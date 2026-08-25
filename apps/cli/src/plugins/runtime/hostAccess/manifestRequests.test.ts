@@ -3,7 +3,10 @@ import { describe, expect, it } from 'vitest';
 import { readCanonicalPluginManifest } from '@/plugins/manifest/normalize';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
 
-import { resolveManifestHostAccessRequests } from './manifestRequests';
+import {
+    resolveManifestHostAccessRequests,
+    resolveManifestHostAccessRequestsForQualifiedContribution,
+} from './manifestRequests';
 
 function manifest() {
     const parsed = readCanonicalPluginManifest(createPluginManifestV2Fixture({
@@ -29,6 +32,13 @@ function manifest() {
             }],
         },
         contributes: {
+            backgroundServices: [{ id: 'account-supervisor' }],
+            notificationChannels: [{
+                id: 'account-notifier',
+                kind: 'plugin',
+                title: 'Account notifier',
+                defaultEnabled: true,
+            }],
             connectedAccountDescriptors: [{
                 id: 'account',
                 title: 'Account',
@@ -96,6 +106,49 @@ describe('resolveManifestHostAccessRequests', () => {
                 required: false,
             },
         ]);
+    });
+
+    it('resolves every live full-service qualified caller through its declared manifest contribution', () => {
+        const pluginManifest = manifest();
+
+        for (const contribution of [
+            {
+                id: 'account-supervisor',
+                qualifiedId: 'acme.accounts/backgroundServices/account-supervisor',
+            },
+            {
+                id: 'account-notifier',
+                qualifiedId: 'acme.accounts/notificationChannels/account-notifier',
+            },
+            {
+                id: 'account',
+                qualifiedId: 'acme.accounts/connectedAccountDescriptors/account',
+            },
+        ]) {
+            expect(resolveManifestHostAccessRequestsForQualifiedContribution({
+                manifest: pluginManifest,
+                pluginId: pluginManifest.id,
+                contribution,
+            })).toEqual([
+                {
+                    request: pluginManifest.hostAccess.required[0],
+                    required: true,
+                },
+                {
+                    request: pluginManifest.hostAccess.optional[0],
+                    required: false,
+                },
+            ]);
+        }
+
+        expect(resolveManifestHostAccessRequestsForQualifiedContribution({
+            manifest: pluginManifest,
+            pluginId: pluginManifest.id,
+            contribution: {
+                id: 'account-supervisor',
+                qualifiedId: 'acme.accounts/agents/account-supervisor',
+            },
+        })).toBeNull();
     });
 
     it('fails closed when a contribution references a missing request id', () => {

@@ -1,9 +1,7 @@
-import { GH_INSTALLABLE_DESCRIPTOR } from '@happier-dev/protocol';
+import { GH_INSTALLABLE_DESCRIPTOR } from '@happier-dev/protocol/installables';
 
-import {
-    BUNDLED_FIRST_PARTY_IMPLEMENTATION_BINDINGS,
-    BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS,
-} from './sources/generatedBundledPlugins';
+import { BUNDLED_FIRST_PARTY_IMPLEMENTATION_BINDINGS } from './sources/generatedBundledPlugins';
+import { BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS } from './sources/generatedBundledPluginManifests';
 import { projectBuiltInAgents } from './builtIn/agents';
 import { loadBundledPluginLocators } from './builtIn/locators';
 import { projectLoadedPluginContributes } from './resolvePluginContributions';

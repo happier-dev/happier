@@ -14,6 +14,43 @@ export const resolvePluginNetworkAddresses: PluginNetworkAddressResolver = async
 
 export type PluginNetworkOriginLocality = 'public' | 'private';
 
+export type PluginNetworkOriginAdmission = Readonly<{
+    locality: PluginNetworkOriginLocality;
+    validatedAddresses: readonly string[];
+}>;
+
+/**
+ * Resolves and classifies one origin as a single admission fact. Callers that
+ * dispatch HTTP must carry `validatedAddresses` to the socket owner; resolving
+ * the hostname again after this decision would detach connection identity from
+ * the policy that admitted it.
+ */
+export async function resolvePluginNetworkOriginAdmission(
+    origin: string,
+    options: Readonly<{ resolveAddresses?: PluginNetworkAddressResolver }> = {},
+): Promise<PluginNetworkOriginAdmission> {
+    try {
+        const syntax = normalizeProviderEndpointUrlSyntax(origin);
+        const resolvedAddresses = syntax.literalAddress
+            ? undefined
+            : await (options.resolveAddresses ?? resolvePluginNetworkAddresses)(syntax.hostname);
+        const assessed = assessEndpointHostLocality({
+            hostname: syntax.hostname,
+            literalAddress: syntax.literalAddress,
+            ...(resolvedAddresses ? { resolvedAddresses } : {}),
+        });
+        return Object.freeze({
+            locality: assessed.locality === 'public' ? 'public' : 'private',
+            validatedAddresses: Object.freeze([...assessed.resolvedAddresses]),
+        });
+    } catch {
+        return Object.freeze({
+            locality: 'private',
+            validatedAddresses: Object.freeze([]),
+        });
+    }
+}
+
 /**
  * The one private-network decision for a plugin network origin. It delegates to
  * the endpoint-locality owner in Protocol, so a literal address and a hostname's
@@ -32,25 +69,7 @@ export async function assessPluginNetworkOriginLocality(
     origin: string,
     options: Readonly<{ resolveAddresses?: PluginNetworkAddressResolver }> = {},
 ): Promise<PluginNetworkOriginLocality> {
-    let syntax: ReturnType<typeof normalizeProviderEndpointUrlSyntax>;
-    try {
-        syntax = normalizeProviderEndpointUrlSyntax(origin);
-    } catch {
-        return 'private';
-    }
-    try {
-        const resolvedAddresses = syntax.literalAddress
-            ? undefined
-            : await (options.resolveAddresses ?? resolvePluginNetworkAddresses)(syntax.hostname);
-        const assessed = assessEndpointHostLocality({
-            hostname: syntax.hostname,
-            literalAddress: syntax.literalAddress,
-            ...(resolvedAddresses ? { resolvedAddresses } : {}),
-        });
-        return assessed.locality === 'public' ? 'public' : 'private';
-    } catch {
-        return 'private';
-    }
+    return (await resolvePluginNetworkOriginAdmission(origin, options)).locality;
 }
 
 /**

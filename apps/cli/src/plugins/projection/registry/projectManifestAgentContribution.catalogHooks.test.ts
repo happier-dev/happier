@@ -21,6 +21,7 @@ const PLUGIN_ID = 'com.acme.agent';
 function projectExternalAgent(
     catalog: Readonly<Record<string, unknown>> | undefined,
     sessionOpen: readonly ('create' | 'resume' | 'fork')[] = ['create', 'resume'],
+    toolDelivery?: 'native_mcp' | 'native_extension' | 'shell_bridge',
 ) {
     const definition = {
         id: 'acme',
@@ -33,6 +34,7 @@ function projectExternalAgent(
                 delivery: ['newTurn'],
                 cancel: true,
             },
+            ...(toolDelivery ? { tools: { delivery: toolDelivery } } : {}),
         },
         ...(catalog ? { catalog } : {}),
     } as unknown as PluginAgentContributionV2;
@@ -45,7 +47,9 @@ function projectExternalAgent(
     });
 }
 
-function loadedExternalAgentPlugin(): LoadedPlugin {
+function loadedExternalAgentPlugin(
+    toolDelivery?: 'native_mcp' | 'native_extension' | 'shell_bridge',
+): LoadedPlugin {
     return {
         pluginId: PLUGIN_ID,
         pluginRootPath: `/plugins/${PLUGIN_ID}`,
@@ -79,6 +83,7 @@ function loadedExternalAgentPlugin(): LoadedPlugin {
                             delivery: ['newTurn'],
                             cancel: true,
                         },
+                        ...(toolDelivery ? { tools: { delivery: toolDelivery } } : {}),
                     },
                     catalog: { vendorResume: { support: 'experimental' } },
                 }],
@@ -243,6 +248,19 @@ describe('external Agent catalog-entry hook routing', () => {
 
         const agent = (projected.agents ?? []).find((candidate) => candidate.id === `${PLUGIN_ID}/acme`);
         expect(agent?.catalogEntry?.vendorResumeSupport).toBe('experimental');
+    });
+
+    it('projects declared external Agent tool delivery through manifest normalization', () => {
+        const projected = projectLoadedPluginContributes({
+            loadResult: {
+                loadedPlugins: [loadedExternalAgentPlugin('native_mcp')],
+                diagnosticsByPluginId: {},
+            },
+            provenance: 'external',
+        });
+
+        const agent = (projected.agents ?? []).find((candidate) => candidate.id === `${PLUGIN_ID}/acme`);
+        expect(agent?.catalogEntry?.toolDelivery).toBe('native_mcp');
     });
 
     // An external Agent's own CLI must be bindable to a system tool it declares,

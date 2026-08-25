@@ -16,7 +16,13 @@ import type {
 import { createDaemonSpawnToolResolutionContext } from '@/daemon/spawnHooks';
 import { readPluginManifest } from '@/plugins/manifest/read';
 import type { PluginStorePaths } from '@/plugins/store/paths';
-import { readPreparedImmutablePluginGeneration } from '@/plugins/store/registry/generationStore';
+import {
+    readCurrentPluginImmutableGenerationIntegrityCurrentness,
+    readPreparedImmutablePluginGeneration,
+} from '@/plugins/store/registry/generationStore';
+import {
+    resolveCurrentInstalledPluginGenerationRuntimeExecutable,
+} from '@/plugins/runtime/installedGenerationRuntimeExecutable';
 import {
     verifyRunnerAgentBindingAgainstGeneration,
 } from '@/plugins/runtime/runner/loadRetainedAgentRuntimeLeaf';
@@ -138,7 +144,8 @@ export async function authorizeRunnerManagedProviderServerSupervision(
             'Managed Provider retained authority is unavailable',
         );
     }
-    if (input.request.executable.kind !== 'packaged-runtime-binary') {
+    const executable = input.request.executable;
+    if (executable.kind !== 'packaged-runtime-binary') {
         return fail(
             'plugin_managed_server_executable_unavailable',
             'Managed Provider packaged runtime is unavailable',
@@ -238,11 +245,36 @@ export async function authorizeRunnerManagedProviderServerSupervision(
             'Managed Provider server launch does not match immutable P',
         );
     }
-    // A packaged Provider runtime is a host-owned executable reference and is
-    // deliberately absent from public manifest HostAccess. The exact retained
-    // Provider declaration/bootstrap authorizes this operation; the runner's
-    // packaged-runtime resolver separately proves the requested artifact lies
-    // within the exact retained runner runtime snapshot before spawning.
+    if (scope.manifestAuthority === 'external') {
+        const command =
+            await resolveCurrentInstalledPluginGenerationRuntimeExecutable({
+                executable,
+                rootPath: generation.rootPath,
+                files: generation.record.files,
+                isCurrent: async () =>
+                    await readCurrentPluginImmutableGenerationIntegrityCurrentness({
+                        paths: input.paths,
+                        pluginId: scope.pluginId,
+                        immutableGenerationId: scope.immutableGenerationId,
+                        retainedManifestAuthority: scope.manifestAuthority,
+                    }),
+            });
+        if (!command) {
+            return fail(
+                'plugin_managed_server_executable_unavailable',
+                'Managed Provider packaged runtime is unavailable',
+            );
+        }
+        return Object.freeze({
+            launch: Object.freeze({
+                kind: 'daemonResolved' as const,
+                value: Object.freeze({ command }),
+            }),
+        });
+    }
+
+    // Bundled first-party Provider payloads remain bound to the exact retained
+    // CLI runner snapshot, which owns their packaged runtime artifact.
     return Object.freeze({
         launch: Object.freeze({ kind: 'runnerPackagedRuntime' as const }),
     });

@@ -420,6 +420,70 @@ describe('parseAutomationTemplateExecution', () => {
     expect(parsed.value.codexBackendMode).toBe('appServer');
   });
 
+  it('carries the authored checkout branch mode through the canonical Session-authoring draft', () => {
+    const parsed = parseAutomationTemplateExecution(
+      buildClaimedRun({
+        automation: {
+          id: 'a1',
+          name: 'Existing branch checkout',
+          enabled: true,
+          targetType: 'new_session',
+          templateCiphertext: buildPlainTemplateCiphertext({
+            directory: '/tmp/project',
+            agent: 'codex',
+            checkoutCreationDraft: {
+              kind: 'git_worktree',
+              displayName: 'feature/auth',
+              baseRef: 'main',
+              branchMode: 'existing',
+            },
+          }),
+        },
+      }),
+      undefined,
+    );
+
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.value.checkoutCreationDraft).toEqual({
+      kind: 'git_worktree',
+      displayName: 'feature/auth',
+      baseRef: 'main',
+      branchMode: 'existing',
+    });
+  });
+
+  it('leaves an omitted checkout branch mode omitted for the materialization owner', () => {
+    const parsed = parseAutomationTemplateExecution(
+      buildClaimedRun({
+        automation: {
+          id: 'a1',
+          name: 'Default branch checkout',
+          enabled: true,
+          targetType: 'new_session',
+          templateCiphertext: buildPlainTemplateCiphertext({
+            directory: '/tmp/project',
+            agent: 'codex',
+            checkoutCreationDraft: {
+              kind: 'git_worktree',
+              displayName: 'feature/auth',
+              baseRef: null,
+            },
+          }),
+        },
+      }),
+      undefined,
+    );
+
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.value.checkoutCreationDraft).toEqual({
+      kind: 'git_worktree',
+      displayName: 'feature/auth',
+      baseRef: null,
+    });
+  });
+
   it('rejects workspace-linked plaintext templates', () => {
     const parsed = parseAutomationTemplateExecution(
       buildClaimedRun({

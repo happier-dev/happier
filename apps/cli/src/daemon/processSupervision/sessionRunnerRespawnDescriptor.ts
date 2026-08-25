@@ -40,6 +40,7 @@ const TERMINAL_MODES = ['plain', 'tmux', 'zellij', 'windows_terminal', 'windows_
 const SAFE_RESPAWN_ENVIRONMENT_VARIABLE_KEYS = [
   'CLAUDE_CONFIG_DIR',
   'CODEX_HOME',
+  'CODEX_SQLITE_HOME',
   HAPPIER_SESSION_CONNECTED_SERVICE_MATERIALIZATION_IDENTITY_ENV_KEY,
 ] as const;
 const MAX_SEALED_RESPAWN_ENVIRONMENT_CIPHERTEXT_CHARS = 65_536;
@@ -182,55 +183,6 @@ function openRespawnEnvironmentVariables(params: Readonly<{
 
   const parsed = z.record(z.string(), z.string()).safeParse(opened.value);
   return parsed.success ? parsed.data : null;
-}
-
-/**
- * Normalizes an already-owned marker's sealed respawn environment. Callers
- * must prove the live process/marker ownership relationship before invoking
- * this write-side helper. Canonical ciphertext is returned byte-for-byte so a
- * later daemon recovery does not rotate its nonce; only the bounded historical
- * tag-6 alias is resealed under canonical tag 5.
- */
-export function normalizeOwnedMarkerRespawnEnvironmentCiphertext(
-  params: Readonly<{
-    sealedEnvironmentVariables: z.infer<
-      typeof SealedRespawnEnvironmentVariablesSchema
-    >;
-    deviceLocalSecretStorage?: DeviceLocalSecretStorage;
-    encryptionMaterial?: RespawnDescriptorEncryptionMaterial;
-    randomBytes?: (length: number) => Uint8Array;
-  }>,
-): z.infer<typeof SealedRespawnEnvironmentVariablesSchema> | null {
-  if (params.sealedEnvironmentVariables.format === 'device_local_v1') {
-    return params.deviceLocalSecretStorage
-      ? params.sealedEnvironmentVariables
-      : null;
-  }
-  if (!params.encryptionMaterial) return null;
-  const opened = openAccountScopedBlobCiphertext({
-    kind: 'session_respawn_environment',
-    material: params.encryptionMaterial,
-    ciphertext:
-      params.sealedEnvironmentVariables.ciphertext,
-  });
-  if (!opened) return null;
-  const environmentVariables =
-    z.record(z.string(), z.string()).safeParse(opened.value);
-  if (!environmentVariables.success) return null;
-  if (opened.kindTag === 'canonical') {
-    return params.sealedEnvironmentVariables;
-  }
-  if (opened.kindTag !== 'historical_alias') return null;
-  return {
-    format: 'account_scoped_v1',
-    ciphertext: sealAccountScopedBlobCiphertext({
-      kind: 'session_respawn_environment',
-      material: params.encryptionMaterial,
-      payload: environmentVariables.data,
-      randomBytes:
-        params.randomBytes ?? nodeRandomBytes,
-    }),
-  };
 }
 
 function areBackendTargetRefV1Equal(left: BackendTargetRefV1, right: BackendTargetRefV1): boolean {

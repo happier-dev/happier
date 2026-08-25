@@ -6,14 +6,15 @@ import {
     type AccountApiTokenIntrospectionRequestV1,
 } from "@happier-dev/protocol";
 
-import { normalizeServerHttpBaseUrl, resolveServerHttpBaseUrl } from "@/api/client/serverHttpBaseUrl";
+import { normalizeServerHttpBaseUrl } from "@/api/client/serverHttpBaseUrl";
 
 import { type DaemonPatIntrospector } from "./daemonPatVerifier";
 
 type AccountServerPatIntrospectorOptions = Readonly<{
     /** Existing signed credential for the daemon's Account-server connection. */
     daemonConnectionToken: string;
-    serverBaseUrl?: string;
+    /** Resolved Account-server URL for this daemon lifecycle. */
+    serverBaseUrl: string;
 }>;
 
 /**
@@ -28,7 +29,7 @@ export function createAccountServerPatIntrospector(
         throw new Error("Account-server PAT introspection requires a daemon connection token");
     }
 
-    const serverBaseUrl = normalizeServerHttpBaseUrl(options.serverBaseUrl ?? resolveServerHttpBaseUrl());
+    const serverBaseUrl = normalizeServerHttpBaseUrl(options.serverBaseUrl);
     const url = `${serverBaseUrl}${ACCOUNT_API_TOKEN_INTROSPECTION_HTTP_PATH_V1}`;
 
     return async (token, signal) => {

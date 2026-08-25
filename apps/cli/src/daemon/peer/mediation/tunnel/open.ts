@@ -83,8 +83,6 @@ export type OpenPeerTcpTunnelInput = Readonly<{
         accountPublicKey?: string;
     }>;
     trustRoots: readonly DirectRouteGrantTrustRoot[];
-    revokedGrantIds?: ReadonlySet<string>;
-    revokedGrantFamilyIds?: ReadonlySet<string>;
     grantConsumption: AtomicRouteGrantConsumption;
     initialWindowBytes?: number;
     maxFrameBytes?: number;
@@ -223,8 +221,6 @@ export async function openPeerTcpTunnel(input: OpenPeerTcpTunnelInput): Promise<
             routeKind: 'loopback_direct',
             endpointFingerprint: input.expected.endpointFingerprint,
         },
-        revokedGrantIds: input.revokedGrantIds,
-        revokedGrantFamilyIds: input.revokedGrantFamilyIds,
       })
       : verifyDirectRouteGrantV1({
         grant: open.grant,
@@ -237,8 +233,6 @@ export async function openPeerTcpTunnel(input: OpenPeerTcpTunnelInput): Promise<
             routeKind: 'loopback_direct',
             endpointFingerprint: input.expected.endpointFingerprint,
         },
-        revokedGrantIds: input.revokedGrantIds,
-        revokedGrantFamilyIds: input.revokedGrantFamilyIds,
       });
     if (!grantVerification.valid) return fallback(grantVerification.reasonCode);
 

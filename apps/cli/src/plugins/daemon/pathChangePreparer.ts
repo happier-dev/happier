@@ -31,7 +31,6 @@ import { serializeCanonicalPluginManifest } from '@/plugins/manifest/serialize';
 import type { CanonicalPluginManifest } from '@/plugins/manifest/types';
 import type { PreparedPluginActivationGraph } from '@/plugins/runtime/types';
 import { projectPluginFailureText } from '@/plugins/runtime/lifecycle/utils';
-import { resolveLocalPluginSourceManifestAuthority } from '@/plugins/manifest/bundledFirstPartyAuthority';
 import { readPluginManifest } from '@/plugins/manifest/read';
 import { pluginSourceProvenanceForKind } from '@/plugins/manifest/sourceProvenance';
 import {
@@ -468,9 +467,7 @@ export function createDaemonPathPluginChangePreparer(params: Readonly<{
               updatePolicy: 'manual',
               createdAtMs: Date.now(),
             });
-            const manifestAuthority = await resolveLocalPluginSourceManifestAuthority({
-              pluginRootPath: entry.packageRoot,
-            });
+            const manifestAuthority = 'external' as const;
             const preparedManifest = await readPluginManifest({
               manifestPath: join(
                 preparedGeneration.rootPath,

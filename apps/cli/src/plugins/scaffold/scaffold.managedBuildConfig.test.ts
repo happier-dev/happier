@@ -99,7 +99,10 @@ describe('scaffoldLocalPlugin managed UI build configuration', () => {
     } finally {
       await rm(root, { recursive: true, force: true });
     }
-  });
+    // This case runs the REAL `runPluginBuildUiCli` against a freshly scaffolded
+    // project; importing the SDK builder alone costs tens of seconds, so the
+    // 30s suite default cannot budget it.
+  }, 180_000);
 
   it('declares standard UI targets without package-root bundler config or hosted HTML files', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-plugin-scaffold-managed-build-'));

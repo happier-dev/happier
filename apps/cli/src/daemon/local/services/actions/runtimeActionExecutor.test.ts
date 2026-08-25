@@ -480,6 +480,9 @@ describe('daemon local-services runtime action executor', () => {
         });
     });
 
+    // Route-contract test: it asserts the RAW public URL, so it must state the surface it really
+    // models (a user driving the services pane). An unattributed caller is now treated as
+    // agent-reachable and redacted (INV-1 / DEC-2), which is a different contract, covered below.
     it('routes localServices.publicPreview controls through daemon public-preview routes', async () => {
         const mod = await import('./runtimeActionExecutor').catch(() => null);
 
@@ -523,6 +526,7 @@ describe('daemon local-services runtime action executor', () => {
                 sessionId: 'session_1',
                 previewId: 'preview_1',
             },
+            context: { surface: 'ui' },
         }))).resolves.toEqual(publicPreviewSnapshot);
         expect(publicPreviewRoutes.getStatus).toHaveBeenCalledWith({
             machineId: 'machine_1',
@@ -542,6 +546,7 @@ describe('daemon local-services runtime action executor', () => {
         await expect(execute(runtimeArgs({
             actionId: 'localServices.publicPreview.create',
             input: createRequest,
+            context: { surface: 'ui' },
         }))).resolves.toMatchObject({
             protocolVersion: 1,
             exposure: publicExposure,
@@ -557,6 +562,7 @@ describe('daemon local-services runtime action executor', () => {
         await expect(execute(runtimeArgs({
             actionId: 'localServices.publicPreview.revoke',
             input: revokeRequest,
+            context: { surface: 'ui' },
         }))).resolves.toMatchObject({
             protocolVersion: 1,
             exposureId: 'public_preview_1',

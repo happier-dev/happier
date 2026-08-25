@@ -26,9 +26,7 @@ export {
 } from './registerRoutes';
 export {
     startPeerMediationLoopback,
-    startPeerMediationMachineRpcLoopback,
     type StartPeerMediationLoopbackInput,
-    type StartPeerMediationMachineRpcLoopbackInput,
     type StartedPeerMediationLoopback,
     type StartedPeerMediationMachineRpcLoopback,
 } from './startLoopback';

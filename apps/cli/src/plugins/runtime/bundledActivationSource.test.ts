@@ -12,18 +12,27 @@ import {
 } from '@/subprocess/sourceDevSharedDepsPreflight';
 import {
   assertContainedRegularGenerationFile,
+  prepareImmutablePluginGeneration,
   readCurrentCommittedPluginGenerations,
+  readValidatedAgentSessionRunnerFactories,
 } from '@/plugins/store/registry/generationStore';
 import { resolvePluginStorePaths } from '@/plugins/store/paths';
 import { BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS } from '@/plugins/projection/registry/sources/generatedBundledPluginArtifacts';
+import { readPluginManifest } from '@/plugins/manifest/read';
+import { activateContributionModule } from '@/plugins/runtime/lifecycle/activation/activateContributionModule';
+import { createAgentSessionRunnerFactoryBinding } from '@/plugins/runtime/runner/agentSessionRunnerFactoryBinding';
+import { verifyRunnerAgentBindingAgainstGeneration } from '@/plugins/runtime/runner/loadRetainedAgentRuntimeLeaf';
+import { readValidatedAgentSessionRunnerFactory } from '@/plugins/runtime/api/registrationRightsHost';
 
 import {
   createBundledActivationSourceResolver,
   prepareBundledExecutableGenerationAdmission,
   resolveBundledActivationSourceRepoRoot,
+  resolveCurrentHostBundledImmutableArtifacts,
   selectBundledExecutableImmutableArtifacts,
   resolveSourceDevelopmentBundledPackageNames,
 } from './bundledActivationSource';
+import * as bundledActivationSource from './bundledActivationSource';
 import type { PluginDaemonModuleNamespace } from './types';
 
 const pluginModuleFixture: PluginDaemonModuleNamespace = {
@@ -272,6 +281,63 @@ describe('createBundledActivationSourceResolver', () => {
     })).toEqual([artifacts[0]]);
   });
 
+  it('retains every executable immutable generation when source activation excludes its overlay', () => {
+    const artifacts = [
+      {
+        packageName: '@happier-dev/plugins-codex',
+        packageEntryRelativePath: 'dist/index.js',
+        record: { immutableGenerationId: 'bundled-codex' },
+      },
+      {
+        packageName: '@happier-dev/plugins-cursor',
+        packageEntryRelativePath: 'dist/index.js',
+        record: { immutableGenerationId: 'bundled-cursor' },
+      },
+      {
+        packageName: '@happier-dev/plugins-ohmypi',
+        packageEntryRelativePath: 'dist/index.js',
+        record: { immutableGenerationId: 'bundled-ohmypi' },
+      },
+      {
+        packageName: '@happier-dev/plugins-pi',
+        packageEntryRelativePath: 'dist/index.js',
+        record: { immutableGenerationId: 'bundled-pi' },
+      },
+    ] as const;
+    const repoRoot = '/source-checkout';
+    const sourceActivationArtifacts = resolveCurrentHostBundledImmutableArtifacts({
+      artifacts,
+      canImportFirstPartyPluginSource: () => true,
+      existsSync: () => true,
+      repoRoot,
+      resolveBundledPackageEntry: (packageName) => join(
+        repoRoot,
+        'apps',
+        'cli',
+        'node_modules',
+        '@happier-dev',
+        packageName.slice('@happier-dev/'.length),
+        'dist',
+        'index.js',
+      ),
+    });
+    expect(sourceActivationArtifacts).toEqual([]);
+
+    const resolveRetentionIds = Reflect.get(
+      bundledActivationSource,
+      'resolveBundledImmutableGenerationRetentionIds',
+    );
+    expect(resolveRetentionIds).toEqual(expect.any(Function));
+    if (typeof resolveRetentionIds !== 'function') return;
+
+    expect(resolveRetentionIds({ artifacts })).toEqual([
+      'bundled-codex',
+      'bundled-cursor',
+      'bundled-ohmypi',
+      'bundled-pi',
+    ]);
+  });
+
   it('does not invoke source-dev preparation for a packaged host', async () => {
     const prepareSourceDevSharedDeps = vi.fn(async () => syncedPreflight);
 
@@ -469,6 +535,127 @@ describe('createBundledActivationSourceResolver', () => {
     expect(imported).toHaveLength(1);
     expect(imported[0]).toMatch(/\/packages\/plugins\/scm-git\/src\/index\.ts$/u);
     expect(prepareSourceDevSharedDeps).toHaveBeenCalledTimes(1);
+  });
+
+  it('persists exact-generation runner validation while activating bundled source development code', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-bundled-source-runner-validation-'));
+    tempDirs.push(happyHomeDir);
+    const artifact = BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS.find(
+      (candidate) => candidate.record.pluginId === 'happier.agent.codex',
+    );
+    expect(artifact).toBeDefined();
+    if (!artifact) throw new Error('Expected the generated bundled Codex artifact');
+    const paths = resolvePluginStorePaths({ happyHomeDir });
+    const committed = await readCurrentCommittedPluginGenerations(paths, {
+      bundledArtifacts: [artifact],
+    });
+    const admitted = committed?.generations.get(artifact.record.pluginId);
+    expect(admitted).toBeDefined();
+    if (!admitted) throw new Error('Expected the copied bundled Codex artifact to be admitted');
+    const prepared = await prepareImmutablePluginGeneration({
+      paths,
+      sourceRootPath: admitted.rootPath,
+      record: admitted.record,
+    });
+    const manifest = await readPluginManifest({
+      sourceProvenance: 'registryCustodied',
+      manifestPath: join(prepared.rootPath, ...admitted.record.manifestRelativePath.split('/')),
+      manifestAuthority: 'bundled_first_party',
+      enforceEngineCompatibility: false,
+    });
+    expect(manifest.ok).toBe(true);
+    if (!manifest.ok) throw new Error('Expected the admitted Codex manifest to be valid');
+
+    const source = createBundledActivationSourceResolver({
+      bundledPackageNames: [artifact.packageName],
+      runnerImmutableArtifactEntryPathsByPackageName: new Map([[
+        artifact.packageName,
+        join(prepared.rootPath, ...(
+          artifact.daemonEntryRelativePath
+            ?? artifact.packageEntryRelativePath
+        ).split('/')),
+      ]]),
+      runnerImmutableArtifactRootPathsByPackageName: new Map([[
+        artifact.packageName,
+        prepared.rootPath,
+      ]]),
+      runnerImmutableArtifactRecordsByPackageName: new Map([[
+        artifact.packageName,
+        admitted.record,
+      ]]),
+      pluginStorePaths: paths,
+      canImportFirstPartyPluginSource: () => true,
+      prepareSourceDevSharedDeps: vi.fn(async () => syncedPreflight),
+      repoRoot: resolveBundledActivationSourceRepoRoot(import.meta.url),
+    })({
+      pluginId: artifact.record.pluginId,
+      daemonEntryPath: artifact.packageName,
+    });
+    if (!source) throw new Error('Expected a bundled Codex activation source');
+    const activation = await activateContributionModule({
+      pluginId: artifact.record.pluginId,
+      manifestAuthority: 'bundled_first_party',
+      generation: artifact.record.immutableGenerationId,
+      manifest: manifest.manifest,
+      moduleNamespace: await source.load(),
+      isGenerationCurrent: () => true,
+      resolveRelativeModule: source.resolveRelativeModule,
+      persistValidatedAgentSessionRunnerFactories:
+        source.persistValidatedAgentSessionRunnerFactories,
+    });
+    expect(activation.status).toBe('active');
+    expect(activation.validatedAgentSessionRunnerFactories).toEqual([
+      expect.objectContaining({
+        localAgentId: 'codex',
+        normalizedModulePath: '.happier-plugin/agent/runtime/engine.js',
+        loadMode: 'immutable-js',
+      }),
+    ]);
+    const agentRegistration = activation.registrations.find(
+      (registration) => registration.family === 'agents' && registration.localId === 'codex',
+    );
+    if (!agentRegistration || agentRegistration.family !== 'agents') {
+      throw new Error('Expected the live Codex Agent registration');
+    }
+    expect(readValidatedAgentSessionRunnerFactory(agentRegistration.value)).toMatchObject({
+      normalizedModulePath: '.happier-plugin/agent/runtime/engine.js',
+      loadMode: 'immutable-js',
+    });
+
+    const retained = await readValidatedAgentSessionRunnerFactories({
+      paths,
+      record: admitted.record,
+    });
+    expect(retained).toMatchObject({
+      pluginId: artifact.record.pluginId,
+      immutableGenerationId: artifact.record.immutableGenerationId,
+      manifestAuthority: 'bundled_first_party',
+      factories: [{
+        localAgentId: 'codex',
+        normalizedModulePath: '.happier-plugin/agent/runtime/engine.js',
+        loadMode: 'immutable-js',
+      }],
+    });
+    const retainedFact = retained.factories[0];
+    if (!retainedFact) throw new Error('Expected the retained Codex runner fact');
+    await expect(verifyRunnerAgentBindingAgainstGeneration({
+      paths,
+      binding: createAgentSessionRunnerFactoryBinding({
+        v: 1,
+        pluginId: artifact.record.pluginId,
+        pluginVersion: manifest.manifest.version,
+        agentId: 'codex',
+        localAgentId: retainedFact.localAgentId,
+        immutableGenerationId: admitted.record.immutableGenerationId,
+        locator: retainedFact.locator,
+        normalizedModulePath: retainedFact.normalizedModulePath,
+        loadMode: retainedFact.loadMode,
+      }),
+    })).resolves.toMatchObject({
+      bindingKind: 'plugin_factory_v1',
+      fact: retainedFact,
+    });
+    await activation.dispose();
   });
 
   it('loads inventory-admitted bundled artifacts from dist even in source development', async () => {

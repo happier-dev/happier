@@ -59,17 +59,25 @@ export type PeerMediationLoopbackExpectedBinding = Readonly<{
   accountPublicKey?: string;
 }>;
 
+/**
+ * The tunnel registrar's options minus everything this composition root supplies itself. Named and
+ * exported so `rpc/startLoopback.ts` consumes it rather than restating the same `Omit<...>`; the
+ * live-stream sibling already follows this shape (`PeerMachineLiveStreamDirectRuntimeOptions`).
+ */
+export type PeerTcpTunnelDirectRuntimeOptions = Omit<
+  RegisterPeerTcpTunnelLoopbackRoutesOptions,
+  'nowMs' | 'expected' | 'trustRoots'
+>;
+
 export type PeerMediationLoopbackAppOptions = Readonly<{
   nowMs: () => number;
   expected: PeerMediationLoopbackExpectedBinding;
   expectedByFlow?: Partial<Record<PeerFlowKindV1, PeerMediationLoopbackExpectedBinding>>;
   trustRoots: readonly DirectRouteGrantTrustRoot[];
-  revokedGrantIds?: ReadonlySet<string>;
-  revokedGrantFamilyIds?: ReadonlySet<string>;
   bodyLimitBytes?: number;
   rpc?: PeerMachineRpcDirectRuntimeOptions;
   stream?: PeerMachineLiveStreamDirectRuntimeOptions;
-  tunnel?: Omit<RegisterPeerTcpTunnelLoopbackRoutesOptions, 'nowMs' | 'expected' | 'trustRoots' | 'revokedGrantIds' | 'revokedGrantFamilyIds'>;
+  tunnel?: PeerTcpTunnelDirectRuntimeOptions;
   /**
    * PMS-9 / P1-9. This composition root is the one place that knows the account, machine, route
    * kind and clock for every direct route, so the emitter is bound here once and each registrar
@@ -182,8 +190,6 @@ export function createPeerMediationLoopbackApp(options: PeerMediationLoopbackApp
         routeKind: expected.routeKind,
         endpointFingerprint: expected.endpointFingerprint,
       },
-      revokedGrantIds: options.revokedGrantIds,
-      revokedGrantFamilyIds: options.revokedGrantFamilyIds,
     });
     if (!verification.valid) return fallback(verification.reasonCode);
 
@@ -228,8 +234,6 @@ export function createPeerMediationLoopbackApp(options: PeerMediationLoopbackApp
       expected,
       observability: directFlowObserverFor(expected),
       trustRoots: options.trustRoots,
-      revokedGrantIds: options.revokedGrantIds,
-      revokedGrantFamilyIds: options.revokedGrantFamilyIds,
     });
   }
 
@@ -241,8 +245,6 @@ export function createPeerMediationLoopbackApp(options: PeerMediationLoopbackApp
       expected,
       observability: directFlowObserverFor(expected),
       trustRoots: options.trustRoots,
-      revokedGrantIds: options.revokedGrantIds,
-      revokedGrantFamilyIds: options.revokedGrantFamilyIds,
     });
   }
 
@@ -259,8 +261,6 @@ export function createPeerMediationLoopbackApp(options: PeerMediationLoopbackApp
         accountPublicKey: expected.accountPublicKey,
       },
       trustRoots: options.trustRoots,
-      revokedGrantIds: options.revokedGrantIds,
-      revokedGrantFamilyIds: options.revokedGrantFamilyIds,
     });
   }
 

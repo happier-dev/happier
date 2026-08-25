@@ -7,7 +7,6 @@ import {
 } from '@happier-dev/protocol';
 
 import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
-import { resolveLocalPluginSourceManifestAuthority } from '@/plugins/manifest/bundledFirstPartyAuthority';
 import { readPluginManifest } from '@/plugins/manifest/read';
 import { pluginSourceProvenanceForKind } from '@/plugins/manifest/sourceProvenance';
 import type { CanonicalPluginManifest } from '@/plugins/manifest/types';
@@ -18,13 +17,8 @@ export type ResolvedLocalPathPluginSourceSuccess = Readonly<{
   ok: true;
   pluginRootPath: string;
   manifestPath: string;
-  /**
-   * The authority this exact source root carries, decided once here from what
-   * the path actually is. Every later reader of these same bytes - the daemon
-   * candidate staged from them, and the installed manifest they became -
-   * inherits this decision instead of re-defaulting to `external`.
-   */
-  manifestAuthority: 'external' | 'bundled_first_party';
+  /** Local/development source roots are always external. */
+  manifestAuthority: 'external';
   manifest: CanonicalPluginManifest;
   sourceSpec: PluginSourceSpecV1;
 }>;
@@ -83,14 +77,6 @@ function resolveManifestLocation(canonicalPath: string, isFilePath: boolean): Re
 export async function resolveLocalPathPluginSource(params: Readonly<{
   locator: string;
   /**
-   * The authority already derived for the canonical source root these exact
-   * bytes came from. An operation-local copy of a first-party source root is
-   * still that root's bytes, but it no longer sits inside the checkout the
-   * canonical predicate inspects, so the copy inherits the decision instead of
-   * silently re-defaulting to `external`.
-   */
-  inheritedManifestAuthority?: 'external' | 'bundled_first_party';
-  /**
    * Source kind of the installed record whose materialized bytes this path
    * holds. A published artifact is unpacked onto the filesystem before it is
    * read, so the path alone cannot say where the bytes came from — only the
@@ -135,8 +121,7 @@ export async function resolveLocalPathPluginSource(params: Readonly<{
   const pathStat = await stat(canonicalPath);
   const sourceLocator = pathStat.isFile() ? canonicalPath : undefined;
   const { pluginRootPath, manifestPath } = resolveManifestLocation(canonicalPath, pathStat.isFile());
-  const manifestAuthority = params.inheritedManifestAuthority
-    ?? await resolveLocalPluginSourceManifestAuthority({ pluginRootPath });
+  const manifestAuthority = 'external' as const;
   const sourceProvenance = pluginSourceProvenanceForKind(params.installedSourceKind);
   const manifestRead = await readPluginManifest({ manifestPath, manifestAuthority, sourceProvenance });
   if (!manifestRead.ok) {

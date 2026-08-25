@@ -6,6 +6,7 @@ import {
 } from './events';
 import {
     createLocalServiceInventoryLabelStore,
+    type LocalServiceInventoryDurableLabelEntry,
     type LocalServiceInventoryLabelPatchResult,
     type LocalServiceInventoryLabelSource,
 } from './labels';
@@ -32,9 +33,34 @@ export type LocalServiceInventoryRegistry = Readonly<{
     subscribe(subscriber: LocalServiceInventorySubscriber): () => void;
 }>;
 
+/**
+ * The user-authored half of the inventory: names people gave services, and services they told us
+ * to stop showing. Everything else here is rediscovered by the next scan, so this is the only
+ * state a daemon restart could destroy (tunnels audit §4.8) — and it is first-class user content,
+ * not a cache.
+ *
+ * Keyed by the stable address tuple rather than the per-scan inventory id, because an id minted by
+ * one daemon run means nothing to the next one.
+ */
+export type LocalServiceInventoryAnnotationsV1 = Readonly<{
+    v: 1;
+    labelsByFallbackKey: readonly LocalServiceInventoryDurableLabelEntry[];
+    forgottenFallbackKeys: readonly (readonly [string, ForgottenSuppression])[];
+}>;
+
+/**
+ * Storage boundary for the annotations. A genuine system boundary (the filesystem), so the
+ * registry stays pure and testable and the daemon supplies the real file-backed adapter.
+ */
+export type LocalServiceInventoryAnnotationStore = Readonly<{
+    read(): LocalServiceInventoryAnnotationsV1 | null;
+    write(annotations: LocalServiceInventoryAnnotationsV1): void;
+}>;
+
 export type LocalServiceInventoryRegistryOptions = Readonly<{
     maxForgottenEntries?: number;
     forgottenEntryTtlMs?: number;
+    annotations?: LocalServiceInventoryAnnotationStore;
 }>;
 
 const DEFAULT_MAX_FORGOTTEN_ENTRIES = 512;
@@ -142,12 +168,25 @@ export function createLocalServiceInventoryRegistry(
     options: LocalServiceInventoryRegistryOptions = {},
 ): LocalServiceInventoryRegistry {
     const subscribers = new Set<LocalServiceInventorySubscriber>();
-    const labels = createLocalServiceInventoryLabelStore();
+    const restored = options.annotations?.read() ?? null;
+    const labels = createLocalServiceInventoryLabelStore(restored?.labelsByFallbackKey ?? []);
     const maxForgottenEntries = resolvePositiveInt(options.maxForgottenEntries, DEFAULT_MAX_FORGOTTEN_ENTRIES);
     const forgottenEntryTtlMs = resolvePositiveInt(options.forgottenEntryTtlMs, DEFAULT_FORGOTTEN_ENTRY_TTL_MS);
+    // Inventory ids do not survive a restart, so only the address-keyed suppressions are restored;
+    // the id-keyed map is rebuilt as this run forgets things.
     const forgottenInventoryIds = new Map<string, ForgottenSuppression>();
-    const forgottenFallbackKeys = new Map<string, ForgottenSuppression>();
+    const forgottenFallbackKeys = new Map<string, ForgottenSuppression>(
+        (restored?.forgottenFallbackKeys ?? []).map(([key, suppression]) => [key, suppression] as const),
+    );
     let snapshot = createEmptySnapshot();
+
+    const persistAnnotations = (): void => {
+        options.annotations?.write({
+            v: 1,
+            labelsByFallbackKey: labels.snapshotDurableLabels(),
+            forgottenFallbackKeys: [...forgottenFallbackKeys.entries()].map(([key, value]) => [key, value] as const),
+        });
+    };
 
     const publish = (event: LocalServiceInventoryRegistryEvent) => {
         for (const subscriber of subscribers) {
@@ -194,6 +233,7 @@ export function createLocalServiceInventoryRegistry(
             };
             addSuppression(forgottenInventoryIds, target.id, suppression, maxForgottenEntries);
             addSuppression(forgottenFallbackKeys, inventoryFallbackKey(target), suppression, maxForgottenEntries);
+            persistAnnotations();
             snapshot = {
                 ...snapshot,
                 generatedAt: input.updatedAt,
@@ -207,6 +247,7 @@ export function createLocalServiceInventoryRegistry(
             if (!result.ok) {
                 return result;
             }
+            persistAnnotations();
             const nextEntries = snapshot.entries.map((entry) => (
                 entry.id === input.inventoryId ? attachStoredLabels(entry, labels.labelsFor(entry)) : entry
             ));

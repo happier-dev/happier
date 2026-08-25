@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
+import { isPidPresent } from '@happier-dev/cli-common/process';
 import {
   reclaimJsonOwnerFileLockSnapshot,
   withJsonOwnerFileLock,
@@ -50,15 +51,6 @@ function parsePredecessorPluginStoreLock(raw: string): PredecessorPluginStoreLoc
   }
 }
 
-function isProcessAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException | null)?.code === 'EPERM';
-  }
-}
-
 async function waitForPredecessorPluginStoreLock(params: Readonly<{
   lockFilePath: string;
   deadlineMs: number;
@@ -76,7 +68,7 @@ async function waitForPredecessorPluginStoreLock(params: Readonly<{
     const predecessor = parsePredecessorPluginStoreLock(raw);
     if (!predecessor) return;
 
-    if (!isProcessAlive(predecessor.pid)) {
+    if (!isPidPresent(predecessor.pid)) {
       const reclaimed = await reclaimJsonOwnerFileLockSnapshot(params.lockFilePath, raw);
       if (reclaimed === 'ownership_unknown') {
         throw new Error(`${params.errorCode}_compromised`);

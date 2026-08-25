@@ -34,16 +34,35 @@ function isNonPublicIpv6(address: string): boolean {
   return false;
 }
 
+/**
+ * The one address-locality decision every acquisition owner shares: an empty
+ * answer set, an unparsable address, or any address inside a private, loopback
+ * or reserved range is not a public destination. Callers that must fail closed
+ * assert on it; callers that must record the caller's own network intent read
+ * it as a value.
+ */
+export function areNetworkAddressesPublic(addresses: readonly string[]): boolean {
+  if (addresses.length === 0) return false;
+  return addresses.every((address) => {
+    const family = isIP(address);
+    if (family === 0) return false;
+    return !(family === 4 ? isNonPublicIpv4(address) : isNonPublicIpv6(address));
+  });
+}
+
 export function assertPublicNpmNetworkAddresses(
   addresses: readonly string[],
   options: Readonly<{ allowPrivateNetwork?: boolean }> = {},
 ): void {
   if (addresses.length === 0) throw new Error('Npm registry DNS lookup returned no addresses');
-  for (const address of addresses) {
-    const family = isIP(address);
-    if (family === 0 || (!options.allowPrivateNetwork && (family === 4 ? isNonPublicIpv4(address) : isNonPublicIpv6(address)))) {
+  if (options.allowPrivateNetwork) {
+    if (addresses.some((address) => isIP(address) === 0)) {
       throw new Error('Npm registry DNS resolved to a private, local, reserved, or invalid address');
     }
+    return;
+  }
+  if (!areNetworkAddressesPublic(addresses)) {
+    throw new Error('Npm registry DNS resolved to a private, local, reserved, or invalid address');
   }
 }
 

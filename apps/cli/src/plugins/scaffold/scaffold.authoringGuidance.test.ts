@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -77,7 +77,85 @@ describe('scaffoldLocalPlugin authoring guidance', () => {
       expect(skill).toContain('examples/advanced-package-root');
       expect(skill).toContain('happier plugins dev typecheck .');
       expect(skill).toContain('happier plugins dev build .');
-      expect(skill).toContain('happier plugins test . --packed');
+      expect(skill).toContain('happier plugins pack .');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('only points the author at SDK paths that exist in the package they install', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-plugin-scaffold-references-'));
+    try {
+      const scaffold = await scaffoldLocalPlugin({
+        targetDir: join(root, 'plugin'),
+        pluginId: 'acme.authoring-references',
+        displayName: 'Authoring references',
+      });
+      expect(scaffold.ok).toBe(true);
+      if (!scaffold.ok) return;
+
+      const skill = await readFile(join(
+        root,
+        'plugin',
+        '.agents',
+        'skills',
+        'happier-plugin-authoring',
+        'SKILL.md',
+      ), 'utf8');
+
+      // A root-relative Markdown target resolves against a documentation site,
+      // not against the author project this file is written into.
+      expect(skill).not.toMatch(/\]\(\/[^)]*\)/u);
+
+      const sdkRoot = join(repositoryRoot, 'packages', 'plugin-sdk');
+      const published: readonly string[] = JSON.parse(
+        await readFile(join(sdkRoot, 'package.json'), 'utf8'),
+      ).files;
+      const references = [...new Set(
+        [...skill.matchAll(/node_modules\/@happier-dev\/plugin-sdk\/([^\s`'")]+)/gu)]
+          .map((match) => match[1]!.replace(/\/+$/u, '')),
+      )];
+      expect(references.length).toBeGreaterThan(0);
+
+      for (const reference of references) {
+        await expect(
+          stat(join(sdkRoot, reference)).then(() => reference),
+          `${reference} is missing from packages/plugin-sdk`,
+        ).resolves.toBe(reference);
+        const inPackedInventory = published.some((entry) => {
+          const normalized = entry.replace(/\/+$/u, '');
+          return normalized === reference
+            || normalized.startsWith(`${reference}/`)
+            || reference.startsWith(`${normalized}/`);
+        });
+        expect(inPackedInventory, `${reference} is not in the plugin-sdk files inventory`).toBe(true);
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('directs React Native authors to the shipped Plugin UI API inventory', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-plugin-scaffold-plugin-ui-inventory-'));
+    try {
+      const scaffold = await scaffoldLocalPlugin({
+        targetDir: join(root, 'plugin'),
+        pluginId: 'acme.plugin-ui-inventory',
+        displayName: 'Plugin UI inventory',
+        ui: 'reactNative',
+      });
+      expect(scaffold.ok).toBe(true);
+      if (!scaffold.ok) return;
+
+      const skill = await readFile(join(
+        root,
+        'plugin',
+        '.agents',
+        'skills',
+        'happier-plugin-authoring',
+        'SKILL.md',
+      ), 'utf8');
+      expect(skill).toContain('node_modules/@happier-dev/plugin-ui/API.md');
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -103,7 +181,8 @@ describe('scaffoldLocalPlugin authoring guidance', () => {
         'SKILL.md',
       ), 'utf8');
 
-      expect(skill).toContain('[cross-plugin contribution guide](/plugins/guides/cross-plugin-contributions)');
+      expect(skill).toContain('node_modules/@happier-dev/plugin-sdk/examples/action-contract-producer/');
+      expect(skill).toContain('node_modules/@happier-dev/plugin-sdk/examples/action-contract-consumer/');
       expect(skill).toContain('This beginner scaffold does not declare a feature integration.');
       expect(skill).not.toContain('@happier-dev/channels-protocol');
       expect(skill).not.toContain('defineTargetedContributionProtocol');

@@ -129,6 +129,7 @@ describe('createStopSession', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
   });
 
   it('fails closed before signaling when host attachment topology evidence is unreadable', async () => {
@@ -1669,6 +1670,7 @@ describe('createStopSession', () => {
     await withProcessPlatform('win32', async () => {
       const { createStopSession } = await import('./stopSession');
 
+      vi.stubEnv('SystemRoot', 'C:\\WINDOWS');
       isPidSafeHappySessionProcess.mockResolvedValueOnce(true);
       const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => {
         throw new Error('no posix process group on windows');
@@ -1695,7 +1697,13 @@ describe('createStopSession', () => {
       const ok = await stop('sess-win-safe');
 
       expect(ok).toEqual({ status: 'stopped' });
-      expect(spawnSyncMock).toHaveBeenCalledWith('taskkill', ['/F', '/T', '/PID', '778'], { stdio: 'ignore' });
+      // Terminate through the same executable identity the launch/inventory custody path used,
+      // not whatever a `PATH` entry ahead of System32 resolves at kill time.
+      expect(spawnSyncMock).toHaveBeenCalledWith(
+        'C:\\WINDOWS\\System32\\taskkill.exe',
+        ['/F', '/T', '/PID', '778'],
+        { stdio: 'ignore' },
+      );
       expect(childKill).not.toHaveBeenCalled();
       expect(pidToTrackedSession.get(778)?.stopRequestedAtMs).toBe(123456789);
 

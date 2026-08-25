@@ -728,6 +728,23 @@ async function executeStrictV3Run(params: Readonly<{
   if (materialized.kind === 'materialUnavailable') return;
 
   if (
+    materialized.target.kind === 'executionRun'
+    && params.claimed.run.resultDelivery?.kind === 'finalResult'
+  ) {
+    await failV3ClaimedRunBeforeStart({
+      machineId: params.machineId,
+      claimed: params.claimed,
+      claimClient: params.claimClient,
+      signal: params.signal,
+      isCurrent: params.isCurrent,
+      resolveAutomationAccountEncryption: params.resolveAutomationAccountEncryption,
+      errorCode: 'execution_run_final_result_unsupported',
+      errorMessage: 'Automation final-result delivery is supported only for Session targets',
+    });
+    return;
+  }
+
+  if (
     materialized.target.kind === 'newSession'
     && !params.dispatchSessionServerStart
   ) return;
@@ -739,12 +756,7 @@ async function executeStrictV3Run(params: Readonly<{
     materialized.target.kind === 'existingSession'
     && (!params.credentials || !params.machineAdmissionTransport)
   ) return;
-  const currentnessBeforeStart = await resolveMatchingAutomationCurrentness({
-    signal: params.signal,
-    expected: claimCurrentness,
-    resolveAutomationAccountEncryption: params.resolveAutomationAccountEncryption,
-  });
-  if (!currentnessBeforeStart || !params.isCurrent()) return;
+  if (!params.isCurrent()) return;
 
   let rawStartCurrentness: AutomationAccountCurrentnessWitnessV1 | null | void;
   try {
@@ -924,13 +936,6 @@ async function executeStrictV3Run(params: Readonly<{
   }
 
   if (materialized.target.kind === 'executionRun') {
-    if (params.claimed.run.resultDelivery?.kind === 'finalResult') {
-      await failWithCurrentEffect(
-        'execution_run_final_result_unsupported',
-        'Automation final-result delivery is supported only for Session targets',
-      );
-      return;
-    }
     let outcome: AutomationV3WorkerExecutionDispatchOutcome;
     const actionRequestId = `automation-run:${params.claimed.run.id}`;
     const actionCaller = {

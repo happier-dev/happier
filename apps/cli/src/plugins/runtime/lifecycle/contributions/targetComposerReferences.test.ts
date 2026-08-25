@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { ComposerReferenceRuntime } from '@happier-dev/plugin-sdk';
+import type { ComposerReferenceRuntime, PluginInvocationContext } from '@happier-dev/plugin-sdk';
 
 import { createTargetComposerReferenceRegistry } from './targetComposerReferences';
 
@@ -26,6 +26,7 @@ function fixture(
 ) {
   const retirement = new AbortController();
   let current = true;
+  const completeInvocation = vi.fn();
   const runtime: ComposerReferenceRuntime = {
     search: vi.fn(async () => [{ id: 'issue:42', label: 'Issue 42' }]),
     resolve: vi.fn(async (candidateId) => ({
@@ -51,6 +52,21 @@ function fixture(
       isCurrent: () => current,
       retirementSignal: retirement.signal,
     }),
+    createInvocationContext: (input) => ({
+      context: Object.freeze({
+        plugin: Object.freeze({ id: input.reference.pluginId, version: '1.0.0' }),
+        contribution: Object.freeze({
+          id: input.reference.localId,
+          qualifiedId: `${input.reference.pluginId}/composerReferences/${input.reference.localId}`,
+        }),
+        surface: 'cli',
+        ...(input.sessionId ? { session: Object.freeze({ id: input.sessionId }) } : {}),
+        signal: input.signal,
+        services: Object.freeze({}),
+        ui: Object.freeze({}),
+      }) as unknown as PluginInvocationContext,
+      complete: completeInvocation,
+    }),
     callbackTimeoutMs: options.callbackTimeoutMs,
     // The public declaration is deliberately supplied through the canonical
     // target registry rather than trusted from a picker request.
@@ -74,6 +90,7 @@ function fixture(
     registry,
     runtime,
     retirement,
+    completeInvocation,
     retire: () => { current = false; retirement.abort(new Error('retired')); },
   };
 }
@@ -119,7 +136,16 @@ describe('target composer reference registry', () => {
 
     await expect(subject.registry.search({ reference: REFERENCE, query: 'e\u0301', trigger: '@', signal: signal.signal }))
       .resolves.toEqual([{ id: 'issue:42', label: 'Issue 42' }]);
-    expect(subject.runtime.search).toHaveBeenCalledWith('é', expect.any(AbortSignal));
+    expect(subject.runtime.search).toHaveBeenCalledWith('é', expect.objectContaining({
+      plugin: { id: REFERENCE.pluginId, version: '1.0.0' },
+      contribution: {
+        id: REFERENCE.localId,
+        qualifiedId: `${REFERENCE.pluginId}/composerReferences/${REFERENCE.localId}`,
+      },
+      surface: 'cli',
+      signal: expect.any(AbortSignal),
+    }));
+    expect(subject.completeInvocation).toHaveBeenCalledTimes(1);
     await expect(subject.registry.search({
       reference: { pluginId: REFERENCE.pluginId, localId: 'other' },
       query: 'issue',
@@ -148,8 +174,8 @@ describe('target composer reference registry', () => {
     const pending = deferred<{ id: string; label: string; context: string }>();
     let observedSignal: AbortSignal | undefined;
     const subject = fixture({
-      resolve: vi.fn(async (_candidateId, signal) => {
-        observedSignal = signal;
+      resolve: vi.fn(async (_candidateId, context) => {
+        observedSignal = context.signal;
         return await pending.promise;
       }),
     });
@@ -180,8 +206,8 @@ describe('target composer reference registry', () => {
     try {
       let observedSignal: AbortSignal | undefined;
       const subject = fixture({
-        search: vi.fn<ComposerReferenceRuntime['search']>(async (_query, signal) => {
-          observedSignal = signal;
+        search: vi.fn<ComposerReferenceRuntime['search']>(async (_query, context) => {
+          observedSignal = context.signal;
           return await new Promise<Array<{ id: string; label: string }>>(() => {});
         }),
       }, { callbackTimeoutMs: 25 });

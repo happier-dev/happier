@@ -3,6 +3,9 @@ import {
   ConnectedServiceIdSchema,
   buildQualifiedPluginContributionKey,
   createPluginContributionIdentity,
+  isQualifiedConnectedAccountProfileActiveV4,
+  resolveQualifiedConnectedAccountGroupActiveAccountV4,
+  sameQualifiedConnectedAccountRef,
   type ConnectedServiceId,
   type QualifiedConnectedAccountGroupV4,
   type QualifiedConnectedAccountProfileV4,
@@ -60,10 +63,8 @@ import type {
 type ConnectedAccountPurposeBindingApi = Pick<
   ApiClient,
   | 'getAccountEncryptionMode'
-  | 'getConnectedServiceAuthGroup'
   | 'getConnectedServiceCredentialPlain'
   | 'getConnectedServiceCredentialSealed'
-  | 'listConnectedServiceAuthGroups'
   | 'listConnectedServiceProfiles'
 >;
 
@@ -82,8 +83,7 @@ type ResolvedDaemonConnectedAccountService = Readonly<{
 }>;
 type DaemonConnectedAccountSelectionProfile = Readonly<{
   profileId: string;
-  status: string;
-  expiresAt?: number | null;
+  active: boolean;
   providerAccountId?: string | null;
   providerEmail?: string | null;
   displayName?: string;
@@ -91,11 +91,7 @@ type DaemonConnectedAccountSelectionProfile = Readonly<{
 type DaemonConnectedAccountSelectionGroup = Readonly<{
   groupId: string;
   displayName: string | null;
-  activeAccountId: string | null;
-  members: readonly Readonly<{
-    accountId: string;
-    enabled: boolean;
-  }>[];
+  resolvable: boolean;
 }>;
 
 type DaemonConnectedAccountRegistryLease = Readonly<{
@@ -290,11 +286,10 @@ function boundedDisplayName(labelLike: unknown, fallback: string): string {
 }
 
 /**
- * The one usability rule shared by binding resolution, interactive selection,
- * Action-form options, and the public listing: a connected account whose
- * credential has not already expired.
+ * Released V2/V3 profiles did not carry V4 revision semantics. Keep their
+ * compatibility rule separate from the V4 active-account predicate.
  */
-function isConnectedUnexpiredProfile(profile: Readonly<{
+function isRevisionedLegacyConnectedAccountProfileActive(profile: Readonly<{
   status: string;
   expiresAt?: number | null;
 }>): boolean {
@@ -303,18 +298,31 @@ function isConnectedUnexpiredProfile(profile: Readonly<{
 }
 
 /**
- * One canonical projection from the host's connection facts to the public
- * listed state. A non-connected account stays visible with an honest state
- * instead of being silently dropped.
+ * A V4 public list continues to show retained rows, while only current
+ * revisioned rows are admitted to direct purpose targets.
  */
-function listedConnectedAccountState(profile: Readonly<{
+function listedQualifiedConnectedAccountState(
+  profile: QualifiedConnectedAccountProfileV4,
+): PluginConnectedAccountListedState {
+  if (profile.status === 'needs_reauth') return 'reconnectRequired';
+  if (profile.status !== 'connected') return 'unavailable';
+  if (!isQualifiedConnectedAccountProfileActiveV4(profile, Date.now())) {
+    return typeof profile.expiresAt === 'number' && profile.expiresAt <= Date.now()
+      ? 'expired'
+      : 'unavailable';
+  }
+  if (profile.configurationReady === false) return 'unavailable';
+  return 'connected';
+}
+
+function listedRevisionedLegacyConnectedAccountState(profile: Readonly<{
   status: 'connected' | 'refreshing' | 'needs_reauth' | 'refresh_failed_retryable';
   expiresAt?: number | null;
   configurationReady?: boolean;
 }>): PluginConnectedAccountListedState {
   if (profile.status === 'needs_reauth') return 'reconnectRequired';
   if (profile.status !== 'connected') return 'unavailable';
-  if (!isConnectedUnexpiredProfile(profile)) return 'expired';
+  if (!isRevisionedLegacyConnectedAccountProfileActive(profile)) return 'expired';
   if (profile.configurationReady === false) return 'unavailable';
   return 'connected';
 }
@@ -466,12 +474,10 @@ export function createDaemonConnectedAccountPurposeBindingRuntime(params: Readon
       ) {
         return null;
       }
-      const profile = result.accounts.find((candidate) => (
-        candidate.ref.service.pluginId === account.service.pluginId
-        && candidate.ref.service.localId === account.service.localId
-        && candidate.ref.accountId === account.accountId
-      ));
-      if (!profile || !isConnectedUnexpiredProfile(profile)) {
+      const profile = result.accounts.find((candidate) =>
+        sameQualifiedConnectedAccountRef(candidate.ref, account),
+      );
+      if (!profile || !isQualifiedConnectedAccountProfileActiveV4(profile, Date.now())) {
         return null;
       }
       return Object.freeze({
@@ -505,7 +511,7 @@ export function createDaemonConnectedAccountPurposeBindingRuntime(params: Readon
     signal.throwIfAborted();
     if (result.serviceId !== transport.serviceId) return null;
     const profile = result.profiles.find((candidate) => candidate.profileId === account.accountId);
-    if (!profile || !isConnectedUnexpiredProfile(profile)) {
+    if (!profile || !isRevisionedLegacyConnectedAccountProfileActive(profile)) {
       return null;
     }
     return Object.freeze({
@@ -542,29 +548,29 @@ export function createDaemonConnectedAccountPurposeBindingRuntime(params: Readon
     }, signal);
     signal.throwIfAborted();
     if (!group) return null;
-    const activeAccountId = group.activeConnectedAccountId;
-    if (!activeAccountId) return null;
-    const activeMember = group.members.find(
-      (member) =>
-        member.connectedAccountId === activeAccountId
-        && member.enabled !== false,
-    );
-    if (!activeMember) return null;
-    const resolvedAccount = await resolveAccount({
-      service: target.service,
-      accountId: activeAccountId,
-    }, signal);
-    return resolvedAccount
-      ? Object.freeze({
-          ...resolvedAccount,
-          displayName: group.displayName
-            ?? group.ref.groupId,
-          group: Object.freeze({
-            groupId: group.ref.groupId,
-            generation: group.generation,
-          }),
-        })
-      : null;
+    const accountResult = await params.qualifiedApi.listAccounts(service.service, signal);
+    signal.throwIfAborted();
+    if (
+      accountResult.service.pluginId !== service.service.pluginId
+      || accountResult.service.localId !== service.service.localId
+    ) return null;
+    const activeAccount = resolveQualifiedConnectedAccountGroupActiveAccountV4({
+      group,
+      accounts: accountResult.accounts,
+      now: Date.now(),
+    });
+    if (!activeAccount) return null;
+    return Object.freeze({
+      displayName: group.displayName ?? group.ref.groupId,
+      account: Object.freeze({
+        service: Object.freeze({ ...activeAccount.ref.service }),
+        accountId: activeAccount.ref.accountId,
+      }),
+      group: Object.freeze({
+        groupId: group.ref.groupId,
+        generation: group.generation,
+      }),
+    });
   };
 
   const selectTarget = async (
@@ -608,25 +614,29 @@ export function createDaemonConnectedAccountPurposeBindingRuntime(params: Readon
       ] = qualified
         ? await Promise.all([
             params.qualifiedApi!.listAccounts(service.service, input.signal)
-              .then((result) => result.accounts.map((profile) => Object.freeze({
+              .then((result) => result.accounts),
+            params.qualifiedApi!.listGroups(service.service, input.signal),
+          ]).then(([qualifiedAccounts, groupResult]) => {
+            const now = Date.now();
+            return [
+              qualifiedAccounts.map((profile) => Object.freeze({
                 profileId: profile.ref.accountId,
-                status: profile.status,
+                active: isQualifiedConnectedAccountProfileActiveV4(profile, now),
                 providerAccountId: profile.providerIdentity?.accountId,
                 providerEmail: profile.providerIdentity?.email,
                 displayName: profile.displayName,
-                expiresAt: profile.expiresAt,
-              }))),
-            params.qualifiedApi!.listGroups(service.service, input.signal)
-              .then((result) => result.groups.map((group) => Object.freeze({
+              })),
+              groupResult.groups.map((group) => Object.freeze({
                 groupId: group.ref.groupId,
                 displayName: group.displayName,
-                activeAccountId: group.activeConnectedAccountId,
-                members: Object.freeze(group.members.map((member) => Object.freeze({
-                  accountId: member.connectedAccountId,
-                  enabled: member.enabled !== false,
-                }))),
-              }))),
-          ])
+                resolvable: resolveQualifiedConnectedAccountGroupActiveAccountV4({
+                  group,
+                  accounts: qualifiedAccounts,
+                  now,
+                }) !== null,
+              })),
+            ] as const;
+          })
         : [
             await params.api.listConnectedServiceProfiles({
               serviceId: (
@@ -638,16 +648,15 @@ export function createDaemonConnectedAccountPurposeBindingRuntime(params: Readon
               forceRefresh: true,
             }).then((result) => result.profiles.map((profile) => Object.freeze({
               profileId: profile.profileId,
-              status: profile.status,
+              active: isRevisionedLegacyConnectedAccountProfileActive(profile),
               providerAccountId: profile.providerAccountId,
               providerEmail: profile.providerEmail,
-              expiresAt: profile.expiresAt,
             }))),
             Object.freeze([]),
           ];
       input.signal.throwIfAborted();
       const availableProfiles = new Map(profiles.flatMap((profile) => (
-        isConnectedUnexpiredProfile(profile)
+        profile.active
           ? [[profile.profileId, profile] as const]
           : []
       )));
@@ -668,19 +677,7 @@ export function createDaemonConnectedAccountPurposeBindingRuntime(params: Readon
         }));
       }
       for (const group of groups) {
-        const activeMember = group.activeAccountId
-          ? group.members.find(
-              (member) =>
-                member.accountId === group.activeAccountId
-                && member.enabled,
-            )
-          : null;
-        if (
-          !activeMember
-          || !availableProfiles.has(group.activeAccountId!)
-        ) {
-          continue;
-        }
+        if (!group.resolvable) continue;
         candidates.push(Object.freeze({
           label: group.displayName ?? group.groupId,
           description: `${service.service.localId} group`,
@@ -812,7 +809,7 @@ export function createDaemonConnectedAccountPurposeBindingRuntime(params: Readon
                 ?? profile.providerIdentity?.accountId,
               profile.ref.accountId,
             ),
-            state: listedConnectedAccountState(profile),
+            state: listedQualifiedConnectedAccountState(profile),
             qualified: true,
           });
         }
@@ -842,7 +839,7 @@ export function createDaemonConnectedAccountPurposeBindingRuntime(params: Readon
             profile.providerEmail ?? profile.providerAccountId,
             profile.profileId,
           ),
-          state: listedConnectedAccountState(profile),
+          state: listedRevisionedLegacyConnectedAccountState(profile),
           qualified: false,
         });
       }
@@ -1021,10 +1018,9 @@ export function createDaemonConnectedAccountPurposeBindingRuntime(params: Readon
     signal: AbortSignal;
   }>): Promise<void> => {
     const inventory = await readTargetAccountInventory(input);
-    const entry = inventory.entries.find((candidate) => (
-      qualifiedContributionKey(candidate.account.service)
-        === qualifiedContributionKey(input.account.service)
-      && candidate.account.accountId === input.account.accountId
+    const entry = inventory.entries.find((candidate) => sameQualifiedConnectedAccountRef(
+      candidate.account,
+      input.account,
     ));
     if (!entry || entry.state !== 'connected') throw listedAccountOutOfScope();
     if (input.request.kind !== 'httpHeaders') return;

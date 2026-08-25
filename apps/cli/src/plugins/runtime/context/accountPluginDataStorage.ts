@@ -5,7 +5,6 @@ import { randomBytes as nodeRandomBytes } from 'node:crypto';
 import {
     convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1,
     createAccountScopedCryptoMaterialSnapshotV1,
-    derivePluginCollectionIdentityTagV1,
     PluginAccountKvRowError,
     assertPluginAccountKvExpectedVersionV1,
     clonePluginAccountKvRowV1,
@@ -41,7 +40,6 @@ import {
     PluginCollectionGetRequestV1Schema,
     PluginCollectionGetResultV1Schema,
     PluginCollectionMutationErrorV1Schema,
-    PluginCollectionMutationRequestV1Schema,
     PluginCollectionMutationResultV1Schema,
     PluginCollectionQueryRequestV1Schema,
     PluginCollectionQueryResultV1Schema,
@@ -52,10 +50,10 @@ import {
     encodePluginCollectionLogicalValueV1,
     assertPluginAccountStorageEnvelopeForModeV1,
     isValidPluginJsonSchemaValue,
-    measurePluginCollectionMutationRequestDecompositionV1,
-    measurePluginCollectionMutationRequestEncodedBytesV1,
     normalizePluginAccountCollectionContractV1,
+    preparePluginCollectionLogicalMutationRequestV1,
     resolveEffectivePluginCollectionLimitsV1,
+    resolvePluginCollectionIdentityTagV1,
     openPluginAccountStoragePrivatePayloadV1,
     normalizeStrictJsonValue,
     sealPluginAccountStoragePrivatePayloadV1,
@@ -70,9 +68,11 @@ import {
     type PluginCollectionContractRefV1,
     type PluginDataCollectionsCapabilities,
     type PluginCollectionMutationOperationV1,
+    type PluginCollectionMutationRequestMeasurementV1,
     type PluginCollectionMutationRequestV1,
     type PluginCollectionMutationResultV1,
     type PluginCollectionRowV1,
+    type PluginCollectionLogicalValueV1,
     type PluginAccountStorageRowV1,
 } from '@happier-dev/protocol';
 import {
@@ -128,7 +128,8 @@ export type AccountPluginDataHttpClient = Readonly<{
         status: number;
         data: unknown;
     }>>;
-    post(url: string, body: unknown, config: Readonly<Record<string, unknown>>): Promise<Readonly<{
+    /** `body` is already-encoded JSON; see `serializeRequestBody`. */
+    post(url: string, body: string, config: Readonly<Record<string, unknown>>): Promise<Readonly<{
         status: number;
         data: unknown;
     }>>;
@@ -227,6 +228,35 @@ type CandidatePreparationStageRequest = ReturnType<
 type CandidatePreparationStageItem = CandidatePreparationStageRequest['items'][number];
 
 const accountKvTransactionContext = new AsyncLocalStorage<ReadonlySet<object>>();
+
+/**
+ * Encodes one request body, or reports that this runtime's `JSON.stringify`
+ * refused it.
+ *
+ * The host serializes here rather than letting the transport do it because only
+ * the operation that runs the serializer can truthfully say a refusal came from
+ * the serializer. Protocol's strict-JSON admission is iterative and carries no
+ * depth quota, while the daemon runs on recursive `JSON.stringify` builds, so an
+ * admitted value can still be one this runtime cannot encode; the measured
+ * per-engine spread is recorded once with the Protocol strict-JSON owner
+ * (`packages/protocol/src/plugins/contributions/strictJsonValue.ts`), which is
+ * why no depth is pre-validated anywhere.
+ *
+ * The throwable is not a discriminator: the same `RangeError` class covers a
+ * response longer than the engine's maximum string length, so classifying by it
+ * across a whole request would report a recoverable outage as permanently
+ * invalid caller data and take it off the retry path. A body this runtime cannot
+ * encode, by contrast, can never be written, so its caller is told the value is
+ * permanently invalid — the same outcome the direct Plugin UI client reports for
+ * the same input, because the two realms must not disagree about one value.
+ */
+function serializeRequestBody(body: unknown): string | null {
+    try {
+        return JSON.stringify(body);
+    } catch {
+        return null;
+    }
+}
 
 function dataError(
     code: string,
@@ -731,10 +761,17 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
             unavailableMessage: string;
         }>): Promise<unknown> => {
             const signal = signalFor(input.operationSignal);
+            const encodedBody = serializeRequestBody(input.body);
+            if (encodedBody === null) {
+                throw dataError(
+                    COLLECTION_INVALID_VALUE_CODE,
+                    'Collection request cannot be serialized by this runtime',
+                );
+            }
             try {
                 const response = await http.post(
                     `${resolveBaseUrl()}${input.path}`,
-                    input.body,
+                    encodedBody,
                     requestConfig(input.credentials, signal),
                 );
                 await assertCurrentAccount(input.credentials, input.operationSignal);
@@ -934,10 +971,12 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
             let postExactRetire: (() => Promise<void>) | null = null;
             const captureExactRetire = (credentials: StoredCredentials): void => {
                 if (postExactRetire) return;
-                let requestBody: ReturnType<typeof PluginCollectionCandidatePreparationRetireRequestV1Schema.parse>;
+                let encodedBody: string | null;
                 let baseUrl: string;
                 try {
-                    requestBody = PluginCollectionCandidatePreparationRetireRequestV1Schema.parse({ binding });
+                    encodedBody = serializeRequestBody(
+                        PluginCollectionCandidatePreparationRetireRequestV1Schema.parse({ binding }),
+                    );
                     baseUrl = resolveBaseUrl();
                 } catch {
                     throw dataError(
@@ -945,6 +984,13 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
                         'Collection candidate retirement authority could not be captured',
                     );
                 }
+                if (encodedBody === null) {
+                    throw dataError(
+                        'collection_candidate_preparation_invalid',
+                        'Collection candidate retirement request cannot be serialized by this runtime',
+                    );
+                }
+                const retireBody = encodedBody;
                 let retainedCredentials: StoredCredentials | null = credentials;
                 let retainedBaseUrl: string | null = baseUrl;
                 postExactRetire = async (): Promise<void> => {
@@ -959,7 +1005,7 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
                         }
                         const response = await http.post(
                             `${exactBaseUrl}${PLUGIN_COLLECTION_CANDIDATE_PREPARATION_RETIRE_HTTP_PATH_V1}`,
-                            requestBody,
+                            retireBody,
                             requestConfig(exactCredentials, new AbortController().signal),
                         );
                         if (response.status < 200 || response.status >= 300) {
@@ -1321,10 +1367,21 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
                 } catch {
                     throw dataError(ACCOUNT_KV_INVALID_CODE, 'Account KV mutation does not satisfy the wire contract');
                 }
+                const encodedBody = serializeRequestBody(body);
+                if (encodedBody === null) {
+                    throw dataError(
+                        ACCOUNT_KV_INVALID_CODE,
+                        'Account KV row cannot be serialized by this runtime',
+                    );
+                }
                 const signal = signalFor(input.operationSignal);
                 let response: Readonly<{ status: number; data: unknown }>;
                 try {
-                    response = await http.post(accountKvUrl(), body, requestConfig(input.snapshot.credentials, signal));
+                    response = await http.post(
+                        accountKvUrl(),
+                        encodedBody,
+                        requestConfig(input.snapshot.credentials, signal),
+                    );
                     await assertCurrentAccount(input.snapshot.credentials, input.operationSignal);
                 } catch (error) {
                     await assertBoundCurrent(lifecycle, input.operationSignal);
@@ -1535,55 +1592,34 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
                 ): Promise<Readonly<{
                     credentials: StoredCredentials;
                     request: PluginCollectionMutationRequestV1;
+                    encodedBytes: number;
+                    measurement: PluginCollectionMutationRequestMeasurementV1;
                 }>> => {
                     const credentials = await currentCredentials(operationSignal);
                     const encryption = await currentEncryption(credentials, operationSignal);
-                    let wireOperations: PluginCollectionMutationOperationV1[];
-                    try {
-                        wireOperations = operations.map((operation) => {
-                            if (operation.kind === 'delete') {
-                                return {
-                                    kind: 'delete' as const,
-                                    rowId: PluginCollectionRowIdV1Schema.parse(operation.rowId),
-                                    expectedRevision: operation.expectedRevision,
-                                };
-                            }
-                            if (operation.kind === 'assert') {
-                                return {
-                                    kind: 'assert' as const,
-                                    rowId: PluginCollectionRowIdV1Schema.parse(operation.rowId),
-                                    expectedRevision: operation.expectedRevision,
-                                };
-                            }
-                            const put = splitLogicalPut({
-                                collection,
-                                value: operation.value,
-                                encryptionMode: encryption.mode,
-                                material: encryption.material,
-                                randomBytes,
-                            });
-                            return { ...put, expectedRevision: operation.expectedRevision };
-                        });
-                    } catch (error) {
-                        if (isPluginError(error)) throw error;
-                        throw dataError(COLLECTION_INVALID_VALUE_CODE, 'Collection batch is invalid');
-                    }
-                    try {
-                        return Object.freeze({
-                            credentials,
-                            request: PluginCollectionMutationRequestV1Schema.parse({
-                                pluginId: lifecycle.pluginId,
-                                collectionId: collection.contract.collectionId,
-                                writerContext: {
-                                    schemaVersion: collection.contract.schemaVersion,
-                                    contractDigest: collection.contract.contractDigest,
-                                },
-                                operations: wireOperations,
-                            }),
-                        });
-                    } catch {
+                    const prepared = preparePluginCollectionLogicalMutationRequestV1({
+                        contract: collection.contract,
+                        isValidLogicalValue: (value): value is PluginCollectionLogicalValueV1 => isValidPluginJsonSchemaValue(
+                            collection.validate,
+                            value,
+                        ),
+                        operations,
+                        encryptionMode: encryption.mode,
+                        material: encryption.material,
+                        randomBytes,
+                    });
+                    if (prepared.status === 'failed') {
+                        if (prepared.reason !== 'mutation-request-invalid') {
+                            throw collectionEncodeFailureError(prepared.reason);
+                        }
                         throw dataError(COLLECTION_INVALID_VALUE_CODE, 'Collection mutation does not satisfy the wire contract');
                     }
+                    return Object.freeze({
+                        credentials,
+                        request: prepared.request,
+                        encodedBytes: prepared.encodedBytes,
+                        measurement: prepared.measurement,
+                    });
                 };
 
                 const mutate = async (
@@ -1603,13 +1639,12 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
                     // its transport side effect.
                     const collectionLimits = readKnownCollectionLimits();
                     if (collectionLimits) {
-                        const encodedBytes = measurePluginCollectionMutationRequestEncodedBytesV1(requestBody);
                         const incompatibility = requestBody.operations.length > collectionLimits.maxBatchRows
                             ? {
                                 dimension: 'maxBatchRows' as const,
                                 effectiveMaximum: collectionLimits.maxBatchRows,
                             }
-                            : encodedBytes > collectionLimits.maxBatchBytes
+                            : sealed.encodedBytes > collectionLimits.maxBatchBytes
                                 ? {
                                     dimension: 'maxBatchBytes' as const,
                                     effectiveMaximum: collectionLimits.maxBatchBytes,
@@ -1845,11 +1880,8 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
                                 operations.slice(offset, offset + window),
                                 options?.signal,
                             );
-                            const measured = measurePluginCollectionMutationRequestDecompositionV1(
-                                sealed.request,
-                            );
-                            overheadEncodedBytes = measured.overheadEncodedBytes;
-                            operationEncodedBytes.push(...measured.operationEncodedBytes);
+                            overheadEncodedBytes = sealed.measurement.overheadEncodedBytes;
+                            operationEncodedBytes.push(...sealed.measurement.operationEncodedBytes);
                         }
                         return Object.freeze({
                             overheadEncodedBytes,

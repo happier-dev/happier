@@ -1,3 +1,4 @@
+import { isPidPresent } from '@happier-dev/cli-common/process';
 import type { DaemonLocallyPersistedState } from '@/persistence';
 import { readDaemonState } from '@/persistence';
 import { logger } from '@/ui/logger';
@@ -21,13 +22,8 @@ async function delay(ms: number): Promise<void> {
 }
 
 function isPidAlive(pid: number | null | undefined): boolean {
-  if (typeof pid !== 'number' || !Number.isFinite(pid) || pid <= 0) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
+  // `isPidPresent` owns "can this value even name a process", so this only narrows the type.
+  return typeof pid === 'number' && isPidPresent(pid);
 }
 
 function hasAuthenticatedPingDetails(state: DaemonLocallyPersistedState): boolean {

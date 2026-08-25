@@ -35,4 +35,50 @@ describe('managed-service specification normalization', () => {
     ])('accepts canonical managed-service id %j', (id) => {
         expect(normalizeManagedServiceSpec(attachedSpec(id)).id).toBe(id);
     });
+
+    it.each([
+        ['a host-owned credential header name', { Authorization: 'Basic abc' }],
+        ['a transport-owned header name', { 'Proxy-Authorization': 'Basic abc' }],
+        ['a host-owned credential header alias', { 'X-Api-Key': 'abc' }],
+        ['a control-character value', { 'x-trace': 'one\r\nx-injected: two' }],
+        [
+            'an excessive header count',
+            Object.fromEntries(
+                Array.from({ length: 65 }, (_value, index) => [
+                    `x-probe-${index}`,
+                    'ok',
+                ]),
+            ),
+        ],
+    ])('refuses %s in a static health-check header set', (_label, headers) => {
+        expect(() => normalizeManagedServiceSpec({
+            ...attachedSpec('gateway'),
+            healthCheck: {
+                kind: 'http',
+                target: { kind: 'servicePath', path: '/health' },
+                headers: headers as Readonly<Record<string, string>>,
+            },
+        })).toThrow(expect.objectContaining({
+            code: 'plugin_managed_service_spec_invalid',
+        }));
+    });
+
+    it('preserves ordinary non-secret health headers in canonical form', () => {
+        const normalized = normalizeManagedServiceSpec({
+            ...attachedSpec('gateway'),
+            healthCheck: {
+                kind: 'http',
+                target: { kind: 'servicePath', path: '/health' },
+                headers: {
+                    'X-Probe': 'ready',
+                    Accept: 'application/json',
+                },
+            },
+        });
+        expect(
+            normalized.healthCheck?.kind === 'http'
+                ? normalized.healthCheck.headers
+                : undefined,
+        ).toEqual({ accept: 'application/json', 'x-probe': 'ready' });
+    });
 });

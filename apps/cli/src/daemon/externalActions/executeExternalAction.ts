@@ -46,9 +46,9 @@ export type ExecuteExternalActionResult = Readonly<
   }
   | {
     kind: 'response';
-    /** Strict relay payload; server-origin dispatch reserializes after IPC. */
+    /** Semantic envelope for local inspection; transport adapters use `prepared`. */
     response: ExternalActionResponseEnvelopeV1;
-    /** Direct daemon HTTP consumes this same-process serialized projection. */
+    /** Both HTTP origins consume this one canonical serialized projection. */
     prepared: PreparedExternalActionResponseEnvelopeV1;
   }
 >;

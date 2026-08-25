@@ -33,6 +33,7 @@ export type BrowserAutomationOwnerRegistry = Readonly<{
     facts?: BrowserAutomationControlFacts,
   ): BrowserAutomationControllerStateV1;
   getControlEpoch(view: BrowserAutomationViewRef): number;
+  takeOver(view: BrowserAutomationViewRef): number;
 }>;
 
 type ViewEntry = {
@@ -66,6 +67,12 @@ export function createBrowserAutomationOwnerRegistry(): BrowserAutomationOwnerRe
 
     getControlEpoch(view) {
       return entryFor(view).controlEpoch;
+    },
+
+    takeOver(view) {
+      const entry = entryFor(view);
+      entry.controlEpoch += 1;
+      return entry.controlEpoch;
     },
   };
 }

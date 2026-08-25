@@ -1,3 +1,5 @@
+import { browserViewContextId } from '@happier-dev/protocol';
+
 import type {
   BrowserSidecarCdpPageHandle,
   BrowserSidecarContextCaptureSurface,
@@ -241,7 +243,7 @@ export function createControlAdapterAutomationTransport(input: Readonly<{
       browserSessionId: query.browserSessionId,
       viewId: query.viewId,
       navigationGeneration: query.navigationGeneration,
-      contextId: `${query.browserSessionId} ${query.viewId} ${query.navigationGeneration}`,
+      contextId: browserViewContextId(query),
     });
     const payload = record(snapshot);
     if (!payload) {

@@ -24,6 +24,11 @@ import type {
 export type BrowserDaemonRuntimeActionDisabledReason =
   | 'browser_action_unbacked'
   | 'browser_automation_route_unavailable'
+  // The managed browser runtime is being fetched right now because this dispatch asked for it.
+  // A ~150MB download behind an action that looks like it did nothing is the silent-stall class
+  // this program is closing, so it gets its own typed outcome the UI can render.
+  | 'browser_automation_runtime_provisioning'
+  | 'browser_automation_runtime_provisioning_failed'
   | 'browser_context_route_unavailable'
   | 'browser_control_route_unavailable'
   | 'browser_diagnostics_route_unavailable'
@@ -35,6 +40,24 @@ type BrowserDaemonRuntimeActionFailure = Extract<ActionExecuteResult, Readonly<{
 export type BrowserRecordingAttachToComposerExecutor = (
   input: BrowserRecordingAttachToComposerInput,
 ) => Promise<BrowserRecordingAttachToComposerResult>;
+
+/**
+ * What a provisioning attempt says about the managed browser runtime.
+ *
+ * - `provisioning` — an install is now in flight (single-flighted by the provisioning owner, so
+ *   concurrent dispatches join the same one rather than starting a second download).
+ * - `failed` — an install was attempted and did not succeed.
+ * - `unavailable` — nothing can be provisioned on this host at all (unsupported platform, or a
+ *   pinned asset with no verifiable digest). This is the pre-existing honest answer and keeps the
+ *   pre-existing reason code.
+ */
+export type BrowserAutomationRuntimeProvisionOutcome =
+  | 'provisioning'
+  | 'failed'
+  | 'unavailable';
+
+export type ProvisionBrowserAutomationRuntime =
+  () => Promise<BrowserAutomationRuntimeProvisionOutcome>;
 
 export type CreateBrowserDaemonRuntimeActionExecutorInput = Readonly<{
   control?: BrowserDaemonControlRoutes;
@@ -48,6 +71,15 @@ export type CreateBrowserDaemonRuntimeActionExecutorInput = Readonly<{
   // OWNER-GATE: defense-in-depth at the action chokepoint. Each dispatchable browser family is
   // refused on server-disable even if a route owner was registered.
   featureGate: BrowserDaemonFeatureGate;
+  /**
+   * Dispatch-time provisioning for the managed browser runtime (user ruling, 2026-08-23). The
+   * ~150MB Chrome-for-Testing fetch is acceptable as a consequence of an agent asking for
+   * automation, and unacceptable as a silent cost on every daemon start — including machines that
+   * never touch the browser. So the daemon startup gate passes `autoInstallWhenMissing: false` and
+   * the install is triggered from HERE, the one seam every `browser.automation.*` dispatch reaches
+   * when no route exists. Absent ⇒ the family stays fail-closed exactly as before.
+   */
+  provisionAutomationRuntime?: ProvisionBrowserAutomationRuntime;
   fallback?: RuntimeActionExecute;
 }>;
 
@@ -122,14 +154,34 @@ async function executeBrowserContextAction(
   return await context.dispatch(args.actionId, args.input);
 }
 
+const PROVISION_OUTCOME_REASONS = {
+  provisioning: 'browser_automation_runtime_provisioning',
+  failed: 'browser_automation_runtime_provisioning_failed',
+  unavailable: 'browser_automation_route_unavailable',
+} as const satisfies Record<
+  BrowserAutomationRuntimeProvisionOutcome,
+  BrowserDaemonRuntimeActionDisabledReason
+>;
+
 async function executeBrowserAutomationAction(
   args: RuntimeActionExecuteArgs,
   automation: BrowserAutomationRoutes | undefined,
+  provisionAutomationRuntime: ProvisionBrowserAutomationRuntime | undefined,
 ): Promise<unknown> {
   if (!automation) {
-    return browserRuntimeActionDisabledResult('browser_automation_route_unavailable');
+    // No route means the sidecar adapter failed closed at startup, and on an unprovisioned host
+    // that is `managed_package_missing`. Asking for automation is what authorizes the fetch, so
+    // this is where it starts. The dispatch does not wait for a 150MB download: it returns a typed
+    // in-flight outcome, and the next dispatch finds the route (route owners are re-resolved per
+    // dispatch, so no restart is needed).
+    if (!provisionAutomationRuntime) {
+      return browserRuntimeActionDisabledResult('browser_automation_route_unavailable');
+    }
+    return browserRuntimeActionDisabledResult(
+      PROVISION_OUTCOME_REASONS[await provisionAutomationRuntime()],
+    );
   }
-  return await automation.dispatch(args.actionId, args.input);
+  return await automation.dispatch(args.actionId, args.input, args.context);
 }
 
 async function executeBrowserRecordingAttachAction(
@@ -164,9 +216,11 @@ export function createBrowserDaemonRuntimeActionExecutor(
       return await fallback(args);
     }
 
-    // The ActionSpec's canonical agent surface keeps browser session lifecycle Actions private
-    // until a daemon owner exists. Do not route them merely because they share the browser control
-    // family with backed view commands.
+    // The ActionSpec's canonical agent surface is the single authority on which browser Actions a
+    // caller may reach; a family member excluded from `RUNTIME_ACTION_REAL_EXECUTOR_*` is refused
+    // here rather than routed on family membership alone. Every browser Action currently carries
+    // `surfaces.agent`, so this chokepoint is fail-closed headroom for the next unbacked id, not a
+    // live rejection path.
     if (!getActionSpec(args.actionId).surfaces.agent) {
       return browserRuntimeActionDisabledResult('browser_action_unbacked');
     }
@@ -181,7 +235,7 @@ export function createBrowserDaemonRuntimeActionExecutor(
       if (!featureGate.isEnabled('browser.automation')) {
         return browserRuntimeActionDisabledResult('browser_automation_route_unavailable');
       }
-      return await executeBrowserAutomationAction(args, input.automation);
+      return await executeBrowserAutomationAction(args, input.automation, input.provisionAutomationRuntime);
     }
     if (BROWSER_DIAGNOSTICS_ACTION_IDS.has(args.actionId)) {
       if (!featureGate.isEnabled('browser.diagnostics')) {

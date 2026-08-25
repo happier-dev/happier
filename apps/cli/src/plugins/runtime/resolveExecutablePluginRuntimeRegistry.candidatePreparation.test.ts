@@ -90,8 +90,8 @@ function accountStorageDependencies(postCalls: unknown[]): AccountPluginDataStor
                 }
                 throw new Error(`Unexpected candidate-preparation GET: ${url}`);
             },
-            async post(url: string, body: unknown) {
-                postCalls.push({ url, body });
+            async post(url: string, body: string) {
+                postCalls.push({ url, body: JSON.parse(body) });
                 throw new Error(`Forged candidate digest must not prepare Account Data: ${url}`);
             },
         },

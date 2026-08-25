@@ -19,6 +19,7 @@ import {
     createStablePluginHttpHost as createProductionStablePluginHttpHost,
     createPluginHttpService as createProductionPluginHttpService,
     type PluginHttpRuntimeAdapter,
+    type PluginHttpRuntimeRequestOptions,
     type CreatePluginHttpServiceParams,
     type PluginRequestInterceptorRegistryV1,
 } from './service';
@@ -38,7 +39,10 @@ type TestFetchRequest = Omit<CanonicalFetchRequest, 'body' | 'redirect'> & Reado
     metadata?: Readonly<Record<string, unknown>>;
 }>;
 type TestFetchResponse = Awaited<ReturnType<HttpService['request']>>;
-type TestFetchAdapter = (request: TestFetchRequest) => Promise<TestFetchResponse>;
+type TestFetchAdapter = (
+    request: TestFetchRequest,
+    options?: PluginHttpRuntimeRequestOptions,
+) => Promise<TestFetchResponse>;
 type TestHttpServiceParams = Omit<CreatePluginHttpServiceParams, 'adapter'> & Readonly<{
     adapter?: TestFetchAdapter | null;
 }>;
@@ -178,11 +182,11 @@ function createStablePluginHttpHost(
         adapter: Object.freeze({
             request: async (
                 request: CanonicalFetchRequest,
-                options: Parameters<HttpService['request']>[1] = {},
+                options: PluginHttpRuntimeRequestOptions = {},
             ) => await params.adapter({
                 ...request,
                 signal: options.signal,
-            }),
+            }, options),
             async openWebSocket(): Promise<never> {
                 throw new Error('WebSocket is unavailable in this HTTP request fixture');
             },
@@ -965,7 +969,7 @@ describe('createPluginHttpService', () => {
             ...createResponse('ok'),
             finalUrl: 'https://selected.example.test/status',
         }));
-        const host = createStablePluginHttpHost({ adapter });
+        const host = createStablePluginHttpHost({ adapter, resolveNetworkAddresses: testResolveNetworkAddresses });
         const baseBinding = createLoggerAndEventsAvailablePluginInvocationServiceBinding(
             'generation-7',
             'binding-selected-resource',
@@ -1007,6 +1011,180 @@ describe('createPluginHttpService', () => {
             redirect: 'error',
         })).rejects.toMatchObject({ code: 'plugin_final_resource_not_selected' });
         expect(adapter).not.toHaveBeenCalled();
+    });
+
+    it('refuses a bound origin that RESOLVES private unless the scope declares private-network access', async () => {
+        // The origin is spelled like any ordinary public name; only its resolved
+        // address makes it private. A literal-hostname test admits it, so this is
+        // the case that proves the decision reaches the resolved-endpoint owner.
+        const resolveNetworkAddresses = async (hostname: string): Promise<readonly string[]> => (
+            hostname === 'selected.example.test' ? ['10.0.0.7'] : ['93.184.216.34']
+        );
+        const bindScope = (privateNetwork: boolean) => {
+            const adapter = vi.fn(async () => Object.freeze({
+                ...createResponse('ok'),
+                finalUrl: 'https://selected.example.test/status',
+            }));
+            const host = createStablePluginHttpHost({ adapter, resolveNetworkAddresses });
+            const baseBinding = createLoggerAndEventsAvailablePluginInvocationServiceBinding(
+                'generation-7',
+                `binding-resolved-private-${privateNetwork}`,
+                [{
+                    required: true,
+                    request: {
+                        id: 'account-origin',
+                        capability: 'network',
+                        reason: 'Selected Connected Account origin',
+                        scope: {
+                            targets: [{ kind: 'fixedOrigin', origin: 'https://selected.example.test' }],
+                            methods: ['GET'],
+                        },
+                    },
+                }],
+            );
+            const binding = Object.freeze({
+                ...baseBinding,
+                networkScopes: Object.freeze([Object.freeze({
+                    authority: 'selectedResource' as const,
+                    accessId: 'account-origin',
+                    required: true,
+                    origins: Object.freeze(['https://selected.example.test']),
+                    methods: Object.freeze(['GET' as const]),
+                    privateNetwork,
+                })]),
+            });
+            return {
+                adapter,
+                service: host.bind({
+                    plugin: { id: 'caller.plugin', version: '1.0.0' },
+                    contribution: { id: 'run', qualifiedId: 'caller.plugin/actions/run' },
+                    generation: 'generation-7',
+                    correlationId: `resolved-private-${privateNetwork}`,
+                    surface: 'agent',
+                    signal: new AbortController().signal,
+                    isGenerationCurrent: () => true,
+                }, binding),
+            };
+        };
+
+        const withoutIntent = bindScope(false);
+        await expect(withoutIntent.service.request({
+            url: 'https://selected.example.test/status',
+            method: 'GET',
+            redirect: 'error',
+        })).rejects.toMatchObject({ code: 'plugin_final_resource_not_selected' });
+        expect(withoutIntent.adapter).not.toHaveBeenCalled();
+
+        // Declared private-network intent still admits the same destination: this
+        // is credential routing, not a refusal to talk to private networks.
+        const withIntent = bindScope(true);
+        await expect(withIntent.service.request({
+            url: 'https://selected.example.test/status',
+            method: 'GET',
+            redirect: 'error',
+        })).resolves.toMatchObject({ status: 200 });
+        expect(withIntent.adapter).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps manifest disclosure diagnostic when trusted plugin traffic resolves private', async () => {
+        const adapter = vi.fn(async () => createResponse('private service'));
+        const host = createStablePluginHttpHost({
+            adapter,
+            resolveNetworkAddresses: async () => ['10.0.0.7'],
+        });
+        const binding = createLoggerAndEventsAvailablePluginInvocationServiceBinding(
+            'generation-7',
+            'binding-private-disclosure',
+            [{
+                required: true,
+                request: {
+                    id: 'self-hosted-forge',
+                    capability: 'network',
+                    reason: 'Reach the user-configured self-hosted forge',
+                    scope: {
+                        targets: [{ kind: 'fixedOrigin', origin: 'https://forge.internal.test' }],
+                        methods: ['GET'],
+                    },
+                },
+            }],
+        );
+        const service = host.bind({
+            plugin: { id: 'caller.plugin', version: '1.0.0' },
+            contribution: { id: 'run', qualifiedId: 'caller.plugin/actions/run' },
+            generation: 'generation-7',
+            correlationId: 'private-disclosure',
+            surface: 'agent',
+            signal: new AbortController().signal,
+            isGenerationCurrent: () => true,
+        }, binding);
+
+        await expect(service.request({
+            url: 'https://forge.internal.test/status',
+            method: 'GET',
+            redirect: 'error',
+        })).resolves.toMatchObject({ status: 200 });
+        expect(adapter).toHaveBeenCalledOnce();
+    });
+
+    it('pins each retry to the exact address set admitted by that attempt', async () => {
+        const admittedAddressSets = [
+            Object.freeze(['93.184.216.34']),
+            Object.freeze(['93.184.216.35']),
+        ] as const;
+        let resolution = 0;
+        const resolveNetworkAddresses = vi.fn(async () => (
+            admittedAddressSets[resolution++] ?? admittedAddressSets.at(-1)!
+        ));
+        const transportedAddressSets: readonly string[][] = [];
+        const adapter = vi.fn(async (
+            _request: TestFetchRequest,
+            options: Readonly<{ signal?: AbortSignal; validatedAddresses?: readonly string[] }> = {},
+        ) => {
+            (transportedAddressSets as string[][]).push([...(options.validatedAddresses ?? [])]);
+            if (transportedAddressSets.length === 1) {
+                throw Object.assign(new Error('retry me'), { code: 'ETIMEDOUT' });
+            }
+            return createResponse('ok');
+        });
+        const host = createStablePluginHttpHost({
+            adapter,
+            retry: { maxAttempts: 2, baseDelayMs: 0 },
+            resolveNetworkAddresses,
+        });
+        const binding = createLoggerAndEventsAvailablePluginInvocationServiceBinding(
+            'generation-7',
+            'binding-dns-pin',
+            [{
+                required: true,
+                request: {
+                    id: 'api',
+                    capability: 'network',
+                    reason: 'API access',
+                    scope: {
+                        targets: [{ kind: 'fixedOrigin', origin: 'https://api.example.test' }],
+                        methods: ['GET'],
+                    },
+                },
+            }],
+        );
+        const service = host.bind({
+            plugin: { id: 'caller.plugin', version: '1.0.0' },
+            contribution: { id: 'run', qualifiedId: 'caller.plugin/actions/run' },
+            generation: 'generation-7',
+            correlationId: 'dns-pin',
+            surface: 'agent',
+            signal: new AbortController().signal,
+            isGenerationCurrent: () => true,
+        }, binding);
+
+        await expect(service.request({
+            url: 'https://api.example.test/status',
+            method: 'GET',
+            redirect: 'error',
+        })).resolves.toMatchObject({ status: 200 });
+
+        expect(resolveNetworkAddresses).toHaveBeenCalledTimes(2);
+        expect(transportedAddressSets).toEqual(admittedAddressSets);
     });
 
     it('revalidates connected-account configuration currentness before every retry attempt', async () => {
@@ -1128,6 +1306,110 @@ describe('createPluginHttpService', () => {
         expect(revalidateFinalPolicy).toHaveBeenLastCalledWith(expect.objectContaining({
             request: expect.objectContaining({ method: 'POST' }),
         }));
+    });
+
+    it('refuses to carry a Connected Account credential onto an interceptor-retargeted request', async () => {
+        const adapter = vi.fn(async (request: TestFetchRequest) => Object.freeze({
+            ...createResponse('ok'),
+            finalUrl: request.url,
+        }));
+        const retargetInterceptor = legacyInterceptorRegistry([{
+            pluginId: 'acme.policy',
+            contribution: { id: 'retarget', origins: ['https://api.example.test'] },
+            registration: {
+                id: 'retarget',
+                handle: async ({ effectiveRequest }) => (
+                    effectiveRequest.url === 'https://api.example.test/authorized'
+                        ? { kind: 'allow', request: { url: 'https://api.example.test/retargeted' } }
+                        : effectiveRequest.url === 'https://api.example.test/remethod'
+                            ? { kind: 'allow', request: { method: 'DELETE' } }
+                            : { kind: 'allow' }
+                ),
+            },
+        }]);
+        const credentialBindingHost = {
+            request: vi.fn(async (input: Readonly<{
+                execute(injection: Readonly<{
+                    headers: Readonly<Record<string, string>>;
+                    secretHeaderNames: readonly string[];
+                }>): Promise<unknown>;
+            }>) => await input.execute(Object.freeze({
+                headers: Object.freeze({ authorization: 'Bearer account-secret' }),
+                secretHeaderNames: Object.freeze(['authorization']),
+            }))),
+        };
+        const host = createStablePluginHttpHost({
+            adapter,
+            interceptorRegistry: retargetInterceptor,
+            credentialBindingHost: credentialBindingHost as never,
+        });
+        const binding = createLoggerAndEventsAvailablePluginInvocationServiceBinding(
+            'generation-credential',
+            'binding-credential',
+            [{
+                required: true,
+                request: {
+                    id: 'api',
+                    capability: 'network',
+                    reason: 'Connected Account API access',
+                    scope: {
+                        targets: [{ kind: 'fixedOrigin', origin: 'https://api.example.test' }],
+                        methods: ['GET'],
+                    },
+                },
+            }],
+        );
+        const service = host.bind({
+            plugin: { id: 'caller.plugin', version: '1.0.0' },
+            contribution: { id: 'run', qualifiedId: 'caller.plugin/actions/run' },
+            generation: 'generation-credential',
+            correlationId: 'correlation-credential',
+            surface: 'ui',
+            signal: new AbortController().signal,
+            isGenerationCurrent: () => true,
+        }, binding);
+        const credentialBinding = Object.freeze({
+            kind: 'voiceAccountOperation' as const,
+            provider: Object.freeze({ pluginId: 'caller.plugin', localId: 'voice' }),
+            operation: 'catalog',
+            parameters: Object.freeze({}),
+        });
+
+        // The credential owner authorized exactly this target, so the ordinary
+        // request still carries the injected secret.
+        await expect(service.request({
+            url: 'https://api.example.test/allowed',
+            method: 'GET',
+            redirect: 'error',
+            credentialBinding,
+        })).resolves.toMatchObject({ status: 200 });
+        expect(adapter).toHaveBeenCalledTimes(1);
+        expect(adapter.mock.calls[0]?.[0]).toMatchObject({
+            url: 'https://api.example.test/allowed',
+            headers: expect.objectContaining({ authorization: 'Bearer account-secret' }),
+        });
+
+        // The interceptor may not move that secret to a target the credential
+        // owner never authorized.
+        await expect(service.request({
+            url: 'https://api.example.test/authorized',
+            method: 'GET',
+            redirect: 'error',
+            credentialBinding,
+        })).rejects.toMatchObject({
+            code: 'plugin_fetch_interceptor_failed',
+            message: expect.stringContaining('retarget a credential-bearing request'),
+        });
+        await expect(service.request({
+            url: 'https://api.example.test/remethod',
+            method: 'GET',
+            redirect: 'error',
+            credentialBinding,
+        })).rejects.toMatchObject({
+            code: 'plugin_fetch_interceptor_failed',
+            message: expect.stringContaining('retarget a credential-bearing request'),
+        });
+        expect(adapter).toHaveBeenCalledTimes(1);
     });
 
     it('removes invocation abort listeners after a completed stable request', async () => {

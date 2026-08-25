@@ -2,10 +2,12 @@ import {
     containsProviderRegisteredSensitiveValue,
     deriveVoiceCredentialBindingIdentityV1,
     materializeRecipientOperationRequestV1FromOperation,
+    resolveVoiceCredentialOperationAuthorization,
     resolveRequiredRecipientContractApprovalDigestV1,
     type RecipientOperationV1,
     type VoiceCredentialAccessPhase,
     type VoiceCredentialBindingIdentityV1,
+    type VoiceCredentialOperationSelectedSource,
     type VoiceProviderContribution,
 } from '@happier-dev/protocol';
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
@@ -56,15 +58,16 @@ type VoiceAccountOperationAuthority = Readonly<{
  * The credential-access phases in which a contribution kind may reach a
  * host-mediated Account operation. Client conversation runtimes disclose
  * mediated access across their settings, prepare and connection phases;
- * daemon speech runtimes have exactly one phase. The manifest still decides
- * which operations are projected into those phases.
+ * daemon speech runtimes use settings for declared settings actions and
+ * speech for batch audio operations. The manifest still decides which
+ * operations are projected into those phases.
  */
 const ADMITTED_OPERATION_PHASES_BY_KIND: Readonly<Record<
     VoiceProviderContribution['kind'],
     readonly VoiceCredentialAccessPhase[]
 >> = Object.freeze({
     conversation: Object.freeze<VoiceCredentialAccessPhase[]>(['settings', 'prepare', 'connection']),
-    speech: Object.freeze<VoiceCredentialAccessPhase[]>(['speech']),
+    speech: Object.freeze<VoiceCredentialAccessPhase[]>(['settings', 'speech']),
 });
 
 /**
@@ -75,6 +78,7 @@ const ADMITTED_OPERATION_PHASES_BY_KIND: Readonly<Record<
  */
 export function declaresAdmittedMediatedOperations(
     contribution: VoiceProviderContribution,
+    phase?: VoiceCredentialAccessPhase,
 ): boolean {
     const credentials = contribution.credentials;
     if (!credentials?.hostMediated) return false;
@@ -85,6 +89,7 @@ export function declaresAdmittedMediatedOperations(
     return credentials.sources.some((source) => source.operationProjections?.some((projection) => (
         declaredOperationIds.has(projection.operation)
         && admittedPhases.includes(projection.phase)
+        && (phase === undefined || projection.phase === phase)
     )) === true);
 }
 
@@ -92,6 +97,20 @@ function unauthorized(): PluginError {
     return new PluginError({
         code: 'plugin_fetch_voice_account_operation_unauthorized',
         message: 'The Voice account operation is not authorized for this invocation',
+    });
+}
+
+function phaseAuthorityUnavailable(): PluginError {
+    return new PluginError({
+        code: 'plugin_fetch_voice_account_operation_phase_authority_unavailable',
+        message: 'The Voice account operation has no host-owned phase authority',
+    });
+}
+
+function credentialUnavailable(): PluginError {
+    return new PluginError({
+        code: 'plugin_voice_credential_unavailable',
+        message: 'The required Voice account credential is unavailable',
     });
 }
 
@@ -135,6 +154,20 @@ function findVoiceProviderDeclaration(
         && candidate.definition.id === ref.localId
     ));
     return matching.length === 1 ? matching[0]! : null;
+}
+
+function selectedSavedSecretSource(
+    credentialResolver: VoiceCredentialResolver,
+    identity: VoiceCredentialBindingIdentityV1,
+): VoiceCredentialOperationSelectedSource {
+    let selection: ReturnType<VoiceCredentialResolver['resolveSelectedSource']>;
+    try {
+        selection = credentialResolver.resolveSelectedSource(identity);
+    } catch {
+        throw unauthorized();
+    }
+    if (selection?.kind !== 'savedSecret') throw credentialUnavailable();
+    return Object.freeze({ kind: 'savedSecret' });
 }
 
 function hasExactNetworkScope(input: Readonly<{
@@ -312,6 +345,8 @@ function authorizeVoiceAccountOperation(input: Readonly<{
     declarations: readonly VoiceProviderDeclaration[];
     provider: PluginContributionRef;
     kind: VoiceProviderContribution['kind'];
+    phase: VoiceCredentialAccessPhase;
+    credentialResolver: VoiceCredentialResolver;
     operationId: string;
     parameters: unknown;
 }>): AuthorizedVoiceAccountOperation {
@@ -322,14 +357,6 @@ function authorizeVoiceAccountOperation(input: Readonly<{
         (candidate) => candidate.id === input.operationId,
     );
     if (!credentials || !operation) throw unauthorized();
-    const admittedPhases = ADMITTED_OPERATION_PHASES_BY_KIND[declaration.definition.kind];
-    const projectedForPhase = credentials.sources.some((source) => (
-        source.operationProjections?.some((projection) => (
-            projection.operation === operation.id
-            && admittedPhases.includes(projection.phase)
-        )) === true
-    ));
-    if (!projectedForPhase) throw unauthorized();
     let materialized: ReturnType<typeof materializeRecipientOperationRequestV1FromOperation>;
     try {
         materialized = materializeRecipientOperationRequestV1FromOperation({
@@ -357,6 +384,18 @@ function authorizeVoiceAccountOperation(input: Readonly<{
         throw unauthorized();
     }
     if (!credentialIdentity || credentialIdentity.credentialSlotId !== operation.credentialSlotId) {
+        throw unauthorized();
+    }
+    const selectedSource = selectedSavedSecretSource(input.credentialResolver, credentialIdentity);
+    const credentialAuthorization = resolveVoiceCredentialOperationAuthorization({
+        pluginId: declaration.pluginId,
+        contributionId: declaration.identity.localId,
+        contribution: declaration.definition,
+        selectedSource,
+        phase: input.phase,
+        operationId: operation.id,
+    });
+    if (!credentialAuthorization || credentialAuthorization.projection.kind !== 'recipientCredential') {
         throw unauthorized();
     }
     return Object.freeze({
@@ -474,6 +513,11 @@ async function executeVoiceAccountOperation(input: Readonly<{
 export function createVoiceAccountPluginHttpCredentialBindingHost(params: Readonly<{
     voiceProviders: readonly VoiceProviderDeclaration[];
     credentialResolver: VoiceCredentialResolver;
+    /**
+     * Bound only by a host Voice lifecycle owner. Generic plugin invocations
+     * have no truthful phase and therefore fail closed below.
+     */
+    phase?: Exclude<VoiceCredentialAccessPhase, 'speech'>;
     recordResponseDiagnostic?: VoiceAccountResponseDiagnosticRecorder;
 }>): StablePluginHttpCredentialBindingHost {
     return Object.freeze({
@@ -487,10 +531,13 @@ export function createVoiceAccountPluginHttpCredentialBindingHost(params: Readon
             ) {
                 throw unauthorized();
             }
+            if (!params.phase) throw phaseAuthorityUnavailable();
             const authorized = authorizeVoiceAccountOperation({
                 declarations: params.voiceProviders,
                 provider: binding.provider,
                 kind: 'conversation',
+                phase: params.phase,
+                credentialResolver: params.credentialResolver,
                 operationId: binding.operation,
                 parameters: binding.parameters,
             });
@@ -544,6 +591,8 @@ export function createVoiceAccountOperationService(params: Readonly<{
     voiceProviders: readonly VoiceProviderDeclaration[];
     provider: PluginContributionRef;
     kind: VoiceProviderContribution['kind'];
+    /** Exact lifecycle phase owned by the host calling this operation service. */
+    phase: VoiceCredentialAccessPhase;
     credentialResolver: VoiceCredentialResolver;
     isCurrent(): boolean;
     signal: AbortSignal;
@@ -566,6 +615,8 @@ export function createVoiceAccountOperationService(params: Readonly<{
                 declarations: params.voiceProviders,
                 provider: params.provider,
                 kind: params.kind,
+                phase: params.phase,
+                credentialResolver: params.credentialResolver,
                 operationId: request.operationId,
                 parameters: request.parameters,
             });

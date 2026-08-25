@@ -3,7 +3,6 @@ import { createRequire } from 'node:module';
 import { join } from 'node:path';
 
 import { formatPluginManifestIngestionDiagnostics, type PluginSourceSpecV1 } from '@happier-dev/protocol';
-import { readTargetedContributionPointSemanticRefs } from '@happier-dev/plugin-sdk/host/targeted-contributions';
 
 import type { LoadedPlugin } from '@/plugins/discovery/load/installed';
 import { readGeneratedPluginUiArtifactsManifestSync } from '@/plugins/install/ui/generatedArtifacts';
@@ -48,12 +47,6 @@ export function loadBundledPluginLocators(
         }
         seenPluginIds.add(locator.pluginId);
 
-        // Read the exact target-authored semantic refs before canonical
-        // ingestion deliberately strips non-JSON host sidecars. They support
-        // current-generation cold admission; loading a bundled locator never
-        // activates its plugin.
-        const semanticPointRefs = readTargetedContributionPointSemanticRefs(locator.manifest);
-
         const ingestion = ingestCanonicalPluginManifest(locator.manifest, {
             manifestAuthority: 'bundled_first_party',
             sourceProvenance: pluginSourceProvenanceForKind('bundled'),
@@ -90,7 +83,6 @@ export function loadBundledPluginLocators(
             devDaemonEntryPath: locator.devDaemonEntryPath ?? null,
             manifest: ingestion.manifest,
             sourceSpec: locator.sourceSpec,
-            ...(semanticPointRefs.length > 0 ? { semanticPointRefs } : {}),
             ...(generatedUiArtifactsManifest ? { generatedUiArtifactsManifest } : {}),
         });
     }));

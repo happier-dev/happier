@@ -4,6 +4,9 @@ import {
   buildConnectedServiceCredentialRecord,
   ConnectedServiceMaterializationIdentityV1Schema,
   ConnectedServiceAuthGroupPolicyV1Schema,
+  BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID,
+  QualifiedConnectedAccountGroupV4Schema,
+  QualifiedConnectedAccountListResponseV4Schema,
   type ConnectedServiceAuthGroupV1,
   type ConnectedServiceBindingsV1,
   type ConnectedServiceMaterializationIdentityV1,
@@ -15,9 +18,11 @@ import { HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY } from '@/daemon/connected
 import { createSessionConnectedServiceAuthHotApply } from './sessionConnectedServiceAuthHotApply';
 import { ConnectedServiceSessionAuthSwitchLockRegistry, createConnectedServiceSessionAuthSwitchCore } from '../runtimeAuth/connectedServiceSessionAuthSwitchCore';
 import {
-  switchSessionConnectedServiceAuth,
+  switchSessionConnectedServiceAuth as switchSessionConnectedServiceAuthImpl,
   type SwitchSessionConnectedServiceAuthInput,
 } from './switchSessionConnectedServiceAuth';
+import type { ConnectedServiceQualifiedAuthGroupApi } from '../resolveConnectedServiceAuthForSpawn';
+import { resolveFirstPartyQualifiedConnectedAccountServiceForLegacyServiceId } from '@/plugins/projection/registry/connectedAccountPurposeCompatibility';
 
 type RuntimeAuthSelectionContinuityInput = Parameters<SwitchSessionConnectedServiceAuthInput['resolveContinuity']>[0];
 type RecoverAfterRuntimeAuthSwitch = (input: Readonly<{
@@ -52,7 +57,7 @@ type VerifyProviderAccountAdoption = (input: Readonly<{
     }>
   | Readonly<{ status: 'unavailable'; retryable: boolean; reason: string; errorClassification?: unknown }>
 >;
-type SwitchInputWithPostSwitchRecovery = SwitchSessionConnectedServiceAuthInput & Readonly<{
+type SwitchInputWithPostSwitchRecovery = SwitchTestInput & Readonly<{
   recoverAfterRuntimeAuthSwitch?: RecoverAfterRuntimeAuthSwitch;
 }>;
 type SwitchInputWithVerification = SwitchInputWithPostSwitchRecovery & Readonly<{
@@ -117,6 +122,129 @@ function group(overrides: Partial<ConnectedServiceAuthGroupV1> = {}): ConnectedS
     updatedAt: 1,
     ...overrides,
   };
+}
+
+function qualifiedAuthGroupApiForLegacyGroup(input: ConnectedServiceAuthGroupV1) {
+  const service = { pluginId: 'happier.agent.claude', localId: 'anthropic' } as const;
+  const qualifiedGroup = QualifiedConnectedAccountGroupV4Schema.parse({
+    v: 1,
+    ref: { service, groupId: input.groupId },
+    incarnation: `qualified-group-${input.groupId}`,
+    displayName: input.displayName,
+    policy: input.policy,
+    activeConnectedAccountId: input.activeProfileId,
+    generation: input.generation,
+    runtimeStateRevision: input.runtimeStateRevision ?? 0,
+    state: {},
+    createdAt: input.createdAt,
+    updatedAt: input.updatedAt,
+    members: input.members.map((member) => ({
+      v: 1,
+      connectedAccountId: member.profileId,
+      priority: member.priority,
+      enabled: member.enabled,
+      state: member.state,
+      createdAt: member.createdAt,
+      updatedAt: member.updatedAt,
+    })),
+  });
+  const qualifiedAccounts = QualifiedConnectedAccountListResponseV4Schema.parse({
+    service,
+    accounts: input.members.map((member) => ({
+      ref: { service, accountId: member.profileId },
+      status: 'connected',
+      authenticationModeId: 'api-key',
+      revisionSemantics: 'revisioned',
+      credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa',
+      configurationReady: true,
+      configurationRevision: null,
+      scopes: [],
+    })),
+  });
+  return {
+    readGroup: vi.fn(async () => qualifiedGroup),
+    listAccounts: vi.fn(async () => qualifiedAccounts),
+  };
+}
+
+type LegacyTestConnectedServiceApi = Readonly<{
+  getConnectedServiceAuthGroup?: (input: Readonly<{ serviceId: string; groupId: string }>) => Promise<ConnectedServiceAuthGroupV1 | null>;
+  listConnectedServiceProfiles?: (input: Readonly<{ serviceId: string }>) => Promise<Readonly<{
+    profiles: ReadonlyArray<Readonly<{ profileId: string; status: 'connected' | 'refreshing' | 'needs_reauth' | 'refresh_failed_retryable' }>>;
+  }>>;
+}>;
+
+function qualifiedAuthGroupApiFromLegacyTestApi(api: unknown): ConnectedServiceQualifiedAuthGroupApi {
+  const legacy = api as LegacyTestConnectedServiceApi;
+  const resolveLegacyServiceId = (service: Readonly<{ pluginId: string; localId: string }>): string => {
+    const entry = Object.entries(BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID)
+      .find(([, compatibility]) => (
+        compatibility.service.pluginId === service.pluginId
+        && compatibility.service.localId === service.localId
+      ));
+    if (!entry) throw new Error('test_legacy_service_mapping_missing');
+    return entry[0];
+  };
+  return {
+    readGroup: async ({ service, groupId }) => {
+      const serviceId = resolveLegacyServiceId(service);
+      const group = await legacy.getConnectedServiceAuthGroup?.({ serviceId, groupId });
+      if (!group) return null;
+      return QualifiedConnectedAccountGroupV4Schema.parse({
+        v: 1,
+        ref: { service, groupId: group.groupId },
+        incarnation: `qualified-group-${group.groupId}`,
+        displayName: group.displayName,
+        policy: group.policy,
+        activeConnectedAccountId: group.activeProfileId,
+        generation: group.generation,
+        runtimeStateRevision: group.runtimeStateRevision ?? 0,
+        state: {},
+        createdAt: group.createdAt,
+        updatedAt: group.updatedAt,
+        members: group.members.map((member) => ({
+          v: 1,
+          connectedAccountId: member.profileId,
+          priority: member.priority,
+          enabled: member.enabled,
+          state: member.state,
+          createdAt: member.createdAt,
+          updatedAt: member.updatedAt,
+        })),
+      });
+    },
+    listAccounts: async ({ service }) => {
+      const serviceId = resolveLegacyServiceId(service);
+      const profiles = await legacy.listConnectedServiceProfiles?.({ serviceId });
+      const profileRows = profiles?.profiles ?? [];
+      return QualifiedConnectedAccountListResponseV4Schema.parse({
+        service,
+        accounts: profileRows.map((profile) => ({
+          ref: { service, accountId: profile.profileId },
+          status: profile.status,
+          authenticationModeId: 'api-key',
+          revisionSemantics: 'revisioned',
+          credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa',
+          configurationReady: true,
+          configurationRevision: null,
+          scopes: [],
+        })),
+      });
+    },
+  };
+}
+
+type SwitchTestInput = Omit<SwitchSessionConnectedServiceAuthInput, 'api' | 'qualifiedConnectedAccountApi'> & Readonly<{
+  api: SwitchSessionConnectedServiceAuthInput['api'] & Pick<LegacyTestConnectedServiceApi, 'getConnectedServiceAuthGroup'>;
+  qualifiedConnectedAccountApi?: ConnectedServiceQualifiedAuthGroupApi;
+}>;
+
+function switchSessionConnectedServiceAuth(input: SwitchTestInput) {
+  return switchSessionConnectedServiceAuthImpl({
+    ...input,
+    qualifiedConnectedAccountApi:
+      input.qualifiedConnectedAccountApi ?? qualifiedAuthGroupApiFromLegacyTestApi(input.api),
+  });
 }
 
 function bindings(profileId: string): ConnectedServiceBindingsV1 {
@@ -280,6 +408,9 @@ describe('switchSessionConnectedServiceAuth', () => {
   it('emits the resolved auth-group label on canonical account switch events', async () => {
     const tracked = trackedSession();
     const emitSessionEvent = vi.fn();
+    const qualifiedConnectedAccountApi = qualifiedAuthGroupApiForLegacyGroup(
+      group({ displayName: 'Work Pool' }),
+    );
 
     await expect(switchSessionConnectedServiceAuth({
       core: createCore(),
@@ -290,8 +421,8 @@ describe('switchSessionConnectedServiceAuth', () => {
           serviceId: 'anthropic',
           profiles: [{ profileId: 'group-active', status: 'connected' }],
         }),
-        getConnectedServiceAuthGroup: async () => group({ displayName: 'Work Pool' }),
       },
+      qualifiedConnectedAccountApi,
       resolveContinuity: async () => ({ mode: 'restart_rematerialize' }),
       restartSession: vi.fn(async () => {}),
       persistSessionBindings: vi.fn(async () => {}),
@@ -3474,6 +3605,19 @@ describe('switchSessionConnectedServiceAuth', () => {
           serviceId: 'openai-codex',
           activeProfileId: 'backup',
           generation: 7,
+          members: [
+            {
+              v: 1,
+              serviceId: 'openai-codex',
+              groupId: 'work',
+              profileId: 'backup',
+              priority: 1,
+              enabled: true,
+              state: {},
+              createdAt: 1,
+              updatedAt: 1,
+            },
+          ],
         }),
       },
       resolveContinuity,

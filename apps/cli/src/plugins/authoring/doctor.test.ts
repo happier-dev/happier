@@ -1,3 +1,7 @@
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { describe, expect, it, vi } from 'vitest';
 
 import { runPluginAuthorDoctor } from './doctor';
@@ -109,6 +113,38 @@ describe('plugin author doctor', () => {
     expect(serialized).not.toContain('at activate');
   });
 
+  it('keeps the dependency-preparation source location the toolchain resolved', async () => {
+    const result = await runPluginAuthorDoctor({
+      locator: '/author/plugin',
+      resolveEntry: async () => ({
+        kind: 'packageRoot',
+        locator: '/author/plugin',
+        packageRoot: '/author/plugin',
+        entryPath: '/author/plugin/src/index.ts',
+      }),
+      prepareDependencies: async () => ({
+        ok: false,
+        projectRoot: '/author/plugin',
+        diagnostic: {
+          code: 'plugin_author_tool_failed',
+          message: 'Plugin development install failed with 1: /author/plugin/package.json(4,3): invalid dependency range',
+          source: { file: 'package.json', line: 4, column: 3 },
+        },
+      }),
+      evaluate: async () => { throw new Error('evaluation must not run'); },
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      diagnostics: [{
+        code: 'plugin_author_dependency_preparation_failed',
+        message: 'Plugin development install failed with 1: <path>(4,3): invalid dependency range',
+        location: { file: 'package.json', line: 4, column: 3 },
+      }],
+    });
+    expect(JSON.stringify(result)).not.toContain('/author/plugin');
+  });
+
   it('prepares a package-root author source before evaluating it', async () => {
     const order: string[] = [];
     const prepareDependencies = vi.fn(async () => {
@@ -143,5 +179,43 @@ describe('plugin author doctor', () => {
     })).resolves.toMatchObject({ ok: true, pluginId: 'example.prepared' });
     expect(order).toEqual(['prepare', 'evaluate']);
     expect(prepareDependencies).toHaveBeenCalledWith({ projectRoot: '/plugin' });
+  });
+
+  it('reuses a materialized package root instead of reinstalling before evaluation', async () => {
+    const projectRoot = await mkdtemp(join(tmpdir(), 'happier-doctor-materialized-'));
+    try {
+      const sdkRoot = join(projectRoot, 'node_modules', '@happier-dev', 'plugin-sdk');
+      await mkdir(sdkRoot, { recursive: true });
+      await writeFile(join(sdkRoot, 'package.json'), JSON.stringify({
+        name: '@happier-dev/plugin-sdk',
+        version: '0.0.0',
+      }), 'utf8');
+      const prepareDependencies = vi.fn();
+
+      await expect(runPluginAuthorDoctor({
+        locator: projectRoot,
+        resolveEntry: async () => ({
+          kind: 'packageRoot',
+          locator: projectRoot,
+          packageRoot: projectRoot,
+          entryPath: join(projectRoot, 'src', 'index.ts'),
+        }),
+        prepareDependencies: prepareDependencies as never,
+        evaluate: (async () => ({
+          entry: {
+            kind: 'packageRoot',
+            locator: projectRoot,
+            packageRoot: projectRoot,
+            entryPath: join(projectRoot, 'src', 'index.ts'),
+          },
+          manifest: { id: 'example.materialized', version: '0.1.0' },
+          canonicalManifestJson: '{"id":"example.materialized"}\n',
+          module: { activate: vi.fn() },
+        })) as never,
+      })).resolves.toMatchObject({ ok: true, pluginId: 'example.materialized' });
+      expect(prepareDependencies).not.toHaveBeenCalled();
+    } finally {
+      await rm(projectRoot, { recursive: true, force: true });
+    }
   });
 });

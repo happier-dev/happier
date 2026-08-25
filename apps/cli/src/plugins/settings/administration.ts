@@ -29,7 +29,7 @@ import {
   readRpcErrorCode,
 } from '@happier-dev/protocol/rpcErrors';
 import { isPluginError, PluginError, type JsonValue, type PluginSettingDescriptor } from '@happier-dev/plugin-sdk';
-import type { ScopedSettingsService } from '@happier-dev/plugin-sdk/settings';
+import type { ScopedSettingsService, SettingsSnapshot } from '@happier-dev/plugin-sdk/settings';
 
 import { resolvePluginInvocationLogTarget } from '@/cli/commands/pluginInvocationLogsMachine';
 import { readStoredCredentials } from '@/persistence';
@@ -430,11 +430,48 @@ function projectDescriptor(descriptor: PluginSettingDescriptor): Readonly<Record
   });
 }
 
+function effectiveAccountFieldValue(
+  descriptor: PluginSettingDescriptor,
+  values: Readonly<Record<string, JsonValue>>,
+): JsonValue {
+  if (Object.prototype.hasOwnProperty.call(values, descriptor.id)) return values[descriptor.id]!;
+  return descriptor.secret || descriptor.default === undefined ? null : descriptor.default;
+}
+
+/** Projects one atomic Account snapshot into the generic administration view. */
+export function projectAccountSettingsAdministrationSnapshot(params: Readonly<{
+  descriptors: readonly PluginSettingDescriptor[];
+  hiddenFieldIds: ReadonlySet<string>;
+  snapshot: SettingsSnapshot;
+}>): Readonly<{
+  scope: SettingsSnapshot['scope'];
+  revision: string;
+  fields: readonly Readonly<Record<string, JsonValue>>[];
+}> {
+  const fields = params.descriptors.flatMap((descriptor) => {
+    if (params.hiddenFieldIds.has(descriptor.id)) return [];
+    return [descriptor.secret
+      ? projectDescriptor(descriptor)
+      : Object.freeze({
+        ...projectDescriptor(descriptor),
+        value: effectiveAccountFieldValue(descriptor, params.snapshot.values),
+      })];
+  });
+  return Object.freeze({
+    scope: params.snapshot.scope,
+    revision: params.snapshot.revision,
+    fields: Object.freeze(fields),
+  });
+}
+
 async function accountSettingsService(params: Readonly<{
   pluginId: string;
   happyHomeDir?: string;
   signal?: AbortSignal;
-}>): Promise<ScopedSettingsService> {
+}>): Promise<Readonly<{
+  service: ScopedSettingsService;
+  hiddenFieldIds: ReadonlySet<string>;
+}>> {
   const credentials = await currentCredentials(params.signal);
   await bootstrapAccountSettingsContext({
     credentials,
@@ -460,6 +497,13 @@ async function accountSettingsService(params: Readonly<{
       ? [Object.freeze({ pluginId: params.pluginId, contribution: candidate.definition })]
       : []
   ));
+  const hiddenFieldIds = new Set(declarations.flatMap(({ contribution }) => (
+    contribution.fields.flatMap((field) => (
+      field.presentation?.binding?.kind === 'perActiveServer'
+        ? [field.presentation.binding.byServerIdSettingId]
+        : []
+    ))
+  )));
   const host = createStablePluginSettingsHost({
     declarations,
     // This declaration set covers exactly the requested plugin, so there is
@@ -488,7 +532,10 @@ async function accountSettingsService(params: Readonly<{
   if (!service) {
     administrationError('plugin_settings_unavailable', 'The requested plugin has no Settings service.');
   }
-  return service.forScope({ kind: 'account' });
+  return Object.freeze({
+    service: service.forScope({ kind: 'account' }),
+    hiddenFieldIds,
+  });
 }
 
 async function currentSecretDeclaration(params: Readonly<{
@@ -678,42 +725,37 @@ async function executeSettingsAction(params: Readonly<{
     }), 'live');
   }
 
-  const service = await accountSettingsService({
+  const account = await accountSettingsService({
     pluginId: params.input.pluginId,
     ...(params.happyHomeDir ? { happyHomeDir: params.happyHomeDir } : {}),
     ...(params.signal ? { signal: params.signal } : {}),
   });
+  const { service } = account;
   if (params.actionId === 'plugins.settings.list') {
     const snapshot = await service.snapshot({ ...(params.signal ? { signal: params.signal } : {}) });
-    const fields = await Promise.all(service.describe().map(async (descriptor) => (
-      descriptor.secret
-        ? projectDescriptor(descriptor)
-        : Object.freeze({
-          ...projectDescriptor(descriptor),
-          value: await service.get(descriptor.id, { ...(params.signal ? { signal: params.signal } : {}) }),
-        })
-    )));
+    const projection = projectAccountSettingsAdministrationSnapshot({
+      descriptors: service.describe(),
+      hiddenFieldIds: account.hiddenFieldIds,
+      snapshot,
+    });
     return result(params.actionId, Object.freeze({
-      scope: snapshot.scope,
+      ...projection,
       target: scoped.target,
-      revision: snapshot.revision,
-      fields,
     }));
   }
   const localId = requireLocalId(params.input);
   const descriptor = service.describe().find((candidate) => candidate.id === localId);
-  if (!descriptor || descriptor.secret) {
+  if (!descriptor || descriptor.secret || account.hiddenFieldIds.has(localId)) {
     administrationError('plugin_settings_unknown_key', 'The requested non-secret Settings field is not declared.');
   }
   if (params.actionId === 'plugins.settings.get') {
     const snapshot = await service.snapshot({ ...(params.signal ? { signal: params.signal } : {}) });
-    const value = await service.get(localId, { ...(params.signal ? { signal: params.signal } : {}) });
     return result(params.actionId, Object.freeze({
       scope: snapshot.scope,
       target: scoped.target,
       localId,
       revision: snapshot.revision,
-      value,
+      value: effectiveAccountFieldValue(descriptor, snapshot.values),
     }));
   }
   const next = params.actionId === 'plugins.settings.set'

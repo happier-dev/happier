@@ -171,10 +171,6 @@ export function createVoiceInferenceWorkerRunner(
   }
 
   async function handleRequest(frame: VoiceInferenceWorkerRequestFrame): Promise<void> {
-    if (frame.kind === 'ping') {
-      send({ kind: 'ready', id: frame.id });
-      return;
-    }
     if (frame.kind === 'abort') {
       abortControllersById.get(frame.targetId)?.abort();
       return;

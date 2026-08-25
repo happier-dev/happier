@@ -27,6 +27,55 @@ describe('Windows process launch custody', () => {
     expect(terminate).toHaveBeenCalledWith({ pid: 4_242, force: true });
   });
 
+  it('does NOT report stopped for an access-denied process when using the default liveness probe', async () => {
+    // The bare-`catch` regression, exercised through the REAL default rather than an injected
+    // stub: `isPidAliveFn` is deliberately not passed. A process the daemon may not signal is
+    // alive (EACCES on Windows, EPERM on POSIX); custody used to read that as dead and report
+    // `{ status: 'stopped' }` — claiming a successful termination of a process still running.
+    for (const code of ['EACCES', 'EPERM']) {
+      const kill = vi.spyOn(process, 'kill').mockImplementation(() => {
+        throw Object.assign(new Error('access denied'), { code });
+      });
+      try {
+        const cancel = createExactWindowsProcessCancellation({
+          pid: 4_242,
+          processStartTimeMs: 1_000,
+          // The identity read comes back empty — the access-denied case — so the decision falls
+          // entirely to the liveness probe.
+          readProcessIdentityByPidFn: vi.fn(async () => null),
+          terminateProcessTreeFn: vi.fn(async () => undefined),
+        });
+
+        await expect(cancel()).resolves.toEqual({
+          status: 'incomplete',
+          reason: 'terminal_host_custody_unproven',
+        });
+      } finally {
+        kill.mockRestore();
+      }
+    }
+  });
+
+  it('still reports stopped when the default probe proves the process is genuinely absent', async () => {
+    // The other side of the pair: ESRCH must remain a real `stopped`, so the fix above cannot be
+    // satisfied by simply never reporting stopped.
+    const kill = vi.spyOn(process, 'kill').mockImplementation(() => {
+      throw Object.assign(new Error('no such process'), { code: 'ESRCH' });
+    });
+    try {
+      const cancel = createExactWindowsProcessCancellation({
+        pid: 4_242,
+        processStartTimeMs: 1_000,
+        readProcessIdentityByPidFn: vi.fn(async () => null),
+        terminateProcessTreeFn: vi.fn(async () => undefined),
+      });
+
+      await expect(cancel()).resolves.toEqual({ status: 'stopped' });
+    } finally {
+      kill.mockRestore();
+    }
+  });
+
   it('does not accept an initial zero inventory before a delayed correlated child appears', async () => {
     const process = {
       pid: 9_999,

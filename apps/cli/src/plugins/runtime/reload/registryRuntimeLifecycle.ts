@@ -135,7 +135,17 @@ async function resolveCandidateContributes(
 ) {
   const builtIn = getResolvedContributionRegistry();
   if (startupMode === 'pluginRecovery') return builtIn;
-  const loadResult = await loadPluginsFromState(candidate.runtimeCatalog);
+  const materializationIdsByPluginId = Object.freeze(Object.fromEntries(
+    Object.entries(candidate.installationState.plugins).flatMap(([pluginId, installation]) => (
+      installation.materializationId === undefined
+        ? []
+        : [[pluginId, installation.materializationId] as const]
+    )),
+  ));
+  const loadResult = await loadPluginsFromState(
+    candidate.runtimeCatalog,
+    materializationIdsByPluginId,
+  );
   const plugin = projectLoadedPluginContributes({
     loadResult,
     provenance: 'external',
@@ -160,6 +170,7 @@ export function createDaemonPluginRegistryRuntimeLifecycle(params: Readonly<{
   /** The daemon's one retained server features snapshot, forwarded unchanged. */
   resolveServerFeaturesSnapshot?: () => CliServerFeaturesSnapshot | undefined;
   reloadController: PluginReloadController;
+  onTerminalActivationFailure?: (pluginId: string) => void;
   connectedAccounts?: StablePluginConnectedAccountsOwner;
   actionFormConnectedAccounts?: Pick<
     ConnectedAccountPurposeBindingOwner,
@@ -355,6 +366,9 @@ export function createDaemonPluginRegistryRuntimeLifecycle(params: Readonly<{
           // routing for every long-lived plugin context it builds.
           currentGlobalExternalSessionsRouter:
             params.reloadController.currentGlobalExternalSessions,
+          ...(params.onTerminalActivationFailure
+            ? { onTerminalActivationFailure: params.onTerminalActivationFailure }
+            : {}),
           ...(candidate.preparedActivationGraphsByPluginId
             ? {
                 preparedActivationGraphsByPluginId:

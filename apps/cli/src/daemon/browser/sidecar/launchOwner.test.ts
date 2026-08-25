@@ -83,7 +83,6 @@ describe('browser sidecar launch owner', () => {
             browserSessionId: 'browser_session_default',
             sidecarId: 'sidecar_launch_disabled',
             featureEnabled: false,
-            browserUseAllowed: true,
             allowPersistentProfiles: false,
             profile: {
                 profileId: 'profile_launch_disabled',
@@ -127,7 +126,6 @@ describe('browser sidecar launch owner', () => {
             browserSessionId: 'browser_session_default',
             sidecarId: 'sidecar_launch_system',
             featureEnabled: true,
-            browserUseAllowed: true,
             allowPersistentProfiles: false,
             profile: {
                 profileId: 'profile_launch_system',
@@ -182,7 +180,6 @@ describe('browser sidecar launch owner', () => {
             browserSessionId: 'browser_session_default',
             sidecarId: 'sidecar_launch_owner',
             featureEnabled: true,
-            browserUseAllowed: true,
             allowPersistentProfiles: false,
             profile: {
                 profileId: 'profile_launch_owner',
@@ -265,7 +262,6 @@ describe('browser sidecar launch owner', () => {
             browserSessionId: 'browser_session_default',
             sidecarId: 'sidecar_launch_owner_dispose_failure',
             featureEnabled: true,
-            browserUseAllowed: true,
             allowPersistentProfiles: false,
             profile: {
                 profileId: 'profile_launch_owner_dispose_failure',
@@ -314,7 +310,6 @@ describe('browser sidecar launch owner', () => {
             browserSessionId: 'browser_session_default',
             sidecarId: 'sidecar_launch_timeout',
             featureEnabled: true,
-            browserUseAllowed: true,
             allowPersistentProfiles: false,
             profile: {
                 profileId: 'profile_launch_timeout',

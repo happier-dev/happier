@@ -50,6 +50,20 @@ import {
 type AuthenticationRuntime =
     PluginConnectedAccountRuntime['authentication']['modes'][string];
 
+// DNS is the one system boundary the configured-origin resolution reaches, and
+// the invoker forwards this resolver to it. Every fixture name below answers
+// with a public address, so admission here is decided by resolved addresses
+// rather than by the hostname's spelling.
+const RESOLVED_ADDRESSES_BY_HOSTNAME: Readonly<Record<string, readonly string[]>> = Object.freeze({
+    'api.telegram.org': ['149.154.167.220'],
+    'api.example.test': ['93.184.216.34'],
+});
+const testResolveNetworkAddresses = async (hostname: string): Promise<readonly string[]> => {
+    const addresses = RESOLVED_ADDRESSES_BY_HOSTNAME[hostname];
+    if (!addresses) throw new Error(`unexpected DNS lookup for ${hostname}`);
+    return addresses;
+};
+
 const service = Object.freeze({
     pluginId: 'acme.accounts',
     localId: 'work',
@@ -140,7 +154,7 @@ function createEstablishedInvoker(
         createServices: () =>
             Object.freeze({}) as PluginInvocationContext['services'],
         registerRawForRedaction() {},
-        resolveHostOwnedConfiguredOrigins: () => Object.freeze([]),
+        resolveHostOwnedConfiguredEndpoints: () => Object.freeze([]),
     });
 }
 
@@ -607,7 +621,7 @@ describe('connected-account runtime invoker', () => {
             }),
             createServices: owners.createServices,
             registerRawForRedaction: owners.registerRawForRedaction,
-            resolveHostOwnedConfiguredOrigins: () => Object.freeze([]),
+            resolveHostOwnedConfiguredEndpoints: () => Object.freeze([]),
         });
 
         await expect(invoker.invokeEstablished({
@@ -795,7 +809,11 @@ describe('connected-account runtime invoker', () => {
                     correlationId: seed.correlationId,
                 }, value);
             },
-            resolveHostOwnedConfiguredOrigins: () => Object.freeze(['https://api.telegram.org']),
+            resolveHostOwnedConfiguredEndpoints: () => Object.freeze([Object.freeze({
+                origin: 'https://api.telegram.org',
+                base: 'https://api.telegram.org',
+                grantTargetKind: 'connectedAccountOrigin' as const,
+            })]),
         });
 
         await expect(invoker.invokeAuthentication({
@@ -904,7 +922,7 @@ describe('connected-account runtime invoker', () => {
             }),
             createServices: () => Object.freeze({}) as PluginInvocationContext['services'],
             registerRawForRedaction,
-            resolveHostOwnedConfiguredOrigins: () => Object.freeze([]),
+            resolveHostOwnedConfiguredEndpoints: () => Object.freeze([]),
         });
 
         await expect(invoker.invokeEstablished({
@@ -1005,7 +1023,7 @@ describe('connected-account runtime invoker', () => {
             }),
             createServices: () => Object.freeze({}) as PluginInvocationContext['services'],
             registerRawForRedaction,
-            resolveHostOwnedConfiguredOrigins: () => Object.freeze([]),
+            resolveHostOwnedConfiguredEndpoints: () => Object.freeze([]),
         });
         const context = Object.freeze({
             service,
@@ -1142,7 +1160,7 @@ describe('connected-account runtime invoker', () => {
                 return Object.freeze({}) as PluginInvocationContext['services'];
             },
             registerRawForRedaction() {},
-            resolveHostOwnedConfiguredOrigins: () => Object.freeze([]),
+            resolveHostOwnedConfiguredEndpoints: () => Object.freeze([]),
         });
         const settle = vi.fn();
         const attempts = createConnectedAccountAuthenticationAttemptOwner({
@@ -1321,7 +1339,7 @@ describe('connected-account runtime invoker', () => {
                 createServices: () =>
                     Object.freeze({}) as PluginInvocationContext['services'],
                 registerRawForRedaction() {},
-                resolveHostOwnedConfiguredOrigins: () => Object.freeze([]),
+                resolveHostOwnedConfiguredEndpoints: () => Object.freeze([]),
             });
             const settle = vi.fn();
             const attempts = createConnectedAccountAuthenticationAttemptOwner({
@@ -1501,7 +1519,7 @@ describe('connected-account runtime invoker', () => {
                 }),
                 createServices: () => Object.freeze({}) as PluginInvocationContext['services'],
                 registerRawForRedaction() {},
-                resolveHostOwnedConfiguredOrigins: vi.fn(() => Object.freeze([])),
+                resolveHostOwnedConfiguredEndpoints: vi.fn(() => Object.freeze([])),
             });
         const invocation = {
             admission: Object.freeze({
@@ -1609,7 +1627,7 @@ describe('connected-account runtime invoker', () => {
             }),
             createServices,
             registerRawForRedaction() {},
-            resolveHostOwnedConfiguredOrigins: vi.fn(() => Object.freeze([])),
+            resolveHostOwnedConfiguredEndpoints: vi.fn(() => Object.freeze([])),
         });
 
         await expect(invoker.invokeAuthentication({

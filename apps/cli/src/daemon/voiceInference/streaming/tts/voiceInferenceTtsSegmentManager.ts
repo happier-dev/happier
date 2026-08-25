@@ -443,6 +443,9 @@ export function createVoiceInferenceTtsSegmentManager(
       if (!segment || input.segmentId !== segmentId(session.streamId, input.segmentIndex)) {
         return streamError('invalid_stream_state', 'daemon_voice_inference_tts_segment_not_found');
       }
+      if (segment.status !== 'delivered' || !segment.delivered) {
+        return streamError('invalid_stream_state', 'daemon_voice_inference_tts_segment_not_delivered');
+      }
       if (segment.ackTimer) {
         clearTimeout(segment.ackTimer);
         segment.ackTimer = null;

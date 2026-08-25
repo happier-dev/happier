@@ -3,6 +3,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 
 import fastify from 'fastify';
+import { isPidPresent } from '@happier-dev/cli-common/process';
 
 import { createDaemonControlAuthGuard } from '@/daemon/controlAuth';
 import { configuration } from '@/configuration';
@@ -187,11 +188,8 @@ export async function runPackedTestDaemonHost(args: readonly string[]): Promise<
     });
 
     parentWatch = setInterval(() => {
-      try {
-        process.kill(expectedParentPid, 0);
-      } catch {
-        requestShutdown();
-      }
+      // Only proof of absence retires this host: a parent we may not signal is still there.
+      if (!isPidPresent(expectedParentPid)) requestShutdown();
     }, 500);
     parentWatch.unref?.();
     await shutdownRequested;

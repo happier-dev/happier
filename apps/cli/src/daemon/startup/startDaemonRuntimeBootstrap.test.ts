@@ -6,7 +6,10 @@ import { createProviderAccountUsageStore } from '../connectedServices/accountUsa
 import { resolveConnectedServicesQuotasDaemonEnabled } from '../connectedServices/quotas/resolveConnectedServicesQuotasDaemonEnabled';
 import { startConnectedServiceQuotasLoop } from '../connectedServices/quotas/startConnectedServiceQuotasLoop';
 import { startConnectedServiceRefreshLoop } from '../connectedServices/refresh/startConnectedServiceRefreshLoop';
-import { buildConnectedServiceCredentialRecord } from '@happier-dev/protocol';
+import {
+  buildConnectedServiceCredentialRecord,
+  type QualifiedConnectedAccountServiceRef,
+} from '@happier-dev/protocol';
 
 const sessionsHttp = vi.hoisted(() => ({
   fetchSessionByIdCompat: vi.fn(),
@@ -14,12 +17,28 @@ const sessionsHttp = vi.hoisted(() => ({
 const composerMediaStageMaintenance = vi.hoisted(() => ({
   runActiveDaemonComposerMediaStageStartupMaintenance: vi.fn(async () => undefined),
 }));
+const qualifiedConnectedAccountApi = vi.hoisted(() => ({
+  listAccounts: vi.fn(async ({ service }: { service: QualifiedConnectedAccountServiceRef }) => ({
+    service,
+    accounts: [],
+  })),
+  listGroups: vi.fn(async () => ({ groups: [] })),
+  resolveUsageSource: vi.fn(async () => null),
+  readUsageRecord: vi.fn(async () => null),
+}));
 
 vi.mock('@/session/transport/http/sessionsHttp', () => sessionsHttp);
 vi.mock('@/transfers/staging/composerMediaStageStore', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/transfers/staging/composerMediaStageStore')>(),
   runActiveDaemonComposerMediaStageStartupMaintenance:
     composerMediaStageMaintenance.runActiveDaemonComposerMediaStageStartupMaintenance,
+}));
+vi.mock('@/api/client/qualifiedConnectedAccountApi', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/api/client/qualifiedConnectedAccountApi')>()),
+  listQualifiedConnectedAccountsV4: qualifiedConnectedAccountApi.listAccounts,
+  listQualifiedConnectedAccountGroupsV4: qualifiedConnectedAccountApi.listGroups,
+  resolveQualifiedProviderAccountUsageSourceV4: qualifiedConnectedAccountApi.resolveUsageSource,
+  readQualifiedProviderAccountUsageRecordV4: qualifiedConnectedAccountApi.readUsageRecord,
 }));
 
 vi.mock('../connectedServices/quotas/resolveConnectedServicesQuotasDaemonEnabled', () => ({
@@ -41,23 +60,37 @@ vi.mock('../connectedServices/refresh/startConnectedServiceRefreshLoop', () => (
   startConnectedServiceRefreshLoop: vi.fn(() => ({ stop: vi.fn(), pause: vi.fn(), resume: vi.fn() })),
 }));
 
+function createQualifiedV4RuntimeFixture() {
+  return {
+    qualifiedConnectedAccountEstablishedRuntimeOwner: {
+      invokeWithReceipt: vi.fn(),
+    },
+    resolveQualifiedConnectedAccountPeerClass: () => 'advertised_v4' as const,
+    listScheduledQualifiedConnectedAccounts: async () => [],
+  };
+}
+
 describe('startDaemonRuntimeBootstrap', () => {
   afterEach(() => {
     vi.unstubAllEnvs();
     vi.clearAllMocks();
     sessionsHttp.fetchSessionByIdCompat.mockReset();
+    qualifiedConnectedAccountApi.listAccounts.mockReset().mockImplementation(
+      async ({ service }: { service: QualifiedConnectedAccountServiceRef }) => ({ service, accounts: [] }),
+    );
+    qualifiedConnectedAccountApi.listGroups.mockReset().mockResolvedValue({ groups: [] });
+    qualifiedConnectedAccountApi.resolveUsageSource.mockReset().mockResolvedValue(null);
+    qualifiedConnectedAccountApi.readUsageRecord.mockReset().mockResolvedValue(null);
   });
 
   it('keeps quota automation disabled when authoritative current-source hydration fails', async () => {
     vi.mocked(resolveConnectedServicesQuotasDaemonEnabled).mockResolvedValueOnce(true);
+    qualifiedConnectedAccountApi.listAccounts.mockRejectedValueOnce(new Error('inventory unavailable'));
     vi.stubEnv('HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_SERVER_ENABLED', 'false');
     vi.stubEnv('HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED', 'false');
     const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn() };
     const result = await startDaemonRuntimeBootstrap({
-      api: {
-        listConnectedServiceProfiles: async () => { throw new Error('inventory unavailable'); },
-        listConnectedServiceAuthGroups: async () => [],
-      } as never,
+      api: {} as never,
       credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(7) } },
       logger,
       processEnv: { HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED: 'false' },
@@ -105,10 +138,6 @@ describe('startDaemonRuntimeBootstrap', () => {
     vi.mocked(resolveConnectedServicesQuotasDaemonEnabled)
       .mockResolvedValueOnce(true);
     vi.stubEnv('HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_SERVER_ENABLED', 'false');
-    const listConnectedServiceProfiles = vi.fn(async ({ serviceId }: { serviceId: 'openai-codex' }) => ({
-      serviceId,
-      profiles: [],
-    }));
     const getServerFeaturesSnapshot = vi.fn(async () => ({
       status: 'ready' as const,
       features: {
@@ -124,9 +153,6 @@ describe('startDaemonRuntimeBootstrap', () => {
     const result = await startDaemonRuntimeBootstrap({
       api: {
         getServerFeaturesSnapshot,
-        listConnectedServiceProfiles,
-        listConnectedServiceAuthGroups: async () => [],
-        resolveProviderAccountUsageSource: async () => null,
         push: () => ({}),
       } as never,
       credentials: {
@@ -156,6 +182,7 @@ describe('startDaemonRuntimeBootstrap', () => {
       publicReleaseChannel: 'dev',
       connectedServicesRestartRequestedPids: new Set(),
       pidToTrackedSession: new Map(),
+      ...createQualifiedV4RuntimeFixture(),
       connectedServiceAuthGroupPreTurnSwitchCoordinator: {
         switchBeforeTurn: vi.fn(async () => ({
           status: 'session_not_found' as const,
@@ -184,7 +211,8 @@ describe('startDaemonRuntimeBootstrap', () => {
     expect(getServerFeaturesSnapshot).not.toHaveBeenCalled();
     expect(startConnectedServiceRefreshLoop).toHaveBeenCalledOnce();
     expect(startConnectedServiceQuotasLoop).toHaveBeenCalledOnce();
-    expect(listConnectedServiceProfiles).toHaveBeenCalled();
+    expect(qualifiedConnectedAccountApi.listAccounts).toHaveBeenCalled();
+    expect(qualifiedConnectedAccountApi.listGroups).toHaveBeenCalled();
     expect(loadQuota).not.toHaveBeenCalled();
   });
 
@@ -200,8 +228,6 @@ describe('startDaemonRuntimeBootstrap', () => {
     const result = await startDaemonRuntimeBootstrap({
       api: {
         listConnectedServiceProfiles: async ({ serviceId }: { serviceId: 'github' }) => ({ serviceId, profiles: [] }),
-        listConnectedServiceAuthGroups: async () => [],
-        resolveProviderAccountUsageSource: async () => null,
       } as never,
       credentials: {
         token: 'token',
@@ -375,8 +401,6 @@ describe('startDaemonRuntimeBootstrap', () => {
           serviceId,
           profiles: [],
         }),
-        listConnectedServiceAuthGroups: async () => [],
-        resolveProviderAccountUsageSource: async () => null,
         getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
         getConnectedServiceCredentialPlain: vi.fn(async () => ({
           content: { t: 'plain' as const, v: record },
@@ -411,6 +435,7 @@ describe('startDaemonRuntimeBootstrap', () => {
       publicReleaseChannel: 'dev',
       connectedServicesRestartRequestedPids: new Set(),
       pidToTrackedSession: new Map(),
+      ...createQualifiedV4RuntimeFixture(),
       connectedServiceAuthGroupPreTurnSwitchCoordinator: {
         switchBeforeTurn: vi.fn(async () => ({
           status: 'session_not_found' as const,
@@ -462,8 +487,6 @@ describe('startDaemonRuntimeBootstrap', () => {
     const input = {
       api: {
         listConnectedServiceProfiles: async ({ serviceId }: { serviceId: 'github' }) => ({ serviceId, profiles: [] }),
-        listConnectedServiceAuthGroups: async () => [],
-        resolveProviderAccountUsageSource: async () => null,
       } as never,
       credentials: {
         token: 'token',
@@ -489,6 +512,7 @@ describe('startDaemonRuntimeBootstrap', () => {
       publicReleaseChannel: 'dev',
       connectedServicesRestartRequestedPids: new Set(),
       pidToTrackedSession: new Map(),
+      ...createQualifiedV4RuntimeFixture(),
       connectedServiceAuthGroupPreTurnSwitchCoordinator: {
         switchBeforeTurn: vi.fn(async () => ({ status: 'session_not_found' as const })),
         applyCommittedGeneration: vi.fn(async (input) => ({ status: 'session_not_found', generation: input.generation })),

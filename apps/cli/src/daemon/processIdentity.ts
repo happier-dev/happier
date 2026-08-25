@@ -1,6 +1,6 @@
-import { execFile as execFileCallback } from 'node:child_process';
 import { readFile, readdir, readlink } from 'node:fs/promises';
-import { promisify } from 'node:util';
+
+import { execFileWithDeadline } from '@happier-dev/cli-common/process';
 
 import {
     readDarwinProcessFacts,
@@ -18,8 +18,6 @@ import {
     readWindowsProcessInventory,
     type WindowsProcessInventoryFact,
 } from './platform/windows/windowsProcessInventory';
-
-const execFile = promisify(execFileCallback);
 
 type SupportedProcessIdentityPlatform = 'darwin' | 'linux' | 'win32';
 
@@ -103,10 +101,11 @@ export async function readProcessIdentityByPid(
             return normalizeExactProcessIdentity(pid, processes.get(pid) ?? null);
         }
 
-        const execFileBoundary = dependencies.execFile ?? (async (command, args, options) => {
-            const result = await execFile(command, [...args], options);
-            return { stdout: result.stdout };
-        });
+        // A `child_process` `timeout` reports a killed `ps`/`powershell` as a SUCCESS with empty
+        // stdout on a stalled loop, which lands here as "this pid has no process row" — the same
+        // answer as a dead pid. Every generation check downstream (reattach, runner lock,
+        // heartbeat, spawn markers) then reads a live runner as unidentifiable.
+        const execFileBoundary = dependencies.execFile ?? execFileWithDeadline;
         const processes = platform === 'darwin'
             ? await readDarwinProcessFacts({ execFile: execFileBoundary, pids: [pid] })
             : await readWindowsProcessInventory({ execFile: execFileBoundary, pids: [pid] });

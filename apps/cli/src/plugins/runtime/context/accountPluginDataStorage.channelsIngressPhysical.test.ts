@@ -214,29 +214,32 @@ function createCurrentBinding(bindingId: string): Readonly<Record<string, JsonVa
 function createIngress(now: number): ConversationProviderObservationIngestInputV1 {
     return {
         connectionId: 'connection-1',
-        observation: {
-            kind: 'fullText',
+        entry: {
             observation: {
-                v: 1,
-                occurrenceId: 'telegram:update:channels-c3-physical',
-                occurredAt: now,
-                transport: { kind: 'poll' },
-                endpoint: { kind: 'direct', audience: 'direct', id: 'telegram:chat:100' },
-                actor: {
-                    principalId: 'telegram:user:999',
-                    label: 'Ada',
-                    kind: 'human',
-                    isIntegrationSelf: false,
-                },
-                message: {
-                    id: 'telegram:message:channels-c3-physical',
-                    revision: 'channels-c3-physical:1',
-                    text: 'x'.repeat(64 * 1024),
-                    addressingEvidence: 'none',
-                    contentProvenance: 'original',
-                    providerTimestamp: now,
+                kind: 'fullText',
+                observation: {
+                    v: 1,
+                    occurrenceId: 'telegram:update:channels-c3-physical',
+                    occurredAt: now,
+                    transport: { kind: 'poll' },
+                    endpoint: { kind: 'direct', audience: 'direct', id: 'telegram:chat:100' },
+                    actor: {
+                        principalId: 'telegram:user:999',
+                        label: 'Ada',
+                        kind: 'human',
+                        isIntegrationSelf: false,
+                    },
+                    message: {
+                        id: 'telegram:message:channels-c3-physical',
+                        revision: 'channels-c3-physical:1',
+                        text: 'x'.repeat(64 * 1024),
+                        addressingEvidence: 'none',
+                        contentProvenance: 'original',
+                        providerTimestamp: now,
+                    },
                 },
             },
+            eventCandidate: null,
         },
     };
 }
@@ -268,13 +271,13 @@ function createHttpCollectionBoundary() {
                 }
                 return { status: 200, data: { mode: 'e2ee' as const, updatedAt: 1 } };
             },
-            async post(url: string, body: unknown) {
+            async post(url: string, body: string) {
                 if (url.endsWith(PLUGIN_COLLECTION_GET_HTTP_PATH_V1)) {
-                    const request = PluginCollectionGetRequestV1Schema.parse(body);
+                    const request = PluginCollectionGetRequestV1Schema.parse(JSON.parse(body));
                     return { status: 200, data: { row: rows.get(request.rowId) ?? null } };
                 }
                 if (url.endsWith(PLUGIN_COLLECTION_QUERY_HTTP_PATH_V1)) {
-                    const request = PluginCollectionQueryRequestV1Schema.parse(body);
+                    const request = PluginCollectionQueryRequestV1Schema.parse(JSON.parse(body));
                     if (request.indexId !== 'by-kind') {
                         throw new Error(`Unexpected Channel Collection query index ${request.indexId}`);
                     }
@@ -300,7 +303,7 @@ function createHttpCollectionBoundary() {
                 if (!url.endsWith(PLUGIN_COLLECTION_MUTATION_HTTP_PATH_V1)) {
                     throw new Error(`Unexpected Account Data POST ${url}`);
                 }
-                const request = PluginCollectionMutationRequestV1Schema.parse(body);
+                const request = PluginCollectionMutationRequestV1Schema.parse(JSON.parse(body));
                 capturedMutationRequests.push(request);
                 const nextRows = new Map(rows);
                 const results: Array<Readonly<{ rowId: string; revision: number; deleted: boolean }>> = [];

@@ -159,6 +159,36 @@ describe('plugin webhook daemon HTTP transport', () => {
     }
   });
 
+  it('never claims against a server that does not advertise webhook capability, then resumes when it does', async () => {
+    // A daemon newer than its server sees no `plugins.webhooks` bit. The worker
+    // must stay entirely off the wire rather than probing the missing route.
+    let serverAdvertisesWebhooks = false;
+    const worker = startPluginWebhookDaemonWorkerV1({
+      credentials,
+      machineId: () => 'machine-1',
+      machineInstallationId: 'installation-1',
+      enabled: () => serverAdvertisesWebhooks,
+      logger: { debug: vi.fn() },
+      intervalMs: 5,
+    });
+
+    try {
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, 40);
+      });
+      expect(mocks.readAvailabilityInventory).not.toHaveBeenCalled();
+      expect(mocks.post).not.toHaveBeenCalled();
+
+      // Positive twin: the same live loop claims as soon as the server
+      // advertises the capability, so the silence above was the gate.
+      serverAdvertisesWebhooks = true;
+      await vi.waitFor(() => expect(mocks.post).toHaveBeenCalled());
+      expect(mocks.post.mock.calls[0]?.[0]).toContain('/v1/daemon/plugins/webhooks/claim');
+    } finally {
+      await worker.stop();
+    }
+  });
+
   it('projects iteration failures before they reach the generic daemon logger', async () => {
     const debug = vi.fn();
     mocks.readAvailabilityInventory.mockRejectedValueOnce(new Error(

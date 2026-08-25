@@ -11,6 +11,11 @@ import type { NpmRegistryJsonClient } from '@/plugins/distribution/npm/resolver'
 import { createPluginStateStore } from '@/plugins/store/state.testkit';
 
 const homes: string[] = [];
+// DNS is the one system boundary the acquisition owner touches; every fixture
+// host is a public destination unless a case supplies a different answer.
+const testResolveAddresses = async (): Promise<readonly Readonly<{ address: string; family: 4 | 6 }>[]> => (
+  [{ address: '93.184.216.34', family: 4 as const }]
+);
 const source = { id: 'marketplace:curated', title: 'Curated', kind: 'curated' as const, sourceUrl: 'https://marketplace.example.test/catalog.json' };
 const communitySource = { id: 'marketplace:community-npm', title: 'Community npm', kind: 'community-npm' as const, sourceUrl: 'https://registry.npmjs.org/-/v1/search?text=keywords:happier-plugin&size=100' };
 const COMMUNITY_INTEGRITY = 'sha512-AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ==';
@@ -115,8 +120,8 @@ describe('loadMarketplaceIndexSource', () => {
       return new Response(JSON.stringify(snapshot()), { status: 200, headers: { etag: '"v1"' } });
     });
 
-    const first = loadMarketplaceIndexSource({ source, happyHomeDir: home, fetchImpl, now: () => 100 });
-    const joined = loadMarketplaceIndexSource({ source, happyHomeDir: home, fetchImpl, now: () => 100 });
+    const first = loadMarketplaceIndexSource({ resolveAddresses: testResolveAddresses, source, happyHomeDir: home, fetchImpl, now: () => 100 });
+    const joined = loadMarketplaceIndexSource({ resolveAddresses: testResolveAddresses, source, happyHomeDir: home, fetchImpl, now: () => 100 });
     release();
     await expect(Promise.all([first, joined])).resolves.toEqual([expect.objectContaining({ freshness: { state: 'fresh', fetchedAtMs: 100 } }), expect.objectContaining({ freshness: { state: 'fresh', fetchedAtMs: 100 } })]);
     expect(fetchImpl).toHaveBeenCalledTimes(1);
@@ -125,15 +130,15 @@ describe('loadMarketplaceIndexSource', () => {
       expect(new Headers(init?.headers).get('if-none-match')).toBe('"v1"');
       return new Response(null, { status: 304 });
     });
-    await expect(loadMarketplaceIndexSource({ source, happyHomeDir: home, fetchImpl: conditionalFetch, now: () => 200 })).resolves.toMatchObject({ freshness: { state: 'fresh', fetchedAtMs: 200 } });
+    await expect(loadMarketplaceIndexSource({ resolveAddresses: testResolveAddresses, source, happyHomeDir: home, fetchImpl: conditionalFetch, now: () => 200 })).resolves.toMatchObject({ freshness: { state: 'fresh', fetchedAtMs: 200 } });
   });
 
   it('keeps bounded cached truth visible offline without converting it to trust authority', async () => {
     const home = await mkdtemp(join(tmpdir(), 'happier-marketplace-index-'));
     homes.push(home);
-    await loadMarketplaceIndexSource({ source, happyHomeDir: home, fetchImpl: async () => new Response(JSON.stringify(snapshot()), { status: 200 }), now: () => 100 });
+    await loadMarketplaceIndexSource({ resolveAddresses: testResolveAddresses, source, happyHomeDir: home, fetchImpl: async () => new Response(JSON.stringify(snapshot()), { status: 200 }), now: () => 100 });
 
-    const offline = await loadMarketplaceIndexSource({ source, happyHomeDir: home, fetchImpl: async () => { throw new Error('offline'); }, now: () => 200 });
+    const offline = await loadMarketplaceIndexSource({ resolveAddresses: testResolveAddresses, source, happyHomeDir: home, fetchImpl: async () => { throw new Error('offline'); }, now: () => 200 });
     expect(offline).toMatchObject({ freshness: { state: 'stale-offline', fetchedAtMs: 100, staleSinceMs: 200 } });
     expect(offline.diagnostics).toEqual(expect.arrayContaining([expect.objectContaining({ code: 'marketplace_source_refresh_failed' })]));
   });
@@ -142,6 +147,7 @@ describe('loadMarketplaceIndexSource', () => {
     const home = await mkdtemp(join(tmpdir(), 'happier-marketplace-index-'));
     homes.push(home);
     const result = await loadMarketplaceIndexSource({
+      resolveAddresses: testResolveAddresses,
       source,
       happyHomeDir: home,
       fetchImpl: async () => {
@@ -162,15 +168,15 @@ describe('loadMarketplaceIndexSource', () => {
   it('labels a rejected online refresh as stale rather than offline', async () => {
     const home = await mkdtemp(join(tmpdir(), 'happier-marketplace-index-'));
     homes.push(home);
-    await loadMarketplaceIndexSource({ source, happyHomeDir: home, fetchImpl: async () => new Response(JSON.stringify(snapshot()), { status: 200 }), now: () => 100 });
+    await loadMarketplaceIndexSource({ resolveAddresses: testResolveAddresses, source, happyHomeDir: home, fetchImpl: async () => new Response(JSON.stringify(snapshot()), { status: 200 }), now: () => 100 });
 
-    const rejected = await loadMarketplaceIndexSource({ source, happyHomeDir: home, fetchImpl: async () => new Response('rejected', { status: 500 }), now: () => 200 });
+    const rejected = await loadMarketplaceIndexSource({ resolveAddresses: testResolveAddresses, source, happyHomeDir: home, fetchImpl: async () => new Response('rejected', { status: 500 }), now: () => 200 });
     expect(rejected.freshness).toMatchObject({ state: 'stale', fetchedAtMs: 100, staleSinceMs: 200 });
   });
 
   it('rejects credential-bearing, non-HTTPS source URLs before network access', async () => {
     const fetchImpl = vi.fn();
-    await expect(loadMarketplaceIndexSource({ source: { ...source, sourceUrl: 'http://token@example.test/catalog.json' }, fetchImpl })).rejects.toThrow('credential-free HTTPS');
+    await expect(loadMarketplaceIndexSource({ resolveAddresses: testResolveAddresses, source: { ...source, sourceUrl: 'http://token@example.test/catalog.json' }, fetchImpl })).rejects.toThrow('credential-free HTTPS');
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
@@ -245,6 +251,7 @@ describe('loadMarketplaceIndexSource', () => {
     };
 
     const result = await loadMarketplaceIndexSource({
+      resolveAddresses: testResolveAddresses,
       source: communitySource,
       fetchImpl: async () => new Response(JSON.stringify(communityNpmSearchPayload()), { status: 200 }),
       communityNpmClient: client,
@@ -264,7 +271,7 @@ describe('loadMarketplaceIndexSource', () => {
     await mkdir(cacheDir, { recursive: true });
     const cachePath = join(cacheDir, `${createHash('sha256').update(source.sourceUrl).digest('hex')}.json`);
     await writeFile(cachePath, '{not-json', 'utf8');
-    const result = await loadMarketplaceIndexSource({ source, happyHomeDir: home, fetchImpl: async () => { throw new Error('offline'); } });
+    const result = await loadMarketplaceIndexSource({ resolveAddresses: testResolveAddresses, source, happyHomeDir: home, fetchImpl: async () => { throw new Error('offline'); } });
     expect(result.freshness.state).toBe('corrupt');
     expect(result.diagnostics).toEqual([expect.objectContaining({ code: 'marketplace_cache_corrupt' })]);
   });
@@ -272,9 +279,9 @@ describe('loadMarketplaceIndexSource', () => {
   it('does not reuse cached curation authority after the configured source binding changes', async () => {
     const home = await mkdtemp(join(tmpdir(), 'happier-marketplace-index-'));
     homes.push(home);
-    await loadMarketplaceIndexSource({ source, happyHomeDir: home, fetchImpl: async () => new Response(JSON.stringify(snapshot()), { status: 200 }), now: () => 100 });
+    await loadMarketplaceIndexSource({ resolveAddresses: testResolveAddresses, source, happyHomeDir: home, fetchImpl: async () => new Response(JSON.stringify(snapshot()), { status: 200 }), now: () => 100 });
     const rebound = { ...source, title: 'Rebound title' };
-    const result = await loadMarketplaceIndexSource({ source: rebound, happyHomeDir: home, fetchImpl: async () => { throw new Error('offline'); }, now: () => 200 });
+    const result = await loadMarketplaceIndexSource({ resolveAddresses: testResolveAddresses, source: rebound, happyHomeDir: home, fetchImpl: async () => { throw new Error('offline'); }, now: () => 200 });
     expect(result.entries).toEqual([]);
     expect(result.freshness.state).toBe('corrupt');
   });
@@ -284,6 +291,7 @@ describe('loadMarketplaceIndexSource', () => {
     homes.push(home);
     const diagnostics = Array.from({ length: 128 }, (_, index) => ({ code: `diagnostic_${index}`, message: `Diagnostic ${index}` }));
     await loadMarketplaceIndexSource({
+      resolveAddresses: testResolveAddresses,
       source,
       happyHomeDir: home,
       fetchImpl: async () => new Response(JSON.stringify({ ...snapshot(), diagnostics }), { status: 200 }),
@@ -291,6 +299,7 @@ describe('loadMarketplaceIndexSource', () => {
     });
 
     const result = await loadMarketplaceIndexSource({
+      resolveAddresses: testResolveAddresses,
       source,
       happyHomeDir: home,
       fetchImpl: async () => { throw new Error('offline'); },
@@ -306,7 +315,7 @@ describe('loadMarketplaceIndexSource', () => {
   ])('rejects literal private-network source %s before invoking the network boundary', async (sourceUrl) => {
     const privateSource = { ...source, sourceUrl };
     const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ ...snapshot(), source: privateSource }), { status: 200 }));
-    await expect(loadMarketplaceIndexSource({ source: privateSource, fetchImpl })).rejects.toThrow(/private|local|public/i);
+    await expect(loadMarketplaceIndexSource({ resolveAddresses: testResolveAddresses, source: privateSource, fetchImpl })).rejects.toThrow(/private|local|public/i);
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
@@ -315,7 +324,7 @@ describe('loadMarketplaceIndexSource', () => {
       expect(init?.redirect).toBe('manual');
       return new Response(null, { status: 302, headers: { location: 'https://attacker.example/catalog.json' } });
     });
-    const result = await loadMarketplaceIndexSource({ source, fetchImpl });
+    const result = await loadMarketplaceIndexSource({ resolveAddresses: testResolveAddresses, source, fetchImpl });
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     expect(result).toMatchObject({ freshness: { state: 'unavailable' }, entries: [] });
     expect(result.diagnostics[0]?.message).toMatch(/redirect.*origin/i);

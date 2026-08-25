@@ -3,15 +3,11 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { VOICE_RUNTIME_LOADED_ARTIFACT_BUDGET_BYTES_BOUNDS } from '@happier-dev/protocol';
 
 import {
-  VOICE_INFERENCE_WORKER_HANG_DEFAULTS,
+  VOICE_INFERENCE_WORKER_IPC_DEFAULTS,
   VOICE_INFERENCE_WORKER_MAX_FRAME_BYTES_BOUNDS,
-  VOICE_INFERENCE_WORKER_MISSED_PING_THRESHOLD_BOUNDS,
-  VOICE_INFERENCE_WORKER_PING_INTERVAL_MS_BOUNDS,
   VOICE_INFERENCE_WORKER_REQUEST_TIMEOUT_MS_BOUNDS,
   resolveVoiceInferenceMaxLoadedArtifactBytes,
   resolveVoiceInferenceWorkerMaxFrameBytes,
-  resolveVoiceInferenceWorkerMissedPingThreshold,
-  resolveVoiceInferenceWorkerPingIntervalMs,
   resolveVoiceInferenceWorkerRequestTimeoutMs,
 } from './voiceInferenceWorkerConfig';
 
@@ -72,31 +68,19 @@ describe('resolveVoiceInferenceMaxLoadedArtifactBytes', () => {
   });
 });
 
-describe('forked worker hang-resilience knobs', () => {
+describe('forked worker IPC safety knobs', () => {
   const REQUEST_TIMEOUT_KEY = 'HAPPIER_VOICE_INFERENCE_WORKER_REQUEST_TIMEOUT_MS';
-  const PING_INTERVAL_KEY = 'HAPPIER_VOICE_INFERENCE_WORKER_PING_INTERVAL_MS';
-  const MISSED_PING_KEY = 'HAPPIER_VOICE_INFERENCE_WORKER_MISSED_PING_THRESHOLD';
   const MAX_FRAME_KEY = 'HAPPIER_VOICE_INFERENCE_WORKER_MAX_FRAME_BYTES';
 
-  it('defaults each knob to the centralized hang defaults', () => {
+  it('defaults each knob to the centralized IPC defaults', () => {
     withEnv(REQUEST_TIMEOUT_KEY, undefined, () => {
       expect(resolveVoiceInferenceWorkerRequestTimeoutMs()).toBe(
-        VOICE_INFERENCE_WORKER_HANG_DEFAULTS.requestTimeoutMs,
-      );
-    });
-    withEnv(PING_INTERVAL_KEY, undefined, () => {
-      expect(resolveVoiceInferenceWorkerPingIntervalMs()).toBe(
-        VOICE_INFERENCE_WORKER_HANG_DEFAULTS.pingIntervalMs,
-      );
-    });
-    withEnv(MISSED_PING_KEY, undefined, () => {
-      expect(resolveVoiceInferenceWorkerMissedPingThreshold()).toBe(
-        VOICE_INFERENCE_WORKER_HANG_DEFAULTS.missedPingThreshold,
+        VOICE_INFERENCE_WORKER_IPC_DEFAULTS.requestTimeoutMs,
       );
     });
     withEnv(MAX_FRAME_KEY, undefined, () => {
       expect(resolveVoiceInferenceWorkerMaxFrameBytes()).toBe(
-        VOICE_INFERENCE_WORKER_HANG_DEFAULTS.maxFrameBytes,
+        VOICE_INFERENCE_WORKER_IPC_DEFAULTS.maxFrameBytes,
       );
     });
   });
@@ -105,16 +89,6 @@ describe('forked worker hang-resilience knobs', () => {
     withEnv(REQUEST_TIMEOUT_KEY, String(VOICE_INFERENCE_WORKER_REQUEST_TIMEOUT_MS_BOUNDS.min + 1_000), () => {
       expect(resolveVoiceInferenceWorkerRequestTimeoutMs()).toBe(
         VOICE_INFERENCE_WORKER_REQUEST_TIMEOUT_MS_BOUNDS.min + 1_000,
-      );
-    });
-    withEnv(PING_INTERVAL_KEY, String(VOICE_INFERENCE_WORKER_PING_INTERVAL_MS_BOUNDS.min + 500), () => {
-      expect(resolveVoiceInferenceWorkerPingIntervalMs()).toBe(
-        VOICE_INFERENCE_WORKER_PING_INTERVAL_MS_BOUNDS.min + 500,
-      );
-    });
-    withEnv(MISSED_PING_KEY, String(VOICE_INFERENCE_WORKER_MISSED_PING_THRESHOLD_BOUNDS.min + 1), () => {
-      expect(resolveVoiceInferenceWorkerMissedPingThreshold()).toBe(
-        VOICE_INFERENCE_WORKER_MISSED_PING_THRESHOLD_BOUNDS.min + 1,
       );
     });
     withEnv(MAX_FRAME_KEY, String(VOICE_INFERENCE_WORKER_MAX_FRAME_BYTES_BOUNDS.min + 1_024), () => {
@@ -138,24 +112,19 @@ describe('forked worker hang-resilience knobs', () => {
   });
 
   it('falls back to defaults for below-min or malformed overrides', () => {
-    withEnv(MISSED_PING_KEY, '0', () => {
-      expect(resolveVoiceInferenceWorkerMissedPingThreshold()).toBe(
-        VOICE_INFERENCE_WORKER_HANG_DEFAULTS.missedPingThreshold,
-      );
-    });
     withEnv(REQUEST_TIMEOUT_KEY, 'not-a-number', () => {
       expect(resolveVoiceInferenceWorkerRequestTimeoutMs()).toBe(
-        VOICE_INFERENCE_WORKER_HANG_DEFAULTS.requestTimeoutMs,
+        VOICE_INFERENCE_WORKER_IPC_DEFAULTS.requestTimeoutMs,
       );
     });
     withEnv(MAX_FRAME_KEY, String(VOICE_INFERENCE_WORKER_MAX_FRAME_BYTES_BOUNDS.min - 1), () => {
       expect(resolveVoiceInferenceWorkerMaxFrameBytes()).toBe(
-        VOICE_INFERENCE_WORKER_HANG_DEFAULTS.maxFrameBytes,
+        VOICE_INFERENCE_WORKER_IPC_DEFAULTS.maxFrameBytes,
       );
     });
   });
 
   it('keeps the per-frame ceiling well below the old 64 MiB bound (M2)', () => {
-    expect(VOICE_INFERENCE_WORKER_HANG_DEFAULTS.maxFrameBytes).toBeLessThan(64 * 1024 * 1024);
+    expect(VOICE_INFERENCE_WORKER_IPC_DEFAULTS.maxFrameBytes).toBeLessThan(64 * 1024 * 1024);
   });
 });

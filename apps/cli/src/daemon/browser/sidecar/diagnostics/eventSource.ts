@@ -195,6 +195,9 @@ export function createBrowserSidecarDiagnosticsEventSourceBridge(input: Readonly
 }> {
     const activeBindings = new Map<string, ActiveSourceBinding>();
     const ordinalsByView = new Map<string, number>();
+    // The view each ordinal key belongs to. `browserViewKey` is an opaque injective encoding, so
+    // session-scoped cleanup matches on the recorded view ref rather than on the key's shape.
+    const viewRefsByOrdinalKey = new Map<string, { browserSessionId: string; viewId: string }>();
     const publisher = createSidecarDiagnosticsPublisher({
         ownerAccountId: input.ownerAccountId,
         publish: (event) => {
@@ -206,6 +209,10 @@ export function createBrowserSidecarDiagnosticsEventSourceBridge(input: Readonly
         const key = browserViewKey(target);
         const next = (ordinalsByView.get(key) ?? 0) + 1;
         ordinalsByView.set(key, next);
+        viewRefsByOrdinalKey.set(key, {
+            browserSessionId: target.browserSessionId,
+            viewId: target.viewId,
+        });
         return next;
     }
 
@@ -244,7 +251,9 @@ export function createBrowserSidecarDiagnosticsEventSourceBridge(input: Readonly
                 stopBinding(binding);
             }
         }
-        ordinalsByView.delete(browserViewKey(closeInput));
+        const closedKey = browserViewKey(closeInput);
+        ordinalsByView.delete(closedKey);
+        viewRefsByOrdinalKey.delete(closedKey);
     }
 
     return {
@@ -335,9 +344,10 @@ export function createBrowserSidecarDiagnosticsEventSourceBridge(input: Readonly
                     stopBinding(binding);
                 }
             }
-            for (const key of [...ordinalsByView.keys()]) {
-                if (key.startsWith(`${closeInput.browserSessionId}\u0000`)) {
+            for (const [key, viewRef] of [...viewRefsByOrdinalKey.entries()]) {
+                if (viewRef.browserSessionId === closeInput.browserSessionId) {
                     ordinalsByView.delete(key);
+                    viewRefsByOrdinalKey.delete(key);
                 }
             }
             input.store.clearSession(closeInput);
@@ -347,6 +357,7 @@ export function createBrowserSidecarDiagnosticsEventSourceBridge(input: Readonly
                 stopBinding(binding);
             }
             ordinalsByView.clear();
+            viewRefsByOrdinalKey.clear();
         },
     };
 }

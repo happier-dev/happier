@@ -34,7 +34,10 @@ vi.mock('@/plugins/projection/registry/createResolvedContributionRegistry', () =
   resolveMergedContributionRegistry,
 }));
 
-import { executePluginSettingsAdministrationAction } from './administration';
+import {
+  executePluginSettingsAdministrationAction,
+  projectAccountSettingsAdministrationSnapshot,
+} from './administration';
 
 const credentials: Credentials = {
   token: 'account-token',
@@ -292,5 +295,62 @@ describe('Plugin Settings administration declaration defaults', () => {
       kind: 'plugins.settings.get',
       data: { localId: 'nullable', value: null },
     });
+  });
+});
+
+describe('Plugin Settings Account administration snapshot projection', () => {
+  const descriptors = [
+    {
+      id: 'endpoint',
+      title: 'Endpoint',
+      target: { kind: 'plugin' as const },
+      scope: 'account' as const,
+      schema: { type: 'string' as const },
+      default: 'https://default.example',
+    },
+    {
+      id: 'endpointByServer',
+      title: 'Endpoint by server',
+      target: { kind: 'plugin' as const },
+      scope: 'account' as const,
+      schema: { type: 'object' as const },
+    },
+  ];
+
+  it('projects revision and effective values from one snapshot while hiding backing maps', () => {
+    expect(projectAccountSettingsAdministrationSnapshot({
+      descriptors,
+      hiddenFieldIds: new Set(['endpointByServer']),
+      snapshot: {
+        scope: { kind: 'account' },
+        revision: '41',
+        values: {
+          endpoint: 'https://snapshot.example',
+          endpointByServer: { srv_one: 'https://hidden.example' },
+        },
+      },
+    })).toEqual({
+      scope: { kind: 'account' },
+      revision: '41',
+      fields: [{
+        localId: 'endpoint',
+        title: 'Endpoint',
+        secret: false,
+        value: 'https://snapshot.example',
+      }],
+    });
+  });
+
+  it('uses the declaration default only when the same snapshot has no own value', () => {
+    expect(projectAccountSettingsAdministrationSnapshot({
+      descriptors,
+      hiddenFieldIds: new Set(['endpointByServer']),
+      snapshot: { scope: { kind: 'account' }, revision: '42', values: {} },
+    }).fields).toEqual([{
+      localId: 'endpoint',
+      title: 'Endpoint',
+      secret: false,
+      value: 'https://default.example',
+    }]);
   });
 });

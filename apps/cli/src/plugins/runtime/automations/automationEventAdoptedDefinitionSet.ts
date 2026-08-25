@@ -13,7 +13,7 @@ import {
   MAX_AUTOMATION_EVENT_SOURCE_DEFINITIONS_PER_PAGE,
   buildAutomationPluginEventOccurrenceEvidenceV1,
   createCanonicalJsonSigningInput,
-  deriveAutomationEventTriggerEvidenceEqualityTagV1,
+  deriveAutomationOccurrenceTriggerEvidenceEqualityTagV1,
   deriveAutomationOccurrenceKeyV1,
   decodeBase64,
   encodeBase64,
@@ -24,8 +24,8 @@ import {
   readAutomationEventAdmitHttpRequestCanonicalUtf8ByteLengthV1,
   freezeAutomationRunPluginEventExecutionRecipeV1,
   sameAutomationAccountContentIdentityV1,
-  sealAutomationEventTriggerEvidenceEnvelopeV1,
-  sealAutomationRunPluginEventTriggerEvidenceEnvelopeV1,
+  sealAutomationOccurrenceTriggerEvidenceEnvelopeV1,
+  sealAutomationRunTriggerEvidenceEnvelopeV1,
   type AutomationEventSourceDefinitionV1,
   type AutomationEventActionHttpCallerV1,
   type AutomationEventAdmitEncryptedDefinitionEvidenceV1,
@@ -35,6 +35,7 @@ import {
   type AutomationEventDeclarationReleaseV1,
   type AutomationEventStoredDefinitionProjectionV1,
   type AutomationEventStoredDefinitionsReadResultV1,
+  type AutomationEventCheckpointRetirementCandidateV1,
   type AutomationEventSourcesListInputV1,
   type AutomationEventSourcesListResultV1,
   type AutomationEventSourcesListTransportV1,
@@ -218,6 +219,12 @@ function definitionStableKey(definition: Readonly<{
     definition.eventRef.pluginId,
     definition.eventRef.localId,
   ].map((part) => `${part.length}:${part}`).join('|');
+}
+
+function checkpointRetirementCandidateKey(
+  candidate: AutomationEventCheckpointRetirementCandidateV1,
+): string {
+  return createCanonicalJsonSigningInput(candidate);
 }
 
 function createPublicProjectionScopeFingerprint(params: Readonly<{
@@ -495,12 +502,16 @@ export function createAutomationEventAdoptedDefinitionSetV1(params: Readonly<{
   function listInput(paramsForPage: Readonly<{
     cursor?: string;
     knownRevision?: string;
+    checkpointRetirementCandidates?: readonly AutomationEventCheckpointRetirementCandidateV1[];
   }>): AutomationEventSourcesListInputV1 {
     return AutomationEventSourcesListInputV1Schema.parse({
       transport: params.transport,
       pageSize,
       ...(paramsForPage.cursor === undefined ? {} : { cursor: paramsForPage.cursor }),
       ...(paramsForPage.knownRevision === undefined ? {} : { knownRevision: paramsForPage.knownRevision }),
+      ...(paramsForPage.checkpointRetirementCandidates === undefined
+        ? {}
+        : { checkpointRetirementCandidates: paramsForPage.checkpointRetirementCandidates }),
     });
   }
 
@@ -791,6 +802,54 @@ export function createAutomationEventAdoptedDefinitionSetV1(params: Readonly<{
       : 'refresh';
   }
 
+  async function classifyCheckpointRetirements(paramsForClassification: Readonly<{
+    snapshot: AdoptedSnapshot;
+    candidates: readonly AutomationEventCheckpointRetirementCandidateV1[];
+    signal: AbortSignal;
+  }>): Promise<
+    | Readonly<{ kind: 'unchanged'; checkpointRetirements: readonly AutomationEventCheckpointRetirementCandidateV1[] }>
+    | Readonly<{ kind: 'cursorStale'; currentRevision: string }>
+    | Readonly<{ kind: 'unavailable' }>
+  > {
+    let result: AutomationEventStoredDefinitionsReadResultV1;
+    try {
+      const parsed = AutomationEventStoredDefinitionsReadResultV1Schema.safeParse(
+        await params.readStoredDefinitions({
+          caller: params.caller,
+          input: listInput({
+            knownRevision: paramsForClassification.snapshot.revision,
+            checkpointRetirementCandidates: paramsForClassification.candidates,
+          }),
+          signal: paramsForClassification.signal,
+        }),
+      );
+      if (!parsed.success) return { kind: 'unavailable' };
+      result = parsed.data;
+    } catch {
+      return { kind: 'unavailable' };
+    }
+    if (!await isCurrent(paramsForClassification.signal)) return { kind: 'unavailable' };
+    if (result.kind === 'cursorStale') return result;
+    if (
+      result.kind !== 'unchanged'
+      || result.revision !== paramsForClassification.snapshot.revision
+      || !isSameAutomationEventDeclarationReleaseV1(
+        result.eventDeclarationRelease,
+        paramsForClassification.snapshot.eventDeclarationRelease,
+      )
+      || result.scope !== paramsForClassification.snapshot.storedDefinitionScope
+      || result.checkpointRetirements === undefined
+    ) return { kind: 'unavailable' };
+    const requested = new Set(paramsForClassification.candidates.map(checkpointRetirementCandidateKey));
+    if (result.checkpointRetirements.some((candidate) => !requested.has(checkpointRetirementCandidateKey(candidate)))) {
+      return { kind: 'unavailable' };
+    }
+    return {
+      kind: 'unchanged',
+      checkpointRetirements: result.checkpointRetirements,
+    };
+  }
+
   function acquireAdoptedSnapshotRefresh(): AdoptedSnapshotRefresh {
     if (adoptedSnapshotRefresh !== null) {
       adoptedSnapshotRefresh.waiters += 1;
@@ -963,7 +1022,33 @@ export function createAutomationEventAdoptedDefinitionSetV1(params: Readonly<{
         }))
         : snapshot.definitions;
 
+      if (
+        request.input.checkpointRetirementCandidates !== undefined
+        && request.input.cursor === undefined
+        && request.input.knownRevision !== snapshot.revision
+      ) {
+        return AutomationEventSourcesListResultV1Schema.parse({
+          kind: 'cursorStale',
+          currentRevision: snapshot.revision,
+        });
+      }
       if (request.input.cursor === undefined && request.input.knownRevision === snapshot.revision) {
+        if (request.input.checkpointRetirementCandidates !== undefined) {
+          const classification = await classifyCheckpointRetirements({
+            snapshot,
+            candidates: request.input.checkpointRetirementCandidates,
+            signal,
+          });
+          if (classification.kind === 'cursorStale') {
+            return AutomationEventSourcesListResultV1Schema.parse(classification);
+          }
+          if (classification.kind === 'unavailable') return { kind: 'unavailable' };
+          return AutomationEventSourcesListResultV1Schema.parse({
+            kind: 'unchanged',
+            revision: snapshot.revision,
+            checkpointRetirements: classification.checkpointRetirements,
+          });
+        }
         return AutomationEventSourcesListResultV1Schema.parse({
           kind: 'unchanged',
           revision: snapshot.revision,
@@ -1174,12 +1259,12 @@ export function createAutomationEventAdoptedDefinitionSetV1(params: Readonly<{
             observationTransport: definition.observationTransport.kind,
             occurrenceKey: deriveAutomationOccurrenceKeyV1(evidence),
             occurredAt: admissionInput.occurredAt,
-            triggerEvidenceEnvelope: sealAutomationEventTriggerEvidenceEnvelopeV1({
+            triggerEvidenceEnvelope: sealAutomationOccurrenceTriggerEvidenceEnvelopeV1({
               material: accountMaterial,
               evidence,
               randomBytes: request.randomBytes,
             }),
-            occurrenceEvidenceEqualityTag: deriveAutomationEventTriggerEvidenceEqualityTagV1({
+            occurrenceEvidenceEqualityTag: deriveAutomationOccurrenceTriggerEvidenceEqualityTagV1({
               material: accountMaterial,
               accountId: request.accountId,
               automationId: definition.automationId,
@@ -1210,7 +1295,7 @@ export function createAutomationEventAdoptedDefinitionSetV1(params: Readonly<{
             return { ...base, outcome: { kind: 'skipped', reason: 'filtered' } };
           }
 
-          const triggerEvidence = sealAutomationRunPluginEventTriggerEvidenceEnvelopeV1({
+          const triggerEvidence = sealAutomationRunTriggerEvidenceEnvelopeV1({
             material: accountMaterial,
             randomBytes: request.randomBytes,
             evidence: {

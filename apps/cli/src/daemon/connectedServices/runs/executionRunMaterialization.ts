@@ -3,6 +3,8 @@ import { randomUUID } from 'node:crypto';
 import { logger } from '@/ui/logger';
 import { isCatalogAgentId } from '@/agent/catalog/resolution';
 import type { CatalogAgentId } from '@/agent/catalog/ids';
+import { isLegacyServiceKeyedCompatibilityCatalogAgent } from '@/agent/catalog/registry';
+import type { AgentCatalogEntry } from '@/agent/catalog/types';
 import {
     CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV,
     resolveConnectedAccountRequestAuthCapabilityPath,
@@ -10,6 +12,7 @@ import {
 import {
     isPersistedExecutionRunConnectedServicesLaunchIdentityExact,
     normalizePersistedExecutionRunConnectedServicesLaunchV1,
+    type ExecutionRunAgentContributionIdentityV1,
 } from '@happier-dev/protocol';
 
 import type { resolveConnectedServiceAuthForSpawn } from '../resolveConnectedServiceAuthForSpawn';
@@ -56,6 +59,15 @@ type ResolveAuthForSpawn = (
     input: Parameters<typeof resolveConnectedServiceAuthForSpawn>[0],
 ) => ReturnType<typeof resolveConnectedServiceAuthForSpawn>;
 
+type ExecutionRunAgentPurposeContributions =
+    AgentSpawnPurposeContributions
+    & Readonly<{
+        catalogEntriesById?: Readonly<Record<
+            string,
+            Pick<AgentCatalogEntry, 'connectedServiceIds'>
+        >>;
+    }>;
+
 export type ExecutionRunTargetRegistration = Readonly<{
     runKey: string;
     runnerPid: number;
@@ -92,7 +104,15 @@ export type CreateExecutionRunConnectedServicesBridgeDeps = Readonly<{
     acquireAgentPurposeContributions: (input: Readonly<{
         agentId: CatalogAgentId;
     }>) => Promise<Readonly<{
-        contributions: AgentSpawnPurposeContributions;
+        contributions: ExecutionRunAgentPurposeContributions;
+        /**
+         * The exact immutable Agent contribution this lease's registry would derive purposes and
+         * request-auth uses from. `null` when the registry cannot prove one, which makes the run
+         * unadoptable rather than adoptable under whatever generation is current later.
+         */
+        resolveAgentContributionIdentity(): Promise<
+            ExecutionRunAgentContributionIdentityV1 | null
+        >;
         isCurrent(): boolean;
         release(): Promise<void>;
     }>>;
@@ -412,6 +432,12 @@ export function createExecutionRunConnectedServicesBridge(
                     });
             }
             if (requestAuthPurposeBindings.length > 0) {
+                const legacyConnectedServiceCatalogAgent =
+                    isLegacyServiceKeyedCompatibilityCatalogAgent(
+                        contributionLease.contributions.catalogEntriesById?.[
+                            input.agentId
+                        ],
+                    );
                 const capabilityPath =
                     input.materializedRoot
                         ? resolveConnectedAccountRequestAuthCapabilityPath(
@@ -437,7 +463,12 @@ export function createExecutionRunConnectedServicesBridge(
                             lease: purposeBindingLease,
                             subjectId: purposeBindingLease.subjectId,
                             uses: purposeSnapshot.requestAuthUses,
-                            legacyServiceKeyedCompatibility: true,
+                            ...(legacyConnectedServiceCatalogAgent
+                                ? {
+                                    legacyServiceKeyedCompatibility:
+                                        true as const,
+                                }
+                                : {}),
                             registerRedaction: redactionLease.add,
                         }),
                         materializedRootDir: input.materializedRoot,
@@ -535,7 +566,44 @@ export function createExecutionRunConnectedServicesBridge(
             ) {
                 return true;
             }
-            if (!(await cleanupPriorRunKey(registration.runKey))) return false;
+            // A live runner proves only that a process still exists, never which build of the
+            // Agent it is executing. Purposes and request-auth uses below are derived from the
+            // registry current RIGHT NOW, so adoption is only sound when that registry still
+            // offers the exact contribution generation this run was launched with. A record whose
+            // writer could not prove one — including a predecessor-shaped marker — is unproven
+            // and must not be upgraded into fresh request-auth authority.
+            const contributionLease = await deps.acquireAgentPurposeContributions({
+                agentId: registrationAgentId,
+            });
+            const releaseUnusedLease = async (reason: string): Promise<false> => {
+                await contributionLease.release().catch(() => undefined);
+                logger.debug(
+                    '[DAEMON RUN] Execution-run adoption refused without exact Agent generation correspondence',
+                    { runId: input.runId, runnerPid: input.runnerPid, reason },
+                );
+                return false;
+            };
+            const currentAgentContribution = await contributionLease
+                .resolveAgentContributionIdentity();
+            const launchedAgentContribution = registration.agentContribution;
+            if (!launchedAgentContribution) {
+                return await releaseUnusedLease('launch_generation_unproven');
+            }
+            if (
+                !currentAgentContribution
+                || currentAgentContribution.pluginId
+                    !== launchedAgentContribution.pluginId
+                || currentAgentContribution.localId
+                    !== launchedAgentContribution.localId
+                || currentAgentContribution.immutableGenerationId
+                    !== launchedAgentContribution.immutableGenerationId
+            ) {
+                return await releaseUnusedLease('current_generation_differs');
+            }
+
+            if (!(await cleanupPriorRunKey(registration.runKey))) {
+                return await releaseUnusedLease('prior_run_cleanup_failed');
+            }
 
             let cleanupOnExit: (() => void | Promise<void>) | null = null;
             if (registration.materializedRoot) {
@@ -544,7 +612,9 @@ export function createExecutionRunConnectedServicesBridge(
                     agentId: registrationAgentId,
                     materializedRoot: registration.materializedRoot,
                 });
-                if (!cleanupOnExit) return false;
+                if (!cleanupOnExit) {
+                    return await releaseUnusedLease('adopted_root_cleanup_unavailable');
+                }
             }
             let entry: RunReleaseEntry | null = null;
             try {
@@ -554,6 +624,7 @@ export function createExecutionRunConnectedServicesBridge(
                     runnerPid: input.runnerPid,
                     agentId: registrationAgentId,
                     runner,
+                    contributionLease,
                     connectedServicesBindings:
                         registration.connectedServicesBindings,
                     materializedRoot: registration.materializedRoot,
@@ -584,7 +655,10 @@ export function createExecutionRunConnectedServicesBridge(
                 return true;
             } catch (error) {
                 if (entry) {
+                    // The entry owns the lease once `prepareEntry` returns it.
                     await cleanupEntry(entry, { skipFilesystem: true });
+                } else {
+                    await contributionLease.release().catch(() => undefined);
                 }
                 logger.debug(
                     '[DAEMON RUN] Exact execution-run request-auth adoption failed closed',
@@ -733,6 +807,8 @@ export function createExecutionRunConnectedServicesBridge(
                     }
                     const connectedServicesBindings = resolved.connectedServicesBindings ?? input.connectedServices;
                     const activationId = randomUUID();
+                    const agentContribution = await contributionLease
+                        .resolveAgentContributionIdentity();
                     entry = await prepareEntry({
                         activationId,
                         runKey,
@@ -753,6 +829,7 @@ export function createExecutionRunConnectedServicesBridge(
                         activationId,
                         runKey,
                         agentId,
+                        ...(agentContribution ? { agentContribution } : {}),
                         materializationKey: runKey,
                         connectedServicesBindings,
                         connectedServiceSelectionsEnv: readRuntimeIdentityEnv(env),

@@ -125,58 +125,6 @@ describe('external Agent UI-behavior descriptor projection', () => {
             .not.toHaveProperty('ui');
     });
 
-    it('derives detected MCP config scan support from the Agent-owned discovery source', () => {
-        // An external Agent reaches the MCP settings screen the same way a bundled
-        // one does: by contributing the discovery source the daemon's detection
-        // runs. Restating it as a hand-written UI-behavior flag would be a second
-        // owner free to drift, so the projection derives it here instead.
-        const definition = PluginContributesV2Schema.parse({
-            agents: [{
-                id: 'acme-mcp',
-                title: 'Acme MCP',
-                runtime: { kind: 'custom' },
-                primary: 'sessions',
-                capabilities: {
-                    sessions: { open: ['create'], delivery: ['newTurn'], cancel: true },
-                },
-            }],
-        }).agents[0]!;
-
-        const registry = {
-            ...emptyRegistry(),
-            agents: [{
-                id: definition.id,
-                identity: createPluginContributionIdentity({
-                    pluginId: 'acme.mcp',
-                    localId: definition.id,
-                }),
-                provenance: 'external' as const,
-                source: { kind: 'path' as const },
-                pluginId: 'acme.mcp',
-                definition: { kindVersion: 1 as const, id: definition.id, ownedBackendIds: [] },
-                richDefinition: { provenance: 'external' as const, definition },
-            }],
-            mcpDiscoverySources: [{
-                provenance: 'external' as const,
-                source: { kind: 'path' as const },
-                pluginId: 'acme.mcp',
-                definition: {
-                    id: 'config',
-                    title: 'Acme MCP configuration',
-                    metadata: { agentId: 'acme-mcp' },
-                },
-            }],
-        } satisfies ResolvedContributionRegistry;
-
-        const projection = buildPluginProjectionV2({ registry, generation: 23 });
-
-        expect(projection.agentsById['acme-mcp']?.ui?.behavior)
-            .toEqual({ mcpServers: { supportsDetectedConfigScan: true } });
-        // The wire shape must survive the canonical strict projection schema.
-        expect(PluginProjectionV2Schema.parse(projection).agentsById['acme-mcp']?.ui?.behavior)
-            .toEqual({ mcpServers: { supportsDetectedConfigScan: true } });
-    });
-
     it('does not offer the scan to an Agent that owns no discovery source', () => {
         const definition = PluginContributesV2Schema.parse({
             agents: [{

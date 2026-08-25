@@ -3,6 +3,7 @@ import {
     createPluginContributionIdentity,
     type PluginDeclarativePreparedTargetedSurfaceInventoryEntryV1,
 } from '@happier-dev/protocol';
+import { createPluginSessionInfoSectionRendererIdV1 } from '@happier-dev/protocol/plugins/contributions/ui';
 
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import {
@@ -132,6 +133,49 @@ export function resolveDeclarativeProjectionModels(params: Readonly<{
             params.onRendererModelUnavailable?.({
                 pluginId,
                 rendererId: renderer.definition.id,
+                error,
+            });
+        }
+    }
+    for (const section of params.registry.sessionInfoSections ?? []) {
+        const pluginId = section.pluginId.trim();
+        if (!pluginId) continue;
+        const rendererId = createPluginSessionInfoSectionRendererIdV1(section.definition.id);
+        try {
+            const permittedActions = actionEntries
+                .filter((entry) => entry.identity.pluginId === pluginId
+                    && section.definition.actions.includes(entry.identity.localId));
+            const model = createStablePluginDeclarativeModel({
+                pluginId,
+                generation: String(params.generation),
+                renderer: {
+                    id: rendererId,
+                    kind: 'declarative',
+                    root: { kind: 'state', state: 'loading' },
+                    documentSource: { kind: 'resource', resourceId: section.definition.resourceId },
+                },
+                settings: [],
+                actions: permittedActions.map((entry) => entry.identity),
+                actionPresentations: permittedActions.map(({ identity, title, icon }) => Object.freeze({
+                    identity,
+                    title,
+                    ...(icon ? { icon } : {}),
+                })),
+                destinations: [],
+                uiQueries: [],
+                ...(params.preparedTargetedSurfacesByPluginId?.[pluginId] === undefined
+                    ? {}
+                    : { preparedTargetedSurfaces: params.preparedTargetedSurfacesByPluginId[pluginId] }),
+                availability: {
+                    visible: true,
+                    enabledActions,
+                },
+            });
+            modelsByRendererKey[`${pluginId}\0${rendererId}`] = model;
+        } catch (error) {
+            params.onRendererModelUnavailable?.({
+                pluginId,
+                rendererId,
                 error,
             });
         }

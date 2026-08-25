@@ -142,8 +142,6 @@ describe('validatePeerMachineRpcDirectRequest', () => {
                 accountPublicKey: Buffer.alloc(32, 3).toString('base64url'),
             },
             trustRoots: [{ keyId: 'key_1', publicKey: Buffer.alloc(32, 4).toString('base64url') }],
-            revokedGrantIds: undefined,
-            revokedGrantFamilyIds: undefined,
             callLimiter,
             quarantine,
             replayKeyCache,

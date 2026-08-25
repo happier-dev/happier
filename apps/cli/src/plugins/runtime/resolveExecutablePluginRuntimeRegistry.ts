@@ -6,7 +6,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
 import {
     BUNDLED_FIRST_PARTY_PLUGIN_PACKAGE_NAMES,
-} from '../projection/registry/sources/generatedBundledPlugins';
+} from '../projection/registry/sources/generatedBundledPluginManifests';
 import { BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS } from '../projection/registry/sources/generatedBundledPluginArtifacts';
 import type { PluginCompatibilityDiagnostic } from '../validation/diagnostics/types';
 import { createResolvedContributionRegistry } from '../projection/registry/createResolvedContributionRegistry';
@@ -15,7 +15,6 @@ import {
     projectAgentDaemonSpawnHooksCatalogEntry,
 } from '../projection/registry/agentCatalogEntryHooks';
 import {
-    collectUnresolvedTargetedContributionSemanticTargetPluginIds,
     dropTargetedContributionAdmissionDiagnostics,
 } from '../projection/registry/targetedContributions';
 import type {
@@ -32,6 +31,7 @@ import {
     normalizePluginAccountCollectionContractsV1,
     PluginMachineExecutionOriginV1Schema,
     PluginMachineMaterializationRefV1Schema,
+    TargetActionApprovalReplayPlacementV1Schema,
     resolveProviderManagedRuntimeDeclarationV1,
     createProviderManagedPurposeBindingsEqualityKeyV1,
     resolveAttentionDeliveryPolicyDecision,
@@ -45,6 +45,7 @@ import {
     type PluginContributionIdentityV1,
     type PluginMachineExecutionOriginV1,
     type PluginMachineMaterializationRefV1,
+    type TargetActionApprovalReplayPlacementV1,
     type NormalizedPluginAccountCollectionContractV1,
     type PluginCollectionCandidatePreparationBindingV1,
     type PluginCollectionContractRefV1,
@@ -66,6 +67,7 @@ import {
 import {
     createBundledActivationSourceResolver,
     prepareBundledExecutableGenerationAdmission,
+    resolveBundledImmutableGenerationRetentionIds,
     resolveCurrentHostBundledImmutableArtifacts,
     selectBundledExecutableImmutableArtifacts,
 } from './bundledActivationSource';
@@ -115,6 +117,12 @@ import {
     createCurrentGlobalExternalSessionsAuthorService,
 } from '@/session/external/currentGlobalAuthorService';
 import type {
+    ConfiguredExternalSessionSourceAgentContribution,
+} from '@/session/external/configuredSourceMaterializer';
+import type {
+    ConfiguredExternalSessionSourceRefusal,
+} from '@/session/external/configuredSourceRegistry';
+import type {
     CurrentGlobalExternalSessionsRouter,
 } from '@/session/external/currentGlobalRouting';
 import type { ExternalSessionHostOperationOwner } from '@/session/external/hostOperationOwner';
@@ -156,7 +164,10 @@ import {
     collectResolvedGeneratedReactNativeArtifactOwners,
     findGeneratedReactNativeCollectionMigrationsModule,
 } from '../projection/registry/ui/generatedUiArtifactOwners';
-import { resolveManifestHostAccessRequests } from './hostAccess/manifestRequests';
+import {
+    resolveManifestHostAccessRequests,
+    resolveManifestHostAccessRequestsForQualifiedContribution,
+} from './hostAccess/manifestRequests';
 import { createPluginResourceAccountStorageResolver } from './hostAccess/resolve';
 import type { StablePluginConnectedAccountsOwner } from './invocation/services/connectedAccounts';
 import type { ConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
@@ -197,7 +208,6 @@ import {
     type JsonValue,
     type PluginInvocationContext,
 } from '@happier-dev/plugin-sdk';
-import { readTargetedContributionPointSemanticRefs } from '@happier-dev/plugin-sdk/host/targeted-contributions';
 import { type PluginEvents } from '@happier-dev/plugin-sdk/events';
 import { type McpDiscoveredEndpoint as PluginMcpDiscoveredEndpoint, type McpDiscoveryRequest as PluginMcpDiscoveryRequest, type McpDiscoveryResult as PluginMcpDiscoveryResult, type McpServerRef as PluginMcpServerRef } from '@happier-dev/plugin-sdk/mcp';
 import { type PluginResourceKind, type PromptAssetAdapter } from '@happier-dev/plugin-sdk/resources';
@@ -221,7 +231,10 @@ import type {
 import {
     withPluginInvocationServiceBindingAvailability,
 } from './invocation/services/unavailable';
-import type { HostCurrentSessionUiServices } from '@/agent/runtime/state/currentSessionUiTypes';
+import {
+    createHostSessionPresentationOwner,
+    type HostCurrentSessionUiServices,
+} from '@/agent/runtime/state/currentSessionUiTypes';
 import type { HostRuntimeLimitMeasurementRecorder } from '@/agent/runtime/state/runtimeLimitMeasurement';
 import {
     createConnectedAccountContributionRegistry,
@@ -232,7 +245,7 @@ import {
     type ConnectedAccountHostRuntimeInvoker,
 } from './connectedAccounts/runtimeInvoker';
 import {
-    resolveHostOwnedConnectedAccountConfiguredOrigins,
+    resolveHostOwnedConnectedAccountConfiguredEndpoints,
 } from './connectedAccounts/configuredOrigins';
 import type { StablePluginManagedDependenciesHost } from './invocation/services/managedDependencies';
 import { composeProviderBindingProcessAccess } from './providerBindings/invocationAccess';
@@ -290,7 +303,9 @@ import type {
     PluginServices,
 } from '@happier-dev/plugin-sdk';
 import { getRuntimeInstallableAdapter } from '@/packagedRuntime/installables/registry';
-import { resolveManagedProviderRuntimeExecutable } from '@/providers/lifecycle/resolveManagedProviderRuntimeLaunch';
+import {
+    resolveManagedProviderRuntimeExecutable,
+} from '@/providers/lifecycle/resolveManagedProviderRuntimeLaunch';
 import { resolveExecutableManagedDependenciesRegistry } from '../projection/registry/managedDependencyExecutables';
 import { resolvePluginStorePaths } from '../store/paths';
 import {
@@ -311,6 +326,9 @@ import {
     readCurrentCommittedPluginGenerations,
     readPreparedImmutablePluginGeneration,
 } from '../store/registry/generationStore';
+import {
+    resolveCurrentInstalledPluginGenerationRuntimeExecutable,
+} from './installedGenerationRuntimeExecutable';
 import { readPluginManifest } from '../manifest/read';
 import { ingestCanonicalPluginManifest } from '../manifest/ingest';
 import { pluginSourceProvenanceForKind } from '../manifest/sourceProvenance';
@@ -350,7 +368,11 @@ import {
 import {
     createVoiceAccountPluginHttpCredentialBindingHost,
 } from './fetch/voiceAccountCredentialBinding';
-import { createGlobalFetchRuntime } from './fetch/globalFetchRuntime';
+import {
+    createGlobalFetchRuntime,
+    type GlobalFetchRuntimeDependencies,
+} from './fetch/globalFetchRuntime';
+import type { PluginNetworkAddressResolver } from './fetch/originLocality';
 import { createVoiceCredentialResolver } from '@/daemon/voice/credentials/resolver';
 import {
     createPluginMcpSessionResolver,
@@ -589,6 +611,15 @@ export type ResolvedExecutablePluginRuntimeRegistry = Readonly<{
         signal?: AbortSignal,
     ): Promise<PluginMachineExecutionOriginV1 | null>;
     /**
+     * The same runtime owner resolves the exact daemon placement required by
+     * a durable API Action approval. Unlike an SDK execution origin, this
+     * placement deliberately has no plugin materialization component.
+     */
+    resolveCurrentPluginApprovalReplayPlacement?(
+        pluginId: string,
+        signal?: AbortSignal,
+    ): Promise<TargetActionApprovalReplayPlacementV1 | null>;
+    /**
      * Host-private exact candidate preparation. It reuses the committed
      * module loader and Account Data stage host; it neither activates a
      * plugin nor exposes the daemon immutable generation to a caller.
@@ -703,6 +734,13 @@ export type ResolvedExecutablePluginRuntimeRegistry = Readonly<{
     /** Internal preparation capability. Real resolved registries provide it; partial
      * consumer fixtures may omit it because ordinary invocation never calls it. */
     activatePluginsForValidation?: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['activatePluginsForValidation'];
+    /**
+     * Fences one plugin whose readiness was rejected after activation and records
+     * its one typed `plugin_activation_failed` diagnostic, leaving retained peers
+     * serving. Real resolved registries provide it; partial consumer fixtures may
+     * omit it because ordinary invocation never calls it.
+     */
+    recordPluginActivationFailure?: (pluginId: string, message: string) => void | Promise<void>;
     /** DATA-DAEMON-DB's one named candidate preparation step. */
     prepareDaemonDatabases?(input: Readonly<{
         pluginIds: readonly string[];
@@ -837,9 +875,9 @@ export type ResolvedExecutablePluginRuntimeRegistry = Readonly<{
             isGenerationCurrent(): boolean;
         }>,
     ): Promise<PluginServices['mcp']>;
-    /** Host-private current-global External Sessions projection for an exact
-     * retained Runner Agent identity. Synchronous capabilities remain a
-     * conservative Runner-local hint; async operations use this owner. */
+    /** Public current-global External Sessions service for a retained Runner
+     * Agent. The retained identity remains the caller's hard-revocation
+     * boundary; every method routes through the published current owner. */
     createRetainedRunnerAgentCurrentGlobalExternalSessionsService?(
         params: Readonly<{
             binding: AgentSessionRunnerBindingV1;
@@ -943,8 +981,11 @@ export type ResolvedExecutablePluginRuntimeRegistry = Readonly<{
     }>): Promise<StablePluginStructuredMessageResolution>;
     /** Synchronously fences invocation capabilities while resource disposal remains lease-delayed. */
     retireConsumers(): void;
-    /** Fences only the named plugin generations while retained peer generations remain usable. */
-    retirePluginConsumers?(pluginIds: readonly string[]): void;
+    /**
+     * Fences named plugin generations synchronously, then settles their
+     * generation-scoped durable consumers before a replacement can publish.
+     */
+    retirePluginConsumers?(pluginIds: readonly string[]): Promise<void>;
     /** Boundedly settles changed generation-scoped background work before replacement starts. */
     settleRetiredBackgroundServices?(pluginIds: readonly string[]): Promise<void>;
     /** Starts committed background work after this registry is adopted/current. */
@@ -1271,6 +1312,17 @@ async function assertCommittedResourceActivationIdentity(params: Readonly<{
     }
 }
 
+/**
+ * The two process-owned boundaries every plugin HTTP request finally crosses:
+ * the DNS answer that admits an origin, and the socket that must connect to
+ * exactly that answer. They travel together because pinning is only meaningful
+ * for the addresses the admission decision validated, and a composed host that
+ * substitutes one without the other would still leave the machine.
+ */
+export type PluginRuntimeNetworkDependencies = Readonly<{
+    resolveNetworkAddresses?: PluginNetworkAddressResolver;
+}> & GlobalFetchRuntimeDependencies;
+
 export async function resolveExecutablePluginRuntimeRegistry(
     params?: Readonly<{
         happyHomeDir?: string;
@@ -1323,13 +1375,15 @@ export async function resolveExecutablePluginRuntimeRegistry(
         externalSessionsActiveServerId?: string;
         /**
          * Daemon/controller-lifetime public current-global External Sessions
-         * router. Long-lived plugin contexts built by this registry capture it
-         * instead of this registry's own owner, so an unchanged plugin that
-         * outlives a peer Agent replacement keeps resolving the published
-         * generation. Absent it (an ephemeral or scoped registry with no
-         * controller), this registry is the only authority and targets itself.
+         * router. Production registry construction always provides it. A
+         * registry without the controller router has no public External
+         * Sessions authority; it must never silently target itself.
          */
         currentGlobalExternalSessionsRouter?: CurrentGlobalExternalSessionsRouter;
+        /** Invalidates projections after a same-generation lazy activation fails terminally. */
+        onTerminalActivationFailure?: (pluginId: string) => void;
+        /** Process-owned network boundaries for this registry's one plugin HTTP host. */
+        networkDependencies?: PluginRuntimeNetworkDependencies;
     }>,
 ): Promise<ResolvedExecutablePluginRuntimeRegistry> {
     const generation = params?.generation ?? 0;
@@ -1389,9 +1443,9 @@ export async function resolveExecutablePluginRuntimeRegistry(
                 paths: pluginStorePaths,
                 commit: committed.commit,
                 retainedCurrentHostGenerationIds:
-                    bundledImmutableArtifactsForCurrentHost.map(
-                        (artifact) => artifact.record.immutableGenerationId,
-                    ),
+                    resolveBundledImmutableGenerationRetentionIds({
+                        artifacts: bundledExecutableImmutableArtifacts,
+                    }),
             });
             if (retirement.status === 'authentication-unavailable') {
                 logger.warn('[PLUGIN RUNTIME] Obsolete generation custody retirement awaits authentication');
@@ -1410,10 +1464,9 @@ export async function resolveExecutablePluginRuntimeRegistry(
         }
     }
     // The publisher installs the daemon runtime bundle, and the session-runner leaves it
-    // stages beside it, outside the compiler's output directory. Activation and relative
-    // runner-module resolution both anchor on that published entry, not on the package
-    // root export, which is the compiler's own emit and is used only to resolve the
-    // installed plugin root.
+    // stages beside it, outside the compiler's output directory. Packaged activation
+    // anchors on that published entry, not on the package root export, which is the
+    // compiler's own emit and is used only to resolve the installed plugin root.
     const immutableArtifactEntryPathsByPackageName = new Map(
         bundledImmutableArtifactsForCurrentHost.flatMap((artifact) => {
             const admitted = committed?.generations.get(artifact.record.pluginId);
@@ -1440,6 +1493,14 @@ export async function resolveExecutablePluginRuntimeRegistry(
                 : [];
         }),
     );
+    // Source-development activation stays source-backed, while cross-process runner factories
+    // must resolve and persist against the exact admitted immutable generation.
+    const runnerImmutableArtifactsByPackageName = new Map(
+        bundledExecutableImmutableArtifacts.flatMap((artifact) => {
+            const admitted = committed?.generations.get(artifact.record.pluginId);
+            return admitted ? [[artifact.packageName, { artifact, admitted }] as const] : [];
+        }),
+    );
     const resolveBundledActivationSource = createBundledActivationSourceResolver({
         bundledPackageNames: BUNDLED_FIRST_PARTY_PLUGIN_PACKAGE_NAMES,
         immutableArtifactPackageNames: bundledImmutableArtifactsForCurrentHost.map(
@@ -1448,6 +1509,28 @@ export async function resolveExecutablePluginRuntimeRegistry(
         immutableArtifactEntryPathsByPackageName,
         immutableArtifactRootPathsByPackageName,
         immutableArtifactRecordsByPackageName,
+        runnerImmutableArtifactEntryPathsByPackageName: new Map(
+            [...runnerImmutableArtifactsByPackageName].map(([packageName, { artifact, admitted }]) => [
+                packageName,
+                join(
+                    admitted.rootPath,
+                    ...(artifact.daemonEntryRelativePath
+                        ?? artifact.packageEntryRelativePath).split('/'),
+                ),
+            ]),
+        ),
+        runnerImmutableArtifactRootPathsByPackageName: new Map(
+            [...runnerImmutableArtifactsByPackageName].map(([packageName, { admitted }]) => [
+                packageName,
+                admitted.rootPath,
+            ]),
+        ),
+        runnerImmutableArtifactRecordsByPackageName: new Map(
+            [...runnerImmutableArtifactsByPackageName].map(([packageName, { admitted }]) => [
+                packageName,
+                admitted.record,
+            ]),
+        ),
         unavailableImmutableArtifactPackageNames: committed?.unavailableBundledPackageNames,
         pluginStorePaths,
     });
@@ -1670,6 +1753,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
                         manifestAuthority: 'external',
                         factories: facts,
                     });
+                    return facts;
                 },
             };
         }
@@ -1692,96 +1776,15 @@ export async function resolveExecutablePluginRuntimeRegistry(
                     manifestAuthority: 'external',
                     factories: facts,
                 });
+                return facts;
             },
         };
     };
-    const semanticTargetPluginIds = collectUnresolvedTargetedContributionSemanticTargetPluginIds({
-        pluginContributionPoints: contributes.pluginContributionPoints ?? [],
-        targetedPluginContributions: contributes.targetedPluginContributions ?? [],
-        immutableGenerationIdsByPluginId: Object.freeze(Object.fromEntries(
-            committedImmutableGenerationIdsByPluginId,
-        )),
-    });
-    const semanticPointRefsByPluginId = new Map<
-        string,
-        ReturnType<typeof readTargetedContributionPointSemanticRefs>
-    >();
-    const activationTargetsByPluginId = new Map(
-        contributes.activationTargets
-            .filter((target) => target.provenance === 'external')
-            .map((target) => [target.pluginId, target] as const),
-    );
-    for (const pluginId of semanticTargetPluginIds) {
-        const target = activationTargetsByPluginId.get(pluginId);
-        if (!target || !committed) continue;
-        try {
-            const source = resolveCommittedActivationSource(target, {
-                recordActivatedManifestAuthority: false,
-            });
-            if (!source || source.kind === 'bundled') continue;
-            const module = await loadPluginModule({ source });
-            if (!await committed.isCurrent()) continue;
-            const moduleManifest = ingestCanonicalPluginManifest(module.manifest, {
-                manifestAuthority: 'external',
-                // Same record, same provenance as the committed manifest this
-                // is compared against: a local working tree is not a published
-                // artifact, so the reserved-namespace rule must not silently
-                // drop its semantic contribution points.
-                sourceProvenance: pluginSourceProvenanceForKind(target.sourceSpec?.kind),
-                // The committed JSON manifest already passed the current-host
-                // compatibility gate. This is an exact identity check, not a
-                // second compatibility decision on a module definition.
-                enforceEngineCompatibility: false,
-            });
-            if (!moduleManifest.ok
-                || serializeCanonicalPluginManifest(moduleManifest.manifest)
-                    !== serializeCanonicalPluginManifest(target.manifest)) {
-                continue;
-            }
-            const semanticPointRefs = readTargetedContributionPointSemanticRefs(
-                module.manifest,
-            );
-            if (semanticPointRefs.length > 0) {
-                semanticPointRefsByPluginId.set(pluginId, semanticPointRefs);
-            }
-        } catch {
-            // The cold registry retains its fail-closed unavailable diagnostic.
-            // Loading module definitions adds no activation or fallback path.
-        }
-    }
-    if (committed) {
-        try {
-            if (!await committed.isCurrent()) {
-                semanticPointRefsByPluginId.clear();
-            }
-        } catch {
-            semanticPointRefsByPluginId.clear();
-        }
-    }
-    const pluginContributionPoints = contributes.pluginContributionPoints?.map((point) => {
-        const targetRefs = semanticPointRefsByPluginId.get(point.pluginId);
-        if (!targetRefs) return point;
-        const semanticPointRefs = targetRefs.filter((ref) => (
-            ref.targetPluginId === point.pluginId
-            && ref.id === point.definition.id
-            && point.definition.protocols.some((protocol) => (
-                protocol.id === ref.protocol.id
-                && protocol.version === ref.protocol.version
-            ))
-        ));
-        return semanticPointRefs.length === 0
-            ? point
-            : Object.freeze({
-                ...point,
-                semanticPointRefs: Object.freeze([...semanticPointRefs]),
-            });
-    });
     contributes = createResolvedContributionRegistry({
         ...contributes,
-        ...(pluginContributionPoints ? { pluginContributionPoints } : {}),
         // The first normalization can precede durable generation selection and
-        // external definition hydration. Re-run every targeted admission fact
-        // only from this one committed snapshot.
+        // immutable generation selection. Re-run every targeted admission fact
+        // only from this one committed manifest snapshot.
         pluginDiagnosticsByPluginId: dropTargetedContributionAdmissionDiagnostics(
             contributes.pluginDiagnosticsByPluginId,
         ),
@@ -1856,6 +1859,9 @@ export async function resolveExecutablePluginRuntimeRegistry(
         happyHomeDir: params?.happyHomeDir,
         resolveActivationSource: resolveCommittedActivationSource,
         adoptActivationComponent: (component) => adoptActivationComponent(component),
+        ...(params?.onTerminalActivationFailure
+            ? { onTerminalActivationFailure: params.onTerminalActivationFailure }
+            : {}),
         invocationServices: {
             createOrdinaryServiceBinding(
                 bindingGeneration,
@@ -2263,6 +2269,32 @@ export async function resolveExecutablePluginRuntimeRegistry(
             materializationRef: Object.freeze({ ...origin.data.materializationRef }),
         }) : null;
     };
+    const resolveCurrentPluginApprovalReplayPlacement = async (
+        pluginId: string,
+        signal?: AbortSignal,
+    ): Promise<TargetActionApprovalReplayPlacementV1 | null> => {
+        signal?.throwIfAborted();
+        if (!params?.resolveCurrentMachineExecutionOriginContext) return null;
+        const beforeImmutableGenerationId = await resolveCurrentPluginImmutableGenerationId(pluginId);
+        if (!beforeImmutableGenerationId) return null;
+        let context: CurrentMachineExecutionOriginContext | null;
+        try {
+            context = await params.resolveCurrentMachineExecutionOriginContext(signal);
+        } catch {
+            return null;
+        }
+        signal?.throwIfAborted();
+        const afterImmutableGenerationId = await resolveCurrentPluginImmutableGenerationId(pluginId);
+        if (
+            !context
+            || beforeImmutableGenerationId !== afterImmutableGenerationId
+        ) return null;
+        const placement = TargetActionApprovalReplayPlacementV1Schema.safeParse({
+            serverId: context.serverIdentityId,
+            machineId: context.machineId,
+        });
+        return placement.success ? Object.freeze({ ...placement.data }) : null;
+    };
     const collectionContractMatchesRef = (
         contract: NormalizedPluginAccountCollectionContractV1,
         ref: PluginCollectionContractRefV1,
@@ -2599,7 +2631,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
     const quiesceDaemonDatabases = async (
         pluginIds: readonly string[],
     ): Promise<PluginDaemonDatabaseQuiescence> => await daemonDatabaseHost.quiesce(pluginIds);
-    const retirePluginConsumers = (pluginIds: readonly string[]): void => {
+    const retirePluginConsumers = async (pluginIds: readonly string[]): Promise<void> => {
         activatedRegistry.retireBackgroundServices(pluginIds);
         for (const pluginId of new Set(pluginIds)) {
             retiredRuntimeConsumerPluginIds.add(pluginId);
@@ -2609,6 +2641,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
                 lifecycle.controller.abort(createRetiredPluginGenerationError(pluginId));
             }
         }
+        await daemonDatabaseHost.retire(pluginIds);
     };
     const buildPromptAssetAdapterRegistry = () => createTargetPromptAssetAdapterRegistry({
         generation: activatedRegistry.generation,
@@ -2746,7 +2779,10 @@ export async function resolveExecutablePluginRuntimeRegistry(
             currentGlobalExternalSessions?.dispose();
             currentGlobalExternalSessions = null;
             currentGlobalExternalSessionsPublicationBasis = null;
-            externalSessionProjectionDiagnosticsByPluginId = Object.freeze({});
+            refreshExternalSessionProjectionDiagnostics(
+                Object.freeze([]),
+                Object.freeze([]),
+            );
             return;
         }
         const agents = Object.freeze(activeAgents.map(({ agent }) => agent));
@@ -2813,12 +2849,14 @@ export async function resolveExecutablePluginRuntimeRegistry(
                             params.externalSessionHostOperationOwner,
                     }
                     : {}),
+                onSourceRefusalsChanged: (refusals) => {
+                    refreshExternalSessionProjectionDiagnostics(agents, refusals);
+                },
                 isCurrent: () => !allRuntimeConsumersRetired,
             });
             currentGlobalExternalSessions = next;
             currentGlobalExternalSessionsPublicationBasis = publicationBasis;
-            externalSessionProjectionDiagnosticsByPluginId =
-                projectExternalSessionSourceRefusalDiagnostics(agents, next.sourceRefusals);
+            refreshExternalSessionProjectionDiagnostics(agents, next.sourceRefusals);
             previous?.dispose();
         } catch (error) {
             // Only a host-integrity failure reaches here now — an unreadable
@@ -2830,7 +2868,10 @@ export async function resolveExecutablePluginRuntimeRegistry(
             previous?.dispose();
             currentGlobalExternalSessions = null;
             currentGlobalExternalSessionsPublicationBasis = null;
-            externalSessionProjectionDiagnosticsByPluginId = Object.freeze({});
+            refreshExternalSessionProjectionDiagnostics(
+                Object.freeze([]),
+                Object.freeze([]),
+            );
             logger.warn(
                 '[PLUGIN RUNTIME] Current-global External Sessions service is unavailable',
                 {
@@ -2880,10 +2921,77 @@ export async function resolveExecutablePluginRuntimeRegistry(
                 if (demands.length === 0) return;
                 await activateContributionsOnDemand(demands);
             },
+            readPublicCallerAccess: (caller) => {
+                const target = resolveExactActivationTarget(caller.pluginId);
+                const hostAccessRequests = target
+                    ? resolveManifestHostAccessRequestsForQualifiedContribution({
+                        manifest: target.manifest,
+                        pluginId: target.pluginId,
+                        contribution: caller.contribution,
+                    })
+                    : null;
+                if (!target || !hostAccessRequests) {
+                    return 'unavailable';
+                }
+                const policy = invocationServiceOwners
+                    .resolveInvocationHostPolicy({
+                        pluginId: target.pluginId,
+                        generation: String(activatedRegistry.generation),
+                        qualifiedId: caller.contribution.qualifiedId,
+                    }, {
+                        hostAccessRequests,
+                        surface: caller.surface,
+                        ...(caller.sessionId ? { sessionId: caller.sessionId } : {}),
+                    });
+                return policy.serviceBinding.availability.sessions;
+            },
         });
-    const publicCurrentGlobalExternalSessions: CurrentGlobalExternalSessionsRouter =
-        params?.currentGlobalExternalSessionsRouter
-        ?? currentGlobalExternalSessionsTarget;
+    const publicCurrentGlobalExternalSessions =
+        params?.currentGlobalExternalSessionsRouter;
+    /**
+     * The public External Sessions service has one router binding regardless of
+     * whether it came from an ordinary SDK context or a retained Runner. The
+     * caller's generation remains a hard-revocation boundary, while source
+     * choice and HostAccess are deliberately re-read from the current global
+     * owner by each service method.
+    */
+    const bindCurrentGlobalExternalSessionsForPublicCaller = (input: Readonly<{
+        pluginId: string;
+        contribution: Readonly<{
+            id: string;
+            qualifiedId: string;
+        }>;
+        surface: string;
+        sessionId?: string;
+        signal: AbortSignal;
+        isGenerationCurrent(): boolean;
+    }>) => createCurrentGlobalExternalSessionsAuthorBinding({
+        pluginId: input.pluginId,
+        signal: input.signal,
+        isGenerationCurrent: input.isGenerationCurrent,
+        ...(params?.externalSessionsActiveServerDir
+            ? { activeServerDir: params.externalSessionsActiveServerDir }
+            : {}),
+        ...(params?.externalSessionPluginAdmissionOwner?.takeoverStart
+            ? {
+                takeoverStart:
+                    params.externalSessionPluginAdmissionOwner.takeoverStart,
+            }
+            : {}),
+        resolveCurrent: () =>
+            publicCurrentGlobalExternalSessions?.resolveCurrent() ?? null,
+        activateConfiguredSources: async (agentId) =>
+            await publicCurrentGlobalExternalSessions
+                ?.activateConfiguredSources(agentId),
+        readCurrentPublicAccess: () =>
+            publicCurrentGlobalExternalSessions
+                ?.readPublicCallerAccess?.({
+                    pluginId: input.pluginId,
+                    contribution: input.contribution,
+                    surface: input.surface,
+                    ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+                }) ?? 'unavailable',
+    });
     const refreshCurrentGlobalExternalSessionsAuthor = async (): Promise<void> => {
         const previousPublication = currentGlobalExternalSessionsPublicationTail;
         let releasePublication!: () => void;
@@ -2983,7 +3091,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
         const presentationOwner = runtimeSeed.session
             && runtimeSeed.currentSession
             && immutableGenerationId
-            ? Object.freeze({
+            ? createHostSessionPresentationOwner({
                 pluginId: runtimeSeed.plugin.id,
                 contributionId: runtimeSeed.contribution.id,
                 generationId: immutableGenerationId,
@@ -3245,7 +3353,14 @@ export async function resolveExecutablePluginRuntimeRegistry(
         }))),
     });
     const stableHttpHost = createStablePluginHttpHost({
-        adapter: createGlobalFetchRuntime(),
+        adapter: createGlobalFetchRuntime(
+            params?.networkDependencies?.openPinnedStream
+                ? { openPinnedStream: params.networkDependencies.openPinnedStream }
+                : {},
+        ),
+        ...(params?.networkDependencies?.resolveNetworkAddresses
+            ? { resolveNetworkAddresses: params.networkDependencies.resolveNetworkAddresses }
+            : {}),
         redactInterceptorText({ seed, value }) {
             return invocationServiceOwners.redactDiagnosticText({
                 pluginId: seed.plugin.id,
@@ -3341,8 +3456,37 @@ export async function resolveExecutablePluginRuntimeRegistry(
         systemTools: authoritativeContributes.systemTools ?? Object.freeze([]),
         managedDependencies,
         resolveSystemTool: resolveDeclaredSystemTool,
-        async resolvePackagedRuntimeBinary(ref) {
-            const command = await resolveManagedProviderRuntimeExecutable(ref);
+        async resolvePackagedRuntimeBinary(ref, context) {
+            const provider = (authoritativeContributes.providers ?? []).find(
+                (candidate) => (
+                    candidate.identity.pluginId === context.pluginId
+                    && candidate.identity.localId === context.providerLocalId
+                ),
+            );
+            let command: string | null = null;
+            if (provider?.provenance === 'external') {
+                const generation = committed?.generations.get(context.pluginId);
+                if (committed && generation?.installation) {
+                    command = await resolveCurrentInstalledPluginGenerationRuntimeExecutable({
+                        executable: ref,
+                        rootPath: generation.rootPath,
+                        files: generation.record.files,
+                        isCurrent: async () => {
+                            try {
+                                return context.isCurrent()
+                                    && isPluginConsumerCurrent(context.pluginId)
+                                    && await committed.isCurrent()
+                                    && context.isCurrent()
+                                    && isPluginConsumerCurrent(context.pluginId);
+                            } catch {
+                                return false;
+                            }
+                        },
+                    });
+                }
+            } else if (provider?.provenance === 'first_party') {
+                command = await resolveManagedProviderRuntimeExecutable(ref);
+            }
             if (!command) {
                 throw new PluginError({
                     code: 'plugin_packaged_runtime_binary_unavailable',
@@ -3411,7 +3555,6 @@ export async function resolveExecutablePluginRuntimeRegistry(
     declaredMcpTransportConnector = createStableDeclaredMcpTransportConnector({
         resolveExecutable: executableResolver,
     });
-    await refreshCurrentGlobalExternalSessionsAuthor();
     let automationEventAdoptedDefinitionOwners: readonly Readonly<{
         caller: PluginMachineMaterializationRefV1;
         transport: AutomationEventSourcesListTransportV1;
@@ -3711,28 +3854,16 @@ export async function resolveExecutablePluginRuntimeRegistry(
                         currentSessionId: seed.session?.id ?? null,
                         sessionScopes: binding.sessionScopes ?? Object.freeze([]),
                         isCurrent: seed.isGenerationCurrent,
-                        external: createCurrentGlobalExternalSessionsAuthorBinding({
+                        external: bindCurrentGlobalExternalSessionsForPublicCaller({
                             pluginId: seed.plugin.id,
+                            contribution: seed.contribution,
+                            surface: seed.surface,
                             signal: seed.signal,
                             isGenerationCurrent:
                                 seed.isGenerationCurrent,
-                            ...(params?.externalSessionsActiveServerDir
-                                ? {
-                                    activeServerDir:
-                                        params.externalSessionsActiveServerDir,
-                                }
+                            ...(seed.session?.id
+                                ? { sessionId: seed.session.id }
                                 : {}),
-                            ...(params?.externalSessionPluginAdmissionOwner?.takeoverStart
-                                ? {
-                                    takeoverStart:
-                                        params.externalSessionPluginAdmissionOwner.takeoverStart,
-                                }
-                                : {}),
-                            resolveCurrent: () =>
-                                publicCurrentGlobalExternalSessions.resolveCurrent(),
-                            activateConfiguredSources: async (agentId) =>
-                                await publicCurrentGlobalExternalSessions
-                                    .activateConfiguredSources(agentId),
                         }),
                         createHandleCapabilities: ({ sessionId, readSummary }) => (
                             createPluginSessionHandleCapabilitiesFactory({
@@ -3878,16 +4009,14 @@ export async function resolveExecutablePluginRuntimeRegistry(
                     if (!committed || !await committed.isCurrent()) return false;
                     return isChannelLocallyCurrent();
                 };
-                const channelHostAccessRequests = Object.freeze([
-                    ...channelTarget.manifest.hostAccess.required.map((request) => Object.freeze({
-                        request,
-                        required: true,
-                    })),
-                    ...channelTarget.manifest.hostAccess.optional.map((request) => Object.freeze({
-                        request,
-                        required: false,
-                    })),
-                ]);
+                const channelHostAccessRequests = resolveManifestHostAccessRequests({
+                    manifest: channelTarget.manifest,
+                    pluginId: ref.pluginId,
+                    contribution: {
+                        family: 'notificationChannels',
+                        localId: ref.localId,
+                    },
+                });
                 return Object.freeze({
                     generation: entry.generation,
                     isCurrent: isChannelCurrent,
@@ -3916,7 +4045,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
                         const presentationOwner = channelSeed.session
                             && channelSeed.currentSession
                             && immutableGenerationId
-                            ? Object.freeze({
+                            ? createHostSessionPresentationOwner({
                                 pluginId: channelSeed.plugin.id,
                                 contributionId: channelSeed.contribution.id,
                                 generationId: immutableGenerationId,
@@ -4150,14 +4279,10 @@ export async function resolveExecutablePluginRuntimeRegistry(
         const appliedGeneration = activationApplied && desiredGeneration !== null
             ? target.immutableGenerationId
             : null;
-        const distribution = target.installation?.source.distribution
-            ?? (activationTarget.sourceSpec.kind === 'bundled' ? 'bundled' : null);
-        if (!distribution) return null;
         return Object.freeze({
             immutableGenerationId: target.immutableGenerationId,
             desiredImmutableGenerationId: desiredGeneration,
             appliedImmutableGenerationId: appliedGeneration,
-            distribution,
             applied: appliedGeneration === target.immutableGenerationId,
             selectedAccess: Object.freeze([...(desired?.installation?.optionalAccess ?? [])]),
         });
@@ -4526,6 +4651,74 @@ export async function resolveExecutablePluginRuntimeRegistry(
         composerReferences: authoritativeContributes.composerReferences ?? Object.freeze([]),
         targetRegistrations: activatedRegistry.targetRegistrations,
         resolveGenerationLifecycle: resolveRuntimeConsumerLifecycle,
+        createInvocationContext(input) {
+            const pluginVersion = [...activatedRegistry.targetActivationFacts].reverse().find((fact) => (
+                fact.pluginId === input.reference.pluginId
+                && fact.generation === input.generation
+                && fact.status === 'active'
+            ))?.pluginVersion;
+            if (!pluginVersion) {
+                throw new Error(`Active Composer reference '${input.reference.pluginId}/${input.reference.localId}' has no activation identity`);
+            }
+            const lifetime = createPluginInvocationLifetime(input.signal);
+            const immutableGenerationId = immutableGenerationIdsByPluginId.get(input.reference.pluginId);
+            const currentSession = input.sessionId ? resolveCurrentSessionUiBinding(input.sessionId) : null;
+            const seed = Object.freeze({
+                plugin: Object.freeze({ id: input.reference.pluginId, version: pluginVersion }),
+                contribution: Object.freeze({
+                    id: input.reference.localId,
+                    qualifiedId: `${input.reference.pluginId}/composerReferences/${input.reference.localId}`,
+                }),
+                generation: input.generation,
+                correlationId: randomUUID(),
+                surface: 'cli' as const,
+                ...(input.sessionId ? { session: Object.freeze({ id: input.sessionId }) } : {}),
+                signal: lifetime.signal,
+                redactionLifetimeSignal: lifetime.redactionLifetimeSignal,
+                isGenerationCurrent: () => (
+                    !input.signal.aborted
+                    && input.isCurrent()
+                    && activatedRegistry.activatedPluginIds.has(input.reference.pluginId)
+                ),
+            });
+            const presentationOwner = currentSession && immutableGenerationId
+                ? createHostSessionPresentationOwner({
+                    pluginId: seed.plugin.id,
+                    contributionId: seed.contribution.id,
+                    generationId: immutableGenerationId,
+                    invocationId: seed.correlationId,
+                })
+                : undefined;
+            try {
+                const serviceBinding = invocationServiceOwners.createOrdinaryServiceBinding(
+                    seed.generation,
+                    `${seed.contribution.qualifiedId}:${seed.correlationId}:binding`,
+                    [],
+                    seed.contribution.qualifiedId,
+                );
+                const services = invocationServiceOwners.createServices(seed, serviceBinding);
+                return Object.freeze({
+                    context: Object.freeze({
+                        plugin: seed.plugin,
+                        contribution: seed.contribution,
+                        surface: seed.surface,
+                        ...(input.sessionId ? { session: Object.freeze({ id: input.sessionId }) } : {}),
+                        signal: seed.signal,
+                        services,
+                        ui: createPluginInvocationPresentation({
+                            currentSession: currentSession ?? null,
+                            signal: seed.signal,
+                            isGenerationCurrent: seed.isGenerationCurrent,
+                            ...(presentationOwner ? { presentationOwner } : {}),
+                        }),
+                    }),
+                    complete: () => lifetime.complete(),
+                });
+            } catch (error) {
+                lifetime.complete();
+                throw error;
+            }
+        },
     });
     const composerAttachments = createTargetComposerAttachmentRegistry({
         targetRegistrations: activatedRegistry.targetRegistrations,
@@ -4580,7 +4773,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
                 ),
             });
             const presentationOwner = currentSession && immutableGenerationId
-                ? Object.freeze({
+                ? createHostSessionPresentationOwner({
                     pluginId: seed.plugin.id,
                     contributionId: seed.contribution.id,
                     generationId: immutableGenerationId,
@@ -4685,6 +4878,33 @@ export async function resolveExecutablePluginRuntimeRegistry(
             ...(promptAssetProjectionDiagnosticsByPluginId[pluginId] ?? []),
             ...(externalSessionProjectionDiagnosticsByPluginId[pluginId] ?? []),
         ]);
+    }
+
+    /**
+     * The configured-source lifecycle is the sole Account-revision owner. Its
+     * admitted refusal facts refresh this existing registry diagnostics map in
+     * place, including the previous owners whose snapshot must be cleared.
+     */
+    function refreshExternalSessionProjectionDiagnostics(
+        agents: readonly ConfiguredExternalSessionSourceAgentContribution[],
+        refusals: readonly ConfiguredExternalSessionSourceRefusal[],
+    ): void {
+        const previousPluginIds = Object.keys(
+            externalSessionProjectionDiagnosticsByPluginId,
+        );
+        const next = projectExternalSessionSourceRefusalDiagnostics(agents, refusals);
+        externalSessionProjectionDiagnosticsByPluginId = next;
+        const affectedPluginIds = new Set([
+            ...previousPluginIds,
+            ...Object.keys(next),
+            ...agents.flatMap((agent) => (
+                agent.identity ? [agent.identity.pluginId] : []
+            )),
+        ]);
+        const scmDiagnosticsByPluginId = readCurrentScmBackendDiagnostics();
+        for (const pluginId of affectedPluginIds) {
+            refreshPluginDiagnostics(pluginId, scmDiagnosticsByPluginId);
+        }
     }
 
     function recordProviderProjectionRefusals(
@@ -4831,6 +5051,17 @@ export async function resolveExecutablePluginRuntimeRegistry(
             refreshPluginDiagnostics(result.pluginId, scmDiagnosticsByPluginId);
         }
         return results;
+    }
+
+    // Isolating a rejected readiness participant is only half of the contract:
+    // an isolated plugin that stays advertised as ready is exactly the fail-open
+    // this fence exists to close. The activation owner records the one typed
+    // diagnostic and drops the plugin from the activated set; retiring its
+    // consumers here fences the live generation while its peers keep serving.
+    async function recordPluginActivationFailure(pluginId: string, message: string): Promise<void> {
+        activatedRegistry.recordPluginActivationFailure(pluginId, message);
+        await retirePluginConsumers([pluginId]);
+        refreshPluginDiagnostics(pluginId, readCurrentScmBackendDiagnostics());
     }
 
     async function acquireManagedProviderRuntime(
@@ -5360,20 +5591,21 @@ export async function resolveExecutablePluginRuntimeRegistry(
             (candidate) => candidate.id
                 === runtimeBindingBasis.endpoint.endpointTemplateId,
         );
+        const deployment = runtimeBindingBasis.deployment;
         if (
-            runtimeBindingBasis.deployment.kind !== 'managedLocal'
+            deployment.kind !== 'managedLocal'
             || !isDeepStrictEqual(
-                runtimeBindingBasis.deployment.implementationIdentity,
+                deployment.implementationIdentity,
                 input.identity,
             )
             || !declaration
             || !isDeepStrictEqual(
-                runtimeBindingBasis.deployment.managedRuntime,
+                deployment.managedRuntime,
                 declaration,
             )
             || endpoint?.protocol !== runtimeBindingBasis.endpoint.protocol
             || !isDeepStrictEqual(
-                runtimeBindingBasis.deployment.purposeBindings,
+                deployment.purposeBindings,
                 QualifiedConnectedAccountPurposeBindingsV1Schema.parse(
                     input.purposeBindings,
                 ),
@@ -5720,21 +5952,24 @@ export async function resolveExecutablePluginRuntimeRegistry(
     });
     const connectedAccountRuntimeInvoker = createConnectedAccountHostRuntimeInvoker({
         resolveRuntime: connectedAccountContributions.resolve,
-        resolvePlugin(pluginId) {
-            const target = resolveExactActivationTarget(pluginId);
-            if (!target) return null;
+        resolvePlugin(ref) {
+            const target = resolveExactActivationTarget(ref.pluginId);
+            if (
+                !target
+                || !target.manifest.contributes.connectedAccountDescriptors.some(
+                    (candidate) => candidate.id === ref.localId,
+                )
+            ) return null;
             return Object.freeze({
                 version: target.manifest.version,
-                hostAccessRequests: Object.freeze([
-                    ...target.manifest.hostAccess.required.map((request) => Object.freeze({
-                        request,
-                        required: true,
-                    })),
-                    ...target.manifest.hostAccess.optional.map((request) => Object.freeze({
-                        request,
-                        required: false,
-                    })),
-                ]),
+                hostAccessRequests: resolveManifestHostAccessRequests({
+                    manifest: target.manifest,
+                    pluginId: target.pluginId,
+                    contribution: {
+                        family: 'connectedAccountDescriptors',
+                        localId: ref.localId,
+                    },
+                }),
             });
         },
         resolveHostPolicy: invocationServiceOwners.resolveInvocationHostPolicy,
@@ -5747,7 +5982,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
                 correlationId: seed.correlationId,
             }, value);
         },
-        resolveHostOwnedConfiguredOrigins(service, configuration) {
+        resolveHostOwnedConfiguredEndpoints(service, configuration) {
             const contribution = connectedAccountContributions.list().find(
                 (candidate) => (
                     candidate.ref.pluginId === service.pluginId
@@ -5759,12 +5994,18 @@ export async function resolveExecutablePluginRuntimeRegistry(
                     'Connected-account configured origin descriptor is unavailable',
                 );
             }
-            return resolveHostOwnedConnectedAccountConfiguredOrigins({
+            return resolveHostOwnedConnectedAccountConfiguredEndpoints({
                 service,
                 descriptor: contribution.descriptor,
                 configuration,
             });
         },
+        // Connected-account origin admission crosses the same process-owned DNS
+        // boundary as plugin HTTP, so a composed host that substitutes it must
+        // reach both. Absent (production) it stays the host resolver.
+        ...(params?.networkDependencies?.resolveNetworkAddresses
+            ? { resolveNetworkAddresses: params.networkDependencies.resolveNetworkAddresses }
+            : {}),
     });
     let consumersRetired = false;
     const connectedAccountPurposeBindingOwner = params?.connectedAccounts
@@ -5797,7 +6038,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
         retireLiveSubscriptionConsumers();
         allRuntimeConsumersRetired = true;
         for (const pluginId of runtimeConsumerLifecycles.keys()) {
-            retirePluginConsumers([pluginId]);
+            void retirePluginConsumers([pluginId]).catch(() => undefined);
         }
         allRuntimeConsumerRetirement.abort(
             new Error('Executable plugin runtime registry consumer retired'),
@@ -5832,12 +6073,14 @@ export async function resolveExecutablePluginRuntimeRegistry(
             typeof verifyRunnerAgentBindingAgainstGeneration
         >>,
     ) => Object.freeze([
-        ...attested.manifest.hostAccess.required.map((request) =>
-            Object.freeze({ request, required: true }),
-        ),
-        ...attested.manifest.hostAccess.optional.map((request) =>
-            Object.freeze({ request, required: false }),
-        ),
+        ...resolveManifestHostAccessRequests({
+            manifest: attested.manifest,
+            pluginId: attested.binding.pluginId,
+            contribution: {
+                family: 'agents',
+                localId: attested.binding.localAgentId,
+            },
+        }),
         ...projectConnectedAccountPurposeDeclarationsToHostAccess(
             attested.declaredAgent.connectedAccounts ?? Object.freeze([]),
         ),
@@ -5859,17 +6102,16 @@ export async function resolveExecutablePluginRuntimeRegistry(
 
     const currentGlobalHostAccessRequests = (
         target: ReturnType<typeof requireCurrentGlobalRetainedAgentTarget>,
-        binding: AgentSessionRunnerBindingV1,
+        localAgentId: string,
     ) => Object.freeze([
-        ...target.manifest.hostAccess.required.map((request) =>
-            Object.freeze({ request, required: true }),
-        ),
-        ...target.manifest.hostAccess.optional.map((request) =>
-            Object.freeze({ request, required: false }),
-        ),
+        ...resolveManifestHostAccessRequests({
+            manifest: target.manifest,
+            pluginId: target.pluginId,
+            contribution: { family: 'agents', localId: localAgentId },
+        }),
         ...projectConnectedAccountPurposeDeclarationsToHostAccess(
             target.manifest.contributes.agents.find(
-                (candidate) => candidate.id === binding.localAgentId,
+                (candidate) => candidate.id === localAgentId,
             )?.connectedAccounts ?? Object.freeze([]),
         ),
     ]);
@@ -5938,7 +6180,10 @@ export async function resolveExecutablePluginRuntimeRegistry(
         resolveCurrentPluginImmutableGenerationId,
         resolveCurrentMediatorContributionMaterializationRef,
         ...(params?.resolveCurrentMachineExecutionOriginContext
-            ? { resolveCurrentPluginExecutionOrigin }
+            ? {
+                resolveCurrentPluginExecutionOrigin,
+                resolveCurrentPluginApprovalReplayPlacement,
+            }
             : {}),
         prepareCollectionMigrationCandidates,
         retireCollectionMigrationCandidates,
@@ -5980,6 +6225,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
         createManagedProviderRuntimeInvocationServices,
         createRetainedManagedProviderRuntimeInvocationServices,
         activatePluginsForValidation,
+        recordPluginActivationFailure,
         prepareDaemonDatabases,
         quiesceDaemonDatabases,
         readPreparedDaemonDatabaseContracts(pluginId) {
@@ -6417,7 +6663,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
                     hostAccessRequests:
                         currentGlobalHostAccessRequests(
                             currentTarget,
-                            verified.binding,
+                            verified.binding.localAgentId,
                         ),
                     surface: seed.surface,
                     sessionId: agentParams.sessionId,
@@ -6443,49 +6689,18 @@ export async function resolveExecutablePluginRuntimeRegistry(
                         `Retained Agent '${verified.binding.agentId}' no longer has exact live daemon-service authority`,
                 });
             }
-            const currentTarget =
-                requireCurrentGlobalRetainedAgentTarget(
-                    verified.binding,
-                );
-            const seed = Object.freeze({
-                plugin: Object.freeze({
-                    id: currentTarget.pluginId,
-                    version: currentTarget.manifest.version,
-                }),
+            return bindCurrentGlobalExternalSessionsForPublicCaller({
+                pluginId: verified.binding.pluginId,
                 contribution: Object.freeze({
                     id: verified.binding.localAgentId,
                     qualifiedId:
                         `${verified.binding.pluginId}/agents/${verified.binding.localAgentId}`,
                 }),
-                generation: String(activatedRegistry.generation),
-                correlationId: agentParams.correlationId,
-                surface: 'agent' as const,
-                session: Object.freeze({
-                    id: agentParams.sessionId,
-                }),
+                surface: 'agent',
+                sessionId: agentParams.sessionId,
                 signal: agentParams.signal,
-                isGenerationCurrent:
-                    agentParams.isGenerationCurrent,
+                isGenerationCurrent: agentParams.isGenerationCurrent,
             });
-            const policy = invocationServiceOwners
-                .resolveInvocationHostPolicy({
-                    pluginId: currentTarget.pluginId,
-                    generation: seed.generation,
-                    qualifiedId:
-                        seed.contribution.qualifiedId,
-                }, {
-                    hostAccessRequests:
-                        currentGlobalHostAccessRequests(
-                            currentTarget,
-                            verified.binding,
-                        ),
-                    surface: seed.surface,
-                    sessionId: agentParams.sessionId,
-                    signal: seed.signal,
-                });
-            return invocationServiceOwners
-                .createServices(seed, policy.serviceBinding)
-                .sessions.external;
         },
         async createRetainedRunnerAgentInvocationServices(agentParams) {
             const storePaths = resolvePluginStorePaths({
@@ -7095,11 +7310,18 @@ export async function resolveExecutablePluginRuntimeRegistry(
         publishDeclaredEventSubscriptions,
         retireLiveSubscriptionConsumers,
         currentGlobalExternalSessionsTarget,
+        // A retired plugin's activation component is fenced, not reusable: its
+        // background services, runtime disposables and generation lifecycle are
+        // already retired here. Donating it would re-merge its `active` facts and
+        // handlers into the successor registry and silently undo the fence.
         retainActivationRegistryComponentsExcluding: (excludedPluginIds) => Object.freeze(
             retainedActivationRegistryLeases
                 .filter((lease) => (
                     lease.pluginIds.size > 0
-                    && [...lease.pluginIds].every((pluginId) => !excludedPluginIds.has(pluginId))
+                    && [...lease.pluginIds].every((pluginId) => (
+                        !excludedPluginIds.has(pluginId)
+                        && !retiredRuntimeConsumerPluginIds.has(pluginId)
+                    ))
                 ))
                 .map((lease) => lease.retain()),
         ),
@@ -7110,5 +7332,13 @@ export async function resolveExecutablePluginRuntimeRegistry(
         } : {}),
     };
     resolvedRuntimeRegistryOwner = resolvedRuntimeRegistry;
+    // The first current-global publication invokes every configured Agent's
+    // `resolveSource` leaf, and that leaf reaches back through this registry's
+    // own Agent invocation services. Publishing it before the owner above is
+    // assigned made each leaf reject with `agent_error`, so a registry whose
+    // Agents were already activated published a permanently sourceless owner:
+    // the publication basis was recorded, so no later same-basis refresh could
+    // repair it. Keep this the last construction step.
+    await refreshCurrentGlobalExternalSessionsAuthor();
     return resolvedRuntimeRegistry;
 }

@@ -68,14 +68,6 @@ export function createBrowserDaemonControlBroker(): BrowserDaemonControlBroker {
   }
 
   async function dispatchCommand(command: BrowserCommandV1) {
-    if (command.kind === 'createSession' || command.kind === 'closeSession') {
-      return browserCommandDispatchFailure({
-        commandId: command.commandId,
-        code: 'unsupported_command',
-        message: 'Browser session commands do not have a daemon control owner.',
-      });
-    }
-
     if (adapters.size === 0) {
       return browserCommandDispatchFailure({
         commandId: command.commandId,

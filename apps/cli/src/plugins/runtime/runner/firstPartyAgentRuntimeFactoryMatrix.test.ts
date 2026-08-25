@@ -35,7 +35,7 @@ import { resolveBuiltInContributions } from '@/plugins/projection/registry/resol
 import {
     BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS,
     BUNDLED_FIRST_PARTY_PLUGIN_METADATA,
-} from '@/plugins/projection/registry/sources/generatedBundledPlugins';
+} from '@/plugins/projection/registry/sources/generatedBundledPluginManifests';
 import { createBundledActivationSourceResolver } from '@/plugins/runtime/bundledActivationSource';
 import { readPluginManifest } from '@/plugins/manifest/read';
 import { readCanonicalPluginManifest } from '@/plugins/manifest/normalize';

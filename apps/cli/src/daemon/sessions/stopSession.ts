@@ -1,5 +1,7 @@
 import { spawnSync } from 'node:child_process';
 
+import { windowsSystemToolCommand } from '@happier-dev/cli-common/process';
+
 import { logger } from '@/ui/logger';
 import { configuration } from '@/configuration';
 import type { TerminalHostAdapter } from '@happier-dev/agents';
@@ -139,7 +141,7 @@ async function taskkillWindowsDaemonChild(params: Readonly<{
   }
   if (!params.claimSignalAuthority()) return false;
 
-  const result = spawnSync('taskkill', ['/F', '/T', '/PID', String(params.pid)], { stdio: 'ignore' });
+  const result = spawnSync(windowsSystemToolCommand('taskkill.exe'), ['/F', '/T', '/PID', String(params.pid)], { stdio: 'ignore' });
   if ((result.status ?? 1) !== 0) {
     logger.debug(`[DAEMON RUN] taskkill failed for daemon-spawned session ${params.normalizedSessionId} (pid=${params.pid})`);
     return false;

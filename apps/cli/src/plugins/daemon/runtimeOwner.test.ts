@@ -2,6 +2,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   createCurrentGlobalExternalSessionsRouter,
+  type CurrentGlobalExternalSessionsRouter,
 } from '@/session/external/currentGlobalRouting';
 import type { ProvidersService } from '@happier-dev/plugin-sdk/providers';
 
@@ -21,6 +22,7 @@ const ownerMocks = vi.hoisted(() => ({
   pathPreparerParams: null as null | Readonly<Record<string, unknown>>,
   npmPreparerParams: null as null | Readonly<Record<string, unknown>>,
   archivePreparerParams: null as null | Readonly<Record<string, unknown>>,
+  bundledSourceOverlayGenerationIds: null as null | readonly string[],
   prepareNpm: vi.fn(),
   preparePath: vi.fn(),
   prepareArchive: vi.fn(),
@@ -88,14 +90,37 @@ vi.mock('@/plugins/runtime/resolveExecutablePluginRuntimeRegistry', () => ({
     });
   }),
 }));
-vi.mock('@/plugins/projection/registry/sources/generatedBundledPluginArtifacts', () => ({
-  // The generated bundled-artifact projection is outside this owner's join contract.
-  BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS: Object.freeze([]),
-}));
+vi.mock('@/plugins/projection/registry/sources/generatedBundledPluginArtifacts', async (importOriginal) => {
+  const actual = await importOriginal<
+    typeof import('@/plugins/projection/registry/sources/generatedBundledPluginArtifacts')
+  >();
+  const sourceOverlayRunnerPluginIds = new Set([
+    'happier.agent.codex',
+    'happier.agent.cursor',
+    'happier.agent.ohmypi',
+    'happier.agent.pi',
+  ]);
+  const artifacts = actual.BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS.filter((artifact) => (
+    sourceOverlayRunnerPluginIds.has(artifact.record.pluginId)
+  ));
+  if (artifacts.length !== sourceOverlayRunnerPluginIds.size) {
+    throw new Error('Expected every source-overlay runner bundled artifact');
+  }
+  ownerMocks.bundledSourceOverlayGenerationIds = Object.freeze(
+    artifacts.map((artifact) => artifact.record.immutableGenerationId),
+  );
+  return {
+    // The generated projection is a boundary. Keep the four source overlays
+    // real so this owner cannot mistake activation-source selection for custody retention.
+    BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS: Object.freeze(artifacts),
+  };
+});
 vi.mock('@/plugins/projection/registry/sources/generatedBundledPlugins', () => ({
   // Registry construction is mocked below; loading bundled plugin packages is not part of this owner test.
-  BUNDLED_FIRST_PARTY_PLUGIN_PACKAGE_NAMES: Object.freeze([]),
   BUNDLED_FIRST_PARTY_PLUGINS: Object.freeze([]),
+}));
+vi.mock('@/plugins/projection/registry/sources/generatedBundledPluginManifests', () => ({
+  BUNDLED_FIRST_PARTY_PLUGIN_PACKAGE_NAMES: Object.freeze([]),
 }));
 vi.mock('@/plugins/projection/registry/createResolvedContributionRegistry', () => ({
   // Recovery-mode contribution projection is separately owned; this test only
@@ -167,6 +192,50 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
     ownerMocks.releaseInitialLease.mockClear();
   });
 
+  it('retains every executable source-overlay generation for custody cleanup', async () => {
+    const reloadController: PluginReloadController = {
+      adoptPreparedRuntimeRegistry: vi.fn(),
+      acquireRuntimeRegistry: vi.fn(async (params = {}) => {
+        const registry = await params.resolveRuntimeRegistry?.();
+        if (!registry) throw new Error('missing initial registry');
+        return Object.freeze({
+          registry,
+          source: 'active' as const,
+          release: ownerMocks.releaseInitialLease,
+        });
+      }),
+      tryAcquireRuntimeRegistry: vi.fn(() => null),
+      isRuntimeRegistryCurrent: vi.fn(() => true),
+      invalidateRuntimeProjection: vi.fn(),
+      applyResourceSessionAccessWitness: vi.fn(),
+      shutdown: vi.fn(),
+      getState: () => ({ generation: 0, activeRegistry: null, lastResult: null }),
+      subscribe: vi.fn(() => () => undefined),
+      publishDurableRunningSessionDisposition: vi.fn(),
+      currentGlobalExternalSessions: createCurrentGlobalExternalSessionsRouter(
+        () => null,
+      ),
+      subscribeRunningSessionDisposition: vi.fn(() => () => undefined),
+    };
+    const owner = createDaemonPluginRuntimeOwner({
+      happyHomeDir: '/tmp/happier-runtime-owner-source-overlay-retention-test',
+      staleCandidateCleanup: 'disabled',
+      reloadController,
+      connectedAccounts: createUnusedConnectedAccountsOwner(),
+    });
+
+    await owner.initialize();
+
+    const expectedGenerationIds = ownerMocks.bundledSourceOverlayGenerationIds;
+    if (!expectedGenerationIds) {
+      throw new Error('Expected source-overlay runner generation identities');
+    }
+    expect(expectedGenerationIds).toHaveLength(4);
+    expect(ownerMocks.stateStoreParams?.retainedCurrentHostGenerationIds).toEqual(
+      expectedGenerationIds,
+    );
+  });
+
   it('publishes the initial registry before gating its one-time background activation', async () => {
     let releaseActivation!: () => void;
     const activationReady = new Promise<void>((resolve) => {
@@ -215,6 +284,7 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
       }),
       tryAcquireRuntimeRegistry: vi.fn(() => null),
       isRuntimeRegistryCurrent: vi.fn(() => true),
+      invalidateRuntimeProjection: vi.fn(),
       applyResourceSessionAccessWitness: vi.fn(),
       shutdown: vi.fn(),
       getState: () => ({ generation: 0, activeRegistry: null, lastResult: null }),
@@ -227,6 +297,7 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
     };
     const onInitialRegistryPublished = vi.fn();
     const onDurableRegistryApplied = vi.fn();
+    const onRuntimeProjectionInvalidated = vi.fn();
     const ownerParams = {
       happyHomeDir: '/tmp/happier-runtime-owner-provider-order-test',
       staleCandidateCleanup: 'disabled' as const,
@@ -236,6 +307,7 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
       onInitialRegistryPublished,
       awaitInitialRuntimeActivation: async () => await activationReady,
       onDurableRegistryApplied,
+      onRuntimeProjectionInvalidated,
     };
     const owner = createDaemonPluginRuntimeOwner(ownerParams);
 
@@ -257,6 +329,15 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
     expect(observedProviderService).toBe(providerService);
     expect(onDurableRegistryApplied).toHaveBeenCalledOnce();
     expect(reloadController.adoptPreparedRuntimeRegistry).not.toHaveBeenCalled();
+
+    const invalidateRuntimeProjection = ownerMocks.resolveRuntimeRegistryParams
+      ?.onTerminalActivationFailure;
+    if (typeof invalidateRuntimeProjection !== 'function') {
+      throw new Error('expected terminal activation projection invalidation');
+    }
+    invalidateRuntimeProjection('acme.failed');
+    expect(reloadController.invalidateRuntimeProjection).toHaveBeenCalledOnce();
+    expect(onRuntimeProjectionInvalidated).toHaveBeenCalledOnce();
   });
 
   it('joins every post-startup durable registry application to the same projection notification', async () => {
@@ -404,6 +485,60 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
       .toBe(targetedContributions);
   });
 
+  it('routes the cold-start registry through the controller-lifetime current-global External Sessions router', async () => {
+    // The daemon's first registry is exactly the one whose long-lived plugin
+    // contexts survive the first peer Agent replacement. If it self-targets,
+    // those contexts keep resolving the predecessor after publication.
+    const activations: string[] = [];
+    const publishedOwner = { label: 'published' } as unknown as NonNullable<
+      ReturnType<CurrentGlobalExternalSessionsRouter['resolveCurrent']>
+    >;
+    const controllerRouter = createCurrentGlobalExternalSessionsRouter(
+      () => Object.freeze({
+        resolveCurrent: () => publishedOwner,
+        activateConfiguredSources: async (agentId?: string) => {
+          activations.push(`published:${agentId ?? '*'}`);
+        },
+      }),
+    );
+    const reloadController: PluginReloadController = {
+      adoptPreparedRuntimeRegistry: vi.fn(),
+      acquireRuntimeRegistry: vi.fn(async (params = {}) => {
+        const registry = await params.resolveRuntimeRegistry?.();
+        if (!registry) throw new Error('missing initial registry');
+        return Object.freeze({
+          registry,
+          source: 'active' as const,
+          release: ownerMocks.releaseInitialLease,
+        });
+      }),
+      tryAcquireRuntimeRegistry: vi.fn(() => null),
+      isRuntimeRegistryCurrent: vi.fn(() => true),
+      applyResourceSessionAccessWitness: vi.fn(),
+      shutdown: vi.fn(),
+      getState: () => ({ generation: 0, activeRegistry: null, lastResult: null }),
+      subscribe: vi.fn(() => () => undefined),
+      publishDurableRunningSessionDisposition: vi.fn(),
+      currentGlobalExternalSessions: controllerRouter,
+      subscribeRunningSessionDisposition: vi.fn(() => () => undefined),
+    };
+    const owner = createDaemonPluginRuntimeOwner({
+      happyHomeDir: '/tmp/happier-runtime-owner-current-global-router-test',
+      staleCandidateCleanup: 'disabled',
+      reloadController,
+      connectedAccounts: createUnusedConnectedAccountsOwner(),
+    });
+
+    await owner.initialize();
+
+    const coldRouter = ownerMocks.resolveRuntimeRegistryParams
+      ?.currentGlobalExternalSessionsRouter as
+        CurrentGlobalExternalSessionsRouter | undefined;
+    expect(coldRouter?.resolveCurrent()).toBe(publishedOwner);
+    await coldRouter?.activateConfiguredSources('codex');
+    expect(activations).toEqual(['published:codex']);
+  });
+
   it('threads the canonical exact Session-access resolver into initial and replacement Resource owners', async () => {
     const resolveSessionResourceAccess = vi.fn(async (input: Readonly<{
       accountId: string;
@@ -464,6 +599,7 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
         activationTargets: Object.freeze([
           Object.freeze({
             pluginId: 'com.acme.indexer',
+            activationEvents: Object.freeze(['startup']),
             manifest: Object.freeze({
               contributes: Object.freeze({
                 daemonDatabases: Object.freeze([Object.freeze({ id: 'index' })]),
@@ -491,6 +627,10 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
         ]),
       }),
       activatedPluginIds: new Set(['com.acme.indexer']),
+      // Every activation target proves its readiness before publication, so this
+      // fixture must satisfy that proof rather than rely on a swallowed rejection.
+      activatePluginsForValidation: vi.fn(async () => Object.freeze([])),
+      agentRuntimesByAgentId: new Map(),
       stableEventsBroker: ownerMocks.stableEventsBroker,
       prepareDaemonDatabases,
       dispose,
@@ -585,13 +725,36 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
     pluginId: string,
     provenance: 'first_party' | 'external',
     daemonDatabases: readonly unknown[],
+    options: Readonly<{
+      activationEvents?: readonly string[];
+      contributes?: Readonly<Record<string, unknown>>;
+    }> = {},
   ) {
     return Object.freeze({
       pluginId,
       provenance,
+      activationEvents: Object.freeze(options.activationEvents ?? ['startup']),
       manifest: Object.freeze({
-        contributes: Object.freeze({ daemonDatabases: Object.freeze([...daemonDatabases]) }),
+        contributes: Object.freeze({
+          daemonDatabases: Object.freeze([...daemonDatabases]),
+          ...(options.contributes ?? {}),
+        }),
       }),
+    });
+  }
+
+  // Records exactly what the canonical activation owner was asked to fence, and
+  // mirrors the one effect cold start reads back from it: a fenced plugin leaves
+  // the activated set. A published cold registry may not advertise a participant
+  // whose readiness was rejected, and it may not fence a healthy peer either.
+  function createReadinessFencingRecorder(activatedPluginIds: Set<string>) {
+    const fenced: Array<Readonly<{ pluginId: string; message: string }>> = [];
+    return Object.freeze({
+      fenced,
+      recordPluginActivationFailure(pluginId: string, message: string): void {
+        fenced.push(Object.freeze({ pluginId, message }));
+        activatedPluginIds.delete(pluginId);
+      },
     });
   }
 
@@ -607,6 +770,15 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
       events.push(`database-prepared:${input.pluginIds.join(',')}`);
     });
     const dispose = vi.fn(async () => undefined);
+    const activatedPluginIds = new Set(['com.acme.bundled-indexer', 'com.zeta.external-indexer']);
+    const fencing = createReadinessFencingRecorder(activatedPluginIds);
+    // The fenced plugin also owns a primary Agent runtime. Its generation is
+    // already retired, so the later readiness step must not construct it and
+    // record a second reason for one rejection.
+    const fencedCreateRuntime = vi.fn(async () => {
+      events.push('fenced-runtime-created');
+      return Object.freeze({});
+    });
     ownerMocks.resolveRuntimeRegistryOverride = Object.freeze({
       contributes: Object.freeze({
         activationTargets: Object.freeze([
@@ -614,11 +786,20 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
           createReadinessActivationTarget('com.zeta.external-indexer', 'external', [{ id: 'index' }]),
         ]),
       }),
-      activatedPluginIds: new Set(['com.acme.bundled-indexer', 'com.zeta.external-indexer']),
+      activatedPluginIds,
       activatePluginsForValidation: vi.fn(async () => Object.freeze([])),
-      agentRuntimesByAgentId: new Map(),
+      agentRuntimesByAgentId: new Map<string, unknown>([
+        ['indexer', Object.freeze({
+          agentId: 'indexer',
+          pluginId: 'com.acme.bundled-indexer',
+          hasPrimaryRuntime: true,
+          retirementSignal: new AbortController().signal,
+          createRuntime: fencedCreateRuntime,
+        })],
+      ]),
       stableEventsBroker: ownerMocks.stableEventsBroker,
       prepareDaemonDatabases,
+      recordPluginActivationFailure: fencing.recordPluginActivationFailure,
       dispose,
     });
     const owner = createDaemonPluginRuntimeOwner({
@@ -634,12 +815,24 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
     expect(prepareDaemonDatabases).toHaveBeenCalledWith({ pluginIds: ['com.acme.bundled-indexer'] });
     expect(prepareDaemonDatabases).toHaveBeenCalledWith({ pluginIds: ['com.zeta.external-indexer'] });
     expect(events).toEqual(['database-prepared:com.zeta.external-indexer', 'published']);
+    // The rejected participant is fenced once at the canonical activation owner;
+    // the healthy peer is left untouched.
+    expect(fencing.fenced.map((entry) => entry.pluginId)).toEqual(['com.acme.bundled-indexer']);
+    expect(fencing.fenced[0]?.message).toContain('cold-start daemon database preparation failed');
+    expect(fencing.fenced[0]?.message).toContain('bundled daemon database preparation rejected');
+    expect(fencedCreateRuntime).not.toHaveBeenCalled();
     expect(dispose).not.toHaveBeenCalled();
   });
 
   it('isolates failing activation and primary-Agent-runtime participants at cold start', async () => {
     const events: string[] = [];
     const dispose = vi.fn(async () => undefined);
+    const activatedPluginIds = new Set([
+      'com.acme.broken-activation',
+      'com.beta.broken-agent',
+      'com.zeta.healthy',
+    ]);
+    const fencing = createReadinessFencingRecorder(activatedPluginIds);
     const activatePluginsForValidation = vi.fn(async (pluginIds: readonly string[]) => {
       if (pluginIds.includes('com.acme.broken-activation')) {
         throw new Error('plugin activation rejected');
@@ -662,11 +855,7 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
           createReadinessActivationTarget('com.zeta.healthy', 'external', []),
         ]),
       }),
-      activatedPluginIds: new Set([
-        'com.acme.broken-activation',
-        'com.beta.broken-agent',
-        'com.zeta.healthy',
-      ]),
+      activatedPluginIds,
       activatePluginsForValidation,
       agentRuntimesByAgentId: new Map<string, unknown>([
         ['broken', Object.freeze({
@@ -685,6 +874,7 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
         })],
       ]),
       stableEventsBroker: ownerMocks.stableEventsBroker,
+      recordPluginActivationFailure: fencing.recordPluginActivationFailure,
       dispose,
     });
     const owner = createDaemonPluginRuntimeOwner({
@@ -706,48 +896,78 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
       'healthy-runtime-created',
       'published',
     ]);
+    // Both rejected participants are fenced as one typed activation failure each,
+    // so neither is advertised as ready by the published cold registry. The
+    // healthy peer is never fenced.
+    expect(fencing.fenced.map((entry) => entry.pluginId)).toEqual([
+      'com.acme.broken-activation',
+      'com.beta.broken-agent',
+    ]);
+    expect(fencing.fenced[0]?.message).toContain('cold-start activation failed');
+    expect(fencing.fenced[0]?.message).toContain('plugin activation rejected');
+    expect(fencing.fenced[1]?.message).toContain('cold-start primary Agent runtime construction failed');
+    expect(fencing.fenced[1]?.message).toContain('agent runtime factory rejected');
     expect(dispose).not.toHaveBeenCalled();
   });
 
-  // The same executable proof, keyed on the structural fact that a plugin is an
-  // activation target — never on where it came from. A bundled first-party
-  // plugin must not join the serving registry without it.
-  it('proves cold-start activation and primary-Agent-runtime readiness for bundled plugins too', async () => {
+  it('keeps demand-ready bundled Agent runtimes cold while proving cold-start participants', async () => {
     const events: string[] = [];
     const dispose = vi.fn(async () => undefined);
+    const activatedPluginIds = new Set(['com.acme.bundled-startup']);
+    const fencing = createReadinessFencingRecorder(activatedPluginIds);
     const activatePluginsForValidation = vi.fn(async (pluginIds: readonly string[]) => {
-      if (pluginIds.includes('com.acme.bundled-broken')) {
-        throw new Error('bundled plugin activation rejected');
+      for (const pluginId of pluginIds) {
+        activatedPluginIds.add(pluginId);
       }
       events.push(`activated:${pluginIds.join(',')}`);
       return Object.freeze([]);
     });
-    const bundledCreateRuntime = vi.fn(async () => {
-      events.push('bundled-runtime-created');
+    const demandReadyAgentCreateRuntime = vi.fn(async () => {
+      events.push('demand-ready-agent-runtime-created');
       return Object.freeze({});
     });
     ownerMocks.resolveRuntimeRegistryOverride = Object.freeze({
       contributes: Object.freeze({
         activationTargets: Object.freeze([
-          createReadinessActivationTarget('com.acme.bundled-broken', 'first_party', []),
-          createReadinessActivationTarget('com.beta.bundled-agent', 'first_party', []),
+          createReadinessActivationTarget('com.acme.bundled-startup', 'first_party', []),
+          createReadinessActivationTarget(
+            'com.beta.bundled-demand-ready-agent',
+            'first_party',
+            [],
+            {
+              activationEvents: [],
+              contributes: {
+                agents: [{
+                  id: 'demand-ready-agent',
+                  title: 'Demand-ready Agent',
+                  runtime: { kind: 'custom' },
+                  primary: 'sessions',
+                  capabilities: {
+                    sessions: {
+                      open: ['create'],
+                      delivery: ['newTurn'],
+                      cancel: true,
+                    },
+                  },
+                }],
+              },
+            },
+          ),
         ]),
       }),
-      activatedPluginIds: new Set([
-        'com.acme.bundled-broken',
-        'com.beta.bundled-agent',
-      ]),
+      activatedPluginIds,
       activatePluginsForValidation,
       agentRuntimesByAgentId: new Map<string, unknown>([
         ['bundled', Object.freeze({
           agentId: 'bundled',
-          pluginId: 'com.beta.bundled-agent',
+          pluginId: 'com.beta.bundled-demand-ready-agent',
           hasPrimaryRuntime: true,
           retirementSignal: new AbortController().signal,
-          createRuntime: bundledCreateRuntime,
+          createRuntime: demandReadyAgentCreateRuntime,
         })],
       ]),
       stableEventsBroker: ownerMocks.stableEventsBroker,
+      recordPluginActivationFailure: fencing.recordPluginActivationFailure,
       dispose,
     });
     const owner = createDaemonPluginRuntimeOwner({
@@ -759,14 +979,11 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
 
     await owner.initialize();
 
-    expect(activatePluginsForValidation).toHaveBeenCalledWith(['com.acme.bundled-broken']);
-    expect(bundledCreateRuntime).toHaveBeenCalledOnce();
-    expect(events).toEqual([
-      'activated:com.beta.bundled-agent',
-      'bundled-runtime-created',
-      'published',
-    ]);
-    // A bundled participant's failure is isolated exactly like an external one.
+    expect(activatePluginsForValidation).toHaveBeenCalledTimes(1);
+    expect(activatePluginsForValidation).toHaveBeenCalledWith(['com.acme.bundled-startup']);
+    expect(demandReadyAgentCreateRuntime).not.toHaveBeenCalled();
+    expect(events).toEqual(['activated:com.acme.bundled-startup', 'published']);
+    expect(fencing.fenced).toEqual([]);
     expect(dispose).not.toHaveBeenCalled();
   });
 

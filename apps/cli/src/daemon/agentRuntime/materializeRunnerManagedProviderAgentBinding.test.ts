@@ -82,6 +82,7 @@ function input(materialize: AgentProviderBindingAdapter['materialize']) {
                 materialize,
             },
             support,
+            isCurrent: () => true,
         },
         binding,
         prepared: {

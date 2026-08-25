@@ -104,8 +104,6 @@ export function verifyDirectRouteGrantV2(input: Readonly<{
     trustRoots: readonly DirectRouteGrantTrustRoot[];
     nowMs: number;
     expected: DirectRouteGrantExpectedBinding;
-    revokedGrantIds?: ReadonlySet<string>;
-    revokedGrantFamilyIds?: ReadonlySet<string>;
 }>): DirectRouteGrantV2VerificationResult {
     const parsed = SignedDirectRouteGrantV2Schema.safeParse(input.grant);
     if (!parsed.success) return { valid: false, reasonCode: 'grant_invalid', receipt: 'peer.route_grant.rejected' };
@@ -115,12 +113,6 @@ export function verifyDirectRouteGrantV2(input: Readonly<{
     if (!publicKey) return { valid: false, reasonCode: 'grant_unknown_key' };
     if (input.nowMs >= grant.payload.exp) return { valid: false, reasonCode: 'grant_expired' };
     if (input.nowMs < grant.payload.iat) return { valid: false, reasonCode: 'grant_not_yet_valid' };
-    if (input.revokedGrantIds?.has(grant.payload.grantId) === true) {
-        return { valid: false, reasonCode: 'grant_revoked' };
-    }
-    if (grant.payload.grantFamilyId && input.revokedGrantFamilyIds?.has(grant.payload.grantFamilyId) === true) {
-        return { valid: false, reasonCode: 'grant_revoked' };
-    }
 
     const bindingMismatch = matchesExpectedBinding(grant.payload, input.expected);
     if (bindingMismatch) return { valid: false, reasonCode: bindingMismatch };
@@ -142,8 +134,6 @@ export function verifyDirectRouteGrantV1(input: Readonly<{
     trustRoots: readonly DirectRouteGrantTrustRoot[];
     nowMs: number;
     expected: DirectRouteGrantExpectedBinding;
-    revokedGrantIds?: ReadonlySet<string>;
-    revokedGrantFamilyIds?: ReadonlySet<string>;
 }>): DirectRouteGrantVerificationResult {
     const parsed = SignedDirectRouteGrantV1Schema.safeParse(input.grant);
     if (!parsed.success) return { valid: false, reasonCode: 'grant_invalid', receipt: 'peer.route_grant.rejected' };
@@ -155,12 +145,6 @@ export function verifyDirectRouteGrantV1(input: Readonly<{
     if (input.nowMs >= grant.payload.exp) return { valid: false, reasonCode: 'grant_expired' };
     if (input.nowMs < grant.payload.iat) return { valid: false, reasonCode: 'grant_not_yet_valid' };
 
-    if (input.revokedGrantIds?.has(grant.payload.grantId) === true) {
-        return { valid: false, reasonCode: 'grant_revoked' };
-    }
-    if (grant.payload.grantFamilyId && input.revokedGrantFamilyIds?.has(grant.payload.grantFamilyId) === true) {
-        return { valid: false, reasonCode: 'grant_revoked' };
-    }
 
     const bindingMismatch = matchesExpectedBinding(grant.payload, input.expected);
     if (bindingMismatch) return { valid: false, reasonCode: bindingMismatch };

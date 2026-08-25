@@ -1,8 +1,13 @@
 import { PluginError } from '@happier-dev/plugin-sdk';
 import type { HttpService } from '@happier-dev/plugin-sdk/http';
 import {
+  openPinnedHttpStream,
+  type PinnedHttpStreamTransport,
+} from '@/network/pinnedHttp';
+import {
   MAX_PLUGIN_FETCH_RESPONSE_BODY_BYTES,
   type PluginHttpRuntimeAdapter,
+  type PluginHttpRuntimeRequestOptions,
 } from './service';
 import { createPluginWebSocketConnection } from './webSocket';
 
@@ -42,6 +47,13 @@ function hasOversizedDeclaredResponseBody(response: Response): boolean {
   const declaredBytes = Number(contentLength);
   return !Number.isSafeInteger(declaredBytes)
     || declaredBytes > MAX_PLUGIN_FETCH_RESPONSE_BODY_BYTES;
+}
+
+function createRedirectRefusedError(): PluginError {
+  return new PluginError({
+    code: 'plugin_fetch_redirect_follow_unavailable',
+    message: 'Plugin fetch redirect following is unavailable until each redirect hop can be reauthorized',
+  });
 }
 
 function createRequestAbortController(signal: AbortSignal | undefined): Readonly<{
@@ -109,14 +121,90 @@ async function readBoundedResponseBody(
   return body;
 }
 
-export function createGlobalFetchRuntime(): PluginHttpRuntimeAdapter {
+async function readBoundedPinnedResponseBody(
+  response: Awaited<ReturnType<typeof openPinnedHttpStream>>,
+): Promise<Uint8Array> {
+  if (
+    response.contentLength !== null
+    && response.contentLength > MAX_PLUGIN_FETCH_RESPONSE_BODY_BYTES
+  ) {
+    response.cancel();
+    throw createResponseTooLargeError();
+  }
+  const chunks: Uint8Array[] = [];
+  let byteLength = 0;
+  for (;;) {
+    const chunk = await response.read();
+    if (chunk === null) break;
+    if (chunk.byteLength > MAX_PLUGIN_FETCH_RESPONSE_BODY_BYTES - byteLength) {
+      response.cancel();
+      throw createResponseTooLargeError();
+    }
+    byteLength += chunk.byteLength;
+    chunks.push(chunk);
+  }
+  if (chunks.length === 0) return new Uint8Array();
+  if (chunks.length === 1) return chunks[0]!;
+  const body = new Uint8Array(byteLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return body;
+}
+
+function pinnedHeadersToRecord(
+  headers: Readonly<Record<string, string | undefined>>,
+): Readonly<Record<string, string>> {
+  return Object.freeze(Object.fromEntries(
+    Object.entries(headers).flatMap(([key, value]) => (
+      value === undefined ? [] : [[key, value]]
+    )),
+  ));
+}
+
+export type GlobalFetchRuntimeDependencies = Readonly<{
+  /**
+   * Socket boundary for an already-admitted origin. It defaults to the process
+   * HTTP owner; a composed host substitutes it so the terminal boundary stays
+   * as replaceable as `globalThis.fetch` is on the unpinned path.
+   */
+  openPinnedStream?: PinnedHttpStreamTransport;
+}>;
+
+export function createGlobalFetchRuntime(
+  dependencies: GlobalFetchRuntimeDependencies = {},
+): PluginHttpRuntimeAdapter {
+  const openPinnedStream = dependencies.openPinnedStream ?? openPinnedHttpStream;
   return Object.freeze({
     async request(
       request: Parameters<HttpService['request']>[0],
-      options: Parameters<HttpService['request']>[1] = {},
+      options: PluginHttpRuntimeRequestOptions = {},
     ) {
       const requestAbort = createRequestAbortController(options.signal);
       try {
+        if (options.validatedAddresses && options.validatedAddresses.length > 0) {
+          const response = await openPinnedStream({
+            url: request.url,
+            validatedAddresses: options.validatedAddresses,
+            headers: request.headers ?? Object.freeze({}),
+            method: request.method,
+            ...(request.body === undefined ? {} : { body: request.body }),
+            signal: requestAbort.controller.signal,
+          });
+          if (response.status >= 300 && response.status < 400 && request.redirect !== 'manual') {
+            response.cancel();
+            throw createRedirectRefusedError();
+          }
+          const body = await readBoundedPinnedResponseBody(response);
+          return Object.freeze({
+            status: response.status,
+            finalUrl: request.url,
+            headers: pinnedHeadersToRecord(response.headers),
+            body,
+          });
+        }
         const response = await globalThis.fetch(request.url, {
           method: request.method,
           headers: request.headers,

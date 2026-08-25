@@ -234,7 +234,6 @@ describe('buildPluginProjectionV2', () => {
                 confirmation,
             },
         };
-
         const projection = buildPluginProjectionV2({
             registry: { ...createEmptyResolvedContributionRegistry(), actions: [action] },
             generation: 1,
@@ -446,9 +445,23 @@ describe('buildPluginProjectionV2', () => {
                 dangerLevel: 'safe',
             },
         };
+        const introspectionContribution = {
+            pluginId,
+            pluginVersion: '1.0.0',
+            source: 'development' as const,
+            family: 'actions',
+            identity: { kind: 'localId' as const, localId: 'open-client-preview' },
+            registration: 'required' as const,
+            consumer: 'action-dispatch',
+            platforms: ['cli' as const],
+        };
 
         const projected = buildPluginProjectionV2({
-            registry: { ...createEmptyResolvedContributionRegistry(), actions: [action] },
+            registry: {
+                ...createEmptyResolvedContributionRegistry(),
+                actions: [action],
+                introspectionContributions: [introspectionContribution],
+            },
             generation: 1,
             pluginExecutionOriginsByPluginId: { [pluginId]: origin },
         }).actionsById[`${pluginId}/open-client-preview`];
@@ -462,15 +475,46 @@ describe('buildPluginProjectionV2', () => {
             ...origin,
         });
         expect(projected?.execution).toEqual(execution);
+
+        const unavailableProjection = buildPluginProjectionV2({
+            registry: {
+                ...createEmptyResolvedContributionRegistry(),
+                actions: [action],
+                introspectionContributions: [introspectionContribution],
+            },
+            generation: 2,
+            introspectionRuntimeSnapshot: adaptTargetActivationFacts({
+                generation: 2,
+                candidates: [introspectionContribution],
+                plugins: [{ pluginId, pluginVersion: '1.0.0', source: 'development' }],
+                targetActivationFacts: [{
+                    pluginId,
+                    pluginVersion: '1.0.0',
+                    source: 'development',
+                    generation: 'activation-2',
+                    host: 'daemon',
+                    platform: 'darwin',
+                    occurredAtMs: 10,
+                    status: 'unavailable',
+                    required: [{ family: 'actions', localId: 'open-client-preview' }],
+                    bound: [],
+                    diagnostics: [{
+                        code: 'plugin_activation_failed',
+                        message: 'Activation failed',
+                    }],
+                }],
+                runtimeState: 'current',
+            }),
+        }).actionsById[`${pluginId}/open-client-preview`];
+        expect(unavailableProjection?.available).toBe(false);
+
+        // Absence of an activation fact is the ordinary lazy-demand state,
+        // already proven by the positive projection above.
     });
 
-    it('projects only the exact target-Action authorization facts when the runtime owner can resolve them', () => {
+    it('projects only exact target-Action currentness facts when the runtime owner can resolve them', () => {
         const pluginId = 'acme.client-actions';
         const authorization = {
-            packageTrust: {
-                packageIdentity: 'package:acme.client-actions:generation-7',
-                reviewedPackageIdentity: null,
-            },
             generation: {
                 targetGeneration: 'generation-7',
                 desiredGeneration: 'generation-7',
@@ -526,7 +570,6 @@ describe('buildPluginProjectionV2', () => {
                 immutableGenerationId: 'generation-7',
                 desiredImmutableGenerationId: 'generation-7',
                 appliedImmutableGenerationId: null,
-                distribution: { kind: 'localPath' },
                 applied: false,
                 selectedAccess: [],
             }]]),
@@ -538,8 +581,8 @@ describe('buildPluginProjectionV2', () => {
             ...authorization,
             confirmation: 'notRequired',
         })).toEqual({
-            outcome: 'denied',
-            code: 'plugin_action_package_untrusted',
+            outcome: 'unavailable',
+            code: 'plugin_action_generation_not_applied',
             requiresCurrentIntent: false,
         });
         expect(buildPluginProjectionV2({

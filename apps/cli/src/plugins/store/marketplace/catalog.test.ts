@@ -287,38 +287,34 @@ describe('readRemoteMarketplaceCatalog', () => {
     envScope.patch({
       HAPPIER_HOME_DIR: home,
       PATH: process.env.PATH ?? '',
-      HAPPIER_PLUGIN_REMOTE_FETCH_TIMEOUT_MS: '23456',
+      HAPPIER_PLUGIN_REMOTE_FETCH_TIMEOUT_MS: '250',
     });
     reloadConfiguration();
 
-    const timeoutSignal = new AbortController().signal;
-    const timeoutSpy = vi.spyOn(AbortSignal, 'timeout').mockReturnValue(timeoutSignal);
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify(createMarketplaceCatalogDocument({
-      sourceUrl: 'https://marketplace.example.test/catalog.json',
-      title: 'Curated Marketplace',
-      entries: [],
-    })), {
-      status: 200,
-      headers: {
-        'content-type': 'application/json',
-      },
-    }));
+    // The server accepts the connection and never answers, so only the shared
+    // remote-fetch timeout can end the catalog read.
+    const server = createServer(() => undefined);
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
+    const address = server.address();
+    if (!address || typeof address === 'string') {
+      throw new Error('Failed to bind marketplace test server');
+    }
 
     try {
       const result = await readRemoteMarketplaceCatalog({
-        sourceUrl: 'https://marketplace.example.test/catalog.json',
+        sourceUrl: `http://127.0.0.1:${address.port}/catalog.json`,
         happyHomeDir: home,
       });
 
-      expect(result.ok).toBe(true);
-      expect(timeoutSpy).toHaveBeenCalledWith(23456);
-      expect(fetchMock).toHaveBeenCalledWith(
-        'https://marketplace.example.test/catalog.json',
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.diagnostics).toEqual(expect.arrayContaining([
         expect.objectContaining({
-          signal: timeoutSignal,
+          message: expect.stringContaining('timed out after 250ms'),
         }),
-      );
+      ]));
     } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve())).catch(() => undefined);
       envScope.restore();
       reloadConfiguration();
       await removeTempDir(home);

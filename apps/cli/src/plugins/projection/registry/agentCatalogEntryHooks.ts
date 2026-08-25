@@ -710,6 +710,9 @@ function readPreflightSessionControlsContribution(value: unknown): PreflightSess
     const probeConfigOptionsRaw = readFunction<NonNullable<PreflightSessionControlsContribution['probeConfigOptionsRaw']>>(
         value.probeConfigOptionsRaw,
     );
+    const probePassiveRealtimeSetupRaw = readFunction<NonNullable<PreflightSessionControlsContribution['probePassiveRealtimeSetupRaw']>>(
+        value.probePassiveRealtimeSetupRaw,
+    );
     const cliModelsCommandArgs = readStringArray(value.cliModelsCommandArgs);
     const verboseModelsCommandArgs = readStringArray(value.verboseModelsCommandArgs);
     return {
@@ -734,6 +737,7 @@ function readPreflightSessionControlsContribution(value: unknown): PreflightSess
             : {}),
         ...(probeModesRaw ? { probeModesRaw } : {}),
         ...(probeConfigOptionsRaw ? { probeConfigOptionsRaw } : {}),
+        ...(probePassiveRealtimeSetupRaw ? { probePassiveRealtimeSetupRaw } : {}),
     };
 }
 
@@ -2295,6 +2299,20 @@ export function createAgentRuntimeCatalogEntryHooks(params: Readonly<{
                                     createPreflightContributionProbeParams(
                                         probeParams,
                                         'configOptions',
+                                        systemTools,
+                                        params.agentId,
+                                        agentCliSystemTool,
+                                    ),
+                                ),
+                        }
+                        : {}),
+                    ...(preflightSessionControls.probePassiveRealtimeSetupRaw
+                        ? {
+                            probePassiveRealtimeSetupRaw: async (probeParams: PreflightSessionControlsProbeParams) =>
+                                await preflightSessionControls.probePassiveRealtimeSetupRaw!(
+                                    createPreflightContributionProbeParams(
+                                        probeParams,
+                                        'passiveRealtimeSetup',
                                         systemTools,
                                         params.agentId,
                                         agentCliSystemTool,

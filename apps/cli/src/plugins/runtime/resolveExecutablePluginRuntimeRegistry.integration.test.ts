@@ -54,7 +54,6 @@ import { BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS } from '@/plugins/projection/re
 import type {
     ResolvedAgentRuntimeContribution,
     ResolvedContributionRegistry,
-    ResolvedProviderContribution,
 } from '@/plugins/projection/registry/types';
 import {
     SAMPLE_PLUGIN_BACKEND_ID,
@@ -67,6 +66,10 @@ import {
     resolveExecutablePluginRuntimeRegistry,
     type RetainedManagedProviderRuntimeInvocationScope,
 } from './resolveExecutablePluginRuntimeRegistry';
+import type {
+    PinnedHttpStreamRequest,
+    PinnedHttpStreamResponse,
+} from '@/network/pinnedHttp';
 import { resolveSpawnChildEnvironment } from '@/daemon/spawn/resolveSpawnChildEnvironment';
 import { adaptTargetActivationFacts } from '@/plugins/projection/introspection/targetActivationFacts';
 import { mapPluginSourceToDiagnosticSource } from '@/plugins/projection/introspection/source';
@@ -94,6 +97,16 @@ import type {
     ManagedProviderOperationAuthority,
 } from '@/daemon/connectedServices/purposeBindings/managedProviderOperationAuthority';
 
+/**
+ * A public-classified address nothing answers on. The canonical locality policy
+ * rejects the reserved documentation ranges outright (`203.0.113.0/24` is
+ * `unsafe`), so this sits just outside them. Admission resolves a configured
+ * origin once and the socket must connect to exactly that answer, so observing
+ * this address on the pinned request proves the transport reused the admitted
+ * DNS result instead of resolving the hostname again.
+ */
+const NOVEL_ACCOUNT_VALIDATED_ADDRESS = '203.0.114.10';
+
 async function createTrustedLocalLinkInstall(params: Readonly<{
     pluginId: string;
     sourceRootPath: string;
@@ -113,7 +126,7 @@ async function createTrustedLocalLinkInstall(params: Readonly<{
 }
 
 describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
-    it('retires current materialization after acquiring exact managed Provider runtimes across provenance', async () => {
+    it('retires current materialization after acquiring every declared managed Provider runtime from one committed activation target', async () => {
         const happyHomeDir = await mkdtemp(
             join(tmpdir(), 'happier-managed-provider-acquisition-home-'),
         );
@@ -291,31 +304,32 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
             },
         });
 
+        // Projected exactly as the host projects an installed plugin, so every
+        // Provider record below carries the provenance and source the loader
+        // actually derived from this committed activation target. An earlier
+        // revision of this test rewrote each record's `provenance`/`source` to
+        // 'bundled'/'path'/'package' while leaving one path-backed activation
+        // target in place. That proved nothing: managed Provider acquisition
+        // resolves one plugin-level activation target and never branches on a
+        // Provider's declared provenance, so the relabelled records exercised a
+        // single loader three times under three names. The real distinct
+        // activation sources are covered where they can actually be built: the
+        // installed-package direction by the sibling package-source test below,
+        // and the bundled first-party direction by 'reconstructs an adopted
+        // bundled Provider from exact P bytes ...', which uses a real
+        // BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS record.
         const localContributes = projectLoadedPluginContributes({
             loadResult: await loadInstalledPlugins({ happyHomeDir }),
-            provenance: 'first_party',
+            provenance: 'external',
             existingAgentIds: new Set(),
         });
         const merged = createMergedContributionRegistry(localContributes, {});
-        const provenanceByLocalId = new Map<string, Readonly<{
-            provenance: ResolvedProviderContribution['provenance'];
-            source: ResolvedProviderContribution['source'];
-        }>>([
-            ['bundled-gateway', { provenance: 'first_party', source: { kind: 'bundled' } }],
-            ['development-gateway', { provenance: 'external', source: { kind: 'path' } }],
-            ['external-gateway', { provenance: 'external', source: { kind: 'package' } }],
-            [descriptorOnlyProviderId, { provenance: 'external', source: { kind: 'archive' } }],
-        ]);
         const contributes: ResolvedContributionRegistry = Object.freeze({
             ...merged,
             materializationIdsByPluginId: Object.freeze({
                 ...(merged.materializationIdsByPluginId ?? {}),
                 [pluginId]: 'materialization-current',
             }),
-            providers: Object.freeze((merged.providers ?? []).map((provider) => Object.freeze({
-                ...provider,
-                ...provenanceByLocalId.get(provider.identity.localId),
-            } as ResolvedProviderContribution))),
         });
         const generationAuthority = await readCurrentCommittedPluginGenerations(
             resolvePluginStorePaths({ happyHomeDir }),
@@ -431,10 +445,22 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
                 acquired: runtime !== null,
                 current: runtime?.isCurrent(),
             }))).toEqual([
-                { provenance: 'first_party', source: 'bundled', acquired: true, current: true },
                 { provenance: 'external', source: 'path', acquired: true, current: true },
-                { provenance: 'external', source: 'package', acquired: true, current: true },
+                { provenance: 'external', source: 'path', acquired: true, current: true },
+                { provenance: 'external', source: 'path', acquired: true, current: true },
             ]);
+            // Every managed Provider a plugin declares is served by that
+            // plugin's one committed activation target, so all three runtimes
+            // carry the exact generation the store committed. A per-Provider
+            // target or a generation from anywhere else fails here.
+            const committedGeneration = generationAuthority.generations.get(pluginId);
+            expect(committedGeneration?.record.immutableGenerationId).toBeTypeOf('string');
+            expect(new Set(acquired.map(
+                ({ runtime }) => runtime?.immutableGenerationId,
+            ))).toEqual(new Set([committedGeneration?.record.immutableGenerationId]));
+            expect(new Set(acquired.map(
+                ({ runtime }) => runtime?.activationGeneration,
+            )).size).toBe(1);
             expect(runtimeRegistry.activatedPluginIds.has(pluginId)).toBe(true);
             expect(runtimeRegistry.resolveCurrentPluginMaterializationRef?.(pluginId)).toEqual({
                 pluginId,
@@ -633,7 +659,18 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
             await secondBounded?.cleanup();
             expect(cleanupOperationAuthority).toHaveBeenCalledTimes(4);
 
-            const sessionRuntimeBindingBasis = {
+            // The canonical binding basis is a Protocol-normalized value: the
+            // daemon reads it back through `ProviderRuntimeBindingBasisV1Schema`
+            // and invokes with exactly `deployment.implementationIdentity`
+            // (`startDaemonSessionControlRuntime.ts`). Normalization is not
+            // cosmetic here — `PluginContributionIdentityV1Schema` returns a
+            // null-prototype record, and the session-demand gate compares it to
+            // the caller's identity with `isDeepStrictEqual`, which is
+            // prototype-sensitive. A hand-built object literal is therefore not
+            // the shape any production caller passes, and the previous fixture
+            // was refused by that correspondence gate before it could reach a
+            // single session-lifecycle assertion.
+            const sessionRuntimeBindingBasis = ProviderRuntimeBindingBasisV1Schema.parse({
                 v: 1 as const,
                 agentTargetKey: 'backend:fixture',
                 connectionId:
@@ -700,7 +737,11 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
                     connectionSecurityFingerprint: 'connection-security',
                     grantFingerprint: 'grant',
                 },
-            } satisfies ProviderRuntimeBindingBasisV1;
+            });
+            if (sessionRuntimeBindingBasis.deployment.kind !== 'managedLocal') {
+                throw new Error('Expected a managed-local Session binding basis');
+            }
+            const sessionDeployment = sessionRuntimeBindingBasis.deployment;
             const bindSessionCustody = vi.fn(async (
                 _scope: unknown,
                 _dependencies: unknown,
@@ -711,10 +752,7 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
             }));
             const createSessionDemandInvocation = async (sessionId: string) => (
                 await createManagedProviderRuntimeInvocationServices({
-                    identity: {
-                        pluginId,
-                        localId: 'external-gateway',
-                    },
+                    identity: sessionDeployment.implementationIdentity,
                     purposeBindings: { v: 1, bindings: [] },
                     operationClaim: {
                         kind: 'sessionDemand',
@@ -731,12 +769,12 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
             const sessionAReplacement =
                 await createSessionDemandInvocation('session-a');
             const sessionB = await createSessionDemandInvocation('session-b');
-            const developmentRuntimeBindingBasis = {
+            const developmentRuntimeBindingBasis = ProviderRuntimeBindingBasisV1Schema.parse({
                 ...sessionRuntimeBindingBasis,
                 contributionKey:
                     `${pluginId}/development-gateway`,
                 deployment: {
-                    ...sessionRuntimeBindingBasis.deployment,
+                    ...sessionDeployment,
                     implementationIdentity: {
                         pluginId,
                         localId: 'development-gateway',
@@ -749,13 +787,15 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
                         endpointTemplateIds: ['api', 'api-chat'],
                     },
                 },
-            } satisfies ProviderRuntimeBindingBasisV1;
+            });
+            if (developmentRuntimeBindingBasis.deployment.kind !== 'managedLocal') {
+                throw new Error('Expected a managed-local development binding basis');
+            }
+            const developmentDeployment =
+                developmentRuntimeBindingBasis.deployment;
             const developmentSession =
                 await createManagedProviderRuntimeInvocationServices({
-                    identity: {
-                        pluginId,
-                        localId: 'development-gateway',
-                    },
+                    identity: developmentDeployment.implementationIdentity,
                     purposeBindings: { v: 1, bindings: [] },
                     operationClaim: {
                         kind: 'sessionDemand',
@@ -791,6 +831,48 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
                 },
                 manifestAuthority: 'external',
             });
+            // A Session's binding basis authorizes exactly one Provider, and the
+            // only thing separating this basis from the accepted
+            // development-gateway one is which Provider it names: this plugin
+            // declares `bundled-gateway` and `development-gateway` with
+            // identical managed runtimes and endpoint templates, so the
+            // declaration, endpoint, and purpose-binding comparisons all agree
+            // and the exact-identity correspondence is the sole reason to
+            // refuse. Custody is never bound, so a caller cannot borrow one
+            // Session's authorization for a sibling Provider.
+            const siblingIdentityBasis = ProviderRuntimeBindingBasisV1Schema.parse({
+                ...developmentRuntimeBindingBasis,
+                contributionKey: `${pluginId}/bundled-gateway`,
+                deployment: {
+                    ...developmentDeployment,
+                    implementationIdentity: {
+                        pluginId,
+                        localId: 'bundled-gateway',
+                    },
+                },
+            });
+            if (siblingIdentityBasis.deployment.kind !== 'managedLocal') {
+                throw new Error('Expected a managed-local sibling binding basis');
+            }
+            expect(siblingIdentityBasis.deployment.managedRuntime).toEqual(
+                developmentDeployment.managedRuntime,
+            );
+            const custodyCallsBeforeMismatch = bindSessionCustody.mock.calls.length;
+            await expect(createManagedProviderRuntimeInvocationServices({
+                identity: developmentDeployment.implementationIdentity,
+                purposeBindings: { v: 1, bindings: [] },
+                operationClaim: {
+                    kind: 'sessionDemand',
+                    sessionId: 'session-mismatched-basis',
+                    runtimeBindingBasis: siblingIdentityBasis,
+                    bindSessionCustody,
+                },
+                signal: new AbortController().signal,
+                isCurrent: () => true,
+            })).resolves.toBeNull();
+            expect(bindSessionCustody.mock.calls.length).toBe(
+                custodyCallsBeforeMismatch,
+            );
             expect(bindSessionCustody).toHaveBeenCalledWith(
                 expect.objectContaining({ sessionId: 'session-a' }),
                 expect.objectContaining({
@@ -841,16 +923,22 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
                 retainedGeneration.rootPath,
                 ...retainedGeneration.record.manifestRelativePath.split('/'),
             );
-            const retainedManifest = await readFile(
-                retainedManifestPath,
-                'utf8',
+            // Retained P reconstructs from the daemon-custodied immutable copy,
+            // so an author reformatting the still-linked source after retirement
+            // is not a second currentness authority: the declaration is read and
+            // normalized from the custodied bytes. The custodied copy itself is
+            // byte-immutable; tampering with it is exercised as the closing
+            // negative below, after the other refusal cases have run for their
+            // own reasons.
+            const sourceManifestPath = join(
+                pluginRoot,
+                '.happier-plugin',
+                'plugin.json',
             );
-            // The retained P declaration is normalized and compared directly.
-            // Formatting-only bytes in its daemon-custodied manifest are not a
-            // second currentness authority.
+            const sourceManifest = await readFile(sourceManifestPath, 'utf8');
             await writeFile(
-                retainedManifestPath,
-                `\n${retainedManifest}`,
+                sourceManifestPath,
+                `\n${sourceManifest}`,
                 'utf8',
             );
 
@@ -950,15 +1038,35 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
                         ProviderRuntimeBindingBasisV1Schema.parse({
                             ...retainedScope.runtimeBindingBasis,
                             deployment: {
-                                ...retainedScope.runtimeBindingBasis.deployment,
+                                ...sessionDeployment,
                                 managedRuntime: {
-                                    ...retainedScope.runtimeBindingBasis.deployment
-                                        .managedRuntime,
+                                    ...sessionDeployment.managedRuntime,
                                     endpointTemplateIds: ['api'],
                                 },
                             },
                         }),
                 },
+                signal: new AbortController().signal,
+                isCurrent: () => true,
+                readAdoptedPublicOutcome,
+                revalidatePolicy: async () => true,
+            })).resolves.toBeNull();
+            // Closing negative: the daemon-custodied generation is immutable, so
+            // any byte change to it — including one that leaves the normalized
+            // declaration identical — retires the retained reconstruction. This
+            // runs last because it permanently invalidates the custodied copy
+            // every earlier case depends on.
+            const custodiedManifest = await readFile(
+                retainedManifestPath,
+                'utf8',
+            );
+            await writeFile(
+                retainedManifestPath,
+                `\n${custodiedManifest}`,
+                'utf8',
+            );
+            await expect(createRetained({
+                scope: retainedScope,
                 signal: new AbortController().signal,
                 isCurrent: () => true,
                 readAdoptedPublicOutcome,
@@ -2531,10 +2639,6 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
     it('demands and re-reads a novel qualified connected-account runtime through the host registry', async () => {
         const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-connected-account-home-'));
         const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-connected-account-plugin-'));
-        const fetchMock = vi.fn(async (
-            _input: string | URL | Request,
-        ) => new Response('{}', { status: 200 }));
-        vi.stubGlobal('fetch', fetchMock);
         await mkdir(join(pluginRoot, '.happier-plugin'), { recursive: true });
         await writeFile(join(pluginRoot, '.happier-plugin', 'plugin.json'), JSON.stringify({
             schemaVersion: 2,
@@ -2622,7 +2726,47 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
             },
         });
 
-        const runtimeRegistry = await resolveExecutablePluginRuntimeRegistry({ happyHomeDir });
+        // Origin admission makes one private-network decision per configured
+        // origin and then pins the socket to exactly that answer, so both
+        // process-owned boundaries are substituted together. Substituting only
+        // `globalThis.fetch` left the real resolver classifying the fixture
+        // hostname as unresolvable/private and failed admission closed. Neither
+        // the locality policy nor the admission path is weakened here.
+        const resolveNetworkAddresses = vi.fn(async (hostname: string) => {
+            if (hostname !== 'tenant.example.test') {
+                throw new Error(`unexpected DNS lookup for ${hostname}`);
+            }
+            return Object.freeze([NOVEL_ACCOUNT_VALIDATED_ADDRESS]);
+        });
+        const pinnedRequests: Readonly<{
+            url: string;
+            method: string | undefined;
+            validatedAddresses: readonly string[];
+        }>[] = [];
+        const openPinnedStream = vi.fn(async (request: PinnedHttpStreamRequest) => {
+            pinnedRequests.push(Object.freeze({
+                url: request.url,
+                method: request.method,
+                validatedAddresses: request.validatedAddresses,
+            }));
+            const bytes = new TextEncoder().encode('{}');
+            let delivered = false;
+            return Object.freeze({
+                status: 200,
+                headers: Object.freeze({ 'content-type': 'application/json' }),
+                contentLength: bytes.byteLength,
+                read: async () => {
+                    if (delivered) return null;
+                    delivered = true;
+                    return bytes;
+                },
+                cancel: () => {},
+            }) satisfies PinnedHttpStreamResponse;
+        });
+        const runtimeRegistry = await resolveExecutablePluginRuntimeRegistry({
+            happyHomeDir,
+            networkDependencies: { resolveNetworkAddresses, openPinnedStream },
+        });
         try {
             expect(runtimeRegistry.activatedPluginIds.has('acme.novel.accounts')).toBe(false);
             const lease = await runtimeRegistry.resolveConnectedAccountRuntime!({
@@ -2690,10 +2834,13 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
                 status: 'connected',
                 accountId: 'novel-1',
             });
-            expect(fetchMock).toHaveBeenCalledOnce();
-            expect(fetchMock.mock.calls[0]?.[0]).toBe(
-                'https://tenant.example.test/session',
-            );
+            // The socket must carry exactly the address admission resolved, not a
+            // second lookup performed by the transport.
+            expect(pinnedRequests).toEqual([{
+                url: 'https://tenant.example.test/session',
+                method: 'POST',
+                validatedAddresses: [NOVEL_ACCOUNT_VALIDATED_ADDRESS],
+            }]);
 
             let currentnessChecks = 0;
             let releaseFinalCheck!: () => void;
@@ -2719,7 +2866,7 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
             await expect(staleInvocation).rejects.toMatchObject({
                 code: 'plugin_final_generation_retired',
             });
-            expect(fetchMock).toHaveBeenCalledOnce();
+            expect(pinnedRequests).toHaveLength(1);
             const introspection = adaptTargetActivationFacts({
                 generation: runtimeRegistry.generation!,
                 candidates: runtimeRegistry.contributes.introspectionContributions ?? [],

@@ -52,8 +52,6 @@ export type RegisterMachineLiveStreamRoutesOptions = PeerMachineLiveStreamDirect
     nowMs: () => number;
     expected: PeerMachineLiveStreamDirectExpectedBinding;
     trustRoots: readonly DirectRouteGrantTrustRoot[];
-    revokedGrantIds?: ReadonlySet<string>;
-    revokedGrantFamilyIds?: ReadonlySet<string>;
 }>;
 
 const LiveStreamDirectStartRequestSchema = z
@@ -172,8 +170,6 @@ export function registerMachineLiveStreamRoutes(
                 routeKind: 'loopback_direct',
                 endpointFingerprint: options.expected.endpointFingerprint,
             },
-            revokedGrantIds: options.revokedGrantIds,
-            revokedGrantFamilyIds: options.revokedGrantFamilyIds,
           })
           : verifyDirectRouteGrantV1({
             grant: body.grant,
@@ -186,8 +182,6 @@ export function registerMachineLiveStreamRoutes(
                 routeKind: 'loopback_direct',
                 endpointFingerprint: options.expected.endpointFingerprint,
             },
-            revokedGrantIds: options.revokedGrantIds,
-            revokedGrantFamilyIds: options.revokedGrantFamilyIds,
           });
         if (!grantVerification.valid) return fallback(version, grantVerification.reasonCode);
 

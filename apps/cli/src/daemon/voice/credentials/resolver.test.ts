@@ -6,6 +6,7 @@ import {
 } from '@happier-dev/protocol';
 
 import {
+  clearActiveAccountSettingsSnapshot,
   resetActiveAccountSettingsSnapshotForTests,
   setActiveAccountSettingsSnapshot,
 } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
@@ -61,18 +62,41 @@ function publishQualified(params: Readonly<{
   credentialSlotId?: string;
   machineValue?: string;
   credentialSource?: 'none' | 'savedSecret' | 'connectedAccount';
+  settingsVersion?: number;
+  secretUpdatedAt?: number;
+  includeSecret?: boolean;
+  unrelatedVoiceProvider?: boolean;
 }>) {
   const credentialSlotId = params.credentialSlotId ?? 'api_key';
   setActiveAccountSettingsSnapshot({
-    source: 'network', scopeKey: params.scopeKey, settingsVersion: 1, loadedAtMs: 1,
+    source: 'network',
+    scopeKey: params.scopeKey,
+    settingsVersion: params.settingsVersion ?? 1,
+    loadedAtMs: 1,
     settingsSecretsReadKeys: [],
     settings: {
-      secrets: [
-        { id: `${params.scopeKey}-account`, name: 'Account key', kind: 'apiKey', encryptedValue: { _isSecretValue: true, value: params.accountValue } },
-        ...(params.machineValue
-          ? [{ id: `${params.scopeKey}-machine`, name: 'Machine key', kind: 'apiKey', encryptedValue: { _isSecretValue: true, value: params.machineValue } }]
-          : []),
-      ],
+      secrets: params.includeSecret === false
+        ? []
+        : [
+            {
+              id: `${params.scopeKey}-account`,
+              name: 'Account key',
+              kind: 'apiKey',
+              encryptedValue: { _isSecretValue: true, value: params.accountValue },
+              createdAt: 1,
+              updatedAt: params.secretUpdatedAt ?? 1,
+            },
+            ...(params.machineValue
+              ? [{
+                  id: `${params.scopeKey}-machine`,
+                  name: 'Machine key',
+                  kind: 'apiKey',
+                  encryptedValue: { _isSecretValue: true, value: params.machineValue },
+                  createdAt: 1,
+                  updatedAt: params.secretUpdatedAt ?? 1,
+                }]
+              : []),
+          ],
       voiceSettingsV1: {
         credentialBindings: [{
           contribution: params.contribution,
@@ -85,6 +109,16 @@ function publishQualified(params: Readonly<{
               : {}),
           },
         }],
+        ...(params.unrelatedVoiceProvider
+          ? {
+              providers: {
+                'happier.voice.unrelated/provider': {
+                  schemaVersion: 1,
+                  config: { enabled: true },
+                },
+              },
+            }
+          : {}),
       },
       ...(params.credentialSource === 'connectedAccount'
         ? {
@@ -154,26 +188,84 @@ describe('Voice credential resolver', () => {
       .resolves.toBe('b-key');
   });
 
-  it('fails an in-flight use when the active account snapshot changes', async () => {
-    const resolver = createVoiceCredentialResolver({ machineId: null });
-    publishQualified({ scopeKey: 'account-a', accountValue: 'a-key', contribution: GOOGLE_STT_CONTRIBUTION });
-    let markStarted!: () => void;
-    let releaseUse!: () => void;
-    const started = new Promise<void>((resolve) => { markStarted = resolve; });
-    const release = new Promise<void>((resolve) => { releaseUse = resolve; });
-    const operation = resolver.withSecret({
-      identity: identityFor(GOOGLE_STT_CONTRIBUTION),
-      use: async (secret) => {
-        markStarted();
-        await release;
-        return secret;
+  it('keeps an in-flight SavedSecret operation only while its selected credential remains current', async () => {
+    const replacements = [{
+      label: 'unrelated Account Settings mutation',
+      next: {
+        settingsVersion: 2,
+        unrelatedVoiceProvider: true,
       },
-    });
-    await started;
-    publishQualified({ scopeKey: 'account-b', accountValue: 'b-key', contribution: GOOGLE_STT_CONTRIBUTION });
-    releaseUse();
+      allowed: true,
+    }, {
+      label: 'source switch',
+      next: {
+        settingsVersion: 2,
+        credentialSource: 'connectedAccount' as const,
+      },
+      allowed: false,
+    }, {
+      label: 'SavedSecret revocation',
+      next: {
+        settingsVersion: 2,
+        includeSecret: false,
+      },
+      allowed: false,
+    }, {
+      label: 'selected credential revision',
+      next: {
+        settingsVersion: 2,
+        secretUpdatedAt: 2,
+      },
+      allowed: false,
+    }, {
+      label: 'same Account re-entry',
+      next: {
+        settingsVersion: 2,
+      },
+      clearAccountFirst: true,
+      allowed: false,
+    }] as const;
 
-    await expect(operation).rejects.toMatchObject({ code: 'credential_unavailable' });
+    for (const replacement of replacements) {
+      resetActiveAccountSettingsSnapshotForTests();
+      const resolver = createVoiceCredentialResolver({ machineId: null });
+      publishQualified({
+        scopeKey: 'account-a',
+        accountValue: 'a-key',
+        contribution: GOOGLE_STT_CONTRIBUTION,
+      });
+      let markStarted!: () => void;
+      let releaseUse!: () => void;
+      const started = new Promise<void>((resolve) => { markStarted = resolve; });
+      const release = new Promise<void>((resolve) => { releaseUse = resolve; });
+      const operation = resolver.withSecret({
+        identity: identityFor(GOOGLE_STT_CONTRIBUTION),
+        use: async (secret) => {
+          markStarted();
+          await release;
+          return secret;
+        },
+      });
+      await started;
+      if ('clearAccountFirst' in replacement && replacement.clearAccountFirst) {
+        clearActiveAccountSettingsSnapshot();
+      }
+      publishQualified({
+        scopeKey: 'account-a',
+        accountValue: 'a-key',
+        contribution: GOOGLE_STT_CONTRIBUTION,
+        ...replacement.next,
+      });
+      releaseUse();
+
+      if (replacement.allowed) {
+        await expect(operation, replacement.label).resolves.toBe('a-key');
+      } else {
+        await expect(operation, replacement.label).rejects.toMatchObject({
+          code: 'credential_unavailable',
+        });
+      }
+    }
   });
 
   it('resolves account-only client operations without consulting machine overrides', async () => {

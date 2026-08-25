@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+import { readFile, rename } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
@@ -73,10 +73,20 @@ export const PluginRegistryCommitRecordSchema = z.object({
 });
 export type PluginRegistryCommitRecord = z.infer<typeof PluginRegistryCommitRecordSchema>;
 
-function parsePluginRegistryCommitRecordFromDisk(value: unknown): PluginRegistryCommitRecord {
+function parsePluginRegistryCommitRecordFromDisk(
+  filePath: string,
+  value: unknown,
+): PluginRegistryCommitRecord {
   const parsed = PluginRegistryCommitRecordSchema.safeParse(value);
   if (parsed.success) return parsed.data;
-  throw invalidCommitRecord(parsed.error);
+  throw invalidCommitRecord(filePath, projectCommitRecordIssues(parsed.error), parsed.error);
+}
+
+function projectCommitRecordIssues(error: z.ZodError): readonly string[] {
+  return Object.freeze(error.issues.map((issue) => {
+    const path = issue.path.map((segment) => String(segment)).join('.');
+    return path ? `${path}: ${issue.message}` : issue.message;
+  }));
 }
 
 export function pluginRegistryCommitRecordsEqual(
@@ -113,8 +123,67 @@ export class PluginRegistryCommitCurrentConflictError extends Error {
   }
 }
 
-function invalidCommitRecord(cause?: unknown): Error {
-  return new Error('Invalid plugin registry commit record', cause === undefined ? undefined : { cause });
+/**
+ * The durable current record is persisted state, so a rejection is an operator
+ * situation rather than a transient fault: it recurs on every start until a
+ * human acts. The daemon's fatal sink serializes only `name` and `message`, so
+ * the offending file and the exact rejected clauses belong in the message —
+ * "Invalid plugin registry commit record" alone names no field, no path and no
+ * file, and cannot be acted on.
+ */
+export class PluginRegistryCommitRecordInvalidError extends Error {
+  readonly filePath: string;
+  readonly issues: readonly string[];
+
+  constructor(filePath: string, issues: readonly string[], cause?: unknown) {
+    super(
+      `Invalid plugin registry commit record '${filePath}': ${
+        issues.length > 0 ? issues.join('; ') : 'record did not match the current schema'
+      }`,
+      cause === undefined ? undefined : { cause },
+    );
+    this.name = 'PluginRegistryCommitRecordInvalidError';
+    this.filePath = filePath;
+    this.issues = Object.freeze([...issues]);
+  }
+}
+
+function invalidCommitRecord(
+  filePath: string,
+  issues: readonly string[],
+  cause?: unknown,
+): PluginRegistryCommitRecordInvalidError {
+  return new PluginRegistryCommitRecordInvalidError(filePath, issues, cause);
+}
+
+/**
+ * Moves an unreadable current record aside so an explicitly requested recovery
+ * start can bootstrap a fresh one. The record is renamed, never deleted, and a
+ * record that still parses is refused: recovery must not discard durable plugin
+ * state that the current reader can actually consume.
+ */
+export async function quarantineInvalidPluginRegistryCommitRecord(input: Readonly<{
+  paths: PluginStorePaths;
+  nowMs?: () => number;
+}>): Promise<string> {
+  const filePath = input.paths.registryCurrentFilePath;
+  const raw = await readFile(filePath, 'utf8');
+  const parsed = (() => {
+    try {
+      return PluginRegistryCommitRecordSchema.safeParse(JSON.parse(raw) as unknown).success;
+    } catch {
+      return false;
+    }
+  })();
+  if (parsed) {
+    throw new Error(
+      `Plugin registry commit record '${filePath}' is readable and must not be quarantined`,
+    );
+  }
+  const quarantinePath = `${filePath}.invalid-${String((input.nowMs ?? Date.now)())}`;
+  await rename(filePath, quarantinePath);
+  await flushDirectoryDurably(dirname(filePath));
+  return quarantinePath;
 }
 
 export function createEmptyPluginRegistryCommitRecord(input: Readonly<{
@@ -143,10 +212,19 @@ export async function readPluginRegistryCommitRecord(
 ): Promise<PluginRegistryCommitRecord | null> {
   try {
     const raw = await readFile(paths.registryCurrentFilePath, 'utf8');
-    return parsePluginRegistryCommitRecordFromDisk(JSON.parse(raw) as unknown);
+    return parsePluginRegistryCommitRecordFromDisk(
+      paths.registryCurrentFilePath,
+      JSON.parse(raw) as unknown,
+    );
   } catch (error) {
     if ((error as NodeJS.ErrnoException | null)?.code === 'ENOENT') return null;
-    if (error instanceof SyntaxError) throw invalidCommitRecord(error);
+    if (error instanceof SyntaxError) {
+      throw invalidCommitRecord(
+        paths.registryCurrentFilePath,
+        [`file is not valid JSON: ${error.message}`],
+        error,
+      );
+    }
     throw error;
   }
 }

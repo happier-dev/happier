@@ -14,6 +14,7 @@ import type {
     PluginActionConfirmationV2,
     PluginActionDangerLevelV2,
     PluginMachineMaterializationRefV1,
+    TargetActionApprovalReplayPlacementV1,
 } from '@happier-dev/protocol';
 
 import {
@@ -58,7 +59,10 @@ import {
     type ContributionPolicyFacts,
     type TargetActionPolicyDecision,
 } from '../policy/evaluate';
-import type { HostCurrentSessionUiServices } from '@/agent/runtime/state/currentSessionUiTypes';
+import {
+    createHostSessionPresentationOwner,
+    type HostCurrentSessionUiServices,
+} from '@/agent/runtime/state/currentSessionUiTypes';
 
 export type TargetActionDefinition = Readonly<{
     id: string;
@@ -96,6 +100,7 @@ export type TargetActionInvocationRegistration = Readonly<{
 
 export type TargetActionInvocationResult = Readonly<
     | { status: 'executed'; value: JsonValue | null }
+    | { status: 'deferred'; artifactId: string }
     | {
         status: 'unavailable' | 'invalid' | 'failed';
         code: string;
@@ -151,6 +156,10 @@ export type InvokeTargetActionParams = Readonly<{
     signal?: AbortSignal;
     facts?: ContributionPolicyFacts;
     requestCurrentIntent?: (request: TargetActionCurrentIntentRequest) => Promise<TargetActionCurrentIntentResult>;
+    /** Host-stamped durable target for exact API approval replay. */
+    replayPlacement?: TargetActionApprovalReplayPlacementV1;
+    /** Revalidate a durable approval against current policy before execution. */
+    requireCurrentIntent?: true;
     /** Current host Action-settings enablement for this exact qualified target Action. */
     isEnabledByActionSettings?: () => boolean;
     /** Current host Action-settings policy for this exact qualified target Action. */
@@ -308,10 +317,39 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
     type IndexedAction = Readonly<{
         registration: TargetActionInvocationRegistration;
         invocation: ReturnType<typeof createPluginActionInvocation>;
+        /** The exact retirement signal this entry's invocation was prepared against. */
+        generationSignal: AbortSignal;
         isCurrent(): boolean;
     }>;
 
-    function buildIndex(registrations: readonly TargetActionInvocationRegistration[]): ReadonlyMap<string, IndexedAction> {
+    /**
+     * Preparing an invocation compiles the Action's input and result JSON Schemas, which builds a
+     * schema compiler and generates a validator for each. `refresh()` runs after every on-demand
+     * activation, including the ones that publish nothing, so recompiling an Action generation
+     * that did not change is the dominant cost of re-indexing and is pure waste.
+     *
+     * `createPluginActionInvocation` reads only the ids, the two schemas and the generation
+     * signal. When all of those are the identical values the previous entry was prepared from,
+     * a recompilation can only reproduce the validators it already holds.
+     */
+    function canReusePreparedInvocation(
+        previous: IndexedAction,
+        registration: TargetActionInvocationRegistration,
+        generationSignal: AbortSignal,
+    ): boolean {
+        return previous.generationSignal === generationSignal
+            && previous.registration.pluginId === registration.pluginId
+            && previous.registration.localId === registration.localId
+            && previous.registration.generation === registration.generation
+            && previous.registration.immutableGenerationId === registration.immutableGenerationId
+            && previous.registration.definition.inputSchema === registration.definition.inputSchema
+            && previous.registration.definition.resultSchema === registration.definition.resultSchema;
+    }
+
+    function buildIndex(
+        registrations: readonly TargetActionInvocationRegistration[],
+        previous: ReadonlyMap<string, IndexedAction> = new Map(),
+    ): ReadonlyMap<string, IndexedAction> {
         const next = new Map<string, IndexedAction>();
         for (const registration of registrations) {
             if (registration.family !== undefined && registration.family !== 'actions') {
@@ -352,17 +390,23 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                 && (params.resolveGenerationLifecycle?.(registration.pluginId).isCurrent() ?? true)
                 && actionsByKey.get(key)?.registration.generation === registration.generation
             );
-            const invocation = createPluginActionInvocation({
-                pluginId: registration.pluginId,
-                localId: registration.localId,
-                ...(definition.inputSchema === undefined ? {} : { inputSchema: definition.inputSchema }),
-                ...(definition.resultSchema === undefined ? {} : { resultSchema: definition.resultSchema }),
-                generationSignal: lifecycle?.retirementSignal ?? generationController.signal,
-                isCurrent: isRegistrationCurrent,
-            });
+            const generationSignal = lifecycle?.retirementSignal ?? generationController.signal;
+            const reusable = previous.get(key);
+            const invocation = reusable
+                && canReusePreparedInvocation(reusable, storedRegistration, generationSignal)
+                ? reusable.invocation
+                : createPluginActionInvocation({
+                    pluginId: registration.pluginId,
+                    localId: registration.localId,
+                    ...(definition.inputSchema === undefined ? {} : { inputSchema: definition.inputSchema }),
+                    ...(definition.resultSchema === undefined ? {} : { resultSchema: definition.resultSchema }),
+                    generationSignal,
+                    isCurrent: isRegistrationCurrent,
+                });
             next.set(key, Object.freeze({
                 registration: storedRegistration,
                 invocation,
+                generationSignal,
                 isCurrent: isRegistrationCurrent,
             }));
         }
@@ -434,7 +478,7 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                 // paths remain deliberately unavailable rather than inventing
                 // a plugin prefix or a mutable-generation substitute.
                 const presentationOwner = invocation.sessionId && registration.immutableGenerationId
-                    ? Object.freeze({
+                    ? createHostSessionPresentationOwner({
                         pluginId: registration.pluginId,
                         contributionId: registration.localId,
                         generationId: registration.immutableGenerationId,
@@ -773,6 +817,8 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                     ...(invocation.invocationSurface ? { invocationSurface: invocation.invocationSurface } : {}),
                     ...(invocation.sessionId ? { sessionId: invocation.sessionId } : {}),
                     ...(invocation.signal ? { signal: invocation.signal } : {}),
+                    ...(invocation.replayPlacement ? { replayPlacement: invocation.replayPlacement } : {}),
+                    ...(invocation.requireCurrentIntent === true ? { requireCurrentIntent: true as const } : {}),
                     ...(invocation.requestCurrentIntent ? { requestCurrentIntent: invocation.requestCurrentIntent } : {}),
             });
             if (prepared.kind === 'settled') {
@@ -806,7 +852,7 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
         },
         refresh() {
             if (generationController.signal.aborted || !params.readActions) return;
-            const next = buildIndex(params.readActions());
+            const next = buildIndex(params.readActions(), actionsByKey);
             for (const key of next.keys()) expectedActionKeys.add(key);
             actionsByKey = next;
         },

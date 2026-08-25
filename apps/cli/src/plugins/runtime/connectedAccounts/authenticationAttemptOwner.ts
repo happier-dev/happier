@@ -5,8 +5,9 @@ import type {
     PluginContributionRef,
 } from '@happier-dev/plugin-sdk';
 import {
-    QualifiedConnectedAccountIdSchema,
-    type PluginConnectedAccountAuthenticationModeV2,
+  QualifiedConnectedAccountIdSchema,
+  sameQualifiedConnectedAccountRef,
+  type PluginConnectedAccountAuthenticationModeV2,
 } from '@happier-dev/protocol';
 
 import {
@@ -316,10 +317,6 @@ type StoredAttempt =
 
 function sameService(left: PluginContributionRef, right: PluginContributionRef): boolean {
     return left.pluginId === right.pluginId && left.localId === right.localId;
-}
-
-function sameAccount(left: PluginConnectedAccountRef, right: PluginConnectedAccountRef): boolean {
-    return sameService(left.service, right.service) && left.accountId === right.accountId;
 }
 
 /**
@@ -1393,7 +1390,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
             if (afterAccountRead) return afterAccountRead;
             if (
                 !exact
-                || !sameAccount(exact.account, attempt.account)
+                || !sameQualifiedConnectedAccountRef(exact.account, attempt.account)
                 || exact.authenticationModeId !== attempt.admission.modeId
                 || exact.credentialRevision !== attempt.expectedCredentialRevision
                 || exact.configurationRevision
@@ -1806,10 +1803,10 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
             await destroyAttempt(attempt, response);
             return response;
         }
-        if (
-            !sameService(settlement.account.service, request.service)
-            || settlement.account.accountId !== request.accountId
-        ) {
+        if (!sameQualifiedConnectedAccountRef(settlement.account, {
+            service: request.service,
+            accountId: request.accountId,
+        })) {
             const response: AttemptResponse = {
                 status: 'conflict',
                 attemptId: attempt.id,
@@ -2693,7 +2690,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                 if (afterAccountRead) return { response: afterAccountRead };
                 if (
                     !exact
-                    || !sameAccount(exact.account, snapshot.account!)
+                    || !sameQualifiedConnectedAccountRef(exact.account, snapshot.account!)
                     || exact.authenticationModeId !== snapshot.modeId
                     || exact.credentialRevision !== snapshot.expectedCredentialRevision
                     || exact.configurationRevision
@@ -2769,7 +2766,10 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                     || !isCanonicalAccountId(preparedSettlement.accountId)
                     || (
                         snapshot.account !== undefined
-                        && preparedSettlement.accountId !== snapshot.account.accountId
+                        && !sameQualifiedConnectedAccountRef({
+                            service: preparedSettlement.service,
+                            accountId: preparedSettlement.accountId,
+                        }, snapshot.account)
                     )
                 )
             ) {
@@ -2845,7 +2845,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
         },
         async beginReconnect(input) {
             const exact = await params.accounts.readExact(input.account);
-            if (!exact || !sameAccount(exact.account, input.account)) {
+            if (!exact || !sameQualifiedConnectedAccountRef(exact.account, input.account)) {
                 return {
                     status: 'unavailable',
                     code: 'connected_account_not_found',
@@ -3093,7 +3093,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                     if (afterAccountRead) return afterAccountRead;
                     if (
                         !exact
-                        || !sameAccount(exact.account, snapshot.account)
+                        || !sameQualifiedConnectedAccountRef(exact.account, snapshot.account)
                         || exact.authenticationModeId !== snapshot.modeId
                         || exact.credentialRevision !== snapshot.expectedCredentialRevision
                         || exact.configurationRevision
@@ -3172,7 +3172,10 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                         || !isCanonicalAccountId(preparedSettlement.accountId)
                         || (
                             snapshot.account !== undefined
-                            && preparedSettlement.accountId !== snapshot.account.accountId
+                            && !sameQualifiedConnectedAccountRef({
+                                service: preparedSettlement.service,
+                                accountId: preparedSettlement.accountId,
+                            }, snapshot.account)
                         )
                     )
                 ) {

@@ -23,6 +23,7 @@ import {
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
 import { readInstalledPluginCatalog } from '@/plugins/projection/catalog/installed';
 import { readPluginRegistryCommitRecord } from './commitRecord';
+import { PREDECESSOR_PLUGIN_REGISTRY_COMMIT_RECORD_BYTES } from './currentState.testkit';
 import {
   createPluginRegistryStateStore,
   type CommitPluginRegistryInstallationInput,
@@ -1467,6 +1468,47 @@ describe('PluginRegistryStateStore', () => {
       status: 'committed',
       pendingSurfaces: ['reconciliation'],
       message: expect.stringContaining('generationCleanup'),
+    });
+  });
+
+  it('fails a normal start closed but recovers a plugin-recovery start from an unreadable current record', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-registry-unreadable-'));
+    const paths = resolvePredecessorPluginStorePaths({ happyHomeDir });
+    await mkdir(paths.stateDir, { recursive: true });
+    await writeFile(
+      paths.registryCurrentFilePath,
+      PREDECESSOR_PLUGIN_REGISTRY_COMMIT_RECORD_BYTES,
+      'utf8',
+    );
+
+    // A normal start must still refuse to discard durable plugin state, but its
+    // refusal has to name the file and the exact rejected field.
+    const normalStart = await createPluginRegistryStateStore({ happyHomeDir })
+      .initialize()
+      .then(() => null, (reason: unknown) => reason);
+    expect((normalStart as Error).message).toContain(paths.registryCurrentFilePath);
+    expect((normalStart as Error).message).toContain('installationState');
+    expect((normalStart as Error).message).toContain('digest');
+    await expect(readFile(paths.registryCurrentFilePath, 'utf8'))
+      .resolves.toBe(PREDECESSOR_PLUGIN_REGISTRY_COMMIT_RECORD_BYTES);
+
+    const quarantined: string[] = [];
+    const recovered = await createPluginRegistryStateStore({
+      happyHomeDir,
+      pluginRecovery: true,
+      onCommitRecordQuarantined: (info) => {
+        quarantined.push(info.quarantinePath);
+      },
+    }).initialize();
+
+    expect(recovered.plugins).toEqual({});
+    expect(quarantined).toHaveLength(1);
+    // The unreadable record is preserved, never deleted.
+    await expect(readFile(quarantined[0]!, 'utf8'))
+      .resolves.toBe(PREDECESSOR_PLUGIN_REGISTRY_COMMIT_RECORD_BYTES);
+    await expect(readPluginRegistryCommitRecord(paths)).resolves.toMatchObject({
+      revision: 0,
+      pluginGenerations: {},
     });
   });
 });

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { PluginSettingsContributionV2 } from '@happier-dev/protocol';
+import type { JsonValue } from '@happier-dev/plugin-sdk';
 
 import { createStablePluginEventsBroker } from './events';
 import {
@@ -33,6 +34,14 @@ const contribution: PluginSettingsContributionV2 = {
     }],
     presentation: { sections: [], subagentSections: [] },
 };
+
+function nestedJson(depth: number): JsonValue {
+    let value: JsonValue = 'leaf';
+    for (let index = 0; index < depth; index += 1) {
+        value = { next: value };
+    }
+    return value;
+}
 
 function seed(params: Readonly<{
     generation?: string;
@@ -111,6 +120,62 @@ describe('generic plugin settings actions', () => {
             revision: 1,
             values: { endpoint: 'https://discovered.example' },
         });
+    });
+
+    it('persists a byte-small deeply nested settings-action patch through the CLI owner', async () => {
+        let record: unknown | null = null;
+        const nestedContribution: PluginSettingsContributionV2 = {
+            ...contribution,
+            fields: [{
+                id: 'nested',
+                title: 'Nested configuration',
+                schema: { type: 'object', additionalProperties: true },
+            }],
+            actions: [{
+                ...contribution.actions![0]!,
+                placement: { kind: 'afterField', fieldId: 'nested' },
+                patchFieldIds: ['nested'],
+            }],
+        };
+        const owner = createStablePluginSettingsOwner({
+            recordStore: {
+                supports: () => true,
+                read: async () => record,
+                async update<T>(
+                    _model: StablePluginSettingsModel,
+                    operation: (current: unknown | null) => Readonly<{
+                        record: CanonicalPluginSettingsRecord;
+                        result: T;
+                    }>,
+                ): Promise<T> {
+                    const next = operation(record);
+                    record = next.record;
+                    return next.result;
+                },
+            },
+            broker: createStablePluginEventsBroker(),
+        });
+        const model = createStablePluginSettingsModel({ pluginId: 'acme.plugin', contribution: nestedContribution });
+        const deepPatchValue = nestedJson(128);
+        const invoker = createPluginSettingsActionInvoker({
+            owner,
+            confirm: async () => true,
+            execute: async () => ({ patch: { nested: deepPatchValue } }),
+        });
+
+        await expect(invoker.invoke({
+            declaration: nestedContribution.actions![0]!,
+            contributionId: nestedContribution.id,
+            model,
+            seed: seed(),
+            userGesture: true,
+            expectedRevision: '0',
+        })).resolves.toMatchObject({
+            revision: '1',
+            changedIds: ['nested'],
+            values: { nested: deepPatchValue },
+        });
+        expect(record).toMatchObject({ values: { nested: deepPatchValue } });
     });
 
     it('admits only one invocation for the same contribution action at a time', async () => {

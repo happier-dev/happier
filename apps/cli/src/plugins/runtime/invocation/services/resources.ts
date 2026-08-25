@@ -149,6 +149,8 @@ type DynamicResourceContextState = {
     observedAccountLifetimeToken: number | null;
     observedDigest: string;
     observedSize: number;
+    /** Exact live host bindings retaining a surface mount context. */
+    surfaceBindingReferences: number;
 };
 
 type AdmittedDynamicResource = {
@@ -208,6 +210,7 @@ function createDynamicContextState(
         observedAccountLifetimeToken: null,
         observedDigest: '',
         observedSize: 0,
+        surfaceBindingReferences: 0,
     };
 }
 
@@ -2147,6 +2150,9 @@ async function createStablePluginResourcesOwnerFromNormalized(
             for (const context of [...resource.sessionContexts.values()]) {
                 retireDynamicSessionContext(resource, context);
             }
+            for (const context of [...resource.surfaceContexts.values()]) {
+                retireDynamicSurfaceContext(resource, context);
+            }
         }
     }
 
@@ -2327,6 +2333,20 @@ async function createStablePluginResourcesOwnerFromNormalized(
             }
             const resources = admittedByPlugin.get(bindParams.pluginId) ?? new Map<string, AdmittedResource>();
             const boundContext = normalizeBoundContext(bindParams.context);
+            const surfaceBinding = bindParams.surfaceAccessAdmission;
+            if (surfaceBinding) {
+                if (
+                    surfaceBinding[surfaceResourceAccessAdmissionBrand] !== true
+                    || surfaceBinding.resource.pluginId !== bindParams.pluginId
+                    || surfaceBinding.context.context.kind !== 'surface'
+                    || surfaceBinding.resource.surfaceContexts.get(
+                        surfaceBinding.context.context.mountInstanceKey,
+                    ) !== surfaceBinding.context
+                ) {
+                    return fail('plugin_resource_context_unavailable', 'Resource context is unavailable');
+                }
+                surfaceBinding.context.surfaceBindingReferences += 1;
+            }
             const bindingSubscriptions = new Set<Disposable>();
             let bindingRetired = false;
             const retireBinding = (): void => {
@@ -2334,6 +2354,12 @@ async function createStablePluginResourcesOwnerFromNormalized(
                 bindingRetired = true;
                 for (const subscription of [...bindingSubscriptions]) subscription.dispose();
                 bindingSubscriptions.clear();
+                if (surfaceBinding && surfaceBinding.context.surfaceBindingReferences > 0) {
+                    surfaceBinding.context.surfaceBindingReferences -= 1;
+                    if (surfaceBinding.context.surfaceBindingReferences === 0) {
+                        retireDynamicSurfaceContext(surfaceBinding.resource, surfaceBinding.context);
+                    }
+                }
             };
             if (bindParams.signal.aborted) retireBinding();
             else bindParams.signal.addEventListener('abort', retireBinding, { once: true });

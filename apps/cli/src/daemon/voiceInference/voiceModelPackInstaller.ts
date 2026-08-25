@@ -16,7 +16,7 @@ import {
   createNodeModelPackDownloadOpener,
   createNodeModelPackInstallerHost,
   type NodeModelPackDownloadNetwork,
-} from './modelPackInstallerHost.node';
+} from './nodeModelPackInstallerHost';
 import { assertVoiceInferencePackIdFilesystemSafe } from './voiceInferenceWorker.shared';
 
 type InstallProgress = Readonly<{

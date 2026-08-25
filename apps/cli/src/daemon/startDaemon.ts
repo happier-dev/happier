@@ -19,6 +19,7 @@ import {
   pruneHappyCliRunnerSnapshots,
 } from '@/utils/spawnHappyCLI';
 import { projectPath } from '@/projectPath';
+import { resolveRunningCliRuntimeIdentity } from '@/packagedRuntime/resolveRunningCliRuntimeIdentity';
 import {
   acquireDaemonLock,
   clearDaemonStateForLockOwner,
@@ -41,6 +42,8 @@ import { initialMachineMetadata } from './machine/metadata';
 import { createDaemonShutdownController } from './lifecycle/shutdown';
 import { createBeforeShutdownDrain } from './lifecycle/createBeforeShutdownDrain';
 import { startDaemonRuntimeBootstrap } from './startup/startDaemonRuntimeBootstrap';
+import { notifyActiveAccountConnectedServicesProjection } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { warmActiveAccountSettingsSnapshotBestEffort } from '@/settings/accountSettings/warmActiveAccountSettingsSnapshot';
 import { migrateTrackedSessionProcessesOutOfDaemonServiceCgroup } from './platform/linux/migrateTrackedSessionsOutOfDaemonServiceCgroup';
 import { resolveFilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
@@ -68,6 +71,7 @@ import {
   ConnectedServiceBindingsV1Schema,
   createProviderErrorV1,
   readServerEnabledBit,
+  type ConnectedServiceId,
 } from '@happier-dev/protocol';
 import { readOrCreateInstallationIdentity } from './identity/store';
 import {
@@ -127,6 +131,9 @@ import { createDaemonPluginRegistryProjectionInvalidation } from './pluginRegist
 import { createExternalSessionHostOperationOwner } from '@/session/external/hostOperationOwner';
 import { resolveConnectedServiceQuotaFetcherDescriptors } from '@/plugins/projection/registry/connectedServiceQuotaFetchers';
 import { resolveMergedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import {
+  resolveFirstPartyQualifiedConnectedAccountServiceForLegacyServiceId,
+} from '@/plugins/projection/registry/connectedAccountPurposeCompatibility';
 import { createDaemonConnectedAccountPurposeBindingRuntime } from './connectedServices/purposeBindings/createDaemonConnectedAccountPurposeBindingRuntime';
 import { createManagedProviderOperationAuthority } from './connectedServices/purposeBindings/managedProviderOperationAuthority';
 import { createConnectedAccountRequestAuthSubjectRegistry } from './connectedServices/requestAuth/ConnectedAccountRequestAuthSubjectRegistry';
@@ -192,6 +199,14 @@ export async function startDaemon(
   const { requestShutdown, resolvesWhenShutdownRequested } = createDaemonShutdownController();
 
   logger.debug('[DAEMON RUN] Starting daemon process...');
+  // Which bytes this daemon is about to run. `startedWithCliVersion` is identical across
+  // every bundle built from the same package version, so it cannot distinguish a current
+  // build from one an earlier package build left in the checkout; this line can.
+  const runningRuntime = resolveRunningCliRuntimeIdentity();
+  logger.infoFile(
+    `[DAEMON RUN] Runtime ${runningRuntime.tree ?? 'unknown'} ${runningRuntime.entrypoint ?? '(unresolved)'}`
+    + ` built ${runningRuntime.builtAt ?? '(unverified)'}`,
+  );
   logger.debugLargeJson('[DAEMON RUN] Environment', getEnvironmentInfo());
   const diagnosticSubsystemGates = resolveDaemonDiagnosticSubsystemGates(process.env);
 
@@ -621,29 +636,43 @@ export async function startDaemon(
       }
     }
 
+    const resolveGroupDeletionAuthority = async ({
+      serviceId,
+      groupId,
+    }: Readonly<{
+      serviceId: ConnectedServiceId;
+      groupId: string;
+    }>) => {
+      if (
+        resolveQualifiedConnectedAccountAtomicV4Negotiation(
+          serverFeaturesSnapshotStore.getSnapshot(),
+        ) !== 'advertised'
+      ) {
+        return { status: 'unknown' as const };
+      }
+      const service =
+        resolveFirstPartyQualifiedConnectedAccountServiceForLegacyServiceId(
+          serviceId,
+        );
+      if (!service) return { status: 'unknown' as const };
+      try {
+        const group = await readQualifiedConnectedAccountGroupV4({
+          token: credentials.token,
+          group: { service, groupId },
+        });
+        return { status: group === null ? 'deleted' as const : 'exists' as const };
+      } catch (error) {
+        if (readHttpStatus(error) === 404) return { status: 'unknown' as const };
+        throw error;
+      }
+    };
     const connectedServiceGroupHomeCleanupScheduler = createConnectedServiceGroupHomeCleanupScheduler({
       activeServerDir: configuration.activeServerDir,
       pidToTrackedSession,
-      resolveGroupDeletionAuthority: async ({ serviceId, groupId }) => {
-        try {
-          const group = await api.getConnectedServiceAuthGroup({ serviceId, groupId });
-          return { status: group === null ? 'deleted' : 'exists' };
-        } catch (error) {
-          if (readHttpStatus(error) === 404) return { status: 'unknown' };
-          throw error;
-        }
-      },
+      resolveGroupDeletionAuthority,
     });
     void connectedServiceGroupHomeCleanupScheduler.reconcileDeletedGroupHomes({
-      resolveGroupDeletionAuthority: async ({ serviceId, groupId }) => {
-        try {
-          const group = await api.getConnectedServiceAuthGroup({ serviceId, groupId });
-          return { status: group === null ? 'deleted' : 'exists' };
-        } catch (error) {
-          if (readHttpStatus(error) === 404) return { status: 'unknown' };
-          throw error;
-        }
-      },
+      resolveGroupDeletionAuthority,
     }).catch((error) => {
       logger.debug('[DAEMON RUN] Connected-service group home startup reconciliation failed (non-fatal)', error);
     });
@@ -933,7 +962,9 @@ export async function startDaemon(
         ]);
       },
       onDurableRegistryApplied:
-        pluginRegistryProjectionInvalidation.onDurableRegistryApplied,
+        pluginRegistryProjectionInvalidation.invalidateProjection,
+      onRuntimeProjectionInvalidated:
+        pluginRegistryProjectionInvalidation.invalidateProjection,
       managedProviderOperationAuthority,
       qualifiedConnectedAccountEstablishedRuntimeOwner:
         establishedConnectedAccountRuntimeOwner,
@@ -1067,9 +1098,11 @@ export async function startDaemon(
     } = await startDaemonSessionControlRuntime({
       machineId,
       externalActionAccountId,
+      serverBaseUrl: configuration.serverUrl,
       runtimeActionExecute: browserRuntimeActionExecute,
       currentMachineHost: metadataForRegistration.host,
       currentMachineHomeDir: metadataForRegistration.homeDir,
+      resolveCurrentMachineExecutionOriginContext,
       resolveExternalSessionHostAction: () => {
         const executor = externalSessionHostActionExecutor;
         if (!executor) return undefined;
@@ -1079,6 +1112,7 @@ export async function startDaemon(
             ...(signal ? { signal } : {}),
           });
       },
+      externalSessionPluginAdmissionOwner: pluginAdmissionOwner,
       resolveSessionSpawnDirectTargetTransport: () =>
         sessionSpawnDirectTargetTransport ?? undefined,
       externalSessionHostOperationOwner,
@@ -1223,6 +1257,11 @@ export async function startDaemon(
       await reconcileProjectionAndInvalidateConnectedAccounts({
         notification,
         reconcile: reconcileConnectedServicesProjection,
+        invalidateConfiguredExternalSessionSources: () => {
+          notifyActiveAccountConnectedServicesProjection(
+            resolveAccountSettingsScopeKey(credentials),
+          );
+        },
         invalidateConnectedAccounts: connectedAccountPurposeBindingRuntime.invalidate,
       });
     };

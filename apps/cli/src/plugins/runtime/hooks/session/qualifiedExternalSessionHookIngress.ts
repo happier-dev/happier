@@ -13,6 +13,7 @@ import type {
     AgentExternalSessionSource,
 } from '@happier-dev/plugin-sdk/sessions/external';
 import {
+    agentRoutingIdAddressesContributionIdentityV1,
     buildLinkedExternalSessionQualifiedIdentityV1,
     type ExternalAgentObservationLeafFactV1,
     type ExternalAgentObservationTargetV1,
@@ -433,7 +434,7 @@ export function createQualifiedExternalSessionHookIngress(
                 || !agentId
                 || !pluginId
                 || !localId
-                || agentId !== localId
+                || false
                 || !variantId
                 || !eventId
                 || !pluginGeneration

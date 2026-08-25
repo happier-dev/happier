@@ -9,6 +9,7 @@ import {
     type DirectRouteGrantPayloadV1,
     type PeerTcpTunnelOpenV1,
 } from '@happier-dev/protocol';
+import { createServer, type Socket } from 'node:net';
 import tweetnacl from 'tweetnacl';
 
 import { createPeerMediationLoopbackApp } from '../loopback/server';
@@ -60,9 +61,11 @@ function createSignedDirectOpen(input: Readonly<{
     signedTunnelId?: string;
     exp?: number;
     flowKind?: 'tcp_tunnel' | 'voice_media';
+    destinationPort?: number;
 }>): PeerTcpTunnelOpenV1 {
     const endpointFingerprint = input.endpointFingerprint ?? 'endpoint_1';
     const flowKind = input.flowKind ?? 'tcp_tunnel';
+    const destinationPort = input.destinationPort ?? 3000;
     const payload: DirectRouteGrantPayloadV1 = {
         v: 1,
         grantId: input.grantId,
@@ -84,7 +87,7 @@ function createSignedDirectOpen(input: Readonly<{
             : {
                 kind: 'tcp_tunnel',
                 tunnelId: input.signedTunnelId ?? input.tunnelId,
-                allowedPorts: [3000],
+                allowedPorts: [destinationPort],
                 maxIdleMs: 30_000,
                 maxDurationMs: 300_000,
                 maxTotalBytes: 4096,
@@ -101,7 +104,7 @@ function createSignedDirectOpen(input: Readonly<{
         tunnelId: input.tunnelId,
         targetMachineId: 'machine_1',
         routeKind: 'loopback_direct',
-        destination: { host: '127.0.0.1', port: 3000 },
+        destination: { host: '127.0.0.1', port: destinationPort },
         grant: {
             payload,
             signature: {
@@ -1739,6 +1742,113 @@ describe('registerPeerTcpTunnelLoopbackRoutes', () => {
             expect(openTunnel).toHaveBeenCalledTimes(2);
         } finally {
             await app.close();
+        }
+    });
+
+    /**
+     * §6.5 deciding check. The audit reported an unbounded socket leak of one TCP connection per
+     * voice tunnel. `open.ts:275` returns before the connect for `voice_media`, so the claim is
+     * falsified — but "it does not connect" was only ever read off the code. This measures REAL OS
+     * sockets against a REAL listener across N open/close cycles with the production dialer (no
+     * injected `connectTcp`), and it is measured as GROWTH, not as one count: N `tcp_tunnel`
+     * cycles are the positive control proving the harness observes connections at all, N voice
+     * cycles must add nothing, and a final barrier cycle proves that zero is settled rather than
+     * merely not-yet-arrived. Remove the guard and the voice half takes the control's path, so
+     * the barrier count moves from N+1 to 2N+1.
+     */
+    it('opens no TCP socket for voice tunnels and leaks none for TCP tunnels across repeated open/close cycles', async () => {
+        const mod = await loadRegisterRoutesModule();
+        if (!mod) throw new Error('expected direct tunnel route module');
+
+        const acceptedSockets: Socket[] = [];
+        const destination = createServer((socket) => {
+            acceptedSockets.push(socket);
+        });
+        await new Promise<void>((resolve) => destination.listen(0, '127.0.0.1', resolve));
+        const address = destination.address();
+        if (typeof address === 'string' || address === null) throw new Error('expected a TCP address');
+        const destinationPort = address.port;
+
+        const cycles = 6;
+        /**
+         * One full open -> WS-connect -> terminate -> close cycle against a fresh app, using the
+         * PRODUCTION dialer (no injected `connectTcp`).
+         */
+        const runCycle = async (params: Readonly<{
+            label: string;
+            flowKind?: 'tcp_tunnel' | 'voice_media';
+        }>) => {
+            const app = createPeerMediationLoopbackApp(loopbackOptions);
+            mod.registerPeerTcpTunnelLoopbackRoutes(app, {
+                nowMs: loopbackOptions.nowMs,
+                expected: {
+                    accountId: 'account_1',
+                    machineId: 'machine_1',
+                    endpointFingerprint: 'endpoint_1',
+                    accountPublicKey: Buffer.from(routeAccountKeyPair.publicKey).toString('base64url'),
+                },
+                trustRoots: routeTrustRoots,
+                ...(params.flowKind === 'voice_media'
+                    ? { voiceBinaryAppendConsumer: vi.fn(async () => ({ ok: true, ackSeq: 0, events: [] })) }
+                    : {}),
+            });
+            const response = await app.inject({
+                method: 'POST',
+                url: '/peer-mediation/v1/tunnel/open',
+                payload: createSignedDirectOpen({
+                    grantId: `grant_${params.label}`,
+                    tunnelId: `tun_${params.label}`,
+                    ...(params.flowKind ? { flowKind: params.flowKind } : {}),
+                    destinationPort,
+                }),
+            });
+            expect(response.statusCode).toBe(200);
+            await app.ready();
+            const ws = await (app as unknown as {
+                injectWS: (path: string) => Promise<{ terminate: () => void }>;
+            }).injectWS('/peer-mediation/v1/tunnel/stream');
+            ws.terminate();
+            await app.close();
+        };
+        /**
+         * The listener's `connection` event is delivered on a later tick than the dialer's resolve,
+         * so every count is read through `waitFor`. Asserting the raw length immediately is what
+         * makes this measurement flaky under host load rather than wrong.
+         */
+        const awaitAcceptedCount = async (expected: number) => {
+            await vi.waitFor(() => {
+                expect(acceptedSockets).toHaveLength(expected);
+            }, { timeout: 10_000 });
+        };
+
+        try {
+            // Positive control first: N `tcp_tunnel` cycles must open exactly N real sockets. If
+            // this half ever reads 0, the harness is not measuring anything and the voice half
+            // below would pass vacuously.
+            for (let cycle = 0; cycle < cycles; cycle += 1) {
+                await runCycle({ label: `tcp_cycle_${cycle}` });
+            }
+            await awaitAcceptedCount(cycles);
+
+            // Voice: N full cycles must add nothing.
+            for (let cycle = 0; cycle < cycles; cycle += 1) {
+                await runCycle({ label: `voice_cycle_${cycle}`, flowKind: 'voice_media' });
+            }
+
+            // Barrier: one more `tcp_tunnel` cycle. Once ITS connection has been observed, every
+            // connection the voice cycles could have opened earlier has also been observed — so
+            // "exactly one more" is a real zero for voice, not a race that has not landed yet.
+            await runCycle({ label: 'tcp_barrier' });
+            await awaitAcceptedCount(cycles + 1);
+            expect(acceptedSockets).toHaveLength(cycles + 1);
+
+            // Nothing the tunnel opened stays open after its cycle closed.
+            await vi.waitFor(() => {
+                expect(acceptedSockets.filter((socket) => !socket.destroyed && socket.writable)).toHaveLength(0);
+            }, { timeout: 10_000 });
+        } finally {
+            for (const socket of acceptedSockets) socket.destroy();
+            await new Promise<void>((resolve) => destination.close(() => resolve()));
         }
     });
 });

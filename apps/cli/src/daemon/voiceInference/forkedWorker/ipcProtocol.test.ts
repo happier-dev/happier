@@ -50,7 +50,7 @@ describe('voice inference worker ipc protocol', () => {
   });
 
   it('reassembles a frame split across multiple byte chunks', () => {
-    const frame: VoiceInferenceWorkerFrame = { kind: 'ping', id: 'p-1' };
+    const frame: VoiceInferenceWorkerFrame = { kind: 'abort', id: 'abort-1', targetId: 'request-1' };
     const encoded = encodeVoiceInferenceWorkerFrame(frame);
     const decoder = createVoiceInferenceWorkerFrameDecoder();
 
@@ -61,7 +61,7 @@ describe('voice inference worker ipc protocol', () => {
   });
 
   it('decodes multiple frames delivered in a single chunk', () => {
-    const a: VoiceInferenceWorkerFrame = { kind: 'ready', id: 'a' };
+    const a: VoiceInferenceWorkerFrame = { kind: 'snapshot', packId: 'pack-1', runtimeState: 'ready' };
     const b: VoiceInferenceWorkerFrame = {
       kind: 'result',
       id: 'b',
@@ -110,7 +110,7 @@ describe('voice inference worker ipc protocol', () => {
   });
 
   it('accepts a frame exactly at the custom ceiling but rejects one byte over on encode (M2)', () => {
-    const small: VoiceInferenceWorkerFrame = { kind: 'ping', id: 'p' };
+    const small: VoiceInferenceWorkerFrame = { kind: 'abort', id: 'abort-1', targetId: 'request-1' };
     const encoded = encodeVoiceInferenceWorkerFrame(small, 64);
     expect(createVoiceInferenceWorkerFrameDecoder(64).push(encoded)).toEqual([small]);
 
@@ -128,8 +128,7 @@ describe('voice inference worker ipc protocol', () => {
   });
 
   describe('response frame schema validation (L4)', () => {
-    it('accepts well-formed ready / result / error / snapshot frames', () => {
-      expect(parseVoiceInferenceWorkerResponseFrame({ kind: 'ready', id: 'p' })).toMatchObject({ kind: 'ready' });
+    it('accepts well-formed result / error / snapshot frames', () => {
       expect(
         parseVoiceInferenceWorkerResponseFrame({ kind: 'error', id: 'p', code: 'runtime_unavailable', message: 'x' }),
       ).toMatchObject({ kind: 'error', code: 'runtime_unavailable' });
@@ -189,7 +188,6 @@ describe('voice inference worker ipc protocol', () => {
 
   describe('request frame schema validation (LB-M2)', () => {
     it('accepts well-formed control / synthesize / transcribe / streaming-STT request frames', () => {
-      expect(parseVoiceInferenceWorkerRequestFrame({ kind: 'ping', id: 'p' })).toMatchObject({ kind: 'ping' });
       expect(parseVoiceInferenceWorkerRequestFrame({ kind: 'abort', id: 'p', targetId: 't' })).toMatchObject({
         kind: 'abort',
         targetId: 't',
@@ -309,7 +307,7 @@ describe('voice inference worker ipc protocol', () => {
 
     it('rejects an unknown request kind or a response-kind frame leaking onto the request path', () => {
       expect(() => parseVoiceInferenceWorkerRequestFrame({ kind: 'bogus', id: 'p' })).toThrow();
-      expect(() => parseVoiceInferenceWorkerRequestFrame({ kind: 'ready', id: 'p' })).toThrow();
+      expect(() => parseVoiceInferenceWorkerRequestFrame({ kind: 'snapshot', packId: 'p', runtimeState: 'ready' })).toThrow();
     });
   });
 });

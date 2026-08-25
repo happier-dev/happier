@@ -7,6 +7,10 @@ import { validateEnvVarRecordStrict } from '@/terminal/runtime/envVarSanitizatio
 import { logger } from '@/ui/logger';
 import { resolveConcreteBackendTargetRefV2 } from '@/session/backendTargets/resolveConcreteBackendTargetRefs';
 import type { CatalogAgentId } from '@/agent/catalog/ids';
+import {
+    findCatalogEntry,
+    isLegacyServiceKeyedCompatibilityCatalogAgent,
+} from '@/agent/catalog/registry';
 
 import type {
     DaemonSpawnStartupReadinessFailure,
@@ -503,6 +507,9 @@ export async function executeSpawnSessionRequest(
                                 uses:
                                     agentPurposeBindingSnapshot.requestAuthUses,
                                 ...(catalogAgentId
+                                    && isLegacyServiceKeyedCompatibilityCatalogAgent(
+                                        findCatalogEntry(catalogAgentId),
+                                    )
                                     ? {
                                         legacyServiceKeyedCompatibility:
                                             true as const,
@@ -586,7 +593,8 @@ export async function executeSpawnSessionRequest(
                                 agentCliLaunch: bindAgentCliLaunchSpec({
                                     localAgentId:
                                         runnerAgentSessionBootstrap.authorization
-                                            .descriptor.agentId,
+                                            .descriptor.agentDeclaration!
+                                            .definition.id,
                                     spec: spawnEnvironment.agentCliLaunchSpec,
                                 }),
                             }

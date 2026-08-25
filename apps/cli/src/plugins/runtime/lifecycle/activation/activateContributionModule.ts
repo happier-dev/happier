@@ -172,14 +172,6 @@ async function validateSessionRunnerFactoryRegistrations(params: Readonly<{
                 );
             }
         }
-        recordValidatedAgentSessionRunnerFactory(
-            registration.value,
-            Object.freeze({
-                locator,
-                normalizedModulePath: resolved.normalizedModulePath,
-                loadMode: resolved.loadMode,
-            }),
-        );
         validatedFacts.push(Object.freeze({
             localAgentId: registration.localId,
             locator,
@@ -301,7 +293,7 @@ export async function activateContributionModule(params: Readonly<{
         }
         pluginCleanup = typeof result === 'function' ? result as PluginCleanup : null;
         const registrations = host.commit();
-        const validatedAgentSessionRunnerFactories =
+        const sourceValidatedAgentSessionRunnerFactories =
             await validateSessionRunnerFactoryRegistrations({
                 pluginId: params.pluginId,
                 manifestAuthority: params.manifestAuthority ?? 'external',
@@ -312,9 +304,47 @@ export async function activateContributionModule(params: Readonly<{
                     ? { resolveRelativeModule: params.resolveRelativeModule }
                     : {}),
             });
-        await params.persistValidatedAgentSessionRunnerFactories?.(
-            validatedAgentSessionRunnerFactories,
+        const validatedAgentSessionRunnerFactories = Object.freeze(
+            await params.persistValidatedAgentSessionRunnerFactories?.(
+                sourceValidatedAgentSessionRunnerFactories,
+            ) ?? sourceValidatedAgentSessionRunnerFactories,
         );
+        const factsByLocalAgentId = new Map(
+            validatedAgentSessionRunnerFactories.map((fact) => [
+                fact.localAgentId,
+                fact,
+            ]),
+        );
+        if (
+            factsByLocalAgentId.size !== sourceValidatedAgentSessionRunnerFactories.length
+            || validatedAgentSessionRunnerFactories.length
+                !== sourceValidatedAgentSessionRunnerFactories.length
+        ) {
+            throw new Error(
+                `Plugin '${params.pluginId}' returned inconsistent retained Agent factory validation`,
+            );
+        }
+        for (const registration of registrations) {
+            if (registration.family !== 'agents') continue;
+            const sourceFact = sourceValidatedAgentSessionRunnerFactories.find(
+                (fact) => fact.localAgentId === registration.localId,
+            );
+            if (!sourceFact) continue;
+            const retainedFact = factsByLocalAgentId.get(registration.localId);
+            if (!retainedFact || retainedFact.locator !== sourceFact.locator) {
+                throw new Error(
+                    `Plugin '${params.pluginId}' returned inconsistent retained Agent factory validation`,
+                );
+            }
+            recordValidatedAgentSessionRunnerFactory(
+                registration.value,
+                Object.freeze({
+                    locator: retainedFact.locator,
+                    normalizedModulePath: retainedFact.normalizedModulePath,
+                    loadMode: retainedFact.loadMode,
+                }),
+            );
+        }
         return Object.freeze({
             status: 'active',
             registrations,

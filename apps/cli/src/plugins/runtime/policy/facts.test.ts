@@ -11,13 +11,12 @@ const current = Object.freeze({
   immutableGenerationId: 'generation-7',
   desiredImmutableGenerationId: 'generation-7',
   appliedImmutableGenerationId: 'generation-7',
-  distribution: Object.freeze({ kind: 'npm', packageName: '@acme/plugin', channel: 'latest' }),
   applied: true,
   selectedAccess: Object.freeze([]),
 });
 
 describe('resolvePluginFinalPolicyAuthorizationFacts', () => {
-  it('binds every consumer to the direct applied generation without digest-era currentness copies', () => {
+  it('binds every consumer to the direct applied generation without package-trust copies', () => {
     const authorization = resolvePluginFinalPolicyAuthorizationFacts({
       pluginId: 'acme.plugin',
       current,
@@ -28,7 +27,7 @@ describe('resolvePluginFinalPolicyAuthorizationFacts', () => {
       serviceAvailability: [],
       currentIntent: 'notRequired',
     })).toMatchObject({ outcome: 'visible', code: 'plugin_final_available' });
-    expect(JSON.stringify(authorization.packageTrust)).not.toContain('sha256:');
+    expect(authorization).not.toHaveProperty('packageTrust');
   });
 
   it('keeps a retained target generation distinct from durable desired and applied facts', () => {
@@ -65,7 +64,7 @@ describe('resolvePluginFinalPolicyAuthorizationFacts', () => {
       ...authorization,
       serviceAvailability: [],
       currentIntent: 'notRequired',
-    })).toMatchObject({ outcome: 'denied', code: 'plugin_final_package_untrusted' });
+    })).toMatchObject({ outcome: 'unavailable', code: 'plugin_final_generation_retired' });
   });
 
   it('projects network disclosure only from required manifest configuration', () => {

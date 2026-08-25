@@ -1,5 +1,7 @@
 import type {
-    ConnectedServiceAuthGroupV1,
+    ConnectedServiceAuthGroupMemberStateV1,
+    ConnectedServiceAuthGroupPolicyV1,
+    ConnectedServiceId,
     ConnectedServiceUsageSourceV1,
     ProviderAccountUsageSnapshotV1,
 } from '@happier-dev/protocol';
@@ -26,8 +28,29 @@ export type AccountUsageStoreForAuthGroupSwitchState = Pick<
     'resolveBySource'
 >;
 
+/**
+ * The scalar account-usage projection needs only this group state, regardless
+ * of whether canonical persistence is the historical service-keyed shape or a
+ * qualified Connected Account group. Callers retain the source scalar at the
+ * ingress boundary; this view never selects or mutates a group.
+ */
+export type ConnectedServiceAuthGroupAccountUsageView = Readonly<{
+    serviceId: ConnectedServiceId;
+    groupId: string;
+    activeProfileId: string | null;
+    generation: number;
+    policy: ConnectedServiceAuthGroupPolicyV1;
+    members: readonly Readonly<{
+        profileId: string;
+        priority: number;
+        enabled: boolean;
+        state: ConnectedServiceAuthGroupMemberStateV1;
+        createdAt: number;
+    }>[];
+}>;
+
 function buildGroupMemberSource(input: Readonly<{
-    group: ConnectedServiceAuthGroupV1;
+    group: ConnectedServiceAuthGroupAccountUsageView;
     profileId: string;
 }>): ConnectedServiceUsageSourceV1 {
     return {
@@ -40,7 +63,7 @@ function buildGroupMemberSource(input: Readonly<{
 }
 
 export function resolveAccountUsageSnapshotsByGroupProfile(input: Readonly<{
-    group: ConnectedServiceAuthGroupV1;
+    group: ConnectedServiceAuthGroupAccountUsageView;
     accountUsageStore: AccountUsageStoreForAuthGroupSwitchState;
     changedProfileId?: string | null;
     changedSnapshot?: ProviderAccountUsageSnapshotV1 | null;
@@ -74,7 +97,7 @@ export function resolveAccountUsageSnapshotsByGroupProfile(input: Readonly<{
 }
 
 export function buildConnectedServiceAuthGroupSwitchStateFromAccountUsage(input: Readonly<{
-    group: ConnectedServiceAuthGroupV1;
+    group: ConnectedServiceAuthGroupAccountUsageView;
     accountUsageStore: AccountUsageStoreForAuthGroupSwitchState;
     changedProfileId?: string | null;
     changedSnapshot?: ProviderAccountUsageSnapshotV1 | null;

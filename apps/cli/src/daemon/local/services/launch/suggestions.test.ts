@@ -3,7 +3,6 @@ import { LocalServiceLauncherSnapshotV1Schema } from '@happier-dev/protocol';
 
 import { buildLocalServiceLauncherSnapshot } from './suggestions';
 import type { NormalizedLocalServiceInventoryEntry } from '../inventory/scanner';
-import type { ManagedLocalServiceRuntimeState } from '../managed/registry';
 
 function inventoryEntry(overrides: Partial<NormalizedLocalServiceInventoryEntry> = {}): NormalizedLocalServiceInventoryEntry {
     return {
@@ -56,19 +55,6 @@ function inventoryEntry(overrides: Partial<NormalizedLocalServiceInventoryEntry>
     };
 }
 
-function managedService(overrides: Partial<ManagedLocalServiceRuntimeState> = {}): ManagedLocalServiceRuntimeState {
-    return {
-        id: 'managed-a',
-        owner: { kind: 'plugin', pluginId: 'plugin-a' },
-        phase: 'failed',
-        launchMode: 'detectAfterLaunch',
-        minimumConfidence: 'medium',
-        process: { pid: 500, startedAt: 1_000 },
-        routeName: 'service-a',
-        diagnostics: [],
-        ...overrides,
-    };
-}
 
 describe('buildLocalServiceLauncherSnapshot', () => {
     it('projects scripts, inventory entries, and registered previews into stable launcher targets', () => {
@@ -99,7 +85,6 @@ describe('buildLocalServiceLauncherSnapshot', () => {
                     presentation: { addressLabel: 'localhost:8080' },
                 }),
             ],
-            managedServices: [],
             previewResources: [{
                 previewId: 'preview-a',
                 sessionId: 'session-a',
@@ -153,7 +138,6 @@ describe('buildLocalServiceLauncherSnapshot', () => {
             updatedAt: 3_000,
             runTargets: [],
             inventoryEntries: [inventoryEntry()],
-            managedServices: [],
             previewResources: [],
         });
 
@@ -185,7 +169,6 @@ describe('buildLocalServiceLauncherSnapshot', () => {
                     probedAt: 2_000,
                 },
             })],
-            managedServices: [],
             previewResources: [],
         });
 
@@ -212,7 +195,6 @@ describe('buildLocalServiceLauncherSnapshot', () => {
                     reasonCode: 'endpoint_probe_failed',
                 },
             })],
-            managedServices: [],
             previewResources: [],
         });
 
@@ -235,9 +217,12 @@ describe('buildLocalServiceLauncherSnapshot', () => {
             inventoryEntries: [inventoryEntry({
                 id: 'terminable-a',
                 port: 5174,
+                // `high` is what eligibility now requires: a terminal-registry match or the
+                // daemon's own OS identity. The old gate accepted `medium`, which every listener
+                // with a pid reached, so it decided nothing.
+                processOwnershipConfidence: 'high',
                 presentation: { addressLabel: 'localhost:5174' },
             })],
-            managedServices: [],
             previewResources: [],
             terminateDetectedEnabled: true,
         });
@@ -253,7 +238,6 @@ describe('buildLocalServiceLauncherSnapshot', () => {
             updatedAt: 3_000,
             runTargets: [],
             inventoryEntries: [inventoryEntry({ id: 'disabled-a' })],
-            managedServices: [],
             previewResources: [],
             terminateDetectedEnabled: false,
         });
@@ -267,13 +251,26 @@ describe('buildLocalServiceLauncherSnapshot', () => {
                 processOwnershipConfidence: 'low',
                 workspaceAssociationConfidence: 'medium',
             })],
-            managedServices: [],
+            previewResources: [],
+            terminateDetectedEnabled: true,
+        });
+
+        // `medium` means the platform could not establish who owns the process. The fixture
+        // default sits there deliberately: it is the grade the old `>= medium` gate accepted for
+        // every listener that merely had a pid, and it must now be refused.
+        const unestablished = buildLocalServiceLauncherSnapshot({
+            machineId: 'machine-a',
+            sessionId: 'session-a',
+            updatedAt: 5_000,
+            runTargets: [],
+            inventoryEntries: [inventoryEntry({ id: 'unestablished-a' })],
             previewResources: [],
             terminateDetectedEnabled: true,
         });
 
         expect(disabled.targets[0]?.actions).toEqual(['open']);
         expect(unowned.targets[0]?.actions).toEqual(['open']);
+        expect(unestablished.targets[0]?.actions).toEqual(['open']);
     });
 
     it('bracket-wraps IPv6 loopback hosts in the minted open url', () => {
@@ -293,7 +290,6 @@ describe('buildLocalServiceLauncherSnapshot', () => {
                     probedAt: 2_000,
                 },
             })],
-            managedServices: [],
             previewResources: [],
         });
         expect(snapshot.targets[0]?.browserTarget).toMatchObject({
@@ -311,7 +307,6 @@ describe('buildLocalServiceLauncherSnapshot', () => {
                 id: 'inventory-wild4',
                 address: { kind: 'wildcard', host: '0.0.0.0', family: 'ipv4' },
             })],
-            managedServices: [],
             previewResources: [],
         });
         expect(ipv4.targets[0]?.browserTarget).toMatchObject({ url: 'http://127.0.0.1:5173/' });
@@ -331,7 +326,6 @@ describe('buildLocalServiceLauncherSnapshot', () => {
                     probedAt: 2_000,
                 },
             })],
-            managedServices: [],
             previewResources: [],
         });
         expect(ipv6.targets[0]?.browserTarget).toMatchObject({ url: 'http://[::1]:5173/' });
@@ -347,7 +341,6 @@ describe('buildLocalServiceLauncherSnapshot', () => {
                 address: { kind: 'lan', host: '192.168.1.5', family: 'ipv4' },
                 endpoint: undefined,
             })],
-            managedServices: [],
             previewResources: [],
         });
         const target = snapshot.targets[0];
@@ -355,26 +348,6 @@ describe('buildLocalServiceLauncherSnapshot', () => {
         expect(target).not.toHaveProperty('browserTarget');
     });
 
-    it('projects failed managed services as unavailable instead of starting', () => {
-        const snapshot = buildLocalServiceLauncherSnapshot({
-            machineId: 'machine-a',
-            sessionId: 'session-a',
-            updatedAt: 3_000,
-            runTargets: [],
-            inventoryEntries: [],
-            managedServices: [managedService()],
-            previewResources: [],
-        });
-
-        expect(LocalServiceLauncherSnapshotV1Schema.parse(snapshot)).toEqual(snapshot);
-        expect(snapshot.targets[0]).toMatchObject({
-            id: 'managed:managed-a',
-            source: 'managed_service',
-            state: 'unavailable',
-            unavailableReason: 'managed_failed',
-            actions: [],
-        });
-    });
 
     it('projects terminal URL and workspace file asset candidates as fail-closed launcher targets', () => {
         const snapshot = buildLocalServiceLauncherSnapshot({
@@ -383,7 +356,6 @@ describe('buildLocalServiceLauncherSnapshot', () => {
             updatedAt: 3_000,
             runTargets: [],
             inventoryEntries: [],
-            managedServices: [],
             previewResources: [],
             terminalUrlCandidates: [{
                 sourceId: 'terminal-candidate-a',

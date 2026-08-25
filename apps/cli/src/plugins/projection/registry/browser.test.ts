@@ -35,7 +35,8 @@ describe('plugin browser projection family', () => {
                     daemonEntryPath: '/plugins/acme/daemon.mjs',
                     definition: {
                         id: 'preview-target',
-                        title: 'Preview',
+                        title: { key: 'browser.preview.title', fallback: 'Preview' },
+                        description: { key: 'browser.preview.description', fallback: 'Preview environment' },
                         url: 'https://preview.example.test/',
                         launch: 'currentView',
                         profile: 'session',
@@ -51,7 +52,8 @@ describe('plugin browser projection family', () => {
                     daemonEntryPath: '/plugins/acme/daemon.mjs',
                     definition: {
                         id: 'open-preview',
-                        title: 'Open preview',
+                        title: { key: 'browser.preview.open', fallback: 'Open preview' },
+                        description: { key: 'browser.preview.openDescription', fallback: 'Open the preview' },
                         action: 'open-preview',
                         target: 'preview-target',
                         placement: 'toolbar',
@@ -76,9 +78,10 @@ describe('plugin browser projection family', () => {
                 url: 'https://preview.example.test/',
             },
             display: {
-                title: 'Preview',
+                title: { key: 'browser.preview.title', fallback: 'Preview' },
                 addressLabel: 'https://preview.example.test/',
             },
+            description: { key: 'browser.preview.description', fallback: 'Preview environment' },
             currentUrl: 'https://preview.example.test/',
             launchMode: 'currentView',
             profileMode: 'session',
@@ -92,9 +95,10 @@ describe('plugin browser projection family', () => {
             targetId: 'browserTarget:acme.preview:preview-target',
             placement: 'toolbar',
             display: {
-                title: 'Open preview',
+                title: { key: 'browser.preview.open', fallback: 'Open preview' },
                 iconToken: 'open-outline',
             },
+            description: { key: 'browser.preview.openDescription', fallback: 'Open the preview' },
             order: 10,
         });
     });

@@ -3,6 +3,7 @@ import { mkdir, open, readFile } from 'node:fs/promises';
 
 import { z } from 'zod';
 
+import { isPidPresent } from '@happier-dev/cli-common/process';
 import { reclaimJsonOwnerFileLockSnapshot } from '@/utils/fs/jsonOwnerFileLock';
 
 import type { PluginStorePaths } from '../paths';
@@ -43,15 +44,6 @@ type CoordinatorDependencies = Readonly<{
   beforeReplace?: () => Promise<void>;
   flushCommit?: (path: string) => Promise<void>;
 }>;
-
-function defaultIsProcessAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException | null)?.code === 'EPERM';
-  }
-}
 
 type LockSnapshot = Readonly<{ record: LockRecord; raw: string }>;
 
@@ -148,7 +140,7 @@ export async function withPluginRegistryCommitFence<T>(input: Readonly<{
     owner: input.owner,
     acquireTimeoutMs: input.acquireTimeoutMs ?? DEFAULT_ACQUIRE_TIMEOUT_MS,
     nowMs: Date.now,
-    isProcessAlive: defaultIsProcessAlive,
+    isProcessAlive: isPidPresent,
     sleep: async (ms: number) => await new Promise((resolve) => setTimeout(resolve, ms)),
   });
   try {
@@ -169,7 +161,7 @@ export function createPluginRegistryCommitCoordinator(dependencies: CoordinatorD
   }>) => Promise<PluginRegistryCommitResult>;
 }> {
   const nowMs = dependencies.nowMs ?? Date.now;
-  const isProcessAlive = dependencies.isProcessAlive ?? defaultIsProcessAlive;
+  const isProcessAlive = dependencies.isProcessAlive ?? isPidPresent;
   const sleep = dependencies.sleep ?? (async (ms: number) => await new Promise((resolve) => setTimeout(resolve, ms)));
 
   function commit(input: Readonly<{

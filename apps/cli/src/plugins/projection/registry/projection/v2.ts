@@ -53,6 +53,7 @@ import {
     composerRegionsProjectionFamily,
 } from '../composer';
 import {
+    buildPluginContributionIntrospectionQualifiedId,
     projectPluginCompatibilityDiagnostics,
     projectPluginContributionIntrospection,
 } from '@/plugins/projection/introspection/project';
@@ -136,44 +137,16 @@ function projectAgentCapabilities(
  * plugin-chosen local id — exactly as the daemon's detection resolves it in
  * `apps/cli/src/mcp/providerDetection/detectProviderMcpServers.ts`.
  */
-function readAgentIdsOwningMcpDiscoverySources(
-    registry: ResolvedContributionRegistry,
-): ReadonlySet<string> {
-    const agentIds = new Set<string>();
-    for (const source of registry.mcpDiscoverySources ?? []) {
-        const agentId = source.definition.metadata?.agentId;
-        if (typeof agentId === 'string' && agentId.trim().length > 0) agentIds.add(agentId.trim());
-    }
-    return agentIds;
-}
-
 /**
  * Carries the Agent's declared client UI-behavior descriptor onto the wire.
  * The daemon never interprets it: the client owns the single fail-closed
  * descriptor interpreter, and this is the only runtime channel an installed
  * Agent has to reach it.
- *
- * `behavior.mcpServers` is the one exception, and it is derived rather than
- * declared: whether the MCP settings screen offers this Agent's detected-config
- * scan is already decided by the discovery source it contributes, which is what
- * the scan itself runs on. Deriving it here is what lets a contributed Agent
- * reach that screen by declaring the source alone — the same single declaration
- * a bundled Agent uses, whose build-time projection derives the flag the same
- * way.
  */
 function projectAgentUiBehavior(
     agent: ResolvedAgentContribution,
-    ownsMcpDiscoverySource: boolean,
 ): PluginProjectionV2['agentsById'][string]['ui'] {
-    const ui = agent.richDefinition?.definition.ui;
-    if (!ownsMcpDiscoverySource) return ui;
-    return {
-        ...ui,
-        behavior: {
-            ...(ui?.behavior ?? {}),
-            mcpServers: { supportsDetectedConfigScan: true },
-        },
-    };
+    return agent.richDefinition?.definition.ui;
 }
 
 function projectAgentExternalSessions(
@@ -604,7 +577,6 @@ function buildAgentsById(
     generation: number,
 ): PluginProjectionV2['agentsById'] {
     const agentsById: PluginProjectionV2['agentsById'] = {};
-    const agentIdsOwningMcpDiscoverySources = readAgentIdsOwningMcpDiscoverySources(registry);
     for (const agent of registry.agents) {
         const identity = agent.identity;
         if (!identity) {
@@ -614,10 +586,7 @@ function buildAgentsById(
         const externalSessions = projectAgentExternalSessions(agent, generation);
         const capabilities = projectAgentCapabilities(agent);
         const connectedServiceIds = agent.catalogEntry?.connectedServiceIds ?? [];
-        const uiBehavior = projectAgentUiBehavior(
-            agent,
-            agentIdsOwningMcpDiscoverySources.has(agent.id),
-        );
+        const uiBehavior = projectAgentUiBehavior(agent);
         agentsById[agent.id] = {
             id: agent.id,
             identity,
@@ -649,6 +618,7 @@ function buildActionsById(
         localId: string,
     ) => PluginActionPresentUserGatePolicy | null,
     pluginFinalPolicyCurrentGenerationsById?: ReadonlyMap<string, PluginFinalPolicyCurrentGeneration>,
+    runtimeFactsByQualifiedId?: PluginTargetActivationIntrospectionSnapshot['runtimeFactsByQualifiedId'],
 ): PluginProjectionV2['actionsById'] {
     const actionsById: PluginProjectionV2['actionsById'] = {};
     for (const action of registry.actions) {
@@ -691,6 +661,13 @@ function buildActionsById(
                 // owner cannot resolve all exact Action facts.
             }
         }
+        const activationUnavailable = runtimeFactsByQualifiedId?.get(
+            buildPluginContributionIntrospectionQualifiedId({
+                pluginId: action.pluginId,
+                family: 'actions',
+                identity: { kind: 'localId', localId: action.definition.id },
+            }),
+        )?.registration.state === 'unavailable';
         actionsById[qualifiedProjectionKey(action.pluginId, action.definition.id)] = {
             id: action.definition.id,
             pluginId: action.pluginId,
@@ -721,7 +698,7 @@ function buildActionsById(
             ...(action.definition.confirmation
                 ? { confirmation: action.definition.confirmation }
                 : {}),
-            available: true,
+            available: !activationUnavailable,
             ...(authorization ? { authorization } : {}),
         };
     }
@@ -856,6 +833,8 @@ export function buildPluginProjectionV2(params: Readonly<{
     /** Current applied-policy facts; absent partial fixtures fail projection closed. */
     pluginFinalPolicyCurrentGenerationsById?: ReadonlyMap<string, PluginFinalPolicyCurrentGeneration>;
     introspectionRuntimeSnapshot?: PluginTargetActivationIntrospectionSnapshot;
+    /** The requesting client's display locale, when it named one. */
+    requestedLocale?: string;
     scmRuntimeAvailability?: Readonly<{
         backendIds: ReadonlySet<string>;
         hostingProviderIds: ReadonlySet<string>;
@@ -919,6 +898,7 @@ export function buildPluginProjectionV2(params: Readonly<{
             params.pluginExecutionOriginsByPluginId,
             params.resolveActionPresentUserGatePolicy,
             params.pluginFinalPolicyCurrentGenerationsById,
+            params.introspectionRuntimeSnapshot?.runtimeFactsByQualifiedId,
         ),
         toolsById: buildToolsById(params.registry),
         commandsById: buildCommandsById(params.registry),
@@ -932,6 +912,9 @@ export function buildPluginProjectionV2(params: Readonly<{
                 ? { pluginExecutionOriginsByPluginId: params.pluginExecutionOriginsByPluginId }
                 : {}),
             pluginUiHostRuntime: params.pluginUiHostRuntime,
+            ...(params.requestedLocale === undefined
+                ? {}
+                : { requestedLocale: params.requestedLocale }),
             scmRuntimeAvailability: params.scmRuntimeAvailability,
         }, familyDescriptors),
         contributionIntrospection: projectPluginContributionIntrospection({

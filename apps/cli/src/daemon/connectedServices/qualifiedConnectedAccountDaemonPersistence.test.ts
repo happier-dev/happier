@@ -20,9 +20,6 @@ import {
   sealQualifiedConnectedAccountContentEnvelope,
   type AccountSettingsStoredContentEnvelope,
 } from '@happier-dev/protocol';
-import {
-  sealHistoricalQualifiedConnectedAccountConfigurationAliasFixtureCiphertext,
-} from '@happier-dev/protocol/testing/accountScopedCipherFixtures';
 import type {
   ConnectedAccountDeviceTransactionSnapshot,
 } from '@/plugins/runtime/connectedAccounts/authenticationAttemptOwner';
@@ -1901,13 +1898,9 @@ describe('createQualifiedConnectedAccountDaemonPersistence', () => {
   });
 
   it('preserves the server-named credential refusal instead of one settlement conflict', async () => {
-    // Capacity exhaustion and an identity/authentication-mode mismatch are not
-    // CAS races: the caller must be able to tell them apart from a stale write.
+    // Identity and authentication-mode mismatch are not CAS races: the caller
+    // must be able to tell them apart from a stale write.
     for (const [serverCode, expected] of [
-      [
-        'connect_connected_account_capacity_exhausted',
-        { status: 'rejected', code: 'connected_account_credential_capacity_exhausted' },
-      ],
       [
         'connect_reconnect_provider_identity_mismatch',
         { status: 'conflict', code: 'connected_account_reconnect_provider_identity_mismatch' },
@@ -2410,97 +2403,6 @@ describe('createQualifiedConnectedAccountDaemonPersistence', () => {
     });
 
     await expect(persistence.attempts.accounts.readExact(account)).resolves.toBeNull();
-  });
-
-  it('reseals a validated Dev-8 account configuration without changing its logical revision', async () => {
-    const material = {
-      type: 'dataKey' as const,
-      machineKey: new Uint8Array(32).fill(5),
-    };
-    const configurationContent = {
-      values: { endpoint: 'https://api.example.test' },
-      secretRefs: {},
-    };
-    const aliasCiphertext =
-      sealHistoricalQualifiedConnectedAccountConfigurationAliasFixtureCiphertext({
-        material,
-        payload: configurationContent,
-        randomBytes: (length) => new Uint8Array(length).fill(6),
-      });
-    const mutateConfiguration = vi.fn(async (input: Readonly<{
-      token: string;
-      patch: unknown;
-    }>) => {
-      const patch =
-        QualifiedConnectedAccountConfigurationPatchV4Schema.parse(
-          input.patch,
-        );
-      expect(
-        patch.preserveConfigurationRevisionForCiphertextReseal,
-      ).toBe(true);
-      expect(patch.expectedConfigurationRevision).toBe(
-        'configuration-8',
-      );
-      expect(patch.replacementContentEnvelope.t).toBe('encrypted');
-      if (patch.replacementContentEnvelope.t !== 'encrypted') {
-        throw new Error('Expected resealed configuration envelope');
-      }
-      expect(openQualifiedConnectedAccountContentEnvelope({
-        kind: 'configuration',
-        accountMode: 'e2ee',
-        material,
-        envelope: patch.replacementContentEnvelope,
-      })).toEqual(configurationContent);
-      return {
-        success: true as const,
-        credentialRevision: 'csr_1234567890123456789012',
-        configurationRevision: 'configuration-8',
-      };
-    });
-    const persistence =
-      createQualifiedConnectedAccountDaemonPersistence({
-        credentials: {
-          token: 'token-1',
-          encryption: {
-            type: 'dataKey',
-            publicKey: new Uint8Array(32),
-            machineKey: material.machineKey,
-          },
-        },
-        getAccountEncryptionMode:
-          vi.fn(async (): Promise<'e2ee'> => 'e2ee'),
-        readConfiguration: vi.fn(async () =>
-          QualifiedConnectedAccountConfigurationSnapshotV4Schema.parse({
-            target: { kind: 'account', ref: account },
-            authenticationModeId: 'manual',
-            revisionSemantics: 'revisioned',
-            credentialRevision:
-              'csr_1234567890123456789012',
-            configurationRevision: 'configuration-8',
-            configurationContent: {
-              t: 'encrypted',
-              c: aliasCiphertext,
-            },
-          })),
-        mutateCredential: vi.fn(),
-        mutateConfiguration,
-        secrets: {
-          has: vi.fn(async () => false),
-          read: vi.fn(async () => null),
-        },
-        randomBytes: (length) =>
-          new Uint8Array(length).fill(7),
-      });
-
-    await expect(persistence.configuration.read({
-      kind: 'account',
-      account,
-      modeId: 'manual',
-    })).resolves.toEqual({
-      revision: 'configuration-8',
-      ...configurationContent,
-    });
-    expect(mutateConfiguration).toHaveBeenCalledOnce();
   });
 
   it.each(['plain', 'e2ee'] as const)(

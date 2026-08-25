@@ -1,5 +1,6 @@
 import {
     BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID,
+    ConnectedServiceIdSchema,
     type ConnectedServiceId,
     type QualifiedConnectedAccountRef,
 } from '@happier-dev/protocol';
@@ -25,6 +26,22 @@ export function resolveFirstPartyQualifiedConnectedAccountServiceForLegacyServic
         BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID,
     ).find(([legacyServiceId]) => legacyServiceId === serviceId)?.[1];
     return compatibility?.service ?? null;
+}
+
+/**
+ * Scalar service identifiers are a released ingress shape. Parse them before
+ * projecting to the generated qualified owner; malformed and non-first-party
+ * inputs deliberately have no qualified-group authority.
+ */
+export function resolveFirstPartyQualifiedConnectedAccountServiceForLegacyServiceInput(
+    serviceId: unknown,
+): QualifiedConnectedAccountRef['service'] | null {
+    const parsed = ConnectedServiceIdSchema.safeParse(serviceId);
+    return parsed.success
+        ? resolveFirstPartyQualifiedConnectedAccountServiceForLegacyServiceId(
+            parsed.data,
+        )
+        : null;
 }
 
 /**

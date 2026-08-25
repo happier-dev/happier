@@ -188,6 +188,28 @@ describe('target Agent External Session takeover lease', () => {
         await expect(takeover.resolveLaunch(request())).resolves.toEqual(result);
     });
 
+    it('carries a host-private exact native resume reference alongside the public launch plan', async () => {
+        const selectedSessionFile =
+            '/home/lee/.pi/agent/sessions/workspace-a/pi-shared.jsonl';
+        const privateResult = Object.freeze({
+            ok: true as const,
+            value: { directory: '/takeover/workspace' },
+            nativeResumeReference: selectedSessionFile,
+        });
+        const takeover = registry({
+            takeover: Object.freeze({
+                resolveLaunch: async () => privateResult,
+            }),
+        }).get('assistant')?.externalSessionTakeover;
+        if (!takeover) throw new Error('Expected takeover lease');
+
+        await expect(takeover.resolveLaunch(request())).resolves.toMatchObject({
+            ok: true,
+            value: { directory: '/takeover/workspace' },
+            nativeResumeReference: selectedSessionFile,
+        });
+    });
+
     it('enforces both caller and host serialized-result ceilings', async () => {
         let result: AgentExternalSessionTakeoverResolveLaunchResult = {
             ok: true as const,

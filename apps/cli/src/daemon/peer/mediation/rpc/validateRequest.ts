@@ -59,8 +59,6 @@ export type ValidatePeerMachineRpcDirectRequestOptions = Readonly<{
     expected: PeerMachineRpcDirectExpectedBinding;
     trustRoots: readonly DirectRouteGrantTrustRoot[];
     nowMs: number;
-    revokedGrantIds?: ReadonlySet<string>;
-    revokedGrantFamilyIds?: ReadonlySet<string>;
     callLimiter: PeerMachineRpcCallLimiter;
     quarantine: PeerMachineRpcVerificationQuarantine;
     replayKeyCache: PeerMachineRpcReplayKeyCache;
@@ -204,8 +202,6 @@ export function validatePeerMachineRpcDirectRequest(
             routeKind: options.expected.routeKind,
             endpointFingerprint: options.expected.endpointFingerprint,
         },
-        revokedGrantIds: options.revokedGrantIds,
-        revokedGrantFamilyIds: options.revokedGrantFamilyIds,
       })
       : verifyDirectRouteGrantV1({
         grant: request.grant,
@@ -218,8 +214,6 @@ export function validatePeerMachineRpcDirectRequest(
             routeKind: options.expected.routeKind,
             endpointFingerprint: options.expected.endpointFingerprint,
         },
-        revokedGrantIds: options.revokedGrantIds,
-        revokedGrantFamilyIds: options.revokedGrantFamilyIds,
       });
     if (!grantVerification.valid) {
         options.quarantine.recordVerificationFailure(qKey);

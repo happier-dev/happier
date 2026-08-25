@@ -1,3 +1,4 @@
+import { isPidPresent } from '@happier-dev/cli-common/process';
 import type { ApiMachineClient } from '@/api/apiMachine';
 import { logger } from '@/ui/logger';
 import { writeSessionExitReport } from '@/session/diagnostics/sessionExitReport';
@@ -15,6 +16,7 @@ import { cleanupPidSessionResources } from './cleanupPidSessionResources';
 import { promoteTrackedSessionPidCustody } from './promoteTrackedSessionPidCustody';
 import { resolveTrackedSessionExitSettlementEvidence } from './resolveTrackedSessionExitSettlementEvidence';
 import { stageObservedExit } from './stageObservedExit';
+import { resolveTrackedSessionActiveTurn } from './trackedSessionActiveTurn';
 
 export type ChildExit = {
   reason: string;
@@ -22,15 +24,6 @@ export type ChildExit = {
   signal: string | null;
   stderrTail?: string | null;
 };
-
-function isPidAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 function normalizeSessionId(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
@@ -69,9 +62,9 @@ function resolveTrackedMarkerOwnership(tracked: TrackedSession): Readonly<{
 }
 
 function isTrackedSessionAlive(tracked: TrackedSession): boolean {
-  if (isPidAlive(tracked.pid)) return true;
+  if (isPidPresent(tracked.pid)) return true;
   const runnerPid = tracked.sessionRunnerPid;
-  return typeof runnerPid === 'number' && runnerPid !== tracked.pid && isPidAlive(runnerPid);
+  return typeof runnerPid === 'number' && runnerPid !== tracked.pid && isPidPresent(runnerPid);
 }
 
 function findLiveReplacementForSameSession(
@@ -91,6 +84,45 @@ function findLiveReplacementForSameSession(
   return null;
 }
 
+function isServerBackedSessionId(sessionId: string): boolean {
+  return !/^PID-\d+$/.test(sessionId);
+}
+
+async function settleNoTurnFinalExit(params: Readonly<{
+  apiMachine: Pick<ApiMachineClient, 'captureMachineSessionTerminal' | 'finalizeMachineSessionTerminal'>;
+  sessionId: string;
+}>): Promise<boolean> {
+  try {
+    const captured = await params.apiMachine.captureMachineSessionTerminal(params.sessionId);
+    if (captured.status === 'rejected') {
+      logger.warn('[DAEMON RUN] Failed to capture no-turn Session terminal authority; retaining marker evidence', {
+        sessionId: params.sessionId,
+        reason: captured.reason,
+      });
+      return false;
+    }
+    if (captured.status === 'already_inactive') return true;
+
+    const finalized = await params.apiMachine.finalizeMachineSessionTerminal({
+      sessionId: captured.sessionId,
+      authority: captured.authority,
+    });
+    if (finalized.status !== 'rejected') return true;
+
+    logger.warn('[DAEMON RUN] Failed to finalize no-turn Session terminal authority; retaining marker evidence', {
+      sessionId: params.sessionId,
+      reason: finalized.reason,
+    });
+    return false;
+  } catch (error) {
+    logger.warn('[DAEMON RUN] Failed to settle no-turn Session terminal authority; retaining marker evidence', {
+      sessionId: params.sessionId,
+      error,
+    });
+    return false;
+  }
+}
+
 export function createOnChildExited(params: Readonly<{
   pidToTrackedSession: Map<number, TrackedSession>;
   spawnResourceCleanupByPid: Map<number, () => void | Promise<void>>;
@@ -101,6 +133,17 @@ export function createOnChildExited(params: Readonly<{
     exit: ChildExit,
   ) => void | Promise<void>;
   onUnexpectedExit?: (trackedSession: TrackedSession, exit: ChildExit) => void | Promise<void>;
+  /**
+   * Retire the managed children this Session runner owned, before anything respawns it.
+   *
+   * A runner that was killed or crashed ran none of its own disposal, and its managed services are
+   * spawned detached, so they keep running with their port, listener and injected host credential.
+   * Only reachable when no live runner still owns this session — a replacement PID means those
+   * children still have their owner.
+   */
+  retireSessionRunnerOwnedManagedServices?: (
+    input: Readonly<{ sessionId: string; trackedSession: TrackedSession; exit: ChildExit }>,
+  ) => void | Promise<void>;
   isExitUnexpectedOverride?: (trackedSession: TrackedSession, exit: ChildExit) => boolean | null | undefined;
   onPidPromoted?: (input: Readonly<{ fromPid: number; toPid: number; trackedSession: TrackedSession }>) => void;
   shouldPreserveSessionMarkerOnExit?: (input: Readonly<{
@@ -128,6 +171,7 @@ export function createOnChildExited(params: Readonly<{
     getApiMachineForSessions,
     beforeUnexpectedExitSettlement,
     onUnexpectedExit,
+    retireSessionRunnerOwnedManagedServices,
     isExitUnexpectedOverride,
     onPidPromoted,
     shouldPreserveSessionMarkerOnExit,
@@ -161,7 +205,7 @@ export function createOnChildExited(params: Readonly<{
     const tracked = pidToTrackedSession.get(pid);
     const runnerPid = tracked?.sessionRunnerPid;
     const override = tracked && isExitUnexpectedOverride ? isExitUnexpectedOverride(tracked, exit) : null;
-    if (tracked && typeof runnerPid === 'number' && runnerPid !== pid && isPidAlive(runnerPid)) {
+    if (tracked && typeof runnerPid === 'number' && runnerPid !== pid && isPidPresent(runnerPid)) {
       logger.debug(`[DAEMON RUN] Wrapper PID ${pid} exited; promoting tracked session to runner PID ${runnerPid}`);
       await promoteTrackedSessionPidCustody({
         fromPid: pid,
@@ -221,6 +265,9 @@ export function createOnChildExited(params: Readonly<{
       }) === true;
       const apiMachineForSessions = getApiMachineForSessions();
       const observedAt = Date.now();
+      const trackedExitSettlementEvidence = resolveTrackedSessionExitSettlementEvidence(tracked);
+      const exactTurn = resolveTrackedSessionActiveTurn(trackedExitSettlementEvidence);
+      const finalSessionId = normalizeSessionId(tracked.happySessionId);
       if (
         actionableUnexpectedExit
         && typeof tracked.happySessionId === 'string'
@@ -237,9 +284,23 @@ export function createOnChildExited(params: Readonly<{
           return;
         }
       }
+      if (
+        shouldReportSessionEnd
+        && !isUnexpected
+        && exactTurn === null
+        && finalSessionId
+        && isServerBackedSessionId(finalSessionId)
+      ) {
+        if (!apiMachineForSessions || !await settleNoTurnFinalExit({
+          apiMachine: apiMachineForSessions,
+          sessionId: finalSessionId,
+        })) {
+          return;
+        }
+      }
       try {
         await stageObservedExitFn({
-          trackedSession: resolveTrackedSessionExitSettlementEvidence(tracked),
+          trackedSession: trackedExitSettlementEvidence,
           observedAt,
           enqueueExactTurnEnd: async (mutation) => {
             if (!apiMachineForSessions?.enqueueDaemonTerminalExactTurnEnd) {
@@ -301,6 +362,19 @@ export function createOnChildExited(params: Readonly<{
       }
 
       if (actionableUnexpectedExit && typeof tracked.happySessionId === 'string' && tracked.happySessionId.trim().length > 0) {
+        try {
+          await retireSessionRunnerOwnedManagedServices?.({
+            sessionId: tracked.happySessionId,
+            trackedSession: tracked,
+            exit,
+          });
+        } catch (error) {
+          logger.warn('[DAEMON RUN] Failed to retire managed services owned by an exited runner', {
+            sessionId: tracked.happySessionId,
+            pid,
+            error,
+          });
+        }
         try {
           await onUnexpectedExit?.(tracked, exit);
         } catch (error) {

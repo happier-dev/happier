@@ -55,6 +55,24 @@ describe('getAutomationRunInvalidationAction', () => {
       'abort',
     ],
     [
+      // The carrier deliberately types `cause` as a bounded string so a newer
+      // producer cause degrades instead of invalidating the whole observation.
+      // Degrading means the generic abort, never borrowed cancellation authority.
+      'an uncertain lifecycle transition naming a cause this daemon does not know',
+      {
+        t: 'automation-run-state-changed',
+        runId: 'run-active',
+        automationId: 'automation-1',
+        originKind: 'manual',
+        previousState: 'running',
+        currentState: 'outcome_uncertain',
+        transitionedAt: 123,
+        claimedByMachineId: 'machine-1',
+        cause: 'someFutureCauseThisDaemonHasNeverSeen',
+      },
+      'abort',
+    ],
+    [
       'machine-scoped cancellation for another Run',
       {
         t: 'automation-run-state-changed',

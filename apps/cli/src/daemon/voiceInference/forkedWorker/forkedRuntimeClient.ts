@@ -26,8 +26,6 @@ import type {
 
 import {
   resolveVoiceInferenceWorkerMaxFrameBytes,
-  resolveVoiceInferenceWorkerMissedPingThreshold,
-  resolveVoiceInferenceWorkerPingIntervalMs,
   resolveVoiceInferenceWorkerRequestTimeoutMs,
 } from '../voiceInferenceWorkerConfig';
 import type {
@@ -122,10 +120,6 @@ export type CreateForkedVoiceInferenceRuntimeClientParams = Readonly<{
    * knob; `0` disables.
    */
   requestTimeoutMs?: number;
-  /** Heartbeat cadence for the liveness watchdog. Defaults to the config knob; `0` disables. */
-  pingIntervalMs?: number;
-  /** Consecutive unanswered pings before the child is declared hung. Defaults to the config knob. */
-  missedPingThreshold?: number;
   /** Per-IPC-frame byte ceiling. Defaults to the config knob (M2). */
   maxFrameBytes?: number;
 }>;
@@ -135,8 +129,6 @@ export function createForkedVoiceInferenceRuntimeClient(
 ): ForkedVoiceInferenceRuntimeClient {
   const policy = params.policy ?? DEFAULT_WORKER_POLICY;
   const requestTimeoutMs = params.requestTimeoutMs ?? resolveVoiceInferenceWorkerRequestTimeoutMs();
-  const pingIntervalMs = params.pingIntervalMs ?? resolveVoiceInferenceWorkerPingIntervalMs();
-  const missedPingThreshold = params.missedPingThreshold ?? resolveVoiceInferenceWorkerMissedPingThreshold();
   const maxFrameBytes = params.maxFrameBytes ?? resolveVoiceInferenceWorkerMaxFrameBytes();
 
   let stopped = false;
@@ -147,27 +139,6 @@ export function createForkedVoiceInferenceRuntimeClient(
   let resolveChannelReady: ((channel: VoiceInferenceWorkerChannel) => void) | null = null;
   let rejectChannelReady: ((error: unknown) => void) | null = null;
   const pendingById = new Map<string, PendingRequest>();
-
-  // Liveness watchdog state for the currently-attached channel. `outstandingPings` counts
-  // pings sent since the last `ready`; it resets to 0 whenever ANY frame arrives from the
-  // child (a `ready` pong, or genuine request progress), and trips at `missedPingThreshold`.
-  let pingTimer: ReturnType<typeof setInterval> | null = null;
-  let outstandingPings = 0;
-
-  function disarmPingWatchdog(): void {
-    if (pingTimer) {
-      clearInterval(pingTimer);
-      pingTimer = null;
-    }
-    outstandingPings = 0;
-  }
-
-  function noteChannelActivity(): void {
-    // Only a SUCCESSFULLY-DECODED, schema-valid frame proves the child is responsive (M2). This is
-    // intentionally NOT reset on raw inbound bytes: a chatty-but-broken child dribbling undecodable
-    // noise must not be able to keep the liveness watchdog alive.
-    outstandingPings = 0;
-  }
 
   function terminateCorruptChannel(channel: VoiceInferenceWorkerChannel, error: unknown): void {
     // A framing/oversize error (decoder throw) or a schema-invalid frame means the wire is corrupt
@@ -184,55 +155,6 @@ export function createForkedVoiceInferenceRuntimeClient(
     } catch {
       // best-effort; if the channel is already gone, onTermination has already fired.
     }
-  }
-
-  function declareHungAndKill(channel: VoiceInferenceWorkerChannel): void {
-    const shouldTerminateChannel = retireUnhealthyChannelBeforeTermination(channel);
-    if (!shouldTerminateChannel) {
-      return;
-    }
-    params.loggerDebug?.('[forkedVoiceInferenceClient] worker unresponsive — force-killing', {
-      missedPingThreshold,
-    });
-    // Force-kill the wedged-but-alive child. Its termination flows through the EXISTING
-    // supervised restart path (waitForTermination → onTermination → failAllPending + respawn);
-    // we do NOT build a parallel restart mechanism here.
-    try {
-      channel.forceTerminate();
-    } catch {
-      // best-effort; if the channel is already gone, onTermination already fired.
-    }
-  }
-
-  function armPingWatchdog(channel: VoiceInferenceWorkerChannel): void {
-    disarmPingWatchdog();
-    if (pingIntervalMs <= 0 || missedPingThreshold <= 0) {
-      return;
-    }
-    pingTimer = setInterval(() => {
-      if (stopped || activeChannel !== channel) {
-        disarmPingWatchdog();
-        return;
-      }
-      if (pendingById.size > 0) {
-        // Native model construction/inference can synchronously occupy the child event loop, so
-        // it cannot answer heartbeat pings while legitimate work is in flight. That interval is
-        // already owned by each request's deadline; the heartbeat only supervises an idle channel.
-        outstandingPings = 0;
-        return;
-      }
-      if (outstandingPings >= missedPingThreshold) {
-        declareHungAndKill(channel);
-        return;
-      }
-      outstandingPings += 1;
-      try {
-        channel.send(encodeVoiceInferenceWorkerFrame({ kind: 'ping', id: nextRequestId() }, maxFrameBytes));
-      } catch {
-        // A failed send means the pipe is broken; let the supervisor's termination path handle it.
-      }
-    }, pingIntervalMs);
-    pingTimer.unref?.();
   }
 
   function failAllPending(error: unknown): void {
@@ -256,7 +178,6 @@ export function createForkedVoiceInferenceRuntimeClient(
     channelReady = null;
     resolveChannelReady = null;
     rejectChannelReady = null;
-    disarmPingWatchdog();
     return true;
   }
 
@@ -268,14 +189,14 @@ export function createForkedVoiceInferenceRuntimeClient(
         rawFrames = decoder.push(chunk);
       } catch (error) {
         // M2(a): a framing/oversize/JSON error means the wire is corrupt — terminate instead of
-        // swallowing. Raw bytes did NOT touch the watchdog, so undecodable noise cannot starve it.
+        // swallowing, because this decoder can no longer safely resume that exact byte stream.
         terminateCorruptChannel(channel, error);
         return;
       }
       for (const rawFrame of rawFrames) {
         // Retirement removes this exact child from authority immediately, while OS termination
         // may still leave buffered frames in flight. Fence every decoded frame by channel identity
-        // before it can reset liveness or publish snapshots or terminal responses.
+        // before it can publish snapshots or terminal responses.
         if (activeChannel !== channel) {
           return;
         }
@@ -288,9 +209,6 @@ export function createForkedVoiceInferenceRuntimeClient(
           terminateCorruptChannel(channel, error);
           return;
         }
-        // M2(b): the missed-ping counter resets ONLY here — after a frame is fully decoded AND
-        // schema-validated — never on raw or undecodable inbound bytes.
-        noteChannelActivity();
         handleResponseFrame(frame, channel);
       }
     });
@@ -308,12 +226,6 @@ export function createForkedVoiceInferenceRuntimeClient(
     if (!pending) {
       return;
     }
-    if (frame.kind === 'ready') {
-      // `ready` is only a terminal frame for a `ping`.
-      pendingById.delete(frame.id);
-      pending.resolve(frame);
-      return;
-    }
     // `result` and `error` are terminal.
     pendingById.delete(frame.id);
     pending.resolve(frame);
@@ -328,10 +240,6 @@ export function createForkedVoiceInferenceRuntimeClient(
       const channel = await params.channelFactory();
       activeChannel = channel;
       attachChannel(channel);
-      // Begin policing idle-channel liveness. A wedged-but-alive idle child that misses
-      // `missedPingThreshold` pongs is force-killed, routing through this same supervisor;
-      // in-flight work remains owned by the per-request deadline above.
-      armPingWatchdog(channel);
       // Resolve the readiness gate for any caller waiting on a fresh channel.
       resolveChannelReady?.(channel);
       resolveChannelReady = null;
@@ -375,7 +283,6 @@ export function createForkedVoiceInferenceRuntimeClient(
         resolveChannelReady = null;
         rejectChannelReady = null;
       }
-      disarmPingWatchdog();
       // In-flight requests can never complete on a dead child — reject cleanly so callers
       // surface `runtime_unavailable` instead of hanging forever.
       failAllPending(unavailableError);
@@ -556,7 +463,12 @@ export function createForkedVoiceInferenceRuntimeClient(
         supportArtifacts: input.supportArtifacts,
       }),
       () => undefined,
-      { signal: input.signal },
+      {
+        signal: input.signal,
+        // Native model construction can synchronously occupy the child just like synthesis/STT.
+        // Cancellation must retire only this exact child so a late warm cannot publish readiness.
+        terminateChannelOnAbort: true,
+      },
     );
   }
 
@@ -572,7 +484,11 @@ export function createForkedVoiceInferenceRuntimeClient(
         supportArtifacts: input.supportArtifacts,
       }),
       () => undefined,
-      { signal: input.signal },
+      {
+        signal: input.signal,
+        // Priming is also native work and therefore cannot rely on a cooperative abort frame.
+        terminateChannelOnAbort: true,
+      },
     );
   }
 
@@ -706,7 +622,7 @@ export function createForkedVoiceInferenceRuntimeClient(
           return undefined;
         },
         // Cleanup must outlive the stream's caller-owned lifetime signal. The
-        // request remains bounded by the forked-client request/watchdog policy.
+        // request remains bounded by the forked-client request-deadline policy.
       ).finally(() => {
         closed = true;
       });
@@ -796,7 +712,6 @@ export function createForkedVoiceInferenceRuntimeClient(
       }
       stopped = true;
       supervisor.markStopRequested({ reason: 'shutdown', requestedAtMs: Date.now() });
-      disarmPingWatchdog();
       const channel = activeChannel ?? retiringChannel;
       activeChannel = null;
       retiringChannel = null;

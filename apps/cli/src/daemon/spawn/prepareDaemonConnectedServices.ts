@@ -21,6 +21,7 @@ import {
     resolveSafeResumeUnreachableDiagnosticReason,
 } from '../connectedServices/buildSpawnResumeUnreachableErrorResult';
 import {
+    boundConnectedServiceMaterializationDiagnosticValue,
     buildConnectedServiceCredentialSpawnErrorResult,
     buildConnectedServiceDiagnosticSpawnValidationErrorResult,
     buildConnectedServiceMaterializationSpawnErrorResult,
@@ -42,6 +43,9 @@ import {
     resolveQualifiedPurposeBindingSnapshotForAgentSpawn,
     type AgentSpawnPurposeContributions,
 } from '../connectedServices/requestAuth/prepareConnectedAccountRequestAuthForSpawn';
+import {
+    sanitizeConnectedServiceDiagnosticError,
+} from '../connectedServices/runtimeAuth/sanitizeConnectedServiceDiagnosticString';
 import {
     CONNECTED_SERVICE_LOCAL_PATH_REDACTION_MARKER,
     CONNECTED_SERVICE_PROVIDER_RESUME_ID_REDACTION_MARKER,
@@ -255,11 +259,16 @@ export async function prepareDaemonConnectedServices(input: Readonly<{
             if (error instanceof ConnectedServiceMaterializationBlockedError) {
                 logger.warn('[DAEMON RUN] Connected services materialization failed; failing closed before spawn', {
                     agentId: input.catalogAgentId,
+                    // Plugin-authored diagnostic prose reaches the retained
+                    // daemon log — and the remote log sink when the dangerous
+                    // remote-debug setting is on — so every open scalar is
+                    // bounded and redacted by the one Connected Service
+                    // diagnostic privacy owner before it is serialized.
                     diagnostics: error.diagnostics.map((diagnostic) => ({
-                        code: diagnostic.code,
+                        code: boundConnectedServiceMaterializationDiagnosticValue(diagnostic.code),
                         providerId: diagnostic.providerId,
                         serviceId: diagnostic.serviceId,
-                        reason: diagnostic.reason,
+                        reason: boundConnectedServiceMaterializationDiagnosticValue(diagnostic.reason),
                         severity: diagnostic.severity,
                     })),
                 });
@@ -282,15 +291,19 @@ export async function prepareDaemonConnectedServices(input: Readonly<{
                 });
                 return { ok: false, result: credentialError };
             }
-            logger.debug('[DAEMON RUN] Connected services resolution failed', error);
+            // An unclassified resolution failure is still upstream/plugin text:
+            // it can name a credential or a local path, and it crosses both the
+            // retained daemon log and the spawn result to the requesting client.
+            const safeResolutionFailure = sanitizeConnectedServiceDiagnosticError(error);
+            logger.debug('[DAEMON RUN] Connected services resolution failed', {
+                reason: safeResolutionFailure,
+            });
             return {
                 ok: false,
                 result: {
                     type: 'error',
                     errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
-                    errorMessage: error instanceof Error
-                        ? `Connected services resolution failed: ${error.message}`
-                        : 'Connected services resolution failed.',
+                    errorMessage: `Connected services resolution failed: ${safeResolutionFailure}`,
                 },
             };
         }
@@ -300,7 +313,9 @@ export async function prepareDaemonConnectedServices(input: Readonly<{
             } catch (error) {
                 const cleanup = auth?.cleanupOnFailure ?? null;
                 await Promise.resolve(cleanup?.());
-                logger.warn('[DAEMON RUN] Failed to persist repaired connected-service materialization identity after exact existing-session materialization', error);
+                logger.warn('[DAEMON RUN] Failed to persist repaired connected-service materialization identity after exact existing-session materialization', {
+                    reason: sanitizeConnectedServiceDiagnosticError(error),
+                });
                 return {
                     ok: false,
                     result: buildMaterializationIdentityMissingSpawnErrorResult({

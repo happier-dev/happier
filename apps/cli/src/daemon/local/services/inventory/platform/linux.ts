@@ -2,7 +2,7 @@ import { LOCAL_SERVICE_PROCESS_LINEAGE_MAX_DEPTH, type LocalServiceProcessFact }
 import type { LocalServiceListenerFact } from '../scanner';
 import type { LocalServiceInventoryDiagnostic } from '../scanner';
 import { collectLocalServiceProcessLineageFacts } from './processLineage';
-import { classifyPosixProcessOwnership, resolveDaemonPosixUserId } from './processOwnership';
+import { classifyProcessOwnershipByIdentity, resolveDaemonPosixUserId } from './processOwnership';
 
 type ProcNetInput = Readonly<{
     tcp4: string;
@@ -227,7 +227,7 @@ async function readProcessFact(
             startTicks: statFacts.startTicks,
         });
         const cwd = await readOptionalLink(boundary, joinProcPath(base, 'cwd'));
-        const processOwnership = classifyPosixProcessOwnership(
+        const processOwnership = classifyProcessOwnershipByIdentity(
             parseProcStatusRealUserId(String(status)),
             daemonUserId,
         );

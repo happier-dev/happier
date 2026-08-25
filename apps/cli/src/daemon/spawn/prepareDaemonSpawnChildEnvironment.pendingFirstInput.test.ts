@@ -110,7 +110,8 @@ describe('prepareDaemonSpawnChildEnvironment pending first input', () => {
     expect(result.trackedSpawnOptions).not.toHaveProperty('pendingFirstInput');
   });
 
-  it('carries takeover correlation only into the first live child environment', async () => {
+  it('carries takeover correlation only into the first live child environment while retaining exact native resume authority', async () => {
+    const selectedSessionFile = '/home/lee/.pi/agent/sessions/workspace-a/pi-shared.jsonl';
     vi.mocked(resolveSpawnChildEnvironment).mockResolvedValue({
       ok: true,
       expandedEnvironmentVariables: {},
@@ -127,6 +128,8 @@ describe('prepareDaemonSpawnChildEnvironment pending first input', () => {
       effectiveModelSelection: undefined,
       options: {
         directory: '/tmp/repo',
+        resume: selectedSessionFile,
+        nativeResumeReference: selectedSessionFile,
         persistedTakeoverAdmission: {
           mode: 'persisted',
           operationId: 'operation-1',
@@ -158,6 +161,10 @@ describe('prepareDaemonSpawnChildEnvironment pending first input', () => {
     expect(result.trackedSpawnOptions).not.toHaveProperty(
       'persistedTakeoverAdmission',
     );
+    expect(result.trackedSpawnOptions).toMatchObject({
+      resume: selectedSessionFile,
+      nativeResumeReference: selectedSessionFile,
+    });
     expect(result.trackedSpawnOptions.environmentVariables ?? {}).not.toHaveProperty(
       HAPPIER_PERSISTED_TAKEOVER_ADMISSION_ENV_KEY,
     );

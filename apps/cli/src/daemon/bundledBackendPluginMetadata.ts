@@ -3,7 +3,7 @@ import type { BackendTargetRefV2 } from '@happier-dev/protocol';
 import {
   BUNDLED_FIRST_PARTY_PLUGIN_METADATA,
   type BundledFirstPartyPluginMetadata,
-} from '@/plugins/projection/registry/sources/generatedBundledPlugins';
+} from '@/plugins/projection/registry/sources/generatedBundledPluginManifests';
 
 import { resolveDaemonCatalogAgentIdFromBackendTarget } from './backendTargetRouting';
 

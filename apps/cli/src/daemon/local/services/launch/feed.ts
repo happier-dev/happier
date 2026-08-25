@@ -2,9 +2,8 @@ import type { LocalServiceLauncherSnapshotV1, LocalServiceLaunchTargetV1 } from 
 
 import { expandHomeDirPath } from '../../../../utils/path/expandHomeDirPath';
 import type { LocalServiceInventoryRegistry } from '../inventory/registry';
-import type { ManagedLocalServiceRegistry } from '../managed/registry';
 import { listLocalServicePreviewResources, type LocalServicePreviewRegistry } from '../preview/registry';
-import type { LocalServiceRunTarget } from '../managed/scripts';
+import type { LocalServiceRunTarget } from './runTargets';
 import { buildLocalServiceLauncherSnapshot } from './suggestions';
 
 const DEFAULT_RUN_TARGETS_TIMEOUT_MS = 1_000;
@@ -36,8 +35,6 @@ export type CreateLocalServiceLauncherFeedInput = Readonly<{
     machineId: string;
     sessionId?: string;
     inventoryRegistry: LocalServiceInventoryRegistry;
-    managedRegistry: ManagedLocalServiceRegistry;
-    isManagedServiceVisible?: (serviceId: string) => boolean;
     previewRegistry: LocalServicePreviewRegistry;
     runTargets?: readonly LocalServiceRunTarget[] | LocalServiceRunTargetsProvider;
     runTargetsTimeoutMs?: number;
@@ -73,14 +70,6 @@ function unavailable(
 
 function fenceExecutableAuthority(target: LocalServiceLaunchTargetV1): LocalServiceLaunchTargetV1 {
     if (
-        target.source === 'managed_service'
-        && target.state === 'available'
-        && target.actions.length === 1
-        && target.actions[0] === 'start'
-    ) {
-        return target;
-    }
-    if (
         target.source === 'inventory_entry'
         && target.state === 'available'
         && target.actions.includes('open')
@@ -99,9 +88,6 @@ function fenceExecutableAuthority(target: LocalServiceLaunchTargetV1): LocalServ
         && next.actions.length === 0
     ) {
         return unavailable(next, 'preview_registration_unavailable');
-    }
-    if (next.source === 'managed_service' && next.state === 'available' && !next.browserTarget) {
-        return unavailable(next, 'managed_preview_unavailable');
     }
     return next;
 }
@@ -195,8 +181,6 @@ export function createLocalServiceLauncherFeed(
     return {
         async getSnapshot(request) {
             const sessionId = request?.sessionId ?? input.sessionId;
-            const managedServices = input.managedRegistry.listServices()
-                .filter((service) => input.isManagedServiceVisible?.(service.id) !== false);
             const workspaceScopePaths = await resolveScopePaths({
                 scope: request?.scope,
                 workspaceRoot: request?.workspaceRoot,
@@ -213,7 +197,6 @@ export function createLocalServiceLauncherFeed(
                     onError: input.onRunTargetsError,
                 }),
                 inventoryEntries: input.inventoryRegistry.getSnapshot().entries,
-                managedServices,
                 previewResources: listLocalServicePreviewResources(input.previewRegistry),
                 terminateDetectedEnabled: input.terminateDetectedEnabled?.() === true,
             });

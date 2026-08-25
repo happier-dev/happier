@@ -21,7 +21,7 @@ import {
   type RegistryConnectedAccountPurposeAuthorizationProjection,
 } from './deriveRegistryConnectedAccountPurposeAuthorizations';
 
-function actionAndHookManifest() {
+function actionAndHookManifest(options: Readonly<{ omitConnectedAccountOptionsField?: boolean }> = {}) {
   const parsed = readCanonicalPluginManifest(createPluginManifestV2Fixture({
     id: 'acme.invocations',
     hostAccess: {
@@ -103,14 +103,16 @@ function actionAndHookManifest() {
           required: ['credentialRef'],
           additionalProperties: false,
         },
-        inputHints: {
-          fields: [{
-            path: 'credentialRef',
-            title: 'Connected Account',
-            widget: 'select',
-            connectedAccountOptions: true,
-          }],
-        },
+        ...(options.omitConnectedAccountOptionsField ? {} : {
+          inputHints: {
+            fields: [{
+              path: 'credentialRef',
+              title: 'Connected Account',
+              widget: 'select',
+              connectedAccountOptions: true,
+            }],
+          },
+        }),
       }],
       hooks: [{
         id: 'before-run',
@@ -402,6 +404,26 @@ describe('registry Connected Accounts purpose authorization projection', () => {
       registry,
       qualifiedActionId: `${manifest.id}/run`,
       fieldPath: 'missing',
+    })).toBeNull();
+  });
+
+  it('fails closed when the requested path is purpose-bound but declares no Connected Account form field', () => {
+    // The requested fieldPath arrives from the client over the projection RPC,
+    // not from the Action's own hints. An Action may bind a credential-ref
+    // purpose without ever declaring a dynamic Connected Account form field,
+    // and the host must not enumerate Accounts for a field the author never
+    // declared.
+    const manifest = actionAndHookManifest({ omitConnectedAccountOptionsField: true });
+    const action = manifest.contributes?.actions?.find((entry) => entry.id === 'run');
+    expect(action?.connectedAccountPurposeBindings).toEqual([
+      { path: 'credentialRef', purpose: 'action-account' },
+    ]);
+    expect(action?.inputHints).toBeUndefined();
+
+    expect(resolveRegistryConnectedAccountActionFormPurposeAuthorization({
+      registry: projection({ activationTargets: [{ pluginId: manifest.id, manifest }] }),
+      qualifiedActionId: `${manifest.id}/run`,
+      fieldPath: 'credentialRef',
     })).toBeNull();
   });
 

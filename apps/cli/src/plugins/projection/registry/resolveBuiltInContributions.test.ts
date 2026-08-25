@@ -16,22 +16,51 @@ import {
   getAllAgentDefinitionContracts,
   getAgentCliRuntimeSpec,
 } from '@happier-dev/agents';
+import { ConversationProvidersContributionProtocolV1 } from '@happier-dev/channels-protocol/v1';
 import { buildConnectedServiceCredentialRecord } from '@happier-dev/protocol';
+import {
+  TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,
+  TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1,
+  TriageSourcesContributionProtocolV1,
+} from '@happier-dev/triage-protocol/v1';
 
+import { createResolvedContributionRegistry } from './createResolvedContributionRegistry';
 import { resolveBuiltInContributions } from './resolveBuiltInContributions';
+import * as generatedBundledPluginManifests from './sources/generatedBundledPluginManifests';
 import * as generatedBundledPlugins from './sources/generatedBundledPlugins';
 
 function readResolverSource(): string {
   return readFileSync(new URL('./resolveBuiltInContributions.ts', import.meta.url), 'utf8');
 }
 
-describe('resolveBuiltInContributions', () => {
-  it('stays a thin reader without host backend or executable plugin imports', () => {
-    const resolverSource = readResolverSource();
+function readPluginContributionResolverSource(): string {
+  return readFileSync(new URL('./resolvePluginContributions.ts', import.meta.url), 'utf8');
+}
 
-    expect(resolverSource).toMatch(/generatedBundledPlugins/);
-    expect(resolverSource).toMatch(/BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS/);
-    expect(resolverSource).toMatch(/BUNDLED_FIRST_PARTY_IMPLEMENTATION_BINDINGS/);
+function readGeneratedBundledPluginsSource(): string {
+  return [
+    readFileSync(new URL('./sources/generatedBundledPlugins.ts', import.meta.url), 'utf8'),
+    readFileSync(new URL('./sources/generatedBundledPluginManifests.ts', import.meta.url), 'utf8'),
+  ].join('\n');
+}
+
+describe('resolveBuiltInContributions', () => {
+  it('keeps cold manifest discovery off the executable bindings aggregate', () => {
+    const resolverSource = readResolverSource();
+    const pluginContributionResolverSource = readPluginContributionResolverSource();
+
+    expect(resolverSource).toContain(
+      "import { BUNDLED_FIRST_PARTY_IMPLEMENTATION_BINDINGS } from './sources/generatedBundledPlugins';",
+    );
+    expect(resolverSource).toContain(
+      "import { BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS } from './sources/generatedBundledPluginManifests';",
+    );
+    expect(pluginContributionResolverSource).toContain(
+      "import { BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS } from './sources/generatedBundledPluginManifests';",
+    );
+    expect(pluginContributionResolverSource).not.toContain(
+      "import { BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS } from './sources/generatedBundledPlugins';",
+    );
     expect(resolverSource).not.toMatch(/BUNDLED_FIRST_PARTY_PLUGIN_MANIFEST_BINDINGS/);
     expect(resolverSource).not.toMatch(/@\/backends\//);
     expect(resolverSource).not.toMatch(/\.\/bundled\/catalogEntries/);
@@ -40,6 +69,147 @@ describe('resolveBuiltInContributions', () => {
     expect(resolverSource).not.toMatch(/from ['"][^'"]*@happier-dev\/plugins-/);
     expect(resolverSource).not.toMatch(/require\(['"]@happier-dev\/plugins-/);
     expect(resolverSource).not.toMatch(/@happier-dev\/extensions-/);
+  });
+
+  it('keeps generated bundled manifest locators data-only at daemon cold start', () => {
+    const generatedSource = readGeneratedBundledPluginsSource();
+
+    // The generator has already normalized these manifests from the bundled
+    // artifact. Re-importing authored `/manifest` modules here pulls plugin
+    // runtime graphs into every registry construction before any demand path.
+    expect(generatedSource).not.toMatch(
+      /from ['"]@happier-dev\/plugins-[^'"]+\/manifest['"]/u,
+    );
+    expect(generatedSource).not.toMatch(
+      /@happier-dev\/plugins-(?:channels|triage)\/targeted-contributions/u,
+    );
+    expect(generatedSource).not.toMatch(
+      /from ['"]@happier-dev\/plugins-(?:channels|triage)\/(?:runtime|daemon)['"]/u,
+    );
+    expect(generatedSource).toMatch(/manifest:\s*\{\s*"contributes":/u);
+  });
+
+  it('keeps the cold bundled registry trace off Protocol and Agent root barrels', () => {
+    const generatedSource = readGeneratedBundledPluginsSource();
+    const resolverSource = readResolverSource();
+    const catalogEntryHooksSource = readFileSync(
+      new URL('./agentCatalogEntryHooks.ts', import.meta.url),
+      'utf8',
+    );
+    const requestAuthClientSource = readFileSync(
+      new URL('../../../../../../packages/agents/src/requestAuth/clientSource.ts', import.meta.url),
+      'utf8',
+    );
+
+    for (const source of [
+      generatedSource,
+      resolverSource,
+      catalogEntryHooksSource,
+      requestAuthClientSource,
+    ]) {
+      expect(source).not.toMatch(/from ['"]@happier-dev\/protocol['"]/u);
+      expect(source).not.toMatch(/from ['"]@happier-dev\/agents['"]/u);
+    }
+  });
+
+  it('admits generated bundled Channels and Triage target semantics without activating their manifests', () => {
+    const contributes = resolveBuiltInContributions();
+    const immutableGenerationIdsByPluginId = Object.freeze(Object.fromEntries(
+      generatedBundledPluginManifests.BUNDLED_FIRST_PARTY_PLUGIN_METADATA.map((entry) => [
+        entry.pluginId,
+        `generation:${entry.pluginId}`,
+      ]),
+    ));
+    const registry = createResolvedContributionRegistry({
+      ...contributes,
+      immutableGenerationIdsByPluginId,
+    });
+    const readAdmittedTargetedContributions = registry.readAdmittedTargetedContributions;
+    if (!readAdmittedTargetedContributions) {
+      throw new Error('Resolved contribution registry must expose targeted-contribution admission');
+    }
+
+    const channels = readAdmittedTargetedContributions({
+      targetPluginId: 'happier.channels',
+      pointId: 'providers',
+      protocol: {
+        id: ConversationProvidersContributionProtocolV1.id,
+        version: ConversationProvidersContributionProtocolV1.version,
+      },
+    });
+    const triage = readAdmittedTargetedContributions({
+      targetPluginId: TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1,
+      pointId: TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,
+      protocol: {
+        id: TriageSourcesContributionProtocolV1.id,
+        version: TriageSourcesContributionProtocolV1.version,
+      },
+    });
+
+    expect(channels?.contributions).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        contributor: expect.objectContaining({
+          pluginId: 'happier.channel.telegram',
+          contributionId: 'telegram-provider',
+        }),
+      }),
+      expect.objectContaining({
+        contributor: expect.objectContaining({
+          pluginId: 'happier.channel.discord',
+          contributionId: 'discord-provider',
+        }),
+      }),
+      expect.objectContaining({
+        contributor: expect.objectContaining({
+          pluginId: 'happier.scm.forge.github',
+          contributionId: 'github-repository',
+        }),
+      }),
+    ]));
+    expect(triage?.contributions).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        contributor: expect.objectContaining({
+          pluginId: 'happier.scm.forge.github',
+          contributionId: 'github-forge',
+        }),
+      }),
+    ]));
+    expect(Object.values(registry.pluginDiagnosticsByPluginId).flat())
+      .not.toEqual(expect.arrayContaining([
+        expect.objectContaining({ code: 'target_semantics_unavailable' }),
+      ]));
+  });
+
+  it('binds every statically projected first-party Agent runtime contribution from its lightweight catalog leaf', () => {
+    const generatedSource = readFileSync(
+      new URL('./sources/generatedBundledPlugins.ts', import.meta.url),
+      'utf8',
+    );
+
+    const agentPackages = [
+      'antigravity',
+      'auggie',
+      'claude',
+      'codex',
+      'cursor',
+      'gemini',
+      'grok',
+      'kilo',
+      'kimi',
+      'kiro',
+      'ohmypi',
+      'opencode',
+      'pi',
+    ] as const;
+
+    for (const packageId of agentPackages) {
+      expect(generatedSource).toContain(
+        `@happier-dev/plugins-${packageId}/agent/contributions/catalog`,
+      );
+      expect(generatedSource).not.toContain(
+        `@happier-dev/plugins-${packageId}/agent/contributions/runtime`,
+      );
+    }
   });
 
   it('does not project Codex external-session factories from app-local host adapters', () => {
@@ -75,7 +245,7 @@ describe('resolveBuiltInContributions', () => {
     for (const exportName of forbiddenBehaviorExports) {
       expect(generatedBundledPlugins).not.toHaveProperty(exportName);
     }
-    for (const metadata of generatedBundledPlugins.BUNDLED_FIRST_PARTY_PLUGIN_METADATA) {
+    for (const metadata of generatedBundledPluginManifests.BUNDLED_FIRST_PARTY_PLUGIN_METADATA) {
       expect(metadata).not.toHaveProperty('activationEvents');
     }
   });
@@ -165,7 +335,7 @@ describe('resolveBuiltInContributions', () => {
     });
     expect(cliProxyApi).not.toHaveProperty('managed');
     expect(cliProxyApi).not.toHaveProperty('managedRuntimeAdapter');
-    expect(generatedBundledPlugins.BUNDLED_FIRST_PARTY_PLUGIN_PACKAGE_NAMES)
+    expect(generatedBundledPluginManifests.BUNDLED_FIRST_PARTY_PLUGIN_PACKAGE_NAMES)
       .toContain('@happier-dev/plugins-cliproxyapi');
   });
 
@@ -337,7 +507,10 @@ describe('resolveBuiltInContributions', () => {
                 recordsByServiceId: new Map([['openai-codex', codexOauthRecord]]),
                 processEnv: { HOME: join(root, 'home') },
             });
-            expect(oauthResult?.env).toEqual({ CODEX_HOME: expect.stringContaining('codex-home') });
+            expect(oauthResult?.env).toEqual({
+                CODEX_HOME: expect.stringContaining('codex-home'),
+                CODEX_SQLITE_HOME: expect.stringContaining(join('home', '.codex')),
+            });
             await expect(readFile(join(String(oauthResult?.env.CODEX_HOME), 'auth.json'), 'utf8')).resolves.toContain('access-token');
 
             const tokenResult = await materializer?.({
@@ -351,7 +524,10 @@ describe('resolveBuiltInContributions', () => {
                 recordsByServiceId: new Map([['openai', openAiTokenRecord]]),
                 processEnv: { HOME: join(root, 'home') },
             });
-            expect(tokenResult?.env).toEqual({ OPENAI_API_KEY: 'sk-test' });
+            expect(tokenResult?.env).toEqual({
+                OPENAI_API_KEY: 'sk-test',
+                CODEX_SQLITE_HOME: expect.stringContaining(join('home', '.codex')),
+            });
         } finally {
             await rm(root, { recursive: true, force: true });
         }

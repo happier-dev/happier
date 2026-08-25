@@ -2,7 +2,7 @@ import { loadInstalledPlugins } from '../../discovery/load/installed';
 import type { PluginCompatibilityDiagnostic } from '../../validation/diagnostics/types';
 import { buildPluginContributionRegistry } from './normalize/package';
 import { loadBundledPluginLocators } from './builtIn/locators';
-import { BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS } from './sources/generatedBundledPlugins';
+import { BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS } from './sources/generatedBundledPluginManifests';
 import { collectNormalizedRegistryIntrospectionCandidates } from '@/plugins/projection/introspection/normalizedRegistry';
 import { resolveContributedAgentRoutingId } from './agentRoutingIdentity';
 import { projectManifestAgentContribution } from './projectManifestAgentContribution';
@@ -35,6 +35,7 @@ import type {
     ResolvedResourceContribution,
     ResolvedSessionHeaderActionContribution,
     ResolvedTranscriptActivityContribution,
+    ResolvedSessionInfoSectionContribution,
     ResolvedSystemToolContribution,
     ResolvedToolContribution,
     ResolvedUiTranslationsContribution,
@@ -113,6 +114,12 @@ type PluginResolvedSessionHeaderActionContribution = ResolvedSessionHeaderAction
 }>;
 
 type PluginResolvedTranscriptActivityContribution = ResolvedTranscriptActivityContribution & Readonly<{
+    provenance: ResolvedContributionProvenance;
+    pluginId: string;
+    manifestPath: string;
+    daemonEntryPath: string | null;
+}>;
+type PluginResolvedSessionInfoSectionContribution = ResolvedSessionInfoSectionContribution & Readonly<{
     provenance: ResolvedContributionProvenance;
     pluginId: string;
     manifestPath: string;
@@ -295,6 +302,7 @@ export function projectLoadedPluginContributes(
     const uiTranslationCandidates: PluginResolvedUiTranslationsContribution[] = [];
     const sessionHeaderActionCandidates: PluginResolvedSessionHeaderActionContribution[] = [];
     const transcriptActivityCandidates: PluginResolvedTranscriptActivityContribution[] = [];
+    const sessionInfoSectionCandidates: PluginResolvedSessionInfoSectionContribution[] = [];
     const hostedWebCandidates: PluginResolvedHostedWebContribution[] = [];
     const browserTargetCandidates: PluginResolvedBrowserTargetContribution[] = [];
     const browserActionCandidates: PluginResolvedBrowserActionContribution[] = [];
@@ -451,9 +459,6 @@ export function projectLoadedPluginContributes(
             pluginVersion: contribution.pluginVersion,
             identity: contribution.identity!,
             manifestPath: contribution.manifestPath,
-            ...(contribution.semanticPointRefs === undefined
-                ? {}
-                : { semanticPointRefs: contribution.semanticPointRefs }),
             definition: contribution.definition,
         });
     }
@@ -624,6 +629,18 @@ export function projectLoadedPluginContributes(
 
     for (const contribution of pluginRegistry.transcriptActivities) {
         transcriptActivityCandidates.push({
+            provenance: params.provenance,
+            source: { kind: contribution.sourceSpec.kind },
+            pluginId: contribution.pluginId,
+            pluginVersion: contribution.pluginVersion,
+            identity: contribution.identity!,
+            manifestPath: contribution.manifestPath,
+            daemonEntryPath: contribution.daemonEntryPath,
+            definition: contribution.definition,
+        });
+    }
+    for (const contribution of pluginRegistry.sessionInfoSections) {
+        sessionInfoSectionCandidates.push({
             provenance: params.provenance,
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
@@ -933,6 +950,7 @@ export function projectLoadedPluginContributes(
         uiTranslations: Object.freeze(uiTranslationCandidates),
         sessionHeaderActions: Object.freeze(sessionHeaderActionCandidates),
         transcriptActivities: Object.freeze(transcriptActivityCandidates),
+        sessionInfoSections: Object.freeze(sessionInfoSectionCandidates),
         hostedWeb: Object.freeze(hostedWebCandidates),
         browserTargets: Object.freeze(browserTargetCandidates),
         browserActions: Object.freeze(browserActionCandidates),

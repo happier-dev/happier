@@ -28,31 +28,18 @@ export const DEFAULT_VOICE_INFERENCE_WORKER_CONFIG = {
 } as const;
 
 /**
- * Hang-resilience defaults for the FORKED voice-inference worker (Lane L7.T7 hardening).
+ * IPC safety defaults for the FORKED voice-inference worker (Lane L7.T7 hardening).
  *
- * These knobs are daemon-IPC-operational facts (they describe how the supervised child's
- * liveness is policed over the local IPC channel), so they live with the CLI daemon config
- * owner rather than the cross-host protocol voice runtime config.
- *
- * - `requestTimeoutMs`: per-request deadline. A wedged-but-alive child must not hang the
- *   caller forever.
- * - `pingIntervalMs`: heartbeat cadence. The daemon periodically pings the idle channel.
- * - `missedPingThreshold`: consecutive unanswered pings before the child is declared hung
- *   and force-killed (which triggers the existing supervised restart path).
- * - `maxFrameBytes`: per-IPC-frame ceiling (M2). Lowered far below the historical 64 MiB so
- *   a single base64-inflated TTS frame cannot balloon daemon memory. Direct terminal output that
- *   cannot fit this bound fails with `output_too_large`; there is no chunked-TTS IPC producer.
+ * These are daemon-local operational facts: the request deadline retires a child that cannot
+ * settle an admitted request, while the frame ceiling bounds hostile or corrupt IPC payloads.
+ * Idle channels have no product-required work and need no second liveness protocol.
  */
-export const VOICE_INFERENCE_WORKER_HANG_DEFAULTS = {
+export const VOICE_INFERENCE_WORKER_IPC_DEFAULTS = {
     requestTimeoutMs: 30_000,
-    pingIntervalMs: 5_000,
-    missedPingThreshold: 3,
     maxFrameBytes: 8 * 1024 * 1024,
 } as const;
 
 export const VOICE_INFERENCE_WORKER_REQUEST_TIMEOUT_MS_BOUNDS = { min: 1_000, max: 600_000 } as const;
-export const VOICE_INFERENCE_WORKER_PING_INTERVAL_MS_BOUNDS = { min: 500, max: 120_000 } as const;
-export const VOICE_INFERENCE_WORKER_MISSED_PING_THRESHOLD_BOUNDS = { min: 1, max: 20 } as const;
 export const VOICE_INFERENCE_WORKER_MAX_FRAME_BYTES_BOUNDS = {
     min: 256 * 1024,
     max: 64 * 1024 * 1024,
@@ -134,26 +121,8 @@ export function resolveVoiceInferenceMaxLoadedArtifactBytes(): number {
 export function resolveVoiceInferenceWorkerRequestTimeoutMs(): number {
     return parseBoundedInt(
         process.env.HAPPIER_VOICE_INFERENCE_WORKER_REQUEST_TIMEOUT_MS,
-        VOICE_INFERENCE_WORKER_HANG_DEFAULTS.requestTimeoutMs,
+        VOICE_INFERENCE_WORKER_IPC_DEFAULTS.requestTimeoutMs,
         VOICE_INFERENCE_WORKER_REQUEST_TIMEOUT_MS_BOUNDS,
-    );
-}
-
-/** Heartbeat ping cadence (ms) for the forked-worker liveness watchdog. */
-export function resolveVoiceInferenceWorkerPingIntervalMs(): number {
-    return parseBoundedInt(
-        process.env.HAPPIER_VOICE_INFERENCE_WORKER_PING_INTERVAL_MS,
-        VOICE_INFERENCE_WORKER_HANG_DEFAULTS.pingIntervalMs,
-        VOICE_INFERENCE_WORKER_PING_INTERVAL_MS_BOUNDS,
-    );
-}
-
-/** Consecutive unanswered pings before the forked worker is declared hung and force-killed. */
-export function resolveVoiceInferenceWorkerMissedPingThreshold(): number {
-    return parseBoundedInt(
-        process.env.HAPPIER_VOICE_INFERENCE_WORKER_MISSED_PING_THRESHOLD,
-        VOICE_INFERENCE_WORKER_HANG_DEFAULTS.missedPingThreshold,
-        VOICE_INFERENCE_WORKER_MISSED_PING_THRESHOLD_BOUNDS,
     );
 }
 
@@ -161,7 +130,7 @@ export function resolveVoiceInferenceWorkerMissedPingThreshold(): number {
 export function resolveVoiceInferenceWorkerMaxFrameBytes(): number {
     return parseBoundedInt(
         process.env.HAPPIER_VOICE_INFERENCE_WORKER_MAX_FRAME_BYTES,
-        VOICE_INFERENCE_WORKER_HANG_DEFAULTS.maxFrameBytes,
+        VOICE_INFERENCE_WORKER_IPC_DEFAULTS.maxFrameBytes,
         VOICE_INFERENCE_WORKER_MAX_FRAME_BYTES_BOUNDS,
     );
 }
@@ -176,8 +145,8 @@ export function readVoiceInferenceRuntimeModuleOverride(): string | null {
  *
  * - `forked` (default): the engine runs in a SEPARATE supervised child process behind the
  *   same `VoiceInferenceRuntime` interface, so a native crash/hang cannot take down the
- *   daemon. Supervision (crash containment, restart, hang watchdog) is only actually in
- *   force on this path, so it is what an unconfigured install gets.
+ *   daemon. Supervision (crash containment, restart, request-deadline retirement) is only
+ *   actually in force on this path, so it is what an unconfigured install gets.
  * - `in_process`: the native sherpa engine is loaded in the daemon process. This is a
  *   diagnostic/measurement escape hatch and must be requested EXPLICITLY; it has no crash
  *   boundary.

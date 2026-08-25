@@ -165,21 +165,10 @@ export async function resolvePluginAuthorSourceEntrypoint(
 
 export async function resolvePluginAuthoringSource(
   locator: string,
-  options: Readonly<{
-    /**
-     * Forwarded verbatim to local-path resolution; see
-     * `resolveLocalPathPluginSource`. Only a caller that already derived the
-     * authority for the canonical root these bytes came from supplies it.
-     */
-    inheritedManifestAuthority?: 'external' | 'bundled_first_party';
-  }> = {},
 ): Promise<ResolvedPluginAuthoringSource> {
-  const inheritedAuthority = options.inheritedManifestAuthority
-    ? { inheritedManifestAuthority: options.inheritedManifestAuthority }
-    : {};
   const expandedLocator = expandHomeDirPath(String(locator ?? '').trim());
   if (!expandedLocator) {
-    const source = await resolveLocalPathPluginSource({ locator, ...inheritedAuthority });
+    const source = await resolveLocalPathPluginSource({ locator });
     return source.ok ? { ok: true, kind: 'manifest', source } : source;
   }
   const absoluteLocator = resolve(expandedLocator);
@@ -187,7 +176,7 @@ export async function resolvePluginAuthoringSource(
   try {
     metadata = await lstat(absoluteLocator);
   } catch {
-    const source = await resolveLocalPathPluginSource({ locator, ...inheritedAuthority });
+    const source = await resolveLocalPathPluginSource({ locator });
     return source.ok ? { ok: true, kind: 'manifest', source } : source;
   }
 
@@ -219,7 +208,7 @@ export async function resolvePluginAuthoringSource(
     }
   }
 
-  const source = await resolveLocalPathPluginSource({ locator: absoluteLocator, ...inheritedAuthority });
+  const source = await resolveLocalPathPluginSource({ locator: absoluteLocator });
   return source.ok ? { ok: true, kind: 'manifest', source } : source;
 }
 

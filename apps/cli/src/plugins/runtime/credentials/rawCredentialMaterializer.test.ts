@@ -38,6 +38,11 @@ const machineB = {
   machineId: 'machine-b',
   installationId: 'installation-b',
 } as const satisfies PluginPermissionGrantAuthoritySourceV1;
+const sameInstallationOnMachineB = {
+  kind: 'machine_installation',
+  machineId: 'machine-b',
+  installationId: 'installation-a',
+} as const satisfies PluginPermissionGrantAuthoritySourceV1;
 const replacedInstallationOnMachineA = {
   kind: 'machine_installation',
   machineId: 'machine-a',
@@ -117,9 +122,11 @@ function snapshot(params: Readonly<{
   scopeKey?: string;
   secretId?: string;
   secret?: string;
+  secretUpdatedAt?: number;
   includeSecret?: boolean;
   settingsVersion?: number;
   groupId?: string;
+  unrelatedVoiceProvider?: boolean;
 }> = {}): ActiveAccountSettingsSnapshot {
   const accountId = params.accountId ?? 'account-a';
   const source = params.source ?? 'connectedAccount';
@@ -137,7 +144,7 @@ function snapshot(params: Readonly<{
         kind: 'apiKey',
         encryptedValue: { _isSecretValue: true, value: params.secret ?? 'saved-secret-raw' },
         createdAt: 1,
-        updatedAt: 1,
+        updatedAt: params.secretUpdatedAt ?? 1,
       }],
       voiceSettingsV1: {
         credentialBindings: [{
@@ -146,6 +153,16 @@ function snapshot(params: Readonly<{
           credentialSource: { kind: source },
           credentialBindings: { account: { api_key: secretId } },
         }],
+        ...(params.unrelatedVoiceProvider
+          ? {
+              providers: {
+                'acme.voice/unrelated': {
+                  schemaVersion: 1,
+                  config: { enabled: true },
+                },
+              },
+            }
+          : {}),
       },
       connectedAccountPurposeBindingsV1: source === 'connectedAccount' ? {
         v: 1,
@@ -180,7 +197,11 @@ function createHarness(input: Readonly<{
   grantSubject?: PluginPermissionSubjectV1;
   grantAuthoritySource?: PluginPermissionGrantAuthoritySourceV1;
   currentAuthoritySource?: PluginPermissionGrantAuthoritySourceV1 | null;
+  readCurrentAuthoritySource?: () => Promise<PluginPermissionGrantAuthoritySourceV1 | null>;
+  afterGrantListRead?: () => void;
   resolvedGroupAccountId?: string | null;
+  /** Canonical Account incumbent token; tests vary it only at lifecycle boundaries. */
+  getLifetimeToken?: () => number;
   afterSnapshotRead?: (
     readNumber: number,
     replace: (next: ActiveAccountSettingsSnapshot) => void,
@@ -250,6 +271,7 @@ function createHarness(input: Readonly<{
   const grants: PluginPermissionGrantListReader = {
     async list(rawInput): Promise<PluginPermissionGrantListActionOutputV1> {
       listInputs.push(rawInput);
+      input.afterGrantListRead?.();
       if (!grantActive || !rawInput.subject) return { grants: [], pendingRequests: [] };
       return {
         grants: [{
@@ -281,14 +303,14 @@ function createHarness(input: Readonly<{
     isRuntimeAuthorityCurrent: input.isRuntimeAuthorityCurrent
       ?? (() => generationCurrent),
   };
-  const materializer = createPluginRawCredentialMaterializer({
+  const materializerInput = {
     binding,
     currentInstallReviewPrincipal: {
       readCurrent: input.readPrincipal ?? (async () => currentPrincipal),
     },
-    readCurrentGrantAuthoritySource: async () => (
+    readCurrentGrantAuthoritySource: input.readCurrentAuthoritySource ?? (async () => (
       input.currentAuthoritySource === undefined ? machineA : input.currentAuthoritySource
-    ),
+    )),
     grants,
     connectedAccounts,
     getAccountSettingsSnapshot: () => {
@@ -299,7 +321,11 @@ function createHarness(input: Readonly<{
     ...(input.ensureAccountSettingsSnapshot
       ? { ensureAccountSettingsSnapshot: input.ensureAccountSettingsSnapshot }
       : {}),
-  });
+    ...(input.getLifetimeToken
+      ? { getAccountSettingsSnapshotLifetimeToken: input.getLifetimeToken }
+      : {}),
+  };
+  const materializer = createPluginRawCredentialMaterializer(materializerInput);
   return {
     materializer,
     connectedAccounts,
@@ -838,6 +864,61 @@ describe('plugin raw credential materializer', () => {
     });
   });
 
+  it('does not materialize bytes when approving machine identity changes during grant authorization', async () => {
+    for (const nextAuthoritySource of [machineB, replacedInstallationOnMachineA]) {
+      let currentAuthoritySource: PluginPermissionGrantAuthoritySourceV1 = machineA;
+      const materializeAccount = vi.fn(async () => ({
+        kind: 'httpHeaders' as const,
+        headers: { authorization: 'Bearer must-not-materialize' },
+      }));
+      const harness = createHarness({
+        materializeAccount,
+        readCurrentAuthoritySource: async () => currentAuthoritySource,
+        afterGrantListRead() {
+          currentAuthoritySource = nextAuthoritySource;
+        },
+      });
+
+      await expect(harness.materializer.materialize(connectedHeaderRequest)).rejects.toMatchObject({
+        code: 'plugin_voice_credential_access_unavailable',
+      });
+      expect(materializeAccount).not.toHaveBeenCalled();
+    }
+  });
+
+  it('does not return materialized bytes when approving machine identity changes in the final authorization inspection', async () => {
+    for (const finalAuthoritySource of [
+      sameInstallationOnMachineB,
+      replacedInstallationOnMachineA,
+    ]) {
+      const authoritySources = [
+        machineA,
+        machineA,
+        machineA,
+        finalAuthoritySource,
+      ] as const;
+      const readCurrentAuthoritySource = vi.fn(async () => {
+        const authoritySource = authoritySources[readCurrentAuthoritySource.mock.calls.length - 1];
+        if (!authoritySource) throw new Error('unexpected authority-source inspection');
+        return authoritySource;
+      });
+      const materializeAccount = vi.fn(async () => ({
+        kind: 'httpHeaders' as const,
+        headers: { authorization: 'Bearer must-not-return' },
+      }));
+      const harness = createHarness({
+        materializeAccount,
+        readCurrentAuthoritySource,
+      });
+
+      await expect(harness.materializer.materialize(connectedHeaderRequest)).rejects.toMatchObject({
+        code: 'plugin_voice_credential_access_unavailable',
+      });
+      expect(readCurrentAuthoritySource).toHaveBeenCalledTimes(4);
+      expect(materializeAccount).toHaveBeenCalledTimes(1);
+    }
+  });
+
   it('discards results after principal or admitted-generation authority changes', async () => {
     for (const revoke of [
       (harness: ReturnType<typeof createHarness>) => harness.setPrincipal(principalB),
@@ -910,10 +991,18 @@ describe('plugin raw credential materializer', () => {
     expect(String(failure)).not.toContain(leaked);
   });
 
-  it('uses semantic SavedSecret currentness across equivalent rehydration and revokes real changes', async () => {
+  it('uses semantic SavedSecret currentness across unrelated Account Settings mutations and revokes real changes', async () => {
     const replacementCases = [{
       label: 'equivalent',
       next: snapshot({ source: 'savedSecret' }),
+      allowed: true,
+    }, {
+      label: 'unrelated Account Settings mutation',
+      next: snapshot({
+        source: 'savedSecret',
+        settingsVersion: 2,
+        unrelatedVoiceProvider: true,
+      }),
       allowed: true,
     }, {
       label: 'account switch',
@@ -924,8 +1013,8 @@ describe('plugin raw credential materializer', () => {
       next: snapshot({ source: 'savedSecret', includeSecret: false }),
       allowed: false,
     }, {
-      label: 'settings revision',
-      next: snapshot({ source: 'savedSecret', settingsVersion: 2 }),
+      label: 'selected credential revision',
+      next: snapshot({ source: 'savedSecret', secretUpdatedAt: 2, settingsVersion: 2 }),
       allowed: false,
     }, {
       label: 'source change',
@@ -951,6 +1040,99 @@ describe('plugin raw credential materializer', () => {
         });
       }
     }
+  });
+
+  it('keeps Connected Account raw materialization current across unrelated Account Settings mutations', async () => {
+    const replacementCases = [{
+      label: 'unrelated Account Settings mutation',
+      next: snapshot({
+        source: 'connectedAccount',
+        settingsVersion: 2,
+        unrelatedVoiceProvider: true,
+      }),
+      allowed: true,
+    }, {
+      label: 'selected account change',
+      next: snapshot({ source: 'connectedAccount', accountId: 'account-b', settingsVersion: 2 }),
+      allowed: false,
+    }, {
+      label: 'selected source change',
+      next: snapshot({ source: 'savedSecret', settingsVersion: 2 }),
+      allowed: false,
+    }] as const;
+
+    for (const replacement of replacementCases) {
+      const harness = createHarness({
+        initialSnapshot: snapshot({ source: 'connectedAccount' }),
+        afterSnapshotRead(readNumber, replace) {
+          if (readNumber === 3) replace(replacement.next);
+        },
+      });
+      const operation = harness.materializer.materialize(connectedHeaderRequest);
+      if (replacement.allowed) {
+        await expect(operation, replacement.label).resolves.toEqual({
+          kind: 'httpHeaders', headers: { authorization: 'Bearer connected:account-a' },
+        });
+      } else {
+        await expect(operation, replacement.label).rejects.toMatchObject({
+          code: 'plugin_voice_credential_access_unavailable',
+        });
+      }
+    }
+  });
+
+  it('rejects in-flight SavedSecret raw materialization after logout and same-Account reentry', async () => {
+    let lifetimeToken = 1;
+    let republished = false;
+    const harness = createHarness({
+      initialSnapshot: snapshot({ source: 'savedSecret' }),
+      getLifetimeToken: () => lifetimeToken,
+      afterSnapshotRead(readNumber, replace) {
+        // The fifth read is after authorization and immediately before this
+        // invocation rechecks the selected SavedSecret for disclosure. The
+        // exact selected source/secret facts are republished unchanged; only
+        // the canonical Account lifetime has retired and re-entered.
+        if (readNumber === 5 && !republished) {
+          republished = true;
+          lifetimeToken += 1;
+          replace(snapshot({ source: 'savedSecret', settingsVersion: 2 }));
+        }
+      },
+    });
+
+    await expect(harness.materializer.materialize(connectedHeaderRequest)).rejects.toMatchObject({
+      code: 'plugin_voice_credential_access_unavailable',
+    });
+    expect(republished).toBe(true);
+  });
+
+  it('rejects in-flight Connected Account raw materialization after logout and same-Account reentry', async () => {
+    let lifetimeToken = 1;
+    const harness = createHarness({
+      initialSnapshot: snapshot({ source: 'connectedAccount' }),
+      getLifetimeToken: () => lifetimeToken,
+      materializeAccount: async ({ account, credentialRevisionBasis, request }) => {
+        if (request.kind !== 'httpHeaders') throw new Error('unsupported test request');
+        // The provider-side materialization is the asynchronous boundary. The
+        // re-entered Account publishes semantically identical selected facts,
+        // but the captured incumbent lifetime is no longer current.
+        lifetimeToken += 1;
+        credentialRevisionBasis?.captureCredentialRevision(
+          'csr_0123456789ABCDEFGHJKMNPQRS',
+        );
+        return {
+          kind: 'httpHeaders',
+          headers: Object.fromEntries(request.headerNames.map((name) => [
+            name,
+            `Bearer connected:${account.accountId}`,
+          ])),
+        };
+      },
+    });
+
+    await expect(harness.materializer.materialize(connectedHeaderRequest)).rejects.toMatchObject({
+      code: 'plugin_voice_credential_access_unavailable',
+    });
   });
 
   it('rejects duplicate disclosure rows and manifest-relative duplicate Connected Account sources', () => {

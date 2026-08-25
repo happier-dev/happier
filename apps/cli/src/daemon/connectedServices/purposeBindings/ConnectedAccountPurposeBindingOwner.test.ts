@@ -1081,6 +1081,56 @@ describe('ConnectedAccountPurposeBindingOwner', () => {
     expect(materializeAccount).not.toHaveBeenCalled();
   });
 
+  it('refuses Account A through the canonical owner before an external opener when its group switches during materialization', async () => {
+    let currentAccountId = 'alpha';
+    let markMaterializationStarted!: () => void;
+    const materializationStarted = new Promise<void>((resolve) => {
+      markMaterializationStarted = resolve;
+    });
+    let releaseMaterialization!: () => void;
+    const materializationReleased = new Promise<void>((resolve) => {
+      releaseMaterialization = resolve;
+    });
+    const { owner } = createOwner({
+      selected: { kind: 'group', service, groupId: 'fallbacks' },
+      currentGroupAccountId: () => currentAccountId,
+      materializeAccount: async ({ account, request }) => {
+        markMaterializationStarted();
+        await materializationReleased;
+        if (request.kind !== 'environment') throw new Error('test only supports environment');
+        return { kind: 'environment', env: { TOKEN: `token:${account.accountId}` } };
+      },
+    });
+    const signal = new AbortController().signal;
+    await owner.requestSelection({
+      ...authorized,
+      reason: 'Choose fallback group',
+      signal,
+    });
+    const externalOpen = vi.fn();
+    const openWithCapturedBinding = async (): Promise<void> => {
+      const binding = await owner.getBinding({ ...authorized, signal });
+      if (!binding) throw new Error('Expected an Account A binding');
+      await owner.materialize({
+        ...authorized,
+        expectedAccount: binding.account,
+        request: { kind: 'environment', keys: ['TOKEN'] },
+        signal,
+      });
+      externalOpen();
+    };
+
+    const pending = openWithCapturedBinding();
+    await materializationStarted;
+    currentAccountId = 'beta';
+    releaseMaterialization();
+
+    await expect(pending).rejects.toMatchObject({
+      code: 'plugin_host_access_resource_not_selected',
+    });
+    expect(externalOpen).not.toHaveBeenCalled();
+  });
+
   it('does not treat a legacy account field as selection authority', async () => {
     const { owner, materializeAccount } = createOwner();
     const signal = new AbortController().signal;

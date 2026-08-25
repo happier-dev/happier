@@ -8,7 +8,7 @@ import { createPluginReloadController } from './controller';
 type RunningSessionDisposition = 'retainRunningSessions' | 'revokeRunningSessions';
 
 function createRuntimeRegistry(
-    retirePluginConsumers: (pluginIds: readonly string[]) => void = () => undefined,
+    retirePluginConsumers: (pluginIds: readonly string[]) => void | Promise<void> = () => undefined,
 ): ResolvedExecutablePluginRuntimeRegistry {
     return {
         contributes: {
@@ -32,7 +32,9 @@ function createRuntimeRegistry(
         activateContributionsOnDemand: async () => [],
         resolvePromptAssetBlocks: async () => [],
         retireConsumers: () => undefined,
-        retirePluginConsumers,
+        retirePluginConsumers: async (pluginIds) => {
+            await retirePluginConsumers(pluginIds);
+        },
         addRuntimeDisposable: (_pluginId, disposable) => disposable,
         createAgentInvocationServices: async () => createUnavailablePluginServices(),
         dispose: async () => undefined,

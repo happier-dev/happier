@@ -554,14 +554,14 @@ describe('executable plugin Account Collections binding', () => {
                 },
             };
         });
-        accountDataBoundary.post.mockImplementation(async (url: string, body: unknown) => {
+        accountDataBoundary.post.mockImplementation(async (url: string, body: string) => {
             if (url.endsWith('/v1/plugins/data/query')) {
                 return { status: 200, data: { rows: [], changeCursor: 0 } };
             }
             if (!url.endsWith('/v1/plugins/data/get')) {
                 throw new Error(`Unexpected Account Data POST: ${url}`);
             }
-            expect(body).toEqual({
+            expect(JSON.parse(body)).toEqual({
                 pluginId: PLUGIN_ID,
                 collectionId: COLLECTION_ID,
                 rowId: 'connection-1',
@@ -614,15 +614,17 @@ describe('executable plugin Account Collections binding', () => {
             expect.stringMatching(/\/v1\/account\/encryption\/currentness$/),
                 expect.any(Object),
             );
-            expect(accountDataBoundary.post).toHaveBeenCalledWith(
-                expect.stringMatching(/\/v1\/plugins\/data\/get$/),
-                expect.objectContaining({
-                    pluginId: PLUGIN_ID,
-                    collectionId: COLLECTION_ID,
-                    rowId: 'connection-1',
-                }),
-                expect.any(Object),
+            // The host hands the transport an already-encoded body, so the
+            // exact request is asserted through the wire bytes it sent.
+            const collectionGetCall = accountDataBoundary.post.mock.calls.find(
+                (call: readonly unknown[]) => /\/v1\/plugins\/data\/get$/.test(String(call[0])),
             );
+            expect(collectionGetCall).toBeDefined();
+            expect(JSON.parse(String(collectionGetCall?.[1]))).toMatchObject({
+                pluginId: PLUGIN_ID,
+                collectionId: COLLECTION_ID,
+                rowId: 'connection-1',
+            });
         } finally {
             await runtime?.dispose();
             await rm(happyHomeDir, { recursive: true, force: true });

@@ -1,4 +1,5 @@
 import {
+  browserViewContextId,
   BrowserAnnotationStrokeV1Schema,
   BrowserAnnotationStyleIntentV1Schema,
   BrowserContextItemV1Schema,
@@ -237,7 +238,7 @@ function parseSnapshotInput(input: unknown): Readonly<{
       : 0;
   const contextId = typeof data.contextId === 'string' && data.contextId.length > 0
     ? data.contextId
-    : `${browserSessionId} ${viewId} ${navigationGeneration}`;
+    : browserViewContextId({ browserSessionId, viewId, navigationGeneration });
   return { browserSessionId, viewId, navigationGeneration, contextId };
 }
 

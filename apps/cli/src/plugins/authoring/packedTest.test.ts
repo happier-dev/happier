@@ -8,6 +8,7 @@ import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { captureConsoleJsonOutput } from '@/testkit/logger/captureOutput';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
 import { handlePluginsCommand } from '@/cli/commands/plugins';
+import { projectPath } from '@/projectPath';
 
 it('public plugins test --packed crosses authenticated daemon process, restart, and stale-incarnation boundaries', async () => {
   const sourceRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-packed-command-source-'));
@@ -104,6 +105,7 @@ it('public plugins test --packed crosses authenticated daemon process, restart, 
         } | null;
         daemon: {
           authenticatedControl: boolean;
+          entrypoint: string;
           initialPid: number;
           restartedPid: number;
           initialIncarnationId: string;
@@ -146,6 +148,7 @@ it('public plugins test --packed crosses authenticated daemon process, restart, 
     expect(result.data?.daemon.restartedPid).not.toBe(process.pid);
     expect(result.data?.daemon.restartedPid).not.toBe(result.data?.daemon.initialPid);
     expect(result.data?.daemon.restartedIncarnationId).not.toBe(result.data?.daemon.initialIncarnationId);
+    expect(result.data?.daemon.entrypoint).toBe(join(projectPath(), 'src', 'index.ts'));
     expect(process.exitCode).toBe(0);
   } finally {
     process.exitCode = previousExitCode;

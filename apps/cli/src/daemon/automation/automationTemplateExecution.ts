@@ -13,6 +13,8 @@ import {
   normalizeCodexBackendMode,
   normalizeAutomationTemplateEnvelopeStoredRead,
   openAccountScopedBlobCiphertext,
+  type SessionAuthoringCheckoutCreationDraftV1,
+  SessionAuthoringCheckoutCreationDraftV1Schema,
   SessionMcpSelectionV1Schema,
   SessionModelSelectionV1Schema,
 } from '@happier-dev/protocol';
@@ -27,19 +29,9 @@ import { decodeBase64, decryptLegacy } from '@/api/encryption';
 const MAX_EXECUTION_INPUT_ENVELOPE_CHARS = MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES;
 const UTF8_ENCODER = new TextEncoder();
 
-const CheckoutCreationDraftSchema = z.object({
-  kind: z.literal('git_worktree'),
-  displayName: z.string().trim().min(1),
-  baseRef: z.string().trim().min(1).nullable().optional(),
-}).strict().transform((value) => ({
-  kind: value.kind,
-  displayName: value.displayName.trim(),
-  baseRef: typeof value.baseRef === 'string' ? value.baseRef.trim() : null,
-}));
-
 const TemplateSchema = z.object({
   directory: z.string().trim().min(1),
-  checkoutCreationDraft: CheckoutCreationDraftSchema.optional(),
+  checkoutCreationDraft: SessionAuthoringCheckoutCreationDraftV1Schema.optional(),
   agent: z.string().trim().min(1).optional(),
   backendTarget: z.preprocess(normalizeBackendTargetRefV2InputToV2, BackendTargetRefV2Schema).optional(),
   profileId: z.string().optional(),
@@ -98,11 +90,7 @@ export type AutomationFrozenRunPayload = Readonly<{
 export type ParsedAutomationExecution = Readonly<{
   targetType: 'new_session' | 'existing_session';
   directory: string;
-  checkoutCreationDraft?: {
-    kind: 'git_worktree';
-    displayName: string;
-    baseRef: string | null;
-  };
+  checkoutCreationDraft?: SessionAuthoringCheckoutCreationDraftV1;
   backendTarget?: SpawnSessionOptions['backendTarget'];
   profileId?: string;
   environmentVariables?: Record<string, string>;

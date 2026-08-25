@@ -9,9 +9,7 @@ import {
 
 import {
   startPeerMediationLoopback,
-  startPeerMediationMachineRpcLoopback,
   type StartPeerMediationLoopbackInput,
-  type StartPeerMediationMachineRpcLoopbackInput,
 } from './startLoopback';
 
 function toBase64Url(bytes: Uint8Array): string {
@@ -53,7 +51,7 @@ function createServerFeatures(publicKey: Uint8Array, proofMintV2 = false): Featu
   });
 }
 
-describe('startPeerMediationMachineRpcLoopback', () => {
+describe('startPeerMediationLoopback', () => {
   it('registers TCP and Voice flows with the same started tunnel endpoint authority', async () => {
     const grantKeyPair = tweetnacl.sign.keyPair();
     const accountSigningSeed = new Uint8Array(32).fill(7);
@@ -183,9 +181,9 @@ describe('startPeerMediationMachineRpcLoopback', () => {
       expiresAt: 302_000,
     };
     const captured: { startOptions?: Parameters<NonNullable<
-      StartPeerMediationMachineRpcLoopbackInput['startPeerMediationLoopbackServer']
+      StartPeerMediationLoopbackInput['startPeerMediationLoopbackServer']
     >>[0] } = {};
-    const startPeerMediationLoopbackServer: StartPeerMediationMachineRpcLoopbackInput['startPeerMediationLoopbackServer'] =
+    const startPeerMediationLoopbackServer: StartPeerMediationLoopbackInput['startPeerMediationLoopbackServer'] =
       vi.fn(async (options) => {
         captured.startOptions = options;
         return {
@@ -196,7 +194,7 @@ describe('startPeerMediationMachineRpcLoopback', () => {
         };
       });
 
-    const started = await startPeerMediationMachineRpcLoopback({
+    const started = await startPeerMediationLoopback({
       accountId: 'account_1',
       machineId: 'machine_1',
       accountSigningSeed,

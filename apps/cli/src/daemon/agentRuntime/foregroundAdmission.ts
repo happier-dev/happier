@@ -1,3 +1,4 @@
+import { isPidPresent } from '@happier-dev/cli-common/process';
 import {
   verifyAgentRuntimeSessionBridgeToken,
   type ForegroundAgentRuntimeBootstrapAuthorization,
@@ -275,17 +276,9 @@ export function createForegroundAgentRuntimeAdmissionOwner(dependencies: Readonl
         if (!livenessTimer) {
           livenessTimer = setInterval(() => {
             for (const active of byAttemptId.values()) {
-              let alive = false;
-              try {
-                alive = dependencies.isProcessAlive
-                  ? dependencies.isProcessAlive(active.request.foregroundPid)
-                  : (() => {
-                      process.kill(active.request.foregroundPid, 0);
-                      return true;
-                    })();
-              } catch {
-                alive = false;
-              }
+              const alive = (dependencies.isProcessAlive ?? isPidPresent)(
+                active.request.foregroundPid,
+              );
               if (!alive) {
                 void releaseAdmission(active).catch(() => undefined);
               }
@@ -409,7 +402,7 @@ export function createForegroundAgentRuntimeAdmissionOwner(dependencies: Readonl
           });
         if (
           retainedAgent.pluginId !== descriptor.pluginId
-          || retainedAgent.localAgentId !== descriptor.agentId
+          || retainedAgent.agentId !== descriptor.agentId
           || retainedAgent.immutableGenerationId
             !== (descriptor.immutableGenerationId ?? descriptor.generation)
         ) {

@@ -1,7 +1,4 @@
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
-
-const execFileAsync = promisify(execFile);
+import { execFileWithDeadline, isPidPresent } from '@happier-dev/cli-common/process';
 
 /**
  * Coarse process run state for daemon liveness decisions.
@@ -16,15 +13,6 @@ const execFileAsync = promisify(execFile);
  * never consumed.
  */
 export type ProcessRunState = 'dead' | 'servable' | 'stopped' | 'zombie';
-
-export function isPidAliveBySignal(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === 'EPERM';
-  }
-}
 
 function classifyPosixStateChar(stateOutput: string): ProcessRunState | null {
   const stateChar = stateOutput.trim().charAt(0);
@@ -44,7 +32,7 @@ export async function readProcessRunState(pid: number, deps?: Readonly<{
   platform?: NodeJS.Platform;
 }>): Promise<ProcessRunState> {
   if (!Number.isFinite(pid) || pid <= 0) return 'dead';
-  const isPidAlive = deps?.isPidAlive ?? isPidAliveBySignal;
+  const isPidAlive = deps?.isPidAlive ?? isPidPresent;
   const platform = deps?.platform ?? process.platform;
   const alive = isPidAlive(pid);
 
@@ -53,10 +41,14 @@ export async function readProcessRunState(pid: number, deps?: Readonly<{
   }
 
   try {
-    const { stdout } = await execFileAsync('ps', ['-p', String(Math.floor(pid)), '-o', 'state='], {
+    // `execFileWithDeadline`, not a `child_process` `timeout`: the latter destroys the buffered
+    // `ps` row from the timers phase and reports success with empty stdout, which classifies as
+    // "no ps row" and collapses `stopped`/`zombie` into `servable` on exactly the stalled daemon
+    // this function was written to protect.
+    const { stdout } = await execFileWithDeadline('ps', ['-p', String(Math.floor(pid)), '-o', 'state='], {
       timeout: 5_000,
     });
-    const classified = classifyPosixStateChar(stdout);
+    const classified = classifyPosixStateChar(String(stdout));
     if (classified) return classified;
   } catch {
     // ps exits non-zero when the pid does not exist; fall through to the signal probe.

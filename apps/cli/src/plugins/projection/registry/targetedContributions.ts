@@ -3,10 +3,15 @@ import {
     createPluginContributionIdentity,
     isValidPluginJsonSchemaValue,
     preparePluginJsonSchema,
+    rehydratePluginContributionPointSemanticsV1,
+    type JsonValue,
     type PluginActionSurfaceV2,
     type PreparedPluginJsonSchema,
+    type RehydratedPluginContributionPointOperationV1,
+    type RehydratedPluginContributionPointSemanticsV1,
+    type RehydratedPluginContributionPointSurfaceV1,
 } from '@happier-dev/protocol';
-import { decodeTargetedContributionPointSemantics } from '@happier-dev/plugin-sdk/host/targeted-contributions';
+import { PLUGIN_UI_TARGETED_CONTRIBUTIONS_MAX_V1 } from '@happier-dev/protocol/plugins/ui/targetedContributions';
 
 import type {
     AdmittedTargetedContribution,
@@ -25,18 +30,18 @@ import {
     resolvePluginUiRendererChain,
 } from './rendererChain';
 
-const MAX_ADMITTED_TARGETED_CONTRIBUTIONS_PER_POINT = 256;
-
 type TargetPoint = Readonly<{
     declaration: ResolvedPluginContributionPointDeclaration;
     immutableGenerationId: string;
 }>;
 
 type TargetPointProtocol = ResolvedPluginContributionPointDeclaration['definition']['protocols'][number];
-type TargetSemanticProjection = Extract<
-    ReturnType<typeof decodeTargetedContributionPointSemantics>,
-    Readonly<{ ok: true }>
->['projection'];
+type TargetSemanticProjection = Readonly<{
+    descriptor?: JsonValue;
+    operations: readonly RehydratedPluginContributionPointOperationV1[];
+    surfaces: readonly RehydratedPluginContributionPointSurfaceV1[];
+}>;
+type TargetSemanticSchemas = RehydratedPluginContributionPointSemanticsV1;
 type PendingAdmittedTargetedContributionOperation = Omit<
     AdmittedTargetedContributionOperation,
     'targetProtocol'
@@ -338,61 +343,6 @@ function requiresTargetSemanticProjection(protocol: TargetPointProtocol): boolea
         || Object.keys(protocol.surfaces ?? {}).length > 0;
 }
 
-function readExactTargetSemanticPointRef(
-    target: TargetPoint,
-    protocol: TargetPointProtocol,
-): NonNullable<ResolvedPluginContributionPointDeclaration['semanticPointRefs']>[number] | undefined {
-    return target.declaration.semanticPointRefs?.find((point) => (
-        point.targetPluginId === target.declaration.pluginId
-        && point.id === target.declaration.definition.id
-        && point.protocol.id === protocol.id
-        && point.protocol.version === protocol.version
-    ));
-}
-
-/**
- * Identifies the current external target modules whose definition-only
- * semantic sidecar is needed before this owner can admit their contributors.
- * The executable registry owns loading those modules; this owner retains the
- * exact point/protocol/currentness selection rule so it cannot drift from
- * admission.
- */
-export function collectUnresolvedTargetedContributionSemanticTargetPluginIds(
-    params: Readonly<{
-        pluginContributionPoints: readonly ResolvedPluginContributionPointDeclaration[];
-        targetedPluginContributions: readonly ResolvedTargetedPluginContributionDeclaration[];
-        immutableGenerationIdsByPluginId: Readonly<Record<string, string>>;
-    }>,
-): readonly string[] {
-    const pointsByKey = new Map<string, TargetPoint>();
-    for (const declaration of params.pluginContributionPoints) {
-        const immutableGenerationId = params.immutableGenerationIdsByPluginId[declaration.pluginId];
-        if (!immutableGenerationId) continue;
-        const key = snapshotKey(declaration.pluginId, declaration.definition.id);
-        if (!pointsByKey.has(key)) {
-            pointsByKey.set(key, Object.freeze({ declaration, immutableGenerationId }));
-        }
-    }
-
-    const targetPluginIds = new Set<string>();
-    for (const declaration of params.targetedPluginContributions) {
-        if (!params.immutableGenerationIdsByPluginId[declaration.pluginId]) continue;
-        const target = pointsByKey.get(snapshotKey(
-            declaration.definition.target.pluginId,
-            declaration.definition.target.pointId,
-        ));
-        if (!target) continue;
-        const protocol = target.declaration.definition.protocols.find((candidate) => (
-            candidate.id === declaration.definition.protocol.id
-            && candidate.version === declaration.definition.protocol.version
-        ));
-        if (!protocol || !requiresTargetSemanticProjection(protocol)) continue;
-        if (readExactTargetSemanticPointRef(target, protocol) !== undefined) continue;
-        targetPluginIds.add(target.declaration.pluginId);
-    }
-    return Object.freeze([...targetPluginIds].sort());
-}
-
 /**
  * Targeted admission is recomputed after executable current-generation
  * authority has selected a committed module. Retain unrelated diagnostics,
@@ -534,6 +484,10 @@ export function resolveAdmittedTargetedContributions(params: Readonly<{
     // form only for this cold resolver invocation so a generation replacement
     // necessarily receives fresh validation.
     const surfaceValidationsByLifecycleKey = new Map<string, PreparedPluginJsonSchema | null>();
+    // Exact Protocol-emitted parser pairs are rehydrated once for the target
+    // protocol in this cold resolution pass. A generation replacement creates
+    // a fresh point object and therefore a fresh parser set.
+    const semanticSchemasByPointProtocol = new Map<TargetPointProtocol, TargetSemanticSchemas | null>();
     const targetSemanticDiagnosticsSeen = new Set<string>();
     for (const candidate of candidates) {
         const definition = candidate.declaration.definition;
@@ -560,20 +514,24 @@ export function resolveAdmittedTargetedContributions(params: Readonly<{
             continue;
         }
         const needsTargetSemanticProjection = requiresTargetSemanticProjection(pointProtocol);
-        const semanticPointRef = needsTargetSemanticProjection
-            ? readExactTargetSemanticPointRef(candidate.target, pointProtocol)
-            : undefined;
-        // Structural JSON admits cold shape only. Any executable target
-        // contract needs its exact live semantic ref before contributor Action
-        // dispatch can make the target's parser observable.
-        if (needsTargetSemanticProjection && semanticPointRef === undefined) {
-            oneSemanticDiagnostic(
-                diagnostics,
-                targetSemanticDiagnosticsSeen,
-                candidate.declaration,
-                'target_semantics_unavailable',
-            );
-            continue;
+        let semanticSchemas: TargetSemanticSchemas | undefined;
+        if (needsTargetSemanticProjection) {
+            const cached = semanticSchemasByPointProtocol.get(pointProtocol);
+            if (cached !== undefined || semanticSchemasByPointProtocol.has(pointProtocol)) {
+                semanticSchemas = cached ?? undefined;
+            } else {
+                semanticSchemas = rehydratePluginContributionPointSemanticsV1(pointProtocol) ?? undefined;
+                semanticSchemasByPointProtocol.set(pointProtocol, semanticSchemas ?? null);
+            }
+            if (!semanticSchemas) {
+                oneSemanticDiagnostic(
+                    diagnostics,
+                    targetSemanticDiagnosticsSeen,
+                    candidate.declaration,
+                    'target_semantics_unavailable',
+                );
+                continue;
+            }
         }
         if (definition.descriptor !== undefined) {
             if (pointProtocol.descriptor === undefined) {
@@ -695,27 +653,40 @@ export function resolveAdmittedTargetedContributions(params: Readonly<{
         }
         let semanticProjection: TargetSemanticProjection | undefined;
         if (needsTargetSemanticProjection) {
-            const semantics = decodeTargetedContributionPointSemantics(semanticPointRef!, {
-                protocol: Object.freeze({ id: definition.protocol.id, version: definition.protocol.version }),
-                ...(definition.descriptor === undefined ? {} : { descriptor: definition.descriptor }),
-                operations: Object.freeze(Object.keys(pointProtocol.operations).sort().map((role) => (
-                    Object.freeze({ role })
-                ))),
-                surfaces: Object.freeze(surfaces.map((surface) => Object.freeze({
-                    role: surface.role,
-                    presentation: surface.presentation,
-                }))),
-            });
-            if (!semantics.ok) {
+            let descriptor: JsonValue | undefined;
+            if (definition.descriptor !== undefined) {
+                const parsed = semanticSchemas?.descriptor?.safeParse(definition.descriptor);
+                if (!parsed?.success) {
+                    oneSemanticDiagnostic(
+                        diagnostics,
+                        targetSemanticDiagnosticsSeen,
+                        candidate.declaration,
+                        'descriptor_semantic_invalid',
+                    );
+                    continue;
+                }
+                descriptor = parsed.data;
+            }
+            const surfaceRoles = new Set(surfaces.map((surface) => surface.role));
+            const declaredSurfaceRoles = new Map(
+                semanticSchemas?.surfaces.map((surface) => [surface.role, surface]) ?? [],
+            );
+            if (surfaces.some((surface) => (
+                declaredSurfaceRoles.get(surface.role)?.presentation !== surface.presentation
+            ))) {
                 oneSemanticDiagnostic(
                     diagnostics,
                     targetSemanticDiagnosticsSeen,
                     candidate.declaration,
-                    semantics.code,
+                    'surface_semantic_invalid',
                 );
                 continue;
             }
-            semanticProjection = semantics.projection;
+            semanticProjection = Object.freeze({
+                ...(descriptor === undefined ? {} : { descriptor }),
+                operations: semanticSchemas?.operations ?? [],
+                surfaces: (semanticSchemas?.surfaces ?? []).filter((surface) => surfaceRoles.has(surface.role)),
+            });
         }
         const semanticOperationsByRole = semanticProjection === undefined
             ? undefined
@@ -742,9 +713,9 @@ export function resolveAdmittedTargetedContributions(params: Readonly<{
         const admitted: AdmittedTargetedContribution = Object.freeze({
             contributor,
             protocol: Object.freeze({ id: definition.protocol.id, version: definition.protocol.version }),
-            ...(semanticProjection?.descriptor === undefined && definition.descriptor === undefined
+            ...(semanticProjection?.descriptor === undefined
                 ? {}
-                : { descriptor: semanticProjection?.descriptor ?? definition.descriptor }),
+                : { descriptor: semanticProjection.descriptor }),
             operations: Object.freeze(admittedOperations),
             surfaces: Object.freeze(semanticSurfaceRoles === undefined
                 ? surfaces
@@ -762,8 +733,8 @@ export function resolveAdmittedTargetedContributions(params: Readonly<{
                 `${right.contributor.pluginId}\u0000${right.contributor.contributionId}`,
             )
         ));
-        const retained = active.slice(0, MAX_ADMITTED_TARGETED_CONTRIBUTIONS_PER_POINT);
-        for (const excess of active.slice(MAX_ADMITTED_TARGETED_CONTRIBUTIONS_PER_POINT)) {
+        const retained = active.slice(0, PLUGIN_UI_TARGETED_CONTRIBUTIONS_MAX_V1);
+        for (const excess of active.slice(PLUGIN_UI_TARGETED_CONTRIBUTIONS_MAX_V1)) {
             const declaration = params.targetedPluginContributions.find((candidate) => (
                 candidate.pluginId === excess.contributor.pluginId
                 && candidate.definition.id === excess.contributor.contributionId

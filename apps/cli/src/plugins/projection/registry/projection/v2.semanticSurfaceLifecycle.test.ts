@@ -69,7 +69,7 @@ function externalManifestText(version: string): string {
             sessionHeaderActions: [{
                 id: 'preview',
                 title: 'Preview',
-                action: HEADER_ACTION_LOCAL_ID,
+                command: HEADER_ACTION_LOCAL_ID,
                 order: 10,
             }],
         },
@@ -156,10 +156,6 @@ function executableRegistry(params: Readonly<{
             targetRegistrations: params.targetRegistrations ?? params.activated.targetRegistrations,
             targetActivationFacts: params.activated.targetActivationFacts,
             resolveAuthorizationFacts: (action) => ({
-                packageTrust: {
-                    packageIdentity: action.qualifiedId,
-                    reviewedPackageIdentity: action.qualifiedId,
-                },
                 generation: {
                     targetGeneration: action.generation,
                     desiredGeneration: action.generation,
@@ -220,7 +216,7 @@ describe('EU-5c/EU-5d semantic host-extension chain', () => {
             pluginId: PLUGIN_ID,
             contributionKind: 'sessionHeaderAction',
             descriptorId: 'preview',
-            action: {
+            command: {
                 kind: 'executeAction',
                 action: { pluginId: PLUGIN_ID, localId: HEADER_ACTION_LOCAL_ID },
             },

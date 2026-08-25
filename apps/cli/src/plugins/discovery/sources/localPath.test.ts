@@ -77,7 +77,7 @@ describe('resolveLocalPathPluginSource', () => {
     expect(result.sourceSpec).not.toHaveProperty('resolvedDigest');
   });
 
-  it('resolves a plugin this checkout bundles under the first-party authority its reserved id requires', async () => {
+  it('keeps a plugin this checkout bundles external when resolving its local source', async () => {
     const manifest = JSON.parse(
       await readFile(join(BUNDLED_PLUGIN_ROOT, '.happier-plugin', 'plugin.json'), 'utf8'),
     ) as Readonly<{ id: string }>;
@@ -88,7 +88,7 @@ describe('resolveLocalPathPluginSource', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.manifest.id).toBe(manifest.id);
-    expect(result.manifestAuthority).toBe('bundled_first_party');
+    expect(result.manifestAuthority).toBe('external');
   });
 
   it('reports external authority for an ordinary local plugin root', async () => {

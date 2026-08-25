@@ -1,4 +1,5 @@
 import type {
+  ActionContextualDefaults,
   ActionInputHints,
   PluginJsonSchemaV2,
   PluginToolContributionV2,
@@ -23,6 +24,7 @@ export type ProjectedPluginToolCatalogEntry = Readonly<{
   title: string;
   description: string;
   inputSchema: PluginJsonSchemaV2;
+  contextualDefaults?: ActionContextualDefaults;
   outputSchema?: NonNullable<PluginToolContributionV2['outputSchema']>;
   inputHints?: ActionInputHints;
   safety?: NonNullable<PluginToolContributionV2['safety']>;
@@ -80,6 +82,9 @@ export function projectExecutablePluginToolCatalog(
       title,
       description: readLocalizedText(tool.definition.description) ?? title,
       inputSchema: tool.definition.inputSchema ?? {},
+      ...(action.definition.contextualDefaults === undefined
+        ? {}
+        : { contextualDefaults: action.definition.contextualDefaults }),
       ...(tool.definition.outputSchema === undefined ? {} : { outputSchema: tool.definition.outputSchema }),
       ...(tool.definition.inputHints === undefined
         ? {}

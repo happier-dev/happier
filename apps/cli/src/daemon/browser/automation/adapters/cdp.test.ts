@@ -84,7 +84,6 @@ describe('browser automation CDP adapter', () => {
     const result = await adapter.execute(
       request({
         actionKind: 'navigate',
-        leaseId: 'lease_1',
         payload: { url: 'https://browser.example.test/next' },
       }),
     );
@@ -143,7 +142,7 @@ describe('browser automation CDP adapter', () => {
     });
 
     const result = await adapter.execute(
-      request({ actionKind: 'reload', leaseId: 'lease_1' }),
+      request({ actionKind: 'reload' }),
     );
 
     expect(result.status).toBe('failed');
@@ -154,7 +153,7 @@ describe('browser automation CDP adapter', () => {
     const adapter = createBrowserAutomationCdpAdapter({ transport: transport() });
 
     const result = await adapter.execute(
-      request({ actionKind: 'startElementPicker', leaseId: 'lease_1' }),
+      request({ actionKind: 'startElementPicker' }),
     );
 
     expect(result.status).toBe('unsupported');
@@ -167,7 +166,7 @@ describe('browser automation CDP adapter', () => {
     const adapter = createBrowserAutomationCdpAdapter({ transport: transport({ dispatchInputCommand }) });
 
     const result = await adapter.execute(
-      request({ actionKind: 'click', leaseId: 'lease_1', payload: { selector: '#go' } }),
+      request({ actionKind: 'click', payload: { selector: '#go' } }),
     );
 
     expect(result.status).toBe('succeeded');
@@ -183,7 +182,7 @@ describe('browser automation CDP adapter', () => {
     const adapter = createBrowserAutomationCdpAdapter({ transport: transport({ dispatchInputCommand }) });
 
     const result = await adapter.execute(
-      request({ actionKind: 'type', leaseId: 'lease_1', payload: { selector: '#x', text: 'hi' } }),
+      request({ actionKind: 'type', payload: { selector: '#x', text: 'hi' } }),
     );
 
     expect(result.status).toBe('failed');

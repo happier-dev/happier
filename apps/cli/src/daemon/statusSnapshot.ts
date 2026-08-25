@@ -1,10 +1,10 @@
+import { isPidPresent } from '@happier-dev/cli-common/process';
 import { createServerUrlComparableKey, type DoctorSnapshot } from '@happier-dev/protocol';
 
 import { decodeJwtPayload } from '@/cloud/decodeJwtPayload';
 import { configuration } from '@/configuration';
 import { readDaemonState, readSettings, readStoredCredentials } from '@/persistence';
 import { resolveDaemonServiceInstallationSnapshotFromEnv } from '@/daemon/service/cli';
-import { isPidAliveBySignal } from '@/daemon/processRunState';
 
 export type DaemonStatusSnapshot = NonNullable<DoctorSnapshot['daemonStatus']>;
 
@@ -34,7 +34,17 @@ export async function readDaemonStatusSnapshot(): Promise<DaemonStatusSnapshot> 
     : null;
 
   const pid = typeof daemonState?.pid === 'number' ? daemonState.pid : null;
-  const daemonRunning = pid != null && isPidAliveBySignal(pid);
+  const daemonRunning = pid != null && isPidPresent(pid);
+  // Process presence and service health are separate questions and this snapshot answers both
+  // separately. `running` stays exactly what it was — a PID probe — because start, repair and
+  // stale-state paths need to know a process is there. `healthy` is the daemon's own last word
+  // on whether it can serve a machine RPC; a probe cannot derive it, so when the daemon has not
+  // published it the answer is unknown rather than a guess in either direction.
+  const daemonHealthy = !daemonRunning
+    ? false
+    : typeof daemonState?.machineControlReady === 'boolean'
+      ? daemonState.machineControlReady
+      : null;
   const machineId = typeof settings.machineId === 'string' && settings.machineId.trim()
     ? settings.machineId.trim()
     : null;
@@ -77,6 +87,7 @@ export async function readDaemonStatusSnapshot(): Promise<DaemonStatusSnapshot> 
     },
     daemon: {
       running: daemonRunning,
+      healthy: daemonHealthy,
       pid,
       httpPort: typeof daemonState?.httpPort === 'number' ? daemonState.httpPort : null,
       startedWithCliVersion: typeof daemonState?.startedWithCliVersion === 'string'

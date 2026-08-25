@@ -270,6 +270,13 @@ async function createTtsRuntime(input: VoiceInferenceRuntimeSynthesizeInput): Pr
         maxNumSentences: 1,
         silenceScale: 0.2,
     });
+    // sherpa-onnx exposes no abort primitive while constructing OfflineTts. Once it
+    // returns, a cancelled attempt must dispose its native handle before it can
+    // become this pack's cached runtime.
+    if (input.signal?.aborted) {
+        disposeCachedRuntime(runtime);
+        throw createVoiceInferenceError('cancelled', 'voice_inference_cancelled');
+    }
     const nextRuntime = { key, runtime } satisfies CachedTtsRuntime;
     cachedTtsRuntimes.set(input.packId, nextRuntime);
     return nextRuntime;

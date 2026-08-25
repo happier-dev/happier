@@ -1,30 +1,20 @@
 import {
-  BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID,
-  ConnectedServiceUsageSourceV1Schema,
-  ProviderAccountUsageRecordIdSchema,
+  ConnectedServiceCredentialRevisionV1Schema,
+  QualifiedConnectedServiceUsageSourceV4Schema,
   ProviderAccountUsageSnapshotV1Schema,
-  projectProviderAccountUsageSnapshotToConnectedServiceQuotaSnapshotV1,
   sealProviderAccountUsageSnapshotCiphertext,
-  type ConnectedServiceUsageSourceV1,
-  type ProviderAccountUsageRecordId,
+  type ConnectedServiceCredentialRevisionV1,
+  type QualifiedConnectedServiceUsageSourceV4,
   type ProviderAccountUsageSnapshotV1,
-  type SealedConnectedServiceQuotaSnapshotV1,
-  type SealedProviderAccountUsageSnapshotV1,
 } from '@happier-dev/protocol';
-import {
-  sealLegacyConnectedServiceQuotaSnapshotCompatibilityCiphertext,
-} from '@happier-dev/protocol/host/legacyConnectedServiceQuotaCompatibility';
 
 import {
   QualifiedConnectedAccountCompatibilityError,
-  resolveProviderAccountUsageWriteTransport,
+  writeQualifiedProviderAccountUsageV4,
 } from '@/api/client/qualifiedConnectedAccountApi';
-import type {
-  SessionSyncPendingInputServerContractResult,
-} from '@/api/clientCompatibility/sessionSyncPendingInputServerContract';
-import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
-import type { StoredCredentials } from '@/persistence';
+import { readHttpStatus } from '@/api/client/httpStatusError';
 import { requireAccountEncryptionCredentials } from '@/api/client/encryptionKey';
+import type { StoredCredentials } from '@/persistence';
 import { createConnectedServiceQuotaPersistenceScheduler } from '../quotas/createConnectedServiceQuotaPersistenceScheduler';
 import {
   shouldPersistQuotaSnapshot,
@@ -40,42 +30,22 @@ const DEFAULT_PROVIDER_ACCOUNT_USAGE_PERSISTENCE_MIN_FRESHNESS_MS = 60_000;
 
 type AccountUsageApi = Readonly<{
   getAccountEncryptionMode: () => Promise<'plain' | 'e2ee' | 'unknown'>;
-  getServerFeaturesSnapshot: (
-    options?: Readonly<{ refresh?: boolean }>,
-  ) => Promise<CliServerFeaturesSnapshot | undefined>;
-  getProviderAccountUsageWriteRouteAvailability: (args: Readonly<{
-    recordId: ProviderAccountUsageRecordId;
-  }>) => Promise<'available' | 'absent' | 'indeterminate'>;
-  registerProviderAccountUsageSnapshotPlain?: (args: Readonly<{
-    recordId: ProviderAccountUsageRecordId;
-    source?: ConnectedServiceUsageSourceV1;
-    content: { t: 'plain'; v: ProviderAccountUsageSnapshotV1 };
-    metadata: {
-      fetchedAt: number;
-      staleAfterMs: number;
-      status: 'ok' | 'unavailable' | 'estimated' | 'error';
-      materialFingerprint?: string;
-    };
-  }>) => Promise<void>;
-  registerProviderAccountUsageSnapshotSealed?: (args: Readonly<{
-    recordId: ProviderAccountUsageRecordId;
-    recordKey: ProviderAccountUsageSnapshotV1['recordKey'];
-    source?: ConnectedServiceUsageSourceV1;
-    sealed: SealedProviderAccountUsageSnapshotV1;
-    legacyQuotaCompatibility?: SealedConnectedServiceQuotaSnapshotV1;
-    metadata: {
-      fetchedAt: number;
-      staleAfterMs: number;
-      status: 'ok' | 'unavailable' | 'estimated' | 'error';
-      materialFingerprint?: string;
-    };
-  }>) => Promise<void>;
+}>;
+
+/**
+ * Caller-proven V4 source and currentness basis. The scheduler owns only the
+ * PAU envelope/write; it deliberately cannot recreate identity or revisions
+ * from a scalar runtime observation after that observation may have gone stale.
+ */
+export type QualifiedProviderAccountUsagePersistenceTarget = Readonly<{
+  source: QualifiedConnectedServiceUsageSourceV4;
+  expectedCredentialRevision: ConnectedServiceCredentialRevisionV1;
+  expectedConfigurationRevision: string | null;
 }>;
 
 type ProviderAccountUsagePersistencePayload = Readonly<{
-  recordId: ProviderAccountUsageRecordId;
   snapshot: ProviderAccountUsageSnapshotV1;
-  source?: ConnectedServiceUsageSourceV1;
+  target: QualifiedProviderAccountUsagePersistenceTarget;
   status: 'ok' | 'unavailable' | 'estimated' | 'error';
   materialFingerprint: string;
   materialState: QuotaPersistenceMaterialState;
@@ -84,10 +54,13 @@ type ProviderAccountUsagePersistencePayload = Readonly<{
 export type ProviderAccountUsagePersistenceScheduler = Readonly<{
   recordInBandSnapshot(
     snapshot: ProviderAccountUsageSnapshotV1,
-    options?: Readonly<{ source?: ConnectedServiceUsageSourceV1; sources?: readonly ConnectedServiceUsageSourceV1[] }>,
+    options?: Readonly<{
+      targets?: readonly QualifiedProviderAccountUsagePersistenceTarget[];
+    }>,
   ): Promise<
     | Readonly<{ status: 'enqueued'; enqueue: 'accepted' | 'coalesced' }>
     | Readonly<{ status: 'already_persisted'; reason: string }>
+    | Readonly<{ status: 'not_persisted'; reason: 'no_current_qualified_source' }>
   >;
   flush(timeoutMs: number): Promise<void>;
   dispose(): void;
@@ -105,47 +78,74 @@ function deriveProviderAccountUsageStatus(
   return 'ok';
 }
 
-function sourcePersistenceKey(source: ConnectedServiceUsageSourceV1 | undefined): string {
-  if (!source) return 'record';
-  if (source.bindingKind === 'group_member') {
-    return JSON.stringify([
-      'group_member',
-      source.serviceId,
-      source.profileId,
-      source.groupId ?? '',
-      source.groupGeneration ?? null,
-    ]);
-  }
-  return JSON.stringify(['profile', source.serviceId, source.profileId]);
+function qualifiedTargetPersistenceKey(
+  target: QualifiedProviderAccountUsagePersistenceTarget,
+): string {
+  const source = QualifiedConnectedServiceUsageSourceV4Schema.parse(target.source);
+  const expectedCredentialRevision =
+    ConnectedServiceCredentialRevisionV1Schema.parse(
+      target.expectedCredentialRevision,
+    );
+  const expectedConfigurationRevision =
+    normalizeExpectedConfigurationRevision(
+      target.expectedConfigurationRevision,
+    );
+  return JSON.stringify([
+    source.ref.service.pluginId,
+    source.ref.service.localId,
+    source.ref.accountId,
+    source.bindingKind,
+    source.bindingKind === 'group_member' ? source.groupId : null,
+    source.bindingKind === 'group_member'
+      ? source.groupGeneration ?? null
+      : null,
+    expectedCredentialRevision,
+    expectedConfigurationRevision,
+  ]);
 }
 
-function normalizePersistenceSources(
-  options: Readonly<{ source?: ConnectedServiceUsageSourceV1; sources?: readonly ConnectedServiceUsageSourceV1[] }> | undefined,
-): readonly (ConnectedServiceUsageSourceV1 | undefined)[] {
-  const sources = [
-    ...(options?.source ? [options.source] : []),
-    ...(options?.sources ?? []),
-  ];
-  if (sources.length === 0) return [undefined];
+function normalizeExpectedConfigurationRevision(
+  value: unknown,
+): string | null {
+  if (value === null) return null;
+  if (typeof value === 'string') return value;
+  throw new Error('Qualified provider account usage configuration revision is invalid');
+}
 
-  const byKey = new Map<string, ConnectedServiceUsageSourceV1>();
-  for (const source of sources) {
-    const parsed = ConnectedServiceUsageSourceV1Schema.parse(source);
-    byKey.set(sourcePersistenceKey(parsed), parsed);
+function normalizePersistenceTargets(
+  options: Readonly<{
+    targets?: readonly QualifiedProviderAccountUsagePersistenceTarget[];
+  }> | undefined,
+): readonly QualifiedProviderAccountUsagePersistenceTarget[] {
+  const byKey = new Map<string, QualifiedProviderAccountUsagePersistenceTarget>();
+  for (const rawTarget of options?.targets ?? []) {
+    const source = QualifiedConnectedServiceUsageSourceV4Schema.parse(
+      rawTarget.source,
+    );
+    const expectedCredentialRevision =
+      ConnectedServiceCredentialRevisionV1Schema.parse(
+        rawTarget.expectedCredentialRevision,
+      );
+    const expectedConfigurationRevision = normalizeExpectedConfigurationRevision(
+      rawTarget.expectedConfigurationRevision,
+    );
+    const target: QualifiedProviderAccountUsagePersistenceTarget = {
+      source,
+      expectedCredentialRevision,
+      expectedConfigurationRevision,
+    };
+    byKey.set(qualifiedTargetPersistenceKey(target), target);
   }
   return [...byKey.values()];
 }
 
 function resolveFingerprintKey(params: Readonly<{
   fingerprintKey?: ProviderAccountUsageFingerprintKey;
-  credentials?: StoredCredentials;
+  credentials: StoredCredentials;
   serverScope?: string;
   accountScope?: string;
 }>): ProviderAccountUsageFingerprintKey {
   if (params.fingerprintKey) return params.fingerprintKey;
-  if (!params.credentials) {
-    throw new Error('Provider account usage persistence requires credentials or a fingerprint key');
-  }
   return deriveProviderAccountUsageFingerprintKey({
     credentials: params.credentials,
     serverScope: params.serverScope ?? 'active-server',
@@ -155,122 +155,83 @@ function resolveFingerprintKey(params: Readonly<{
 
 export function createProviderAccountUsagePersistenceScheduler(params: Readonly<{
   api: AccountUsageApi;
+  credentials: StoredCredentials;
   now: () => number;
   fingerprintKey?: ProviderAccountUsageFingerprintKey;
-  credentials?: StoredCredentials;
   randomBytes?: (length: number) => Uint8Array;
   serverScope?: string;
   accountScope?: string;
   minFreshnessMs?: number;
-  resolveServerContract?: () =>
-    SessionSyncPendingInputServerContractResult | null;
+  writeQualifiedProviderAccountUsage?: typeof writeQualifiedProviderAccountUsageV4;
 }>): ProviderAccountUsagePersistenceScheduler {
   const fingerprintKey = resolveFingerprintKey(params);
   const minFreshnessMs = Math.max(
     0,
-    Math.trunc(params.minFreshnessMs ?? DEFAULT_PROVIDER_ACCOUNT_USAGE_PERSISTENCE_MIN_FRESHNESS_MS),
+    Math.trunc(
+      params.minFreshnessMs
+        ?? DEFAULT_PROVIDER_ACCOUNT_USAGE_PERSISTENCE_MIN_FRESHNESS_MS,
+    ),
   );
   const stateByPersistenceKey = new Map<string, QuotaPersistenceMaterialState>();
+  const writeProviderAccountUsage =
+    params.writeQualifiedProviderAccountUsage
+    ?? writeQualifiedProviderAccountUsageV4;
 
-  async function persistPayload(_key: string, payload: ProviderAccountUsagePersistencePayload): Promise<void> {
-    const serverFeatures = await params.api.getServerFeaturesSnapshot({
-      refresh: true,
-    });
-    const providerAccountUsageRoute =
-      await params.api.getProviderAccountUsageWriteRouteAvailability({
-        recordId: payload.recordId,
-      });
-    const transport = resolveProviderAccountUsageWriteTransport({
-      snapshot: serverFeatures,
-      serverContract: params.resolveServerContract?.() ?? null,
-      providerAccountUsageRoute,
-      ...(payload.source ? { source: payload.source } : {}),
-    });
+  async function persistPayload(
+    persistenceKey: string,
+    payload: ProviderAccountUsagePersistencePayload,
+  ): Promise<void> {
     const accountMode = await params.api.getAccountEncryptionMode();
-    if (accountMode === 'plain') {
-      if (!params.api.registerProviderAccountUsageSnapshotPlain) {
-        throw new Error('Provider account usage plaintext persistence route unavailable');
-      }
-      await params.api.registerProviderAccountUsageSnapshotPlain({
-        recordId: payload.recordId,
-        ...(payload.source ? { source: payload.source } : {}),
-        content: { t: 'plain', v: payload.snapshot },
-        metadata: {
-          fetchedAt: payload.snapshot.fetchedAtMs,
-          staleAfterMs: payload.snapshot.staleAfterMs,
-          status: payload.status,
-          materialFingerprint: payload.materialFingerprint,
-        },
-      });
-      stateByPersistenceKey.set(_key, payload.materialState);
-      return;
+    if (accountMode !== 'plain' && accountMode !== 'e2ee') {
+      throw new Error(
+        'Provider account usage persistence route unavailable for account mode',
+      );
     }
-    if (accountMode !== 'e2ee') {
-      throw new Error('Provider account usage persistence route unavailable for account mode');
-    }
-    if (!params.credentials || !params.randomBytes) {
-      throw new Error('Provider account usage sealed persistence requires credentials and randomBytes');
-    }
-    const encryption =
-      requireAccountEncryptionCredentials(params.credentials).encryption;
-    const material =
-      encryption.type === 'legacy'
-        ? ({ type: 'legacy' as const, secret: encryption.secret })
-        : ({ type: 'dataKey' as const, machineKey: encryption.machineKey });
-    if (!params.api.registerProviderAccountUsageSnapshotSealed) {
-      throw new Error('Provider account usage sealed persistence route unavailable');
-    }
-    const ciphertext = sealProviderAccountUsageSnapshotCiphertext({
-      material,
-      payload: payload.snapshot,
-      randomBytes: params.randomBytes,
-    });
-    const legacyQuotaCompatibility = (() => {
-      if (!transport.legacyQuotaCompatibility) return undefined;
-      if (payload.source?.bindingKind !== 'profile') return undefined;
-      const compatibility =
-        BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID[
-          payload.source.serviceId
-        ];
-      if (
-        compatibility?.exactV0_2_1ReaderQuotaProjection
-        !== true
-      ) {
-        return undefined;
-      }
-      const quotaSnapshot =
-        projectProviderAccountUsageSnapshotToConnectedServiceQuotaSnapshotV1({
-          snapshot: payload.snapshot,
-          source: payload.source,
-        });
-      if (!quotaSnapshot) return undefined;
-      return {
-        format: 'account_scoped_v1' as const,
-        ciphertext:
-          sealLegacyConnectedServiceQuotaSnapshotCompatibilityCiphertext({
-            material,
-            payload: quotaSnapshot,
-            randomBytes: params.randomBytes!,
-          }),
-      };
-    })();
-    await params.api.registerProviderAccountUsageSnapshotSealed({
-      recordId: payload.recordId,
+    const write = {
+      source: payload.target.source,
+      expectedCredentialRevision: payload.target.expectedCredentialRevision,
+      expectedConfigurationRevision:
+        payload.target.expectedConfigurationRevision,
+      recordId: payload.snapshot.recordId,
       recordKey: payload.snapshot.recordKey,
-      ...(payload.source ? { source: payload.source } : {}),
-      sealed: { format: 'account_scoped_v1', ciphertext },
-      ...(legacyQuotaCompatibility ? { legacyQuotaCompatibility } : {}),
-      metadata: {
-        fetchedAt: payload.snapshot.fetchedAtMs,
-        staleAfterMs: payload.snapshot.staleAfterMs,
-        status: payload.status,
-        materialFingerprint: payload.materialFingerprint,
-      },
+      payloadMode: accountMode === 'plain'
+        ? 'plain_json_v1' as const
+        : 'sealed_account_scoped_v1' as const,
+      status: payload.status,
+      ...(accountMode === 'plain'
+        ? { snapshot: payload.snapshot }
+        : {
+            sealedPayload: {
+              format: 'account_scoped_v1' as const,
+              ciphertext: sealProviderAccountUsageSnapshotCiphertext({
+                material: requireAccountEncryptionCredentials(
+                  params.credentials,
+                ).encryption,
+                payload: payload.snapshot,
+                randomBytes: params.randomBytes
+                  ?? (() => {
+                    throw new Error(
+                      'Provider account usage sealed persistence requires randomBytes',
+                    );
+                  }),
+              }),
+            },
+          }),
+      fetchedAt: payload.snapshot.fetchedAtMs,
+      staleAfterMs: payload.snapshot.staleAfterMs,
+      metadata: { materialFingerprint: payload.materialFingerprint },
+    };
+    await writeProviderAccountUsage({
+      token: params.credentials.token,
+      write,
     });
-    stateByPersistenceKey.set(_key, payload.materialState);
+    stateByPersistenceKey.set(persistenceKey, payload.materialState);
   }
 
-  const scheduler = createConnectedServiceQuotaPersistenceScheduler<string, ProviderAccountUsagePersistencePayload>({
+  const scheduler = createConnectedServiceQuotaPersistenceScheduler<
+    string,
+    ProviderAccountUsagePersistencePayload
+  >({
     run: persistPayload,
     maxConcurrent: 2,
     minKeyIntervalMs: 0,
@@ -279,16 +240,28 @@ export function createProviderAccountUsagePersistenceScheduler(params: Readonly<
     maxPendingPayloadAgeMs: 10 * 60_000,
     now: params.now,
     shouldRetry: (error) =>
-      !(error instanceof QualifiedConnectedAccountCompatibilityError),
+      !(error instanceof QualifiedConnectedAccountCompatibilityError)
+      && readHttpStatus(error) !== 409,
     shouldPauseAfterFailure: (error) =>
-      !(error instanceof QualifiedConnectedAccountCompatibilityError),
+      !(error instanceof QualifiedConnectedAccountCompatibilityError)
+      && readHttpStatus(error) !== 409,
   });
 
   return {
     recordInBandSnapshot: async (inputSnapshot, options) => {
       const snapshot = ProviderAccountUsageSnapshotV1Schema.parse(inputSnapshot);
+      const targets = normalizePersistenceTargets(options);
+      if (targets.length === 0) {
+        return {
+          status: 'not_persisted' as const,
+          reason: 'no_current_qualified_source' as const,
+        };
+      }
       const status = deriveProviderAccountUsageStatus(snapshot);
-      const materialFingerprint = computeProviderAccountUsageSnapshotFingerprint(snapshot, fingerprintKey);
+      const materialFingerprint = computeProviderAccountUsageSnapshotFingerprint(
+        snapshot,
+        fingerprintKey,
+      );
       const materialState: QuotaPersistenceMaterialState = {
         fingerprint: materialFingerprint,
         fetchedAt: snapshot.fetchedAtMs,
@@ -298,8 +271,8 @@ export function createProviderAccountUsagePersistenceScheduler(params: Readonly<
       let accepted = false;
       let coalesced = false;
       let lastSuppressionReason = 'unchanged_fresh';
-      for (const source of normalizePersistenceSources(options)) {
-        const persistenceKey = `${snapshot.recordId}\u0000${sourcePersistenceKey(source)}`;
+      for (const target of targets) {
+        const persistenceKey = `${snapshot.recordId}\u0000${qualifiedTargetPersistenceKey(target)}`;
         const decision = shouldPersistQuotaSnapshot({
           previous: stateByPersistenceKey.get(persistenceKey) ?? null,
           next: materialState,
@@ -311,9 +284,8 @@ export function createProviderAccountUsagePersistenceScheduler(params: Readonly<
           continue;
         }
         const enqueue = scheduler.enqueue(persistenceKey, {
-          recordId: snapshot.recordId,
           snapshot,
-          ...(source ? { source } : {}),
+          target,
           status,
           materialFingerprint,
           materialState,
@@ -321,11 +293,21 @@ export function createProviderAccountUsagePersistenceScheduler(params: Readonly<
         if (enqueue.type === 'accepted') accepted = true;
         if (enqueue.type === 'coalesced') coalesced = true;
         if (enqueue.type === 'suppressed') {
-          throw new Error(`provider_account_usage_persistence_${enqueue.reason}`);
+          throw new Error(
+            `provider_account_usage_persistence_${enqueue.reason}`,
+          );
         }
       }
-      if (accepted || coalesced) return { status: 'enqueued', enqueue: accepted ? 'accepted' : 'coalesced' };
-      return { status: 'already_persisted', reason: lastSuppressionReason };
+      if (accepted || coalesced) {
+        return {
+          status: 'enqueued' as const,
+          enqueue: accepted ? 'accepted' as const : 'coalesced' as const,
+        };
+      }
+      return {
+        status: 'already_persisted' as const,
+        reason: lastSuppressionReason,
+      };
     },
     flush: async (timeoutMs) => {
       await scheduler.flushAll(timeoutMs);

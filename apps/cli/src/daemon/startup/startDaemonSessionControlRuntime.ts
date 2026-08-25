@@ -20,6 +20,10 @@ import {
 import type {
     QualifiedConnectedAccountPeerOperationTransport,
 } from '@/api/client/qualifiedConnectedAccountApi';
+import {
+    listQualifiedConnectedAccountsV4,
+    readQualifiedConnectedAccountGroupV4,
+} from '@/api/client/qualifiedConnectedAccountApi';
 import { resolveConcreteBackendTargetRefV2 } from '@/session/backendTargets/resolveConcreteBackendTargetRefs';
 import {
     ConnectedServiceBindingsV1Schema,
@@ -29,7 +33,6 @@ import {
     DEFAULT_LOCAL_SERVICE_PAGE_TITLE_MAX_BODY_BYTES,
     DEFAULT_LOCAL_SERVICE_PAGE_TITLE_SUCCESS_TTL_MS,
     DEFAULT_LOCAL_SERVICE_PAGE_TITLE_TIMEOUT_MS,
-    ComposerAttachmentPrepareRequestV1Schema,
     parseBooleanEnv,
     projectProviderAccountUsageSnapshotToConnectedServiceQuotaSnapshotV1,
     readConnectedServiceMaterializationIdentityV1FromMetadata,
@@ -44,6 +47,7 @@ import {
     type ConnectedServiceId,
     type ConnectedServiceMaterializationIdentityV1,
     type ConnectedServiceUsageSourceV1,
+    type ProviderAccountUsageSnapshotV1,
     type MachineSessionTerminalAuthorityV1,
     type QualifiedConnectedAccountServiceRef,
     type SessionConnectedServiceAuthReadRuntimeIdentityResponseV1,
@@ -83,6 +87,7 @@ import { createCredentialedTargetActionCurrentIntent } from '@/session/actions/c
 import { resolveCatalogAgentId } from '@/agent/catalog/resolution';
 import {
     findCatalogEntry,
+    isLegacyServiceKeyedCompatibilityCatalogAgent,
     readDeclaredCatalogConnectedServiceIds,
 } from '@/agent/catalog/registry';
 import {
@@ -117,11 +122,13 @@ import type { ActionExecutorDeps, RuntimeActionExecute } from '@happier-dev/prot
 import { createAccountServerPatIntrospector } from '../auth/accountServerPatIntrospector';
 import { createDaemonPatVerifier } from '../auth/daemonPatVerifier';
 import {
+    createDaemonExternalActionContributedApprovalReplay,
     createDaemonExternalActionContributedDefinitionLister,
     createDaemonExternalActionContributedInvoker,
 } from '../externalActions/createDaemonExternalActionContributedInvoker';
 import { createDaemonExternalActionTargetResolver } from '../externalActions/daemonExternalActionTargetResolver';
 import type { ExternalActionIngressOwner } from '@/rpc/handlers/externalAction';
+import type { CurrentMachineExecutionOriginContext } from '@/api/machine/resolveCurrentMachineExecutionOriginContext';
 
 import type {
     ConnectedServiceDaemonAuthBridgeRegistration,
@@ -169,7 +176,10 @@ import {
 } from '@/providers/lifecycle/resourceScope';
 import { createDaemonShutdownCancellationDomains } from './shutdownCancellationDomains';
 import type { DaemonPluginChangeService } from '@/plugins/daemon/changeService';
-import { resolveConnectedServiceAuthForSpawn } from '../connectedServices/resolveConnectedServiceAuthForSpawn';
+import {
+    resolveConnectedServiceAuthForSpawn,
+    type ConnectedServiceQualifiedAuthGroupApi,
+} from '../connectedServices/resolveConnectedServiceAuthForSpawn';
 import { isValidConnectedServiceRunMaterializeToken } from '../connectedServices/runs/capabilityToken';
 import { createExecutionRunConnectedServicesBridge } from '../connectedServices/runs/executionRunMaterialization';
 import { isExecutionRunConnectedServiceGenerationCurrent } from '../connectedServices/runs/executionRunGenerationAdmission';
@@ -216,13 +226,14 @@ import {
 } from '../browser/context/source';
 import { createSidecarCdpBrowserContextSource } from '../browser/context/cdp/productSource';
 import {
-    createBrowserContextDiagnosticsRingBuffer,
-    type BrowserContextDiagnosticsRingBuffer,
-} from '../browser/context/diagnostics/ringBuffer';
-import { tapBrowserDiagnosticsStoreIntoRingBuffer } from '../browser/context/diagnostics/storeTap';
+    createBrowserContextDiagnosticsSummarySource,
+    type BrowserContextDiagnosticsSummarySource,
+} from '../browser/context/diagnostics/summary';
 import { createSidecarCdpDiagnosticsRuntime } from '../browser/sidecar/diagnostics/runtime';
 import { createTransferPathAllowanceRegistry } from '@/transfers/targets/createTransferPathAllowanceRegistry';
 import { createBrowserAutomationDaemonService } from '../browser/automation/service';
+import { createBrowserAutomationRuntimeProvisioner } from '../browser/sidecar/provisioning';
+import type { ProvisionBrowserAutomationRuntime } from '../browser/actions/runtimeActionExecutor';
 import { createBrowserAutomationRoutes, type BrowserAutomationRoutes } from '../browser/automation/routes';
 import { createBrowserAutomationCdpAdapter } from '../browser/automation/adapters/cdp';
 import { createControlAdapterAutomationTransport } from '../browser/automation/adapters/controlBridge';
@@ -352,9 +363,6 @@ import {
     RunnerAgentDaemonFacetOperationV1Schema,
 } from '@/agent/runtime/session/process/agentRuntimeDaemonFacetProtocol';
 import {
-    resolveExternalSessionSurfaceOps,
-} from '@/session/actions/externalSessions/providerOpsResolution';
-import {
     resolveRetainedAgentSessionRealtimeVoiceAuthority,
     snapshotAgentSessionRealtimeVoiceProviders,
 } from '@/agent/runtime/session/realtime/resolveAgentSessionRealtimeVoiceAuthority';
@@ -400,6 +408,9 @@ import {
     projectRunnerManagedProviderServerLaunchAuthority,
     type RunnerManagedProviderServerLaunchAuthority,
 } from '@/plugins/runtime/invocation/services/runnerManagedServiceSupervisionAuthorization';
+import {
+    resolveRunnerManagedServiceDeclaredSecret,
+} from '@/plugins/runtime/invocation/services/runnerManagedServiceDeclaredSecretAuthority';
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
 import type {
     ManagedServiceSpec,
@@ -502,7 +513,7 @@ import {
     resolveFirstPartyConnectedAccountServiceId,
 } from '../connectedServices/requestAuth/firstPartyConnectedAccountRequestAuthAdapter';
 import {
-    resolveFirstPartyQualifiedConnectedAccountServiceForLegacyServiceId,
+    resolveFirstPartyQualifiedConnectedAccountServiceForLegacyServiceInput,
 } from '@/plugins/projection/registry/connectedAccountPurposeCompatibility';
 import type {
     QualifiedConnectedAccountEstablishedRuntimeOwner,
@@ -532,12 +543,14 @@ import {
 } from '../connectedServices/accountGroups/switching/ConnectedServiceAuthGroupSwitchCoordinator';
 import { resolvePredictiveSoftSwitchCapability } from '../connectedServices/accountGroups/switching/resolvePredictiveSoftSwitchCapability';
 import { evaluatePredictiveSoftSwitchLiveSessionRequirement } from '../connectedServices/accountGroups/switching/predictiveSoftSwitchPolicy';
-import { createQuotaDrivenConnectedServiceAuthGroupSwitchCoordinator } from '../connectedServices/quotas/createQuotaDrivenConnectedServiceAuthGroupSwitchCoordinator';
 import { createProviderAccountUsagePersistenceScheduler } from '../connectedServices/accountUsage/persistence';
 import {
     recordProviderAccountUsageAdoptionForSession,
     recordProviderAccountUsageSnapshotForSession,
 } from '../connectedServices/accountUsage/recordProviderAccountUsageSnapshotForSession';
+import type {
+    QualifiedProviderAccountUsagePersistenceTarget,
+} from '../connectedServices/accountUsage/persistence';
 import {
     createProviderAccountUsageStore,
     isProviderAccountUsageStoreMutationAccepted,
@@ -550,7 +563,6 @@ import type { DaemonSessionMutationCustody } from '../connectedServices/usageLim
 import {
     buildRuntimeAuthRecoveryAttemptTransitionLocalId,
 } from '../connectedServices/runtimeAuth/projection/connectedServiceRuntimeAuthRecoveryProjection';
-import { createDaemonConnectedServiceAuthGroupSwitchCoordinator } from '../connectedServices/runtimeAuth/createDaemonConnectedServiceAuthGroupSwitchCoordinator';
 import {
     createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator,
 } from '../connectedServices/runtimeAuth/createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator';
@@ -689,6 +701,15 @@ import { createConnectedServiceRecoverySupersessionCleaner } from '../connectedS
 
 type ShutdownSource = 'happier-app' | 'happier-cli' | 'os-signal' | 'exception';
 type HostedWebStaticAssetSyncReason = 'startup' | 'session_spawned' | 'session_webhook' | 'session_exit';
+type ConnectedServicePreTurnSwitchCoordinator = NonNullable<
+    Parameters<typeof resolveConnectedServiceAuthForSpawn>[0]['authGroupSwitchCoordinator']
+>;
+type ConnectedServicePreTurnSwitchInput = Parameters<
+    ConnectedServicePreTurnSwitchCoordinator['switchBeforeTurn']
+>[0];
+type ConnectedServicePreTurnSwitchResult = Awaited<ReturnType<
+    ConnectedServicePreTurnSwitchCoordinator['switchBeforeTurn']
+>>;
 
 function resolvePositiveIntEnv(raw: string | undefined, fallback: number, bounds: { min: number; max: number }): number {
     const value = (raw ?? '').trim();
@@ -1971,9 +1992,15 @@ export async function startDaemonSessionControlRuntime(
          * Without it the public Action route is deliberately not mounted.
          */
         externalActionAccountId?: string | null;
+        /** Resolved Account server for this daemon lifecycle's PAT introspection. */
+        serverBaseUrl: string;
         runtimeActionExecute?: RuntimeActionExecute;
         currentMachineHost?: string | null;
         currentMachineHomeDir?: string | null;
+        /** Fresh Account server + exact daemon identity for server-origin Session spawn binding. */
+        resolveCurrentMachineExecutionOriginContext?: (
+            signal?: AbortSignal,
+        ) => Promise<CurrentMachineExecutionOriginContext | null>;
         /** Current exact external-session RPC executor; it may change after machine sync. */
         resolveExternalSessionHostAction?: () =>
             | ActionExecutorDeps['hostExternalSessionAction']
@@ -2094,9 +2121,6 @@ export async function startDaemonSessionControlRuntime(
         liveStreamCaptureRegistry?: MachineLiveStreamCaptureRegistry;
         simulatorInputLeaseManager?: SimulatorInputLeaseManager;
         browserSidecarControlAdapterFactory?: BrowserSidecarControlAdapterFactory;
-        // Product browser-use policy decision for sidecar startup. Missing/malformed decisions
-        // fail closed; the browser.sidecar feature gate is availability only, not consent.
-        resolveBrowserUseAllowed?: () => boolean;
         resolveServerFeaturesSnapshot?: () => Promise<CliServerFeaturesSnapshot | undefined> | CliServerFeaturesSnapshot | undefined;
         // OWNER-GATE test seam: inject a browser daemon feature gate whose cached snapshot is
         // deterministic. Defaults to a real gate over the shared server-features snapshot source.
@@ -2146,12 +2170,8 @@ export async function startDaemonSessionControlRuntime(
     controlToken: string;
     stopControlServer: () => Promise<void>;
     connectedServiceAuthGroupPreTurnSwitchCoordinator: Readonly<{
-        switchBeforeTurn: (input: Readonly<{
-            sessionId?: string;
-            serviceId: string;
-            groupId: string;
-            reason: 'usage_limit' | 'soft_threshold' | 'same_provider_account_exhausted' | 'auth_expired' | 'account_changed' | 'refresh_failed';
-        }>) => Promise<unknown>;
+        switchBeforeTurn: (input: ConnectedServicePreTurnSwitchInput) =>
+            Promise<ConnectedServicePreTurnSwitchResult>;
         applyCommittedGeneration: (input: Readonly<{
             sessionId: string;
             serviceId: string;
@@ -2376,18 +2396,15 @@ export async function startDaemonSessionControlRuntime(
     const connectedServiceRuntimeQuotaSnapshots = new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore();
     const providerAccountUsageStore = createProviderAccountUsageStore();
     const providerAccountUsagePersistence = createProviderAccountUsagePersistenceScheduler({
-        api: params.api,
+        api: {
+            getAccountEncryptionMode: () => params.api.getAccountEncryptionMode(),
+        },
         credentials: params.credentials,
         randomBytes,
         serverScope: configuration.activeServerDir,
         accountScope: 'active-account',
         now: () => Date.now(),
-        resolveServerContract: () =>
-            params.getApiMachineForSessions()
-                ?.getSessionSyncPendingInputServerContractResult()
-            ?? null,
     });
-    const connectedServiceAuthGroupSwitchLeases = new InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry();
     const qualifiedConnectedAccountAuthGroupSwitchLeases =
         new InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry<
             QualifiedConnectedAccountServiceRef
@@ -2491,6 +2508,122 @@ export async function startDaemonSessionControlRuntime(
             status: 'ineligible' as const,
             memberState: { credentialHealthStatus: 'refresh_failed_retryable' as const },
         };
+    const readQualifiedConnectedServiceAuthGroup = async (input: Readonly<{
+        serviceId: ConnectedServiceId;
+        groupId: string;
+        signal?: AbortSignal;
+    }>) => {
+        if (params.resolveQualifiedConnectedAccountV4Support?.() !== 'advertised') {
+            return null;
+        }
+        const service =
+            resolveFirstPartyQualifiedConnectedAccountServiceForLegacyServiceInput(
+                input.serviceId,
+            );
+        if (!service) return null;
+        return await readQualifiedConnectedAccountGroupV4({
+            token: params.credentials.token,
+            group: { service, groupId: input.groupId },
+            ...(input.signal ? { signal: input.signal } : {}),
+        });
+    };
+    const resolveQualifiedProviderAccountUsagePersistenceTargets = async (input: Readonly<{
+        sessionId: string;
+        snapshot: ProviderAccountUsageSnapshotV1;
+        sources: readonly ConnectedServiceUsageSourceV1[];
+    }>): Promise<readonly QualifiedProviderAccountUsagePersistenceTarget[]> => {
+        if (
+            params.resolveQualifiedConnectedAccountV4Support?.() !== 'advertised'
+            || input.snapshot.accountSubject.kind !== 'providerSubject'
+        ) {
+            return [];
+        }
+        const runtimeTarget = connectedServiceRuntimeRegistry.getBySessionId(
+            input.sessionId,
+        );
+        if (!runtimeTarget) return [];
+        const sourceMatchesBinding = (
+            source: ConnectedServiceUsageSourceV1,
+            binding: (typeof runtimeTarget.activeBindings)[number],
+        ): boolean => {
+            if (
+                source.serviceId !== binding.serviceId
+                || source.profileId !== binding.profileId
+            ) return false;
+            return source.bindingKind === 'group_member'
+                ? binding.groupId === source.groupId
+                    && binding.groupGeneration === source.groupGeneration
+                : binding.groupId === null;
+        };
+        const candidateBindings = input.sources.length > 0
+            ? runtimeTarget.activeBindings.filter((binding) =>
+                input.sources.some((source) => sourceMatchesBinding(source, binding)),
+            )
+            : runtimeTarget.activeBindings;
+        const providerAccountId = input.snapshot.accountSubject.id.trim();
+        if (!providerAccountId) return [];
+        const listedAccountsByService = new Map<
+            string,
+            Awaited<ReturnType<typeof listQualifiedConnectedAccountsV4>> | null
+        >();
+        const targets: QualifiedProviderAccountUsagePersistenceTarget[] = [];
+        for (const binding of candidateBindings) {
+            const service =
+                resolveFirstPartyQualifiedConnectedAccountServiceForLegacyServiceInput(
+                    binding.serviceId,
+                );
+            if (!service) continue;
+            const serviceKey = `${service.pluginId}\u0000${service.localId}`;
+            let listed = listedAccountsByService.get(serviceKey);
+            if (listed === undefined) {
+                listed = await listQualifiedConnectedAccountsV4({
+                    token: params.credentials.token,
+                    service,
+                }).catch(() => null);
+                listedAccountsByService.set(serviceKey, listed);
+            }
+            const profile = listed?.accounts.find((candidate) =>
+                candidate.ref.accountId === binding.profileId
+                && candidate.providerIdentity?.accountId === providerAccountId,
+            );
+            if (!profile || profile.revisionSemantics !== 'revisioned') continue;
+            const resolutions = await resolveConnectedServiceCredentialResolutions({
+                credentials: params.credentials,
+                api: params.api,
+                bindings: [{
+                    serviceId: binding.serviceId,
+                    profileId: binding.profileId,
+                }],
+            }).catch(() => null);
+            const resolution = resolutions?.get(binding.serviceId) ?? null;
+            if (
+                !resolution
+                || resolution.revisionSemantics !== 'revisioned'
+                || resolution.credentialRevision !== profile.credentialRevision
+                || readConnectedServiceCredentialProviderAccountId(resolution.record)
+                    !== providerAccountId
+            ) continue;
+            const source = binding.groupId === null
+                ? {
+                    ref: profile.ref,
+                    bindingKind: 'account' as const,
+                }
+                : {
+                    ref: profile.ref,
+                    bindingKind: 'group_member' as const,
+                    groupId: binding.groupId,
+                    ...(binding.groupGeneration === null
+                        ? {}
+                        : { groupGeneration: binding.groupGeneration }),
+                };
+            targets.push({
+                source,
+                expectedCredentialRevision: profile.credentialRevision,
+                expectedConfigurationRevision: profile.configurationRevision,
+            });
+        }
+        return targets;
+    };
     const validateConnectedServiceGroupMutationCurrentness = async (input: Readonly<{
         serviceId: ConnectedServiceId;
         groupId: string;
@@ -2498,22 +2631,22 @@ export async function startDaemonSessionControlRuntime(
         generation: number;
         credentialRevision: ConnectedServiceCredentialRevisionV1 | null;
     }>) => {
-        const currentGroup = await params.api.getConnectedServiceAuthGroup({
+        const currentGroup = await readQualifiedConnectedServiceAuthGroup({
             serviceId: input.serviceId,
             groupId: input.groupId,
         }).catch(() => null);
-        if (!currentGroup?.activeProfileId) {
+        if (!currentGroup?.activeConnectedAccountId) {
             return { current: false as const, reason: 'shared_generation_application_superseded' };
         }
         const currentResolutions = await resolveConnectedServiceCredentialResolutions({
             credentials: params.credentials,
             api: params.api,
-            bindings: [{ serviceId: input.serviceId, profileId: currentGroup.activeProfileId }],
+            bindings: [{ serviceId: input.serviceId, profileId: currentGroup.activeConnectedAccountId }],
         }).catch(() => null);
         const currentResolution = currentResolutions?.get(input.serviceId) ?? null;
         const authoritativeTarget = currentResolution
             ? {
-                profileId: currentGroup.activeProfileId,
+                profileId: currentGroup.activeConnectedAccountId,
                 generation: currentGroup.generation,
                 credentialRevision: currentResolution.revisionSemantics === 'revisioned'
                     ? currentResolution.credentialRevision
@@ -2521,7 +2654,7 @@ export async function startDaemonSessionControlRuntime(
             }
             : undefined;
         if (
-            currentGroup.activeProfileId !== input.profileId
+            currentGroup.activeConnectedAccountId !== input.profileId
             || currentGroup.generation !== input.generation
         ) {
             return {
@@ -2558,33 +2691,6 @@ export async function startDaemonSessionControlRuntime(
             reason: input.reason,
         });
     };
-    const preTurnConnectedServiceAuthGroupSwitchCoordinator = createDaemonConnectedServiceAuthGroupSwitchCoordinator({
-        api: params.api,
-        prepareCandidateForSwitch:
-            prepareLegacyAuthGroupCandidateForSwitch,
-        runtimeQuotaSnapshots: connectedServiceRuntimeQuotaSnapshots,
-        accountUsageStore: providerAccountUsageStore,
-        leases: connectedServiceAuthGroupSwitchLeases,
-        quotaFreshnessMs: requestAuthGroupQuotaFreshnessMs,
-        nowMs: () => Date.now(),
-        resolveCredentialRevision: (serviceId, profileId) => (
-            latestConnectedServiceProjectionSnapshot
-                ?.resolveCredentialRevision(serviceId, profileId)
-            ?? null
-        ),
-        restartSession: async () => ({ ok: true }),
-        probeQuotaSnapshotsForGroup: async (input) => {
-            const coordinator = params.getConnectedServiceQuotasCoordinator();
-            return coordinator
-                ? await coordinator.probeGroupQuotaSnapshots(input)
-                : {
-                    status: 'incomplete' as const,
-                    requestedProfileCount: input.profileIds.length,
-                    completedProfileCount: 0,
-                    reason: 'probe_unavailable' as const,
-                };
-        },
-    });
     const qualifiedRequestAuthGroupSwitchCoordinator =
         params.resolveQualifiedConnectedAccountV4Support
             ? createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator({
@@ -2599,7 +2705,6 @@ export async function startDaemonSessionControlRuntime(
             : null;
     const switchAfterConnectedAccountRequestAuthFailure = async (input: Readonly<{
         service: QualifiedConnectedAccountServiceRef;
-        legacyServiceId: ConnectedServiceId | null;
         failure: Parameters<
             ConnectedAccountRequestAuthRecoveryInput[
                 'switchAfterClassifiedFailure'
@@ -2610,20 +2715,15 @@ export async function startDaemonSessionControlRuntime(
             params.resolveQualifiedConnectedAccountV4Support?.()
             ?? 'absent';
         if (
-            support === 'advertised'
-            && qualifiedRequestAuthGroupSwitchCoordinator
+            support !== 'advertised'
+            || !qualifiedRequestAuthGroupSwitchCoordinator
         ) {
-            return await qualifiedRequestAuthGroupSwitchCoordinator
-                .switchAfterClassifiedFailure({
-                    ...input.failure,
-                    serviceId: input.service,
-                });
+            return null;
         }
-        if (support !== 'absent' || !input.legacyServiceId) return null;
-        return await preTurnConnectedServiceAuthGroupSwitchCoordinator
+        return await qualifiedRequestAuthGroupSwitchCoordinator
             .switchAfterClassifiedFailure({
                 ...input.failure,
-                serviceId: input.legacyServiceId,
+                serviceId: input.service,
             });
     };
     let connectedAccountRequestAuthHttpPort: number | null = null;
@@ -2798,7 +2898,6 @@ export async function startDaemonSessionControlRuntime(
                 input.signal.throwIfAborted();
                 const result = await switchAfterConnectedAccountRequestAuthFailure({
                     service: input.resolved.account.service,
-                    legacyServiceId,
                     failure,
                 }).catch(() => null);
                 input.signal.throwIfAborted();
@@ -3385,9 +3484,9 @@ export async function startDaemonSessionControlRuntime(
                         lease: sessionPurposeBindingLease,
                         subjectId: sessionPurposeBindingLease.subjectId,
                         uses: purposeSnapshot.requestAuthUses,
-                        ...(readDeclaredCatalogConnectedServiceIds(
+                        ...(isLegacyServiceKeyedCompatibilityCatalogAgent(
                             contributions.catalogEntriesById[agentId],
-                        ).length > 0
+                        )
                             ? { legacyServiceKeyedCompatibility: true as const }
                             : {}),
                         registerRedaction: redactionLease.add,
@@ -3874,7 +3973,7 @@ export async function startDaemonSessionControlRuntime(
                                 ?.getSessionSyncPendingInputServerContractResult()
                             ?? null,
                         providerAccountUsageStore,
-                        authGroupSwitchCoordinator: preTurnConnectedServiceAuthGroupSwitchCoordinator,
+                        authGroupSwitchCoordinator: connectedServiceAuthGroupPreTurnSwitchCoordinator,
                         predictiveSwitchGuard: connectedServicePredictiveSwitchGuard ?? undefined,
                         repairMissingConnectedServiceMaterializationIdentityForSpawn: async (input) => {
                             const repair = await repairMissingConnectedServiceMaterializationIdentityForSpawn({
@@ -4693,6 +4792,20 @@ export async function startDaemonSessionControlRuntime(
      * the atomic explicit-user-input suppression at enqueue time.
      */
     const verifySessionConnectedServiceAccountAdoption = createSessionConnectedServiceAccountAdoptionVerifier();
+    const qualifiedConnectedAccountApi: ConnectedServiceQualifiedAuthGroupApi = {
+        readGroup: ({ service, groupId, signal }) =>
+            readQualifiedConnectedAccountGroupV4({
+                token: params.credentials.token,
+                group: { service, groupId },
+                ...(signal ? { signal } : {}),
+            }),
+        listAccounts: ({ service, signal }) =>
+            listQualifiedConnectedAccountsV4({
+                token: params.credentials.token,
+                service,
+                ...(signal ? { signal } : {}),
+            }),
+    };
 
     const buildConnectedServiceAuthApplicationSession = (builderInput: Readonly<{
         sessionId: string;
@@ -4836,6 +4949,7 @@ export async function startDaemonSessionControlRuntime(
                 });
             },
             api: params.api,
+            qualifiedConnectedAccountApi,
             ...(runtimeAuthApplyReason
                 ? { runtimeAuthApplyReason }
                 : {}),
@@ -4929,7 +5043,7 @@ export async function startDaemonSessionControlRuntime(
                     serviceId: restartInput.serviceId,
                     groupId: previousBinding.selection === 'group' ? previousBinding.groupId : null,
                     loadGroupPolicy: previousBinding.selection === 'group' && previousBinding.groupId
-                        ? async () => (await params.api.getConnectedServiceAuthGroup({
+                        ? async () => (await readQualifiedConnectedServiceAuthGroup({
                             serviceId: restartInput.serviceId,
                             groupId: previousBinding.groupId,
                         }))?.policy ?? null
@@ -5014,79 +5128,95 @@ export async function startDaemonSessionControlRuntime(
     };
 
     /**
-     * K2 (cmpn4hhdi fix): the PROACTIVE quota-driven pre-turn switch coordinator. It is
-     * built HERE (where the FSM/deferral/hot-apply primitives live) and handed to the
-     * quotas coordinator via startDaemonRuntimeBootstrap. With a sessionId present, its
-     * `restartSession` is the shared FSM apply builder above — so the appServer usage-limit
-     * switch hot-applies in place when eligible (+ X4), and otherwise gates a deferred
-     * restart-resume with the K1 reachability gate, instead of the previous raw SIGTERM.
-     * Pre-turn switches are clean boundaries and therefore never author a continuation row.
+     * The released session-control surface still accepts scalar service ids. Keep that
+     * compatibility seam at the edge while routing every group decision through the
+     * qualified V4 coordinator. An unsupported or unmapped scalar has no group authority.
      */
-    const createSessionQuotaDrivenAuthGroupSwitchCoordinator = (input: Readonly<{
+    const createSessionQualifiedAuthGroupSwitchCoordinator = (input: Readonly<{
         sessionId: string;
+        serviceId: ConnectedServiceId;
         reason: string;
         allowRestart?: boolean;
         executionAuthority?: ConnectedServiceGenerationExecutionAuthority;
-    }>) => createQuotaDrivenConnectedServiceAuthGroupSwitchCoordinator({
-        api: params.api,
-        prepareCandidateForSwitch:
-            prepareLegacyAuthGroupCandidateForSwitch,
-        runtimeQuotaSnapshots: connectedServiceRuntimeQuotaSnapshots,
-        accountUsageStore: providerAccountUsageStore,
-        leases: connectedServiceAuthGroupSwitchLeases,
-        quotaFreshnessMs: resolvePositiveIntEnv(
-            params.processEnv.HAPPIER_CONNECTED_SERVICES_AUTH_GROUP_QUOTA_FRESHNESS_MS,
-            5 * 60_000,
-            { min: 1_000, max: 60 * 60_000 },
-        ),
-        nowMs: () => Date.now(),
-        resolveCredentialRevision: (serviceId, profileId) => (
-            latestConnectedServiceProjectionSnapshot?.resolveCredentialRevision(serviceId, profileId) ?? null
-        ),
-        quotaCoordinator: params.getConnectedServiceQuotasCoordinator(),
-        restartSession: buildConnectedServiceAuthApplicationSession({
-            sessionId: input.sessionId,
-            restartReason: input.reason,
-            commitAccountSwitchEvents: false,
-            allowRestart: input.allowRestart,
-            ...(input.executionAuthority ? { executionAuthority: input.executionAuthority } : {}),
-        }),
-        preflightConnectedServiceAuthGeneration: buildConnectedServiceAuthApplicationSession({
-            sessionId: input.sessionId,
-            restartReason: input.reason,
-            commitAccountSwitchEvents: false,
-            dryRun: true,
-        }),
-        emitEvent: () => undefined,
-    });
+    }>) => {
+        if (params.resolveQualifiedConnectedAccountV4Support?.() !== 'advertised') {
+            return null;
+        }
+        const qualifiedService =
+            resolveFirstPartyQualifiedConnectedAccountServiceForLegacyServiceInput(
+                input.serviceId,
+            );
+        if (!qualifiedService) return null;
+        return createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator({
+            token: params.credentials.token,
+            quotaFreshnessMs: requestAuthGroupQuotaFreshnessMs,
+            nowMs: () => Date.now(),
+            leases: qualifiedConnectedAccountAuthGroupSwitchLeases,
+            prepareCandidateForSwitch:
+                prepareQualifiedAuthGroupCandidateForSwitch,
+            // Session application remains the bounded scalar compatibility seam; the
+            // qualified coordinator owns loading, selection, CAS, and generation truth.
+            applyGeneration: async (generation) => await buildConnectedServiceAuthApplicationSession({
+                sessionId: input.sessionId,
+                restartReason: input.reason,
+                commitAccountSwitchEvents: false,
+                allowRestart: input.allowRestart,
+                ...(input.executionAuthority
+                    ? { executionAuthority: input.executionAuthority }
+                    : {}),
+            })({
+                ...generation,
+                serviceId: input.serviceId,
+            }),
+        });
+    };
 
     const connectedServiceAuthGroupPreTurnSwitchCoordinator = {
-        switchBeforeTurn: async (input: Readonly<{
-            sessionId?: string;
-            serviceId: string;
-            groupId: string;
-            reason: 'usage_limit' | 'soft_threshold' | 'same_provider_account_exhausted' | 'auth_expired' | 'account_changed' | 'refresh_failed';
-        }>): Promise<unknown> => {
+        switchBeforeTurn: async (
+            input: ConnectedServicePreTurnSwitchInput,
+        ): Promise<ConnectedServicePreTurnSwitchResult> => {
             const sessionId = typeof input.sessionId === 'string' ? input.sessionId.trim() : '';
             if (!sessionId) return { status: 'session_not_found' };
             const tracked = Array.from(params.pidToTrackedSession.values())
                 .find((child) => child.happySessionId === sessionId) ?? null;
             if (!tracked) return { status: 'session_not_found' };
-            const proactiveCoordinator = createSessionQuotaDrivenAuthGroupSwitchCoordinator({
+            const parsedServiceId = ConnectedServiceIdSchema.safeParse(input.serviceId);
+            const proactiveCoordinator = parsedServiceId.success
+                ? createSessionQualifiedAuthGroupSwitchCoordinator({
                 sessionId,
+                serviceId: parsedServiceId.data,
                 reason: input.reason,
+            })
+                : null;
+            if (!proactiveCoordinator) {
+                return {
+                    status: 'qualified_connected_account_v4_unavailable',
+                    generation: 0,
+                };
+            }
+            const qualifiedService =
+                resolveFirstPartyQualifiedConnectedAccountServiceForLegacyServiceInput(
+                    parsedServiceId.data,
+                );
+            if (!qualifiedService) {
+                return {
+                    status: 'qualified_connected_account_v4_unavailable',
+                    generation: 0,
+                };
+            }
+            const proactiveSwitchResult = await proactiveCoordinator.switchBeforeTurn({
+                ...input,
+                serviceId: qualifiedService,
             });
-            // O3: switch-attempt trace at the proactive-quota decision point (the cmpn4hhdi seam).
-            const proactiveSwitchResult = await proactiveCoordinator.switchBeforeTurn(input);
             logger.debug('[DAEMON RUN] Connected-service proactive quota switch attempt', {
                 trigger: 'automatic_group_switch',
-                decision: 'proactive_quota_switch_before_turn',
+                decision: 'qualified_v4_switch_before_turn',
                 sessionId,
                 serviceId: input.serviceId,
                 groupId: input.groupId,
                 reason: input.reason,
-                resultStatus: (proactiveSwitchResult as { status?: unknown }).status ?? null,
-                routedThroughFsm: true,
+                resultStatus: proactiveSwitchResult.status,
+                routedThroughQualifiedV4: true,
             });
             return proactiveSwitchResult;
         },
@@ -5111,15 +5241,42 @@ export async function startDaemonSessionControlRuntime(
                     errorCode: 'session_not_found',
                 };
             }
+            const parsedServiceId = ConnectedServiceIdSchema.safeParse(input.serviceId);
+            const recipientCoordinator = parsedServiceId.success
+                ? createSessionQualifiedAuthGroupSwitchCoordinator({
+                    sessionId,
+                    serviceId: parsedServiceId.data,
+                    reason: input.reason,
+                    allowRestart: input.allowRestart,
+                    ...(input.executionAuthority
+                        ? { executionAuthority: input.executionAuthority }
+                        : {}),
+                })
+                : null;
+            if (!recipientCoordinator || !parsedServiceId.success) {
+                return {
+                    status: 'generation_apply_failed',
+                    generation: input.generation,
+                    errorCode: 'qualified_connected_account_v4_unavailable',
+                };
+            }
+            const qualifiedService =
+                resolveFirstPartyQualifiedConnectedAccountServiceForLegacyServiceInput(
+                    parsedServiceId.data,
+                );
+            if (!qualifiedService) {
+                return {
+                    status: 'generation_apply_failed',
+                    generation: input.generation,
+                    errorCode: 'qualified_connected_account_v4_unavailable',
+                };
+            }
             // Recipients consume the source session's immutable committed generation. They must
             // never re-enter selection/CAS and independently advance the group generation.
-            const recipientCoordinator = createSessionQuotaDrivenAuthGroupSwitchCoordinator({
-                sessionId,
-                reason: input.reason,
-                allowRestart: input.allowRestart,
-                ...(input.executionAuthority ? { executionAuthority: input.executionAuthority } : {}),
+            const result = await recipientCoordinator.applyCommittedGeneration({
+                ...input,
+                serviceId: qualifiedService,
             });
-            const result = await recipientCoordinator.applyCommittedGeneration(input);
             if (
                 input.allowRestart === false
                 && result.status === 'generation_apply_failed'
@@ -5298,7 +5455,7 @@ export async function startDaemonSessionControlRuntime(
                             quotaFreshnessMs: 5 * 60_000,
                             nowMs: () => Date.now(),
                             authGroupSwitchCoordinator:
-                                preTurnConnectedServiceAuthGroupSwitchCoordinator,
+                                connectedServiceAuthGroupPreTurnSwitchCoordinator,
                             predictiveSwitchGuard:
                                 connectedServicePredictiveSwitchGuard ?? null,
                             accountSettings,
@@ -7341,43 +7498,6 @@ export async function startDaemonSessionControlRuntime(
                     })
                 ).status === 'admitted';
             },
-            resolveCurrentExternalSessionProviderOps:
-                async (agentId) => {
-                    try {
-                        const surface =
-                            await resolveExternalSessionSurfaceOps(
-                                agentId,
-                            );
-                        const {
-                            validateSource,
-                            listCandidates,
-                            resolveLinkIdentity,
-                            canonicalizeLinkedSession,
-                            pageTranscript,
-                            readAfterTranscript,
-                        } = surface;
-                        if (
-                            !validateSource
-                            || !listCandidates
-                            || !resolveLinkIdentity
-                            || !canonicalizeLinkedSession
-                            || !pageTranscript
-                            || !readAfterTranscript
-                        ) {
-                            return null;
-                        }
-                        return Object.freeze({
-                            validateSource,
-                            listCandidates,
-                            resolveLinkIdentity,
-                            canonicalizeLinkedSession,
-                            pageTranscript,
-                            readAfterTranscript,
-                        });
-                    } catch {
-                        return null;
-                    }
-            },
             resolveRetainedExternalSessionAgentContribution:
                 async ({ retainedAgent }) => {
                     try {
@@ -7606,6 +7726,16 @@ export async function startDaemonSessionControlRuntime(
                         error: error instanceof Error ? error.message : String(error),
                     });
                 }
+            }
+        },
+        retireSessionRunnerOwnedManagedServices: async ({ sessionId }) => {
+            const retiredPids = await managedServiceDurabilityOwner
+                ?.retireSessionRunnerOwnedProjections({ sessionId });
+            if (retiredPids?.length) {
+                logger.debug('[DAEMON RUN] Retired managed services orphaned by an exited Session runner', {
+                    sessionId,
+                    retiredPids,
+                });
             }
         },
         onUnexpectedExit: (tracked, exit) => {
@@ -8083,10 +8213,10 @@ export async function startDaemonSessionControlRuntime(
         if (!serviceId.success || !groupId) return classification;
         return await resolveRuntimeAuthFailureSourceProfile({
             classification,
-            getGroupMembers: async () => (await params.api.getConnectedServiceAuthGroup({
+            getGroupMembers: async () => (await readQualifiedConnectedServiceAuthGroup({
                 serviceId: serviceId.data,
                 groupId,
-            }))?.members ?? null,
+            }))?.members.map((member) => ({ profileId: member.connectedAccountId })) ?? null,
             resolveProviderAccountId: async (profileId) => {
                 const resolution = await resolveConnectedServiceCredentialResolutions({
                     credentials: params.credentials,
@@ -8158,11 +8288,10 @@ export async function startDaemonSessionControlRuntime(
         const legacyRuntimeAuthService = ConnectedServiceIdSchema.safeParse(
             input.classification.serviceId,
         );
-        const qualifiedRuntimeAuthService = legacyRuntimeAuthService.success
-            ? resolveFirstPartyQualifiedConnectedAccountServiceForLegacyServiceId(
-                legacyRuntimeAuthService.data,
-            )
-            : null;
+        const qualifiedRuntimeAuthService =
+            resolveFirstPartyQualifiedConnectedAccountServiceForLegacyServiceInput(
+                input.classification.serviceId,
+            );
         const runtimeAuthGroupQuotaFreshnessMs = resolvePositiveIntEnv(
             params.processEnv.HAPPIER_CONNECTED_SERVICES_AUTH_GROUP_QUOTA_FRESHNESS_MS,
             5 * 60_000,
@@ -8226,40 +8355,7 @@ export async function startDaemonSessionControlRuntime(
                 };
             })()
             : null;
-        const switchCoordinator = qualifiedRuntimeAuthSwitchCoordinator
-            ?? (
-                runtimeAuthV4Support === 'absent'
-                    ? createDaemonConnectedServiceAuthGroupSwitchCoordinator({
-                        api: params.api,
-                        prepareCandidateForSwitch:
-                            prepareLegacyAuthGroupCandidateForSwitch,
-                        runtimeQuotaSnapshots: connectedServiceRuntimeQuotaSnapshots,
-                        accountUsageStore: providerAccountUsageStore,
-                        leases: connectedServiceAuthGroupSwitchLeases,
-                        quotaFreshnessMs: runtimeAuthGroupQuotaFreshnessMs,
-                        nowMs: () => Date.now(),
-                        probeQuotaSnapshotsForGroup: async (groupInput) => {
-                            const coordinator = params.getConnectedServiceQuotasCoordinator();
-                            return coordinator
-                                ? await coordinator.probeGroupQuotaSnapshots(groupInput)
-                                : {
-                                    status: 'incomplete' as const,
-                                    requestedProfileCount: groupInput.profileIds.length,
-                                    completedProfileCount: 0,
-                                    reason: 'probe_unavailable' as const,
-                                };
-                        },
-                        restartSession: buildRuntimeAuthApplication({
-                            commitAccountSwitchEvents: true,
-                        }),
-                        preflightConnectedServiceAuthGeneration:
-                            buildRuntimeAuthApplication({
-                                commitAccountSwitchEvents: false,
-                                dryRun: true,
-                            }),
-                    })
-                    : null
-            );
+        const switchCoordinator = qualifiedRuntimeAuthSwitchCoordinator;
         const runtimeAuthCapabilityAgentId = input.sourceAuthorization?.status === 'authorized'
             ? input.sourceAuthorization.tracked
                 ? resolveTrackedSessionCatalogAgentId(input.sourceAuthorization.tracked)
@@ -8279,7 +8375,7 @@ export async function startDaemonSessionControlRuntime(
                 groupId: input.classification.groupId,
                 explicit: input.resumePromptMode,
                 loadGroupPolicy: input.classification.groupId
-                    ? async () => (await params.api.getConnectedServiceAuthGroup({
+                    ? async () => (await readQualifiedConnectedServiceAuthGroup({
                         serviceId: ConnectedServiceIdSchema.parse(input.classification.serviceId),
                         groupId: input.classification.groupId!,
                     }))?.policy ?? null
@@ -8705,6 +8801,7 @@ export async function startDaemonSessionControlRuntime(
         setBrowserDaemonControlRoutesProvider?: (provider: (() => BrowserDaemonControlRoutes | null) | null) => void;
         setBrowserDaemonContextRoutesProvider?: (provider: (() => BrowserContextRoutes | null) | null) => void;
         setBrowserDaemonAutomationRoutesProvider?: (provider: (() => BrowserAutomationRoutes | null) | null) => void;
+        setBrowserAutomationRuntimeProvisionerProvider?: (provider: (() => ProvisionBrowserAutomationRuntime | null) | null) => void;
         setBrowserDiagnosticsActionRoutesProvider?: (provider: (() => BrowserDiagnosticsActionRoutes | null) | null) => void;
         setBrowserRecordingRoutesProvider?: (provider: (() => BrowserRecordingRoutes | null) | null) => void;
         setLocalServicesRuntimeActionRoutesProvider?: (provider: (() => LocalServicesRuntimeActionRoutes | null) | null) => void;
@@ -8722,18 +8819,13 @@ export async function startDaemonSessionControlRuntime(
                 logger.debug('[DAEMON RUN] Browser daemon feature gate refresh failed (non-fatal)', error);
             },
         });
-    const browserContextDiagnosticsRingBuffer: BrowserContextDiagnosticsRingBuffer =
-        createBrowserContextDiagnosticsRingBuffer();
     const browserDiagnosticsStore = createBrowserDiagnosticsDaemonStore({ machineId: params.machineId });
-    // Tap the diagnostics publish + lifecycle path into the context ring buffer without mutating the
-    // store: the wrapper re-exposes the full store contract and forwards every method. Only accepted,
-    // schema-valid events feed the ring (it inherits the store's redaction + validation), and the
-    // bridge's view-close / session-close clears prune the ring in lockstep with the store so closed
-    // or purged diagnostics never linger in daemon memory.
-    const browserDiagnosticsStoreTapped = tapBrowserDiagnosticsStoreIntoRingBuffer({
-        store: browserDiagnosticsStore,
-        ringBuffer: browserContextDiagnosticsRingBuffer,
-    });
+    // SB-G: the offline-diagnostics summaries read the store on demand instead of retaining a second
+    // copy of the same redacted event stream under the same view key. The store is the one retainer,
+    // so a view's diagnostics are pruned exactly once by the bridge's view-close / session-close
+    // clears (BRW-6 purge posture) and the two buffers cannot diverge.
+    const browserContextDiagnosticsSummarySource: BrowserContextDiagnosticsSummarySource =
+        createBrowserContextDiagnosticsSummarySource({ store: browserDiagnosticsStore });
     let browserDiagnosticsRoutes: BrowserDiagnosticsRoutes | null = null;
     // DEV-5 / DIAG-INTERACTION: the `browser.diagnostics.*` runtime-action route owner. snapshot/clear
     // are backed by the live daemon diagnostics store; the interactive verbs (pause/resume/eval/
@@ -8810,7 +8902,7 @@ export async function startDaemonSessionControlRuntime(
             if (controlRuntimeResourcesDisposed) return;
             const browserDiagnosticsEnabled = browserDaemonFeatureGate.isEnabled('browser.diagnostics');
             if (browserDiagnosticsEnabled && !browserDiagnosticsRoutes) {
-                browserDiagnosticsRoutes = createBrowserDiagnosticsRoutes({ store: browserDiagnosticsStoreTapped });
+                browserDiagnosticsRoutes = createBrowserDiagnosticsRoutes({ store: browserDiagnosticsStore });
             }
             if (
                 browserDiagnosticsEnabled
@@ -8818,7 +8910,7 @@ export async function startDaemonSessionControlRuntime(
                     || (browserDiagnosticsInteractionTransport && !browserDiagnosticsActionRoutesHasInteraction))
             ) {
                 browserDiagnosticsActionRoutes = createBrowserDiagnosticsActionRoutes({
-                    store: browserDiagnosticsStoreTapped,
+                    store: browserDiagnosticsStore,
                     ...(browserDiagnosticsInteractionTransport
                         ? { interaction: browserDiagnosticsInteractionTransport }
                         : {}),
@@ -8827,12 +8919,35 @@ export async function startDaemonSessionControlRuntime(
             }
 
             const browserSidecarEnabled = browserDaemonFeatureGate.isEnabled('browser.sidecar');
-            const browserUseAllowed = params.resolveBrowserUseAllowed?.() === true;
-            if (browserSidecarEnabled && browserUseAllowed && !unregisterBrowserSidecarControlAdapter) {
+            // E2-F1: this gate used to also require `params.resolveBrowserUseAllowed?.() === true`,
+            // a browser-use consent hook that NO production caller has ever passed — `git log -S`
+            // over the whole repository history finds it only inside this file and its own test. It
+            // was therefore permanently `false`, and this block holds the sole
+            // `browserControlBroker.registerAdapter` call plus the only assignments of
+            // `browserControlRoutes` / `browserContextRoutes` / `browserAutomationRoutes`, so no
+            // agent could ever reach a daemon browser route. It is not a lost producer: no
+            // `browserUse` policy owner exists anywhere in the product. Consent for agent-driven
+            // browser use is owned by the action-approval danger floor (every
+            // `browser.automation.*` id is in `protocol/src/actions/danger.ts`, and
+            // `readFeatureEnv.ts` says so verbatim); the server feature bit below is the
+            // availability authority. One owner each — no second decision-maker.
+            if (browserSidecarEnabled && !unregisterBrowserSidecarControlAdapter) {
                 const browserSidecarControlAdapterFactory = params.browserSidecarControlAdapterFactory
                     ?? createProductBrowserSidecarControlAdapterFactory({
                         featureEnabled: browserSidecarEnabled,
-                        browserUseAllowed,
+                        // OPEN PRODUCT DECISION (E2-F1, awaiting a user ruling — see
+                        // `.project/plans/2026-08-23-ru2-surfaces-finalization/lanes/A1.md`).
+                        // `autoInstallWhenMissing` defaults to `true`, and MCH-2's lazy install is
+                        // the ONLY production path that can ever place the managed
+                        // Chrome-for-Testing artifact on disk (`getArchiveDownloadInstallableAdapter`
+                        // has zero non-test callers). Leaving it defaulted here would make every
+                        // daemon fetch ~150 MB of third-party Chromium at startup, because
+                        // `browser.sidecar` is default-ALLOW and this refresh runs on every start.
+                        // That is a cost/trust change no user has agreed to, so it stays explicitly
+                        // off: the daemon wires browser control/context/automation the moment a
+                        // managed Chromium exists on disk, and provisioning it stays a separate,
+                        // explicit decision. Flip this to `true` to adopt the lazy install.
+                        autoInstallWhenMissing: false,
                     });
                 const browserSidecarControlAdapterResult = await browserSidecarControlAdapterFactory({
                     machineId: params.machineId,
@@ -8853,7 +8968,7 @@ export async function startDaemonSessionControlRuntime(
                                     contextCapture: browserSidecarControlAdapterResult.contextCapture,
                                     workingDirectory: configuration.happyHomeDir,
                                     pathAllowanceRegistry: createTransferPathAllowanceRegistry(),
-                                    diagnosticsRingBuffer: browserContextDiagnosticsRingBuffer,
+                                    diagnosticsSummarySource: browserContextDiagnosticsSummarySource,
                                 })
                                 : createUnavailableBrowserContextSource();
                         browserContextRoutes = createBrowserContextRoutes({
@@ -8900,7 +9015,7 @@ export async function startDaemonSessionControlRuntime(
                         const subscribeViewLifecycle = browserSidecarContextCapture.subscribeViewLifecycle;
                         const diagnosticsRuntime = createSidecarCdpDiagnosticsRuntime({
                             ownerAccountId: params.machineId,
-                            store: browserDiagnosticsStoreTapped,
+                            store: browserDiagnosticsStore,
                             contextCapture: {
                                 transport: browserSidecarContextCapture.transport,
                                 resolvePageHandle: (view) => browserSidecarContextCapture.resolvePageHandle(view),
@@ -8936,7 +9051,7 @@ export async function startDaemonSessionControlRuntime(
                             },
                         });
                         browserDiagnosticsActionRoutes = createBrowserDiagnosticsActionRoutes({
-                            store: browserDiagnosticsStoreTapped,
+                            store: browserDiagnosticsStore,
                             interaction: browserDiagnosticsInteractionTransport,
                         });
                         browserDiagnosticsActionRoutesHasInteraction = true;
@@ -9081,13 +9196,28 @@ export async function startDaemonSessionControlRuntime(
             token: params.credentials.token,
         }),
     };
+    // Install-on-first-automation-attempt (user ruling, 2026-08-23). Startup deliberately does NOT
+    // fetch the ~150MB managed Chromium (`autoInstallWhenMissing: false` above); the provisioner is
+    // published so the FIRST `browser.automation.*` dispatch that finds no route can start the
+    // fetch and, when it lands, refresh these same route owners. No feature check here: the browser
+    // action executor already refuses the family when `browser.automation` is server-disabled, and a
+    // second gate would be a second decision-maker for one question.
+    const browserAutomationRuntimeProvisioner = createBrowserAutomationRuntimeProvisioner({
+        refreshRouteOwners: refreshBrowserRouteOwners,
+        onError: (error) => {
+            logger.debug('[DAEMON RUN] Managed browser runtime provisioning failed (non-fatal)', error);
+        },
+    });
+    runtimeActionRouteProviderTarget.setBrowserAutomationRuntimeProvisionerProvider?.(
+        () => browserAutomationRuntimeProvisioner.provision,
+    );
+
     await refreshBrowserRouteOwners();
     runtimeActionRouteProviderTarget.setLocalServicesRuntimeActionRoutesProvider?.(() => localServicesRuntimeActionRoutes);
     runtimeActionRouteProviderTarget.setSimulatorPreviewRoutesProvider?.(() => simulatorPreviewRuntime.routes);
     const localServicesMachineRpcRoutes: DaemonLocalServicesMachineRpcRoutes = {
         localServicesInventory: localServicesRuntime.inventoryRoutes,
         localServicesLauncher: localServicesRuntime.launcherRoutes,
-        localServicesManaged: localServicesRuntime.managedRoutes,
         localServicesPreview: localServicesRuntime.previewRoutes,
         localServicesActions: localServicesRuntime.actionRoutes,
         localServicesPublicPreview: localServicesRuntimeActionRoutes.publicPreviewRoutes,
@@ -9123,6 +9253,7 @@ export async function startDaemonSessionControlRuntime(
         if (browserAutomationRoutes) {
             runtimeActionRouteProviderTarget.setBrowserDaemonAutomationRoutesProvider?.(null);
         }
+        runtimeActionRouteProviderTarget.setBrowserAutomationRuntimeProvisionerProvider?.(null);
         if (browserDiagnosticsActionRoutes) {
             runtimeActionRouteProviderTarget.setBrowserDiagnosticsActionRoutesProvider?.(null);
         }
@@ -9223,7 +9354,7 @@ export async function startDaemonSessionControlRuntime(
             accountUsageStore: providerAccountUsageStore,
             quotaFreshnessMs: 5 * 60_000,
             nowMs: () => Date.now(),
-            authGroupSwitchCoordinator: preTurnConnectedServiceAuthGroupSwitchCoordinator,
+            authGroupSwitchCoordinator: connectedServiceAuthGroupPreTurnSwitchCoordinator,
             predictiveSwitchGuard: connectedServicePredictiveSwitchGuard ?? null,
             accountSettings: getActiveAccountSettingsSnapshot()?.settings ?? null,
             processEnv: params.processEnv ?? process.env,
@@ -9283,13 +9414,31 @@ export async function startDaemonSessionControlRuntime(
                     params.pidToTrackedSession.get(runnerPid) === tracked,
             });
         },
-        acquireAgentPurposeContributions: async () => {
+        acquireAgentPurposeContributions: async ({ agentId }) => {
             const lease =
                 await acquireAuthoritativePluginRuntimeRegistryLease({
                     happyHomeDir: configuration.happyHomeDir,
                 });
             return Object.freeze({
                 contributions: lease.registry.contributes,
+                // The same registry that supplies the declarations also owns the committed
+                // immutable generation those declarations came from, so both facts are read
+                // through this one lease rather than resolved again later.
+                resolveAgentContributionIdentity: async () => {
+                    const identity = lease.registry.contributes
+                        .agentDefinitionsById.get(agentId)?.identity;
+                    if (!identity) return null;
+                    const immutableGenerationId = await lease.registry
+                        .resolveCurrentPluginImmutableGenerationId?.(
+                            identity.pluginId,
+                        ) ?? null;
+                    if (!immutableGenerationId) return null;
+                    return Object.freeze({
+                        pluginId: identity.pluginId,
+                        localId: identity.localId,
+                        immutableGenerationId,
+                    });
+                },
                 isCurrent: () =>
                     pluginReloadController.isRuntimeRegistryCurrent(
                         lease.registry,
@@ -10516,13 +10665,33 @@ export async function startDaemonSessionControlRuntime(
             requestCurrentIntent: pluginActionCurrentIntent,
         })
         : null;
+    const externalActionContributedApprovalReplay = externalActionAccountId
+        ? createDaemonExternalActionContributedApprovalReplay({
+            credentials: params.credentials,
+        })
+        : null;
     const externalActionContributedDefinitionLister = externalActionAccountId
         ? createDaemonExternalActionContributedDefinitionLister()
         : null;
+    const requiresPortableSessionSpawnServerIdentity = (actionId: string, input: unknown): boolean => {
+        if (actionId === 'session.spawn_new' || actionId === 'approval.request.decide') {
+            return true;
+        }
+        if (
+            actionId !== 'approval.request.create'
+            || !input
+            || typeof input !== 'object'
+            || Array.isArray(input)
+        ) {
+            return false;
+        }
+        return (input as Readonly<Record<string, unknown>>).actionId === 'session.spawn_new';
+    };
     const externalActionIngressOwner: ExternalActionIngressOwner | undefined = (
         externalActionAccountId
         && externalActionTranscriptFollowLeaseRegistry
         && externalActionContributedInvoker
+        && externalActionContributedApprovalReplay
         && externalActionContributedDefinitionLister
     )
         ? {
@@ -10538,6 +10707,27 @@ export async function startDaemonSessionControlRuntime(
             }),
             executor: {
                 execute: async (actionId, input, context) => {
+                    let executionContext = context;
+                    if (requiresPortableSessionSpawnServerIdentity(actionId, input)) {
+                        let origin: CurrentMachineExecutionOriginContext | null = null;
+                        try {
+                            origin = await params.resolveCurrentMachineExecutionOriginContext?.(context?.signal) ?? null;
+                        } catch {
+                            origin = null;
+                        }
+                        if (!origin || origin.machineId !== params.machineId) {
+                            const cancelled = context?.signal?.aborted === true;
+                            return {
+                                ok: false,
+                                errorCode: cancelled ? 'cancelled' : 'target_unavailable',
+                                error: cancelled ? 'cancelled' : 'target_unavailable',
+                            };
+                        }
+                        executionContext = {
+                            ...(context ?? {}),
+                            serverId: origin.serverIdentityId,
+                        };
+                    }
                     // Machine-sync owners can be replaced after the control
                     // listener starts. Resolve their exact current adapters at
                     // the request boundary rather than retaining a stale one.
@@ -10552,6 +10742,8 @@ export async function startDaemonSessionControlRuntime(
                             ? { runtimeActionExecute: params.runtimeActionExecute }
                             : {}),
                         invokeContributedAction: externalActionContributedInvoker,
+                        targetActionApprovalReplay:
+                            externalActionContributedApprovalReplay,
                         listContributedActionDefinitions:
                             externalActionContributedDefinitionLister,
                         ...(hostExternalSessionAction
@@ -10578,7 +10770,7 @@ export async function startDaemonSessionControlRuntime(
                         transcriptFollowLeaseRegistry:
                             externalActionTranscriptFollowLeaseRegistry,
                     });
-                    return await executor.execute(actionId, input, context);
+                    return await executor.execute(actionId, input, executionContext);
                 },
             },
         }
@@ -10591,6 +10783,7 @@ export async function startDaemonSessionControlRuntime(
                 accountId: externalActionAccountId,
                 introspect: createAccountServerPatIntrospector({
                     daemonConnectionToken: params.credentials.token,
+                    serverBaseUrl: params.serverBaseUrl,
                 }),
             }),
             ...externalActionIngressOwner,
@@ -10756,7 +10949,6 @@ export async function startDaemonSessionControlRuntime(
         ...(params.sshTunnelSupervisor ? { sshTunnels: params.sshTunnelSupervisor } : {}),
         localServicesInventory: localServicesRuntime.inventoryRoutes,
         localServicesLauncher: localServicesRuntime.launcherRoutes,
-        localServicesManaged: localServicesRuntime.managedRoutes,
         localServicesPreview: localServicesRuntime.previewRoutes,
         localServicesActions: localServicesRuntime.actionRoutes,
         localServicesPublicPreview: localServicesRuntimeActionRoutes.publicPreviewRoutes,
@@ -11227,6 +11419,7 @@ export async function startDaemonSessionControlRuntime(
                                         operationRequest.reference,
                                     candidateId:
                                         operationRequest.candidateId,
+                                    sessionId,
                                     signal:
                                         context.signal
                                         ?? new AbortController().signal,
@@ -11688,6 +11881,43 @@ export async function startDaemonSessionControlRuntime(
                 }
                 if (
                     request.operation.kind
+                    === 'managed_server.secret.read'
+                ) {
+                    const resolved =
+                        await resolveRunnerManagedServiceDeclaredSecret({
+                            paths: resolvePluginStorePaths({
+                                happyHomeDir:
+                                    configuration.happyHomeDir,
+                            }),
+                            binding: retainedAgent,
+                            request: {
+                                phase: request.operation.phase,
+                                secretId: request.operation.secretId,
+                                canonicalOrigin:
+                                    request.operation.canonicalOrigin,
+                                ...(request.operation.expectedRevision
+                                    ? {
+                                        expectedRevision:
+                                            request.operation
+                                                .expectedRevision,
+                                    }
+                                    : {}),
+                            },
+                            ...(context.signal
+                                ? { signal: context.signal }
+                                : {}),
+                        });
+                    return AgentRuntimeDaemonServiceResponseV1Schema.parse({
+                        ok: true as const,
+                        result: {
+                            kind: 'managed_server.secret' as const,
+                            requestId: request.operation.requestId,
+                            ...resolved,
+                        },
+                    });
+                }
+                if (
+                    request.operation.kind
                     === 'managed_server.supervision.authorize'
                 ) {
                     const managedProviderAuthority =
@@ -12027,6 +12257,7 @@ export async function startDaemonSessionControlRuntime(
                     });
                 },
                 api: params.api,
+                qualifiedConnectedAccountApi,
                 resolveContinuity: async ({
                     tracked,
                     sessionId,
@@ -12480,10 +12711,20 @@ export async function startDaemonSessionControlRuntime(
                 claimedSource = await resolveProviderAccountUsageSourceProfile({
                     source: groupSource,
                     providerAccountId: input.snapshot.accountSubject.id,
-                    getCurrentGroup: async () => await params.api.getConnectedServiceAuthGroup({
-                        serviceId: groupSource.serviceId,
-                        groupId: groupSource.groupId,
-                    }),
+                    getCurrentGroup: async () => {
+                        const group = await readQualifiedConnectedServiceAuthGroup({
+                            serviceId: groupSource.serviceId,
+                            groupId: groupSource.groupId,
+                        });
+                        return group
+                            ? {
+                                generation: group.generation,
+                                members: group.members.map((member) => ({
+                                    profileId: member.connectedAccountId,
+                                })),
+                            }
+                            : null;
+                    },
                     resolveProviderAccountId: async (profileId) => {
                         const resolution = await resolveConnectedServiceCredentialResolutions({
                             credentials: params.credentials,
@@ -12564,9 +12805,11 @@ export async function startDaemonSessionControlRuntime(
                                 bindingKind: 'group_member',
                                 groupId: currentBinding.groupId,
                                 groupGeneration: currentBinding.groupGeneration,
-                            };
+                    };
                     return qualifiedUsageSource;
                 },
+                resolvePersistenceTargets:
+                    resolveQualifiedProviderAccountUsagePersistenceTargets,
                 publishRecordId: async ({ sessionId, recordId }) => await publishProviderAccountUsageRecordIdToSessionMetadata({
                     token: params.credentials.token,
                     credentials: params.credentials,
@@ -12702,6 +12945,8 @@ export async function startDaemonSessionControlRuntime(
             getChildren: () => Array.from(params.pidToTrackedSession.values()),
             store: providerAccountUsageStore,
             persistence: providerAccountUsagePersistence,
+            resolvePersistenceTargets:
+                resolveQualifiedProviderAccountUsagePersistenceTargets,
             publishRecordId: async ({ sessionId, recordId }) => await publishProviderAccountUsageRecordIdToSessionMetadata({
                 token: params.credentials.token,
                 credentials: params.credentials,

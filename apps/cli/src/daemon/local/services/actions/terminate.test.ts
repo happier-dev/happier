@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
     createTerminateDetectedService,
+    type TerminateDescendantResolution,
     type TerminateListenerProbeResult,
     type TerminateProcessControl,
     type TerminateProcessIdentity,
@@ -58,6 +59,8 @@ type ControlOverrides = Partial<TerminateProcessControl> & {
     aliveResults?: readonly boolean[];
     signalResults?: readonly TerminateProcessSignalOutcome[];
     descendantPids?: readonly number[];
+    /** Descendant resolutions returned per `resolveDescendantPids` call, in order. */
+    descendantRounds?: ReadonlyArray<TerminateDescendantResolution>;
 };
 
 function held(identity: TerminateProcessIdentity): TerminateListenerProbeResult {
@@ -79,7 +82,16 @@ function fakeControl(overrides: ControlOverrides = {}): TerminateProcessControl 
     const signalResults = overrides.signalResults ?? [{ status: 'delivered', deliveredPids: [4_321] }];
     let signalIndex = 0;
 
-    const resolveDescendantPids = vi.fn(async () => overrides.descendantPids ?? [4_322, 4_323]);
+    const descendantRounds = overrides.descendantRounds;
+    let descendantRound = 0;
+    const resolveDescendantPids = vi.fn(async (): Promise<TerminateDescendantResolution> => {
+        if (descendantRounds) {
+            const value = descendantRounds[Math.min(descendantRound, descendantRounds.length - 1)];
+            descendantRound += 1;
+            return value ?? { status: 'resolved', pids: [] };
+        }
+        return { status: 'resolved', pids: overrides.descendantPids ?? [4_322, 4_323] };
+    });
     const signal = vi.fn(async () => {
         const value = signalResults[Math.min(signalIndex, signalResults.length - 1)];
         signalIndex += 1;
@@ -229,7 +241,6 @@ describe('createTerminateDetectedService', () => {
         const result = await terminate({ request: request(), entry: entry(), now: 0 });
 
         expect(result).toEqual({ status: 'succeeded' });
-        expect(control.resolveDescendantPids).toHaveBeenCalledTimes(1);
         expect(control.signal).toHaveBeenNthCalledWith(1, {
             pid: 4_321,
             signal: 'SIGTERM',
@@ -238,6 +249,68 @@ describe('createTerminateDetectedService', () => {
         expect(control.signal).toHaveBeenNthCalledWith(2, {
             pid: 4_321,
             signal: 'SIGKILL',
+            descendantPids: [4_322],
+        });
+    });
+
+    it('unions descendants spawned during the grace window into the SIGKILL round', async () => {
+        // Surviving SIGTERM is exactly when a dev server may fork a replacement worker; the
+        // first round's pids stay in the set because they may since have been orphaned onto init.
+        const control = fakeControl({
+            probeResults: [held({ pid: 4_321, startTime: 1_717_171_717_000 }), { status: 'free' }],
+            aliveResults: [true],
+            descendantRounds: [
+                { status: 'resolved', pids: [4_322] },
+                { status: 'resolved', pids: [4_323] },
+            ],
+        });
+        const terminate = createTerminateDetectedService(control, { graceMs: 1 });
+
+        await terminate({ request: request(), entry: entry(), now: 0 });
+
+        expect(control.resolveDescendantPids).toHaveBeenCalledTimes(2);
+        expect(control.signal).toHaveBeenNthCalledWith(2, {
+            pid: 4_321,
+            signal: 'SIGKILL',
+            descendantPids: [4_322, 4_323],
+        });
+    });
+
+    it('refuses to signal anything when the process table cannot be read', async () => {
+        // The regression this pins: an unreadable process table used to resolve to "no
+        // descendants", so terminate signalled the listener alone. Killing the listener frees
+        // the port, so verification passed and the destructive action reported success while
+        // the user's children kept running.
+        const control = fakeControl({
+            probeResults: [held({ pid: 4_321, startTime: 1_717_171_717_000 }), { status: 'free' }],
+            descendantRounds: [{ status: 'unavailable' }],
+        });
+        const terminate = createTerminateDetectedService(control, { graceMs: 1 });
+
+        const result = await terminate({ request: request(), entry: entry(), now: 0 });
+
+        expect(result).toEqual({ status: 'failed', reasonCode: 'process_tree_unresolved' });
+        expect(control.signal).not.toHaveBeenCalled();
+    });
+
+    it('refuses to escalate to SIGKILL when the re-read of the process table fails', async () => {
+        // Half a tree kill is still a partial kill: SIGTERM went out, the listener survived it,
+        // and we can no longer establish what else has to die. Report it instead of forcing a
+        // SIGKILL at a set we know is stale.
+        const control = fakeControl({
+            probeResults: [held({ pid: 4_321, startTime: 1_717_171_717_000 }), { status: 'free' }],
+            aliveResults: [true],
+            descendantRounds: [{ status: 'resolved', pids: [4_322] }, { status: 'unavailable' }],
+        });
+        const terminate = createTerminateDetectedService(control, { graceMs: 1 });
+
+        const result = await terminate({ request: request(), entry: entry(), now: 0 });
+
+        expect(result).toEqual({ status: 'failed', reasonCode: 'process_tree_unresolved' });
+        expect(control.signal).toHaveBeenCalledOnce();
+        expect(control.signal).toHaveBeenCalledWith({
+            pid: 4_321,
+            signal: 'SIGTERM',
             descendantPids: [4_322],
         });
     });

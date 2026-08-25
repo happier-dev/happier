@@ -2,10 +2,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 describe('resolveCliRuntimeAssetPath', () => {
   const originalExecPathDescriptor = Object.getOwnPropertyDescriptor(process, 'execPath');
+  const originalArgv = [...process.argv];
 
   afterEach(() => {
     vi.resetModules();
     vi.doUnmock('@/projectPath');
+    vi.unstubAllEnvs();
+    process.argv = [...originalArgv];
     if (originalExecPathDescriptor) {
       Object.defineProperty(process, 'execPath', originalExecPathDescriptor);
     }
@@ -26,6 +29,81 @@ describe('resolveCliRuntimeAssetPath', () => {
 
     expect(resolveCliRuntimeAssetPath('scripts', 'claude_local_launcher.cjs')).toBe(
       '/runtime/payload/scripts/claude_local_launcher.cjs',
+    );
+  });
+
+  it('uses the admitted physical runtime root when Bun exposes only virtual process paths', async () => {
+    vi.doMock('@/projectPath', () => ({
+      projectPath: () => '/repo/apps/cli',
+    }));
+    if (originalExecPathDescriptor) {
+      Object.defineProperty(process, 'execPath', {
+        ...originalExecPathDescriptor,
+        value: '/$bunfs/root/happier',
+      });
+    }
+    process.argv = ['/$bunfs/root/happier', '/$bunfs/root/happier', 'daemon', 'start'];
+    vi.stubEnv('HAPPIER_CLI_SUBPROCESS_RUNTIME_BACKED', '1');
+    vi.stubEnv(
+      'HAPPIER_CLI_SUBPROCESS_DIST_ENTRYPOINT',
+      '/runtime/builds/selected/cli/package-dist/index.mjs',
+    );
+    vi.stubEnv('HAPPIER_CLI_SUBPROCESS_DAEMON_DIST_CLOSURE_FINGERPRINT', 'abcdef1234567890');
+
+    const { resolveCliRuntimeAssetPath } = await import('./resolveCliRuntimeAssetPath');
+
+    expect(resolveCliRuntimeAssetPath('runtime-entrypoint.cjs')).toBe(
+      '/runtime/builds/selected/cli/runtime-entrypoint.cjs',
+    );
+  });
+
+  it('uses the admitted physical Windows runtime root when Bun embeds every process path', async () => {
+    vi.doMock('@/projectPath', () => ({
+      projectPath: () => 'C:/repo/apps/cli',
+    }));
+    if (originalExecPathDescriptor) {
+      Object.defineProperty(process, 'execPath', {
+        ...originalExecPathDescriptor,
+        value: 'C:\\~BUN\\root\\happier.exe',
+      });
+    }
+    process.argv = ['C:\\~BUN\\root\\happier.exe', 'daemon', 'start'];
+    vi.stubEnv('HAPPIER_CLI_SUBPROCESS_RUNTIME_BACKED', '1');
+    vi.stubEnv(
+      'HAPPIER_CLI_SUBPROCESS_DIST_ENTRYPOINT',
+      'C:\\runtime\\payload\\package-dist\\index.mjs',
+    );
+    vi.stubEnv('HAPPIER_CLI_SUBPROCESS_DAEMON_DIST_CLOSURE_FINGERPRINT', 'abcdef1234567890');
+
+    const { resolveCliRuntimeAssetPath } = await import('./resolveCliRuntimeAssetPath');
+
+    expect(resolveCliRuntimeAssetPath('runtime-entrypoint.cjs')).toBe(
+      'C:/runtime/payload/runtime-entrypoint.cjs',
+    );
+  });
+
+  it('does not trust an unadmitted runtime entrypoint when Bun exposes only virtual process paths', async () => {
+    vi.doMock('@/projectPath', () => ({
+      projectPath: () => '/repo/apps/cli',
+    }));
+    if (originalExecPathDescriptor) {
+      Object.defineProperty(process, 'execPath', {
+        ...originalExecPathDescriptor,
+        value: '/$bunfs/root/happier',
+      });
+    }
+    process.argv = ['/$bunfs/root/happier', '/$bunfs/root/happier', 'daemon', 'start'];
+    vi.stubEnv('HAPPIER_CLI_SUBPROCESS_RUNTIME_BACKED', '1');
+    vi.stubEnv(
+      'HAPPIER_CLI_SUBPROCESS_DIST_ENTRYPOINT',
+      '/runtime/builds/untrusted/cli/package-dist/index.mjs',
+    );
+    vi.stubEnv('HAPPIER_CLI_SUBPROCESS_DAEMON_DIST_CLOSURE_FINGERPRINT', 'not-a-fingerprint');
+
+    const { resolveCliRuntimeAssetPath } = await import('./resolveCliRuntimeAssetPath');
+
+    expect(resolveCliRuntimeAssetPath('runtime-entrypoint.cjs')).toBe(
+      '/$bunfs/root/runtime-entrypoint.cjs',
     );
   });
 

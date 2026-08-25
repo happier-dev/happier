@@ -1,8 +1,15 @@
 import { createWriteStream } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import { Readable, Transform } from 'node:stream';
+import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
+
+import {
+  openRemoteAcquisition,
+  type OpenedRemoteAcquisition,
+  type RemoteAcquisitionAddressResolver,
+  type RemoteAcquisitionDestinationPolicy,
+} from './acquisition';
 
 const REMOTE_FETCH_TIMEOUT_MS_ENV = 'HAPPIER_PLUGIN_REMOTE_FETCH_TIMEOUT_MS';
 const REMOTE_CATALOG_MAX_BYTES_ENV = 'HAPPIER_PLUGIN_REMOTE_CATALOG_MAX_BYTES';
@@ -54,6 +61,24 @@ export function resolvePluginRemoteArchiveMaxBytes(): number {
   });
 }
 
+/**
+ * Remote plugin material is named by the current user (a typed install locator
+ * or a configured catalog URL), so that first destination is their own network
+ * intent. Everything the remote side then chooses — a redirect, a re-resolved
+ * name — must stay on a destination this host has classified, and may never
+ * move a public acquisition into a loopback, private or reserved network.
+ */
+const REMOTE_PLUGIN_ACQUISITION_POLICY: RemoteAcquisitionDestinationPolicy = Object.freeze({
+  scheme: 'httpOrHttps',
+  redirects: 'anyAssessedOrigin',
+  privateNetwork: 'followCallerDestination',
+});
+
+export type RemoteFetchNetworkBoundary = Readonly<{
+  fetchImpl?: typeof fetch;
+  resolveAddresses?: RemoteAcquisitionAddressResolver;
+}>;
+
 function describeTimeoutError(error: unknown, errorLabel: string, timeoutMs: number): Error {
   if (
     error instanceof Error
@@ -76,96 +101,78 @@ function assertResponseContentLengthWithinLimit(params: Readonly<{
   }
 }
 
-function createBodyByteLimitTransform(params: Readonly<{
-  maxBytes: number;
-  errorLabel: string;
-}>): Transform {
-  let totalBytes = 0;
-  return new Transform({
-    transform(chunk, encoding, callback) {
-      const chunkBytes = typeof chunk === 'string' ? Buffer.byteLength(chunk, encoding) : chunk.byteLength;
-      totalBytes += chunkBytes;
-      if (totalBytes > params.maxBytes) {
-        callback(new Error(`${params.errorLabel} exceeds the configured size limit (${params.maxBytes} bytes)`));
-        return;
-      }
-      callback(null, chunk);
-    },
-  });
-}
-
-async function fetchRemoteResponse(params: Readonly<{
+async function openRemoteResponse(params: Readonly<{
   url: string;
   accept: string;
   timeoutMs: number;
   maxBytes: number;
   errorLabel: string;
-}>): Promise<Response> {
-  let response: Response;
+  network: RemoteFetchNetworkBoundary;
+}>): Promise<OpenedRemoteAcquisition> {
+  let opened: OpenedRemoteAcquisition;
   try {
-    response = await fetch(params.url, {
-      headers: {
-        accept: params.accept,
-      },
-      signal: AbortSignal.timeout(params.timeoutMs),
+    opened = await openRemoteAcquisition({
+      url: params.url,
+      headers: { accept: params.accept },
+      policy: REMOTE_PLUGIN_ACQUISITION_POLICY,
+      timeoutMs: params.timeoutMs,
+      errorLabel: params.errorLabel,
+      ...(params.network.fetchImpl ? { fetchImpl: params.network.fetchImpl } : {}),
+      ...(params.network.resolveAddresses ? { resolveAddresses: params.network.resolveAddresses } : {}),
     });
   } catch (error) {
     throw describeTimeoutError(error, params.errorLabel, params.timeoutMs);
   }
 
-  if (!response.ok) {
-    throw new Error(`${params.errorLabel} fetch failed with ${response.status}`);
+  try {
+    if (opened.response.status < 200 || opened.response.status >= 300) {
+      throw new Error(`${params.errorLabel} fetch failed with ${opened.response.status}`);
+    }
+    assertResponseContentLengthWithinLimit({
+      response: opened.response,
+      maxBytes: params.maxBytes,
+      errorLabel: params.errorLabel,
+    });
+    if (!opened.response.body) {
+      throw new Error(`${params.errorLabel} response body is empty`);
+    }
+  } catch (error) {
+    await opened.response.body?.cancel().catch(() => undefined);
+    await opened.dispose().catch(() => undefined);
+    throw error;
   }
-
-  assertResponseContentLengthWithinLimit({
-    response,
-    maxBytes: params.maxBytes,
-    errorLabel: params.errorLabel,
-  });
-
-  if (!response.body) {
-    throw new Error(`${params.errorLabel} response body is empty`);
-  }
-
-  return response;
+  return opened;
 }
 
-async function readRemoteBodyWithLimit(params: Readonly<{
+/**
+ * The single byte-budget owner for a remote plugin body. Both the catalog
+ * reader and the archive writer consume it, so a declared and an undeclared
+ * length are bounded by exactly the same rule.
+ */
+async function* readLimitedChunks(params: Readonly<{
   response: Response;
   maxBytes: number;
   errorLabel: string;
-}>): Promise<Uint8Array> {
+}>): AsyncGenerator<Uint8Array> {
   const reader = params.response.body?.getReader();
   if (!reader) {
     throw new Error(`${params.errorLabel} response body is empty`);
   }
-
-  const chunks: Uint8Array[] = [];
   let totalBytes = 0;
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    if (!value) continue;
-    totalBytes += value.byteLength;
-    if (totalBytes > params.maxBytes) {
-      try {
-        await reader.cancel();
-      } catch {
-        // ignore
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      totalBytes += value.byteLength;
+      if (totalBytes > params.maxBytes) {
+        throw new Error(`${params.errorLabel} exceeds the configured size limit (${params.maxBytes} bytes)`);
       }
-      throw new Error(`${params.errorLabel} exceeds the configured size limit (${params.maxBytes} bytes)`);
+      yield value;
     }
-    chunks.push(value);
+  } finally {
+    await reader.cancel().catch(() => undefined);
   }
-
-  const body = new Uint8Array(totalBytes);
-  let offset = 0;
-  for (const chunk of chunks) {
-    body.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return body;
 }
 
 export async function fetchRemoteJsonWithLimits<T>(params: Readonly<{
@@ -174,21 +181,40 @@ export async function fetchRemoteJsonWithLimits<T>(params: Readonly<{
   timeoutMs?: number;
   maxBytes?: number;
   errorLabel: string;
+  network?: RemoteFetchNetworkBoundary;
 }>): Promise<T> {
   const timeoutMs = params.timeoutMs ?? resolvePluginRemoteFetchTimeoutMs();
   const maxBytes = params.maxBytes ?? resolvePluginRemoteCatalogMaxBytes();
-  const response = await fetchRemoteResponse({
+  const opened = await openRemoteResponse({
     url: params.url,
     accept: params.accept ?? 'application/json',
     timeoutMs,
     maxBytes,
     errorLabel: params.errorLabel,
+    network: params.network ?? {},
   });
-  const body = await readRemoteBodyWithLimit({
-    response,
-    maxBytes,
-    errorLabel: params.errorLabel,
-  });
+
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+  try {
+    for await (const chunk of readLimitedChunks({
+      response: opened.response,
+      maxBytes,
+      errorLabel: params.errorLabel,
+    })) {
+      chunks.push(chunk);
+      totalBytes += chunk.byteLength;
+    }
+  } finally {
+    await opened.dispose().catch(() => undefined);
+  }
+
+  const body = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
 
   try {
     return JSON.parse(Buffer.from(body).toString('utf8')) as T;
@@ -204,27 +230,30 @@ export async function downloadRemoteFileWithLimits(params: Readonly<{
   timeoutMs?: number;
   maxBytes?: number;
   errorLabel: string;
+  network?: RemoteFetchNetworkBoundary;
 }>): Promise<void> {
   const timeoutMs = params.timeoutMs ?? resolvePluginRemoteFetchTimeoutMs();
   const maxBytes = params.maxBytes ?? resolvePluginRemoteArchiveMaxBytes();
-  const response = await fetchRemoteResponse({
+  const opened = await openRemoteResponse({
     url: params.url,
     accept: params.accept ?? 'application/octet-stream',
     timeoutMs,
     maxBytes,
     errorLabel: params.errorLabel,
+    network: params.network ?? {},
   });
 
-  await mkdir(dirname(params.destinationPath), { recursive: true });
-  // Mixed DOM/Node declaration builds model the same runtime WHATWG stream with
-  // structurally incompatible interfaces. Keep the assertion at that boundary.
-  const responseBody = response.body as Parameters<typeof Readable.fromWeb>[0];
-  await pipeline(
-    Readable.fromWeb(responseBody),
-    createBodyByteLimitTransform({
-      maxBytes,
-      errorLabel: params.errorLabel,
-    }),
-    createWriteStream(params.destinationPath),
-  );
+  try {
+    await mkdir(dirname(params.destinationPath), { recursive: true });
+    await pipeline(
+      Readable.from(readLimitedChunks({
+        response: opened.response,
+        maxBytes,
+        errorLabel: params.errorLabel,
+      })),
+      createWriteStream(params.destinationPath),
+    );
+  } finally {
+    await opened.dispose().catch(() => undefined);
+  }
 }

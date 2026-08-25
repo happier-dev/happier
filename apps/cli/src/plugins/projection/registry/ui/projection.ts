@@ -2,14 +2,17 @@ import {
     PluginMachineExecutionOriginV1Schema,
     PluginUiResourceBindingCapabilityV1Schema,
     DaemonHostedWebFrameCapabilityV1Schema,
+    deriveDaemonPluginReactNativeBundleCacheIdentityKeyV1,
     type DaemonHostedWebFrameCapabilityV1,
     type DaemonPluginHostedWebArtifactCacheIdentityV1,
     type DaemonPluginReactNativeCrashMountV1,
     type DaemonPluginReactNativeCrashStateV1,
+    type DaemonPluginReactNativeBundleCacheIdentityV1 as ReactNativeBundleCacheIdentity,
     type PluginMachineExecutionOriginV1,
     type PluginUiResourceBindingCapabilityV1,
 } from '@happier-dev/protocol';
 import {
+    createPluginSessionInfoSectionRendererIdV1,
     normalizePluginUiDestinationBindingV1,
     isPluginUiDestinationBindingPotentiallySupportedOnPlatformV1,
     normalizePluginSessionHeaderActionDescriptorV1,
@@ -27,9 +30,7 @@ import {
 import { definePluginProjectionFamilyV2 } from '@/plugins/projection/families';
 import { createReactNativeCrashStateBindingKey } from '@/plugins/runtime/ui/reactNativeCrashDisableState';
 import {
-    deriveReactNativeBundleRuntimeCacheKey,
     deriveReactNativeNativeCapabilitiesDigest,
-    type ReactNativeBundleCacheIdentity,
     type ReactNativeBundleHostRuntime,
 } from '@/plugins/install/ui/reactNativeBundles';
 import type {
@@ -163,9 +164,45 @@ function stampEntriesWithExecutionOrigins(
     }
 }
 
+/**
+ * English is the projected fallback bundle every client merges under its
+ * preferred locale (`apps/ui/sources/sync/domains/plugins/ui/i18n.ts`
+ * `resolvePluginUiTranslationBundle`). It is the one locale that is always read.
+ */
+const TRANSLATION_FALLBACK_LOCALE = 'en';
+
+/**
+ * The single rule for which contributed bundles reach the wire.
+ *
+ * A client reads exactly two: its preferred locale merged over English. Shipping
+ * the rest is pure transfer — measured at 629,256 B across the bundled plugin set
+ * for 11 locales, of which a client can use at most 125,531 B. A request that
+ * names no locale is an older client (or an older-shaped call), and still
+ * receives everything.
+ *
+ * This narrows only `bundles`. `locales` remains the complete availability fact,
+ * and duplicate-locale diagnostics are still derived from the full contributed
+ * set, so no fact is lost — only bytes no reader consumes.
+ */
+function narrowProjectedTranslationBundles(
+    bundles: Readonly<Record<string, Readonly<Record<string, string>>>>,
+    requestedLocale: string | undefined,
+): Readonly<Record<string, Readonly<Record<string, string>>>> {
+    if (requestedLocale === undefined) return bundles;
+    const retained: Record<string, Readonly<Record<string, string>>> = {};
+    for (const locale of [TRANSLATION_FALLBACK_LOCALE, requestedLocale]) {
+        const bundle = bundles[locale];
+        if (bundle !== undefined && !Object.hasOwn(retained, locale)) {
+            retained[locale] = bundle;
+        }
+    }
+    return retained;
+}
+
 function projectTranslations(
     registry: ResolvedContributionRegistry,
     entriesById: Record<string, PluginUiProjectedEntry>,
+    requestedLocale: string | undefined,
 ): void {
     const v2ByPluginId = new Map<string, ResolvedUiTranslationBundleV2Contribution[]>();
     const sortedV2 = [...(registry.uiTranslationsV2 ?? [])].sort((left, right) => {
@@ -201,7 +238,7 @@ function projectTranslations(
             pluginId,
             contributionKind: 'translations',
             locales: Object.freeze(Object.keys(bundles).sort()),
-            bundles: Object.freeze(bundles),
+            bundles: Object.freeze(narrowProjectedTranslationBundles(bundles, requestedLocale)),
             ...(duplicateLocales.size > 0
                 ? { diagnostics: Object.freeze(['duplicate_translation_locale']) }
                 : {}),
@@ -220,7 +257,7 @@ function projectTranslations(
             contributionKind: 'translations',
             defaultLocale: contribution.definition.defaultLocale,
             locales: Object.keys(contribution.definition.locales).sort(),
-            bundles: contribution.definition.locales,
+            bundles: narrowProjectedTranslationBundles(contribution.definition.locales, requestedLocale),
         });
     }
 }
@@ -251,7 +288,7 @@ function projectSessionHeaderActions(
             description: normalized.description,
             icon: normalized.icon,
             order: normalized.order,
-            action: normalized.action,
+            command: normalized.command,
             availability: normalized.availability,
         });
     }
@@ -281,6 +318,70 @@ function projectTranscriptActivities(
             descriptorId: definition.id,
             resource: Object.freeze({ pluginId, localId: definition.resourceId }),
             actions: Object.freeze(definition.actions.map((localId) => Object.freeze({ pluginId, localId }))),
+        });
+    }
+}
+
+function projectSessionInfoSections(
+    registry: ResolvedContributionRegistry,
+    entriesById: Record<string, PluginUiProjectedEntry>,
+    declarativeHostRuntime: DeclarativeProjectionHostRuntimeContext | undefined,
+    hostRuntime: PluginUiProjectionHostRuntimeContext | undefined,
+): void {
+    for (const contribution of registry.sessionInfoSections ?? []) {
+        const pluginId = readPluginId(contribution);
+        if (!pluginId
+            || contribution.identity.pluginId !== pluginId
+            || contribution.identity.localId !== contribution.definition.id) continue;
+        const definition = contribution.definition;
+        const rendererId = createPluginSessionInfoSectionRendererIdV1(definition.id);
+        const model = declarativeHostRuntime?.modelsByRendererKey?.[`${pluginId}\0${rendererId}`];
+        if (!model?.visible) continue;
+        const binding = normalizePluginUiDestinationBindingV1({
+            pluginId,
+            destinationId: definition.id,
+            rendererId,
+            fallbackRendererIds: [],
+            availableRendererIds: [rendererId],
+            container: 'sessionInfoSection',
+            target: { kind: 'session' },
+            instancePolicy: 'singleton',
+        });
+        if (!binding) continue;
+        const runtime = projectSurfaceResourceRuntime(pluginId, hostRuntime);
+        const renderer = Object.freeze({
+            kind: 'declarative' as const,
+            contributionId: rendererId,
+            model,
+            documentSource: Object.freeze({ kind: 'resource' as const, resourceId: definition.resourceId }),
+        });
+        const placement = Object.freeze({
+            id: `sessionInfoSectionPlacement:${pluginId}:${definition.id}`,
+            pluginId,
+            pluginVersion: contribution.pluginVersion ?? '0.0.0',
+            contributionKind: 'surfacePlacement' as const,
+            descriptorId: definition.id,
+            binding,
+            target: binding.target,
+            renderer,
+            display: Object.freeze({}),
+            availability: Object.freeze({ state: 'available' as const, reason: 'available', diagnostics: Object.freeze([]) }),
+            headerActions: Object.freeze([]),
+            runtime,
+        });
+        addEntry(entriesById, {
+            id: `sessionInfoSection:${pluginId}:${definition.id}`,
+            pluginId,
+            pluginVersion: contribution.pluginVersion ?? '0.0.0',
+            contributionKind: 'sessionInfoSection',
+            descriptorId: definition.id,
+            order: definition.order,
+            availability: definition.availability,
+            resource: Object.freeze({ pluginId, localId: definition.resourceId }),
+            actions: Object.freeze(definition.actions.map((localId) => Object.freeze({ pluginId, localId }))),
+            renderer,
+            runtime,
+            placement,
         });
     }
 }
@@ -425,7 +526,7 @@ function generatedReactNativeRuntimeResult(params: Readonly<{
         }),
         ...(params.cacheIdentity
             ? {
-                cacheKey: deriveReactNativeBundleRuntimeCacheKey(params.cacheIdentity),
+                cacheKey: deriveDaemonPluginReactNativeBundleCacheIdentityKeyV1(params.cacheIdentity),
                 cacheIdentity: params.cacheIdentity,
                 loadPolicy: Object.freeze({ source: 'installedArtifact' as const }),
             }
@@ -675,7 +776,7 @@ function generatedViewDisplay(view: ResolvedUiViewV2Contribution): Readonly<Reco
         ? undefined
         : Object.freeze(typeof badge.label === 'string'
             ? {
-                developerFallback: badge.label,
+                label: badge.label,
                 ...(badge.tone === undefined ? {} : { tone: badge.tone }),
             }
             : {
@@ -691,8 +792,7 @@ function generatedViewDisplay(view: ResolvedUiViewV2Contribution): Readonly<Reco
     };
     if (typeof title === 'string') {
         return Object.freeze({
-            titleKey: view.definition.id,
-            developerFallback: title,
+            title,
             ...presentationDefaults,
         });
     }
@@ -704,8 +804,7 @@ function generatedViewDisplay(view: ResolvedUiViewV2Contribution): Readonly<Reco
         });
     }
     return Object.freeze({
-        titleKey: view.definition.id,
-        developerFallback: view.definition.id,
+        title: view.definition.id,
         ...presentationDefaults,
     });
 }
@@ -716,18 +815,18 @@ function projectGeneratedPageHeaderActions(
 ): readonly Readonly<Record<string, unknown>>[] {
     const projected: Readonly<Record<string, unknown>>[] = [];
     for (const headerAction of headerActions ?? []) {
-        const action = normalizePluginUiSemanticCommandV1({
+        const command = normalizePluginUiSemanticCommandV1({
             pluginId,
-            command: headerAction.action,
+            command: headerAction.command,
         });
-        if (!action) continue;
+        if (!command) continue;
         projected.push(Object.freeze({
             id: headerAction.id,
             title: headerAction.title,
             ...(headerAction.description === undefined ? {} : { description: headerAction.description }),
             ...(headerAction.icon === undefined ? {} : { icon: headerAction.icon }),
             ...(headerAction.order === undefined ? {} : { order: headerAction.order }),
-            action,
+            command,
         }));
     }
     return Object.freeze(projected);
@@ -1162,12 +1261,13 @@ function projectOpenableContentViewers(
 }
 export const pluginUiProjectionFamily = definePluginProjectionFamilyV2({
     family: 'pluginUi',
-    project({ registry, generation, pluginExecutionOriginsByPluginId, pluginUiHostRuntime }) {
+    project({ registry, generation, pluginExecutionOriginsByPluginId, pluginUiHostRuntime, requestedLocale }) {
         const hostRuntime = pluginUiHostRuntime as PluginUiProjectionHostRuntimeContext | undefined;
         const entriesById: Record<string, PluginUiProjectedEntry> = {};
-        projectTranslations(registry, entriesById);
+        projectTranslations(registry, entriesById, requestedLocale);
         projectSessionHeaderActions(registry, entriesById);
         projectTranscriptActivities(registry, entriesById);
+        projectSessionInfoSections(registry, entriesById, hostRuntime?.declarative, hostRuntime);
         projectGeneratedHostedWebRenderers(
             registry,
             entriesById,

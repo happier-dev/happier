@@ -8,7 +8,10 @@ import {
     type ProviderAccountUsageAdoptionV1,
 } from './adoption';
 
-import type { ProviderAccountUsagePersistenceScheduler } from './persistence';
+import type {
+    ProviderAccountUsagePersistenceScheduler,
+    QualifiedProviderAccountUsagePersistenceTarget,
+} from './persistence';
 import {
     type ProviderAccountUsageObservation,
     type ProviderAccountUsageStore,
@@ -19,6 +22,12 @@ import { normalizeConnectedServiceAccessTokenFingerprint } from '../refresh/cred
 type TrackedSessionLike = Readonly<{
     happySessionId?: unknown;
 }>;
+
+type QualifiedPersistenceTargetResolver = (input: Readonly<{
+    sessionId: string;
+    snapshot: ProviderAccountUsageSnapshotV1;
+    sources: readonly ConnectedServiceUsageSourceV1[];
+}>) => Promise<readonly QualifiedProviderAccountUsagePersistenceTarget[]>;
 
 function normalizeSessionId(value: unknown): string {
     return typeof value === 'string' ? value.trim() : '';
@@ -52,6 +61,12 @@ export async function recordProviderAccountUsageSnapshotForSession(input: Readon
     resolveAuthoritativeSource?: (
         source: ConnectedServiceUsageSourceV1,
     ) => Promise<ConnectedServiceUsageSourceV1 | null>;
+    /**
+     * The runtime source owner resolves the exact V4 account/group relation and
+     * current credential/configuration basis after source qualification. This
+     * recorder owns neither identity translation nor a second currentness read.
+     */
+    resolvePersistenceTargets?: QualifiedPersistenceTargetResolver;
     sessionId: string;
     snapshot: ProviderAccountUsageSnapshotV1;
 }>): Promise<
@@ -125,11 +140,18 @@ export async function recordProviderAccountUsageSnapshotForSession(input: Readon
 
     let persisted = false;
     if (input.persistence) {
-        await input.persistence.recordInBandSnapshot(
+        const targets = input.resolvePersistenceTargets
+            ? await input.resolvePersistenceTargets({
+                sessionId: input.sessionId,
+                snapshot,
+                sources: qualifiedSources ?? [],
+            })
+            : [];
+        const persistence = await input.persistence.recordInBandSnapshot(
             snapshot,
-            qualifiedSources ? { sources: qualifiedSources } : undefined,
+            { targets },
         );
-        persisted = true;
+        persisted = persistence.status !== 'not_persisted';
     }
 
     const recorded = input.store.recordSnapshot(snapshot, observation);
@@ -157,6 +179,7 @@ export async function recordProviderAccountUsageAdoptionForSession(input: Readon
     store: Pick<ProviderAccountUsageStore, 'prepareAdoption'>;
     persistence: Pick<ProviderAccountUsagePersistenceScheduler, 'recordInBandSnapshot'> | null;
     publishRecordId?: (input: Readonly<{ sessionId: string; recordId: string }>) => Promise<void>;
+    resolvePersistenceTargets?: QualifiedPersistenceTargetResolver;
     sessionId: string;
     adoption: ProviderAccountUsageAdoptionV1;
 }>): Promise<
@@ -182,12 +205,20 @@ export async function recordProviderAccountUsageAdoptionForSession(input: Readon
     if (!input.persistence) {
         throw new Error('Provider account usage adoption persistence unavailable');
     }
-    await input.persistence.recordInBandSnapshot(
+    const targets = input.resolvePersistenceTargets
+        ? await input.resolvePersistenceTargets({
+            sessionId: input.sessionId,
+            snapshot: prepared.snapshot,
+            sources: prepared.observation.sources ?? [],
+        })
+        : [];
+    const persistence = await input.persistence.recordInBandSnapshot(
         prepared.snapshot,
-        prepared.observation.sources?.length
-            ? { sources: prepared.observation.sources }
-            : undefined,
+        { targets },
     );
+    if (persistence.status === 'not_persisted') {
+        throw new Error('Provider account usage adoption persistence target unavailable');
+    }
     const applied = prepared.commit();
     try {
         await input.publishRecordId?.({

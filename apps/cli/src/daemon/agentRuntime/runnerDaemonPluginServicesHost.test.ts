@@ -689,6 +689,111 @@ describe('runner daemon PluginServices host', () => {
         });
     });
 
+    it('keeps follow disposer custody across acquisition-close races and rejected cleanup retries', async () => {
+        const unavailable = createUnavailablePluginServices();
+        let settleLateFollow!: () => void;
+        const lateFollow = new Promise<void>((resolve) => {
+            settleLateFollow = resolve;
+        });
+        const disposeLate = vi.fn(async () => undefined);
+        const disposeRetry = vi.fn()
+            .mockRejectedValueOnce(new Error('physical follow disposal rejected'))
+            .mockResolvedValueOnce(undefined);
+        const followTranscript: RunnerDaemonCurrentGlobalExternalSessionsOwner[
+            'followTranscript'
+        ] = vi.fn(async (ref) => {
+            if (ref.remoteSessionId === 'late') await lateFollow;
+            return Object.freeze({
+                status: 'following' as const,
+                startingCursor: null,
+                subscription: Object.freeze({
+                    dispose: ref.remoteSessionId === 'late'
+                        ? disposeLate
+                        : disposeRetry,
+                }),
+            });
+        });
+        const host = createRunnerDaemonPluginServicesHost({
+            async createInvocation() {
+                return {
+                    services: unavailable,
+                    resourceDescriptors: {},
+                    subscriptionCapabilities: {
+                        settingsWatch: false,
+                        eventSubscriptions: [],
+                        resourceWatches: [],
+                        notificationPreferencesWatch: false,
+                    },
+                    dispose() {},
+                    authorizeOperation: () => true,
+                    executeCurrentGlobalAction: async () => null,
+                    currentGlobalMcp: unavailable.mcp,
+                    currentGlobalExternalSessions: Object.freeze({
+                        ...unavailable.sessions.external,
+                        followTranscript,
+                    }),
+                };
+            },
+        });
+        await host.dispatch({
+            ...direct,
+            operation: {
+                kind: 'plugin_services.prepare_v1',
+                ...requestBase(),
+            },
+        });
+        const open = async (subscriptionId: string, remoteSessionId: string) => {
+            await host.dispatch({
+                ...direct,
+                operation: {
+                    kind:
+                        'plugin_sessions.external.follow_transcript.open_v1',
+                    ...requestBase(),
+                    subscriptionId,
+                    ref: encodeRunnerDaemonPluginServiceWireValueV1({
+                        agentId: 'fixture.agent',
+                        sourceId: 'source-1',
+                        remoteSessionId,
+                    }),
+                    options:
+                        encodeRunnerDaemonPluginServiceWireValueV1({}),
+                },
+            });
+        };
+        const close = async (subscriptionId: string) => await host.dispatch({
+            ...direct,
+            operation: {
+                kind: 'plugin_services.subscription.close_v1',
+                ...requestBase({ lifecycle: true }),
+                subscriptionId,
+            },
+        });
+
+        await open('late-follow', 'late');
+        let lateCloseSettled = false;
+        const lateClose = close('late-follow').finally(() => {
+            lateCloseSettled = true;
+        });
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(lateCloseSettled).toBe(false);
+        settleLateFollow();
+        await expect(lateClose).resolves.toMatchObject({
+            kind: 'plugin_services.result_v1',
+        });
+        expect(disposeLate).toHaveBeenCalledOnce();
+
+        await open('retry-follow', 'retry');
+        await vi.waitFor(() => expect(followTranscript).toHaveBeenCalledTimes(2));
+        await expect(close('retry-follow')).rejects.toThrow(
+            'physical follow disposal rejected',
+        );
+        await expect(close('retry-follow')).resolves.toMatchObject({
+            kind: 'plugin_services.result_v1',
+        });
+        expect(disposeRetry).toHaveBeenCalledTimes(2);
+    });
+
     it('routes MCP lookup through the current-global owner and keeps the selected client for later requests', async () => {
         const services = createUnavailablePluginServices();
         const list = vi.fn(async () => ({ items: [] }));
@@ -916,6 +1021,119 @@ describe('runner daemon PluginServices host', () => {
         expect(disposeInvocationOwner).toHaveBeenCalledOnce();
     });
 
+    it('retains an exact system-tool resolution across multiple launches in one invocation', async () => {
+        const unavailable = createUnavailablePluginServices();
+        const executable = Object.freeze({
+            kind: 'systemTool' as const,
+            id: 'codex-cli',
+        });
+        const resolveSystemTool = vi.fn(async () => ({
+            grantId: 'codex-cli-grant',
+            toolId: 'codex-cli',
+            displayName: 'Codex CLI',
+            source: 'system' as const,
+            executablePath: '/daemon/codex',
+            launch: {
+                kind: 'binary' as const,
+                executablePath: '/daemon/codex',
+                args: [],
+                env: {},
+            },
+        }));
+        const exec = createStablePluginExecService({
+            allowedExecutables: [executable],
+            signal: new AbortController().signal,
+            isGenerationCurrent: () => true,
+            resolveExecutable: async () => {
+                throw new Error('an exact system-tool resolution must remain available');
+            },
+            resolvePath: async () => {
+                throw new Error('cwd was not expected');
+            },
+            systemTools: { resolve: resolveSystemTool },
+        });
+        const services: PluginServices = Object.freeze({
+            ...unavailable,
+            availability(serviceId: PluginServiceId) {
+                return serviceId === 'exec'
+                    ? { status: 'available' as const }
+                    : unavailable.availability(serviceId);
+            },
+            exec,
+        });
+        const host = createRunnerDaemonPluginServicesHost({
+            async createInvocation() {
+                return {
+                    services,
+                    resourceDescriptors: {},
+                    subscriptionCapabilities: {
+                        settingsWatch: false,
+                        eventSubscriptions: [],
+                        resourceWatches: [],
+                        notificationPreferencesWatch: false,
+                    },
+                    dispose() {},
+                    authorizeOperation: () => true,
+                    executeCurrentGlobalAction: async () => null,
+                    currentGlobalMcp: services.mcp,
+                    currentGlobalExternalSessions: services.sessions.external,
+                };
+            },
+        });
+        await host.dispatch({
+            ...direct,
+            operation: {
+                kind: 'plugin_services.prepare_v1',
+                ...requestBase(),
+            },
+        });
+        const resolution = await host.dispatch({
+            ...direct,
+            operation: {
+                kind: 'plugin_exec.system_tools.resolve_v1',
+                ...requestBase(),
+                request: {
+                    toolId: 'codex-cli',
+                    purpose: 'Launch the Codex native app-server',
+                },
+            },
+        });
+        const decodedResolution = decodeRunnerDaemonPluginServiceWireValueV1(
+            resolution.value,
+        );
+        expect(decodedResolution).toMatchObject({
+            resolutionId: expect.any(String),
+            result: { executable },
+        });
+        if (
+            !isWireRecord(decodedResolution)
+            || typeof decodedResolution.resolutionId !== 'string'
+        ) {
+            throw new Error('system-tool resolution id missing');
+        }
+        const systemToolResolutionId = decodedResolution.resolutionId;
+        const authorize = async () => await host.dispatch({
+            ...direct,
+            operation: {
+                kind: 'plugin_exec.launch.authorize_v1',
+                ...requestBase(),
+                systemToolResolutionId,
+                request: {
+                    executable,
+                    args: ['app-server'],
+                },
+            },
+        });
+
+        await expect(authorize()).resolves.toMatchObject({
+            kind: 'plugin_services.result_v1',
+        });
+        await expect(authorize()).resolves.toMatchObject({
+            kind: 'plugin_services.result_v1',
+        });
+        expect(resolveSystemTool).toHaveBeenCalledOnce();
+    });
+
     it('preserves empty and non-empty binary inputs through canonical fetch and no-spawn exec authorization', async () => {
         const unavailable = createUnavailablePluginServices();
         const values = new Map<string, JsonValue>();
@@ -968,6 +1186,21 @@ describe('runner daemon PluginServices host', () => {
             events: vi.fn(),
             resources: vi.fn(),
             notifications: vi.fn(),
+        };
+        const eventDeliveryOutcomes: Array<Promise<
+            | Readonly<{ status: 'fulfilled' }>
+            | Readonly<{ status: 'rejected'; error: unknown }>
+        >> = [];
+        const observeEventDelivery = (
+            delivery: void | Promise<void>,
+        ): void => {
+            eventDeliveryOutcomes.push(Promise.resolve(delivery).then(
+                () => ({ status: 'fulfilled' as const }),
+                (error: unknown) => ({
+                    status: 'rejected' as const,
+                    error,
+                }),
+            ));
         };
         const providerDescribe = vi.fn(async () => ({
             status: 'success' as const,
@@ -1120,17 +1353,17 @@ describe('runner daemon PluginServices host', () => {
                             }>,
                         ) => void | Promise<void>,
                     ) {
-                        void listener({
+                        observeEventDelivery(listener({
                             ref: event,
                             // The wire fixture supplies JSON independently of the caller-selected payload type.
                             payload: { ready: true } as unknown as T,
                             sequence: 2,
-                        });
-                        void listener({
+                        }));
+                        observeEventDelivery(listener({
                             ref: event,
                             payload: { ready: false } as unknown as T,
                             sequence: 3,
-                        });
+                        }));
                         return {
                             dispose: watchDisposals.events,
                         };
@@ -1597,6 +1830,9 @@ describe('runner daemon PluginServices host', () => {
                 expectedKind:
                     'plugin_events.subscribe.event_v1',
                 expectedValues: [2, 3],
+                // Event subscriptions hold the broker's delivery open until the runner reports
+                // that its listener ran, so each later request carries an acknowledgement.
+                acknowledgeDelivery: true,
             },
             {
                 open: {
@@ -1644,6 +1880,13 @@ describe('runner daemon PluginServices host', () => {
                         ...requestBase(),
                         subscriptionId:
                             watchCase.open.subscriptionId,
+                        ...(
+                            'acknowledgeDelivery' in watchCase
+                            && watchCase.acknowledgeDelivery
+                            && index > 0
+                                ? { acknowledgement: 'settled' as const }
+                                : {}
+                        ),
                     },
                 });
                 const decoded =
@@ -1673,6 +1916,16 @@ describe('runner daemon PluginServices host', () => {
             }
             expect(observedValues)
                 .toEqual(watchCase.expectedValues);
+            if (watchCase.open.subscriptionId === 'events-watch') {
+                expect(eventDeliveryOutcomes).toHaveLength(2);
+                const firstEventDelivery = eventDeliveryOutcomes[0];
+                if (!firstEventDelivery) {
+                    throw new Error('first event delivery outcome missing');
+                }
+                await expect(firstEventDelivery).resolves.toEqual({
+                    status: 'fulfilled',
+                });
+            }
         }
 
         await host.dispatch({
@@ -1681,6 +1934,14 @@ describe('runner daemon PluginServices host', () => {
                 kind: 'plugin_services.close_v1',
                 ...requestBase({ lifecycle: true }),
             },
+        });
+        const secondEventDelivery = eventDeliveryOutcomes[1];
+        if (!secondEventDelivery) {
+            throw new Error('second event delivery outcome missing');
+        }
+        await expect(secondEventDelivery).resolves.toMatchObject({
+            status: 'rejected',
+            error: { code: 'plugin_service_subscription_closed' },
         });
         expect(disposeInvocation).toHaveBeenCalledOnce();
         expect(authorizeOperation).toHaveBeenCalled();
@@ -2731,11 +2992,33 @@ describe('runner daemon PluginServices host', () => {
         ).resolves.toBeNull();
     });
 
-    it('bounds retained Host Event transport delivery without failing the producer', async () => {
+    // The Event broker, not this transport, owns Host Event delivery accounting. Its `publish`
+    // must therefore stay pending until the runner reports its listener ran, and the transport
+    // must not carry a second count-only drop policy of its own.
+    it('keeps Host Event delivery in broker custody until the runner acknowledges it', async () => {
         const unavailable = createUnavailablePluginServices();
         const diagnostic = vi.fn();
-        let publishHostEvent: (event: unknown) => void = () => {
-            throw new Error('Host Event subscription was not opened');
+        let publishHostEvent!: (event: unknown) => Promise<void>;
+        const deliveryOutcomes: Array<Promise<
+            | Readonly<{ status: 'fulfilled' }>
+            | Readonly<{ status: 'rejected'; error: unknown }>
+        >> = [];
+        const observeDelivery = (
+            delivery: Promise<void>,
+            onFulfilled?: () => void,
+        ) => {
+            const outcome = delivery.then(
+                () => {
+                    onFulfilled?.();
+                    return { status: 'fulfilled' as const };
+                },
+                (error: unknown) => ({
+                    status: 'rejected' as const,
+                    error,
+                }),
+            );
+            deliveryOutcomes.push(outcome);
+            return outcome;
         };
         const services: PluginServices = Object.freeze({
             ...unavailable,
@@ -2752,8 +3035,8 @@ describe('runner daemon PluginServices host', () => {
                             event: HostEventEnvelope<Id>,
                         ) => void | Promise<void>,
                     ) {
-                        publishHostEvent = (event) => {
-                            void listener(event as never);
+                        publishHostEvent = async (event) => {
+                            await listener(event as never);
                         };
                         return Object.freeze({ dispose() {} });
                     },
@@ -2804,34 +3087,65 @@ describe('runner daemon PluginServices host', () => {
             },
         });
 
-        expect(() => {
-            for (let sequence = 1; sequence <= 257; sequence += 1) {
-                publishHostEvent({
-                    eventId: '@happier/runtime/turn-complete',
-                    scope: {
-                        kind: 'session',
-                        sessionId: 'session-1',
-                    },
-                    payload: {
-                        sequence,
-                        sessionId: 'session-1',
-                        emittedAtMs: sequence,
-                        kind: 'turn-complete',
-                        turnId: `turn-${sequence}`,
-                    },
-                });
-            }
-        }).not.toThrow();
-        expect(diagnostic).toHaveBeenCalledTimes(1);
-        expect(diagnostic).toHaveBeenCalledWith({
-            code: 'plugin_host_events_delivery_dropped',
-            severity: 'warning',
-            message:
-                'Host Event delivery was dropped because the retained runner transport queue is full',
-            details: {
-                subscriptionId: 'host-events',
-                queueLimit: 256,
+        const hostEvent = (sequence: number) => ({
+            eventId: '@happier/runtime/turn-complete',
+            scope: { kind: 'session', sessionId: 'session-1' },
+            payload: {
+                sequence,
+                sessionId: 'session-1',
+                emittedAtMs: sequence,
+                kind: 'turn-complete',
+                turnId: `turn-${sequence}`,
             },
         });
+        let firstSettled = false;
+        const firstDelivery = observeDelivery(
+            publishHostEvent(hostEvent(1)),
+            () => { firstSettled = true; },
+        );
+        await Promise.resolve();
+        expect(firstSettled).toBe(false);
+
+        await host.dispatch({
+            ...direct,
+            signal: AbortSignal.timeout(1_000),
+            operation: {
+                kind: 'plugin_services.subscription.next_v1',
+                ...requestBase(),
+                subscriptionId: 'host-events',
+            },
+        });
+        await Promise.resolve();
+        expect(firstSettled).toBe(false);
+
+        const secondDelivery = observeDelivery(publishHostEvent(hostEvent(2)));
+        await host.dispatch({
+            ...direct,
+            signal: AbortSignal.timeout(1_000),
+            operation: {
+                kind: 'plugin_services.subscription.next_v1',
+                ...requestBase(),
+                subscriptionId: 'host-events',
+                acknowledgement: 'settled',
+            },
+        });
+        await expect(firstDelivery).resolves.toEqual({ status: 'fulfilled' });
+
+        // The second delivery remains in broker custody when the invocation closes. Its
+        // fixture handler is attached immediately above, so the rejection is observed instead
+        // of becoming an unhandled Promise rejection.
+        await host.dispatch({
+            ...direct,
+            operation: {
+                kind: 'plugin_services.close_v1',
+                ...requestBase({ lifecycle: true }),
+            },
+        });
+        expect(deliveryOutcomes).toHaveLength(2);
+        await expect(secondDelivery).resolves.toMatchObject({
+            status: 'rejected',
+            error: { code: 'plugin_service_subscription_closed' },
+        });
+        expect(diagnostic).not.toHaveBeenCalled();
     });
 });

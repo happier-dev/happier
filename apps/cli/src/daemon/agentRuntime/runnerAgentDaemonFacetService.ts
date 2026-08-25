@@ -26,7 +26,7 @@ import type {
   AgentRuntimeDaemonServiceTurnWitnessV1,
 } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceTurnWitness';
 import type {
-  RunnerAgentCurrentExternalSessionProviderOps,
+  RunnerAgentExternalSessionProviderOps,
 } from '@/agent/runtime/registry/engineRegistry/types';
 import type {
   ConfiguredExternalSessionSourceAgentContribution,
@@ -134,12 +134,6 @@ function followUnavailable(code: string): Error {
   return error;
 }
 
-function currentExternalSessionUnavailable(): Error {
-  return followUnavailable(
-    'agent_runtime_daemon_current_external_session_unavailable',
-  );
-}
-
 export type RunnerAgentDaemonFacetService = Readonly<{
   dispatch(input: Readonly<{
     sessionId: string;
@@ -166,9 +160,6 @@ export function createRunnerAgentDaemonFacetService(input: Readonly<{
     retainedAgent: AgentSessionRunnerBindingV1;
     witness: AgentRuntimeDaemonServiceTurnWitnessV1;
   }>): Promise<boolean>;
-  resolveCurrentExternalSessionProviderOps(
-    agentId: string,
-  ): Promise<RunnerAgentCurrentExternalSessionProviderOps | null>;
   resolveRetainedExternalSessionAgentContribution?(
     input: Readonly<{
       sessionId: string;
@@ -499,55 +490,6 @@ export function createRunnerAgentDaemonFacetService(input: Readonly<{
     }
   };
 
-  const requireCurrentExternalSessionProviderOps = async (
-    sessionId: string,
-    runner: AgentRuntimeDaemonServiceAuthorityRunnerIdentity,
-    retainedAgent: AgentSessionRunnerBindingV1,
-    operation: Extract<
-      RunnerAgentDaemonFacetOperationV1,
-      Readonly<{
-        kind: `external_session.current.${string}`;
-      }>
-    >,
-  ): Promise<RunnerAgentCurrentExternalSessionProviderOps> => {
-    const authorized = operation.witness
-      ? await input.authorizeActiveTurn({
-          sessionId,
-          runner,
-          retainedAgent,
-          witness: operation.witness,
-        })
-      : await input.authorizeCurrent({
-          sessionId,
-          runner,
-          retainedAgent,
-        });
-    if (
-      disposed
-      || !authorized
-      || operation.agentId !== retainedAgent.agentId
-    ) {
-      throw currentExternalSessionUnavailable();
-    }
-    try {
-      const providerOps =
-        await input.resolveCurrentExternalSessionProviderOps(
-          operation.agentId,
-        );
-      if (!providerOps) throw currentExternalSessionUnavailable();
-      return providerOps;
-    } catch (error) {
-      if (
-        error instanceof Error
-        && error.message
-          === 'agent_runtime_daemon_current_external_session_unavailable'
-      ) {
-        throw error;
-      }
-      throw currentExternalSessionUnavailable();
-    }
-  };
-
   const resolveFollow = (
     sessionId: string,
     followId: string,
@@ -721,20 +663,20 @@ export function createRunnerAgentDaemonFacetService(input: Readonly<{
     };
     const providerOps = Object.freeze({
       async validateSource(request: Parameters<
-        RunnerAgentCurrentExternalSessionProviderOps['validateSource']
+        RunnerAgentExternalSessionProviderOps['validateSource']
       >[0]) {
         return await requestProvider<Awaited<ReturnType<
-          RunnerAgentCurrentExternalSessionProviderOps['validateSource']
+          RunnerAgentExternalSessionProviderOps['validateSource']
         >>>({
           kind: 'validateSource',
           source: request.source,
         }, request.signal);
       },
       async resolveLinkIdentity(request: Parameters<
-        RunnerAgentCurrentExternalSessionProviderOps['resolveLinkIdentity']
+        RunnerAgentExternalSessionProviderOps['resolveLinkIdentity']
       >[0]) {
         return await requestProvider<Awaited<ReturnType<
-          RunnerAgentCurrentExternalSessionProviderOps['resolveLinkIdentity']
+          RunnerAgentExternalSessionProviderOps['resolveLinkIdentity']
         >>>(RunnerAgentDaemonExternalSessionFollowProviderRequestV1Schema.parse({
           kind: 'resolveLinkIdentity',
           source: request.source,
@@ -746,10 +688,10 @@ export function createRunnerAgentDaemonFacetService(input: Readonly<{
         }), request.signal);
       },
       async pageTranscript(request: Parameters<
-        RunnerAgentCurrentExternalSessionProviderOps['pageTranscript']
+        RunnerAgentExternalSessionProviderOps['pageTranscript']
       >[0]) {
         return await requestProvider<Awaited<ReturnType<
-          RunnerAgentCurrentExternalSessionProviderOps['pageTranscript']
+          RunnerAgentExternalSessionProviderOps['pageTranscript']
         >>>({
           kind: 'pageTranscript',
           source: request.source,
@@ -761,12 +703,12 @@ export function createRunnerAgentDaemonFacetService(input: Readonly<{
         }, request.signal);
       },
       async readAfterTranscript(request: Parameters<
-        RunnerAgentCurrentExternalSessionProviderOps[
+        RunnerAgentExternalSessionProviderOps[
           'readAfterTranscript'
         ]
       >[0]) {
         return await requestProvider<Awaited<ReturnType<
-          RunnerAgentCurrentExternalSessionProviderOps[
+          RunnerAgentExternalSessionProviderOps[
             'readAfterTranscript'
           ]
         >>>({
@@ -900,144 +842,6 @@ export function createRunnerAgentDaemonFacetService(input: Readonly<{
       signal,
     }) {
       switch (operation.kind) {
-        case 'external_session.current.resolve_source': {
-          const providerOps =
-            await requireCurrentExternalSessionProviderOps(
-              sessionId,
-              runner,
-              retainedAgent,
-              operation,
-            );
-          const result = await providerOps.validateSource({
-            source: operation.source,
-            ...(signal ? { signal } : {}),
-          });
-          return RunnerAgentDaemonFacetResultV1Schema.parse({
-            kind: operation.kind,
-            result,
-          });
-        }
-        case 'external_session.current.list_candidates': {
-          const providerOps =
-            await requireCurrentExternalSessionProviderOps(
-              sessionId,
-              runner,
-              retainedAgent,
-              operation,
-            );
-          const result = await providerOps.listCandidates({
-            source: operation.source,
-            limit: operation.limit,
-            ...(operation.cursor
-              ? { cursor: operation.cursor }
-              : {}),
-            ...(operation.searchTerm !== undefined
-              ? { searchTerm: operation.searchTerm }
-              : {}),
-            ...(operation.searchMode
-              ? { searchMode: operation.searchMode }
-              : {}),
-            ...(operation.maxBytes !== undefined
-              ? { maxBytes: operation.maxBytes }
-              : {}),
-            ...(signal ? { signal } : {}),
-          });
-          return RunnerAgentDaemonFacetResultV1Schema.parse({
-            kind: operation.kind,
-            result,
-          });
-        }
-        case 'external_session.current.resolve_link_identity': {
-          const providerOps =
-            await requireCurrentExternalSessionProviderOps(
-              sessionId,
-              runner,
-              retainedAgent,
-              operation,
-            );
-          const result = await providerOps.resolveLinkIdentity({
-            source: operation.source,
-            remoteSessionId: operation.remoteSessionId,
-            ...(operation.runtimeDescriptor !== undefined
-              ? {
-                  runtimeDescriptor:
-                    operation.runtimeDescriptor,
-                }
-              : {}),
-            ...(operation.metadata
-              ? { metadata: operation.metadata }
-              : {}),
-            ...(signal ? { signal } : {}),
-          });
-          return RunnerAgentDaemonFacetResultV1Schema.parse({
-            kind: operation.kind,
-            result,
-          });
-        }
-        case 'external_session.current.resolve_linked_identity': {
-          const providerOps =
-            await requireCurrentExternalSessionProviderOps(
-              sessionId,
-              runner,
-              retainedAgent,
-              operation,
-            );
-          const result = await providerOps.canonicalizeLinkedSession({
-            source: operation.source,
-            remoteSessionId: operation.remoteSessionId,
-            metadata: operation.metadata,
-            ...(signal ? { signal } : {}),
-          });
-          return RunnerAgentDaemonFacetResultV1Schema.parse({
-            kind: operation.kind,
-            result,
-          });
-        }
-        case 'external_session.current.page_transcript': {
-          const providerOps =
-            await requireCurrentExternalSessionProviderOps(
-              sessionId,
-              runner,
-              retainedAgent,
-              operation,
-            );
-          const result = await providerOps.pageTranscript({
-            source: operation.source,
-            remoteSessionId: operation.remoteSessionId,
-            direction: operation.direction,
-            maxBytes: operation.maxBytes,
-            maxItems: operation.maxItems,
-            ...(operation.cursor
-              ? { cursor: operation.cursor }
-              : {}),
-            ...(signal ? { signal } : {}),
-          });
-          return RunnerAgentDaemonFacetResultV1Schema.parse({
-            kind: operation.kind,
-            result,
-          });
-        }
-        case 'external_session.current.read_after_transcript': {
-          const providerOps =
-            await requireCurrentExternalSessionProviderOps(
-              sessionId,
-              runner,
-              retainedAgent,
-              operation,
-            );
-          const result = await providerOps.readAfterTranscript({
-            source: operation.source,
-            remoteSessionId: operation.remoteSessionId,
-            cursor: operation.cursor,
-            maxBytes: operation.maxBytes,
-            maxItems: operation.maxItems,
-            ...(signal ? { signal } : {}),
-          });
-          return RunnerAgentDaemonFacetResultV1Schema.parse({
-            kind: operation.kind,
-            result,
-          });
-        }
         case 'external_session.follow.open':
           return await openFollow(
             sessionId,

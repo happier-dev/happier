@@ -49,7 +49,6 @@ export function createSidecarLaunchPlan(params: Readonly<{
     sidecarId: string;
     nowMs: number;
     featureEnabled: boolean;
-    browserUseAllowed: boolean;
     allowPersistentProfiles: boolean;
     profile: BrowserProfileV1;
     profileDirectory: string;
@@ -60,16 +59,6 @@ export function createSidecarLaunchPlan(params: Readonly<{
             publicResult: rejectedLaunchResult({
                 errorCode: 'feature_disabled',
                 disabledReason: 'browser.sidecar feature disabled',
-            }),
-            privateLaunch: null,
-        };
-    }
-
-    if (!params.browserUseAllowed) {
-        return {
-            publicResult: rejectedLaunchResult({
-                errorCode: 'browser_policy_denied',
-                disabledReason: 'browser use denied by policy',
             }),
             privateLaunch: null,
         };

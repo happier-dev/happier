@@ -1,11 +1,7 @@
 import { createHash } from 'node:crypto';
-import { lookup as dnsLookup } from 'node:dns/promises';
 import { readFile } from 'node:fs/promises';
-import { isIP, type LookupFunction } from 'node:net';
 import { resolve } from 'node:path';
 import { performance } from 'node:perf_hooks';
-
-import { Agent, fetch as undiciFetch } from 'undici';
 
 import {
   createMarketplaceNpmDiscoveryProjectionV1,
@@ -19,22 +15,36 @@ import {
   type MarketplaceIndexSourceSnapshotV1,
 } from '@happier-dev/protocol';
 
-import { resolveUrlConnectionIdentity } from '@/network/urlConnectionIdentity';
+import {
+  assertRemoteAcquisitionUrl,
+  openRemoteAcquisition,
+  type RemoteAcquisitionAddressResolver,
+  type RemoteAcquisitionDestinationPolicy,
+} from '@/plugins/discovery/remote/acquisition';
 import { resolvePluginRemoteCatalogMaxBytes, resolvePluginRemoteFetchTimeoutMs } from '@/plugins/discovery/remote/fetch';
 import { createNpmRegistryHttpsClient } from '@/plugins/distribution/npm/httpsClient';
 import { normalizeNpmArtifactRequest } from '@/plugins/distribution/npm/normalize';
 import { resolveNpmArtifactMetadata, type NpmRegistryJsonClient } from '@/plugins/distribution/npm/resolver';
 import type { ResolvedNpmArtifact } from '@/plugins/distribution/npm/types';
-import { assertPublicNpmNetworkAddresses } from '@/plugins/distribution/npm/networkPolicy';
 import { projectPluginFailureText } from '@/plugins/runtime/lifecycle/utils';
 import { resolvePluginStorePaths } from '@/plugins/store/paths';
 import { writeJsonAtomic } from '@/utils/fs/writeJsonAtomic';
 
 const CACHE_MAX_STALE_MS = 7 * 24 * 60 * 60 * 1000;
-const MAX_REDIRECTS = 5;
 const MAX_COMMUNITY_NPM_DISCOVERY_CANDIDATES = 100;
 const MAX_CONCURRENT_COMMUNITY_NPM_METADATA_REQUESTS = 4;
-const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+const INDEX_SOURCE_ERROR_LABEL = 'Marketplace index source';
+/**
+ * A configured index source is a published catalog: it must be reachable over
+ * HTTPS, stay on the origin the operator configured, and never resolve into a
+ * private, loopback or reserved network. The shared acquisition owner enforces
+ * all three and pins each hop to the addresses it assessed.
+ */
+const INDEX_SOURCE_ACQUISITION_POLICY: RemoteAcquisitionDestinationPolicy = Object.freeze({
+  scheme: 'https',
+  redirects: 'sameOrigin',
+  privateNetwork: 'refuse',
+});
 const inFlight = new Map<string, Promise<MarketplaceIndexSourceSnapshotV1>>();
 
 type CacheRecord = Readonly<{
@@ -191,109 +201,7 @@ function sourceCachePath(happyHomeDir: string | undefined, sourceUrl: string): s
 }
 
 function validateSourceUrl(sourceUrl: string): string {
-  const parsed = new URL(sourceUrl);
-  if (parsed.protocol !== 'https:' || parsed.username || parsed.password || parsed.hash || !parsed.hostname) {
-    throw new Error('Marketplace index sources require a credential-free HTTPS URL');
-  }
-  const { hostname } = resolveUrlConnectionIdentity(parsed.hostname);
-  if (hostname.toLowerCase() === 'localhost') {
-    throw new Error('Marketplace index source host must be public');
-  }
-  if (isIP(hostname) !== 0) assertPublicNpmNetworkAddresses([hostname]);
-  return parsed.toString();
-}
-
-function remainingMs(deadlineAtMs: number): number {
-  const remaining = Math.ceil(deadlineAtMs - performance.now());
-  if (remaining <= 0) throw new Error('Marketplace index source fetch timed out');
-  return remaining;
-}
-
-async function withinDeadline<T>(promise: Promise<T>, deadlineAtMs: number): Promise<T> {
-  let timer: NodeJS.Timeout | undefined;
-  try {
-    return await Promise.race([
-      promise,
-      new Promise<T>((_resolve, reject) => {
-        timer = setTimeout(() => reject(new Error('Marketplace index source fetch timed out')), remainingMs(deadlineAtMs));
-      }),
-    ]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
-}
-
-function createPinnedLookup(hostname: string, addresses: readonly Readonly<{ address: string; family: 4 | 6 }>[]): LookupFunction {
-  const expectedHostname = hostname.toLowerCase().replace(/\.$/u, '');
-  return (requestedHostname, options, callback) => {
-    if (requestedHostname.toLowerCase().replace(/\.$/u, '') !== expectedHostname) {
-      callback(Object.assign(new Error('Marketplace index source host changed after DNS assessment'), { code: 'EHOSTUNREACH' }), '', 0);
-      return;
-    }
-    const family = typeof options === 'number' ? options : options.family ?? 0;
-    const candidates = family === 4 || family === 6 ? addresses.filter((entry) => entry.family === family) : addresses;
-    if (candidates.length === 0) {
-      callback(Object.assign(new Error('Marketplace index source has no assessed address for the requested family'), { code: 'EHOSTUNREACH' }), '', 0);
-      return;
-    }
-    if (typeof options !== 'number' && options.all) {
-      callback(null, [...candidates]);
-      return;
-    }
-    callback(null, candidates[0]!.address, candidates[0]!.family);
-  };
-}
-
-async function openSourceResponse(params: Readonly<{
-  sourceUrl: string;
-  headers: Readonly<Record<string, string>>;
-  fetchImpl?: typeof fetch;
-}>): Promise<Readonly<{ response: Response; dispose: () => Promise<void> }>> {
-  const requiredOrigin = new URL(params.sourceUrl).origin;
-  const deadlineAtMs = performance.now() + resolvePluginRemoteFetchTimeoutMs();
-  let current = params.sourceUrl;
-  for (let redirects = 0; ; redirects += 1) {
-    const signal = AbortSignal.timeout(remainingMs(deadlineAtMs));
-    let response: Response;
-    let dispose = async (): Promise<void> => undefined;
-    if (params.fetchImpl) {
-      response = await params.fetchImpl(current, { headers: params.headers, signal, redirect: 'manual' });
-    } else {
-      const { hostname } = resolveUrlConnectionIdentity(new URL(current).hostname);
-      const answers = await withinDeadline(dnsLookup(hostname, { all: true, verbatim: true }), deadlineAtMs);
-      const addresses = answers.filter((answer): answer is { address: string; family: 4 | 6 } => answer.family === 4 || answer.family === 6);
-      assertPublicNpmNetworkAddresses(addresses.map((answer) => answer.address));
-      const dispatcher = new Agent({ connect: { lookup: createPinnedLookup(hostname, addresses) } });
-      dispose = async () => await dispatcher.close();
-      try {
-        response = await undiciFetch(current, { headers: params.headers, signal, redirect: 'manual', dispatcher }) as unknown as Response;
-      } catch (error) {
-        await dispose().catch(() => undefined);
-        throw error;
-      }
-    }
-
-    if (!REDIRECT_STATUSES.has(response.status)) {
-      if (response.url) {
-        const observed = validateSourceUrl(response.url);
-        if (new URL(observed).origin !== requiredOrigin) {
-          await response.body?.cancel().catch(() => undefined);
-          await dispose().catch(() => undefined);
-          throw new Error('Marketplace index source redirect changed origin');
-        }
-      }
-      return { response, dispose };
-    }
-
-    await response.body?.cancel().catch(() => undefined);
-    await dispose().catch(() => undefined);
-    if (redirects >= MAX_REDIRECTS) throw new Error(`Marketplace index source exceeded ${MAX_REDIRECTS} redirects`);
-    const location = response.headers.get('location');
-    if (!location) throw new Error('Marketplace index source redirect omitted location');
-    const next = validateSourceUrl(new URL(location, current).toString());
-    if (new URL(next).origin !== requiredOrigin) throw new Error('Marketplace index source redirect changed origin');
-    current = next;
-  }
+  return assertRemoteAcquisitionUrl(sourceUrl, INDEX_SOURCE_ACQUISITION_POLICY, INDEX_SOURCE_ERROR_LABEL).toString();
 }
 
 async function readCache(
@@ -347,6 +255,7 @@ export async function loadMarketplaceIndexSource(params: Readonly<{
   happyHomeDir?: string;
   now?: () => number;
   fetchImpl?: typeof fetch;
+  resolveAddresses?: RemoteAcquisitionAddressResolver;
   communityNpmClient?: NpmRegistryJsonClient;
 }>): Promise<MarketplaceIndexSourceSnapshotV1> {
   const sourceUrl = validateSourceUrl(params.source.sourceUrl);
@@ -359,10 +268,14 @@ export async function loadMarketplaceIndexSource(params: Readonly<{
     const cacheRead = await readCache(cachePath, { ...params.source, sourceUrl }, now());
     const cached = cacheRead.record;
     try {
-      const opened = await openSourceResponse({
-        sourceUrl,
+      const opened = await openRemoteAcquisition({
+        url: sourceUrl,
         headers: { accept: 'application/json', ...(cached?.etag ? { 'if-none-match': cached.etag } : {}), ...(cached?.lastModified ? { 'if-modified-since': cached.lastModified } : {}) },
+        policy: INDEX_SOURCE_ACQUISITION_POLICY,
+        timeoutMs: resolvePluginRemoteFetchTimeoutMs(),
+        errorLabel: INDEX_SOURCE_ERROR_LABEL,
         ...(params.fetchImpl ? { fetchImpl: params.fetchImpl } : {}),
+        ...(params.resolveAddresses ? { resolveAddresses: params.resolveAddresses } : {}),
       });
       try {
         const response = opened.response;

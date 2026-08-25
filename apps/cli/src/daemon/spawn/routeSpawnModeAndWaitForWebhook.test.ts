@@ -1,8 +1,14 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { chmodSync, mkdirSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 
 import { partitionProviderSessionArgs } from '@/cli/providerSessionArgPartition';
 import type { SpawnSessionResult } from '@/rpc/handlers/registerSessionHandlers';
 import type { NativeForkSource } from '@/session/shared/spawnSessionContract';
+import { createSpawnHappyCliEnvScope } from '@/testkit/process/spawnHappyCliHarness';
+import { withTempDir } from '@/testkit/fs/tempDir';
+import cliDistBuildManifest from '@happier-dev/cli-common/cliDistBuildManifest';
+import { CLI_RUNTIME_SIDECAR_ENTRIES } from '@happier-dev/cli-common/cliRuntimeSidecars';
 
 const mocks = vi.hoisted(() => ({
   prepareSourceDevSharedDepsForHappyCliSpawn: vi.fn(),
@@ -11,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   spawnRegularProcessAndWaitForWebhook: vi.fn(),
   spawnWindowsHostedSessionAndWaitForWebhook: vi.fn(),
   resolveWindowsRemoteSessionConsoleMode: vi.fn(() => 'hidden'),
+  ensureManagedJavaScriptRuntimeCommand: vi.fn(),
 }));
 
 vi.mock('@/subprocess/sourceDevSharedDepsPreflight', async (importOriginal) => {
@@ -38,12 +45,21 @@ vi.mock('../platform/windows/windowsSessionConsoleMode', () => ({
   resolveWindowsRemoteSessionConsoleMode: mocks.resolveWindowsRemoteSessionConsoleMode,
 }));
 
+vi.mock('@/packagedRuntime/js/managedJavaScriptRuntime', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/packagedRuntime/js/managedJavaScriptRuntime')>();
+  return {
+    ...actual,
+    ensureManagedJavaScriptRuntimeCommand: mocks.ensureManagedJavaScriptRuntimeCommand,
+  };
+});
+
 const successResult: SpawnSessionResult = {
   type: 'success',
   sessionId: 'session-1',
 };
 
 const ROUTE_SPAWN_MODE_TEST_TIMEOUT_MS = 90_000;
+const envScope = createSpawnHappyCliEnvScope();
 
 const nativeForkSource: NativeForkSource = {
   sessionId: 'source-session',
@@ -96,6 +112,53 @@ function createParams() {
   } as const;
 }
 
+function writeRuntimeBackedRunnerFixture(root: string): Readonly<{
+  entrypoint: string;
+  fingerprint: string;
+}> {
+  const distDir = join(root, 'dist');
+  mkdirSync(distDir, { recursive: true });
+  writeFileSync(join(distDir, 'chunk.mjs'), 'export const runner = true;\n', 'utf8');
+  const entrypoint = join(distDir, 'index.mjs');
+  writeFileSync(entrypoint, 'import "./chunk.mjs";\nexport {};\n', 'utf8');
+
+  const scriptsDir = join(root, 'scripts');
+  const toolsDir = join(root, 'tools', 'unpacked');
+  mkdirSync(scriptsDir, { recursive: true });
+  mkdirSync(toolsDir, { recursive: true });
+  for (const relativePath of CLI_RUNTIME_SIDECAR_ENTRIES) {
+    const targetPath = join(scriptsDir, ...relativePath);
+    if (relativePath[0] === 'runtime' || relativePath[0] === 'shims') {
+      mkdirSync(targetPath, { recursive: true });
+      continue;
+    }
+    mkdirSync(dirname(targetPath), { recursive: true });
+    writeFileSync(targetPath, `module.exports = ${JSON.stringify(relativePath.at(-1))};\n`, 'utf8');
+  }
+  writeFileSync(join(toolsDir, 'rg'), '#!/bin/sh\nexit 0\n', 'utf8');
+  writeFileSync(join(toolsDir, 'happier-cliproxyapi-managed'), 'managed-runtime', 'utf8');
+
+  const manifest = cliDistBuildManifest.writeCliDistBuildManifest(entrypoint, {
+    outputDir: distDir,
+    builtAt: '2026-08-25T00:00:00.000Z',
+  });
+  return { entrypoint, fingerprint: manifest.manifest.fingerprint };
+}
+
+function writeManagedJavaScriptRuntime(homeDir: string): string {
+  const runtimeDir = join(homeDir, 'tools', 'js-runtime', 'current', 'runtime', 'bin');
+  const binDir = join(homeDir, 'tools', 'js-runtime', 'current', 'bin');
+  const nodePath = join(runtimeDir, 'node');
+  const wrapperPath = join(binDir, 'happier-js-runtime');
+  mkdirSync(runtimeDir, { recursive: true });
+  mkdirSync(binDir, { recursive: true });
+  writeFileSync(nodePath, '#!/bin/sh\nexit 0\n', 'utf8');
+  writeFileSync(wrapperPath, '#!/bin/sh\nexec "$(dirname "$0")/../runtime/bin/node" "$@"\n', 'utf8');
+  chmodSync(nodePath, 0o755);
+  chmodSync(wrapperPath, 0o755);
+  return wrapperPath;
+}
+
 describe('routeSpawnModeAndWaitForWebhook', () => {
   beforeEach(() => {
     mocks.prepareSourceDevSharedDepsForHappyCliSpawn.mockReset().mockResolvedValue({
@@ -117,7 +180,118 @@ describe('routeSpawnModeAndWaitForWebhook', () => {
     mocks.spawnRegularProcessAndWaitForWebhook.mockReset().mockResolvedValue(successResult);
     mocks.spawnWindowsHostedSessionAndWaitForWebhook.mockReset().mockResolvedValue(successResult);
     mocks.resolveWindowsRemoteSessionConsoleMode.mockReset().mockReturnValue('hidden');
+    mocks.ensureManagedJavaScriptRuntimeCommand.mockReset();
   });
+
+  afterEach(() => {
+    envScope.restore();
+  });
+
+  it('provisions the managed runtime before resolving a runtime-backed pinned runner', async () => {
+    await withTempDir('happier-runtime-backed-session-spawn-', async (root) => {
+      const { entrypoint, fingerprint } = writeRuntimeBackedRunnerFixture(root);
+      const homeDir = join(root, 'happier-home');
+      const managedRuntimePath = join(homeDir, 'tools', 'js-runtime', 'current', 'bin', 'happier-js-runtime');
+      envScope.patch({
+        HAPPIER_CLI_SUBPROCESS_RUNTIME: 'bun',
+        HAPPIER_CLI_SUBPROCESS_RUNTIME_BACKED: '1',
+        HAPPIER_CLI_SUBPROCESS_DIST_ENTRYPOINT: entrypoint,
+        HAPPIER_CLI_SUBPROCESS_DAEMON_DIST_CLOSURE_FINGERPRINT: fingerprint,
+        HAPPIER_HOME_DIR: homeDir,
+        HAPPIER_STACK_STACK: 'session-spawn-test',
+      });
+      const launchEnvironment = { ...process.env };
+      envScope.patch({
+        HAPPIER_CLI_SUBPROCESS_RUNTIME: undefined,
+        HAPPIER_CLI_SUBPROCESS_RUNTIME_BACKED: undefined,
+        HAPPIER_CLI_SUBPROCESS_DIST_ENTRYPOINT: undefined,
+        HAPPIER_CLI_SUBPROCESS_DAEMON_DIST_CLOSURE_FINGERPRINT: undefined,
+        HAPPIER_STACK_STACK: undefined,
+      });
+      mocks.ensureManagedJavaScriptRuntimeCommand.mockImplementationOnce(async () => writeManagedJavaScriptRuntime(homeDir));
+      const originalExecPath = process.execPath;
+
+      try {
+        Object.defineProperty(process, 'execPath', {
+          value: join(root, 'happier'),
+          configurable: true,
+        });
+        const { routeSpawnModeAndWaitForWebhook } = await import('./routeSpawnModeAndWaitForWebhook');
+
+        await expect(routeSpawnModeAndWaitForWebhook({
+          ...createParams(),
+          processEnv: launchEnvironment,
+        })).resolves.toEqual(successResult);
+
+        expect(mocks.ensureManagedJavaScriptRuntimeCommand).toHaveBeenCalledWith(launchEnvironment);
+        const runnerLaunchOptions = mocks.spawnRegularProcessAndWaitForWebhook.mock.calls.at(-1)?.[0]?.runnerLaunchOptions;
+        expect(runnerLaunchOptions?.runtimeDecision).toMatchObject({ runtime: 'node' });
+        const { buildHappyCliSubprocessLaunchSpec } = await import('@/utils/spawnHappyCLI');
+        expect(buildHappyCliSubprocessLaunchSpec(['opencode'], runnerLaunchOptions)).toMatchObject({
+          filePath: managedRuntimePath,
+        });
+      } finally {
+        Object.defineProperty(process, 'execPath', {
+          value: originalExecPath,
+          configurable: true,
+        });
+      }
+    });
+  }, ROUTE_SPAWN_MODE_TEST_TIMEOUT_MS);
+
+  it('propagates a runtime bootstrap failure before any spawn host starts', async () => {
+    await withTempDir('happier-runtime-backed-session-spawn-failure-', async (root) => {
+      const { entrypoint, fingerprint } = writeRuntimeBackedRunnerFixture(root);
+      const homeDir = join(root, 'happier-home');
+      envScope.patch({
+        HAPPIER_CLI_SUBPROCESS_RUNTIME: 'bun',
+        HAPPIER_CLI_SUBPROCESS_RUNTIME_BACKED: '1',
+        HAPPIER_CLI_SUBPROCESS_DIST_ENTRYPOINT: entrypoint,
+        HAPPIER_CLI_SUBPROCESS_DAEMON_DIST_CLOSURE_FINGERPRINT: fingerprint,
+        HAPPIER_HOME_DIR: homeDir,
+        HAPPIER_STACK_STACK: 'session-spawn-test',
+      });
+      const bootstrapFailure = new Error('Managed JavaScript runtime is unavailable: bootstrap failed');
+      mocks.ensureManagedJavaScriptRuntimeCommand.mockRejectedValueOnce(bootstrapFailure);
+      const originalExecPath = process.execPath;
+
+      try {
+        Object.defineProperty(process, 'execPath', {
+          value: join(root, 'happier'),
+          configurable: true,
+        });
+        const { routeSpawnModeAndWaitForWebhook } = await import('./routeSpawnModeAndWaitForWebhook');
+
+        await expect(routeSpawnModeAndWaitForWebhook({
+          ...createParams(),
+          processEnv: process.env,
+        })).rejects.toBe(bootstrapFailure);
+        expect(mocks.spawnTmuxHostedSessionAndWaitForWebhook).not.toHaveBeenCalled();
+        expect(mocks.spawnRegularProcessAndWaitForWebhook).not.toHaveBeenCalled();
+        expect(mocks.spawnWindowsHostedSessionAndWaitForWebhook).not.toHaveBeenCalled();
+      } finally {
+        Object.defineProperty(process, 'execPath', {
+          value: originalExecPath,
+          configurable: true,
+        });
+      }
+    });
+  }, ROUTE_SPAWN_MODE_TEST_TIMEOUT_MS);
+
+  it('does not provision a managed runtime for non-runtime-backed spawn paths', async () => {
+    const { routeSpawnModeAndWaitForWebhook } = await import('./routeSpawnModeAndWaitForWebhook');
+    const processEnv = {
+      ...process.env,
+      HAPPIER_CLI_SUBPROCESS_RUNTIME_BACKED: undefined,
+    };
+
+    await expect(routeSpawnModeAndWaitForWebhook({
+      ...createParams(),
+      processEnv,
+    })).resolves.toEqual(successResult);
+
+    expect(mocks.ensureManagedJavaScriptRuntimeCommand).not.toHaveBeenCalled();
+  }, ROUTE_SPAWN_MODE_TEST_TIMEOUT_MS);
 
   it('runs the source-dev shared-deps preflight before selecting a spawn host', async () => {
     const order: string[] = [];

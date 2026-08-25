@@ -50,11 +50,15 @@ import {
   ConnectedServiceProfileIdSchema,
   ConnectedServiceUsageSourceV1Schema,
   CONNECTED_ACCOUNT_REQUEST_AUTH_FAILURE_PATH,
+  CONNECTED_ACCOUNT_REQUEST_AUTH_ERROR_HTTP_STATUS_V1,
   CONNECTED_ACCOUNT_REQUEST_AUTH_LOOKUP_PATH,
   CONNECTED_ACCOUNT_REQUEST_AUTH_QUOTA_FAILURE_PATH,
   ConnectedAccountAuthFailureRequestV1Schema,
   ConnectedAccountQuotaFailureRequestV1Schema,
+  ConnectedAccountRequestAuthErrorResponseV1Schema,
+  ConnectedAccountRequestAuthFailureSuccessResponseV1Schema,
   ConnectedAccountRequestAuthLookupRequestV1Schema,
+  ConnectedAccountRequestAuthLookupSuccessResponseV1Schema,
   DaemonLocalServicePublicPreviewStatusRequestV1Schema,
   DaemonSimulatorPreviewActionRequestV1Schema,
   LocalServiceLauncherSnapshotV1Schema,
@@ -63,8 +67,7 @@ import {
   LocalServicePreviewSnapshotV1Schema,
   LocalServicePublicPreviewSnapshotV1Schema,
   ProviderAccountUsageSnapshotV1Schema,
-  OAuthBearerLeaseV1Schema,
-  RequestAuthFailureOutcomeV1Schema,
+  getConnectedAccountRequestAuthErrorHttpStatusV1,
   RestartAllSessionRunnersRequestV1Schema,
   RestartAllSessionRunnersResultV1Schema,
   RestartSessionRunnerRequestV1Schema,
@@ -122,7 +125,6 @@ import { readAuthenticationStatus } from '@/api/client/httpStatusError';
 import { toSshTunnelErrorResponse, type SshTunnelSupervisor } from '@/daemon/ssh/tunnels';
 import type { LocalServiceInventoryRoutes } from './local/services/inventory/routes';
 import type { LocalServiceLauncherRoutes } from './local/services/launch/routes';
-import type { LocalServiceManagedRoutes } from './local/services/managed/routes';
 import type { LocalServiceActionRoutes } from './local/services/actions/routes';
 import type { LocalServicePreviewRoutes } from './local/services/preview/routes';
 import type { LocalServicePublicPreviewRoutes } from './local/services/public/routes';
@@ -772,7 +774,6 @@ export function createDaemonControlApp({
   }>) => Promise<unknown>;
   localServicesInventory?: LocalServiceInventoryRoutes;
   localServicesLauncher?: LocalServiceLauncherRoutes;
-  localServicesManaged?: LocalServiceManagedRoutes;
   localServicesPreview?: Pick<LocalServicePreviewRoutes, 'getSnapshot'>;
   localServicesActions?: LocalServiceActionRoutes;
   localServicesPublicPreview?: LocalServicePublicPreviewRoutes;
@@ -1081,30 +1082,44 @@ export function createDaemonControlApp({
 
   const requireAuth = createDaemonControlAuthGuard(normalizedControlToken);
 
-  const requestAuthErrorResponseSchema = z.object({
-    ok: z.literal(false),
-    error: z.object({ code: z.string().trim().min(1).max(128) }).strict(),
-  }).strict();
+  const connectedAccountRequestAuthErrorResponses = {
+    [CONNECTED_ACCOUNT_REQUEST_AUTH_ERROR_HTTP_STATUS_V1.request_auth_unauthorized]:
+      ConnectedAccountRequestAuthErrorResponseV1Schema,
+    [CONNECTED_ACCOUNT_REQUEST_AUTH_ERROR_HTTP_STATUS_V1.request_auth_purpose_forbidden]:
+      ConnectedAccountRequestAuthErrorResponseV1Schema,
+    [CONNECTED_ACCOUNT_REQUEST_AUTH_ERROR_HTTP_STATUS_V1.request_auth_not_active]:
+      ConnectedAccountRequestAuthErrorResponseV1Schema,
+    [CONNECTED_ACCOUNT_REQUEST_AUTH_ERROR_HTTP_STATUS_V1.request_auth_unavailable]:
+      ConnectedAccountRequestAuthErrorResponseV1Schema,
+  } as const;
+  const sendConnectedAccountRequestAuthError = (
+    reply: FastifyReply,
+    code: Parameters<typeof getConnectedAccountRequestAuthErrorHttpStatusV1>[0],
+  ) => {
+    reply.code(getConnectedAccountRequestAuthErrorHttpStatusV1(code));
+    return {
+      ok: false as const,
+      error: { code },
+    };
+  };
   const requireConnectedAccountRequestAuth = async (request: {
     headers: Record<string, unknown>;
   }, reply: FastifyReply): Promise<void> => {
     if (isDaemonQuiescing()) {
-      reply.code(503);
-      return reply.send({
-        ok: false as const,
-        error: { code: 'request_auth_unavailable' },
-      });
+      return reply.send(sendConnectedAccountRequestAuthError(
+        reply,
+        'request_auth_unavailable',
+      ));
     }
     const provided = request.headers[CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_HEADER];
     const principal = typeof provided === 'string'
       ? connectedAccountRequestAuth?.authenticate(provided) ?? null
       : null;
     if (!principal || !principal.isCurrent()) {
-      reply.code(401);
-      return reply.send({
-        ok: false as const,
-        error: { code: 'request_auth_unauthorized' },
-      });
+      return reply.send(sendConnectedAccountRequestAuthError(
+        reply,
+        'request_auth_unauthorized',
+      ));
     }
     requestAuthPrincipalByRequest.set(request, principal);
   };
@@ -1122,25 +1137,16 @@ export function createDaemonControlApp({
     error: unknown,
   ) => {
     if (error instanceof ConnectedAccountRequestAuthError) {
-      const status = error.code === 'request_auth_purpose_forbidden'
-        ? 403
-        : error.code === 'request_auth_not_active'
-          ? 409
-          : 503;
-      reply.code(status);
-      return {
-        ok: false as const,
-        error: { code: error.code },
-      };
+      const code = error.code === 'request_auth_purpose_forbidden'
+        || error.code === 'request_auth_not_active'
+        ? error.code
+        : 'request_auth_unavailable';
+      return sendConnectedAccountRequestAuthError(reply, code);
     }
     logger.debug('[CONTROL SERVER] Connected-account request-auth operation failed', {
       errorCode: 'unexpected_error',
     });
-    reply.code(503);
-    return {
-      ok: false as const,
-      error: { code: 'request_auth_unavailable' },
-    };
+    return sendConnectedAccountRequestAuthError(reply, 'request_auth_unavailable');
   };
 
   const createConnectedAccountRequestAuthRequestLifetime = (
@@ -1228,19 +1234,15 @@ export function createDaemonControlApp({
     schema: {
       body: ConnectedAccountRequestAuthLookupRequestV1Schema,
       response: {
-        200: z.object({ ok: z.literal(true), value: OAuthBearerLeaseV1Schema }).strict(),
-        401: requestAuthErrorResponseSchema,
-        403: requestAuthErrorResponseSchema,
-        409: requestAuthErrorResponseSchema,
-        503: requestAuthErrorResponseSchema,
+        200: ConnectedAccountRequestAuthLookupSuccessResponseV1Schema,
+        ...connectedAccountRequestAuthErrorResponses,
       },
     },
     preHandler: requireConnectedAccountRequestAuth,
   }, async (request, reply) => {
     const principal = takeConnectedAccountRequestAuthPrincipal(request);
     if (!principal || !connectedAccountRequestAuth) {
-      reply.code(401);
-      return { ok: false as const, error: { code: 'request_auth_unauthorized' } };
+      return sendConnectedAccountRequestAuthError(reply, 'request_auth_unauthorized');
     }
     const requestLifetime = createConnectedAccountRequestAuthRequestLifetime(request, reply);
     try {
@@ -1250,8 +1252,7 @@ export function createDaemonControlApp({
         signal: requestLifetime.signal,
       });
       if (!principal.isCurrent()) {
-        reply.code(409);
-        return { ok: false as const, error: { code: 'request_auth_not_active' } };
+        return sendConnectedAccountRequestAuthError(reply, 'request_auth_not_active');
       }
       return { ok: true as const, value };
     } catch (error) {
@@ -1265,19 +1266,15 @@ export function createDaemonControlApp({
     schema: {
       body: ConnectedAccountAuthFailureRequestV1Schema,
       response: {
-        200: z.object({ ok: z.literal(true), value: RequestAuthFailureOutcomeV1Schema }).strict(),
-        401: requestAuthErrorResponseSchema,
-        403: requestAuthErrorResponseSchema,
-        409: requestAuthErrorResponseSchema,
-        503: requestAuthErrorResponseSchema,
+        200: ConnectedAccountRequestAuthFailureSuccessResponseV1Schema,
+        ...connectedAccountRequestAuthErrorResponses,
       },
     },
     preHandler: requireConnectedAccountRequestAuth,
   }, async (request, reply) => {
     const principal = takeConnectedAccountRequestAuthPrincipal(request);
     if (!principal || !connectedAccountRequestAuth) {
-      reply.code(401);
-      return { ok: false as const, error: { code: 'request_auth_unauthorized' } };
+      return sendConnectedAccountRequestAuthError(reply, 'request_auth_unauthorized');
     }
     const requestLifetime = createConnectedAccountRequestAuthRequestLifetime(request, reply);
     try {
@@ -1287,8 +1284,7 @@ export function createDaemonControlApp({
         signal: requestLifetime.signal,
       });
       if (!principal.isCurrent()) {
-        reply.code(409);
-        return { ok: false as const, error: { code: 'request_auth_not_active' } };
+        return sendConnectedAccountRequestAuthError(reply, 'request_auth_not_active');
       }
       return { ok: true as const, value };
     } catch (error) {
@@ -1302,19 +1298,15 @@ export function createDaemonControlApp({
     schema: {
       body: ConnectedAccountQuotaFailureRequestV1Schema,
       response: {
-        200: z.object({ ok: z.literal(true), value: RequestAuthFailureOutcomeV1Schema }).strict(),
-        401: requestAuthErrorResponseSchema,
-        403: requestAuthErrorResponseSchema,
-        409: requestAuthErrorResponseSchema,
-        503: requestAuthErrorResponseSchema,
+        200: ConnectedAccountRequestAuthFailureSuccessResponseV1Schema,
+        ...connectedAccountRequestAuthErrorResponses,
       },
     },
     preHandler: requireConnectedAccountRequestAuth,
   }, async (request, reply) => {
     const principal = takeConnectedAccountRequestAuthPrincipal(request);
     if (!principal || !connectedAccountRequestAuth) {
-      reply.code(401);
-      return { ok: false as const, error: { code: 'request_auth_unauthorized' } };
+      return sendConnectedAccountRequestAuthError(reply, 'request_auth_unauthorized');
     }
     const requestLifetime = createConnectedAccountRequestAuthRequestLifetime(request, reply);
     try {
@@ -1324,8 +1316,7 @@ export function createDaemonControlApp({
         signal: requestLifetime.signal,
       });
       if (!principal.isCurrent()) {
-        reply.code(409);
-        return { ok: false as const, error: { code: 'request_auth_not_active' } };
+        return sendConnectedAccountRequestAuthError(reply, 'request_auth_not_active');
       }
       return { ok: true as const, value };
     } catch (error) {
@@ -3822,7 +3813,6 @@ export function startDaemonControlServer({
   sshTunnels?: Pick<SshTunnelSupervisor, 'ensureTunnel' | 'listTunnels' | 'probeTunnel' | 'releaseTunnel' | 'stopTunnel'>;
   localServicesInventory?: LocalServiceInventoryRoutes;
   localServicesLauncher?: LocalServiceLauncherRoutes;
-  localServicesManaged?: LocalServiceManagedRoutes;
   localServicesPreview?: Pick<LocalServicePreviewRoutes, 'getSnapshot'>;
   localServicesActions?: LocalServiceActionRoutes;
   localServicesPublicPreview?: LocalServicePublicPreviewRoutes;

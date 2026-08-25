@@ -1,5 +1,4 @@
 import type { HttpService } from '@happier-dev/plugin-sdk/http';
-import type { SpeechProviderRuntime } from '@happier-dev/plugin-sdk/voice/speech';
 
 import type { ContributionRuntimeRegistration } from '@/plugins/runtime/api/registrationRightsHost';
 import type { ResolvedVoiceProviderContribution } from '@/plugins/projection/registry/types';
@@ -11,10 +10,19 @@ type TargetRegistration = Readonly<{
     registration: ContributionRuntimeRegistration;
 }>;
 
+type RegisteredVoiceProviderRuntime = Extract<
+    ContributionRuntimeRegistration,
+    Readonly<{ family: 'voiceProviders' }>
+>['value'];
+export type RegisteredSpeechProviderRuntime = Extract<
+    RegisteredVoiceProviderRuntime,
+    Readonly<{ kind: 'speech' }>
+>;
+
 export type TargetVoiceSpeechRuntime = Readonly<{
     generation: string;
     qualifiedId: string;
-    runtime: SpeechProviderRuntime;
+    runtime: RegisteredSpeechProviderRuntime;
     contribution: Extract<ResolvedVoiceProviderContribution['definition'], { kind: 'speech' }>;
     isCurrent(): boolean;
     retirementSignal: AbortSignal;

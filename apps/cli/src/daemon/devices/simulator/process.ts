@@ -1,10 +1,8 @@
 import { Buffer } from 'node:buffer';
-import { execFile as nodeExecFile, type ExecFileOptions } from 'node:child_process';
-import { promisify } from 'node:util';
+
+import { execFileWithDeadline, type ExecFileWithDeadlineOptions } from '@happier-dev/cli-common/process';
 
 const DEFAULT_SIMULATOR_TOOL_MAX_OUTPUT_BYTES = 64 * 1024;
-
-const execFileAsync = promisify(nodeExecFile);
 
 export type SimulatorToolRunResult = Readonly<{
     exitCode: number | null;
@@ -84,19 +82,22 @@ function isAbortError(error: unknown): boolean {
     return readErrorName(error) === 'AbortError' || readErrorField(error, 'code') === 'ABORT_ERR';
 }
 
+/**
+ * The budget is owned here, not by `child_process`. Its `timeout` destroys a finished child's
+ * buffered output and still calls back with `code 0`, which this runner would report as
+ * `{ exitCode: 0, stdout: '' }` — a device listing that succeeded and found no devices, with
+ * `timedOut` never set. `execFileWithDeadline` rejects instead, so the `timedOut` branch below is
+ * reachable for the case it names.
+ */
 const defaultExecFile: SimulatorToolExecFile = async (command, args, options) => {
-    const execOptions: ExecFileOptions = {
+    const execOptions: ExecFileWithDeadlineOptions = {
         timeout: options.timeout,
         maxBuffer: options.maxBuffer,
         windowsHide: options.windowsHide,
         shell: options.shell,
         ...(options.signal ? { signal: options.signal } : {}),
     };
-    const result = await execFileAsync(command, [...args], execOptions);
-    return {
-        stdout: result.stdout,
-        stderr: result.stderr,
-    };
+    return await execFileWithDeadline(command, [...args], execOptions);
 };
 
 export function createDefaultSimulatorToolRunner(options: SimulatorToolRunnerOptions = {}): SimulatorToolRunner {

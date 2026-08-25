@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { applyAccountSettingMutationV1 } from '@happier-dev/protocol';
 
+import { logger } from '@/ui/logger';
+
 import {
   createActiveAccountSettingsConnectedAccountPurposeBindingStore,
   createConnectedAccountPurposeBindingOwner,
@@ -352,6 +354,60 @@ describe('active Account Settings purpose-binding store', () => {
       code: 'plugin_connected_account_settings_conflict',
       retryable: true,
       details: { currentVersion: '7' },
+    });
+  });
+
+  describe('an unavailable Account Settings boundary', () => {
+    const unavailable = Object.freeze({
+      status: 'unavailable' as const,
+      retryable: true,
+      reason: 'account_settings_storage_unavailable',
+    });
+
+    beforeEach(() => {
+      accountSettingsIo.current = {
+        connectedAccountPurposeBindingsV1: { v: 1, bindings: [] },
+      };
+      accountSettingsIo.update.mockResolvedValue(unavailable);
+    });
+
+    it('defers the durable prune and still publishes the candidate registry', async () => {
+      const publish = vi.fn();
+
+      await expect(createOwner().reconcileAuthorizedPurposes({
+        consumerScopes: [{ consumer: purpose.consumer, authorizedPurposes: [] }],
+        publish,
+        signal: new AbortController().signal,
+      })).resolves.toBeUndefined();
+
+      expect(publish).toHaveBeenCalledOnce();
+    });
+
+    it('reports the boundary refusal reason and its retryability to the operator', async () => {
+      const debug = vi.spyOn(logger, 'debug').mockImplementation(() => undefined);
+
+      await createOwner().reconcileAuthorizedPurposes({
+        consumerScopes: [{ consumer: purpose.consumer, authorizedPurposes: [] }],
+        publish: () => undefined,
+        signal: new AbortController().signal,
+      });
+
+      const reported = debug.mock.calls.map((call) => JSON.stringify(call)).join('\n');
+      expect(reported).toContain('account_settings_storage_unavailable');
+      expect(reported).toContain('"retryable":true');
+      debug.mockRestore();
+    });
+
+    it('still fails a user-initiated selection instead of reporting a bind that did not happen', async () => {
+      await expect(createOwner().requestSelection({
+        ...authorized,
+        reason: 'Choose account',
+        signal: new AbortController().signal,
+      })).rejects.toMatchObject({
+        code: 'plugin_connected_account_settings_unavailable',
+        retryable: true,
+        details: { reason: 'account_settings_storage_unavailable' },
+      });
     });
   });
 });

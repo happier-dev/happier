@@ -10,6 +10,7 @@ vi.mock('../../../configuration', () => ({
 }));
 
 import { resolvePluginStorePaths } from '../paths';
+import { PREDECESSOR_PLUGIN_REGISTRY_COMMIT_RECORD_BYTES } from './currentState.testkit';
 import {
   createEmptyPluginRegistryCommitRecord,
   PluginRegistryCommitRecordSchema,
@@ -101,6 +102,40 @@ describe('PluginRegistryCommitRecord', () => {
 
     expect(() => PluginRegistryCommitRecordSchema.parse(legacy)).toThrow();
     await expect(readPluginRegistryCommitRecord(paths)).rejects.toThrow(/invalid plugin registry commit/i);
+  });
+
+  it('names the offending file and the exact rejected field so an operator can act', async () => {
+    const happyHomeDir = await import('node:fs/promises').then(({ mkdtemp }) => mkdtemp(join(tmpdir(), 'happier-registry-diagnostic-')));
+    const paths = resolvePluginStorePaths({ happyHomeDir });
+    await mkdir(paths.stateDir, { recursive: true });
+    // Verbatim bytes of a real predecessor-shaped record found on disk at
+    // ~/.happier/stacks/<stack>/cli/plugins/plugins/state/plugin-registry-current.v1.json.
+    await writeFile(paths.registryCurrentFilePath, PREDECESSOR_PLUGIN_REGISTRY_COMMIT_RECORD_BYTES, 'utf8');
+
+    const error = await readPluginRegistryCommitRecord(paths).then(
+      () => null,
+      (reason: unknown) => reason,
+    );
+
+    expect(error).toBeInstanceOf(Error);
+    const message = (error as Error).message;
+    expect(message).toContain(paths.registryCurrentFilePath);
+    expect(message).toContain('installationState');
+    expect(message).toContain('digest');
+  });
+
+  it('reports unparseable JSON with the offending file rather than a bare rejection', async () => {
+    const happyHomeDir = await import('node:fs/promises').then(({ mkdtemp }) => mkdtemp(join(tmpdir(), 'happier-registry-syntax-')));
+    const paths = resolvePluginStorePaths({ happyHomeDir });
+    await mkdir(paths.stateDir, { recursive: true });
+    await writeFile(paths.registryCurrentFilePath, '{ "t": "happier_plugin_registry_commit_v1"', 'utf8');
+
+    const error = await readPluginRegistryCommitRecord(paths).then(
+      () => null,
+      (reason: unknown) => reason,
+    );
+
+    expect((error as Error).message).toContain(paths.registryCurrentFilePath);
   });
 
   it('rejects malformed, partial, stale digest, and non-monotonic records fail-closed', async () => {

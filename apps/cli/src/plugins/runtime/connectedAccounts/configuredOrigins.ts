@@ -56,6 +56,7 @@ export function matchesConnectedAccountOriginTarget(
 export type ConnectedAccountConfiguredEndpoint = Readonly<{
     origin: string;
     base: string;
+    grantTargetKind: 'connectedAccountOrigin' | 'fixedOrigin';
 }>;
 
 export function normalizeConnectedAccountConfiguredOrigin(
@@ -107,12 +108,19 @@ export function normalizeConnectedAccountConfiguredBase(
     ) {
         throw rejected();
     }
-    return Object.freeze({ origin: url.origin, base });
+    return Object.freeze({
+        origin: url.origin,
+        base,
+        grantTargetKind: 'connectedAccountOrigin',
+    });
 }
 
-function originEndpoint(value: string): ConnectedAccountConfiguredEndpoint {
+function originEndpoint(
+    value: string,
+    grantTargetKind: ConnectedAccountConfiguredEndpoint['grantTargetKind'],
+): ConnectedAccountConfiguredEndpoint {
     const origin = normalizeConnectedAccountConfiguredOrigin(value).origin;
-    return Object.freeze({ origin, base: origin });
+    return Object.freeze({ origin, base: origin, grantTargetKind });
 }
 
 function configurationService(
@@ -183,7 +191,7 @@ export function projectConnectedAccountConfiguredEndpoints(input: Readonly<{
             continue;
         }
         if (semantic.value === 'connectedAccountOrigin') {
-            endpoints.push(originEndpoint(configured));
+            endpoints.push(originEndpoint(configured, 'connectedAccountOrigin'));
             continue;
         }
         const originByValue = Object.getOwnPropertyDescriptor(field, 'originByValue');
@@ -197,7 +205,7 @@ export function projectConnectedAccountConfiguredEndpoints(input: Readonly<{
                 `Connected-account configured endpoint field '${field.id}' declares no origin for its configured choice`,
             );
         }
-        endpoints.push(originEndpoint(routed));
+        endpoints.push(originEndpoint(routed, 'fixedOrigin'));
     }
     return Object.freeze(endpoints);
 }
@@ -289,9 +297,9 @@ export async function resolveConnectedAccountConfiguredOrigins(input: Readonly<{
         required: boolean;
         status: 'available' | 'unavailable' | 'denied' | 'notApplicable';
     }>[];
-    resolveHostOwnedConfiguredOrigins(
+    resolveHostOwnedConfiguredEndpoints(
         configuration: RuntimeConfiguration,
-    ): readonly string[] | Promise<readonly string[]>;
+    ): readonly ConnectedAccountConfiguredEndpoint[] | Promise<readonly ConnectedAccountConfiguredEndpoint[]>;
     isConfigurationCurrent(configuration: RuntimeConfiguration): boolean | Promise<boolean>;
     /** Push revocation from the exact host-owned configuration snapshot. */
     configurationRevocationSignal?: AbortSignal;
@@ -302,26 +310,53 @@ export async function resolveConnectedAccountConfiguredOrigins(input: Readonly<{
     if (input.pluginId !== input.service.pluginId) {
         throw new TypeError('Connected-account producer network requests must be same-plugin');
     }
+    const configured = (await input.resolveHostOwnedConfiguredEndpoints(input.configuration)).map((endpoint) => {
+        const normalized = normalizeConnectedAccountConfiguredOrigin(endpoint.origin).origin;
+        if (endpoint.origin !== normalized || !endpoint.base.startsWith(endpoint.origin)) {
+            throw new TypeError('Connected-account configured endpoint is not canonical');
+        }
+        return endpoint;
+    });
     const matching = input.hostAccessRequests.flatMap(({ request, required, status }) => {
         if (
             status !== 'available'
             || (request.capability !== 'network' && request.capability !== 'network.client')
-            || !request.scope.targets.some((target) => (
-                target.kind === 'connectedAccountOrigin'
-                && matchesConnectedAccountOriginTarget(
-                    input.pluginId,
-                    input.service,
-                    target,
-                )
-            ))
         ) return [];
-        return [{ request, required }];
+        const hasConnectedAccountTarget = request.scope.targets.some((target) => (
+            target.kind === 'connectedAccountOrigin'
+            && matchesConnectedAccountOriginTarget(
+                input.pluginId,
+                input.service,
+                target,
+            )
+        ));
+        const matchesFixedConfiguredEndpoint = configured.some((endpoint) => (
+            endpoint.grantTargetKind === 'fixedOrigin'
+            && request.scope.targets.some((target) => (
+                target.kind === 'fixedOrigin' && target.origin === endpoint.origin
+            ))
+        ));
+        if (!hasConnectedAccountTarget && !matchesFixedConfiguredEndpoint) return [];
+        return [{ request, required, hasConnectedAccountTarget }];
     });
     if (matching.length === 0) {
         throw new Error('Connected-account producer network access is unavailable');
     }
-    const configured = (await input.resolveHostOwnedConfiguredOrigins(input.configuration))
-        .map(normalizeConnectedAccountConfiguredOrigin);
+    const configuredFreeOrigins = configured.filter((endpoint) => (
+        endpoint.grantTargetKind === 'connectedAccountOrigin'
+    ));
+    const configuredFixedOrigins = configured.filter((endpoint) => (
+        endpoint.grantTargetKind === 'fixedOrigin'
+    ));
+    const configuredOriginsForRequest = (
+        request: Extract<PluginHostAccessRequestV2, { capability: 'network' | 'network.client' }>,
+        hasConnectedAccountTarget: boolean,
+    ): readonly ConnectedAccountConfiguredEndpoint[] => Object.freeze([
+        ...(hasConnectedAccountTarget ? configuredFreeOrigins : []),
+        ...configuredFixedOrigins.filter((endpoint) => request.scope.targets.some((target) => (
+            target.kind === 'fixedOrigin' && target.origin === endpoint.origin
+        ))),
+    ]);
     // One private-network decision for every origin this resolution can admit,
     // literal and resolved alike. A configured hostname that resolves inside a
     // private range is private here exactly as a private literal is, so the
@@ -349,14 +384,17 @@ export async function resolveConnectedAccountConfiguredOrigins(input: Readonly<{
     if (!await input.isGenerationCurrent(input.generation)) {
         throw new Error('Connected-account plugin generation changed during origin resolution');
     }
-    const networkScopes = matching.flatMap(({ request, required }) => {
+    const networkScopes = matching.flatMap(({ request, required, hasConnectedAccountTarget }) => {
         if (request.capability !== 'network') return [];
         const fixed = request.scope.targets.flatMap((target) => (
             target.kind === 'fixedOrigin'
                 ? [normalizeConnectedAccountConfiguredOrigin(target.origin)]
                 : []
         ));
-        const origins = [...fixed, ...configured]
+        const origins = [
+            ...fixed,
+            ...configuredOriginsForRequest(request, hasConnectedAccountTarget),
+        ]
             .map((endpoint) => endpoint.origin)
             .filter((origin) => admits(origin, request.scope.privateNetwork));
         const scope = Object.freeze({
@@ -372,14 +410,17 @@ export async function resolveConnectedAccountConfiguredOrigins(input: Readonly<{
         });
         return scope.origins.length > 0 ? [scope] : [];
     });
-    const networkClientScopes = matching.flatMap(({ request, required }) => {
+    const networkClientScopes = matching.flatMap(({ request, required, hasConnectedAccountTarget }) => {
         if (request.capability !== 'network.client') return [];
         const fixed = request.scope.targets.flatMap((target) => (
             target.kind === 'fixedOrigin'
                 ? [normalizeConnectedAccountConfiguredOrigin(target.origin)]
                 : []
         ));
-        const origins = [...fixed, ...configured]
+        const origins = [
+            ...fixed,
+            ...configuredOriginsForRequest(request, hasConnectedAccountTarget),
+        ]
             .map((endpoint) => endpoint.origin)
             .filter((origin) => admits(origin, request.scope.privateNetwork));
         const scope = Object.freeze({

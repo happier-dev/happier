@@ -18,8 +18,9 @@ import { readCurrentCommittedPluginGenerations } from '@/plugins/store/registry/
 import { resolvePluginStorePaths } from '@/plugins/store/paths';
 
 import {
+    commitPackedPublicHandoffFixture,
     createPublicHandoffArchiveChangeService,
-    packAndCommitPublicHandoffFixture,
+    packPublicHandoffFixture,
     PUBLIC_HANDOFF_AGENT_ID,
     PUBLIC_HANDOFF_AGENT_PLUGIN_ID,
     PUBLIC_HANDOFF_PROVIDER_ENDPOINT_ID,
@@ -88,18 +89,20 @@ describe('external Agent and managed Provider archive generations', () => {
             version: '1.0.0',
             generation: 'P',
         });
-        const agentGPacked = await packAndCommitPublicHandoffFixture({
-            archivePath: join(root, 'agent-g.tgz'),
-            changeService: service,
-            pluginId: PUBLIC_HANDOFF_AGENT_PLUGIN_ID,
-            pluginRoot: agentRoot,
-        });
-        const providerPPacked = await packAndCommitPublicHandoffFixture({
-            archivePath: join(root, 'provider-p.tgz'),
-            changeService: service,
-            pluginId: PUBLIC_HANDOFF_PROVIDER_PLUGIN_ID,
-            pluginRoot: providerRoot,
-        });
+        const [agentGArchive, providerPArchive] = await Promise.all([
+            packPublicHandoffFixture({
+                archivePath: join(root, 'agent-g.tgz'),
+                pluginId: PUBLIC_HANDOFF_AGENT_PLUGIN_ID,
+                pluginRoot: agentRoot,
+            }),
+            packPublicHandoffFixture({
+                archivePath: join(root, 'provider-p.tgz'),
+                pluginId: PUBLIC_HANDOFF_PROVIDER_PLUGIN_ID,
+                pluginRoot: providerRoot,
+            }),
+        ]);
+        const agentGPacked = await commitPackedPublicHandoffFixture({ changeService: service, packed: agentGArchive });
+        const providerPPacked = await commitPackedPublicHandoffFixture({ changeService: service, packed: providerPArchive });
 
         const initial = await readCurrentCommittedPluginGenerations(
             resolvePluginStorePaths({ happyHomeDir }),
@@ -139,18 +142,20 @@ describe('external Agent and managed Provider archive generations', () => {
             version: '2.0.0',
             generation: 'Q',
         });
-        const agentHPacked = await packAndCommitPublicHandoffFixture({
-            archivePath: join(root, 'agent-h.tgz'),
-            changeService: service,
-            pluginId: PUBLIC_HANDOFF_AGENT_PLUGIN_ID,
-            pluginRoot: agentHRoot,
-        });
-        const providerQPacked = await packAndCommitPublicHandoffFixture({
-            archivePath: join(root, 'provider-q.tgz'),
-            changeService: service,
-            pluginId: PUBLIC_HANDOFF_PROVIDER_PLUGIN_ID,
-            pluginRoot: providerQRoot,
-        });
+        const [agentHArchive, providerQArchive] = await Promise.all([
+            packPublicHandoffFixture({
+                archivePath: join(root, 'agent-h.tgz'),
+                pluginId: PUBLIC_HANDOFF_AGENT_PLUGIN_ID,
+                pluginRoot: agentHRoot,
+            }),
+            packPublicHandoffFixture({
+                archivePath: join(root, 'provider-q.tgz'),
+                pluginId: PUBLIC_HANDOFF_PROVIDER_PLUGIN_ID,
+                pluginRoot: providerQRoot,
+            }),
+        ]);
+        const agentHPacked = await commitPackedPublicHandoffFixture({ changeService: service, packed: agentHArchive });
+        const providerQPacked = await commitPackedPublicHandoffFixture({ changeService: service, packed: providerQArchive });
 
         const current = await readCurrentCommittedPluginGenerations(
             resolvePluginStorePaths({ happyHomeDir }),

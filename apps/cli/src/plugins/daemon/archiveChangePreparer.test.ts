@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto';
 import { mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
+import { createServer, type Server } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -20,9 +22,13 @@ import { createDaemonArchivePluginChangePreparer } from './archiveChangePreparer
 import { createDaemonPluginChangeService } from './changeService';
 
 const roots: string[] = [];
+const archiveServers: Server[] = [];
 
 afterEach(async () => {
   vi.restoreAllMocks();
+  await Promise.all(archiveServers.splice(0).map((server) => new Promise<void>((resolve) => {
+    server.close(() => resolve());
+  })));
   await Promise.all(roots.splice(0).map(async (root) => await rm(root, { recursive: true, force: true })));
 });
 
@@ -225,18 +231,28 @@ async function findFile(rootPath: string, fileName: string): Promise<string> {
   throw new Error(`Could not find ${fileName} below archive candidate root`);
 }
 
-function createRemoteArchiveResponse(bytes: Buffer): Response {
-  return {
-    ok: true,
-    status: 200,
-    headers: new Headers({ 'content-length': String(bytes.byteLength) }),
-    body: new ReadableStream<Uint8Array>({
-      start(controller) {
-        controller.enqueue(bytes);
-        controller.close();
-      },
-    }),
-  } as unknown as Response;
+/**
+ * Remote archive acquisition owns a destination-assessed, DNS-pinned connection
+ * of its own, so the substitutable boundary is a real HTTP origin. Loopback is
+ * the caller's own network intent, the one destination the policy admits as
+ * private.
+ */
+async function startArchiveServer(bytes: Buffer): Promise<Readonly<{
+  port: number;
+  observedUrls: readonly string[];
+}>> {
+  const observedUrls: string[] = [];
+  const server = createServer((request, response) => {
+    observedUrls.push(request.url ?? '');
+    response.writeHead(200, {
+      'content-type': 'application/octet-stream',
+      'content-length': String(bytes.byteLength),
+    });
+    response.end(bytes);
+  });
+  archiveServers.push(server);
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  return { port: (server.address() as AddressInfo).port, observedUrls };
 }
 
 describe('createDaemonArchivePluginChangePreparer', () => {
@@ -676,14 +692,15 @@ describe('createDaemonArchivePluginChangePreparer', () => {
     roots.push(happyHomeDir);
     const fixture = await createArchiveFixture();
     const bytes = await readFile(fixture.archivePath);
-    const archiveUrl = [
-      'https://example.test/plugins/archive-candidate.tgz?download=1',
+    const origin = await startArchiveServer(bytes);
+    const archivePathAndQuery = [
+      '/plugins/archive-candidate.tgz?download=1',
       'download=selector-private-secret',
       'opaqueGrant=opaque-private-secret',
       'token=private-archive-secret',
     ].join('&');
-    const reviewArchiveUrl = 'https://example.test/plugins/archive-candidate.tgz?download=1';
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(createRemoteArchiveResponse(bytes));
+    const archiveUrl = `http://127.0.0.1:${origin.port}${archivePathAndQuery}`;
+    const reviewArchiveUrl = `http://127.0.0.1:${origin.port}/plugins/archive-candidate.tgz?download=1`;
     const service = createDaemonPluginChangeService({
       prepare: createDaemonArchivePluginChangePreparer({
         happyHomeDir,
@@ -710,10 +727,7 @@ describe('createDaemonArchivePluginChangePreparer', () => {
       actorEvidence: { kind: 'authenticatedLocalUser', interactionId: 'remote-archive', occurredAtMs: 12 },
     });
     expect(committed).toMatchObject({ kind: 'committed', appliedGeneration: expect.any(String), pendingSurfaces: [] });
-    expect(fetchMock).toHaveBeenCalledWith(archiveUrl, expect.objectContaining({
-      headers: { accept: 'application/octet-stream' },
-      signal: expect.any(AbortSignal),
-    }));
+    expect(origin.observedUrls).toEqual([archivePathAndQuery]);
     expect((await createPluginRegistryStateStore({ happyHomeDir }).read()).plugins['acme.archive-candidate'])
       .toMatchObject({
         source: { kind: 'archive', locator: reviewArchiveUrl },

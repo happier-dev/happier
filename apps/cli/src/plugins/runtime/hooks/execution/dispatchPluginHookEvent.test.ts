@@ -67,11 +67,14 @@ describe('dispatchPluginHookEvent', () => {
         executionKind: 'observe',
       },
     };
+    // The dispatcher catches every handler rejection by design, so an assertion here
+    // could never fail. The raw half of this contract is asserted from the recording.
+    const tokenTextSeenByPlugin: string[] = [];
     const handler = vi.fn(async (event: unknown) => {
       const tokenText = (event as Readonly<{
         payload: Readonly<{ tokenText: string }>;
       }>).payload.tokenText;
-      expect(tokenText).toBe(sensitiveTokenText);
+      tokenTextSeenByPlugin.push(tokenText);
       const pluginError = new Error(`plugin echoed sensitive input: ${tokenText}`, {
         cause: new Error(`nested plugin cause echoed sensitive input: ${tokenText}`),
       });
@@ -128,6 +131,7 @@ describe('dispatchPluginHookEvent', () => {
       });
 
       expect(handler).toHaveBeenCalledOnce();
+      expect(tokenTextSeenByPlugin).toEqual([sensitiveTokenText]);
       expect(result.outcomes).toEqual([{
         pluginId: 'echo.plugin',
         hookId: 'agent.stream.token',

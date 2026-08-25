@@ -633,6 +633,43 @@ describe('qualified External Session hook ingress', () => {
             .toEqual({ state: 'disabled' });
     });
 
+    it('admits an installed Agent principal addressed by its qualified routing id', () => {
+        const harness = createHarness();
+        // An installed (non first-party) Agent is routed by its qualified
+        // `{pluginId, localId}` key while the principal carries the durable
+        // identity, so the two are related by projection, never by equality.
+        const installed = harness.ingress.createPrincipal({
+            installationIdentity: 'installation-installed',
+            machineId: 'machine-1',
+            agentId: 'acme.external-sessions/product-agent',
+            qualifiedContributionId: {
+                pluginId: 'acme.external-sessions',
+                localId: 'product-agent',
+            },
+            variantId: 'session-lifecycle-v1',
+            eventId: 'session-stop',
+            pluginGeneration: 'plugin-generation-1',
+            retirementSignal: new AbortController().signal,
+        });
+        expect(harness.ingress.readPrincipal(installed.principalRef))
+            .toEqual({ state: 'disabled' });
+
+        // A routing id that addresses a different Agent is still refused.
+        expect(() => harness.ingress.createPrincipal({
+            installationIdentity: 'installation-installed',
+            machineId: 'machine-1',
+            agentId: 'acme.other-plugin/product-agent',
+            qualifiedContributionId: {
+                pluginId: 'acme.external-sessions',
+                localId: 'product-agent',
+            },
+            variantId: 'session-lifecycle-v1',
+            eventId: 'session-stop',
+            pluginGeneration: 'plugin-generation-1',
+            retirementSignal: new AbortController().signal,
+        })).toThrow(/Invalid qualified External Session hook principal/u);
+    });
+
     it('rehydrates an exact persisted principal reference and token after daemon restart', async () => {
         const runtime = createRuntimeLease();
         const first = createHarness({ runtime });

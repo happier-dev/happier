@@ -1,8 +1,8 @@
 import type { ApiClient } from '@/api/api';
-import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';
 import { logger } from '@/ui/logger';
 
 import type { ConnectedServiceId } from '@happier-dev/protocol';
+import { sanitizeConnectedServiceDiagnosticError } from '../runtimeAuth/sanitizeConnectedServiceDiagnosticString';
 
 export type ConnectedServiceCredentialRefreshReason =
   | 'scheduled'
@@ -60,9 +60,10 @@ export async function readCredentialHealthStatusForRefresh(input: Readonly<{
   } catch (error) {
     logger.warn('[DAEMON RUN] Failed to read connected-service profile health before refresh', {
       serviceId: input.binding.serviceId,
-      profileId: input.binding.profileId,
       reason: input.reason,
-      error: serializeAxiosErrorForLog(error),
+      error: sanitizeConnectedServiceDiagnosticError(error, {
+        redactedValues: [input.binding.profileId],
+      }),
     });
     return null;
   }

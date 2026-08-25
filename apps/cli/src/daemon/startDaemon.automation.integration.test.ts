@@ -946,6 +946,17 @@ describe('startDaemon automation wiring (integration)', () => {
       }
       const currentDaemonState = Object.freeze({ status: 'running' as const, pid: 17 });
       expect(updateDaemonState(currentDaemonState)).toBe(currentDaemonState);
+
+      harness.apiMachine.updateDaemonState.mockClear();
+      const onRuntimeProjectionInvalidated = pluginRuntimeOwnerParams.current
+        ?.onRuntimeProjectionInvalidated;
+      if (typeof onRuntimeProjectionInvalidated !== 'function') {
+        throw new Error('expected runtime projection invalidation publisher');
+      }
+      onRuntimeProjectionInvalidated();
+      await vi.waitFor(() => {
+        expect(harness.apiMachine.updateDaemonState).toHaveBeenCalledOnce();
+      });
       harness.requestShutdown('happier-cli');
       void Promise.resolve(machineSyncSettlement).catch(() => undefined);
     } finally {

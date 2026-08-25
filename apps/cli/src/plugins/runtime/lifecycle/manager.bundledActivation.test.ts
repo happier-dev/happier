@@ -4,7 +4,7 @@ import { listDeclaredPluginContributionFamilies } from '@happier-dev/protocol';
 
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { resolveBuiltInContributions } from '@/plugins/projection/registry/resolveBuiltInContributions';
-import { BUNDLED_FIRST_PARTY_PLUGIN_PACKAGE_NAMES } from '@/plugins/projection/registry/sources/generatedBundledPlugins';
+import { BUNDLED_FIRST_PARTY_PLUGIN_PACKAGE_NAMES } from '@/plugins/projection/registry/sources/generatedBundledPluginManifests';
 import { createBundledActivationSourceResolver } from '@/plugins/runtime/bundledActivationSource';
 
 import { shouldActivateTargetAtStartup } from './activation/targets';
@@ -60,6 +60,7 @@ describe('bundled PluginApi parity', () => {
         const startupTargets = contributes.activationTargets.filter(shouldActivateTargetAtStartup);
         const expectedStartupPluginIds = new Set(startupTargets.map((target) => target.pluginId));
         expect([...expectedStartupPluginIds]).toEqual([
+            'happier.channel.discord',
             'happier.channels',
             'happier.scm.forge.github',
         ]);

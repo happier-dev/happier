@@ -57,7 +57,7 @@ describe('Windows process inventory', () => {
       .resolves.toEqual(new Map());
 
     expect(execFile).toHaveBeenCalledWith(
-      'powershell.exe',
+      expect.stringMatching(/powershell\.exe$/u),
       ['-NoProfile', '-NonInteractive', '-Command', expect.stringContaining(
         'Get-CimInstance Win32_Process |',
       )],
@@ -72,6 +72,23 @@ describe('Windows process inventory', () => {
     expect(calls[0]?.[1]?.[3]).not.toContain('-Filter');
     expect(calls[0]?.[2]?.timeout).toBeGreaterThan(2_000);
     expect(calls[0]?.[2]?.timeout).toBeLessThanOrEqual(5_000);
+  });
+
+  // Process identity is a custody fact. Reading it through whichever `powershell.exe` the ambient
+  // `PATH` happens to expose lets availability, launch, inventory and termination each answer for
+  // a different binary; the installed Windows PowerShell is the one every step must agree on.
+  it('reads identity through the installed Windows PowerShell rather than an ambient one', async () => {
+    vi.stubEnv('SystemRoot', 'C:\\WINDOWS');
+    const execFile = vi.fn(async () => ({ stdout: '[]' }));
+
+    await readWindowsProcessInventory({ execFile, pids: [777] });
+
+    expect(execFile).toHaveBeenCalledWith(
+      'C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
+      expect.any(Array),
+      expect.any(Object),
+    );
+    vi.unstubAllEnvs();
   });
 
   it('uses the same parser and a narrower buffer for exact PID inventory', async () => {

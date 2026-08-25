@@ -7,7 +7,11 @@ import { logger } from '@/ui/logger';
 import { authAndSetupMachineIfNeeded } from '@/ui/auth';
 
 import { getPreferredHostName } from '../machine/metadata';
-import { stopDaemon, isDaemonRunningCurrentlyInstalledHappyVersion } from '../controlClient';
+import {
+    inspectDaemonRunningStateAndCleanupStaleState,
+    isDaemonRunningCurrentlyInstalledHappyVersion,
+    stopDaemon,
+} from '../controlClient';
 import type { DaemonStartupSource } from '../ownership/daemonOwnershipMetadata';
 import { configuration } from '@/configuration';
 import {
@@ -50,8 +54,13 @@ export async function prepareDaemonBootstrapContext(
         if (params.daemonLockHandle) {
             logger.debug('[DAEMON RUN] Daemon startup already owns the lock; continuing without asking the control client to stop its own pre-state process');
         } else {
-            logger.debug('[DAEMON RUN] Daemon version or machine identity mismatch detected, restarting daemon with current CLI version');
-            await stopDaemon();
+            const incumbent = await inspectDaemonRunningStateAndCleanupStaleState();
+            if (incumbent.status === 'not-running') {
+                logger.debug('[DAEMON RUN] Persisted daemon state has no live process; acquiring startup ownership without a stop attempt');
+            } else {
+                logger.debug('[DAEMON RUN] Daemon version or machine identity mismatch detected, restarting daemon with current CLI version');
+                await stopDaemon();
+            }
         }
     } else {
         preflightMachineRegistration = await ensureMachineRegistered({

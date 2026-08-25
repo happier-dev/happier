@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-    deriveReactNativeBundleRuntimeCacheKey,
+    deriveDaemonPluginReactNativeBundleCacheIdentityKeyV1,
+    type DaemonPluginReactNativeBundleCacheIdentityV1 as ReactNativeBundleCacheIdentity,
+} from '@happier-dev/protocol';
+
+import {
     deriveReactNativeNativeCapabilitiesDigest,
-    type ReactNativeBundleCacheIdentity,
 } from './reactNativeBundles';
 
 const NATIVE_CAPABILITIES_DIGEST = deriveReactNativeNativeCapabilitiesDigest(['clipboard', 'haptics']);
@@ -50,7 +53,7 @@ const VARIANT_BY_FIELD: {
 
 describe('generated React Native artifact runtime identity', () => {
     it('derives the cache key from the artifact owner and the full host runtime identity', () => {
-        expect(deriveReactNativeBundleRuntimeCacheKey(BASE_IDENTITY)).toBe([
+        expect(deriveDaemonPluginReactNativeBundleCacheIdentityKeyV1(BASE_IDENTITY)).toBe([
             'acme.preview',
             'native-preview',
             `sha256:${'b'.repeat(64)}`,
@@ -72,13 +75,13 @@ describe('generated React Native artifact runtime identity', () => {
     // for the resolved runtime. The previous assertion here only matched the
     // owner prefix and still passed with ten of the thirteen fields removed.
     it('binds every cache-identity field into the derived runtime cache key', () => {
-        const baseKey = deriveReactNativeBundleRuntimeCacheKey(BASE_IDENTITY);
+        const baseKey = deriveDaemonPluginReactNativeBundleCacheIdentityKeyV1(BASE_IDENTITY);
         const fields = Object.keys(VARIANT_BY_FIELD) as ReadonlyArray<keyof ReactNativeBundleCacheIdentity>;
 
         expect(fields.length).toBe(Object.keys(BASE_IDENTITY).length);
         for (const field of fields) {
             const mutated = { ...BASE_IDENTITY, [field]: VARIANT_BY_FIELD[field] };
-            expect(deriveReactNativeBundleRuntimeCacheKey(mutated), field).not.toBe(baseKey);
+            expect(deriveDaemonPluginReactNativeBundleCacheIdentityKeyV1(mutated), field).not.toBe(baseKey);
         }
     });
 
@@ -87,7 +90,7 @@ describe('generated React Native artifact runtime identity', () => {
     it('separates an absent optional runtime version from a declared one', () => {
         const { expoRuntimeVersion: _expo, ...withoutExpo } = BASE_IDENTITY;
 
-        expect(deriveReactNativeBundleRuntimeCacheKey(withoutExpo))
-            .not.toBe(deriveReactNativeBundleRuntimeCacheKey(BASE_IDENTITY));
+        expect(deriveDaemonPluginReactNativeBundleCacheIdentityKeyV1(withoutExpo))
+            .not.toBe(deriveDaemonPluginReactNativeBundleCacheIdentityKeyV1(BASE_IDENTITY));
     });
 });

@@ -3,7 +3,7 @@ import type { TransferPathAllowanceRegistry } from '@/transfers/targets/createTr
 
 import type { BrowserContextSource } from '../capture';
 import type { BrowserSidecarContextCaptureSurface } from '../../sidecar/controlAdapter';
-import type { BrowserContextDiagnosticsRingBuffer } from '../diagnostics/ringBuffer';
+import type { BrowserContextDiagnosticsSummarySource } from '../diagnostics/summary';
 import {
     createCdpBrowserContextSource,
     type BrowserContextDiagnosticsSummarizer,
@@ -25,8 +25,10 @@ export type SidecarCdpBrowserContextSourceInput = Readonly<{
         viewId: string;
         navigationGeneration: number;
     }>) => BrowserContextSessionMediaTarget;
-    /** Ring buffer feeding network/console summaries. Absent ⇒ those summaries stay unavailable. */
-    diagnosticsRingBuffer?: BrowserContextDiagnosticsRingBuffer;
+    /**
+     * Store-backed source of network/console summaries. Absent ⇒ those summaries stay unavailable.
+     */
+    diagnosticsSummarySource?: BrowserContextDiagnosticsSummarySource;
     screenshotMediaWriter?: BrowserContextScreenshotMediaWriter;
     now?: () => number;
 }>;
@@ -60,9 +62,9 @@ export function createSidecarCdpBrowserContextSource(
             ...(input.now ? { now: input.now } : {}),
         });
 
-    const ringBuffer = input.diagnosticsRingBuffer;
-    const summarizeDiagnostics: BrowserContextDiagnosticsSummarizer | undefined = ringBuffer
-        ? (request) => ringBuffer.summarize(request)
+    const diagnosticsSummarySource = input.diagnosticsSummarySource;
+    const summarizeDiagnostics: BrowserContextDiagnosticsSummarizer | undefined = diagnosticsSummarySource
+        ? (request) => diagnosticsSummarySource.summarize(request)
         : undefined;
 
     return createCdpBrowserContextSource({

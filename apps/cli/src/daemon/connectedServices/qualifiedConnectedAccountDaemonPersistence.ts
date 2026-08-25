@@ -15,12 +15,12 @@ import {
   applyAccountSettingsSavedSecretMutation,
   accountSettingsParse,
   decryptSecretValueWithKeysV1,
+  sameQualifiedConnectedAccountRef,
   parseBuiltInLegacyConnectedServiceCredentialRecordV1,
   parseConnectedAccountServiceConfigurationsV1,
   parseQualifiedConnectedAccountCredentialPlaintextV1,
   openQualifiedConnectedAccountContentEnvelope,
   projectQualifiedConnectedAccountCredentialPlaintextV1,
-  resealQualifiedConnectedAccountConfigurationContentEnvelopeIfHistoricalAlias,
   sealQualifiedConnectedAccountContentEnvelope,
   type AccountScopedCryptoMaterial,
   type ConnectedServiceCredentialRecordV1,
@@ -115,11 +115,6 @@ function readQualifiedConnectedAccountCredentialSettlementCause(
 ): Readonly<{ status: 'conflict' | 'rejected'; code: string }> | null {
   if (!(error instanceof QualifiedConnectedAccountCredentialConflictError)) return null;
   switch (error.code) {
-    case 'connect_connected_account_capacity_exhausted':
-      return Object.freeze({
-        status: 'rejected' as const,
-        code: 'connected_account_credential_capacity_exhausted',
-      });
     case 'connect_reconnect_provider_identity_mismatch':
       return Object.freeze({
         status: 'conflict' as const,
@@ -491,14 +486,6 @@ function sameService(
   return left.pluginId === right.pluginId && left.localId === right.localId;
 }
 
-function sameAccount(
-  left: QualifiedConnectedAccountRef,
-  right: QualifiedConnectedAccountRef,
-): boolean {
-  return sameService(left.service, right.service)
-    && left.accountId === right.accountId;
-}
-
 function accountTarget(account: QualifiedConnectedAccountRef) {
   return Object.freeze({
     kind: 'account' as const,
@@ -659,7 +646,7 @@ export function createQualifiedConnectedAccountDaemonPersistence(
       && (
         left.account === undefined
           ? right.account === undefined
-          : right.account !== undefined && sameAccount(left.account, right.account)
+          : right.account !== undefined && sameQualifiedConnectedAccountRef(left.account, right.account)
       )
       && left.modeId === right.modeId
       && left.immutableGenerationId === right.immutableGenerationId
@@ -1199,58 +1186,13 @@ export function createQualifiedConnectedAccountDaemonPersistence(
         });
         if (
           !snapshot
-          || !sameAccount(snapshot.target.ref, target.account)
+          || !sameQualifiedConnectedAccountRef(snapshot.target.ref, target.account)
           || snapshot.authenticationModeId !== target.modeId
         ) {
           return null;
         }
         const accountMode = await resolveAccountMode();
-        const resealed = accountMode === 'e2ee'
-          ? resealQualifiedConnectedAccountConfigurationContentEnvelopeIfHistoricalAlias({
-              material: requireCryptoMaterial(params.credentials, material),
-              envelope: snapshot.configurationContent,
-              randomBytes,
-              validatePayload: (value) => {
-                try {
-                  return configurationContent(
-                    parsePhysicalConfigurationRecord({
-                      content: value,
-                      revision: snapshot.configurationRevision,
-                      scope: 'account',
-                    }),
-                  );
-                } catch {
-                  return null;
-                }
-              },
-            })
-          : null;
-        if (resealed?.resealed) {
-          const result = await mutateConfiguration({
-            token: params.credentials.token,
-            patch: {
-              target: accountTarget(target.account),
-              expectedConfigurationRevision:
-                snapshot.configurationRevision,
-              expectedCredentialRevision:
-                snapshot.credentialRevision,
-              replacementContentEnvelope: resealed.envelope,
-              preserveConfigurationRevisionForCiphertextReseal:
-                true,
-            },
-          });
-          if (
-            result.credentialRevision
-              !== snapshot.credentialRevision
-            || result.configurationRevision
-              !== snapshot.configurationRevision
-          ) {
-            throw new Error(
-              'Qualified Connected Account configuration alias reseal changed its logical revision',
-            );
-          }
-        }
-        const opened = resealed?.value ?? openContent({
+        const opened = openContent({
           kind: 'configuration',
           accountMode,
           credentials: params.credentials,
@@ -1401,7 +1343,7 @@ export function createQualifiedConnectedAccountDaemonPersistence(
               });
               if (
                 !credential
-                || !sameAccount(credential.ref, exactAccountTarget.account)
+                || !sameQualifiedConnectedAccountRef(credential.ref, exactAccountTarget.account)
                 || credential.authenticationModeId !== exactAccountTarget.modeId
               ) {
                 return Object.freeze({
@@ -1555,7 +1497,7 @@ export function createQualifiedConnectedAccountDaemonPersistence(
           });
           if (
             !snapshot
-            || !sameAccount(snapshot.ref, account)
+            || !sameQualifiedConnectedAccountRef(snapshot.ref, account)
             || snapshot.authenticationModeId === null
             || snapshot.revisionSemantics !== 'revisioned'
           ) {
@@ -1851,7 +1793,7 @@ export function createQualifiedConnectedAccountDaemonPersistence(
               });
               if (
                 !committed
-                || !sameAccount(committed.ref, account)
+                || !sameQualifiedConnectedAccountRef(committed.ref, account)
                 || committed.authenticationModeId !== request.authenticationModeId
               ) {
                 throw error;

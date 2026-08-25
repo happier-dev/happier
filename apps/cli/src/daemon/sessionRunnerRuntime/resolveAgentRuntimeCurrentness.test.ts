@@ -63,7 +63,45 @@ function registration(input: Readonly<{
   };
 }
 
-function providerContribution(): ResolvedProviderContribution {
+const RETAINED_PROVIDER_GENERATION = 'provider-generation-p';
+
+function managedProviderRuntime(
+  immutableGenerationId: string,
+): NonNullable<ResolvedProviderContribution['managedRuntime']> {
+  return {
+    runtime: {
+      start: async () => {
+        throw new Error('not used by currentness tests');
+      },
+    },
+    activationGeneration: 'registry-generation',
+    immutableGenerationId,
+    isCurrent: () => true,
+  };
+}
+
+function retainedManagedProviderTracked(
+  immutableGenerationId = RETAINED_PROVIDER_GENERATION,
+): TrackedSession {
+  return {
+    ...selectedProviderTracked(),
+    runnerManagedDependencyRetentionV1: {
+      v: 1,
+      adoptedManagedProviderAuthority: {
+        pluginId: 'acme.gateway',
+        immutableGenerationId,
+        manifestAuthority: 'external',
+        hardRevocationRevisionAtAdmission: 0,
+      },
+      sourceGenerationIds: [],
+      qualifiedDependencyIds: [],
+    },
+  };
+}
+
+function providerContribution(
+  managedRuntime?: ResolvedProviderContribution['managedRuntime'],
+): ResolvedProviderContribution {
   return {
     provenance: 'external',
     source: { kind: 'path' },
@@ -72,6 +110,7 @@ function providerContribution(): ResolvedProviderContribution {
       pluginId: 'acme.gateway',
       localId: 'gateway',
     },
+    ...(managedRuntime ? { managedRuntime } : {}),
     definition: ProviderContributionV1Schema.parse({
       v: 1,
       id: 'gateway',
@@ -240,6 +279,50 @@ describe('resolveTrackedRunnerAgentRuntimeCurrentness', () => {
       providerResolution: providerResolution({
         providersByContributionKey: new Map([
           ['acme.gateway/gateway', providerContribution()],
+        ]),
+      }),
+    })).toEqual({
+      versionState: 'current',
+      restartUnavailableReason: null,
+    });
+  });
+
+  it('reports a Provider-only update as stale while the retained Agent generation is unchanged', () => {
+    expect(resolveTrackedRunnerAgentRuntimeCurrentness({
+      tracked: retainedManagedProviderTracked(),
+      agentRuntimesByAgentId: new Map([
+        ['codex', registration()],
+      ]),
+      providerResolution: providerResolution({
+        providersByContributionKey: new Map([
+          [
+            'acme.gateway/gateway',
+            providerContribution(
+              managedProviderRuntime('provider-generation-q'),
+            ),
+          ],
+        ]),
+      }),
+    })).toEqual({
+      versionState: 'stale',
+      restartUnavailableReason: null,
+    });
+  });
+
+  it('keeps the Session current while the retained managed Provider generation is unchanged', () => {
+    expect(resolveTrackedRunnerAgentRuntimeCurrentness({
+      tracked: retainedManagedProviderTracked(),
+      agentRuntimesByAgentId: new Map([
+        ['codex', registration()],
+      ]),
+      providerResolution: providerResolution({
+        providersByContributionKey: new Map([
+          [
+            'acme.gateway/gateway',
+            providerContribution(
+              managedProviderRuntime(RETAINED_PROVIDER_GENERATION),
+            ),
+          ],
         ]),
       }),
     })).toEqual({

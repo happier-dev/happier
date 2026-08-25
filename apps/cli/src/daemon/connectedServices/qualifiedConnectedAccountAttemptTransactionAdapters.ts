@@ -6,6 +6,7 @@ import {
   isStoredJsonContentEnvelopeModeCompatible,
   openQualifiedConnectedAccountContentEnvelope,
   sealQualifiedConnectedAccountContentEnvelope,
+  sameQualifiedConnectedAccountRef,
   type StoredJsonContentEnvelope,
 } from '@happier-dev/protocol';
 import { z } from 'zod';
@@ -138,8 +139,7 @@ function sameAccount(
   right: ConnectedAccountOAuthTransactionSnapshot['account'],
 ): boolean {
   if (!left || !right) return left === right;
-  return sameService(left.service, right.service)
-    && left.accountId === right.accountId;
+  return sameQualifiedConnectedAccountRef(left, right);
 }
 
 function sameSnapshotIdentity(

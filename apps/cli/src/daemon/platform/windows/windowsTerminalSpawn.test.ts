@@ -1,10 +1,52 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { buildWindowsTerminalWindowIdentity } from './windowsHostedSessionRuntime';
 import { parseWindowsCommandLine } from './windowsCommandLine';
 import {
+  buildPowerShellStartWindowsTerminalInvocation,
   buildWindowsTerminalArgumentLine,
 } from './windowsTerminalSpawn';
+
+describe('Windows Terminal dispatcher executable identity', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  // Both executables in this invocation used to be bare names, so the PowerShell child resolved
+  // `wt.exe` from its own `PATH` and the daemon resolved `powershell.exe` from a third one.
+  it('names the exact Terminal and installed PowerShell executables', () => {
+    vi.stubEnv('SystemRoot', 'C:\\WINDOWS');
+
+    const invocation = buildPowerShellStartWindowsTerminalInvocation({
+      filePath: 'C:\\Program Files\\Happier\\happier.exe',
+      args: ['--version'],
+      workingDirectory: 'C:\\repo',
+      windowId: 'happy-window',
+      title: 'Happier Session',
+      terminalExecutablePath: 'C:\\Users\\lee\\AppData\\Local\\Microsoft\\WindowsApps\\wt.exe',
+    });
+
+    expect(invocation.command).toBe('C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe');
+    const script = invocation.args[3] ?? '';
+    expect(script).toContain(
+      "-FilePath 'C:\\Users\\lee\\AppData\\Local\\Microsoft\\WindowsApps\\wt.exe'",
+    );
+    expect(script).not.toContain("-FilePath 'wt.exe'");
+  });
+
+  it('quotes a Terminal path containing a single quote instead of breaking the script', () => {
+    const invocation = buildPowerShellStartWindowsTerminalInvocation({
+      filePath: 'C:\\happier.exe',
+      args: [],
+      workingDirectory: 'C:\\repo',
+      windowId: 'happy-window',
+      title: 'Happier Session',
+      terminalExecutablePath: "C:\\Users\\o'brien\\wt.exe",
+    });
+
+    expect(invocation.args[3] ?? '').toContain("-FilePath 'C:\\Users\\o''brien\\wt.exe'");
+  });
+});
 
 describe('Windows Terminal native invocation', () => {
   it('preserves native argv while escaping Terminal command separators', () => {

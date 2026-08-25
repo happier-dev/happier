@@ -159,10 +159,11 @@ describe('parseDarwinLsofTcpListenOutput', () => {
         const result = await readDarwinLocalServiceListeners({ execFile, daemonUserId: '501' });
 
         expect(result.processes.get(123)?.processStartTimeMs).toBe(startedAt);
-        expect(execFile).toHaveBeenCalledWith('ps', ['-o', 'pid=,ppid=,uid=,lstart=,command=', '-p', '123'], {
-            timeout: 2_000,
-            maxBuffer: 1024 * 1024,
-        });
+        expect(execFile).toHaveBeenCalledWith(
+            'ps',
+            ['-o', 'pid=,ppid=,uid=,lstart=,command=', '-p', '123'],
+            expect.objectContaining({ timeout: 2_000, maxBuffer: 1024 * 1024, env: expect.objectContaining({ LC_ALL: 'C' }) }),
+        );
     });
 
     it('marks a listener owned by another OS user as not the daemon\'s to control', async () => {
@@ -417,9 +418,40 @@ describe('readDarwinProcessFacts', () => {
         expect(execFile).toHaveBeenCalledWith(
             'ps',
             ['-o', 'pid=,ppid=,uid=,lstart=,command=', '-p', '123'],
-            { timeout: 2_000, maxBuffer: 1024 * 1024 },
+            expect.objectContaining({ timeout: 2_000, maxBuffer: 1024 * 1024 }),
         );
         // The `lsof -d txt` executable-path call is gone: nothing read `executablePath`.
         expect(execFile).toHaveBeenCalledOnce();
+    });
+
+    // `ps` renders `lstart` through the caller's time locale. These are the real strings this
+    // host's `ps` printed for one process under `LC_ALL=C`, `de_CH.UTF-8` and `fr_CH.UTF-8`.
+    it.each([
+        ['de_CH.UTF-8', '  123    99   501 Mo. 30 Jun. 12:34:56 2025 happier --resume abc\n'],
+        ['fr_CH.UTF-8', '  123    99   501 lun. 30 juin 12:34:56 2025 happier --resume abc\n'],
+    ])('reads the process birthday when the daemon inherits the %s time locale', async (locale, localized) => {
+        const execFile = vi.fn(async (
+            command: string,
+            args: readonly string[],
+            options: Readonly<{ env?: NodeJS.ProcessEnv }>,
+        ) => {
+            if (command !== 'ps') throw new Error(`unexpected boundary call ${command} ${args.join(' ')}`);
+            const effective = options.env?.LC_ALL ?? options.env?.LC_TIME ?? locale;
+            return {
+                stdout: effective.startsWith('C')
+                    ? '  123    99   501 Mon Jun 30 12:34:56 2025 happier --resume abc\n'
+                    : localized,
+            };
+        });
+
+        const processes = await readDarwinProcessFacts({ execFile, pids: [123], daemonUserId: '501' });
+
+        expect(processes.get(123)).toEqual({
+            pid: 123,
+            ppid: 99,
+            processStartTimeMs: Date.parse('Mon Jun 30 12:34:56 2025'),
+            command: 'happier --resume abc',
+            processOwnership: 'self',
+        });
     });
 });

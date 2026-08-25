@@ -42,6 +42,16 @@ async function prepareRetainedFactory(input: Readonly<{
   manifestEngines?: Readonly<Record<string, string>>;
   externalSessionsExport?: string;
   additionalFiles?: Readonly<Record<string, string>>;
+  /**
+   * Acquisition identity the generation record is minted from. It decides the
+   * record's `sourceProvenance`, and with it the two registry-lifecycle
+   * manifest rules — the reserved `happier.*` namespace and the
+   * release-stamped engine range — which describe a published artifact and
+   * deliberately exempt the default local working tree.
+   */
+  distribution?: Parameters<
+    typeof createImmutablePluginGenerationRecordFromSource
+  >[0]['distribution'];
 }>) {
   const pluginId = input.pluginId ?? 'acme.runner-loader';
   const localAgentId = input.localAgentId ?? 'fixture';
@@ -95,7 +105,7 @@ async function prepareRetainedFactory(input: Readonly<{
     pluginId,
     sourceRootPath: input.sourceRootPath,
     manifestRelativePath: '.happier-plugin/plugin.json',
-    distribution: {
+    distribution: input.distribution ?? {
       kind: 'localPath',
       canonicalPath: input.sourceRootPath,
     },
@@ -224,7 +234,10 @@ async function prepareHostDeclarativeBinding(input: Readonly<{
     v: 1,
     pluginId,
     pluginVersion: '1.0.0',
-    agentId: 'fixture',
+    // An installed Agent's routing id is qualified by its owning plugin, so
+    // this is the literal id the contribution projection assigns and the
+    // generation attestation re-derives. Only `localAgentId` stays manifest-local.
+    agentId: 'acme.host-declarative-loader/fixture',
     qualifiedAgentId: `${pluginId}/agents/fixture`,
     localAgentId: 'fixture',
     immutableGenerationId: record.immutableGenerationId,
@@ -428,16 +441,13 @@ describe('loadRetainedAgentRuntimeLeaf', () => {
       '  async readAfterTranscript() {},',
       '};',
     ].join('\n')],
-    ['accessor operation', [
-      'export const externalSessions = {',
-      '  get resolveSource() { return async () => {}; },',
-      '  async listCandidates() {},',
-      '  async resolveLinkIdentity() {},',
-      '  async resolveLinkedIdentity() {},',
-      '  async pageTranscript() {},',
-      '  async readAfterTranscript() {},',
-      '};',
-    ].join('\n')],
+    // An accessor-backed operation is deliberately NOT a rejection case: the
+    // registration scope captures each declared operation once through
+    // ordinary property access and freezes the façade, so a class author's
+    // `get readAfterTranscript()` is as static as a data method. That
+    // capability is owned and covered by the SDK registration scope
+    // ("captures class, prototype, and accessor-backed operations with the
+    // author receiver"); rejecting it here would remove an author capability.
   ] as const)(
     'rejects a freshly evaluated companion with a %s before factory or follow effects',
     async (label, companionBytes) => {
@@ -882,6 +892,18 @@ describe('loadRetainedAgentRuntimeLeaf', () => {
         loadMode: 'immutable-js',
         pluginId: 'happier.agent.fixture',
         manifestAuthority: 'external',
+        // The impersonation this rejects is a *published* artifact claiming a
+        // first-party id, so the generation has to be minted from a
+        // registry-custodied acquisition identity. A local working tree is the
+        // maintainer's own dev loop and is exempt by design.
+        distribution: {
+          kind: 'npm',
+          registryOrigin: 'https://registry.example.test',
+          packageName: '@acme/happier-agent-fixture',
+        },
+        // No declared engine range, so the reserved namespace is the only
+        // registry-lifecycle rule that can reject this manifest.
+        manifestEngines: {},
       });
 
       await expect(loadRetainedAgentRuntimeLeaf({

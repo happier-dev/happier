@@ -17,6 +17,7 @@ import {
   PluginContributionIdentityV1Schema,
   qualifiedPurposeKey,
   readAccountSettingsConnectedAccountPurposeBindings,
+  sameQualifiedConnectedAccountRef,
   type PluginContributionIdentityV1,
   type ConnectedServiceCredentialRevisionV1,
   type QualifiedConnectedAccountPurposeBindingsV1,
@@ -41,6 +42,7 @@ import type {
   HostCurrentSessionUiServices,
 } from '@/agent/runtime/state/currentSessionUiTypes';
 import type { PermissionRequestOwner } from '@/agent/permissions/permissionRequestOwner';
+import { logger } from '@/ui/logger';
 import type { CatalogAgentId } from '@/agent/catalog/ids';
 import type {
   ConnectedAccountMaterializationCredentialRevisionBasis,
@@ -477,8 +479,21 @@ function accountSettingsMutationFailure(
         code: 'plugin_connected_account_settings_unavailable',
         message: 'Connected Account binding settings are unavailable',
         retryable: result.retryable,
+        // Same disclosure as the `locked`/`invalid` siblings above: a caller that
+        // has to explain the refusal gets the boundary's own code, not just a
+        // status-free sentence.
+        ...(result.reason ? { details: { reason: result.reason } } : {}),
       });
   }
+}
+
+/**
+ * Recognizes the one refusal that startup reconciliation degrades on rather than
+ * escalating. Every other CAS outcome stays terminal for its caller.
+ */
+function isAccountSettingsBoundaryUnavailable(error: unknown): error is PluginError {
+  return error instanceof PluginError
+    && error.code === 'plugin_connected_account_settings_unavailable';
 }
 
 function assertTargetAuthorized(
@@ -528,10 +543,7 @@ function assertResolvedTargetMatchesIntent(
   }
   if (
     target.kind === 'account'
-    && (
-      resolved.account.accountId !== target.account.accountId
-      || contributionKey(resolved.account.service) !== contributionKey(target.account.service)
-    )
+    && !sameQualifiedConnectedAccountRef(resolved.account, target.account)
   ) {
     throw new Error('connected_account_purpose_resolution_account_mismatch');
   }
@@ -556,14 +568,6 @@ function summary(
   });
 }
 
-function sameResolvedAccount(
-  left: QualifiedConnectedAccountRef,
-  right: QualifiedConnectedAccountRef,
-): boolean {
-  return contributionKey(left.service) === contributionKey(right.service)
-    && left.accountId === right.accountId;
-}
-
 function sameResolvedTarget(
   left: Readonly<{
     target: QualifiedConnectedAccountPurposeBindingTargetV1;
@@ -575,7 +579,7 @@ function sameResolvedTarget(
   }>,
 ): boolean {
   return targetKey(left.target) === targetKey(right.target)
-    && sameResolvedAccount(left.resolved.account, right.resolved.account)
+    && sameQualifiedConnectedAccountRef(left.resolved.account, right.resolved.account)
     && left.resolved.group?.groupId === right.resolved.group?.groupId
     && left.resolved.group?.generation === right.resolved.group?.generation;
 }
@@ -1090,7 +1094,7 @@ export function createConnectedAccountPurposeBindingOwner(
     if (!resolved) throw resourceNotSelected(input.purpose);
     if (
       input.expectedAccount
-      && !sameResolvedAccount(input.expectedAccount, resolved.resolved.account)
+      && !sameQualifiedConnectedAccountRef(input.expectedAccount, resolved.resolved.account)
     ) {
       throw resourceNotSelected(input.purpose);
     }
@@ -1115,13 +1119,13 @@ export function createConnectedAccountPurposeBindingOwner(
     if (
       !current
       || targetKey(current.target) !== targetKey(resolved.target)
-      || contributionKey(current.resolved.account.service)
-        !== contributionKey(resolved.resolved.account.service)
-      || current.resolved.account.accountId
-        !== resolved.resolved.account.accountId
+      || !sameQualifiedConnectedAccountRef(
+        current.resolved.account,
+        resolved.resolved.account,
+      )
       || (
         input.expectedAccount
-        && !sameResolvedAccount(input.expectedAccount, current.resolved.account)
+        && !sameQualifiedConnectedAccountRef(input.expectedAccount, current.resolved.account)
       )
     ) {
       throw resourceNotSelected(input.purpose);
@@ -1269,7 +1273,7 @@ export function createConnectedAccountPurposeBindingOwner(
         const after = await readCurrent();
         if (
           !after
-          || !sameResolvedAccount(
+          || !sameQualifiedConnectedAccountRef(
             before.current.resolved.account,
             after.current.resolved.account,
           )
@@ -1321,7 +1325,7 @@ export function createConnectedAccountPurposeBindingOwner(
     if (expectedGroup === null) throw bindingOutOfScope();
     if (
       binding.target.kind === 'account'
-      && !sameResolvedAccount(binding.target.account, input.resolved.account)
+      && !sameQualifiedConnectedAccountRef(binding.target.account, input.resolved.account)
     ) {
       throw bindingOutOfScope();
     }
@@ -1332,7 +1336,7 @@ export function createConnectedAccountPurposeBindingOwner(
     });
     if (
       !currentBefore
-      || !sameResolvedAccount(currentBefore.account, input.resolved.account)
+      || !sameQualifiedConnectedAccountRef(currentBefore.account, input.resolved.account)
       || currentBefore.credentialRevision !== expectedCredentialRevision
       || currentBefore.group?.groupId !== input.resolved.group?.groupId
       || currentBefore.group?.generation !== input.resolved.group?.generation
@@ -1366,7 +1370,7 @@ export function createConnectedAccountPurposeBindingOwner(
     });
     if (
       !currentAfter
-      || !sameResolvedAccount(currentAfter.account, input.resolved.account)
+      || !sameQualifiedConnectedAccountRef(currentAfter.account, input.resolved.account)
       || currentAfter.credentialRevision !== expectedCredentialRevision
       || currentAfter.group?.groupId !== input.resolved.group?.groupId
       || currentAfter.group?.generation !== input.resolved.group?.generation
@@ -1484,8 +1488,38 @@ export function createConnectedAccountPurposeBindingOwner(
         input.publish();
         release();
       } catch (error) {
+        if (!isAccountSettingsBoundaryUnavailable(error)) {
+          release();
+          throw error;
+        }
+        // The Account Settings boundary is the same missing truth the startup
+        // warmer and the retained-materialization scan both already treat as
+        // non-fatal. This prune is durable cleanup, not the authorization gate:
+        // every read re-checks `assertTargetAuthorized` and contracts an
+        // out-of-scope entry through `replaceTargetIfStillCurrent`. Escalating
+        // here instead left the candidate registry unpublished and the daemon
+        // unable to start at all, with no cache to recover from on a fresh host.
+        logger.debug(
+          '[connected-accounts] Account Settings is unavailable; deferred the'
+          + ' Connected Account purpose-binding prune and published the candidate'
+          + ' registry anyway',
+          {
+            // Details first, so the error's own identity below can never be
+            // shadowed by a detail key.
+            ...(error.details && typeof error.details === 'object' && !Array.isArray(error.details)
+              ? error.details
+              : {}),
+            code: error.code,
+            retryable: error.retryable,
+            // The flag decides the operator's next move, so it is stated rather
+            // than left for them to infer from the code.
+            recovery: error.retryable
+              ? 'the prune re-runs on the next registry publication'
+              : 'the boundary will not recover without operator action',
+          },
+        );
+        input.publish();
         release();
-        throw error;
       }
     },
     async getBinding(input) {

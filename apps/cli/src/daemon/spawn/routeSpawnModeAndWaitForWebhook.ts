@@ -26,9 +26,12 @@ import {
 import type { SpawnCommitRevalidation } from './spawnCommitRevalidation';
 import type { ProviderStreamingSanitizer } from '@/providers/spawn/redaction';
 import {
+  isRuntimeBackedHappyCliSubprocess,
   resolveHappyCliSubprocessRuntimeDecision,
   type HappyCliSubprocessLaunchOptions,
 } from '@/utils/spawnHappyCLI';
+import { ensureJavaScriptRuntimeExecutable } from '@/packagedRuntime/js/ensureJavaScriptRuntimeExecutable';
+import { isBun } from '@/utils/runtime';
 import { resolveLiveRunnerSnapshotFingerprints } from '../sessionRunnerRuntime/resolveLiveRunnerSnapshotFingerprints';
 
 function resolveSourceDevWorkspaceNamesForBackendTarget(
@@ -128,7 +131,17 @@ export async function routeSpawnModeAndWaitForWebhook(params: Readonly<{
   }
 
   const liveRunnerSnapshotFingerprints = resolveLiveRunnerSnapshotFingerprints(params.pidToTrackedSession.values());
-  const runtimeDecision = resolveHappyCliSubprocessRuntimeDecision({ liveRunnerSnapshotFingerprints });
+  if (isRuntimeBackedHappyCliSubprocess(params.processEnv)) {
+    await ensureJavaScriptRuntimeExecutable({
+      isBunRuntime: isBun(),
+      processEnv: params.processEnv,
+      currentExecPath: process.execPath,
+    });
+  }
+  const runtimeDecision = resolveHappyCliSubprocessRuntimeDecision({
+    environment: params.processEnv,
+    liveRunnerSnapshotFingerprints,
+  });
   const runnerLaunchOptions: HappyCliSubprocessLaunchOptions = {
     preferWindowsPackagedBinary: true,
     liveRunnerSnapshotFingerprints,

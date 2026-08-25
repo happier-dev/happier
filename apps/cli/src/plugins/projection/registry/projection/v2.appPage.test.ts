@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { manifest as INSPECTOR_PLUGIN_MANIFEST } from '@happier-dev/plugins-inspector';
 
 import type { LoadedPlugin } from '@/plugins/discovery/load/installed';
 import { ingestCanonicalPluginManifest } from '@/plugins/manifest/ingest';
@@ -56,8 +57,14 @@ function manifestText(input: Readonly<{
     });
 }
 
-function loadedPlugin(pluginId: string, text: string): LoadedPlugin {
-    const ingested = ingestCanonicalPluginManifest(text, { sourceProvenance: 'registryCustodied' });
+function loadedPlugin(
+    pluginId: string,
+    text: string,
+    options: Readonly<{ bundledFirstParty?: boolean }> = {},
+): LoadedPlugin {
+    const ingested = ingestCanonicalPluginManifest(text, options.bundledFirstParty
+        ? { sourceProvenance: 'localSource', manifestAuthority: 'bundled_first_party' }
+        : { sourceProvenance: 'registryCustodied' });
     if (!ingested.ok) {
         throw new Error(ingested.diagnostics.map((item) => `${item.code}: ${item.message}`).join('\n'));
     }
@@ -77,16 +84,22 @@ function loadedPlugin(pluginId: string, text: string): LoadedPlugin {
     };
 }
 
-function resolveRegistry(loadedPlugins: readonly LoadedPlugin[]): ResolvedContributionRegistry {
+function resolveRegistry(
+    loadedPlugins: readonly LoadedPlugin[],
+    provenance: 'first_party' | 'external' = 'external',
+): ResolvedContributionRegistry {
     return createResolvedContributionRegistry(projectLoadedPluginContributes({
         loadResult: { loadedPlugins, diagnosticsByPluginId: {} },
-        provenance: 'external',
+        provenance,
     }));
 }
 
-function projectUiEntries(loadedPlugins: readonly LoadedPlugin[]) {
+function projectUiEntries(
+    loadedPlugins: readonly LoadedPlugin[],
+    provenance: 'first_party' | 'external' = 'external',
+) {
     const projection = buildPluginProjectionV2({
-        registry: resolveRegistry(loadedPlugins),
+        registry: resolveRegistry(loadedPlugins, provenance),
         generation: 1,
         pluginUiHostRuntime: { declarative: { modelsByRendererKey: {} } } as never,
     });
@@ -118,6 +131,39 @@ function expectViewFieldRejected(overrides: Parameters<typeof manifestText>[0]):
 }
 
 describe('EU-5b app-page projection', () => {
+    it('projects the maintained public Inspector Browser and Services declarations into mounted bindings', () => {
+        const entries = projectUiEntries([
+            loadedPlugin(INSPECTOR_PLUGIN_MANIFEST.id, JSON.stringify(INSPECTOR_PLUGIN_MANIFEST), { bundledFirstParty: true }),
+        ], 'first_party');
+
+        expect(entries['surfacePlacement:happier.inspector:inspector-browser-panel']).toEqual(expect.objectContaining({
+            pluginId: 'happier.inspector',
+            descriptorId: 'inspector-browser-panel',
+            container: 'browserPanel',
+            target: { kind: 'browser', browserViewIdPath: '/browser/viewId' },
+            binding: expect.objectContaining({
+                container: 'browserPanel',
+                targetKind: 'browser',
+                destination: { pluginId: 'happier.inspector', localId: 'inspector-browser-panel' },
+            }),
+        }));
+        expect(entries['surfacePlacement:happier.inspector:inspector-services-panel']).toEqual(expect.objectContaining({
+            pluginId: 'happier.inspector',
+            descriptorId: 'inspector-services-panel',
+            container: 'servicesPanel',
+            target: { kind: 'services' },
+            binding: expect.objectContaining({
+                container: 'servicesPanel',
+                targetKind: 'services',
+                destination: { pluginId: 'happier.inspector', localId: 'inspector-services-panel' },
+            }),
+        }));
+        expect((entries['surfacePlacement:happier.inspector:inspector-browser-panel'] as { availability: { reason: string } }).availability.reason)
+            .not.toBe('placement_unmounted');
+        expect((entries['surfacePlacement:happier.inspector:inspector-services-panel'] as { availability: { reason: string } }).availability.reason)
+            .not.toBe('placement_unmounted');
+    });
+
     it('carries an external app-page declaration to a mounted binding bound to the app target', () => {
         const entries = projectUiEntries([loadedPlugin('acme.notes', manifestText({ pluginId: 'acme.notes' }))]);
 

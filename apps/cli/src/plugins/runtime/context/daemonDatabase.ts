@@ -1558,6 +1558,8 @@ export type StablePluginDaemonDatabaseHost = Readonly<{
     readPreparedContracts(pluginId: string): readonly PluginDaemonDatabasePreparedContract[];
     /** Stops only selected incumbent handles while a candidate proves its fixture. */
     quiesce(pluginIds: readonly string[]): Promise<PluginDaemonDatabaseQuiescence>;
+    /** Permanently closes only the selected plugin owners; healthy peers remain prepared. */
+    retire(pluginIds: readonly string[]): Promise<void>;
     /** The supplied measured policy is visible without leaking a driver. */
     readCapability(pluginId: string): PluginDaemonDatabaseCapability;
     /** Registry retirement owns the single close path for every database. */
@@ -1775,6 +1777,7 @@ export function createStablePluginDaemonDatabaseHost(params: Readonly<{
         string,
         'daemon_database_policy_unavailable' | 'daemon_database_unavailable'
     >();
+    const retiredPluginIds = new Set<string>();
     const protocolMaximumDatabaseBytes = params.daemonDatabaseLimits
         ? requirePositiveSafeInteger(
             params.daemonDatabaseLimits.protocolMaximumDatabaseBytes,
@@ -1801,6 +1804,9 @@ export function createStablePluginDaemonDatabaseHost(params: Readonly<{
     return Object.freeze({
         async prepare(input): Promise<void> {
             if (closed) fail('daemon_database_closed', 'Plugin daemon database host is closed');
+            if (retiredPluginIds.has(input.pluginId)) {
+                fail('daemon_database_closed', 'Plugin daemon database owner is retired');
+            }
             if (preparedByPluginId.has(input.pluginId)) {
                 fail('daemon_database_duplicate_preparation', 'Plugin daemon database owner was prepared more than once');
             }
@@ -1848,7 +1854,12 @@ export function createStablePluginDaemonDatabaseHost(params: Readonly<{
         },
         bind(input): DaemonDatabaseService {
             const prepared = preparedByPluginId.get(input.pluginId);
-            if (!prepared || prepared.generation !== input.generation || closed) {
+            if (
+                !prepared
+                || prepared.generation !== input.generation
+                || closed
+                || retiredPluginIds.has(input.pluginId)
+            ) {
                 return createUnavailablePluginDaemonDatabaseService(
                     unavailableCodesByPluginId.get(input.pluginId)
                     ?? (params.daemonDatabaseLimits
@@ -1874,6 +1885,7 @@ export function createStablePluginDaemonDatabaseHost(params: Readonly<{
             });
         },
         readPreparedContracts(pluginId): readonly PluginDaemonDatabasePreparedContract[] {
+            if (retiredPluginIds.has(pluginId)) return Object.freeze([]);
             const prepared = preparedByPluginId.get(pluginId);
             return prepared
                 ? Object.freeze([...prepared.owner.readPreparedContracts()])
@@ -1928,9 +1940,31 @@ export function createStablePluginDaemonDatabaseHost(params: Readonly<{
                 },
             });
         },
+        async retire(pluginIds): Promise<void> {
+            const owners: PreparedPluginDaemonDatabaseOwner[] = [];
+            for (const pluginId of [...new Set(pluginIds)].sort()) {
+                retiredPluginIds.add(pluginId);
+                unavailableCodesByPluginId.set(pluginId, 'daemon_database_unavailable');
+                quiescedByPluginId.delete(pluginId);
+                const prepared = preparedByPluginId.get(pluginId);
+                if (prepared) owners.push(prepared);
+            }
+            const results = await Promise.allSettled(owners.map(async ({ owner }) => await owner.close()));
+            for (const pluginId of pluginIds) {
+                const prepared = preparedByPluginId.get(pluginId);
+                if (prepared && owners.includes(prepared)) preparedByPluginId.delete(pluginId);
+            }
+            const failures = results
+                .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+                .map((result) => result.reason);
+            if (failures.length === 1) throw failures[0];
+            if (failures.length > 1) {
+                throw new AggregateError(failures, 'Plugin daemon database retirement failed');
+            }
+        },
         readCapability(pluginId): PluginDaemonDatabaseCapability {
             const prepared = preparedByPluginId.get(pluginId);
-            if (prepared && protocolMaximumDatabaseBytes !== null) {
+            if (prepared && protocolMaximumDatabaseBytes !== null && !retiredPluginIds.has(pluginId)) {
                 return Object.freeze({
                     status: 'available' as const,
                     protocolMaximumDatabaseBytes,
@@ -1955,6 +1989,7 @@ export function createStablePluginDaemonDatabaseHost(params: Readonly<{
                 preparedByPluginId.clear();
                 quiescedByPluginId.clear();
                 unavailableCodesByPluginId.clear();
+                retiredPluginIds.clear();
                 const failures = results
                     .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
                     .map((result) => result.reason);

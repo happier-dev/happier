@@ -1,7 +1,10 @@
 import { randomUUID } from 'node:crypto';
 
 import type { PluginContributionRef } from '@happier-dev/plugin-sdk';
-import { PluginJsonValueV2Schema } from '@happier-dev/protocol';
+import {
+    PluginJsonValueV2Schema,
+    sameQualifiedConnectedAccountRef,
+} from '@happier-dev/protocol';
 import type {
     ConnectedAccountAttemptResponse,
     ConnectedAccountControlTarget as ConnectedAccountDaemonControlTarget,
@@ -317,8 +320,7 @@ export function createConnectedAccountDaemonRuntime(params: Readonly<{
             );
             if (
                 !exact
-                || !sameService(exact.account.service, target.account.service)
-                || exact.account.accountId !== target.account.accountId
+                || !sameQualifiedConnectedAccountRef(exact.account, target.account)
             ) {
                 return null;
             }
@@ -396,8 +398,7 @@ export function createConnectedAccountDaemonRuntime(params: Readonly<{
         );
         if (
             !exact
-            || !sameService(exact.account.service, basis.target.account.service)
-            || exact.account.accountId !== basis.target.account.accountId
+            || !sameQualifiedConnectedAccountRef(exact.account, basis.target.account)
             || exact.authenticationModeId !== basis.mode.id
         ) {
             throw configurationConsequenceError(

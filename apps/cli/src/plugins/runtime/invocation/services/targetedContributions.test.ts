@@ -6,9 +6,7 @@ import {
 import {
     definePlugin,
     type JsonValue,
-    type TargetedContributionPointRef,
 } from '@happier-dev/plugin-sdk';
-import { readTargetedContributionPointSemanticRefs } from '@happier-dev/plugin-sdk/host/targeted-contributions';
 import {
     CHANNELS_PROVIDER_POINT_REF,
 } from '@happier-dev/plugins-channels/manifest';
@@ -102,26 +100,6 @@ const admittedSurfaceTarget = definePlugin({
         providers: admittedSurfaceProtocol.point(),
     },
 });
-const admittedSurfaceProtocolV2 = defineContributionProtocol({
-    id: 'example-admitted-surface',
-    version: 2,
-    descriptor: admittedSurfaceDescriptorSchema,
-    operations: {},
-    surfaces: {
-        detail: {
-            required: true,
-            inputSchema: admittedSurfaceInputSchema,
-            presentation: 'content',
-        },
-    },
-});
-const admittedSurfaceTargetV2 = definePlugin({
-    id: 'acme.target',
-    version: '0.1.0',
-    contributionPoints: {
-        providers: admittedSurfaceProtocolV2.point(),
-    },
-});
 const admittedOperationResultSchema = defineProtocolObject({}, { policy: 'closed' });
 const admittedOperationProtocol = defineContributionProtocol({
     id: 'example-providers',
@@ -168,7 +146,6 @@ const BUNDLED_GITHUB_PROVIDER = Object.freeze({
 function readBundledChannelsProviderPlugin(
     params: BundledChannelsPluginFixture,
 ): LoadedPlugin {
-    const semanticPointRefs = readTargetedContributionPointSemanticRefs(params.manifest);
     const ingested = ingestCanonicalPluginManifest(params.manifest, { sourceProvenance: 'localSource',
         manifestAuthority: 'bundled_first_party',
         enforceEngineCompatibility: false,
@@ -183,7 +160,6 @@ function readBundledChannelsProviderPlugin(
         daemonEntryPath: params.packageName,
         devDaemonEntryPath: null,
         manifest: ingested.manifest,
-        ...(semanticPointRefs.length > 0 ? { semanticPointRefs } : {}),
         sourceSpec: {
             kind: 'bundled',
             locator: params.packageName,
@@ -310,7 +286,7 @@ function runtimeRegistry(
         activateContributionsOnDemand: vi.fn(async () => []),
         resolvePromptAssetBlocks: async () => [],
         retireConsumers: () => {},
-        retirePluginConsumers(pluginIds: readonly string[]) {
+        async retirePluginConsumers(pluginIds: readonly string[]) {
             if (pluginIds.includes('acme.target')) target.abort(new Error('target replaced'));
         },
         retireLiveSubscriptionConsumers,
@@ -346,7 +322,7 @@ function runtimeRegistryForResolvedContributions(
         activateContributionsOnDemand: vi.fn(async () => []),
         resolvePromptAssetBlocks: async () => [],
         retireConsumers: () => {},
-        retirePluginConsumers(pluginIds: readonly string[]) {
+        async retirePluginConsumers(pluginIds: readonly string[]) {
             if (pluginIds.includes('happier.channels')) {
                 target.abort(new Error('target replaced'));
             }
@@ -433,9 +409,9 @@ describe('targeted contribution observation service', () => {
         });
         const lease = await controller.acquireRuntimeRegistry();
         await lease.release();
-        // The registry already consumed exact target refs before publishing
-        // this snapshot. A caller's public point ref therefore does not become
-        // a second late semantic decoder input.
+        // The registry already admitted the canonical manifest snapshot before
+        // publishing this view. A caller's public point ref therefore does not
+        // become a second late semantic decoder input.
         const carrierlessPoint = Object.freeze({ ...CHANNELS_PROVIDER_POINT_REF });
         const observation = owner.bind({
             pluginId: 'happier.channels',
@@ -456,19 +432,9 @@ describe('targeted contribution observation service', () => {
         await controller.shutdown();
     });
 
-    it('does not re-decode an admitted snapshot from a caller-visible target ref', async () => {
+    it('does not reinterpret an admitted snapshot from a caller-visible structural target ref', async () => {
         const target = new AbortController();
-        const v1Point = readTargetedContributionPointSemanticRefs(admittedSurfaceTarget.manifest)
-            .find((point) => point.protocol.version === admittedSurfaceProtocol.version);
-        const v2Point = readTargetedContributionPointSemanticRefs(admittedSurfaceTargetV2.manifest)
-            .find((point) => point.protocol.version === admittedSurfaceProtocolV2.version);
-        if (!v1Point || !v2Point) throw new Error('Expected admitted target point semantic refs');
-        const visibleV2PointWithV1Carrier: TargetedContributionPointRef = Object.freeze({
-            targetPluginId: v2Point.targetPluginId,
-            id: v2Point.id,
-            protocol: v2Point.protocol,
-            semanticCarrier: v1Point.semanticCarrier,
-        });
+        const visiblePoint = Object.freeze({ ...admittedSurfaceTarget.contributionPoints.providers });
         const firstContributor = Object.freeze({
             pluginId: 'acme.v2.first',
             contributionId: 'first',
@@ -533,7 +499,7 @@ describe('targeted contribution observation service', () => {
             signal: target.signal,
             isCurrent: () => !target.signal.aborted,
         }).observeForSelf(
-            visibleV2PointWithV1Carrier,
+            visiblePoint,
             { onInvalidated: vi.fn() },
         );
 

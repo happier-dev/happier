@@ -15,7 +15,7 @@ import type {
     ManagedServiceProcessSnapshot,
     ManagedServiceProcessSpec,
 } from './managedProcessSupervisor';
-import type { ManagedServiceDurabilityOwner } from './managedServiceDurability';
+import type { ManagedServiceProcessDurabilityOwner } from './managedServiceDurability';
 import { associateSupervisedPluginProcessHandleForHost } from '../../exec/processSupervisor';
 
 const CLEAN_EXIT: PluginProcessResult = Object.freeze({
@@ -114,10 +114,9 @@ function createHarness(processes: PluginProcessHandle[] = []) {
     return { exec, host, servers };
 }
 
-function createDurability(): ManagedServiceDurabilityOwner & {
+function createDurability(): ManagedServiceProcessDurabilityOwner & {
     publishEndpointProjection: ReturnType<typeof vi.fn>;
     releaseEndpointProjection: ReturnType<typeof vi.fn>;
-    resolveEndpointProjection: ReturnType<typeof vi.fn>;
     openLog: ReturnType<typeof vi.fn>;
     writes: string[];
 } {
@@ -125,7 +124,6 @@ function createDurability(): ManagedServiceDurabilityOwner & {
     return {
         publishEndpointProjection: vi.fn(async () => 'c'.repeat(64)),
         releaseEndpointProjection: vi.fn(async () => true),
-        resolveEndpointProjection: vi.fn(async () => null),
         openLog: vi.fn(async () => ({
             path: '/host/logs/redacted.log',
             write: (_source: 'stdout' | 'stderr', chunk: Uint8Array | string) => {

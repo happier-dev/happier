@@ -98,4 +98,11 @@ export type AutomationWorkerAssignmentsResponse = Readonly<{
     automationId: string;
     nextClaimAt: number | null;
   }>;
+  /**
+   * Current V3 server projection, or the Protocol-owned default normalized
+   * once at the V2 HTTP compatibility boundary.
+   */
+  settings: Readonly<{
+    maxActiveRunsPerMachine: number;
+  }>;
 }>;

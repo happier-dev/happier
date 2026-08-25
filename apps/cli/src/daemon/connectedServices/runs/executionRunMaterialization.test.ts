@@ -36,6 +36,13 @@ const MATERIALIZE_INPUT = {
 } as const;
 
 const REQUEST_AUTH_HTTP_PORT = 42427;
+
+/** The immutable Agent contribution a fixture registry admits, i.e. generation G1. */
+const AGENT_CONTRIBUTION_IDENTITY = Object.freeze({
+    pluginId: 'happier.agent.codex',
+    localId: 'codex',
+    immutableGenerationId: 'gen-1',
+});
 const UNKNOWN_ACTIVATION_ID = '00000000-0000-4000-8000-000000000000';
 
 const REQUEST_AUTH_CONTRIBUTIONS = {
@@ -91,6 +98,7 @@ function createBridge(overrides: Partial<Parameters<typeof createExecutionRunCon
         }),
         acquireAgentPurposeContributions: async () => ({
             contributions: { agentDefinitionsById: new Map() },
+            resolveAgentContributionIdentity: async () => AGENT_CONTRIBUTION_IDENTITY,
             isCurrent: () => true,
             release: async () => undefined,
         }),
@@ -119,7 +127,26 @@ function createBridge(overrides: Partial<Parameters<typeof createExecutionRunCon
 }
 
 describe('createExecutionRunConnectedServicesBridge', () => {
-    it('activates one exact run purpose subject and capability before returning connected env', async () => {
+    it.each([
+        {
+            caseName: 'contributed Agent stays on qualified request-auth authority',
+            contributions: REQUEST_AUTH_CONTRIBUTIONS,
+            expectsLegacyCompatibility: false,
+        },
+        {
+            caseName: 'legacy catalog Agent retains service-keyed compatibility',
+            contributions: {
+                ...REQUEST_AUTH_CONTRIBUTIONS,
+                catalogEntriesById: {
+                    codex: { connectedServiceIds: ['openai-codex'] as const },
+                },
+            },
+            expectsLegacyCompatibility: true,
+        },
+    ])('$caseName', async ({
+        contributions,
+        expectsLegacyCompatibility,
+    }) => {
         const materializedRoot = '/materialized/run_abc/codex';
         const capabilityPath = `${materializedRoot}/request-auth/capability.json`;
         const cleanupOrder: string[] = [];
@@ -159,7 +186,12 @@ describe('createExecutionRunConnectedServicesBridge', () => {
         });
         const capturedSubject:
             { current:
-            | Readonly<{ subjectId: string; isCurrent(): boolean }>
+            | Readonly<{
+                subjectId: string;
+                legacyServiceKeyedCompatibility?: true;
+                isCurrent(): boolean;
+                resolvePurposeUse(rawPurpose: unknown): unknown;
+            }>
             | null } = { current: null };
         const requestAuthRegistry = {
             activate: vi.fn(async ({ subject }) => {
@@ -167,7 +199,6 @@ describe('createExecutionRunConnectedServicesBridge', () => {
                 expect(subject.subjectId).toBe(
                     purposeLease.subjectId,
                 );
-                expect(subject.legacyServiceKeyedCompatibility).toBe(true);
                 return {
                     path: capabilityPath,
                     materializationId: 'run_abc',
@@ -205,7 +236,8 @@ describe('createExecutionRunConnectedServicesBridge', () => {
         const { bridge } = createBridge({
             resolveAuthForSpawn: resolveAuthForSpawn as never,
             acquireAgentPurposeContributions: async () => ({
-                contributions: REQUEST_AUTH_CONTRIBUTIONS,
+                contributions,
+                resolveAgentContributionIdentity: async () => AGENT_CONTRIBUTION_IDENTITY,
                 isCurrent: () => generationCurrent,
                 release: async () => undefined,
             }),
@@ -246,11 +278,32 @@ describe('createExecutionRunConnectedServicesBridge', () => {
         expect(requestAuthRegistry.activate).toHaveBeenCalledWith({
             subject: expect.objectContaining({
                 subjectId: purposeLease.subjectId,
-                legacyServiceKeyedCompatibility: true,
             }),
             materializedRootDir: materializedRoot,
             materializationId: 'run_abc',
             httpPort: REQUEST_AUTH_HTTP_PORT,
+        });
+        if (expectsLegacyCompatibility) {
+            expect(
+                capturedSubject.current?.legacyServiceKeyedCompatibility,
+            ).toBe(true);
+        } else {
+            expect(capturedSubject.current).not.toHaveProperty(
+                'legacyServiceKeyedCompatibility',
+            );
+        }
+        expect(capturedSubject.current?.resolvePurposeUse({
+            consumer: {
+                pluginId: 'happier.agent.codex',
+                localId: 'codex',
+            },
+            purpose: 'primary',
+        })).toMatchObject({
+            binding: {
+                target: {
+                    kind: 'account',
+                },
+            },
         });
         generationCurrent = false;
         expect(capturedSubject.current?.isCurrent()).toBe(false);
@@ -307,6 +360,7 @@ describe('createExecutionRunConnectedServicesBridge', () => {
             resolveAuthForSpawn: resolveAuthForSpawn as never,
             acquireAgentPurposeContributions: async () => ({
                 contributions: REQUEST_AUTH_CONTRIBUTIONS,
+                resolveAgentContributionIdentity: async () => AGENT_CONTRIBUTION_IDENTITY,
                 isCurrent: () => true,
                 release: async () => undefined,
             }),
@@ -357,6 +411,9 @@ describe('createExecutionRunConnectedServicesBridge', () => {
             activationId: result.activationId,
             runKey: 'run_abc',
             agentId: 'codex',
+            // The routing id alone cannot say which build the runner is executing; the exact
+            // contribution generation is what restart adoption later demands correspondence with.
+            agentContribution: AGENT_CONTRIBUTION_IDENTITY,
             materializationKey: 'run_abc',
             connectedServicesBindings: RUN_BINDINGS,
             connectedServiceSelectionsEnv: {
@@ -549,6 +606,7 @@ describe('createExecutionRunConnectedServicesBridge', () => {
             }),
             acquireAgentPurposeContributions: async () => ({
                 contributions: { agentDefinitionsById: new Map() },
+                resolveAgentContributionIdentity: async () => AGENT_CONTRIBUTION_IDENTITY,
                 isCurrent: () => true,
                 release: contributionRelease,
             }),
@@ -613,6 +671,7 @@ describe('createExecutionRunConnectedServicesBridge', () => {
             },
             acquireAgentPurposeContributions: async () => ({
                 contributions: { agentDefinitionsById: new Map() },
+                resolveAgentContributionIdentity: async () => AGENT_CONTRIBUTION_IDENTITY,
                 isCurrent: () => true,
                 release: contributionRelease,
             }),
@@ -646,6 +705,7 @@ describe('createExecutionRunConnectedServicesBridge', () => {
             unregisterRunTargets,
             acquireAgentPurposeContributions: async () => ({
                 contributions: { agentDefinitionsById: new Map() },
+                resolveAgentContributionIdentity: async () => AGENT_CONTRIBUTION_IDENTITY,
                 isCurrent: () => true,
                 release: contributionRelease,
             }),
@@ -854,6 +914,7 @@ describe('createExecutionRunConnectedServicesBridge', () => {
             activationId: '11111111-1111-4111-8111-111111111111',
             runKey: 'run_abc',
             agentId: 'codex' as const,
+            agentContribution: AGENT_CONTRIBUTION_IDENTITY,
             materializationKey: 'run_abc',
             connectedServicesBindings: RUN_BINDINGS,
             connectedServiceSelectionsEnv: { [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: '[]' },
@@ -975,6 +1036,7 @@ describe('createExecutionRunConnectedServicesBridge', () => {
             createAdoptedRootCleanup: () => adoptedCleanup,
             acquireAgentPurposeContributions: async () => ({
                 contributions: REQUEST_AUTH_CONTRIBUTIONS,
+                resolveAgentContributionIdentity: async () => AGENT_CONTRIBUTION_IDENTITY,
                 isCurrent: () => true,
                 release: async () => undefined,
             }),
@@ -986,6 +1048,7 @@ describe('createExecutionRunConnectedServicesBridge', () => {
             activationId: '22222222-2222-4222-8222-222222222222',
             runKey: 'run_abc',
             agentId: 'codex' as const,
+            agentContribution: AGENT_CONTRIBUTION_IDENTITY,
             materializationKey: 'run_abc',
             connectedServicesBindings: RUN_BINDINGS,
             connectedServiceSelectionsEnv: {
@@ -1040,7 +1103,74 @@ describe('createExecutionRunConnectedServicesBridge', () => {
         }
     });
 
-    it('adopts distinct predecessor ids only from the exact persisted predecessor contract', async () => {
+    // Restart adoption reconstructs purposes and request-auth uses from the registry current at
+    // restart. Accepting a live G1 runner while deriving G2 declarations would run Agent code
+    // against a different credential/request-auth ABI, so the two must correspond exactly.
+    it.each([
+        {
+            label: 'the Agent generation moved from G1 to G2',
+            currentIdentity: { ...AGENT_CONTRIBUTION_IDENTITY, immutableGenerationId: 'gen-2' },
+            launched: AGENT_CONTRIBUTION_IDENTITY,
+        },
+        {
+            label: 'the Agent now comes from a different plugin',
+            currentIdentity: { ...AGENT_CONTRIBUTION_IDENTITY, pluginId: 'someone.else.codex' },
+            launched: AGENT_CONTRIBUTION_IDENTITY,
+        },
+        {
+            label: 'the registry can no longer prove any generation',
+            currentIdentity: null,
+            launched: AGENT_CONTRIBUTION_IDENTITY,
+        },
+        {
+            label: 'the persisted record never proved a generation',
+            currentIdentity: AGENT_CONTRIBUTION_IDENTITY,
+            launched: undefined,
+        },
+    ])('refuses restart adoption when $label', async ({ currentIdentity, launched }) => {
+        const activatePurposeBindings = vi.fn();
+        const requestAuthRegistry = { activate: vi.fn(), retire: vi.fn() };
+        const release = vi.fn(async () => undefined);
+        const { bridge, registerRunTargets } = createBridge({
+            acquireAgentPurposeContributions: async () => ({
+                contributions: REQUEST_AUTH_CONTRIBUTIONS,
+                resolveAgentContributionIdentity: async () => currentIdentity,
+                isCurrent: () => true,
+                release,
+            }),
+            purposeBindingOwner: { activatePurposeBindings } as never,
+            requestAuthRegistry: requestAuthRegistry as never,
+        });
+
+        await expect(bridge.adoptLiveMaterialization({
+            runId: 'run_abc',
+            runnerPid: 4242,
+            sessionId: 'session-1',
+            persistedLaunch: {
+                v: 1 as const,
+                activationId: '33333333-3333-4333-8333-333333333333',
+                runKey: 'run_abc',
+                agentId: 'codex' as const,
+                ...(launched ? { agentContribution: launched } : {}),
+                materializationKey: 'run_abc',
+                connectedServicesBindings: RUN_BINDINGS,
+                connectedServiceSelectionsEnv: {
+                    [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: '[]',
+                },
+                sessionDirectory: '/tmp/project',
+                materializedRoot: null,
+            },
+        })).resolves.toBe(false);
+
+        expect(activatePurposeBindings).not.toHaveBeenCalled();
+        expect(requestAuthRegistry.activate).not.toHaveBeenCalled();
+        expect(registerRunTargets).not.toHaveBeenCalled();
+        expect(release).toHaveBeenCalled();
+    });
+
+    // A predecessor-shaped record carries no Agent generation at all, so it is unproven by
+    // construction. Its runner keeps running; it simply does not receive fresh authority.
+    it('refuses to upgrade a predecessor-shaped record into fresh request-auth authority', async () => {
         const { bridge, registerRunTargets } = createBridge();
         const predecessorLaunch = {
             v: 1 as const,
@@ -1068,11 +1198,7 @@ describe('createExecutionRunConnectedServicesBridge', () => {
             runnerPid: 4242,
             sessionId: 'session-1',
             persistedLaunch: predecessorLaunch,
-        })).resolves.toBe(true);
-        expect(registerRunTargets).toHaveBeenCalledWith(expect.objectContaining({
-            runKey: predecessorLaunch.runKey,
-            runnerPid: 4242,
-            sessionId: 'session-1',
-        }));
+        })).resolves.toBe(false);
+        expect(registerRunTargets).not.toHaveBeenCalled();
     });
 });

@@ -1,0 +1,751 @@
+(self["rspackChunkhappier_plugin_acme_packed_voice_voice_runtime_web"] = self["rspackChunkhappier_plugin_acme_packed_voice_voice_runtime_web"] || []).push([["src_voiceRuntime_tsx"], {
+574: (function (__unused_rspack_module, exports) {
+"use strict";
+
+function asyncGeneratorStep(gen, resolve, reject, _next, _throw, key, arg) {
+    try {
+        var info = gen[key](arg);
+        var value = info.value;
+    } catch (error) {
+        reject(error);
+        return;
+    }
+    if (info.done) resolve(value);
+    else Promise.resolve(value).then(_next, _throw);
+}
+function _async_to_generator(fn) {
+    return function() {
+        var self = this, args = arguments;
+        return new Promise(function(resolve, reject) {
+            var gen = fn.apply(self, args);
+            function _next(value) {
+                asyncGeneratorStep(gen, resolve, reject, _next, _throw, "next", value);
+            }
+            function _throw(err) {
+                asyncGeneratorStep(gen, resolve, reject, _next, _throw, "throw", err);
+            }
+            _next(undefined);
+        });
+    };
+}
+exports._ = _async_to_generator;
+
+
+}),
+511: (function (__unused_rspack_module, exports) {
+"use strict";
+
+function _define_property(obj, key, value) {
+    if (key in obj) {
+        Object.defineProperty(obj, key, {
+            value: value,
+            enumerable: true,
+            configurable: true,
+            writable: true
+        });
+    } else obj[key] = value;
+    return obj;
+}
+exports._ = _define_property;
+
+
+}),
+472: (function (__unused_rspack_module, exports) {
+"use strict";
+
+function _getRequireWildcardCache(nodeInterop) {
+    if (typeof WeakMap !== "function") return null;
+    var cacheBabelInterop = new WeakMap();
+    var cacheNodeInterop = new WeakMap();
+    return (_getRequireWildcardCache = function _getRequireWildcardCache(nodeInterop) {
+        return nodeInterop ? cacheNodeInterop : cacheBabelInterop;
+    })(nodeInterop);
+}
+function _interop_require_wildcard(obj, nodeInterop) {
+    if (!nodeInterop && obj && obj.__esModule) return obj;
+    if (obj === null || typeof obj !== "object" && typeof obj !== "function") return {
+        default: obj
+    };
+    var cache = _getRequireWildcardCache(nodeInterop);
+    if (cache && cache.has(obj)) return cache.get(obj);
+    var newObj = {
+        __proto__: null
+    };
+    var hasPropertyDescriptor = Object.defineProperty && Object.getOwnPropertyDescriptor;
+    for(var key in obj){
+        if (key !== "default" && Object.prototype.hasOwnProperty.call(obj, key)) {
+            var desc = hasPropertyDescriptor ? Object.getOwnPropertyDescriptor(obj, key) : null;
+            if (desc && (desc.get || desc.set)) Object.defineProperty(newObj, key, desc);
+            else newObj[key] = obj[key];
+        }
+    }
+    newObj.default = obj;
+    if (cache) cache.set(obj, newObj);
+    return newObj;
+}
+exports._ = _interop_require_wildcard;
+
+
+}),
+613: (function (__unused_rspack_module, exports, __webpack_require__) {
+"use strict";
+
+var _define_property = __webpack_require__(511);
+function _object_spread(target) {
+    for(var i = 1; i < arguments.length; i++){
+        var source = arguments[i] != null ? arguments[i] : {};
+        var ownKeys = Object.keys(source);
+        if (typeof Object.getOwnPropertySymbols === "function") {
+            ownKeys = ownKeys.concat(Object.getOwnPropertySymbols(source).filter(function(sym) {
+                return Object.getOwnPropertyDescriptor(source, sym).enumerable;
+            }));
+        }
+        ownKeys.forEach(function(key) {
+            _define_property._(target, key, source[key]);
+        });
+    }
+    return target;
+}
+exports._ = _object_spread;
+
+
+}),
+294: (function (__unused_rspack_module, exports, __webpack_require__) {
+Object.defineProperty(exports, "__esModule", ({
+    value: true
+}));
+function _export(target, all) {
+    for(var name in all)Object.defineProperty(target, name, {
+        enumerable: true,
+        get: Object.getOwnPropertyDescriptor(all, name).get
+    });
+}
+_export(exports, {
+    get activate () {
+        return activate;
+    },
+    get renderSurface () {
+        return renderSurface;
+    }
+});
+var _async_to_generator = __webpack_require__(574);
+var _interop_require_wildcard = __webpack_require__(472);
+var _object_spread = __webpack_require__(613);
+var _react = /*#__PURE__*/ _interop_require_wildcard._(__webpack_require__(947));
+var MAX_CATALOG_METADATA_PROPERTIES = 32;
+var FIXTURE_VOICE_ID = 'packed-voice-primary';
+var CONVERSATION_KIND = 'conversation';
+var CURRENT_UI_READ_RESPONSE_PREFIX = 'packed-current-ui-read-response-';
+var CURRENT_UI_INVOKE_RESPONSE_PREFIX = 'packed-current-ui-invoke-response-';
+var fixtureEvents = [];
+globalThis.__HAPPIER_PACKED_VOICE_FIXTURE_EVENTS__ = fixtureEvents;
+function isRecord(value) {
+    return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+function readRecord(value) {
+    return isRecord(value) ? value : null;
+}
+function readBoundedString(value, maxLength) {
+    return typeof value === 'string' && value.trim() === value && value.length > 0 && value.length <= maxLength ? value : null;
+}
+function currentUiReadCallId(responseId) {
+    return `${responseId}:read`;
+}
+function currentUiInvokeCallId(responseId) {
+    return `${responseId}:invoke`;
+}
+function readCurrentUiCommandId(value) {
+    var _readRecord, _readRecord1;
+    var commands = (_readRecord = readRecord(value)) === null || _readRecord === void 0 ? void 0 : _readRecord.commands;
+    if (!Array.isArray(commands)) return null;
+    return readBoundedString((_readRecord1 = readRecord(commands[0])) === null || _readRecord1 === void 0 ? void 0 : _readRecord1.id, 512);
+}
+function readCurrentUiReadToolResult(value) {
+    var _readRecord;
+    var results = (_readRecord = readRecord(value)) === null || _readRecord === void 0 ? void 0 : _readRecord.results;
+    if (!Array.isArray(results)) return null;
+    for (var result of results){
+        var _readRecord1;
+        var record = readRecord(result);
+        if ((record === null || record === void 0 ? void 0 : record.status) !== 'success') continue;
+        var responseId = readBoundedString(record.responseId, 512);
+        var commandId = readCurrentUiCommandId(record.output);
+        if (!responseId || !commandId || !responseId.startsWith(CURRENT_UI_READ_RESPONSE_PREFIX) || record.callId !== currentUiReadCallId(responseId)) continue;
+        var context = readRecord(record.output);
+        var commands = context === null || context === void 0 ? void 0 : context.commands;
+        return {
+            responseId,
+            commandId,
+            entityLabel: readBoundedString((_readRecord1 = readRecord(context === null || context === void 0 ? void 0 : context.entity)) === null || _readRecord1 === void 0 ? void 0 : _readRecord1.label, 512),
+            commandCount: Array.isArray(commands) ? commands.length : 0
+        };
+    }
+    return null;
+}
+function readCurrentUiInvokeToolResult(value) {
+    var _readRecord;
+    var results = (_readRecord = readRecord(value)) === null || _readRecord === void 0 ? void 0 : _readRecord.results;
+    if (!Array.isArray(results)) return null;
+    for (var result of results){
+        var record = readRecord(result);
+        if ((record === null || record === void 0 ? void 0 : record.status) !== 'success') continue;
+        var responseId = readBoundedString(record.responseId, 512);
+        if (!responseId || !responseId.startsWith(CURRENT_UI_INVOKE_RESPONSE_PREFIX) || record.callId !== currentUiInvokeCallId(responseId)) continue;
+        return {
+            responseId,
+            result: record.output
+        };
+    }
+    return null;
+}
+function readToolContinuation(value) {
+    var record = readRecord(value);
+    return (record === null || record === void 0 ? void 0 : record.kind) === 'fixture_continue' ? readBoundedString(record.responseId, 512) : null;
+}
+function isFixtureTextTurn(value) {
+    var record = readRecord(value);
+    return (record === null || record === void 0 ? void 0 : record.kind) === 'fixture_text' && readBoundedString(record.text, 16384) !== null;
+}
+function createToolCallControl(input) {
+    return {
+        kind: 'fixture_tool_call',
+        responseId: input.responseId,
+        callId: input.callId,
+        toolName: input.toolName,
+        arguments: input.arguments
+    };
+}
+function decodeToolCallControl(value) {
+    var record = readRecord(value);
+    if ((record === null || record === void 0 ? void 0 : record.kind) !== 'fixture_tool_call') return [];
+    var responseId = readBoundedString(record.responseId, 512);
+    var callId = readBoundedString(record.callId, 512);
+    var argumentsRecord = readRecord(record.arguments);
+    if (!responseId || !callId || !argumentsRecord) return [];
+    if (record.toolName === 'readCurrentUiContext') {
+        if (Object.keys(argumentsRecord).length !== 0) return [];
+        return [
+            {
+                type: 'tool_calls',
+                responseId,
+                calls: [
+                    {
+                        v: 1,
+                        responseId,
+                        callId,
+                        toolName: 'readCurrentUiContext',
+                        order: 0,
+                        arguments: {}
+                    }
+                ]
+            }
+        ];
+    }
+    var commandId = record.toolName === 'invokeCurrentUiCommand' ? readBoundedString(argumentsRecord.commandId, 512) : null;
+    if (!commandId || Object.keys(argumentsRecord).length !== 1) return [];
+    return [
+        {
+            type: 'tool_calls',
+            responseId,
+            calls: [
+                {
+                    v: 1,
+                    responseId,
+                    callId,
+                    toolName: 'invokeCurrentUiCommand',
+                    order: 0,
+                    arguments: {
+                        commandId
+                    }
+                }
+            ]
+        }
+    ];
+}
+function readJsonResponse(response, errorCode) {
+    if (response.status !== 200) throw new Error(errorCode);
+    try {
+        return JSON.parse(new TextDecoder().decode(response.body));
+    } catch  {
+        throw new Error(errorCode);
+    }
+}
+function readProviderConfig(value) {
+    var config = readRecord(value);
+    if ((config === null || config === void 0 ? void 0 : config.profile) !== 'balanced' && (config === null || config === void 0 ? void 0 : config.profile) !== 'expressive' || typeof config.enableProvisioning !== 'boolean' || Object.keys(config).some((key)=>key !== 'profile' && key !== 'enableProvisioning')) {
+        throw new Error('invalid_provider_config');
+    }
+    return {
+        profile: config.profile,
+        enableProvisioning: config.enableProvisioning
+    };
+}
+function readCatalog(response) {
+    var wire = readRecord(readJsonResponse(response, 'invalid_voice_catalog'));
+    if (!Array.isArray(wire === null || wire === void 0 ? void 0 : wire.voices) || wire.voices.length < 1 || wire.voices.length > 500) {
+        throw new Error('invalid_voice_catalog');
+    }
+    return wire.voices.map((candidate)=>{
+        var record = readRecord(candidate);
+        var id = typeof (record === null || record === void 0 ? void 0 : record.voice_id) === 'string' ? record.voice_id.trim() : '';
+        var name = typeof (record === null || record === void 0 ? void 0 : record.name) === 'string' ? record.name.trim() : '';
+        if (id.length < 1 || id.length > 256 || name.length < 1 || name.length > 256) {
+            throw new Error('invalid_voice_catalog');
+        }
+        var metadata = {};
+        if (typeof (record === null || record === void 0 ? void 0 : record.language) === 'string' && record.language.length <= 512) {
+            metadata.language = record.language;
+        }
+        if (Object.keys(metadata).length > MAX_CATALOG_METADATA_PROPERTIES) {
+            throw new Error('invalid_voice_catalog');
+        }
+        return {
+            id,
+            name,
+            metadata
+        };
+    });
+}
+function readProvisioning(response, selectedVoiceId, profile) {
+    var wire = readRecord(readJsonResponse(response, 'invalid_voice_provisioning'));
+    if ((wire === null || wire === void 0 ? void 0 : wire.provisioned_voice_id) !== selectedVoiceId || (wire === null || wire === void 0 ? void 0 : wire.profile) !== profile) {
+        throw new Error('invalid_voice_provisioning');
+    }
+    return {
+        selectedVoiceId,
+        profile
+    };
+}
+function readClientAuth(response) {
+    var wire = readRecord(readJsonResponse(response, 'invalid_voice_client_auth_artifact'));
+    var clientSecret = readRecord(wire === null || wire === void 0 ? void 0 : wire.client_secret);
+    var value = clientSecret === null || clientSecret === void 0 ? void 0 : clientSecret.value;
+    var expiresAtMs = clientSecret === null || clientSecret === void 0 ? void 0 : clientSecret.expires_at_ms;
+    if (typeof value !== 'string' || value.length < 1 || value.length > 16384 || typeof expiresAtMs !== 'number' || !Number.isInteger(expiresAtMs) || expiresAtMs <= 0) {
+        throw new Error('invalid_voice_client_auth_artifact');
+    }
+    return {
+        kind: 'bearer_token',
+        value,
+        expiresAtMs,
+        placement: 'authorization_header'
+    };
+}
+function PackedCurrentContextSurface(param) {
+    var context = param.context;
+    _react.useEffect(()=>{
+        context.hostApi.publishCurrentUiContext({
+            entity: {
+                kind: 'voice',
+                label: 'Packed Voice current context',
+                summary: 'The packed external Voice fixture publishes this mounted semantic context.'
+            },
+            detail: {
+                source: 'packed-external-voice-provider'
+            },
+            commands: [
+                {
+                    title: 'Open packed current context',
+                    command: {
+                        kind: 'executeAction',
+                        action: 'open-packed-current-context'
+                    }
+                }
+            ]
+        });
+        return ()=>{
+            try {
+                context.hostApi.publishCurrentUiContext(null);
+            } catch  {
+            // The mounted surface may already have been retired by its host.
+            }
+        };
+    }, [
+        context.hostApi
+    ]);
+    return null;
+}
+function renderSurface(context) {
+    return /*#__PURE__*/ _react.createElement(PackedCurrentContextSurface, {
+        context
+    });
+}
+function activate(api) {
+    fixtureEvents.push({
+        kind: 'activated'
+    });
+    api.actions.register('open-packed-current-context', (_input, context)=>_async_to_generator._(function*() {
+            var _context_currentUiContext_entity, _context_currentUiContext;
+            context.signal.throwIfAborted();
+            fixtureEvents.push({
+                kind: 'packed_current_context_action',
+                entityLabel: ((_context_currentUiContext = context.currentUiContext) === null || _context_currentUiContext === void 0 ? void 0 : (_context_currentUiContext_entity = _context_currentUiContext.entity) === null || _context_currentUiContext_entity === void 0 ? void 0 : _context_currentUiContext_entity.label) ?? null
+            });
+            return {
+                opened: true
+            };
+        })());
+    var mediatedRuntime = {
+        kind: CONVERSATION_KIND,
+        settingsOperations: {
+            listCatalog (input) {
+                return _async_to_generator._(function*() {
+                    readProviderConfig(input.providerConfig);
+                    if (input.catalog !== 'voices') throw new Error('unsupported_voice_catalog');
+                    if (!input.credentials.mediated) throw new Error('voice_mediated_credentials_required');
+                    var catalog = readCatalog((yield input.credentials.mediated.request({
+                        operationId: 'list-voices',
+                        parameters: {},
+                        signal: input.signal
+                    })));
+                    fixtureEvents.push({
+                        kind: 'catalog',
+                        selectedVoiceId: catalog[0].id
+                    });
+                    return catalog;
+                })();
+            }
+        },
+        settingsActions: {
+            execute (input, context) {
+                return _async_to_generator._(function*() {
+                    if (input.actionId !== 'provision-voice') throw new Error('unsupported_voice_settings_action');
+                    var providerConfig = readProviderConfig(input.settings);
+                    if (!providerConfig.enableProvisioning) throw new Error('voice_provisioning_disabled');
+                    if (!context.credentials.mediated) throw new Error('voice_mediated_credentials_required');
+                    var provisioning = readProvisioning((yield context.credentials.mediated.request({
+                        operationId: 'provision-voice',
+                        parameters: {
+                            voiceId: FIXTURE_VOICE_ID,
+                            body: {
+                                profile: providerConfig.profile
+                            }
+                        },
+                        signal: context.signal
+                    })), FIXTURE_VOICE_ID, providerConfig.profile);
+                    fixtureEvents.push(_object_spread._({
+                        kind: 'provisioned'
+                    }, provisioning));
+                    return {
+                        patch: {
+                            profile: 'expressive'
+                        }
+                    };
+                })();
+            }
+        },
+        protocol: {
+            prepare (input) {
+                return _async_to_generator._(function*() {
+                    var providerConfig = readProviderConfig(input.providerConfig);
+                    if (!input.credentials.mediated) throw new Error('voice_mediated_credentials_required');
+                    var clientAuth = readClientAuth((yield input.credentials.mediated.request({
+                        operationId: 'client-auth',
+                        parameters: {
+                            body: {
+                                audience: 'realtime',
+                                voiceId: FIXTURE_VOICE_ID
+                            }
+                        },
+                        signal: input.signal
+                    })));
+                    fixtureEvents.push({
+                        kind: 'client_auth',
+                        artifact: {
+                            kind: clientAuth.kind,
+                            expiresAtMs: clientAuth.expiresAtMs,
+                            placement: clientAuth.placement
+                        },
+                        selectedVoiceId: FIXTURE_VOICE_ID
+                    });
+                    fixtureEvents.push({
+                        kind: 'prepared',
+                        profile: providerConfig.profile
+                    });
+                    return {
+                        kind: 'prepared',
+                        session: {
+                            config: {
+                                selectedVoiceId: FIXTURE_VOICE_ID,
+                                profile: providerConfig.profile,
+                                clientAuth
+                            },
+                            safeMetadata: {
+                                selectedVoiceId: FIXTURE_VOICE_ID,
+                                profile: providerConfig.profile
+                            }
+                        }
+                    };
+                })();
+            },
+            decodeControl (event) {
+                var _readRecord, _readRecord1, _readRecord2;
+                if (((_readRecord = readRecord(event)) === null || _readRecord === void 0 ? void 0 : _readRecord.kind) === 'fixture_tool_call') {
+                    return decodeToolCallControl(event);
+                }
+                if (((_readRecord1 = readRecord(event)) === null || _readRecord1 === void 0 ? void 0 : _readRecord1.kind) === 'fixture_transcript') {
+                    return [
+                        {
+                            type: 'transcript',
+                            event: {
+                                v: 1,
+                                type: 'voice.transcript.final',
+                                epoch: 1,
+                                sequence: 1,
+                                revision: 1,
+                                eventId: 'packed-event-1',
+                                itemId: 'packed-item-1',
+                                role: 'user',
+                                text: 'packed provider transcript',
+                                provenance: 'live'
+                            }
+                        }
+                    ];
+                }
+                if (((_readRecord2 = readRecord(event)) === null || _readRecord2 === void 0 ? void 0 : _readRecord2.kind) === 'fixture_output_started') return [
+                    {
+                        type: 'assistant_output_started'
+                    }
+                ];
+                return [];
+            },
+            encodeTurnControl (action) {
+                return action === 'cancel_response' ? {
+                    kind: 'fixture_cancel'
+                } : null;
+            }
+        },
+        createConnection (input) {
+            return _async_to_generator._(function*() {
+                var config = readRecord(input.session.config);
+                var clientAuth = readRecord(config === null || config === void 0 ? void 0 : config.clientAuth);
+                if (typeof (config === null || config === void 0 ? void 0 : config.selectedVoiceId) !== 'string' || typeof config.profile !== 'string' || (clientAuth === null || clientAuth === void 0 ? void 0 : clientAuth.kind) !== 'bearer_token' || typeof clientAuth.value !== 'string' || !Number.isInteger(clientAuth.expiresAtMs) || clientAuth.placement !== 'authorization_header') {
+                    throw new Error('invalid_prepared_voice_session');
+                }
+                var emitControl = null;
+                var nextCurrentUiResponse = 0;
+                var pendingCurrentUiCommands = new Map();
+                var emitCurrentUiRead = ()=>{
+                    if (!emitControl) return;
+                    var responseId = `${CURRENT_UI_READ_RESPONSE_PREFIX}${++nextCurrentUiResponse}`;
+                    // Effectful Actions travel through canonical provider tool calls so
+                    // the host owns authorization, settlement, cancellation, and replay.
+                    emitControl(createToolCallControl({
+                        responseId,
+                        callId: currentUiReadCallId(responseId),
+                        toolName: 'readCurrentUiContext',
+                        arguments: {}
+                    }));
+                };
+                fixtureEvents.push({
+                    kind: 'connection_created'
+                });
+                return input.media.createSdkHandleConnection({
+                    driver: {
+                        open (_0) {
+                            return _async_to_generator._(function*(param) {
+                                var signal = param.signal, onControl = param.onControl;
+                                signal.throwIfAborted();
+                                emitControl = onControl;
+                                fixtureEvents.push({
+                                    kind: 'host_media_opened'
+                                });
+                                emitCurrentUiRead();
+                                onControl({
+                                    kind: 'fixture_transcript'
+                                });
+                                onControl({
+                                    kind: 'fixture_output_started'
+                                });
+                            }).apply(this, arguments);
+                        },
+                        sendControl (event) {
+                            return _async_to_generator._(function*() {
+                                if (input.signal.aborted || !emitControl) return;
+                                fixtureEvents.push({
+                                    kind: 'sent',
+                                    event
+                                });
+                                if (isFixtureTextTurn(event)) {
+                                    emitCurrentUiRead();
+                                    return;
+                                }
+                                var currentUiRead = readCurrentUiReadToolResult(event);
+                                if (currentUiRead) {
+                                    pendingCurrentUiCommands.set(currentUiRead.responseId, currentUiRead.commandId);
+                                    fixtureEvents.push({
+                                        kind: 'current_ui_context_read',
+                                        entityLabel: currentUiRead.entityLabel,
+                                        commandCount: currentUiRead.commandCount
+                                    });
+                                    return;
+                                }
+                                var currentUiInvoke = readCurrentUiInvokeToolResult(event);
+                                if (currentUiInvoke) {
+                                    fixtureEvents.push({
+                                        kind: 'current_ui_context_invoked',
+                                        result: currentUiInvoke.result
+                                    });
+                                    return;
+                                }
+                                var responseId = readToolContinuation(event);
+                                if (!responseId) return;
+                                var commandId = pendingCurrentUiCommands.get(responseId);
+                                if (!commandId) return;
+                                pendingCurrentUiCommands.delete(responseId);
+                                var invokeResponseId = responseId.replace(CURRENT_UI_READ_RESPONSE_PREFIX, CURRENT_UI_INVOKE_RESPONSE_PREFIX);
+                                if (invokeResponseId === responseId) return;
+                                emitControl(createToolCallControl({
+                                    responseId: invokeResponseId,
+                                    callId: currentUiInvokeCallId(invokeResponseId),
+                                    toolName: 'invokeCurrentUiCommand',
+                                    arguments: {
+                                        commandId
+                                    }
+                                }));
+                            })();
+                        },
+                        close (reason) {
+                            return _async_to_generator._(function*() {
+                                pendingCurrentUiCommands.clear();
+                                emitControl = null;
+                                fixtureEvents.push({
+                                    kind: 'closed',
+                                    reason
+                                });
+                            })();
+                        }
+                    }
+                });
+            })();
+        },
+        encodeToolResults (results) {
+            return [
+                {
+                    kind: 'fixture_tool_results',
+                    results
+                }
+            ];
+        },
+        encodeToolContinuation (responseId) {
+            return {
+                kind: 'fixture_continue',
+                responseId
+            };
+        },
+        encodeContextUpdate (text) {
+            return [
+                {
+                    kind: 'fixture_context',
+                    text
+                }
+            ];
+        },
+        encodeTextTurn (text) {
+            return [
+                {
+                    kind: 'fixture_text',
+                    text
+                }
+            ];
+        },
+        dispose () {
+            return _async_to_generator._(function*() {
+                fixtureEvents.push({
+                    kind: 'runtime_disposed'
+                });
+            })();
+        },
+        microphoneMode: 'provider_managed'
+    };
+    api.voiceProviders.register('conversation-mediated', mediatedRuntime);
+    var rawRuntime = {
+        kind: CONVERSATION_KIND,
+        protocol: {
+            prepare (input) {
+                return _async_to_generator._(function*() {
+                    input.signal.throwIfAborted();
+                    return {
+                        kind: 'prepared',
+                        session: {
+                            config: {},
+                            safeMetadata: {}
+                        }
+                    };
+                })();
+            },
+            decodeControl () {
+                return [];
+            },
+            encodeTurnControl () {
+                return null;
+            }
+        },
+        createConnection (input) {
+            return _async_to_generator._(function*() {
+                if (!input.credentials.raw) throw new Error('voice_raw_credentials_required');
+                yield input.credentials.raw.materialize({
+                    kind: 'httpHeaders',
+                    origin: 'https://voice.example.test',
+                    headerNames: [
+                        'authorization'
+                    ]
+                }, {
+                    signal: input.signal
+                });
+                input.signal.throwIfAborted();
+                fixtureEvents.push({
+                    kind: 'raw_connection_authorized'
+                });
+                return input.media.createSdkHandleConnection({
+                    driver: {
+                        open () {
+                            return _async_to_generator._(function*() {
+                                fixtureEvents.push({
+                                    kind: 'raw_connection_opened'
+                                });
+                            })();
+                        },
+                        sendControl (event) {
+                            return _async_to_generator._(function*() {
+                                fixtureEvents.push({
+                                    kind: 'raw_sent',
+                                    event
+                                });
+                            })();
+                        },
+                        close (reason) {
+                            return _async_to_generator._(function*() {
+                                fixtureEvents.push({
+                                    kind: 'raw_closed',
+                                    reason
+                                });
+                            })();
+                        }
+                    }
+                });
+            })();
+        },
+        encodeToolResults () {
+            return [];
+        },
+        encodeToolContinuation () {
+            return {};
+        },
+        encodeContextUpdate () {
+            return [];
+        },
+        encodeTextTurn () {
+            return [];
+        },
+        outputLevelMeter: 'unavailable',
+        microphoneMode: 'provider_managed'
+    };
+    api.voiceProviders.register('conversation-raw', rawRuntime);
+}
+
+
+}),
+
+}]);
+//# sourceMappingURL=src_voiceRuntime_tsx.chunk.bundle.map

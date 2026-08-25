@@ -1,4 +1,6 @@
 import { cp, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -59,33 +61,32 @@ async function createLegacyReleaseArchiveFixture(): Promise<Readonly<{
   return { pluginSourceRoot, archivePath };
 }
 
-function createRemoteArchiveResponse(archiveBytes: Buffer, options?: Readonly<{
-  arrayBufferThrows?: boolean;
-  contentLength?: number;
-}>): Response {
-  const body = new ReadableStream<Uint8Array>({
-    start(controller) {
-      controller.enqueue(new Uint8Array(archiveBytes));
-      controller.close();
-    },
-  });
-  return {
-    ok: true,
-    status: 200,
-    headers: new Headers({
-      'content-length': String(options?.contentLength ?? archiveBytes.byteLength),
-    }),
-    body,
-    arrayBuffer: options?.arrayBufferThrows
-      ? vi.fn(async () => {
-          throw new Error('arrayBuffer should not be called');
-        })
-      : vi.fn(async () => archiveBytes.buffer.slice(archiveBytes.byteOffset, archiveBytes.byteOffset + archiveBytes.byteLength)),
-  } as unknown as Response;
+/**
+ * Remote archive acquisition now owns its own destination-assessed, DNS-pinned
+ * connection, so the boundary a test can substitute is a real HTTP server, not
+ * an ambient `fetch`. A loopback origin is the caller's own network intent, the
+ * one case the acquisition policy admits as private.
+ */
+const servers: Server[] = [];
+
+async function startArchiveServer(
+  handler: (request: IncomingMessage, response: ServerResponse) => void,
+): Promise<number> {
+  const server = createServer(handler);
+  servers.push(server);
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  return (server.address() as AddressInfo).port;
 }
 
-afterEach(() => {
+async function stopArchiveServers(): Promise<void> {
+  await Promise.all(servers.splice(0).map((server) => new Promise<void>((resolve) => {
+    server.close(() => resolve());
+  })));
+}
+
+afterEach(async () => {
   vi.restoreAllMocks();
+  await stopArchiveServers();
 });
 
 describe('inspectPluginSource remote archive downloads', () => {
@@ -155,12 +156,16 @@ describe('inspectPluginSource remote archive downloads', () => {
     reloadConfiguration();
 
     const { pluginSourceRoot, archiveBytes } = await createArchivedSamplePluginFixture();
-    const archiveUrl = 'https://example.test/plugins/acme.sample.tar.gz';
-    const response = createRemoteArchiveResponse(archiveBytes, {
-      arrayBufferThrows: true,
-      contentLength: archiveBytes.byteLength,
+    const observedRequests: Readonly<{ url: string; accept: string | undefined }>[] = [];
+    const port = await startArchiveServer((request, response) => {
+      observedRequests.push({ url: request.url ?? '', accept: request.headers.accept });
+      response.writeHead(200, {
+        'content-type': 'application/octet-stream',
+        'content-length': String(archiveBytes.byteLength),
+      });
+      response.end(archiveBytes);
     });
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(response);
+    const archiveUrl = `http://127.0.0.1:${port}/plugins/acme.sample.tar.gz`;
 
     try {
       const result = await inspectPluginSource({
@@ -180,16 +185,9 @@ describe('inspectPluginSource remote archive downloads', () => {
       expect(result.pluginId).toBe(SAMPLE_PLUGIN_ID);
       expect(result.installedPath).toBeNull();
       expect(result.manifestPath).toContain('.happier-plugin/plugin.json');
-      expect(fetchMock).toHaveBeenCalledWith(
-        archiveUrl,
-        expect.objectContaining({
-          headers: {
-            accept: 'application/octet-stream',
-          },
-          signal: expect.any(AbortSignal),
-        }),
-      );
-      expect(response.arrayBuffer).not.toHaveBeenCalled();
+      expect(observedRequests).toEqual([
+        { url: '/plugins/acme.sample.tar.gz', accept: 'application/octet-stream' },
+      ]);
 
       expect(result.source).toMatchObject({
         kind: 'archive',
@@ -220,15 +218,15 @@ describe('inspectPluginSource remote archive downloads', () => {
       HAPPIER_HOME_DIR: home,
       PATH: process.env.PATH ?? '',
       HAPPIER_PLUGIN_REMOTE_ARCHIVE_MAX_BYTES: '1048576',
-      HAPPIER_PLUGIN_REMOTE_FETCH_TIMEOUT_MS: '12345',
+      HAPPIER_PLUGIN_REMOTE_FETCH_TIMEOUT_MS: '250',
     });
     reloadConfiguration();
 
-    const { pluginSourceRoot, archiveBytes } = await createArchivedSamplePluginFixture();
-    const archiveUrl = 'https://example.test/plugins/acme.sample.tar.gz';
-    const timeoutSignal = new AbortController().signal;
-    const timeoutSpy = vi.spyOn(AbortSignal, 'timeout').mockReturnValue(timeoutSignal);
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(createRemoteArchiveResponse(archiveBytes));
+    const { pluginSourceRoot } = await createArchivedSamplePluginFixture();
+    // The server accepts the connection and never answers, so only the shared
+    // remote-fetch timeout can end the acquisition.
+    const port = await startArchiveServer(() => undefined);
+    const archiveUrl = `http://127.0.0.1:${port}/plugins/acme.sample.tar.gz`;
 
     try {
       const result = await inspectPluginSource({
@@ -243,14 +241,9 @@ describe('inspectPluginSource remote archive downloads', () => {
         },
       });
 
-      expect(result.ok, result.ok ? undefined : result.errorMessage).toBe(true);
-      expect(timeoutSpy).toHaveBeenCalledWith(12345);
-      expect(fetchMock).toHaveBeenCalledWith(
-        archiveUrl,
-        expect.objectContaining({
-          signal: timeoutSignal,
-        }),
-      );
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.errorMessage).toContain('timed out after 250ms');
     } finally {
       envScope.restore();
       reloadConfiguration();
@@ -305,11 +298,16 @@ describe('inspectPluginSource remote archive downloads', () => {
     reloadConfiguration();
 
     const { pluginSourceRoot, archiveBytes } = await createArchivedSamplePluginFixture();
-    const archiveUrl = 'https://example.test/plugins/acme.sample.tar.gz';
-    const response = createRemoteArchiveResponse(archiveBytes, {
-      contentLength: archiveBytes.byteLength,
+    let requestCount = 0;
+    const port = await startArchiveServer((_request, response) => {
+      requestCount += 1;
+      response.writeHead(200, {
+        'content-type': 'application/octet-stream',
+        'content-length': String(archiveBytes.byteLength),
+      });
+      response.end(archiveBytes);
     });
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(response);
+    const archiveUrl = `http://127.0.0.1:${port}/plugins/acme.sample.tar.gz`;
 
     try {
       const result = await inspectPluginSource({
@@ -319,7 +317,7 @@ describe('inspectPluginSource remote archive downloads', () => {
         skipIfInstalled: true,
       });
 
-      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(requestCount).toBe(1);
       expect(result.ok).toBe(false);
       if (result.ok) return;
       expect(result.errorCode).toBe('plugin_install_failed');

@@ -3,7 +3,6 @@ import { LocalServiceLauncherSnapshotV1Schema } from '@happier-dev/protocol';
 
 import { createLocalServiceInventoryRegistry } from '../inventory/registry';
 import type { NormalizedLocalServiceInventoryEntry } from '../inventory/scanner';
-import { createManagedLocalServiceRegistry } from '../managed/registry';
 import { createLocalServicePreviewRegistry, registerLocalServicePreview } from '../preview/registry';
 import { createLocalServiceLauncherFeed } from './feed';
 
@@ -37,7 +36,9 @@ function inventoryEntry(
         },
         labels: [],
         confidence: 'high',
-        processOwnershipConfidence: 'medium',
+        // `terminate_detected` now requires established ownership (`high`); `medium` means the
+        // platform could not establish who owns the process and the gate fails closed.
+        processOwnershipConfidence: 'high',
         workspaceAssociationConfidence: 'high',
         diagnostics: [],
         provenance: {
@@ -64,7 +65,6 @@ function inventoryEntry(
 describe('createLocalServiceLauncherFeed', () => {
     it('projects daemon registries into a fail-closed launcher snapshot', async () => {
         const inventoryRegistry = createLocalServiceInventoryRegistry();
-        const managedRegistry = createManagedLocalServiceRegistry();
         const previewRegistry = createLocalServicePreviewRegistry();
         inventoryRegistry.replaceSnapshot({
             v: 1,
@@ -96,34 +96,10 @@ describe('createLocalServiceLauncherFeed', () => {
             },
             originMode: 'path',
         });
-        managedRegistry.startDetectAfterLaunch({
-            id: 'managed-a',
-            owner: { kind: 'plugin', pluginId: 'plugin-a' },
-            routeName: 'Managed worker',
-            minimumConfidence: 'medium',
-            process: { pid: 700, startedAt: 1_000 },
-        });
-        managedRegistry.applyInventoryEntry({
-            id: 'managed-entry-a',
-            port: 4173,
-            confidence: 'high',
-            processOwnershipConfidence: 'high',
-            provenance: {
-                process: {
-                    pid: 701,
-                    ppid: 700,
-                    lineagePids: [701, 700],
-                    command: 'vite --host 127.0.0.1',
-                    redacted: true,
-                },
-            },
-        });
-
         const feed = createLocalServiceLauncherFeed({
             machineId: 'machine-a',
             sessionId: 'session-a',
             inventoryRegistry,
-            managedRegistry,
             previewRegistry,
             now: () => 3_000,
             runTargets: [{
@@ -185,20 +161,11 @@ describe('createLocalServiceLauncherFeed', () => {
                 actions: [],
                 browserTargetKind: null,
             },
-            {
-                id: 'managed:managed-a',
-                source: 'managed_service',
-                state: 'unavailable',
-                unavailableReason: 'managed_preview_unavailable',
-                actions: [],
-                browserTargetKind: null,
-            },
         ]);
     });
 
     it('preserves the open action + externalUrl target for a listening loopback entry (fence carve-out)', async () => {
         const inventoryRegistry = createLocalServiceInventoryRegistry();
-        const managedRegistry = createManagedLocalServiceRegistry();
         const previewRegistry = createLocalServicePreviewRegistry();
         inventoryRegistry.replaceSnapshot({
             v: 1,
@@ -211,7 +178,6 @@ describe('createLocalServiceLauncherFeed', () => {
         const feed = createLocalServiceLauncherFeed({
             machineId: 'machine-a',
             inventoryRegistry,
-            managedRegistry,
             previewRegistry,
             now: () => 3_000,
         });
@@ -225,7 +191,6 @@ describe('createLocalServiceLauncherFeed', () => {
 
     it('ranks an openable loopback entry above a package_script suggestion', async () => {
         const inventoryRegistry = createLocalServiceInventoryRegistry();
-        const managedRegistry = createManagedLocalServiceRegistry();
         const previewRegistry = createLocalServicePreviewRegistry();
         inventoryRegistry.replaceSnapshot({
             v: 1,
@@ -238,7 +203,6 @@ describe('createLocalServiceLauncherFeed', () => {
         const feed = createLocalServiceLauncherFeed({
             machineId: 'machine-a',
             inventoryRegistry,
-            managedRegistry,
             previewRegistry,
             now: () => 3_000,
             runTargets: [{
@@ -259,7 +223,6 @@ describe('createLocalServiceLauncherFeed', () => {
 
     it('honors an explicit machine scope by returning entries from all workspaces even with a sessionId', async () => {
         const inventoryRegistry = createLocalServiceInventoryRegistry();
-        const managedRegistry = createManagedLocalServiceRegistry();
         const previewRegistry = createLocalServicePreviewRegistry();
         inventoryRegistry.replaceSnapshot({
             v: 1,
@@ -275,7 +238,6 @@ describe('createLocalServiceLauncherFeed', () => {
         const feed = createLocalServiceLauncherFeed({
             machineId: 'machine-a',
             inventoryRegistry,
-            managedRegistry,
             previewRegistry,
             now: () => 3_000,
             resolveSessionWorkspacePaths: () => ['/repo/web'],
@@ -289,7 +251,6 @@ describe('createLocalServiceLauncherFeed', () => {
 
     it('scopes to an explicit session-less workspaceRoot', async () => {
         const inventoryRegistry = createLocalServiceInventoryRegistry();
-        const managedRegistry = createManagedLocalServiceRegistry();
         const previewRegistry = createLocalServicePreviewRegistry();
         inventoryRegistry.replaceSnapshot({
             v: 1,
@@ -305,7 +266,6 @@ describe('createLocalServiceLauncherFeed', () => {
         const feed = createLocalServiceLauncherFeed({
             machineId: 'machine-a',
             inventoryRegistry,
-            managedRegistry,
             previewRegistry,
             now: () => 3_000,
         });
@@ -321,7 +281,6 @@ describe('createLocalServiceLauncherFeed', () => {
         process.env.HOME = '/repo';
         try {
             const inventoryRegistry = createLocalServiceInventoryRegistry();
-            const managedRegistry = createManagedLocalServiceRegistry();
             const previewRegistry = createLocalServicePreviewRegistry();
             inventoryRegistry.replaceSnapshot({
                 v: 1,
@@ -337,7 +296,6 @@ describe('createLocalServiceLauncherFeed', () => {
             const feed = createLocalServiceLauncherFeed({
                 machineId: 'machine-a',
                 inventoryRegistry,
-                managedRegistry,
                 previewRegistry,
                 now: () => 3_000,
             });
@@ -357,7 +315,6 @@ describe('createLocalServiceLauncherFeed', () => {
 
     it('scopes a requested snapshot to the session workspace PATH (not the session) and projects attribution', async () => {
         const inventoryRegistry = createLocalServiceInventoryRegistry();
-        const managedRegistry = createManagedLocalServiceRegistry();
         const previewRegistry = createLocalServicePreviewRegistry();
         inventoryRegistry.replaceSnapshot({
             v: 1,
@@ -404,7 +361,6 @@ describe('createLocalServiceLauncherFeed', () => {
         const feed = createLocalServiceLauncherFeed({
             machineId: 'machine-a',
             inventoryRegistry,
-            managedRegistry,
             previewRegistry,
             now: () => 3_000,
             resolveSessionWorkspacePaths: (sessionId) =>
@@ -429,13 +385,11 @@ describe('createLocalServiceLauncherFeed', () => {
 
     it('scopes run-targets to the session workspace and surfaces a package_script target', async () => {
         const inventoryRegistry = createLocalServiceInventoryRegistry();
-        const managedRegistry = createManagedLocalServiceRegistry();
         const previewRegistry = createLocalServicePreviewRegistry();
 
         const feed = createLocalServiceLauncherFeed({
             machineId: 'machine-a',
             inventoryRegistry,
-            managedRegistry,
             previewRegistry,
             now: () => 3_000,
             resolveSessionWorkspacePaths: () => ['/repo/web'],
@@ -470,7 +424,6 @@ describe('createLocalServiceLauncherFeed', () => {
 
     it('returns all entries unscoped when no sessionId is supplied', async () => {
         const inventoryRegistry = createLocalServiceInventoryRegistry();
-        const managedRegistry = createManagedLocalServiceRegistry();
         const previewRegistry = createLocalServicePreviewRegistry();
         inventoryRegistry.replaceSnapshot({
             v: 1,
@@ -487,7 +440,6 @@ describe('createLocalServiceLauncherFeed', () => {
         const feed = createLocalServiceLauncherFeed({
             machineId: 'machine-a',
             inventoryRegistry,
-            managedRegistry,
             previewRegistry,
             now: () => 3_000,
             resolveSessionWorkspacePaths: () => ['/repo/web'],
@@ -502,7 +454,6 @@ describe('createLocalServiceLauncherFeed', () => {
 
     it('does not block the launcher snapshot on unresolved run-target discovery', async () => {
         const inventoryRegistry = createLocalServiceInventoryRegistry();
-        const managedRegistry = createManagedLocalServiceRegistry();
         const previewRegistry = createLocalServicePreviewRegistry();
         inventoryRegistry.replaceSnapshot({
             v: 1,
@@ -519,7 +470,6 @@ describe('createLocalServiceLauncherFeed', () => {
         const feed = createLocalServiceLauncherFeed({
             machineId: 'machine-a',
             inventoryRegistry,
-            managedRegistry,
             previewRegistry,
             now: () => 3_000,
             runTargetsTimeoutMs: 1,
@@ -547,7 +497,6 @@ describe('createLocalServiceLauncherFeed', () => {
 
     it('does not fail the launcher snapshot when run-target discovery rejects', async () => {
         const inventoryRegistry = createLocalServiceInventoryRegistry();
-        const managedRegistry = createManagedLocalServiceRegistry();
         const previewRegistry = createLocalServicePreviewRegistry();
         const errors: unknown[] = [];
         inventoryRegistry.replaceSnapshot({
@@ -561,7 +510,6 @@ describe('createLocalServiceLauncherFeed', () => {
         const feed = createLocalServiceLauncherFeed({
             machineId: 'machine-a',
             inventoryRegistry,
-            managedRegistry,
             previewRegistry,
             now: () => 3_000,
             onRunTargetsError: (error) => errors.push(error),

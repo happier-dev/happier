@@ -300,7 +300,9 @@ describe('scaffoldLocalPlugin',
     expect(skill).toContain('happier plugins change status <pendingChangeId>');
     expect(skill).toContain('same daemon lifetime');
     expect(skill).toContain('outcome_unknown');
-    expect(skill).toContain('[cross-plugin contribution guide](/plugins/guides/cross-plugin-contributions)');
+    expect(skill).toContain('node_modules/@happier-dev/plugin-sdk/examples/action-contract-producer/');
+    expect(skill).toContain('Confirm the relevant rows are `available` in `capability-matrix.json`');
+    expect(skill).not.toContain('externally supported author product remains operation-only');
     expect(skill).not.toContain('defineContributionProtocol');
     expect(skill).not.toContain('protocol.operations');
     expect(skill).not.toMatch(/(?:^|[^A-Za-z])(?:apps|packages)\//mu);
@@ -416,6 +418,8 @@ describe('scaffoldLocalPlugin',
     expect(source).not.toMatch(/@happier-dev\/plugin-sdk\/runtime|export function activate|api\.actions\.register/u);
     const testSource = await readFile(join(targetDir, 'test', 'index.test.mjs'), 'utf8');
     expect(testSource).toContain("from '@happier-dev/plugin-sdk/testing'");
+    expect(testSource).not.toContain('replace this placeholder with your first plugin contract');
+    expect(testSource).not.toContain('Replace this placeholder test before shipping your plugin.');
     expect(testSource).toContain("test('save-note returns the supplied note'");
     expect(testSource).toContain("invokeAction('save-note', { note: 'hello' })");
     const packageJson = await readJsonFile<Record<string, unknown>>(result.packageJsonPath);
@@ -514,6 +518,10 @@ describe('scaffoldLocalPlugin',
     const config = ts.readConfigFile(join(targetDir, 'tsconfig.json'), ts.sys.readFile);
     expect(config.error).toBeUndefined();
     expect(config.config.compilerOptions?.types).toContain('node');
+    expect(config.config.compilerOptions).toMatchObject({
+      incremental: true,
+      tsBuildInfoFile: 'node_modules/.cache/happier/plugin-author.tsbuildinfo',
+    });
     const parsed = ts.parseJsonConfigFileContent(config.config, ts.sys, targetDir);
     const program = ts.createProgram({ rootNames: parsed.fileNames, options: parsed.options });
     const diagnostics = ts.getPreEmitDiagnostics(program);

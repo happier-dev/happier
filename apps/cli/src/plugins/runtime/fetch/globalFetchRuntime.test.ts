@@ -1,8 +1,11 @@
+import { createServer } from 'node:http';
+
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createGlobalFetchRuntime } from './globalFetchRuntime';
 
 const STABLE_RESPONSE_BODY_CEILING_BYTES = 32 * 1024 * 1024;
+const servers: ReturnType<typeof createServer>[] = [];
 
 function createTrackedStream(chunks: readonly Uint8Array[]) {
     let pullCount = 0;
@@ -29,8 +32,62 @@ function createTrackedStream(chunks: readonly Uint8Array[]) {
 }
 
 describe('createGlobalFetchRuntime', () => {
-    afterEach(() => {
+    afterEach(async () => {
         vi.unstubAllGlobals();
+        await Promise.all(servers.splice(0).map(async (server) => {
+            await new Promise<void>((resolve) => server.close(() => resolve()));
+        }));
+    });
+
+    it('connects only to the policy-validated address while preserving the URL hostname', async () => {
+        let receivedHost = '';
+        const server = createServer((request, response) => {
+            receivedHost = request.headers.host ?? '';
+            response.end('pinned');
+        });
+        servers.push(server);
+        await new Promise<void>((resolve, reject) => {
+            server.once('error', reject);
+            server.listen(0, '127.0.0.1', resolve);
+        });
+        const address = server.address();
+        if (!address || typeof address === 'string') throw new TypeError('Expected a TCP test listener');
+
+        const runtime = createGlobalFetchRuntime() as ReturnType<typeof createGlobalFetchRuntime> & Readonly<{
+            request(
+                input: Parameters<ReturnType<typeof createGlobalFetchRuntime>['request']>[0],
+                options: Readonly<{ validatedAddresses: readonly string[] }>,
+            ): ReturnType<ReturnType<typeof createGlobalFetchRuntime>['request']>;
+        }>;
+        const response = await runtime.request({
+            url: `http://dns-rebind.invalid:${address.port}/resource`,
+            method: 'GET',
+            redirect: 'error',
+        }, { validatedAddresses: ['127.0.0.1'] });
+
+        expect(new TextDecoder().decode(response.body)).toBe('pinned');
+        expect(receivedHost).toBe(`dns-rebind.invalid:${address.port}`);
+    });
+
+    it('does not report a pinned redirect as followed before its next hop is reauthorized', async () => {
+        const cancel = vi.fn();
+        const runtime = createGlobalFetchRuntime({
+            openPinnedStream: async () => Object.freeze({
+                status: 302,
+                headers: Object.freeze({ location: 'https://next.example.test/result' }),
+                contentLength: 0,
+                read: async () => null,
+                cancel,
+            }),
+        });
+
+        await expect(runtime.request({
+            url: 'https://api.example.test/start',
+            redirect: 'follow',
+        }, { validatedAddresses: ['93.184.216.34'] })).rejects.toMatchObject({
+            code: 'plugin_fetch_redirect_follow_unavailable',
+        });
+        expect(cancel).toHaveBeenCalledOnce();
     });
 
     it('passes manual redirect mode to the system boundary and exposes the 3xx response', async () => {

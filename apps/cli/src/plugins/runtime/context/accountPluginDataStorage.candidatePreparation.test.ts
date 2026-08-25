@@ -136,7 +136,7 @@ function collectionFeatures(
 }
 
 function createCandidateHost(
-    post: (url: string, body: unknown) => Promise<Readonly<{
+    post: (url: string, body: string) => Promise<Readonly<{
         status: number;
         data: unknown;
     }>>,
@@ -161,7 +161,7 @@ function createCandidateHost(
 }
 
 function createCandidate(params: Readonly<{
-    post: (url: string, body: unknown) => Promise<Readonly<{ status: number; data: unknown }>>;
+    post: (url: string, body: string) => Promise<Readonly<{ status: number; data: unknown }>>;
     migrate: (value: Readonly<Record<string, JsonValue>>) => Readonly<Record<string, JsonValue>> | Promise<Readonly<Record<string, JsonValue>>>;
     signal?: AbortSignal;
     resolveServerFeaturesSnapshot?: () => CliServerFeaturesSnapshot | undefined;
@@ -189,9 +189,9 @@ function createCandidate(params: Readonly<{
 
 describe('Account Data Collection candidate preparation', () => {
     it('retires an exact persisted candidate binding without requiring its target callback or generation', async () => {
-        const post = vi.fn(async (url: string, body: unknown) => {
+        const post = vi.fn(async (url: string, body: string) => {
             expect(url).toBe(`https://data.example.test${PLUGIN_COLLECTION_CANDIDATE_PREPARATION_RETIRE_HTTP_PATH_V1}`);
-            expect(body).toEqual({ binding });
+            expect(JSON.parse(body)).toEqual({ binding });
             return { status: 200, data: { status: 'retired' } };
         });
         const host = createCandidateHost(post);
@@ -283,9 +283,9 @@ describe('Account Data Collection candidate preparation', () => {
             ...value,
             status: 'open',
         }));
-        const post = vi.fn(async (url: string, body: unknown) => {
+        const post = vi.fn(async (url: string, body: string) => {
             if (url.endsWith(PLUGIN_COLLECTION_CANDIDATE_PREPARATION_SOURCE_PAGE_HTTP_PATH_V1)) {
-                expect(body).toEqual({ binding, limit: 50 });
+                expect(JSON.parse(body)).toEqual({ binding, limit: 50 });
                 return {
                     status: 200,
                     data: {
@@ -315,7 +315,7 @@ describe('Account Data Collection candidate preparation', () => {
         const stageCall = post.mock.calls.find(([url]) => (
             String(url).endsWith(PLUGIN_COLLECTION_CANDIDATE_PREPARATION_STAGE_HTTP_PATH_V1)
         ));
-        expect(stageCall?.[1]).toEqual({
+        expect(JSON.parse(stageCall?.[1] ?? 'null')).toEqual({
             binding,
             items: [
                 {
@@ -358,7 +358,7 @@ describe('Account Data Collection candidate preparation', () => {
                 ],
             }),
         );
-        const post = vi.fn(async (url: string, body: unknown) => {
+        const post = vi.fn(async (url: string, body: string) => {
             if (url.endsWith(PLUGIN_COLLECTION_CANDIDATE_PREPARATION_SOURCE_PAGE_HTTP_PATH_V1)) {
                 return {
                     status: 200,
@@ -371,7 +371,7 @@ describe('Account Data Collection candidate preparation', () => {
                 };
             }
             if (url.endsWith(PLUGIN_COLLECTION_CANDIDATE_PREPARATION_STAGE_HTTP_PATH_V1)) {
-                const request = body as { items: readonly unknown[] };
+                const request = JSON.parse(body) as { items: readonly unknown[] };
                 return {
                     status: 200,
                     data: { results: request.items.map(() => ({ status: 'staged' })) },
@@ -395,7 +395,7 @@ describe('Account Data Collection candidate preparation', () => {
 
         const stageBodies = post.mock.calls
             .filter(([url]) => String(url).endsWith(PLUGIN_COLLECTION_CANDIDATE_PREPARATION_STAGE_HTTP_PATH_V1))
-            .map(([, body]) => body);
+            .map(([, body]) => JSON.parse(body));
         expect(stageBodies).toEqual([
             {
                 binding,
@@ -443,7 +443,7 @@ describe('Account Data Collection candidate preparation', () => {
                 PluginCollectionCandidatePreparationStageRequestV1Schema.parse({ binding, items: [secondItem] }),
             ),
         );
-        const post = vi.fn(async (url: string, body: unknown) => {
+        const post = vi.fn(async (url: string, body: string) => {
             if (url.endsWith(PLUGIN_COLLECTION_CANDIDATE_PREPARATION_SOURCE_PAGE_HTTP_PATH_V1)) {
                 return {
                     status: 200,
@@ -456,7 +456,7 @@ describe('Account Data Collection candidate preparation', () => {
                 };
             }
             if (url.endsWith(PLUGIN_COLLECTION_CANDIDATE_PREPARATION_STAGE_HTTP_PATH_V1)) {
-                const request = body as { items: readonly unknown[] };
+                const request = JSON.parse(body) as { items: readonly unknown[] };
                 return {
                     status: 200,
                     data: { results: request.items.map(() => ({ status: 'staged' })) },
@@ -480,7 +480,7 @@ describe('Account Data Collection candidate preparation', () => {
 
         const stageBodies = post.mock.calls
             .filter(([url]) => String(url).endsWith(PLUGIN_COLLECTION_CANDIDATE_PREPARATION_STAGE_HTTP_PATH_V1))
-            .map(([, body]) => body);
+            .map(([, body]) => JSON.parse(body));
         expect(stageBodies).toHaveLength(2);
         expect(stageBodies.map((body) => (body as { items: readonly unknown[] }).items)).toEqual([
             [firstItem],
@@ -495,7 +495,7 @@ describe('Account Data Collection candidate preparation', () => {
         }));
         const sourcePage = vi.fn();
         const stage = vi.fn();
-        const post = vi.fn(async (url: string, _body: unknown) => {
+        const post = vi.fn(async (url: string, _body: string) => {
             if (url.endsWith(PLUGIN_COLLECTION_CANDIDATE_PREPARATION_SOURCE_PAGE_HTTP_PATH_V1)) {
                 sourcePage();
                 return {
@@ -542,7 +542,7 @@ describe('Account Data Collection candidate preparation', () => {
         const migrate = vi.fn((value: Readonly<Record<string, JsonValue>>) => new Promise<Readonly<Record<string, JsonValue>>>((resolve) => {
             pendingMigration.release = () => resolve({ ...value, status: 'open' });
         }));
-        const post = vi.fn(async (url: string, _body: unknown) => {
+        const post = vi.fn(async (url: string, _body: string) => {
             if (url.endsWith(PLUGIN_COLLECTION_CANDIDATE_PREPARATION_SOURCE_PAGE_HTTP_PATH_V1)) {
                 return {
                     status: 200,
@@ -572,9 +572,9 @@ describe('Account Data Collection candidate preparation', () => {
             code: 'plugin_collection_cancelled',
         } satisfies Partial<PluginError>);
         await expect(retiring).resolves.toBeUndefined();
-        expect(post.mock.calls.find(([url]) => (
+        expect(JSON.parse(post.mock.calls.find(([url]) => (
             String(url).endsWith(PLUGIN_COLLECTION_CANDIDATE_PREPARATION_RETIRE_HTTP_PATH_V1)
-        ))?.[1]).toEqual({ binding });
+        ))?.[1] ?? 'null')).toEqual({ binding });
     });
 
     it('uses the Account-A retirement authority captured before staging after active credentials switch to Account B', async () => {
@@ -589,7 +589,7 @@ describe('Account Data Collection candidate preparation', () => {
         let activeCredentials: StoredCredentials = accountA;
         const post = vi.fn(async (
             url: string,
-            _body: unknown,
+            _body: string,
             config: Readonly<Record<string, unknown>>,
         ) => {
             if (url.endsWith(PLUGIN_COLLECTION_CANDIDATE_PREPARATION_SOURCE_PAGE_HTTP_PATH_V1)) {

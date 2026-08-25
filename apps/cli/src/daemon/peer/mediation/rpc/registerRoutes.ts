@@ -44,7 +44,6 @@ export type PeerMachineRpcDirectRuntimeOptions = Readonly<{
     quarantine?: PeerMachineRpcVerificationQuarantine;
     replayKeyCache?: PeerMachineRpcReplayKeyCache;
     localPerPeerMaxConcurrentCalls?: number;
-    revokeGrant?: (input: Readonly<{ grantId: string; grantFamilyId?: string }>) => void;
     /** Scope-bound PMS-9 observer supplied by the loopback composition root (P1-9). */
     observability?: DaemonPeerMediationDirectFlowObserver;
 }>;
@@ -53,8 +52,6 @@ export type RegisterPeerMediationMachineRpcDirectRoutesOptions = PeerMachineRpcD
     nowMs: () => number;
     expected: PeerMachineRpcDirectExpectedBinding;
     trustRoots: readonly DirectRouteGrantTrustRoot[];
-    revokedGrantIds?: ReadonlySet<string>;
-    revokedGrantFamilyIds?: ReadonlySet<string>;
 }>;
 
 function isMethodNotFoundResult(value: unknown): boolean {
@@ -154,19 +151,11 @@ export function registerPeerMediationMachineRpcDirectRoutes(
             expected: options.expected,
             trustRoots: options.trustRoots,
             nowMs: options.nowMs(),
-            revokedGrantIds: options.revokedGrantIds,
-            revokedGrantFamilyIds: options.revokedGrantFamilyIds,
             callLimiter,
             quarantine,
             replayKeyCache,
         });
         if (!validation.ok) {
-            if (validation.response.reasonCode === 'quarantined' && validation.grant) {
-                options.revokeGrant?.({
-                    grantId: validation.grant.grantId,
-                    ...(validation.grant.grantFamilyId ? { grantFamilyId: validation.grant.grantFamilyId } : {}),
-                });
-            }
             observe({
                 flowId: validation.response.requestId,
                 kind: 'flow.denied',

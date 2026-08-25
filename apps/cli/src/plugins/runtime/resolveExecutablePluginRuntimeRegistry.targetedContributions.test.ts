@@ -69,7 +69,6 @@ const coldTargetManifest = ingestCanonicalPluginManifest(coldTarget.manifest, { 
 if (!coldTargetManifest.ok) throw new Error('cold_target_manifest_invalid');
 const point = coldTargetManifest.manifest.contributes.pluginContributionPoints?.[0]
     ?? (() => { throw new Error('cold_target_point_missing'); })();
-const pointSemanticRefs = [coldTarget.contributionPoints.providers];
 
 const contribution: PluginTargetedContributionV1 = {
     id: 'provider-a',
@@ -293,16 +292,12 @@ function bundledLocator(input: Readonly<{
 }
 
 function externalSemanticTargetModuleSource(params: Readonly<{
+    topLevelMarker: string;
     activationMarker: string;
-    manifestBridgeKey: string;
 }>): string {
     return [
-        // The source test route aliases workspace packages to TypeScript. The
-        // committed evaluator intentionally uses native ESM for an external
-        // JavaScript plugin, so give that module the exact source-defined
-        // manifest object rather than resolving stale package dist bytes.
-        `export const manifest = globalThis[${JSON.stringify(params.manifestBridgeKey)}];`,
-        'export function activate(api) {',
+        `globalThis[${JSON.stringify(params.topLevelMarker)}] = (globalThis[${JSON.stringify(params.topLevelMarker)}] ?? 0) + 1;`,
+        'export function activate() {',
         `  globalThis[${JSON.stringify(params.activationMarker)}] = (globalThis[${JSON.stringify(params.activationMarker)}] ?? 0) + 1;`,
         '}',
         '',
@@ -320,7 +315,6 @@ describe('executable targeted contribution admission', () => {
                 identity: createPluginContributionIdentity({ pluginId: targetPluginId, localId: pointId }),
                 manifestPath: '/plugins/target/.happier-plugin/plugin.json',
                 definition: point,
-                semanticPointRefs: pointSemanticRefs,
             }],
             targetedPluginContributions: [{
                 provenance: 'external',
@@ -376,18 +370,18 @@ describe('executable targeted contribution admission', () => {
         }
     });
 
-    it('projects an external definePlugin target through its committed module without activation', async () => {
+    it('projects an external target from its committed manifest without module execution', async () => {
         const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-external-targeted-home-'));
         const targetRoot = await mkdtemp(join(tmpdir(), 'happier-external-targeted-target-'));
         const contributorRoot = await mkdtemp(join(tmpdir(), 'happier-external-targeted-contributor-'));
         const externalTargetPluginId = 'acme.external-semantic-target';
         const externalContributorPluginId = 'acme.external-semantic-contributor';
+        const topLevelMarker = '__HAPPIER_EU26_EXTERNAL_TARGET_TOP_LEVEL_EXECUTIONS__';
         const activationMarker = '__HAPPIER_EU26_EXTERNAL_TARGET_ACTIVATIONS__';
-        const manifestBridgeKey = '__HAPPIER_EU26_EXTERNAL_TARGET_MANIFEST__';
         const globalValues = globalThis as typeof globalThis & Record<string, unknown>;
         const target = defineExternalSemanticTarget(externalTargetPluginId);
+        globalValues[topLevelMarker] = 0;
         globalValues[activationMarker] = 0;
-        globalValues[manifestBridgeKey] = target.manifest;
 
         await mkdir(join(targetRoot, '.happier-plugin'), { recursive: true });
         await writeFile(
@@ -398,8 +392,8 @@ describe('executable targeted contribution admission', () => {
         await writeFile(
             join(targetRoot, 'daemon.mjs'),
             externalSemanticTargetModuleSource({
+                topLevelMarker,
                 activationMarker,
-                manifestBridgeKey,
             }),
             'utf8',
         );
@@ -495,6 +489,7 @@ describe('executable targeted contribution admission', () => {
             });
 
             expect(runtime.activatedPluginIds).toEqual(new Set());
+            expect(globalValues[topLevelMarker]).toBe(0);
             expect(globalValues[activationMarker]).toBe(0);
             const admitted = runtime.contributes.readAdmittedTargetedContributions?.({
                 targetPluginId: externalTargetPluginId,
@@ -557,15 +552,16 @@ describe('executable targeted contribution admission', () => {
             expect(projectedMount).not.toHaveProperty('descriptor');
             expect(projectedMount).not.toHaveProperty('operations');
             expect(projectedMount).not.toHaveProperty('semanticPointRefs');
+            expect(globalValues[topLevelMarker]).toBe(0);
             expect(globalValues[activationMarker]).toBe(0);
         } finally {
             await runtime?.dispose();
+            delete globalValues[topLevelMarker];
             delete globalValues[activationMarker];
-            delete globalValues[manifestBridgeKey];
         }
     });
 
-    it('projects the bundled locator semantic sidecar through the same UI response pair', async () => {
+    it('projects a bundled target manifest through the same UI response pair', async () => {
         const bundledTargetPluginId = 'happier.bundled-semantic-target';
         const bundledContributorPluginId = 'happier.bundled-semantic-contributor';
         const target = defineBundledSemanticTarget(bundledTargetPluginId);
@@ -612,7 +608,10 @@ describe('executable targeted contribution admission', () => {
             },
         };
         const loadedPlugins = loadBundledPluginLocators([
-            bundledLocator({ pluginId: bundledTargetPluginId, manifest: target.manifest }),
+            bundledLocator({
+                pluginId: bundledTargetPluginId,
+                manifest: target.manifest,
+            }),
             bundledLocator({
                 pluginId: bundledContributorPluginId,
                 manifest: contributorManifest,
@@ -634,7 +633,8 @@ describe('executable targeted contribution admission', () => {
         const targetPoint = projected.pluginContributionPoints?.find(
             (candidate) => candidate.pluginId === bundledTargetPluginId,
         );
-        expect(targetPoint?.semanticPointRefs?.[0]).toBe(target.contributionPoints.providers);
+        expect(targetPoint).toBeDefined();
+        expect(targetPoint).not.toHaveProperty('semanticPointRefs');
 
         const runtime = await resolveExecutablePluginRuntimeRegistry({
             contributes: createResolvedContributionRegistry(projected),
@@ -731,7 +731,6 @@ describe('executable targeted contribution admission', () => {
                 immutableGenerationId: 'bundled-immutable-a',
                 desiredImmutableGenerationId: 'bundled-immutable-a',
                 appliedImmutableGenerationId: null,
-                distribution: 'bundled',
                 applied: false,
                 selectedAccess: [],
             });

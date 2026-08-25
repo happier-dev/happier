@@ -1,4 +1,4 @@
-import { mkdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -35,6 +35,20 @@ export const PUBLIC_HANDOFF_PROVIDER_SERVICE_ID =
 export const PUBLIC_HANDOFF_PROVIDER_BINARY_NAME =
     'happier-public-provider-fixture';
 export const PUBLIC_HANDOFF_PROVIDER_ENDPOINT_ID = 'responses';
+
+export type PublicHandoffFixtureArchivePhase =
+    | 'archive pack'
+    | 'archive install request'
+    | 'archive installation commit';
+
+export type PackedPublicHandoffFixture = Readonly<{
+    pluginId: string;
+    version: string;
+    archivePath: string;
+    archiveDigest: string;
+    archiveIntegrity: string;
+    archiveSizeBytes: number;
+}>;
 
 async function writeExternalAuthorPackage(input: Readonly<{
     pluginRoot: string;
@@ -153,8 +167,28 @@ export async function writePublicHandoffProviderPluginFixture(input: Readonly<{
         pluginRoot: input.pluginRoot,
         packageName: 'happier-plugin-acme-public-provider-handoff',
         version: input.version,
-        files: ['index.ts'],
+        files: ['index.ts', 'tools/unpacked'],
     });
+    const runtimeBinaryName = process.platform === 'win32'
+        ? `${PUBLIC_HANDOFF_PROVIDER_BINARY_NAME}.exe`
+        : PUBLIC_HANDOFF_PROVIDER_BINARY_NAME;
+    const runtimeBinaryPath = join(
+        input.pluginRoot,
+        'tools',
+        'unpacked',
+        runtimeBinaryName,
+    );
+    await mkdir(join(input.pluginRoot, 'tools', 'unpacked'), {
+        recursive: true,
+    });
+    await writeFile(
+        runtimeBinaryPath,
+        `#!/bin/sh\n# public-provider-fixture ${input.generation}\nexit 0\n`,
+        'utf8',
+    );
+    if (process.platform !== 'win32') {
+        await chmod(runtimeBinaryPath, 0o755);
+    }
     await writeFile(join(input.pluginRoot, 'index.ts'), [
         "import { definePlugin } from '@happier-dev/plugin-sdk';",
         `export const fixtureProviderGeneration = ${JSON.stringify(input.generation)};`,
@@ -233,20 +267,13 @@ export function createPublicHandoffArchiveChangeService(
     });
 }
 
-export async function packAndCommitPublicHandoffFixture(input: Readonly<{
+export async function packPublicHandoffFixture(input: Readonly<{
     archivePath: string;
-    changeService: ReturnType<typeof createPublicHandoffArchiveChangeService>;
+    onPhase?: (phase: PublicHandoffFixtureArchivePhase) => void;
     pluginId: string;
     pluginRoot: string;
-}>): Promise<Readonly<{
-    pluginId: string;
-    version: string;
-    archivePath: string;
-    archiveDigest: string;
-    archiveIntegrity: string;
-    archiveSizeBytes: number;
-    immutableGenerationId: string;
-}>> {
+}>): Promise<PackedPublicHandoffFixture> {
+    input.onPhase?.('archive pack');
     const packed = await packLocalPlugin({
         locator: input.pluginRoot,
         outPath: input.archivePath,
@@ -259,28 +286,6 @@ export async function packAndCommitPublicHandoffFixture(input: Readonly<{
             `Packed fixture identity mismatch: expected ${input.pluginId}, received ${packed.pluginId}`,
         );
     }
-    const requested = await input.changeService.requestPluginChange({
-        kind: 'installArchive',
-        locator: input.archivePath,
-        expectedIntegrity: packed.archiveIntegrity,
-    });
-    if (requested.kind !== 'reviewRequired') {
-        throw new Error(
-            `Expected archive review for ${input.pluginId}, received ${JSON.stringify(requested)}`,
-        );
-    }
-    const committed = await input.changeService.decidePluginChange({
-        pendingChangeId: requested.pendingChangeId,
-        decision: 'installAndTrust',
-        actorEvidence: {
-            kind: 'authenticatedLocalUser',
-            interactionId: `public-handoff-${input.pluginId}`,
-            occurredAtMs: 1,
-        },
-    });
-    if (committed.kind !== 'committed' || !committed.appliedGeneration) {
-        throw new Error(`Expected archive commit for ${input.pluginId}, received ${committed.kind}`);
-    }
     return Object.freeze({
         pluginId: packed.pluginId,
         version: packed.version,
@@ -288,6 +293,59 @@ export async function packAndCommitPublicHandoffFixture(input: Readonly<{
         archiveDigest: packed.archiveDigest,
         archiveIntegrity: packed.archiveIntegrity,
         archiveSizeBytes: packed.archiveSizeBytes,
+    });
+}
+
+export async function commitPackedPublicHandoffFixture(input: Readonly<{
+    changeService: ReturnType<typeof createPublicHandoffArchiveChangeService>;
+    onPhase?: (phase: PublicHandoffFixtureArchivePhase) => void;
+    packed: PackedPublicHandoffFixture;
+}>): Promise<PackedPublicHandoffFixture & Readonly<{
+    immutableGenerationId: string;
+}>> {
+    input.onPhase?.('archive install request');
+    const requested = await input.changeService.requestPluginChange({
+        kind: 'installArchive',
+        locator: input.packed.archivePath,
+        expectedIntegrity: input.packed.archiveIntegrity,
+    });
+    if (requested.kind !== 'reviewRequired') {
+        throw new Error(
+            `Expected archive review for ${input.packed.pluginId}, received ${JSON.stringify(requested)}`,
+        );
+    }
+    input.onPhase?.('archive installation commit');
+    const committed = await input.changeService.decidePluginChange({
+        pendingChangeId: requested.pendingChangeId,
+        decision: 'installAndTrust',
+        actorEvidence: {
+            kind: 'authenticatedLocalUser',
+            interactionId: `public-handoff-${input.packed.pluginId}`,
+            occurredAtMs: 1,
+        },
+    });
+    if (committed.kind !== 'committed' || !committed.appliedGeneration) {
+        throw new Error(`Expected archive commit for ${input.packed.pluginId}, received ${committed.kind}`);
+    }
+    return Object.freeze({
+        ...input.packed,
         immutableGenerationId: committed.appliedGeneration,
+    });
+}
+
+export async function packAndCommitPublicHandoffFixture(input: Readonly<{
+    archivePath: string;
+    changeService: ReturnType<typeof createPublicHandoffArchiveChangeService>;
+    onPhase?: (phase: PublicHandoffFixtureArchivePhase) => void;
+    pluginId: string;
+    pluginRoot: string;
+}>): Promise<PackedPublicHandoffFixture & Readonly<{
+    immutableGenerationId: string;
+}>> {
+    const packed = await packPublicHandoffFixture(input);
+    return commitPackedPublicHandoffFixture({
+        changeService: input.changeService,
+        onPhase: input.onPhase,
+        packed,
     });
 }

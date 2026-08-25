@@ -42,7 +42,7 @@ export type FileBackedPluginActivationSource = Readonly<{
     resolveRelativeModule?: PluginRelativeModuleResolver<Record<string, unknown>>;
     persistValidatedAgentSessionRunnerFactories?: (
         facts: readonly ValidatedAgentSessionRunnerFactoryFactV1[],
-    ) => Promise<void>;
+    ) => Promise<readonly ValidatedAgentSessionRunnerFactoryFactV1[] | void>;
 }>;
 
 export type BundledPluginActivationSource<TModule> = Readonly<{
@@ -62,7 +62,7 @@ export type BundledPluginActivationSource<TModule> = Readonly<{
     resolveRelativeModule?: PluginRelativeModuleResolver<Record<string, unknown>>;
     persistValidatedAgentSessionRunnerFactories?: (
         facts: readonly ValidatedAgentSessionRunnerFactoryFactV1[],
-    ) => Promise<void>;
+    ) => Promise<readonly ValidatedAgentSessionRunnerFactoryFactV1[] | void>;
 }>;
 
 export type PreparedPluginActivationSource<TModule> = Readonly<{
@@ -72,7 +72,7 @@ export type PreparedPluginActivationSource<TModule> = Readonly<{
     resolveRelativeModule?: PluginRelativeModuleResolver<Record<string, unknown>>;
     persistValidatedAgentSessionRunnerFactories?: (
         facts: readonly ValidatedAgentSessionRunnerFactoryFactV1[],
-    ) => Promise<void>;
+    ) => Promise<readonly ValidatedAgentSessionRunnerFactoryFactV1[] | void>;
 }>;
 
 export type PluginActivationSource<TModule> =

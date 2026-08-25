@@ -79,6 +79,33 @@ function createFakeChannel(handlers: Readonly<{
   };
 }
 
+function invokeWarmOrPrime(
+  client: ReturnType<typeof createForkedVoiceInferenceRuntimeClient>,
+  kind: 'warm' | 'prime',
+  signal?: AbortSignal,
+): Promise<void> {
+  if (kind === 'warm') {
+    if (!client.warmModel) {
+      throw new Error('expected forked runtime warmModel');
+    }
+    return client.warmModel({
+      packId: 'pack-1',
+      packDir: '/tmp/pack-1',
+      manifest,
+      signal,
+    });
+  }
+  if (!client.primeModel) {
+    throw new Error('expected forked runtime primeModel');
+  }
+  return client.primeModel({
+    packId: 'pack-1',
+    packDir: '/tmp/pack-1',
+    manifest,
+    signal,
+  });
+}
+
 describe('forked voice inference runtime client', () => {
   afterEach(() => {
     vi.useRealTimers();
@@ -509,10 +536,7 @@ describe('forked voice inference runtime client', () => {
         fake.channel.forceTerminate();
       },
     };
-    const client = createForkedVoiceInferenceRuntimeClient({
-      channelFactory: async () => channel,
-      pingIntervalMs: 0,
-    });
+    const client = createForkedVoiceInferenceRuntimeClient({ channelFactory: async () => channel });
 
     const controller = new AbortController();
     const pending = client.synthesizeTts({
@@ -546,6 +570,113 @@ describe('forked voice inference runtime client', () => {
     expect(terminateCount).toBe(1);
     await client.stop();
   });
+
+  it.each(['warm', 'prime'] as const)(
+    'settles an aborted native %s locally, retires its exact channel, and waits for the supervised replacement',
+    async (kind) => {
+      let spawnCount = 0;
+      let forceTerminateCount = 0;
+      let firstRequestId: string | null = null;
+      let staleSuccessorCount = 0;
+      const abortTargets: string[] = [];
+      const firstFakeRef: { value: ReturnType<typeof createFakeChannel> | null } = { value: null };
+      const client = createForkedVoiceInferenceRuntimeClient({
+        channelFactory: async () => {
+          spawnCount += 1;
+          const generation = spawnCount;
+          const fake = createFakeChannel({
+            pid: 4_250 + generation,
+            onRequest: (frame, reply) => {
+              if (frame.kind === 'abort') {
+                abortTargets.push(frame.targetId);
+                return;
+              }
+              if (frame.kind !== kind) {
+                return;
+              }
+              if (generation === 1 && firstRequestId === null) {
+                // Model a synchronous native warm/prime: its child event loop cannot consume
+                // the cooperative abort frame or send a terminal response until it returns.
+                firstRequestId = frame.id;
+                return;
+              }
+              if (generation === 1) {
+                staleSuccessorCount += 1;
+                return;
+              }
+              reply({
+                kind: 'result',
+                id: frame.id,
+                result: kind === 'warm' ? { kind: 'warm' } : { kind: 'prime' },
+              });
+            },
+          });
+          if (generation === 1) {
+            firstFakeRef.value = fake;
+            return {
+              ...fake.channel,
+              forceTerminate: () => {
+                forceTerminateCount += 1;
+                // OS termination is asynchronous: prove a buffered late result cannot win
+                // before this exact child reports its own exit.
+              },
+            };
+          }
+          return fake.channel;
+        },
+        random: () => 0,
+        policy: {
+          kind: 'other',
+          restart: { mode: 'on_unexpected_exit', maxRestarts: null, baseDelayMs: 0, maxDelayMs: 0, jitterMs: 0 },
+          logging: { logTerminationEvents: false },
+          artifacts: { captureStderr: false },
+          terminateGraceMs: 0,
+        },
+      });
+
+      try {
+        const controller = new AbortController();
+        const cancelled = invokeWarmOrPrime(client, kind, controller.signal);
+        await vi.waitFor(() => expect(firstRequestId).not.toBeNull());
+        controller.abort();
+
+        const cancellationOutcome = await Promise.race([
+          cancelled.then(
+            () => ({ kind: 'resolved' as const }),
+            (error: unknown) => ({ kind: 'rejected' as const, error }),
+          ),
+          new Promise<{ kind: 'timeout' }>((resolve) => {
+            setTimeout(() => resolve({ kind: 'timeout' }), 100);
+          }),
+        ]);
+        expect(cancellationOutcome).toMatchObject({
+          kind: 'rejected',
+          error: { code: 'cancelled' },
+        });
+        expect(forceTerminateCount).toBe(1);
+        expect(abortTargets).toEqual([firstRequestId]);
+
+        const successor = invokeWarmOrPrime(client, kind);
+        const retiringFake = firstFakeRef.value;
+        if (!retiringFake || firstRequestId === null) {
+          throw new Error('expected the first worker to own the aborted warm/prime request');
+        }
+        retiringFake.reply({
+          kind: 'result',
+          id: firstRequestId,
+          result: kind === 'warm' ? { kind: 'warm' } : { kind: 'prime' },
+        });
+        expect(spawnCount).toBe(1);
+        expect(staleSuccessorCount).toBe(0);
+
+        retiringFake.crash();
+        await expect(successor).resolves.toBeUndefined();
+        expect(spawnCount).toBe(2);
+      } finally {
+        await client.stop();
+      }
+    },
+  );
 
   it('routes an immediate retry to the replacement while the cancelled TTS worker is still terminating', async () => {
     let spawnCount = 0;
@@ -603,7 +734,6 @@ describe('forked voice inference runtime client', () => {
         return fake.channel;
       },
       random: () => 0,
-      pingIntervalMs: 0,
       policy: {
         kind: 'other',
         restart: { mode: 'on_unexpected_exit', maxRestarts: null, baseDelayMs: 0, maxDelayMs: 0, jitterMs: 0 },
@@ -710,7 +840,6 @@ describe('forked voice inference runtime client', () => {
         return fake.channel;
       },
       random: () => 0,
-      pingIntervalMs: 0,
       policy: {
         kind: 'other',
         restart: { mode: 'on_unexpected_exit', maxRestarts: null, baseDelayMs: 0, maxDelayMs: 0, jitterMs: 0 },
@@ -804,7 +933,6 @@ describe('forked voice inference runtime client', () => {
           },
         };
       },
-      pingIntervalMs: 0,
     });
 
     const controller = new AbortController();
@@ -1032,8 +1160,6 @@ describe('forked voice inference runtime client', () => {
     const client = createForkedVoiceInferenceRuntimeClient({
       channelFactory: async () => wrapped,
       requestTimeoutMs: 1_000,
-      // Disable the heartbeat so the timeout is the sole reason the request settles.
-      pingIntervalMs: 0,
     });
 
     const pending = client.synthesizeTts({
@@ -1049,6 +1175,80 @@ describe('forked voice inference runtime client', () => {
     // The wedged child is marked unhealthy: the channel is terminated so the supervisor respawns.
     expect(terminateCount).toBeGreaterThanOrEqual(1);
     await client.stop();
+  });
+
+  it('retires the exact warmed child when its prime request times out', async () => {
+    vi.useFakeTimers();
+    let spawnCount = 0;
+    let forceTerminateCount = 0;
+    let firstPrimeRequestId: string | null = null;
+    const firstFakeRef: { value: ReturnType<typeof createFakeChannel> | null } = { value: null };
+    const client = createForkedVoiceInferenceRuntimeClient({
+      channelFactory: async () => {
+        spawnCount += 1;
+        const generation = spawnCount;
+        const fake = createFakeChannel({
+          onRequest: (frame, reply) => {
+            if (frame.kind === 'warm') {
+              reply({ kind: 'result', id: frame.id, result: { kind: 'warm' } });
+              return;
+            }
+            if (frame.kind === 'prime' && generation === 1) {
+              firstPrimeRequestId = frame.id;
+              return;
+            }
+            if (frame.kind === 'prime') {
+              reply({ kind: 'result', id: frame.id, result: { kind: 'prime' } });
+            }
+          },
+        });
+        if (generation === 1) {
+          firstFakeRef.value = fake;
+          return {
+            ...fake.channel,
+            forceTerminate: () => {
+              forceTerminateCount += 1;
+              // Model asynchronous OS termination: buffered frames from this exact child remain
+              // possible until its own termination event reaches the sole supervisor.
+            },
+          };
+        }
+        return fake.channel;
+      },
+      random: () => 0,
+      requestTimeoutMs: 1_000,
+      policy: {
+        kind: 'other',
+        restart: { mode: 'on_unexpected_exit', maxRestarts: null, baseDelayMs: 0, maxDelayMs: 0, jitterMs: 0 },
+        logging: { logTerminationEvents: false },
+        artifacts: { captureStderr: false },
+        terminateGraceMs: 0,
+      },
+    });
+
+    try {
+      await invokeWarmOrPrime(client, 'warm');
+      const timedOut = invokeWarmOrPrime(client, 'prime').catch((error: unknown) => error);
+      await vi.advanceTimersByTimeAsync(1_000);
+
+      await expect(timedOut).resolves.toMatchObject({ code: 'runtime_timeout' });
+      expect(forceTerminateCount).toBe(1);
+      expect(spawnCount).toBe(1);
+
+      const firstFake = firstFakeRef.value;
+      if (!firstFake || firstPrimeRequestId === null) {
+        throw new Error('expected the warmed first child to own the timed-out prime request');
+      }
+      firstFake.reply({ kind: 'result', id: firstPrimeRequestId, result: { kind: 'prime' } });
+      expect(spawnCount).toBe(1);
+
+      const successor = invokeWarmOrPrime(client, 'prime');
+      firstFake.crash();
+      await expect(successor).resolves.toBeUndefined();
+      expect(spawnCount).toBe(2);
+    } finally {
+      await client.stop();
+    }
   });
 
   it('ignores late snapshots and results from a timed-out channel for its other concurrent requests', async () => {
@@ -1071,7 +1271,6 @@ describe('forked voice inference runtime client', () => {
         },
       }),
       requestTimeoutMs: 1_000,
-      pingIntervalMs: 0,
       onSnapshot: (snapshot) => snapshots.push(`${snapshot.packId}:${snapshot.runtimeState}`),
       policy: {
         kind: 'other',
@@ -1190,7 +1389,6 @@ describe('forked voice inference runtime client', () => {
       },
       random: () => 0,
       requestTimeoutMs: 1_000,
-      pingIntervalMs: 0,
       policy: {
         kind: 'other',
         restart: { mode: 'on_unexpected_exit', maxRestarts: null, baseDelayMs: 0, maxDelayMs: 0, jitterMs: 0 },
@@ -1241,128 +1439,6 @@ describe('forked voice inference runtime client', () => {
     await client.stop();
   });
 
-  it('does not apply the idle heartbeat watchdog while a native request is in flight', async () => {
-    vi.useFakeTimers();
-    let terminateCount = 0;
-    const captured: {
-      reply: ((response: VoiceInferenceWorkerResponseFrame) => void) | null;
-      id: string | null;
-    } = { reply: null, id: null };
-    const fake = createFakeChannel({
-      onRequest: (frame, reply) => {
-        if (frame.kind === 'synthesize') {
-          captured.id = frame.id;
-          captured.reply = reply;
-        }
-      },
-    });
-    const client = createForkedVoiceInferenceRuntimeClient({
-      channelFactory: async () => ({
-        ...fake.channel,
-        terminate: () => {
-          terminateCount += 1;
-          fake.crash();
-        },
-      }),
-      requestTimeoutMs: 10_000,
-      pingIntervalMs: 1_000,
-      missedPingThreshold: 3,
-    });
-
-    const pending = client.synthesizeTts({
-      requestId: 'tts-native-busy', text: 'busy', packId: 'pack-1', packDir: '/tmp/pack-1', manifest, voiceId: null, speed: null, output: { codec: 'wav', mimeType: 'audio/wav' },
-    });
-    await vi.advanceTimersByTimeAsync(1);
-
-    // Native warm/inference can monopolize the child event loop. The per-request deadline owns
-    // that interval; the heartbeat is only an idle-channel watchdog and must not kill it early.
-    await vi.advanceTimersByTimeAsync(5_000);
-    expect(terminateCount).toBe(0);
-
-    const requestId = captured.id;
-    const reply = captured.reply;
-    if (requestId === null || reply === null) {
-      throw new Error('expected the worker to receive the native request');
-    }
-    reply({ kind: 'result', id: requestId, result: { kind: 'synthesize', output: { codec: 'wav', mimeType: 'audio/wav' }, bytesBase64: '', name: 'busy.wav' } });
-    await expect(pending).resolves.toMatchObject({ name: 'busy.wav' });
-    await client.stop();
-  });
-
-  it('force-kills a hung-but-alive worker after N missed pings and reuses the supervised restart path (H1b)', async () => {
-    vi.useFakeTimers();
-    let spawnCount = 0;
-    let terminateCount = 0;
-    const channelFactory = async () => {
-      spawnCount += 1;
-      const generation = spawnCount;
-      const fake = createFakeChannel({
-        onRequest: (frame, reply) => {
-          // The first worker serves one request, then becomes idle-but-hung and stops answering
-          // heartbeats. In-flight hangs are owned by the separate request deadline.
-          if (generation === 1 && frame.kind === 'ping') {
-            return;
-          }
-          if (frame.kind === 'ping') {
-            reply({ kind: 'ready', id: frame.id });
-            return;
-          }
-          if (frame.kind === 'synthesize') {
-            reply({ kind: 'result', id: frame.id, result: { kind: 'synthesize', output: { codec: 'wav', mimeType: 'audio/wav' }, bytesBase64: Buffer.from(`gen-${generation}`).toString('base64'), name: 'r.wav' } });
-          }
-        },
-      });
-      const wrapped: VoiceInferenceWorkerChannel = {
-        ...fake.channel,
-        forceTerminate: () => {
-          terminateCount += 1;
-          // Terminating a real child resolves waitForTermination → the supervisor's restart path.
-          fake.crash();
-        },
-      };
-      return wrapped;
-    };
-
-    const client = createForkedVoiceInferenceRuntimeClient({
-      channelFactory,
-      random: () => 0,
-      requestTimeoutMs: 1_000_000, // large, so the watchdog (not the per-request timeout) is what fires
-      pingIntervalMs: 1_000,
-      missedPingThreshold: 3,
-      policy: {
-        kind: 'other',
-        restart: { mode: 'on_unexpected_exit', maxRestarts: null, baseDelayMs: 100, maxDelayMs: 1_000, jitterMs: 0 },
-        logging: { logTerminationEvents: false },
-        artifacts: { captureStderr: false },
-        terminateGraceMs: 0,
-      },
-    });
-
-    // Start the first worker and prove it can serve work before becoming idle-but-hung.
-    const first = client.synthesizeTts({
-      requestId: 'tts-hung', text: 'a', packId: 'pack-1', packDir: '/tmp/pack-1', manifest, voiceId: null, speed: null, output: { codec: 'wav', mimeType: 'audio/wav' },
-    });
-    await vi.advanceTimersByTimeAsync(1);
-    await expect(first).resolves.toMatchObject({ name: 'r.wav' });
-    expect(spawnCount).toBe(1);
-
-    // Advance through enough ping intervals with no pong → declared hung → force-kill.
-    // (threshold=3 unanswered pings; the watchdog kills on the interval after the 3rd.)
-    await vi.advanceTimersByTimeAsync(5_000);
-
-    // The idle hung worker is force-killed through the existing supervisor.
-    expect(terminateCount).toBeGreaterThanOrEqual(1);
-
-    // The EXISTING supervised restart path respawns a healthy worker on the next use.
-    await vi.advanceTimersByTimeAsync(300);
-    expect(spawnCount).toBeGreaterThanOrEqual(2);
-    const second = await client.synthesizeTts({
-      requestId: 'tts-ok', text: 'b', packId: 'pack-1', packDir: '/tmp/pack-1', manifest, voiceId: null, speed: null, output: { codec: 'wav', mimeType: 'audio/wav' },
-    });
-    expect(Buffer.from(second.bytes).toString('utf8')).toMatch(/^gen-/);
-    await client.stop();
-  });
-
   it('terminates the channel and respawns when the child emits an undecodable oversized frame (M2a)', async () => {
     vi.useFakeTimers();
     let spawnCount = 0;
@@ -1397,7 +1473,6 @@ describe('forked voice inference runtime client', () => {
       channelFactory,
       random: () => 0,
       requestTimeoutMs: 1_000_000,
-      pingIntervalMs: 0, // isolate the decode-error path from the watchdog
       policy: {
         kind: 'other',
         restart: { mode: 'on_unexpected_exit', maxRestarts: null, baseDelayMs: 100, maxDelayMs: 1_000, jitterMs: 0 },
@@ -1423,85 +1498,6 @@ describe('forked voice inference runtime client', () => {
     expect(terminateCount).toBeGreaterThanOrEqual(1);
     const firstError = await first;
     expect(firstError).toMatchObject({ code: 'runtime_unavailable' });
-
-    await vi.advanceTimersByTimeAsync(300);
-    expect(spawnCount).toBeGreaterThanOrEqual(2);
-    const second = await client.synthesizeTts({
-      requestId: 'tts-ok', text: 'b', packId: 'pack-1', packDir: '/tmp/pack-1', manifest, voiceId: null, speed: null, output: { codec: 'wav', mimeType: 'audio/wav' },
-    });
-    expect(Buffer.from(second.bytes).toString('utf8')).toMatch(/^gen-/);
-    await client.stop();
-  });
-
-  it('does not let undecodable dribble from the child starve the liveness watchdog (M2b)', async () => {
-    vi.useFakeTimers();
-    let spawnCount = 0;
-    let terminateCount = 0;
-    const firstGen: { emitRaw: ((bytes: Buffer) => void) | null } = { emitRaw: null };
-    const channelFactory = async () => {
-      spawnCount += 1;
-      const generation = spawnCount;
-      const fake = createFakeChannel({
-        onRequest: (frame, reply) => {
-          if (generation === 1 && frame.kind === 'ping') {
-            return; // idle-but-broken worker: answers the admission request, then no pings
-          }
-          if (frame.kind === 'ping') {
-            reply({ kind: 'ready', id: frame.id });
-            return;
-          }
-          if (frame.kind === 'synthesize') {
-            reply({ kind: 'result', id: frame.id, result: { kind: 'synthesize', output: { codec: 'wav', mimeType: 'audio/wav' }, bytesBase64: Buffer.from(`gen-${generation}`).toString('base64'), name: 'r.wav' } });
-          }
-        },
-      });
-      if (generation === 1) {
-        firstGen.emitRaw = fake.emitRaw;
-      }
-      return {
-        ...fake.channel,
-        forceTerminate: () => {
-          terminateCount += 1;
-          fake.crash();
-        },
-      };
-    };
-
-    const client = createForkedVoiceInferenceRuntimeClient({
-      channelFactory,
-      random: () => 0,
-      requestTimeoutMs: 1_000_000, // large, so the watchdog (not the per-request deadline) is what fires
-      pingIntervalMs: 1_000,
-      missedPingThreshold: 3,
-      policy: {
-        kind: 'other',
-        restart: { mode: 'on_unexpected_exit', maxRestarts: null, baseDelayMs: 100, maxDelayMs: 1_000, jitterMs: 0 },
-        logging: { logTerminationEvents: false },
-        artifacts: { captureStderr: false },
-        terminateGraceMs: 0,
-      },
-    });
-
-    const first = client.synthesizeTts({
-      requestId: 'tts-dribble', text: 'a', packId: 'pack-1', packDir: '/tmp/pack-1', manifest, voiceId: null, speed: null, output: { codec: 'wav', mimeType: 'audio/wav' },
-    });
-    await vi.advanceTimersByTimeAsync(1);
-    await expect(first).resolves.toMatchObject({ name: 'r.wav' });
-    expect(spawnCount).toBe(1);
-
-    // The broken child is CHATTY: each ping interval it dribbles a lone 4-byte length prefix whose
-    // payload never arrives. These bytes buffer in the decoder (no complete frame, no throw). They
-    // must NOT reset the missed-ping counter — only a fully decoded, valid frame may.
-    const dribblePrefix = Buffer.alloc(4);
-    dribblePrefix.writeUInt32BE(64, 0);
-    for (let i = 0; i < 4; i += 1) {
-      firstGen.emitRaw?.(Buffer.from(dribblePrefix));
-      await vi.advanceTimersByTimeAsync(1_000);
-    }
-    await vi.advanceTimersByTimeAsync(1);
-
-    // The watchdog still trips despite the chatter → force-kill → supervised respawn.
-    expect(terminateCount).toBeGreaterThanOrEqual(1);
 
     await vi.advanceTimersByTimeAsync(300);
     expect(spawnCount).toBeGreaterThanOrEqual(2);
@@ -1555,7 +1551,6 @@ describe('forked voice inference runtime client', () => {
       channelFactory,
       random: () => 0,
       requestTimeoutMs: 1_000_000,
-      pingIntervalMs: 0,
       policy: {
         kind: 'other',
         restart: { mode: 'on_unexpected_exit', maxRestarts: null, baseDelayMs: 100, maxDelayMs: 1_000, jitterMs: 0 },

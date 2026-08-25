@@ -30,8 +30,13 @@ import {
 } from '../projection/registry/createResolvedContributionRegistry';
 import {
     resolveExecutablePluginRuntimeRegistry,
+    type PluginRuntimeNetworkDependencies,
     type ResolvedExecutablePluginRuntimeRegistry,
 } from './resolveExecutablePluginRuntimeRegistry';
+import type {
+    PinnedHttpStreamRequest,
+    PinnedHttpStreamResponse,
+} from '@/network/pinnedHttp';
 import type { AccountPluginDataStorageHostDependencies } from './context/accountPluginDataStorage';
 import {
     createConnectedAccountAuthenticationAttemptOwner,
@@ -116,6 +121,76 @@ function createBundledAccountDataDependencies(): AccountPluginDataStorageHostDep
                 throw new Error(`Unexpected bundled Account Data POST: ${url}`);
             },
         },
+    });
+}
+
+/**
+ * A public-classified address no bundled service actually answers on. The host
+ * admits an origin by resolving it once and then connects to exactly that
+ * answer, so seeing this address on the socket proves the connection used the
+ * admitted DNS result rather than resolving the hostname a second time.
+ */
+const FIXTURE_VALIDATED_ADDRESS = '203.0.114.10';
+
+type ObservedPinnedRequest = Readonly<{
+    url: string;
+    method: string | undefined;
+    headers: Readonly<Record<string, string>>;
+    validatedAddresses: readonly string[];
+}>;
+
+function pinnedJsonResponse(
+    body: unknown,
+    init: Readonly<{
+        status?: number;
+        headers?: Readonly<Record<string, string>>;
+    }> = {},
+): PinnedHttpStreamResponse {
+    const bytes = new TextEncoder().encode(JSON.stringify(body));
+    let delivered = false;
+    return Object.freeze({
+        status: init.status ?? 200,
+        headers: Object.freeze({
+            'content-type': 'application/json',
+            ...(init.headers ?? {}),
+        }),
+        contentLength: bytes.byteLength,
+        read: async () => {
+            if (delivered) return null;
+            delivered = true;
+            return bytes;
+        },
+        cancel: () => {},
+    });
+}
+
+/**
+ * Substitutes the two process-owned network boundaries the plugin HTTP host
+ * finally crosses — the DNS answer that admits an origin and the socket pinned
+ * to it — so these cases exercise the real admission, credential and
+ * currentness path without leaving the machine.
+ */
+function createPinnedNetworkFixture(
+    respond: (request: PinnedHttpStreamRequest) => PinnedHttpStreamResponse,
+) {
+    const observed: ObservedPinnedRequest[] = [];
+    const openPinnedStream = vi.fn(async (request: PinnedHttpStreamRequest) => {
+        observed.push(Object.freeze({
+            url: request.url,
+            method: request.method,
+            headers: request.headers,
+            validatedAddresses: request.validatedAddresses,
+        }));
+        return respond(request);
+    });
+    const networkDependencies = Object.freeze({
+        openPinnedStream,
+        resolveNetworkAddresses: async () => Object.freeze([FIXTURE_VALIDATED_ADDRESS]),
+    }) satisfies PluginRuntimeNetworkDependencies;
+    return Object.freeze({
+        observed: observed as readonly ObservedPinnedRequest[],
+        openPinnedStream,
+        networkDependencies,
     });
 }
 
@@ -320,7 +395,11 @@ describe('executable plugin runtime Connected Accounts integration', () => {
             await restartedRuntime?.dispose();
             if (!runtimeDisposed) await runtime.dispose();
         }
-    });
+        // This case admits and boots the whole bundled plugin census twice — a
+        // real filesystem and generation-admission workload measured at ~66s on
+        // a busy machine. The suite-wide 30s budget is sized for ordinary cases,
+        // so state this one's cost here rather than loosening it for everything.
+    }, 180_000);
 
     it('quarantines one bundled plugin whose generation cannot be admitted and keeps every other plugin loadable', async () => {
         const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-connected-account-quarantine-'));
@@ -478,29 +557,23 @@ describe('executable plugin runtime Connected Accounts integration', () => {
         temporaryRoots.push(happyHomeDir);
         let configurationCurrent = true;
         let invalidateConfigurationDuringFetch = false;
-        const fetchMock = vi.fn(async (_input: string | URL | Request) => {
+        const network = createPinnedNetworkFixture(() => {
             if (invalidateConfigurationDuringFetch) {
                 configurationCurrent = false;
             }
-            return new Response(JSON.stringify({
+            return pinnedJsonResponse({
                 id: 42,
                 login: 'octocat',
                 email: 'octocat@example.test',
-            }), {
-                status: 200,
-                headers: {
-                    'content-type': 'application/json',
-                    'x-oauth-scopes': 'repo, read:user',
-                },
-            });
+            }, { headers: { 'x-oauth-scopes': 'repo, read:user' } });
         });
-        vi.stubGlobal('fetch', fetchMock);
         let runtime: ResolvedExecutablePluginRuntimeRegistry | null = null;
 
         try {
             runtime = await resolveExecutablePluginRuntimeRegistry({
                 happyHomeDir,
                 pluginIds: ['happier.scm.forge.github'],
+                networkDependencies: network.networkDependencies,
             });
             const service = Object.freeze({
                 pluginId: 'happier.scm.forge.github',
@@ -556,8 +629,14 @@ describe('executable plugin runtime Connected Accounts integration', () => {
                 accountId: '42',
                 displayName: 'octocat',
             });
-            expect(fetchMock).toHaveBeenCalledOnce();
-            expect(fetchMock.mock.calls[0]?.[0]).toBe('https://api.github.com/user');
+            expect(network.openPinnedStream).toHaveBeenCalledOnce();
+            // The admitted address — not a second DNS answer — is what the socket
+            // connected to, so the manifest origin and the connection identity
+            // that carried its credential are asserted together.
+            expect(network.observed[0]).toMatchObject({
+                url: 'https://api.github.com/user',
+                validatedAddresses: [FIXTURE_VALIDATED_ADDRESS],
+            });
             expect(staged.get('token')).toBe('github_pat_test');
 
             const establishedConfiguration: PluginConnectedAccountRuntimeConfiguration = Object.freeze({
@@ -629,10 +708,9 @@ describe('executable plugin runtime Connected Accounts integration', () => {
                 isCredentialRevisionCurrent: async () => true,
                 signal: new AbortController().signal,
             })).rejects.toThrow('target is no longer current');
-            expect(fetchMock).toHaveBeenCalledTimes(3);
+            expect(network.openPinnedStream).toHaveBeenCalledTimes(3);
         } finally {
             await runtime?.dispose();
-            vi.unstubAllGlobals();
         }
     });
 
@@ -664,10 +742,13 @@ describe('executable plugin runtime Connected Accounts integration', () => {
             pluginId: 'happier.agent.claude',
             serviceId: 'claude-subscription',
             accountId: 'claude-account-1',
-            modeId: 'setup-token',
+            // Only the OAuth mode reads subscription usage; a setup-token account
+            // answers `limits: []` locally and never reaches a host boundary, so
+            // it cannot prove anything about the configured-origin path.
+            modeId: 'oauth',
             usageUrl: 'https://api.anthropic.com/api/oauth/usage',
             credentials: new Map([
-                ['setupToken', 'sk-ant-oat01-setup-token'],
+                ['accessToken', 'sk-ant-oat01-access-token'],
             ]),
             response: {
                 five_hour: {
@@ -694,30 +775,14 @@ describe('executable plugin runtime Connected Accounts integration', () => {
     }) => {
         const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-connected-account-quota-'));
         temporaryRoots.push(happyHomeDir);
-        const observedFetches: Array<Readonly<{
-            input: string | URL | Request;
-            init?: RequestInit;
-        }>> = [];
-        const fetchMock = vi.fn(async (
-            input: string | URL | Request,
-            init?: RequestInit,
-        ) => {
-            observedFetches.push(Object.freeze({
-                input,
-                ...(init === undefined ? {} : { init }),
-            }));
-            return new Response(JSON.stringify(response), {
-                status: 200,
-                headers: { 'content-type': 'application/json' },
-            });
-        });
-        vi.stubGlobal('fetch', fetchMock);
+        const network = createPinnedNetworkFixture(() => pinnedJsonResponse(response));
         let runtime: ResolvedExecutablePluginRuntimeRegistry | null = null;
 
         try {
             runtime = await resolveExecutablePluginRuntimeRegistry({
                 happyHomeDir,
                 pluginIds: [pluginId],
+                networkDependencies: network.networkDependencies,
             });
             const service = Object.freeze({ pluginId, localId: serviceId });
             const lease = await runtime.resolveConnectedAccountRuntime?.(service);
@@ -752,14 +817,14 @@ describe('executable plugin runtime Connected Accounts integration', () => {
                 observedAtMs: expect.any(Number),
                 limits: expect.arrayContaining([expectedLimit]),
             });
-            expect(fetchMock).toHaveBeenCalledOnce();
-            expect(observedFetches[0]).toMatchObject({
-                input: usageUrl,
-                init: { method: 'GET' },
+            expect(network.openPinnedStream).toHaveBeenCalledOnce();
+            expect(network.observed[0]).toMatchObject({
+                url: usageUrl,
+                method: 'GET',
+                validatedAddresses: [FIXTURE_VALIDATED_ADDRESS],
             });
         } finally {
             await runtime?.dispose();
-            vi.unstubAllGlobals();
         }
     });
 
@@ -781,27 +846,16 @@ describe('executable plugin runtime Connected Accounts integration', () => {
     }) => {
         const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-connected-account-oauth-'));
         temporaryRoots.push(happyHomeDir);
-        const observedFetches: Array<Readonly<{
-            input: string | URL | Request;
-            init?: RequestInit;
-        }>> = [];
-        const fetchMock = vi.fn(async (
-            input: string | URL | Request,
-            init?: RequestInit,
-        ) => {
-            observedFetches.push(Object.freeze({
-                input,
-                ...(init === undefined ? {} : { init }),
-            }));
+        const network = createPinnedNetworkFixture(() => {
             throw new Error('simulated response loss after remote effect');
         });
-        vi.stubGlobal('fetch', fetchMock);
         let runtime: ResolvedExecutablePluginRuntimeRegistry | null = null;
 
         try {
             runtime = await resolveExecutablePluginRuntimeRegistry({
                 happyHomeDir,
                 pluginIds: [pluginId],
+                networkDependencies: network.networkDependencies,
             });
             const service = Object.freeze({ pluginId, localId: serviceId });
             const configuration: PluginConnectedAccountRuntimeConfiguration = Object.freeze({
@@ -855,12 +909,19 @@ describe('executable plugin runtime Connected Accounts integration', () => {
                                 method: 'S256' as const,
                             }),
                         }),
+                        // The transaction owner — not its caller — holds the PKCE
+                        // verifier it minted beside the challenge, so it is the
+                        // party that completes the callback with it. Returning the
+                        // bare callback fields would hand the runtime an
+                        // `undefined` secret to register for redaction.
                         acceptCompletion: async (completion: Readonly<{
                             code: string;
                             callbackUrl: string;
                             state: string;
-                            pkceVerifier: string;
-                        }>) => completion,
+                        }>) => Object.freeze({
+                            ...completion,
+                            pkceVerifier: 'pkce-verifier-1',
+                        }),
                         close: async () => undefined,
                     }),
                 }),
@@ -886,10 +947,11 @@ describe('executable plugin runtime Connected Accounts integration', () => {
                 attemptId: 'oauth-attempt-1',
                 code: expect.stringContaining('outcome_unknown'),
             });
-            expect(fetchMock).toHaveBeenCalledOnce();
-            expect(observedFetches[0]).toMatchObject({
-                input: tokenUrl,
-                init: { method: 'POST' },
+            expect(network.openPinnedStream).toHaveBeenCalledOnce();
+            expect(network.observed[0]).toMatchObject({
+                url: tokenUrl,
+                method: 'POST',
+                validatedAddresses: [FIXTURE_VALIDATED_ADDRESS],
             });
             expect(settle).not.toHaveBeenCalled();
             await expect(attempts.reconcile({
@@ -899,10 +961,9 @@ describe('executable plugin runtime Connected Accounts integration', () => {
                 attemptId: 'oauth-attempt-1',
                 code: expect.stringContaining('outcome_unknown'),
             });
-            expect(fetchMock).toHaveBeenCalledOnce();
+            expect(network.openPinnedStream).toHaveBeenCalledOnce();
         } finally {
             await runtime?.dispose();
-            vi.unstubAllGlobals();
         }
     });
 
@@ -1025,7 +1086,24 @@ describe('executable plugin runtime Connected Accounts integration', () => {
                             pluginId: 'acme.agent.realtime',
                             immutableGenerationId: 'fixture-acme-agent-realtime-1',
                             rootPath: '/plugins/acme-agent-realtime',
-                            record: {} as never,
+                            // A committed generation always carries its structural
+                            // file inventory, and the resources owner normalizes
+                            // that inventory before it will hand out a resource
+                            // handle. `{} as never` skipped the type checker and
+                            // then failed the runtime contract, so every case here
+                            // died on `plugin_resource_generation_invalid`.
+                            record: {
+                                t: 'happier_plugin_generation_v1',
+                                schemaVersion: 1,
+                                pluginId: 'acme.agent.realtime',
+                                immutableGenerationId: 'fixture-acme-agent-realtime-1',
+                                createdAtMs: 1,
+                                sourceProvenance: 'localSource',
+                                manifestRelativePath: '.happier-plugin/plugin.json',
+                                files: [
+                                    { relativePath: '.happier-plugin/plugin.json', byteLength: 2 },
+                                ],
+                            },
                         },
                     ]]),
                     rejectedGenerations: new Map(),

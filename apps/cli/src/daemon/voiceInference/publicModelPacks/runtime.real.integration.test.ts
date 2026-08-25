@@ -24,7 +24,7 @@ import {
 } from '@/plugins/testkit/voiceModelPackPackage';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createObservedForkedWorkerProcessTracker } from '../forkedWorker/processTracker.testkit';
-import { createNodeModelPackInstallerHost } from '../modelPackInstallerHost.node';
+import { createNodeModelPackInstallerHost } from '../nodeModelPackInstallerHost';
 import { resolveVoiceInferencePaths } from '../voiceInferencePaths';
 import type { VoiceInferenceWorkerHandle } from '../voiceInferenceWorker';
 import { startVoiceInferenceWorker } from '../voiceInferenceWorker';

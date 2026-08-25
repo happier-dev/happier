@@ -12,38 +12,16 @@ import tweetnacl from 'tweetnacl';
 import type { DaemonPeerMediationObservabilityEmitter } from '../observability/events';
 import {
   startPeerMediationLoopbackServer as startPeerMediationLoopbackServerDefault,
+  type PeerTcpTunnelDirectRuntimeOptions,
   type StartPeerMediationLoopbackServerOptions,
 } from '../loopback/server';
 import type { PeerMachineLiveStreamDirectRuntimeOptions } from '../stream/registerRoutes';
-import type { RegisterPeerTcpTunnelLoopbackRoutesOptions } from '../tunnel/registerRoutes';
 import type { DirectRouteGrantTrustRoot } from '../verifyDirectRouteGrantV1';
 import type { PeerMachineRpcDirectHandlerManager } from './registerRoutes';
 
 const PEER_MEDIATION_MACHINE_RPC_DEFAULT_HOST = '127.0.0.1';
 const PEER_MEDIATION_MACHINE_RPC_DEFAULT_PORT = 0;
 const PEER_MEDIATION_MACHINE_RPC_ENDPOINT_FINGERPRINT_BYTES = 16;
-
-export type StartPeerMediationMachineRpcLoopbackInput = Readonly<{
-  accountId: string;
-  machineId: string;
-  accountSigningSeed?: Uint8Array;
-  serverFeatures: FeaturesResponse;
-  rpcHandlerManager: PeerMachineRpcDirectHandlerManager;
-  nowMs?: () => number;
-  endpointFingerprint?: () => string;
-  endpointTtlMs?: number;
-  host?: string;
-  port?: number;
-  localPerPeerMaxConcurrentCalls?: number;
-  startPeerMediationLoopbackServer?: (
-    options: StartPeerMediationLoopbackServerOptions,
-  ) => ReturnType<typeof startPeerMediationLoopbackServerDefault>;
-}>;
-
-type PeerTcpTunnelDirectRuntimeOptions = Omit<
-  RegisterPeerTcpTunnelLoopbackRoutesOptions,
-  'nowMs' | 'expected' | 'trustRoots' | 'revokedGrantIds' | 'revokedGrantFamilyIds'
->;
 
 export type StartPeerMediationLoopbackInput = Readonly<{
   accountId: string;
@@ -80,6 +58,11 @@ export type StartedPeerMediationLoopback = StartedPeerMediationMachineRpcLoopbac
     machine_rpc?: true;
     live_stream?: true;
     tcp_tunnel?: true;
+    /**
+     * §7.5: `voice_media` rides the tunnel endpoint but is its own flow kind. Omitting it here made
+     * the daemon's own state report unable to show the substrate's most-used flow.
+     */
+    voice_media?: true;
   }>;
 }>;
 
@@ -106,37 +89,6 @@ function resolveAccountPublicKey(accountSigningSeed: Uint8Array | undefined): st
   }
   const keyPair = tweetnacl.sign.keyPair.fromSeed(accountSigningSeed);
   return Buffer.from(keyPair.publicKey).toString('base64url');
-}
-
-export async function startPeerMediationMachineRpcLoopback(
-  input: StartPeerMediationMachineRpcLoopbackInput,
-): Promise<StartedPeerMediationMachineRpcLoopback | null> {
-  if (readServerEnabledBit(input.serverFeatures, 'machines.rpc.directPeer') !== true) {
-    return null;
-  }
-  const started = await startPeerMediationLoopback({
-    accountId: input.accountId,
-    machineId: input.machineId,
-    accountSigningSeed: input.accountSigningSeed,
-    serverFeatures: input.serverFeatures,
-    rpcHandlerManager: input.rpcHandlerManager,
-    ...(input.nowMs ? { nowMs: input.nowMs } : {}),
-    ...(input.endpointFingerprint ? { endpointFingerprint: input.endpointFingerprint } : {}),
-    ...(input.endpointTtlMs ? { endpointTtlMs: input.endpointTtlMs } : {}),
-    ...(input.host ? { host: input.host } : {}),
-    ...(typeof input.port === 'number' ? { port: input.port } : {}),
-    ...(typeof input.localPerPeerMaxConcurrentCalls === 'number'
-      ? { localPerPeerMaxConcurrentCalls: input.localPerPeerMaxConcurrentCalls }
-      : {}),
-    ...(input.startPeerMediationLoopbackServer
-      ? { startPeerMediationLoopbackServer: input.startPeerMediationLoopbackServer }
-      : {}),
-  });
-  if (!started?.activeFlows.machine_rpc) return null;
-  return {
-    endpoint: started.endpoint,
-    stop: started.stop,
-  };
 }
 
 export async function startPeerMediationLoopback(
@@ -251,6 +203,7 @@ export async function startPeerMediationLoopback(
       ...(rpcEnabled ? { machine_rpc: true as const } : {}),
       ...(liveStreamEnabled ? { live_stream: true as const } : {}),
       ...(tunnelEnabled ? { tcp_tunnel: true as const } : {}),
+      ...(voiceMediaEnabled ? { voice_media: true as const } : {}),
     },
   };
 }

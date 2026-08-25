@@ -4,6 +4,7 @@ import { join } from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
 
+import { accountSettingsParse } from '@happier-dev/protocol';
 import type {
   ResolvedActionContribution,
   ResolvedActionDefinition,
@@ -20,6 +21,10 @@ import { createProductionPluginInvocationServiceOwners } from '@/plugins/runtime
 import { createTargetActionInvocationRegistry as createTargetActionInvocationRegistryBase } from '@/plugins/runtime/invocation/targetActionRegistry';
 import type { TargetActionInvocationRegistration } from '@/plugins/runtime/invocation/targetActionRegistry';
 import type { TargetActionCurrentIntentRequest } from '@/plugins/runtime/invocation/actionExecutor';
+import {
+  resetActiveAccountSettingsSnapshotForTests,
+  setActiveAccountSettingsSnapshot,
+} from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { executePluginActionIfAvailable } from './execute';
 
 type SafeResolvedActionContribution = Omit<ResolvedActionContribution, 'definition'> & Readonly<{
@@ -32,10 +37,6 @@ function createTargetActionInvocationRegistry(
 ) {
   return createTargetActionInvocationRegistryBase({
     resolveAuthorizationFacts: (action) => ({
-      packageTrust: {
-        packageIdentity: action.qualifiedId,
-        reviewedPackageIdentity: action.qualifiedId,
-      },
       generation: {
         targetGeneration: action.generation,
         desiredGeneration: action.generation,
@@ -314,6 +315,218 @@ describe('executePluginActionIfAvailable', () => {
     }
   });
 
+  it('enforces live API settings for a qualified contributed Action ahead of inherited environment settings', async () => {
+    const previousSettings = process.env.HAPPIER_ACTIONS_SETTINGS_V1;
+    process.env.HAPPIER_ACTIONS_SETTINGS_V1 = JSON.stringify({ v: 1, actions: {} });
+    setActiveAccountSettingsSnapshot({
+      source: 'network',
+      settings: accountSettingsParse({
+        actionsSettingsV1: {
+          v: 1,
+          actions: {
+            'acme.action.plugin/actions/live-api-disabled': { disabledSurfaces: ['api'] },
+          },
+        },
+      }),
+      settingsVersion: 1,
+      loadedAtMs: 1,
+      settingsSecretsReadKeys: [],
+      scopeKey: 'account:contributed-action-live-policy',
+    });
+
+    try {
+      const source = createAction('/unused/live-api-disabled.mjs', 'live-api-disabled');
+      const action: ResolvedActionContribution = {
+        ...source,
+        definition: {
+          ...source.definition,
+          surfaces: {
+            ...source.definition.surfaces,
+            cli: false,
+            api: true,
+            plugin: true,
+          },
+          contributionSurfaces: ['api', 'plugin'],
+        },
+      };
+      const handler = vi.fn(async () => ({ executed: true }));
+      const targetActionInvocations = createTargetActionInvocationRegistry({
+        actions: [createTargetActionRegistration({ action, handler })],
+        expectedActions: [{ pluginId: 'acme.action.plugin', localId: 'live-api-disabled' }],
+      });
+      const activateContributionsOnDemand = vi.fn(async () => []);
+
+      await expect(executePluginActionIfAvailable({
+        runtimeRegistry: createExecutableRegistry({
+          action,
+          targetActionInvocations,
+          activateContributionsOnDemand,
+        }),
+        actionId: action.definition.id,
+        input: {},
+        context: { surface: 'api', invocationSurface: 'api' },
+      })).resolves.toEqual({
+        matched: true,
+        result: {
+          ok: false,
+          errorCode: 'plugin_action_unavailable',
+          error: 'Plugin action is disabled by Action settings',
+          actionHandlerInvocation: 'notStarted',
+        },
+      });
+
+      expect(activateContributionsOnDemand).not.toHaveBeenCalled();
+      await expect(executePluginActionIfAvailable({
+        runtimeRegistry: createExecutableRegistry({
+          action,
+          targetActionInvocations,
+          activateContributionsOnDemand,
+        }),
+        actionId: action.definition.id,
+        input: {},
+        context: {
+          surface: 'api',
+          invocationSurface: 'api',
+          caller: {
+            kind: 'plugin',
+            pluginId: 'acme.mounted',
+            contribution: {
+              id: 'dashboard',
+              qualifiedId: 'acme.mounted/dashboard',
+            },
+            materialization: {
+              machineId: 'machine-1',
+              materializationId: 'materialization-mounted-current',
+              pluginId: 'acme.mounted',
+            },
+            originSurface: 'api',
+          },
+        },
+      })).resolves.toEqual({
+        matched: true,
+        result: { ok: true, result: { executed: true } },
+      });
+      expect(handler).toHaveBeenCalledOnce();
+    } finally {
+      resetActiveAccountSettingsSnapshotForTests();
+      if (previousSettings === undefined) delete process.env.HAPPIER_ACTIONS_SETTINGS_V1;
+      else process.env.HAPPIER_ACTIONS_SETTINGS_V1 = previousSettings;
+    }
+  });
+
+  it('applies Off, Ask first, and Allowed settings to one running contributed Action', async () => {
+    const previousSettings = process.env.HAPPIER_ACTIONS_SETTINGS_V1;
+    // A stale startup env projection must not win over later Account revisions.
+    process.env.HAPPIER_ACTIONS_SETTINGS_V1 = JSON.stringify({ v: 1, actions: {} });
+    const publishActionsSettings = (actionsSettingsV1: unknown, settingsVersion: number): void => {
+      setActiveAccountSettingsSnapshot({
+        source: 'network',
+        settings: accountSettingsParse({ actionsSettingsV1 }),
+        settingsVersion,
+        loadedAtMs: settingsVersion,
+        settingsSecretsReadKeys: [],
+        scopeKey: 'account:contributed-action-currentness',
+      });
+    };
+
+    try {
+      const source = createAction('/unused/live-plugin-currentness.mjs', 'live-plugin-currentness');
+      const action: ResolvedActionContribution = {
+        ...source,
+        definition: {
+          ...source.definition,
+          surfaces: {
+            ...source.definition.surfaces,
+            agent: false,
+            cli: false,
+            plugin: true,
+          },
+          contributionSurfaces: ['plugin'],
+        },
+      };
+      const handler = vi.fn(async () => ({ executed: true }));
+      const targetActionInvocations = createTargetActionInvocationRegistry({
+        actions: [createTargetActionRegistration({ action, handler })],
+      });
+      const runtimeRegistry = createExecutableRegistry({
+        action,
+        targetActionInvocations,
+        activateContributionsOnDemand: async () => [],
+      });
+      const invoke = async (requestCurrentIntent?: (request: TargetActionCurrentIntentRequest) => Promise<
+        Readonly<{ status: 'approved'; fingerprint: string } | { status: 'rejected' | 'unavailable'; code: string }>
+      >) => await executePluginActionIfAvailable({
+        runtimeRegistry,
+        actionId: action.definition.id,
+        input: {},
+        ...(requestCurrentIntent ? { requestCurrentIntent } : {}),
+        context: {
+          surface: 'plugin',
+          invocationSurface: 'plugin',
+          caller: {
+            kind: 'plugin',
+            pluginId: 'acme.caller',
+            contribution: { id: 'dispatcher', qualifiedId: 'acme.caller/actions/dispatcher' },
+            materialization: {
+              pluginId: 'acme.caller',
+              machineId: 'machine-1',
+              materializationId: 'materialization-caller-current',
+            },
+          },
+        },
+      });
+
+      publishActionsSettings({
+        v: 1,
+        actions: {
+          'acme.action.plugin/actions/live-plugin-currentness': { disabledSurfaces: ['plugin'] },
+        },
+      }, 1);
+      await expect(invoke()).resolves.toEqual({
+        matched: true,
+        result: {
+          ok: false,
+          errorCode: 'plugin_action_unavailable',
+          error: 'Plugin action is disabled by Action settings',
+          actionHandlerInvocation: 'notStarted',
+        },
+      });
+      expect(handler).not.toHaveBeenCalled();
+
+      publishActionsSettings({
+        v: 1,
+        actions: {
+          'acme.action.plugin/actions/live-plugin-currentness': { approvalRequiredSurfaces: ['plugin'] },
+        },
+      }, 2);
+      const requestCurrentIntent = vi.fn(async () => ({
+        status: 'rejected' as const,
+        code: 'plugin_action_current_intent_rejected',
+      }));
+      await expect(invoke(requestCurrentIntent)).resolves.toMatchObject({
+        matched: true,
+        result: {
+          ok: false,
+          errorCode: 'plugin_action_current_intent_rejected',
+          actionHandlerInvocation: 'notStarted',
+        },
+      });
+      expect(requestCurrentIntent).toHaveBeenCalledOnce();
+      expect(handler).not.toHaveBeenCalled();
+
+      publishActionsSettings({ v: 1, actions: {} }, 3);
+      await expect(invoke()).resolves.toEqual({
+        matched: true,
+        result: { ok: true, result: { executed: true } },
+      });
+      expect(handler).toHaveBeenCalledOnce();
+    } finally {
+      resetActiveAccountSettingsSnapshotForTests();
+      if (previousSettings === undefined) delete process.env.HAPPIER_ACTIONS_SETTINGS_V1;
+      else process.env.HAPPIER_ACTIONS_SETTINGS_V1 = previousSettings;
+    }
+  });
+
   it('requires current intent for a safe contributed Action when Action settings require approval', async () => {
     const previousSettings = process.env.HAPPIER_ACTIONS_SETTINGS_V1;
     process.env.HAPPIER_ACTIONS_SETTINGS_V1 = JSON.stringify({
@@ -543,10 +756,6 @@ describe('executePluginActionIfAvailable', () => {
       ],
       readActions: () => registrations,
       resolveAuthorizationFacts: (action) => ({
-        packageTrust: {
-          packageIdentity: action.qualifiedId,
-          reviewedPackageIdentity: action.qualifiedId,
-        },
         generation: {
           targetGeneration: action.generation,
           desiredGeneration: action.generation,
@@ -710,7 +919,7 @@ describe('executePluginActionIfAvailable', () => {
     expect(target).toHaveBeenCalledTimes(1);
   });
 
-  it('returns the pre-effect target execution origin without a post-settlement reread', async () => {
+  it('returns the target execution origin only after rereading it at settlement', async () => {
     const externalAction = createAction('/unused/daemon.mjs', 'publish');
     const action: ResolvedActionContribution = {
       ...externalAction,
@@ -782,8 +991,9 @@ describe('executePluginActionIfAvailable', () => {
       },
     });
     expect(target).toHaveBeenCalledTimes(1);
-    expect(resolveCurrentPluginExecutionOrigin).toHaveBeenCalledTimes(1);
+    expect(resolveCurrentPluginExecutionOrigin).toHaveBeenCalledTimes(2);
     expect(resolveCurrentPluginExecutionOrigin).toHaveBeenNthCalledWith(1, 'acme.target', signal);
+    expect(resolveCurrentPluginExecutionOrigin).toHaveBeenNthCalledWith(2, 'acme.target', signal);
   });
 
   it('rejects a mismatched expected target origin before the handler without replacement disclosure', async () => {
@@ -918,7 +1128,7 @@ describe('executePluginActionIfAvailable', () => {
     expect(target).not.toHaveBeenCalled();
   });
 
-  it('preserves a known contributed action result when the target origin retires after handler settlement', async () => {
+  it('refuses to publish a retired target execution origin after handler settlement', async () => {
     const externalAction = createAction('/unused/daemon.mjs', 'publish');
     const action: ResolvedActionContribution = {
       ...externalAction,
@@ -953,7 +1163,91 @@ describe('executePluginActionIfAvailable', () => {
       actions: [createTargetActionRegistration({ action, handler: target })],
     });
 
-    await expect(executePluginActionIfAvailable({
+    const attempt = await executePluginActionIfAvailable({
+      runtimeRegistry: createExecutableRegistry({
+        action,
+        targetActionInvocations,
+        resolveCurrentPluginExecutionOrigin,
+        activateContributionsOnDemand: async () => [],
+      }),
+      actionId: action.definition.id,
+      input: { title: 'Ready' },
+      captureExecutionOrigin: true,
+      expectedExecutionOrigin: {
+        serverIdentityId: 'srv_action_origin_fixture',
+        materializationRef: {
+          pluginId: 'acme.target',
+          machineId: 'machine-target',
+          materializationId: 'materialization-target-before',
+        },
+      },
+      context: {
+        surface: 'plugin',
+        caller: {
+          kind: 'plugin',
+          pluginId: 'acme.caller',
+          contribution: { id: 'sender', qualifiedId: 'acme.caller/actions/sender' },
+          materialization: {
+            pluginId: 'acme.caller',
+            machineId: 'machine-caller',
+            materializationId: 'materialization-caller-current',
+          },
+        },
+      },
+    });
+
+    expect(attempt).toEqual({
+      matched: true,
+      result: {
+        ok: false,
+        errorCode: 'plugin_action_execution_origin_changed',
+        error: 'Target execution origin changed while the contributed Action was running',
+      },
+    });
+    // The refusal is post-start: it must never be mistaken for a handler that
+    // did not run, because the effect is already known to have happened.
+    expect(attempt.matched && attempt.result).not.toHaveProperty('actionHandlerInvocation');
+    expect(attempt.matched && attempt.result).not.toHaveProperty('executionOrigin');
+    expect(target).toHaveBeenCalledTimes(1);
+    expect(resolveCurrentPluginExecutionOrigin).toHaveBeenCalledTimes(2);
+  });
+
+  it('refuses the origin-bearing result when the target origin disappears during the handler', async () => {
+    const externalAction = createAction('/unused/daemon.mjs', 'publish');
+    const action: ResolvedActionContribution = {
+      ...externalAction,
+      pluginId: 'acme.target',
+      definition: {
+        ...externalAction.definition,
+        surfaces: {
+          ...externalAction.definition.surfaces,
+          plugin: true,
+        },
+        contributionSurfaces: ['plugin'],
+      },
+    };
+    let originAvailable = true;
+    const resolveCurrentPluginExecutionOrigin = vi.fn(async (pluginId: string) => (
+      pluginId === 'acme.target' && originAvailable
+        ? Object.freeze({
+          serverIdentityId: 'srv_action_origin_fixture',
+          materializationRef: Object.freeze({
+            pluginId: 'acme.target',
+            machineId: 'machine-target',
+            materializationId: 'materialization-target-before',
+          }),
+        })
+        : null
+    ));
+    const target = vi.fn(async () => {
+      originAvailable = false;
+      return { accepted: true };
+    });
+    const targetActionInvocations = createTargetActionInvocationRegistry({
+      actions: [createTargetActionRegistration({ action, handler: target })],
+    });
+
+    const attempt = await executePluginActionIfAvailable({
       runtimeRegistry: createExecutableRegistry({
         action,
         targetActionInvocations,
@@ -976,23 +1270,86 @@ describe('executePluginActionIfAvailable', () => {
           },
         },
       },
-    })).resolves.toEqual({
+    });
+
+    expect(attempt).toEqual({
       matched: true,
       result: {
-        ok: true,
-        result: { accepted: true },
-        executionOrigin: {
+        ok: false,
+        errorCode: 'plugin_action_execution_origin_unavailable',
+        error: 'Current target execution origin is unavailable',
+      },
+    });
+    expect(attempt.matched && attempt.result).not.toHaveProperty('actionHandlerInvocation');
+    expect(target).toHaveBeenCalledTimes(1);
+    expect(resolveCurrentPluginExecutionOrigin).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps an ordinary contributed action result when the target origin retires during the handler', async () => {
+    const externalAction = createAction('/unused/daemon.mjs', 'publish');
+    const action: ResolvedActionContribution = {
+      ...externalAction,
+      pluginId: 'acme.target',
+      definition: {
+        ...externalAction.definition,
+        surfaces: {
+          ...externalAction.definition.surfaces,
+          plugin: true,
+        },
+        contributionSurfaces: ['plugin'],
+      },
+    };
+    let originAvailable = true;
+    const resolveCurrentPluginExecutionOrigin = vi.fn(async (pluginId: string) => (
+      pluginId === 'acme.target' && originAvailable
+        ? Object.freeze({
           serverIdentityId: 'srv_action_origin_fixture',
-          materializationRef: {
+          materializationRef: Object.freeze({
             pluginId: 'acme.target',
             machineId: 'machine-target',
             materializationId: 'materialization-target-before',
+          }),
+        })
+        : null
+    ));
+    const target = vi.fn(async () => {
+      originAvailable = false;
+      return { accepted: true };
+    });
+    const targetActionInvocations = createTargetActionInvocationRegistry({
+      actions: [createTargetActionRegistration({ action, handler: target })],
+    });
+
+    const attempt = await executePluginActionIfAvailable({
+      runtimeRegistry: createExecutableRegistry({
+        action,
+        targetActionInvocations,
+        resolveCurrentPluginExecutionOrigin,
+        activateContributionsOnDemand: async () => [],
+      }),
+      actionId: action.definition.id,
+      input: { title: 'Ready' },
+      context: {
+        surface: 'plugin',
+        caller: {
+          kind: 'plugin',
+          pluginId: 'acme.caller',
+          contribution: { id: 'sender', qualifiedId: 'acme.caller/actions/sender' },
+          materialization: {
+            pluginId: 'acme.caller',
+            machineId: 'machine-caller',
+            materializationId: 'materialization-caller-current',
           },
         },
       },
     });
+
+    expect(attempt).toEqual({
+      matched: true,
+      result: { ok: true, result: { accepted: true } },
+    });
     expect(target).toHaveBeenCalledTimes(1);
-    expect(resolveCurrentPluginExecutionOrigin).toHaveBeenCalledTimes(1);
+    expect(resolveCurrentPluginExecutionOrigin).not.toHaveBeenCalled();
   });
 
   it('rejects a stale admitted contributor generation before cold activation and admits the fresh binding', async () => {

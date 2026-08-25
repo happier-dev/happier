@@ -7,7 +7,6 @@ import { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { SessionPendingEnqueueByMachineRequestV1 } from '@happier-dev/protocol';
 import { encodeBase64, encryptLegacy } from '@/api/encryption';
-import { ExecutionBudgetRegistry } from '@/daemon/executionBudget/ExecutionBudgetRegistry';
 
 import type { AutomationDaemonAssignmentsResponse } from './automationTypes';
 
@@ -1524,82 +1523,4 @@ describe('automationWorker integration', () => {
     }
   });
 
-  it('does not execute runs when daemon execution budget has no ephemeral task capacity', async () => {
-    const now = Date.now();
-    const template = buildEncryptedTemplateCiphertext({
-      agent: 'claude',
-      directory: '/tmp/happier-automation',
-      prompt: 'Hello',
-    });
-
-    const server = await startAutomationServer({
-      claimRunOnce: {
-        run: {
-          id: 'run-budget-1',
-          automationId: 'automation-budget-1',
-          state: 'queued',
-          scheduledAt: now,
-          dueAt: now,
-          claimedAt: null,
-          startedAt: null,
-          finishedAt: null,
-          claimedByMachineId: null,
-          leaseExpiresAt: null,
-          attempt: 1,
-          summaryCiphertext: null,
-          errorCode: null,
-          errorMessage: null,
-          producedSessionId: null,
-          createdAt: now,
-          updatedAt: now,
-        },
-        automation: {
-          id: 'automation-budget-1',
-          name: 'Budgeted run',
-          enabled: true,
-          targetType: 'new_session',
-          templateCiphertext: template,
-        },
-      },
-    });
-
-    const homeDir = await mkdtemp(join(tmpdir(), 'happier-automation-worker-budget-'));
-    process.env.HAPPIER_HOME_DIR = homeDir;
-    process.env.HAPPIER_SERVER_URL = server.baseUrl;
-    process.env.HAPPIER_WEBAPP_URL = server.baseUrl;
-
-    vi.resetModules();
-    const { startAutomationWorker } = await import('./automationWorker');
-
-    const spawnSession = vi.fn(async () => ({ type: 'success' as const, sessionId: 'session-budget-1' }));
-
-    const budgetRegistry = new ExecutionBudgetRegistry({ maxConcurrentExecutionRuns: 1, maxConcurrentOneShotTasks: 1 });
-    expect(budgetRegistry.tryAcquireOneShotTask('busy', 'automation')).toBe(true);
-
-    const worker = startAutomationWorker({
-      token: 'token-budget-1',
-      machineId: 'machine-budget-1',
-      encryption: TEST_ENCRYPTION,
-      spawnSession,
-      budgetRegistry,
-      env: {
-        HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1',
-        HAPPIER_AUTOMATION_CLAIM_POLL_MS: '20',
-        HAPPIER_AUTOMATION_ASSIGNMENT_REFRESH_MS: '20',
-        HAPPIER_AUTOMATION_LEASE_MS: '200',
-        HAPPIER_AUTOMATION_HEARTBEAT_MS: '50',
-      } as NodeJS.ProcessEnv,
-    });
-
-    try {
-      await new Promise((resolve) => setTimeout(resolve, 200));
-      expect(spawnSession).toHaveBeenCalledTimes(0);
-      expect(server.state.started).toHaveLength(0);
-      expect(server.state.succeeded).toHaveLength(0);
-    } finally {
-      worker.stop();
-      await server.close();
-      await rm(homeDir, { recursive: true, force: true });
-    }
-  });
 });

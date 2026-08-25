@@ -241,13 +241,18 @@ describe('createOsProcessControl.resolveDescendantPids', () => {
             execFile,
         });
 
-        await expect(control.resolveDescendantPids(4_321)).resolves.toEqual([4_322, 4_323]);
+        await expect(control.resolveDescendantPids(4_321)).resolves.toEqual({
+            status: 'resolved',
+            pids: [4_322, 4_323],
+        });
         expect(execFile).toHaveBeenCalledWith('ps', ['-A', '-o', 'pid=,ppid='], expect.objectContaining({
             timeout: 2_000,
         }));
     });
 
-    it('degrades to the listener pid alone when the process table is unreadable', async () => {
+    it('reports the process table as unavailable rather than as an empty descendant set', async () => {
+        // "No children" and "we could not look" must not collapse: the caller acts on the first
+        // and has to refuse the second, or a failed lookup becomes a partial kill.
         const control = createOsProcessControl({
             platform: 'linux',
             refreshInventory: async () => snapshot(),
@@ -256,7 +261,40 @@ describe('createOsProcessControl.resolveDescendantPids', () => {
             },
         });
 
-        await expect(control.resolveDescendantPids(4_321)).resolves.toEqual([]);
+        await expect(control.resolveDescendantPids(4_321)).resolves.toEqual({ status: 'unavailable' });
+    });
+
+    it('reports unavailable when the process-table query times out with partial stdout', async () => {
+        // The observed failure: on a loaded machine the 2s `ps` timeout fires. execFile rejects
+        // and carries whatever it had captured. Accepting that prefix would hand the caller a
+        // silently short descendant list — the truncated table below omits the grandchild.
+        const control = createOsProcessControl({
+            platform: 'darwin',
+            refreshInventory: async () => snapshot(),
+            execFile: async () => {
+                const error = new Error('ps ETIMEDOUT') as NodeJS.ErrnoException & { stdout: string };
+                error.code = 'ETIMEDOUT';
+                error.stdout = '  4321   300\n  4322  4321\n';
+                throw error;
+            },
+        });
+
+        await expect(control.resolveDescendantPids(4_321)).resolves.toEqual({ status: 'unavailable' });
+    });
+
+    it('reports unavailable when `ps` exits cleanly but its output is unparseable', async () => {
+        // A busybox `ps` ignores `-o` and prints its own columns. Every line fails the
+        // `pid ppid` match, so the table reads as empty — which, allowed through as "resolved
+        // with no descendants", is the timeout defect again behind a success exit code.
+        const control = createOsProcessControl({
+            platform: 'linux',
+            refreshInventory: async () => snapshot(),
+            execFile: async () => ({
+                stdout: 'PID   USER     TIME  COMMAND\n    1 root      0:00 init\n 4321 root      0:00 node\n',
+            }),
+        });
+
+        await expect(control.resolveDescendantPids(4_321)).resolves.toEqual({ status: 'unavailable' });
     });
 
     it('resolves nothing on Windows, where taskkill /T owns the subtree', async () => {
@@ -267,7 +305,7 @@ describe('createOsProcessControl.resolveDescendantPids', () => {
             execFile,
         });
 
-        await expect(control.resolveDescendantPids(4_321)).resolves.toEqual([]);
+        await expect(control.resolveDescendantPids(4_321)).resolves.toEqual({ status: 'resolved', pids: [] });
         expect(execFile).not.toHaveBeenCalled();
     });
 });

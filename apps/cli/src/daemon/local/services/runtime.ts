@@ -8,7 +8,12 @@ import {
     isLocalServiceActionConfirmationNonceV1,
 } from '@happier-dev/protocol';
 
-import { createLocalServiceInventoryRegistry, type LocalServiceInventoryRegistry } from './inventory/registry';
+import { createLocalServiceInventoryAnnotationsFileStore } from './inventory/annotationsFile';
+import {
+    createLocalServiceInventoryRegistry,
+    type LocalServiceInventoryAnnotationStore,
+    type LocalServiceInventoryRegistry,
+} from './inventory/registry';
 import { createLocalServiceInventoryRoutes, type LocalServiceInventoryRoutes } from './inventory/routes';
 import {
     createLocalServicePreviewRegistry,
@@ -49,7 +54,7 @@ import {
 import {
     discoverLocalServiceRunTargets,
     type LocalServiceRunTarget,
-} from './managed/scripts';
+} from './launch/runTargets';
 import {
     scanPlatformLocalServices,
     type LocalServicesScanResult,
@@ -59,14 +64,6 @@ import {
     createLocalServiceEndpointEnricher,
     type LocalServiceEndpointEnricher,
 } from './inventory/endpoint';
-import {
-    createManagedLocalServiceRegistry,
-    type ManagedLocalServiceRegistry,
-} from './managed/registry';
-import {
-    createLocalServiceManagedRoutes,
-    type LocalServiceManagedRoutes,
-} from './managed/routes';
 import {
     createHostedWebStaticAssetLifecycle,
     type HostedWebStaticAssetLifecycle,
@@ -82,7 +79,6 @@ type LocalServiceWorkspaceFactsProvider =
 
 export type LocalServicesDaemonRuntime = Readonly<{
     inventoryRegistry: LocalServiceInventoryRegistry;
-    managedRegistry: ManagedLocalServiceRegistry;
     previewRegistry: LocalServicePreviewRegistry;
     /**
      * The shared terminal->port registration store. Daemon startup hands this same
@@ -92,7 +88,6 @@ export type LocalServicesDaemonRuntime = Readonly<{
     terminalRegistry: TerminalProcessRegistry;
     inventoryRoutes: LocalServiceInventoryRoutes;
     launcherRoutes: LocalServiceLauncherRoutes;
-    managedRoutes: LocalServiceManagedRoutes;
     previewRoutes: LocalServicePreviewRoutes;
     actionRoutes: LocalServiceActionRoutes;
     refreshInventoryNow(): Promise<NormalizedLocalServiceInventorySnapshot>;
@@ -114,11 +109,24 @@ function markSnapshotEntriesStale(
     ));
 }
 
+/**
+ * The gate's own account of why this refresh did not scan. `enabled` here means the feature id
+ * resolved enabled but the daemon-local gate refused, which is the deterministic test injection.
+ */
+function inventoryGateDiagnostic(decision: FeatureDecision): LocalServiceInventoryDiagnostic {
+    return {
+        code: decision.state === 'enabled'
+            ? 'local_services_inventory_feature_disabled'
+            : `local_services_inventory_${decision.blockerCode}`,
+        severity: 'info',
+    };
+}
+
 function disabledInventorySnapshot(input: Readonly<{
     previous: NormalizedLocalServiceInventorySnapshot;
     machineId: string;
     now: number;
-    decision: FeatureDecision;
+    diagnostic: LocalServiceInventoryDiagnostic;
 }>): NormalizedLocalServiceInventorySnapshot {
     return {
         ...input.previous,
@@ -126,12 +134,7 @@ function disabledInventorySnapshot(input: Readonly<{
         generatedAt: input.now,
         refreshState: 'idle',
         entries: markSnapshotEntriesStale(input.previous),
-        diagnostics: [{
-            code: input.decision.state === 'enabled'
-                ? 'local_services_inventory_feature_disabled'
-                : `local_services_inventory_${input.decision.blockerCode}`,
-            severity: 'info',
-        }],
+        diagnostics: [input.diagnostic],
     };
 }
 
@@ -205,6 +208,8 @@ export function createLocalServicesDaemonRuntime(params: Readonly<{
      */
     resolveServerFeaturesSnapshot?: () => Promise<CliServerFeaturesSnapshot | undefined> | CliServerFeaturesSnapshot | undefined;
     scan?: LocalServicesScanner;
+    /** Restart-durable store for user labels and forget-suppressions; defaults to the daemon's home-dir file. */
+    inventoryAnnotations?: LocalServiceInventoryAnnotationStore;
     now?: () => number;
     pageTitleEnricher?: LocalPageTitleEnricher;
     endpointEnricher?: LocalServiceEndpointEnricher;
@@ -218,12 +223,18 @@ export function createLocalServicesDaemonRuntime(params: Readonly<{
     resolveSessionWorkspacePaths?: (sessionId: string) => Promise<readonly string[]> | readonly string[];
     hostedWebStaticAssets?: Omit<HostedWebStaticAssetLifecycleOptions, 'registerPreview' | 'unregisterPreview'>;
 }>): LocalServicesDaemonRuntime {
-    const inventoryRegistry = createLocalServiceInventoryRegistry();
+    // User labels and "forget" decisions are the only inventory state a scan cannot rediscover, so
+    // they outlive the process (tunnels audit §4.8). Tests inject their own store; a test that
+    // injects a deterministic `scan` gets no persistence at all rather than writing to a real home.
+    const inventoryAnnotations: LocalServiceInventoryAnnotationStore | undefined = params.inventoryAnnotations
+        ?? (params.scan ? undefined : createLocalServiceInventoryAnnotationsFileStore());
+    const inventoryRegistry = createLocalServiceInventoryRegistry(
+        inventoryAnnotations ? { annotations: inventoryAnnotations } : {},
+    );
     // Shared daemon-process terminal->port registry: the same instance the PTY session
     // manager writes to on spawn. The scanner consults it for deterministic, attributed
     // workspace scoping. Defaults to the process singleton; tests inject a fresh one.
     const terminalRegistry = params.terminalRegistry ?? getSharedTerminalProcessRegistry();
-    const managedRegistry = createManagedLocalServiceRegistry();
     const previewRegistry = createLocalServicePreviewRegistry();
     const processEnv = params.processEnv ?? process.env;
     const now = params.now ?? (() => Date.now());
@@ -281,12 +292,27 @@ export function createLocalServicesDaemonRuntime(params: Readonly<{
         const generatedAt = now();
         const decision = resolveDecision();
         if (!isInventoryEnabled()) {
-            const snapshot = disabledInventorySnapshot({
-                previous,
-                machineId: params.machineId,
-                now: generatedAt,
-                decision,
-            });
+            const diagnostic = inventoryGateDiagnostic(decision);
+            // A gate that never resolved is not an answer about this machine's services. `unknown`
+            // means the server-features probe did not complete — a 1.5 s fetch on an event loop this
+            // daemon can stall for tens of seconds — so nothing was scanned and nothing is known.
+            // Publishing that as a settled `idle` inventory is the same false negative the scan
+            // boundary used to produce: a surface that confidently reports no services while they
+            // are running. A decided gate (the server turned the product off) IS an answer and stays
+            // authoritative.
+            const snapshot = decision.state === 'unknown'
+                ? nonAuthoritativeInventorySnapshot({
+                    previous,
+                    machineId: params.machineId,
+                    now: generatedAt,
+                    diagnostics: [diagnostic],
+                })
+                : disabledInventorySnapshot({
+                    previous,
+                    machineId: params.machineId,
+                    now: generatedAt,
+                    diagnostic,
+                });
             inventoryRegistry.replaceSnapshot(snapshot);
             return snapshot;
         }
@@ -339,9 +365,6 @@ export function createLocalServicesDaemonRuntime(params: Readonly<{
                 enricher: params.pageTitleEnricher,
             });
         }
-        managedRegistry.applyInventoryEntries(snapshotWithDiagnostics.entries);
-        // Publish only after the canonical managed registry has consumed the same snapshot so
-        // one-shot readiness subscribers observe the committed lifecycle transition.
         inventoryRegistry.replaceSnapshot(snapshotWithDiagnostics);
         return snapshotWithDiagnostics;
     };
@@ -461,7 +484,6 @@ export function createLocalServicesDaemonRuntime(params: Readonly<{
     const scannedLauncherFeed = createLocalServiceLauncherFeed({
         machineId: params.machineId,
         inventoryRegistry,
-        managedRegistry,
         previewRegistry,
         runTargets: runTargetsProvider,
         onRunTargetsError: params.onError,
@@ -503,25 +525,16 @@ export function createLocalServicesDaemonRuntime(params: Readonly<{
     const actionRoutes = createLocalServiceActionRoutes({
         machineId: params.machineId,
         inventoryRegistry,
-        managedRegistry,
         terminateEnabled: isTerminateEnabled,
         verifyConfirmationNonce: isLocalServiceActionConfirmationNonceV1,
         terminateDetectedService,
     });
-    const managedRoutes = createLocalServiceManagedRoutes({
-        machineId: params.machineId,
-        registry: managedRegistry,
-        now,
-    });
-
     return {
         inventoryRegistry,
-        managedRegistry,
         previewRegistry,
         terminalRegistry,
         inventoryRoutes,
         launcherRoutes,
-        managedRoutes,
         previewRoutes,
         actionRoutes,
         refreshInventoryNow,

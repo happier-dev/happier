@@ -31,12 +31,30 @@ import {
     createLoggerAndEventsAvailablePluginInvocationServiceBinding,
 } from '@/plugins/runtime/invocation/services/factory';
 import { createStablePluginHttpHost as createProductionStablePluginHttpHost } from './service';
-import { createVoiceAccountPluginHttpCredentialBindingHost } from './voiceAccountCredentialBinding';
+import {
+    createVoiceAccountPluginHttpCredentialBindingHost as createUnboundVoiceAccountPluginHttpCredentialBindingHost,
+} from './voiceAccountCredentialBinding';
+
+function createVoiceAccountPluginHttpCredentialBindingHost(
+    params: Parameters<typeof createUnboundVoiceAccountPluginHttpCredentialBindingHost>[0],
+) {
+    return createUnboundVoiceAccountPluginHttpCredentialBindingHost({
+        ...params,
+        phase: 'prepare',
+    });
+}
 
 type TestFetchRequest = Parameters<HttpService['request']>[0] & Readonly<{
     signal?: AbortSignal;
 }>;
 type TestFetchResponse = Awaited<ReturnType<HttpService['request']>>;
+
+/** DNS is a system boundary; this fixture has one declared public origin. */
+const resolveVoiceFixtureNetworkAddresses = async (
+    hostname: string,
+): Promise<readonly string[]> => (
+    hostname === 'voice.example.test' ? ['93.184.216.34'] : []
+);
 
 function createStablePluginHttpHost(
     params: Omit<Parameters<typeof createProductionStablePluginHttpHost>[0], 'adapter'> & Readonly<{
@@ -44,6 +62,7 @@ function createStablePluginHttpHost(
     }>,
 ) {
     return createProductionStablePluginHttpHost({
+        resolveNetworkAddresses: resolveVoiceFixtureNetworkAddresses,
         ...params,
         adapter: Object.freeze({
             request: async (
@@ -452,11 +471,40 @@ function createCatalogService(
 }
 
 describe('Voice account Plugin fetch credential binding', () => {
-    afterEach(() => {
-        resetActiveAccountSettingsSnapshotForTests();
-    });
+  afterEach(() => {
+    resetActiveAccountSettingsSnapshotForTests();
+  });
 
-    it('resolves the exact qualified ElevenLabs binding by the canonical recipient contract digest', async () => {
+  it('fails closed before credential materialization when the generic host has no Voice phase authority', async () => {
+    publishCredential();
+    const adapter = vi.fn(async (request: TestFetchRequest) => response(request, { voices: [] }));
+    const service = createStablePluginHttpHost({
+        adapter,
+        credentialBindingHost: createUnboundVoiceAccountPluginHttpCredentialBindingHost({
+            voiceProviders: [{
+                pluginId: 'acme.voice',
+                identity: { pluginId: 'acme.voice', localId: 'conversation' },
+                definition,
+            }],
+            credentialResolver: createVoiceCredentialResolver({ machineId: null }),
+        }),
+    }).bind({
+        plugin: { id: 'acme.voice', version: '1.0.0' },
+        contribution: { id: 'list-voices', qualifiedId: 'acme.voice/actions/list-voices' },
+        generation: 'generation-7',
+        correlationId: 'voice-catalog-operation',
+        surface: 'ui',
+        signal: new AbortController().signal,
+        isGenerationCurrent: () => true,
+    }, catalogNetworkBinding());
+
+    await expect(service.request(catalogRequest())).rejects.toMatchObject({
+      code: 'plugin_fetch_voice_account_operation_phase_authority_unavailable',
+    });
+    expect(adapter).not.toHaveBeenCalled();
+  });
+
+  it('resolves the exact qualified ElevenLabs binding by the canonical recipient contract digest', async () => {
         const identity = {
             pluginId: 'happier.voice.elevenlabs',
             localId: 'realtime-elevenlabs',
@@ -686,6 +734,7 @@ describe('Voice account Plugin fetch credential binding', () => {
         const operation = mutableDefinition.credentials!.hostMediated!.operations[0]!;
         const adapter = vi.fn(async (request: TestFetchRequest) => response(request));
         const credentialResolver: VoiceCredentialResolver = Object.freeze({
+            resolveSelectedSource: () => ({ kind: 'savedSecret' as const }),
             status: () => ({ available: true, source: 'account' as const }),
             async withSecret<T>(input: Readonly<{
                 identity: VoiceCredentialBindingIdentityV1;
@@ -1438,32 +1487,32 @@ describe('Voice account Plugin fetch credential binding', () => {
                     provider_only: true,
                 })
         ));
-        const fetch = createStablePluginHttpHost({
+        const signal = new AbortController().signal;
+        const bindForHostPhase = (phase: 'settings' | 'prepare') => createStablePluginHttpHost({
             adapter,
-            credentialBindingHost: createVoiceAccountPluginHttpCredentialBindingHost({
+            credentialBindingHost: createUnboundVoiceAccountPluginHttpCredentialBindingHost({
                 voiceProviders: [{
                     pluginId: 'acme.packed-voice',
                     identity: { pluginId: 'acme.packed-voice', localId: packedDefinition.id },
                     definition: packedDefinition,
                 }],
                 credentialResolver: createVoiceCredentialResolver({ machineId: null }),
+                phase,
             }),
-        });
-        const signal = new AbortController().signal;
-        const service = fetch.bind({
+        }).bind({
             plugin: { id: 'acme.packed-voice', version: '1.0.0' },
             contribution: {
                 id: packedDefinition.id,
                 qualifiedId: `acme.packed-voice/voiceProviders/${packedDefinition.id}`,
             },
             generation: 'generation-7',
-            correlationId: 'packed-voice-account-operation',
+            correlationId: `packed-voice-account-operation:${phase}`,
             surface: 'ui' as const,
             signal,
             isGenerationCurrent: () => true,
         }, createLoggerAndEventsAvailablePluginInvocationServiceBinding(
             'generation-7',
-            'binding-packed-voice',
+            `binding-packed-voice:${phase}`,
             [{
                 required: true,
                 request: {
@@ -1477,6 +1526,10 @@ describe('Voice account Plugin fetch credential binding', () => {
                 },
             }],
         ));
+        const services = Object.freeze({
+            settings: bindForHostPhase('settings'),
+            prepare: bindForHostPhase('prepare'),
+        });
         const request = async (
             operation: 'list-voices' | 'provision-voice' | 'client-auth',
             parameters: Readonly<Record<string, VoiceRealtimeJsonValue>>,
@@ -1489,6 +1542,9 @@ describe('Voice account Plugin fetch credential binding', () => {
                 operation: declaration,
                 parameters,
             });
+            const service = operation === 'client-auth'
+                ? services.prepare
+                : services.settings;
             return await service.request({
                 url: materialized.url,
                 method: materialized.method,

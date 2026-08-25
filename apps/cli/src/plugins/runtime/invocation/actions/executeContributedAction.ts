@@ -9,6 +9,8 @@ import {
   type JsonValue,
   type MessageActionAvailableSnapshotV1,
   type PluginMachineExecutionOriginV1,
+  type RehydratedPluginContributionPointOperationV1,
+  type TargetActionApprovalReplayPlacementV1,
 } from '@happier-dev/protocol';
 import { arePluginMachineExecutionOriginsEqual } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import type { PluginUiSelectedActionInputCarrierV1 } from '@happier-dev/protocol/plugins/ui';
@@ -17,7 +19,6 @@ import type {
   PluginInvocationOriginSurface,
 } from '@happier-dev/plugin-sdk';
 import type { PluginActionHandlerInvocation } from '@happier-dev/plugin-sdk/actions';
-import type { TargetedContributionPointSemanticOperation } from '@happier-dev/plugin-sdk/host/targeted-contributions';
 
 import type {
   ResolvedActionContribution,
@@ -30,14 +31,17 @@ import type { ContributionPolicyFacts } from '@/plugins/runtime/policy/evaluate'
 import type { TargetActionCurrentIntentRequest, TargetActionCurrentIntentResult } from '@/plugins/runtime/invocation/actionExecutor';
 import type { TargetActionOperationProgressPort } from '@/plugins/runtime/invocation/targetActionRegistry';
 import {
-  isActionApprovalRequiredByEnv,
-  isActionEnabledByEnv,
-} from '@/settings/actionsSettings';
+  isActionEnabledByActionsSettings,
+  isApprovalRequiredByActionsSettings,
+} from '@happier-dev/protocol/actions';
+import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 
 export type PluginActionExecutorResult = Readonly<
   | {
     ok: true;
     result: JsonValue | null;
+    /** Host-private handoff from API current-intent admission to Action ingress. */
+    deferredApprovalArtifactId?: string;
     /** Present only for the contributed-Action execution-origin request. */
     executionOrigin?: PluginMachineExecutionOriginV1;
   }
@@ -79,11 +83,16 @@ export type AdmittedTargetedOperationExecutionRequest = Readonly<{
     immutableGenerationId: string;
   }>;
   contributorImmutableGenerationId: string;
-  targetProtocol: TargetedContributionPointSemanticOperation;
+  targetProtocol: RehydratedPluginContributionPointOperationV1;
 }>;
 
 type CurrentTargetExecutionOrigin = Readonly<
   | { status: 'resolved'; origin: PluginMachineExecutionOriginV1 }
+  | { status: 'aborted' | 'unavailable' }
+>;
+
+type CurrentTargetApprovalReplayPlacement = Readonly<
+  | { status: 'resolved'; placement: TargetActionApprovalReplayPlacementV1 }
   | { status: 'aborted' | 'unavailable' }
 >;
 
@@ -132,6 +141,26 @@ async function resolveCurrentTargetExecutionOrigin(
       return Object.freeze({ status: 'unavailable' as const });
     }
     return Object.freeze({ status: 'resolved' as const, origin });
+  } catch {
+    return Object.freeze({
+      status: signal?.aborted ? 'aborted' as const : 'unavailable' as const,
+    });
+  }
+}
+
+async function resolveCurrentTargetApprovalReplayPlacement(
+  registry: ResolvedExecutablePluginRuntimeRegistry,
+  pluginId: string,
+  signal: AbortSignal | undefined,
+): Promise<CurrentTargetApprovalReplayPlacement> {
+  if (signal?.aborted) return Object.freeze({ status: 'aborted' as const });
+  const resolver = registry.resolveCurrentPluginApprovalReplayPlacement;
+  if (!resolver) return Object.freeze({ status: 'unavailable' as const });
+  try {
+    const placement = await resolver(pluginId, signal);
+    if (signal?.aborted) return Object.freeze({ status: 'aborted' as const });
+    if (!placement) return Object.freeze({ status: 'unavailable' as const });
+    return Object.freeze({ status: 'resolved' as const, placement });
   } catch {
     return Object.freeze({
       status: signal?.aborted ? 'aborted' as const : 'unavailable' as const,
@@ -221,7 +250,7 @@ function targetedOperationResultInvalid(): PluginActionExecutorResult {
 }
 
 function validateTargetedOperationInput(
-  targetProtocol: TargetedContributionPointSemanticOperation,
+  targetProtocol: RehydratedPluginContributionPointOperationV1,
   input: unknown,
 ): Readonly<{ ok: true; value: unknown }> | Readonly<{ ok: false; result: PluginActionExecutorResult }> {
   if (targetProtocol.input.kind === 'contributorDefined') {
@@ -237,7 +266,7 @@ function validateTargetedOperationInput(
 }
 
 function validateTargetedOperationResult(
-  targetProtocol: TargetedContributionPointSemanticOperation,
+  targetProtocol: RehydratedPluginContributionPointOperationV1,
   result: JsonValue | null,
 ): Readonly<{ ok: true; value: JsonValue }> | Readonly<{ ok: false; result: PluginActionExecutorResult }> {
   try {
@@ -295,8 +324,16 @@ export async function executeContributedAction(params: Readonly<{
   input?: unknown;
   /** Host-private request from ActionsService.executeWithExecutionOrigin only. */
   captureExecutionOrigin?: true;
+  /**
+   * Host-private placement capture for a deferred API approval. Unlike the
+   * public execution-origin result, it never turns a completed direct Action
+   * into an origin-change failure after the target handler has run.
+   */
+  captureApprovalReplayPlacement?: true;
   /** Equality-only precondition from ActionsService.executeWithExecutionOrigin only. */
   expectedExecutionOrigin?: PluginMachineExecutionOriginV1;
+  /** Exact daemon placement re-read from a durable API approval subject. */
+  expectedApprovalReplayPlacement?: TargetActionApprovalReplayPlacementV1;
   /**
    * Host-stamped targeted-contribution admission fence. It is never Action
    * input, a target selector, or public SDK call option.
@@ -400,9 +437,14 @@ export async function executeContributedAction(params: Readonly<{
     pluginId,
     action.definition.id,
   );
+  const actionSettingsProvider = createActionSettingsProvider();
   if (
     contributedActionSettingsId !== null
-    && !isActionEnabledByEnv(contributedActionSettingsId, { surface: actionSurface })
+    && !isActionEnabledByActionsSettings(
+      contributedActionSettingsId,
+      actionSettingsProvider.getActionsSettings(),
+      { surface: actionSurface },
+    )
   ) {
     return {
       matched: true,
@@ -540,6 +582,42 @@ export async function executeContributedAction(params: Readonly<{
         ),
       };
     }
+    const beforeApprovalReplayPlacement = params.expectedApprovalReplayPlacement === undefined
+      ? null
+      : await resolveCurrentTargetApprovalReplayPlacement(
+          runtimeRegistry,
+          pluginId,
+          params.context.signal,
+        );
+    if (beforeApprovalReplayPlacement && beforeApprovalReplayPlacement.status !== 'resolved') {
+      return {
+        matched: true,
+        result: actionHandlerNotStartedFailure(
+          beforeApprovalReplayPlacement.status === 'aborted'
+            ? 'plugin_action_aborted'
+            : 'plugin_action_execution_origin_unavailable',
+          beforeApprovalReplayPlacement.status === 'aborted'
+            ? 'Plugin action invocation was aborted'
+            : 'Current target approval replay placement is unavailable',
+        ),
+      };
+    }
+    if (beforeApprovalReplayPlacement?.status === 'resolved'
+      && params.expectedApprovalReplayPlacement !== undefined
+      && (
+        beforeApprovalReplayPlacement.placement.serverId
+          !== params.expectedApprovalReplayPlacement.serverId
+        || beforeApprovalReplayPlacement.placement.machineId
+          !== params.expectedApprovalReplayPlacement.machineId
+      )) {
+      return {
+        matched: true,
+        result: actionHandlerNotStartedFailure(
+          'plugin_action_execution_origin_mismatch',
+          'Persisted target approval does not match the current target execution origin',
+        ),
+      };
+    }
     if (admittedTargetedOperation !== undefined
       && !(await isExpectedPluginCurrent({
         runtimeRegistry,
@@ -563,6 +641,39 @@ export async function executeContributedAction(params: Readonly<{
             : {}),
         })
       : params.context.caller;
+    const replayPlacement = params.expectedApprovalReplayPlacement;
+    const requestCurrentIntent = params.requestCurrentIntent && params.captureApprovalReplayPlacement === true
+      ? async (request: TargetActionCurrentIntentRequest): Promise<TargetActionCurrentIntentResult> => {
+          const requestedSurface = request.invocationSurface ?? request.surface;
+          const createsDurableApiApproval = requestedSurface === 'api'
+            && (request.action.confirmation !== undefined
+              || request.action.approvalRequiredByActionSettings === true);
+          if (!createsDurableApiApproval) return await params.requestCurrentIntent!(request);
+          const currentPlacement = await resolveCurrentTargetApprovalReplayPlacement(
+            runtimeRegistry,
+            pluginId,
+            request.signal,
+          );
+          if (currentPlacement.status !== 'resolved') {
+            return {
+              status: 'unavailable',
+              code: currentPlacement.status === 'aborted'
+                ? 'plugin_action_aborted'
+                : 'plugin_action_execution_origin_unavailable',
+            };
+          }
+          return await params.requestCurrentIntent!({
+            ...request,
+            replayPlacement: Object.freeze({
+              serverId: currentPlacement.placement.serverId,
+              machineId: currentPlacement.placement.machineId,
+              ...(params.context.defaultSessionId === undefined
+                ? {}
+                : { defaultSessionId: params.context.defaultSessionId }),
+            }),
+          });
+        }
+      : params.requestCurrentIntent;
     const targetInvocation = {
       pluginId,
       localId: action.definition.id,
@@ -591,37 +702,85 @@ export async function executeContributedAction(params: Readonly<{
       ...(params.context.operationProgress
         ? { operationProgress: params.context.operationProgress }
         : {}),
+      ...(replayPlacement ? { replayPlacement } : {}),
+      ...(params.expectedApprovalReplayPlacement === undefined
+        ? {}
+        : { requireCurrentIntent: true as const }),
       ...(contributedActionSettingsId === null
         ? {}
         : {
-          isEnabledByActionSettings: () => isActionEnabledByEnv(
+          isEnabledByActionSettings: () => isActionEnabledByActionsSettings(
             contributedActionSettingsId,
+            actionSettingsProvider.getActionsSettings(),
             { surface: actionSurface },
           ),
-          isApprovalRequiredByActionSettings: () => isActionApprovalRequiredByEnv(
+          isApprovalRequiredByActionSettings: () => isApprovalRequiredByActionsSettings(
             contributedActionSettingsId,
+            actionSettingsProvider.getActionsSettings(),
             { surface: actionSurface },
           ),
         }),
-      ...(params.requestCurrentIntent ? { requestCurrentIntent: params.requestCurrentIntent } : {}),
+      ...(requestCurrentIntent ? { requestCurrentIntent } : {}),
     } as const;
-    const projectTargetResult = (targetResult: Awaited<ReturnType<
+    const projectTargetResult = async (targetResult: Awaited<ReturnType<
       typeof targetActionInvocations.invoke
-    >>): PluginActionExecutorResult => {
+    >>): Promise<PluginActionExecutorResult> => {
+      if (targetResult.status === 'deferred') {
+        return {
+          ok: true,
+          result: null,
+          deferredApprovalArtifactId: targetResult.artifactId,
+        };
+      }
       const validatedResult = targetResult.status !== 'executed' || admittedTargetedOperation === undefined
         ? null
         : validateTargetedOperationResult(admittedTargetedOperation.targetProtocol, targetResult.value);
       if (validatedResult !== null && !validatedResult.ok) return validatedResult.result;
       if (targetResult.status === 'executed') {
-        // Generation and execution-origin fences protect admission before the
-        // effect begins. A known successful settlement must survive later
+        // Generation fences protect admission before the effect begins, and an
+        // ordinary Action's known successful settlement survives later
         // retirement so callers never mistake it for absence and retry blindly.
+        // The origin-bearing request is a different contract: it publishes the
+        // target's execution origin as current transport authority, so the
+        // origin is re-read after settlement and returned only when the before,
+        // after, and expected origins all agree. The refusal is deliberately
+        // post-start and never carries `notStarted`.
+        if (beforeExecutionOrigin?.status === 'resolved'
+          && (params.captureExecutionOrigin === true || params.expectedExecutionOrigin !== undefined)) {
+          const afterExecutionOrigin = await resolveCurrentTargetExecutionOrigin(
+            runtimeRegistry,
+            pluginId,
+            params.context.signal,
+          );
+          if (afterExecutionOrigin.status !== 'resolved') {
+            return {
+              ok: false,
+              errorCode: 'plugin_action_execution_origin_unavailable',
+              error: 'Current target execution origin is unavailable',
+            };
+          }
+          // Origin equality is exact field identity, so an expected origin that
+          // already equals the before-origin also equals any equal after-origin.
+          // Comparing before/after is the whole three-way agreement.
+          if (!arePluginMachineExecutionOriginsEqual(
+            beforeExecutionOrigin.origin,
+            afterExecutionOrigin.origin,
+          )) {
+            return {
+              ok: false,
+              errorCode: 'plugin_action_execution_origin_changed',
+              error: 'Target execution origin changed while the contributed Action was running',
+            };
+          }
+          return {
+            ok: true,
+            result: validatedResult === null ? targetResult.value : validatedResult.value,
+            executionOrigin: afterExecutionOrigin.origin,
+          };
+        }
         return {
           ok: true,
           result: validatedResult === null ? targetResult.value : validatedResult.value,
-          ...(beforeExecutionOrigin?.status === 'resolved'
-            ? { executionOrigin: beforeExecutionOrigin.origin }
-            : {}),
         };
       }
       return {
@@ -645,10 +804,10 @@ export async function executeContributedAction(params: Readonly<{
     if (params.context.capturePreparedInvocation) {
       const prepared = await targetActionInvocations.prepare(targetInvocation);
       if (prepared.kind === 'settled') {
-        return { matched: true, result: projectTargetResult(prepared.result) };
+        return { matched: true, result: await projectTargetResult(prepared.result) };
       }
       params.context.capturePreparedInvocation(Object.freeze({
-        run: async (operationProgress) => projectTargetResult(await prepared.run({
+        run: async (operationProgress) => await projectTargetResult(await prepared.run({
           ...(operationProgress ? { operationProgress } : {}),
         })),
       }));
@@ -657,7 +816,7 @@ export async function executeContributedAction(params: Readonly<{
     const targetResult = await targetActionInvocations.invoke(targetInvocation);
     return {
       matched: true,
-      result: projectTargetResult(targetResult),
+      result: await projectTargetResult(targetResult),
     };
   }
 

@@ -462,7 +462,24 @@ describe('bootstrapMachineSyncRuntime', () => {
             registry: { stableEventsBroker: { publishHostEventEnvelope } },
             release: releaseWithBroker,
         });
-        receiveUpdate(lifecycleUpdate);
+        // A cancellation that landed after dispatch permission can only be
+        // published as uncertain, so `cause` is the whole reason a plugin
+        // observer can tell it apart from ordinary uncertainty. Dropping it
+        // here would silently downgrade the observation.
+        const causedLifecycleUpdate = {
+            body: {
+                t: 'automation-run-state-changed',
+                runId: 'run-1',
+                automationId: 'automation-1',
+                originKind: 'scheduled',
+                previousState: 'running',
+                currentState: 'outcome_uncertain',
+                transitionedAt: 2,
+                claimedByMachineId: 'machine-1',
+                cause: 'cancelledAfterDispatchPermitted',
+            },
+        } as const;
+        receiveUpdate(causedLifecycleUpdate);
         expect(automationWorker.handleServerUpdate).toHaveBeenCalledTimes(2);
         expect(publishHostEventEnvelope).toHaveBeenCalledWith({
             eventId: '@happier/automation/run-state-changed',
@@ -471,10 +488,11 @@ describe('bootstrapMachineSyncRuntime', () => {
                 runId: 'run-1',
                 automationId: 'automation-1',
                 originKind: 'scheduled',
-                previousState: null,
-                currentState: 'queued',
-                transitionedAt: 1,
-                claimedByMachineId: null,
+                previousState: 'running',
+                currentState: 'outcome_uncertain',
+                transitionedAt: 2,
+                claimedByMachineId: 'machine-1',
+                cause: 'cancelledAfterDispatchPermitted',
             },
         });
         await vi.waitFor(() => expect(releaseWithBroker).toHaveBeenCalledOnce());
@@ -1736,14 +1754,22 @@ describe('bootstrapMachineSyncRuntime', () => {
                     destination: { host: '127.0.0.1', port: 3000 },
                     selectedEncoding: PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2,
                     relayAuthorization: {
+                        // Migrated v:1 -> v:2 on 2026-08-23 (lane D3) when relay authorization V1
+                        // was removed from the wire union. V1 had no minter and always failed
+                        // verification, so this fixture asserted rejection through a shape no
+                        // producer could create. V2 is the only shape a verifier accepts; the
+                        // signature below is still unverifiable, so the contract under test —
+                        // an invalid relay authorization aborts with `relay_authorization_invalid`
+                        // — is unchanged and now runs against a reachable shape.
                         payload: {
-                            v: 1,
+                            v: 2,
                             grantId: 'relay_grant_1',
                             accountId: 'account_1',
                             targetMachineId: 'machine-1',
                             flowKind: 'tcp_tunnel',
                             routeKind: 'server_relay',
                             tunnelId: 'tun_invalid_auth',
+                            relaySocketId: 'socket_invalid_auth',
                             destination: { host: '127.0.0.1', port: 3000 },
                             capProfileId: 'interactive',
                             maxFrameBytes: 64 * 1024,

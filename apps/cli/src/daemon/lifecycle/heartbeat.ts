@@ -1,5 +1,6 @@
 import { readFileSync } from 'fs';
 
+import { isPidPresent } from '@happier-dev/cli-common/process';
 import type { ApiMachineClient } from '@/api/apiMachine';
 import type { DaemonLocallyPersistedState } from '@/persistence';
 import { projectPath } from '@/projectPath';
@@ -37,18 +38,6 @@ function parsePositiveInt(rawValue: string | undefined, fallback: number): numbe
 function parseNonNegativeInt(rawValue: string | undefined, fallback: number): number {
   const parsed = Number.parseInt(rawValue ?? '', 10);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
-}
-
-function isPidAliveBestEffort(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    const code = error && typeof error === 'object' ? (error as any).code : null;
-    // EPERM means the process exists but we lack permission to signal it. Fail closed and treat it as alive.
-    if (code === 'ESRCH') return false;
-    return true;
-  }
 }
 
 export function startDaemonHeartbeatLoop(params: Readonly<{
@@ -195,7 +184,7 @@ export function startDaemonHeartbeatLoop(params: Readonly<{
 
       // Prune stale sessions
       for (const [pid, tracked] of pidToTrackedSession.entries()) {
-        if (!isPidAliveBestEffort(pid)) {
+        if (!isPidPresent(pid)) {
           if (isShuttingDown?.() === true) {
             return;
           }
@@ -239,9 +228,7 @@ export function startDaemonHeartbeatLoop(params: Readonly<{
         await gcExecutionRunMarkers({
           nowMs: Date.now(),
           terminalTtlMs: executionRunTerminalTtlMs,
-          isPidAlive: (pid) => {
-            return isPidAliveBestEffort(pid);
-          },
+          isPidAlive: isPidPresent,
           isPidSafeHappyProcess: async (pid) => {
             if (pidToTrackedSession.has(pid)) return true;
             const proc = await findHappyProcessByPid(pid);
@@ -279,7 +266,7 @@ export function startDaemonHeartbeatLoop(params: Readonly<{
       const cleanupPidMapIfUntracked = async (map: Map<number, unknown>) => {
         for (const [pid] of map.entries()) {
           if (pidToTrackedSession.has(pid)) continue;
-          if (!isPidAliveBestEffort(pid)) {
+          if (!isPidPresent(pid)) {
             await cleanupPidSessionResources({
               pid,
               spawnResourceCleanupByPid,
@@ -322,19 +309,24 @@ export function startDaemonHeartbeatLoop(params: Readonly<{
         if (isShuttingDown?.() === true) {
           return;
         }
+        // Republish the record this daemon started from, changing only what a heartbeat owns.
+        // Enumerating the carried-over fields silently erased every field added to the state
+        // since the enumeration was written — the running-runtime identity `happier doctor`
+        // reports survived exactly one heartbeat before this was a spread.
+        //
+        // The heartbeat is the only writer of this record after startup, so the readiness fact
+        // it stamps and `lastHeartbeatAt` always describe the same instant. While no machine
+        // client exists yet the fact is genuinely unavailable, so the field is omitted and
+        // readers report unknown rather than inventing a negative.
+        const machineControlClient = getApiMachineForSessions();
         const updatedState: DaemonLocallyPersistedState = {
+          ...fileState,
           pid: process.pid,
           httpPort: controlPort,
-          startedAt: fileState.startedAt,
-          startedWithCliVersion: fileState.startedWithCliVersion,
-          startedWithPublicReleaseChannel: fileState.startedWithPublicReleaseChannel,
-          runtimeId: fileState.runtimeId,
-          startupSource: fileState.startupSource,
-          serviceLabel: fileState.serviceLabel,
-          machineId: fileState.machineId,
           lastHeartbeatAt: Date.now(),
-          daemonLogPath: fileState.daemonLogPath,
-          controlToken: fileState.controlToken,
+          ...(machineControlClient
+            ? { machineControlReady: machineControlClient.isMachineControlRegistrationReady() }
+            : {}),
         };
         const published = writeDaemonStateForCurrentOwner(updatedState);
         if (!published) {

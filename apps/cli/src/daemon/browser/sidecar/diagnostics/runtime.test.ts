@@ -5,21 +5,17 @@ import type {
     BrowserSidecarCdpEventSubscriber,
     BrowserSidecarViewLifecycleSubscriber,
 } from '../controlAdapter';
-import { createBrowserContextDiagnosticsRingBuffer } from '../../context/diagnostics/ringBuffer';
-import { tapBrowserDiagnosticsStoreIntoRingBuffer } from '../../context/diagnostics/storeTap';
-import { createBrowserDiagnosticsDaemonStore, type BrowserDiagnosticsDaemonStore } from '../../diagnostics/store';
+import {
+    createBrowserContextDiagnosticsSummarySource,
+    type BrowserContextDiagnosticsSummarySource,
+} from '../../context/diagnostics/summary';
+import { createBrowserDiagnosticsDaemonStore } from '../../diagnostics/store';
 import { createCdpBrowserContextSource } from '../../context/cdp/source';
 import { createSidecarCdpDiagnosticsRuntime } from './runtime';
 
 const OWNER = 'machine_owner';
 const VIEW = { browserSessionId: 'browser_session_1', viewId: 'view_1' } as const;
 const HANDLE = { targetId: 'target_1', sessionId: 'cdp_session_1' } as const;
-
-function tappedStore(store: BrowserDiagnosticsDaemonStore, ring: ReturnType<typeof createBrowserContextDiagnosticsRingBuffer>): BrowserDiagnosticsDaemonStore {
-    // Uses the same canonical tap as the production startup wiring so this test never drifts from
-    // the real publish/lifecycle forwarding contract.
-    return tapBrowserDiagnosticsStoreIntoRingBuffer({ store, ringBuffer: ring });
-}
 
 function fakeContextCapture() {
     let cdpListener: BrowserSidecarCdpEventSubscriber | null = null;
@@ -52,25 +48,25 @@ function fakeContextCapture() {
     };
 }
 
-function summaryContextSource(ring: ReturnType<typeof createBrowserContextDiagnosticsRingBuffer>) {
-    // The summary path only consults the diagnostics ring; transport/writer are never touched for it.
+function summaryContextSource(summaries: BrowserContextDiagnosticsSummarySource) {
+    // The summary path only consults the diagnostics summary source; transport/writer are never
+    // touched for it.
     return createCdpBrowserContextSource({
         transport: { dispatchPageCommand: vi.fn(async () => { throw new Error('unused'); }) },
         resolveView: () => HANDLE,
         screenshotMediaWriter: { write: vi.fn(async () => ({ ok: false as const, reason: 'capture_failed' as const })) },
-        summarizeDiagnostics: (request) => ring.summarize(request),
+        summarizeDiagnostics: (request) => summaries.summarize(request),
     });
 }
 
 describe('createSidecarCdpDiagnosticsRuntime', () => {
-    it('feeds the diagnostics store + ring from the live CDP stream once a view is bound, redacting raw payloads', async () => {
+    it('feeds the diagnostics store from the live CDP stream once a view is bound, redacting raw payloads', async () => {
         const store = createBrowserDiagnosticsDaemonStore({ machineId: 'machine_1', now: () => 9_000 });
-        const ring = createBrowserContextDiagnosticsRingBuffer({ now: () => 9_000 });
         const surface = fakeContextCapture();
 
         const runtime = createSidecarCdpDiagnosticsRuntime({
             ownerAccountId: OWNER,
-            store: tappedStore(store, ring),
+            store,
             contextCapture: surface.contextCapture,
             isEnabled: () => true,
             nowMs: () => 9_000,
@@ -113,8 +109,8 @@ describe('createSidecarCdpDiagnosticsRuntime', () => {
         expect(serialized).not.toContain('Bearer secret');
         expect(serialized).not.toContain('token=secret');
 
-        // The ring is now non-empty: the context captureSummary path returns a redacted network summary.
-        const networkSummary = await summaryContextSource(ring).captureSummary({
+        // The store is now non-empty: the context captureSummary path returns a redacted network summary.
+        const networkSummary = await summaryContextSource(createBrowserContextDiagnosticsSummarySource({ store, now: () => 9_000 })).captureSummary({
             kind: 'browserNetworkSummary',
             ...VIEW,
             navigationGeneration: 0,
@@ -130,12 +126,11 @@ describe('createSidecarCdpDiagnosticsRuntime', () => {
 
     it('stays empty when the live gate is disabled (fail-closed per event)', () => {
         const store = createBrowserDiagnosticsDaemonStore({ machineId: 'machine_1', now: () => 9_000 });
-        const ring = createBrowserContextDiagnosticsRingBuffer({ now: () => 9_000 });
         const surface = fakeContextCapture();
 
         const runtime = createSidecarCdpDiagnosticsRuntime({
             ownerAccountId: OWNER,
-            store: tappedStore(store, ring),
+            store,
             contextCapture: surface.contextCapture,
             isEnabled: () => false,
             nowMs: () => 9_000,
@@ -149,18 +144,18 @@ describe('createSidecarCdpDiagnosticsRuntime', () => {
         });
 
         expect(store.getSnapshot().events).toEqual([]);
-        expect(ring.summarize({ ...VIEW, navigationGeneration: 0, kind: 'browserNetworkSummary' })?.summary).toBe('');
+        expect(createBrowserContextDiagnosticsSummarySource({ store, now: () => 9_000 })
+            .summarize({ ...VIEW, navigationGeneration: 0, kind: 'browserNetworkSummary' })?.summary).toBe('');
         runtime.dispose();
     });
 
     it('detaches the per-view source on unbind and after dispose', () => {
         const store = createBrowserDiagnosticsDaemonStore({ machineId: 'machine_1', now: () => 9_000 });
-        const ring = createBrowserContextDiagnosticsRingBuffer({ now: () => 9_000 });
         const surface = fakeContextCapture();
 
         const runtime = createSidecarCdpDiagnosticsRuntime({
             ownerAccountId: OWNER,
-            store: tappedStore(store, ring),
+            store,
             contextCapture: surface.contextCapture,
             isEnabled: () => true,
             nowMs: () => 9_000,

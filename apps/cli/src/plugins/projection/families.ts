@@ -28,6 +28,13 @@ export type PluginProjectionFamilyContextV2 = Readonly<{
      */
     pluginExecutionOriginsByPluginId?: Readonly<Record<string, PluginMachineExecutionOriginV1>>;
     pluginUiHostRuntime?: unknown;
+    /**
+     * The requesting client's display locale, when it named one. Only the
+     * translations projection consumes it, to ship the locales that client can
+     * actually read instead of every contributed one. Absent means "no
+     * narrowing", which is the shape an older client receives.
+     */
+    requestedLocale?: string;
     scmRuntimeAvailability?: Readonly<{
         backendIds: ReadonlySet<string>;
         hostingProviderIds: ReadonlySet<string>;

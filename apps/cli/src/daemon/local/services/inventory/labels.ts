@@ -22,6 +22,11 @@ export type LocalServiceInventoryLabelPatchResult =
     | Readonly<{ ok: false; reason: 'unknown_inventory_entry' }>;
 
 export type LocalServiceInventoryLabelStore = Readonly<{
+    /**
+     * The restart-durable half of the store, keyed by the stable address tuple. Used by the
+     * registry's annotation persistence; the per-run inventory-id index is rebuilt from scans.
+     */
+    snapshotDurableLabels(): readonly (readonly [string, readonly LocalServiceInventoryStoredLabel[]])[];
     applyPatch(input: Readonly<{
         knownEntries: readonly LocalServiceInventoryLabelTarget[];
         inventoryId: string;
@@ -36,10 +41,21 @@ function fallbackKey(target: LocalServiceInventoryLabelTarget): string {
     return `${target.machineId}:${target.address.kind}:${target.address.host}:${target.port}`;
 }
 
-export function createLocalServiceInventoryLabelStore(): LocalServiceInventoryLabelStore {
+export type LocalServiceInventoryDurableLabelEntry = readonly [string, readonly LocalServiceInventoryStoredLabel[]];
+
+export function createLocalServiceInventoryLabelStore(
+    restoredDurableLabels: readonly LocalServiceInventoryDurableLabelEntry[] = [],
+): LocalServiceInventoryLabelStore {
     const labelsByInventoryId = new Map<string, readonly LocalServiceInventoryStoredLabel[]>();
-    const labelsByFallbackKey = new Map<string, readonly LocalServiceInventoryStoredLabel[]>();
+    // Only the address-derived key survives a restart: inventory ids are minted per scan, so a
+    // label stored against one would silently detach from the service the user named.
+    const labelsByFallbackKey = new Map<string, readonly LocalServiceInventoryStoredLabel[]>(
+        restoredDurableLabels.map(([key, labels]) => [key, Object.freeze([...labels])] as const),
+    );
     return {
+        snapshotDurableLabels() {
+            return [...labelsByFallbackKey.entries()].map(([key, labels]) => [key, labels] as const);
+        },
         applyPatch(input) {
             const target = input.knownEntries.find((entry) => entry.id === input.inventoryId);
             if (!target) {

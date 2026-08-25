@@ -27,8 +27,13 @@ import type { LocalServiceActionExecutionOutcome } from './executor';
  *    `taskkill /T` (subtree) then `/F` (force). We never address a process *group*: the
  *    listener pid of a run-wrapped dev server (`npm run dev` -> node) is not a group leader, so
  *    `kill(-pid)` raises ESRCH and signals nothing, and `kill(-pgid)` would reach unrelated
- *    members of the launching shell's group. The descendant set is resolved once, before
- *    SIGTERM: children orphaned by the SIGTERM keep the pids we already collected.
+ *    members of the launching shell's group. The descendant set is resolved before SIGTERM and
+ *    re-resolved before SIGKILL, unioned: pids orphaned onto init by the SIGTERM stay covered by
+ *    the first set, and a worker the service spawned during the grace window is caught by the
+ *    second. If the process table cannot be read we refuse (`process_tree_unresolved`) rather
+ *    than signalling the listener alone — killing the parent frees the port, so a partial tree
+ *    kill would report success while leaving the user's children running, which is the exact
+ *    class of lie this lane exists to remove.
  *  - **Post-release verification, with the failure named.** After signalling we poll liveness
  *    and confirm the port was released (or rebound by a *different* pid). If our pid still
  *    holds it we distinguish `port_not_released` (we did signal it and it survived) from
@@ -91,6 +96,14 @@ export type TerminateProcessSignalOutcome =
     | Readonly<{ status: 'permission_denied' }>
     | Readonly<{ status: 'failed' }>;
 
+/**
+ * Descendant resolution is three-valued for the same reason the listener probe is: "no children"
+ * and "we could not look" must not collapse, because one is safe to act on and the other is not.
+ */
+export type TerminateDescendantResolution =
+    | Readonly<{ status: 'resolved'; pids: readonly number[] }>
+    | Readonly<{ status: 'unavailable' }>;
+
 export type TerminateWindowsTreeInput = Readonly<{ pid: number; force: boolean }>;
 
 export type TerminateProcessControl = Readonly<{
@@ -98,11 +111,11 @@ export type TerminateProcessControl = Readonly<{
     /** Re-resolve which pid currently holds the `(host, port)` listener. */
     probeListener(input: TerminateListenerProbeInput): Promise<TerminateListenerProbeResult>;
     /**
-     * Transitive descendants of `pid`. Empty on Windows (`taskkill /T` owns the subtree) and
-     * empty when the process table could not be read — the caller then signals the pid alone
-     * and the port-release verification reports the real outcome.
+     * Transitive descendants of `pid`. `unavailable` means the process table could not be read;
+     * the caller must refuse rather than half-kill the tree. Windows resolves to an empty set —
+     * `taskkill /T` owns the subtree there.
      */
-    resolveDescendantPids(pid: number): Promise<readonly number[]>;
+    resolveDescendantPids(pid: number): Promise<TerminateDescendantResolution>;
     isProcessAlive(pid: number): Promise<boolean>;
     signal(input: TerminateProcessSignalInput): Promise<TerminateProcessSignalOutcome>;
     terminateWindowsTree(input: TerminateWindowsTreeInput): Promise<void>;
@@ -209,9 +222,14 @@ export function createTerminateDetectedService(
             return { status: 'denied', reasonCode: 'identity_changed' };
         }
 
-        const descendantPids = control.platform === 'posix'
-            ? await control.resolveDescendantPids(pid)
-            : [];
+        let descendantPids: readonly number[] = [];
+        if (control.platform === 'posix') {
+            const resolved = await control.resolveDescendantPids(pid);
+            if (resolved.status === 'unavailable') {
+                return { status: 'failed', reasonCode: 'process_tree_unresolved' };
+            }
+            descendantPids = resolved.pids;
+        }
 
         let deliveredAnySignal = false;
         try {
@@ -231,6 +249,15 @@ export function createTerminateDetectedService(
                 deliveredAnySignal = terminated.status === 'delivered';
                 await control.wait(graceMs);
                 if (await control.isProcessAlive(pid)) {
+                    // Surviving the grace window is exactly the case where the service may have
+                    // spawned more children during it, so re-resolve — and union, because the
+                    // first round's pids may since have been orphaned onto init and would no
+                    // longer appear as descendants.
+                    const escalation = await control.resolveDescendantPids(pid);
+                    if (escalation.status === 'unavailable') {
+                        return { status: 'failed', reasonCode: 'process_tree_unresolved' };
+                    }
+                    descendantPids = [...new Set([...descendantPids, ...escalation.pids])];
                     const killed = await control.signal({ pid, signal: 'SIGKILL', descendantPids });
                     const killFailure = signalFailureReasonCode(killed);
                     if (killFailure) {

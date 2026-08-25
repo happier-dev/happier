@@ -17,6 +17,7 @@ import {
     readPrivateOwnerFile,
     replacePrivateBearerFile,
 } from '@/daemon/privateBearerFile';
+import { killProcessTree } from '@/agent/runtime/process/killProcessTree';
 import { readProcessIdentityByPid } from '@/daemon/processIdentity';
 import {
     MANAGED_SERVICE_NUMERIC_CONTRACT,
@@ -28,7 +29,14 @@ export type ManagedServiceDurableLogCapture = Readonly<{
     close(): Promise<void>;
 }>;
 
-export interface ManagedServiceDurabilityOwner {
+/**
+ * Durability effects consumed by one managed-service process lifecycle.
+ *
+ * Session-wide projection resolution and orphan retirement stay on the daemon's persisted
+ * projection-store owner. A Session runner implements this smaller port by routing projection
+ * publication to that daemon while retaining its process logs locally.
+ */
+export interface ManagedServiceProcessDurabilityOwner {
     publishEndpointProjection(
         record: ManagedServiceEndpointProjectionInputV1,
     ): Promise<string>;
@@ -38,9 +46,6 @@ export interface ManagedServiceDurabilityOwner {
         sessionId: string;
         pluginId: string;
     }>): Promise<boolean>;
-    resolveEndpointProjection(
-        query: ManagedServiceEndpointProjectionResolveQuery,
-    ): Promise<ManagedServiceEndpointProjectionV1 | null>;
     openLog(input: Readonly<{
         instanceId: string;
         serverId: string;
@@ -48,6 +53,26 @@ export interface ManagedServiceDurabilityOwner {
         secretValues: readonly string[];
         nowMs?: number;
     }>): Promise<ManagedServiceDurableLogCapture>;
+}
+
+export interface ManagedServiceDurabilityOwner
+    extends ManagedServiceProcessDurabilityOwner {
+    resolveEndpointProjection(
+        query: ManagedServiceEndpointProjectionResolveQuery,
+    ): Promise<ManagedServiceEndpointProjectionV1 | null>;
+    /**
+     * Terminate and forget the managed children a Session runner owned when that runner is gone.
+     *
+     * A managed child is spawned detached, so it outlives its runner: a `SIGKILL`ed or crashed
+     * runner runs none of its own cleanup and the child keeps its port, its listener and the host
+     * credential in its process memory, while the next runner allocates another one. The projection
+     * this owner already persists carries the exact pid and process birthday, so the child can be
+     * identified without a second registry — and the birthday is what stops a recycled pid from
+     * being killed in its place.
+     */
+    retireSessionRunnerOwnedProjections(input: Readonly<{
+        sessionId: string;
+    }>): Promise<readonly number[]>;
 }
 
 const DEFAULT_MAX_ENDPOINT_PROJECTIONS = 256;
@@ -185,6 +210,8 @@ export function createManagedServiceDurabilityOwner(params: Readonly<{
     maxEndpointProjections?: number;
     maxLogBytes?: number;
     observeProcessStartIdentity?: (pid: number) => Promise<string | null>;
+    /** The canonical cross-platform process-tree terminator; injected only by tests. */
+    terminateProcessTree?: (input: Readonly<{ pid: number }>) => Promise<void>;
 }>): ManagedServiceDurabilityOwner {
     const endpointProjectionsDir = join(params.rootDir, 'endpoint-projections');
     const logsDir = join(params.rootDir, 'logs');
@@ -504,10 +531,42 @@ export function createManagedServiceDurabilityOwner(params: Readonly<{
         });
     }
 
+    async function retireSessionRunnerOwnedProjections(input: Readonly<{
+        sessionId: string;
+    }>): Promise<readonly number[]> {
+        return await runExclusive(async () => {
+            await ensureDirs();
+            const retiredPids: number[] = [];
+            const owned = readManagedServiceEndpointProjectionCandidates(params.rootDir)
+                .filter((projection) => projection.sessionId === input.sessionId)
+                .filter((projection) => projection.custodyOwner === 'sessionRunner');
+            for (const projection of owned) {
+                if (projection.mode === 'managedSpawn') {
+                    // `live` proves this exact pid is still the process the runner started;
+                    // `stale` means the pid was recycled and must not be signalled. `unknown`
+                    // leaves the record alone rather than guessing at somebody else's process.
+                    const state = await observeManagedSpawnProjectionState(projection);
+                    if (state === 'unknown') continue;
+                    if (state === 'live') {
+                        await (params.terminateProcessTree
+                            ?? ((target: Readonly<{ pid: number }>) =>
+                                killProcessTree(target)))({
+                            pid: projection.process.pid,
+                        }).catch(() => undefined);
+                        retiredPids.push(projection.process.pid);
+                    }
+                }
+                await removeEndpointProjectionIfCurrent(projection);
+            }
+            return Object.freeze(retiredPids);
+        });
+    }
+
     return Object.freeze({
         publishEndpointProjection,
         releaseEndpointProjection,
         resolveEndpointProjection,
+        retireSessionRunnerOwnedProjections,
         openLog,
     });
 }

@@ -35,29 +35,28 @@ describe('createLocalServicesDaemonRuntime platform scanner dispatch', () => {
             command: string,
             _args: readonly string[],
             _options: Readonly<{ timeout: number; maxBuffer: number }>,
-            callback: (error: Error | null, result: Readonly<{ stdout: string }>) => void,
+            // Mirrors the real `child_process.execFile` callback contract — `(error, stdout, stderr)`
+            // — because that is the boundary the scan adapter calls. It previously modelled
+            // `promisify(execFile)`'s resolved value instead.
+            callback: (error: Error | null, stdout: string, stderr: string) => void,
         ) => {
             if (command === 'netstat.exe') {
-                callback(null, {
-                    stdout: [
-                        '  Proto  Local Address          Foreign Address        State           PID',
-                        '  TCP    127.0.0.1:5173         0.0.0.0:0              LISTENING       1234',
-                    ].join('\r\n'),
-                });
+                callback(null, [
+                    '  Proto  Local Address          Foreign Address        State           PID',
+                    '  TCP    127.0.0.1:5173         0.0.0.0:0              LISTENING       1234',
+                ].join('\r\n'), '');
                 return;
             }
             if (command === 'powershell.exe') {
-                callback(null, {
-                    stdout: JSON.stringify([{
-                        ProcessId: 1234,
-                        ParentProcessId: 100,
-                        CommandLine: 'npm run dev',
-                        ExecutablePath: 'C:\\Program Files\\nodejs\\node.exe',
-                    }]),
-                });
+                callback(null, JSON.stringify([{
+                    ProcessId: 1234,
+                    ParentProcessId: 100,
+                    CommandLine: 'npm run dev',
+                    ExecutablePath: 'C:\\Program Files\\nodejs\\node.exe',
+                }]), '');
                 return;
             }
-            callback(new Error(`unexpected command ${command}`), { stdout: '' });
+            callback(new Error(`unexpected command ${command}`), '', '');
         });
 
         try {
@@ -85,8 +84,10 @@ describe('createLocalServicesDaemonRuntime platform scanner dispatch', () => {
                     },
                 },
             });
+            // No `timeout` is handed to Node: its timeout kill destroys the child's stdout from the
+            // timers phase and still reports success, so a scan cut short by a stalled event loop
+            // would arrive as an authoritative empty listing. The scan boundary owns the deadline.
             expect(execFileMock).toHaveBeenCalledWith('netstat.exe', ['-ano', '-p', 'tcp'], {
-                timeout: 2_000,
                 maxBuffer: 1024 * 1024,
             }, expect.any(Function));
         } finally {

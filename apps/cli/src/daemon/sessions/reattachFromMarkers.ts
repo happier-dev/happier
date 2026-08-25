@@ -1,3 +1,4 @@
+import { isPidPresent } from '@happier-dev/cli-common/process';
 import { logger } from '@/ui/logger';
 import type { StoredCredentials } from '@/persistence';
 import { parseOptionalBooleanEnv } from '@happier-dev/protocol';
@@ -8,7 +9,6 @@ import {
 import {
   buildSessionRunnerRespawnDescriptorV1FromSpawnOptions,
   buildSpawnSessionOptionsFromRespawnDescriptorV1,
-  normalizeOwnedMarkerRespawnEnvironmentCiphertext,
   type SessionRunnerRespawnDescriptorV1,
   SessionRunnerRespawnDescriptorV1Schema,
 } from '../processSupervision/sessionRunnerRespawnDescriptor';
@@ -26,7 +26,6 @@ import {
   hashProcessCommand,
   listSessionMarkers,
   removeSessionMarker,
-  rewriteSessionMarkerRespawnEnvironmentCiphertextIfOwned,
   writeSessionMarker,
   type DaemonSessionMarker,
 } from '../sessionRegistry';
@@ -238,99 +237,6 @@ async function includePidSpecificHappyProcessesForAliveMarkers(params: Readonly<
     result.push(processInfo);
   }
   return result;
-}
-
-async function rewriteExactlyAdoptedRespawnAliases(params: Readonly<{
-  markers: ReadonlyArray<DaemonSessionMarker>;
-  happyProcesses: ReadonlyArray<HappyProcessInfo>;
-  processIdentityByPid: ReadonlyMap<
-    number,
-    LocalServiceProcessFact
-  >;
-  pidToTrackedSession: ReadonlyMap<number, TrackedSession>;
-  credentials?: StoredCredentials | null;
-}>): Promise<void> {
-  const encryptionMaterial = params.credentials?.encryption;
-  if (!encryptionMaterial) return;
-  const processByPid = new Map(
-    params.happyProcesses.map((processInfo) => [
-      processInfo.pid,
-      processInfo,
-    ] as const),
-  );
-
-  for (const marker of params.markers) {
-    const sealedEnvironmentVariables =
-      marker.respawn?.sealedEnvironmentVariables;
-    if (
-      !sealedEnvironmentVariables
-      || !marker.processCommandHash
-      || marker.processStartTimeMs === undefined
-    ) {
-      continue;
-    }
-    const tracked = params.pidToTrackedSession.get(marker.pid);
-    const processInfo = processByPid.get(marker.pid);
-    const processIdentity =
-      params.processIdentityByPid.get(marker.pid);
-    if (
-      !tracked
-      || tracked.happySessionId !== marker.happySessionId
-      || tracked.processCommandHash !==
-        marker.processCommandHash
-      || tracked.processStartTimeMs !==
-        marker.processStartTimeMs
-      || !processInfo
-      || extractExistingSessionIdFromCommand(
-        processInfo.command,
-      ) !== marker.happySessionId
-      || !isOwnedLiveDaemonSessionProcessCommand(
-        processInfo.command,
-      )
-      || hashProcessCommand(processInfo.command) !==
-        marker.processCommandHash
-      || processIdentity?.pid !== marker.pid
-      || processIdentity.processStartTimeMs !==
-        marker.processStartTimeMs
-      || hashProcessCommand(processIdentity.command) !==
-        marker.processCommandHash
-    ) {
-      continue;
-    }
-
-    try {
-      const normalized =
-        normalizeOwnedMarkerRespawnEnvironmentCiphertext({
-          sealedEnvironmentVariables,
-          encryptionMaterial,
-        });
-      if (
-        !normalized
-        || normalized.ciphertext ===
-          sealedEnvironmentVariables.ciphertext
-      ) {
-        continue;
-      }
-      await rewriteSessionMarkerRespawnEnvironmentCiphertextIfOwned({
-        pid: marker.pid,
-        ownership: {
-          happySessionId: marker.happySessionId,
-          processCommandHash:
-            marker.processCommandHash,
-          processStartTimeMs:
-            marker.processStartTimeMs,
-        },
-        expectedCiphertext:
-          sealedEnvironmentVariables.ciphertext,
-        replacementCiphertext: normalized.ciphertext,
-      });
-    } catch (error) {
-      logger.debug(
-        `[DAEMON RUN] Failed to rewrite an exactly adopted respawn environment alias for session ${marker.happySessionId}`,
-        error,
-      );
-    }
-  }
 }
 
 async function recoverMarkerlessDaemonSpawnedSessions(params: Readonly<{
@@ -704,10 +610,9 @@ export async function reattachTrackedSessionsFromMarkers(params: Readonly<{
     const markers = await listSessionMarkers();
     const aliveMarkers = [];
     for (const marker of markers) {
-      try {
-        process.kill(marker.pid, 0);
+      if (isPidPresent(marker.pid)) {
         aliveMarkers.push(marker);
-      } catch {
+      } else {
         const sessionId = normalizeSessionId(marker.happySessionId);
         const attachmentState = marker.startedBy === 'daemon' && sessionId
           ? await readTerminalHostAttachmentState({ happyHomeDir: marker.happyHomeDir, sessionId })
@@ -781,13 +686,6 @@ export async function reattachTrackedSessionsFromMarkers(params: Readonly<{
       credentials,
       deviceLocalSecretStorage,
       processIdentityByPid,
-    });
-    await rewriteExactlyAdoptedRespawnAliases({
-      markers: aliveMarkers,
-      happyProcesses: happyProcessesForReattach,
-      processIdentityByPid,
-      pidToTrackedSession,
-      credentials,
     });
     if (adopted > 0) logger.debug(`[DAEMON RUN] Reattached ${adopted} sessions from disk markers`);
     const adoptedPidSet = new Set(pidToTrackedSession.keys());

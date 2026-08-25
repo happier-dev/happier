@@ -157,12 +157,11 @@ const attachRunnerRetainedPluginGenerations = async (
 
 describe('promoteForegroundDaemonServiceAuthority', () => {
   it.each([
-    ['reserved', 'happier.agent.codex', 'bundled_first_party'],
-    ['external', 'acme.agent.codex', 'external'],
-  ] as const)('proves %s host-declarative bindings with the canonical manifest authority', async (
+    ['reserved local/development', 'happier.agent.codex'],
+    ['external', 'acme.agent.codex'],
+  ] as const)('leaves %s host-declarative bindings to exact generation custody', async (
     _kind,
     pluginId,
-    retainedManifestAuthority,
   ) => {
     const retained = retainedHostDeclarativeAgent({
       pluginId,
@@ -207,7 +206,7 @@ describe('promoteForegroundDaemonServiceAuthority', () => {
           retained.pluginId,
           retained.immutableGenerationId,
           undefined,
-          retainedManifestAuthority,
+          undefined,
         );
     } finally {
       await rm(fixture.happyHomeDir, { recursive: true, force: true });

@@ -1,5 +1,5 @@
 import { PluginError } from '@happier-dev/plugin-sdk';
-import type { ComposerReferenceRuntime } from '@happier-dev/plugin-sdk';
+import type { ComposerReferenceRuntime, PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import {
     ComposerReferenceCandidatePageV1Schema,
     ComposerReferenceResolutionV1Schema,
@@ -23,6 +23,19 @@ type TargetRegistration = Readonly<{
 type GenerationLifecycle = Readonly<{
     isCurrent(): boolean;
     retirementSignal: AbortSignal;
+}>;
+
+export type TargetComposerReferenceInvocationContextFactory = (
+    input: Readonly<{
+        reference: PluginContributionIdentityV1;
+        generation: string;
+        sessionId?: string;
+        signal: AbortSignal;
+        isCurrent(): boolean;
+    }>,
+) => Readonly<{
+    context: PluginInvocationContext;
+    complete(): void;
 }>;
 
 /**
@@ -96,6 +109,7 @@ export function createTargetComposerReferenceRegistry(params: Readonly<{
     composerReferences: readonly ResolvedComposerReferenceContribution[];
     targetRegistrations: readonly TargetRegistration[];
     resolveGenerationLifecycle(pluginId: string): GenerationLifecycle;
+    createInvocationContext: TargetComposerReferenceInvocationContextFactory;
     callbackTimeoutMs?: number;
 }>): Readonly<{
     list(): readonly PluginContributionIdentityV1[];
@@ -104,11 +118,13 @@ export function createTargetComposerReferenceRegistry(params: Readonly<{
         query: string;
         trigger: ComposerReferenceTriggerV1;
         signal: AbortSignal;
+        sessionId?: string;
     }>): Promise<ComposerReferenceCandidatePageV1>;
     resolve(input: Readonly<{
         reference: PluginContributionIdentityV1;
         candidateId: string;
         signal: AbortSignal;
+        sessionId?: string;
     }>): Promise<ComposerReferenceResolutionV1>;
 }> {
     const callbackTimeoutMs = typeof params.callbackTimeoutMs === 'number'
@@ -149,7 +165,8 @@ export function createTargetComposerReferenceRegistry(params: Readonly<{
     async function invoke<TResult>(paramsForCall: Readonly<{
         reference: PluginContributionIdentityV1;
         signal: AbortSignal;
-        operation(runtime: ComposerReferenceRuntime, signal: AbortSignal): Promise<TResult>;
+        sessionId?: string;
+        operation(runtime: ComposerReferenceRuntime, context: PluginInvocationContext): Promise<TResult>;
     }>): Promise<TResult> {
         const entry = find(paramsForCall.reference);
         if (!entry) throw unavailableError(paramsForCall.reference);
@@ -170,6 +187,7 @@ export function createTargetComposerReferenceRegistry(params: Readonly<{
             return notCurrentError(paramsForCall.reference);
         };
         let removeAbortListener = () => {};
+        let invocation: ReturnType<TargetComposerReferenceInvocationContextFactory> | null = null;
         try {
             const aborted = new Promise<never>((_resolve, reject) => {
                 const rejectAbort = () => reject(abortError());
@@ -180,10 +198,18 @@ export function createTargetComposerReferenceRegistry(params: Readonly<{
                 signal.addEventListener('abort', rejectAbort, { once: true });
                 removeAbortListener = () => signal.removeEventListener('abort', rejectAbort);
             });
+            const createdInvocation = params.createInvocationContext({
+                reference: paramsForCall.reference,
+                generation: entry.generation,
+                ...(paramsForCall.sessionId ? { sessionId: paramsForCall.sessionId } : {}),
+                signal,
+                isCurrent: () => isEntryCurrent(entry, lifecycle),
+            });
+            invocation = createdInvocation;
             const result = await runWithOptionalTimeout(
                 callbackTimeoutMs,
                 async () => await Promise.race([
-                    paramsForCall.operation(entry.registration.value, signal),
+                    paramsForCall.operation(entry.registration.value, createdInvocation.context),
                     aborted,
                 ]),
                 () => {
@@ -201,6 +227,7 @@ export function createTargetComposerReferenceRegistry(params: Readonly<{
             throw error;
         } finally {
             removeAbortListener();
+            invocation?.complete();
         }
     }
 
@@ -232,7 +259,8 @@ export function createTargetComposerReferenceRegistry(params: Readonly<{
             const result = await invoke({
                 reference: input.reference,
                 signal: input.signal,
-                operation: async (runtime, signal) => await runtime.search(query, signal),
+                ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+                operation: async (runtime, context) => await runtime.search(query, context),
             });
             const parsed = ComposerReferenceCandidatePageV1Schema.safeParse(result);
             if (!parsed.success) throw invalidResultError(input.reference);
@@ -242,7 +270,8 @@ export function createTargetComposerReferenceRegistry(params: Readonly<{
             const result = await invoke({
                 reference: input.reference,
                 signal: input.signal,
-                operation: async (runtime, signal) => await runtime.resolve(input.candidateId, signal),
+                ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+                operation: async (runtime, context) => await runtime.resolve(input.candidateId, context),
             });
             const parsed = ComposerReferenceResolutionV1Schema.safeParse(result);
             if (!parsed.success) throw invalidResultError(input.reference);

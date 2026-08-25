@@ -1,5 +1,4 @@
 import type {
-  ConnectedServiceAuthGroupV1,
   ConnectedServiceId,
   ProviderAccountUsageSnapshotV1,
 } from '@happier-dev/protocol';
@@ -19,6 +18,9 @@ import {
   mergePersistedMemberRuntimeState,
   normalizeConnectedServiceAuthGroupPolicy,
 } from '../switching/buildConnectedServiceAuthGroupSwitchState';
+import type {
+  ConnectedServiceAuthGroupAccountUsageView,
+} from '../switching/buildConnectedServiceAuthGroupSwitchStateFromAccountUsage';
 
 export { canDisplayAccountUsageForQuota, canDriveQuotaLifecycleEdge };
 
@@ -72,7 +74,7 @@ function noEdge(
 }
 
 function readMemberRuntimeStates(input: Readonly<{
-  group: ConnectedServiceAuthGroupV1;
+  group: ConnectedServiceAuthGroupAccountUsageView;
   changedGroupGeneration: number;
   snapshotsByProfileId: ReadonlyMap<string, ProviderAccountUsageSnapshotV1>;
   nowMs: number;
@@ -109,7 +111,7 @@ function readMemberRuntimeStates(input: Readonly<{
   return { status: 'ready', memberStatesByProfileId };
 }
 
-function buildMembers(group: ConnectedServiceAuthGroupV1) {
+function buildMembers(group: ConnectedServiceAuthGroupAccountUsageView) {
   return group.members.map((member) => ({
     profileId: member.profileId,
     priority: member.priority,
@@ -120,7 +122,7 @@ function buildMembers(group: ConnectedServiceAuthGroupV1) {
 
 export function evaluateConnectedServiceAuthGroupQuotaLifecycle(input: Readonly<{
   mode: EvaluationMode;
-  group: ConnectedServiceAuthGroupV1;
+  group: ConnectedServiceAuthGroupAccountUsageView;
   changedProfileId: string;
   changedGroupGeneration: number;
   previousState: ConnectedServiceAuthGroupQuotaLifecycleState;

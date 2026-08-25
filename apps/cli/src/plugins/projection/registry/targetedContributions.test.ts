@@ -8,14 +8,13 @@ import type {
 } from '@happier-dev/protocol';
 
 import { createPluginContributionIdentity } from '@happier-dev/protocol';
-import {
-    definePlugin,
-    type TargetedContributionPointRef,
-} from '@happier-dev/plugin-sdk';
+import { PLUGIN_UI_TARGETED_CONTRIBUTIONS_MAX_V1 } from '@happier-dev/protocol/plugins/ui/targetedContributions';
+import { definePlugin } from '@happier-dev/plugin-sdk';
 import {
     defineContributionProtocol,
 } from '@happier-dev/plugin-sdk/contributions';
 import {
+    defineProtocolLiteral,
     defineProtocolObject,
     defineProtocolString,
 } from '@happier-dev/plugin-sdk/protocol';
@@ -111,13 +110,11 @@ function canonicalTargetPoint(params: Readonly<{
     });
     const definition = readCanonicalPluginManifest(target.manifest)
         ?.contributes?.pluginContributionPoints?.find((candidate) => candidate.id === pointId);
-    const semanticPointRef = target.contributionPoints[pointId];
-    if (!definition || !semanticPointRef || 'protocols' in semanticPointRef) {
+    if (!definition) {
         throw new Error('Expected one canonical target contribution point');
     }
     return {
         definition,
-        semanticPointRefs: [semanticPointRef] as const,
     };
 }
 
@@ -238,7 +235,6 @@ function registry(params: Readonly<{
     points?: readonly Readonly<{
         pluginId: string;
         definition: PluginContributionPointV1;
-        semanticPointRefs?: readonly TargetedContributionPointRef<unknown>[];
     }>[];
     contributions?: readonly Readonly<{ pluginId: string; definition: PluginTargetedContributionV1 }>[];
     actions?: readonly ResolvedActionContribution[];
@@ -249,7 +245,6 @@ function registry(params: Readonly<{
     const points = params.points ?? [{
         pluginId: targetPluginId,
         definition: defaultPoint.definition,
-        semanticPointRefs: defaultPoint.semanticPointRefs,
     }];
     const contributions = params.contributions ?? [{
         pluginId: contributorPluginId,
@@ -261,9 +256,6 @@ function registry(params: Readonly<{
         pluginId: entry.pluginId,
         identity: createPluginContributionIdentity({ pluginId: entry.pluginId, localId: entry.definition.id }),
         manifestPath: `/plugins/${entry.pluginId}/.happier-plugin/plugin.json`,
-        ...(entry.semanticPointRefs === undefined
-            ? {}
-            : { semanticPointRefs: entry.semanticPointRefs }),
         definition: entry.definition,
     }));
     const resolvedContributions = contributions.map((entry) => ({
@@ -374,7 +366,6 @@ describe('targeted contribution cold admission', () => {
             points: [{
                 pluginId: targetPluginId,
                 definition: targetPoint,
-                semanticPointRefs: [target.contributionPoints[pointId]],
             }],
             contributions: [{
                 pluginId: contributorPluginId,
@@ -395,6 +386,121 @@ describe('targeted contribution cold admission', () => {
         expect(admitted?.contributions[0]?.descriptor).toEqual({ providerId: 'github' });
         expect(admitted?.contributions[0]?.surfaces.map((surface) => surface.role)).toEqual(['detail']);
         expect(activate).not.toHaveBeenCalled();
+    });
+
+    it('retains a null descriptor rehydrated from the target-owned Protocol schema', () => {
+        const target = definePlugin({
+            id: targetPluginId,
+            version: '0.1.0',
+            contributionPoints: {
+                [pointId]: defineContributionProtocol({
+                    id: protocol.id,
+                    version: protocol.version,
+                    descriptor: defineProtocolLiteral(null),
+                    operations: {
+                        refresh: {
+                            required: false,
+                            input: { kind: 'contributorDefined' },
+                            resultSchema: defineProtocolObject({}, { policy: 'closed' }),
+                            action: { surface: 'plugin', dangerLevel: 'safe' },
+                        },
+                    },
+                }).point(),
+            },
+        });
+        const targetPoint = readCanonicalPluginManifest(target.manifest)
+            ?.contributes.pluginContributionPoints?.[0];
+        if (!targetPoint) throw new Error('Expected target contribution point');
+
+        const catalog = registry({
+            points: [{ pluginId: targetPluginId, definition: targetPoint }],
+            contributions: [{
+                pluginId: contributorPluginId,
+                definition: {
+                    id: 'provider-a',
+                    target: { pluginId: targetPluginId, pointId },
+                    protocol,
+                    descriptor: null,
+                    operations: {},
+                },
+            }],
+            actions: [],
+        });
+
+        expect(catalog.readAdmittedTargetedContributions?.({ targetPluginId, pointId, protocol })?.contributions)
+            .toEqual([expect.objectContaining({ descriptor: null })]);
+        expect(targetedDiagnosticCodes(catalog)).toEqual([]);
+    });
+
+    it('rehydrates Protocol-emitted nested unknown-key semantics from the exact-generation manifest', () => {
+        const descriptor = defineProtocolObject({
+            drop: defineProtocolObject({
+                known: defineProtocolString(),
+            }, { policy: 'additive-open/drop' }),
+            preserve: defineProtocolObject({
+                known: defineProtocolString(),
+            }, { policy: 'additive-open/preserve' }),
+            typed: defineProtocolObject({
+                known: defineProtocolString(),
+            }, {
+                policy: 'additive-open/preserve',
+                additionalProperties: defineProtocolString({ minLength: 1 }),
+            }),
+        }, { policy: 'closed' });
+        const target = definePlugin({
+            id: targetPluginId,
+            version: '0.1.0',
+            contributionPoints: {
+                [pointId]: defineContributionProtocol({
+                    id: protocol.id,
+                    version: protocol.version,
+                    descriptor,
+                    operations: {
+                        refresh: {
+                            required: false,
+                            input: { kind: 'contributorDefined' },
+                            resultSchema: defineProtocolObject({}, { policy: 'closed' }),
+                            action: { surface: 'plugin', dangerLevel: 'safe' },
+                        },
+                    },
+                }).point(),
+            },
+        });
+        const targetManifest = readCanonicalPluginManifest(target.manifest);
+        const targetPoint = targetManifest?.contributes.pluginContributionPoints?.[0];
+        if (!targetPoint) throw new Error('Expected serialized target contribution point');
+
+        const catalog = registry({
+            points: [{
+                pluginId: targetPluginId,
+                definition: targetPoint,
+            }],
+            contributions: [{
+                pluginId: contributorPluginId,
+                definition: {
+                    id: 'provider-a',
+                    target: { pluginId: targetPluginId, pointId },
+                    protocol,
+                    descriptor: {
+                        drop: { known: 'drop', future: 'discarded' },
+                        preserve: { known: 'preserve', future: 'retained' },
+                        typed: { known: 'typed', future: 'also-retained' },
+                    },
+                    operations: {},
+                },
+            }],
+            actions: [],
+        });
+
+        expect(catalog.readAdmittedTargetedContributions?.({ targetPluginId, pointId, protocol })?.contributions)
+            .toEqual([expect.objectContaining({
+                descriptor: {
+                    drop: { known: 'drop' },
+                    preserve: { known: 'preserve', future: 'retained' },
+                    typed: { known: 'typed', future: 'also-retained' },
+                },
+            })]);
+        expect(targetedDiagnosticCodes(catalog)).toEqual([]);
     });
 
     it('rejects a contribution that omits the descriptor a target protocol declares', () => {
@@ -429,7 +535,6 @@ describe('targeted contribution cold admission', () => {
         const points = [{
             pluginId: targetPluginId,
             definition: targetPoint,
-            semanticPointRefs: [target.contributionPoints[pointId]],
         }] as const;
         const withoutDescriptor = registry({
             points,
@@ -854,7 +959,6 @@ describe('targeted contribution cold admission', () => {
             points: [{
                 pluginId: targetPluginId,
                 definition: canonical.definition,
-                semanticPointRefs: canonical.semanticPointRefs,
             }],
             contributions: [{
                 pluginId: contributorPluginId,
@@ -876,7 +980,6 @@ describe('targeted contribution cold admission', () => {
             points: [{
                 pluginId: targetPluginId,
                 definition: canonical.definition,
-                semanticPointRefs: canonical.semanticPointRefs,
             }],
             contributions: [{
                 pluginId: contributorPluginId,
@@ -1051,9 +1154,9 @@ describe('targeted contribution cold admission', () => {
             .toEqual(['contributor_contribution_limit_exceeded', 'contributor_contribution_limit_exceeded']);
     });
 
-    it('bounds one point snapshot at 256 contributions with one deterministic diagnostic per excess candidate', () => {
+    it('bounds one point snapshot at the Protocol projected-entry ceiling with one deterministic diagnostic per excess candidate', () => {
         const canonical = canonicalTargetPoint({ maxContributionsPerContributor: 2 });
-        const contributions = Array.from({ length: 257 }, (_, index) => ({
+        const contributions = Array.from({ length: PLUGIN_UI_TARGETED_CONTRIBUTIONS_MAX_V1 + 1 }, (_, index) => ({
             pluginId: `examples.contributor-${index}`,
             definition: contribution({ id: `provider-${String(index).padStart(3, '0')}` }),
         }));
@@ -1065,7 +1168,6 @@ describe('targeted contribution cold admission', () => {
             points: [{
                 pluginId: targetPluginId,
                 definition: canonical.definition,
-                semanticPointRefs: canonical.semanticPointRefs,
             }],
             contributions,
             actions: contributions.map((entry) => action({ pluginId: entry.pluginId })),
@@ -1073,7 +1175,7 @@ describe('targeted contribution cold admission', () => {
         });
 
         expect(catalog.readAdmittedTargetedContributions?.({ targetPluginId, pointId, protocol })?.contributions)
-            .toHaveLength(256);
+            .toHaveLength(PLUGIN_UI_TARGETED_CONTRIBUTIONS_MAX_V1);
         expect(targetedDiagnosticCodes(catalog)).toEqual(['snapshot_limit_exceeded']);
     });
 });

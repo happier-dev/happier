@@ -156,6 +156,14 @@ export type ActivatedPluginRuntimeRegistry = ActivatedHandlerRegistry & Readonly
     activatePluginsForValidation: (
         pluginIds: readonly string[],
     ) => Promise<readonly PluginActivationDemandResult[]>;
+    /**
+     * Records a readiness rejection that arrives after this plugin's activation
+     * fact was already produced — a rejected daemon database preparation or
+     * primary Agent runtime construction. The plugin leaves the activated set,
+     * its one activation fact becomes `unavailable`, and the reason is carried
+     * by exactly one typed `plugin_activation_failed` diagnostic.
+     */
+    recordPluginActivationFailure: (pluginId: string, message: string) => void;
     startAdoptedBackgroundServices: () => void;
     retireBackgroundServices: (pluginIds: readonly string[]) => void;
     settleRetiredBackgroundServices: (pluginIds: readonly string[]) => Promise<void>;
@@ -238,6 +246,8 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
         pluginId: string;
         registry: ActivatedPluginRuntimeRegistry;
     }>) => void;
+    /** Same-generation lazy activation became terminally unavailable. */
+    onTerminalActivationFailure?: (pluginId: string) => void;
     /** Internal recursion guard for the canonical per-plugin component composer. */
     activationComponentMode?: boolean;
 }>): Promise<ActivatedPluginRuntimeRegistry> {
@@ -800,6 +810,48 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
     const lazyActivationPromisesByPluginId = new Map<string, Promise<PluginActivationDemandResult>>();
     const lazyActivatedRegistries: ActivatedPluginRuntimeRegistry[] = [];
 
+    // A readiness step that runs after the activation loop — daemon database
+    // preparation, primary Agent runtime construction — can reject a plugin the
+    // loop already reported as active. Its rejection is represented exactly like
+    // an activation-time one so every reader keeps a single meaning of "ready":
+    // one `unavailable` activation fact carrying one typed diagnostic.
+    function recordPluginActivationFailure(pluginId: string, message: string): void {
+        const target = activationTargets.find((candidate) => candidate.pluginId === pluginId);
+        if (!target) {
+            throw new Error(`Plugin '${pluginId}' is not an activation target of this runtime registry`);
+        }
+        const diagnostic: PluginCompatibilityDiagnostic = {
+            code: 'plugin_activation_failed',
+            message,
+        };
+        appendDiagnostic(diagnosticsByPluginId, pluginId, diagnostic);
+        activatedPluginIds.delete(pluginId);
+        failedActivationPluginIds.add(pluginId);
+        const index = targetActivationFacts.findIndex((fact) => fact.pluginId === pluginId);
+        const existing = index < 0 ? null : targetActivationFacts[index]!;
+        // Exactly one fact per plugin, and an inactive target may never keep
+        // publishing bound contributions.
+        const fact: PluginTargetActivationFact = Object.freeze({
+            pluginId,
+            pluginVersion: existing?.pluginVersion ?? target.manifest.version,
+            source: existing?.source ?? mapPluginSourceToDiagnosticSource(target.sourceSpec),
+            generation: existing?.generation ?? String(params.generation),
+            host: existing?.host ?? 'daemon',
+            platform: existing?.platform ?? process.platform,
+            occurredAtMs: nowMs(),
+            status: 'unavailable',
+            required: existing?.required ?? projectPluginTargetActivationRegistrationFacts(
+                derivePluginDaemonContributionRegistrationRights(
+                    target.manifest.contributes as unknown as Readonly<Record<string, unknown>>,
+                ),
+            ),
+            bound: Object.freeze([]),
+            diagnostics: Object.freeze([...(existing?.diagnostics ?? []), diagnostic]),
+        });
+        if (index < 0) targetActivationFacts.push(fact);
+        else targetActivationFacts[index] = fact;
+    }
+
     const addRuntimeDisposable = (pluginId: string, disposable: PluginDisposable): PluginDisposable => {
         if (lifecycleState !== 'active' || retiredRuntimeDisposablePluginIds.has(pluginId)) {
             throw new Error(
@@ -983,6 +1035,9 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
                 };
             }
             await mergeActivatedRegistry(registry, pluginId);
+            if (registry.failedActivationPluginIds.has(pluginId)) {
+                params.onTerminalActivationFailure?.(pluginId);
+            }
             return {
                 pluginId,
                 diagnostics: Object.freeze([...(diagnosticsByPluginId[pluginId] ?? [])]),
@@ -1106,6 +1161,7 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
         retryableActivationPreparationPluginIds,
         activateContributionsOnDemand,
         activatePluginsForValidation,
+        recordPluginActivationFailure,
         startAdoptedBackgroundServices,
         retireBackgroundServices,
         settleRetiredBackgroundServices,

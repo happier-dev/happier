@@ -2619,7 +2619,23 @@ describe('executeSpawnSessionRequest', () => {
     }));
   });
 
-  it('activates one canonical Agent session lease before spawn and retires it on launch refusal', async () => {
+  // The legacy service-keyed request-auth certificate is host-private and
+  // belongs only to the retained first-party legacy adapter. Production
+  // projects that fact as the catalog entry's declared legacy
+  // `connectedServiceIds`; an installed external Agent that names the same
+  // built-in service must reach spawn without them and stay unmarked.
+  it.each([
+    {
+      label: 'retained first-party legacy adapter',
+      catalogEntry: { connectedServiceIds: ['openai-codex'] },
+      expectLegacyServiceKeyedCompatibility: true,
+    },
+    {
+      label: 'installed external Agent',
+      catalogEntry: {},
+      expectLegacyServiceKeyedCompatibility: false,
+    },
+  ])('activates one canonical Agent session lease before spawn and retires it on launch refusal ($label)', async ({ catalogEntry, expectLegacyServiceKeyedCompatibility }) => {
     const events: string[] = [];
     const agentPurpose = {
       consumer: { pluginId: 'happier.agent.pi', localId: 'pi' },
@@ -2653,7 +2669,7 @@ describe('executeSpawnSessionRequest', () => {
       },
       purpose: 'openai-upstream',
     };
-    hoisted.requireCatalogEntry.mockReturnValue({});
+    hoisted.requireCatalogEntry.mockReturnValue(catalogEntry);
     hoisted.resolveSpawnBackendIdentity.mockResolvedValueOnce({
       ok: true,
       normalizedExistingSessionId: 'session-1',
@@ -2880,14 +2896,17 @@ describe('executeSpawnSessionRequest', () => {
       bindings: [agentPurposeBinding],
     });
     expect(requestAuthRegistry.activate).toHaveBeenCalledWith({
-      subject: expect.objectContaining({
-        subjectId: 'agent-session:session-1',
-        legacyServiceKeyedCompatibility: true,
-      }),
+      subject: expect.objectContaining({ subjectId: 'agent-session:session-1' }),
       materializedRootDir: '/tmp/pi-materialized',
       materializationId: 'csm_pi_request_auth',
       httpPort: 18_765,
     });
+    const activatedSubject = requestAuthRegistry.activate.mock.calls[0]?.[0]?.subject as
+      | Readonly<{ legacyServiceKeyedCompatibility?: true }>
+      | undefined;
+    expect(activatedSubject?.legacyServiceKeyedCompatibility).toBe(
+      expectLegacyServiceKeyedCompatibility ? true : undefined,
+    );
     expect(requestAuthRegistry.retire).toHaveBeenCalledWith(descriptor);
     expect(sessionPurposeBindingSubject.dispose).toHaveBeenCalledTimes(1);
   });

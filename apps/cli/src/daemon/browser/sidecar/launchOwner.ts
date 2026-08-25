@@ -29,7 +29,6 @@ export type BrowserSidecarLaunchOwnerControlAdapterFactoryInput = Readonly<{
     browserSessionId: string;
     sidecarId: string;
     featureEnabled: boolean;
-    browserUseAllowed: boolean;
     allowPersistentProfiles: boolean;
     profile: BrowserProfileV1;
     profileDirectory: string;
@@ -102,7 +101,6 @@ export function createBrowserSidecarLaunchOwnerControlAdapterFactory(
             sidecarId: input.sidecarId,
             nowMs: input.nowMs?.() ?? Date.now(),
             featureEnabled: input.featureEnabled,
-            browserUseAllowed: input.browserUseAllowed,
             allowPersistentProfiles: input.allowPersistentProfiles,
             profile: input.profile,
             profileDirectory: input.profileDirectory,

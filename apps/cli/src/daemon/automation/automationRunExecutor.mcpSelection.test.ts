@@ -255,7 +255,6 @@ describe('executeClaimedRun (mcpSelection)', () => {
     }));
     const resolveAutomationAccountEncryption = vi.fn()
       .mockResolvedValueOnce(availableCurrentness(CLAIM_CURRENTNESS))
-      .mockResolvedValueOnce(availableCurrentness(CLAIM_CURRENTNESS))
       .mockResolvedValueOnce(availableCurrentness(START_CURRENTNESS));
     const claimClient = {
       startRun: vi.fn(async () => START_CURRENTNESS),
@@ -301,7 +300,7 @@ describe('executeClaimedRun (mcpSelection)', () => {
       producedSessionId: 'session-existing',
     });
     expect(claimClient.failRun).not.toHaveBeenCalled();
-    expect(resolveAutomationAccountEncryption).toHaveBeenCalledTimes(3);
+    expect(resolveAutomationAccountEncryption).toHaveBeenCalledTimes(2);
   });
 
   it('waits for the exact accepted existing-Session turn and seals its final text once', async () => {
@@ -336,7 +335,6 @@ describe('executeClaimedRun (mcpSelection)', () => {
         localId: 'automation:run-strict',
       })),
       resolveAutomationAccountEncryption: vi.fn()
-        .mockResolvedValueOnce(availableCurrentness(CLAIM_CURRENTNESS))
         .mockResolvedValueOnce(availableCurrentness(CLAIM_CURRENTNESS))
         .mockResolvedValueOnce(availableCurrentness(START_CURRENTNESS)),
       claimed: buildStrictClaimedRun({
@@ -465,11 +463,6 @@ describe('executeClaimedRun (mcpSelection)', () => {
         })
         .mockResolvedValueOnce({
           kind: 'available' as const,
-          witness: claimCurrentness,
-          material: accountEncryption,
-        })
-        .mockResolvedValueOnce({
-          kind: 'available' as const,
           witness: startCurrentness,
           material: accountEncryption,
         }),
@@ -556,7 +549,6 @@ describe('executeClaimedRun (mcpSelection)', () => {
       sessionId: 'must-not-spawn',
     }));
     const resolveAutomationAccountEncryption = vi.fn()
-      .mockResolvedValueOnce(availableCurrentness(CLAIM_CURRENTNESS))
       .mockResolvedValueOnce(availableCurrentness(CLAIM_CURRENTNESS))
       .mockResolvedValueOnce(availableCurrentness(CLAIM_CURRENTNESS));
     const claimClient = {
@@ -719,7 +711,6 @@ describe('executeClaimedRun (mcpSelection)', () => {
       dispatchSessionServerStart,
       resolveAutomationAccountEncryption: vi.fn()
         .mockResolvedValueOnce(availableCurrentness(CLAIM_CURRENTNESS))
-        .mockResolvedValueOnce(availableCurrentness(CLAIM_CURRENTNESS))
         .mockResolvedValueOnce(availableCurrentness(START_CURRENTNESS)),
       claimed: buildStrictClaimedRun({ recipe: strictNewSessionRecipe() }),
     };
@@ -812,11 +803,6 @@ describe('executeClaimedRun (mcpSelection)', () => {
         })
         .mockResolvedValueOnce({
           kind: 'available' as const,
-          witness: claimCurrentness,
-          material: accountEncryption,
-        })
-        .mockResolvedValueOnce({
-          kind: 'available' as const,
           witness: startCurrentness,
           material: accountEncryption,
         }),
@@ -888,7 +874,6 @@ describe('executeClaimedRun (mcpSelection)', () => {
       dispatchSessionServerStart,
       resolveAutomationAccountEncryption: vi.fn()
         .mockResolvedValueOnce(availableCurrentness(CLAIM_CURRENTNESS))
-        .mockResolvedValueOnce(availableCurrentness(CLAIM_CURRENTNESS))
         .mockResolvedValueOnce(availableCurrentness(START_CURRENTNESS)),
       claimed: buildStrictClaimedRun({ recipe: strictNewSessionRecipe({ machineId: 'machine-2' }) }),
     };
@@ -940,7 +925,6 @@ describe('executeClaimedRun (mcpSelection)', () => {
         leaseDurationMs: 120_000,
         dispatchSessionServerStart: vi.fn<DispatchSessionServerStart>(async () => result),
         resolveAutomationAccountEncryption: vi.fn()
-          .mockResolvedValueOnce(availableCurrentness(CLAIM_CURRENTNESS))
           .mockResolvedValueOnce(availableCurrentness(CLAIM_CURRENTNESS))
           .mockResolvedValueOnce(availableCurrentness(START_CURRENTNESS)),
         claimed: buildStrictClaimedRun({ recipe: strictNewSessionRecipe() }),
@@ -1021,7 +1005,6 @@ describe('executeClaimedRun (mcpSelection)', () => {
       dispatchSessionServerStart,
       resolveAutomationAccountEncryption: vi.fn()
         .mockResolvedValueOnce(availableCurrentness(CLAIM_CURRENTNESS))
-        .mockResolvedValueOnce(availableCurrentness(CLAIM_CURRENTNESS))
         .mockResolvedValueOnce(availableCurrentness(START_CURRENTNESS)),
       claimed: buildStrictClaimedRun({ recipe: strictNewSessionRecipe() }),
     };
@@ -1035,7 +1018,6 @@ describe('executeClaimedRun (mcpSelection)', () => {
     await executeClaimedRun({
       ...first,
       resolveAutomationAccountEncryption: vi.fn()
-        .mockResolvedValueOnce(availableCurrentness(CLAIM_CURRENTNESS))
         .mockResolvedValueOnce(availableCurrentness(CLAIM_CURRENTNESS))
         .mockResolvedValueOnce(availableCurrentness(START_CURRENTNESS)),
     });
@@ -1089,7 +1071,6 @@ describe('executeClaimedRun (mcpSelection)', () => {
       dispatchSessionServerStart,
       resolveAutomationAccountEncryption: vi.fn()
         .mockResolvedValueOnce(availableCurrentness(CLAIM_CURRENTNESS))
-        .mockResolvedValueOnce(availableCurrentness(CLAIM_CURRENTNESS))
         .mockResolvedValueOnce(availableCurrentness(START_CURRENTNESS)),
       claimed: buildStrictClaimedRun({ recipe: strictNewSessionRecipe() }),
     };
@@ -1135,7 +1116,6 @@ describe('executeClaimedRun (mcpSelection)', () => {
       leaseDurationMs: 120_000,
       dispatchSessionServerStart,
       resolveAutomationAccountEncryption: vi.fn()
-        .mockResolvedValueOnce(availableCurrentness(CLAIM_CURRENTNESS))
         .mockResolvedValueOnce(availableCurrentness(CLAIM_CURRENTNESS))
         .mockResolvedValueOnce(availableCurrentness(START_CURRENTNESS)),
       claimed: buildStrictClaimedRun({ recipe: strictNewSessionRecipe() }),
@@ -1184,7 +1164,6 @@ describe('executeClaimedRun (mcpSelection)', () => {
       dispatchSessionServerStart,
       resolveAutomationAccountEncryption: vi.fn()
         .mockResolvedValueOnce(availableCurrentness(CLAIM_CURRENTNESS))
-        .mockResolvedValueOnce(availableCurrentness(CLAIM_CURRENTNESS))
         .mockResolvedValueOnce(availableCurrentness(START_CURRENTNESS)),
       claimed: buildStrictClaimedRun({ recipe: strictNewSessionRecipe() }),
     };
@@ -1230,7 +1209,6 @@ describe('executeClaimedRun (mcpSelection)', () => {
       leaseDurationMs: 120_000,
       dispatchSessionServerStart,
       resolveAutomationAccountEncryption: vi.fn()
-        .mockResolvedValueOnce(availableCurrentness(CLAIM_CURRENTNESS))
         .mockResolvedValueOnce(availableCurrentness(CLAIM_CURRENTNESS))
         .mockResolvedValueOnce(availableCurrentness({
           ...START_CURRENTNESS,
@@ -1289,7 +1267,6 @@ describe('executeClaimedRun (mcpSelection)', () => {
       signal: cancellation.signal,
       dispatchSessionServerStart,
       resolveAutomationAccountEncryption: vi.fn()
-        .mockResolvedValueOnce(availableCurrentness(CLAIM_CURRENTNESS))
         .mockResolvedValueOnce(availableCurrentness(CLAIM_CURRENTNESS))
         .mockResolvedValueOnce(availableCurrentness(START_CURRENTNESS)),
       claimed: buildStrictClaimedRun({ recipe: strictNewSessionRecipe() }),
@@ -1386,7 +1363,6 @@ describe('executeClaimedRun (mcpSelection)', () => {
       dispatchSessionServerStart,
       resolveAutomationAccountEncryption: vi.fn()
         .mockResolvedValueOnce(availableCurrentness(CLAIM_CURRENTNESS))
-        .mockResolvedValueOnce(availableCurrentness(CLAIM_CURRENTNESS))
         .mockResolvedValueOnce(availableCurrentness(START_CURRENTNESS)),
       claimed: buildStrictClaimedRun({ recipe: strictNewSessionRecipe() }),
     });
@@ -1458,7 +1434,6 @@ describe('executeClaimedRun (mcpSelection)', () => {
       dispatchSessionServerStart,
       resolveAutomationAccountEncryption: vi.fn()
         .mockResolvedValueOnce(availableCurrentness(CLAIM_CURRENTNESS))
-        .mockResolvedValueOnce(availableCurrentness(CLAIM_CURRENTNESS))
         .mockResolvedValueOnce(availableCurrentness(START_CURRENTNESS)),
       claimed: buildStrictClaimedRun({ recipe: strictNewSessionRecipe() }),
     });
@@ -1510,7 +1485,6 @@ describe('executeClaimedRun (mcpSelection)', () => {
       }),
       resolveAutomationAccountEncryption: vi.fn()
         .mockResolvedValueOnce(availableCurrentness(CLAIM_CURRENTNESS))
-        .mockResolvedValueOnce(availableCurrentness(CLAIM_CURRENTNESS))
         .mockResolvedValueOnce(availableCurrentness(START_CURRENTNESS)),
       claimed: buildStrictClaimedRun({ recipe: strictNewSessionRecipe() }),
     });
@@ -1554,7 +1528,6 @@ describe('executeClaimedRun (mcpSelection)', () => {
       leaseDurationMs: 120_000,
       executeAction,
       resolveAutomationAccountEncryption: vi.fn()
-        .mockResolvedValueOnce(availableCurrentness(CLAIM_CURRENTNESS))
         .mockResolvedValueOnce(availableCurrentness(CLAIM_CURRENTNESS))
         .mockResolvedValueOnce(availableCurrentness(START_CURRENTNESS)),
       claimed: buildStrictClaimedRun({
@@ -1644,8 +1617,7 @@ describe('executeClaimedRun (mcpSelection)', () => {
       executeAction,
       resolveAutomationAccountEncryption: vi.fn()
         .mockResolvedValueOnce(availableCurrentness(CLAIM_CURRENTNESS))
-        .mockResolvedValueOnce(availableCurrentness(CLAIM_CURRENTNESS))
-        .mockResolvedValueOnce(availableCurrentness(START_CURRENTNESS)),
+        .mockResolvedValueOnce(availableCurrentness(CLAIM_CURRENTNESS)),
       claimed: buildStrictClaimedRun({
         recipe: {
           ...strictExecutionRunRecipe(),
@@ -1661,11 +1633,12 @@ describe('executeClaimedRun (mcpSelection)', () => {
     });
 
     expect(executeAction).not.toHaveBeenCalled();
+    expect(claimClient.startRun).not.toHaveBeenCalled();
     expect(claimClient.settleExecutionDispatch).not.toHaveBeenCalled();
     expect(claimClient.succeedRun).not.toHaveBeenCalled();
     expect(claimClient.failRun).toHaveBeenCalledWith(expect.objectContaining({
       runId: 'run-strict',
-      accountCurrentness: START_CURRENTNESS,
+      accountCurrentness: CLAIM_CURRENTNESS,
       errorCode: 'execution_run_final_result_unsupported',
       errorDetailEnvelope: expect.any(String),
     }));
@@ -1695,7 +1668,6 @@ describe('executeClaimedRun (mcpSelection)', () => {
       leaseDurationMs: 120_000,
       executeAction,
       resolveAutomationAccountEncryption: vi.fn()
-        .mockResolvedValueOnce(availableCurrentness(CLAIM_CURRENTNESS))
         .mockResolvedValueOnce(availableCurrentness(CLAIM_CURRENTNESS))
         .mockResolvedValueOnce(availableCurrentness(START_CURRENTNESS)),
       claimed: buildStrictClaimedRun({ recipe: strictExecutionRunRecipe() }),
@@ -1751,7 +1723,6 @@ describe('executeClaimedRun (mcpSelection)', () => {
       executeAction: vi.fn(async () => actionResult),
       resolveAutomationAccountEncryption: vi.fn()
         .mockResolvedValueOnce(availableCurrentness(CLAIM_CURRENTNESS))
-        .mockResolvedValueOnce(availableCurrentness(CLAIM_CURRENTNESS))
         .mockResolvedValueOnce(availableCurrentness(START_CURRENTNESS)),
       claimed: buildStrictClaimedRun({ recipe: strictExecutionRunRecipe() }),
     });
@@ -1788,7 +1759,6 @@ describe('executeClaimedRun (mcpSelection)', () => {
         throw new Error('response lost after Action dispatch');
       }),
       resolveAutomationAccountEncryption: vi.fn()
-        .mockResolvedValueOnce(availableCurrentness(CLAIM_CURRENTNESS))
         .mockResolvedValueOnce(availableCurrentness(CLAIM_CURRENTNESS))
         .mockResolvedValueOnce(availableCurrentness(START_CURRENTNESS)),
       claimed: buildStrictClaimedRun({ recipe: strictExecutionRunRecipe() }),
@@ -1872,7 +1842,6 @@ describe('executeClaimedRun (mcpSelection)', () => {
       executeAction,
       resolveAutomationAccountEncryption: vi.fn()
         .mockResolvedValueOnce(availableCurrentness(CLAIM_CURRENTNESS))
-        .mockResolvedValueOnce(availableCurrentness(CLAIM_CURRENTNESS))
         .mockResolvedValueOnce(availableCurrentness(START_CURRENTNESS)),
       claimed: buildStrictClaimedRun({ recipe: strictExecutionRunRecipe() }),
     });
@@ -1948,7 +1917,6 @@ describe('executeClaimedRun (mcpSelection)', () => {
       executeAction,
       resolveAutomationAccountEncryption: vi.fn()
         .mockResolvedValueOnce(availableCurrentness(CLAIM_CURRENTNESS))
-        .mockResolvedValueOnce(availableCurrentness(CLAIM_CURRENTNESS))
         .mockResolvedValueOnce(availableCurrentness(START_CURRENTNESS)),
       claimed: buildStrictClaimedRun({ recipe: strictExecutionRunRecipe() }),
     });
@@ -1997,7 +1965,6 @@ describe('executeClaimedRun (mcpSelection)', () => {
       executeAction,
       resolveAutomationAccountEncryption: vi.fn()
         .mockResolvedValueOnce(availableCurrentness(CLAIM_CURRENTNESS))
-        .mockResolvedValueOnce(availableCurrentness(CLAIM_CURRENTNESS))
         .mockResolvedValueOnce(availableCurrentness(START_CURRENTNESS)),
       claimed: buildStrictClaimedRun({ recipe: strictExecutionRunRecipe() }),
     });
@@ -2035,7 +2002,6 @@ describe('executeClaimedRun (mcpSelection)', () => {
       signal: cancellation.signal,
       executeAction,
       resolveAutomationAccountEncryption: vi.fn()
-        .mockResolvedValueOnce(availableCurrentness(CLAIM_CURRENTNESS))
         .mockResolvedValueOnce(availableCurrentness(CLAIM_CURRENTNESS))
         .mockResolvedValueOnce(availableCurrentness(START_CURRENTNESS)),
       claimed: buildStrictClaimedRun({ recipe: strictExecutionRunRecipe() }),
@@ -2088,7 +2054,6 @@ describe('executeClaimedRun (mcpSelection)', () => {
       signal: cancellation.signal,
       executeAction,
       resolveAutomationAccountEncryption: vi.fn()
-        .mockResolvedValueOnce(availableCurrentness(CLAIM_CURRENTNESS))
         .mockResolvedValueOnce(availableCurrentness(CLAIM_CURRENTNESS))
         .mockResolvedValueOnce(availableCurrentness(START_CURRENTNESS)),
       claimed: buildStrictClaimedRun({ recipe: strictExecutionRunRecipe() }),
@@ -2148,7 +2113,6 @@ describe('executeClaimedRun (mcpSelection)', () => {
       executeAction,
       resolveAutomationAccountEncryption: vi.fn()
         .mockResolvedValueOnce(availableCurrentness(CLAIM_CURRENTNESS))
-        .mockResolvedValueOnce(availableCurrentness(CLAIM_CURRENTNESS))
         .mockResolvedValueOnce(availableCurrentness(START_CURRENTNESS)),
       claimed: buildStrictClaimedRun({ recipe: strictExecutionRunRecipe() }),
     });
@@ -2189,7 +2153,6 @@ describe('executeClaimedRun (mcpSelection)', () => {
         },
       })),
       resolveAutomationAccountEncryption: vi.fn()
-        .mockResolvedValueOnce(availableCurrentness(CLAIM_CURRENTNESS))
         .mockResolvedValueOnce(availableCurrentness(CLAIM_CURRENTNESS))
         .mockResolvedValueOnce(availableCurrentness(START_CURRENTNESS)),
       claimed: buildStrictClaimedRun({ recipe: strictExecutionRunRecipe() }),

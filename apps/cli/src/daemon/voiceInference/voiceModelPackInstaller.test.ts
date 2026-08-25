@@ -293,6 +293,9 @@ describe('fetchVoiceModelPackManifest URL policy (LB-M1)', () => {
     const packId = 'public-https-pack';
     const body = Buffer.from(JSON.stringify(manifestFixture(packId)), 'utf8');
     const transport = vi.fn<PinnedHttpStreamTransport>(async (request) => {
+      if (request.wallTimeMs === undefined || request.idleTimeMs === undefined) {
+        throw new Error('expected bounded manifest transport timeouts');
+      }
       expect(request.wallTimeMs).toBeGreaterThan(0);
       expect(request.wallTimeMs).toBeLessThanOrEqual(60_000);
       expect(request.idleTimeMs).toBeGreaterThan(0);

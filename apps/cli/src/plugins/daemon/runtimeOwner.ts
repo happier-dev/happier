@@ -8,13 +8,14 @@ import { createDaemonPathPluginChangePreparer } from '@/plugins/daemon/pathChang
 import { readCurrentDaemonPluginCatalog } from '@/plugins/daemon/currentCatalog';
 import type { PluginReloadController } from '@/plugins/runtime/reload/controller';
 import { projectPluginFailureText } from '@/plugins/runtime/lifecycle/utils';
+import { shouldActivateTargetAtStartup } from '@/plugins/runtime/lifecycle/activation/targets';
 import { createDaemonPluginRegistryRuntimeLifecycle } from '@/plugins/runtime/reload/registryRuntimeLifecycle';
 import {
   activatePluginRuntimeForReadiness,
   bootstrapPrimaryAgentRuntimesForReadiness,
 } from '@/plugins/runtime/reload/readiness';
 import {
-  resolveCurrentHostBundledImmutableArtifacts,
+  resolveBundledImmutableGenerationRetentionIds,
 } from '@/plugins/runtime/bundledActivationSource';
 import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import {
@@ -53,6 +54,13 @@ import type { CliServerFeaturesSnapshot } from '@/features/featureDecisionServic
 import type { CurrentMachineExecutionOriginContext } from '@/api/machine/resolveCurrentMachineExecutionOriginContext';
 import type { RpcHandlerInvoker } from '@/api/rpc/types';
 import type { ResolveSessionResourceAccess } from '@/plugins/runtime/invocation/services/resources';
+
+/** One author-readable reason per cold-start readiness step a plugin can fail. */
+const COLD_START_READINESS_STAGE_REASONS = Object.freeze({
+  activation: 'cold-start activation failed',
+  daemonDatabases: 'cold-start daemon database preparation failed',
+  primaryAgentRuntime: 'cold-start primary Agent runtime construction failed',
+});
 
 export type DaemonPluginRuntimeOwner = Readonly<{
   changeService: DaemonPluginChangeOwner;
@@ -114,6 +122,8 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
   awaitInitialRuntimeActivation?: () => Promise<void>;
   /** Notifies the daemon projection after a registry is durably current. */
   onDurableRegistryApplied?: () => void;
+  /** Publishes daemon-state currentness after a live runtime projection changes in place. */
+  onRuntimeProjectionInvalidated?: () => void;
   managedProviderOperationAuthority?: ManagedProviderOperationAuthority;
   qualifiedConnectedAccountEstablishedRuntimeOwner?:
     Pick<QualifiedConnectedAccountEstablishedRuntimeOwner, 'invoke'>;
@@ -141,6 +151,10 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
   // and prepared registry replacement. Runtime construction only consumes it.
   const targetedContributions =
     params.reloadController.getTargetedContributionsOwner?.();
+  const onTerminalActivationFailure = (): void => {
+    params.reloadController.invalidateRuntimeProjection?.();
+    params.onRuntimeProjectionInvalidated?.();
+  };
   const beforePublish = params.reconcileConnectedAccountPurposePublication
     ? async (
         registry: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>>,
@@ -198,6 +212,7 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
       ? { resolveServerFeaturesSnapshot: params.resolveServerFeaturesSnapshot }
       : {}),
     reloadController: params.reloadController,
+    onTerminalActivationFailure,
     connectedAccounts: params.connectedAccounts,
     ...(params.actionFormConnectedAccounts
       ? { actionFormConnectedAccounts: params.actionFormConnectedAccounts }
@@ -302,16 +317,22 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
     },
   });
   const retainedCurrentHostGenerationIds =
-    resolveCurrentHostBundledImmutableArtifacts({
+    resolveBundledImmutableGenerationRetentionIds({
       artifacts: BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS,
-    }).map(
-      (artifact) => artifact.record.immutableGenerationId,
-    );
+    });
   const stateStore = createPluginRegistryStateStore({
     happyHomeDir: params.happyHomeDir,
     retainedCurrentHostGenerationIds,
     runtimeLifecycle,
     runHardRevocationCurrentnessChange: changeService.runHardRevocationCurrentnessChange,
+    ...(params.startupMode === 'pluginRecovery' ? { pluginRecovery: true } : {}),
+    onCommitRecordQuarantined: (info) => {
+      logger.warn(
+        '[PLUGIN RUNTIME] Recovery startup quarantined an unreadable plugin registry commit record; '
+        + 'installed plugins must be reinstalled or the record restored after repair.',
+        info,
+      );
+    },
     onApplied: onRegistryApplied,
     onReconciliationPending: (diagnostic) => {
       logger.warn('[PLUGIN RUNTIME] Plugin registry reconciliation remains pending', diagnostic);
@@ -429,6 +450,13 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
             ...(params.daemonDatabaseLimits
               ? { daemonDatabaseLimits: params.daemonDatabaseLimits }
               : {}),
+            // Required on the controller contract, so this is unconditional.
+            // The cold registry is exactly the generation whose long-lived
+            // plugin contexts survive the first peer replacement; letting it
+            // self-target would pin them to a retired predecessor.
+            currentGlobalExternalSessionsRouter:
+              params.reloadController.currentGlobalExternalSessions,
+            onTerminalActivationFailure,
             ...(targetedContributions
               ? { targetedContributions }
               : {}),
@@ -438,34 +466,50 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
           });
           // Cold start has no serving incumbent to fall back to, so a rejected
           // projection exits the daemon instead of serving its healthy plugins.
-          // Isolation is keyed on the structural fact that a participant failed,
-          // never on where the participant came from: a bundled participant is
-          // isolated exactly like an external one. The reload path deliberately
-          // keeps the opposite contract — there a rejected candidate must be
-          // discarded whole because the incumbent is still serving.
+          // A rejected participant is fenced at the canonical activation owner so
+          // the published registry stops advertising it, keyed on the structural
+          // fact that it failed and never on where it came from: a bundled
+          // participant is fenced exactly like an external one. The reload path
+          // deliberately keeps the opposite contract — there a rejected candidate
+          // must be discarded whole because the incumbent is still serving.
           const isolateReadinessParticipant = async (
             pluginId: string,
-            stage: 'activation' | 'daemonDatabases' | 'primaryAgentRuntime',
+            stage: keyof typeof COLD_START_READINESS_STAGE_REASONS,
             run: () => Promise<void>,
           ): Promise<void> => {
             try {
               await run();
             } catch (error) {
+              const reason = `${COLD_START_READINESS_STAGE_REASONS[stage]}: ${
+                projectPluginFailureText(error)
+              }`;
+              // Isolation alone would keep advertising the rejected plugin as
+              // ready. A registry that cannot fence it has no way to publish a
+              // truthful cold projection, so the whole startup fails closed.
+              if (!registry.recordPluginActivationFailure) {
+                throw new AggregateError(
+                  [error],
+                  'Prepared plugin runtime registry cannot fence a rejected cold-start readiness participant',
+                );
+              }
+              await registry.recordPluginActivationFailure(pluginId, reason);
               logger.warn(
-                '[PLUGIN RUNTIME] Cold startup isolated a failed plugin readiness participant',
+                '[PLUGIN RUNTIME] Cold startup fenced a failed plugin readiness participant',
                 { pluginId, stage, error: projectPluginFailureText(error) },
               );
             }
           };
           try {
             const activationTargets = registry.contributes.activationTargets ?? [];
-            // Readiness is proven for every activation target, keyed on the
-            // structural fact that a plugin is one — never on where it came
-            // from. A bundled first-party plugin activates through the same ABI
-            // as an external one, so it must not join the serving registry
-            // without the same executable proof.
+            // The lifecycle manager owns which targets must be live before the
+            // daemon can serve. Its demand-ready targets remain dormant until
+            // their consumer admits the exact demand; cold-start readiness must
+            // not become a second activation policy that eagerly loads them.
+            const coldStartActivationTargets = activationTargets.filter(
+              shouldActivateTargetAtStartup,
+            );
             const readinessPluginIds = [...new Set(
-              activationTargets.map((target) => target.pluginId),
+              coldStartActivationTargets.map((target) => target.pluginId),
             )].sort();
             // The lifecycle manager already records ordinary activation and trust
             // failures against the affected plugin; this isolates the exceptional
@@ -480,7 +524,7 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
             }));
             if (registry.prepareDaemonDatabases) {
               const daemonDatabasePluginIds = [...new Set(
-                activationTargets
+                coldStartActivationTargets
                   .filter((target) => (
                     registry.activatedPluginIds.has(target.pluginId)
                     && target.manifest.contributes.daemonDatabases.length > 0
@@ -494,6 +538,10 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
               }
             }
             for (const pluginId of readinessPluginIds) {
+              // A plugin an earlier readiness step already fenced is retired.
+              // Constructing its runtime against that retired generation would
+              // only fail again and record a second reason for one rejection.
+              if (!registry.activatedPluginIds.has(pluginId)) continue;
               await isolateReadinessParticipant(pluginId, 'primaryAgentRuntime', async () => {
                 await bootstrapPrimaryAgentRuntimesForReadiness({
                   registry,

@@ -110,7 +110,6 @@ describe('browser sidecar product source owner', () => {
         const factory = mod.createProductBrowserSidecarControlAdapterFactory({
             platform: 'linux',
             featureEnabled: true,
-            browserUseAllowed: true,
             resolveManagedCandidate: resolveCandidate,
             createLaunchOwnerFactory: launchOwnerFactory,
         });
@@ -151,7 +150,6 @@ describe('browser sidecar product source owner', () => {
             platform: 'linux',
             // Server-disabled `browser.sidecar` decision threaded from the daemon startup gate.
             featureEnabled: false,
-            browserUseAllowed: true,
             resolveManagedCandidate: vi.fn(async () => managedCandidate()),
             createLaunchOwnerFactory: launchOwnerFactory,
         });
@@ -165,43 +163,6 @@ describe('browser sidecar product source owner', () => {
         expect(launchInput.featureEnabled).toBe(false);
     });
 
-    it('fails closed before launch when browser use is denied by product policy', async () => {
-        const mod = await import('./productSource');
-
-        expect(mod?.createProductBrowserSidecarControlAdapterFactory).toBeTypeOf('function');
-        if (!mod?.createProductBrowserSidecarControlAdapterFactory) return;
-
-        const launchOwnerFactory = vi.fn((_input: unknown) => async () => ({
-            ok: true as const,
-            adapter: {
-                adapterKind: 'chromiumSidecar' as const,
-                ownsView: () => false,
-                supportsOpenView: () => false,
-                dispatchCommand: vi.fn(),
-            },
-            dispose: vi.fn(),
-        }));
-        const params = {
-            platform: 'linux',
-            featureEnabled: true,
-            browserUseAllowed: false,
-            resolveManagedCandidate: vi.fn(async () => managedCandidate()),
-            createLaunchOwnerFactory: launchOwnerFactory,
-        } satisfies Parameters<typeof mod.createProductBrowserSidecarControlAdapterFactory>[0] & Readonly<{
-            browserUseAllowed: boolean;
-        }>;
-        const factory = mod.createProductBrowserSidecarControlAdapterFactory(params);
-
-        const result = await factory({ machineId: 'machine_policy_denied' });
-
-        expect(result).toMatchObject({
-            ok: false,
-            errorCode: 'browser_policy_denied',
-            disabledReason: 'browser use denied by policy',
-        });
-        expect(launchOwnerFactory).not.toHaveBeenCalled();
-    });
-
     it('stays fail-closed when no managed candidate is installed', async () => {
         const mod = await import('./productSource');
 
@@ -212,7 +173,6 @@ describe('browser sidecar product source owner', () => {
         const factory = mod.createProductBrowserSidecarControlAdapterFactory({
             platform: 'linux',
             featureEnabled: true,
-            browserUseAllowed: true,
             resolveManagedCandidate: vi.fn(async () => null),
             createLaunchOwnerFactory: launchOwnerFactory,
         });
@@ -262,7 +222,6 @@ describe('browser sidecar product source owner', () => {
         const factory = mod.createProductBrowserSidecarControlAdapterFactory({
             platform: 'linux',
             featureEnabled: true,
-            browserUseAllowed: true,
             resolveManagedCandidate: missingThenInstalled,
             createLaunchOwnerFactory: launchOwnerFactory,
             installManagedBrowserChromium,
@@ -287,7 +246,6 @@ describe('browser sidecar product source owner', () => {
         const factory = mod.createProductBrowserSidecarControlAdapterFactory({
             platform: 'linux',
             featureEnabled: true,
-            browserUseAllowed: true,
             autoInstallWhenMissing: false,
             resolveManagedCandidate: vi.fn(async () => ({
                 source: 'managedBrowserPackage' as const,
@@ -316,7 +274,6 @@ describe('browser sidecar product source owner', () => {
         const factory = mod.createProductBrowserSidecarControlAdapterFactory({
             platform: 'linux',
             featureEnabled: true,
-            browserUseAllowed: true,
             resolveManagedCandidate: vi.fn(async () => ({
                 source: 'managedBrowserPackage' as const,
                 executablePath: '/home/u/.happier/tools/browser-chromium/current/chrome',

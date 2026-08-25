@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import { basename, join } from 'node:path';
+import { isPidPresent } from '@happier-dev/cli-common/process';
 import { spawnSync } from 'node:child_process';
 
 import { configuration, reloadConfiguration } from '@/configuration';
@@ -2069,15 +2070,7 @@ export async function runDaemonServiceCliCommand(params: Readonly<{
 
     const state = await readDaemonState().catch(() => null);
     const pid = typeof state?.pid === 'number' ? state.pid : null;
-    const pidAlive = (() => {
-      if (!pid) return false;
-      try {
-        process.kill(pid, 0);
-        return true;
-      } catch {
-        return false;
-      }
-    })();
+    const pidAlive = pid !== null && isPidPresent(pid);
 
     const systemPlan = planDaemonServiceLifecycle({
       platform: runtime.platform,

@@ -20,7 +20,6 @@ import type {
 import type {
     PluginCancellationOptions,
     PluginContributionRef } from '@happier-dev/plugin-sdk';
-import type { TargetedContributionPointSemanticOperation } from '@happier-dev/plugin-sdk/host/targeted-contributions';
 import type {
     PluginInvocationSurface,
 } from '@happier-dev/plugin-sdk/interactions';
@@ -36,9 +35,11 @@ import {
     pluginJsonValuesEqual,
     readPluginActionFailureAuthorPayload,
     PluginMachineExecutionOriginV1Schema,
+    sameQualifiedConnectedAccountRef,
     StrictJsonValueSchema,
     type QualifiedConnectedAccountRef,
     type PluginMachineExecutionOriginV1,
+    type RehydratedPluginContributionPointOperationV1,
     withExecutionRunStartFailureDetails,
 } from '@happier-dev/protocol';
 import {
@@ -155,7 +156,7 @@ type AdmittedTargetedOperationExecutionBinding = Readonly<{
     /** Exact Action-definition selection fact, never carrier supplied. */
     selectedActionInput: AdmittedTargetedOperationSelectedActionInput;
     /** Exact target parser pair, retained only through this original handle. */
-    targetProtocol: TargetedContributionPointSemanticOperation;
+    targetProtocol: RehydratedPluginContributionPointOperationV1;
 }>;
 
 const admittedTargetedOperationExecutionBindings = new WeakMap<object, AdmittedTargetedOperationExecutionBinding>();
@@ -187,7 +188,7 @@ export function createAdmittedTargetedOperationExecutionHandle<
     /** Host-private fact derived from the exact admitted Action definition. */
     selectedActionInput?: AdmittedTargetedOperationSelectedActionInput;
     /** Exact target parser pair selected by cold targeted-contribution admission. */
-    targetProtocol: TargetedContributionPointSemanticOperation;
+    targetProtocol: RehydratedPluginContributionPointOperationV1;
 }>): AdmittedTargetedOperationExecutionHandle<TInput, TResult, TRole> {
     const identity = Object.freeze({
         target: Object.freeze({ pluginId: params.identity.target.pluginId }),
@@ -431,7 +432,7 @@ async function resolveAdmittedTargetedOperationInput(params: Readonly<{
         expectedRef === null
         || carrier.result.connectedAccount.kind !== 'selected'
         || carrier.result.connectedAccount.fieldPath !== selected.fieldPath
-        || !pluginJsonValuesEqual(expectedRef, carrier.result.connectedAccount.ref)
+        || !sameQualifiedConnectedAccountRef(expectedRef, carrier.result.connectedAccount.ref)
     ) {
         throw selectedActionInputInvalid();
     }

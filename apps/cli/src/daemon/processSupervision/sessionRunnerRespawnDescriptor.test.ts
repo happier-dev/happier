@@ -8,19 +8,13 @@ import {
   buildTrackedSessionRespawnEnvironmentVariables,
   buildSessionRunnerRespawnDescriptorV1FromSpawnOptions,
   buildSpawnSessionOptionsFromRespawnDescriptorV1,
-  normalizeOwnedMarkerRespawnEnvironmentCiphertext,
   SessionRunnerRespawnDescriptorV1Schema,
   writeSessionRunnerRespawnDescriptorForPersistence,
 } from './sessionRunnerRespawnDescriptor';
 import type { SpawnSessionOptions } from '@/rpc/handlers/registerSessionHandlers';
 import {
   ProviderConnectionIdSchema,
-  readAccountScopedCiphertextKindByte,
-  sealAccountScopedBlobCiphertext,
 } from '@happier-dev/protocol';
-import {
-  sealHistoricalSessionRespawnEnvironmentAliasFixtureCiphertext,
-} from '@happier-dev/protocol/testing/accountScopedCipherFixtures';
 import { readOrCreateDeviceLocalSecretStorage } from '../deviceLocalSecretStorage';
 
 const HAPPIER_SESSION_CONNECTED_SERVICE_MATERIALIZATION_IDENTITY_ENV_KEY =
@@ -1090,6 +1084,7 @@ describe('sessionRunnerRespawnDescriptor', () => {
         environmentVariables: {
           CLAUDE_CONFIG_DIR: '/tmp/claude-config',
           CODEX_HOME: '/tmp/codex-home',
+          CODEX_SQLITE_HOME: '/tmp/codex-state',
           OPENAI_API_KEY: 'test-key',
         },
         connectedServices: {
@@ -1108,6 +1103,7 @@ describe('sessionRunnerRespawnDescriptor', () => {
       environmentVariables: {
         CLAUDE_CONFIG_DIR: '/tmp/claude-config',
         CODEX_HOME: '/tmp/codex-home',
+        CODEX_SQLITE_HOME: '/tmp/codex-state',
       },
       connectedServices: {
         bindings: {
@@ -1138,6 +1134,7 @@ describe('sessionRunnerRespawnDescriptor', () => {
       environmentVariables: {
         CLAUDE_CONFIG_DIR: '/tmp/claude-config',
         CODEX_HOME: '/tmp/codex-home',
+        CODEX_SQLITE_HOME: '/tmp/codex-state',
         OPENAI_API_KEY: 'test-key',
       },
       approvedNewDirectoryCreation: true,
@@ -1181,50 +1178,6 @@ describe('sessionRunnerRespawnDescriptor', () => {
     } finally {
       await rm(home, { recursive: true, force: true });
     }
-  });
-
-  it('reseals the respawn alias once and preserves canonical ciphertext on later owned-marker recovery', () => {
-    const material = {
-      type: 'dataKey' as const,
-      machineKey: new Uint8Array(32).fill(7),
-    };
-    const payload = {
-      CODEX_HOME: '/tmp/codex-home',
-      OPENAI_API_KEY: 'test-key',
-    };
-    const aliasCiphertext =
-      sealHistoricalSessionRespawnEnvironmentAliasFixtureCiphertext({
-        material,
-        payload,
-        randomBytes: (length) =>
-          new Uint8Array(length).fill(6),
-      });
-
-    const resealed =
-      normalizeOwnedMarkerRespawnEnvironmentCiphertext({
-        sealedEnvironmentVariables: {
-          format: 'account_scoped_v1',
-          ciphertext: aliasCiphertext,
-        },
-        encryptionMaterial: material,
-        randomBytes: (length) =>
-          new Uint8Array(length).fill(8),
-      });
-    expect(
-      readAccountScopedCiphertextKindByte(
-        resealed?.ciphertext ?? '',
-      ),
-    ).toBe(5);
-    expect(resealed?.ciphertext).not.toBe(aliasCiphertext);
-
-    expect(
-      normalizeOwnedMarkerRespawnEnvironmentCiphertext({
-        sealedEnvironmentVariables: resealed!,
-        encryptionMaterial: material,
-        randomBytes: (length) =>
-          new Uint8Array(length).fill(9),
-      }),
-    ).toEqual(resealed);
   });
 
   it('builds tracked respawn environment variables from expanded env plus safe child runtime locators only', () => {

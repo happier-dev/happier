@@ -13,6 +13,7 @@ import {
 } from './declarativeModel';
 import type { HostStructuredMessageDescriptorV1 } from './structuredMessageDescriptor';
 import { createStablePluginSettingsModel } from './settings';
+import { listDeclarativeNodesInPreorder } from './declarativeModel.testkit';
 
 const settingsContribution: PluginSettingsContributionV2 = {
     id: 'appearance',
@@ -102,14 +103,15 @@ describe('stable declarative plugin model', () => {
             generation: 'generation-7',
         });
         expect(model.visible).toBe(true);
-        expect(model.nodes.map((node) => [node.kind, node.path, node.order])).toEqual([
+        const nodes = listDeclarativeNodesInPreorder(model.root);
+        expect(nodes.map((node) => [node.kind, node.path, node.order])).toEqual([
             ['stack', 'root', 0],
             ['field', 'root.children[0]', 1],
             ['field', 'root.children[1]', 2],
             ['action', 'root.children[2]', 3],
             ['action', 'root.children[3]', 4],
         ]);
-        expect(model.nodes[1]).toMatchObject({
+        expect(nodes[1]).toMatchObject({
             kind: 'field',
             setting: {
                 id: 'enabled',
@@ -117,7 +119,7 @@ describe('stable declarative plugin model', () => {
                 descriptor: { schema: { type: 'boolean' } },
             },
         });
-        expect(model.nodes[3]).toMatchObject({
+        expect(nodes[3]).toMatchObject({
             kind: 'action',
             action: {
                 identity: { pluginId: 'com.acme.forms', localId: 'save' },
@@ -126,13 +128,55 @@ describe('stable declarative plugin model', () => {
             enabled: true,
             input: { source: 'form' },
         });
-        expect(model.nodes[4]).toMatchObject({
+        expect(nodes[4]).toMatchObject({
             kind: 'action',
             action: { qualifiedId: 'com.acme.forms/reset' },
             enabled: false,
         });
     expect(Object.isFrozen(model)).toBe(true);
   });
+
+    // The model is a wire payload. `root` is the only representation any reader
+    // walks, so carrying a second flat copy of the same node objects made every
+    // container's subtree appear once per ancestor level — an O(nodes x depth)
+    // multiplier on a response that already exceeded 200 KB.
+    it('carries the document once, as root, with no duplicate flat node list', () => {
+        const model = createStablePluginDeclarativeModel({
+            pluginId: 'com.acme.forms',
+            generation: 'generation-7',
+            renderer: {
+                id: 'nested',
+                kind: 'declarative',
+                root: {
+                    kind: 'stack',
+                    children: [{
+                        kind: 'list',
+                        label: 'Repositories',
+                        children: [{
+                            kind: 'section',
+                            title: 'Active',
+                            children: [{ kind: 'item', title: 'deeply-nested-marker' }],
+                        }],
+                    }],
+                },
+            },
+            settings: [],
+            actions: [],
+        } as unknown as Parameters<typeof createStablePluginDeclarativeModel>[0]);
+
+        // The tree is intact and still enumerable in preorder from root alone.
+        expect(listDeclarativeNodesInPreorder(model.root).map((node) => node.kind))
+            .toEqual(['stack', 'list', 'section', 'item']);
+
+        // Nothing reads a flat copy, so the payload must not carry one.
+        expect(Object.hasOwn(model, 'nodes')).toBe(false);
+
+        // The discriminating fact: the deepest node appears exactly once on the
+        // wire. With a parallel `nodes` array it appeared four times — once in
+        // root's subtree and once inside each ancestor's own entry.
+        const serialized = JSON.stringify(model);
+        expect(serialized.split('deeply-nested-marker').length - 1).toBe(1);
+    });
 
   it('projects a target-local Surface only from the exact host-stamped inventory', () => {
     const inputValidation = preparePluginJsonSchema({
@@ -193,7 +237,7 @@ describe('stable declarative plugin model', () => {
       instanceKey: expect.stringMatching(/^targeted-surface:v1:[a-f0-9]{64}$/u),
       fallback: { kind: 'state', state: 'loading' },
     });
-    expect(model.nodes.map((node) => node.kind)).toEqual(['targetedSurface', 'state']);
+    expect(listDeclarativeNodesInPreorder(model.root).map((node) => node.kind)).toEqual(['targetedSurface', 'state']);
   });
 
   it('projects the full admitted Action and Settings inventory independently of the static root', () => {
@@ -273,6 +317,7 @@ describe('stable declarative plugin model', () => {
         kind: 'declarative',
         root: {
           kind: 'collectionList',
+          label: { key: 'tasks.open.label', fallback: 'Open tasks' },
           source: {
             collectionId: 'tasks',
             uiQueryId: 'open-tasks',
@@ -293,6 +338,7 @@ describe('stable declarative plugin model', () => {
     expect(model.declarativeInventory.uiQueries).toEqual([uiQuery]);
     expect(model.root).toMatchObject({
       kind: 'collectionList',
+      label: { key: 'tasks.open.label', fallback: 'Open tasks' },
       source: { collectionId: 'tasks', uiQueryId: 'open-tasks', parameters: { status: 'open' } },
       query: uiQuery,
       projection: {
@@ -683,7 +729,8 @@ describe('stable declarative plugin model', () => {
             },
         });
 
-        expect(model.nodes.map((node) => [node.kind, node.path, node.order])).toEqual([
+        const nodes = listDeclarativeNodesInPreorder(model.root);
+        expect(nodes.map((node) => [node.kind, node.path, node.order])).toEqual([
             ['stack', 'root', 0],
             ['list', 'root.children[0]', 1],
             ['section', 'root.children[0].children[0]', 2],
@@ -697,7 +744,7 @@ describe('stable declarative plugin model', () => {
         ]);
         // An item action is qualified and policy-gated by the SAME owner as an
         // `action` node — an item must never become a second dispatch path.
-        expect(model.nodes[3]).toMatchObject({
+        expect(nodes[3]).toMatchObject({
             kind: 'item',
             title: 'happier',
             icon: 'file',
@@ -706,15 +753,15 @@ describe('stable declarative plugin model', () => {
             input: { id: 'happier' },
             enabled: true,
         });
-        expect(model.nodes[4]).toMatchObject({ kind: 'item', enabled: false });
-        expect(model.nodes[5]).not.toHaveProperty('action');
-        expect(model.nodes[5]).not.toHaveProperty('enabled');
-        expect(model.nodes[6]).toMatchObject({ kind: 'state', state: 'empty', icon: 'info' });
-        expect(model.nodes[7]).toMatchObject({
+        expect(nodes[4]).toMatchObject({ kind: 'item', enabled: false });
+        expect(nodes[5]).not.toHaveProperty('action');
+        expect(nodes[5]).not.toHaveProperty('enabled');
+        expect(nodes[6]).toMatchObject({ kind: 'state', state: 'empty', icon: 'info' });
+        expect(nodes[7]).toMatchObject({
             kind: 'metadata',
             entries: [{ label: 'Branch', value: 'dev', tone: 'muted' }],
         });
-        expect(model.nodes[9]).toMatchObject({ kind: 'action', enabled: false });
+        expect(nodes[9]).toMatchObject({ kind: 'action', enabled: false });
     });
 
     it('refuses a semantic container holding children it cannot render', () => {
@@ -796,7 +843,7 @@ describe('stable declarative plugin model', () => {
         // Bounds disposition (plan §EU-9): MAX_DECLARATIVE_NODES stays 512. A
         // declarative tree is an authored manifest document, so 200 rows is a
         // generous realistic ceiling and still leaves ~300 nodes of headroom.
-        expect(build(rows(200)).nodes).toHaveLength(202);
+        expect(listDeclarativeNodesInPreorder(build(rows(200)).root)).toHaveLength(202);
         // Over-cap rejects through the existing typed code — it never truncates.
         expectPluginError(() => build(rows(511)), 'plugin_declarative_nodes_exceeded');
     });

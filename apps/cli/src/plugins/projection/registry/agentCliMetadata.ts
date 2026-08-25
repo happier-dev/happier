@@ -16,7 +16,7 @@ import {
 import { expandHomeDirPath } from '@/utils/path/expandHomeDirPath';
 import { readAgentSessionCapabilities } from './agentContributionDefinition';
 import { resolveFirstPartyLegacyAgentConnectedAccountServiceId } from './connectedAccountPurposeCompatibility';
-import type { ResolvedCatalogEntry } from './types';
+import type { ResolvedCatalogEntry, ResolvedContributionProvenance } from './types';
 
 /**
  * Read a declared manifest title, accepting both the plain-string and the
@@ -347,10 +347,24 @@ export function createNativeAgentCliAuthSpec(cli: PluginAgentCliMetadata): CliAu
     };
 }
 
+const NO_LEGACY_CONNECTED_SERVICE_IDS: readonly ConnectedServiceId[] = Object.freeze([]);
+
+/**
+ * Legacy service-keyed Connected Service ids are the host-private compatibility
+ * input for the retained bundled first-party adapters: they route an Agent
+ * onto the service-keyed credential owner and earn the request-auth
+ * `legacyServiceKeyedCompatibility` certificate at spawn, foreground admission,
+ * execution runs and reattach. An external manifest can name the same built-in
+ * service ref, which proves nothing about provenance, so the projection is
+ * first-party only and every external Agent stays on the qualified purpose
+ * binding owner with its declared Connected Account capability intact.
+ */
 function resolveManifestAgentConnectedServiceIds(params: Readonly<{
     definition: PluginAgentContributionV2;
     pluginId: string;
+    provenance: ResolvedContributionProvenance;
 }>): readonly ConnectedServiceId[] {
+    if (params.provenance !== 'first_party') return NO_LEGACY_CONNECTED_SERVICE_IDS;
     const ids = new Set<ConnectedServiceId>();
     for (const declaration of params.definition.connectedAccounts ?? []) {
         const service: QualifiedConnectedAccountRef['service'] =
@@ -369,11 +383,15 @@ export function createManifestAgentCatalogEntry(params: Readonly<{
     pluginId: string;
     definition: PluginAgentContributionV2;
     cli: PluginAgentCliMetadata | null;
+    provenance: ResolvedContributionProvenance;
 }>): ResolvedCatalogEntry | null {
     const sessionCapabilities = readAgentSessionCapabilities(params.definition);
     if (!sessionCapabilities) return null;
     const cli = params.cli;
     const connectedServiceIds = resolveManifestAgentConnectedServiceIds(params);
+    const toolDelivery = 'tools' in params.definition.capabilities
+        ? params.definition.capabilities.tools?.delivery
+        : undefined;
 
     return Object.freeze({
         id: params.agentId,
@@ -384,6 +402,9 @@ export function createManifestAgentCatalogEntry(params: Readonly<{
         vendorResumeSupport: sessionCapabilities.open.includes('resume')
             ? 'supported'
             : 'unsupported',
+        ...(toolDelivery
+            ? { toolDelivery }
+            : {}),
         ...(connectedServiceIds.length > 0 ? { connectedServiceIds } : {}),
         ...(cli
             ? {

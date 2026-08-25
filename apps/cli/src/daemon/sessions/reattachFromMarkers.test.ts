@@ -1,9 +1,6 @@
 import {
-  readAccountScopedCiphertextKindByte,
+  sealAccountScopedBlobCiphertext,
 } from '@happier-dev/protocol';
-import {
-  sealHistoricalSessionRespawnEnvironmentAliasFixtureCiphertext,
-} from '@happier-dev/protocol/testing/accountScopedCipherFixtures';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { reattachTrackedSessionsFromMarkers } from './reattachFromMarkers';
@@ -14,7 +11,6 @@ import {
   hashProcessCommand,
   listSessionMarkers,
   removeSessionMarker,
-  rewriteSessionMarkerRespawnEnvironmentCiphertextIfOwned,
   writeSessionMarker,
 } from '../sessionRegistry';
 import { createSessionRunnerRespawnManager } from '../processSupervision/sessionRunnerRespawn';
@@ -73,8 +69,6 @@ vi.mock('../sessionRegistry', async (importOriginal) => {
     clearSessionMarkerConnectedServiceRestartIntent: vi.fn(async () => {}),
     listSessionMarkers: vi.fn(async () => []),
     removeSessionMarker: vi.fn(async () => {}),
-    rewriteSessionMarkerRespawnEnvironmentCiphertextIfOwned:
-      vi.fn(async () => true),
     writeSessionMarker: vi.fn(async () => {}),
     hashProcessCommand: vi.fn((command: string) => `hash:${command}`),
   };
@@ -1895,7 +1889,8 @@ describe('reattachTrackedSessionsFromMarkers', () => {
           },
           sealedEnvironmentVariables: {
             format: 'account_scoped_v1',
-            ciphertext: sealHistoricalSessionRespawnEnvironmentAliasFixtureCiphertext({
+            ciphertext: sealAccountScopedBlobCiphertext({
+              kind: 'session_respawn_environment',
               material: credentials.encryption,
               payload: {
                 CODEX_HOME: '/tmp/codex-home',
@@ -1957,27 +1952,6 @@ describe('reattachTrackedSessionsFromMarkers', () => {
       }),
     );
     expect(writeSessionMarker).not.toHaveBeenCalled();
-    expect(
-      rewriteSessionMarkerRespawnEnvironmentCiphertextIfOwned,
-    ).toHaveBeenCalledOnce();
-    const rewriteRequest = vi.mocked(
-      rewriteSessionMarkerRespawnEnvironmentCiphertextIfOwned,
-    ).mock.calls[0]?.[0];
-    expect(rewriteRequest).toMatchObject({
-      pid: 12345,
-      ownership: {
-        happySessionId: 'session-123',
-        processCommandHash: `hash:${command}`,
-        processStartTimeMs,
-      },
-      expectedCiphertext: expect.any(String),
-      replacementCiphertext: expect.any(String),
-    });
-    expect(
-      readAccountScopedCiphertextKindByte(
-        rewriteRequest?.replacementCiphertext ?? '',
-      ),
-    ).toBe(5);
   });
 
   it('hydrates an observed PID birth for a retained Remote request-auth source from a predecessor marker', async () => {
@@ -2010,7 +1984,8 @@ describe('reattachTrackedSessionsFromMarkers', () => {
         sealedEnvironmentVariables: {
           format: 'account_scoped_v1',
           ciphertext:
-            sealHistoricalSessionRespawnEnvironmentAliasFixtureCiphertext({
+            sealAccountScopedBlobCiphertext({
+              kind: 'session_respawn_environment',
               material: credentials.encryption,
               payload: {
                 HAPPIER_OPENCODE_BROKER_STATE_PATH:
@@ -2083,7 +2058,7 @@ describe('reattachTrackedSessionsFromMarkers', () => {
     expect(writeSessionMarker).not.toHaveBeenCalled();
   });
 
-  it('continues startup restart-intent reconciliation when an exact adopted respawn alias rewrite fails', async () => {
+  it('continues startup restart-intent reconciliation after an exact marker adoption', async () => {
     const credentials: Credentials = {
       token: 't',
       encryption: {
@@ -2119,7 +2094,8 @@ describe('reattachTrackedSessionsFromMarkers', () => {
         sealedEnvironmentVariables: {
           format: 'account_scoped_v1',
           ciphertext:
-            sealHistoricalSessionRespawnEnvironmentAliasFixtureCiphertext({
+            sealAccountScopedBlobCiphertext({
+              kind: 'session_respawn_environment',
               material: credentials.encryption,
               payload: {
                 OPENAI_API_KEY: 'must-remain-sealed',
@@ -2144,11 +2120,6 @@ describe('reattachTrackedSessionsFromMarkers', () => {
       );
     vi.mocked(adoptSessionsFromMarkers).mockImplementationOnce(
       actualReattach.adoptSessionsFromMarkers,
-    );
-    vi.mocked(
-      rewriteSessionMarkerRespawnEnvironmentCiphertextIfOwned,
-    ).mockRejectedValueOnce(
-      new Error('marker rewrite failed'),
     );
     vi.spyOn(process, 'kill').mockImplementation(
       () => true as never,
@@ -2177,14 +2148,11 @@ describe('reattachTrackedSessionsFromMarkers', () => {
       true,
     );
     expect(
-      rewriteSessionMarkerRespawnEnvironmentCiphertextIfOwned,
-    ).toHaveBeenCalledOnce();
-    expect(
       clearSessionMarkerConnectedServiceRestartIntent,
     ).toHaveBeenCalledWith(marker.pid);
   });
 
-  it('does not recover or rewrite a marker when the live PID has a different process birth identity', async () => {
+  it('does not recover a marker when the live PID has a different process birth identity', async () => {
     const credentials: Credentials = {
       token: 't',
       encryption: {
@@ -2194,8 +2162,9 @@ describe('reattachTrackedSessionsFromMarkers', () => {
     };
     const command =
       'happier opencode --happy-starting-mode remote --started-by daemon --existing-session session-birth-mismatch';
-    const aliasCiphertext =
-      sealHistoricalSessionRespawnEnvironmentAliasFixtureCiphertext({
+    const sealedCiphertext =
+      sealAccountScopedBlobCiphertext({
+        kind: 'session_respawn_environment',
         material: credentials.encryption,
         payload: {
           OPENAI_API_KEY: 'must-remain-sealed',
@@ -2223,7 +2192,7 @@ describe('reattachTrackedSessionsFromMarkers', () => {
         },
         sealedEnvironmentVariables: {
           format: 'account_scoped_v1',
-          ciphertext: aliasCiphertext,
+          ciphertext: sealedCiphertext,
         },
       },
     } as any]);
@@ -2252,9 +2221,6 @@ describe('reattachTrackedSessionsFromMarkers', () => {
 
     expect(pidToTrackedSession.has(12346)).toBe(false);
     expect(writeSessionMarker).not.toHaveBeenCalled();
-    expect(
-      rewriteSessionMarkerRespawnEnvironmentCiphertextIfOwned,
-    ).not.toHaveBeenCalled();
   });
 
   it('does not recover a live daemon-spawned process when a live marker failed marker adoption safety checks', async () => {
@@ -2313,8 +2279,9 @@ describe('reattachTrackedSessionsFromMarkers', () => {
         secret: new Uint8Array(32).fill(9),
       },
     };
-    const aliasCiphertext =
-      sealHistoricalSessionRespawnEnvironmentAliasFixtureCiphertext({
+    const sealedCiphertext =
+      sealAccountScopedBlobCiphertext({
+        kind: 'session_respawn_environment',
         material: credentials.encryption,
         payload: {
           OPENAI_API_KEY: 'must-remain-sealed',
@@ -2340,7 +2307,7 @@ describe('reattachTrackedSessionsFromMarkers', () => {
           },
           sealedEnvironmentVariables: {
             format: 'account_scoped_v1',
-            ciphertext: aliasCiphertext,
+            ciphertext: sealedCiphertext,
           },
         },
       } as any,
@@ -2381,16 +2348,7 @@ describe('reattachTrackedSessionsFromMarkers', () => {
       vi.mocked(writeSessionMarker).mock.calls[0]?.[0].respawn;
     expect(
       preservedRespawn?.sealedEnvironmentVariables?.ciphertext,
-    ).toBe(aliasCiphertext);
-    expect(
-      readAccountScopedCiphertextKindByte(
-        preservedRespawn?.sealedEnvironmentVariables
-          ?.ciphertext ?? '',
-      ),
-    ).toBe(6);
-    expect(
-      rewriteSessionMarkerRespawnEnvironmentCiphertextIfOwned,
-    ).not.toHaveBeenCalled();
+    ).toBe(sealedCiphertext);
   });
 
   it('recovers incomplete daemon markers during takeover when the live command degrades to a bare runtime command', async () => {

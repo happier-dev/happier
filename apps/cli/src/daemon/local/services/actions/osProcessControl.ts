@@ -1,9 +1,8 @@
-import { execFile as execFileCallback } from 'node:child_process';
-import { promisify } from 'node:util';
-
+import { execFileWithDeadline, isPidPresent } from '@happier-dev/cli-common/process';
 import { taskkillWindowsProcessTree } from '@/subprocess/supervision/taskkillWindowsProcessTree';
 import type { NormalizedLocalServiceInventorySnapshot } from '../inventory/scanner';
 import type {
+    TerminateDescendantResolution,
     TerminateListenerProbeInput,
     TerminateListenerProbeResult,
     TerminateProcessControl,
@@ -118,10 +117,14 @@ export function createOsProcessControl(input: CreateOsProcessControlInput): Term
     const kill = input.kill ?? ((pid, signal) => {
         process.kill(pid, signal);
     });
-    const execFile = input.execFile ?? (async (command, args, options) => {
-        const result = await promisify(execFileCallback)(command, [...args], options);
-        return { stdout: result.stdout };
-    });
+    // `execFileWithDeadline` owns the budget. A `child_process` `timeout` destroys the buffered
+    // process table from the timers phase and reports success with empty stdout, so a `ps` that
+    // actually completed arrives as a table we cannot parse — the `size === 0` guard below then
+    // refuses a terminate the machine could have served. Worse, a partially drained pipe parses
+    // into a table that is silently SHORT, which is the under-reported descendant set that guard
+    // exists to prevent. Owning the deadline removes both: a finished `ps` delivers its whole
+    // listing, and one still running rejects.
+    const execFile = input.execFile ?? execFileWithDeadline;
 
     async function probeListener(probe: TerminateListenerProbeInput): Promise<TerminateListenerProbeResult> {
         let snapshot = await input.refreshInventory();
@@ -162,36 +165,56 @@ export function createOsProcessControl(input: CreateOsProcessControlInput): Term
         };
     }
 
-    async function resolveDescendantPids(pid: number): Promise<readonly number[]> {
-        if (platform === 'windows') return [];
+    async function resolveDescendantPids(pid: number): Promise<TerminateDescendantResolution> {
+        if (platform === 'windows') return { status: 'resolved', pids: [] };
+        let output: string;
         try {
             const result = await execFile('ps', ['-A', '-o', 'pid=,ppid='], {
                 timeout: PROCESS_TABLE_TIMEOUT_MS,
                 maxBuffer: PROCESS_TABLE_MAX_BUFFER,
             });
-            return collectProcessDescendants({
-                pid,
-                childrenByParent: parsePosixProcessParentTable(stdoutText(result)),
-                selfPid: process.pid,
-            });
+            output = stdoutText(result);
         } catch {
-            // The process table is unavailable: signal the listener pid alone and let the
-            // port-release verification report what actually happened.
-            return [];
+            // The process table could not be read — `ps` absent, or (observed on a loaded
+            // machine during this lane's own QA) the timeout above firing. This used to return
+            // an empty descendant set, which is indistinguishable from "this service has no
+            // children": terminate then signalled the listener alone, killing it freed the
+            // port, verification passed, and the destructive action reported **success** while
+            // the user's child processes kept running. Same failure class as the ESRCH the
+            // group addressing swallowed, so it gets the same treatment — say so, and refuse.
+            //
+            // Partial stdout is deliberately *not* recovered here, unlike the darwin `lsof`
+            // inventory scan. A truncated inventory degrades a listing the user can re-read; a
+            // truncated process table silently under-reports descendants and hands this
+            // function's one caller a set it cannot tell is incomplete — the exact partial kill
+            // being removed.
+            return { status: 'unavailable' };
         }
+        const childrenByParent = parsePosixProcessParentTable(output);
+        if (childrenByParent.size === 0) {
+            // `ps` exited 0 but we understood none of it — an unexpected column layout (a
+            // busybox `ps` ignoring `-o`), or empty stdout. A real `-A` listing always yields at
+            // least one parseable `pid ppid` pair, so this is not "a machine with no process
+            // tree"; it is the same blindness as the timeout above wearing a success exit code,
+            // and it reaches the same partial kill if let through as an empty descendant set.
+            return { status: 'unavailable' };
+        }
+        return {
+            status: 'resolved',
+            pids: collectProcessDescendants({
+                pid,
+                childrenByParent,
+                selfPid: process.pid,
+            }),
+        };
     }
 
     async function isProcessAlive(pid: number): Promise<boolean> {
-        try {
-            // Signal 0 performs no kill but throws ESRCH when the pid is gone.
-            kill(pid, 0);
-            return true;
-        } catch (error) {
-            // A process we may not signal still exists. POSIX reports EPERM; libuv maps the
-            // Windows `OpenProcess` access denial to EACCES.
-            const code = (error as NodeJS.ErrnoException).code;
-            return code === 'EPERM' || code === 'EACCES';
-        }
+        // Shared canonical probe. "Present" is the right question here, not "alive": a process we
+        // may not signal must never let terminate report a completed kill.
+        return isPidPresent(pid, (target, signal) => {
+            kill(target, signal);
+        });
     }
 
     async function signal(signalInput: TerminateProcessSignalInput): Promise<TerminateProcessSignalOutcome> {

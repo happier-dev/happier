@@ -219,16 +219,6 @@ describe('browser sidecar CDP control adapter', () => {
             transport,
         });
 
-        await expect(adapter.dispatchCommand({
-            kind: 'createSession',
-            commandId: 'command_create_session',
-        })).resolves.toMatchObject({
-            v: 1,
-            commandId: 'command_create_session',
-            status: 'failed',
-            adapterKind: 'chromiumSidecar',
-            error: { code: 'unsupported_command' },
-        });
         await expect(adapter.dispatchCommand(navigateCommand({ viewId: 'stale_view' }))).resolves.toMatchObject({
             v: 1,
             commandId: 'command_navigate',

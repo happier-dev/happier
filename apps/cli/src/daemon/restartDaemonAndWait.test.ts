@@ -143,6 +143,8 @@ describe('restartDaemonAndWait', () => {
 
         await expect(restartDaemonAndWait({ stopSessions: true })).resolves.toEqual({
             ok: false,
+            failedPhase: 'stop',
+            daemonStatusAfterFailure: 'running',
         });
 
         expect(stopDaemonMock).toHaveBeenCalledWith({
@@ -163,6 +165,8 @@ describe('restartDaemonAndWait', () => {
 
         await expect(restartDaemonAndWait({ stopSessions: true })).resolves.toEqual({
             ok: false,
+            failedPhase: 'start',
+            daemonStatusAfterFailure: 'running',
         });
 
         expect(stopDaemonMock).toHaveBeenCalledWith({
@@ -170,6 +174,48 @@ describe('restartDaemonAndWait', () => {
         });
         expect(spawnDetachedDaemonStartSyncMock).toHaveBeenCalledTimes(1);
         expect(waitForDaemonRunningWithinBudgetMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('reports the failed phase and the daemon state it leaves behind when the start half fails', async () => {
+        // F-DAEMON-6: `happier daemon restart` stopped the daemon, failed to start the replacement and
+        // reported only "Failed to restart daemon" — the user was never told the stack was now
+        // daemonless, nor what to run. A bare `{ ok: false }` cannot carry any of that.
+        const { restartDaemonAndWait } = await importSubject();
+        waitForDaemonRunningWithinBudgetMock.mockResolvedValueOnce(false);
+        inspectDaemonRunningStateMock.mockReset();
+        inspectDaemonRunningStateMock
+            .mockResolvedValueOnce({
+                status: 'running',
+                state: {
+                    pid: 1234,
+                    startedAt: 100,
+                    httpPort: 9400,
+                    startedWithCliVersion: '0.2.8',
+                    startedWithPublicReleaseChannel: 'preview',
+                    startupSource: 'manual',
+                    controlToken: 'token-1',
+                },
+            })
+            .mockResolvedValue({ status: 'not-running' });
+
+        await expect(restartDaemonAndWait({ stopSessions: true })).resolves.toEqual({
+            ok: false,
+            failedPhase: 'start',
+            daemonStatusAfterFailure: 'not-running',
+        });
+    });
+
+    it('reports a stop-phase failure while naming the daemon that is now running', async () => {
+        // The mirror-image lie: the replacement daemon is up and healthy, but because the OLD daemon's
+        // stop could not be confirmed the command printed the same bare "Failed to restart daemon".
+        const { restartDaemonAndWait } = await importSubject();
+        stopDaemonMock.mockRejectedValueOnce(new Error('stop failed'));
+
+        await expect(restartDaemonAndWait({ stopSessions: true })).resolves.toEqual({
+            ok: false,
+            failedPhase: 'stop',
+            daemonStatusAfterFailure: 'running',
+        });
     });
 
     it('uses the shared daemon startup wait budget by default', async () => {
@@ -216,6 +262,8 @@ describe('restartDaemonAndWait', () => {
 
         await expect(restartDaemonAndWait({ stopSessions: true })).resolves.toEqual({
             ok: false,
+            failedPhase: 'start',
+            daemonStatusAfterFailure: 'running',
         });
     });
 
@@ -226,12 +274,14 @@ describe('restartDaemonAndWait', () => {
             .mockResolvedValueOnce({
                 status: 'not-running',
             })
-            .mockResolvedValueOnce({
+            .mockResolvedValue({
                 status: 'not-running',
             });
 
         await expect(restartDaemonAndWait({ stopSessions: true })).resolves.toEqual({
             ok: false,
+            failedPhase: 'start',
+            daemonStatusAfterFailure: 'not-running',
         });
     });
 
@@ -296,6 +346,8 @@ describe('restartDaemonAndWait', () => {
 
         await expect(restartDaemonAndWait({ stopSessions: false, restartSessionRunners: true })).resolves.toEqual({
             ok: false,
+            failedPhase: 'start',
+            daemonStatusAfterFailure: 'running',
         });
 
         expect(restartAllDaemonSessionRunnersMock).not.toHaveBeenCalled();

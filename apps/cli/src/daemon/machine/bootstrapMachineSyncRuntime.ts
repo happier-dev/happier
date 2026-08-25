@@ -62,8 +62,6 @@ import {
 import { createNpmRegistryProfileService } from '@/plugins/distribution/npm/profiles/service';
 import { createNpmRegistryProfileProbe } from '@/plugins/distribution/npm/profiles/probe';
 import { triggerLegacyProfileMigration as triggerLegacyProfileMigrationRuntime } from '@/providers/migrations/runtime';
-import { resolveMergedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
-import { resolveProviderContributionRegistryView } from '@/providers/registry';
 import { decodeJwtPayload } from '@/cloud/decodeJwtPayload';
 import {
   PeerLoopbackEndpointCandidateV1Schema,
@@ -313,6 +311,7 @@ function mergePeerMediationLoopbackEndpoint(
           ...(activeFlows.machine_rpc ? { machine_rpc: { active: true } } : {}),
           ...(activeFlows.live_stream ? { live_stream: { active: true } } : {}),
           ...(activeFlows.tcp_tunnel ? { tcp_tunnel: { active: true } } : {}),
+          ...(activeFlows.voice_media ? { voice_media: { active: true } } : {}),
         },
       },
     },
@@ -876,9 +875,6 @@ export async function bootstrapMachineSyncRuntime(
     providerRuntimeServices = createRuntimeProviderModelManagementServices({
       machineId: params.machineId,
       happyHomeDir: configuration.happyHomeDir,
-      resolveRegistry: async () => resolveProviderContributionRegistryView(
-        await resolveMergedContributionRegistry({ happyHomeDir: configuration.happyHomeDir }),
-      ),
       featureGate: providerFeatureGate,
       modelSettingsMutation: providerConnectionRuntimeServices?.service.mutateModelSettings
         ?? providerConnectionUnavailable,

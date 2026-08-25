@@ -660,7 +660,7 @@ describe('packLocalPlugin', () => {
 
       expect(result).toMatchObject({
         ok: false,
-        diagnostics: [expect.objectContaining({ message: expect.stringContaining('Plugin author install failed') })],
+        diagnostics: [expect.objectContaining({ message: expect.stringContaining('Plugin development install failed') })],
       });
     } finally {
       await registry.close();
@@ -668,7 +668,7 @@ describe('packLocalPlugin', () => {
     }
   });
 
-  it('packs a bundled first-party provider through the canonical candidate registry without changing its source metadata', async () => {
+  it('does not promote a locally sourced workspace plugin to bundled first-party authority while packing', async () => {
     const parent = await mkdtemp(join(tmpdir(), 'happier-bundled-first-party-pack-'));
     const fixture = await writeBundledFirstPartyPackFixture(parent);
     const [sdkTarball, channelsProtocolTarball] = await Promise.all([
@@ -698,24 +698,13 @@ describe('packLocalPlugin', () => {
         sdkRegistryOrigin: registry.origin,
       });
 
-      expect(result, result.ok ? '' : result.diagnostics.map((entry) => entry.message).join('\n'))
-        .toMatchObject({ ok: true, pluginId: 'happier.channel.telegram' });
+      expect(result).toMatchObject({
+        ok: false,
+        diagnostics: [expect.objectContaining({ message: expect.stringContaining('happier-plugin keyword') })],
+      });
       const sourcePackageJson = JSON.parse(await readFile(fixture.packageJsonPath, 'utf8')) as Record<string, unknown>;
       expect(sourcePackageJson).not.toHaveProperty('keywords');
       expect(sourcePackageJson).not.toHaveProperty('happier');
-
-      const extractedRoot = join(parent, 'bundled-first-party-extracted');
-      await mkdir(extractedRoot);
-      await tar.x({ file: join(parent, 'bundled-first-party.tgz'), cwd: extractedRoot });
-      const packedPackageJson = JSON.parse(
-        await readFile(join(extractedRoot, 'package', 'package.json'), 'utf8'),
-      ) as Record<string, unknown>;
-      expect(packedPackageJson).toMatchObject({
-        name: '@happier-dev/plugins-channel-telegram',
-        version: '0.0.0',
-      });
-      expect(packedPackageJson).not.toHaveProperty('keywords');
-      expect(packedPackageJson).not.toHaveProperty('happier');
     } finally {
       await registry.close();
       await rm(parent, { recursive: true, force: true });
@@ -764,7 +753,7 @@ describe('packLocalPlugin', () => {
     }
   });
 
-  it('packs a bundled first-party descriptor package whose canonical manifest is read before staging', async () => {
+  it('does not promote a locally sourced descriptor package to bundled first-party authority while packing', async () => {
     const parent = await mkdtemp(join(tmpdir(), 'happier-bundled-first-party-descriptor-pack-'));
     const fixture = await writeBundledFirstPartyDescriptorPackFixture(parent);
     try {
@@ -773,8 +762,12 @@ describe('packLocalPlugin', () => {
         outPath: join(parent, 'bundled-first-party-descriptor.tgz'),
       });
 
-      expect(result, result.ok ? '' : result.diagnostics.map((entry) => entry.message).join('\n'))
-        .toMatchObject({ ok: true, pluginId: 'happier.channels', version: '0.0.0' });
+      expect(result).toMatchObject({
+        ok: false,
+        diagnostics: [expect.objectContaining({
+          message: expect.stringContaining('happier-plugin keyword'),
+        })],
+      });
     } finally {
       await rm(parent, { recursive: true, force: true });
     }
@@ -793,10 +786,9 @@ describe('packLocalPlugin', () => {
 
       expect(result).toMatchObject({
         ok: false,
-        diagnostics: [
-          expect.objectContaining({ message: expect.stringContaining("reserved happier.* namespace") }),
-          expect.objectContaining({ message: expect.stringContaining('compatible Happier CLI version') }),
-        ],
+        diagnostics: [expect.objectContaining({
+          message: expect.stringContaining('happier-plugin keyword'),
+        })],
       });
     } finally {
       await rm(parent, { recursive: true, force: true });

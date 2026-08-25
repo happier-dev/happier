@@ -11,12 +11,12 @@ vi.mock('@/cli/runBackendSessionCliCommand', () => ({
 
 import { projectManifestAgentContribution } from './projectManifestAgentContribution';
 
-function project(definition: unknown) {
+function project(definition: unknown, provenance: 'external' | 'first_party' = 'external') {
     return projectManifestAgentContribution({
         definition: PluginAgentContributionV2Schema.parse(definition),
-        provenance: 'external',
-        source: { kind: 'path' },
-        pluginId: 'com.acme.agent',
+        provenance,
+        source: provenance === 'first_party' ? { kind: 'bundled' } : { kind: 'path' },
+        pluginId: provenance === 'first_party' ? 'happier.agent.codex' : 'com.acme.agent',
     });
 }
 
@@ -146,7 +146,12 @@ describe('projectManifestAgentContribution', () => {
         });
     });
 
-    it('projects only exact legacy-compatible Connected Service ids declared by an external Agent', () => {
+    it('keeps an external Agent off the legacy service-keyed projection even when it targets a built-in service', () => {
+        // `connectedServiceIds` is the host-private legacy compatibility input:
+        // it routes an Agent onto the service-keyed credential owner and earns
+        // the request-auth `legacyServiceKeyedCompatibility` certificate. An
+        // external manifest declaring a built-in service ref proves nothing
+        // about provenance, so it stays on the qualified purpose owner.
         const contribution = project({
             ...sessionAgent(['create']),
             connectedAccounts: [{
@@ -160,6 +165,24 @@ describe('projectManifestAgentContribution', () => {
                 service: 'anthropic',
             }],
         });
+
+        expect(contribution.catalogEntry).not.toHaveProperty('connectedServiceIds');
+    });
+
+    it('projects exact legacy-compatible Connected Service ids for the retained first-party legacy adapter', () => {
+        const contribution = project({
+            ...sessionAgent(['create']),
+            connectedAccounts: [{
+                purpose: 'codex',
+                service: {
+                    pluginId: 'happier.agent.codex',
+                    localId: 'openai-codex',
+                },
+            }, {
+                purpose: 'local',
+                service: 'anthropic',
+            }],
+        }, 'first_party');
 
         expect(contribution.catalogEntry?.connectedServiceIds).toEqual([
             'openai-codex',

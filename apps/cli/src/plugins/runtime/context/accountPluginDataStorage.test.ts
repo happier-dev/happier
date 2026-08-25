@@ -145,8 +145,8 @@ function createAccountKvWireStore(initialRow?: unknown) {
             if (content === null) return { status: 200, data: { status: 'deleted', revision } };
             return { status: 200, data: { status: 'present', revision, content } };
         },
-        async post(_url: string, body: unknown): Promise<Readonly<{ status: number; data: unknown }>> {
-            const request = PluginAccountStorageMutationRequestV1Schema.parse(body);
+        async post(_url: string, body: string): Promise<Readonly<{ status: number; data: unknown }>> {
+            const request = PluginAccountStorageMutationRequestV1Schema.parse(JSON.parse(body));
             if (request.expectedRevision !== revision) {
                 return {
                     status: 200,
@@ -164,7 +164,7 @@ function bindHost(params: Readonly<{
     contracts?: readonly NormalizedPluginAccountCollectionContractV1[];
     credentials?: StoredCredentials;
     get?: (url: string) => Promise<Readonly<{ status: number; data: unknown }>>;
-    post: (url: string, body: unknown) => Promise<Readonly<{ status: number; data: unknown }>>;
+    post: (url: string, body: string) => Promise<Readonly<{ status: number; data: unknown }>>;
     currentness?: (credentials: StoredCredentials) => AccountEncryptionCurrentnessResponse;
     subscribeChanges?: (
         subscription: Readonly<{
@@ -417,7 +417,7 @@ describe('Account plugin Data storage host', () => {
         const calls: HttpCall[] = [];
         const account = bindHost({
             post: async (url, body) => {
-                calls.push({ url, body });
+                calls.push({ url, body: JSON.parse(body) });
                 return { status: 200, data: { status: 'updated', results: [], changeCursor: 1 } };
             },
         });
@@ -438,7 +438,7 @@ describe('Account plugin Data storage host', () => {
         const account = bindHost({
             contracts: [rowIdOnlyIdentityAdmitted],
             post: async (url, body) => {
-                calls.push({ url, body });
+                calls.push({ url, body: JSON.parse(body) });
                 return { status: 200, data: { status: 'updated', results: [], changeCursor: 1 } };
             },
         });
@@ -530,7 +530,7 @@ describe('Account plugin Data storage host', () => {
         const account = bindHost({
             contracts: [migratedContract],
             post: async (url, body) => {
-                calls.push({ url, body });
+                calls.push({ url, body: JSON.parse(body) });
                 return {
                     status: 200,
                     data: {
@@ -565,7 +565,7 @@ describe('Account plugin Data storage host', () => {
         const calls: HttpCall[] = [];
         const account = bindHost({
             post: async (url, body) => {
-                calls.push({ url, body });
+                calls.push({ url, body: JSON.parse(body) });
                 return {
                     status: 200,
                     data: {
@@ -624,7 +624,7 @@ describe('Account plugin Data storage host', () => {
         const calls: HttpCall[] = [];
         const account = bindHost({
             post: async (url, body) => {
-                calls.push({ url, body });
+                calls.push({ url, body: JSON.parse(body) });
                 return {
                     status: 200,
                     data: {
@@ -676,7 +676,7 @@ describe('Account plugin Data storage host', () => {
         const changeSubscription: {
             listener: ((hint: PluginAccountCollectionWatchInvalidation) => void) | null;
         } = { listener: null };
-        const post = vi.fn(async (_url: string, _body: unknown) => ({
+        const post = vi.fn(async (_url: string, _body: string) => ({
             status: 200,
             data: {
                 status: 'updated',
@@ -703,7 +703,7 @@ describe('Account plugin Data storage host', () => {
             privateNote: 'encrypted private field',
         }, { expectedRevision: 'absent' });
 
-        const request = post.mock.calls[0]?.[1] as Readonly<{ operations: readonly Readonly<{
+        const request = JSON.parse(post.mock.calls[0]?.[1] ?? 'null') as Readonly<{ operations: readonly Readonly<{
             content: Readonly<{ t: string; c?: string }>;
         }>[] }>;
         const ciphertext = request.operations[0]?.content.c;
@@ -965,7 +965,7 @@ describe('Account plugin Data storage host', () => {
         const account = bindHost({
             credentials: encryptedCredentials,
             post: async (_url, body) => {
-                sentRequests.push(body);
+                sentRequests.push(JSON.parse(body));
                 return {
                     status: 200,
                     data: {
@@ -1145,9 +1145,15 @@ describe('Account plugin Data storage host', () => {
         await expect(account.kv.list()).resolves.toEqual({
             items: [{ key: 'checkpoint', version: 1, deleted: true }],
         });
+        // The rule itself lives in the Protocol row owner, whose own error class
+        // already carries this `code`. Asserting the name too is what proves the
+        // daemon translated it into the author-facing `PluginError` the canonical
+        // recognizer accepts — without it this assertion passes unchanged when the
+        // translation is removed and a raw internal error reaches the plugin.
         await expect(account.kv.set('checkpoint', { offset: 2 }, {
             expectedVersion: 'absent',
         })).rejects.toMatchObject({
+            name: 'PluginError',
             code: 'plugin_account_kv_conflict',
         } satisfies Partial<PluginError>);
         await expect(account.kv.set('checkpoint', { offset: 2 }, {
@@ -1185,11 +1191,11 @@ describe('Account plugin Data storage host', () => {
     it('runs Account KV callbacks once against one CAS snapshot and seals E2EE rows in the KV-only domain', async () => {
         let revision: number | 'absent' = 'absent';
         let content: unknown = null;
-        const post = vi.fn(async (url: string, body: unknown) => {
+        const post = vi.fn(async (url: string, body: string) => {
             if (url.endsWith('/v1/account/encryption')) {
                 return { status: 200, data: { mode: 'e2ee', updatedAt: 1 } };
             }
-            const request = body as Readonly<{ expectedRevision: number | 'absent'; content: Readonly<{ t: string; c?: string }> | null }>;
+            const request = JSON.parse(body) as Readonly<{ expectedRevision: number | 'absent'; content: Readonly<{ t: string; c?: string }> | null }>;
             if (request.expectedRevision !== revision) {
                 return { status: 200, data: { status: 'conflict', revision: revision === 'absent' ? 0 : revision } };
             }
@@ -1222,7 +1228,9 @@ describe('Account plugin Data storage host', () => {
 
         await expect(account.kv.transaction(callback)).resolves.toBe('committed');
         expect(callback).toHaveBeenCalledOnce();
-        const persisted = post.mock.calls.find(([url]) => String(url).includes('/plugin-storage/'))?.[1] as Readonly<{
+        const persisted = JSON.parse(
+            post.mock.calls.find(([url]) => String(url).includes('/plugin-storage/'))?.[1] ?? 'null',
+        ) as Readonly<{
             content: Readonly<{ t: string; c?: string }>;
         }>;
         expect(persisted.content.t).toBe('encrypted');
@@ -1269,7 +1277,7 @@ describe('Account plugin Data storage host', () => {
 
     it('does not replay a transaction callback when the one whole-row CAS conflicts', async () => {
         const wire = createAccountKvWireStore();
-        const post = vi.fn(async (_url: string, _body: unknown) => ({
+        const post = vi.fn(async (_url: string, _body: string) => ({
             status: 200,
             data: { status: 'conflict' as const, revision: 0 },
         }));
@@ -1284,5 +1292,62 @@ describe('Account plugin Data storage host', () => {
         } satisfies Partial<PluginError>);
         expect(callback).toHaveBeenCalledOnce();
         expect(post).toHaveBeenCalledOnce();
+    });
+
+    /**
+     * Protocol's strict-JSON admission is iterative and deliberately carries no
+     * depth quota, but the request still has to be serialized, and on the
+     * recursive `JSON.stringify` builds this daemon ships on that serializer can
+     * refuse an admitted value. Only the operation that runs the serializer can
+     * say a refusal came from it: the host therefore encodes its own request
+     * body and classifies that refusal there.
+     *
+     * Everything the transport can throw is a different fact. `RangeError` is
+     * not a transport-versus-serializer discriminator — a response larger than
+     * the engine's maximum string length raises `RangeError: Invalid string
+     * length` out of the very same call — so a client that reads `RangeError`
+     * off the whole request tells a caller its data is permanently bad and takes
+     * a recoverable outage off the retry path.
+     */
+    it('keeps a transport RangeError on the retryable availability path for a Collection mutation', async () => {
+        const bodies: unknown[] = [];
+        const account = bindHost({
+            post: async (_url, body) => {
+                bodies.push(body);
+                throw new RangeError('Invalid string length');
+            },
+        });
+
+        await expect(account.collection(collectionDefinition).put({
+            id: 'task-1',
+            status: 'open',
+            privateNote: 'keep private',
+        }, { expectedRevision: 'absent' })).rejects.toMatchObject({
+            code: 'plugin_account_storage_unavailable',
+            retryable: true,
+        } satisfies Partial<PluginError>);
+        // The host, not the transport, encoded the body — which is what makes a
+        // serializer refusal identifiable without capturing transport failures.
+        expect(bodies).toHaveLength(1);
+        expect(typeof bodies[0]).toBe('string');
+        expect(JSON.parse(bodies[0] as string)).toMatchObject({
+            pluginId: PLUGIN_ID,
+            collectionId: COLLECTION_ID,
+        });
+    });
+
+    it('keeps a transport RangeError on the retryable availability path for an Account KV write', async () => {
+        const account = bindHost({
+            get: async () => ({ status: 200, data: { status: 'absent' } }),
+            post: async () => {
+                throw new RangeError('Invalid string length');
+            },
+        });
+
+        await expect(account.kv.set('deep', { nested: true }, { expectedVersion: 'absent' }))
+            .rejects.toMatchObject({
+                code: 'plugin_account_storage_unavailable',
+                retryable: true,
+            } satisfies Partial<PluginError>);
     });
 });

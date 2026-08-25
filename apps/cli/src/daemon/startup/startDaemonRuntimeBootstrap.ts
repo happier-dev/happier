@@ -4,10 +4,16 @@ import { join } from 'node:path';
 import type { ApiClient } from '@/api/api';
 import {
   acquireQualifiedConnectedAccountRefreshLeaseV4,
+  listQualifiedConnectedAccountsV4,
+  listQualifiedConnectedAccountGroupsV4,
   mutateQualifiedConnectedAccountCredentialV4,
   mutateQualifiedConnectedAccountCredentialHealthV4,
+  readQualifiedConnectedAccountGroupV4,
   readQualifiedConnectedAccountQuotaV4,
   readQualifiedConnectedAccountCredentialV4,
+  readQualifiedProviderAccountUsageRecordV4,
+  resolveQualifiedProviderAccountUsageSourceV4,
+  updateQualifiedConnectedAccountGroupRuntimeStateV4,
   writeQualifiedProviderAccountUsageV4,
   type QualifiedConnectedAccountPeerClass,
   type QualifiedConnectedAccountPeerOperationTransport,
@@ -21,6 +27,7 @@ import { createTailscaleTransferServeLifecycle } from '@/machines/transfer/tails
 import { resolveMachineTransferRuntimeConfig } from '@/machines/transfer/transferRuntimeConfig';
 import { createDaemonTransferRuntimeState, createDaemonTransferRuntimeStatePublisher } from '../transferRuntimeState';
 import { resolveTailscaleTransferListenerState } from '../resolveTailscaleTransferListenerState';
+import { resolveRunningCliRuntimeIdentity } from '@/packagedRuntime/resolveRunningCliRuntimeIdentity';
 import { createPromptAssetAdapterRegistry } from '@/prompts/assets/createPromptAssetAdapterRegistry';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { createPromptRegistryAdapterRegistry } from '@/prompts/registries/createPromptRegistryAdapterRegistry';
@@ -310,12 +317,15 @@ export async function startDaemonRuntimeBootstrap(
     };
   }
 
+  const runningRuntime = resolveRunningCliRuntimeIdentity();
   const fileState: DaemonLocallyPersistedState = {
     pid: process.pid,
     httpPort: params.controlPort,
     startedAt: Date.now(),
     startedWithCliVersion: params.cliVersion,
     startedWithPublicReleaseChannel: params.publicReleaseChannel,
+    ...(runningRuntime.entrypoint ? { startedWithRuntimeEntrypoint: runningRuntime.entrypoint } : {}),
+    ...(runningRuntime.builtAt ? { startedWithRuntimeBuiltAt: runningRuntime.builtAt } : {}),
     runtimeId: params.runtimeId,
     startupSource: params.startupSource,
     serviceLabel: params.serviceLabel,
@@ -463,6 +473,11 @@ export async function startDaemonRuntimeBootstrap(
                 mutateQualifiedConnectedAccountCredentialHealthV4,
               readCredential:
                 readQualifiedConnectedAccountCredentialV4,
+              readGroup: ({ service, groupId }) =>
+                readQualifiedConnectedAccountGroupV4({
+                  token: params.credentials.token,
+                  group: { service, groupId },
+                }),
               acquireRefreshLease:
                 acquireQualifiedConnectedAccountRefreshLeaseV4,
               mutateCredential:
@@ -613,11 +628,29 @@ export async function startDaemonRuntimeBootstrap(
       hydrate: async ({ serviceIds }) => (
         await hydrateProviderAccountUsageStoreFromConnectedServiceInventory({
           serviceIds,
-          api: params.api,
+          api: {
+            listAccounts: async ({ service }) => await listQualifiedConnectedAccountsV4({
+              token: params.credentials.token,
+              service,
+            }),
+            listGroups: async ({ service }) => await listQualifiedConnectedAccountGroupsV4({
+              token: params.credentials.token,
+              service,
+            }),
+            resolveSource: async ({ source }) => await resolveQualifiedProviderAccountUsageSourceV4({
+              token: params.credentials.token,
+              source,
+            }),
+            readProviderAccountUsageRecord: async ({ recordId }) =>
+              await readQualifiedProviderAccountUsageRecordV4({
+                token: params.credentials.token,
+                recordId,
+              }),
+            getAccountEncryptionMode: async () => await params.api.getAccountEncryptionMode(),
+          },
           credentials: params.credentials,
           store: params.providerAccountUsageStore,
           nowMs: Date.now(),
-          randomBytes: (length) => randomBytes(length),
         })
       ).hydration,
       createCoordinator: () => new ConnectedServiceQuotasCoordinator({
@@ -654,9 +687,38 @@ export async function startDaemonRuntimeBootstrap(
                 params.qualifiedConnectedAccountEstablishedRuntimeOwner,
               listScheduledAccounts:
                 params.listScheduledQualifiedConnectedAccounts,
+              listAccounts: async ({ service, signal }) => (
+                await listQualifiedConnectedAccountsV4({
+                  token: params.credentials.token,
+                  service,
+                  ...(signal ? { signal } : {}),
+                })
+              ).accounts,
               ...(params.listQualifiedConnectedAccountGroupQuotaTargets
                 ? { listGroupQuotaTargets: params.listQualifiedConnectedAccountGroupQuotaTargets }
                 : {}),
+              readGroup: async ({ service, groupId, signal }) =>
+                await readQualifiedConnectedAccountGroupV4({
+                  token: params.credentials.token,
+                  group: { service, groupId },
+                  ...(signal ? { signal } : {}),
+                }),
+              updateGroupRuntimeState: async ({
+                service,
+                groupId,
+                expectedIncarnation,
+                expectedRuntimeStateRevision,
+                runtimeState,
+              }) => await updateQualifiedConnectedAccountGroupRuntimeStateV4({
+                token: params.credentials.token,
+                patch: {
+                  service,
+                  groupId,
+                  expectedIncarnation,
+                  expectedRuntimeStateRevision,
+                  runtimeState,
+                },
+              }),
               readQuota: readQualifiedConnectedAccountQuotaV4,
               writeProviderAccountUsage:
                 writeQualifiedProviderAccountUsageV4,

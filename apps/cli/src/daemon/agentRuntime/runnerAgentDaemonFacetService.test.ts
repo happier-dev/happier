@@ -117,43 +117,6 @@ async function setup(options: SetupOptions = {}) {
     providers: [],
   }));
   const waitVoiceAuthorityRetired = vi.fn(async () => undefined);
-  const currentExternalSessionProviderOps = {
-    validateSource: vi.fn(async ({ source }) => ({
-      ok: true as const,
-      source,
-    })),
-    listCandidates: vi.fn(async () => ({
-      candidates: [{
-        remoteSessionId: 'current-h-session',
-        updatedAtMs: 1,
-      }],
-      nextCursor: null,
-    })),
-    resolveLinkIdentity: vi.fn(async ({ source, remoteSessionId }) => ({
-      source,
-      remoteSessionId,
-    })),
-    canonicalizeLinkedSession: vi.fn(async ({ source, remoteSessionId }) => ({
-      source,
-      remoteSessionId,
-    })),
-    pageTranscript: vi.fn(async () => ({
-      items: [],
-      nextCursor: null,
-      tailCursor: null,
-      hasMore: false,
-      truncated: false,
-    })),
-    readAfterTranscript: vi.fn(async () => ({
-      outcome: 'already_current' as const,
-    })),
-  };
-  let currentExternalSessionAvailable = true;
-  const resolveCurrentExternalSessionProviderOps = vi.fn(
-    async () => currentExternalSessionAvailable
-      ? currentExternalSessionProviderOps
-      : null,
-  );
   const authorizeActiveTurn = vi.fn<
     Parameters<typeof createRunnerAgentDaemonFacetService>[0]['authorizeActiveTurn']
   >(
@@ -187,7 +150,6 @@ async function setup(options: SetupOptions = {}) {
     readAccountRevision: () => 'account-revision-1',
     authorizeCurrent,
     authorizeActiveTurn,
-    resolveCurrentExternalSessionProviderOps,
     ...(options.resolveRetainedExternalSessionAgentContribution
       ? {
           resolveRetainedExternalSessionAgentContribution:
@@ -208,8 +170,6 @@ async function setup(options: SetupOptions = {}) {
     authorizeCurrent,
     bindPrivateExternalSession,
     boundPortRetirements,
-    currentExternalSessionProviderOps,
-    resolveCurrentExternalSessionProviderOps,
     emitFollow: async (event: HostExternalTranscriptFollowEvent) => {
       if (!followListener) throw new Error('follow listener unavailable');
       await followListener(event);
@@ -217,120 +177,10 @@ async function setup(options: SetupOptions = {}) {
     setCurrent(value: boolean) {
       current = value;
     },
-    setCurrentExternalSessionAvailable(value: boolean) {
-      currentExternalSessionAvailable = value;
-    },
   };
 }
 
 describe('runner Agent daemon-owned facet service', () => {
-  it('authorizes retained G but resolves the six-operation External Session surface through current H per call', async () => {
-    const fixture = await setup();
-    fixture.setCurrent(false);
-    await expect(fixture.service.dispatch({
-      ...direct,
-      operation: {
-        kind: 'external_session.current.list_candidates',
-        requestId: 'current-list-1',
-        agentId: retainedAgent.agentId,
-        source,
-        limit: 20,
-        witness,
-      },
-    })).resolves.toEqual({
-      kind: 'external_session.current.list_candidates',
-      result: {
-        candidates: [{
-          remoteSessionId: 'current-h-session',
-          updatedAtMs: 1,
-        }],
-        nextCursor: null,
-      },
-    });
-    expect(fixture.authorizeActiveTurn).toHaveBeenCalledWith({
-      ...direct,
-      witness,
-    });
-    expect(
-      fixture.resolveCurrentExternalSessionProviderOps,
-    ).toHaveBeenCalledWith(retainedAgent.agentId);
-    expect(
-      fixture.currentExternalSessionProviderOps.listCandidates,
-    ).toHaveBeenCalledWith({
-      source,
-      limit: 20,
-    });
-    const remainingOperations = [
-      {
-        kind: 'external_session.current.resolve_source',
-        requestId: 'current-source-1',
-        agentId: retainedAgent.agentId,
-        source,
-        witness,
-      },
-      {
-        kind: 'external_session.current.resolve_link_identity',
-        requestId: 'current-link-1',
-        agentId: retainedAgent.agentId,
-        source,
-        remoteSessionId: 'remote-session-1',
-        witness,
-      },
-      {
-        kind: 'external_session.current.resolve_linked_identity',
-        requestId: 'current-linked-1',
-        agentId: retainedAgent.agentId,
-        source,
-        remoteSessionId: 'remote-session-1',
-        metadata: {},
-        witness,
-      },
-      {
-        kind: 'external_session.current.page_transcript',
-        requestId: 'current-page-1',
-        agentId: retainedAgent.agentId,
-        source,
-        remoteSessionId: 'remote-session-1',
-        direction: 'older',
-        maxBytes: 65_536,
-        maxItems: 100,
-        witness,
-      },
-      {
-        kind: 'external_session.current.read_after_transcript',
-        requestId: 'current-after-1',
-        agentId: retainedAgent.agentId,
-        source,
-        remoteSessionId: 'remote-session-1',
-        cursor: 'cursor-1',
-        maxBytes: 65_536,
-        maxItems: 100,
-        witness,
-      },
-    ] as const;
-    for (const operation of remainingOperations) {
-      await expect(fixture.service.dispatch({
-        ...direct,
-        operation,
-      })).resolves.toMatchObject({ kind: operation.kind });
-    }
-    expect(fixture.bindPrivateExternalSession).not.toHaveBeenCalled();
-
-    fixture.setCurrentExternalSessionAvailable(false);
-    await expect(fixture.service.dispatch({
-      ...direct,
-      operation: {
-        kind: 'external_session.current.resolve_source',
-        requestId: 'current-source-unavailable',
-        agentId: retainedAgent.agentId,
-        source,
-        witness,
-      },
-    })).rejects.toThrow(
-      'agent_runtime_daemon_current_external_session_unavailable',
-    );
-  });
-
   it('reuses one exact private binding for concurrent cold follows and retires it when G stops being current', async () => {
     const contributionEntered = createDeferred();
     const releaseContribution = createDeferred();

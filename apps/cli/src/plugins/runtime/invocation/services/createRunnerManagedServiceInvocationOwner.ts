@@ -31,10 +31,11 @@ import {
 import type {
     AgentRuntimeDaemonServiceAuthorityExpectedInput,
 } from '@/daemon/agentRuntime/sessionBridgeAuthorization';
-import { readOrCreateDeviceLocalSecretStorage } from '@/daemon/deviceLocalSecretStorage';
 import {
     claimCurrentRunnerManagedServiceEndpointRead,
     dispatchCurrentAgentRuntimeDaemonServiceRequest,
+    readCurrentRunnerManagedServiceDeclaredSecret,
+    revalidateCurrentRunnerManagedServiceDeclaredSecret,
     validateCurrentRunnerManagedServiceEndpointRead,
 } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceAuthorityClient';
 import type {
@@ -79,12 +80,7 @@ import { createManagedServiceCredentialFileOwner } from './managedServiceCredent
 import { createManagedServiceProcessSupervisorHost } from './managedProcessSupervisor';
 import { createManagedServicesOwner } from './managedServicesOwner';
 import { createDeclaredManagedServiceSecretResolver } from './declaredManagedServiceSecret';
-import { collectDeclaredPluginSecrets } from '../../context/declaredPluginSecrets';
-import {
-    createDaemonPluginSecretCustodyRouter,
-    createPluginSecretCustodyRouter,
-    createStableDeclaredPluginSecretsHost,
-} from '../../context/secrets';
+import type { DeclaredPluginSecretReadPort } from '../../context/secrets';
 import type {
     ManagedProviderEndpointAccessProjection,
     ManagedProviderEndpointPath,
@@ -92,7 +88,7 @@ import type {
 import {
     createManagedServiceDurabilityOwner,
     observeManagedServiceProcessStartIdentity,
-    type ManagedServiceDurabilityOwner,
+    type ManagedServiceProcessDurabilityOwner,
 } from './managedServiceDurability';
 import type { PluginInvocationServicesSeed } from './types';
 import type {
@@ -250,6 +246,23 @@ function boundManagedServiceEndpointResponseBody(
     });
 }
 
+/**
+ * How many managed-service response bodies one runner may hold open at once.
+ *
+ * This is an ADMISSION bound, not a lifetime: each live entry retains an abort controller, a Fetch
+ * body reader and the socket underneath it, so an unbounded number of simultaneously open bodies is
+ * a real runner file-descriptor and memory cost. It deliberately does not decide when an admitted
+ * response ends — the public request contract gives post-header lifetime to the caller's signal and
+ * the exact handle, and slots are returned by caller cancel, stream end, projection release and
+ * authority retirement.
+ *
+ * The value is a deliberate budget rather than a measured platform limit: it is far below the
+ * default POSIX descriptor ceiling while being orders of magnitude above any observed concurrent
+ * managed-stream count. Raising or lowering it is a product decision, so it is named and exported
+ * here instead of being an anonymous literal at the admission check.
+ */
+export const RUNNER_MANAGED_SERVICE_MAX_ACTIVE_ENDPOINT_READS = 128;
+
 export function createRunnerManagedServiceEndpointProjectionBinding(
     remote: RemoteRunnerManagedServiceEndpointProjectionOwner,
     options: Readonly<{
@@ -271,7 +284,6 @@ export function createRunnerManagedServiceEndpointProjectionBinding(
         ) => ((
             request: ManagedServiceRequest,
         ) => Promise<ManagedServiceResponse>) | null;
-        readInactivityTimeoutMs?: number;
     }> = {},
 ) {
     type ProjectionEndpointAccess = Readonly<{
@@ -286,21 +298,8 @@ export function createRunnerManagedServiceEndpointProjectionBinding(
         controller: AbortController;
         reader: ReadableStreamDefaultReader<Uint8Array> | null;
         nextPending: boolean;
-        inactivityTimer: ReturnType<typeof setTimeout> | null;
     };
     const activeReads = new Map<string, ActiveRead>();
-    const MAX_ACTIVE_READS = 128;
-    const readInactivityTimeoutMs =
-        options.readInactivityTimeoutMs ?? 30_000;
-    if (
-        !Number.isSafeInteger(readInactivityTimeoutMs)
-        || readInactivityTimeoutMs < 1
-    ) {
-        fail(
-            'plugin_managed_server_timeout_invalid',
-            'Managed server endpoint read inactivity timeout is invalid',
-        );
-    }
 
     const accessMatches = (
         projection: ManagedServiceEndpointProjectionV1,
@@ -333,10 +332,6 @@ export function createRunnerManagedServiceEndpointProjectionBinding(
     };
 
     const disposeActiveRead = (active: ActiveRead): void => {
-        if (active.inactivityTimer) {
-            clearTimeout(active.inactivityTimer);
-            active.inactivityTimer = null;
-        }
         active.controller.abort('Managed server endpoint read cancelled');
         void active.reader?.cancel().catch(() => undefined);
     };
@@ -347,19 +342,6 @@ export function createRunnerManagedServiceEndpointProjectionBinding(
         activeReads.delete(requestId);
         disposeActiveRead(active);
         return true;
-    };
-
-    const armInactivityLease = (
-        requestId: string,
-        active: ActiveRead,
-    ): void => {
-        if (active.inactivityTimer) {
-            clearTimeout(active.inactivityTimer);
-        }
-        active.inactivityTimer = setTimeout(() => {
-            cancelActiveRead(requestId);
-        }, readInactivityTimeoutMs);
-        active.inactivityTimer.unref?.();
     };
 
     const validateActiveRead = async (
@@ -449,7 +431,8 @@ export function createRunnerManagedServiceEndpointProjectionBinding(
             });
             if (
                 activeReads.has(request.requestId)
-                || activeReads.size >= MAX_ACTIVE_READS
+                || activeReads.size
+                    >= RUNNER_MANAGED_SERVICE_MAX_ACTIVE_ENDPOINT_READS
                 || hasCallerAuthentication(request.headers)
             ) return unavailable();
             if (
@@ -476,7 +459,6 @@ export function createRunnerManagedServiceEndpointProjectionBinding(
                 controller,
                 reader: null,
                 nextPending: false,
-                inactivityTimer: null,
             };
             activeReads.set(request.requestId, active);
             const onAbort = () => {
@@ -591,7 +573,6 @@ export function createRunnerManagedServiceEndpointProjectionBinding(
                     response.headers,
                 );
                 if (!active.reader) activeReads.delete(request.requestId);
-                else armInactivityLease(request.requestId, active);
                 return {
                     v: 1 as const,
                     requestId: request.requestId,
@@ -644,14 +625,6 @@ export function createRunnerManagedServiceEndpointProjectionBinding(
                     cancelActiveRead(request.requestId);
                     return unavailable();
                 }
-                // The inactivity lease bounds an abandoned response body. A
-                // caller with an outstanding next request is actively
-                // consuming the stream, even while an SSE-like source is
-                // waiting to publish its next byte.
-                if (active.inactivityTimer) {
-                    clearTimeout(active.inactivityTimer);
-                    active.inactivityTimer = null;
-                }
                 const value = (await active.reader.read()).value ?? null;
                 if (
                     activeReads.get(request.requestId) !== active
@@ -668,7 +641,6 @@ export function createRunnerManagedServiceEndpointProjectionBinding(
                         status: 'end' as const,
                     };
                 }
-                armInactivityLease(request.requestId, active);
                 return {
                     v: 1 as const,
                     requestId: request.requestId,
@@ -911,22 +883,6 @@ export async function createRunnerManagedServiceInvocationOwner(input: Readonly<
             : 'external' as const,
     });
     const manifest = attested.manifest;
-    const declaredSecrets = collectDeclaredPluginSecrets([{
-        pluginId: input.retainedAgent.pluginId,
-        manifest,
-    }]);
-    const daemonSecretCustody = createDaemonPluginSecretCustodyRouter({
-        paths: input.paths,
-        resolveDeviceLocalSecretStorage: async () => await readOrCreateDeviceLocalSecretStorage({
-            path: join(input.paths.happyHomeDir, 'device-local-secret-key.json'),
-        }),
-    });
-    const declaredSecretsHost = createStableDeclaredPluginSecretsHost({
-        declarations: declaredSecrets,
-        resolveCustody: createPluginSecretCustodyRouter({
-            daemon: daemonSecretCustody.resolve,
-        }).resolve,
-    });
     const hostAccessRequests = Object.freeze([
         ...manifest.hostAccess.required.map((request) =>
             Object.freeze({ request, required: true })
@@ -1056,15 +1012,12 @@ export async function createRunnerManagedServiceInvocationOwner(input: Readonly<
                     });
             },
         });
-    const durability: ManagedServiceDurabilityOwner =
+    const durability: ManagedServiceProcessDurabilityOwner =
         Object.freeze({
             publishEndpointProjection:
                 endpointProjectionBinding.publishEndpointProjection,
             releaseEndpointProjection:
                 endpointProjectionBinding.releaseEndpointProjection,
-            async resolveEndpointProjection() {
-                return null;
-            },
             openLog: localDurability.openLog,
         });
     const unavailableDependencies = Object.freeze({
@@ -1197,20 +1150,69 @@ export async function createRunnerManagedServiceInvocationOwner(input: Readonly<
     ): void => {
         secretRedactor.registerRaw(scope, value);
     };
+    /**
+     * The runner is not a managed-service secret authority. It holds no
+     * device-local key material and never decrypts a declared secret: every
+     * read and pre-dispatch revalidation is answered by the CURRENT daemon
+     * over the existing authenticated runner↔daemon services channel, from
+     * that daemon's retained-generation declaration and canonical custody
+     * owner. Losing daemon authority therefore yields no credential at all.
+     */
     const bindManagedServiceSecretReadPort = (
         seed: PluginInvocationServicesSeed,
-    ) => declaredSecretsHost.bindManagedServiceSecretReadPort({
-        pluginId: seed.plugin.id,
-        signal: seed.signal,
-        isGenerationCurrent: seed.isGenerationCurrent,
-        registerRawForRedaction(value) {
+    ): DeclaredPluginSecretReadPort => async ({
+        secretId,
+        canonicalOrigin,
+        signal,
+    }) => {
+        if (
+            typeof canonicalOrigin !== 'string'
+            || canonicalOrigin.length === 0
+            || seed.plugin.id !== input.retainedAgent.pluginId
+        ) return null;
+        const isBoundCurrent = (
+            revalidationSignal?: AbortSignal,
+        ): boolean => (
+            !signal?.aborted
+            && !revalidationSignal?.aborted
+            && !seed.signal.aborted
+            && readsCurrent(seed.isGenerationCurrent)
+        );
+        if (!isBoundCurrent()) return null;
+        const observed =
+            await readCurrentRunnerManagedServiceDeclaredSecret({
+                authority: input.authority,
+                secretId,
+                canonicalOrigin,
+                ...(signal ? { signal } : {}),
+            });
+        if (!observed || !isBoundCurrent()) return null;
+        if (observed.value !== null) {
             registerRawForRedaction({
                 pluginId: seed.plugin.id,
                 generation: seed.generation,
                 correlationId: seed.correlationId,
-            }, value);
-        },
-    });
+            }, observed.value);
+        }
+        return Object.freeze({
+            value: observed.value,
+            revision: observed.revision,
+            async isCurrent(revalidationSignal?: AbortSignal) {
+                if (!isBoundCurrent(revalidationSignal)) return false;
+                const current =
+                    await revalidateCurrentRunnerManagedServiceDeclaredSecret({
+                        authority: input.authority,
+                        secretId,
+                        canonicalOrigin,
+                        expectedRevision: observed.revision,
+                        ...(revalidationSignal
+                            ? { signal: revalidationSignal }
+                            : {}),
+                    });
+                return current && isBoundCurrent(revalidationSignal);
+            },
+        });
+    };
     const managedServicesOwner = createManagedServicesOwner({
         processSupervisorHost: managedServiceProcessSupervisorHost,
         dependencies: unavailableDependencies,

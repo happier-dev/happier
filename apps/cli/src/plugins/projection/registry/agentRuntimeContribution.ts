@@ -105,6 +105,7 @@ type PreflightSessionControlsContributionSource = Readonly<{
     probeModelsRaw?: RuntimeContributionFunction;
     probeModesRaw?: RuntimeContributionFunction;
     probeConfigOptionsRaw?: RuntimeContributionFunction;
+    probePassiveRealtimeSetupRaw?: RuntimeContributionFunction;
 }>;
 
 type CloudConnectContributionSource = Readonly<{
@@ -282,6 +283,7 @@ export type PreflightSessionControlsContribution = Readonly<{
     }>;
     probeModesRaw?: (params: PreflightSessionControlsContributionProbeParams) => Promise<unknown | null> | unknown | null;
     probeConfigOptionsRaw?: (params: PreflightSessionControlsContributionProbeParams) => Promise<unknown | null> | unknown | null;
+    probePassiveRealtimeSetupRaw?: (params: PreflightSessionControlsContributionProbeParams) => Promise<unknown | null> | unknown | null;
 }>;
 
 export type PreflightSessionControlsContributionProbeParams = PreflightSessionControlsProbeParams & Readonly<{

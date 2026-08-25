@@ -8,6 +8,7 @@ import {
   openProviderAccountUsageSnapshotCiphertext,
   projectProviderAccountUsageSnapshotToConnectedServiceQuotaSnapshotV1,
   ProviderAccountUsageSnapshotV1Schema,
+  QualifiedProviderAccountUsageWriteV4Schema,
   sealAccountScopedBlobCiphertext,
   sealQualifiedConnectedAccountContentEnvelope,
 } from '@happier-dev/protocol';
@@ -16,10 +17,13 @@ import {
 } from '@happier-dev/protocol/testing/accountScopedCipherFixtures';
 import type {
   BuiltInLegacyConnectedAccountOperation,
+  ConnectedServiceAuthGroupV1,
   ConnectedServiceCredentialRevisionV1,
+  ConnectedServiceId,
   ConnectedServiceQuotaSnapshotV1,
   ProviderAccountUsageRecordKeyV1,
   ProviderAccountUsageSnapshotV1,
+  QualifiedConnectedAccountGroupV4,
   QualifiedConnectedAccountProfileV4,
 } from '@happier-dev/protocol';
 import type { AgentAccountUsageSnapshot } from '@happier-dev/plugin-sdk/agents/runtime';
@@ -116,13 +120,29 @@ import {
 import { QuotaFetchError, type ConnectedServiceQuotaFetcher } from './types';
 
 type QuotaApi = ConstructorParameters<typeof ConnectedServiceQuotasCoordinator>[0]['api'];
-type ProviderSealedRegisterArgs = Parameters<NonNullable<QuotaApi['registerProviderAccountUsageSnapshotSealed']>>[0];
-type ProviderPlainRegisterArgs = Parameters<NonNullable<QuotaApi['registerProviderAccountUsageSnapshotPlain']>>[0];
+type QualifiedProviderAccountUsageWriteArgs = Readonly<{
+  token: string;
+  write: import('zod').output<typeof QualifiedProviderAccountUsageWriteV4Schema>;
+}>;
 type FetchArgs = Parameters<ConnectedServiceQuotaFetcher['loadQuota']>[0];
 type SealedCredentialResponse = NonNullable<Awaited<ReturnType<QuotaApi['getConnectedServiceCredentialSealed']>>>;
 type SealedQuotaSnapshotResponse = NonNullable<Awaited<ReturnType<QuotaApi['getConnectedServiceQuotaSnapshotSealed']>>>;
-type ConnectedServiceAuthGroupResponse = NonNullable<Awaited<ReturnType<NonNullable<QuotaApi['getConnectedServiceAuthGroup']>>>>;
+type ConnectedServiceAuthGroupResponse = ConnectedServiceAuthGroupV1;
+type LegacyConnectedServiceAuthGroupReader = (params: Readonly<{
+  serviceId: ConnectedServiceId;
+  groupId: string;
+  signal?: AbortSignal;
+}>) => Promise<ConnectedServiceAuthGroupResponse | null>;
 type SameAccountFanoutStrategy = 'provider_account_id' | 'shared_group_auth_surface' | 'none';
+
+function readSealedQualifiedProviderAccountUsageCiphertext(
+  params: QualifiedProviderAccountUsageWriteArgs,
+): string | null {
+  const sealedPayload = params.write.sealedPayload;
+  return params.write.payloadMode === 'sealed_account_scoped_v1' && sealedPayload
+    ? sealedPayload.ciphertext
+    : null;
+}
 
 function createQuotaFixtureAccountStorageDependencies(): AccountPluginDataStorageHostDependencies {
   const credentials = Object.freeze({
@@ -292,7 +312,7 @@ function createSoftSwitchEligibilityFixture(input: Readonly<{
 }>): Readonly<{
   runtimeQuotaSnapshots: ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore;
   accountUsageStore: ReturnType<typeof createProviderAccountUsageStore>;
-  getConnectedServiceAuthGroup: QuotaApi['getConnectedServiceAuthGroup'];
+  getConnectedServiceAuthGroup: LegacyConnectedServiceAuthGroupReader;
 }> {
   const groupId = input.groupId ?? 'team';
   const activeProfileId = input.activeProfileId ?? 'active';
@@ -444,7 +464,7 @@ function recordGroupMemberAccountUsageFixture(
 }
 
 describe('ConnectedServiceQuotasCoordinator', () => {
-  it('canonicalizes a current descriptor usage observation before legacy-peer persistence', async () => {
+  it('canonicalizes a legacy scalar quota observation into a qualified V4 PAU write', async () => {
     const now = 1_000_000;
     const credentials: StoredCredentials = {
       token: 'token-only',
@@ -486,7 +506,6 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       accountLabel: 'user@example.com',
       meters: [],
     } satisfies AgentAccountUsageSnapshot;
-    const registerProviderAccountUsageSnapshotPlain = vi.fn(async () => {});
     const api = {
       getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
       getConnectedServiceCredentialPlain: vi.fn(async () => ({
@@ -497,8 +516,26 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       getConnectedServiceQuotaSnapshotPlain: vi.fn(async () => null),
       getConnectedServiceCredentialSealed: vi.fn(async () => null),
       getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
-      registerProviderAccountUsageSnapshotPlain,
     } as unknown as QuotaApi;
+    const profile = {
+      ref: {
+        service: {
+          pluginId: 'happier.agent.codex',
+          localId: 'openai-codex',
+        },
+        accountId: 'work',
+      },
+      status: 'connected' as const,
+      authenticationModeId: 'oauth',
+      revisionSemantics: 'revisioned' as const,
+      credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
+      configurationReady: true,
+      configurationRevision: null,
+      providerIdentity: { accountId: 'acct' },
+      displayName: 'Work',
+      scopes: [],
+    } satisfies QualifiedConnectedAccountProfileV4;
+    const writeProviderAccountUsage = vi.fn(async () => ({ success: true as const }));
     const fetcher = {
       serviceId: 'openai-codex' as const,
       loadQuota: vi.fn(async () => publicSnapshot),
@@ -510,6 +547,13 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       now: () => now,
       randomBytes: (length) => new Uint8Array(length).fill(7),
       discoveryEnabled: false,
+      qualifiedConnectedAccountRuntime: {
+        resolvePeerClass: () => 'revisioned_v2_v3' as const,
+        establishedRuntimeOwner: { invokeWithReceipt: vi.fn() },
+        listScheduledAccounts: vi.fn(async () => []),
+        listAccounts: vi.fn(async () => [profile]),
+        writeProviderAccountUsage,
+      } as unknown as QualifiedConnectedAccountQuotaRuntime,
     });
     coordinator.registerSpawnTarget({
       pid: 123,
@@ -524,13 +568,20 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     await coordinator.tickOnce();
 
     expect(fetcher.loadQuota).toHaveBeenCalledOnce();
-    expect(registerProviderAccountUsageSnapshotPlain).toHaveBeenCalledWith(
+    expect(writeProviderAccountUsage).toHaveBeenCalledWith(
       expect.objectContaining({
-        recordId: buildProviderAccountUsageRecordId(publicSnapshot.recordKey),
-        content: { t: 'plain', v: expect.objectContaining({
-          providerId: 'openai-codex',
-          recordKey: publicSnapshot.recordKey,
-        }) },
+        token: 'token-only',
+        write: expect.objectContaining({
+          source: { ref: profile.ref, bindingKind: 'account' },
+          expectedCredentialRevision: profile.credentialRevision,
+          expectedConfigurationRevision: null,
+          recordId: buildProviderAccountUsageRecordId(publicSnapshot.recordKey),
+          payloadMode: 'plain_json_v1',
+          snapshot: expect.objectContaining({
+            providerId: 'openai-codex',
+            recordKey: publicSnapshot.recordKey,
+          }),
+        }),
       }),
     );
   });
@@ -690,13 +741,11 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       discoveryEnabled: false,
       runtimeQuotaSnapshots: softSwitchEligibility.runtimeQuotaSnapshots,
       accountUsageStore: softSwitchEligibility.accountUsageStore,
-      accountUsagePersistence,
       authGroupSwitchCoordinator: { switchBeforeTurn },
       groupSwitchCheckMinIntervalMs: 0,
     } satisfies ConstructorParameters<typeof ConnectedServiceQuotasCoordinator>[0] & {
       authGroupSwitchCoordinator: { switchBeforeTurn: typeof switchBeforeTurn };
       groupSwitchCheckMinIntervalMs: number;
-      accountUsagePersistence: typeof accountUsagePersistence;
     });
     coordinator.registerSpawnTarget({
       pid: 123,
@@ -1981,7 +2030,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       },
     });
     const loadQuota = vi.fn(async () => null);
-    const registerProviderAccountUsageSnapshotPlain = vi.fn(async (_params: ProviderPlainRegisterArgs) => {});
+    const registerProviderAccountUsageSnapshotPlain = vi.fn(async (_params: QualifiedProviderAccountUsageWriteArgs) => {});
     const api = {
       getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
       getConnectedServiceCredentialPlain: vi.fn(async () => ({
@@ -2000,7 +2049,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
       getConnectedServiceCredentialSealed: vi.fn(async () => null),
       registerProviderAccountUsageSnapshotPlain,
-    } satisfies QuotaApi;
+    };
     const coordinator = new ConnectedServiceQuotasCoordinator({
       api,
       credentials: { token: 'token-only', encryption: null },
@@ -3566,9 +3615,6 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       randomBytes: (length: number) => randomBytes(length),
       serverWorkScheduler,
       accountUsageStore,
-      accountUsagePersistence,
-    } as ConstructorParameters<typeof ConnectedServiceQuotasCoordinator>[0] & {
-      accountUsagePersistence: typeof accountUsagePersistence;
     });
 
     coordinator.registerSpawnTarget({
@@ -3682,7 +3728,6 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       now: () => now,
       randomBytes: (length: number) => randomBytes(length),
       accountUsageStore: createProviderAccountUsageStore(),
-      accountUsagePersistence,
     });
     coordinator.registerSpawnTarget({
       pid: 123,
@@ -3803,7 +3848,6 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       now: () => now,
       randomBytes: (length: number) => randomBytes(length),
       accountUsageStore,
-      accountUsagePersistence,
     });
     coordinator.registerSpawnTarget({
       pid: 123,
@@ -3877,9 +3921,6 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       now: () => now,
       randomBytes: (length: number) => randomBytes(length),
       accountUsageStore,
-      accountUsagePersistence,
-    } as ConstructorParameters<typeof ConnectedServiceQuotasCoordinator>[0] & {
-      accountUsagePersistence: typeof accountUsagePersistence;
     });
 
     coordinator.registerSpawnTarget({
@@ -3958,11 +3999,11 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       getAccountEncryptionMode: vi.fn(async () => 'e2ee' as const),
       getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
       getConnectedServiceCredentialSealed: vi.fn(async (): Promise<SealedCredentialResponse | null> => sealedCredential),
-      registerProviderAccountUsageSnapshotSealed: vi.fn(async (params: ProviderSealedRegisterArgs) => {
-        uploadedCiphertext = params.sealed.ciphertext;
-        uploadedStatus = params.metadata?.status ?? null;
+      registerProviderAccountUsageSnapshotSealed: vi.fn(async (params: QualifiedProviderAccountUsageWriteArgs) => {
+        uploadedCiphertext = readSealedQualifiedProviderAccountUsageCiphertext(params);
+        uploadedStatus = params.write.status;
       }),
-    } satisfies QuotaApi;
+    };
 
     const fetcher: ConnectedServiceQuotaFetcher = {
       serviceId: 'openai-codex',
@@ -4070,15 +4111,15 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       revisionSemantics: 'revisioned' as const,
       credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
     };
-    const uploads: ProviderSealedRegisterArgs[] = [];
+    const uploads: QualifiedProviderAccountUsageWriteArgs[] = [];
     const api = {
       getAccountEncryptionMode: vi.fn(async () => 'e2ee' as const),
       getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
       getConnectedServiceCredentialSealed: vi.fn(async (): Promise<SealedCredentialResponse | null> => sealedCredential),
-      registerProviderAccountUsageSnapshotSealed: vi.fn(async (params: ProviderSealedRegisterArgs) => {
+      registerProviderAccountUsageSnapshotSealed: vi.fn(async (params: QualifiedProviderAccountUsageWriteArgs) => {
         uploads.push(params);
       }),
-    } satisfies QuotaApi;
+    };
 
     const fetcher: ConnectedServiceQuotaFetcher = {
       serviceId: 'openai-codex',
@@ -4152,15 +4193,15 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       revisionSemantics: 'revisioned' as const,
       credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
     };
-    const uploads: ProviderSealedRegisterArgs[] = [];
+    const uploads: QualifiedProviderAccountUsageWriteArgs[] = [];
     const api = {
       getAccountEncryptionMode: vi.fn(async () => 'e2ee' as const),
       getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
       getConnectedServiceCredentialSealed: vi.fn(async (): Promise<SealedCredentialResponse | null> => sealedCredential),
-      registerProviderAccountUsageSnapshotSealed: vi.fn(async (params: ProviderSealedRegisterArgs) => {
+      registerProviderAccountUsageSnapshotSealed: vi.fn(async (params: QualifiedProviderAccountUsageWriteArgs) => {
         uploads.push(params);
       }),
-    } satisfies QuotaApi;
+    };
 
     const fetcher: ConnectedServiceQuotaFetcher = {
       serviceId: 'openai-codex',
@@ -4198,8 +4239,8 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     const uploaded = uploads[0];
     expect(uploaded).toBeDefined();
     if (!uploaded) throw new Error('expected uploaded provider usage snapshot');
-    expect(uploaded.recordKey.subjectKind).toBe('unknown');
-    expect(uploaded.source).toBeUndefined();
+    expect(uploaded.write.recordKey.subjectKind).toBe('unknown');
+    expect(uploaded.write.source.bindingKind).toBe('account');
   });
 
   it('uses resolved group active profiles from child selections when registering spawn targets', async () => {
@@ -5776,15 +5817,16 @@ describe('ConnectedServiceQuotasCoordinator', () => {
         providerEmail: 'active@example.com',
       },
     });
+    const getConnectedServiceAuthGroup = vi.fn(async () => {
+      throw new Error('timeout of 5000ms exceeded');
+    });
     const api = {
       getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
       getConnectedServiceQuotaSnapshotPlain: vi.fn(async () => null),
       getConnectedServiceCredentialPlain: vi.fn(async () => ({ content: { t: 'plain' as const, v: record }, revisionSemantics: 'revisioned' as const, credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS' })),
       getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
       getConnectedServiceCredentialSealed: vi.fn(async () => null),
-      getConnectedServiceAuthGroup: vi.fn(async () => {
-        throw new Error('timeout of 5000ms exceeded');
-      }),
+      getConnectedServiceAuthGroup,
     } as unknown as QuotaApi;
     const fetcher: ConnectedServiceQuotaFetcher = {
       serviceId: 'openai-codex',
@@ -5849,7 +5891,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
 
     await coordinator.tickOnce();
 
-    expect(api.getConnectedServiceAuthGroup).toHaveBeenCalledWith({
+    expect(getConnectedServiceAuthGroup).toHaveBeenCalledWith({
       serviceId: 'openai-codex',
       groupId: 'team',
     });
@@ -7734,36 +7776,44 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       buildConnectedGroupProviderAccountUsageObservation({ profileId: 'backup', groupGeneration: 4 }),
     );
 
-    const api = {
-      getConnectedServiceAuthGroup: vi.fn(async (): Promise<ConnectedServiceAuthGroupResponse> => ({
-        v: 1,
-        serviceId: 'openai-codex',
-        groupId: 'team',
-        displayName: 'Team',
-        activeProfileId: 'primary',
-        generation: 4,
-        runtimeStateRevision: 0,
-        policy: {
-          ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1,
-          autoSwitch: true,
-          strategy: 'priority',
-          cooldownMs: 500,
+    const qualifiedGroup = (): QualifiedConnectedAccountGroupV4 => ({
+      v: 1,
+      ref: {
+        service: {
+          pluginId: 'happier.agent.codex',
+          localId: 'openai-codex',
         },
-        state: { v: 1 },
-        members: ['primary', 'backup'].map((profileId, index) => ({
-          v: 1,
-          serviceId: 'openai-codex',
-          groupId: 'team',
-          profileId,
-          priority: index,
-          enabled: true,
-          state: {},
-          createdAt: index + 1,
-          updatedAt: index + 1,
-        })),
-        createdAt: 1,
-        updatedAt: 2,
+        groupId: 'team',
+      },
+      incarnation: 'qualified-group-team',
+      displayName: 'Team',
+      activeConnectedAccountId: 'primary',
+      generation: 4,
+      runtimeStateRevision: 0,
+      policy: {
+        ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1,
+        autoSwitch: true,
+        strategy: 'priority',
+        cooldownMs: 500,
+      },
+      state: { v: 1 },
+      members: ['primary', 'backup'].map((connectedAccountId, index) => ({
+        v: 1,
+        connectedAccountId,
+        priority: index,
+        enabled: true,
+        state: {},
+        createdAt: index + 1,
+        updatedAt: index + 1,
       })),
+      createdAt: 1,
+      updatedAt: 2,
+    });
+    const readGroup = vi.fn(async () => qualifiedGroup());
+    const api = {
+      getConnectedServiceAuthGroup: vi.fn(() => {
+        throw new Error('legacy V3 group reader must not be called');
+      }),
     } as unknown as QuotaApi;
     const onQuotaLifecycleTransition = vi.fn(async () => {});
     const coordinator = new ConnectedServiceQuotasCoordinator({
@@ -7775,6 +7825,14 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       discoveryEnabled: false,
       accountUsageStore,
       onQuotaLifecycleTransition,
+      qualifiedConnectedAccountRuntime: {
+        resolvePeerClass: () => 'advertised_v4' as const,
+        establishedRuntimeOwner: {
+          invokeWithReceipt: vi.fn(),
+        },
+        listScheduledAccounts: vi.fn(async () => []),
+        readGroup,
+      } as unknown as QualifiedConnectedAccountQuotaRuntime,
     } as unknown as ConstructorParameters<typeof ConnectedServiceQuotasCoordinator>[0] & {
       accountUsageStore: typeof accountUsageStore;
       onQuotaLifecycleTransition: typeof onQuotaLifecycleTransition;
@@ -7828,6 +7886,13 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       issueFingerprint: 'quota-blocked:openai-codex:team',
       resetAtMs,
     }));
+    expect(readGroup).toHaveBeenCalledWith({
+      service: {
+        pluginId: 'happier.agent.codex',
+        localId: 'openai-codex',
+      },
+      groupId: 'team',
+    });
 
     accountUsageStore.recordSnapshot(
       buildConnectedGroupProviderAccountUsageSnapshot({
@@ -9164,10 +9229,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       randomBytes: (length: number) => randomBytes(length),
       runtimeQuotaSnapshots,
       accountUsageStore,
-      accountUsagePersistence,
       discoveryEnabled: false,
-    } as ConstructorParameters<typeof ConnectedServiceQuotasCoordinator>[0] & {
-      accountUsagePersistence: typeof accountUsagePersistence;
     });
     const probeGroupQuotaSnapshots = (coordinator as unknown as {
       probeGroupQuotaSnapshots?: (input: Readonly<{
@@ -9337,10 +9399,10 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       getAccountEncryptionMode: vi.fn(async () => 'e2ee' as const),
       getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
       getConnectedServiceCredentialSealed: vi.fn(async (): Promise<SealedCredentialResponse | null> => sealedCredential),
-      registerProviderAccountUsageSnapshotSealed: vi.fn(async (params: ProviderSealedRegisterArgs) => {
-        uploadedStatus = params.metadata?.status ?? null;
+      registerProviderAccountUsageSnapshotSealed: vi.fn(async (params: QualifiedProviderAccountUsageWriteArgs) => {
+        uploadedStatus = params.write.status;
       }),
-    } satisfies QuotaApi;
+    };
 
     const fetcher: ConnectedServiceQuotaFetcher = {
       serviceId: 'openai-codex',
@@ -9456,8 +9518,8 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       revisionSemantics: 'revisioned' as const,
       credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
       })),
-      registerProviderAccountUsageSnapshotPlain: vi.fn(async (_params: ProviderPlainRegisterArgs) => {}),
-    } satisfies QuotaApi;
+      registerProviderAccountUsageSnapshotPlain: vi.fn(async (_params: QualifiedProviderAccountUsageWriteArgs) => {}),
+    };
     const fetcher: ConnectedServiceQuotaFetcher = {
       serviceId: 'openai-codex',
       loadQuota: vi.fn(async ({ record: inputRecord }: FetchArgs) => buildAgentAccountUsageSnapshotFixture({
@@ -9710,10 +9772,10 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       getAccountEncryptionMode: vi.fn(async () => 'e2ee' as const),
       getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
       getConnectedServiceCredentialSealed: vi.fn(async (): Promise<SealedCredentialResponse | null> => sealedCredential),
-      registerProviderAccountUsageSnapshotSealed: vi.fn(async (params: ProviderSealedRegisterArgs) => {
-        uploadedCiphertext = params.sealed.ciphertext;
+      registerProviderAccountUsageSnapshotSealed: vi.fn(async (params: QualifiedProviderAccountUsageWriteArgs) => {
+        uploadedCiphertext = readSealedQualifiedProviderAccountUsageCiphertext(params);
       }),
-    } satisfies QuotaApi;
+    };
 
     const fetcher: ConnectedServiceQuotaFetcher = {
       serviceId: 'openai-codex',
@@ -10037,10 +10099,16 @@ describe('ConnectedServiceQuotasCoordinator', () => {
         },
       })),
       getConnectedServiceCredentialPlain: vi.fn(async () => ({ content: { t: 'plain' as const, v: record }, revisionSemantics: 'revisioned' as const, credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS' })),
-      registerProviderAccountUsageSnapshotPlain: vi.fn(async (params: ProviderPlainRegisterArgs) => {
+      registerProviderAccountUsageSnapshotPlain: vi.fn(async (params: QualifiedProviderAccountUsageWriteArgs) => {
+        if (params.write.payloadMode !== 'plain_json_v1') {
+          throw new Error('Expected a plaintext qualified provider-account usage write');
+        }
+        if (!params.write.snapshot) {
+          throw new Error('Expected plaintext qualified provider-account usage payload');
+        }
         const projected = projectProviderAccountUsageSnapshotToConnectedServiceQuotaSnapshotV1({
-          snapshot: params.content.v,
-          source: params.source ?? {
+          snapshot: params.write.snapshot,
+          source: {
             serviceId: 'openai-codex',
             profileId: 'work',
             bindingKind: 'profile',
@@ -10061,7 +10129,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
         }
         return { acquired: false, leaseUntil: now + 50 };
       }),
-    } satisfies QuotaApi;
+    };
     const api = apiWithLease;
 
     let loadCallCount = 0;
@@ -11332,10 +11400,10 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       getAccountEncryptionMode: vi.fn(async () => 'e2ee' as const),
       getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
       getConnectedServiceCredentialSealed: vi.fn(async (): Promise<SealedCredentialResponse | null> => sealedCredential),
-      registerProviderAccountUsageSnapshotSealed: vi.fn(async (params: ProviderSealedRegisterArgs) => {
-        uploadedCiphertext = params.sealed.ciphertext;
+      registerProviderAccountUsageSnapshotSealed: vi.fn(async (params: QualifiedProviderAccountUsageWriteArgs) => {
+        uploadedCiphertext = readSealedQualifiedProviderAccountUsageCiphertext(params);
       }),
-    } satisfies QuotaApi;
+    };
     (api as unknown as { listConnectedServiceProfiles: unknown }).listConnectedServiceProfiles = vi.fn(async () => ({
       serviceId: 'openai-codex',
       profiles: [{ profileId: 'work', status: 'connected' }],

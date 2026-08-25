@@ -36,6 +36,43 @@ function readNonEmptyString(value: unknown): string | null {
   return normalized || null;
 }
 
+/**
+ * The Session retains an exact managed Provider generation alongside its
+ * retained Agent. An ordinary Provider-only update leaves P running and must
+ * therefore report the same optional staleness the retained Agent already
+ * reports, so the existing explicit restart path stays reachable.
+ */
+function isRetainedManagedProviderStale(input: Readonly<{
+  tracked: TrackedSession;
+  registry: ProviderContributionRegistryView | undefined;
+}>): boolean {
+  const retained = input.tracked
+    .runnerManagedDependencyRetentionV1
+    ?.adoptedManagedProviderAuthority;
+  const registry = input.registry;
+  if (!retained || !registry) return false;
+  for (const contribution of registry.providersByContributionKey.values()) {
+    const managedRuntime = contribution.managedRuntime;
+    if (
+      !managedRuntime
+      || contribution.pluginId !== retained.pluginId
+    ) continue;
+    let isCurrent = false;
+    try {
+      isCurrent = managedRuntime.isCurrent() === true;
+    } catch {
+      isCurrent = false;
+    }
+    if (!isCurrent) continue;
+    const currentGeneration = readNonEmptyString(
+      managedRuntime.immutableGenerationId,
+    );
+    if (!currentGeneration) continue;
+    if (currentGeneration !== retained.immutableGenerationId) return true;
+  }
+  return false;
+}
+
 export function resolveTrackedRunnerAgentRuntimeCurrentness(input: Readonly<{
   tracked: TrackedSession | null | undefined;
   agentRuntimesByAgentId: ReadonlyMap<string, AgentRuntimeRegistrationLease>;
@@ -83,9 +120,15 @@ export function resolveTrackedRunnerAgentRuntimeCurrentness(input: Readonly<{
   );
   if (!currentGeneration) return UNKNOWN_AGENT_RUNTIME_CURRENTNESS;
 
+  const retainedProviderStale = isRetainedManagedProviderStale({
+    tracked,
+    registry: input.providerResolution?.registry,
+  });
   const agentRuntimeCurrentness: SessionRunnerAgentRuntimeCurrentness = {
     versionState:
-      currentGeneration === pinnedGeneration ? 'current' : 'stale',
+      currentGeneration === pinnedGeneration && !retainedProviderStale
+        ? 'current'
+        : 'stale',
     restartUnavailableReason: null,
   };
 

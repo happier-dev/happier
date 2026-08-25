@@ -1,8 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { spawn, type ChildProcess } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import {
   compilePluginJsonSchema,
@@ -17,7 +19,12 @@ import {
 } from '@/daemon/controlClient';
 import { buildDaemonControlHttpHeaders } from '@/daemon/controlHttp';
 import { sanitizeDaemonSpawnEnv } from '@happier-dev/cli-common/process';
-import { buildHappyCliSubprocessLaunchSpec } from '@/utils/spawnHappyCLI';
+import {
+  buildHappyCliSubprocessLaunchSpec,
+  type HappyCliSubprocessLaunchSpec,
+} from '@/utils/spawnHappyCLI';
+import { resolvePackagedRuntimeEntrypoint } from '@/packagedRuntime/resolvePackagedRuntimeEntrypoint';
+import { projectPath } from '@/projectPath';
 import type {
   PluginChangeDecisionResult,
   PluginChangeRequestResult,
@@ -39,9 +46,30 @@ import {
 } from '@/plugins/daemon/packedTestTargetedAdmissions';
 import type { PackedTestDaemonReady } from '@/plugins/daemon/packedTestHost';
 
+/**
+ * Which packed participant a diagnostic is about. `--with-plugin` is
+ * repeatable, so one run packs and installs several companion projects before
+ * the target; without this, every companion failure reads identically and the
+ * author has to bisect their own command line to find the rejected input.
+ * `index` is the position in the requested `--with-plugin` list.
+ */
+export type PackedPluginTestDiagnosticSubject =
+  | Readonly<{ role: 'target'; locator: string }>
+  | Readonly<{ role: 'prerequisite'; index: number; locator: string }>;
+
+/**
+ * One candidate index maps to exactly one requested `--with-plugin` locator:
+ * the loop below either pushes a candidate or returns, so the position is the
+ * same on the pack and install failure paths.
+ */
+function prerequisiteSubject(index: number, locator: string): PackedPluginTestDiagnosticSubject {
+  return Object.freeze({ role: 'prerequisite', index, locator });
+}
+
 export type PackedPluginTestDiagnostic = Readonly<{
   code: string;
   message: string;
+  subject?: PackedPluginTestDiagnosticSubject;
 }>;
 
 type PackedPluginTestInvocation = Readonly<{
@@ -124,6 +152,7 @@ export type PackedPluginTestResult =
       }>;
       daemon: Readonly<{
         authenticatedControl: true;
+        entrypoint: string;
         initialPid: number;
         restartedPid: number;
         initialIncarnationId: string;
@@ -142,12 +171,17 @@ function failure(
   projectRoot: string,
   code: string,
   message: string,
+  subject?: PackedPluginTestDiagnosticSubject,
 ): Extract<PackedPluginTestResult, { ok: false }> {
   return Object.freeze({
     ok: false,
     mode: 'packed',
     projectRoot,
-    diagnostics: Object.freeze([Object.freeze({ code, message })]),
+    diagnostics: Object.freeze([Object.freeze({
+      code,
+      message,
+      ...(subject === undefined ? {} : { subject }),
+    })]),
   });
 }
 
@@ -196,6 +230,7 @@ function describePackedThrownFailure(error: unknown): string {
 
 function projectPackDiagnostics(
   diagnostics: Extract<PackLocalPluginResult, { ok: false }>['diagnostics'],
+  subject: PackedPluginTestDiagnosticSubject,
 ): readonly PackedPluginTestDiagnostic[] {
   return Object.freeze(diagnostics.map((diagnostic) => {
     const message = 'message' in diagnostic && typeof diagnostic.message === 'string'
@@ -204,6 +239,7 @@ function projectPackDiagnostics(
     return Object.freeze({
       code: diagnostic.code,
       message: message || `Plugin pack failed (${diagnostic.code})`,
+      subject,
     });
   }));
 }
@@ -222,6 +258,7 @@ function selectEmptyInputCliAction(
 
 type DisposableDaemon = Readonly<{
   ready: PackedTestDaemonReady;
+  entrypoint: string;
   target: NonNullable<DaemonControlRequestOptions['target']>;
   stop: () => Promise<void>;
 }>;
@@ -266,19 +303,40 @@ function parseReady(raw: string): PackedTestDaemonReady | null {
   }
 }
 
+function resolveRuntimeModuleFilePath(runtimeModuleUrl: string): string {
+  const withoutQuery = runtimeModuleUrl.split('?')[0] ?? runtimeModuleUrl;
+  if (!withoutQuery.startsWith('file:')) return withoutQuery;
+  try {
+    return fileURLToPath(withoutQuery);
+  } catch {
+    return withoutQuery;
+  }
+}
+
 /**
  * The disposable daemon must run the SAME Happier CLI implementation as the
  * process that starts it, otherwise a packed journey silently proves whatever
  * prebuilt artifact happens to sit in the checkout instead of the code under
- * test. A packaged CLI already satisfies that: its packaged entrypoint is the
- * implementation currently executing. A source-run CLI does not, because
- * `resolvePackagedRuntimeEntrypoint` returns any `package-dist`/`dist` build
- * that exists next to the sources, no matter how old.
+ * test.
  *
  * This module's own execution form is the authority for which implementation
- * is live: a TypeScript module means the checkout sources are executing, so the
- * daemon is pinned to the source runtime. An explicit caller pin
- * (`HAPPIER_CLI_SUBPROCESS_ENTRYPOINT`) always wins.
+ * is live. A TypeScript module means the checkout sources are executing, so the
+ * daemon is pinned to the source runtime. A module inside a `dist` build means
+ * that build is executing, so the daemon is pinned to its `index.mjs`. An
+ * explicit caller pin (`HAPPIER_CLI_SUBPROCESS_ENTRYPOINT`) always wins.
+ *
+ * `resolvePackagedRuntimeEntrypoint` now applies the same rule for the packaged
+ * trees, so a `dist`-run CLI already resolves to its own build; this pin remains
+ * because it additionally covers the source-run case, which the packaged
+ * resolver deliberately does not answer.
+ *
+ * Only a `dist` build is pinned. Every packaged, managed-install and
+ * runtime-backed runner layout executes from `package-dist/index.mjs`
+ * (`componentCatalog.nodeEntrypointRelativePath`), which is already what the
+ * subprocess resolver selects; pinning those would additionally bypass the
+ * admitted immutable-closure decision in `buildHappyCliSubprocessInvocation`.
+ * If a packaged layout ever stops resolving to its own build, this ceiling is
+ * what has to move.
  */
 export function resolveDisposableDaemonEnvironment(
   baseEnv: NodeJS.ProcessEnv,
@@ -293,10 +351,31 @@ export function resolveDisposableDaemonEnvironment(
     ? environment.HAPPIER_CLI_SUBPROCESS_ENTRYPOINT.trim()
     : '';
   if (pinnedEntrypoint) return environment;
-  const runtimeModulePath = runtimeModuleUrl.split('?')[0] ?? runtimeModuleUrl;
-  if (!/\.[cm]?tsx?$/.test(runtimeModulePath)) return environment;
-  environment.HAPPIER_CLI_SUBPROCESS_PREFER_TSX = '1';
+  const runtimeModulePath = resolveRuntimeModuleFilePath(runtimeModuleUrl);
+  if (/\.[cm]?tsx?$/.test(runtimeModulePath)) {
+    environment.HAPPIER_CLI_SUBPROCESS_PREFER_TSX = '1';
+    return environment;
+  }
+  const buildDirectory = dirname(runtimeModulePath);
+  if (basename(buildDirectory) !== 'dist') return environment;
+  const buildEntrypoint = join(buildDirectory, 'index.mjs');
+  if (!existsSync(buildEntrypoint)) return environment;
+  environment.HAPPIER_CLI_SUBPROCESS_ENTRYPOINT = buildEntrypoint;
   return environment;
+}
+
+export function recordDisposableDaemonLaunchEntrypoint(
+  launchSpec: HappyCliSubprocessLaunchSpec,
+  expectedEntrypoint: string,
+): string {
+  const launchedEntrypoint = [launchSpec.filePath, ...launchSpec.args]
+    .find((argument) => argument === expectedEntrypoint);
+  if (!launchedEntrypoint) {
+    throw new Error(
+      `Disposable plugin daemon launch did not use the expected CLI entrypoint '${expectedEntrypoint}'`,
+    );
+  }
+  return launchedEntrypoint;
 }
 
 async function startDisposableDaemon(params: Readonly<{
@@ -321,6 +400,14 @@ async function startDisposableDaemon(params: Readonly<{
       params.connectedAccountsFixturePluginId,
     ] : []),
   ], { environment: daemonEnvironment });
+  const expectedEntrypoint = daemonEnvironment.HAPPIER_CLI_SUBPROCESS_ENTRYPOINT?.trim()
+    || (daemonEnvironment.HAPPIER_CLI_SUBPROCESS_PREFER_TSX === '1'
+      ? join(projectPath(), 'src', 'index.ts')
+      : resolvePackagedRuntimeEntrypoint('index.mjs'));
+  const launchedEntrypoint = recordDisposableDaemonLaunchEntrypoint(
+    launchSpec,
+    expectedEntrypoint,
+  );
   const child = spawn(launchSpec.filePath, launchSpec.args, {
     cwd: params.projectRoot,
     env: sanitizeDaemonSpawnEnv({
@@ -354,6 +441,7 @@ async function startDisposableDaemon(params: Readonly<{
       }
       return Object.freeze({
         ready,
+        entrypoint: launchedEntrypoint,
         target: Object.freeze({
           pid: ready.pid,
           httpPort: ready.httpPort,
@@ -730,6 +818,10 @@ export async function runPackedPluginTest(params: Readonly<{
   const operationRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-packed-test-'));
   const happyHomeDir = join(operationRoot, 'home');
   const archivePath = join(operationRoot, 'plugin.happier-plugin.tgz');
+  const targetSubject: PackedPluginTestDiagnosticSubject = Object.freeze({
+    role: 'target',
+    locator: projectRoot,
+  });
   const prerequisiteCandidates: PackedPluginInstallCandidate[] = [];
   let daemon: DisposableDaemon | null = null;
 
@@ -757,7 +849,10 @@ export async function runPackedPluginTest(params: Readonly<{
           ok: false,
           mode: 'packed',
           projectRoot,
-          diagnostics: projectPackDiagnostics(prerequisite.diagnostics),
+          diagnostics: projectPackDiagnostics(
+            prerequisite.diagnostics,
+            prerequisiteSubject(index, resolve(locator)),
+          ),
         });
       }
       prerequisiteCandidates.push(createPackedProjectInstallCandidate(prerequisite, resolve(locator)));
@@ -772,7 +867,7 @@ export async function runPackedPluginTest(params: Readonly<{
         ok: false,
         mode: 'packed',
         projectRoot,
-        diagnostics: projectPackDiagnostics(packed.diagnostics),
+        diagnostics: projectPackDiagnostics(packed.diagnostics, targetSubject),
       });
     }
 
@@ -790,10 +885,15 @@ export async function runPackedPluginTest(params: Readonly<{
     }
     const initialDaemon = daemon;
     const prerequisites: PackedPluginTestParticipant[] = [];
-    for (const candidate of prerequisiteCandidates) {
+    for (const [index, candidate] of prerequisiteCandidates.entries()) {
       const prerequisiteInstall = await installPackedPlugin({ daemon, candidate });
       if (!prerequisiteInstall.ok) {
-        return failure(projectRoot, prerequisiteInstall.code, prerequisiteInstall.message);
+        return failure(
+          projectRoot,
+          prerequisiteInstall.code,
+          prerequisiteInstall.message,
+          prerequisiteSubject(index, candidate.source.locator),
+        );
       }
       prerequisites.push(prerequisiteInstall.participant);
     }
@@ -802,7 +902,7 @@ export async function runPackedPluginTest(params: Readonly<{
       candidate: createPackedProjectInstallCandidate(packed, projectRoot),
     });
     if (!packedInstall.ok) {
-      return failure(projectRoot, packedInstall.code, packedInstall.message);
+      return failure(projectRoot, packedInstall.code, packedInstall.message, targetSubject);
     }
     let target = packedInstall.participant;
 
@@ -851,6 +951,13 @@ export async function runPackedPluginTest(params: Readonly<{
     });
     if (daemon.ready.incarnationId === initialDaemon.ready.incarnationId || daemon.ready.pid === initialDaemon.ready.pid) {
       return failure(projectRoot, 'plugin_packed_daemon_restart_failed', 'Disposable daemon did not start a fresh incarnation');
+    }
+    if (daemon.entrypoint !== initialDaemon.entrypoint) {
+      return failure(
+        projectRoot,
+        'plugin_packed_daemon_entrypoint_changed',
+        `Disposable daemon restart changed CLI entrypoint from '${initialDaemon.entrypoint}' to '${daemon.entrypoint}'`,
+      );
     }
     const restartedCatalog = await readDaemonPluginCatalog({ target: daemon.target });
     const expectedInstalledPluginIds = [
@@ -1036,6 +1143,7 @@ export async function runPackedPluginTest(params: Readonly<{
       ...(publicationRemovalReadd ? { publicationRemovalReadd } : {}),
       daemon: Object.freeze({
         authenticatedControl: true,
+        entrypoint: initialDaemon.entrypoint,
         initialPid: initialDaemon.ready.pid,
         restartedPid: restartedReady.pid,
         initialIncarnationId: initialDaemon.ready.incarnationId,

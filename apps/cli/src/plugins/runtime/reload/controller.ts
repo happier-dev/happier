@@ -445,6 +445,8 @@ export function createPluginReloadController(params?: Readonly<{
             happyHomeDir: await resolveHappyHomeDir(),
             generation: attemptedGeneration,
             targetedContributions: getTargetedContributionsOwner(),
+            currentGlobalExternalSessionsRouter: currentGlobalExternalSessions,
+            onTerminalActivationFailure: () => controller.invalidateRuntimeProjection?.(),
         });
     }
 
@@ -674,7 +676,7 @@ export function createPluginReloadController(params?: Readonly<{
                 // changed predecessor is stale. Fence only those consumers before
                 // any candidate validation or awaited publication work, so every
                 // post-commit failure remains fail-closed without disturbing peers.
-                previousRegistry?.retirePluginConsumers?.(changedPluginIds);
+                await previousRegistry?.retirePluginConsumers?.(changedPluginIds);
                 await previousRegistry?.settleRetiredBackgroundServices?.(changedPluginIds);
                 if (hasBlockingPluginReloadDiagnostic(adoption.registry, changedPluginIds)) {
                     throw new Error(

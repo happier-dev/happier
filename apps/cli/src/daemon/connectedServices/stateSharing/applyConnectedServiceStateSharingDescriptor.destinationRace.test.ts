@@ -47,6 +47,20 @@ describe('applyConnectedServiceStateSharingDescriptor destination races', () => 
     vi.resetModules();
   });
 
+  it('retries when moving an existing entry aside collides with a directory suffix', async () => {
+    const renameMock = vi.fn()
+      .mockRejectedValueOnce(createRenameError('EISDIR'))
+      .mockResolvedValueOnce(undefined);
+    vi.doMock('node:fs/promises', async () => {
+      const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+      return { ...actual, rename: renameMock };
+    });
+    const { moveConnectedServiceHomeEntryAside } = await import('./connectedServiceHomeEntrySync');
+
+    await expect(moveConnectedServiceHomeEntryAside('/tmp/provider-home')).resolves.toBeUndefined();
+    expect(renameMock).toHaveBeenCalledTimes(2);
+  });
+
   it.each(['EISDIR', 'ENOTEMPTY', 'EEXIST', 'EPERM'] as const)(
     'preserves provider-created content and retries the same prepared link after %s',
     async (raceCode) => {

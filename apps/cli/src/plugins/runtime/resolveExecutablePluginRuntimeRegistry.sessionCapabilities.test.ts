@@ -14,9 +14,12 @@ describe('ordinary plugin Session-handle live capabilities', () => {
       handleToolCall,
       listMediatedPendingRequests: vi.fn<
         NonNullable<CurrentSessionCapabilityBinding['permissionHandler']>['listMediatedPendingRequests']
-      >(() => ({ requests: [], truncated: false })),
+      >(() => ({ requests: [], truncated: false, nextCursor: null })),
       respondToMediatedPendingPermission: vi.fn<
         NonNullable<CurrentSessionCapabilityBinding['permissionHandler']>['respondToMediatedPendingPermission']
+      >(async () => ({ status: 'rejected', code: 'mediationStateUnavailable' })),
+      respondToMediatedPendingUserAction: vi.fn<
+        NonNullable<CurrentSessionCapabilityBinding['permissionHandler']>['respondToMediatedPendingUserAction']
       >(async () => ({ status: 'rejected', code: 'mediationStateUnavailable' })),
       listMediatedPermissionGrants: vi.fn<
         NonNullable<CurrentSessionCapabilityBinding['permissionHandler']>['listMediatedPermissionGrants']

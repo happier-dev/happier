@@ -105,15 +105,12 @@ export type VoiceInferenceWorkerRequestFrame =
       sessionId: string;
     }>
   /** Cooperative cancellation: maps the daemon-side D12 AbortSignal to a child-side abort. */
-  | Readonly<{ kind: 'abort'; id: string; targetId: string }>
-  /** Liveness probe — the child answers with a `ready` frame for the same id. */
-  | Readonly<{ kind: 'ping'; id: string }>;
+  | Readonly<{ kind: 'abort'; id: string; targetId: string }>;
 
 export type VoiceInferenceWorkerRequestKind = VoiceInferenceWorkerRequestFrame['kind'];
 
 /** Child → daemon. Terminal results and readiness telemetry. */
 export type VoiceInferenceWorkerResponseFrame =
-  | Readonly<{ kind: 'ready'; id: string }>
   | Readonly<{ kind: 'result'; id: string; result: VoiceInferenceWorkerResultPayload }>
   | Readonly<{
       kind: 'error';
@@ -264,7 +261,6 @@ const VoiceInferenceWorkerResultPayloadSchema = z.discriminatedUnion('kind', [
 ]);
 
 const VoiceInferenceWorkerResponseFrameSchema = z.union([
-  z.object({ kind: z.literal('ready'), id: z.string() }),
   z.object({ kind: z.literal('result'), id: z.string(), result: VoiceInferenceWorkerResultPayloadSchema }),
   z.object({ kind: z.literal('error'), id: z.string(), code: z.string(), message: z.string() }),
   z.object({
@@ -390,7 +386,6 @@ const VoiceInferenceWorkerRequestFrameSchema = z.discriminatedUnion('kind', [
     sessionId: z.string().min(1),
   }),
   z.object({ kind: z.literal('abort'), id: z.string(), targetId: z.string() }),
-  z.object({ kind: z.literal('ping'), id: z.string() }),
 ]);
 
 /**

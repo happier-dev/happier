@@ -137,7 +137,7 @@ describe('browser automation daemon service', () => {
     await pending;
   });
 
-  it('cancels an in-flight action when cancelActive is called by the requester that started it', async () => {
+  it('lets a present user take over an in-flight action and advances control epoch', async () => {
     let release: () => void = () => undefined;
     const gate = new Promise<void>((resolve) => {
       release = resolve;
@@ -155,12 +155,14 @@ describe('browser automation daemon service', () => {
       request({ actionKind: 'navigate', payload: { url: 'https://x.test/' } }),
     );
 
-    const canceled = service.cancelActive({ ...view, requesterRef: agentRef });
+    const canceled = service.cancelActive({ ...view, authority: 'present_user' });
     expect(canceled.ok).toBe(true);
 
     const result = await pending;
     expect(result.status).toBe('canceled');
     expect(result.errorCode).toBe('user_canceled');
+    expect(result.controlEpochBefore).toBe(0);
+    expect(result.controlEpochAfter).toBe(1);
 
     release();
 
@@ -168,7 +170,7 @@ describe('browser automation daemon service', () => {
     expect(timeline.entries.some((entry) => entry.status === 'canceled')).toBe(true);
   });
 
-  it('refuses cancelActive from a requester that did not start the in-flight action', async () => {
+  it('lets a present user take over a differently-provenanced in-flight action', async () => {
     let release: () => void = () => undefined;
     const gate = new Promise<void>((resolve) => {
       release = resolve;
@@ -183,16 +185,18 @@ describe('browser automation daemon service', () => {
       },
     });
 
-    const pending = service.execute(request({ actionKind: 'navigate', payload: { url: 'https://x.test/' } }));
+    const pending = service.execute(request({
+      requestedBy: 'plugin',
+      requesterRef: pluginRef,
+      actionKind: 'navigate',
+      payload: { url: 'https://x.test/' },
+    }));
 
-    // Provenance is recorded at admission from the request itself. This check was unreachable
-    // while it read a lease requester, because no request could ever carry a lease.
-    const canceled = service.cancelActive({ ...view, requesterRef: pluginRef });
+    const canceled = service.cancelActive({ ...view, authority: 'present_user' });
 
-    expect(canceled).toEqual({ ok: false, errorCode: 'owner_mismatch' });
-
+    expect(canceled).toEqual({ ok: true });
+    expect((await pending).status).toBe('canceled');
     release();
-    expect((await pending).status).toBe('succeeded');
   });
 
   it('negotiates supportedOperations: fails closed up-front for an unsupported op without dispatching (BA-6)', async () => {

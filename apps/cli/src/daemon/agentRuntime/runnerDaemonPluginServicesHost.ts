@@ -133,6 +133,12 @@ type SubscriptionWaiter = Readonly<{
 type SubscriptionDeliverySettlement = Readonly<{
     promise: Promise<void>;
     acknowledgeOnly: boolean;
+    /**
+     * What the daemon-side publisher sees when the runner listener rejects a delivery. It is a
+     * property of the subscription, not of the transport: External Sessions has a published
+     * acquisition contract, while an Event listener failure is the broker's own isolation case.
+     */
+    rejection: Readonly<{ code: string; message: string }>;
     resolve(): void;
     reject(error: unknown): void;
 }>;
@@ -143,20 +149,17 @@ type SubscriptionDelivery = Readonly<{
 }>;
 
 type Subscription = {
-    disposable: Readonly<{ dispose(): void | Promise<void> }>;
+    disposable: Readonly<{ dispose(): void | Promise<void> }> | null;
+    acquisition: Promise<void> | null;
+    closing: boolean;
     readonly queueMode: 'fifo' | 'latest';
     readonly queue: SubscriptionDelivery[];
     readonly authorityScope: 'agent' | 'managedProvider';
     readonly awaitDeliverySettlement: boolean;
-    readonly queueLimit?: number;
-    readonly onOverflow?: () => void;
-    overflowReported: boolean;
     waiter: SubscriptionWaiter | null;
     deliveredSettlement: SubscriptionDeliverySettlement | null;
     disposal: Promise<void> | null;
 };
-
-const RUNNER_DAEMON_PLUGIN_SERVICE_SUBSCRIPTION_QUEUE_LIMIT = 256;
 
 type StorageTransactionState = {
     transaction: StorageTransaction | null;
@@ -428,39 +431,46 @@ export function createRunnerDaemonPluginServicesHost(input: Readonly<{
         if (subscription.disposal) {
             return await subscription.disposal;
         }
-        subscription.disposal = (async () => {
-            try {
-                await subscription.disposable.dispose();
-            } finally {
-                if (
-                    invocation.subscriptions.get(subscriptionId)
-                    === subscription
-                ) {
-                    invocation.subscriptions.delete(subscriptionId);
+        subscription.closing = true;
+        const attempt = (async () => {
+            await subscription.acquisition;
+            await subscription.disposable?.dispose();
+            if (
+                invocation.subscriptions.get(subscriptionId)
+                === subscription
+            ) {
+                invocation.subscriptions.delete(subscriptionId);
+            }
+            const closed = new PluginError({
+                code: 'plugin_service_subscription_closed',
+                message: 'Plugin service subscription is closed',
+            });
+            subscription.deliveredSettlement?.reject(closed);
+            subscription.deliveredSettlement = null;
+            for (const delivery of subscription.queue.splice(0)) {
+                delivery.settlement?.reject(closed);
+            }
+            const waiter = subscription.waiter;
+            subscription.waiter = null;
+            if (waiter) {
+                if (waiter.abort && waiter.signal) {
+                    waiter.signal.removeEventListener(
+                        'abort',
+                        waiter.abort,
+                    );
                 }
-                const closed = new PluginError({
-                    code: 'plugin_service_subscription_closed',
-                    message: 'Plugin service subscription is closed',
-                });
-                subscription.deliveredSettlement?.reject(closed);
-                subscription.deliveredSettlement = null;
-                for (const delivery of subscription.queue.splice(0)) {
-                    delivery.settlement?.reject(closed);
-                }
-                const waiter = subscription.waiter;
-                subscription.waiter = null;
-                if (waiter) {
-                    if (waiter.abort && waiter.signal) {
-                        waiter.signal.removeEventListener(
-                            'abort',
-                            waiter.abort,
-                        );
-                    }
-                    waiter.reject(closed);
-                }
+                waiter.reject(closed);
             }
         })();
-        return await subscription.disposal;
+        subscription.disposal = attempt;
+        try {
+            await attempt;
+        } catch (error) {
+            if (subscription.disposal === attempt) {
+                subscription.disposal = null;
+            }
+            throw error;
+        }
     };
 
     const enqueueSubscriptionEvent = (
@@ -478,11 +488,28 @@ export function createRunnerDaemonPluginServicesHost(input: Readonly<{
                             rejectSettlement = reject;
                         },
                     );
+                    const externalSessionsFollow = event.kind
+                        === 'plugin_sessions.external.follow_transcript.opened_v1'
+                        || event.kind
+                        === 'plugin_sessions.external.follow_transcript.event_v1';
                     return {
                         promise,
                         acknowledgeOnly:
                             event.kind
                             === 'plugin_sessions.external.follow_transcript.opened_v1',
+                        rejection: externalSessionsFollow
+                            ? {
+                                code:
+                                    'plugin_external_follow_listener_failed',
+                                message:
+                                    'External Sessions follow listener rejected delivery',
+                            }
+                            : {
+                                code:
+                                    'plugin_service_subscription_listener_failed',
+                                message:
+                                    'Runner subscription listener rejected delivery',
+                            },
                         resolve: resolveSettlement,
                         reject: rejectSettlement,
                     };
@@ -506,23 +533,6 @@ export function createRunnerDaemonPluginServicesHost(input: Readonly<{
             return settled;
         }
         if (subscription.queueMode === 'fifo') {
-            if (
-                subscription.queueLimit !== undefined
-                &&
-                subscription.queue.length
-                    >= subscription.queueLimit
-            ) {
-                if (!subscription.overflowReported) {
-                    subscription.overflowReported = true;
-                    try {
-                        subscription.onOverflow?.();
-                    } catch {
-                        // Overflow diagnostics never affect the producer.
-                    }
-                }
-                settlement?.resolve();
-                return settled;
-            }
             subscription.queue.push(delivery);
         } else {
             for (const replaced of subscription.queue.splice(0)) {
@@ -538,13 +548,11 @@ export function createRunnerDaemonPluginServicesHost(input: Readonly<{
         subscriptionId: string,
         register: (
             publish: (event: SubscriptionEvent) => Promise<void>,
-        ) => Readonly<{ dispose(): void | Promise<void> }>,
+        ) => Readonly<{ dispose(): void | Promise<void> }> | null,
         queueMode: Subscription['queueMode'],
         authorityScope: Subscription['authorityScope'] = 'agent',
-        queueLimit?: number,
-        onOverflow?: () => void,
         awaitDeliverySettlement = false,
-    ): void => {
+    ): Subscription => {
         if (invocation.subscriptions.has(subscriptionId)) {
             return fail(
                 'plugin_service_subscription_duplicate',
@@ -552,14 +560,13 @@ export function createRunnerDaemonPluginServicesHost(input: Readonly<{
             );
         }
         const subscription: Subscription = {
-            disposable: Object.freeze({ dispose() {} }),
+            disposable: null,
+            acquisition: null,
+            closing: false,
             queueMode,
             queue: [],
             authorityScope,
             awaitDeliverySettlement,
-            ...(queueLimit !== undefined ? { queueLimit } : {}),
-            ...(onOverflow ? { onOverflow } : {}),
-            overflowReported: false,
             waiter: null,
             deliveredSettlement: null,
             disposal: null,
@@ -575,6 +582,7 @@ export function createRunnerDaemonPluginServicesHost(input: Readonly<{
             invocation.subscriptions.delete(subscriptionId);
             throw error;
         }
+        return subscription;
     };
 
     const requireStorageTransaction = (
@@ -1480,6 +1488,10 @@ export function createRunnerDaemonPluginServicesHost(input: Readonly<{
                         operationOptions,
                     ),
                 );
+            // The Event broker owns pending-delivery and encoded-byte accounting until its
+            // listener settles, so this bridge listener must not resolve the moment it copies an
+            // event into transport. Returning `publish(...)` keeps the broker's own bounds and
+            // failure isolation in charge instead of growing a second, count-only policy here.
             case 'plugin_events.subscribe.open_v1':
                 openSubscription(
                     invocation,
@@ -1487,8 +1499,8 @@ export function createRunnerDaemonPluginServicesHost(input: Readonly<{
                     (publish) =>
                         services.events.plugin.subscribe(
                             operation.event,
-                            (event) => {
-                                publish({
+                            async (event) => {
+                                await publish({
                                     kind:
                                         'plugin_events.subscribe.event_v1',
                                     invocationId:
@@ -1508,8 +1520,13 @@ export function createRunnerDaemonPluginServicesHost(input: Readonly<{
                             },
                         ),
                     'fifo',
+                    'agent',
+                    true,
                 );
                 return result(operation, null);
+            // Host Events stay synchronous and lossy for their producer: the broker never awaits
+            // its own detached drain. Settlement only keeps ONE owner of the count/byte drop
+            // policy — the broker — instead of a second count-only quota in this transport.
             case 'plugin_events.host.subscribe.open_v1':
                 openSubscription(
                     invocation,
@@ -1517,8 +1534,8 @@ export function createRunnerDaemonPluginServicesHost(input: Readonly<{
                     (publish) =>
                         services.events.host.subscribe(
                             operation.target,
-                            (event) => {
-                                publish({
+                            async (event) => {
+                                await publish({
                                     kind:
                                         'plugin_events.host.subscribe.event_v1',
                                     invocationId:
@@ -1539,22 +1556,7 @@ export function createRunnerDaemonPluginServicesHost(input: Readonly<{
                         ),
                     'fifo',
                     'agent',
-                    RUNNER_DAEMON_PLUGIN_SERVICE_SUBSCRIPTION_QUEUE_LIMIT,
-                    () => {
-                        services.logger.diagnostic({
-                            code:
-                                'plugin_host_events_delivery_dropped',
-                            severity: 'warning',
-                            message:
-                                'Host Event delivery was dropped because the retained runner transport queue is full',
-                            details: {
-                                subscriptionId:
-                                    operation.subscriptionId,
-                                queueLimit:
-                                    RUNNER_DAEMON_PLUGIN_SERVICE_SUBSCRIPTION_QUEUE_LIMIT,
-                            },
-                        });
-                    },
+                    true,
                 );
                 return result(operation, null);
             case 'plugin_fetch.request_v1':
@@ -1738,22 +1740,20 @@ export function createRunnerDaemonPluginServicesHost(input: Readonly<{
                         'plugin_service_subscription_unavailable',
                         'External Sessions follow subscription is unavailable',
                     );
-                openSubscription(
+                const subscription = openSubscription(
                     invocation,
                     operation.subscriptionId,
                     (publish) => {
                         publishFollowEvent = publish;
-                        return Object.freeze({ dispose() {} });
+                        return null;
                     },
                     'fifo',
                     'agent',
-                    undefined,
-                    undefined,
                     true,
                 );
                 void (async () => {
                     try {
-                        const followed = await invocation
+                        const acquisition = invocation
                         .currentGlobalExternalSessions.followTranscript(
                             decodeRunnerDaemonPluginServiceWireValueV1(
                                 operation.ref,
@@ -1787,6 +1787,23 @@ export function createRunnerDaemonPluginServicesHost(input: Readonly<{
                                 });
                             },
                         );
+                        subscription.acquisition = acquisition.then(
+                            (followed) => {
+                                if (followed.status === 'following') {
+                                    subscription.disposable =
+                                        followed.subscription;
+                                }
+                            },
+                            () => undefined,
+                        );
+                        const followed = await acquisition;
+                        if (subscription.closing) {
+                            await closeSubscription(
+                                invocation,
+                                operation.subscriptionId,
+                            ).catch(() => undefined);
+                            return;
+                        }
                         if (followed.status === 'unavailable') {
                             await publishFollowEvent({
                                 kind:
@@ -1802,16 +1819,6 @@ export function createRunnerDaemonPluginServicesHost(input: Readonly<{
                             );
                             return;
                         }
-                        const subscription =
-                            invocation.subscriptions.get(
-                                operation.subscriptionId,
-                            );
-                        if (!subscription) {
-                            await followed.subscription.dispose();
-                            return;
-                        }
-                        subscription.disposable =
-                            followed.subscription;
                         await publishFollowEvent({
                             kind:
                                 'plugin_sessions.external.follow_transcript.opened_v1',
@@ -2356,12 +2363,9 @@ export function createRunnerDaemonPluginServicesHost(input: Readonly<{
                                 return result(operation, null);
                             }
                         } else {
-                            settlement.reject(new PluginError({
-                                code:
-                                    'plugin_external_follow_listener_failed',
-                                message:
-                                    'External Sessions follow listener rejected delivery',
-                            }));
+                            settlement.reject(new PluginError(
+                                settlement.rejection,
+                            ));
                             return result(operation, null);
                         }
                     } else if (operation.acknowledgement) {
@@ -2455,9 +2459,6 @@ export function createRunnerDaemonPluginServicesHost(input: Readonly<{
                         invocation.systemToolResolutions.get(
                             operation.systemToolResolutionId,
                         );
-                    invocation.systemToolResolutions.delete(
-                        operation.systemToolResolutionId,
-                    );
                     if (
                         !resolved
                         || !sameExecutable(resolved, executable)
@@ -2467,6 +2468,8 @@ export function createRunnerDaemonPluginServicesHost(input: Readonly<{
                             'System-tool resolution is unavailable or does not match the launch',
                         );
                     }
+                    // A resolution is scoped to this invocation and cleared with it. The
+                    // same exact tool may legitimately serve probes and the eventual launch.
                     executable = resolved;
                 }
                 const {

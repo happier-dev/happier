@@ -7,6 +7,7 @@ import { createResolvedContributionRegistry } from '@/plugins/projection/registr
 import { projectLoadedPluginContributes } from '@/plugins/projection/registry/resolvePluginContributions';
 
 const PLUGIN_ID = 'happier.channel.telegram';
+const EVENT_LOCAL_ID = 'automation/chat-message-v1';
 const SETUP_LOCAL_ID = 'telegram/setup-chat-event-source';
 const IMMUTABLE_GENERATION_ID = 'bundled-telegram-generation-a';
 
@@ -32,19 +33,11 @@ function loadedTelegramPlugin(): LoadedPlugin {
 }
 
 describe('Telegram chat Automation Event source', () => {
-    it('is withheld from the Automation composer projection while its occurrence has no durable obligation', () => {
-        // Telegram `getUpdates` is single-consumer: one `offset` confirms and discards
-        // every earlier update for every reader of the bot. The Telegram admission runs
-        // inline inside that one shared Channels ingress cycle and holds no durable
-        // obligation, so a catalog or admission outage could only choose between losing
-        // Automation occurrences and stalling Channel delivery for every user of the bot.
-        // The declaration stays withheld until the occurrence is persisted in the
-        // canonical Channels ingress store before the shared offset advances, so the
-        // composer must offer no Telegram chat source at all. Withholding the
-        // declaration is not deleting the work: the setup Action stays declared and
-        // projected, but the composer reaches a setup Action ONLY through an eligible
-        // Event's `setupAction`, so with no eligible Event nothing user-facing can
-        // offer an Automation that cannot exist.
+    it('projects its Event and exact setup Action through the cold Automation composer registry', () => {
+        // Telegram `getUpdates` is single-consumer. The shared Channels ingress
+        // owner must durably create the Event obligation before it advances that
+        // offset; this source-level assertion proves the provider declaration is
+        // genuinely reachable once that owner accepts the provider candidate.
         const registry = createResolvedContributionRegistry({
             ...projectLoadedPluginContributes({
                 loadResult: { loadedPlugins: [loadedTelegramPlugin()], diagnosticsByPluginId: {} },
@@ -53,8 +46,34 @@ describe('Telegram chat Automation Event source', () => {
             immutableGenerationIdsByPluginId: { [PLUGIN_ID]: IMMUTABLE_GENERATION_ID },
         });
 
-        expect(registry.automationEligibleEvents ?? []).toEqual([]);
-        expect(registry.events ?? []).toEqual([]);
+        expect(registry.automationEligibleEvents).toEqual([
+            expect.objectContaining({
+                event: expect.objectContaining({
+                    id: `${PLUGIN_ID}/${EVENT_LOCAL_ID}`,
+                    identity: { pluginId: PLUGIN_ID, localId: EVENT_LOCAL_ID },
+                    immutableGenerationId: IMMUTABLE_GENERATION_ID,
+                }),
+                setupAction: expect.objectContaining({
+                    identity: { pluginId: PLUGIN_ID, localId: SETUP_LOCAL_ID },
+                    immutableGenerationId: IMMUTABLE_GENERATION_ID,
+                }),
+            }),
+        ]);
+        expect(registry.events).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                definition: expect.objectContaining({
+                    id: `${PLUGIN_ID}/${EVENT_LOCAL_ID}`,
+                    localId: EVENT_LOCAL_ID,
+                    automation: expect.objectContaining({
+                        eligible: true,
+                        source: expect.objectContaining({
+                            supportedObservationTransports: ['checkpointedPull'],
+                            setupActionRef: { pluginId: PLUGIN_ID, localId: SETUP_LOCAL_ID },
+                        }),
+                    }),
+                }),
+            }),
+        ]));
         const actionLocalIds = registry.actions.map((action) => action.identity?.localId);
         expect(actionLocalIds).toContain(SETUP_LOCAL_ID);
         expect(registry.actions.find((action) => action.identity?.localId === SETUP_LOCAL_ID)
@@ -64,12 +83,11 @@ describe('Telegram chat Automation Event source', () => {
                 mcp: false,
                 plugin: true,
                 rpc: false,
-                api: false,
+                api: true,
                 ui: false,
                 voice: false,
             });
-        // The withdrawal touches only the Automation declaration: the shipped Telegram
-        // Channel Actions still project from the same manifest.
+        // The Event declaration does not bypass the shipped Telegram Channel Actions.
         expect(actionLocalIds).toContain('telegram/poll-updates');
     });
 });

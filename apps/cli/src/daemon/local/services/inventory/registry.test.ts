@@ -1,7 +1,25 @@
 import { describe, expect, it } from 'vitest';
 import { LocalServiceInventoryUpdateEventV1Schema } from '@happier-dev/protocol';
 
-import { createLocalServiceInventoryRegistry } from './registry';
+import {
+    createLocalServiceInventoryRegistry,
+    type LocalServiceInventoryAnnotationStore,
+    type LocalServiceInventoryAnnotationsV1,
+} from './registry';
+
+/** In-memory stand-in for the daemon's annotations file — the one genuine boundary here. */
+function createAnnotationStoreDouble(): LocalServiceInventoryAnnotationStore & { written: number } {
+    let stored: LocalServiceInventoryAnnotationsV1 | null = null;
+    const store = {
+        written: 0,
+        read: () => stored,
+        write: (annotations: LocalServiceInventoryAnnotationsV1) => {
+            stored = annotations;
+            store.written += 1;
+        },
+    };
+    return store;
+}
 
 const snapshot = {
     v: 1,
@@ -153,5 +171,57 @@ describe('createLocalServiceInventoryRegistry', () => {
         });
 
         expect(registry.getSnapshot().entries.map((entry) => entry.id)).toEqual(['entry-1']);
+    });
+    it('carries a user label across a daemon restart (tunnels audit 4.8)', () => {
+        const annotations = createAnnotationStoreDouble();
+        const first = createLocalServiceInventoryRegistry({ annotations });
+        first.replaceSnapshot(snapshot);
+        expect(first.applyLabelPatch({
+            inventoryId: 'entry-1',
+            text: 'Storefront',
+            source: 'user',
+            updatedAt: 2_000,
+        })).toEqual({ ok: true });
+        expect(annotations.written).toBeGreaterThan(0);
+
+        // The daemon restarts: a brand-new registry, and the next scan re-mints inventory ids.
+        const restarted = createLocalServiceInventoryRegistry({ annotations });
+        restarted.replaceSnapshot({
+            ...snapshot,
+            generatedAt: 9_000,
+            entries: [{ ...snapshot.entries[0]!, id: 'entry-1-rescanned', detectedAt: 9_000, lastSeenAt: 9_000 }],
+        });
+
+        expect(restarted.getSnapshot().entries[0]?.labels.map((label) => label.text)).toEqual(['Storefront']);
+    });
+
+    it('keeps a forgotten service hidden across a daemon restart', () => {
+        const annotations = createAnnotationStoreDouble();
+        const first = createLocalServiceInventoryRegistry({ annotations });
+        first.replaceSnapshot(snapshot);
+        expect(first.forgetEntry({ inventoryId: 'entry-1', updatedAt: 2_000 })).toEqual({ ok: true });
+        expect(first.getSnapshot().entries).toHaveLength(0);
+
+        const restarted = createLocalServiceInventoryRegistry({ annotations });
+        restarted.replaceSnapshot({
+            ...snapshot,
+            generatedAt: 3_000,
+            entries: [{ ...snapshot.entries[0]!, id: 'entry-1-rescanned' }],
+        });
+
+        // Same process, same address: the user's decision to hide it still holds.
+        expect(restarted.getSnapshot().entries).toHaveLength(0);
+    });
+
+    it('works with no annotation store at all', () => {
+        const registry = createLocalServiceInventoryRegistry();
+        registry.replaceSnapshot(snapshot);
+        expect(registry.applyLabelPatch({
+            inventoryId: 'entry-1',
+            text: 'Storefront',
+            source: 'user',
+            updatedAt: 2_000,
+        })).toEqual({ ok: true });
+        expect(registry.getSnapshot().entries[0]?.labels.map((label) => label.text)).toEqual(['Storefront']);
     });
 });

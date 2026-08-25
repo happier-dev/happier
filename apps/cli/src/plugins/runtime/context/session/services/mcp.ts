@@ -14,6 +14,7 @@ import {
     mcpElicitationFormQuestions,
     parseMcpElicitationFormSchema,
 } from '@/plugins/runtime/invocation/services/mcpElicitationForm';
+import { readTrimmedString } from './readTrimmedString';
 
 type SessionMcpScope = Readonly<{
     permissionHandler: Pick<ProviderEnforcedPermissionHandler, 'handleToolCall'>;
@@ -27,10 +28,6 @@ export type CreateSessionScopedMcpServicesParams = Readonly<{
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
     return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-}
-
-function readTrimmedString(value: unknown): string | null {
-    return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
 }
 
 function createAbortError(signal: AbortSignal): Error {

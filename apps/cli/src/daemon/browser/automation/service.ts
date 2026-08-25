@@ -1,4 +1,5 @@
 import {
+  BROWSER_AUTOMATION_NOT_IMPLEMENTED_ACTION_KINDS,
   browserViewKey,
   BrowserAutomationActionRequestV1Schema,
   BrowserAutomationActionResultV1Schema,
@@ -35,11 +36,13 @@ const NAVIGATION_GENERATION_ACTIONS = new Set([
   'goForward',
 ]);
 
-const NOT_IMPLEMENTED_ACTIONS = new Set<BrowserAutomationActionKindV1>([
-  'evaluate',
-  'startElementPicker',
-  'cancelElementPicker',
-]);
+// F3/G19: the one owner of "which verbs are declared but not executed" is the protocol
+// (`browser/automation/notImplemented.ts`). The server publishes `supportedActions` from the same
+// list, so a verb can never be refused here while advertised there — which had already happened
+// once, when the server's hand-maintained copy silently stopped publishing `upload` and `drag`.
+const NOT_IMPLEMENTED_ACTIONS: ReadonlySet<BrowserAutomationActionKindV1> = new Set(
+  BROWSER_AUTOMATION_NOT_IMPLEMENTED_ACTION_KINDS,
+);
 
 type ActiveBrowserAutomationControllerKind = Exclude<BrowserAutomationControllerKindV1, 'none'>;
 
@@ -67,7 +70,7 @@ export type BrowserAutomationViewLifecycleSubscriber = (
 export type BrowserAutomationDaemonService = Readonly<{
   execute(request: BrowserAutomationActionRequestV1): Promise<BrowserAutomationActionResultV1>;
   cancelActive(
-    input: BrowserAutomationViewRef & Readonly<{ requesterRef: { kind: string; id: string } }>,
+    input: BrowserAutomationViewRef & Readonly<{ authority: 'present_user' }>,
   ): BrowserAutomationCancelResult;
   getStatus(view: BrowserAutomationViewRef): BrowserAutomationControllerStateV1;
   getTimeline(view: BrowserAutomationViewRef): BrowserAutomationTimelineV1;
@@ -87,8 +90,9 @@ type ViewRuntime = {
   timeline: BrowserAutomationTimelineEntryV1[];
   /**
    * Single-flight: the one mutating automation action in flight for this view, with the provenance
-   * that admitted it. One object, one owner — `cancelActive` compares against this requester, and
-   * `getStatus` projects it, so there is no second copy of "who is driving this view".
+   * that admitted it. One object, one owner — a present-user takeover can only interrupt an
+   * accountable active action, and `getStatus` projects the same state, so there is no second
+   * copy of "who is driving this view".
    */
   activeAutomationRequestId: string | null;
   activeRequesterRef: BrowserAutomationRequesterRefV1 | null;
@@ -256,7 +260,8 @@ export function createBrowserAutomationDaemonService(input: Readonly<{
         const canceledOutcome = await buildCanceledOutcome({
           request,
           adapterKind: input.adapter.adapterKind,
-          controlEpoch,
+          controlEpochBefore: controlEpoch,
+          controlEpochAfter: owners.getControlEpoch(request),
           navigationGenerationBefore,
           errorCode: raced.errorCode,
           now,
@@ -293,17 +298,14 @@ export function createBrowserAutomationDaemonService(input: Readonly<{
       if (!runtime.activeAutomationRequestId || !runtime.cancel) {
         return { ok: false, errorCode: 'no_active_action' };
       }
-      // Provenance for the in-flight action, recorded at admission. Before the lease was removed
-      // this read the lease's requester, which no request could ever carry, so `owner_mismatch`
-      // was unreachable and any caller could cancel any agent's action.
-      const activeRequesterRef = runtime.activeRequesterRef;
-      if (
-        activeRequesterRef
-        && (activeRequesterRef.kind !== cancelInput.requesterRef.kind
-          || activeRequesterRef.id !== cancelInput.requesterRef.id)
-      ) {
+      // Provenance is stored atomically with admission. The route accepts only host-stamped
+      // present-user authority, never an input-supplied requester identity, so a human can take
+      // over any accountable in-flight automation action without an untrusted caller borrowing it.
+      if (!runtime.activeRequesterRef) {
         return { ok: false, errorCode: 'owner_mismatch' };
       }
+      owners.takeOver(cancelInput);
+      runtime.activeController = 'human';
       runtime.cancel('user_canceled');
       return { ok: true };
     },
@@ -336,7 +338,8 @@ export function createBrowserAutomationDaemonService(input: Readonly<{
 async function buildCanceledOutcome(input: Readonly<{
   request: BrowserAutomationActionRequestV1;
   adapterKind: BrowserAutomationAdapter['adapterKind'];
-  controlEpoch: number;
+  controlEpochBefore: number;
+  controlEpochAfter: number;
   navigationGenerationBefore: number;
   errorCode: BrowserAutomationErrorCodeV1;
   now: () => number;
@@ -353,8 +356,8 @@ async function buildCanceledOutcome(input: Readonly<{
     trustedInput: false,
     navigationGenerationBefore: input.navigationGenerationBefore,
     navigationGenerationAfter: input.navigationGenerationBefore,
-    controlEpochBefore: input.controlEpoch,
-    controlEpochAfter: input.controlEpoch,
+    controlEpochBefore: input.controlEpochBefore,
+    controlEpochAfter: input.controlEpochAfter,
     errorCode: input.errorCode,
   });
   const timelineEntry = BrowserAutomationTimelineEntryV1Schema.parse({
@@ -373,8 +376,8 @@ async function buildCanceledOutcome(input: Readonly<{
     finishedAtMs: at,
     navigationGenerationBefore: input.navigationGenerationBefore,
     navigationGenerationAfter: input.navigationGenerationBefore,
-    controlEpochBefore: input.controlEpoch,
-    controlEpochAfter: input.controlEpoch,
+    controlEpochBefore: input.controlEpochBefore,
+    controlEpochAfter: input.controlEpochAfter,
     reasonCode: input.errorCode,
   });
   return { result, timelineEntry };

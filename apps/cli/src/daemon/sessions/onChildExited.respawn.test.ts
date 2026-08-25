@@ -206,14 +206,28 @@ describe('createOnChildExited', () => {
     expect(removeSessionMarkerFn).not.toHaveBeenCalled();
   });
 
-  it('authors no terminal row when an exited runner has no exact active turn', async () => {
+  it('fences and finalizes a no-turn final exit before releasing its marker custody', async () => {
     const pid = 124;
     const pidToTrackedSession = new Map<number, any>([[pid, {
       pid,
       startedBy: 'daemon',
       happySessionId: 'session-2',
     }]]);
-    const apiMachine = { enqueueDaemonTerminalExactTurnEnd: vi.fn(async () => undefined) };
+    let releaseFinalize!: () => void;
+    const finalizeGate = new Promise<void>((resolve) => { releaseFinalize = resolve; });
+    const apiMachine = {
+      enqueueDaemonTerminalExactTurnEnd: vi.fn(async () => undefined),
+      captureMachineSessionTerminal: vi.fn(async () => ({
+        v: 1 as const,
+        status: 'captured' as const,
+        sessionId: 'session-2',
+        authority: { kind: 'generation' as const, publisherGeneration: '7' },
+      })),
+      finalizeMachineSessionTerminal: vi.fn(async () => {
+        await finalizeGate;
+        return { v: 1 as const, status: 'closed' as const, sessionId: 'session-2' };
+      }),
+    };
     const removeSessionMarkerFn = vi.fn(async () => undefined);
     const onChildExited = createOnChildExited({
       pidToTrackedSession,
@@ -223,11 +237,57 @@ describe('createOnChildExited', () => {
       removeSessionMarkerFn,
     } as any);
 
-    onChildExited(pid, { reason: 'process-exited', code: 0, signal: null });
+    const observation = onChildExited(pid, { reason: 'process-exited', code: 0, signal: null });
 
-    await vi.waitFor(() => expect(pidToTrackedSession.has(pid)).toBe(false));
+    await vi.waitFor(() => expect(apiMachine.captureMachineSessionTerminal).toHaveBeenCalledWith('session-2'));
+    expect(apiMachine.finalizeMachineSessionTerminal).toHaveBeenCalledWith({
+      sessionId: 'session-2',
+      authority: { kind: 'generation', publisherGeneration: '7' },
+    });
     expect(apiMachine.enqueueDaemonTerminalExactTurnEnd).not.toHaveBeenCalled();
+    expect(pidToTrackedSession.has(pid)).toBe(true);
+    expect(removeSessionMarkerFn).not.toHaveBeenCalled();
+
+    releaseFinalize();
+    await observation;
+    expect(pidToTrackedSession.has(pid)).toBe(false);
     expect(removeSessionMarkerFn).toHaveBeenCalledWith(pid);
+  });
+
+  it('retains no-turn final-exit custody when terminal capture is rejected', async () => {
+    const pid = 126;
+    const tracked = { pid, startedBy: 'daemon' as const, happySessionId: 'session-capture-rejected' };
+    const pidToTrackedSession = new Map<number, any>([[pid, tracked]]);
+    const apiMachine = {
+      enqueueDaemonTerminalExactTurnEnd: vi.fn(async () => undefined),
+      captureMachineSessionTerminal: vi.fn(async () => ({
+        v: 1 as const,
+        status: 'rejected' as const,
+        sessionId: 'session-capture-rejected',
+        reason: 'unsupported' as const,
+      })),
+      finalizeMachineSessionTerminal: vi.fn(async () => ({
+        v: 1 as const,
+        status: 'closed' as const,
+        sessionId: 'session-capture-rejected',
+      })),
+    };
+    const removeSessionMarkerFn = vi.fn(async () => undefined);
+    const onChildExited = createOnChildExited({
+      pidToTrackedSession,
+      spawnResourceCleanupByPid: new Map(),
+      sessionAttachCleanupByPid: new Map(),
+      getApiMachineForSessions: () => apiMachine,
+      removeSessionMarkerFn,
+    } as any);
+
+    await onChildExited(pid, { reason: 'process-exited', code: 0, signal: null });
+
+    expect(apiMachine.captureMachineSessionTerminal).toHaveBeenCalledWith('session-capture-rejected');
+    expect(apiMachine.finalizeMachineSessionTerminal).not.toHaveBeenCalled();
+    expect(apiMachine.enqueueDaemonTerminalExactTurnEnd).not.toHaveBeenCalled();
+    expect(pidToTrackedSession.get(pid)).toBe(tracked);
+    expect(removeSessionMarkerFn).not.toHaveBeenCalled();
   });
 
   it('stages the dead runner exact turn even when a live replacement owns the same session', async () => {
@@ -386,6 +446,67 @@ describe('createOnChildExited', () => {
       expect.objectContaining({ happySessionId: 'session-1', pid: 123 }),
       expect.objectContaining({ code: 1 }),
     );
+  });
+
+  // A killed runner ran none of its own disposal, so its detached managed children must be
+  // retired by the daemon BEFORE a replacement runner starts allocating new ones.
+  it('retires the managed services an unexpectedly exited runner owned before respawning it', async () => {
+    const pid = 129;
+    const order: string[] = [];
+    const tracked = { pid, startedBy: 'daemon', happySessionId: 'session-orphan' };
+    const retireSessionRunnerOwnedManagedServices = vi.fn(async () => {
+      order.push('retire');
+    });
+    const onUnexpectedExit = vi.fn(() => {
+      order.push('respawn');
+    });
+
+    const onChildExited = createOnChildExited({
+      pidToTrackedSession: new Map<number, any>([[pid, tracked]]),
+      spawnResourceCleanupByPid: new Map<number, () => void>(),
+      sessionAttachCleanupByPid: new Map<number, () => Promise<void>>(),
+      getApiMachineForSessions: () => null,
+      retireSessionRunnerOwnedManagedServices,
+      onUnexpectedExit,
+    } as any);
+
+    await onChildExited(pid, { reason: 'process-exited', code: null, signal: 'SIGKILL' });
+
+    expect(retireSessionRunnerOwnedManagedServices).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: 'session-orphan' }),
+    );
+    expect(order).toEqual(['retire', 'respawn']);
+  });
+
+  // A replacement PID still owns those children, so retiring by session id would kill the live
+  // runner's own managed services.
+  it('does not retire managed services while another live runner owns the same session', async () => {
+    const obsoletePid = 130;
+    const livePid = 131;
+    const retireSessionRunnerOwnedManagedServices = vi.fn(async () => undefined);
+    const originalKill = process.kill.bind(process);
+    const killSpy = vi.spyOn(process, 'kill').mockImplementation(((targetPid: number, signal?: any) => {
+      if (targetPid === livePid && signal === 0) return true;
+      return originalKill(targetPid, signal as any);
+    }) as any);
+
+    const onChildExited = createOnChildExited({
+      pidToTrackedSession: new Map<number, any>([
+        [obsoletePid, { pid: obsoletePid, startedBy: 'daemon', happySessionId: 'session-shared' }],
+        [livePid, { pid: livePid, startedBy: 'daemon', happySessionId: 'session-shared' }],
+      ]),
+      spawnResourceCleanupByPid: new Map<number, () => void>(),
+      sessionAttachCleanupByPid: new Map<number, () => Promise<void>>(),
+      getApiMachineForSessions: () => ({
+        enqueueDaemonTerminalExactTurnEnd: vi.fn(async () => undefined),
+      }),
+      retireSessionRunnerOwnedManagedServices,
+    } as any);
+
+    await onChildExited(obsoletePid, { reason: 'process-missing', code: null, signal: null });
+
+    expect(retireSessionRunnerOwnedManagedServices).not.toHaveBeenCalled();
+    killSpy.mockRestore();
   });
 
   it('captures unexpected exit authority before durable staging and schedules only after staging', async () => {
@@ -733,7 +854,20 @@ describe('createOnChildExited', () => {
     const pidToTrackedSession = new Map<number, any>([[wrapperPid, tracked]]);
     const spawnResourceCleanupByPid = new Map<number, () => void>();
     const sessionAttachCleanupByPid = new Map<number, () => Promise<void>>();
-    const apiMachine = { enqueueDaemonTerminalExactTurnEnd: vi.fn(async () => undefined) };
+    const apiMachine = {
+      enqueueDaemonTerminalExactTurnEnd: vi.fn(async () => undefined),
+      captureMachineSessionTerminal: vi.fn(async () => ({
+        v: 1 as const,
+        status: 'captured' as const,
+        sessionId: 'session-1',
+        authority: { kind: 'generation' as const, publisherGeneration: '8' },
+      })),
+      finalizeMachineSessionTerminal: vi.fn(async () => ({
+        v: 1 as const,
+        status: 'closed' as const,
+        sessionId: 'session-1',
+      })),
+    };
 
     const removeSessionMarkerFn = vi.fn(async () => {});
     const promoteSessionMarkerFn = vi.fn(async () => {});
@@ -780,7 +914,20 @@ describe('createOnChildExited', () => {
       pidToTrackedSession,
       spawnResourceCleanupByPid: new Map<number, () => void>(),
       sessionAttachCleanupByPid: new Map<number, () => Promise<void>>(),
-      getApiMachineForSessions: () => null,
+      getApiMachineForSessions: () => ({
+        enqueueDaemonTerminalExactTurnEnd: vi.fn(async () => undefined),
+        captureMachineSessionTerminal: vi.fn(async () => ({
+          v: 1 as const,
+          status: 'captured' as const,
+          sessionId: 'session-preserve-marker',
+          authority: { kind: 'generation' as const, publisherGeneration: '9' },
+        })),
+        finalizeMachineSessionTerminal: vi.fn(async () => ({
+          v: 1 as const,
+          status: 'closed' as const,
+          sessionId: 'session-preserve-marker',
+        })),
+      }),
       removeSessionMarkerFn,
       shouldPreserveSessionMarkerOnExit: (input: { trackedSession: typeof tracked }) =>
         input.trackedSession === tracked,
@@ -811,7 +958,20 @@ describe('createOnChildExited', () => {
       pidToTrackedSession,
       spawnResourceCleanupByPid: new Map<number, () => void>(),
       sessionAttachCleanupByPid: new Map<number, () => Promise<void>>(),
-      getApiMachineForSessions: () => null,
+      getApiMachineForSessions: () => ({
+        enqueueDaemonTerminalExactTurnEnd: vi.fn(async () => undefined),
+        captureMachineSessionTerminal: vi.fn(async () => ({
+          v: 1 as const,
+          status: 'captured' as const,
+          sessionId: 'session-register-terminal-host',
+          authority: { kind: 'generation' as const, publisherGeneration: '10' },
+        })),
+        finalizeMachineSessionTerminal: vi.fn(async () => ({
+          v: 1 as const,
+          status: 'closed' as const,
+          sessionId: 'session-register-terminal-host',
+        })),
+      }),
       removeSessionMarkerFn,
       shouldPreserveSessionMarkerOnExit: () => true,
       stageObservedExitFn: vi.fn(async () => {

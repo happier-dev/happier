@@ -470,7 +470,7 @@ describe('plugin UI projection family', () => {
                     headerActions: [{
                         id: 'refresh',
                         title: 'Refresh',
-                        action: { kind: 'executeAction', action: 'refresh-navigation' },
+                        command: { kind: 'executeAction', action: 'refresh-navigation' },
                     }],
                 },
             }],
@@ -488,15 +488,15 @@ describe('plugin UI projection family', () => {
             headerActions: [{
                 id: 'refresh',
                 title: 'Refresh',
-                action: {
+                command: {
                     kind: 'executeAction',
                     action: { pluginId: 'acme.navigation', localId: 'refresh-navigation' },
                 },
             }],
         });
-        // The compiled entry carries the qualified semantic action only; the
-        // retired `command` spelling must not survive anywhere on the wire.
-        expect(entry).not.toHaveProperty('headerActions.0.command');
+        // The compiled entry carries the qualified semantic command only; the
+        // retired `action` spelling must not survive anywhere on the wire.
+        expect(entry).not.toHaveProperty('headerActions.0.action');
     });
 
     it('projects bounded destination presentation defaults without assigning placement authority', () => {
@@ -557,6 +557,54 @@ describe('plugin UI projection family', () => {
         });
     });
 
+    it('keeps authored literal destination presentation distinct from keyed localized presentation', () => {
+        const registry = {
+            ...createEmptyResolvedContributionRegistry(),
+            uiRenderersV2: [{
+                provenance: 'external',
+                source: { kind: 'path' },
+                pluginId: 'acme.navigation',
+                identity: { pluginId: 'acme.navigation', localId: 'renderer' },
+                manifestPath: '/plugins/acme/.happier-plugin/plugin.json',
+                definition: {
+                    id: 'renderer',
+                    kind: 'declarative',
+                    root: { kind: 'text', text: 'Navigation' },
+                },
+            }],
+            uiViewsV2: [{
+                provenance: 'external',
+                source: { kind: 'path' },
+                pluginId: 'acme.navigation',
+                identity: { pluginId: 'acme.navigation', localId: 'literal-navigation-page' },
+                manifestPath: '/plugins/acme/.happier-plugin/plugin.json',
+                definition: {
+                    id: 'literal-navigation-page',
+                    container: 'appPage',
+                    target: { kind: 'app' },
+                    renderer: 'renderer',
+                    title: 'Navigation',
+                    badge: { label: 'Preview', tone: 'accent' },
+                    headerActions: [],
+                },
+            }],
+        } as unknown as ResolvedContributionRegistry;
+
+        const entry = buildPluginProjectionV2({ registry, generation: 1 })
+            .familiesById.pluginUi?.entriesById['surfacePlacement:acme.navigation:literal-navigation-page'];
+
+        expect(entry).toMatchObject({
+            display: {
+                title: 'Navigation',
+                badge: { label: 'Preview', tone: 'accent' },
+            },
+        });
+        expect(entry?.display).not.toHaveProperty('titleKey');
+        expect(entry?.display).not.toHaveProperty('developerFallback');
+        expect(entry?.display.badge).not.toHaveProperty('labelKey');
+        expect(entry?.display.badge).not.toHaveProperty('developerFallback');
+    });
+
     it('gives the deterministic V2 locale owner precedence over the legacy translation adapter', () => {
         const v2Translations = [
             {
@@ -597,6 +645,47 @@ describe('plugin UI projection family', () => {
             diagnostics: ['duplicate_translation_locale'],
         });
         expect(JSON.stringify(forward)).not.toContain('Legacy V1');
+    });
+
+    it('ships only the locales a client can read when the describe request names one', () => {
+        const contributedLocales = ['en', 'fr', 'ja', 'ru'] as const;
+        const registry = {
+            ...createEmptyResolvedContributionRegistry(),
+            uiTranslationsV2: contributedLocales.map((locale) => ({
+                pluginId: 'acme.preview',
+                localeIdentity: { pluginId: 'acme.preview', locale },
+                manifestPath: `/plugins/acme/${locale}.plugin.json`,
+                definition: { locale, messages: { title: `title-${locale}` } },
+            })),
+        } as unknown as ResolvedContributionRegistry;
+
+        const project = (requestedLocale?: string) => buildPluginProjectionV2({
+            registry,
+            generation: 1,
+            ...(requestedLocale === undefined ? {} : { requestedLocale }),
+        } as Parameters<typeof buildPluginProjectionV2>[0])
+            .familiesById.pluginUi?.entriesById['translations:acme.preview'] as unknown as Readonly<{
+                locales: readonly string[];
+                bundles: Readonly<Record<string, Readonly<Record<string, string>>>>;
+            }>;
+
+        // The only reader (`resolvePluginUiTranslationBundle`) merges the preferred
+        // locale over English and never touches another one, so nothing else belongs
+        // on the wire.
+        const narrowed = project('fr');
+        expect(Object.keys(narrowed.bundles)).toEqual(['en', 'fr']);
+        expect(narrowed.bundles).toEqual({
+            en: { title: 'title-en' },
+            fr: { title: 'title-fr' },
+        });
+        // `locales` stays the full availability fact; only the payload narrows.
+        expect(narrowed.locales).toEqual(['en', 'fr', 'ja', 'ru']);
+
+        // An English client needs exactly one bundle.
+        expect(Object.keys(project('en').bundles)).toEqual(['en']);
+
+        // A client that names no locale — an older one — still receives everything.
+        expect(Object.keys(project().bundles)).toEqual(['en', 'fr', 'ja', 'ru']);
     });
 
     it('projects connected-account descriptors only through the canonical connectedAccounts family', async () => {
@@ -699,6 +788,77 @@ describe('plugin UI projection family', () => {
         });
     });
 
+    it('projects a Session-info section through the canonical declarative model', () => {
+        const registry = {
+            ...createEmptyResolvedContributionRegistry(),
+            sessionInfoSections: [{
+                provenance: 'external',
+                source: { kind: 'path' },
+                pluginId: 'acme.preview',
+                pluginVersion: '1.0.0',
+                identity: { pluginId: 'acme.preview', localId: 'overview' },
+                manifestPath: '/plugins/acme/.happier-plugin/plugin.json',
+                definition: {
+                    id: 'overview',
+                    resourceId: 'session-overview',
+                    order: 25,
+                    actions: ['open-details'],
+                },
+            }],
+        } satisfies ResolvedContributionRegistry;
+        const model = {
+            identity: {
+                pluginId: 'acme.preview',
+                localId: 'session-info-overview',
+                qualifiedId: 'acme.preview/session-info-overview',
+                generation: '9',
+            },
+            visible: true,
+            requiredHostMethods: ['context', 'executeAction', 'readResource', 'watchResource'],
+            declarativeInventory: emptyDeclarativeInventory,
+            root: {
+                kind: 'state',
+                path: 'root',
+                order: 0,
+                state: 'loading',
+                title: 'Loading overview',
+            },
+        } satisfies StablePluginDeclarativeModel;
+
+        const entries = buildPluginProjectionV2({
+            registry,
+            generation: 9,
+            pluginUiHostRuntime: {
+                declarative: { modelsByRendererKey: { ['acme.preview\0session-info-overview']: model } },
+            },
+        } as Parameters<typeof buildPluginProjectionV2>[0]).familiesById.pluginUi?.entriesById ?? {};
+
+        expect(entries['sessionInfoSection:acme.preview:overview']).toMatchObject({
+            pluginId: 'acme.preview',
+            pluginVersion: '1.0.0',
+            contributionKind: 'sessionInfoSection',
+            descriptorId: 'overview',
+            order: 25,
+            resource: { pluginId: 'acme.preview', localId: 'session-overview' },
+            actions: [{ pluginId: 'acme.preview', localId: 'open-details' }],
+            renderer: {
+                kind: 'declarative',
+                contributionId: 'session-info-overview',
+                model,
+                documentSource: { kind: 'resource', resourceId: 'session-overview' },
+            },
+            placement: {
+                contributionKind: 'surfacePlacement',
+                descriptorId: 'overview',
+                binding: expect.objectContaining({
+                    container: 'sessionInfoSection',
+                    target: { kind: 'session' },
+                    targetKind: 'session',
+                }),
+            },
+        });
+    });
+
     it('rejects a duplicate V2 view id instead of selecting a projection-order survivor (DR-2)', () => {
         const renderer = {
             provenance: 'external',
@@ -797,7 +957,6 @@ describe('plugin UI projection family', () => {
             requiredHostMethods: ['context', 'executeAction'],
             declarativeInventory: emptyDeclarativeInventory,
             root: { kind: 'text', path: 'root', order: 0, text: 'Generated status' },
-            nodes: [{ kind: 'text', path: 'root', order: 0, text: 'Generated status' }],
         } satisfies StablePluginDeclarativeModel;
         const registry = {
             ...createEmptyResolvedContributionRegistry(),
@@ -1116,7 +1275,6 @@ describe('plugin UI projection family', () => {
             requiredHostMethods: ['context'],
             declarativeInventory: emptyDeclarativeInventory,
             root: { kind: 'text', path: 'root', order: 0, text: 'Status' },
-            nodes: [{ kind: 'text', path: 'root', order: 0, text: 'Status' }],
         } satisfies StablePluginDeclarativeModel);
         const registry = {
             ...createEmptyResolvedContributionRegistry(),
@@ -1208,7 +1366,6 @@ describe('plugin UI projection family', () => {
             requiredHostMethods: [],
             declarativeInventory: emptyDeclarativeInventory,
             root: { kind: 'text', path: 'root', order: 0, text: 'Static dashboard' },
-            nodes: [{ kind: 'text', path: 'root', order: 0, text: 'Static dashboard' }],
         } satisfies StablePluginDeclarativeModel;
 
         const projection = buildPluginProjectionV2({

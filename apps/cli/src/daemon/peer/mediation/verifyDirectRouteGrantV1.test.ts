@@ -112,24 +112,6 @@ describe('verifyDirectRouteGrantV1', () => {
             },
         })).toEqual({ valid: false, reasonCode: 'grant_endpoint_mismatch' });
     });
-
-    it('rejects revoked grant ids and grant families before expiry', () => {
-        expect(verifyDirectRouteGrantV1({
-            grant: createSignedGrant(),
-            trustRoots: [{ keyId: 'key_1', publicKey: toBase64Url(signingKeyPair.publicKey) }],
-            nowMs: 2_000,
-            expected: { accountId: 'account_1', machineId: 'machine_1', flowKind: 'bounded_transfer', routeKind: 'loopback_direct' },
-            revokedGrantIds: new Set(['grant_1']),
-        })).toEqual({ valid: false, reasonCode: 'grant_revoked' });
-
-        expect(verifyDirectRouteGrantV1({
-            grant: createSignedGrant(),
-            trustRoots: [{ keyId: 'key_1', publicKey: toBase64Url(signingKeyPair.publicKey) }],
-            nowMs: 2_000,
-            expected: { accountId: 'account_1', machineId: 'machine_1', flowKind: 'bounded_transfer', routeKind: 'loopback_direct' },
-            revokedGrantFamilyIds: new Set(['family_1']),
-        })).toEqual({ valid: false, reasonCode: 'grant_revoked' });
-    });
 });
 
 describe('verifyDirectRouteGrantV2', () => {

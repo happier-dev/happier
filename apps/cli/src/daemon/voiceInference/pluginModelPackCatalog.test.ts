@@ -151,7 +151,6 @@ function currentGeneration(
     desiredImmutableGenerationId: overrides.desiredImmutableGenerationId ?? immutableGenerationId,
     appliedImmutableGenerationId: overrides.appliedImmutableGenerationId
       ?? (applied ? immutableGenerationId : null),
-    distribution: 'test',
     applied,
     selectedAccess: Object.freeze([]),
     ...overrides,

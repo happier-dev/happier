@@ -14,7 +14,7 @@ import {
   type PluginWebhookInvocationReferenceV1,
   convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1,
   createAccountScopedCryptoMaterialSnapshotV1,
-  isAutomationEventTriggerEvidenceCiphertextV1,
+  isAutomationTriggerEvidenceCiphertextV1,
   parseAutomationRunExecutionRecipeV1,
   sealAccountScopedBlobCiphertext,
   sealAutomationTriggerDefinitionStoredEnvelopeV1,
@@ -856,7 +856,7 @@ describe('createAutomationEventActionExecutor', () => {
       'templateVersion',
       'triggerEvidenceEnvelope',
     ]);
-    expect(isAutomationEventTriggerEvidenceCiphertextV1(
+    expect(isAutomationTriggerEvidenceCiphertextV1(
       request.hostEvidence.definitions[0]!.triggerEvidenceEnvelope.c,
     )).toBe(true);
     const recipe = parseAutomationRunExecutionRecipeV1(
@@ -866,7 +866,7 @@ describe('createAutomationEventActionExecutor', () => {
     );
     expect(recipe.kind).toBe('available');
     if (recipe.kind !== 'available' || recipe.recipe.triggerEvidence?.t !== 'encrypted') return;
-    expect(isAutomationEventTriggerEvidenceCiphertextV1(recipe.recipe.triggerEvidence.c)).toBe(true);
+    expect(isAutomationTriggerEvidenceCiphertextV1(recipe.recipe.triggerEvidence.c)).toBe(true);
   });
 
   it('passes a custom E2 transport the complete E3 E2EE body without raw plugin Event input', async () => {

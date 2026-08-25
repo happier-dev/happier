@@ -5,6 +5,7 @@ import {
 } from '@happier-dev/protocol';
 import type {
   AutomationEventDeclarationReleaseV1,
+  AutomationEventCheckpointRetirementCandidateV1,
   AutomationEventSourceDefinitionV1,
   AutomationEventSourceObservationTransportV1,
   AutomationEventStoredDefinitionProjectionV1,
@@ -189,6 +190,73 @@ function unchanged(
 }
 
 describe('createAutomationEventAdoptedDefinitionSetV1', () => {
+  it('forwards only server-classified checkpoint retirements at the exact refreshed revision', async () => {
+    const definition = storedDefinition(1);
+    const candidate = {
+      automationId: definition.automationId,
+      eventRef: definition.eventRef,
+      sourceSelectorId: definition.sourceSelectorId,
+      sourceContractVersion: definition.sourceContractVersion,
+    } as const satisfies AutomationEventCheckpointRetirementCandidateV1;
+    let retirementResult: AutomationEventStoredDefinitionsReadResultV1 = {
+      kind: 'unchanged',
+      revision: '7',
+      eventDeclarationRelease,
+      checkpointRetirements: [candidate],
+    };
+    const readStoredDefinitions = vi.fn(async ({ input }: Readonly<{
+      input: AutomationEventSourcesListInputV1;
+    }>): Promise<AutomationEventStoredDefinitionsReadResultV1> => {
+      if (input.checkpointRetirementCandidates !== undefined) {
+        expect(input).toEqual({
+          transport: { kind: 'checkpointedPull' },
+          pageSize: 500,
+          knownRevision: '7',
+          checkpointRetirementCandidates: [candidate],
+        });
+        return retirementResult;
+      }
+      if (input.knownRevision === '7') return unchanged('7');
+      return page('7', [definition], null);
+    });
+    const owner = createAutomationEventAdoptedDefinitionSetV1({
+      caller,
+      transport: { kind: 'checkpointedPull' },
+      generationSignal: new AbortController().signal,
+      isGenerationCurrent: () => true,
+      revalidateCallerMaterialization: async () => true,
+      resolveAccountEncryption: async () => PLAIN_ACCOUNT_ENCRYPTION,
+      readStoredDefinitions,
+      projectStoredDefinition: async ({ storedDefinition: stored }) => projectStoredDefinition(stored),
+    });
+
+    await expect(owner.refresh()).resolves.toEqual({ kind: 'adopted', revision: '7' });
+    await expect(owner.listPublicProjection({
+      accountId: 'account-1',
+      input: {
+        transport: { kind: 'checkpointedPull' },
+        pageSize: 500,
+        knownRevision: '7',
+        checkpointRetirementCandidates: [candidate],
+      },
+    })).resolves.toEqual({
+      kind: 'unchanged',
+      revision: '7',
+      checkpointRetirements: [candidate],
+    });
+
+    retirementResult = { kind: 'cursorStale', currentRevision: '8' };
+    await expect(owner.listPublicProjection({
+      accountId: 'account-1',
+      input: {
+        transport: { kind: 'checkpointedPull' },
+        pageSize: 500,
+        knownRevision: '7',
+        checkpointRetirementCandidates: [candidate],
+      },
+    })).resolves.toEqual({ kind: 'cursorStale', currentRevision: '8' });
+  });
+
   it('pages only the adopted public projection with a revision- and caller-scoped continuation', async () => {
     const definitions = [storedDefinition(1), storedDefinition(2), storedDefinition(3)];
     let revision = '7';

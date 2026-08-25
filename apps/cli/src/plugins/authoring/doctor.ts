@@ -9,6 +9,7 @@ import {
   type PluginAuthorSourceEntry,
 } from './sourceModule';
 import {
+  isPluginAuthorRootMaterialized,
   preparePluginAuthorDependencies,
   type PluginAuthorDependencyPreparationResult,
 } from './toolchain';
@@ -28,7 +29,13 @@ export type PluginAuthorDoctorDiagnostic = Readonly<{
   location?: PluginAuthorDoctorDiagnosticLocation;
 }>;
 
-const ABSOLUTE_PATH_FRAGMENT_PATTERN = /(?:[A-Za-z]:[\\/][^\s)\],:]*|\\\\[^\s)\],:]+|\/[^\s)\],:]+)/gu;
+/**
+ * `(` terminates a path fragment as surely as `)` does: the compiler and the
+ * package manager report `file(line,column)`, so a class that swallowed the
+ * opening parenthesis redacted the line number away with the path and left the
+ * author a dangling `<path>,3):`.
+ */
+const ABSOLUTE_PATH_FRAGMENT_PATTERN = /(?:[A-Za-z]:[\\/][^\s()\],:]*|\\\\[^\s()\],:]+|\/[^\s()\],:]+)/gu;
 
 function redactAbsolutePathFragments(message: string): string {
   return message.replace(ABSOLUTE_PATH_FRAGMENT_PATTERN, '<path>');
@@ -106,7 +113,7 @@ export async function runPluginAuthorDoctor(input: Readonly<{
     });
   }
 
-  if (entry.kind === 'packageRoot') {
+  if (entry.kind === 'packageRoot' && !(await isPluginAuthorRootMaterialized(entry.packageRoot))) {
     let preparation: PluginAuthorDependencyPreparationResult;
     try {
       preparation = await (input.prepareDependencies ?? preparePluginAuthorDependencies)({
@@ -126,11 +133,16 @@ export async function runPluginAuthorDoctor(input: Readonly<{
       });
     }
     if (!preparation.ok) {
+      // The toolchain already rebased this location onto the author's own
+      // project root, so the projection carries it through instead of handing
+      // back a redacted sentence with nowhere to look.
+      const { source } = preparation.diagnostic;
       return Object.freeze({
         ok: false,
         diagnostics: Object.freeze([Object.freeze({
           code: 'plugin_author_dependency_preparation_failed' as const,
           message: redactAbsolutePathFragments(preparation.diagnostic.message),
+          ...(source === undefined ? {} : { location: source }),
         })]),
       });
     }

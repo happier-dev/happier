@@ -197,6 +197,7 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
     const structuredMessages = Object.freeze([...(inputs.structuredMessages ?? [])].sort(compareStructuredMessageContributes));
     const sessionHeaderActions = Object.freeze([...(inputs.sessionHeaderActions ?? [])].sort(compareSessionHeaderActionContributes));
     const transcriptActivities = Object.freeze([...(inputs.transcriptActivities ?? [])].sort(compareTranscriptActivityContributes));
+    const sessionInfoSections = Object.freeze([...(inputs.sessionInfoSections ?? [])].sort(compareTranscriptActivityContributes));
     const hostedWeb = Object.freeze([...(inputs.hostedWeb ?? [])].sort(compareHostedWebContributes));
     const browserTargets = Object.freeze([...(inputs.browserTargets ?? [])].sort(compareBrowserTargetContributes));
     const browserActions = Object.freeze([...(inputs.browserActions ?? [])].sort(compareBrowserActionContributes));
@@ -270,6 +271,7 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
     const structuredMessagesById = new Map<string, ResolvedStructuredMessageContribution>();
     const sessionHeaderActionsById = new Map<string, ResolvedSessionHeaderActionContribution>();
     const transcriptActivitiesById = new Map<string, ResolvedTranscriptActivityContribution>();
+    const sessionInfoSectionsById = new Map<string, (typeof sessionInfoSections)[number]>();
     const hostedWebById = new Map<string, ResolvedHostedWebContribution>();
     const browserTargetsById = new Map<string, ResolvedBrowserTargetContribution>();
     const browserActionsById = new Map<string, ResolvedBrowserActionContribution>();
@@ -362,6 +364,13 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
             throw new Error(`Duplicate transcript Activity contribution '${id}'`);
         }
         transcriptActivitiesById.set(id, activity);
+    }
+    for (const section of sessionInfoSections) {
+        const id = resolvePluginUiContributionRegistryId(section);
+        if (sessionInfoSectionsById.has(id)) {
+            throw new Error(`Duplicate Session-info section contribution '${id}'`);
+        }
+        sessionInfoSectionsById.set(id, section);
     }
 
     for (const contribution of hostedWeb) {
@@ -488,6 +497,7 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
         structuredMessages,
         sessionHeaderActions,
         transcriptActivities,
+        sessionInfoSections,
         hostedWeb,
         browserTargets,
         browserActions,
@@ -524,6 +534,7 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
         structuredMessagesById: Object.freeze(structuredMessagesById),
         sessionHeaderActionsById: Object.freeze(sessionHeaderActionsById),
         transcriptActivitiesById: Object.freeze(transcriptActivitiesById),
+        sessionInfoSectionsById: Object.freeze(sessionInfoSectionsById),
         hostedWebById: Object.freeze(hostedWebById),
         browserTargetsById: Object.freeze(browserTargetsById),
         browserActionsById: Object.freeze(browserActionsById),
@@ -982,6 +993,7 @@ export function createMergedContributionRegistry(
         structuredMessages: Object.freeze([...(builtIn.structuredMessages ?? [])]),
         sessionHeaderActions: Object.freeze([...(builtIn.sessionHeaderActions ?? []), ...(plugin.sessionHeaderActions ?? [])]),
         transcriptActivities: Object.freeze([...(builtIn.transcriptActivities ?? []), ...(plugin.transcriptActivities ?? [])]),
+        sessionInfoSections: Object.freeze([...(builtIn.sessionInfoSections ?? []), ...(plugin.sessionInfoSections ?? [])]),
         hostedWeb: Object.freeze([...(builtIn.hostedWeb ?? []), ...(plugin.hostedWeb ?? [])]),
         browserTargets: Object.freeze([...(builtIn.browserTargets ?? []), ...(plugin.browserTargets ?? [])]),
         browserActions: Object.freeze([...(builtIn.browserActions ?? []), ...(plugin.browserActions ?? [])]),

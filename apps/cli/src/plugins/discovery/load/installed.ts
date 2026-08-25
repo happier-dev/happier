@@ -2,7 +2,6 @@ import { resolve } from 'node:path';
 
 import type { PluginSourceSpecV1 } from '@happier-dev/protocol';
 import type { PluginUiArtifactsManifestV1 } from '@happier-dev/protocol/plugins/ui';
-import type { TargetedContributionPointRef } from '@happier-dev/plugin-sdk';
 
 import type { PluginStateFileV1, PluginStateSourceRecord } from '@/plugins/store/state';
 import { createPluginRegistryStateStore } from '@/plugins/store/registry/currentState';
@@ -26,12 +25,6 @@ export type LoadedPlugin = Readonly<{
   daemonEntryPath: string | null;
   devDaemonEntryPath: string | null;
   generatedUiArtifactsManifest?: PluginUiArtifactsManifestV1;
-  /**
-   * Same-process refs retained only for bundled targets authored through
-   * `definePlugin`. External JSON loading remains structural; the executable
-   * registry may hydrate its current committed module definition separately.
-   */
-  semanticPointRefs?: readonly TargetedContributionPointRef<unknown>[];
   manifest: CanonicalPluginManifest;
   sourceSpec: PluginSourceSpecV1;
 }>;

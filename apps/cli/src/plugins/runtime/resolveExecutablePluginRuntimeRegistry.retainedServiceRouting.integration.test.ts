@@ -21,10 +21,6 @@ import {
     type PluginServices,
 } from '@happier-dev/plugin-sdk';
 
-import { createAgentExternalSessionsExecutionSurface } from '@/agent/runtime/registry/agentExternalSessionsExecutionSurface';
-import type {
-    RunnerAgentCurrentExternalSessionProviderOps,
-} from '@/agent/runtime/registry/engineRegistry/types';
 import {
     RunnerAgentDaemonFacetOperationV1Schema,
 } from '@/agent/runtime/session/process/agentRuntimeDaemonFacetProtocol';
@@ -1029,10 +1025,15 @@ describe('retained Agent composed daemon-service routing (integration)', () => {
                     expect.objectContaining({ pluginId: PLUGIN_ID }),
                 ]),
             );
+            reloadController = createPluginReloadController({
+                resolveRuntimeRegistry: async () => gRegistry!,
+            });
             gRegistry = await resolveExecutablePluginRuntimeRegistry({
                 happyHomeDir,
                 generation: 1,
                 connectedAccounts: stableConnectedAccountsOwner,
+                currentGlobalExternalSessionsRouter:
+                    reloadController.currentGlobalExternalSessions,
             });
             await gRegistry.activateContributionsOnDemand([{
                 pluginId: PLUGIN_ID,
@@ -1094,9 +1095,6 @@ describe('retained Agent composed daemon-service routing (integration)', () => {
             });
             expect(gRegistry.generation).toBe(1);
 
-            reloadController = createPluginReloadController({
-                resolveRuntimeRegistry: async () => gRegistry!,
-            });
             const initialRegistryLease =
                 await reloadController.acquireRuntimeRegistry();
             expect(initialRegistryLease.registry).toBe(gRegistry);
@@ -1530,6 +1528,8 @@ describe('retained Agent composed daemon-service routing (integration)', () => {
                     gRegistry.stableEventsBroker,
                 externalSessionHostOperationOwner:
                     currentGlobalFollowOwner,
+                currentGlobalExternalSessionsRouter:
+                    reloadController.currentGlobalExternalSessions,
                 resolveExternalSessionCurrentMachineId: () =>
                     'machine-current-global-routing',
             });
@@ -1557,8 +1557,9 @@ describe('retained Agent composed daemon-service routing (integration)', () => {
             const firstCurrentRef = firstCurrentPage.items[0]?.ref;
             const firstCurrentCursor = firstCurrentPage.nextCursor;
             if (!firstCurrentRef || !firstCurrentCursor) {
-                throw new Error('Expected a current-H first page and cursor');
+                throw new Error('Expected the published current-G first page and cursor');
             }
+            expect(firstCurrentRef.remoteSessionId).toBe('current-G');
             await expect(actualHCurrentExternalSessions.list({
                 agentId: AGENT_ID,
                 cursor: firstCurrentCursor,
@@ -1566,27 +1567,11 @@ describe('retained Agent composed daemon-service routing (integration)', () => {
                 items: [{
                     ref: {
                         agentId: AGENT_ID,
-                        remoteSessionId: 'current-H-page-2',
+                        remoteSessionId: 'current-G-page-2',
                     },
                 }],
                 nextCursor: null,
             });
-            const currentFollow =
-                await actualHCurrentExternalSessions.followTranscript(
-                    firstCurrentRef,
-                    {},
-                    async () => {},
-                );
-            expect(currentFollow).toMatchObject({
-                status: 'following',
-                startingCursor: 'current-global-follow-cursor',
-            });
-            await expect(
-                actualHCurrentExternalSessions.capabilities(),
-            ).resolves.toMatchObject({
-                follow: { status: 'available' },
-            });
-            expect(currentGlobalFollowSubscriptionDispose).not.toHaveBeenCalled();
             const hFollowTranscript = vi.fn(async () => Object.freeze({
                 status: 'unavailable' as const,
                 code: 'plugin_external_follow_unavailable',
@@ -2084,43 +2069,6 @@ describe('retained Agent composed daemon-service routing (integration)', () => {
                 followOperation: { execute: exactGFollow },
                 followTargetOperation: null,
             });
-            const resolveCurrentExternal = vi.fn(async (
-                agentId: string,
-            ): Promise<
-                RunnerAgentCurrentExternalSessionProviderOps | null
-            > => {
-                const current =
-                    hRegistry?.agentRuntimesByAgentId.get(agentId);
-                if (!current?.externalSessions) return null;
-                const surface =
-                    createAgentExternalSessionsExecutionSurface(
-                        current.externalSessions,
-                    );
-                const {
-                    validateSource,
-                    listCandidates,
-                    resolveLinkIdentity,
-                    canonicalizeLinkedSession,
-                    pageTranscript,
-                    readAfterTranscript,
-                } = surface;
-                if (
-                    !validateSource
-                    || !listCandidates
-                    || !resolveLinkIdentity
-                    || !canonicalizeLinkedSession
-                    || !pageTranscript
-                    || !readAfterTranscript
-                ) return null;
-                return Object.freeze({
-                    validateSource,
-                    listCandidates,
-                    resolveLinkIdentity,
-                    canonicalizeLinkedSession,
-                    pageTranscript,
-                    readAfterTranscript,
-                });
-            });
             const snapshotRetainedGVoice = (
                 hRegistry as typeof hRegistry & Readonly<{
                     snapshotRetainedRunnerAgentSessionRealtimeVoiceAuthority?: (
@@ -2165,8 +2113,6 @@ describe('retained Agent composed daemon-service routing (integration)', () => {
                         activeWitness
                             ? sameWitness(witness, activeWitness)
                             : false,
-                    resolveCurrentExternalSessionProviderOps:
-                        resolveCurrentExternal,
                     snapshotVoiceAuthority: exactGVoiceLookup,
                     waitVoiceAuthorityRetired: waitExactGVoiceRetired,
                 });
@@ -2264,27 +2210,6 @@ describe('retained Agent composed daemon-service routing (integration)', () => {
             await vi.waitFor(() => expect(
                 retainedVoiceAuthority?.isCurrent(voiceProvider),
             ).toBe(false));
-            const currentExternal =
-                positiveFacets.currentExternalSessionProviderOps;
-            await expect(currentExternal.listCandidates({
-                source: SOURCE,
-                limit: 20,
-            })).resolves.toMatchObject({
-                candidates: [{
-                    remoteSessionId: 'current-H',
-                    linkData: { ownerVersion: 'H' },
-                }],
-            });
-            await expect(currentExternal.listCandidates({
-                source: SOURCE,
-                limit: 20,
-            })).resolves.toMatchObject({
-                candidates: [{ remoteSessionId: 'current-H' }],
-            });
-            expect(resolveCurrentExternal).toHaveBeenCalledTimes(2);
-            const currentGlobalCallsBeforePrivate =
-                resolveCurrentExternal.mock.calls.length;
-
             const positiveFollow = await positiveFacets
                 .externalSessionHostOperations
                 .bindSession(SESSION_ID)
@@ -2333,8 +2258,6 @@ describe('retained Agent composed daemon-service routing (integration)', () => {
                         activeWitness
                             ? sameWitness(witness, activeWitness)
                             : false,
-                    resolveCurrentExternalSessionProviderOps:
-                        resolveCurrentExternal,
                     snapshotVoiceAuthority: exactGVoiceLookup,
                     waitVoiceAuthorityRetired: async () => {},
                 });
@@ -2361,9 +2284,6 @@ describe('retained Agent composed daemon-service routing (integration)', () => {
                     status: 'unavailable',
                     code: 'plugin_external_follow_unavailable',
                 });
-            expect(resolveCurrentExternal).toHaveBeenCalledTimes(
-                currentGlobalCallsBeforePrivate,
-            );
             expect(exactGVoiceLookup.mock.calls.every(
                 ([calledAuthority]) => calledAuthority.retainedAgent
                     .immutableGenerationId
@@ -2435,7 +2355,6 @@ describe('retained Agent composed daemon-service routing (integration)', () => {
             expect(connectedAccountGetBinding).toHaveBeenCalledTimes(4);
             expect(exactGFollow).toHaveBeenCalledOnce();
             expect(providerSupervise).toHaveBeenCalledOnce();
-            expect(resolveCurrentExternal).toHaveBeenCalledTimes(2);
             expect(authorizedLaunchCommands).toEqual([gToolPath]);
 
             await Promise.all([
@@ -2471,6 +2390,8 @@ describe('retained Agent composed daemon-service routing (integration)', () => {
                         stableConnectedAccountsOwner,
                     stableEventsBroker:
                         hRegistry.stableEventsBroker,
+                    currentGlobalExternalSessionsRouter:
+                        reloadController.currentGlobalExternalSessions,
                 });
             await successorRegistry.activateContributionsOnDemand([{
                 pluginId: PLUGIN_ID,

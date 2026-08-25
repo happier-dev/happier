@@ -13,6 +13,7 @@ import type { SpawnSessionOptions } from '@/session/shared/spawnSessionContract'
 import {
   ConnectedServiceBindingsV1Schema,
   buildBackendTargetKeyV2,
+  readRuntimeDescriptorV1FromMetadata,
   type ProviderBoundModelRef,
   type ConnectedServiceMaterializationIdentityV1,
   type ConnectedServiceBindingsV1,
@@ -33,6 +34,7 @@ export type SessionRuntimeSnapshot = Readonly<{
   connectedServices: ConnectedServiceBindingsV1 | null;
   connectedServicesUpdatedAt: number | null;
   connectedServiceMaterializationIdentityV1: ConnectedServiceMaterializationIdentityV1 | null;
+  runtimeDescriptorV1: SpawnSessionOptions['runtimeDescriptorV1'] | null;
   permissionMode: SnapshotValue<PermissionMode> | null;
   agentModeId: SnapshotValue<string> | null;
   modelSelection: SnapshotValue<ProviderBoundModelRef | null> | null;
@@ -311,6 +313,10 @@ function applySnapshotToSpawnOptions(
     next.connectedServiceMaterializationIdentityV1 = snapshot.connectedServiceMaterializationIdentityV1;
   }
 
+  if (snapshot.runtimeDescriptorV1) {
+    next.runtimeDescriptorV1 = snapshot.runtimeDescriptorV1;
+  }
+
   if (snapshot.permissionMode) {
     next.permissionMode = snapshot.permissionMode.value;
     next.permissionModeUpdatedAt = snapshot.permissionMode.updatedAt;
@@ -377,6 +383,7 @@ export function resolveSessionRuntimeSnapshot(
     connectedServices: connectedServices?.value ?? null,
     connectedServicesUpdatedAt: connectedServices?.updatedAt ?? null,
     connectedServiceMaterializationIdentityV1: chooseConnectedServiceMaterializationIdentity(params),
+    runtimeDescriptorV1: readRuntimeDescriptorV1FromMetadata(params.persistedMetadata),
     permissionMode: chooseTimestamped([
       readPermissionFromMetadata(params.persistedMetadata),
       readPermissionFromOptions(params.trackedSpawnOptions, 'tracked'),

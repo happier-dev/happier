@@ -89,9 +89,11 @@ vi.mock('../projection/registry/sources/generatedBundledPluginArtifacts', () => 
 }));
 
 vi.mock('../projection/registry/sources/generatedBundledPlugins', () => ({
+    BUNDLED_FIRST_PARTY_IMPLEMENTATION_BINDINGS: [],
+}));
+vi.mock('../projection/registry/sources/generatedBundledPluginManifests', () => ({
     BUNDLED_FIRST_PARTY_PLUGIN_PACKAGE_NAMES: [],
     BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS: [],
-    BUNDLED_FIRST_PARTY_IMPLEMENTATION_BINDINGS: [],
 }));
 
 // The shared generated contribution catalog is being edited independently and

@@ -137,7 +137,6 @@ export type TargetActionPolicyDecision = PluginActionPolicyDecision;
 
 export type TargetActionAuthorizationFacts = Pick<
   PluginActionPolicyInput,
-  | 'packageTrust'
   | 'generation'
   | 'resourceSelections'
   | 'scopedGrants'
@@ -150,7 +149,6 @@ export function projectTargetActionPresentUserAuthorizationFacts(
   serviceAvailability: PluginActionPolicyInput['serviceAvailability'],
 ) {
   return {
-    packageTrust: { ...authorization.packageTrust },
     generation: { ...authorization.generation },
     resourceSelections: authorization.resourceSelections.map((selection) => ({ ...selection })),
     scopedGrants: authorization.scopedGrants.map((grant) => ({

@@ -1,7 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import os from 'node:os';
 import { join } from 'node:path';
-import type { SpawnSessionResult } from '@/rpc/handlers/registerSessionHandlers';
+import {
+  DEFAULT_AUTOMATION_V3_MAX_ACTIVE_RUNS_PER_MACHINE,
+  type SessionServerStartDispatchResultV1,
+  type SessionServerStartIngressRequestV1,
+} from '@happier-dev/protocol';
 
 const { mockGet, mockPost, mockIsAxiosError, mockCreate } = vi.hoisted(() => ({
   mockGet: vi.fn(),
@@ -33,6 +37,28 @@ vi.mock('./automationTelemetry', () => ({
   logAutomationWarn: () => {},
 }));
 
+/**
+ * The canonical claim client signs a machine-installation publisher proof before
+ * every automation request, so an assignment read or claim only reaches Axios
+ * after that asynchronous header work settles. Drain those continuations without
+ * moving the clock so timer-boundary assertions stay exact.
+ */
+async function settleRequestDispatch(): Promise<void> {
+  for (let index = 0; index < 20; index += 1) {
+    await Promise.resolve();
+  }
+}
+
+async function waitForCondition(check: () => boolean, timeoutMs = 2_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!check()) {
+    if (Date.now() >= deadline) {
+      throw new Error('Timed out while waiting for automation worker condition');
+    }
+    await new Promise<void>((resolve) => setTimeout(resolve, 10));
+  }
+}
+
 function createAxios404(url: string) {
   return {
     message: 'Request failed with status code 404',
@@ -52,6 +78,10 @@ const V3_START_CURRENTNESS = {
   version: 8,
   contentKeyFingerprint: null,
 };
+
+const DEFAULT_WORKER_SETTINGS = {
+  maxActiveRunsPerMachine: DEFAULT_AUTOMATION_V3_MAX_ACTIVE_RUNS_PER_MACHINE,
+} as const;
 
 function createAccountCurrentnessResponse(
   witness: typeof V3_CLAIM_CURRENTNESS | typeof V3_START_CURRENTNESS,
@@ -85,6 +115,7 @@ function createV3StartResponse(params: { runId: string; now: number; attempt: nu
       replyHandoffState: 'none' as const,
       replyHandoffAttempt: 0,
       replyHandoffDueAt: null,
+      contentRemovedAt: null,
       createdAt: params.now,
       updatedAt: params.now,
     },
@@ -178,7 +209,7 @@ describe('automationWorker', () => {
         `happier-automation-worker-${Date.now().toString(16)}-${Math.random().toString(16).slice(2)}`,
       );
 
-      mockGet.mockResolvedValue({ data: { assignments: [] } });
+      mockGet.mockResolvedValue({ data: { assignments: [], settings: DEFAULT_WORKER_SETTINGS } });
       mockPost.mockResolvedValue({ data: { run: null, automation: null } });
 
       const { reloadConfiguration } = await import('@/configuration');
@@ -216,7 +247,7 @@ describe('automationWorker', () => {
       `happier-automation-worker-${Date.now().toString(16)}-${Math.random().toString(16).slice(2)}`,
     );
 
-    mockGet.mockResolvedValue({ data: { assignments: [] } });
+    mockGet.mockResolvedValue({ data: { assignments: [], settings: DEFAULT_WORKER_SETTINGS } });
     mockPost.mockResolvedValue({ data: { run: null, automation: null } });
 
     const { reloadConfiguration } = await import('@/configuration');
@@ -235,6 +266,10 @@ describe('automationWorker', () => {
     });
 
     await worker.refreshAssignments();
+    // The worker also fires one unawaited startup refresh. Drain it before the
+    // baseline, or a slow cold start lets its request land after the clear and
+    // masks a missing resume refresh.
+    await settleRequestDispatch();
     mockGet.mockClear();
 
     worker.pause();
@@ -242,6 +277,7 @@ describe('automationWorker', () => {
     expect(mockGet).not.toHaveBeenCalled();
 
     worker.resume();
+    await settleRequestDispatch();
     expect(mockGet).toHaveBeenCalledTimes(1);
 
     worker.stop();
@@ -258,7 +294,7 @@ describe('automationWorker', () => {
         `happier-automation-worker-${Date.now().toString(16)}-${Math.random().toString(16).slice(2)}`,
       );
 
-      mockGet.mockResolvedValue({ data: { assignments: [] } });
+      mockGet.mockResolvedValue({ data: { assignments: [], settings: DEFAULT_WORKER_SETTINGS } });
       mockPost.mockResolvedValue({ data: { run: null, automation: null } });
 
       const { reloadConfiguration } = await import('@/configuration');
@@ -276,16 +312,17 @@ describe('automationWorker', () => {
         } as NodeJS.ProcessEnv,
       });
 
-      await vi.advanceTimersByTimeAsync(0);
+      await settleRequestDispatch();
       expect(mockGet).toHaveBeenCalledTimes(1);
 
-      // The periodic callback invokes an async tick, but it starts the authoritative
-      // assignment read synchronously before its first await. Advance the clock
-      // synchronously here so the assertion only measures the timer boundary.
+      // Advance the clock synchronously so each assertion measures only the timer
+      // boundary, then drain the request dispatch that the tick started.
       vi.advanceTimersByTime(59_999);
+      await settleRequestDispatch();
       expect(mockGet).toHaveBeenCalledTimes(1);
 
       vi.advanceTimersByTime(1);
+      await settleRequestDispatch();
       expect(mockGet).toHaveBeenCalledTimes(2);
 
       worker.stop();
@@ -307,7 +344,7 @@ describe('automationWorker', () => {
 
       mockGet
         .mockRejectedValueOnce(new Error('initial assignments read failed'))
-        .mockResolvedValue({ data: { assignments: [] } });
+        .mockResolvedValue({ data: { assignments: [], settings: DEFAULT_WORKER_SETTINGS } });
       mockPost.mockResolvedValue({ data: { run: null, automation: null } });
 
       const { reloadConfiguration } = await import('@/configuration');
@@ -347,7 +384,7 @@ describe('automationWorker', () => {
         `happier-automation-worker-${Date.now().toString(16)}-${Math.random().toString(16).slice(2)}`,
       );
 
-      mockGet.mockResolvedValue({ data: { assignments: [] } });
+      mockGet.mockResolvedValue({ data: { assignments: [], settings: DEFAULT_WORKER_SETTINGS } });
       mockPost.mockResolvedValue({ data: { run: null, automation: null } });
 
       const { reloadConfiguration } = await import('@/configuration');
@@ -408,7 +445,9 @@ describe('automationWorker', () => {
         `happier-automation-worker-${Date.now().toString(16)}-${Math.random().toString(16).slice(2)}`,
       );
 
-      let resolveOlderAssignments!: (value: { data: { assignments: never[] } }) => void;
+      let resolveOlderAssignments!: (value: {
+        data: { assignments: never[]; settings: typeof DEFAULT_WORKER_SETTINGS };
+      }) => void;
       let resolveNewerAssignments!: (value: {
         data: {
           assignments: Array<{
@@ -416,6 +455,7 @@ describe('automationWorker', () => {
             automationId: string;
             nextClaimAt: number;
           }>;
+          settings: typeof DEFAULT_WORKER_SETTINGS;
         };
       }) => void;
       mockGet
@@ -443,6 +483,7 @@ describe('automationWorker', () => {
         } as NodeJS.ProcessEnv,
       });
 
+      await settleRequestDispatch();
       expect(mockGet).toHaveBeenCalledTimes(1);
       worker.handleServerUpdate({
         id: 'u-run',
@@ -461,6 +502,7 @@ describe('automationWorker', () => {
           targetMachineId: 'machine-1',
         },
       } as any);
+      await settleRequestDispatch();
       expect(mockGet).toHaveBeenCalledTimes(2);
 
       resolveNewerAssignments({
@@ -470,14 +512,18 @@ describe('automationWorker', () => {
             automationId: 'automation-1',
             nextClaimAt: now + 60_000,
           }],
+          settings: DEFAULT_WORKER_SETTINGS,
         },
       });
-      await Promise.resolve();
-      await Promise.resolve();
-      await Promise.resolve();
+      await settleRequestDispatch();
 
-      resolveOlderAssignments({ data: { assignments: [] } });
-      await vi.advanceTimersByTimeAsync(0);
+      // Let the stale response settle BEFORE the queued-wake claim timer fires, so
+      // the assertion fails if a late older snapshot is allowed to erase the cache.
+      resolveOlderAssignments({ data: { assignments: [], settings: DEFAULT_WORKER_SETTINGS } });
+      await settleRequestDispatch();
+
+      vi.advanceTimersByTime(0);
+      await settleRequestDispatch();
 
       expect(mockPost).toHaveBeenCalledTimes(1);
 
@@ -501,7 +547,7 @@ describe('automationWorker', () => {
       );
 
       mockGet
-        .mockResolvedValueOnce({ data: { assignments: [] } })
+        .mockResolvedValueOnce({ data: { assignments: [], settings: DEFAULT_WORKER_SETTINGS } })
         .mockResolvedValueOnce({
           data: {
             assignments: [{
@@ -509,6 +555,7 @@ describe('automationWorker', () => {
               automationId: 'automation-1',
               nextClaimAt: now + 60_000,
             }],
+            settings: DEFAULT_WORKER_SETTINGS,
           },
         })
         .mockResolvedValue({
@@ -518,6 +565,7 @@ describe('automationWorker', () => {
               automationId: 'automation-1',
               nextClaimAt: now + 60_000,
             }],
+            settings: DEFAULT_WORKER_SETTINGS,
           },
         });
 
@@ -569,7 +617,7 @@ describe('automationWorker', () => {
         `happier-automation-worker-${Date.now().toString(16)}-${Math.random().toString(16).slice(2)}`,
       );
 
-      mockGet.mockResolvedValue({ data: { assignments: [] } });
+      mockGet.mockResolvedValue({ data: { assignments: [], settings: DEFAULT_WORKER_SETTINGS } });
       mockPost.mockResolvedValue({ data: { run: null, automation: null } });
 
       const { reloadConfiguration } = await import('@/configuration');
@@ -627,7 +675,7 @@ describe('automationWorker', () => {
       );
 
       mockGet
-        .mockResolvedValueOnce({ data: { assignments: [] } })
+        .mockResolvedValueOnce({ data: { assignments: [], settings: DEFAULT_WORKER_SETTINGS } })
         .mockResolvedValueOnce({
           data: {
             assignments: [{
@@ -635,6 +683,7 @@ describe('automationWorker', () => {
               automationId: 'automation-1',
               nextClaimAt: now + 60_000,
             }],
+            settings: DEFAULT_WORKER_SETTINGS,
           },
         });
       mockPost.mockResolvedValue({ data: { run: null, automation: null } });
@@ -700,133 +749,136 @@ describe('automationWorker', () => {
     }
   });
 
-  it('claims again when another queued wake arrives while a run is already in flight', async () => {
-    vi.useFakeTimers();
+  it('fills the default four-slot Automation budget and claims again when a slot settles', async () => {
+    const now = Date.now();
+
+    process.env.HAPPIER_SERVER_URL = 'https://api.example.test';
+    process.env.HAPPIER_WEBAPP_URL = 'https://app.example.test';
+    process.env.HAPPIER_HOME_DIR = join(
+      os.tmpdir(),
+      `happier-automation-worker-${Date.now().toString(16)}-${Math.random().toString(16).slice(2)}`,
+    );
+
+    const executionInputEnvelope = JSON.stringify({
+      v: 1,
+      templateVersion: 1,
+      template: { t: 'plain', v: { v: 1, prompt: 'create an Automation Session' } },
+      triggerEvidence: null,
+      target: {
+        kind: 'newSession',
+        spawn: {
+          executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
+          directory: '/tmp/happier-automation',
+          agentTarget: {
+            kind: 'agent',
+            identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+          },
+        },
+      },
+    });
+
+    const assignment = {
+      machineId: 'machine-1',
+      automationId: 'automation-1',
+      nextClaimAt: now + 60_000,
+    };
+    const claimedAutomation = {
+      id: 'automation-1',
+      name: 'A1',
+      enabled: true,
+    };
+    let projectedSettings = {
+      maxActiveRunsPerMachine: DEFAULT_AUTOMATION_V3_MAX_ACTIVE_RUNS_PER_MACHINE,
+    };
+
+    mockGet.mockImplementation(async (url: string) => {
+      if (url.endsWith('/v1/account/encryption/currentness')) {
+        return {
+          status: 200,
+          data: createAccountCurrentnessResponse(V3_CLAIM_CURRENTNESS, now),
+        };
+      }
+      return {
+        data: {
+          assignments: [assignment],
+          settings: projectedSettings,
+        },
+      };
+    });
+
+    let claimCount = 0;
+    mockPost.mockImplementation(async (url: string) => {
+      if (url.endsWith('/v3/automations/runs/claim')) {
+        claimCount += 1;
+        return {
+          data: {
+            run: {
+              id: `run-${claimCount}`,
+              automationId: 'automation-1',
+              attempt: 1,
+              origin: { kind: 'manual', invokedAt: now },
+              executionInputEnvelope,
+            },
+            automation: claimedAutomation,
+            accountCurrentness: V3_CLAIM_CURRENTNESS,
+          },
+        };
+      }
+      if (/\/v3\/automations\/runs\/.+\/start$/.test(url)) {
+        const runId = url.split('/').at(-2) ?? 'run-1';
+        return {
+          data: {
+            ...createV3StartResponse({ runId, now, attempt: 1 }),
+            accountCurrentness: V3_CLAIM_CURRENTNESS,
+          },
+        };
+      }
+      if (/\/v3\/automations\/runs\/.+\/(heartbeat|succeed|fail)$/.test(url)) {
+        return { data: { ok: true } };
+      }
+      throw new Error(`Unexpected POST ${url}`);
+    });
+
+    const { reloadConfiguration } = await import('@/configuration');
+    reloadConfiguration();
+
+    const ingressResolvers: Array<(value: SessionServerStartDispatchResultV1) => void> = [];
+    const ingressSignals: AbortSignal[] = [];
+    const dispatchSessionServerStart = vi.fn((
+      _request: SessionServerStartIngressRequestV1,
+      options?: Readonly<{ signal?: AbortSignal }>,
+    ) => new Promise<SessionServerStartDispatchResultV1>((resolve) => {
+      if (options?.signal) ingressSignals.push(options.signal);
+      ingressResolvers.push(resolve);
+    }));
+    const sessionStartSuccess = (runId: string): SessionServerStartDispatchResultV1 => ({
+      type: 'success',
+      disposition: 'created',
+      sessionId: `session-${runId}`,
+      executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
+      organizationPlacement: { folderId: null, tagIds: [] },
+      initialInput: { status: 'accepted', localId: `automation:run:${runId}` },
+    });
+
+    const { startAutomationWorker } = await import('./automationWorker');
+    const worker = startAutomationWorker({
+      token: 'token-1',
+      machineId: 'machine-1',
+      spawnSession: vi.fn(async () => ({
+        type: 'error' as const,
+        errorCode: 'SPAWN_FAILED' as const,
+        errorMessage: 'Strict V3 Runs must use the Session ingress owner',
+      })),
+      dispatchSessionServerStart,
+      env: {
+        HAPPIER_AUTOMATION_ASSIGNMENT_REFRESH_MS: '600000',
+        HAPPIER_AUTOMATION_CLAIM_POLL_MS: '1000',
+        HAPPIER_AUTOMATION_LEASE_MS: '30000',
+        HAPPIER_AUTOMATION_HEARTBEAT_MS: '10000',
+      } as NodeJS.ProcessEnv,
+    });
+
     try {
-      vi.setSystemTime(new Date('2026-02-01T00:00:00.000Z'));
-      const now = Date.now();
-
-      process.env.HAPPIER_SERVER_URL = 'https://api.example.test';
-      process.env.HAPPIER_WEBAPP_URL = 'https://app.example.test';
-      process.env.HAPPIER_HOME_DIR = join(
-        os.tmpdir(),
-        `happier-automation-worker-${Date.now().toString(16)}-${Math.random().toString(16).slice(2)}`,
-      );
-
-      const templateCiphertext = JSON.stringify({
-        kind: 'happier_automation_template_plain_v1',
-        payload: { directory: '/tmp/happier-automation' },
-      });
-      const executionInputEnvelope = JSON.stringify({
-        kind: 'happier_automation_run_execution_input_v1',
-        targetType: 'new_session',
-        templateVersion: 1,
-        templateCiphertext,
-        origin: { kind: 'manual', invokedAt: now },
-      });
-
-      const assignment = {
-        machineId: 'machine-1',
-        automationId: 'automation-1',
-        nextClaimAt: now + 60_000,
-      };
-      const claimedAutomation = {
-        id: 'automation-1',
-        name: 'A1',
-        enabled: true,
-      };
-
-      let accountCurrentnessReads = 0;
-      mockGet.mockImplementation(async (url: string) => {
-        if (url.endsWith('/v1/account/encryption/currentness')) {
-          accountCurrentnessReads += 1;
-          return {
-            status: 200,
-            data: createAccountCurrentnessResponse(
-              accountCurrentnessReads === 1
-                ? V3_CLAIM_CURRENTNESS
-                : V3_START_CURRENTNESS,
-              now,
-            ),
-          };
-        }
-        return { data: { assignments: [assignment] } };
-      });
-
-      let claimCount = 0;
-      mockPost.mockImplementation(async (url: string) => {
-        if (url.endsWith('/v3/automations/runs/claim')) {
-          claimCount += 1;
-          if (claimCount === 1) {
-            return {
-              data: {
-                run: {
-                  id: 'run-1',
-                  automationId: 'automation-1',
-                  attempt: 1,
-                  origin: { kind: 'manual', invokedAt: now },
-                  executionInputEnvelope,
-                },
-                automation: claimedAutomation,
-                accountCurrentness: V3_CLAIM_CURRENTNESS,
-              },
-            };
-          }
-          if (claimCount === 2) {
-            return {
-              data: {
-                run: {
-                  id: 'run-2',
-                  automationId: 'automation-1',
-                  attempt: 1,
-                  origin: { kind: 'manual', invokedAt: now },
-                  executionInputEnvelope,
-                },
-                automation: claimedAutomation,
-                accountCurrentness: V3_CLAIM_CURRENTNESS,
-              },
-            };
-          }
-          return { data: { run: null, automation: null, accountCurrentness: null } };
-        }
-        if (/\/v3\/automations\/runs\/.+\/start$/.test(url)) {
-          const runId = url.split('/').at(-2) ?? 'run-1';
-          return { data: createV3StartResponse({ runId, now, attempt: 1 }) };
-        }
-        if (/\/v3\/automations\/runs\/.+\/(heartbeat|succeed|fail)$/.test(url)) {
-          return { data: { ok: true } };
-        }
-        throw new Error(`Unexpected POST ${url}`);
-      });
-
-      const { reloadConfiguration } = await import('@/configuration');
-      reloadConfiguration();
-
-      let resolveFirstSpawn!: (value: SpawnSessionResult) => void;
-      let firstSpawnPending = true;
-      const spawnSession: (options: unknown) => Promise<SpawnSessionResult> = vi.fn(() => {
-        if (firstSpawnPending) {
-          firstSpawnPending = false;
-          return new Promise<SpawnSessionResult>((resolve) => {
-            resolveFirstSpawn = resolve;
-          });
-        }
-        return Promise.resolve({ type: 'success' as const, sessionId: 'session-2' });
-      });
-
-      const { startAutomationWorker } = await import('./automationWorker');
-      const worker = startAutomationWorker({
-        token: 'token-1',
-        machineId: 'machine-1',
-        spawnSession,
-        env: {
-          HAPPIER_AUTOMATION_ASSIGNMENT_REFRESH_MS: '600000',
-          HAPPIER_AUTOMATION_CLAIM_POLL_MS: '1000',
-          HAPPIER_AUTOMATION_LEASE_MS: '30000',
-          HAPPIER_AUTOMATION_HEARTBEAT_MS: '10000',
-        } as NodeJS.ProcessEnv,
-      });
-
       await worker.refreshAssignments();
 
       worker.handleServerUpdate({
@@ -847,38 +899,39 @@ describe('automationWorker', () => {
         },
       } as any);
 
-      await vi.advanceTimersByTimeAsync(0);
-      expect(claimCount).toBe(1);
+      await waitForCondition(() => ingressResolvers.length >= 4);
+      expect(claimCount).toBe(4);
+      expect(ingressResolvers).toHaveLength(4);
 
-      worker.handleServerUpdate({
-        id: 'u-run-2',
-        seq: 2,
-        createdAt: now + 1,
-        body: {
-          t: 'automation-run-updated',
-          runId: 'run-2',
-          automationId: 'automation-1',
-          state: 'queued',
-          scheduledAt: now + 1,
-          startedAt: null,
-          finishedAt: null,
-          updatedAt: now + 1,
-          machineId: null,
-          targetMachineId: 'machine-1',
-        },
-      } as any);
+      ingressResolvers[0]!(sessionStartSuccess('run-1'));
+      await waitForCondition(() => ingressResolvers.length >= 5);
 
-      await vi.advanceTimersByTimeAsync(0);
-      expect(claimCount).toBe(1);
+      expect(claimCount).toBe(5);
+      expect(ingressResolvers).toHaveLength(5);
 
-      resolveFirstSpawn({ type: 'success', sessionId: 'session-1' });
-      await vi.advanceTimersByTimeAsync(0);
+      // The current server projects its canonical default above. A later
+      // setting may lower the budget, but it must not abort the four already-
+      // owned local effects.
+      projectedSettings = { maxActiveRunsPerMachine: 2 };
+      await worker.refreshAssignments();
+      expect(ingressSignals).toHaveLength(5);
+      expect(ingressSignals.every((signal) => !signal.aborted)).toBe(true);
 
-      expect(claimCount).toBe(2);
+      ingressResolvers[1]!(sessionStartSuccess('run-2'));
+      ingressResolvers[2]!(sessionStartSuccess('run-3'));
+      await new Promise<void>((resolve) => setTimeout(resolve, 50));
+      expect(claimCount).toBe(5);
 
-      worker.stop();
+      ingressResolvers[3]!(sessionStartSuccess('run-4'));
+      await waitForCondition(() => ingressResolvers.length >= 6);
+      expect(claimCount).toBe(6);
+
     } finally {
-      vi.useRealTimers();
+      worker.stop();
+      for (const [index, resolve] of ingressResolvers.entries()) {
+        resolve(sessionStartSuccess(`run-${index + 1}`));
+      }
+      await settleRequestDispatch();
     }
   });
 

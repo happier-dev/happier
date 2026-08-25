@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   ensureMachineRegistered: vi.fn(),
   getPreferredHostName: vi.fn(),
   isDaemonRunningCurrentlyInstalledHappyVersion: vi.fn(),
+  inspectDaemonRunningStateAndCleanupStaleState: vi.fn(),
   stopDaemon: vi.fn(),
   readOrCreateDeviceLocalSecretStorage: vi.fn(),
   startCaffeinate: vi.fn(),
@@ -50,6 +51,7 @@ vi.mock('../machine/metadata', () => ({
 
 vi.mock('../controlClient', () => ({
   isDaemonRunningCurrentlyInstalledHappyVersion: mocks.isDaemonRunningCurrentlyInstalledHappyVersion,
+  inspectDaemonRunningStateAndCleanupStaleState: mocks.inspectDaemonRunningStateAndCleanupStaleState,
   stopDaemon: mocks.stopDaemon,
 }));
 
@@ -71,6 +73,10 @@ describe('prepareDaemonBootstrapContext', () => {
     });
     mocks.getPreferredHostName.mockResolvedValue('host.local');
     mocks.isDaemonRunningCurrentlyInstalledHappyVersion.mockResolvedValue(true);
+    mocks.inspectDaemonRunningStateAndCleanupStaleState.mockResolvedValue({
+      status: 'running',
+      state: { pid: 1234 },
+    });
     mocks.readOrCreateDeviceLocalSecretStorage.mockResolvedValue({
       sealJson: vi.fn(),
       openJson: vi.fn(),
@@ -144,6 +150,24 @@ describe('prepareDaemonBootstrapContext', () => {
     expect(mocks.stopDaemon.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.acquireDaemonLock.mock.invocationCallOrder[0]!,
     );
+    expect(result.daemonLockHandle).toBe(acquiredLock);
+  });
+
+  it('does not stop a daemon whose persisted PID is definitively absent', async () => {
+    const { prepareDaemonBootstrapContext } = await import('./prepareDaemonBootstrapContext');
+    mocks.isDaemonRunningCurrentlyInstalledHappyVersion.mockResolvedValue(false);
+    mocks.inspectDaemonRunningStateAndCleanupStaleState.mockResolvedValue({ status: 'not-running' });
+    const acquiredLock = { kind: 'acquired-lock' };
+    mocks.acquireDaemonLock.mockResolvedValue(acquiredLock);
+
+    const result = await prepareDaemonBootstrapContext({
+      daemonLockHandle: null,
+      initialMachineMetadata: { platform: 'darwin' } as never,
+      startupSource: 'manual',
+    });
+
+    expect(mocks.stopDaemon).not.toHaveBeenCalled();
+    expect(mocks.acquireDaemonLock).toHaveBeenCalledWith(5, 200);
     expect(result.daemonLockHandle).toBe(acquiredLock);
   });
 });

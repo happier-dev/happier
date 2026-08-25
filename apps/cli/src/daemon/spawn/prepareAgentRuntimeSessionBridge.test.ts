@@ -214,7 +214,7 @@ describe('prepareRunnerAgentSessionBootstrapForLease', () => {
 
         expect(prepared?.authorization.descriptor).toMatchObject({
             pluginId,
-            agentId: 'ohmypi',
+            agentId: 'ohMyPi',
             backendId: 'ohMyPi',
             agentDeclaration: {
                 definition: {

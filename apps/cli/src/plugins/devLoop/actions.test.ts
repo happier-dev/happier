@@ -516,14 +516,14 @@ describe('executePluginDevLoopAction', () => {
 
     try {
       const result = await executePluginDevLoopAction({
-        actionId: 'plugins.dev' as any,
+        actionId: 'plugins.dev.submit' as any,
         input: { projectRoot: sourceRoot },
         happyHomeDir: home,
       });
 
       expect(result).toMatchObject({
         ok: false,
-        kind: 'plugins_dev',
+        kind: 'plugins_dev_submit',
         outcome: 'reviewRequired',
         pendingReview: {
           kind: 'sourceRootReviewRequired',

@@ -250,6 +250,40 @@ describe('browser automation routes', () => {
     }
   });
 
+  it('does not let account automation take over an action whose requester matches the old synthetic identity', async () => {
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const service = createBrowserAutomationDaemonService({
+      adapter: {
+        adapterKind: 'chromiumSidecar',
+        execute: vi.fn(async () => {
+          await gate;
+          return { status: 'succeeded' as const, fidelity: 'cdp' as const, trustedInput: true };
+        }),
+      },
+    });
+    const { routes: r } = routes(service);
+    const pending = r.dispatch('browser.automation.click', clickRequest({
+      automationRequestId: 'req_non_present',
+      requesterRef: { kind: 'agent', id: 'browser_session_1' },
+    }));
+
+    try {
+      const canceled = await r.dispatch('browser.automation.cancelActive', {
+        browserSessionId: 'browser_session_1',
+        viewId: 'view_1',
+      }, accountAutomationContext);
+
+      expect(canceled).toEqual({ v: 1, outcome: 'owner_mismatch', canceledCount: 0 });
+      release();
+      await expect(pending).resolves.toMatchObject({ status: 'succeeded' });
+    } finally {
+      release();
+    }
+  });
+
   it('projects no active automation as the cancel command outcome', async () => {
     const { routes: r } = routes();
     const result = await r.dispatch('browser.automation.cancelActive', {

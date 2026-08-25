@@ -11,13 +11,11 @@ import {
 import {
   type AgentSessionRunnerBindingV1,
 } from '@/plugins/runtime/runner/agentSessionRunnerFactoryBinding';
-import { isReservedHappierPluginId } from '@happier-dev/protocol';
 import { resolvePluginStorePaths } from '@/plugins/store/paths';
 import { BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS } from '@/plugins/projection/registry/sources/generatedBundledPluginArtifacts';
 import {
   readCurrentPluginHardRevocationRevision,
   readCurrentPluginImmutableGenerationIntegrityCurrentness,
-  resolveBundledImmutablePluginArtifact,
 } from '@/plugins/store/registry/generationStore';
 import {
   attachExactRunnerRetainedPluginGenerations,
@@ -64,12 +62,7 @@ function resolveRetainedAgentCurrentnessProof(
 }> {
   return 'kind' in retainedAgent
     && retainedAgent.kind === 'host_declarative_acp_v1'
-    ? Object.freeze({
-        retainedManifestAuthority:
-          isReservedHappierPluginId(retainedAgent.pluginId)
-            ? 'bundled_first_party' as const
-            : 'external' as const,
-      })
+    ? Object.freeze({})
     : Object.freeze({
         requiredAgentSessionRunnerFactoryLocalAgentId:
           retainedAgent.localAgentId,

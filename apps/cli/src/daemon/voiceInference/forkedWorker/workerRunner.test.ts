@@ -74,16 +74,6 @@ function createFakeTransport() {
 }
 
 describe('voice inference worker runner', () => {
-  it('answers a ping with a ready frame', async () => {
-    const fake = createFakeTransport();
-    createVoiceInferenceWorkerRunner({
-      transport: fake.transport,
-      loadRuntime: async () => null,
-    });
-    fake.sendRequest({ kind: 'ping', id: 'p-1' });
-    await vi.waitFor(() => expect(fake.responses).toContainEqual({ kind: 'ready', id: 'p-1' }));
-  });
-
   it('dispatches synthesize to the engine and returns base64 audio plus warm snapshots', async () => {
     const fake = createFakeTransport();
     const runtime: VoiceInferenceRuntime = {

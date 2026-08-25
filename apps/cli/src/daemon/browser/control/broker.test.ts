@@ -191,13 +191,6 @@ describe('browser daemon control broker', () => {
       status: 'failed',
       error: { code: 'view_not_found' },
     });
-    await expect(broker.dispatchCommand({
-      kind: 'createSession',
-      commandId: 'command_create_session',
-    })).resolves.toMatchObject({
-      status: 'failed',
-      error: { code: 'unsupported_command' },
-    });
     expect(dispatchCommand).not.toHaveBeenCalled();
   });
 

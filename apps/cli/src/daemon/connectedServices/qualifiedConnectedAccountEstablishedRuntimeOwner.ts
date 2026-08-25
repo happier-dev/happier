@@ -9,6 +9,7 @@ import {
   parseQualifiedConnectedAccountCredentialPlaintextV1,
   projectQualifiedConnectedAccountCredentialPlaintextV1,
   sealQualifiedConnectedAccountContentEnvelope,
+  sameQualifiedConnectedAccountRef,
   type AccountScopedCryptoMaterial,
   type BuiltInLegacyConnectedServiceId,
   type ConnectedServiceCredentialRevisionV1,
@@ -183,14 +184,6 @@ function sameService(
   return left.pluginId === right.pluginId && left.localId === right.localId;
 }
 
-function sameAccount(
-  left: QualifiedConnectedAccountRef,
-  right: QualifiedConnectedAccountRef,
-): boolean {
-  return sameService(left.service, right.service)
-    && left.accountId === right.accountId;
-}
-
 function accountTarget(account: QualifiedConnectedAccountRef) {
   return Object.freeze({
     kind: 'account' as const,
@@ -263,7 +256,7 @@ function assertCredentialSnapshotIdentity(
   snapshot: QualifiedConnectedAccountCredentialSnapshotV4,
   account: QualifiedConnectedAccountRef,
 ): void {
-  if (!sameAccount(snapshot.ref, account)) {
+  if (!sameQualifiedConnectedAccountRef(snapshot.ref, account)) {
     throw new Error('Connected-account credential snapshot does not match the exact qualified account');
   }
 }
@@ -274,7 +267,7 @@ function assertConfigurationSnapshotIdentity(
 ): void {
   if (
     snapshot.target.kind !== 'account'
-    || !sameAccount(snapshot.target.ref, account)
+    || !sameQualifiedConnectedAccountRef(snapshot.target.ref, account)
   ) {
     throw new Error('Connected-account configuration snapshot does not match the exact qualified account');
   }
@@ -530,7 +523,7 @@ export function createQualifiedConnectedAccountEstablishedRuntimeOwner(
               }
               if (
                 target.kind !== 'account'
-                || !sameAccount(target.account, exactConfigurationTarget.account)
+                || !sameQualifiedConnectedAccountRef(target.account, exactConfigurationTarget.account)
               ) {
                 return null;
               }
@@ -629,7 +622,7 @@ export function createQualifiedConnectedAccountEstablishedRuntimeOwner(
             });
             return Boolean(
               latest
-              && sameAccount(latest.ref, input.account)
+              && sameQualifiedConnectedAccountRef(latest.ref, input.account)
               && latest.revisionSemantics === 'revisioned'
               && latest.credentialRevision === expectedCredentialRevision,
             );
@@ -905,7 +898,7 @@ export function createRevisionedLegacyConnectedAccountMaterializationOwner(
       }
       const readCredential: CredentialSnapshotReader =
         async ({ ref }) => {
-          if (!sameAccount(ref, input.account)) return null;
+          if (!sameQualifiedConnectedAccountRef(ref, input.account)) return null;
           const resolutions =
             await resolveConnectedServiceCredentialResolutions({
               credentials: params.credentials,

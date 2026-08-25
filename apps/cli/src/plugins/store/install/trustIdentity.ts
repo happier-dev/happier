@@ -139,6 +139,27 @@ export const PluginTrustRecordSchema: z.ZodType<PluginTrustRecord> = z.object({
   approvedAtMs: z.number().int().nonnegative().refine(Number.isSafeInteger, 'Expected a safe trust approval timestamp'),
 }).strict();
 
+/**
+ * What an installed plugin's record permits when an update is **requested**.
+ *
+ * Happier has no update scheduler. Nothing here runs on a timer, at startup or
+ * in the background: every policy below is read only while
+ * `resolveInstalledPluginUpdate` answers an explicit `{ kind: 'update' }`
+ * request from `happier install plugin update` or the Plugins settings screen.
+ *
+ * - `pinned` — the request is refused (`plugin_update_pinned`). The installation
+ *   stays where the user put it until they change this policy.
+ * - `manual` — the request proceeds, and the newest compatible candidate is
+ *   staged and presented to a present user, who decides it like any install.
+ * - `automatic` — the request proceeds and may be admitted *without a new
+ *   present-user review*, which is the whole of what "automatic" names. It is
+ *   authorized only for an npm channel whose reviewed curated source binding is
+ *   still current and unchanged, whose trust record still matches the candidate
+ *   distribution, and whose manifest change is not review-sensitive; it also
+ *   requires published compatibility metadata, so an unevaluatable candidate is
+ *   ineligible rather than silently taken. Any of those failing falls back to
+ *   the present-user review, never to a silent upgrade.
+ */
 export const PluginUpdatePolicySchema = z.enum(['automatic', 'manual', 'pinned']);
 export type PluginUpdatePolicy = z.infer<typeof PluginUpdatePolicySchema>;
 

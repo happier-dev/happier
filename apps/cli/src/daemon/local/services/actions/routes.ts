@@ -6,17 +6,11 @@ import type {
 
 import {
     executeLocalServiceAction,
-    type RestartManagedLocalService,
     type ResolvedLocalServiceActionTarget,
-    type StopManagedLocalService,
 } from './executor';
 import { resolveLocalServiceActionEligibility } from './policy';
 import type { TerminateDetectedService } from './terminate';
 import type { LocalServiceInventoryRegistry } from '../inventory/registry';
-import type {
-    ManagedLocalServiceRegistry,
-    ManagedLocalServiceRuntimeState,
-} from '../managed/registry';
 
 export type LocalServiceActionRoutes = Readonly<{
     execute(request: LocalServiceActionRequestV1): Promise<LocalServiceActionResultV1>;
@@ -99,7 +93,6 @@ function resolveActionTarget(input: Readonly<{
     request: LocalServiceActionRequestV1;
     machineId: string;
     inventoryRegistry: LocalServiceInventoryRegistry;
-    managedRegistry: ManagedLocalServiceRegistry;
 }>): ResolvedLocalServiceActionTarget | Readonly<{ reasonCode: string }> {
     const target = input.request.target;
     if (target.machineId !== input.machineId) {
@@ -115,22 +108,18 @@ function resolveActionTarget(input: Readonly<{
             : { reasonCode: 'unknown_inventory_entry' };
     }
 
-    const service = input.managedRegistry.getService(target.managedServiceId);
-    return service
-        ? { kind: 'managed_service', service }
-        : { reasonCode: 'unknown_managed_service' };
+    // The protocol still carries a `managed_service` target arm, but the managed local-service
+    // runtime that could answer it was removed with its producerless registry (RU2 surfaces
+    // finalization, DEC-6). No managed service exists on any machine, so the resolution is
+    // constant. Removal condition: drop the arm with the next plugin-SDK contraction.
+    return { reasonCode: 'unknown_managed_service' };
 }
 
 export function createLocalServiceActionRoutes(input: Readonly<{
     machineId: string;
     inventoryRegistry: LocalServiceInventoryRegistry;
-    managedRegistry: ManagedLocalServiceRegistry;
     terminateEnabled?: () => boolean;
-    managedStopEnabled?: () => boolean;
-    managedRestartEnabled?: (service: ManagedLocalServiceRuntimeState) => boolean;
     verifyConfirmationNonce?: (request: LocalServiceActionRequestV1) => boolean;
-    stopManagedService?: StopManagedLocalService;
-    restartManagedService?: RestartManagedLocalService;
     terminateDetectedService?: TerminateDetectedService;
     now?: () => number;
 }>): LocalServiceActionRoutes {
@@ -142,7 +131,6 @@ export function createLocalServiceActionRoutes(input: Readonly<{
                 request,
                 machineId: input.machineId,
                 inventoryRegistry: input.inventoryRegistry,
-                managedRegistry: input.managedRegistry,
             });
             if ('reasonCode' in target) {
                 return deniedResult({ request, requestedAt, reasonCode: target.reasonCode });
@@ -152,9 +140,6 @@ export function createLocalServiceActionRoutes(input: Readonly<{
                 action: request.action,
                 target,
                 terminateEnabled: input.terminateEnabled?.() === true,
-                managedStopEnabled: input.managedStopEnabled?.() === true,
-                managedRestartEnabled: target.kind === 'managed_service'
-                    && input.managedRestartEnabled?.(target.service) === true,
             });
             if (!decision.enabled) {
                 return deniedResult({
@@ -183,9 +168,6 @@ export function createLocalServiceActionRoutes(input: Readonly<{
                 request,
                 target,
                 inventoryRegistry: input.inventoryRegistry,
-                managedRegistry: input.managedRegistry,
-                stopManagedService: input.stopManagedService,
-                restartManagedService: input.restartManagedService,
                 terminateDetectedService: input.terminateDetectedService,
                 now: requestedAt,
             });

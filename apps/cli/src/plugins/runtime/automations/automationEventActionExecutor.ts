@@ -34,6 +34,7 @@ import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/
 import { configuration } from '@/configuration';
 import { createDefaultPluginInstallationPublisherHeader } from '@/plugins/installations/publisherProof';
 import {
+  createPluginActionCallerCurrentnessCheck,
   type RevalidatePluginActionCallerMaterialization,
   type RevalidatePluginActionCallerImmutableGeneration,
 } from '@/plugins/runtime/invocation/services/actionCaller';
@@ -231,34 +232,20 @@ export function createAutomationEventActionExecutor(params: Readonly<{
     ) {
       return admissionFailure('automation_event_caller_generation_unavailable');
     }
-    const revalidateCaller = async (): Promise<
-      | Readonly<{ kind: 'current' }>
-      | Readonly<{ kind: 'materializationUnavailable' | 'generationUnavailable' }>
-    > => {
-      try {
-        if (!await revalidateCallerMaterialization(materialization.data)) {
-          return { kind: 'materializationUnavailable' };
-        }
-      } catch {
-        return { kind: 'materializationUnavailable' };
-      }
-      // Source-status callers were rejected above when unstamped. Other Event
-      // Action kinds do not persist recovery authority.
-      if (immutableGenerationId === undefined) return { kind: 'current' };
-      if (!revalidateCallerImmutableGeneration) {
-        return { kind: 'generationUnavailable' };
-      }
-      try {
-        return await revalidateCallerImmutableGeneration({
-          pluginId: args.caller.pluginId,
-          immutableGenerationId,
-        })
-          ? { kind: 'current' }
-          : { kind: 'generationUnavailable' };
-      } catch {
-        return { kind: 'generationUnavailable' };
-      }
-    };
+    // Source-status callers were rejected above when unstamped. Other Event
+    // Action kinds do not persist recovery authority, so an unstamped legacy
+    // caller remains current once its materialization is proven.
+    const revalidateCaller = createPluginActionCallerCurrentnessCheck({
+      caller: {
+        pluginId: args.caller.pluginId,
+        ...(immutableGenerationId === undefined ? {} : { immutableGenerationId }),
+        materialization: materialization.data,
+      },
+      revalidateMaterialization: revalidateCallerMaterialization,
+      ...(revalidateCallerImmutableGeneration
+        ? { revalidateImmutableGeneration: revalidateCallerImmutableGeneration }
+        : {}),
+    });
     const initialCallerCurrentness = await revalidateCaller();
     if (initialCallerCurrentness.kind === 'materializationUnavailable') {
       return admissionFailure('automation_event_caller_materialization_unavailable');

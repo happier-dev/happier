@@ -43,6 +43,7 @@ import {
     createProviderBindingSecurityFingerprintV1,
     createProviderMachineGrantFingerprintV1,
     AccountSettingsSchema,
+    ACCOUNT_API_TOKEN_INTROSPECTION_HTTP_PATH_V1,
     ACCOUNT_API_TOKENS_LIST_HTTP_PATH_V1,
     DEFAULT_PROVIDER_SETTINGS_V1,
     FeaturesResponseSchema,
@@ -412,71 +413,42 @@ it('unregisters the canonical hot-apply target when a post-registration consumer
     expect(registry.getByPid(502)).toBeNull();
 });
 
-const requestAuthSwitchAfterClassifiedFailureMock = vi.hoisted(() => vi.fn(async () => ({
-    status: 'switched',
-})));
-const createDaemonConnectedServiceAuthGroupSwitchCoordinatorMock = vi.hoisted(() => vi.fn((params: unknown) => ({
-    __testParams: params,
-    switchAfterClassifiedFailure: requestAuthSwitchAfterClassifiedFailureMock,
-})));
 const qualifiedRequestAuthSwitchAfterClassifiedFailureMock = vi.hoisted(
     () => vi.fn(async () => ({ status: 'switched' })),
 );
 const createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinatorMock =
     vi.hoisted(() => vi.fn((params: unknown) => ({
         __testParams: params,
+        switchBeforeTurn: vi.fn(async (input: Readonly<{
+            serviceId: unknown;
+            groupId: string;
+        }>) => ({
+            status: 'switched' as const,
+            activeProfileId: 'qualified-backup',
+            generation: 2,
+            serviceId: input.serviceId,
+            groupId: input.groupId,
+        })),
+        applyCommittedGeneration: vi.fn(async (input: Readonly<{
+            activeProfileId: string;
+            generation: number;
+        }>) => ({
+            status: 'observed_generation' as const,
+            activeProfileId: input.activeProfileId,
+            generation: input.generation,
+        })),
         switchAfterClassifiedFailure:
             qualifiedRequestAuthSwitchAfterClassifiedFailureMock,
     })));
+const CODEX_QUALIFIED_SERVICE = {
+    pluginId: 'happier.agent.codex',
+    localId: 'openai-codex',
+} as const;
 const connectedAccountRequestAuthServiceDependenciesCapture = vi.hoisted(() => ({
     current: null as ConnectedAccountRequestAuthServiceDependencies | null,
 }));
 const sendSessionMessageMock = vi.hoisted(() => vi.fn(async () => undefined));
 const createCliActionExecutorFromCredentialsMock = vi.hoisted(() => vi.fn());
-type QuotaCoordinatorFactoryTestParams = Readonly<{
-    emitEvent?: (event: unknown) => void;
-    restartSession?: (input: Readonly<{
-        sessionId?: string;
-        serviceId: string;
-        groupId: string;
-        activeProfileId: string;
-        generation: number;
-        credentialRevision?: string | null;
-        reason?: string;
-    }>) => Promise<Readonly<Record<string, unknown>>>;
-}>;
-
-const createQuotaDrivenConnectedServiceAuthGroupSwitchCoordinatorMock = vi.hoisted(() => vi.fn((params: QuotaCoordinatorFactoryTestParams) => ({
-    switchBeforeTurn: vi.fn(async () => {
-        params.emitEvent?.({
-            type: 'connected_service_auth_group_switch',
-            success: true,
-            resultStatus: 'switched',
-            serviceId: 'openai-codex',
-            groupId: 'codex-main',
-            fromProfileId: 'primary',
-            toProfileId: 'backup',
-            reason: 'soft_threshold',
-            fromGeneration: 6,
-            toGeneration: 7,
-            limitCategory: 'soft_threshold',
-            retryAfterMs: null,
-            quotaScope: 'account',
-            providerLimitId: 'weekly',
-        });
-        return { status: 'switched' };
-    }),
-    applyCommittedGeneration: vi.fn<(input: Readonly<{
-        activeProfileId: string;
-        generation: number;
-        reason?: string;
-    }>) => Promise<Readonly<Record<string, unknown>>>>(async (input) => ({
-        status: 'observed_generation',
-        activeProfileId: input.activeProfileId,
-        generation: input.generation,
-        mode: 'hot_apply',
-    })),
-})));
 const handleConnectedServiceRuntimeAuthFailureForSessionMock = vi.hoisted(() => vi.fn<(_input: unknown) => Promise<unknown>>(async (_input) => ({
     handled: false,
     reason: 'unhandled',
@@ -550,8 +522,11 @@ const commitSessionStoredMessageMock = vi.hoisted(() => vi.fn<(input: {
 })));
 type StartDaemonSessionControlRuntimeTestParams = Omit<
     Parameters<typeof startDaemonSessionControlRuntimeRaw>[0],
-    'daemonSessionMutationCustody' | 'cancelInactiveSessionUsageLimitRecoveryAfterExplicitStop'
+    | 'daemonSessionMutationCustody'
+    | 'cancelInactiveSessionUsageLimitRecoveryAfterExplicitStop'
+    | 'serverBaseUrl'
 > & Readonly<{
+    serverBaseUrl?: string;
     daemonSessionMutationCustody?: Pick<Parameters<
         typeof startDaemonSessionControlRuntimeRaw
     >[0]['daemonSessionMutationCustody'], 'stageTranscriptEvent'> & Partial<Pick<Parameters<
@@ -566,6 +541,7 @@ const startDaemonSessionControlRuntime = async (
 ): ReturnType<typeof startDaemonSessionControlRuntimeRaw> => (
     await startDaemonSessionControlRuntimeRaw({
         ...params,
+        serverBaseUrl: params.serverBaseUrl ?? configuration.apiServerUrl,
         cancelInactiveSessionUsageLimitRecoveryAfterExplicitStop:
             params.cancelInactiveSessionUsageLimitRecoveryAfterExplicitStop ?? (async () => null),
         daemonSessionMutationCustody: {
@@ -929,10 +905,6 @@ vi.mock('@/daemon/connectedServices/catalogHooks', async (importOriginal) => {
     };
 });
 
-vi.mock('../connectedServices/runtimeAuth/createDaemonConnectedServiceAuthGroupSwitchCoordinator', () => ({
-    createDaemonConnectedServiceAuthGroupSwitchCoordinator: createDaemonConnectedServiceAuthGroupSwitchCoordinatorMock,
-}));
-
 vi.mock('../connectedServices/runtimeAuth/createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator', () => ({
     createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator:
         createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinatorMock,
@@ -976,10 +948,6 @@ vi.mock(
         };
     },
 );
-
-vi.mock('../connectedServices/quotas/createQuotaDrivenConnectedServiceAuthGroupSwitchCoordinator', () => ({
-    createQuotaDrivenConnectedServiceAuthGroupSwitchCoordinator: createQuotaDrivenConnectedServiceAuthGroupSwitchCoordinatorMock,
-}));
 
 vi.mock(
     '../connectedServices/runtimeAuth/handleConnectedServiceRuntimeAuthFailureForSession',
@@ -1421,9 +1389,14 @@ describe('startDaemonSessionControlRuntime', () => {
             // These are daemon-owned lifecycle facts. The HTTP request never
             // provides either Account or machine-placement authority.
             externalActionAccountId: 'account-external-action-ingress',
+            serverBaseUrl: 'https://daemon-current.example.test/',
             runtimeActionExecute,
             currentMachineHost: 'daemon-host',
             currentMachineHomeDir: '/home/daemon',
+            resolveCurrentMachineExecutionOriginContext: vi.fn(async () => ({
+                serverIdentityId: 'srv_external_action_account',
+                machineId: 'machine-external-action-ingress',
+            })),
             resolveExternalSessionHostAction: () => externalSessionHostAction,
             externalSessionPluginAdmissionOwner: {
                 hookManagementAction,
@@ -1452,6 +1425,35 @@ describe('startDaemonSessionControlRuntime', () => {
                 kind: 'machine',
                 machineId: 'machine-external-action-ingress',
             });
+
+            const patIntrospectionPost = vi.spyOn(axios, 'post').mockResolvedValueOnce({
+                status: 200,
+                data: {
+                    accountId: 'account-external-action-ingress',
+                    principalId: 'account-external-action-ingress',
+                    credentialId: '11111111-1111-4111-8111-111111111111',
+                    expiresAt: null,
+                    authority: 'account_automation',
+                },
+            });
+            onTestFinished(() => patIntrospectionPost.mockRestore());
+            await expect(externalActionApi?.verifyPat('pat-external-action-ingress')).resolves.toEqual({
+                ok: true,
+                accountId: 'account-external-action-ingress',
+                principalId: 'account-external-action-ingress',
+                credentialId: '11111111-1111-4111-8111-111111111111',
+                expiresAt: null,
+                authority: 'account_automation',
+            });
+            expect(patIntrospectionPost).toHaveBeenCalledWith(
+                `https://daemon-current.example.test${ACCOUNT_API_TOKEN_INTROSPECTION_HTTP_PATH_V1}`,
+                { token: 'pat-external-action-ingress' },
+                expect.objectContaining({
+                    headers: expect.objectContaining({
+                        Authorization: 'Bearer token-daemon',
+                    }),
+                }),
+            );
 
             const accountApiTokensPost = vi.spyOn(axios, 'post').mockResolvedValueOnce({
                 status: 200,
@@ -1503,6 +1505,77 @@ describe('startDaemonSessionControlRuntime', () => {
                     listContributedActionDefinitions: expect.any(Function),
                 }),
             );
+
+            const capturePortableTargetExecutor = vi.fn(async () => ({
+                ok: true as const,
+                result: { sessionId: 'session-portable-target' },
+            }));
+            createCliActionExecutorFromCredentialsMock.mockImplementationOnce(() => ({
+                execute: capturePortableTargetExecutor,
+            }) as never);
+            await expect(externalActionApi?.executor.execute(
+                'session.spawn_new',
+                { directory: '/workspace' },
+                {
+                    surface: 'api',
+                    authority: 'account_automation',
+                    actionCaller: { kind: 'host' },
+                    serverId: configuration.activeServerId,
+                },
+            )).resolves.toEqual({
+                ok: true,
+                result: { sessionId: 'session-portable-target' },
+            });
+            expect(capturePortableTargetExecutor).toHaveBeenCalledWith(
+                'session.spawn_new',
+                { directory: '/workspace' },
+                expect.objectContaining({
+                    serverId: 'srv_external_action_account',
+                }),
+            );
+
+            for (const { actionId, input } of [
+                {
+                    actionId: 'approval.request.create' as const,
+                    input: {
+                        actionId: 'session.spawn_new',
+                        actionArgs: { directory: '/workspace' },
+                    },
+                },
+                {
+                    actionId: 'approval.request.decide' as const,
+                    input: {
+                        artifactId: 'approval-portable-target',
+                        decision: 'approve',
+                    },
+                },
+            ]) {
+                const capturePortableApprovalExecutor = vi.fn(async () => ({
+                    ok: true as const,
+                    result: {},
+                }));
+                createCliActionExecutorFromCredentialsMock.mockImplementationOnce(() => ({
+                    execute: capturePortableApprovalExecutor,
+                }) as never);
+
+                await expect(externalActionApi?.executor.execute(
+                    actionId,
+                    input,
+                    {
+                        surface: 'api',
+                        authority: 'account_automation',
+                        actionCaller: { kind: 'host' },
+                        serverId: configuration.activeServerId,
+                    },
+                )).resolves.toEqual({ ok: true, result: {} });
+                expect(capturePortableApprovalExecutor).toHaveBeenCalledWith(
+                    actionId,
+                    input,
+                    expect.objectContaining({
+                        serverId: 'srv_external_action_account',
+                    }),
+                );
+            }
 
             await expect(externalActionApi?.executor.execute(
                 'plugins.sessionHooks.status.get',
@@ -1658,6 +1731,10 @@ describe('startDaemonSessionControlRuntime', () => {
             requestShutdown: vi.fn(),
             processEnv: {},
             externalActionAccountId: 'account-external-action-admission',
+            resolveCurrentMachineExecutionOriginContext: async () => ({
+                serverIdentityId: 'srv_external_action_account',
+                machineId: 'machine-external-action-admission',
+            }),
             resolveSessionSpawnDirectTargetTransport: () => undefined,
         } as StartDaemonSessionControlRuntimeTestParams);
 
@@ -1710,7 +1787,10 @@ describe('startDaemonSessionControlRuntime', () => {
             expect(execute).toHaveBeenCalledWith(
                 'session.spawn_new',
                 { initialMessage: 'Durable E2EE initial input' },
-                { surface: 'api' },
+                {
+                    surface: 'api',
+                    serverId: 'srv_external_action_account',
+                },
             );
         } finally {
             await runtime.stopControlServer();
@@ -4301,7 +4381,6 @@ describe('startDaemonSessionControlRuntime', () => {
                 expectedCredentialRevision:
                     'csr_0123456789ABCDEFGHJKMNPQRS',
             });
-            expect(requestAuthSwitchAfterClassifiedFailureMock).not.toHaveBeenCalled();
             expect(handleConnectedServiceRuntimeAuthFailureForSessionMock).not.toHaveBeenCalled();
             expect(sendSessionMessageMock).not.toHaveBeenCalled();
         } finally {
@@ -4532,7 +4611,6 @@ describe('startDaemonSessionControlRuntime', () => {
                     account: primary.account,
                     expectedCredentialRevision: primary.credentialRevision,
                 });
-            expect(requestAuthSwitchAfterClassifiedFailureMock).not.toHaveBeenCalled();
             expect(fetchAccountProfile).not.toHaveBeenCalled();
         } finally {
             fetchAccountProfile.mockRestore();
@@ -4568,6 +4646,7 @@ describe('startDaemonSessionControlRuntime', () => {
             account: binding.target.account,
             credentialRevision: 'csr_123456789ABCDEFGHJKMNPQRS',
         } as const;
+        const runtimeRegistry = new ConnectedServiceRuntimeRegistry();
         let current: typeof initial | typeof replaced = initial;
         let resolverOperational = true;
         const resolveCurrentRequestAuthBinding = vi.fn(async () => {
@@ -4587,6 +4666,7 @@ describe('startDaemonSessionControlRuntime', () => {
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
+            connectedServiceRuntimeRegistry: runtimeRegistry,
             resolveQualifiedConnectedAccountV4Support: () => 'advertised',
             pidToTrackedSession: new Map(),
             pidToAwaiter: new Map(),
@@ -4789,9 +4869,6 @@ describe('startDaemonSessionControlRuntime', () => {
                 .toHaveBeenCalledOnce();
             expect(qualifiedRequestAuthSwitchAfterClassifiedFailureMock)
                 .not.toHaveBeenCalled();
-            expect(requestAuthSwitchAfterClassifiedFailureMock)
-                .not.toHaveBeenCalled();
-
             await expect(requestAuth.lookupRequestAuth({
                 subject,
                 purpose: binding.purpose,
@@ -4923,8 +5000,6 @@ describe('startDaemonSessionControlRuntime', () => {
             });
             expect(qualifiedRequestAuthSwitchAfterClassifiedFailureMock)
                 .not.toHaveBeenCalled();
-            expect(requestAuthSwitchAfterClassifiedFailureMock)
-                .not.toHaveBeenCalled();
         } finally {
             await runtime.stopControlServer();
         }
@@ -4935,28 +5010,24 @@ describe('startDaemonSessionControlRuntime', () => {
             label: 'advertised V4',
             support: 'advertised',
             qualifiedCalls: 1,
-            legacyCalls: 0,
             rejectQualified: false,
         },
         {
             label: 'rejected advertised V4',
             support: 'advertised',
             qualifiedCalls: 1,
-            legacyCalls: 0,
             rejectQualified: true,
         },
         {
             label: 'indeterminate capability',
             support: 'indeterminate',
             qualifiedCalls: 0,
-            legacyCalls: 0,
             rejectQualified: false,
         },
         {
-            label: 'absent V4 compatibility',
+            label: 'absent V4 capability',
             support: 'absent',
             qualifiedCalls: 0,
-            legacyCalls: 1,
             rejectQualified: false,
         },
     ] as const)(
@@ -4964,7 +5035,6 @@ describe('startDaemonSessionControlRuntime', () => {
         async ({
             support,
             qualifiedCalls,
-            legacyCalls,
             rejectQualified,
         }) => {
         if (rejectQualified) {
@@ -5060,9 +5130,6 @@ describe('startDaemonSessionControlRuntime', () => {
                     },
                 }));
             }
-            expect(
-                requestAuthSwitchAfterClassifiedFailureMock,
-            ).toHaveBeenCalledTimes(legacyCalls);
         } finally {
             await runtime.stopControlServer();
         }
@@ -5108,8 +5175,6 @@ describe('startDaemonSessionControlRuntime', () => {
         });
 
         try {
-            createDaemonConnectedServiceAuthGroupSwitchCoordinatorMock
-                .mockClear();
             createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinatorMock
                 .mockClear();
             qualifiedRequestAuthSwitchAfterClassifiedFailureMock.mockClear();
@@ -5132,9 +5197,6 @@ describe('startDaemonSessionControlRuntime', () => {
                 },
             });
 
-            expect(
-                createDaemonConnectedServiceAuthGroupSwitchCoordinatorMock,
-            ).not.toHaveBeenCalled();
             expect(
                 createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinatorMock,
             ).toHaveBeenCalledOnce();
@@ -5176,6 +5238,196 @@ describe('startDaemonSessionControlRuntime', () => {
                 groupId: 'fallbacks',
                 observedProfileId: 'primary',
             }));
+        } finally {
+            await runtime.stopControlServer();
+        }
+    });
+
+    it('uses the qualified V4 adapter for pre-turn and execution generation paths without constructing V3 coordinators', async () => {
+        const tracked: TrackedSession = {
+            startedBy: 'daemon',
+            happySessionId: 'sess-qualified-pre-turn',
+            pid: 7789,
+        };
+        const runtime = await startDaemonSessionControlRuntime({
+            machineId: 'machine-qualified-pre-turn',
+            credentials: {
+                token: 'token-daemon',
+                encryption: {
+                    type: 'legacy',
+                    secret: new Uint8Array(32).fill(1),
+                },
+            },
+            api: {} as never,
+            loadLocalHandoffMetadataByVendorResumeId: vi.fn(),
+            connectedServicesMaterializationBaseDir:
+                '/tmp/connected-services',
+            getConnectedServiceRefreshCoordinator: () => null,
+            getConnectedServiceQuotasCoordinator: () => null,
+            resolveQualifiedConnectedAccountV4Support: () => 'advertised',
+            pidToTrackedSession: new Map([[tracked.pid, tracked]]),
+            pidToAwaiter: new Map(),
+            pidToSpawnResultResolver: new Map(),
+            pidToSpawnWebhookTimeout: new Map(),
+            getApiMachineForSessions: () => null,
+            spawnResourceCleanupByPid: new Map(),
+            sessionAttachCleanupByPid: new Map(),
+            connectedServicesRestartRequestedPids: new Set(),
+            beforeShutdown: vi.fn(),
+            onHappySessionWebhook: vi.fn(),
+            requestShutdown: vi.fn(),
+            processEnv: {},
+        });
+
+        try {
+            await expect(
+                runtime.connectedServiceAuthGroupPreTurnSwitchCoordinator
+                    .switchBeforeTurn({
+                        sessionId: tracked.happySessionId ?? 'sess-qualified-pre-turn',
+                        serviceId: 'openai-codex',
+                        groupId: 'codex-main',
+                        reason: 'soft_threshold',
+                    }),
+            ).resolves.toMatchObject({
+                status: 'switched',
+                activeProfileId: 'qualified-backup',
+            });
+
+            const qualifiedPreTurnCoordinator =
+                createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinatorMock
+                    .mock.results.at(-1)?.value as {
+                        switchBeforeTurn: ReturnType<typeof vi.fn>;
+                    } | undefined;
+            expect(qualifiedPreTurnCoordinator?.switchBeforeTurn)
+                .toHaveBeenCalledWith(expect.objectContaining({
+                    serviceId: {
+                        pluginId: 'happier.agent.codex',
+                        localId: 'openai-codex',
+                    },
+                    groupId: 'codex-main',
+                }));
+
+            await expect(
+                runtime.connectedServiceAuthGroupPreTurnSwitchCoordinator
+                    .applyCommittedGeneration({
+                        sessionId: tracked.happySessionId ?? 'sess-qualified-pre-turn',
+                        serviceId: 'openai-codex',
+                        groupId: 'codex-main',
+                        activeProfileId: 'qualified-backup',
+                        generation: 2,
+                        reason: 'usage_limit',
+                    }),
+            ).resolves.toMatchObject({
+                status: 'observed_generation',
+                activeProfileId: 'qualified-backup',
+                generation: 2,
+            });
+
+            const qualifiedExecutionCoordinator =
+                createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinatorMock
+                    .mock.results.at(-1)?.value as {
+                        applyCommittedGeneration: ReturnType<typeof vi.fn>;
+                    } | undefined;
+            expect(qualifiedExecutionCoordinator?.applyCommittedGeneration)
+                .toHaveBeenCalledWith(expect.objectContaining({
+                    serviceId: {
+                        pluginId: 'happier.agent.codex',
+                        localId: 'openai-codex',
+                    },
+                    groupId: 'codex-main',
+                    activeProfileId: 'qualified-backup',
+                    generation: 2,
+                }));
+        } finally {
+            await runtime.stopControlServer();
+        }
+    });
+
+    it('passes the qualified V4 group API to automatic auth-generation application', async () => {
+        const tracked: TrackedSession = {
+            startedBy: 'daemon',
+            happySessionId: 'sess-qualified-generation-apply',
+            pid: 7790,
+            spawnOptions: {
+                directory: '/tmp/qualified-generation-apply',
+                backendTarget: {
+                    kind: 'backend',
+                    backendId: 'codex',
+                    sourceKind: 'built_in',
+                },
+                environmentVariables: {
+                    [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: JSON.stringify([{
+                        kind: 'group',
+                        serviceId: 'openai-codex',
+                        groupId: 'codex-main',
+                        activeProfileId: 'primary',
+                        fallbackProfileId: 'primary',
+                        generation: 6,
+                    }]),
+                },
+                connectedServices: {
+                    v: 1,
+                    bindingsByServiceId: {
+                        'openai-codex': {
+                            source: 'connected',
+                            selection: 'group',
+                            groupId: 'codex-main',
+                            profileId: 'primary',
+                        },
+                    },
+                },
+            },
+        };
+        const runtime = await startDaemonSessionControlRuntime({
+            machineId: 'machine-qualified-generation-apply',
+            credentials: {
+                token: 'token-daemon',
+                encryption: {
+                    type: 'legacy',
+                    secret: new Uint8Array(32).fill(1),
+                },
+            },
+            api: {} as never,
+            loadLocalHandoffMetadataByVendorResumeId: vi.fn(),
+            connectedServicesMaterializationBaseDir: '/tmp/connected-services',
+            getConnectedServiceRefreshCoordinator: () => null,
+            getConnectedServiceQuotasCoordinator: () => null,
+            resolveQualifiedConnectedAccountV4Support: () => 'advertised',
+            pidToTrackedSession: new Map([[tracked.pid, tracked]]),
+            pidToAwaiter: new Map(),
+            pidToSpawnResultResolver: new Map(),
+            pidToSpawnWebhookTimeout: new Map(),
+            getApiMachineForSessions: () => null,
+            spawnResourceCleanupByPid: new Map(),
+            sessionAttachCleanupByPid: new Map(),
+            connectedServicesRestartRequestedPids: new Set(),
+            beforeShutdown: vi.fn(),
+            onHappySessionWebhook: vi.fn(),
+            requestShutdown: vi.fn(),
+            processEnv: {},
+        });
+
+        try {
+            applyConnectedServiceAuthGenerationToTrackedSessionMock.mockClear();
+
+            await expect(
+                runtime.connectedServiceAuthGroupPreTurnSwitchCoordinator
+                    .applyCredentialUpdate({
+                        sessionId: tracked.happySessionId ?? 'sess-qualified-apply-credential',
+                        serviceId: 'openai-codex',
+                        profileId: 'primary',
+                        reason: 'account_changed',
+                        executionAuthority: 'runtime_recovery',
+                    }),
+            ).resolves.toEqual({ status: 'hot_applied' });
+
+            expect(applyConnectedServiceAuthGenerationToTrackedSessionMock)
+                .toHaveBeenCalledWith(expect.objectContaining({
+                    qualifiedConnectedAccountApi: expect.objectContaining({
+                        readGroup: expect.any(Function),
+                        listAccounts: expect.any(Function),
+                    }),
+                }));
         } finally {
             await runtime.stopControlServer();
         }
@@ -5270,7 +5522,6 @@ describe('startDaemonSessionControlRuntime', () => {
                     quotaScope: 'provider',
                 },
             );
-            expect(requestAuthSwitchAfterClassifiedFailureMock).not.toHaveBeenCalled();
             expect(handleConnectedServiceRuntimeAuthFailureForSessionMock).not.toHaveBeenCalled();
             expect(sendSessionMessageMock).not.toHaveBeenCalled();
             expect(executeSpawnSessionRequest).not.toHaveBeenCalled();
@@ -5311,7 +5562,6 @@ describe('startDaemonSessionControlRuntime', () => {
                 resetAtMs: null,
                 providerCode: null,
             });
-            expect(requestAuthSwitchAfterClassifiedFailureMock).not.toHaveBeenCalled();
             expect(handleConnectedServiceRuntimeAuthFailureForSessionMock).not.toHaveBeenCalled();
             expect(recordRequestAuthProviderBackoff).toHaveBeenCalledTimes(2);
             expect(sendSessionMessageMock).not.toHaveBeenCalled();
@@ -5437,15 +5687,12 @@ describe('startDaemonSessionControlRuntime', () => {
         }));
         vi.mocked(callSessionRpc).mockReset();
         vi.mocked(callSessionRpc).mockImplementation(async () => ({ type: 'no_pending' }));
-        createDaemonConnectedServiceAuthGroupSwitchCoordinatorMock.mockClear();
-        requestAuthSwitchAfterClassifiedFailureMock.mockClear();
         createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinatorMock
             .mockClear();
         qualifiedRequestAuthSwitchAfterClassifiedFailureMock.mockClear();
         connectedAccountRequestAuthServiceDependenciesCapture.current = null;
         sendSessionMessageMock.mockClear();
         createCliActionExecutorFromCredentialsMock.mockClear();
-        createQuotaDrivenConnectedServiceAuthGroupSwitchCoordinatorMock.mockClear();
         handleConnectedServiceRuntimeAuthFailureForSessionMock.mockClear();
         dispatchActivityNotificationAsyncMock.mockClear();
         fetchSessionByIdMock.mockReset();
@@ -9228,6 +9475,11 @@ describe('startDaemonSessionControlRuntime', () => {
             activationId,
             runKey: runId,
             agentId: 'codex' as const,
+            agentContribution: {
+                pluginId: 'happier.agent.codex',
+                localId: 'codex',
+                immutableGenerationId: 'generation-codex-run-startup-port',
+            },
             materializationKey: runId,
             connectedServicesBindings: {
                 v: 1 as const,
@@ -9280,6 +9532,9 @@ describe('startDaemonSessionControlRuntime', () => {
                             },
                         }]]),
                     },
+                    resolveCurrentPluginImmutableGenerationId: vi.fn(async () =>
+                        'generation-codex-run-startup-port',
+                    ),
                 },
                 source: 'active',
                 release: vi.fn(async () => {}),
@@ -10538,6 +10793,22 @@ describe('startDaemonSessionControlRuntime', () => {
             },
         });
         const dispose = vi.fn(async () => undefined);
+        const apiMachine = {
+            captureMachineSessionTerminal: vi.fn(async (capturedSessionId: string) => ({
+                v: 1 as const,
+                status: 'captured' as const,
+                sessionId: capturedSessionId,
+                authority: { kind: 'generation' as const, publisherGeneration: '1' },
+            })),
+            finalizeMachineSessionTerminal: vi.fn(async ({ sessionId: finalizedSessionId }: { sessionId: string }) => ({
+                v: 1 as const,
+                status: 'closed' as const,
+                sessionId: finalizedSessionId,
+            })),
+            getSessionSyncPendingInputServerContractResult: vi.fn(() => null),
+            registerLocalServicesRoutes: vi.fn(),
+            registerSimulatorPreviewRoutes: vi.fn(),
+        };
         const trackedSessions = new Map<number, TrackedSession>([[
             trackedPid,
             {
@@ -10574,7 +10845,7 @@ describe('startDaemonSessionControlRuntime', () => {
             pidToAwaiter: new Map(),
             pidToSpawnResultResolver: new Map(),
             pidToSpawnWebhookTimeout: new Map(),
-            getApiMachineForSessions: () => null,
+            getApiMachineForSessions: () => apiMachine as never,
             spawnResourceCleanupByPid: new Map(),
             sessionAttachCleanupByPid: new Map(),
             connectedServicesRestartRequestedPids: new Set(),
@@ -10719,9 +10990,8 @@ describe('startDaemonSessionControlRuntime', () => {
 
     it('registers canonical provider account usage snapshots through daemon control startup wiring', async () => {
         vi.mocked(startDaemonControlServer).mockClear();
-        const registerProviderAccountUsageSnapshotPlain = vi.fn(async () => {});
         const recordKey = {
-            providerId: 'claude',
+            providerId: 'codex',
             accountSubjectId: 'acct_123',
             subjectKind: 'account',
             quotaScope: 'account',
@@ -10730,7 +11000,7 @@ describe('startDaemonSessionControlRuntime', () => {
             v: 1,
             recordId: buildProviderAccountUsageRecordId(recordKey),
             recordKey,
-            providerId: 'claude',
+            providerId: 'codex',
             accountSubject: { kind: 'providerSubject', id: 'acct_123' },
             observedAtMs: 1_000,
             fetchedAtMs: 1_000,
@@ -10742,6 +11012,52 @@ describe('startDaemonSessionControlRuntime', () => {
             accountLabel: null,
             meters: [],
         };
+        const credentialRevision = 'csr_0123456789ABCDEFGHJKMNPQRS' as const;
+        const connectedCredential = buildConnectedServiceCredentialRecord({
+            now: 1_000,
+            serviceId: 'openai-codex',
+            profileId: 'work',
+            kind: 'oauth',
+            expiresAt: null,
+            oauth: {
+                accessToken: 'current-access-token',
+                refreshToken: 'current-refresh-token',
+                idToken: null,
+                scope: null,
+                tokenType: null,
+                providerAccountId: 'acct_123',
+                providerEmail: null,
+            },
+        });
+        const runtimeRegistry = new ConnectedServiceRuntimeRegistry();
+        const listQualifiedAccounts = vi.spyOn(axios, 'get').mockResolvedValue({
+            status: 200,
+            data: {
+                service: CODEX_QUALIFIED_SERVICE,
+                accounts: [{
+                    ref: { service: CODEX_QUALIFIED_SERVICE, accountId: 'work' },
+                    status: 'connected',
+                    authenticationModeId: 'oauth',
+                    revisionSemantics: 'revisioned',
+                    credentialRevision,
+                    configurationReady: true,
+                    configurationRevision: 'cfg-work',
+                    kind: 'oauth',
+                    expiresAt: null,
+                    providerIdentity: { accountId: 'acct_123' },
+                    displayName: 'Work',
+                    scopes: [],
+                }],
+            },
+        });
+        const writeProviderAccountUsage = vi.spyOn(axios, 'post').mockResolvedValue({
+            status: 200,
+            data: { success: true },
+        });
+        onTestFinished(() => {
+            listQualifiedAccounts.mockRestore();
+            writeProviderAccountUsage.mockRestore();
+        });
 
         const runtime = await startDaemonSessionControlRuntime({
             machineId: 'machine-usage',
@@ -10751,18 +11067,18 @@ describe('startDaemonSessionControlRuntime', () => {
             },
             api: {
                 getAccountEncryptionMode: vi.fn(async () => 'plain'),
-                getServerFeaturesSnapshot: vi.fn(
-                    async () => providerAccountUsageV4ServerFeatures,
-                ),
-                getProviderAccountUsageWriteRouteAvailability: vi.fn(
-                    async () => 'available' as const,
-                ),
-                registerProviderAccountUsageSnapshotPlain,
+                getConnectedServiceCredentialPlain: vi.fn(async () => ({
+                    content: { t: 'plain' as const, v: connectedCredential },
+                    revisionSemantics: 'revisioned' as const,
+                    credentialRevision,
+                })),
             } as never,
             loadLocalHandoffMetadataByVendorResumeId: vi.fn(),
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
+            connectedServiceRuntimeRegistry: runtimeRegistry,
+            resolveQualifiedConnectedAccountV4Support: () => 'advertised',
             pidToTrackedSession: new Map<number, TrackedSession>([
                 [1234, { startedBy: 'daemon', pid: 1234, happySessionId: 'sess_usage' }],
             ]),
@@ -10780,6 +11096,25 @@ describe('startDaemonSessionControlRuntime', () => {
         });
 
         try {
+            runtimeRegistry.registerTarget({
+                pid: 1234,
+                agentId: 'codex',
+                sessionId: 'sess_usage',
+                connectedServicesBindingsRaw: {
+                    v: 1,
+                    bindingsByServiceId: {
+                        'openai-codex': { source: 'connected', selection: 'profile', profileId: 'work' },
+                    },
+                },
+                connectedServiceSelectionsEnv: {
+                    [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: JSON.stringify([{
+                        kind: 'profile',
+                        serviceId: 'openai-codex',
+                        profileId: 'work',
+                        credentialRevision,
+                    }]),
+                },
+            });
             const controlServerInput = vi.mocked(startDaemonControlServer).mock.calls.at(-1)?.[0];
             expect(controlServerInput?.handleProviderAccountUsageSnapshot).toEqual(expect.any(Function));
             await expect(controlServerInput?.handleProviderAccountUsageSnapshot?.({
@@ -10790,19 +11125,27 @@ describe('startDaemonSessionControlRuntime', () => {
                 recordId: snapshot.recordId,
                 persisted: true,
             });
-            for (let attempt = 0; attempt < 20 && registerProviderAccountUsageSnapshotPlain.mock.calls.length === 0; attempt += 1) {
+            for (let attempt = 0; attempt < 20 && writeProviderAccountUsage.mock.calls.length === 0; attempt += 1) {
                 await new Promise((resolve) => setTimeout(resolve, 5));
             }
-            expect(registerProviderAccountUsageSnapshotPlain).toHaveBeenCalledWith(expect.objectContaining({
-                recordId: snapshot.recordId,
-                content: {
-                    t: 'plain',
-                    v: expect.objectContaining({
+            expect(writeProviderAccountUsage).toHaveBeenCalledWith(
+                expect.stringContaining('/v4/connect/qualified/provider-account-usage'),
+                expect.objectContaining({
+                    source: {
+                        ref: { service: CODEX_QUALIFIED_SERVICE, accountId: 'work' },
+                        bindingKind: 'account',
+                    },
+                    expectedCredentialRevision: credentialRevision,
+                    expectedConfigurationRevision: 'cfg-work',
+                    recordId: snapshot.recordId,
+                    payloadMode: 'plain_json_v1',
+                    snapshot: expect.objectContaining({
                         recordId: snapshot.recordId,
                         accountSubject: { kind: 'providerSubject', id: 'acct_123' },
                     }),
-                },
-            }));
+                }),
+                expect.any(Object),
+            );
         } finally {
             await runtime.stopControlServer();
         }
@@ -10846,6 +11189,8 @@ describe('startDaemonSessionControlRuntime', () => {
             releasePolicy = resolve;
         });
         const handleAccountUsageChanged = vi.fn(async () => await policyBarrier);
+        const credentialRevision =
+            'csr_0123456789ABCDEFGHJKMNPQRS' as const;
         const connectedCredential = buildConnectedServiceCredentialRecord({
             now: 1_000,
             serviceId: 'openai-codex',
@@ -10863,7 +11208,6 @@ describe('startDaemonSessionControlRuntime', () => {
             },
         });
         const runtimeRegistry = new ConnectedServiceRuntimeRegistry();
-        const registerProviderAccountUsageSnapshotPlain = vi.fn(async () => {});
         let credentialRevisionSemantics:
             'revisioned' | 'legacy_unfenced' = 'revisioned';
         const getConnectedServiceCredentialPlain = vi.fn(async () => ({
@@ -10871,14 +11215,41 @@ describe('startDaemonSessionControlRuntime', () => {
             ...(credentialRevisionSemantics === 'revisioned'
                 ? {
                     revisionSemantics: 'revisioned' as const,
-                    credentialRevision:
-                        'csr_0123456789ABCDEFGHJKMNPQRS',
+                    credentialRevision,
                 }
                 : {
                     revisionSemantics: 'legacy_unfenced' as const,
                     credentialRevision: null,
                 }),
         }));
+        const listQualifiedAccounts = vi.spyOn(axios, 'get').mockResolvedValue({
+            status: 200,
+            data: {
+                service: CODEX_QUALIFIED_SERVICE,
+                accounts: [{
+                    ref: { service: CODEX_QUALIFIED_SERVICE, accountId: 'primary' },
+                    status: 'connected',
+                    authenticationModeId: 'oauth',
+                    revisionSemantics: 'revisioned',
+                    credentialRevision,
+                    configurationReady: true,
+                    configurationRevision: 'cfg-team',
+                    kind: 'oauth',
+                    expiresAt: 10_000,
+                    providerIdentity: { accountId: 'acct_group_usage' },
+                    displayName: 'Primary',
+                    scopes: [],
+                }],
+            },
+        });
+        const writeProviderAccountUsage = vi.spyOn(axios, 'post').mockResolvedValue({
+            status: 200,
+            data: { success: true },
+        });
+        onTestFinished(() => {
+            listQualifiedAccounts.mockRestore();
+            writeProviderAccountUsage.mockRestore();
+        });
 
         const runtime = await startDaemonSessionControlRuntime({
             machineId: 'machine-usage-policy',
@@ -10888,14 +11259,7 @@ describe('startDaemonSessionControlRuntime', () => {
             },
             api: {
                 getAccountEncryptionMode: vi.fn(async () => 'plain'),
-                getServerFeaturesSnapshot: vi.fn(
-                    async () => providerAccountUsageV4ServerFeatures,
-                ),
-                getProviderAccountUsageWriteRouteAvailability: vi.fn(
-                    async () => 'available' as const,
-                ),
                 getConnectedServiceCredentialPlain,
-                registerProviderAccountUsageSnapshotPlain,
             } as never,
             loadLocalHandoffMetadataByVendorResumeId: vi.fn(),
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
@@ -10926,6 +11290,7 @@ describe('startDaemonSessionControlRuntime', () => {
                                 activeProfileId: 'primary',
                                 fallbackProfileId: 'primary',
                                 generation: 6,
+                                credentialRevision,
                             }]),
                         },
                     },
@@ -10939,6 +11304,7 @@ describe('startDaemonSessionControlRuntime', () => {
             sessionAttachCleanupByPid: new Map(),
             connectedServicesRestartRequestedPids: new Set(),
             connectedServiceRuntimeRegistry: runtimeRegistry,
+            resolveQualifiedConnectedAccountV4Support: () => 'advertised',
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -10962,6 +11328,7 @@ describe('startDaemonSessionControlRuntime', () => {
                     activeProfileId: 'primary',
                     fallbackProfileId: 'primary',
                     generation: 7,
+                    credentialRevision,
                 }]),
             },
         });
@@ -11069,16 +11436,20 @@ describe('startDaemonSessionControlRuntime', () => {
             groupId: 'team',
             groupGeneration: 7,
         })));
-        await vi.waitFor(() => expect(registerProviderAccountUsageSnapshotPlain).toHaveBeenLastCalledWith(
+        await vi.waitFor(() => expect(writeProviderAccountUsage).toHaveBeenLastCalledWith(
+            expect.stringContaining('/v4/connect/qualified/provider-account-usage'),
             expect.objectContaining({
                 source: {
-                    serviceId: 'openai-codex',
-                    profileId: 'primary',
+                    ref: { service: CODEX_QUALIFIED_SERVICE, accountId: 'primary' },
                     bindingKind: 'group_member',
                     groupId: 'team',
                     groupGeneration: 7,
                 },
+                expectedCredentialRevision: credentialRevision,
+                expectedConfigurationRevision: 'cfg-team',
+                payloadMode: 'plain_json_v1',
             }),
+            expect.any(Object),
         ));
 
         markQuotaProof.mockClear();
@@ -11099,16 +11470,20 @@ describe('startDaemonSessionControlRuntime', () => {
             groupId: 'team',
             groupGeneration: 7,
         })));
-        await vi.waitFor(() => expect(registerProviderAccountUsageSnapshotPlain).toHaveBeenLastCalledWith(
+        await vi.waitFor(() => expect(writeProviderAccountUsage).toHaveBeenLastCalledWith(
+            expect.stringContaining('/v4/connect/qualified/provider-account-usage'),
             expect.objectContaining({
                 source: {
-                    serviceId: 'openai-codex',
-                    profileId: 'primary',
+                    ref: { service: CODEX_QUALIFIED_SERVICE, accountId: 'primary' },
                     bindingKind: 'group_member',
                     groupId: 'team',
                     groupGeneration: 7,
                 },
+                expectedCredentialRevision: credentialRevision,
+                expectedConfigurationRevision: 'cfg-team',
+                payloadMode: 'plain_json_v1',
             }),
+            expect.any(Object),
         ));
 
         await expect(controlServerInput?.handleProviderAccountUsageSnapshot?.({
@@ -11198,10 +11573,6 @@ describe('startDaemonSessionControlRuntime', () => {
             api: {
                 getAccountEncryptionMode: vi.fn(async () => 'plain'),
                 getServerFeaturesSnapshot: vi.fn(async () => undefined),
-                getProviderAccountUsageWriteRouteAvailability: vi.fn(
-                    async () => 'available' as const,
-                ),
-                registerProviderAccountUsageSnapshotPlain: vi.fn(async () => {}),
             } as never,
             loadLocalHandoffMetadataByVendorResumeId: vi.fn(),
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
@@ -11255,6 +11626,53 @@ describe('startDaemonSessionControlRuntime', () => {
     it('rejects provider account usage adoption after shutdown disposal suppresses persistence custody', async () => {
         vi.mocked(startDaemonControlServer).mockClear();
         updateSessionMetadataWithRetryMock.mockClear();
+        const credentialRevision =
+            'csr_0123456789ABCDEFGHJKMNPQRS' as const;
+        const connectedCredential = buildConnectedServiceCredentialRecord({
+            now: 1_000,
+            serviceId: 'openai-codex',
+            profileId: 'work',
+            kind: 'oauth',
+            expiresAt: null,
+            oauth: {
+                accessToken: 'current-access-token',
+                refreshToken: 'current-refresh-token',
+                idToken: null,
+                scope: null,
+                tokenType: null,
+                providerAccountId: 'acct_shutdown_adopted',
+                providerEmail: null,
+            },
+        });
+        const runtimeRegistry = new ConnectedServiceRuntimeRegistry();
+        const listQualifiedAccounts = vi.spyOn(axios, 'get').mockResolvedValue({
+            status: 200,
+            data: {
+                service: CODEX_QUALIFIED_SERVICE,
+                accounts: [{
+                    ref: { service: CODEX_QUALIFIED_SERVICE, accountId: 'work' },
+                    status: 'connected',
+                    authenticationModeId: 'oauth',
+                    revisionSemantics: 'revisioned',
+                    credentialRevision,
+                    configurationReady: true,
+                    configurationRevision: 'cfg-work',
+                    kind: 'oauth',
+                    expiresAt: null,
+                    providerIdentity: { accountId: 'acct_shutdown_adopted' },
+                    displayName: 'Work',
+                    scopes: [],
+                }],
+            },
+        });
+        const writeProviderAccountUsage = vi.spyOn(axios, 'post').mockResolvedValue({
+            status: 200,
+            data: { success: true },
+        });
+        onTestFinished(() => {
+            listQualifiedAccounts.mockRestore();
+            writeProviderAccountUsage.mockRestore();
+        });
         const runtime = await startDaemonSessionControlRuntime({
             machineId: 'machine-usage-adoption-shutdown',
             credentials: {
@@ -11263,7 +11681,11 @@ describe('startDaemonSessionControlRuntime', () => {
             },
             api: {
                 getAccountEncryptionMode: vi.fn(async () => 'plain'),
-                registerProviderAccountUsageSnapshotPlain: vi.fn(async () => {}),
+                getConnectedServiceCredentialPlain: vi.fn(async () => ({
+                    content: { t: 'plain' as const, v: connectedCredential },
+                    revisionSemantics: 'revisioned' as const,
+                    credentialRevision,
+                })),
             } as never,
             loadLocalHandoffMetadataByVendorResumeId: vi.fn(),
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
@@ -11279,10 +11701,31 @@ describe('startDaemonSessionControlRuntime', () => {
             spawnResourceCleanupByPid: new Map(),
             sessionAttachCleanupByPid: new Map(),
             connectedServicesRestartRequestedPids: new Set(),
+            connectedServiceRuntimeRegistry: runtimeRegistry,
+            resolveQualifiedConnectedAccountV4Support: () => 'advertised',
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
             processEnv: {},
+        });
+        runtimeRegistry.registerTarget({
+            pid: 1234,
+            agentId: 'codex',
+            sessionId: 'sess_usage_adoption',
+            connectedServicesBindingsRaw: {
+                v: 1,
+                bindingsByServiceId: {
+                    'openai-codex': { source: 'connected', selection: 'profile', profileId: 'work' },
+                },
+            },
+            connectedServiceSelectionsEnv: {
+                [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: JSON.stringify([{
+                    kind: 'profile',
+                    serviceId: 'openai-codex',
+                    profileId: 'work',
+                    credentialRevision,
+                }]),
+            },
         });
 
         const controlServerInput = vi.mocked(startDaemonControlServer).mock.calls.at(-1)?.[0];
@@ -11340,6 +11783,7 @@ describe('startDaemonSessionControlRuntime', () => {
             sessionId: 'sess_usage_adoption',
             adoption,
         })).rejects.toThrow('provider_account_usage_persistence_disposed');
+        expect(writeProviderAccountUsage).not.toHaveBeenCalled();
         expect(updateSessionMetadataWithRetryMock).not.toHaveBeenCalled();
     });
 
@@ -11437,7 +11881,6 @@ describe('startDaemonSessionControlRuntime', () => {
         expect(registerLocalServicesRoutes).toHaveBeenCalledWith({
             localServicesInventory: controlServerInput?.localServicesInventory,
             localServicesLauncher: controlServerInput?.localServicesLauncher,
-            localServicesManaged: controlServerInput?.localServicesManaged,
             localServicesPreview: controlServerInput?.localServicesPreview,
             localServicesActions: controlServerInput?.localServicesActions,
             localServicesPublicPreview: controlServerInput?.localServicesPublicPreview,
@@ -11551,7 +11994,6 @@ describe('startDaemonSessionControlRuntime', () => {
             processEnv: {},
             ...({
                 browserSidecarControlAdapterFactory,
-                resolveBrowserUseAllowed: () => true,
                 browserDaemonFeatureGate: fakeBrowserGate({ 'browser.sidecar': true }),
             } satisfies Record<string, unknown>),
         });
@@ -11582,6 +12024,10 @@ describe('startDaemonSessionControlRuntime', () => {
     });
 
     it('registers privileged browser route owners only when the server feature gate is enabled', async () => {
+        // E2-F1: this fixture used to hand-feed `resolveBrowserUseAllowed: () => true`, a hook no
+        // production caller has ever passed, so it could never have caught the gate being dead in
+        // production. It now omits the hook exactly like production does. The full reasoning and
+        // the dedicated gate live on `starts the Browser sidecar from the feature gate alone`.
         vi.mocked(startDaemonControlServer).mockClear();
         const setBrowserDaemonContextRoutesProvider = vi.fn();
         const setBrowserDaemonAutomationRoutesProvider = vi.fn();
@@ -11628,7 +12074,6 @@ describe('startDaemonSessionControlRuntime', () => {
             ...({
                 browserSidecarControlAdapterFactory,
                 browserContextSourceFactory,
-                resolveBrowserUseAllowed: () => true,
                 browserDaemonFeatureGate: fakeBrowserGate({
                     'browser.sidecar': true,
                     'browser.context': true,
@@ -11656,11 +12101,11 @@ describe('startDaemonSessionControlRuntime', () => {
             | (() => { dispatch(actionId: string, input: unknown): Promise<unknown> })
             | undefined;
         const automationService = automationProvider?.();
-        const lease = await automationService?.dispatch('browser.automation.status', {
+        const statusResult = await automationService?.dispatch('browser.automation.status', {
             browserSessionId: 'browser_session_caps',
             viewId: 'view_caps',
         });
-        expect((lease as { status?: string })?.status).toBe('succeeded');
+        expect((statusResult as { status?: string })?.status).toBe('succeeded');
         const richSnapshot = await automationService?.dispatch('browser.automation.snapshot', {
             v: 1,
             automationRequestId: 'req_snapshot_caps',
@@ -11738,7 +12183,6 @@ describe('startDaemonSessionControlRuntime', () => {
                 browserSidecarControlAdapterFactory,
                 browserContextSourceFactory,
                 // Sidecar host on, but the server disables context + automation: no owner registers.
-                resolveBrowserUseAllowed: () => true,
                 browserDaemonFeatureGate: fakeBrowserGate({
                     'browser.sidecar': true,
                     'browser.context': false,
@@ -11822,7 +12266,6 @@ describe('startDaemonSessionControlRuntime', () => {
             ...({
                 browserSidecarControlAdapterFactory,
                 browserContextSourceFactory,
-                resolveBrowserUseAllowed: () => true,
                 browserDaemonFeatureGate,
             } satisfies Record<string, unknown>),
         });
@@ -11997,7 +12440,6 @@ describe('startDaemonSessionControlRuntime', () => {
             processEnv: {},
             ...({
                 browserSidecarControlAdapterFactory,
-                resolveBrowserUseAllowed: () => true,
                 browserDaemonFeatureGate: fakeBrowserGate({
                     'browser.sidecar': true,
                     'browser.diagnostics': true,
@@ -12115,7 +12557,6 @@ describe('startDaemonSessionControlRuntime', () => {
             processEnv: {},
             ...({
                 browserSidecarControlAdapterFactory,
-                resolveBrowserUseAllowed: () => true,
                 browserDaemonFeatureGate: fakeBrowserGate({
                     'browser.sidecar': true,
                     'browser.diagnostics': true,
@@ -12222,7 +12663,6 @@ describe('startDaemonSessionControlRuntime', () => {
             ...({
                 browserDaemonFeatureGate: fakeBrowserGate({ 'browser.sidecar': true }),
                 browserSidecarControlAdapterFactory,
-                resolveBrowserUseAllowed: () => true,
             } satisfies Record<string, unknown>),
         });
 
@@ -12270,7 +12710,26 @@ describe('startDaemonSessionControlRuntime', () => {
         expect(setBrowserDaemonControlRoutesProvider).not.toHaveBeenCalled();
     });
 
-    it('keeps Browser sidecar startup fail-closed when browser-use policy is absent', async () => {
+    it('starts the Browser sidecar from the feature gate alone — no browser-use policy producer exists (E2-F1)', async () => {
+        // INVERTED 2026-08-23. This test used to assert the opposite: that an absent browser-use
+        // policy keeps sidecar startup fail-closed. That was the defect written down as a contract.
+        // `startDaemonSessionControlRuntime` declared an optional `resolveBrowserUseAllowed` hook
+        // and gated the sidecar block on `params.resolveBrowserUseAllowed?.() === true`, but
+        // `git log -S resolveBrowserUseAllowed --all` finds that symbol, in EVERY commit of this
+        // repository's history, only inside the runtime file and this test — no production caller
+        // has ever passed it. The conjunct was therefore permanently `false`, and the block it
+        // gated holds the sole `browserControlBroker.registerAdapter` call plus the only
+        // assignments of `browserControlRoutes` / `browserContextRoutes` /
+        // `browserAutomationRoutes`. No agent could reach a daemon browser route at all.
+        //
+        // It is not a lost producer either: no `browserUse` policy owner exists anywhere in the
+        // product. Consent for agent-driven browser use is owned by the action-approval danger
+        // floor (every `browser.automation.*` id is listed in `protocol/src/actions/danger.ts`);
+        // the `browser.sidecar` server feature bit is the availability authority, and it is the
+        // only gate here now.
+        //
+        // This is the falsifiability gate for that removal: re-introducing any browser-use
+        // conjunct on the sidecar gate, without also inventing a producer, reddens this test.
         vi.mocked(startDaemonControlServer).mockClear();
         const setBrowserDaemonControlRoutesProvider = vi.fn();
         const browserSidecarControlAdapterFactory = vi.fn(() => ({
@@ -12314,11 +12773,11 @@ describe('startDaemonSessionControlRuntime', () => {
             } satisfies Record<string, unknown>),
         });
 
-        expect(browserSidecarControlAdapterFactory).not.toHaveBeenCalled();
-        expect(setBrowserDaemonControlRoutesProvider).not.toHaveBeenCalled();
+        expect(browserSidecarControlAdapterFactory).toHaveBeenCalledOnce();
+        expect(setBrowserDaemonControlRoutesProvider).toHaveBeenCalledWith(expect.any(Function));
 
         await runtime.stopControlServer();
-        expect(setBrowserDaemonControlRoutesProvider).not.toHaveBeenCalled();
+        expect(setBrowserDaemonControlRoutesProvider).toHaveBeenLastCalledWith(null);
     });
 
     it('registers Browser control routes only after the launch owner starts a sidecar and connects CDP', async () => {
@@ -12344,7 +12803,6 @@ describe('startDaemonSessionControlRuntime', () => {
             browserSessionId: 'browser_session_default',
             sidecarId: 'sidecar_startup_owner',
             featureEnabled: true,
-            browserUseAllowed: true,
             allowPersistentProfiles: false,
             profile: {
                 profileId: 'profile_startup_owner',
@@ -12395,7 +12853,6 @@ describe('startDaemonSessionControlRuntime', () => {
             browserSidecarControlAdapterFactory,
             ...({
                 browserDaemonFeatureGate: fakeBrowserGate({ 'browser.sidecar': true }),
-                resolveBrowserUseAllowed: () => true,
             } satisfies Record<string, unknown>),
         });
 
@@ -12485,7 +12942,6 @@ describe('startDaemonSessionControlRuntime', () => {
             platform: 'linux',
             arch: 'x64',
             featureEnabled: true,
-            browserUseAllowed: true,
             resolveManagedCandidate,
             createLaunchOwnerFactory,
         });
@@ -12517,7 +12973,6 @@ describe('startDaemonSessionControlRuntime', () => {
             processEnv: {},
             ...({
                 browserSidecarControlAdapterFactory,
-                resolveBrowserUseAllowed: () => true,
                 browserDaemonFeatureGate: fakeBrowserGate({ 'browser.sidecar': true }),
             } satisfies Record<string, unknown>),
         });
@@ -12998,7 +13453,6 @@ describe('startDaemonSessionControlRuntime', () => {
             processEnv: {},
             ...({
                 browserSidecarControlAdapterFactory,
-                resolveBrowserUseAllowed: () => true,
                 browserDaemonFeatureGate: fakeBrowserGate({
                     'browser.sidecar': true,
                     'browser.recording': true,
@@ -13655,21 +14109,6 @@ describe('startDaemonSessionControlRuntime', () => {
 
     it('keeps quota coordinator proof applies deduplicated while awaiting passive replay acknowledgement', async () => {
         applyConnectedServiceAuthGenerationToTrackedSessionMock.mockClear();
-        const currentGroup = {
-            v: 1,
-            serviceId: 'openai-codex' as const,
-            groupId: 'codex-main',
-            displayName: 'Codex main',
-            activeProfileId: 'backup',
-            generation: 8,
-            policy: { strategy: 'priority' as const, autoSwitch: true, recoveryMode: 'auto' as const },
-            state: { status: 'ready' as const },
-            createdAt: 1,
-            updatedAt: 1,
-            members: [],
-        } as const;
-        const listConnectedServiceAuthGroups = vi.fn(async () => ([currentGroup]));
-        const getConnectedServiceAuthGroup = vi.fn(async () => currentGroup);
         const connectedServiceRuntimeRegistry = new ConnectedServiceRuntimeRegistry();
         const tracked: TrackedSession = {
             startedBy: 'daemon',
@@ -13711,14 +14150,13 @@ describe('startDaemonSessionControlRuntime', () => {
             },
             api: {
                 listConnectedServiceProfiles: vi.fn(async () => ({ serviceId: 'openai-codex', profiles: [] })),
-                getConnectedServiceAuthGroup,
-                listConnectedServiceAuthGroups,
                 push: vi.fn(() => ({ sendPushNotification: vi.fn() })),
             } as never,
             loadLocalHandoffMetadataByVendorResumeId: vi.fn(),
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
+            resolveQualifiedConnectedAccountV4Support: () => 'advertised',
             connectedServiceRuntimeRegistry,
             pidToTrackedSession: new Map([[tracked.pid, tracked]]),
             pidToAwaiter: new Map(),
@@ -13771,13 +14209,13 @@ describe('startDaemonSessionControlRuntime', () => {
             activeProfileId: 'backup',
             generation: 7,
         });
-        const generation7Coordinator = createQuotaDrivenConnectedServiceAuthGroupSwitchCoordinatorMock.mock.results.at(-1)?.value as {
+        const generation7Coordinator = createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinatorMock.mock.results.at(-1)?.value as {
             switchBeforeTurn: ReturnType<typeof vi.fn>;
             applyCommittedGeneration: ReturnType<typeof vi.fn>;
         } | undefined;
         expect(generation7Coordinator?.applyCommittedGeneration).toHaveBeenCalledWith({
             sessionId: 'sess-quota-switch',
-            serviceId: 'openai-codex',
+            serviceId: CODEX_QUALIFIED_SERVICE,
             groupId: 'codex-main',
             activeProfileId: 'backup',
             generation: 7,
@@ -13797,12 +14235,13 @@ describe('startDaemonSessionControlRuntime', () => {
             status: 'observed_generation',
             generation: 8,
         });
-        const generation8Coordinator = createQuotaDrivenConnectedServiceAuthGroupSwitchCoordinatorMock.mock.results.at(-1)?.value as {
+        const generation8Coordinator = createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinatorMock.mock.results.at(-1)?.value as {
             applyCommittedGeneration: ReturnType<typeof vi.fn>;
         } | undefined;
         expect(generation7Coordinator?.applyCommittedGeneration).not.toHaveBeenCalled();
         expect(generation8Coordinator?.applyCommittedGeneration).toHaveBeenCalledWith(expect.objectContaining({
             sessionId: 'sess-quota-switch',
+            serviceId: CODEX_QUALIFIED_SERVICE,
             activeProfileId: 'backup',
             generation: 8,
             allowRestart: false,
@@ -13962,7 +14401,7 @@ describe('startDaemonSessionControlRuntime', () => {
         }));
 
         replayApplyCommittedGeneration.mockClear();
-        let generationCoordinatorCallsBeforeReplay = createQuotaDrivenConnectedServiceAuthGroupSwitchCoordinatorMock.mock.calls.length;
+        let generationCoordinatorCallsBeforeReplay = createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinatorMock.mock.calls.length;
         await expect(Promise.resolve(
             controlServerInputForReplay?.onHappySessionWebhook?.('sess-quota-switch', {
                 ...baseSessionMetadata,
@@ -13972,12 +14411,12 @@ describe('startDaemonSessionControlRuntime', () => {
             credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa',
             allowRestart: false,
         }));
-        expect(createQuotaDrivenConnectedServiceAuthGroupSwitchCoordinatorMock).toHaveBeenCalledTimes(
+        expect(createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinatorMock).toHaveBeenCalledTimes(
             generationCoordinatorCallsBeforeReplay + 1,
         );
 
         replayApplyCommittedGeneration.mockClear();
-        generationCoordinatorCallsBeforeReplay = createQuotaDrivenConnectedServiceAuthGroupSwitchCoordinatorMock.mock.calls.length;
+        generationCoordinatorCallsBeforeReplay = createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinatorMock.mock.calls.length;
         await expect(Promise.resolve(
             controlServerInputForReplay?.onHappySessionWebhook?.('sess-quota-switch', {
                 ...baseSessionMetadata,
@@ -14008,13 +14447,13 @@ describe('startDaemonSessionControlRuntime', () => {
             credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa',
             allowRestart: false,
         }));
-        expect(createQuotaDrivenConnectedServiceAuthGroupSwitchCoordinatorMock).toHaveBeenCalledTimes(
+        expect(createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinatorMock).toHaveBeenCalledTimes(
             generationCoordinatorCallsBeforeReplay + 1,
         );
 
         // Prove the mismatched envelope did not populate the projection cache before the exact-proof check.
         replayApplyCommittedGeneration.mockClear();
-        generationCoordinatorCallsBeforeReplay = createQuotaDrivenConnectedServiceAuthGroupSwitchCoordinatorMock.mock.calls.length;
+        generationCoordinatorCallsBeforeReplay = createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinatorMock.mock.calls.length;
         await expect(Promise.resolve(
             controlServerInputForReplay?.onHappySessionWebhook?.('sess-quota-switch', {
                 ...baseSessionMetadata,
@@ -14024,14 +14463,12 @@ describe('startDaemonSessionControlRuntime', () => {
             credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa',
             allowRestart: false,
         }));
-        expect(createQuotaDrivenConnectedServiceAuthGroupSwitchCoordinatorMock).toHaveBeenCalledTimes(
+        expect(createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinatorMock).toHaveBeenCalledTimes(
             generationCoordinatorCallsBeforeReplay + 1,
         );
 
         replayApplyCommittedGeneration.mockClear();
-        generationCoordinatorCallsBeforeReplay = createQuotaDrivenConnectedServiceAuthGroupSwitchCoordinatorMock.mock.calls.length;
-        listConnectedServiceAuthGroups.mockClear();
-        getConnectedServiceAuthGroup.mockClear();
+        generationCoordinatorCallsBeforeReplay = createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinatorMock.mock.calls.length;
         updateSessionMetadataWithRetryMock.mockClear();
         vi.mocked(callSessionRpc).mockClear();
         connectedServiceRuntimeRegistry.registerTarget({
@@ -14095,10 +14532,8 @@ describe('startDaemonSessionControlRuntime', () => {
         )).resolves.toBeUndefined();
         const accountProfileGetCalls = accountProfileGet.mock.calls.length;
         expect(replayApplyCommittedGeneration).not.toHaveBeenCalled();
-        expect(listConnectedServiceAuthGroups).not.toHaveBeenCalled();
-        expect(getConnectedServiceAuthGroup).not.toHaveBeenCalled();
         expect(accountProfileGetCalls).toBeGreaterThan(0);
-        expect(createQuotaDrivenConnectedServiceAuthGroupSwitchCoordinatorMock).toHaveBeenCalledTimes(
+        expect(createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinatorMock).toHaveBeenCalledTimes(
             generationCoordinatorCallsBeforeReplay,
         );
         expect(updateSessionMetadataWithRetryMock).not.toHaveBeenCalled();
@@ -14116,19 +14551,25 @@ describe('startDaemonSessionControlRuntime', () => {
         expect(commitSessionStoredMessageMock).not.toHaveBeenCalled();
         expect(dispatchActivityNotificationAsyncMock).not.toHaveBeenCalled();
 
-        const quotaCoordinatorInput = createQuotaDrivenConnectedServiceAuthGroupSwitchCoordinatorMock.mock.calls.at(-1)?.[0] as {
-            restartSession?: (input: {
-                serviceId: 'openai-codex';
+        const qualifiedCoordinatorInput = createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinatorMock.mock.calls.at(-1)?.[0] as {
+            applyGeneration?: (input: {
+                serviceId: typeof CODEX_QUALIFIED_SERVICE;
                 groupId: string;
-                activeProfileId: string | null;
+                activeProfileId: string;
                 generation: number;
-            }) => Promise<void>;
+                credentialRevision?: string | null;
+                reason?: string;
+                sessionId?: string;
+            }) => Promise<unknown>;
         };
-        await quotaCoordinatorInput.restartSession?.({
-            serviceId: 'openai-codex',
+        await qualifiedCoordinatorInput.applyGeneration?.({
+            serviceId: CODEX_QUALIFIED_SERVICE,
             groupId: 'codex-main',
             activeProfileId: 'backup',
             generation: 7,
+            sessionId: 'sess-quota-switch',
+            credentialRevision: null,
+            reason: 'soft_threshold',
         });
 
         const applyInput = applyConnectedServiceAuthGenerationToTrackedSessionMock.mock.calls.at(-1)?.[0] as {
@@ -14767,6 +15208,22 @@ describe('startDaemonSessionControlRuntime', () => {
             signalCode: null as NodeJS.Signals | null,
             kill: vi.fn(() => true),
         };
+        const apiMachine = {
+            captureMachineSessionTerminal: vi.fn(async (capturedSessionId: string) => ({
+                v: 1 as const,
+                status: 'captured' as const,
+                sessionId: capturedSessionId,
+                authority: { kind: 'generation' as const, publisherGeneration: '1' },
+            })),
+            finalizeMachineSessionTerminal: vi.fn(async ({ sessionId: finalizedSessionId }: { sessionId: string }) => ({
+                v: 1 as const,
+                status: 'closed' as const,
+                sessionId: finalizedSessionId,
+            })),
+            getSessionSyncPendingInputServerContractResult: vi.fn(() => null),
+            registerLocalServicesRoutes: vi.fn(),
+            registerSimulatorPreviewRoutes: vi.fn(),
+        };
         const pidToTrackedSession = new Map<number, TrackedSession>([[
             pid,
             {
@@ -14904,7 +15361,7 @@ describe('startDaemonSessionControlRuntime', () => {
                 pidToAwaiter: new Map(),
                 pidToSpawnResultResolver: new Map(),
                 pidToSpawnWebhookTimeout: new Map(),
-                getApiMachineForSessions: () => null,
+                getApiMachineForSessions: () => apiMachine as never,
                 spawnResourceCleanupByPid: new Map(),
                 sessionAttachCleanupByPid: new Map(),
                 connectedServicesRestartRequestedPids: new Set(),
@@ -16270,20 +16727,28 @@ describe('startDaemonSessionControlRuntime', () => {
             id: 'sess-connected-service-runtime-refresh',
             encryptionMode: 'plain',
             metadata: JSON.stringify({
-                flavor: 'claude',
-                claudeSessionId: 'claude-fresh-thread',
+                flavor: 'codex',
+                codexSessionId: 'codex-fresh-thread',
+                runtimeDescriptorV1: {
+                    v: 1,
+                    agentId: 'codex',
+                    agent: {
+                        backendMode: 'acp',
+                        providerSessionId: 'codex-fresh-thread',
+                    },
+                },
                 path: '/tmp/project',
                 permissionMode: 'yolo',
                 permissionModeUpdatedAt: 500,
                 sessionModeOverrideV1: { v: 1, updatedAt: 501, modeId: 'plan' },
-                modelOverrideV1: { v: 1, updatedAt: 502, modelId: 'claude-opus-4-7' },
+                modelOverrideV1: { v: 1, updatedAt: 502, modelId: 'gpt-5.1' },
                 connectedServices: {
                     v: 1,
                     bindingsByServiceId: {
-                        'claude-subscription': {
+                        'openai-codex': {
                             source: 'connected',
                             selection: 'profile',
-                            profileId: 'fresh-claude-profile',
+                            profileId: 'fresh-codex-profile',
                         },
                     },
                 },
@@ -16302,10 +16767,10 @@ describe('startDaemonSessionControlRuntime', () => {
                     startedBy: 'daemon',
                     happySessionId: 'sess-connected-service-runtime-refresh',
                     pid: 9998,
-                    vendorResumeId: 'claude-stale-thread',
+                    vendorResumeId: 'codex-stale-thread',
                     spawnOptions: {
                         directory: '/tmp/project',
-                        backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
+                        backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
                         existingSessionId: 'sess-connected-service-runtime-refresh',
                         permissionMode: 'default',
                         permissionModeUpdatedAt: 100,
@@ -16357,18 +16822,26 @@ describe('startDaemonSessionControlRuntime', () => {
                         v: 1,
                         updatedAt: 502,
                         ref: {
-                            agentTargetKey: 'backend:claude',
+                            agentTargetKey: 'backend:codex',
                             providerConnectionId: null,
-                            modelId: 'claude-opus-4-7',
+                            modelId: 'gpt-5.1',
+                        },
+                    },
+                    runtimeDescriptorV1: {
+                        v: 1,
+                        agentId: 'codex',
+                        agent: {
+                            backendMode: 'acp',
+                            providerSessionId: 'codex-fresh-thread',
                         },
                     },
                     connectedServices: {
                         v: 1,
                         bindingsByServiceId: {
-                            'claude-subscription': {
+                            'openai-codex': {
                                 source: 'connected',
                                 selection: 'profile',
-                                profileId: 'fresh-claude-profile',
+                                profileId: 'fresh-codex-profile',
                             },
                         },
                     },
@@ -16376,6 +16849,9 @@ describe('startDaemonSessionControlRuntime', () => {
             }));
         });
         expect(vi.mocked(executeSpawnSessionRequest).mock.calls[0]?.[0].options).not.toHaveProperty('resume');
+        expect(logger.warn).not.toHaveBeenCalledWith(
+            '[DAEMON RUN] Respawn suppressed for session sess-connected-service-runtime-refresh (resume not supported)',
+        );
 
         vi.mocked(executeSpawnSessionRequest).mockClear();
         await runtime.stopControlServer();
@@ -17736,7 +18212,7 @@ describe('startDaemonSessionControlRuntime', () => {
     });
 
     it('applies automatic auth-group generations through the shared session auth primitive', async () => {
-        createDaemonConnectedServiceAuthGroupSwitchCoordinatorMock.mockClear();
+        createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinatorMock.mockClear();
         handleConnectedServiceRuntimeAuthFailureForSessionMock.mockClear();
         requestConnectedServiceSessionRestartSignalMock.mockClear();
         applyConnectedServiceAuthGenerationToTrackedSessionMock.mockClear();
@@ -17769,8 +18245,6 @@ describe('startDaemonSessionControlRuntime', () => {
                 encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
             },
             api: {
-                getConnectedServiceAuthGroup: vi.fn(),
-                updateConnectedServiceAuthGroupActiveProfile: vi.fn(),
                 listConnectedServiceProfiles: vi.fn(),
                 push: vi.fn(() => ({ sendPushNotification: vi.fn() })),
             } as never,
@@ -17778,6 +18252,7 @@ describe('startDaemonSessionControlRuntime', () => {
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
+            resolveQualifiedConnectedAccountV4Support: () => 'advertised',
             pidToTrackedSession: new Map([[tracked.pid, tracked]]),
             pidToAwaiter: new Map(),
             pidToSpawnResultResolver: new Map(),
@@ -17808,19 +18283,25 @@ describe('startDaemonSessionControlRuntime', () => {
             },
         });
 
-        const coordinatorInput = createDaemonConnectedServiceAuthGroupSwitchCoordinatorMock.mock.calls.at(-1)?.[0] as {
-            restartSession?: (input: {
-                serviceId: 'openai-codex';
+        const coordinatorInput = createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinatorMock.mock.calls.at(-1)?.[0] as {
+            applyGeneration?: (input: {
+                serviceId: typeof CODEX_QUALIFIED_SERVICE;
                 groupId: string;
-                activeProfileId: string | null;
+                activeProfileId: string;
                 generation: number;
-            }) => Promise<void>;
+                credentialRevision?: string | null;
+                reason?: string;
+                sessionId?: string;
+            }) => Promise<unknown>;
         };
-        await coordinatorInput.restartSession?.({
-            serviceId: 'openai-codex',
+        await coordinatorInput.applyGeneration?.({
+            serviceId: CODEX_QUALIFIED_SERVICE,
             groupId: 'codex-main',
             activeProfileId: 'backup',
             generation: 4,
+            sessionId: 'sess-runtime',
+            credentialRevision: null,
+            reason: 'automatic_runtime_failure',
         });
 
         expect(applyConnectedServiceAuthGenerationToTrackedSessionMock).toHaveBeenCalledWith(expect.objectContaining({
@@ -17938,7 +18419,7 @@ describe('startDaemonSessionControlRuntime', () => {
     });
 
     it('applies inactive auth-group generations through the shared session auth primitive', async () => {
-        createDaemonConnectedServiceAuthGroupSwitchCoordinatorMock.mockClear();
+        createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinatorMock.mockClear();
         handleConnectedServiceRuntimeAuthFailureForSessionMock.mockClear();
         requestConnectedServiceSessionRestartSignalMock.mockClear();
         applyConnectedServiceAuthGenerationToTrackedSessionMock.mockClear();
@@ -17971,14 +18452,13 @@ describe('startDaemonSessionControlRuntime', () => {
                 encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
             },
             api: {
-                getConnectedServiceAuthGroup: vi.fn(),
-                updateConnectedServiceAuthGroupActiveProfile: vi.fn(),
                 listConnectedServiceProfiles: vi.fn(),
             } as never,
             loadLocalHandoffMetadataByVendorResumeId: vi.fn(),
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
+            resolveQualifiedConnectedAccountV4Support: () => 'advertised',
             pidToTrackedSession: new Map(),
             pidToAwaiter: new Map(),
             pidToSpawnResultResolver: new Map(),
@@ -18009,19 +18489,25 @@ describe('startDaemonSessionControlRuntime', () => {
             },
         });
 
-        const coordinatorInput = createDaemonConnectedServiceAuthGroupSwitchCoordinatorMock.mock.calls.at(-1)?.[0] as {
-            restartSession?: (input: {
-                serviceId: 'openai-codex';
+        const coordinatorInput = createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinatorMock.mock.calls.at(-1)?.[0] as {
+            applyGeneration?: (input: {
+                serviceId: typeof CODEX_QUALIFIED_SERVICE;
                 groupId: string;
-                activeProfileId: string | null;
+                activeProfileId: string;
                 generation: number;
+                credentialRevision?: string | null;
+                reason?: string;
+                sessionId?: string;
             }) => Promise<unknown>;
         };
-        await expect(coordinatorInput.restartSession?.({
-            serviceId: 'openai-codex',
+        await expect(coordinatorInput.applyGeneration?.({
+            serviceId: CODEX_QUALIFIED_SERVICE,
             groupId: 'codex-main',
             activeProfileId: 'backup',
             generation: 4,
+            sessionId: 'sess-runtime-inactive',
+            credentialRevision: null,
+            reason: 'automatic_runtime_failure',
         })).resolves.toMatchObject({ ok: true });
 
         expect(applyConnectedServiceAuthGenerationToTrackedSessionMock).toHaveBeenCalledWith(expect.objectContaining({
@@ -18049,7 +18535,7 @@ describe('startDaemonSessionControlRuntime', () => {
     });
 
     it('passes active PI resume context from tracked spawn options into automatic switch continuity', async () => {
-        createDaemonConnectedServiceAuthGroupSwitchCoordinatorMock.mockClear();
+        createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinatorMock.mockClear();
         handleConnectedServiceRuntimeAuthFailureForSessionMock.mockClear();
         applyConnectedServiceAuthGenerationToTrackedSessionMock.mockClear();
         resolveConnectedServiceSwitchContinuityMock.mockClear();
@@ -18084,14 +18570,13 @@ describe('startDaemonSessionControlRuntime', () => {
                 encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
             },
             api: {
-                getConnectedServiceAuthGroup: vi.fn(),
-                updateConnectedServiceAuthGroupActiveProfile: vi.fn(),
                 listConnectedServiceProfiles: vi.fn(),
             } as never,
             loadLocalHandoffMetadataByVendorResumeId: vi.fn(),
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
+            resolveQualifiedConnectedAccountV4Support: () => 'advertised',
             pidToTrackedSession: new Map([[tracked.pid, tracked]]),
             pidToAwaiter: new Map(),
             pidToSpawnResultResolver: new Map(),
@@ -18122,19 +18607,25 @@ describe('startDaemonSessionControlRuntime', () => {
             },
         });
 
-        const coordinatorInput = createDaemonConnectedServiceAuthGroupSwitchCoordinatorMock.mock.calls.at(-1)?.[0] as {
-            restartSession?: (input: {
-                serviceId: 'openai-codex';
+        const coordinatorInput = createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinatorMock.mock.calls.at(-1)?.[0] as {
+            applyGeneration?: (input: {
+                serviceId: typeof CODEX_QUALIFIED_SERVICE;
                 groupId: string;
-                activeProfileId: string | null;
+                activeProfileId: string;
                 generation: number;
-            }) => Promise<void>;
+                credentialRevision?: string | null;
+                reason?: string;
+                sessionId?: string;
+            }) => Promise<unknown>;
         };
-        await coordinatorInput.restartSession?.({
-            serviceId: 'openai-codex',
+        await coordinatorInput.applyGeneration?.({
+            serviceId: CODEX_QUALIFIED_SERVICE,
             groupId: 'codex-main',
             activeProfileId: 'backup',
             generation: 4,
+            sessionId: 'sess-pi-runtime',
+            credentialRevision: null,
+            reason: 'automatic_runtime_failure',
         });
 
         const applyCalls = applyConnectedServiceAuthGenerationToTrackedSessionMock.mock.calls as unknown as ReadonlyArray<readonly [{
@@ -18191,7 +18682,7 @@ describe('startDaemonSessionControlRuntime', () => {
     });
 
     it('returns typed automatic auth-group apply failures from the shared session auth primitive', async () => {
-        createDaemonConnectedServiceAuthGroupSwitchCoordinatorMock.mockClear();
+        createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinatorMock.mockClear();
         handleConnectedServiceRuntimeAuthFailureForSessionMock.mockClear();
         requestConnectedServiceSessionRestartSignalMock.mockClear();
         const applyResult = {
@@ -18238,14 +18729,13 @@ describe('startDaemonSessionControlRuntime', () => {
                 encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
             },
             api: {
-                getConnectedServiceAuthGroup: vi.fn(),
-                updateConnectedServiceAuthGroupActiveProfile: vi.fn(),
                 listConnectedServiceProfiles: vi.fn(),
             } as never,
             loadLocalHandoffMetadataByVendorResumeId: vi.fn(),
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
+            resolveQualifiedConnectedAccountV4Support: () => 'advertised',
             pidToTrackedSession: new Map([[tracked.pid, tracked]]),
             pidToAwaiter: new Map(),
             pidToSpawnResultResolver: new Map(),
@@ -18276,25 +18766,31 @@ describe('startDaemonSessionControlRuntime', () => {
             },
         });
 
-        const coordinatorInput = createDaemonConnectedServiceAuthGroupSwitchCoordinatorMock.mock.calls.at(-1)?.[0] as {
-            restartSession?: (input: {
-                serviceId: 'openai-codex';
+        const coordinatorInput = createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinatorMock.mock.calls.at(-1)?.[0] as {
+            applyGeneration?: (input: {
+                serviceId: typeof CODEX_QUALIFIED_SERVICE;
                 groupId: string;
-                activeProfileId: string | null;
+                activeProfileId: string;
                 generation: number;
+                credentialRevision?: string | null;
+                reason?: string;
+                sessionId?: string;
             }) => Promise<unknown>;
         };
-        await expect(coordinatorInput.restartSession?.({
-            serviceId: 'openai-codex',
+        await expect(coordinatorInput.applyGeneration?.({
+            serviceId: CODEX_QUALIFIED_SERVICE,
             groupId: 'codex-main',
             activeProfileId: 'backup',
             generation: 4,
+            sessionId: 'sess-runtime',
+            credentialRevision: null,
+            reason: 'automatic_runtime_failure',
         })).resolves.toEqual(applyResult);
         expect(requestConnectedServiceSessionRestartSignalMock).not.toHaveBeenCalled();
     });
 
     it('returns typed automatic auth-group apply failure when the tracked child is missing', async () => {
-        createDaemonConnectedServiceAuthGroupSwitchCoordinatorMock.mockClear();
+        createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinatorMock.mockClear();
         handleConnectedServiceRuntimeAuthFailureForSessionMock.mockClear();
         requestConnectedServiceSessionRestartSignalMock.mockClear();
         applyConnectedServiceAuthGenerationToTrackedSessionMock.mockClear();
@@ -18308,14 +18804,13 @@ describe('startDaemonSessionControlRuntime', () => {
                 encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
             },
             api: {
-                getConnectedServiceAuthGroup: vi.fn(),
-                updateConnectedServiceAuthGroupActiveProfile: vi.fn(),
                 listConnectedServiceProfiles: vi.fn(),
             } as never,
             loadLocalHandoffMetadataByVendorResumeId: vi.fn(),
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
+            resolveQualifiedConnectedAccountV4Support: () => 'advertised',
             pidToTrackedSession: new Map(),
             pidToAwaiter: new Map(),
             pidToSpawnResultResolver: new Map(),
@@ -18346,19 +18841,25 @@ describe('startDaemonSessionControlRuntime', () => {
             },
         });
 
-        const coordinatorInput = createDaemonConnectedServiceAuthGroupSwitchCoordinatorMock.mock.calls.at(-1)?.[0] as {
-            restartSession?: (input: {
-                serviceId: 'openai-codex';
+        const coordinatorInput = createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinatorMock.mock.calls.at(-1)?.[0] as {
+            applyGeneration?: (input: {
+                serviceId: typeof CODEX_QUALIFIED_SERVICE;
                 groupId: string;
-                activeProfileId: string | null;
+                activeProfileId: string;
                 generation: number;
+                credentialRevision?: string | null;
+                reason?: string;
+                sessionId?: string;
             }) => Promise<unknown>;
         };
-        await expect(coordinatorInput.restartSession?.({
-            serviceId: 'openai-codex',
+        await expect(coordinatorInput.applyGeneration?.({
+            serviceId: CODEX_QUALIFIED_SERVICE,
             groupId: 'codex-main',
             activeProfileId: 'backup',
             generation: 4,
+            sessionId: 'sess-runtime',
+            credentialRevision: null,
+            reason: 'automatic_runtime_failure',
         })).resolves.toEqual({
             ok: false,
             errorCode: 'session_not_found',
@@ -18370,7 +18871,7 @@ describe('startDaemonSessionControlRuntime', () => {
     });
 
     it('returns typed automatic auth-group apply failure after deferred fallback restart signals at turn boundary', async () => {
-        createDaemonConnectedServiceAuthGroupSwitchCoordinatorMock.mockClear();
+        createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinatorMock.mockClear();
         handleConnectedServiceRuntimeAuthFailureForSessionMock.mockClear();
         requestConnectedServiceSessionRestartSignalMock.mockClear();
         applyConnectedServiceAuthGenerationToTrackedSessionMock.mockClear();
@@ -18402,14 +18903,13 @@ describe('startDaemonSessionControlRuntime', () => {
                 encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
             },
             api: {
-                getConnectedServiceAuthGroup: vi.fn(),
-                updateConnectedServiceAuthGroupActiveProfile: vi.fn(),
                 listConnectedServiceProfiles: vi.fn(),
             } as never,
             loadLocalHandoffMetadataByVendorResumeId: vi.fn(),
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
+            resolveQualifiedConnectedAccountV4Support: () => 'advertised',
             pidToTrackedSession: new Map([[tracked.pid, tracked]]),
             pidToAwaiter: new Map(),
             pidToSpawnResultResolver: new Map(),
@@ -18444,19 +18944,25 @@ describe('startDaemonSessionControlRuntime', () => {
             event: 'prompt_or_steer',
         });
 
-        const coordinatorInput = createDaemonConnectedServiceAuthGroupSwitchCoordinatorMock.mock.calls.at(-1)?.[0] as {
-            restartSession?: (input: {
-                serviceId: 'openai-codex';
+        const coordinatorInput = createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinatorMock.mock.calls.at(-1)?.[0] as {
+            applyGeneration?: (input: {
+                serviceId: typeof CODEX_QUALIFIED_SERVICE;
                 groupId: string;
-                activeProfileId: string | null;
+                activeProfileId: string;
                 generation: number;
+                credentialRevision?: string | null;
+                reason?: string;
+                sessionId?: string;
             }) => Promise<unknown>;
         };
-        const pendingRestart = coordinatorInput.restartSession?.({
-            serviceId: 'openai-codex',
+        const pendingRestart = coordinatorInput.applyGeneration?.({
+            serviceId: CODEX_QUALIFIED_SERVICE,
             groupId: 'codex-main',
             activeProfileId: 'backup',
             generation: 4,
+            sessionId: 'sess-runtime',
+            credentialRevision: null,
+            reason: 'automatic_runtime_failure',
         });
         expect(requestConnectedServiceSessionRestartSignalMock).not.toHaveBeenCalled();
 
@@ -19078,7 +19584,7 @@ describe('startDaemonSessionControlRuntime', () => {
     });
 
     it('emits account-switch notifications and transcript events from the canonical runtime-auth session switch event', async () => {
-        createDaemonConnectedServiceAuthGroupSwitchCoordinatorMock.mockClear();
+        createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinatorMock.mockClear();
         handleConnectedServiceRuntimeAuthFailureForSessionMock.mockClear();
         dispatchActivityNotificationAsyncMock.mockClear();
         fetchSessionByIdMock.mockClear();
@@ -19091,8 +19597,6 @@ describe('startDaemonSessionControlRuntime', () => {
                 encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
             },
             api: {
-                getConnectedServiceAuthGroup: vi.fn(),
-                updateConnectedServiceAuthGroupActiveProfile: vi.fn(),
                 push: vi.fn(() => ({ sendPushNotification: vi.fn() })),
                 listConnectedServiceProfiles: vi.fn(async () => ({
                     serviceId: 'openai-codex',
@@ -19106,6 +19610,7 @@ describe('startDaemonSessionControlRuntime', () => {
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
+            resolveQualifiedConnectedAccountV4Support: () => 'advertised',
             pidToTrackedSession: new Map(),
             pidToAwaiter: new Map(),
             pidToSpawnResultResolver: new Map(),
@@ -19142,28 +19647,13 @@ describe('startDaemonSessionControlRuntime', () => {
             },
         });
 
-        const coordinatorInput = createDaemonConnectedServiceAuthGroupSwitchCoordinatorMock.mock.calls.at(-1)?.[0] as {
+        const coordinatorInput = createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinatorMock.mock.calls.at(-1)?.[0] as {
             emitEvent?: (event: unknown) => void;
         };
         const runtimeHandlerInput = handleConnectedServiceRuntimeAuthFailureForSessionMock.mock.calls.at(-1)?.[0] as {
             emitSessionEvent?: (sessionId: string, event: unknown) => void;
         } | undefined;
-        coordinatorInput.emitEvent?.({
-            type: 'connected_service_auth_group_switch',
-            success: true,
-            resultStatus: 'switched',
-            serviceId: 'openai-codex',
-            groupId: 'codex-main',
-            fromProfileId: 'primary',
-            toProfileId: 'backup',
-            reason: 'usage_limit',
-            fromGeneration: 6,
-            toGeneration: 7,
-            limitCategory: 'usage_limit',
-            retryAfterMs: 30_000,
-            quotaScope: 'account',
-            providerLimitId: 'weekly',
-        });
+        expect(coordinatorInput.emitEvent).toBeUndefined();
 
         await Promise.resolve();
         expect(commitSessionStoredMessageMock).not.toHaveBeenCalled();
@@ -19262,10 +19752,13 @@ describe('startDaemonSessionControlRuntime', () => {
                 },
             ],
         ]);
-        const listConnectedServiceProfiles = vi.fn(async () => ({
-            serviceId: 'gemini' as const,
-            profiles: [{ profileId: 'gemini-work', status: 'connected' as const }],
-        }));
+    const listConnectedServiceProfiles = vi.fn(async () => ({
+        serviceId: 'gemini' as const,
+        profiles: [{ profileId: 'gemini-work', status: 'connected' as const }],
+    }));
+        resolveConnectedServiceSwitchContinuityMock.mockResolvedValueOnce({
+            mode: 'restart_same_home',
+        });
 
         await startDaemonSessionControlRuntime({
             machineId: 'machine-1',

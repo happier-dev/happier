@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
 import { resolveLocalServiceActionEligibility } from './policy';
-import type { NormalizedLocalServiceInventoryEntry } from '../inventory/scanner';
-import type { ManagedLocalServiceRuntimeState } from '../managed/registry';
+import {
+    normalizeLocalServiceScan,
+    type NormalizedLocalServiceInventoryEntry,
+} from '../inventory/scanner';
 
 function entry(overrides: Partial<NormalizedLocalServiceInventoryEntry> = {}): NormalizedLocalServiceInventoryEntry {
     return {
@@ -35,20 +37,6 @@ function entry(overrides: Partial<NormalizedLocalServiceInventoryEntry> = {}): N
                 association: 'cwd_containment',
             },
         },
-        ...overrides,
-    };
-}
-
-function managedService(overrides: Partial<ManagedLocalServiceRuntimeState> = {}): ManagedLocalServiceRuntimeState {
-    return {
-        id: 'plugin-a:web',
-        owner: { kind: 'plugin', pluginId: 'plugin-a' },
-        phase: 'running',
-        launchMode: 'detectAfterLaunch',
-        minimumConfidence: 'medium',
-        process: { pid: 300, startedAt: 1_000 },
-        routeName: 'plugin-a-web',
-        diagnostics: [],
         ...overrides,
     };
 }
@@ -91,6 +79,48 @@ describe('resolveLocalServiceActionEligibility', () => {
         })).toMatchObject({ enabled: false, reasonCode: 'ownership_not_established' });
     });
 
+    // The previous version of this suite hand-built a `low` confidence *with* populated
+    // provenance — a combination the scanner cannot emit — so it would have passed against an
+    // implementation that deleted the ownership check outright. These cases drive the real
+    // scanner so the entry/confidence pairs are provably reachable.
+    it('refuses termination for scanner-produced rows the daemon cannot establish ownership of', () => {
+        const scanned = (processOwnership: 'self' | 'other' | undefined) => normalizeLocalServiceScan({
+            machineId: 'machine-a',
+            now: 1_000,
+            previous: null,
+            listeners: [{ address: '127.0.0.1', port: 5173, protocol: 'tcp', pid: 400 }],
+            processes: new Map([[400, {
+                pid: 400,
+                command: 'node ./node_modules/vite/bin/vite.js',
+                cwd: '/repo/web',
+                ...(processOwnership ? { processOwnership } : {}),
+            }]]),
+            workspaces: [{ path: '/repo' }],
+        }).entries[0] as NormalizedLocalServiceInventoryEntry;
+
+        const decisionFor = (processOwnership: 'self' | 'other' | undefined) =>
+            resolveLocalServiceActionEligibility({
+                action: 'terminate_detected',
+                target: { kind: 'inventory_entry', entry: scanned(processOwnership) },
+                terminateEnabled: true,
+            });
+
+        // Same OS user: the daemon owns it and may terminate it.
+        expect(decisionFor('self')).toMatchObject({ enabled: true });
+        // Another user's process (the cross-user case Linux/Windows machine-wide scans expose).
+        expect(decisionFor('other')).toMatchObject({
+            enabled: false,
+            reasonCode: 'ownership_not_established',
+        });
+        // Ownership unproven: fail closed rather than repeat the old "has a pid" gate. A
+        // workspace association alone must not rescue it.
+        expect(scanned(undefined).workspaceAssociationConfidence).toBe('high');
+        expect(decisionFor(undefined)).toMatchObject({
+            enabled: false,
+            reasonCode: 'ownership_not_established',
+        });
+    });
+
     it('allows detected termination only with explicit terminate policy and current owned process facts', () => {
         expect(resolveLocalServiceActionEligibility({
             action: 'terminate_detected',
@@ -110,55 +140,15 @@ describe('resolveLocalServiceActionEligibility', () => {
         });
     });
 
-    it('denies managed stop/restart until execution hooks are explicitly available', () => {
-        expect(resolveLocalServiceActionEligibility({
-            action: 'stop_managed',
-            target: {
-                kind: 'managed_service',
-                service: managedService(),
-            },
-            terminateEnabled: false,
-        })).toMatchObject({
-            enabled: false,
-            reasonCode: 'managed_stop_unavailable',
-            requiresConfirmation: true,
-            auditRequired: true,
-        });
-
-        expect(resolveLocalServiceActionEligibility({
-            action: 'restart_managed',
-            target: {
-                kind: 'managed_service',
-                service: managedService(),
-            },
-            terminateEnabled: false,
-        })).toMatchObject({
-            enabled: false,
-            reasonCode: 'managed_restart_unavailable',
-            requiresConfirmation: true,
-            auditRequired: true,
-        });
-
-        expect(resolveLocalServiceActionEligibility({
-            action: 'stop_managed',
-            target: { kind: 'inventory_entry', entry: entry() },
-            terminateEnabled: false,
-        })).toMatchObject({ enabled: false, reasonCode: 'wrong_target_kind' });
-    });
-
-    it('allows managed stop only when a managed stop executor is present', () => {
-        expect(resolveLocalServiceActionEligibility({
-            action: 'stop_managed',
-            target: {
-                kind: 'managed_service',
-                service: managedService(),
-            },
-            terminateEnabled: false,
-            managedStopEnabled: true,
-        })).toMatchObject({
-            enabled: true,
-            requiresConfirmation: true,
-            auditRequired: true,
-        });
+    // Lane B3 removed the managed local-service runtime (DEC-6); the published action kinds
+    // survive in the catalog with no target kind to resolve, so both are flat denials.
+    it('denies the surviving managed action kinds now that no managed target exists', () => {
+        for (const action of ['stop_managed', 'restart_managed'] as const) {
+            expect(resolveLocalServiceActionEligibility({
+                action,
+                target: { kind: 'inventory_entry', entry: entry() },
+                terminateEnabled: false,
+            })).toMatchObject({ enabled: false, reasonCode: 'wrong_target_kind' });
+        }
     });
 });

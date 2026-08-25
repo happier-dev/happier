@@ -70,7 +70,7 @@ describe('browser automation action runtime', () => {
 
   it('advances navigation generation accounting for a mutating navigate action', async () => {
     const { result, timelineEntry } = await executeBrowserAutomationAction({
-      request: request({ actionKind: 'navigate', leaseId: 'lease_1', payload: { url: 'https://x.test/' } }),
+      request: request({ actionKind: 'navigate', payload: { url: 'https://x.test/' } }),
       adapter: adapter({ status: 'succeeded', fidelity: 'cdp', trustedInput: false }),
       controlEpoch: 3,
       navigationGenerationBefore: 5,

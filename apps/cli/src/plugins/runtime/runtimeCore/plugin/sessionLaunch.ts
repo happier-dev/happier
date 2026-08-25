@@ -35,6 +35,7 @@ export type PluginSessionBindingInput = Readonly<{
     credentials: StoredCredentials;
     sessionCreationTag?: SessionCreationTagV1;
     sessionCreationCorrespondence?: SessionCreationCorrespondenceV1;
+    initialTitle?: string;
     bootstrap: Readonly<{
         workingDirectory?: string;
         target?: BackendTargetRefV2Input;
@@ -87,7 +88,7 @@ export type PluginSessionLaunchParams = Readonly<{
     metadata: Readonly<Record<string, unknown>>;
 }> & Omit<
     PluginSessionBindingInput,
-    'sessionCreationTag' | 'sessionCreationCorrespondence'
+    'sessionCreationTag' | 'sessionCreationCorrespondence' | 'initialTitle'
 >;
 
 export type PluginSessionLaunchHandler = (
@@ -98,6 +99,7 @@ export type PluginHostSessionRuntimeOptions = Readonly<{
     credentials: StoredCredentials;
     sessionCreationTag?: SessionCreationTagV1;
     sessionCreationCorrespondence?: SessionCreationCorrespondenceV1;
+    initialTitle?: string;
     directory?: string;
     backendTarget?: BackendTargetRefV2Input;
     startedBy?: 'daemon' | 'terminal';
@@ -274,6 +276,7 @@ export function buildPluginSessionBindingInput(raw: unknown): PluginSessionBindi
 
     const modelSelection = readModelSelection(raw);
     const nativeForkSource = readNativeForkSource(raw.nativeForkSource);
+    const initialTitle = readOptionalString(raw.initialTitle);
     const parsedSessionCreationTag = raw.sessionCreationTag === undefined
         ? null
         : SessionCreationTagV1Schema.safeParse(raw.sessionCreationTag);
@@ -322,6 +325,7 @@ export function buildPluginSessionBindingInput(raw: unknown): PluginSessionBindi
         ...(parsedSessionCreationCorrespondence?.success
             ? { sessionCreationCorrespondence: parsedSessionCreationCorrespondence.data }
             : {}),
+        ...(initialTitle ? { initialTitle } : {}),
         bootstrap: Object.freeze({
             ...(readOptionalString(raw.directory) ? { workingDirectory: readOptionalString(raw.directory) } : {}),
             ...(isRecord(raw.backendTarget) ? { target: raw.backendTarget as BackendTargetRefV2Input } : {}),
@@ -401,6 +405,7 @@ export function buildPluginSessionLaunchParams(params: Readonly<{
     const {
         sessionCreationTag: _sessionCreationTag,
         sessionCreationCorrespondence: _sessionCreationCorrespondence,
+        initialTitle: _initialTitle,
         ...launchInput
     } = params.input;
     return Object.freeze({
@@ -426,6 +431,7 @@ export function buildPluginHostSessionRuntimeOptions(
         ...(input.sessionCreationCorrespondence
             ? { sessionCreationCorrespondence: input.sessionCreationCorrespondence }
             : {}),
+        ...(input.initialTitle ? { initialTitle: input.initialTitle } : {}),
         ...(typeof input.bootstrap.workingDirectory === 'string' ? { directory: input.bootstrap.workingDirectory } : {}),
         ...(input.bootstrap.target ? { backendTarget: input.bootstrap.target } : {}),
         ...(input.bootstrap.source ? { startedBy: input.bootstrap.source } : {}),

@@ -402,10 +402,6 @@ describe('registerPeerMediationMachineRpcDirectRoutes V2 grant admission', () =>
                 },
             }],
             resolveAuthorizationFacts: (action) => ({
-                packageTrust: {
-                    packageIdentity: action.qualifiedId,
-                    reviewedPackageIdentity: action.qualifiedId,
-                },
                 generation: {
                     targetGeneration: action.generation,
                     desiredGeneration: action.generation,

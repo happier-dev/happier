@@ -230,12 +230,17 @@ describe('getResolvedContributionRegistry', () => {
     const builtInRegistry = getResolvedContributionRegistry();
     expect(Object.keys(builtInRegistry.catalogEntriesById).slice().sort()).toEqual([...AGENT_IDS].slice().sort());
 
-    const mergedRegistry = await primeResolvedContributionRegistry({ happyHomeDir: 'prime-isolated-home' });
-    expect(mergedRegistry.catalogEntriesById.codex?.id).toBe('codex');
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-prime-isolated-home-'));
+    try {
+      const mergedRegistry = await primeResolvedContributionRegistry({ happyHomeDir });
+      expect(mergedRegistry.catalogEntriesById.codex?.id).toBe('codex');
 
-    const builtInAfterPrime = getResolvedContributionRegistry();
-    expect(Object.keys(builtInAfterPrime.catalogEntriesById).slice().sort()).toEqual([...AGENT_IDS].slice().sort());
-    expect(builtInAfterPrime.catalogEntriesById['acme.ohmypi']).toBeUndefined();
+      const builtInAfterPrime = getResolvedContributionRegistry();
+      expect(Object.keys(builtInAfterPrime.catalogEntriesById).slice().sort()).toEqual([...AGENT_IDS].slice().sort());
+      expect(builtInAfterPrime.catalogEntriesById['acme.ohmypi']).toBeUndefined();
+    } finally {
+      await rm(happyHomeDir, { recursive: true, force: true });
+    }
   });
 
   it('indexes action contributes in deterministic order on an immutable snapshot', () => {

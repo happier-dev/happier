@@ -1,6 +1,9 @@
 import { randomUUID } from 'node:crypto';
 
-import type { PluginHostAccessRequestV2 } from '@happier-dev/protocol';
+import {
+    sameQualifiedConnectedAccountRef,
+    type PluginHostAccessRequestV2,
+} from '@happier-dev/protocol';
 import {
     type ConnectedAccountMaterializationRequest,
     type ConnectedAccountAuthenticationContext as PluginConnectedAccountAuthenticationContext,
@@ -35,6 +38,7 @@ import {
     bindConnectedAccountConfiguredOrigins,
     matchesConnectedAccountOriginTarget,
     resolveConnectedAccountConfiguredOrigins,
+    type ConnectedAccountConfiguredEndpoint,
 } from './configuredOrigins';
 import type { ConnectedAccountRuntimeLease } from './contributionRegistry';
 import {
@@ -197,7 +201,7 @@ function authenticationUnavailable(code: string): Readonly<{
 
 export function createConnectedAccountHostRuntimeInvoker(params: Readonly<{
     resolveRuntime(ref: PluginContributionRef): Promise<ConnectedAccountRuntimeLease | null>;
-    resolvePlugin(pluginId: string): Readonly<{
+    resolvePlugin(ref: PluginContributionRef): Readonly<{
         version: string;
         hostAccessRequests: readonly Readonly<{
             request: PluginHostAccessRequestV2;
@@ -217,10 +221,10 @@ export function createConnectedAccountHostRuntimeInvoker(params: Readonly<{
         seed: PluginInvocationServicesSeed,
         value: string,
     ): string;
-    resolveHostOwnedConfiguredOrigins(
+    resolveHostOwnedConfiguredEndpoints(
         service: PluginContributionRef,
         configuration: PluginConnectedAccountRuntimeConfiguration,
-    ): MaybePromise<readonly string[]>;
+    ): MaybePromise<readonly ConnectedAccountConfiguredEndpoint[]>;
     /** DNS boundary for the private-network decision; defaults to the host resolver. */
     resolveNetworkAddresses?: PluginNetworkAddressResolver;
 }>): ConnectedAccountHostRuntimeInvoker {
@@ -241,7 +245,7 @@ export function createConnectedAccountHostRuntimeInvoker(params: Readonly<{
         ) {
             throw new Error('Connected-account runtime admission is no longer current');
         }
-        const plugin = params.resolvePlugin(lease.ref.pluginId);
+        const plugin = params.resolvePlugin(lease.ref);
         if (!plugin) {
             throw new Error('Connected-account plugin package identity is unavailable');
         }
@@ -305,8 +309,8 @@ export function createConnectedAccountHostRuntimeInvoker(params: Readonly<{
                         plugin.hostAccessRequests,
                         policy,
                     ),
-                    resolveHostOwnedConfiguredOrigins: async (configuration) => (
-                        await params.resolveHostOwnedConfiguredOrigins(lease.ref, configuration)
+                    resolveHostOwnedConfiguredEndpoints: async (configuration) => (
+                        await params.resolveHostOwnedConfiguredEndpoints(lease.ref, configuration)
                     ),
                     isConfigurationCurrent: input.isConfigurationCurrent,
                     ...(configurationRevocationSignal === undefined
@@ -380,10 +384,7 @@ export function createConnectedAccountHostRuntimeInvoker(params: Readonly<{
         left: ConnectedAccountRuntimeEstablishedTarget['account'],
         right: ConnectedAccountRuntimeEstablishedTarget['account'],
     ): void {
-        if (
-            !sameService(left.service, right.service)
-            || left.accountId !== right.accountId
-        ) {
+        if (!sameQualifiedConnectedAccountRef(left, right)) {
             throw new Error('Connected-account established context does not match its exact target');
         }
     }
@@ -416,7 +417,7 @@ export function createConnectedAccountHostRuntimeInvoker(params: Readonly<{
         }
 
         const lease = await params.resolveRuntime(input.target.account.service);
-        const plugin = lease ? params.resolvePlugin(lease.ref.pluginId) : null;
+        const plugin = lease ? params.resolvePlugin(lease.ref) : null;
         if (!lease || !plugin || !sameService(lease.ref, input.target.account.service)) {
             throw new Error('Connected-account established runtime is unavailable');
         }
@@ -484,8 +485,8 @@ export function createConnectedAccountHostRuntimeInvoker(params: Readonly<{
                         plugin.hostAccessRequests,
                         policy,
                     ),
-                    resolveHostOwnedConfiguredOrigins: async (configuration) => (
-                        await params.resolveHostOwnedConfiguredOrigins(lease.ref, configuration)
+                    resolveHostOwnedConfiguredEndpoints: async (configuration) => (
+                        await params.resolveHostOwnedConfiguredEndpoints(lease.ref, configuration)
                     ),
                     isConfigurationCurrent: input.isConfigurationCurrent,
                     ...(configurationRevocationSignal === undefined

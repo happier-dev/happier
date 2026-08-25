@@ -150,6 +150,7 @@ export type StablePluginDeclarativeNode =
     | StablePluginDeclarativeActionNode
     | (StablePluginDeclarativeNodeBase & Readonly<{
         kind: 'collectionList';
+        label?: PluginLocalizedStringV2;
         source: Readonly<{
             collectionId: string;
             uiQueryId: string;
@@ -252,8 +253,13 @@ export type StablePluginDeclarativeModel = Readonly<{
     visible: boolean;
     requiredHostMethods: readonly string[];
     declarativeInventory: StablePluginDeclarativeInventory;
+    /**
+     * The whole projected document, and the only representation any reader
+     * walks. It deliberately has no flat sibling: a parallel `nodes` array held
+     * the same node objects, so `JSON.stringify` emitted every container's
+     * subtree once more for each of its ancestors.
+     */
     root: StablePluginDeclarativeNode;
-    nodes: readonly StablePluginDeclarativeNode[];
 }>;
 
 export type StablePluginStructuredMessageModel = Readonly<{
@@ -581,7 +587,6 @@ export function createStablePluginDeclarativeModel(params: Readonly<{
         throw error;
     }
 
-    const nodes: StablePluginDeclarativeNode[] = new Array(document.nodes.length);
     const projectChildren = (children: readonly PluginDeclarativeNormalizedNodeV1[]) => Object.freeze(
         children.map(projectNode),
     );
@@ -709,6 +714,7 @@ export function createStablePluginDeclarativeModel(params: Readonly<{
                     kind: source.kind,
                     path: source.path,
                     order: source.order,
+                    ...(source.label ? { label: source.label } : {}),
                     source: source.source,
                     query: source.query,
                     projection: source.projection,
@@ -808,7 +814,6 @@ export function createStablePluginDeclarativeModel(params: Readonly<{
                 throw modelError('plugin_declarative_document_invalid', `Unsupported declarative node '${JSON.stringify(unreachable)}'`);
             }
         }
-        nodes[source.order] = projected;
         return projected;
     }
 
@@ -829,7 +834,6 @@ export function createStablePluginDeclarativeModel(params: Readonly<{
             uiQueries: uiQueriesInventory,
         }),
         root,
-        nodes: Object.freeze(nodes),
     });
 }
 

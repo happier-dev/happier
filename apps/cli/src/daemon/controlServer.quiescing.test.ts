@@ -36,6 +36,9 @@ describe('daemon control server quiescing producer routes', () => {
         entries: [],
         diagnostics: [],
       })),
+      // The control server never watches; the double still satisfies the whole route contract.
+      watchSnapshot: vi.fn(async () => ({ changed: false as const })),
+      watcherCount: vi.fn(() => 0),
       patchLabel: vi.fn(async () => ({ ok: true as const })),
     };
     const localServicesActions = {

@@ -1,5 +1,6 @@
 import {
     type PluginMachineMaterializationRefV1,
+    type RehydratedPluginContributionPointOperationV1,
 } from '@happier-dev/protocol';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import type { ActionHandler } from '@happier-dev/plugin-sdk/actions';
@@ -8,7 +9,6 @@ import {
     defineProtocolLiteral,
     defineProtocolObject,
 } from '@happier-dev/plugin-sdk/protocol';
-import type { TargetedContributionPointSemanticOperation } from '@happier-dev/plugin-sdk/host/targeted-contributions';
 import { describe, expect, it, vi } from 'vitest';
 
 import { readCanonicalPluginManifest } from '@/plugins/manifest/normalize';
@@ -390,10 +390,6 @@ describe('buildTargetActionInvocationRegistry caller currentness', () => {
             targetRegistrations,
             targetActivationFacts,
             resolveAuthorizationFacts: (action) => ({
-                packageTrust: {
-                    packageIdentity: action.qualifiedId,
-                    reviewedPackageIdentity: action.qualifiedId,
-                },
                 generation: {
                     targetGeneration: action.generation,
                     desiredGeneration: action.generation,
@@ -624,10 +620,6 @@ function createComposedAdmittedOperationFixture() {
         targetRegistrations,
         targetActivationFacts,
         resolveAuthorizationFacts: (action) => ({
-            packageTrust: {
-                packageIdentity: action.qualifiedId,
-                reviewedPackageIdentity: action.qualifiedId,
-            },
             generation: {
                 targetGeneration: action.generation,
                 desiredGeneration: action.generation,
@@ -713,7 +705,7 @@ function createComposedAdmittedOperationFixture() {
         dispatchAdmittedTargetedOperation(params: Readonly<{
             contributorImmutableGenerationId: string;
             targetImmutableGenerationId: string;
-            targetProtocol: TargetedContributionPointSemanticOperation;
+            targetProtocol: RehydratedPluginContributionPointOperationV1;
             input: unknown;
         }>) {
             return executeContributedAction({

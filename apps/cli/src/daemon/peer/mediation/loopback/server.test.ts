@@ -19,6 +19,7 @@ import {
   assertPeerMediationLoopbackBindHost,
   createPeerMediationLoopbackApp,
   PEER_MEDIATION_LOOPBACK_BODY_LIMIT_BYTES,
+  startPeerMediationLoopbackServer,
 } from './server';
 
 function toBase64Url(bytes: Uint8Array): string {
@@ -612,6 +613,46 @@ describe('peer mediation loopback server', () => {
     expect(() => assertPeerMediationLoopbackBindHost('127.not-a-host')).toThrow(/loopback/i);
   });
 
+  it('rejects a non-loopback bind host through the composed start path, not only the guard', async () => {
+    // Regression guard for review finding R2 F-1. The case above exercises the pure function only.
+    // `assertPeerMediationLoopbackBindHost` has exactly one call site (`server.ts:277`); deleting it
+    // left that case — and both halves of the PMS-2 acceptance gate — green while the daemon bound
+    // every interface. This case pins the composed entry point, so removing the *invocation* of the
+    // security boundary fails the gate, not just removing its implementation.
+    const anyAddress = ['0', '0', '0', '0'].join('.');
+    const accountKeyPair = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(9));
+    let started: Awaited<ReturnType<typeof startPeerMediationLoopbackServer>> | undefined;
+    try {
+      await expect(
+        startPeerMediationLoopbackServer({
+          host: anyAddress,
+          port: 0,
+          endpointExpiresAt: 10_000,
+          nowMs: () => 2_000,
+          expected: {
+            accountId: 'account_1',
+            machineId: 'machine_1',
+            flowKind: 'bounded_transfer',
+            routeKind: 'loopback_direct',
+            endpointFingerprint: 'loopback_endpoint_1',
+            accountPublicKey: toBase64Url(accountKeyPair.publicKey),
+          },
+          trustRoots: [],
+        }).then((server) => {
+          // Only reached if the guard is gone; captured so the accidental listener is closed.
+          started = server;
+          return server;
+        }),
+        // Assert the guard's EXACT message, not /loopback/i. With the call site removed the start
+        // path still rejects — but from a downstream Zod endpoint-URL parse, *after* the socket has
+        // already bound 0.0.0.0. A loose regex matches that Zod text (it contains "loopback_direct")
+        // and so cannot tell the two apart. This exact string can only come from the guard.
+      ).rejects.toThrow('Peer mediation loopback server must bind to a loopback host');
+    } finally {
+      await started?.stop();
+    }
+  });
+
   it('executes direct machine RPC only after grant, nonce, method policy, and endpoint binding verify', async () => {
     const grantKeyPair = tweetnacl.sign.keyPair();
     const accountKeyPair = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(7));
@@ -948,7 +989,14 @@ describe('peer mediation loopback server', () => {
     await app.close();
   });
 
-  it('revokes a known direct machine RPC grant when nonce failures trigger quarantine', async () => {
+  /**
+   * Grant revocation is withdrawn — direct route grants are TTL-only (see lanes/D2.md §4) — so the
+   * internal grant-revocation notification hook this test used to spy on no longer exists. The
+   * quarantine itself is live, and is asserted where it is actually observable: the wire response.
+   * That is a stronger contract than the old callback spy, which pinned an internal call that
+   * nothing in production ever supplied.
+   */
+  it('quarantines a direct machine RPC grant on the wire after repeated nonce failures', async () => {
     const grantKeyPair = tweetnacl.sign.keyPair();
     const accountKeyPair = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(7));
     const grant = createSignedMachineRpcGrant({
@@ -965,7 +1013,6 @@ describe('peer mediation loopback server', () => {
       nonceBase64Url: 'nonce_1',
       accountSigningSeed: new Uint8Array(32).fill(8),
     });
-    const revoked: Array<Readonly<{ grantId: string; grantFamilyId?: string }>> = [];
     const app = createPeerMediationLoopbackApp({
       nowMs: () => 2_000,
       expected: {
@@ -984,14 +1031,12 @@ describe('peer mediation loopback server', () => {
         rpcHandlerManager: {
           invokeLocal: async () => ({ ok: true }),
         },
-        revokeGrant: (input) => {
-          revoked.push(input);
-        },
       },
     });
 
+    const reasonCodes: string[] = [];
     for (let index = 0; index < 5; index += 1) {
-      await app.inject({
+      const response = await app.inject({
         method: 'POST',
         url: '/peer-mediation/v1/rpc',
         payload: {
@@ -1006,12 +1051,13 @@ describe('peer mediation loopback server', () => {
           endpointFingerprint: 'loopback_endpoint_1',
         },
       });
+      reasonCodes.push((response.json() as { reasonCode?: string }).reasonCode ?? '');
     }
 
-    expect(revoked).toEqual([{
-      grantId: grant.payload.grantId,
-      grantFamilyId: grant.payload.grantFamilyId,
-    }]);
+    // Repeated bad nonces latch the quarantine, and the caller can see why it was cut off.
+    expect(reasonCodes).toContain('quarantined');
+    expect(reasonCodes[reasonCodes.length - 1]).toBe('quarantined');
+    expect(reasonCodes.every((code) => code.length > 0)).toBe(true);
 
     await app.close();
   });

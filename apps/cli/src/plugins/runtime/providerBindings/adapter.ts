@@ -21,6 +21,7 @@ import type {
     AgentProviderBindingResolvedFacts,
 } from '@happier-dev/plugin-sdk/agents/runtime';
 
+import { isAgentRuntimeGenerationCurrent } from '../lifecycle/contributions/agentGenerationCurrentness';
 import type { PluginRuntimeRegistryLease } from '../reload/controller';
 
 const MaterializationKindSchema = z.enum(['spawnEnv', 'engineConfig', 'configFile']);
@@ -176,6 +177,13 @@ export type CapturedAgentProviderBindingAdapter = Readonly<{
     pluginId: string;
     adapter: AgentProviderBindingAdapter;
     support: AgentProviderRequirementsV1;
+    /**
+     * Currentness of the exact Agent runtime registration this adapter was
+     * captured from. A capture outlives the generation that produced it, so
+     * every use is re-checked against this handle rather than against whatever
+     * registration currently answers to the Agent id.
+     */
+    isCurrent: () => boolean;
 }>;
 
 export function readLeasedAgentProviderBindingAdapter(params: Readonly<{
@@ -192,7 +200,11 @@ export function readLeasedAgentProviderBindingAdapter(params: Readonly<{
     if (!owner || !adapter) {
         throw new Error(`Agent '${params.agentId}' declares static provider support without an executable provider-binding adapter`);
     }
-    return Object.freeze({ pluginId: owner.pluginId, adapter, support });
+    const isCurrent = () => isAgentRuntimeGenerationCurrent(owner);
+    if (!isCurrent()) {
+        throw new Error(`Agent '${params.agentId}' provider-binding adapter belongs to a retired generation`);
+    }
+    return Object.freeze({ pluginId: owner.pluginId, adapter, support, isCurrent });
 }
 
 export function prepareLeasedAgentProviderBinding(params: Readonly<{
@@ -251,11 +263,19 @@ export async function materializeCapturedAgentProviderBinding(params: Readonly<{
         throw new Error('Agent provider binding materialization does not match static agent support');
     }
     assertCredentialMatchesBinding(binding, credential);
+    if (!resolved.isCurrent()) {
+        throw new Error('Agent provider binding generation retired before materialization');
+    }
     let raw: unknown;
     try {
         raw = await resolved.adapter.materialize(deepFreeze({ v: 1 as const, binding, prepared, credential }));
     } catch {
         throw new Error('Agent provider binding materialization failed');
+    }
+    if (!resolved.isCurrent()) {
+        // The generation retired while materialization was in flight: drop the
+        // settled result rather than publishing a dead generation's credential.
+        throw new Error('Agent provider binding generation retired while materializing');
     }
     const materialization = deepFreeze(AgentProviderBindingMaterializationV1Schema.parse(raw));
     if (materialization.kind !== prepared.materialization

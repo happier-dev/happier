@@ -1,6 +1,12 @@
 import { basename, dirname, join } from 'node:path';
 
 import { projectPath, projectPathFromModuleUrl } from '../../projectPath';
+import { isEmbeddedBunBundlePath } from '../js/isEmbeddedBunBundlePath';
+import { resolveRuntimeRootFromEntrypointPath } from '../resolveRuntimeEntrypointArgv';
+
+const RUNTIME_BACKED_SUBPROCESS_ENV = 'HAPPIER_CLI_SUBPROCESS_RUNTIME_BACKED';
+const RUNTIME_DIST_ENTRYPOINT_ENV = 'HAPPIER_CLI_SUBPROCESS_DIST_ENTRYPOINT';
+const RUNTIME_DIST_CLOSURE_FINGERPRINT_ENV = 'HAPPIER_CLI_SUBPROCESS_DAEMON_DIST_CLOSURE_FINGERPRINT';
 
 function normalizePathLike(pathLike: string): string {
   return String(pathLike ?? '').trim().replaceAll('\\', '/');
@@ -50,6 +56,22 @@ function resolveInstalledCliRuntimeRootPath(execPath: string): string | null {
   return join(dirname(binaryDir), installRootName, 'current');
 }
 
+function resolveAdmittedRuntimeRootFromLaunchProvenance(
+  env: NodeJS.ProcessEnv = process.env,
+): string | null {
+  // The Stack projects this tuple only after admitting the immutable CLI closure.
+  // Bun's embedded paths are process-local, so this physical entrypoint is the
+  // launch authority for support files that remain outside the compiled binary.
+  if (String(env[RUNTIME_BACKED_SUBPROCESS_ENV] ?? '').trim() !== '1') {
+    return null;
+  }
+  const fingerprint = String(env[RUNTIME_DIST_CLOSURE_FINGERPRINT_ENV] ?? '').trim();
+  if (!/^[a-f0-9]{16}$/iu.test(fingerprint)) {
+    return null;
+  }
+  return resolveRuntimeRootFromEntrypointPath(env[RUNTIME_DIST_ENTRYPOINT_ENV]);
+}
+
 export function resolveCliRuntimeRootPath(execPath: string = process.execPath): string {
   return resolveCliRuntimeRootPathFromModuleUrl(execPath, import.meta.url);
 }
@@ -58,12 +80,19 @@ export function resolveCliRuntimeRootPathFromModuleUrl(
   execPath: string = process.execPath,
   moduleUrl: string,
 ): string {
+  const normalizedExecPath = normalizePathLike(execPath);
+  if (isEmbeddedBunBundlePath(normalizedExecPath)) {
+    const admittedRuntimeRoot = resolveAdmittedRuntimeRootFromLaunchProvenance();
+    if (admittedRuntimeRoot) {
+      return admittedRuntimeRoot;
+    }
+  }
+
   const installedCliRuntimeRoot = resolveInstalledCliRuntimeRootPath(execPath);
   if (installedCliRuntimeRoot) {
     return installedCliRuntimeRoot;
   }
 
-  const normalizedExecPath = normalizePathLike(execPath);
   if (isSelfContainedCliBinary(normalizedExecPath)) {
     return dirname(normalizedExecPath);
   }

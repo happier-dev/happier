@@ -1,5 +1,7 @@
 import { spawn } from 'node:child_process';
 
+import { resolveWindowsCommandOnPath } from '@happier-dev/cli-common/process';
+
 import { parsePowerShellStartProcessPid } from './visibleConsoleSpawn';
 import { buildPowerShellStartWindowsTerminalInvocation } from './windowsTerminalSpawn';
 
@@ -28,7 +30,14 @@ export async function startHappySessionInWindowsTerminal(params: {
       errorMessage: string;
     }
 > {
-  const invocation = buildPowerShellStartWindowsTerminalInvocation(params);
+  // Resolve the Terminal executable HERE, against the exact environment the PowerShell child is
+  // about to receive, instead of letting that child search its own `PATH` for a bare `wt.exe`.
+  // A bare name survives only when this probe finds nothing, in which case the child's search is
+  // the sole remaining chance to launch and refusing here would remove a working capability.
+  const invocation = buildPowerShellStartWindowsTerminalInvocation({
+    ...params,
+    terminalExecutablePath: resolveWindowsCommandOnPath('wt.exe', params.env) ?? 'wt.exe',
+  });
 
   return await new Promise((resolve) => {
     let settled = false;

@@ -141,6 +141,7 @@ export async function prepareExecuteSpawnSessionRequest(
         directory: requestedDirectory,
         sessionId,
         resume,
+        nativeResumeReference,
         existingSessionId,
         permissionMode,
         permissionModeUpdatedAt,
@@ -154,6 +155,9 @@ export async function prepareExecuteSpawnSessionRequest(
     const backendIdentityResolution = await resolveSpawnBackendIdentity({
         existingSessionId: typeof existingSessionId === 'string' ? existingSessionId : '',
         resume: normalizedResume,
+        ...(typeof nativeResumeReference === 'string'
+            ? { nativeResumeReference }
+            : {}),
         backendTarget,
         credentials: params.request.credentials,
         loadLocalHandoffMetadataByVendorResumeId: params.request.loadLocalHandoffMetadataByVendorResumeId,

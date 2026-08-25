@@ -37,6 +37,7 @@ import type {
 import type { CanonicalPluginManifest } from '@/plugins/manifest/types';
 import {
   getActiveAccountSettingsSnapshot,
+  getActiveAccountSettingsSnapshotLifetimeToken,
   type ActiveAccountSettingsSnapshot,
 } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { indexSavedSecretsByIdFromAccountSettings } from '@/settings/secrets/indexSavedSecretsById';
@@ -164,6 +165,10 @@ type SelectedSource = Readonly<{
 type Authorization = Readonly<{
   selected: SelectedSource;
   subject: ReturnType<typeof PluginPermissionSubjectV1Schema.parse>;
+  /** Exact approving daemon installation read in the selected-source bracket. */
+  authoritySource: Extract<PluginPermissionGrantAuthoritySourceV1, Readonly<{
+    kind: 'machine_installation';
+  }>>;
 }>;
 
 function unavailable(): PluginError {
@@ -460,6 +465,7 @@ async function selectedSourceFromSnapshot(
   authority: DeclarationAuthority,
   connectedAccounts: Pick<StablePluginConnectedAccountsOwner, 'getBinding'> | undefined,
   snapshot: ActiveAccountSettingsSnapshot | null,
+  accountSettingsLifetimeToken: number,
   signal: AbortSignal,
 ): Promise<SelectedSource> {
   if (!snapshot) throw unavailable();
@@ -477,7 +483,11 @@ async function selectedSourceFromSnapshot(
   } catch {
     throw unavailable();
   }
-  const sourceRevision = `${snapshot.scopeKey ?? ''}\0${snapshot.settingsVersion}`;
+  // Account Settings' version is a whole-document CAS revision. It advances
+  // for unrelated settings mutations, so it is not part of one selected Voice
+  // credential's authority. The exact selected binding, source, secret/account,
+  // declaration grant, and account scope below are the currentness facts.
+  const selectedAccountScopeKey = snapshot.scopeKey ?? '';
   if (resolved.selection.kind === 'savedSecret') {
     if (!resolved.savedSecret) throw unavailable();
     const source = authority.contribution.credentials?.sources.find((candidate) => (
@@ -509,7 +519,8 @@ async function selectedSourceFromSnapshot(
       }),
       selectedRawAccessDigest: selectedRawAccess,
       fingerprint: [
-        sourceRevision,
+        accountSettingsLifetimeToken,
+        selectedAccountScopeKey,
         'savedSecret',
         resolved.savedSecret.source,
         resolved.savedSecret.secretId,
@@ -579,7 +590,8 @@ async function selectedSourceFromSnapshot(
     }),
     selectedRawAccessDigest: selectedRawAccess,
     fingerprint: [
-      sourceRevision,
+      accountSettingsLifetimeToken,
+      selectedAccountScopeKey,
       'connectedAccount',
       JSON.stringify(resolved.selection.target),
       contributionKey(effectiveAccount.data.service),
@@ -605,7 +617,9 @@ function assertDeclaredTuple(
 
 function sameAuthorization(left: Authorization, right: Authorization): boolean {
   return left.selected.fingerprint === right.selected.fingerprint
-    && JSON.stringify(left.subject) === JSON.stringify(right.subject);
+    && JSON.stringify(left.subject) === JSON.stringify(right.subject)
+    && left.authoritySource.machineId === right.authoritySource.machineId
+    && left.authoritySource.installationId === right.authoritySource.installationId;
 }
 
 function exactStringRecord(
@@ -698,14 +712,17 @@ async function materializeCurrentSavedSecret(input: Readonly<{
   before: Authorization;
   request: VoiceRawCredentialMaterializationRequest;
   getSnapshot: () => ActiveAccountSettingsSnapshot | null;
+  getAccountSettingsSnapshotLifetimeToken: () => number;
   connectedAccounts: Pick<StablePluginConnectedAccountsOwner, 'getBinding'> | undefined;
   signal: AbortSignal;
 }>): Promise<VoiceRawCredentialMaterialization> {
+  const snapshot = input.getSnapshot();
   const current = await selectedSourceFromSnapshot(
     input.binding,
     input.authority,
     input.connectedAccounts,
-    input.getSnapshot(),
+    snapshot,
+    input.getAccountSettingsSnapshotLifetimeToken(),
     input.signal,
   );
   if (
@@ -738,6 +755,7 @@ type RawCredentialAuthorizationDependencies = Readonly<{
   readCurrentGrantAuthoritySource: CurrentPluginPermissionGrantAuthoritySourceReader;
   connectedAccounts?: Pick<StablePluginConnectedAccountsOwner, 'getBinding'>;
   getAccountSettingsSnapshot: () => ActiveAccountSettingsSnapshot | null;
+  getAccountSettingsSnapshotLifetimeToken: () => number;
   ensureAccountSettingsSnapshot?: () => Promise<void>;
 }>;
 
@@ -754,11 +772,13 @@ async function readSelectedSource(
     assertRuntimeCurrent(input.binding);
     snapshot = input.getAccountSettingsSnapshot();
   }
+  const accountSettingsLifetimeToken = input.getAccountSettingsSnapshotLifetimeToken();
   return await selectedSourceFromSnapshot(
     input.binding,
     authority,
     input.connectedAccounts,
     snapshot,
+    accountSettingsLifetimeToken,
     signal,
   );
 }
@@ -832,7 +852,11 @@ async function inspectCurrentAuthorization(
     ...parsedSubject,
     contribution: Object.freeze({ ...parsedSubject.contribution }),
   });
-  const authorization = Object.freeze({ selected: firstSelected, subject });
+  const authorization = Object.freeze({
+    selected: firstSelected,
+    subject,
+    authoritySource: Object.freeze({ ...authoritySource }),
+  });
   return Object.freeze({
     authorization,
     inspection: Object.freeze({
@@ -840,7 +864,7 @@ async function inspectCurrentAuthorization(
       capability: RAW_CREDENTIAL_CAPABILITY,
       targetScope: ACCOUNT_TARGET_SCOPE,
       subject,
-      authoritySource: Object.freeze({ ...authoritySource }),
+      authoritySource: authorization.authoritySource,
       disclosures: Object.freeze([...authority.disclosures]),
     }),
   });
@@ -869,12 +893,16 @@ export function createPluginRawCredentialAuthorizationInspector(input: Readonly<
   readCurrentGrantAuthoritySource: CurrentPluginPermissionGrantAuthoritySourceReader;
   connectedAccounts?: Pick<StablePluginConnectedAccountsOwner, 'getBinding'>;
   getAccountSettingsSnapshot?: () => ActiveAccountSettingsSnapshot | null;
+  getAccountSettingsSnapshotLifetimeToken?: () => number;
   /** Joins the canonical daemon snapshot warm only before initial source admission. */
   ensureAccountSettingsSnapshot?: () => Promise<void>;
 }>): PluginRawCredentialAuthorizationInspector {
   return createAuthorizationInspector({
     ...input,
     getAccountSettingsSnapshot: input.getAccountSettingsSnapshot ?? getActiveAccountSettingsSnapshot,
+    getAccountSettingsSnapshotLifetimeToken:
+      input.getAccountSettingsSnapshotLifetimeToken
+      ?? getActiveAccountSettingsSnapshotLifetimeToken,
   }, deriveDeclarationAuthority(input.binding));
 }
 
@@ -885,17 +913,21 @@ export function createPluginRawCredentialMaterializer(input: Readonly<{
   grants: PluginPermissionGrantListReader;
   connectedAccounts?: Pick<StablePluginConnectedAccountsOwner, 'getBinding' | 'materialize'>;
   getAccountSettingsSnapshot?: () => ActiveAccountSettingsSnapshot | null;
+  getAccountSettingsSnapshotLifetimeToken?: () => number;
   /** Joins the canonical daemon snapshot warm only before initial source admission. */
   ensureAccountSettingsSnapshot?: () => Promise<void>;
 }>): PluginRawCredentialMaterializer {
   const authority = deriveDeclarationAuthority(input.binding);
   const getSnapshot = input.getAccountSettingsSnapshot ?? getActiveAccountSettingsSnapshot;
+  const getSnapshotLifetimeToken = input.getAccountSettingsSnapshotLifetimeToken
+    ?? getActiveAccountSettingsSnapshotLifetimeToken;
   const authorizationDependencies: RawCredentialAuthorizationDependencies = Object.freeze({
     binding: input.binding,
     currentInstallReviewPrincipal: input.currentInstallReviewPrincipal,
     readCurrentGrantAuthoritySource: input.readCurrentGrantAuthoritySource,
     ...(input.connectedAccounts ? { connectedAccounts: input.connectedAccounts } : {}),
     getAccountSettingsSnapshot: getSnapshot,
+    getAccountSettingsSnapshotLifetimeToken: getSnapshotLifetimeToken,
     ...(input.ensureAccountSettingsSnapshot
       ? { ensureAccountSettingsSnapshot: input.ensureAccountSettingsSnapshot }
       : {}),
@@ -915,7 +947,7 @@ export function createPluginRawCredentialMaterializer(input: Readonly<{
       true,
     );
     const { selected, subject } = inspected.authorization;
-    const currentAuthoritySource = inspected.inspection.authoritySource;
+    const currentAuthoritySource = inspected.authorization.authoritySource;
     assertDeclaredTuple(selected, input.binding, request);
     if (subject.kind !== 'credential_access_disclosure') throw unavailable();
     const listInput = PluginPermissionGrantListActionInputV1Schema.parse({
@@ -954,7 +986,7 @@ export function createPluginRawCredentialMaterializer(input: Readonly<{
     }))) {
       throw unavailable();
     }
-    return Object.freeze({ selected, subject });
+    return inspected.authorization;
   };
 
   return Object.freeze({
@@ -980,6 +1012,7 @@ export function createPluginRawCredentialMaterializer(input: Readonly<{
           before,
           request,
           getSnapshot,
+          getAccountSettingsSnapshotLifetimeToken: getSnapshotLifetimeToken,
           connectedAccounts: input.connectedAccounts,
           signal,
         });

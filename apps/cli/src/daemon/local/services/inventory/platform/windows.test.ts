@@ -26,6 +26,31 @@ describe('parseWindowsNetstatTcpListeners', () => {
             { address: '192.168.1.10', port: 5174, protocol: 'tcp', pid: 5000 },
         ]);
     });
+
+    it('still resolves listeners when the State column is localized', () => {
+        // A listening TCP socket always reports the wildcard foreign address with port 0, which
+        // is locale-independent; matching only the literal `LISTENING` would blank the entire
+        // inventory on a non-English host.
+        const listeners = parseWindowsNetstatTcpListeners([
+            '  Proto  Lokale Adresse         Remoteadresse          Status          PID',
+            '  TCP    127.0.0.1:5173         0.0.0.0:0              ABHÖREN         1234',
+            '  TCP    [::1]:8081             [::]:0                 ABHÖREN         4321',
+        ].join('\r\n'));
+
+        expect(listeners).toEqual([
+            { address: '127.0.0.1', port: 5173, protocol: 'tcp', pid: 1234 },
+            { address: '::1', port: 8081, protocol: 'tcp', pid: 4321 },
+        ]);
+    });
+
+    it('does not mistake a localized connected socket for a listener', () => {
+        const listeners = parseWindowsNetstatTcpListeners([
+            '  Proto  Lokale Adresse         Remoteadresse          Status          PID',
+            '  TCP    127.0.0.1:5173         93.184.216.34:443      HERGESTELLT     1234',
+        ].join('\r\n'));
+
+        expect(listeners).toEqual([]);
+    });
 });
 
 describe('readWindowsProcessFacts', () => {
@@ -47,7 +72,6 @@ describe('readWindowsProcessFacts', () => {
             ppid: 100,
             processStartTimeMs: Date.UTC(2025, 5, 30, 12, 34, 56, 123),
             command: 'happier --resume abc',
-            executablePath: 'C:\\Program Files\\Happier\\happier.exe',
         });
         const args = execFile.mock.calls[0]?.[1] ?? [];
         expect(execFile.mock.calls[0]?.[0]).toBe('powershell.exe');
@@ -86,13 +110,11 @@ describe('parseWindowsProcessFactsJson', () => {
                 ppid: 100,
                 processStartTimeMs: Date.UTC(2025, 5, 30, 12, 34, 56),
                 command: 'npm run dev -- --token raw-secret',
-                executablePath: 'C:\\Program Files\\nodejs\\node.exe',
             }],
             [4321, {
                 pid: 4321,
                 ppid: 101,
                 command: 'C:\\Python311\\python.exe',
-                executablePath: 'C:\\Python311\\python.exe',
             }],
         ]);
     });
@@ -123,6 +145,8 @@ describe('readWindowsLocalServiceListeners', () => {
             throw new Error(`unexpected command ${command}`);
         });
 
+        // Ownership now comes from the owner SID on the injected inventory row, so a fixture pid
+        // can never reach an unrelated process on the host running the suite.
         const result = await readWindowsLocalServiceListeners({ execFile });
         const snapshot = normalizeLocalServiceScan({
             machineId: 'machine-win',
@@ -205,6 +229,8 @@ describe('readWindowsLocalServiceListeners', () => {
             throw new Error(`unexpected command ${command}`);
         });
 
+        // Ownership now comes from the owner SID on the injected inventory row, so a fixture pid
+        // can never reach an unrelated process on the host running the suite.
         const result = await readWindowsLocalServiceListeners({ execFile });
         const registry = createTerminalProcessRegistry();
         registry.registerTerminalProcesses({
@@ -241,11 +267,130 @@ describe('readWindowsLocalServiceListeners', () => {
         });
     });
 
+    it('grades listener ownership from the owner SID, and refuses a service the daemon does not own', async () => {
+        // DEC-14: the gate needs positive ownership evidence. Ownership is an SID comparison,
+        // NOT `process.kill(pid, 0)` — an elevated daemon (a supported `schtasks-system`
+        // install) may open every system service for termination, so access would have graded
+        // the whole machine `self`. Here the daemon is an ordinary user and svchost is SYSTEM.
+        const daemonSid = 'S-1-5-21-1111111111-2222222222-3333333333-1001';
+        const execFile = vi.fn(async (command: string) => {
+            if (command === 'netstat.exe') {
+                return {
+                    stdout: [
+                        '  Proto  Local Address          Foreign Address        State           PID',
+                        '  TCP    127.0.0.1:5173         0.0.0.0:0              LISTENING       1234',
+                        '  TCP    127.0.0.1:5432         0.0.0.0:0              LISTENING       4321',
+                    ].join('\r\n'),
+                };
+            }
+            return {
+                stdout: JSON.stringify([
+                    {
+                        ProcessId: 1234,
+                        ParentProcessId: 1,
+                        CommandLine: 'node server.js',
+                        OwnerSid: daemonSid,
+                        CurrentUserSid: daemonSid,
+                    },
+                    {
+                        ProcessId: 4321,
+                        ParentProcessId: 1,
+                        CommandLine: 'C:\\Windows\\System32\\svchost.exe',
+                        OwnerSid: 'S-1-5-18',
+                        CurrentUserSid: daemonSid,
+                    },
+                ]),
+            };
+        });
+
+        const result = await readWindowsLocalServiceListeners({ execFile });
+        const snapshot = normalizeLocalServiceScan({
+            machineId: 'machine-win',
+            now: 2_000,
+            previous: null,
+            listeners: result.listeners,
+            processes: result.processes,
+            workspaces: [],
+        });
+
+        expect(result.processes.get(1234)?.processOwnership).toBe('self');
+        expect(result.processes.get(4321)?.processOwnership).toBe('other');
+        expect(snapshot.entries.map((entry) => [entry.port, entry.processOwnershipConfidence])).toEqual([
+            [5173, 'high'],
+            [5432, 'low'],
+        ]);
+    });
+
+    it('refuses rather than approves when the owner SID cannot be read', async () => {
+        // A missing SID is not evidence of ownership. It must grade `medium`, which the
+        // terminate gate denies with `ownership_not_established` — the failure direction has to
+        // be refusal, never an enabled destructive action.
+        const execFile = vi.fn(async (command: string) => {
+            if (command === 'netstat.exe') {
+                return {
+                    stdout: [
+                        '  Proto  Local Address          Foreign Address        State           PID',
+                        '  TCP    127.0.0.1:5173         0.0.0.0:0              LISTENING       1234',
+                    ].join('\r\n'),
+                };
+            }
+            return {
+                stdout: JSON.stringify([
+                    { ProcessId: 1234, ParentProcessId: 1, CommandLine: 'node server.js' },
+                ]),
+            };
+        });
+
+        const result = await readWindowsLocalServiceListeners({ execFile });
+        const snapshot = normalizeLocalServiceScan({
+            machineId: 'machine-win',
+            now: 2_000,
+            previous: null,
+            listeners: result.listeners,
+            processes: result.processes,
+            workspaces: [],
+        });
+
+        expect(result.processes.get(1234)?.processOwnership).toBeUndefined();
+        expect(snapshot.entries[0]?.processOwnershipConfidence).toBe('medium');
+    });
+
+    it('asks for owner SIDs only for listener pids, never for their ancestors', async () => {
+        // `GetOwnerSid` is a per-object WMI method call on a scan that runs every ten seconds.
+        // Nothing reads an ancestor's ownership, so nothing should pay to resolve it.
+        const scripts: string[] = [];
+        const execFile = vi.fn(async (command: string, args: readonly string[]) => {
+            if (command === 'netstat.exe') {
+                return {
+                    stdout: [
+                        '  Proto  Local Address          Foreign Address        State           PID',
+                        '  TCP    127.0.0.1:5173         0.0.0.0:0              LISTENING       1234',
+                    ].join('\r\n'),
+                };
+            }
+            scripts.push(String(args[args.length - 1]));
+            return {
+                stdout: JSON.stringify([
+                    { ProcessId: 1234, ParentProcessId: 900, CommandLine: 'node server.js' },
+                ]),
+            };
+        });
+
+        await readWindowsLocalServiceListeners({ execFile });
+
+        expect(scripts[0]).toContain('$ownerPids = @(1234)');
+        expect(scripts[0]).toContain('GetOwnerSid');
+        // The ancestor batch (ppid 900) must carry no SID projection at all.
+        expect(scripts.slice(1).some((script) => script.includes('GetOwnerSid'))).toBe(false);
+    });
+
     it('fails closed without leaking command output when netstat is unavailable', async () => {
         const execFile = vi.fn(async () => {
             throw new Error('TOKEN raw-secret command output');
         });
 
+        // Ownership now comes from the owner SID on the injected inventory row, so a fixture pid
+        // can never reach an unrelated process on the host running the suite.
         const result = await readWindowsLocalServiceListeners({ execFile });
 
         expect(result.listeners).toEqual([]);
@@ -274,6 +419,8 @@ describe('readWindowsLocalServiceListeners', () => {
             throw new Error(`unexpected command ${command}`);
         });
 
+        // Ownership now comes from the owner SID on the injected inventory row, so a fixture pid
+        // can never reach an unrelated process on the host running the suite.
         const result = await readWindowsLocalServiceListeners({ execFile });
 
         expect(result.listeners).toEqual([

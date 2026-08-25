@@ -835,54 +835,6 @@ export async function updateSessionMarkerRunnerAgentImmutableGenerationId(
   });
 }
 
-export async function rewriteSessionMarkerRespawnEnvironmentCiphertextIfOwned(
-  params: Readonly<{
-    pid: number;
-    ownership: Readonly<{
-      happySessionId: string;
-      processCommandHash: string;
-      processStartTimeMs: number;
-    }>;
-    expectedCiphertext: string;
-    replacementCiphertext: string;
-  }>,
-): Promise<boolean> {
-  return await runWithSessionMarkerMutationLock(
-    params.pid,
-    async () => {
-      const existing =
-        await readSessionMarkerForPid(params.pid);
-      if (
-        !existing
-        || !sessionMarkerProcessOwnershipMatches(
-          existing,
-          params.ownership,
-        )
-        || existing.respawn?.sealedEnvironmentVariables
-          ?.ciphertext !== params.expectedCiphertext
-      ) {
-        return false;
-      }
-      const {
-        happyHomeDir: _happyHomeDir,
-        updatedAt: _updatedAt,
-        ...rest
-      } = existing;
-      await writeSessionMarkerUnlocked({
-        ...rest,
-        respawn: {
-          ...existing.respawn,
-          sealedEnvironmentVariables: {
-            format: 'account_scoped_v1',
-            ciphertext: params.replacementCiphertext,
-          },
-        },
-      });
-      return true;
-    },
-  );
-}
-
 export type SessionMarkerOwnership = Readonly<{
   happySessionId: string;
   processCommandHash?: string;

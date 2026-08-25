@@ -7,15 +7,15 @@ type DaemonStateProjectionApiMachine = Readonly<{
 }>;
 
 /**
- * Bridges a durable plugin-registry application to the existing daemon-state
- * version signal consumed by the UI.
+ * Bridges plugin projection changes to the existing daemon-state version
+ * signal consumed by the UI.
  */
 export function createDaemonPluginRegistryProjectionInvalidation(params: Readonly<{
   getApiMachine: () => DaemonStateProjectionApiMachine | null;
   isDaemonQuiescing: () => boolean;
   onPublicationFailure: (error: unknown) => void;
 }>): Readonly<{
-  onDurableRegistryApplied: () => void;
+  invalidateProjection: () => void;
   resume: () => void;
 }> {
   let hasPendingInvalidation = false;
@@ -29,7 +29,7 @@ export function createDaemonPluginRegistryProjectionInvalidation(params: Readonl
   };
 
   return Object.freeze({
-    onDurableRegistryApplied: () => {
+    invalidateProjection: () => {
       if (params.isDaemonQuiescing()) {
         // A failed self-restart resumes this same daemon. One version bump then
         // invalidates UI projections for every registry application it retained.

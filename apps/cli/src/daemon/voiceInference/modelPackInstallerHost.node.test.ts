@@ -12,7 +12,7 @@ import {
   createNodeModelPackDownloadOpener,
   createNodeModelPackInstallerHost,
   reconcileModelPackPromotions,
-} from './modelPackInstallerHost.node';
+} from './nodeModelPackInstallerHost';
 import type { PinnedHttpStreamTransport } from '../../network/pinnedHttp';
 
 function sha256Hex(bytes: Uint8Array): string {

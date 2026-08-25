@@ -492,6 +492,114 @@ describe('daemon browser runtime action executor', () => {
     });
   });
 
+  /**
+   * Managed-Chromium provisioning is triggered by an agent ASKING for automation, never at daemon
+   * startup. A ~150MB third-party download is legible as the consequence of a browser action and is
+   * not legible as a silent cost on every daemon, including machines that never touch the browser.
+   *
+   * These four cases pin that placement. If provisioning is moved back to daemon startup, or
+   * dropped, the provisioner is never invoked from dispatch and the first one goes RED.
+   */
+  it('provisions the managed browser runtime on the first browser.automation dispatch', async () => {
+    const realMod = await import('./runtimeActionExecutor');
+    const provisionAutomationRuntime = vi.fn(async () => 'provisioning' as const);
+
+    const execute = realMod.createBrowserDaemonRuntimeActionExecutor({
+      featureGate: allowAllBrowserGate(),
+      provisionAutomationRuntime,
+    });
+
+    // No automation route: on an unprovisioned host the sidecar adapter fails closed with
+    // `managed_package_missing`, so nothing is registered and this is the ONLY seam an agent reaches.
+    await expect(execute(runtimeArgs({
+      actionId: 'browser.automation.click',
+      input: {
+        v: 1,
+        automationRequestId: 'req_provision_1',
+        browserSessionId: 'browser_session_1',
+        viewId: 'view_1',
+        actionKind: 'click',
+        locator: { kind: 'css', value: '#go' },
+      },
+    }))).resolves.toEqual({
+      ok: false,
+      errorCode: 'runtime_action_disabled',
+      error: 'runtime_action_disabled:browser:browser_automation_runtime_provisioning',
+    });
+
+    expect(provisionAutomationRuntime).toHaveBeenCalledOnce();
+  });
+
+  it('reports a provisioning failure distinguishably from an absent runtime', async () => {
+    const realMod = await import('./runtimeActionExecutor');
+
+    const failed = realMod.createBrowserDaemonRuntimeActionExecutor({
+      featureGate: allowAllBrowserGate(),
+      provisionAutomationRuntime: async () => 'failed' as const,
+    });
+    await expect(failed(runtimeArgs({
+      actionId: 'browser.automation.snapshot',
+      input: { browserSessionId: 'browser_session_1', viewId: 'view_1' },
+    }))).resolves.toEqual({
+      ok: false,
+      errorCode: 'runtime_action_disabled',
+      error: 'runtime_action_disabled:browser:browser_automation_runtime_provisioning_failed',
+    });
+
+    // `unavailable` means nothing CAN be provisioned here (unsupported platform, unpinned asset).
+    // That keeps the pre-existing honest answer rather than inventing a new one.
+    const unavailable = realMod.createBrowserDaemonRuntimeActionExecutor({
+      featureGate: allowAllBrowserGate(),
+      provisionAutomationRuntime: async () => 'unavailable' as const,
+    });
+    await expect(unavailable(runtimeArgs({
+      actionId: 'browser.automation.snapshot',
+      input: { browserSessionId: 'browser_session_1', viewId: 'view_1' },
+    }))).resolves.toEqual({
+      ok: false,
+      errorCode: 'runtime_action_disabled',
+      error: 'runtime_action_disabled:browser:browser_automation_route_unavailable',
+    });
+  });
+
+  it('never provisions when an automation route already exists', async () => {
+    const realMod = await import('./runtimeActionExecutor');
+    const provisionAutomationRuntime = vi.fn(async () => 'provisioning' as const);
+    const dispatch = vi.fn(async () => ({ v: 1, status: 'succeeded' }));
+
+    const execute = realMod.createBrowserDaemonRuntimeActionExecutor({
+      featureGate: allowAllBrowserGate(),
+      automation: { dispatch } as unknown as BrowserAutomationRoutes,
+      provisionAutomationRuntime,
+    });
+
+    await execute(runtimeArgs({
+      actionId: 'browser.automation.status',
+      input: { browserSessionId: 'browser_session_1', viewId: 'view_1' },
+    }));
+
+    expect(dispatch).toHaveBeenCalledOnce();
+    expect(provisionAutomationRuntime).not.toHaveBeenCalled();
+  });
+
+  it('never provisions from a non-automation browser family', async () => {
+    const realMod = await import('./runtimeActionExecutor');
+    const provisionAutomationRuntime = vi.fn(async () => 'provisioning' as const);
+
+    const execute = realMod.createBrowserDaemonRuntimeActionExecutor({
+      featureGate: allowAllBrowserGate(),
+      provisionAutomationRuntime,
+    });
+
+    // A context or control action must not trigger a 150MB download.
+    await execute(runtimeArgs({
+      actionId: 'browser.context.capturePage',
+      input: { browserSessionId: 'browser_session_1', viewId: 'view_1' },
+    }));
+
+    expect(provisionAutomationRuntime).not.toHaveBeenCalled();
+  });
+
   it('dispatches browser.recording.attachToComposer to the recording-attach executor', async () => {
     const realMod = await import('./runtimeActionExecutor');
     const recordingAttach = vi.fn(async (input: Readonly<{ recordingId: string; sessionId?: string }>) => ({

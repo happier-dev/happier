@@ -22,6 +22,7 @@ import type {
 } from '../invocation/services/types';
 import {
     assessPluginNetworkOriginLocality,
+    resolvePluginNetworkOriginAdmission,
     type PluginNetworkAddressResolver,
 } from './originLocality';
 import {
@@ -73,7 +74,16 @@ export type CreatePluginHttpServiceParams = Readonly<{
     revalidateFinalPolicy?: (effect: Readonly<{
         request: Parameters<HttpService['request']>[0];
         attempt: number;
-    }>) => void | Promise<void>;
+    }>) => void | PluginHttpFinalPolicyResolution | Promise<void | PluginHttpFinalPolicyResolution>;
+}>;
+
+export type PluginHttpFinalPolicyResolution = Readonly<{
+    validatedAddresses: readonly string[];
+}>;
+
+export type PluginHttpRuntimeRequestOptions = Readonly<{
+    signal?: AbortSignal;
+    validatedAddresses?: readonly string[];
 }>;
 
 /**
@@ -81,7 +91,11 @@ export type CreatePluginHttpServiceParams = Readonly<{
  * lifecycle signal lets this one transport owner distinguish connect abortion
  * from a generation or host retirement after the connection opens.
  */
-export type PluginHttpRuntimeAdapter = Omit<HttpService, 'openWebSocket'> & Readonly<{
+export type PluginHttpRuntimeAdapter = Readonly<{
+    request(
+        input: Parameters<HttpService['request']>[0],
+        options?: PluginHttpRuntimeRequestOptions,
+    ): ReturnType<HttpService['request']>;
     openWebSocket(
         input: PluginWebSocketOpenInput,
         options?: PluginWebSocketRuntimeOptions,
@@ -538,6 +552,19 @@ function adaptContinuedRequest(params: Readonly<{
     privateCredentialHeaderNames: ReadonlySet<string>;
 }>): PluginHttpRequest {
     const returned = params.result.request;
+    // A Connected Account credential is authorized for one exact target. Once
+    // the host has attached that secret, an interceptor may still refine the
+    // ordinary headers it can see, but it may not move the request: the
+    // credential owner never authorized the rewritten URL or method, and the
+    // secret is reinjected into whatever request leaves this owner.
+    if (params.privateCredentialHeaderNames.size > 0
+        && (returned.url !== params.publicRequest.url
+            || normalizeRequestMethod(returned.method) !== params.publicRequest.method)) {
+        throw new PluginError({
+            code: 'plugin_fetch_interceptor_failed',
+            message: `Request interceptor '${params.pluginId}/${params.interceptorId}' attempted to retarget a credential-bearing request`,
+        });
+    }
     let nextUrl = params.effectiveRequest.url;
     if (returned.url !== params.publicRequest.url) {
         if (params.publicRequest.url !== params.effectiveRequest.url
@@ -837,18 +864,25 @@ export function createPluginHttpService(params: CreatePluginHttpServiceParams): 
             for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
                 assertNotAborted(timeout.signal);
                 try {
+                    let finalPolicy: PluginHttpFinalPolicyResolution | undefined;
                     if (params.revalidateFinalPolicy) {
-                        await raceWithAbort(
+                        const policyResult = await raceWithAbort(
                             Promise.resolve(params.revalidateFinalPolicy(Object.freeze({
                                 request: interceptedRequest,
                                 attempt,
                             }))),
                             timeout.signal,
                         );
+                        if (policyResult) finalPolicy = policyResult;
                     }
                     assertNotAborted(timeout.signal);
                     return await raceWithAbort(
-                        terminal.request(interceptedRequest, { signal: timeout.signal }),
+                        terminal.request(interceptedRequest, {
+                            signal: timeout.signal,
+                            ...(finalPolicy === undefined
+                                ? {}
+                                : { validatedAddresses: finalPolicy.validatedAddresses }),
+                        }),
                         timeout.signal,
                     );
                 } catch (error) {
@@ -940,43 +974,51 @@ export function createStablePluginHttpHost(params: StablePluginHttpHostParams): 
             } : {}),
             ...(interceptorRegistry ? { interceptorRegistry } : {}),
             ...(params.retry ? { retry: params.retry } : {}),
-            ...(revalidateFinalPolicy || binding.networkCurrentness || binding.networkScopes?.length ? {
-                revalidateFinalPolicy: async (effect) => {
-                    if (
-                        binding.networkCurrentness
-                        && !await binding.networkCurrentness()
-                    ) {
-                        throw new PluginError({
-                            code: 'plugin_final_generation_retired',
-                            message: 'Connected-account network configuration is no longer current',
-                        });
-                    }
-                    const url = new URL(effect.request.url);
-                    const method = (effect.request.method ?? 'GET').toUpperCase();
-                    const selectedResourceScopes = binding.networkScopes?.filter((scope) => (
-                        scope.authority === 'selectedResource'
-                    )) ?? [];
-                    const privateNetwork = selectedResourceScopes.length === 0
-                        ? false
-                        : await assessPluginNetworkOriginLocality(url.origin, resolverOptions) === 'private';
-                    const withinBoundScope = selectedResourceScopes.some((scope) => (
-                        scope.origins.includes(url.origin)
-                        && (scope.methods === undefined || scope.methods.includes(method as HttpMethod))
-                        && (!privateNetwork || scope.privateNetwork)
-                    )) === true;
-                    if (selectedResourceScopes.length > 0 && !withinBoundScope) {
-                        throw new PluginError({
-                            code: 'plugin_final_resource_not_selected',
-                            message: 'Fetch operation is outside the bound network scope',
-                        });
-                    }
-                    await revalidateFinalPolicy?.({
-                        seed,
-                        serviceBinding: binding,
-                        ...effect,
+            revalidateFinalPolicy: async (effect) => {
+                if (
+                    binding.networkCurrentness
+                    && !await binding.networkCurrentness()
+                ) {
+                    throw new PluginError({
+                        code: 'plugin_final_generation_retired',
+                        message: 'Connected-account network configuration is no longer current',
                     });
-                },
-            } : {}),
+                }
+                const url = new URL(effect.request.url);
+                const method = (effect.request.method ?? 'GET').toUpperCase();
+                const selectedResourceScopes = binding.networkScopes?.filter((scope) => (
+                    scope.authority === 'selectedResource'
+                )) ?? [];
+                const admission = await resolvePluginNetworkOriginAdmission(
+                    url.origin,
+                    resolverOptions,
+                );
+                const withinBoundScope = selectedResourceScopes.some((scope) => (
+                    scope.origins.includes(url.origin)
+                    && (scope.methods === undefined || scope.methods.includes(method as HttpMethod))
+                    && (admission.locality !== 'private' || scope.privateNetwork)
+                )) === true;
+                if (selectedResourceScopes.length > 0 && !withinBoundScope) {
+                    throw new PluginError({
+                        code: 'plugin_final_resource_not_selected',
+                        message: 'Fetch operation is outside the bound network scope',
+                    });
+                }
+                if (admission.validatedAddresses.length === 0) {
+                    throw new PluginError({
+                        code: 'plugin_final_resource_not_selected',
+                        message: 'Fetch operation has no validated network address',
+                    });
+                }
+                await revalidateFinalPolicy?.({
+                    seed,
+                    serviceBinding: binding,
+                    ...effect,
+                });
+                return Object.freeze({
+                    validatedAddresses: admission.validatedAddresses,
+                });
+            },
         });
         return Object.freeze({
             async request(

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ResolvedActivatedHookRegistration } from '@/plugins/projection/registry/types';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
@@ -10,6 +10,14 @@ import {
   resolvePluginComposerReferenceThroughRuntimeRegistry,
   transformAgentRequestThroughRuntimeRegistry,
 } from './dispatchAgentTurnHooks';
+
+const { readAgentCatalogSnapshot } = vi.hoisted(() => ({
+  readAgentCatalogSnapshot: vi.fn(),
+}));
+
+vi.mock('@/agent/catalog/snapshot', () => ({
+  readAgentCatalogSnapshot,
+}));
 
 function createAgentRequestRegistration(): ResolvedActivatedHookRegistration {
   return {
@@ -98,6 +106,21 @@ function createInstructionOnlyCompositionRuntimeRegistry(
 }
 
 describe('agent turn hook dispatch bridge', () => {
+  beforeEach(() => {
+    readAgentCatalogSnapshot.mockReturnValue({
+      agentDefinitionsById: new Map(),
+      catalogEntriesById: {
+        claude: { id: 'claude', cliSubcommand: 'claude', toolDelivery: 'native_mcp' },
+        codex: { id: 'codex', cliSubcommand: 'codex', toolDelivery: 'native_mcp' },
+        'review-agent': {
+          id: 'review-agent',
+          cliSubcommand: 'review-agent',
+          toolDelivery: 'native_mcp',
+        },
+      },
+    });
+  });
+
   it('resolves a Composer candidate through the canonical composerReferences registry field', async () => {
     const reference = { pluginId: 'acme.issues', localId: 'issues' } as const;
     const signal = new AbortController().signal;
@@ -144,6 +167,7 @@ describe('agent turn hook dispatch bridge', () => {
       localId: 'resolve-composition',
     });
     const companionHandler = vi.fn(async () => ({
+      enabledToolIds: ['companion-tool'],
       additionalInstructions: 'Use the bounded review context for this turn.',
     }));
     const hostileHandler = vi.fn(async () => ({
@@ -294,19 +318,23 @@ describe('agent turn hook dispatch bridge', () => {
     expect(companionHandler).toHaveBeenCalledWith(expect.objectContaining({
       eventId: 'agent.composition.resolve',
       payload: expect.objectContaining({
-        declaredToolIds: [],
+        declaredToolIds: ['companion-tool'],
         declaredPromptAssetIds: ['companion-context'],
       }),
     }), expect.objectContaining({ signal: expect.any(AbortSignal) }));
     expect(hostileHandler).toHaveBeenCalledWith(expect.objectContaining({
       payload: expect.objectContaining({
-        declaredToolIds: [],
+        declaredToolIds: ['hostile-tool'],
         declaredPromptAssetIds: [],
       }),
     }), expect.anything());
     expect(composition.managedPluginIds).toEqual(['companion.plugin']);
-    expect(composition.selectedTools).toEqual([]);
-    expect(composition.toolPromptContributions).toEqual([]);
+    expect(composition.selectedTools).toEqual([
+      { pluginId: 'companion.plugin', localId: 'companion-tool' },
+    ]);
+    expect(composition.toolPromptContributions).toEqual([
+      expect.objectContaining({ pluginId: 'companion.plugin', id: 'companion-tool' }),
+    ]);
     expect(composition.promptAssetBlocks).toEqual([
       expect.objectContaining({ id: 'plugin_prompt_asset.companion.plugin/companion-context' }),
     ]);

@@ -36,6 +36,57 @@ export type RevalidatePluginActionCallerImmutableGeneration = (
     caller: Readonly<{ pluginId: string; immutableGenerationId: string }>,
 ) => boolean | Promise<boolean>;
 
+export type PluginActionCallerCurrentness = Readonly<{
+    kind: 'current' | 'materializationUnavailable' | 'generationUnavailable';
+}>;
+
+/**
+ * One composition of the host-private exact-reference revalidators for an
+ * Action owner that must prove its host-stamped caller is still current
+ * immediately before a durable outward effect. The outer dispatcher rechecks
+ * the caller only after the owner returns, which is already past that effect.
+ *
+ * It rechecks the exact stamped bytes: it never substitutes a replacement
+ * reference, resolves a caller by plugin ID, or treats an unavailable
+ * revalidator as currentness.
+ */
+export function createPluginActionCallerCurrentnessCheck(params: Readonly<{
+    caller: Readonly<{
+        pluginId: string;
+        /** Absent only for a legacy in-process caller the host never stamped. */
+        immutableGenerationId?: string;
+        materialization: PluginMachineMaterializationRefV1;
+    }>;
+    revalidateMaterialization: RevalidatePluginActionCallerMaterialization;
+    revalidateImmutableGeneration?: RevalidatePluginActionCallerImmutableGeneration;
+}>): () => Promise<PluginActionCallerCurrentness> {
+    const { caller } = params;
+    return async () => {
+        try {
+            if (!await params.revalidateMaterialization(caller.materialization)) {
+                return { kind: 'materializationUnavailable' };
+            }
+        } catch {
+            return { kind: 'materializationUnavailable' };
+        }
+        const immutableGenerationId = caller.immutableGenerationId;
+        if (immutableGenerationId === undefined) return { kind: 'current' };
+        if (!params.revalidateImmutableGeneration) {
+            return { kind: 'generationUnavailable' };
+        }
+        try {
+            return await params.revalidateImmutableGeneration({
+                pluginId: caller.pluginId,
+                immutableGenerationId,
+            })
+                ? { kind: 'current' }
+                : { kind: 'generationUnavailable' };
+        } catch {
+            return { kind: 'generationUnavailable' };
+        }
+    };
+}
+
 /**
  * Projects host-owned plugin invocation provenance onto the canonical Action
  * caller contract. Legacy invocations without a contribution remain valid but

@@ -3119,6 +3119,59 @@ describe('surface-scoped dynamic Resources (SDK-EU-28)', () => {
         ]);
     });
 
+    it('retires a surface context after its last exact binding closes', async () => {
+        const owner = await createStablePluginResourcesOwner({
+            registry: registry([dynamicContribution('acme.alpha', 'targeted-document', 'surface')]),
+            generations: new Map(),
+            immutableGenerationIdsByPluginId: dynamicGenerationIds(),
+            dynamicProducers: [{
+                pluginId: 'acme.alpha',
+                localId: 'targeted-document',
+                runtime: {
+                    read: () => new Uint8Array(Buffer.from('surface-bytes')),
+                    observe: () => ({ dispose: () => undefined }),
+                },
+            }],
+        });
+        const context = {
+            kind: 'surface' as const,
+            mountInstanceKey: 'target/acme.target/point/contributor/detail/entry-7',
+            launchInput: { revision: 1 },
+        };
+        const firstController = new AbortController();
+        const secondController = new AbortController();
+        const first = await owner.bindForResource({
+            pluginId: 'acme.alpha',
+            resourceId: 'targeted-document',
+            signal: firstController.signal,
+            isGenerationCurrent: () => true,
+            context,
+        });
+        const second = await owner.bindForResource({
+            pluginId: 'acme.alpha',
+            resourceId: 'targeted-document',
+            signal: secondController.signal,
+            isGenerationCurrent: () => true,
+            context,
+        });
+        await first.read('targeted-document');
+
+        firstController.abort();
+        expect(second.describe('targeted-document').digest).toMatch(/^sha256:/u);
+
+        secondController.abort();
+        const replacement = await owner.bindForResource({
+            pluginId: 'acme.alpha',
+            resourceId: 'targeted-document',
+            signal: new AbortController().signal,
+            isGenerationCurrent: () => true,
+            context,
+        });
+        expect(() => replacement.describe('targeted-document')).toThrowError(
+            expect.objectContaining({ code: 'plugin_resource_context_unavailable' }),
+        );
+    });
+
     it('aborts and fences an old surface watch before a replacement can admit late bytes', async () => {
         const baseline = new Uint8Array(Buffer.from('baseline'));
         const replacementBytes = new Uint8Array(Buffer.from('replacement'));

@@ -3,6 +3,7 @@
  * Used by CLI commands to interact with running daemon
  */
 
+import { isPidPresent, isPidProvablyAbsent } from '@happier-dev/cli-common/process';
 import { logger } from '@/ui/logger';
 import {
   clearReplaceableDaemonLock,
@@ -375,9 +376,7 @@ async function daemonPost(path: string, body?: any, options: DaemonPostOptions =
     };
   }
 
-  try {
-    process.kill(state.pid, 0);
-  } catch (error) {
+  if (!isPidPresent(state.pid)) {
     const errorMessage = 'Daemon is not running, file is stale';
     logger.debug(`[CONTROL CLIENT] ${errorMessage}`);
     return {
@@ -1479,6 +1478,20 @@ async function forceKillKnownDaemonPid(
   pid: number,
   expectedState?: Awaited<ReturnType<typeof readDaemonState>>,
 ): Promise<DaemonStopResult> {
+  // A recorded lifecycle owner that is PROVABLY gone is a completed stop, not an identity
+  // mismatch: there is no process left to signal and nothing left to protect. The identity gate
+  // below reads a process inventory, and an inventory that finds nothing cannot tell "the pid
+  // exited" apart from "the pid is not ours" or "the inventory failed" — so it refused all three
+  // and left `happier daemon restart` reporting a failed stop for a daemon it had already
+  // stopped. Only proven absence short-circuits here: `isPidProvablyAbsent` requires ESRCH, so
+  // access-denied and unreadable-inventory verdicts stay inconclusive and still refuse below.
+  // `confirmedForceStop`'s cleanup is itself ownership-guarded (it only reclaims a *replaceable*
+  // lock), so a successor daemon that already took the lock is never disturbed.
+  if (isPidProvablyAbsent(pid)) {
+    logger.debug(`[CONTROL CLIENT] Daemon PID ${pid} has already exited; recording the stop as complete`);
+    return await confirmedForceStop(pid);
+  }
+
   const forceState = await assertForceStopIdentity(pid, expectedState);
 
   try {
@@ -1496,6 +1509,14 @@ async function forceKillKnownDaemonPid(
     return await confirmedForceStop(pid);
   } catch (error) {
     logger.debug('[CONTROL CLIENT] Daemon remained live after SIGTERM; escalating to SIGKILL', error);
+  }
+
+  // SIGTERM may still be draining when the death wait expires; a daemon that exits in that gap is
+  // stopped, and re-asserting identity against a vanished process would report the same false
+  // refusal this function opens by rejecting.
+  if (isPidProvablyAbsent(pid)) {
+    logger.debug(`[CONTROL CLIENT] Daemon PID ${pid} exited after SIGTERM; recording the stop as complete`);
+    return await confirmedForceStop(pid);
   }
 
   await assertForceStopIdentity(pid, forceState);

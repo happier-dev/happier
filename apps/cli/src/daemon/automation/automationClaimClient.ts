@@ -8,10 +8,17 @@ import type {
 } from '@happier-dev/protocol';
 import {
   AutomationV3WorkerClaimResponseSchema,
+  AutomationV3WorkerAssignmentsResponseSchema,
   AutomationV3WorkerStartResponseSchema,
+  DEFAULT_AUTOMATION_V3_MAX_ACTIVE_RUNS_PER_MACHINE,
+  PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1,
 } from '@happier-dev/protocol';
 
 import { configuration } from '@/configuration';
+import {
+  createDefaultPluginInstallationPublisherHeader,
+  type CreatePluginInstallationPublisherHeader,
+} from '@/plugins/installations/publisherProof';
 import type {
   AutomationClaimRunResponse,
   AutomationDaemonAssignmentsResponse,
@@ -73,10 +80,15 @@ function toWorkerAssignmentResponseFromV3(
       automationId: assignment.automationId,
       nextClaimAt: assignment.nextClaimAt,
     })),
+    settings: response.settings,
   };
 }
 
-/** The V2 fallback is schedule-only because that is all its server predicate can claim. */
+/**
+ * The observed predecessor has only schedule-aware V2 assignments. Normalize
+ * its lack of settings once at this compatibility boundary to the Protocol
+ * default so the worker still has one required downstream shape.
+ */
 function toWorkerAssignmentResponseFromV2(
   response: AutomationDaemonAssignmentsResponse,
 ): AutomationWorkerAssignmentsResponse {
@@ -86,6 +98,9 @@ function toWorkerAssignmentResponseFromV2(
       automationId: assignment.automation.id,
       nextClaimAt: assignment.automation.nextRunAt,
     })),
+    settings: {
+      maxActiveRunsPerMachine: DEFAULT_AUTOMATION_V3_MAX_ACTIVE_RUNS_PER_MACHINE,
+    },
   };
 }
 
@@ -138,9 +153,14 @@ function toWorkerClaimResponseFromV2(response: AutomationV2ClaimResponseWire): A
   };
 }
 
-export function createAutomationClaimClient(params: { token: string }) {
+export function createAutomationClaimClient(params: {
+  token: string;
+  createPublisherHeader?: CreatePluginInstallationPublisherHeader;
+}) {
   const baseUrl = configuration.apiServerUrl;
   const token = params.token;
+  const createPublisherHeader = params.createPublisherHeader
+    ?? createDefaultPluginInstallationPublisherHeader;
   let assignmentProtocol: AutomationWorkerProtocol | null = null;
   let latestAssignmentRead = 0;
   let runProtocol: AutomationWorkerProtocol | null = null;
@@ -171,9 +191,18 @@ export function createAutomationClaimClient(params: { token: string }) {
     return version;
   }
 
-  function runPath(runId: string, operation: 'heartbeat' | 'start' | 'succeed' | 'fail'): string {
-    const version = requireRunProtocol();
-    return `${baseUrl}/${version}/automations/runs/${encodeURIComponent(runId)}/${operation}`;
+  async function workerHeaders(request: Readonly<{
+    method: 'GET' | 'POST';
+    path: string;
+    body: unknown;
+  }>): Promise<Record<string, string>> {
+    const publisherHeader = await createPublisherHeader(request);
+    return {
+      ...authHeaders(token),
+      ...(publisherHeader
+        ? { [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]: publisherHeader }
+        : {}),
+    };
   }
 
   return {
@@ -186,7 +215,11 @@ export function createAutomationClaimClient(params: { token: string }) {
         const response = await axios.get<AutomationV3WorkerAssignmentsResponse>(
           assignmentsUrl,
           {
-            headers: authHeaders(token),
+            headers: await workerHeaders({
+              method: 'GET',
+              path: '/v3/automations/worker/assignments',
+              body: null,
+            }),
             params: { machineId },
             timeout: 15_000,
           },
@@ -194,7 +227,9 @@ export function createAutomationClaimClient(params: { token: string }) {
         if (assignmentRead === latestAssignmentRead) {
           assignmentProtocol = 'v3';
         }
-        return toWorkerAssignmentResponseFromV3(response.data);
+        return toWorkerAssignmentResponseFromV3(
+          AutomationV3WorkerAssignmentsResponseSchema.parse(response.data),
+        );
       } catch (error) {
         if (!isMissingEndpointError(error, '/v3/automations/worker/assignments')) {
           throw error;
@@ -204,7 +239,11 @@ export function createAutomationClaimClient(params: { token: string }) {
       const response = await axios.get<AutomationDaemonAssignmentsResponse>(
         `${baseUrl}/v2/automations/daemon/assignments`,
         {
-          headers: authHeaders(token),
+          headers: await workerHeaders({
+            method: 'GET',
+            path: '/v2/automations/daemon/assignments',
+            body: null,
+          }),
           params: { machineId },
           timeout: 15_000,
         },
@@ -222,18 +261,20 @@ export function createAutomationClaimClient(params: { token: string }) {
         machineId: paramsClaim.machineId,
         leaseDurationMs: paramsClaim.leaseDurationMs,
       };
-      const requestOptions = {
-        headers: authHeaders(token),
-        timeout: 15_000,
-      };
-
       if (version === 'v3') {
         const claimUrl = `${baseUrl}/v3/automations/runs/claim`;
         try {
           const response = await axios.post<AutomationV3WorkerClaimResponse>(
             claimUrl,
             body,
-            requestOptions,
+            {
+              headers: await workerHeaders({
+                method: 'POST',
+                path: '/v3/automations/runs/claim',
+                body,
+              }),
+              timeout: 15_000,
+            },
           );
           const result = toWorkerClaimResponse(AutomationV3WorkerClaimResponseSchema.parse(response.data));
           runProtocol = 'v3';
@@ -254,7 +295,14 @@ export function createAutomationClaimClient(params: { token: string }) {
       const response = await axios.post<AutomationV2ClaimResponseWire>(
         `${baseUrl}/v2/automations/runs/claim`,
         body,
-        requestOptions,
+        {
+          headers: await workerHeaders({
+            method: 'POST',
+            path: '/v2/automations/runs/claim',
+            body,
+          }),
+          timeout: 15_000,
+        },
       );
       const result = toWorkerClaimResponseFromV2(response.data);
       runProtocol = 'v2';
@@ -267,15 +315,17 @@ export function createAutomationClaimClient(params: { token: string }) {
       attempt: number;
       leaseDurationMs: number;
     }): Promise<void> {
+      const path = `/${requireRunProtocol()}/automations/runs/${encodeURIComponent(paramsHeartbeat.runId)}/heartbeat`;
+      const body = {
+        machineId: paramsHeartbeat.machineId,
+        attempt: paramsHeartbeat.attempt,
+        leaseDurationMs: paramsHeartbeat.leaseDurationMs,
+      };
       await axios.post(
-        runPath(paramsHeartbeat.runId, 'heartbeat'),
+        `${baseUrl}${path}`,
+        body,
         {
-          machineId: paramsHeartbeat.machineId,
-          attempt: paramsHeartbeat.attempt,
-          leaseDurationMs: paramsHeartbeat.leaseDurationMs,
-        },
-        {
-          headers: authHeaders(token),
+          headers: await workerHeaders({ method: 'POST', path, body }),
           timeout: 15_000,
         },
       );
@@ -292,25 +342,29 @@ export function createAutomationClaimClient(params: { token: string }) {
         if (!paramsStart.accountCurrentness) {
           throw new Error('Automation V3 start requires the claim Account currentness witness');
         }
-        const response = await axios.post(
-          runPath(paramsStart.runId, 'start'),
-          {
+        const path = `/v3/automations/runs/${encodeURIComponent(paramsStart.runId)}/start`;
+        const body = {
             machineId: paramsStart.machineId,
             attempt: paramsStart.attempt,
             accountCurrentness: paramsStart.accountCurrentness,
-          },
+        };
+        const response = await axios.post(
+          `${baseUrl}${path}`,
+          body,
           {
-            headers: authHeaders(token),
+            headers: await workerHeaders({ method: 'POST', path, body }),
             timeout: 15_000,
           },
         );
         return AutomationV3WorkerStartResponseSchema.parse(response.data).accountCurrentness;
       }
+      const path = `/v2/automations/runs/${encodeURIComponent(paramsStart.runId)}/start`;
+      const body = { machineId: paramsStart.machineId, attempt: paramsStart.attempt };
       await axios.post(
-        runPath(paramsStart.runId, 'start'),
-        { machineId: paramsStart.machineId, attempt: paramsStart.attempt },
+        `${baseUrl}${path}`,
+        body,
         {
-          headers: authHeaders(token),
+          headers: await workerHeaders({ method: 'POST', path, body }),
           timeout: 15_000,
         },
       );
@@ -329,24 +383,26 @@ export function createAutomationClaimClient(params: { token: string }) {
       if (version === 'v3' && !paramsSucceed.accountCurrentness) {
         throw new Error('Automation V3 success requires the start Account currentness witness');
       }
+      const path = `/${version}/automations/runs/${encodeURIComponent(paramsSucceed.runId)}/succeed`;
+      const body = version === 'v3'
+        ? {
+          machineId: paramsSucceed.machineId,
+          attempt: paramsSucceed.attempt,
+          accountCurrentness: paramsSucceed.accountCurrentness,
+          producedSessionId: paramsSucceed.producedSessionId ?? null,
+          resultEnvelope: paramsSucceed.resultEnvelope ?? null,
+        }
+        : {
+          machineId: paramsSucceed.machineId,
+          attempt: paramsSucceed.attempt,
+          producedSessionId: paramsSucceed.producedSessionId ?? null,
+          summaryCiphertext: null,
+        };
       await axios.post(
-        runPath(paramsSucceed.runId, 'succeed'),
-        version === 'v3'
-          ? {
-            machineId: paramsSucceed.machineId,
-            attempt: paramsSucceed.attempt,
-            accountCurrentness: paramsSucceed.accountCurrentness,
-            producedSessionId: paramsSucceed.producedSessionId ?? null,
-            resultEnvelope: paramsSucceed.resultEnvelope ?? null,
-          }
-          : {
-            machineId: paramsSucceed.machineId,
-            attempt: paramsSucceed.attempt,
-            producedSessionId: paramsSucceed.producedSessionId ?? null,
-            summaryCiphertext: null,
-          },
+        `${baseUrl}${path}`,
+        body,
         {
-          headers: authHeaders(token),
+          headers: await workerHeaders({ method: 'POST', path, body }),
           timeout: 15_000,
         },
       );
@@ -362,16 +418,18 @@ export function createAutomationClaimClient(params: { token: string }) {
       if (requireRunProtocol() !== 'v3') {
         throw new Error('Detached Automation execution requires the V3 worker protocol');
       }
+      const path = `/v3/automations/runs/${encodeURIComponent(paramsSettlement.runId)}/execution-dispatch/settle`;
+      const body = {
+        machineId: paramsSettlement.machineId,
+        attempt: paramsSettlement.attempt,
+        accountCurrentness: paramsSettlement.accountCurrentness,
+        outcome: paramsSettlement.outcome,
+      };
       await axios.post(
-        `${baseUrl}/v3/automations/runs/${encodeURIComponent(paramsSettlement.runId)}/execution-dispatch/settle`,
+        `${baseUrl}${path}`,
+        body,
         {
-          machineId: paramsSettlement.machineId,
-          attempt: paramsSettlement.attempt,
-          accountCurrentness: paramsSettlement.accountCurrentness,
-          outcome: paramsSettlement.outcome,
-        },
-        {
-          headers: authHeaders(token),
+          headers: await workerHeaders({ method: 'POST', path, body }),
           timeout: 15_000,
         },
       );
@@ -401,30 +459,32 @@ export function createAutomationClaimClient(params: { token: string }) {
       if (version === 'v2' && typeof paramsFail.errorMessage !== 'string') {
         throw new Error('Automation V2 failure requires its released raw error message');
       }
+      const path = `/${version}/automations/runs/${encodeURIComponent(paramsFail.runId)}/fail`;
+      const body = version === 'v3'
+        ? {
+          machineId: paramsFail.machineId,
+          attempt: paramsFail.attempt,
+          accountCurrentness: paramsFail.accountCurrentness,
+          ...(paramsFail.producedSessionId === undefined
+            ? {}
+            : { producedSessionId: paramsFail.producedSessionId }),
+          errorCode: paramsFail.errorCode,
+          errorDetailEnvelope: paramsFail.errorDetailEnvelope ?? null,
+        }
+        : {
+          machineId: paramsFail.machineId,
+          attempt: paramsFail.attempt,
+          ...(paramsFail.producedSessionId === undefined
+            ? {}
+            : { producedSessionId: paramsFail.producedSessionId }),
+          errorCode: paramsFail.errorCode,
+          errorMessage: paramsFail.errorMessage,
+        };
       await axios.post(
-        runPath(paramsFail.runId, 'fail'),
-        version === 'v3'
-          ? {
-            machineId: paramsFail.machineId,
-            attempt: paramsFail.attempt,
-            accountCurrentness: paramsFail.accountCurrentness,
-            ...(paramsFail.producedSessionId === undefined
-              ? {}
-              : { producedSessionId: paramsFail.producedSessionId }),
-            errorCode: paramsFail.errorCode,
-            errorDetailEnvelope: paramsFail.errorDetailEnvelope ?? null,
-          }
-          : {
-            machineId: paramsFail.machineId,
-            attempt: paramsFail.attempt,
-            ...(paramsFail.producedSessionId === undefined
-              ? {}
-              : { producedSessionId: paramsFail.producedSessionId }),
-            errorCode: paramsFail.errorCode,
-            errorMessage: paramsFail.errorMessage,
-          },
+        `${baseUrl}${path}`,
+        body,
         {
-          headers: authHeaders(token),
+          headers: await workerHeaders({ method: 'POST', path, body }),
           timeout: 15_000,
         },
       );

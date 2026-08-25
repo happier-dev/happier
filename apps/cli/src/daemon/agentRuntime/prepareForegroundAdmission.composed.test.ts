@@ -7,6 +7,8 @@ const boundaries = vi.hoisted(() => ({
   bridgeAgentId: 'codex',
   bridgePluginId: 'happier.agent.codex',
   bridgeCleanup: vi.fn(async () => undefined),
+  bridgePrepared: vi.fn(() => undefined),
+  providersFeatureEnabled: true,
   leaseRelease: vi.fn(async () => undefined),
   mutateDuringMaterialization: null as null | (() => void),
   providerMaterialization: 'spawnEnv' as 'spawnEnv' | 'configFile',
@@ -26,7 +28,11 @@ vi.mock('@/plugins/runtime/reload/runtimeLease', () => ({
 }));
 
 vi.mock('@/daemon/spawn/prepareAgentRuntimeSessionBridge', () => ({
-  prepareForegroundAgentRuntimeBootstrapForLease: async () => ({
+  prepareForegroundAgentRuntimeBootstrapForLease: async () => {
+    // Records that bootstrap material was actually written, so a test can
+    // prove a refusal landed before the bridge ran at all.
+    boundaries.bridgePrepared();
+    return ({
     authorization: {
       capabilityHash: 'sha256:test',
       foregroundAdmissionFilePath:
@@ -45,7 +51,8 @@ vi.mock('@/daemon/spawn/prepareAgentRuntimeSessionBridge', () => ({
     },
     childEnv: {},
     cleanupBootstrapFiles: boundaries.bridgeCleanup,
-  }),
+    });
+  },
 }));
 
 vi.mock('@/daemon/processIdentity', () => ({
@@ -96,7 +103,9 @@ vi.mock('./sessionBridgeAuthorization', async (importOriginal) => ({
 
 vi.mock('@/features/featureDecisionService', () => ({
   resolveCliFeatureDecisionForServer: async () => ({
-    decision: { state: 'enabled' },
+    decision: {
+      state: boundaries.providersFeatureEnabled ? 'enabled' : 'disabled',
+    },
   }),
 }));
 
@@ -432,6 +441,8 @@ beforeEach(() => {
   boundaries.bridgeAgentId = 'codex';
   boundaries.bridgePluginId = 'happier.agent.codex';
   boundaries.bridgeCleanup.mockClear();
+  boundaries.bridgePrepared.mockClear();
+  boundaries.providersFeatureEnabled = true;
   boundaries.leaseRelease.mockClear();
   boundaries.mutateDuringMaterialization = null;
   boundaries.providerMaterialization = 'spawnEnv';
@@ -611,6 +622,27 @@ describe('foreground admission composed real Provider authorization seam', () =>
     expect(claimed).not.toHaveProperty('environment');
     expect(claimed).not.toHaveProperty('profileSecretRecovery');
     await admitted.prepared.cleanup();
+  });
+
+  it('refuses a Provider-bound foreground admission at the feature gate before any Agent runtime bootstrap material exists', async () => {
+    publishSettings({ version: 1 });
+    boundaries.providersFeatureEnabled = false;
+
+    const admitted = await prepareForegroundAgentRuntimeAdmission(request());
+
+    expect(admitted).toEqual({
+      ok: false,
+      error: createProviderErrorV1('provider_feature_disabled', {
+        connectionId,
+        machineId: 'machine-1',
+      }),
+    });
+    // Bootstrap files can be cleaned up, but an activated Agent runtime
+    // contribution cannot be un-activated, so a refusal this owner can already
+    // establish must land before the bridge runs at all.
+    expect(boundaries.bridgePrepared).not.toHaveBeenCalled();
+    expect(boundaries.bridgeCleanup).not.toHaveBeenCalled();
+    expect(boundaries.leaseRelease).toHaveBeenCalledTimes(1);
   });
 
   it('binds Profile scope/version through final claim and redacts successful plaintext for admission lifetime', async () => {

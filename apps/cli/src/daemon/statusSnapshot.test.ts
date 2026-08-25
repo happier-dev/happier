@@ -20,7 +20,16 @@ const {
     readStoredCredentialsMock: vi.fn(
         async (): Promise<StoredCredentials | null> => null,
     ),
-    readDaemonStateMock: vi.fn(async () => ({
+    readDaemonStateMock: vi.fn(async (): Promise<Readonly<{
+        pid: number;
+        httpPort: number;
+        startupSource: string;
+        serviceLabel: string;
+        // Optional on the persisted record, and the readiness fact is what separates a working
+        // daemon from a live one that cannot serve a single machine RPC.
+        lastHeartbeatAt?: number;
+        machineControlReady?: boolean;
+    }>> => ({
         pid: process.pid,
         httpPort: 53288,
         startupSource: 'background-service',
@@ -115,6 +124,67 @@ describe('readDaemonStatusSnapshot', () => {
         } finally {
             killSpy.mockRestore();
         }
+    });
+
+    // `daemon.running` answers "does the process exist"; `daemon.healthy` answers "does the
+    // service work". Splitting them is the whole point: a daemon whose machine-control RPC
+    // registration never completed is a live process that cannot serve a single RPC, and a
+    // PID probe is structurally incapable of saying so.
+    it('reports a live daemon that never completed machine-control registration as unhealthy', async () => {
+        readDaemonStateMock.mockResolvedValueOnce({
+            pid: process.pid,
+            httpPort: 53288,
+            startupSource: 'background-service',
+            serviceLabel: 'com.happier.cli.daemon.default',
+            lastHeartbeatAt: Date.now(),
+            machineControlReady: false,
+        });
+
+        const { readDaemonStatusSnapshot } = await import('./statusSnapshot');
+
+        const snapshot = await readDaemonStatusSnapshot();
+
+        // The process is genuinely there — reporting it absent would send repair/start paths
+        // after a daemon that already holds the lifecycle lock.
+        expect(snapshot.daemon.running).toBe(true);
+        expect(snapshot.daemon.healthy).toBe(false);
+    });
+
+    it('reports a daemon that completed machine-control registration as healthy', async () => {
+        readDaemonStateMock.mockResolvedValueOnce({
+            pid: process.pid,
+            httpPort: 53288,
+            startupSource: 'background-service',
+            serviceLabel: 'com.happier.cli.daemon.default',
+            lastHeartbeatAt: Date.now(),
+            machineControlReady: true,
+        });
+
+        const { readDaemonStatusSnapshot } = await import('./statusSnapshot');
+
+        const snapshot = await readDaemonStatusSnapshot();
+
+        expect(snapshot.daemon.running).toBe(true);
+        expect(snapshot.daemon.healthy).toBe(true);
+    });
+
+    // The inconclusive case must stay inconclusive. Two lanes in this program found the
+    // opposite anti-pattern — an unknown observation acted on as a definite negative — so a
+    // daemon that has published no readiness fact reports unknown, never `false`.
+    it('reports unknown, not unhealthy, when the daemon published no readiness fact', async () => {
+        readDaemonStateMock.mockResolvedValueOnce({
+            pid: process.pid,
+            httpPort: 53288,
+            startupSource: 'background-service',
+            serviceLabel: 'com.happier.cli.daemon.default',
+        });
+
+        const { readDaemonStatusSnapshot } = await import('./statusSnapshot');
+
+        const snapshot = await readDaemonStatusSnapshot();
+
+        expect(snapshot.daemon.running).toBe(true);
+        expect(snapshot.daemon.healthy).toBeNull();
     });
 
     it('keeps service.installed false when the running service label does not match the expected installation', async () => {

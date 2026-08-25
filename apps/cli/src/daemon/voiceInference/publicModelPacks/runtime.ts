@@ -37,8 +37,8 @@ import {
   readModelPackPromotionIntents,
   reconcileModelPackPromotions,
   settleModelPackPromotion,
-} from '../modelPackInstallerHost.node';
-import { createNodeInstalledModelPackIntegrityHost } from '../modelPackIntegrityHost.node';
+} from '../nodeModelPackInstallerHost';
+import { createNodeInstalledModelPackIntegrityHost } from '../nodeModelPackIntegrityHost';
 import {
   readInstalledVoiceModelPackManifest,
   removeInstalledVoiceModelPack,

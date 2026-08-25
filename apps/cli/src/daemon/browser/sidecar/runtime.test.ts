@@ -11,7 +11,6 @@ describe('daemon browser sidecar runtime planning', () => {
             sidecarId: 'sidecar_1',
             nowMs: 2_000,
             featureEnabled: false,
-            browserUseAllowed: true,
             allowPersistentProfiles: false,
             profile: {
                 profileId: 'profile_1',
@@ -49,7 +48,6 @@ describe('daemon browser sidecar runtime planning', () => {
             sidecarId: 'sidecar_1',
             nowMs: 2_000,
             featureEnabled: true,
-            browserUseAllowed: true,
             allowPersistentProfiles: false,
             profile: {
                 profileId: 'profile_1',

@@ -7,6 +7,7 @@ import {
     QualifiedConnectedAccountPurposeV1Schema,
     RequestAuthFailureOutcomeV1Schema,
     qualifiedPurposeKey,
+    sameQualifiedConnectedAccountRef,
     type ConnectedAccountAuthFailureRequestV1,
     type ConnectedAccountQuotaFailureRequestV1,
     type OAuthBearerLeaseV1,
@@ -312,15 +313,11 @@ function tokenFingerprint(accessToken: string): string {
     return `sha256:${createHash('sha256').update(accessToken, 'utf8').digest('hex')}`;
 }
 
-function sameAccount(left: QualifiedConnectedAccountRef, right: QualifiedConnectedAccountRef): boolean {
-    return accountKey(left) === accountKey(right);
-}
-
 function sameResolvedBinding(
     left: ConnectedAccountRequestAuthResolvedBinding,
     right: ConnectedAccountRequestAuthResolvedBinding,
 ): boolean {
-    if (!sameAccount(left.account, right.account)) return false;
+    if (!sameQualifiedConnectedAccountRef(left.account, right.account)) return false;
     if (left.credentialRevision !== right.credentialRevision) return false;
     if (
         left.legacyServiceKeyedCompatibility
@@ -336,7 +333,7 @@ function resolvedMatchesBinding(
     resolved: ConnectedAccountRequestAuthResolvedBinding,
 ): boolean {
     if (binding.target.kind === 'account') {
-        return sameAccount(binding.target.account, resolved.account) && resolved.group === undefined;
+        return sameQualifiedConnectedAccountRef(binding.target.account, resolved.account) && resolved.group === undefined;
     }
     return serviceKey(binding.target.service) === serviceKey(resolved.account.service)
         && resolved.group?.groupId === binding.target.groupId;
@@ -346,7 +343,7 @@ function contextMatchesResolved(
     context: ConnectedAccountAuthFailureRequestV1['credentialContext'],
     resolved: ConnectedAccountRequestAuthResolvedBinding,
 ): boolean {
-    if (!sameAccount(context.account, resolved.account)) return false;
+    if (!sameQualifiedConnectedAccountRef(context.account, resolved.account)) return false;
     if (context.credentialRevision !== resolved.credentialRevision) return false;
     if (!context.group && !resolved.group) return true;
     return context.group?.groupId === resolved.group?.groupId

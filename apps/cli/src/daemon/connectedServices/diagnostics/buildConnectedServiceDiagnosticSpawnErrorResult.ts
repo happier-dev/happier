@@ -9,6 +9,9 @@ import {
 
 import type { CatalogAgentId } from '@/agent/catalog/ids';
 import type { ConnectedServicesMaterializationDiagnostic } from '../materialization/materializer';
+import {
+  sanitizeConnectedServiceDiagnosticString,
+} from '../runtimeAuth/sanitizeConnectedServiceDiagnosticString';
 import { buildConnectedServiceUxDiagnostic } from './connectedServiceUxDiagnostics';
 
 type ConnectedServiceCredentialRefreshSpawnError = Readonly<{
@@ -160,6 +163,27 @@ export function buildConnectedServiceCredentialRefreshSpawnErrorResult(input: Re
   });
 }
 
+/**
+ * Materialization diagnostics are plugin-authored prose, not a closed
+ * classification: an ordinary trusted plugin that wraps an upstream failure can
+ * carry a bearer token, API key, or local path in them. They cross the daemon
+ * process boundary into the requesting client through the spawn result, so each
+ * scalar is bounded and redacted here — at the one producer — with the existing
+ * Connected Service diagnostic privacy owner.
+ */
+const MAX_MATERIALIZATION_DIAGNOSTIC_VALUE_LENGTH = 200;
+
+export function boundConnectedServiceMaterializationDiagnosticValue(
+  value: string | null | undefined,
+): string | null {
+  const trimmed = typeof value === 'string' ? value.trim() : '';
+  if (!trimmed) return null;
+  const sanitized = sanitizeConnectedServiceDiagnosticString(trimmed, {
+    maxLength: MAX_MATERIALIZATION_DIAGNOSTIC_VALUE_LENGTH,
+  }).trim();
+  return sanitized || null;
+}
+
 export function buildConnectedServiceMaterializationSpawnErrorResult(input: Readonly<{
   agentId: CatalogAgentId;
   diagnostics: readonly ConnectedServicesMaterializationDiagnostic[];
@@ -180,9 +204,9 @@ export function buildConnectedServiceMaterializationSpawnErrorResult(input: Read
       ...(primary?.serviceId ? { serviceId: primary.serviceId } : {}),
       retryable: false,
       diagnostics: {
-        reason: primary?.reason ?? null,
-        materializationCode: primary?.code ?? null,
-        entryName: primary?.entryName ?? null,
+        reason: boundConnectedServiceMaterializationDiagnosticValue(primary?.reason),
+        materializationCode: boundConnectedServiceMaterializationDiagnosticValue(primary?.code),
+        entryName: boundConnectedServiceMaterializationDiagnosticValue(primary?.entryName),
       },
     }),
   });

@@ -7,9 +7,12 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   ConnectedServiceAuthGroupV1Schema,
+  BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID,
   buildProviderAccountUsageRecordId,
   buildConnectedServiceCredentialRecord,
   sealAccountScopedBlobCiphertext,
+  QualifiedConnectedAccountGroupV4Schema,
+  QualifiedConnectedAccountListResponseV4Schema,
   type ConnectedServiceBindingsV1,
   type ConnectedServiceId,
   type ProviderAccountUsageRecordKeyV1,
@@ -27,8 +30,9 @@ import { buildConnectedServiceAuthGroupSwitchState } from './accountGroups/switc
 import {
   ConnectedServiceLegacyUnfencedAuthorityError,
   persistMaterializationFailureCredentialHealthForSpawn,
-  resolveConnectedServiceAuthForSpawn,
+  resolveConnectedServiceAuthForSpawn as resolveConnectedServiceAuthForSpawnImpl,
 } from './resolveConnectedServiceAuthForSpawn';
+import type { ConnectedServiceQualifiedAuthGroupApi } from './resolveConnectedServiceAuthForSpawn';
 import type { ConnectedServicesMaterializationDiagnostic } from './materialization/materializer';
 import type { ConnectedServiceCredentialRefreshResult } from './refresh/ConnectedServiceRefreshCoordinator';
 import {
@@ -68,6 +72,111 @@ type SpawnAuthGroupSwitchCoordinator = NonNullable<
     generation?: number;
   }>>;
 }>;
+
+type LegacyTestConnectedServiceApi = Readonly<{
+  getConnectedServiceAuthGroup?: (input: Readonly<{ serviceId: string; groupId: string }>) => Promise<Readonly<{
+    v?: number;
+    serviceId?: string;
+    groupId: string;
+    displayName?: string | null;
+    policy?: unknown;
+    activeProfileId?: string | null;
+    generation?: number | null;
+    runtimeStateRevision?: number;
+    state?: unknown;
+    createdAt?: number;
+    updatedAt?: number;
+    members?: ReadonlyArray<Readonly<{
+      profileId: string;
+      priority?: number;
+      enabled?: boolean;
+      state?: unknown;
+      createdAt?: number;
+      updatedAt?: number;
+    }>>;
+  }> | null>;
+  listConnectedServiceProfiles?: (input: Readonly<{ serviceId: string }>) => Promise<Readonly<{
+    profiles: ReadonlyArray<Readonly<{
+      profileId: string;
+      status: 'connected' | 'refreshing' | 'needs_reauth' | 'refresh_failed_retryable';
+      kind?: 'oauth' | 'token' | null;
+    }>>;
+  }>>;
+}>;
+
+function qualifiedAuthGroupApiFromLegacyTestApi(api: unknown): ConnectedServiceQualifiedAuthGroupApi {
+  const legacy = api as LegacyTestConnectedServiceApi;
+  let latestGroup: Awaited<ReturnType<NonNullable<LegacyTestConnectedServiceApi['getConnectedServiceAuthGroup']>>> = null;
+  const resolveLegacyServiceId = (service: Readonly<{ pluginId: string; localId: string }>): string => {
+    const entry = Object.entries(BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID)
+      .find(([, compatibility]) => (
+        compatibility.service.pluginId === service.pluginId
+        && compatibility.service.localId === service.localId
+      ));
+    if (!entry) throw new Error('test_legacy_service_mapping_missing');
+    return entry[0];
+  };
+  return {
+    readGroup: async ({ service, groupId }) => {
+      const serviceId = resolveLegacyServiceId(service);
+      const group = await legacy.getConnectedServiceAuthGroup?.({ serviceId, groupId }) ?? null;
+      latestGroup = group;
+      if (!group) return null;
+      return QualifiedConnectedAccountGroupV4Schema.parse({
+        v: 1,
+        ref: { service, groupId: group.groupId },
+        incarnation: `qualified-group-${group.groupId}`,
+        displayName: group.displayName ?? null,
+        policy: group.policy ?? { v: 1 },
+        activeConnectedAccountId: group.activeProfileId ?? null,
+        generation: group.generation ?? 0,
+        runtimeStateRevision: group.runtimeStateRevision ?? 0,
+        state: {},
+        createdAt: group.createdAt ?? 0,
+        updatedAt: group.updatedAt ?? 0,
+        members: (group.members ?? []).map((member) => ({
+          v: 1,
+          connectedAccountId: member.profileId,
+          priority: member.priority ?? 100,
+          enabled: member.enabled ?? true,
+          state: member.state ?? {},
+          createdAt: member.createdAt ?? 0,
+          updatedAt: member.updatedAt ?? 0,
+        })),
+      });
+    },
+    listAccounts: async ({ service }) => {
+      const serviceId = resolveLegacyServiceId(service);
+      const profiles = await legacy.listConnectedServiceProfiles?.({ serviceId });
+      const profileRows = profiles?.profiles ?? latestGroup?.members?.map((member) => ({
+        profileId: member.profileId,
+        status: 'connected' as const,
+      })) ?? [];
+      return QualifiedConnectedAccountListResponseV4Schema.parse({
+        service,
+        accounts: profileRows.map((profile) => ({
+          ref: { service, accountId: profile.profileId },
+          status: profile.status,
+          authenticationModeId: 'kind' in profile && profile.kind === 'oauth' ? 'oauth' : 'api-key',
+          revisionSemantics: 'revisioned',
+          credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa',
+          configurationReady: true,
+          configurationRevision: null,
+          scopes: [],
+        })),
+      });
+    },
+  };
+}
+
+function resolveConnectedServiceAuthForSpawn(input: Parameters<typeof resolveConnectedServiceAuthForSpawnImpl>[0]) {
+  return resolveConnectedServiceAuthForSpawnImpl({
+    ...input,
+    ...(input.qualifiedConnectedAccountApi
+      ? {}
+      : { qualifiedConnectedAccountApi: qualifiedAuthGroupApiFromLegacyTestApi(input.api) }),
+  });
+}
 
 const exactOldServerContract = {
   mode: 'released_server_v0_2_1' as const,
@@ -320,9 +429,52 @@ async function createSpawnPreTurnSwitchScenario(input: Readonly<{
     if (input.switchError) throw input.switchError;
     return input.switchResult!;
   });
+  const qualifiedService = {
+    pluginId: 'happier.agent.codex',
+    localId: 'openai-codex',
+  } as const;
+  const qualifiedGroup = QualifiedConnectedAccountGroupV4Schema.parse({
+    v: 1,
+    ref: { service: qualifiedService, groupId: 'codex-main' },
+    incarnation: 'qualified-group-codex-main',
+    displayName: 'Codex main',
+    policy: group.policy,
+    activeConnectedAccountId: 'primary',
+    generation: group.generation,
+    runtimeStateRevision: group.runtimeStateRevision,
+    state: {},
+    createdAt: group.createdAt,
+    updatedAt: group.updatedAt,
+    members: group.members.map((member) => ({
+      v: 1,
+      connectedAccountId: member.profileId,
+      priority: member.priority,
+      enabled: member.enabled,
+      state: {},
+      createdAt: member.createdAt,
+      updatedAt: member.updatedAt,
+    })),
+  });
+  const qualifiedAccounts = QualifiedConnectedAccountListResponseV4Schema.parse({
+    service: qualifiedService,
+    accounts: [...recordsByProfileId.keys()].map((profileId) => ({
+      ref: { service: qualifiedService, accountId: profileId },
+      status: 'connected',
+      authenticationModeId: 'oauth',
+      revisionSemantics: 'revisioned',
+      credentialRevision: `csr_${profileId === 'primary' ? '0123456789ABCDEFGHJKMNPQRS' : 'ZYXWVUTSRQPONLKJHGFEDCBA1'}`,
+      configurationReady: true,
+      configurationRevision: null,
+      scopes: [],
+    })),
+  });
+  const readQualifiedConnectedAccountGroupV4 = vi.fn(async () => qualifiedGroup);
+  const listQualifiedConnectedAccountsV4 = vi.fn(async () => qualifiedAccounts);
 
   return {
     getConnectedServiceAuthGroup,
+    readQualifiedConnectedAccountGroupV4,
+    listQualifiedConnectedAccountsV4,
     getConnectedServiceCredentialPlain,
     switchBeforeTurn,
     run: async () => await resolveConnectedServiceAuthForSpawn({
@@ -349,11 +501,34 @@ async function createSpawnPreTurnSwitchScenario(input: Readonly<{
       nowMs: () => 1_000,
       sessionId: 'session-single-spawn-switch',
       authGroupSwitchCoordinator: { switchBeforeTurn },
+      qualifiedConnectedAccountApi: {
+        readGroup: readQualifiedConnectedAccountGroupV4,
+        listAccounts: listQualifiedConnectedAccountsV4,
+      },
     } as Parameters<typeof resolveConnectedServiceAuthForSpawn>[0] & {
       accountUsageStore: typeof accountUsageStore;
     }),
   };
 }
+
+describe('resolveConnectedServiceAuthForSpawn V4 group ingress', () => {
+  it('uses the qualified V4 group reader for scalar group bindings', async () => {
+    const scenario = await createSpawnPreTurnSwitchScenario({
+      switchResult: { status: 'auto_switch_disabled', generation: 5 },
+    });
+
+    await scenario.run();
+
+    expect(scenario.readQualifiedConnectedAccountGroupV4).toHaveBeenCalledWith({
+      service: {
+        pluginId: 'happier.agent.codex',
+        localId: 'openai-codex',
+      },
+      groupId: 'codex-main',
+    });
+    expect(scenario.getConnectedServiceAuthGroup).not.toHaveBeenCalled();
+  });
+});
 
 describe('resolveConnectedServiceAuthForSpawn', () => {
   it('projects the applied OpenCode request-auth purpose into fresh spawn materialization', async () => {
@@ -1810,8 +1985,9 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
         },
       ],
     };
+    const getConnectedServiceAuthGroup = vi.fn(async () => group);
     const api = {
-      getConnectedServiceAuthGroup: vi.fn(async () => group),
+      getConnectedServiceAuthGroup,
       listConnectedServiceProfiles: vi.fn(async () => ({
         serviceId: 'openai-codex' as const,
         profiles: [
@@ -1987,8 +2163,9 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
         return null;
       }),
     };
+    const getConnectedServiceAuthGroup = vi.fn(async () => group);
     const api = {
-      getConnectedServiceAuthGroup: vi.fn(async () => group),
+      getConnectedServiceAuthGroup,
       listConnectedServiceProfiles: vi.fn(async () => ({
         serviceId: 'openai-codex' as const,
         profiles: [
@@ -2057,9 +2234,10 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
       serviceId: 'openai-codex',
       groupId: 'codex-main',
       reason: 'soft_threshold',
+      observedProfileId: 'primary',
     });
     expect(authGroupSwitchCoordinator.switchBeforeTurn).toHaveBeenCalledTimes(1);
-    expect(api.getConnectedServiceAuthGroup).toHaveBeenCalledTimes(1);
+    expect(getConnectedServiceAuthGroup).toHaveBeenCalledTimes(1);
     expect(api.getConnectedServiceCredentialSealed).toHaveBeenCalledWith({
       serviceId: 'openai-codex',
       profileId: 'backup',
@@ -2068,7 +2246,7 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
     expect(JSON.stringify(connectedServiceAuth!.env)).not.toContain('backup-access');
   });
 
-  it('rereads authoritative group truth after one ambiguous spawn switch result without local reselection', async () => {
+  it('uses coordinator-returned group authority after an ambiguous spawn switch without local reselection', async () => {
     const scenario = await createSpawnPreTurnSwitchScenario({
       switchResult: {
         status: 'generation_apply_failed',
@@ -2128,7 +2306,8 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
     expect(scenario.switchBeforeTurn).toHaveBeenCalledWith(expect.objectContaining({
       observedProfileId: 'primary',
     }));
-    expect(scenario.getConnectedServiceAuthGroup).toHaveBeenCalledTimes(2);
+    expect(scenario.readQualifiedConnectedAccountGroupV4).toHaveBeenCalledTimes(1);
+    expect(scenario.getConnectedServiceAuthGroup).not.toHaveBeenCalled();
     expect(scenario.getConnectedServiceCredentialPlain).toHaveBeenCalledWith({
       serviceId: 'openai-codex',
       profileId: 'backup',
@@ -2155,7 +2334,8 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
       reason: 'soft_threshold',
       observedProfileId: 'primary',
     });
-    expect(scenario.getConnectedServiceAuthGroup).toHaveBeenCalledTimes(1);
+    expect(scenario.readQualifiedConnectedAccountGroupV4).toHaveBeenCalledTimes(1);
+    expect(scenario.getConnectedServiceAuthGroup).not.toHaveBeenCalled();
     expect(scenario.getConnectedServiceCredentialPlain).toHaveBeenCalledWith({
       serviceId: 'openai-codex',
       profileId: 'primary',
@@ -2182,7 +2362,7 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
     expect(scenario.getConnectedServiceCredentialPlain).not.toHaveBeenCalled();
   });
 
-  it('fails closed after one ambiguous spawn switch result when authoritative group truth is missing', async () => {
+  it('uses coordinator-returned authority without a second group reread', async () => {
     const scenario = await createSpawnPreTurnSwitchScenario({
       switchResult: {
         status: 'predictive_apply_unavailable',
@@ -2193,15 +2373,14 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
       rereadGroup: null,
     });
 
-    await expect(scenario.run()).rejects.toMatchObject({
-      name: 'ConnectedServiceSpawnAuthGroupAuthorityError',
-      kind: 'group_missing',
-      serviceId: 'openai-codex',
-      groupId: 'codex-main',
-    });
+    await expect(scenario.run()).resolves.not.toBeNull();
     expect(scenario.switchBeforeTurn).toHaveBeenCalledTimes(1);
-    expect(scenario.getConnectedServiceAuthGroup).toHaveBeenCalledTimes(2);
-    expect(scenario.getConnectedServiceCredentialPlain).not.toHaveBeenCalled();
+    expect(scenario.readQualifiedConnectedAccountGroupV4).toHaveBeenCalledTimes(1);
+    expect(scenario.getConnectedServiceAuthGroup).not.toHaveBeenCalled();
+    expect(scenario.getConnectedServiceCredentialPlain).toHaveBeenCalledWith({
+      serviceId: 'openai-codex',
+      profileId: 'backup',
+    });
   });
 
   it('keeps server group truth when real coordinator preflight rejects the proposed spawn switch', async () => {
@@ -2394,11 +2573,11 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
     expect(group).toMatchObject({ activeProfileId: 'primary', generation: 1 });
     expect(getConnectedServiceCredentialPlain).toHaveBeenCalledWith({
       serviceId: 'openai-codex',
-      profileId: 'primary',
+      profileId: 'backup',
     });
     expect(getConnectedServiceCredentialPlain).not.toHaveBeenCalledWith({
       serviceId: 'openai-codex',
-      profileId: 'backup',
+      profileId: 'primary',
     });
     expect(connectedServiceAuth?.connectedServicesBindings.bindingsByServiceId['openai-codex']).toEqual({
       source: 'connected',
@@ -3317,10 +3496,11 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
         },
       ],
     });
+    const getConnectedServiceAuthGroup = vi.fn()
+      .mockResolvedValueOnce(buildGroup('primary', 5))
+      .mockResolvedValueOnce(buildGroup('backup', 6));
     const api = {
-      getConnectedServiceAuthGroup: vi.fn()
-        .mockResolvedValueOnce(buildGroup('primary', 5))
-        .mockResolvedValueOnce(buildGroup('backup', 6)),
+      getConnectedServiceAuthGroup,
       getAccountEncryptionMode: vi.fn(async () => 'e2ee' as const),
       getConnectedServiceCredentialSealed: vi.fn(async (params: { serviceId: string; profileId: string }) => {
         if (params.serviceId !== 'openai-codex') return null;
@@ -3405,7 +3585,7 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
     });
 
     expect(switchAfterClassifiedFailure).toHaveBeenCalledTimes(1);
-    expect(api.getConnectedServiceAuthGroup).toHaveBeenCalledTimes(1);
+    expect(getConnectedServiceAuthGroup).toHaveBeenCalledTimes(1);
     expect(api.getConnectedServiceCredentialSealed).not.toHaveBeenCalledWith({
       serviceId: 'openai-codex',
       profileId: 'backup',

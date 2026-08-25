@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { PluginError } from '@happier-dev/plugin-sdk';
+import { PluginError, type JsonValue } from '@happier-dev/plugin-sdk';
 import type { PluginActionDangerLevelV2 } from '@happier-dev/protocol';
 
 import { createTargetActionExecutor } from './actionExecutor';
@@ -15,17 +15,10 @@ function resolved(dangerLevel: PluginActionDangerLevelV2 = 'safe') {
 }
 
 function authorizationFacts(overrides: Readonly<{
-  reviewedPackageIdentity?: string | null;
   desiredGeneration?: string | null;
   appliedGeneration?: string | null;
 }> = {}) {
   return {
-    packageTrust: {
-      packageIdentity: 'acme.alpha/actions/run',
-      reviewedPackageIdentity: overrides.reviewedPackageIdentity === undefined
-        ? 'acme.alpha/actions/run'
-        : overrides.reviewedPackageIdentity,
-    },
     generation: {
       targetGeneration: '7',
       desiredGeneration: overrides.desiredGeneration === undefined ? '7' : overrides.desiredGeneration,
@@ -464,6 +457,40 @@ describe('target action executor', () => {
         },
       },
     });
+  });
+
+  it('redacts admitted deeply nested failure data without falling back to a recursive privacy projection', async () => {
+    let data: JsonValue = 'scoped-secret';
+    const depth = 12_000;
+    for (let index = 0; index < depth; index += 1) {
+      data = [data];
+    }
+    const executor = createExecutor({
+      resolve: () => resolved(),
+      invoke: async () => ({
+        status: 'failed' as const,
+        code: 'fixture_provider_failed',
+        message: 'provider rejected the publish',
+        data,
+      }),
+      redactFailureText: (_action, value) => value.replaceAll('scoped-secret', '[redacted]'),
+    });
+
+    const result = await executor.execute({
+      pluginId: 'acme.alpha', localId: 'run', input: {}, surface: 'cli',
+    });
+
+    expect(result).toMatchObject({
+      status: 'failed',
+      code: 'fixture_provider_failed',
+    });
+    if (result.status !== 'failed') throw new Error('Expected target-action failure');
+    let projected = result.data;
+    for (let index = 0; index < depth; index += 1) {
+      if (!Array.isArray(projected)) throw new Error('Expected a preserved nested failure payload');
+      projected = projected[0];
+    }
+    expect(projected).toBe('[redacted]');
   });
 
   it('withholds only the failure payload when scoped redaction is unavailable', async () => {

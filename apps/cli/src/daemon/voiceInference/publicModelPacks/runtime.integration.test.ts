@@ -21,7 +21,7 @@ import { startVoiceInferenceWorker } from '../voiceInferenceWorker';
 import { deriveVoiceModelPackLicenseTextDigestV1 } from '@happier-dev/voice-modelpacks';
 import { resolveVoiceInferencePaths } from '../voiceInferencePaths';
 import { readInstalledVoiceModelPackManifest } from '../voiceModelPackInstaller';
-import { createNodeModelPackInstallerHost } from '../modelPackInstallerHost.node';
+import { createNodeModelPackInstallerHost } from '../nodeModelPackInstallerHost';
 import type { PinnedHttpStreamTransport } from '@/network/pinnedHttp';
 import {
   installVoiceModelPackPluginArchiveFixture,

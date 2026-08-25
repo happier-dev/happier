@@ -1,4 +1,4 @@
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -34,7 +34,7 @@ const TREE_SCRIPT = [
 ].join('\n');
 
 type SpawnedTree = Readonly<{
-    root: ChildProcessWithoutNullStreams;
+    root: ReturnType<typeof spawn>;
     pids: Readonly<{ root: number; child: number; branch: number; grandchild: number }>;
     dir: string;
 }>;
@@ -188,5 +188,51 @@ describe.skipIf(process.platform === 'win32')('terminate_detected against a real
             branch: isAlive(tree.pids.branch),
             grandchild: isAlive(tree.pids.grandchild),
         }).toEqual({ root: false, child: false, branch: false, grandchild: false });
+    });
+
+    it('refuses the kill instead of half-killing the tree when `ps` times out', async () => {
+        // Observed on a loaded machine during this lane's QA: the process-table query hit its
+        // timeout, resolved to an empty descendant set, and terminate signalled the listener
+        // alone. Killing the listener frees the port, so the port-release verification passed
+        // and the one destructive action in the product reported SUCCESS while the user's child
+        // processes were still running. The only honest outcomes are "the whole tree died" or a
+        // typed failure — never a partial kill dressed as success.
+        const tree = await spawnProcessTree();
+        spawned = tree;
+
+        const control = createOsProcessControl({
+            refreshInventory: async () => ({
+                v: 1 as const,
+                machineId: 'machine-a',
+                generatedAt: Date.now(),
+                refreshState: 'idle' as const,
+                entries: isAlive(tree.pids.root) ? [inventoryEntry(tree.pids.root)] : [],
+                diagnostics: [],
+            }),
+            execFile: async () => {
+                const error = new Error('spawn ps ETIMEDOUT') as NodeJS.ErrnoException;
+                error.code = 'ETIMEDOUT';
+                throw error;
+            },
+        });
+        const terminate = createTerminateDetectedService(control, {
+            graceMs: 300,
+            verifyPollMs: 50,
+            verifyAttempts: 20,
+        });
+
+        const result = await terminate({
+            request: request(),
+            entry: inventoryEntry(tree.pids.root),
+            now: Date.now(),
+        });
+
+        expect(result).toEqual({ status: 'failed', reasonCode: 'process_tree_unresolved' });
+        expect({
+            root: isAlive(tree.pids.root),
+            child: isAlive(tree.pids.child),
+            branch: isAlive(tree.pids.branch),
+            grandchild: isAlive(tree.pids.grandchild),
+        }).toEqual({ root: true, child: true, branch: true, grandchild: true });
     });
 });

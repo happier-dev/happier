@@ -1,5 +1,6 @@
 import {
   QualifiedConnectedAccountCredentialSnapshotV4Schema,
+  sameQualifiedConnectedAccountRef,
   type QualifiedConnectedAccountCredentialSnapshotV4,
   type QualifiedConnectedAccountRef,
 } from '@happier-dev/protocol';
@@ -56,15 +57,6 @@ export type QualifiedConnectedAccountRefreshSettlement =
       }>;
       basis: QualifiedConnectedAccountEstablishedInvocationBasis;
     }>;
-
-function sameAccount(
-  left: QualifiedConnectedAccountRef,
-  right: QualifiedConnectedAccountRef,
-): boolean {
-  return left.service.pluginId === right.service.pluginId
-    && left.service.localId === right.service.localId
-    && left.accountId === right.accountId;
-}
 
 function createStagedCredentialStore(): Readonly<{
   store: PluginConnectedAccountCredentialStore;
@@ -140,7 +132,7 @@ export async function refreshQualifiedConnectedAccount(input: Readonly<{
     QualifiedConnectedAccountCredentialSnapshotV4Schema.parse(
       input.expectedCredential,
     );
-  if (!sameAccount(input.account, expectedCredential.ref)) {
+  if (!sameQualifiedConnectedAccountRef(input.account, expectedCredential.ref)) {
     throw new Error(
       'Qualified Connected Account refresh snapshot does not match the exact account',
     );

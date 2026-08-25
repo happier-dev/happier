@@ -50,6 +50,7 @@ import {
   createRuntimeUnavailableError,
   createVoiceInferenceError,
   assertVoiceInferencePackIdFilesystemSafe,
+  isVoiceInferenceRuntimeInvalidatingError,
   isVoiceInferenceModelKind,
   normalizePackId,
   readVoiceInferenceErrorCode,
@@ -135,15 +136,18 @@ export function createVoiceInferenceWorkerLifecycle(params?: VoiceInferenceWorke
   // In-use lease count per pack. A pack with active leases is mid-inference and must never
   // be evicted by the memory-budget LRU.
   const inUseCountByPackId = new Map<string, number>();
-  const warmupCoordinator = createInferenceWarmupCoordinator<VoiceInferenceRuntime>({
+  const warmupCoordinator = createInferenceWarmupCoordinator<WarmRuntimeHandle>({
     residencyMs,
     maxLoadedBytes: maxLoadedArtifactBytes,
     resolveLoadedBytes: (packId) => loadedArtifactBytesByPackId.get(packId) ?? 0,
     isInUse: (packId) => (inUseCountByPackId.get(packId) ?? 0) > 0,
-    onRelease: async (packId) => {
-      runtimeStateByPackId.set(packId, 'evicted');
+    onRelease: async (packId, warmRuntime) => {
       await concurrencyCoordinator.runLifecycleExclusive(packId, async () => {
-        await releaseRuntimeForPack(packId);
+        const currentWarmRuntime = warmRuntimeByPackId.get(packId);
+        if (currentWarmRuntime === warmRuntime) {
+          runtimeStateByPackId.set(packId, 'evicted');
+        }
+        await releaseRuntimeForPack(packId, warmRuntime);
       });
     },
   });
@@ -174,6 +178,12 @@ export function createVoiceInferenceWorkerLifecycle(params?: VoiceInferenceWorke
   const stopScopedController = new AbortController();
   const stopScopedPackIds = new Set<string>();
 
+  function throwIfWarmAborted(signal: AbortSignal | null | undefined): void {
+    if (signal?.aborted) {
+      throw createVoiceInferenceError('cancelled');
+    }
+  }
+
   async function loadRuntime(): Promise<VoiceInferenceRuntime> {
     try {
       const runtime = await runtimeLoader();
@@ -189,13 +199,21 @@ export function createVoiceInferenceWorkerLifecycle(params?: VoiceInferenceWorke
     }
   }
 
-  async function releaseRuntimeForPack(packId: string): Promise<void> {
-    loadedArtifactBytesByPackId.delete(packId);
-    const warmRuntime = warmRuntimeByPackId.get(packId);
+  async function releaseRuntimeForPack(
+    packId: string,
+    expectedWarmRuntime?: WarmRuntimeHandle,
+  ): Promise<void> {
+    const currentWarmRuntime = warmRuntimeByPackId.get(packId);
+    const warmRuntime = expectedWarmRuntime ?? currentWarmRuntime;
     if (!warmRuntime) {
+      loadedArtifactBytesByPackId.delete(packId);
       return;
     }
-    warmRuntimeByPackId.delete(packId);
+    const releasesCurrentRuntime = currentWarmRuntime === warmRuntime;
+    if (releasesCurrentRuntime) {
+      loadedArtifactBytesByPackId.delete(packId);
+      warmRuntimeByPackId.delete(packId);
+    }
     await warmRuntime.runtime.releaseModel?.({
       packId,
       packDir: warmRuntime.packDir,
@@ -407,7 +425,12 @@ export function createVoiceInferenceWorkerLifecycle(params?: VoiceInferenceWorke
   }
 
   async function warmRuntimeForPack(packId: string, signal?: AbortSignal | null): Promise<WarmRuntimeHandle> {
+    const warmSignal = signal
+      ? AbortSignal.any([stopScopedController.signal, signal])
+      : stopScopedController.signal;
+    throwIfWarmAborted(warmSignal);
     const publicEntry = await publicModelPacks?.resolve(packId);
+    throwIfWarmAborted(warmSignal);
     const catalogEntry = getModelPackCatalogEntry(packId);
     if (!publicEntry && !isCatalogRuntimeAdmitted(catalogEntry)) {
       throw createVoiceInferenceError('unsupported_runtime_family');
@@ -417,23 +440,29 @@ export function createVoiceInferenceWorkerLifecycle(params?: VoiceInferenceWorke
       throw createVoiceInferenceError('unsupported_runtime_family');
     }
     const { packDir, manifest, runtimeDescriptor, supportArtifacts } = await resolvePackManifest(packId);
+    throwIfWarmAborted(warmSignal);
     diagnostics = { ...diagnostics, runtimeState: 'warming' };
     try {
-      const runtime = await warmupCoordinator.warm(packId, async () => {
+      const warmRuntime = await warmupCoordinator.warm(packId, async () => {
         runtimeStateByPackId.set(packId, 'warming');
         const loadedRuntime = await loadRuntime();
         try {
-          await loadedRuntime.warmModel?.({ packId, packDir, manifest, runtimeDescriptor, supportArtifacts, signal });
+          throwIfWarmAborted(warmSignal);
+          await loadedRuntime.warmModel?.({ packId, packDir, manifest, runtimeDescriptor, supportArtifacts, signal: warmSignal });
+          // A native call can return a late ordinary success after its cancellation signal. Do not
+          // publish that stale runtime; cancellation owns the terminal fact and cleanup below.
+          throwIfWarmAborted(warmSignal);
           // Prime the loaded engine once so the first real utterance does not pay cold-start
           // latency. Best-effort: priming failures must not block readiness (the model is
           // loaded and usable). Cancellation still propagates as a real abort.
           try {
-            await loadedRuntime.primeModel?.({ packId, packDir, manifest, runtimeDescriptor, supportArtifacts, signal });
+            await loadedRuntime.primeModel?.({ packId, packDir, manifest, runtimeDescriptor, supportArtifacts, signal: warmSignal });
           } catch (error) {
-            if (signal?.aborted) {
+            if (warmSignal.aborted || isVoiceInferenceRuntimeInvalidatingError(error)) {
               throw error;
             }
           }
+          throwIfWarmAborted(warmSignal);
         } catch (error) {
           try {
             await loadedRuntime.releaseModel?.({
@@ -450,11 +479,11 @@ export function createVoiceInferenceWorkerLifecycle(params?: VoiceInferenceWorke
         }
         loadedArtifactBytesByPackId.set(packId, sumManifestLoadedArtifactBytes(manifest));
         runtimeStateByPackId.set(packId, 'ready');
-        return loadedRuntime;
+        return { runtime: loadedRuntime, packDir, manifest, runtimeDescriptor, supportArtifacts };
       });
-      warmRuntimeByPackId.set(packId, { runtime, packDir, manifest, runtimeDescriptor, supportArtifacts });
+      warmRuntimeByPackId.set(packId, warmRuntime);
       diagnostics = { ...diagnostics, runtimeState: 'ready' };
-      return { runtime, packDir, manifest, runtimeDescriptor, supportArtifacts };
+      return warmRuntime;
     } catch (error) {
       loadedArtifactBytesByPackId.delete(packId);
       runtimeStateByPackId.delete(packId);
@@ -642,8 +671,8 @@ export function createVoiceInferenceWorkerLifecycle(params?: VoiceInferenceWorke
         ? normalizedPackId
         : assertVoiceInferencePackIdFilesystemSafe(normalizedPackId);
       await concurrencyCoordinator.runLifecycleExclusive(runtimePackId, async () => {
-        await warmRuntimeForPack(runtimePackId);
-      });
+        await warmRuntimeForPack(runtimePackId, stopScopedController.signal);
+      }, { signal: stopScopedController.signal });
     },
   };
 }

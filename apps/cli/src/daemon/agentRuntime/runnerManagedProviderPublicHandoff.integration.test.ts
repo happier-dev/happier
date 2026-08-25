@@ -116,8 +116,9 @@ import {
     spawnSupervisedPluginProcess,
 } from '@/plugins/runtime/exec/processSupervisor';
 import {
+    commitPackedPublicHandoffFixture,
     createPublicHandoffArchiveChangeService,
-    packAndCommitPublicHandoffFixture,
+    packPublicHandoffFixture,
     writePublicHandoffAgentPluginFixture as writeExternalPublicHandoffAgentPluginFixture,
     writePublicHandoffProviderPluginFixture as writeExternalPublicHandoffProviderPluginFixture,
 } from './runnerManagedProviderPublicHandoff.fixture';
@@ -125,6 +126,8 @@ import {
 const FIXTURE_AGENT_PLUGIN_ID = 'acme.public-handoff-agent';
 const FIXTURE_PROVIDER_PLUGIN_ID = 'acme.public-provider-handoff';
 const FIXTURE_AGENT_ID = 'public-handoff-agent';
+const FIXTURE_AGENT_ROUTING_ID =
+    `${FIXTURE_AGENT_PLUGIN_ID}/${FIXTURE_AGENT_ID}`;
 const FIXTURE_PROVIDER_ID = 'gateway';
 const FIXTURE_PROVIDER_CONTRIBUTION_KEY =
     `${FIXTURE_PROVIDER_PLUGIN_ID}/${FIXTURE_PROVIDER_ID}`;
@@ -407,8 +410,15 @@ function expectDesiredCurrentProviderRuntimeResolutionCount(
 
 describe('representative public Provider-to-SVC09 handoff', () => {
     const cleanups: Array<() => void | Promise<void>> = [];
+    let composedPhase = 'not started';
+    let composedStartedAt = 0;
 
     afterEach(async () => {
+        if (composedPhase !== 'complete') {
+            console.info(
+                `[public-handoff] incomplete phase=${composedPhase} elapsedMs=${Date.now() - composedStartedAt}`,
+            );
+        }
         while (cleanups.length > 0) {
             await cleanups.pop()?.();
         }
@@ -424,9 +434,13 @@ describe('representative public Provider-to-SVC09 handoff', () => {
         testState.resolveFirstPartyVersionInstallPath.mockClear();
         testState.resolveCliRuntimeAssetPath.mockClear();
         vi.restoreAllMocks();
+        composedPhase = 'not started';
+        composedStartedAt = 0;
     });
 
     it('keeps one direct-retained G/P across H/Q adoption and A/B/C authority rotation, then fences exact P on live-policy or hard revocation', async () => {
+        composedStartedAt = Date.now();
+        composedPhase = 'P/G fixture package and generation admission';
         const happyHomeDir = await mkdtemp(
             join(tmpdir(), 'happier-public-p-composed-'),
         );
@@ -499,9 +513,9 @@ describe('representative public Provider-to-SVC09 handoff', () => {
                 basename(packagedBinary),
             ].join('/'),
         });
-        const canonicalPackagedBinary = await realpath(packagedBinary);
+        const canonicalCliPackagedBinary = await realpath(packagedBinary);
         const isFixtureProviderChild = (entry: Readonly<{ command: string }>) =>
-            basename(entry.command) === basename(canonicalPackagedBinary);
+            basename(entry.command) === basename(canonicalCliPackagedBinary);
 
         const previousPath = process.env.PATH;
         process.env.PATH = [
@@ -527,6 +541,7 @@ describe('representative public Provider-to-SVC09 handoff', () => {
         cleanups.push(async () => {
             await pluginReloadController.shutdown({ timeoutMs: 5_000 });
         });
+        composedPhase = 'P/G author fixture creation';
         await writeExternalPublicHandoffAgentPluginFixture({
             pluginRoot: agentPluginRoot,
             version: '1.0.0',
@@ -537,18 +552,30 @@ describe('representative public Provider-to-SVC09 handoff', () => {
             version: '1.0.0',
             generation: 'P',
         });
-        await packAndCommitPublicHandoffFixture({
-            archivePath: join(happyHomeDir, 'agent-g.tgz'),
+        composedPhase = 'P/G parallel archive pack';
+        const [agentGPacked, providerPPacked] = await Promise.all([
+            packPublicHandoffFixture({
+                archivePath: join(happyHomeDir, 'agent-g.tgz'),
+                pluginId: FIXTURE_AGENT_PLUGIN_ID,
+                pluginRoot: agentPluginRoot,
+            }),
+            packPublicHandoffFixture({
+                archivePath: join(happyHomeDir, 'provider-p.tgz'),
+                pluginId: FIXTURE_PROVIDER_PLUGIN_ID,
+                pluginRoot: providerPluginRoot,
+            }),
+        ]);
+        composedPhase = 'P/G Agent archive admission';
+        await commitPackedPublicHandoffFixture({
             changeService: fixtureChangeService,
-            pluginId: FIXTURE_AGENT_PLUGIN_ID,
-            pluginRoot: agentPluginRoot,
+            packed: agentGPacked,
         });
-        await packAndCommitPublicHandoffFixture({
-            archivePath: join(happyHomeDir, 'provider-p.tgz'),
+        composedPhase = 'P/G Provider archive admission';
+        await commitPackedPublicHandoffFixture({
             changeService: fixtureChangeService,
-            pluginId: FIXTURE_PROVIDER_PLUGIN_ID,
-            pluginRoot: providerPluginRoot,
+            packed: providerPPacked,
         });
+        composedPhase = 'P/G generation admission and initial registry';
         const generationAuthority = await readCurrentCommittedPluginGenerations(
             resolvePluginStorePaths({ happyHomeDir }),
             { bundledArtifacts: [] },
@@ -600,6 +627,24 @@ describe('representative public Provider-to-SVC09 handoff', () => {
         expect(providerGeneration.rootPath).not.toBe(
             agentGeneration.rootPath,
         );
+        const fixtureProviderRuntimeBinaryName = process.platform === 'win32'
+            ? `${FIXTURE_PROVIDER_BINARY_NAME}.exe`
+            : FIXTURE_PROVIDER_BINARY_NAME;
+        const fixtureProviderRuntimeRelativePath = [
+            'tools',
+            'unpacked',
+            fixtureProviderRuntimeBinaryName,
+        ].join('/');
+        expect(providerGeneration.record.files).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                relativePath: fixtureProviderRuntimeRelativePath,
+            }),
+        ]));
+        const canonicalProviderPBinary = await realpath(join(
+            providerGeneration.rootPath,
+            ...fixtureProviderRuntimeRelativePath.split('/'),
+        ));
+        expect(canonicalProviderPBinary).not.toBe(canonicalCliPackagedBinary);
         const agentManifest = JSON.parse(await readFile(join(
             agentGeneration.rootPath,
             '.happier-plugin',
@@ -628,29 +673,29 @@ describe('representative public Provider-to-SVC09 handoff', () => {
             await initialRegistryLease.release();
         });
         const registry = initialRegistryLease.registry;
-        if (!registry.agentRuntimesByAgentId.has(FIXTURE_AGENT_ID)) {
+        if (!registry.agentRuntimesByAgentId.has(FIXTURE_AGENT_ROUTING_ID)) {
             throw new Error(
                 `External Agent fixture did not publish its runtime: ${JSON.stringify({ facts: registry.targetActivationFacts })}`,
             );
         }
         const retainedAgent = registry.agentRuntimesByAgentId.get(
-            FIXTURE_AGENT_ID,
+            FIXTURE_AGENT_ROUTING_ID,
         )?.sessionRunnerFactoryBinding;
         if (!retainedAgent) {
             throw new Error(
                 'Expected the external fixture Agent direct runner binding',
             );
         }
-        expect(registry.agentRuntimesByAgentId.get(FIXTURE_AGENT_ID)).toMatchObject({
+        expect(registry.agentRuntimesByAgentId.get(FIXTURE_AGENT_ROUTING_ID)).toMatchObject({
             pluginId: FIXTURE_AGENT_PLUGIN_ID,
             sessionRunnerFactoryBinding: expect.any(Object),
         });
-        expect(registry.agentRuntimesByAgentId.get(FIXTURE_AGENT_ID))
+        expect(registry.agentRuntimesByAgentId.get(FIXTURE_AGENT_ROUTING_ID))
             .not.toHaveProperty('issueRunnerExecutionGrant');
         expect(retainedAgent).toMatchObject({
             v: 1,
             pluginId: FIXTURE_AGENT_PLUGIN_ID,
-            agentId: FIXTURE_AGENT_ID,
+            agentId: FIXTURE_AGENT_ROUTING_ID,
             localAgentId: FIXTURE_AGENT_ID,
             immutableGenerationId: agentGeneration.immutableGenerationId,
             locator: {
@@ -714,7 +759,7 @@ describe('representative public Provider-to-SVC09 handoff', () => {
         const contributionKey = FIXTURE_PROVIDER_CONTRIBUTION_KEY;
         const agentTargetKey = buildBackendTargetKeyV2({
             kind: 'backend',
-            backendId: FIXTURE_AGENT_ID,
+            backendId: FIXTURE_AGENT_ROUTING_ID,
         });
         const model: ProviderModelDescriptorV1 = Object.freeze({
             id: 'gpt-public-p-composed',
@@ -770,7 +815,7 @@ describe('representative public Provider-to-SVC09 handoff', () => {
         });
         const providerAdapter = readLeasedAgentProviderBindingAdapter({
             lease,
-            agentId: FIXTURE_AGENT_ID,
+            agentId: FIXTURE_AGENT_ROUTING_ID,
         });
         if (!providerAdapter) {
             throw new Error(
@@ -822,7 +867,7 @@ describe('representative public Provider-to-SVC09 handoff', () => {
                 runtimeModelDescriptor: model,
                 machineId,
                 agentTargetKey,
-                agentId: FIXTURE_AGENT_ID,
+                agentId: FIXTURE_AGENT_ROUTING_ID,
                 lease,
                 getAccountSettingsSnapshot: () => ({
                     source: 'network',
@@ -853,7 +898,7 @@ describe('representative public Provider-to-SVC09 handoff', () => {
         const runnerProcessCommand = [
             process.execPath,
             `/opt/happier/versions/${retainedVersionId}/package-dist/index.mjs`,
-            FIXTURE_AGENT_ID,
+            FIXTURE_AGENT_ROUTING_ID,
         ].map((value) => JSON.stringify(value)).join(' ');
         testState.readProcessIdentityByPid.mockImplementation(
             async (pid: number) => pid === process.pid
@@ -880,7 +925,7 @@ describe('representative public Provider-to-SVC09 handoff', () => {
                 directory: happyHomeDir,
                 backendTarget: {
                     kind: 'backend',
-                    backendId: FIXTURE_AGENT_ID,
+                    backendId: FIXTURE_AGENT_ROUTING_ID,
                 },
                 modelSelection: {
                     v: 1,
@@ -895,8 +940,8 @@ describe('representative public Provider-to-SVC09 handoff', () => {
                 providerBindingActive: true,
             },
             runnerAgentBootstrapIdentity: {
-                agentId: FIXTURE_AGENT_ID,
-                backendId: FIXTURE_AGENT_ID,
+                agentId: FIXTURE_AGENT_ROUTING_ID,
+                backendId: FIXTURE_AGENT_ROUTING_ID,
             },
         };
         await writeSessionMarker({
@@ -916,6 +961,7 @@ describe('representative public Provider-to-SVC09 handoff', () => {
         const startDaemonAuthorityHost = async () => {
             const runtime = await startDaemonSessionControlRuntime({
                 machineId,
+                serverBaseUrl: 'https://account.example.test',
                 credentials: {
                     token: 'token-public-p-composed',
                     encryption: {
@@ -965,6 +1011,7 @@ describe('representative public Provider-to-SVC09 handoff', () => {
             }
         });
 
+        composedPhase = 'A authority setup';
         const daemonRuntimeA = await startDaemonAuthorityHost();
         const controlInputA = testState.controlInputs.get(
             daemonRuntimeA.controlPort,
@@ -997,7 +1044,7 @@ describe('representative public Provider-to-SVC09 handoff', () => {
                 sessionId,
                 tracked,
                 resolveCurrentRetainedAgent: ({ agentId }) => {
-                    if (agentId !== FIXTURE_AGENT_ID) {
+                    if (agentId !== FIXTURE_AGENT_ROUTING_ID) {
                         throw new Error(
                             `Unexpected retained Agent id: ${agentId}`,
                         );
@@ -1306,7 +1353,7 @@ describe('representative public Provider-to-SVC09 handoff', () => {
         }
         expect(source.identity).toMatchObject({
             pluginId: FIXTURE_AGENT_PLUGIN_ID,
-            agentId: FIXTURE_AGENT_ID,
+            agentId: FIXTURE_AGENT_ROUTING_ID,
             immutableGenerationId:
                 agentGeneration.immutableGenerationId,
         });
@@ -1379,7 +1426,7 @@ describe('representative public Provider-to-SVC09 handoff', () => {
         };
 
         const agent =
-            registry.contributes.agentDefinitionsById.get(FIXTURE_AGENT_ID);
+            registry.contributes.agentDefinitionsById.get(FIXTURE_AGENT_ROUTING_ID);
         if (!agent) {
             throw new Error(
                 'Expected the external fixture Agent contribution projection',
@@ -1387,7 +1434,7 @@ describe('representative public Provider-to-SVC09 handoff', () => {
         }
         const backend = projectEngineRuntimeContributionFromAgent(
             agent,
-            FIXTURE_AGENT_ID,
+            FIXTURE_AGENT_ROUTING_ID,
         );
         const plan = await createNativeAgentRuntimeSessionPlan({
             createRuntime: createObservedRuntime,
@@ -1425,7 +1472,7 @@ describe('representative public Provider-to-SVC09 handoff', () => {
                 directory: happyHomeDir,
                 backendTarget: {
                     kind: 'backend',
-                    backendId: FIXTURE_AGENT_ID,
+                    backendId: FIXTURE_AGENT_ROUTING_ID,
                 },
                 modelSelection: {
                     v: 1,
@@ -1443,6 +1490,7 @@ describe('representative public Provider-to-SVC09 handoff', () => {
             throw new Error('Expected Native Session runtime factory');
         }
         const metadata = initialSessionMetadata;
+        composedPhase = 'A/P composed launch';
         const composed = await plan.config.createSessionRuntime({
             directory: happyHomeDir,
             metadata,
@@ -1465,7 +1513,14 @@ describe('representative public Provider-to-SVC09 handoff', () => {
         cleanups.push(async () => {
             await composed.operations.resetOrDisposeRuntime();
         });
-        expect(updateMetadataAsCurrentPublisher).toHaveBeenCalled();
+        expect(updateMetadataAsCurrentPublisher).not.toHaveBeenCalled();
+        expect((composed as Readonly<{
+            admittedProviderBindingHandoff?: Readonly<{
+                sessionBindingMetadata: unknown;
+            }>;
+        }>).admittedProviderBindingHandoff?.sessionBindingMetadata).toEqual(
+            sessionBindingMetadata,
+        );
 
         const nativeOpenRequest = observedOpenRequest.current;
         if (!nativeOpenRequest) {
@@ -1474,6 +1529,9 @@ describe('representative public Provider-to-SVC09 handoff', () => {
         const openJson = JSON.stringify(nativeOpenRequest);
         const providerChild = spawned.find(isFixtureProviderChild);
         expect(providerChild).toBeDefined();
+        expect(await realpath(providerChild!.command)).toBe(
+            canonicalProviderPBinary,
+        );
         expect(providerChild?.env.FIXTURE_PROVIDER_GENERATION).toBe('P');
         const rawBearer =
             providerChild?.env[FIXTURE_PROVIDER_BEARER_ENV_KEY];
@@ -1492,14 +1550,7 @@ describe('representative public Provider-to-SVC09 handoff', () => {
             .not.toContain(rawBearer!);
         expect(JSON.stringify(tracked)).not.toContain(rawBearer!);
         expect(testState.resolveFirstPartyVersionInstallPath)
-            .toHaveBeenCalledTimes(1);
-        expect(testState.resolveFirstPartyVersionInstallPath)
-            .toHaveBeenCalledWith({
-                componentId: 'happier-cli',
-                channel: 'stable',
-                versionId: retainedVersionId,
-                processEnv: undefined,
-            });
+            .not.toHaveBeenCalled();
         expectDesiredCurrentProviderRuntimeResolutionCount(0);
         const daemonOperationKinds = daemonRequests.map(
             (request) => request.operation.kind,
@@ -1665,9 +1716,11 @@ describe('representative public Provider-to-SVC09 handoff', () => {
             agentRuntimeDaemonServiceAdmittedUserMessageSeqs: [],
         });
 
+        composedPhase = 'A/P retained continuity';
         initialRegistryLeaseReleased = true;
         await initialRegistryLease.release();
 
+        composedPhase = 'G/H and P/Q replacement package and admission';
         await writeExternalPublicHandoffAgentPluginFixture({
             pluginRoot: agentHPluginRoot,
             version: '2.0.0',
@@ -1678,17 +1731,25 @@ describe('representative public Provider-to-SVC09 handoff', () => {
             version: '2.0.0',
             generation: 'Q',
         });
-        await packAndCommitPublicHandoffFixture({
-            archivePath: join(happyHomeDir, 'agent-h.tgz'),
+        const [agentHPacked, providerQPacked] = await Promise.all([
+            packPublicHandoffFixture({
+                archivePath: join(happyHomeDir, 'agent-h.tgz'),
+                pluginId: FIXTURE_AGENT_PLUGIN_ID,
+                pluginRoot: agentHPluginRoot,
+            }),
+            packPublicHandoffFixture({
+                archivePath: join(happyHomeDir, 'provider-q.tgz'),
+                pluginId: FIXTURE_PROVIDER_PLUGIN_ID,
+                pluginRoot: providerQPluginRoot,
+            }),
+        ]);
+        await commitPackedPublicHandoffFixture({
             changeService: fixtureChangeService,
-            pluginId: FIXTURE_AGENT_PLUGIN_ID,
-            pluginRoot: agentHPluginRoot,
+            packed: agentHPacked,
         });
-        await packAndCommitPublicHandoffFixture({
-            archivePath: join(happyHomeDir, 'provider-q.tgz'),
+        await commitPackedPublicHandoffFixture({
             changeService: fixtureChangeService,
-            pluginId: FIXTURE_PROVIDER_PLUGIN_ID,
-            pluginRoot: providerQPluginRoot,
+            packed: providerQPacked,
         });
         const currentGenerationAuthority =
             await readCurrentCommittedPluginGenerations(
@@ -1709,6 +1770,7 @@ describe('representative public Provider-to-SVC09 handoff', () => {
         ) {
             throw new Error('Expected current committed H/Q generations');
         }
+        composedPhase = 'G/H and P/Q current-generation continuity';
         expect(agentHGeneration.immutableGenerationId).not.toBe(
             agentGeneration.immutableGenerationId,
         );
@@ -1725,11 +1787,21 @@ describe('representative public Provider-to-SVC09 handoff', () => {
             immutableGenerationId: providerQGeneration.immutableGenerationId,
             manifestRelativePath: '.happier-plugin/plugin.json',
         });
+        expect(providerQGeneration.record.files).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                relativePath: fixtureProviderRuntimeRelativePath,
+            }),
+        ]));
+        const canonicalProviderQBinary = await realpath(join(
+            providerQGeneration.rootPath,
+            ...fixtureProviderRuntimeRelativePath.split('/'),
+        ));
+        expect(canonicalProviderQBinary).not.toBe(canonicalProviderPBinary);
 
         const currentRegistryLease =
             await pluginReloadController.acquireRuntimeRegistry();
         const currentRegistry = currentRegistryLease.registry;
-        expect(currentRegistry.agentRuntimesByAgentId.get(FIXTURE_AGENT_ID))
+        expect(currentRegistry.agentRuntimesByAgentId.get(FIXTURE_AGENT_ROUTING_ID))
             .toMatchObject({
                 pluginId: FIXTURE_AGENT_PLUGIN_ID,
                 immutableGenerationId:
@@ -1738,7 +1810,7 @@ describe('representative public Provider-to-SVC09 handoff', () => {
                     pluginId: FIXTURE_AGENT_PLUGIN_ID,
                     immutableGenerationId:
                         agentHGeneration.immutableGenerationId,
-                    agentId: FIXTURE_AGENT_ID,
+                    agentId: FIXTURE_AGENT_ROUTING_ID,
                     localAgentId: FIXTURE_AGENT_ID,
                     locator: {
                         module: './agentRuntime.js',
@@ -1797,7 +1869,7 @@ describe('representative public Provider-to-SVC09 handoff', () => {
                 .map(([key]) => ({ command: entry.command, key })),
         )).toEqual([
             {
-                command: canonicalPackagedBinary,
+                command: canonicalProviderPBinary,
                 key: FIXTURE_PROVIDER_BEARER_ENV_KEY,
             },
             {
@@ -1805,12 +1877,39 @@ describe('representative public Provider-to-SVC09 handoff', () => {
                 key: FIXTURE_AGENT_PROVIDER_ENV_KEY,
             },
         ]);
+        composedPhase = 'P/Q stale-artifact fence and current-Q launch';
         const startCurrentProvider =
             createPublicManagedProviderRuntimeStartOperation({
                 machineId,
                 happyHomeDir,
                 controller: pluginReloadController,
             });
+        const providerQBinaryBytes = await readFile(canonicalProviderQBinary);
+        await rm(canonicalProviderQBinary);
+        const spawnCountBeforeStaleArtifactProbe = spawned.length;
+        await expect(startCurrentProvider({
+            contributionKey,
+            identity: {
+                pluginId: FIXTURE_PROVIDER_PLUGIN_ID,
+                localId: FIXTURE_PROVIDER_ID,
+            },
+            request: {
+                reason: 'explicitStartLocal',
+                endpointTemplateIds: [FIXTURE_PROVIDER_ENDPOINT_ID],
+            },
+            purposeBindings: { v: 1, bindings: [] },
+            isAuthorizationCurrent: () => true,
+            revalidateAuthorization: async () => true,
+        })).rejects.toMatchObject({
+            code: 'provider_endpoint_unavailable',
+        });
+        expect(spawned).toHaveLength(spawnCountBeforeStaleArtifactProbe);
+        await writeFile(canonicalProviderQBinary, providerQBinaryBytes, {
+            mode: 0o755,
+        });
+        if (process.platform !== 'win32') {
+            await chmod(canonicalProviderQBinary, 0o755);
+        }
         const spawnCountBeforeCurrentProviderStart = spawned.length;
         await expect(startCurrentProvider({
             contributionKey,
@@ -1835,17 +1934,18 @@ describe('representative public Provider-to-SVC09 handoff', () => {
             throw new Error('Expected current Q managed Provider child');
         }
         expect(await realpath(currentProviderChild.command))
-            .toBe(canonicalPackagedBinary);
+            .toBe(canonicalProviderQBinary);
         expect(currentProviderChild).not.toBe(providerChild);
         expect(currentProviderChild.env.FIXTURE_PROVIDER_GENERATION).toBe('Q');
         expect(providerChild?.disposed).not.toHaveBeenCalled();
         expect(spawned.filter(isFixtureProviderChild)).toHaveLength(2);
+        composedPhase = 'P/Q continuity assertions';
         const hardRevocationRevision =
             currentGenerationAuthority.commit.revision + 1;
         const postHardRevocationRetainRevision =
             hardRevocationRevision + 1;
         expect(providerChild?.disposed).not.toHaveBeenCalled();
-        expectDesiredCurrentProviderRuntimeResolutionCount(1);
+        expectDesiredCurrentProviderRuntimeResolutionCount(0);
         expect(spawned.filter(isFixtureProviderChild))
             .toHaveLength(2);
         await expect(readPreparedImmutablePluginGeneration({
@@ -1858,6 +1958,7 @@ describe('representative public Provider-to-SVC09 handoff', () => {
             },
         });
 
+        composedPhase = 'B authority rotation continuity';
         const daemonRuntimeB = await startDaemonAuthorityHost();
         const controlInputB = testState.controlInputs.get(
             daemonRuntimeB.controlPort,
@@ -1960,10 +2061,11 @@ describe('representative public Provider-to-SVC09 handoff', () => {
         expect(physicalNonPStarts).toHaveLength(0);
         expect(spawned.filter(isFixtureProviderChild))
             .toHaveLength(2);
-        expectDesiredCurrentProviderRuntimeResolutionCount(1);
+        expectDesiredCurrentProviderRuntimeResolutionCount(0);
         await stopDaemonRuntime(daemonRuntimeA);
         expect(providerChild?.disposed).not.toHaveBeenCalled();
 
+        composedPhase = 'B provider-policy fence';
         const revokedProviderSettings = ProviderSettingsV1Schema.parse({
             ...providerSettings,
             machineGrants: [],
@@ -2031,7 +2133,7 @@ describe('representative public Provider-to-SVC09 handoff', () => {
         expect(custodyRequests.filter((request) =>
             request.kind === 'supervise'
         )).toHaveLength(1);
-        expectDesiredCurrentProviderRuntimeResolutionCount(1);
+        expectDesiredCurrentProviderRuntimeResolutionCount(0);
         await vi.waitFor(() => {
             expect(providerChild?.disposed).toHaveBeenCalledOnce();
         });
@@ -2063,6 +2165,7 @@ describe('representative public Provider-to-SVC09 handoff', () => {
             settingsSecretsReadKeys: [],
             scopeKey: 'account-public-p-composed',
         });
+        composedPhase = 'C authority rotation continuity';
         const daemonRuntimeC = await startDaemonAuthorityHost();
         const controlInputC = testState.controlInputs.get(
             daemonRuntimeC.controlPort,
@@ -2132,6 +2235,7 @@ describe('representative public Provider-to-SVC09 handoff', () => {
 
         await stopDaemonRuntime(daemonRuntimeB);
 
+        composedPhase = 'C hard-revocation continuity';
         pluginReloadController.publishDurableRunningSessionDisposition({
             durableRevision: hardRevocationRevision,
             changedPluginIds: [FIXTURE_PROVIDER_PLUGIN_ID],
@@ -2230,7 +2334,7 @@ describe('representative public Provider-to-SVC09 handoff', () => {
             && request.scope.operationClaimId
                 !== commitAdoptionRequest.claim.operationClaimId
         )).toHaveLength(0);
-        expectDesiredCurrentProviderRuntimeResolutionCount(1);
+        expectDesiredCurrentProviderRuntimeResolutionCount(0);
         await stopDaemonRuntime(daemonRuntimeC);
 
         await composed.operations.resetOrDisposeRuntime();
@@ -2245,5 +2349,8 @@ describe('representative public Provider-to-SVC09 handoff', () => {
         )).toBe(true);
         expect(runtimeSend).toHaveBeenCalledTimes(2);
         expect(callSessionRpc).toHaveBeenCalled();
-    }, 60_000);
+        composedPhase = 'complete';
+        // Four real archive builds and immutable admissions exceeded 60 seconds
+        // (73.5s observed); keep a bounded allowance for CI variance.
+    }, 180_000);
 });

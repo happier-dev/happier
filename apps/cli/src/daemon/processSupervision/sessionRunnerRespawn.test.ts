@@ -699,6 +699,49 @@ describe('createSessionRunnerRespawnManager', () => {
     expect(spawnSession).toHaveBeenCalledTimes(2);
   });
 
+  it('cancels a scheduled retry when Stop arrives in the no-runner respawn gap', async () => {
+    vi.useFakeTimers();
+    const spawnSession = vi
+      .fn()
+      .mockResolvedValueOnce({ type: 'error' as const, errorCode: 'SPAWN_FAILED', errorMessage: 'stale source dependency' })
+      .mockResolvedValueOnce({ type: 'success' as const, sessionId: 'sess-stop-retry-gap' });
+
+    const manager = createSessionRunnerRespawnManager({
+      enabled: true,
+      maxRestarts: 2,
+      baseDelayMs: 50,
+      maxDelayMs: 50,
+      jitterMs: 0,
+      isSessionAlreadyRunning: async () => false,
+      spawnSession: (opts) => spawnSession(opts),
+      random: () => 0,
+      logDebug: () => {},
+      logWarn: () => {},
+    });
+
+    const tracked: TrackedSession = {
+      startedBy: 'daemon',
+      pid: 111,
+      happySessionId: 'sess-stop-retry-gap',
+      spawnOptions: { directory: '/tmp', backendTarget: { kind: 'builtInAgent', agentId: 'codex' } } as any,
+    };
+
+    expect(manager.handleUnexpectedExit(
+      tracked,
+      { reason: 'process-missing', code: null, signal: null },
+    )).toBe('scheduled');
+    await vi.advanceTimersByTimeAsync(50);
+    expect(spawnSession).toHaveBeenCalledTimes(1);
+
+    manager.markStopRequested('sess-stop-retry-gap', {
+      reason: 'daemon_stop_session',
+      requestedAtMs: 1_000,
+    });
+    await vi.advanceTimersByTimeAsync(500);
+
+    expect(spawnSession).toHaveBeenCalledTimes(1);
+  });
+
   it('treats resume-not-supported as terminal instead of retrying a permanent refusal', async () => {
     vi.useFakeTimers();
     const spawnSession = vi.fn(async () => ({

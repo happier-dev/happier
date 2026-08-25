@@ -40,7 +40,7 @@ type BundledActivationSource = Readonly<{
     ) => Promise<PluginRelativeModuleResolution<Record<string, unknown>>>;
     persistValidatedAgentSessionRunnerFactories?: (
         facts: readonly ValidatedAgentSessionRunnerFactoryFactV1[],
-    ) => Promise<void>;
+    ) => Promise<readonly ValidatedAgentSessionRunnerFactoryFactV1[] | void>;
 }>;
 
 type ImportModule = (specifier: string) => Promise<PluginDaemonModuleNamespace>;
@@ -214,6 +214,24 @@ export function resolveCurrentHostBundledImmutableArtifacts<
 }
 
 /**
+ * Source-development activation chooses source bytes, but it does not change
+ * the immutable generations that persisted runner facts can still reference.
+ * Custody cleanup therefore retains every supplied bundled generation rather
+ * than reusing the activation-source selector above.
+ */
+export function resolveBundledImmutableGenerationRetentionIds<
+    TArtifact extends Readonly<{
+        record: Readonly<{ immutableGenerationId: string }>;
+    }>,
+>(params: Readonly<{
+    artifacts: readonly TArtifact[];
+}>): readonly string[] {
+    return Object.freeze([...new Set(
+        params.artifacts.map((artifact) => artifact.record.immutableGenerationId),
+    )]);
+}
+
+/**
  * Keeps immutable admission scoped to actual bundled daemon targets. A
  * declaration without an executable target cannot acquire a generation here.
  */
@@ -306,6 +324,12 @@ export function createBundledActivationSourceResolver(params: Readonly<{
         string,
         ImmutablePluginGenerationRecord
     >;
+    runnerImmutableArtifactEntryPathsByPackageName?: ReadonlyMap<string, string>;
+    runnerImmutableArtifactRootPathsByPackageName?: ReadonlyMap<string, string>;
+    runnerImmutableArtifactRecordsByPackageName?: ReadonlyMap<
+        string,
+        ImmutablePluginGenerationRecord
+    >;
     unavailableImmutableArtifactPackageNames?: ReadonlySet<string>;
     canImportFirstPartyPluginSource?: () => boolean;
     existsSync?: (path: string) => boolean;
@@ -319,6 +343,15 @@ export function createBundledActivationSourceResolver(params: Readonly<{
     const immutableArtifactEntryPathsByPackageName = params.immutableArtifactEntryPathsByPackageName ?? new Map();
     const immutableArtifactRootPathsByPackageName = params.immutableArtifactRootPathsByPackageName ?? new Map();
     const immutableArtifactRecordsByPackageName = params.immutableArtifactRecordsByPackageName ?? new Map();
+    const runnerImmutableArtifactEntryPathsByPackageName =
+        params.runnerImmutableArtifactEntryPathsByPackageName
+        ?? immutableArtifactEntryPathsByPackageName;
+    const runnerImmutableArtifactRootPathsByPackageName =
+        params.runnerImmutableArtifactRootPathsByPackageName
+        ?? immutableArtifactRootPathsByPackageName;
+    const runnerImmutableArtifactRecordsByPackageName =
+        params.runnerImmutableArtifactRecordsByPackageName
+        ?? immutableArtifactRecordsByPackageName;
     const unavailableImmutableArtifactPackageNames = params.unavailableImmutableArtifactPackageNames ?? new Set();
     const canImportFirstPartyPluginSource =
         params.canImportFirstPartyPluginSource ?? defaultCanImportFirstPartyPluginSource;
@@ -536,19 +569,44 @@ export function createBundledActivationSourceResolver(params: Readonly<{
             }
             return null;
         };
+        const resolveSelectedRunnerEntry = (): Readonly<{
+            entryPath: string;
+            rootPath: string;
+            loadMode: 'immutable-js' | 'source-ts';
+        }> | null => {
+            const immutableArtifactEntryPath =
+                runnerImmutableArtifactEntryPathsByPackageName.get(daemonEntryPath);
+            if (immutableArtifactEntryPath) {
+                return {
+                    entryPath: immutableArtifactEntryPath,
+                    rootPath: runnerImmutableArtifactRootPathsByPackageName.get(daemonEntryPath)
+                        ?? dirname(immutableArtifactEntryPath),
+                    loadMode: 'immutable-js',
+                };
+            }
+            return resolveSelectedEntry();
+        };
         const immutableRootPath =
             immutableArtifactRootPathsByPackageName.get(daemonEntryPath);
-        const immutableRecord: ImmutablePluginGenerationRecord | undefined =
+        const immutableRecord =
             immutableArtifactRecordsByPackageName.get(daemonEntryPath);
+        const runnerImmutableRootPath =
+            runnerImmutableArtifactRootPathsByPackageName.get(daemonEntryPath);
+        const runnerImmutableRecord =
+            runnerImmutableArtifactRecordsByPackageName.get(daemonEntryPath);
 
-        const resolveRelativeModule = async (
+        const resolveRelativeModuleFromSelected = async (
             module: string,
+            selected: Readonly<{
+                entryPath: string;
+                rootPath: string;
+                loadMode: 'immutable-js' | 'source-ts';
+            }>,
+            verification?: Readonly<{
+                rootPath: string;
+                record: ImmutablePluginGenerationRecord;
+            }>,
         ): Promise<PluginRelativeModuleResolution<Record<string, unknown>>> => {
-            await prepare();
-            const selected = resolveSelectedEntry();
-            if (!selected) {
-                throw new Error(`Bundled plugin '${daemonEntryPath}' has no file-backed runner module root`);
-            }
             const candidateBase = resolve(dirname(selected.entryPath), module);
             const extensionCandidates = resolvePluginModuleCandidatePaths({
                 candidateBase,
@@ -594,19 +652,18 @@ export function createBundledActivationSourceResolver(params: Readonly<{
             const normalizedModulePath =
                 relativeModulePath.split(sep).join('/');
             const immutableInventoryFile = (
-                immutableRootPath
-                && immutableRecord
+                verification
                 && selected.loadMode === 'immutable-js'
             )
-                ? immutableRecord.files.find(
+                ? verification.record.files.find(
                     (file) => file.relativePath === normalizedModulePath,
                 )
                 : undefined;
             const assertSelectedImmutableLeaf = async (): Promise<void> => {
-                if (!immutableRootPath || !immutableRecord || selected.loadMode !== 'immutable-js') {
+                if (!verification || selected.loadMode !== 'immutable-js') {
                     return;
                 }
-                const canonicalImmutableRoot = realpathSync(immutableRootPath);
+                const canonicalImmutableRoot = realpathSync(verification.rootPath);
                 if (rootPath !== canonicalImmutableRoot || !immutableInventoryFile) {
                     throw new Error(
                         `Runner module '${module}' failed bundled immutable inventory verification`,
@@ -655,21 +712,72 @@ export function createBundledActivationSourceResolver(params: Readonly<{
                 loadMode: selected.loadMode,
             });
         };
+        const resolveRelativeModule = async (
+            module: string,
+        ): Promise<PluginRelativeModuleResolution<Record<string, unknown>>> => {
+            await prepare();
+            const selected = resolveSelectedEntry();
+            if (!selected) {
+                throw new Error(`Bundled plugin '${daemonEntryPath}' has no file-backed runner module root`);
+            }
+            return await resolveRelativeModuleFromSelected(
+                module,
+                selected,
+                immutableRootPath && immutableRecord
+                    ? { rootPath: immutableRootPath, record: immutableRecord }
+                    : undefined,
+            );
+        };
 
         return {
             kind: 'bundled' as const,
             moduleId: daemonEntryPath,
             prepare,
             resolveRelativeModule,
-            ...(params.pluginStorePaths && immutableRootPath && immutableRecord
+            ...(params.pluginStorePaths && runnerImmutableRecord
                 ? {
                     persistValidatedAgentSessionRunnerFactories: async (facts) => {
+                        const selected = resolveSelectedRunnerEntry();
+                        if (!selected || !runnerImmutableRootPath) {
+                            throw new Error(
+                                `Bundled plugin '${daemonEntryPath}' has no admitted immutable runner module root`,
+                            );
+                        }
+                        const retainedFacts = await Promise.all(facts.map(async (fact) => {
+                            const resolved = await resolveRelativeModuleFromSelected(
+                                fact.locator.module,
+                                selected,
+                                {
+                                    rootPath: runnerImmutableRootPath,
+                                    record: runnerImmutableRecord,
+                                },
+                            );
+                            if (typeof resolved.module[fact.locator.export] !== 'function') {
+                                throw new Error(
+                                    `Session runner factory export '${fact.locator.export}' is unavailable in the admitted immutable generation`,
+                                );
+                            }
+                            if (
+                                fact.locator.externalSessionsExport !== undefined
+                                && resolved.module[fact.locator.externalSessionsExport] === undefined
+                            ) {
+                                throw new Error(
+                                    `External Sessions companion export '${fact.locator.externalSessionsExport}' is unavailable in the admitted immutable generation`,
+                                );
+                            }
+                            return Object.freeze({
+                                ...fact,
+                                normalizedModulePath: resolved.normalizedModulePath,
+                                loadMode: resolved.loadMode,
+                            });
+                        }));
                         await persistValidatedAgentSessionRunnerFactories({
                             paths: params.pluginStorePaths!,
-                            record: immutableRecord,
+                            record: runnerImmutableRecord,
                             manifestAuthority: 'bundled_first_party',
-                            factories: facts,
+                            factories: retainedFacts,
                         });
+                        return Object.freeze(retainedFacts);
                     },
                 }
                 : {}),

@@ -1,3 +1,4 @@
+import { constants } from 'node:fs';
 import { access, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -8,11 +9,17 @@ import {
   PluginInstallReviewPrincipalPresentationV1Schema,
 } from '@happier-dev/protocol';
 
+const packagedRuntime = vi.hoisted(() => ({ root: '' }));
+
 vi.mock('../../../configuration', () => ({ configuration: { happyHomeDir: join(tmpdir(), 'unused-registry-home') } }));
+vi.mock('@/packagedRuntime/assets/resolveCliRuntimeAssetPath', () => ({
+  resolveCliRuntimeRootPath: () => packagedRuntime.root,
+}));
 
 import { resolvePluginStorePaths } from '../paths';
 import {
   cleanupUnreferencedPluginGenerations,
+  copyOwnedPluginGenerationFile,
   createImmutablePluginGenerationRecordFromSource,
   ImmutablePluginGenerationRecordSchema,
   persistInstallationStateRevision,
@@ -52,6 +59,18 @@ function stateRevision(generationId = 'generation-a'): PluginInstallationStateRe
     rollbackRetention: [],
   };
 }
+
+it('requests copy-on-write cloning for immutable generation copies while preserving the platform fallback', async () => {
+  const copyFile = vi.fn(async () => undefined);
+
+  await copyOwnedPluginGenerationFile('/source/file', '/destination/file', copyFile);
+
+  expect(copyFile).toHaveBeenCalledWith(
+    '/source/file',
+    '/destination/file',
+    constants.COPYFILE_FICLONE,
+  );
+});
 
 describe('immutable plugin generation store', () => {
   it('rejects retired generation health state from the canonical schema', () => {
@@ -930,6 +949,112 @@ describe('immutable plugin generation store', () => {
     } finally {
       await rm(happyHomeDir, { recursive: true, force: true });
       await rm(packageRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('admits a bundled artifact from the runtime payload beside a self-contained daemon', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-generation-bundled-runtime-root-'));
+    const runtimeRoot = await mkdtemp(join(tmpdir(), 'happier-daemon-runtime-root-'));
+    const packageRoot = join(
+      runtimeRoot,
+      'node_modules',
+      '@happier-dev',
+      'plugins-review-runtime-root-fixture',
+    );
+    const paths = resolvePluginStorePaths({ happyHomeDir });
+    const packageEntryPath = join(packageRoot, 'dist', 'index.js');
+    const daemonEntryPath = join(packageRoot, '.happier-plugin', 'daemon.js');
+    const daemonBytes = 'export const activate = () => undefined;';
+    const record = {
+      t: 'happier_plugin_generation_v1' as const,
+      schemaVersion: 1 as const,
+      pluginId: 'happier.review.runtime-root-fixture',
+      immutableGenerationId: 'bundled-generation-runtime-root',
+      createdAtMs: 0,
+      manifestRelativePath: 'package.json',
+      files: [
+        { relativePath: '.happier-plugin/daemon.js', byteLength: Buffer.byteLength(daemonBytes) },
+        { relativePath: 'dist/index.js', byteLength: Buffer.byteLength('export default 1') },
+        { relativePath: 'package.json', byteLength: 2 },
+      ],
+    };
+    try {
+      packagedRuntime.root = runtimeRoot;
+      await mkdir(join(packageRoot, 'dist'), { recursive: true });
+      await mkdir(join(packageRoot, '.happier-plugin'), { recursive: true });
+      await writeFile(packageEntryPath, 'export default 1', 'utf8');
+      await writeFile(daemonEntryPath, daemonBytes, 'utf8');
+      await writeFile(join(packageRoot, 'package.json'), JSON.stringify({
+        name: '@happier-dev/plugins-review-runtime-root-fixture',
+        type: 'module',
+        // The immutable artifact identifies its physical entry itself. It must
+        // not depend on the package root export being resolvable by the host.
+        exports: { './daemon': './.happier-plugin/daemon.js' },
+      }), 'utf8');
+
+      const current = await readCurrentCommittedPluginGenerations(paths, {
+        bundledArtifacts: [{
+          packageName: '@happier-dev/plugins-review-runtime-root-fixture',
+          packageEntryRelativePath: 'dist/index.js',
+          daemonEntryRelativePath: '.happier-plugin/daemon.js',
+          record,
+        }],
+      });
+
+      expect(current?.generations.get(record.pluginId)).toMatchObject({
+        immutableGenerationId: record.immutableGenerationId,
+        rootPath: await realpath(packageRoot),
+      });
+    } finally {
+      packagedRuntime.root = '';
+      await rm(happyHomeDir, { recursive: true, force: true });
+      await rm(runtimeRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects a runtime payload package whose manifest name does not match its bundled artifact', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-generation-bundled-runtime-name-'));
+    const runtimeRoot = await mkdtemp(join(tmpdir(), 'happier-daemon-runtime-name-'));
+    const packageName = '@happier-dev/plugins-review-runtime-name-fixture';
+    const packageRoot = join(runtimeRoot, 'node_modules', ...packageName.split('/'));
+    const paths = resolvePluginStorePaths({ happyHomeDir });
+    const packageEntryPath = join(packageRoot, 'dist', 'index.js');
+    const record = {
+      t: 'happier_plugin_generation_v1' as const,
+      schemaVersion: 1 as const,
+      pluginId: 'happier.review.runtime-name-fixture',
+      immutableGenerationId: 'bundled-generation-runtime-name',
+      createdAtMs: 0,
+      manifestRelativePath: 'package.json',
+      files: [
+        { relativePath: 'dist/index.js', byteLength: Buffer.byteLength('export default 1') },
+        { relativePath: 'package.json', byteLength: 2 },
+      ],
+    };
+    try {
+      packagedRuntime.root = runtimeRoot;
+      await mkdir(join(packageRoot, 'dist'), { recursive: true });
+      await writeFile(packageEntryPath, 'export default 1', 'utf8');
+      await writeFile(join(packageRoot, 'package.json'), JSON.stringify({
+        name: '@happier-dev/plugins-review-runtime-name-impostor',
+        type: 'module',
+        exports: './dist/index.js',
+      }), 'utf8');
+
+      const current = await readCurrentCommittedPluginGenerations(paths, {
+        bundledArtifacts: [{
+          packageName,
+          packageEntryRelativePath: 'dist/index.js',
+          record,
+        }],
+      });
+
+      expect(current?.generations.has(record.pluginId)).toBe(false);
+      expect([...current!.unavailableBundledPackageNames]).toEqual([packageName]);
+    } finally {
+      packagedRuntime.root = '';
+      await rm(happyHomeDir, { recursive: true, force: true });
+      await rm(runtimeRoot, { recursive: true, force: true });
     }
   });
 

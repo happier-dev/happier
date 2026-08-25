@@ -9,8 +9,7 @@ import type {
 } from '@happier-dev/protocol';
 import { BrowserHttpUrlV1Schema } from '@happier-dev/protocol';
 
-import type { LocalServiceRunTarget } from '../managed/scripts';
-import type { ManagedLocalServiceRuntimeState } from '../managed/registry';
+import type { LocalServiceRunTarget } from './runTargets';
 import type { NormalizedLocalServiceInventoryEntry } from '../inventory/scanner';
 import { buildLocalServiceEndpointUrl } from '../inventory/endpoint';
 import { isWorkspacePathWithin } from '../inventory/provenance';
@@ -29,7 +28,6 @@ export type BuildLocalServiceLauncherSnapshotInput = Readonly<{
     updatedAt: number;
     runTargets: readonly LocalServiceRunTarget[];
     inventoryEntries: readonly NormalizedLocalServiceInventoryEntry[];
-    managedServices: readonly ManagedLocalServiceRuntimeState[];
     previewResources: readonly LocalServicePreviewResourceV1[];
     terminateDetectedEnabled?: boolean;
     terminalUrlCandidates?: readonly LocalServiceTerminalUrlLaunchCandidate[];
@@ -341,28 +339,6 @@ function targetFromRunTarget(target: LocalServiceRunTarget, machineId: string, s
     };
 }
 
-function targetFromManagedService(service: ManagedLocalServiceRuntimeState, machineId: string, sessionId: string | undefined): LocalServiceLaunchTargetV1 {
-    const available = service.phase === 'running';
-    const unavailable = service.phase === 'stopped' || service.phase === 'failed';
-    return {
-        id: `managed:${service.id}`,
-        source: 'managed_service',
-        sourceClass: {
-            kind: 'managed_service',
-            managedServiceId: service.id,
-            ...(service.inventoryId ? { inventoryEntryId: service.inventoryId } : {}),
-        },
-        machineId,
-        ...(sessionId ? { sessionId } : {}),
-        title: service.routeName,
-        subtitle: service.port ? `localhost:${service.port}` : undefined,
-        confidence: service.minimumConfidence,
-        state: available ? 'available' : unavailable ? 'unavailable' : 'starting',
-        ...(unavailable ? { unavailableReason: `managed_${service.phase}` } : {}),
-        actions: available ? ['manage'] : [],
-    };
-}
-
 function matchesWorkspaceScope(
     candidatePath: string | undefined,
     scopePaths: readonly string[] | undefined,
@@ -426,13 +402,6 @@ export function buildLocalServiceLauncherSnapshot(
     for (const entry of unavailableInventoryEntries) {
         const preview = previews.find((candidate) => previewMatchesEntry(candidate, entry));
         targets.push(targetFromInventoryEntry(entry, preview, input.sessionId, input.terminateDetectedEnabled === true));
-    }
-
-    for (const service of input.managedServices) {
-        if (service.inventoryId && inventoryIds.has(service.inventoryId)) {
-            continue;
-        }
-        targets.push(targetFromManagedService(service, input.machineId, input.sessionId));
     }
 
     return {

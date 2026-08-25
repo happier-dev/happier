@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -20,6 +20,7 @@ import {
 import { resolvePluginStorePaths } from '@/plugins/store/paths';
 import {
     createImmutablePluginGenerationRecordFromSource,
+    persistInstallationStateRevision,
     persistValidatedAgentSessionRunnerFactories,
     prepareImmutablePluginGeneration,
 } from '@/plugins/store/registry/generationStore';
@@ -142,7 +143,9 @@ async function prepareOpenCodeAgentSupervisionFixture(input: Readonly<{
     };
 }
 
-async function prepareProviderSupervisionFixture() {
+async function prepareProviderSupervisionFixture(input: Readonly<{
+    manifestAuthority: 'external' | 'bundled_first_party';
+}>) {
     const happyHomeDir = await mkdtemp(join(
         tmpdir(),
         'happier-provider-supervision-home-',
@@ -153,7 +156,15 @@ async function prepareProviderSupervisionFixture() {
     ));
     const paths = resolvePluginStorePaths({ happyHomeDir });
     const manifest = CLIPROXYAPI_PLUGIN_MANIFEST;
+    const executableBaseName = 'happier-cliproxyapi-managed';
+    const executableName = process.platform === 'win32'
+        ? `${executableBaseName}.exe`
+        : executableBaseName;
+    const executableBytes = '#!/bin/sh\nexit 0\n';
     await mkdir(join(sourceRootPath, '.happier-plugin'), {
+        recursive: true,
+    });
+    await mkdir(join(sourceRootPath, 'tools', 'unpacked'), {
         recursive: true,
     });
     await writeFile(
@@ -161,6 +172,17 @@ async function prepareProviderSupervisionFixture() {
         JSON.stringify(manifest),
         'utf8',
     );
+    await writeFile(
+        join(sourceRootPath, 'tools', 'unpacked', executableName),
+        executableBytes,
+        'utf8',
+    );
+    if (process.platform !== 'win32') {
+        await chmod(
+            join(sourceRootPath, 'tools', 'unpacked', executableName),
+            0o755,
+        );
+    }
     const record = await createImmutablePluginGenerationRecordFromSource({
         pluginId: manifest.id,
         sourceRootPath,
@@ -173,11 +195,53 @@ async function prepareProviderSupervisionFixture() {
         createdAtMs: 1,
         immutableGenerationId: 'provider-generation-p',
     });
-    await prepareImmutablePluginGeneration({
+    const prepared = await prepareImmutablePluginGeneration({
         paths,
         sourceRootPath,
         record,
     });
+    if (input.manifestAuthority === 'external') {
+        const distribution = {
+            kind: 'localPath' as const,
+            canonicalPath: sourceRootPath,
+        };
+        const installationState = await persistInstallationStateRevision({
+            paths,
+            state: {
+                t: 'happier_plugin_installations_v1',
+                schemaVersion: 1,
+                revisionId: 'provider-supervision-state-p',
+                createdAtMs: 1,
+                plugins: {
+                    [manifest.id]: {
+                        enabled: true,
+                        trust: {
+                            pluginId: manifest.id,
+                            distribution,
+                            state: 'trusted',
+                            approvedAtMs: 1,
+                        },
+                        source: { distribution },
+                        updatePolicy: 'manual',
+                        optionalAccess: [],
+                    },
+                },
+                rollbackRetention: [],
+            },
+        });
+        await mkdir(paths.stateDir, { recursive: true });
+        await writeFile(paths.registryCurrentFilePath, JSON.stringify({
+            t: 'happier_plugin_registry_commit_v1',
+            schemaVersion: 1,
+            revision: 1,
+            transactionId: 'provider-supervision-commit-p',
+            baseRevision: 0,
+            installationState,
+            pluginGenerations: { [manifest.id]: prepared.reference },
+            createdAtMs: 1,
+            creator: { pid: 1, instanceId: 'provider-supervision' },
+        }), 'utf8');
+    }
     const provider = (manifest.contributes.providers ?? [])[0]!;
     const managedRuntime = resolveProviderManagedRuntimeDeclarationV1({
         implementationIdentity: {
@@ -191,7 +255,7 @@ async function prepareProviderSupervisionFixture() {
     const executable = {
         kind: 'packaged-runtime-binary' as const,
         directorySegments: ['tools', 'unpacked'],
-        executableBaseName: 'happier-cliproxyapi-managed',
+        executableBaseName,
     };
     const bootstrap = RunnerDaemonManagedProviderBootstrapV1Schema.parse({
         v: 1,
@@ -244,7 +308,7 @@ async function prepareProviderSupervisionFixture() {
             providerLocalId: provider.id,
             activationGeneration: 'activation-p',
             immutableGenerationId: record.immutableGenerationId,
-            manifestAuthority: 'bundled_first_party',
+            manifestAuthority: input.manifestAuthority,
             operationClaimId: 'provider-operation-p',
         },
         requestAuth: {
@@ -275,6 +339,12 @@ async function prepareProviderSupervisionFixture() {
             executable: request.executable,
             environmentKeys: request.environmentKeys,
         },
+        executablePath: await realpath(join(
+            prepared.rootPath,
+            'tools',
+            'unpacked',
+            executableName,
+        )),
         async cleanup() {
             await rm(happyHomeDir, { recursive: true, force: true });
             await rm(sourceRootPath, { recursive: true, force: true });
@@ -395,7 +465,9 @@ describe('runner managed-server supervision authorization', () => {
     });
 
     it('authorizes the exact admitted Provider P bootstrap and rejects claim or launch mismatches', async () => {
-        const fixture = await prepareProviderSupervisionFixture();
+        const fixture = await prepareProviderSupervisionFixture({
+            manifestAuthority: 'external',
+        });
         try {
             await expect(authorizeRunnerManagedProviderServerSupervision({
                 paths: fixture.paths,
@@ -404,7 +476,10 @@ describe('runner managed-server supervision authorization', () => {
                 expectedLaunch: fixture.expectedLaunch,
                 request: fixture.request,
             })).resolves.toEqual({
-                launch: { kind: 'runnerPackagedRuntime' },
+                launch: {
+                    kind: 'daemonResolved',
+                    value: { command: fixture.executablePath },
+                },
             });
             await expect(authorizeRunnerManagedProviderServerSupervision({
                 paths: fixture.paths,
@@ -429,6 +504,25 @@ describe('runner managed-server supervision authorization', () => {
                 request: fixture.request,
             })).rejects.toMatchObject({
                 code: 'plugin_managed_server_launch_denied',
+            });
+        } finally {
+            await fixture.cleanup();
+        }
+    });
+
+    it('keeps a bundled first-party Provider bootstrap bound to runner packaged runtime', async () => {
+        const fixture = await prepareProviderSupervisionFixture({
+            manifestAuthority: 'bundled_first_party',
+        });
+        try {
+            await expect(authorizeRunnerManagedProviderServerSupervision({
+                paths: fixture.paths,
+                sessionId: fixture.bootstrap.scope.sessionId,
+                bootstrap: fixture.bootstrap,
+                expectedLaunch: fixture.expectedLaunch,
+                request: fixture.request,
+            })).resolves.toEqual({
+                launch: { kind: 'runnerPackagedRuntime' },
             });
         } finally {
             await fixture.cleanup();

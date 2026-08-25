@@ -130,10 +130,6 @@ export function createProductBrowserSidecarControlAdapterFactory(params: Readonl
     // gate. Passed to the launch owner so the launch plan's existing `featureEnabled: false`
     // rejection (sidecar/runtime.ts) is the single fail-close point — never a hard-coded `true`.
     featureEnabled: boolean;
-    // Product browser-use policy decision. Kept separate from `featureEnabled` because the launch
-    // owner has a distinct browser-use denial branch; product callers must derive and thread it
-    // instead of letting this source silently force it open.
-    browserUseAllowed: boolean;
     resolveManagedCandidate?: typeof resolveManagedBrowserSidecarCandidate;
     createLaunchOwnerFactory?: CreateLaunchOwnerFactory;
     // Lazy-install trigger (MCH-2). When `false`, a missing artifact stays fail-closed instead of
@@ -151,10 +147,6 @@ export function createProductBrowserSidecarControlAdapterFactory(params: Readonl
     const arch = params.arch ?? process.arch;
 
     return async (factoryInput) => {
-        if (!params.browserUseAllowed) {
-            return unavailable('browser_policy_denied', 'browser use denied by policy');
-        }
-
         let candidate = await resolveCandidate({ platform, arch });
 
         // Lazy-install seam: a supported, digest-pinned platform whose artifact is not yet installed
@@ -193,7 +185,6 @@ export function createProductBrowserSidecarControlAdapterFactory(params: Readonl
             browserSessionId: `browser_product_${machineId}`,
             sidecarId: `sidecar_product_${machineId}`,
             featureEnabled: params.featureEnabled,
-            browserUseAllowed: params.browserUseAllowed,
             allowPersistentProfiles: false,
             profile: defaultEphemeralProfile(machineId),
             profileDirectory: defaultProfileDirectory(machineId),

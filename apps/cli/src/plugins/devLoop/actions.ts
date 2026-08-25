@@ -76,7 +76,7 @@ function summarizeCatalogEntry(entry: Awaited<ReturnType<typeof readInstalledPlu
 function summarizePluginChangeFailure(result: Exclude<
   Awaited<ReturnType<typeof requestUserPluginChange>>,
   { kind: 'committed' }
->, actionKind: 'plugins_dev' | 'plugins_reload') {
+>, actionKind: 'plugins_dev_submit' | 'plugins_reload') {
   const code = result.kind === 'failed' || result.kind === 'unavailable'
     ? result.code
     : `plugin_change_${result.kind}`;
@@ -106,7 +106,7 @@ function isPluginPendingReview(
 }
 
 function projectPendingReview(
-  actionKind: 'plugins_dev' | 'plugins_install' | 'plugins_reload',
+  actionKind: 'plugins_dev_submit' | 'plugins_install' | 'plugins_reload',
   pendingReview: PluginPendingReview,
 ) {
   return {
@@ -121,7 +121,7 @@ function projectPendingReview(
 }
 
 async function runPluginDevelopmentAction(params: Readonly<{
-  actionKind: 'plugins_dev' | 'plugins_reload';
+  actionKind: 'plugins_dev_submit' | 'plugins_reload';
   projectRoot: string;
   pluginId?: string;
   sdkRegistryOrigin?: string;
@@ -203,16 +203,16 @@ export async function executePluginDevLoopAction(
   const input = readInput(params.input);
 
   if (
-    params.actionId === 'plugins.author.install'
-    || params.actionId === 'plugins.author.typecheck'
-    || params.actionId === 'plugins.author.build'
-    || params.actionId === 'plugins.author.test'
+    params.actionId === 'plugins.dev.install'
+    || params.actionId === 'plugins.dev.typecheck'
+    || params.actionId === 'plugins.dev.build'
+    || params.actionId === 'plugins.dev.test'
   ) {
-    const operation: PluginAuthorToolchainOperation = params.actionId === 'plugins.author.install'
+    const operation: PluginAuthorToolchainOperation = params.actionId === 'plugins.dev.install'
       ? 'install'
-      : params.actionId === 'plugins.author.typecheck'
+      : params.actionId === 'plugins.dev.typecheck'
         ? 'typecheck'
-        : params.actionId === 'plugins.author.build'
+        : params.actionId === 'plugins.dev.build'
           ? 'build'
           : 'test';
     const sdkRegistryOrigin = readString(input, 'sdkRegistryOrigin');
@@ -227,13 +227,13 @@ export async function executePluginDevLoopAction(
     return result.ok
       ? {
           ok: true,
-          kind: `plugins_author_${operation}`,
+          kind: `plugins_dev_${operation}`,
           operation: result.operation,
           projectRoot: result.projectRoot,
         }
       : {
           ok: false,
-          kind: `plugins_author_${operation}`,
+          kind: `plugins_dev_${operation}`,
           diagnostics: result.diagnostics,
         };
   }
@@ -305,11 +305,11 @@ export async function executePluginDevLoopAction(
     };
   }
 
-  if (params.actionId === 'plugins.dev') {
+  if (params.actionId === 'plugins.dev.submit') {
     const projectRoot = readString(input, 'projectRoot');
     const sdkRegistryOrigin = readString(input, 'sdkRegistryOrigin');
     return await runPluginDevelopmentAction({
-      actionKind: 'plugins_dev',
+      actionKind: 'plugins_dev_submit',
       projectRoot,
       ...(sdkRegistryOrigin ? { sdkRegistryOrigin } : {}),
       ...(params.context?.signal ? { signal: params.context.signal } : {}),

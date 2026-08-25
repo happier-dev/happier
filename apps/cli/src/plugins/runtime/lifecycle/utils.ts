@@ -1,4 +1,6 @@
 import {
+    PLUGIN_ACTION_FAILURE_MESSAGE_MAX_UTF8_BYTES,
+    projectPluginActionFailureMessage,
     redactBugReportSensitiveText,
     trimBugReportTextHeadToMaxBytes,
 } from '@happier-dev/protocol';
@@ -22,7 +24,7 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
     return Boolean(value) && typeof value === 'object';
 }
 
-export const PLUGIN_FAILURE_TEXT_MAX_UTF8_BYTES = 2_048;
+export const PLUGIN_FAILURE_TEXT_MAX_UTF8_BYTES = PLUGIN_ACTION_FAILURE_MESSAGE_MAX_UTF8_BYTES;
 const NEUTRAL_PLUGIN_FAILURE_TEXT = 'Plugin operation failed';
 const REDACTED_PLUGIN_FAILURE_PATH = '[REDACTED_PATH]';
 
@@ -177,7 +179,24 @@ function redactPluginFailureAbsolutePaths(value: string): string {
  */
 export function projectPluginFailureText(error: unknown): string {
     try {
-        const message = error instanceof Error ? error.message : '';
+        return projectPluginFailureMessage(error instanceof Error ? error.message : '');
+    } catch {
+        return NEUTRAL_PLUGIN_FAILURE_TEXT;
+    }
+}
+
+/**
+ * The same boundary for plugin-supplied failure prose that already arrived as a
+ * string rather than as a thrown Error — a public runtime outcome `reason`, for
+ * example. A caller whose published contract has a narrower ceiling than the
+ * host default supplies it here rather than trimming afterwards, so the
+ * redaction and the byte bound stay with this one owner.
+ */
+export function projectPluginFailureMessage(
+    message: unknown,
+    options: Readonly<{ maxUtf8Bytes?: number }> = {},
+): string {
+    try {
         if (typeof message !== 'string' || message.trim().length === 0) {
             return NEUTRAL_PLUGIN_FAILURE_TEXT;
         }
@@ -185,8 +204,7 @@ export function projectPluginFailureText(error: unknown): string {
             redactBugReportSensitiveText(message),
         ).trim();
         if (!redacted) return NEUTRAL_PLUGIN_FAILURE_TEXT;
-        const bounded = trimBugReportTextHeadToMaxBytes(redacted, PLUGIN_FAILURE_TEXT_MAX_UTF8_BYTES).trim();
-        return bounded || NEUTRAL_PLUGIN_FAILURE_TEXT;
+        return projectPluginActionFailureMessage(redacted, options);
     } catch {
         return NEUTRAL_PLUGIN_FAILURE_TEXT;
     }

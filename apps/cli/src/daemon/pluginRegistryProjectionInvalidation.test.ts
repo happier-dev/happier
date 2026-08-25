@@ -18,8 +18,8 @@ describe('createDaemonPluginRegistryProjectionInvalidation', () => {
 
     // Both applications are already durable; the UI needs only one currentness
     // signal when the original daemon retains its lock after handoff failure.
-    invalidation.onDurableRegistryApplied();
-    invalidation.onDurableRegistryApplied();
+    invalidation.invalidateProjection();
+    invalidation.invalidateProjection();
     expect(updateDaemonState).not.toHaveBeenCalled();
 
     quiescing = false;

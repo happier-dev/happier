@@ -875,7 +875,12 @@ describe('executable plugin dynamic resource observation (EU-4b)', () => {
                     }
                     throw new Error(`Unexpected Account Data GET: ${url}`);
                 },
-                async post(url, body) {
+                async post(url, encodedBody) {
+                    // The Account Data host encodes its own request body so a
+                    // serializer refusal is identifiable at the serializer; this
+                    // physical boundary therefore decodes the wire bytes exactly
+                    // as the server would.
+                    const body: unknown = JSON.parse(encodedBody);
                     if (!isRecord(body)) throw new Error('Expected an Account Data request object');
                     if (url.endsWith('/v1/plugins/data/get')) {
                         if (typeof body.collectionId !== 'string' || typeof body.rowId !== 'string') {

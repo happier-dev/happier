@@ -1,5 +1,3 @@
-import { isDeepStrictEqual } from 'node:util';
-
 import {
     PluginIdSchema,
     PluginJsonSchemaV2Schema,
@@ -11,6 +9,7 @@ import {
     type PluginSettingFieldV2,
     type PluginSettingsContributionV2,
 } from '@happier-dev/protocol';
+import { containsEquivalentPluginJsonValue } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
 import {
     isPluginError,
     PluginError,
@@ -37,8 +36,6 @@ import {
 export const PLUGIN_SETTINGS_STORAGE_KEY = `${PLUGIN_HOST_STORAGE_KEY_PREFIX}settings/v1`;
 const SETTINGS_RECORD_TYPE = 'happier_plugin_settings_record_v1';
 const MAX_SETTINGS_EVENT_VALUE_BYTES = 512 * 1024;
-const MAX_SETTINGS_ACTION_PATCH_BYTES = 64 * 1024;
-const MAX_SETTINGS_ACTION_PATCH_FIELDS = 16;
 const SETTINGS_CHANGED_REF = Object.freeze({
     pluginId: '@happier',
     localId: 'runtime/plugin-settings-changed',
@@ -461,9 +458,14 @@ function publishAccountPluginSettingsChange(
     next: CanonicalPluginSettingsRecord,
     listener: (change: SettingsChange) => void,
 ): void {
+    const haveEquivalentValues = (left: JsonValue | undefined, right: JsonValue | undefined): boolean => (
+        left === undefined
+            ? right === undefined
+            : right !== undefined && containsEquivalentPluginJsonValue([left], right)
+    );
     const changedIds = model.fields
         .filter((field) => field.descriptor.secret !== true)
-        .filter((field) => !isDeepStrictEqual(
+        .filter((field) => !haveEquivalentValues(
             previous.values[field.id],
             next.values[field.id],
         ))
@@ -752,18 +754,6 @@ export function createStablePluginSettingsOwner(params: Readonly<{
             assertCurrent(seed, input.signal);
             const patch = clonePlainData(input.patch, 'settingsActionPatch');
             const changedIds = Object.keys(patch).sort();
-            if (changedIds.length === 0 || changedIds.length > MAX_SETTINGS_ACTION_PATCH_FIELDS) {
-                throw settingsError(
-                    'plugin_settings_action_patch_bounded',
-                    'Plugin settings action patch must contain between 1 and 16 fields',
-                );
-            }
-            if (Buffer.byteLength(JSON.stringify(patch), 'utf8') > MAX_SETTINGS_ACTION_PATCH_BYTES) {
-                throw settingsError(
-                    'plugin_settings_action_patch_bounded',
-                    'Plugin settings action patch exceeds the canonical JSON byte limit',
-                );
-            }
             const allowedIds = new Set(input.allowedFieldIds);
             for (const id of changedIds) {
                 const field = fieldOrThrow(model, id);

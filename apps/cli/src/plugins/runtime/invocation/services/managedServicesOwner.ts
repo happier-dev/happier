@@ -1714,6 +1714,28 @@ function requestUnavailable(message: string): never {
     return fail('plugin_managed_service_unavailable', message);
 }
 
+/**
+ * Cancellation provenance for one managed request.
+ *
+ * Establishment and streaming compose several abort authorities into one signal — the caller's own
+ * `signal`, the exact handle's lifetime, and the invocation scope — so by the time a request fails
+ * the composed signal no longer says who ended it. Reporting all of them as unavailability tells a
+ * plugin that its service, credentials or generation are gone when in fact it cancelled itself, and
+ * that is the difference between retrying, re-establishing, and reporting an outage to the user.
+ * The caller's signal is therefore consulted directly: it aborted, so this is `plugin_operation_aborted`;
+ * anything else (handle/scope/currentness/process retirement, timeout, transport failure) stays
+ * `plugin_managed_service_unavailable`.
+ */
+function requestFailure(
+    callerSignal: AbortSignal | null | undefined,
+    message: string,
+): never {
+    if (callerSignal?.aborted) {
+        return fail('plugin_operation_aborted', message);
+    }
+    return requestUnavailable(message);
+}
+
 function normalizeManagedServiceRequest(
     request: ManagedServiceRequest,
 ): ManagedServiceRequestInput {
@@ -1937,6 +1959,7 @@ function readManagedServiceResponseHeaders(
 function boundManagedServiceResponseBody(input: Readonly<{
     body: ReadableStream<Uint8Array> | null;
     signal: AbortSignal;
+    callerSignal?: AbortSignal | null;
     isCurrent(): boolean;
     cleanup(): void;
 }>): ReadableStream<Uint8Array> | null {
@@ -1969,10 +1992,16 @@ function boundManagedServiceResponseBody(input: Readonly<{
         if (settled) return;
         cancelInput();
         try {
-            outputController?.error(new PluginError({
-                code: 'plugin_managed_service_unavailable',
-                message: 'Managed-service response body is unavailable',
-            }));
+            outputController?.error(input.callerSignal?.aborted
+                ? new PluginError({
+                    code: 'plugin_operation_aborted',
+                    message:
+                        'Managed-service request was cancelled by its caller',
+                })
+                : new PluginError({
+                    code: 'plugin_managed_service_unavailable',
+                    message: 'Managed-service response body is unavailable',
+                }));
         } catch {
             // A concurrently settled stream needs no second notification.
         }
@@ -2048,6 +2077,8 @@ async function executeManagedServiceFetch(input: Readonly<{
     target: URL;
     init: RequestInit;
     signals: readonly (AbortSignal | null | undefined)[];
+    /** The request's own `signal`, kept apart from the composed lifetime so cancellation stays attributable. */
+    callerSignal?: AbortSignal | null;
     timeoutMs: number;
     isCurrent(): boolean;
     isDispatchCurrent?(signal: AbortSignal): Promise<boolean>;
@@ -2081,7 +2112,10 @@ async function executeManagedServiceFetch(input: Readonly<{
     if (establishment.signal.aborted) {
         cleanupEstablishment();
         cleanupLifetime();
-        return requestUnavailable('Managed-service request is unavailable');
+        return requestFailure(
+            input.callerSignal,
+            'Managed-service request is unavailable',
+        );
     }
     if (
         input.isDispatchCurrent
@@ -2089,12 +2123,18 @@ async function executeManagedServiceFetch(input: Readonly<{
     ) {
         cleanupEstablishment();
         cleanupLifetime();
-        return requestUnavailable('Managed-service request is unavailable');
+        return requestFailure(
+            input.callerSignal,
+            'Managed-service request is unavailable',
+        );
     }
     if (establishment.signal.aborted) {
         cleanupEstablishment();
         cleanupLifetime();
-        return requestUnavailable('Managed-service request is unavailable');
+        return requestFailure(
+            input.callerSignal,
+            'Managed-service request is unavailable',
+        );
     }
     let response: Response;
     try {
@@ -2107,7 +2147,10 @@ async function executeManagedServiceFetch(input: Readonly<{
     } catch {
         cleanupEstablishment();
         cleanupLifetime();
-        return requestUnavailable('Managed-service request failed');
+        return requestFailure(
+            input.callerSignal,
+            'Managed-service request failed',
+        );
     }
     let status: number;
     let statusText: string;
@@ -2144,11 +2187,15 @@ async function executeManagedServiceFetch(input: Readonly<{
     ) {
         await response.body?.cancel().catch(() => undefined);
         cleanupLifetime();
-        return requestUnavailable('Managed-service response is unavailable');
+        return requestFailure(
+            input.callerSignal,
+            'Managed-service response is unavailable',
+        );
     }
     const body = boundManagedServiceResponseBody({
         body: response.body,
         signal: lifetime.signal,
+        ...(input.callerSignal ? { callerSignal: input.callerSignal } : {}),
         isCurrent: input.isCurrent,
         cleanup: cleanupLifetime,
     });
@@ -3198,6 +3245,9 @@ export function createManagedServicesOwner(input: Readonly<{
                                     scope.signal,
                                     normalized.signal,
                                 ],
+                                ...(normalized.signal
+                                    ? { callerSignal: normalized.signal }
+                                    : {}),
                                 timeoutMs: normalized.timeoutMs,
                                 isCurrent,
                                 ...(requestCredentialCurrentness

@@ -29,7 +29,7 @@ import {
 
 const execFileAsync = promisify(execFile);
 
-function successfulSpawn() {
+function successfulSpawn(_input?: Parameters<PluginAuthorToolchainDeps['spawn']>[0]) {
   return Promise.resolve({ exitCode: 0, signal: null, stdout: '', stderr: '' });
 }
 
@@ -104,6 +104,42 @@ describe('assertPluginAuthorPrepublicationRuntimeDeclarations', () => {
 });
 
 describe('runPluginAuthorToolchain', () => {
+  it('does not reinstall dependencies before a focused check when the author root is already materialized', async () => {
+    const fixture = await createColdAuthorBuildFixture(createPluginManifestV2Fixture({ entrypoints: undefined }));
+    try {
+      const sdkRoot = join(fixture.projectRoot, 'node_modules', '@happier-dev', 'plugin-sdk');
+      await mkdir(sdkRoot, { recursive: true });
+      await writeFile(join(sdkRoot, 'package.json'), JSON.stringify({
+        name: '@happier-dev/plugin-sdk',
+        version: '0.0.0',
+      }), 'utf8');
+      const spawn = vi.fn(successfulSpawn);
+
+      const result = await runPluginAuthorToolchain({
+        operation: 'typecheck',
+        projectRoot: fixture.projectRoot,
+      }, {
+        ensureManagedPnpmCommand: async () => '/happier/tools/pnpm/current/bin/pnpm',
+        managedPnpmBinPath: () => '/happier/tools/pnpm/current/bin/pnpm',
+        managedJavaScriptRuntimeBinPath: () => '/happier/tools/js-runtime/current/bin/happier-js-runtime',
+        buildManagedPnpmEnvironment: (env = {}) => env,
+        ensureManagedJavaScriptRuntimeCommand: async () => '/happier/tools/js-runtime/current/bin/happier-js-runtime',
+        resolveNativeTypeScriptBin: () => '/fixture/plugin/node_modules/@typescript/native/bin/tsc',
+        resolvePluginUiBuildBin: () => null,
+        spawn,
+        processEnv: {},
+      });
+
+      expect(result).toMatchObject({ ok: true, operation: 'typecheck' });
+      expect(spawn).toHaveBeenCalledTimes(1);
+      expect(spawn.mock.calls[0]?.[0]).toMatchObject({
+        command: '/happier/tools/js-runtime/current/bin/happier-js-runtime',
+      });
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
   it('cleans stale executable outputs before a descriptor-only compiler emit', async () => {
     const fixture = await createColdAuthorBuildFixture(createPluginManifestV2Fixture({ entrypoints: undefined }));
     const chunksDirectory = join(fixture.projectRoot, 'dist', '.happier-chunks');
@@ -895,7 +931,13 @@ describe('runPluginAuthorToolchain', () => {
   });
 
   it.each([
-    ['typecheck', ['--noEmit', '-p', 'tsconfig.json']],
+    ['typecheck', [
+      '--noEmit',
+      '--tsBuildInfoFile',
+      'node_modules/.cache/happier/plugin-author.typecheck.tsbuildinfo',
+      '-p',
+      'tsconfig.json',
+    ]],
     ['build', ['-p', 'tsconfig.json']],
   ] as const)('runs %s through the managed JavaScript runtime and project-local TypeScript 7 entrypoint', async (operation, compilerArgs) => {
     const spawn = vi.fn(successfulSpawn);
@@ -1332,18 +1374,18 @@ describe('plugin author toolchain source locations', () => {
 describe('classifyPluginAuthorDaemonBuild', () => {
   const REPO_ROOT = resolve(import.meta.dirname, '../../../../..');
 
-  it('classifies a first-party bundled workspace package the current checkout actually ships', async () => {
+  it('classifies a bundled workspace source as local development without granting bundled authority', async () => {
     // `happier.scm.backend.git` is a reserved-namespace id whose bundled
     // manifest declares the build-time `^0.0.0` engine placeholder. The author
-    // build command must read it under the authority the path actually carries
-    // instead of defaulting to `external` and refusing our own package.
+    // build command reads its source as external local development; generated
+    // artifact custody is decided separately at the exact artifact resolver.
     await expect(classifyPluginAuthorDaemonBuild(
       resolve(REPO_ROOT, 'packages/plugins/scm-git'),
     )).resolves.toBe('required');
   });
 
-  // C1: the dev loop reaches this classifier through `plugins.author.build` and
-  // `plugins.author.test`, so refusing a reserved id here gave bundled plugins a
+  // C1: the dev loop reaches this classifier through `plugins.dev.build` and
+  // `plugins.dev.test`, so refusing a reserved id here gave bundled plugins a
   // loop external authors could not have. A project root is a working tree on
   // this machine, never a distributed artifact. The rule stays fully enforced
   // where custody actually transfers: `resolveLocalPathPluginSource` rejects the

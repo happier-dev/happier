@@ -22,6 +22,7 @@ import type {
   PluginPackagedResourceContributionV2,
   PluginSessionHeaderActionDescriptorV1,
   PluginTranscriptActivityContributionV1,
+  PluginSessionInfoSectionContributionV1,
   PluginSettingsContributionV2,
   PluginSystemToolContributionV1,
   ScmHostingProviderContribution,
@@ -65,7 +66,6 @@ import type {
 } from '@happier-dev/protocol/plugins/ui';
 
 import type { LoadedPlugin } from '@/plugins/discovery/load/installed';
-import type { TargetedContributionPointRef } from '@happier-dev/plugin-sdk';
 import { resolvePluginResourcePath } from '../../resources/package/resolve';
 import type {
   ResolvedCommandDefinition,
@@ -117,10 +117,7 @@ export type PluginOwnedActionContribution = PluginOwnedContribution<ResolvedActi
   localizedPresentation?: ResolvedActionLocalizedPresentation;
 }>;
 
-export type PluginOwnedContributionPoint = PluginOwnedContribution<PluginContributionPointV1> & Readonly<{
-  /** Exact target-owned refs supplied only by a bundled `definePlugin` manifest. */
-  semanticPointRefs?: readonly TargetedContributionPointRef<unknown>[];
-}>;
+export type PluginOwnedContributionPoint = PluginOwnedContribution<PluginContributionPointV1>;
 
 export type PluginOwnedAccountCollectionContribution = PluginOwnedContribution<NormalizedPluginAccountCollectionContractV1>;
 export type PluginOwnedOpenableContentViewerContribution = PluginOwnedContribution<PluginOpenableContentViewerContributionV1>;
@@ -152,6 +149,7 @@ export type PluginContributionRegistry = Readonly<{
   uiTranslations: readonly PluginOwnedContribution<PluginUiTranslationsContributionV1>[];
   sessionHeaderActions: readonly PluginOwnedContribution<PluginSessionHeaderActionDescriptorV1>[];
   transcriptActivities: readonly PluginOwnedContribution<PluginTranscriptActivityContributionV1>[];
+  sessionInfoSections: readonly PluginOwnedContribution<PluginSessionInfoSectionContributionV1>[];
   hostedWeb: readonly PluginOwnedContribution<PluginHostedWebContributionV1>[];
   browserTargets: readonly PluginOwnedContribution<PluginBrowserTargetContributionV1>[];
   browserActions: readonly PluginOwnedContribution<PluginBrowserActionContributionV1>[];
@@ -271,6 +269,7 @@ function toActionDefinition(definition: PluginActionContributionV2): ResolvedAct
     },
     inputHints: normalizePluginActionInputHintsV2(definition.inputHints) ?? null,
     inputSchema: definition.inputSchema ?? {},
+    ...(definition.contextualDefaults ? { contextualDefaults: definition.contextualDefaults } : {}),
     ...(definition.resultSchema ? { outputSchema: definition.resultSchema } : {}),
     ...(definition.operation ? { operation: definition.operation } : {}),
     scopes: definition.scopes,
@@ -399,6 +398,7 @@ export function buildPluginContributionRegistry(params: Readonly<{
   const uiTranslations: PluginOwnedContribution<PluginUiTranslationsContributionV1>[] = [];
   const sessionHeaderActions: PluginOwnedContribution<PluginSessionHeaderActionDescriptorV1>[] = [];
   const transcriptActivities: PluginOwnedContribution<PluginTranscriptActivityContributionV1>[] = [];
+  const sessionInfoSections: PluginOwnedContribution<PluginSessionInfoSectionContributionV1>[] = [];
   const hostedWeb: PluginOwnedContribution<PluginHostedWebContributionV1>[] = [];
   const browserTargets: PluginOwnedContribution<PluginBrowserTargetContributionV1>[] = [];
   const browserActions: PluginOwnedContribution<PluginBrowserActionContributionV1>[] = [];
@@ -460,13 +460,6 @@ export function buildPluginContributionRegistry(params: Readonly<{
     );
 
     for (const definition of readSemanticDefinitions<PluginContributionPointV1>('pluginContributionPoints')) {
-      const semanticPointRefs = plugin.semanticPointRefs?.filter((point) => (
-        point.targetPluginId === plugin.pluginId
-        && point.id === definition.id
-        && definition.protocols.some((protocol) => (
-          protocol.id === point.protocol.id && protocol.version === point.protocol.version
-        ))
-      ));
       pluginContributionPoints.push({
         pluginId: plugin.pluginId,
         pluginVersion: plugin.manifest.version,
@@ -477,9 +470,6 @@ export function buildPluginContributionRegistry(params: Readonly<{
         devDaemonEntryPath: plugin.devDaemonEntryPath,
         sourceSpec: plugin.sourceSpec,
         definition,
-        ...(semanticPointRefs && semanticPointRefs.length > 0
-          ? { semanticPointRefs: Object.freeze(semanticPointRefs) }
-          : {}),
       });
     }
     for (const definition of readSemanticDefinitions<PluginTargetedContributionV1>('targetedPluginContributions')) {
@@ -806,6 +796,19 @@ export function buildPluginContributionRegistry(params: Readonly<{
         definition,
       });
     }
+    for (const definition of readSemanticDefinitions<PluginSessionInfoSectionContributionV1>('sessionInfoSections')) {
+      sessionInfoSections.push({
+        pluginId: plugin.pluginId,
+        pluginVersion: plugin.manifest.version,
+        identity: createPluginContributionIdentity({ pluginId: plugin.pluginId, localId: definition.id }),
+        pluginRootPath: plugin.pluginRootPath,
+        manifestPath: plugin.manifestPath,
+        daemonEntryPath: plugin.daemonEntryPath,
+        devDaemonEntryPath: plugin.devDaemonEntryPath,
+        sourceSpec: plugin.sourceSpec,
+        definition,
+      });
+    }
 
     for (const definition of readContributionArray<PluginHostedWebContributionV1>(plugin.manifest.contributes, 'hostedWeb')) {
       hostedWeb.push({
@@ -1077,6 +1080,7 @@ export function buildPluginContributionRegistry(params: Readonly<{
     uiTranslations: Object.freeze(uiTranslations),
     sessionHeaderActions: Object.freeze(sessionHeaderActions),
     transcriptActivities: Object.freeze(transcriptActivities),
+    sessionInfoSections: Object.freeze(sessionInfoSections),
     hostedWeb: Object.freeze(hostedWeb),
     browserTargets: Object.freeze(browserTargets),
     browserActions: Object.freeze(browserActions),

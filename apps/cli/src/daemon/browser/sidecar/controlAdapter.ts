@@ -323,9 +323,6 @@ export function createBrowserSidecarCdpControlAdapter(
         },
         async dispatchCommand(command) {
             switch (command.kind) {
-                case 'createSession':
-                case 'closeSession':
-                    return failed(command, 'unsupported_command', 'Browser session commands do not have a sidecar CDP owner.');
                 case 'openView': {
                     if (command.browserSessionId !== input.browserSessionId || command.target.kind !== 'externalUrl') {
                         return failed(command, 'unsupported_command', 'Browser sidecar supports only external URL views.');

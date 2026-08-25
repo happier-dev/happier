@@ -298,6 +298,89 @@ describe('plugin daemon database owner', () => {
         }
     });
 
+    it('permanently retires one prepared plugin owner without closing a healthy peer', async () => {
+        const happyHomeDir = await makeHappyHome();
+        const paths = resolvePluginStorePaths({ happyHomeDir });
+        const limits = {
+            maximumDatabaseBytes: 1_048_576,
+            maximumInputBytes: 16_384,
+            maximumResultBytes: 16_384,
+            maximumResultRows: 100,
+            maximumAffectedRows: 1_000,
+            maximumElapsedMs: 5_000,
+        } as const;
+        const host = createStablePluginDaemonDatabaseHost({
+            paths,
+            daemonDatabaseLimits: {
+                protocolMaximumDatabaseBytes: limits.maximumDatabaseBytes,
+                resolvePluginLimits: () => limits,
+            },
+        });
+        const declaration = [{
+            id: 'state',
+            migrations: [{ version: 1, id: 'create-state' }],
+            incumbentQueryFixtureId: 'state-readable',
+        }];
+        const runtime = {
+            state: {
+                migrations: [{
+                    version: 1,
+                    id: 'create-state',
+                    up: async (transaction: { execute(sql: string): Promise<unknown> }) => {
+                        await transaction.execute('CREATE TABLE records (value TEXT NOT NULL)');
+                    },
+                }],
+                incumbentQueryFixture: { id: 'state-readable', run: async () => undefined },
+            },
+        } as const;
+        const failedController = new AbortController();
+        const healthyController = new AbortController();
+        try {
+            for (const [pluginId, controller] of [
+                ['acme.failed-agent', failedController],
+                ['acme.healthy', healthyController],
+            ] as const) {
+                await host.prepare({
+                    pluginId,
+                    generation: '1',
+                    signal: controller.signal,
+                    isGenerationCurrent: () => true,
+                    declarations: declaration,
+                    runtime,
+                });
+            }
+            const failedDatabase = await host.bind({
+                pluginId: 'acme.failed-agent',
+                generation: '1',
+                signal: failedController.signal,
+                isGenerationCurrent: () => true,
+            }).database('state', runtime.state);
+            const healthyDatabase = await host.bind({
+                pluginId: 'acme.healthy',
+                generation: '1',
+                signal: healthyController.signal,
+                isGenerationCurrent: () => true,
+            }).database('state', runtime.state);
+
+            await host.retire(['acme.failed-agent']);
+
+            expect(host.readPreparedContracts('acme.failed-agent')).toEqual([]);
+            expect(host.readPreparedContracts('acme.healthy')).toEqual([
+                expect.objectContaining({ id: 'state', incumbentQueryFixtureId: 'state-readable' }),
+            ]);
+            await expect(failedDatabase.query('SELECT value FROM records')).rejects.toMatchObject({
+                code: 'daemon_database_closed',
+            });
+            await healthyDatabase.execute('INSERT INTO records (value) VALUES (?)', ['healthy']);
+            await expect(healthyDatabase.query('SELECT value FROM records')).resolves.toEqual([
+                { value: 'healthy' },
+            ]);
+        } finally {
+            await host.close();
+            await rm(happyHomeDir, { recursive: true, force: true });
+        }
+    }, 120_000);
+
     it('prepares every declared database deterministically, binds it through storage.daemon, and closes it at retirement', async () => {
         const happyHomeDir = await makeHappyHome();
         const paths = resolvePluginStorePaths({ happyHomeDir });

@@ -1,4 +1,5 @@
 import { spawn as spawnChildProcess } from 'node:child_process';
+import { isPidPresent } from '@happier-dev/cli-common/process';
 
 import { redactBugReportSensitiveText, trimBugReportTextToMaxBytes } from '@happier-dev/protocol';
 
@@ -206,14 +207,6 @@ export async function spawnRegularProcessAndWaitForWebhook(params: Readonly<{
       ? `The path '${params.directory}' did not exist. We created a new folder and spawned a new session there.`
       : undefined,
   };
-  const isPidAlive = (candidatePid: number): boolean => {
-    try {
-      process.kill(candidatePid, 0);
-      return true;
-    } catch {
-      return false;
-    }
-  };
   const isOriginalProcessGroupAlive = (): boolean => {
     if (process.platform === 'win32') return false;
     try {
@@ -270,7 +263,7 @@ export async function spawnRegularProcessAndWaitForWebhook(params: Readonly<{
         process.platform !== 'win32'
         && (
           isOriginalProcessGroupAlive()
-          || ownedPids.some(isPidAlive)
+          || ownedPids.some((ownedPid) => isPidPresent(ownedPid))
         )
       ) {
         return {

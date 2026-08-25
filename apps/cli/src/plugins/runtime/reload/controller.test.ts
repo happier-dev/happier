@@ -19,7 +19,7 @@ function createRuntimeRegistry(
         diagnostics?: readonly PluginCompatibilityDiagnostic[];
         dispose?: ResolvedExecutablePluginRuntimeRegistry['dispose'];
         retireConsumers?: ResolvedExecutablePluginRuntimeRegistry['retireConsumers'];
-        retirePluginConsumers?: (pluginIds: readonly string[]) => void;
+        retirePluginConsumers?: (pluginIds: readonly string[]) => void | Promise<void>;
         settleRetiredBackgroundServices?: (pluginIds: readonly string[]) => Promise<void>;
         startAdoptedBackgroundServices?: () => void;
         publishDeclaredEventSubscriptions?: () => void;
@@ -54,7 +54,9 @@ function createRuntimeRegistry(
         activateContributionsOnDemand: async () => [],
         resolvePromptAssetBlocks: async () => [],
         retireConsumers: params?.retireConsumers ?? (() => undefined),
-        retirePluginConsumers: params?.retirePluginConsumers ?? (() => undefined),
+        retirePluginConsumers: async (pluginIds) => {
+            await params?.retirePluginConsumers?.(pluginIds);
+        },
         ...(params?.settleRetiredBackgroundServices
             ? { settleRetiredBackgroundServices: params.settleRetiredBackgroundServices }
             : {}),
@@ -133,7 +135,9 @@ describe('createPluginReloadController', () => {
     it('starts background services only after adoption and settles changed predecessors first', async () => {
         const calls: string[] = [];
         const initialRegistry = createRuntimeRegistry('initial', {
-            retirePluginConsumers: (pluginIds) => calls.push(`retire:${pluginIds.join(',')}`),
+            retirePluginConsumers: async (pluginIds) => {
+                calls.push(`retire:${pluginIds.join(',')}`);
+            },
             settleRetiredBackgroundServices: async (pluginIds) => {
                 calls.push(`settle:${pluginIds.join(',')}`);
             },
@@ -961,6 +965,89 @@ describe('createPluginReloadController', () => {
         expect(retireInitialConsumers).not.toHaveBeenCalled();
         expect(retireInitialPluginConsumers).toHaveBeenCalledExactlyOnceWith(['acme.plugin']);
         expect(disposePrepared).toHaveBeenCalledTimes(1);
+    });
+
+    it('waits for changed predecessor consumer retirement before publishing a candidate', async () => {
+        const retirementSettled = createDeferred<void>();
+        const calls: string[] = [];
+        const retireInitialPluginConsumers = vi.fn(() => {
+            calls.push('fence');
+            return retirementSettled.promise;
+        });
+        const initialRegistry = createRuntimeRegistry('initial', {
+            retirePluginConsumers: retireInitialPluginConsumers,
+        });
+        const preparedRegistry = createRuntimeRegistry('prepared');
+        const controller = createPluginReloadController({
+            resolveRuntimeRegistry: async () => initialRegistry,
+        });
+        const initialLease = await controller.acquireRuntimeRegistry();
+        await initialLease.release();
+        const beforePublish = vi.fn(async (
+            _registry: ResolvedExecutablePluginRuntimeRegistry,
+            publish: () => void,
+        ) => {
+            calls.push('publish');
+            publish();
+        });
+
+        const adoption = controller.adoptPreparedRuntimeRegistry({
+            registry: preparedRegistry,
+            changedPluginIds: ['acme.plugin'],
+            durableRevision: 1,
+            runningSessionDisposition: 'retainRunningSessions',
+            beforePublish,
+        });
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(retireInitialPluginConsumers).toHaveBeenCalledExactlyOnceWith(['acme.plugin']);
+        expect(calls).toEqual(['fence']);
+        expect(controller.getState()).toMatchObject({
+            generation: 1,
+            activeRegistry: initialRegistry,
+        });
+
+        retirementSettled.resolve();
+        await expect(adoption).resolves.toMatchObject({ registry: preparedRegistry });
+        expect(calls).toEqual(['fence', 'publish']);
+    });
+
+    it('rejects and disposes a candidate when changed predecessor consumer retirement fails', async () => {
+        const retirementFailure = new Error('database retirement failed');
+        const retireInitialPluginConsumers = vi.fn(async () => {
+            throw retirementFailure;
+        });
+        const initialRegistry = createRuntimeRegistry('initial', {
+            retirePluginConsumers: retireInitialPluginConsumers,
+        });
+        const disposePrepared = vi.fn(async () => {});
+        const preparedRegistry = createRuntimeRegistry('prepared', {
+            dispose: disposePrepared,
+        });
+        const controller = createPluginReloadController({
+            resolveRuntimeRegistry: async () => initialRegistry,
+        });
+        const initialLease = await controller.acquireRuntimeRegistry();
+        await initialLease.release();
+        const beforePublish = vi.fn();
+
+        await expect(controller.adoptPreparedRuntimeRegistry({
+            registry: preparedRegistry,
+            changedPluginIds: ['acme.plugin'],
+            durableRevision: 1,
+            runningSessionDisposition: 'retainRunningSessions',
+            beforePublish,
+        })).rejects.toBe(retirementFailure);
+
+        expect(retireInitialPluginConsumers).toHaveBeenCalledExactlyOnceWith(['acme.plugin']);
+        expect(beforePublish).not.toHaveBeenCalled();
+        expect(disposePrepared).toHaveBeenCalledTimes(1);
+        expect(controller.getState()).toMatchObject({
+            generation: 1,
+            activeRegistry: initialRegistry,
+        });
+        expect(controller.isRuntimeRegistryCurrent(initialRegistry)).toBe(true);
     });
 
     it('retires only changed-plugin consumers when publishing a prepared candidate', async () => {

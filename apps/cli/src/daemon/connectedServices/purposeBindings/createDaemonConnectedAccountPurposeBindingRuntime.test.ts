@@ -5,7 +5,6 @@ import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
-  ConnectedServiceAuthGroupV1Schema,
   ConnectedServiceCredentialRecordV1Schema,
   FeaturesResponseSchema,
   sealQualifiedConnectedAccountContentEnvelope,
@@ -101,31 +100,6 @@ const unavailableLegacyMaterializationOwner = {
     throw new Error('legacy materialization must not be invoked');
   },
 };
-const primaryOpenAiGroup = ConnectedServiceAuthGroupV1Schema.parse({
-  v: 1,
-  serviceId: 'openai',
-  groupId: 'primary',
-  displayName: 'Primary upstreams',
-  policy: {},
-  activeProfileId: 'standard-openai',
-  generation: 1,
-  runtimeStateRevision: 0,
-  state: {},
-  createdAt: 1,
-  updatedAt: 1,
-  members: [{
-    v: 1,
-    serviceId: 'openai',
-    groupId: 'primary',
-    profileId: 'standard-openai',
-    priority: 1,
-    enabled: true,
-    state: {},
-    createdAt: 1,
-    updatedAt: 1,
-  }],
-});
-
 function testQualifiedProfile(input: Readonly<{
   accountId?: string;
   status?: QualifiedConnectedAccountProfileV4['status'];
@@ -427,8 +401,6 @@ function createSelectionRuntime(
           kind: 'token' as const,
         }],
       })),
-      listConnectedServiceAuthGroups: vi.fn(async () => [primaryOpenAiGroup]),
-      getConnectedServiceAuthGroup: vi.fn(async () => primaryOpenAiGroup),
       getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
       getConnectedServiceCredentialPlain: vi.fn(async () => null),
       getConnectedServiceCredentialSealed: vi.fn(async () => null),
@@ -498,8 +470,6 @@ function createInventoryRuntime(input: Readonly<{
         serviceId: 'openai' as const,
         profiles: [],
       })),
-      listConnectedServiceAuthGroups: vi.fn(async () => []),
-      getConnectedServiceAuthGroup: vi.fn(async () => null),
       getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
       getConnectedServiceCredentialPlain: vi.fn(async () => null),
       getConnectedServiceCredentialSealed: vi.fn(async () => null),
@@ -553,8 +523,6 @@ function createActionFormRuntime(input: Readonly<{
         serviceId: 'openai' as const,
         profiles: input.legacyProfiles ?? [],
       })),
-      listConnectedServiceAuthGroups: vi.fn(async () => []),
-      getConnectedServiceAuthGroup: vi.fn(async () => null),
       getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
       getConnectedServiceCredentialPlain: vi.fn(async () => null),
       getConnectedServiceCredentialSealed: vi.fn(async () => null),
@@ -605,6 +573,23 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
           testQualifiedProfile({ accountId: 'reauth', status: 'needs_reauth' }),
         ],
       }),
+    });
+
+    await expect(runtimeOwner.listActionFormConnectedAccountOptions({
+      purpose,
+      serviceRefs: [openAiService],
+      signal: new AbortController().signal,
+    })).resolves.toEqual([]);
+  });
+
+  it('omits legacy-unfenced V4 accounts from Action-form options', async () => {
+    const legacyUnfenced: QualifiedConnectedAccountProfileV4 = {
+      ...testQualifiedProfile(),
+      revisionSemantics: 'legacy_unfenced',
+      credentialRevision: null,
+    };
+    const runtimeOwner = createActionFormRuntime({
+      qualifiedApi: testQualifiedApi({ accounts: [legacyUnfenced] }),
     });
 
     await expect(runtimeOwner.listActionFormConnectedAccountOptions({
@@ -903,8 +888,6 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
             expiresAt: null,
           }],
         })),
-        listConnectedServiceAuthGroups: vi.fn(async () => []),
-        getConnectedServiceAuthGroup: vi.fn(async () => null),
         getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
         getConnectedServiceCredentialPlain: vi.fn(async () => null),
         getConnectedServiceCredentialSealed: vi.fn(async () => null),
@@ -1034,8 +1017,6 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
         unavailableLegacyMaterializationOwner,
       api: {
         listConnectedServiceProfiles: vi.fn(),
-        listConnectedServiceAuthGroups: vi.fn(),
-        getConnectedServiceAuthGroup: vi.fn(),
         getAccountEncryptionMode: vi.fn(),
         getConnectedServiceCredentialPlain: vi.fn(),
         getConnectedServiceCredentialSealed: vi.fn(),
@@ -1154,8 +1135,6 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
     }));
     const api = {
       listConnectedServiceProfiles,
-      listConnectedServiceAuthGroups: vi.fn(async () => []),
-      getConnectedServiceAuthGroup: vi.fn(async () => null),
       getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
       getConnectedServiceCredentialPlain,
       getConnectedServiceCredentialSealed: vi.fn(async () => null),
@@ -1313,8 +1292,6 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
         createDaemonConnectedAccountPurposeBindingRuntime({
           api: {
             listConnectedServiceProfiles,
-            listConnectedServiceAuthGroups: vi.fn(),
-            getConnectedServiceAuthGroup: vi.fn(),
             getAccountEncryptionMode: vi.fn(),
             getConnectedServiceCredentialPlain,
             getConnectedServiceCredentialSealed: vi.fn(),
@@ -1454,8 +1431,6 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
             expiresAt: null,
           }],
         })),
-        listConnectedServiceAuthGroups: vi.fn(async () => []),
-        getConnectedServiceAuthGroup: vi.fn(async () => null),
         getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
         getConnectedServiceCredentialPlain: vi.fn(async () => null),
         getConnectedServiceCredentialSealed: vi.fn(async () => null),
@@ -1698,8 +1673,6 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
         unavailableLegacyMaterializationOwner,
       api: {
         listConnectedServiceProfiles: vi.fn(),
-        listConnectedServiceAuthGroups: vi.fn(),
-        getConnectedServiceAuthGroup: vi.fn(),
         getAccountEncryptionMode: vi.fn(),
         getConnectedServiceCredentialPlain: vi.fn(),
         getConnectedServiceCredentialSealed: vi.fn(),
@@ -2169,8 +2142,6 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
           serviceId: 'openai' as const,
           profiles: [],
         })),
-        listConnectedServiceAuthGroups: vi.fn(async () => []),
-        getConnectedServiceAuthGroup: vi.fn(async () => null),
         getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
         getConnectedServiceCredentialPlain: vi.fn(async () => null),
         getConnectedServiceCredentialSealed: vi.fn(async () => null),

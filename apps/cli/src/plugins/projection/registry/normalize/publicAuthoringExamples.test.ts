@@ -10,6 +10,7 @@ import { readCanonicalPluginManifest } from '@/plugins/manifest/normalize';
 import { createResolvedContributionRegistry } from '../createResolvedContributionRegistry';
 import { projectLoadedPluginContributes } from '../resolvePluginContributions';
 import { resolveDeclarativeProjectionModels } from '../ui/declarativeModels';
+import { listDeclarativeNodesInPreorder } from '@/plugins/runtime/invocation/services/declarativeModel.testkit';
 
 import { buildPluginContributionRegistry } from './package';
 
@@ -279,31 +280,34 @@ describe('plugin SDK public installable examples', () => {
     expect(settingsModel).toBeDefined();
     expect(listModel).toBeDefined();
 
+    const settingsNodes = listDeclarativeNodesInPreorder(settingsModel!.root);
+    const listNodes = listDeclarativeNodesInPreorder(listModel!.root);
+
     // Settings context: host-rendered controls plus markdown and a toned status.
-    expect(settingsModel!.nodes.filter((node) => node.kind === 'field')).toHaveLength(2);
-    expect(settingsModel!.nodes.some((node) => node.kind === 'markdown')).toBe(true);
-    expect(settingsModel!.nodes.some((node) => node.kind === 'status' && node.tone === 'success')).toBe(true);
+    expect(settingsNodes.filter((node) => node.kind === 'field')).toHaveLength(2);
+    expect(settingsNodes.some((node) => node.kind === 'markdown')).toBe(true);
+    expect(settingsNodes.some((node) => node.kind === 'status' && node.tone === 'success')).toBe(true);
 
     // Session context: the whole approved list vocabulary evaluates, including
     // the empty/loading/error states.
-    const kinds = new Set(listModel!.nodes.map((node) => node.kind));
+    const kinds = new Set(listNodes.map((node) => node.kind));
     for (const kind of ['list', 'section', 'item', 'metadata', 'state', 'actionPanel', 'markdown', 'action']) {
       expect(kinds.has(kind as never), `declarative example must exercise '${kind}'`).toBe(true);
     }
-    expect(listModel!.nodes.flatMap((node) => (node.kind === 'state' ? [node.state] : [])).sort())
+    expect(listNodes.flatMap((node) => (node.kind === 'state' ? [node.state] : [])).sort())
       .toEqual(['empty', 'error', 'loading']);
 
     // A row action is qualified by the same owner as a standalone action, and
     // the destructive affordance keeps its declared variant so the renderer can
     // present it accessibly rather than by colour alone.
-    const rowAction = listModel!.nodes.find((node) => node.kind === 'item' && node.action !== undefined);
+    const rowAction = listNodes.find((node) => node.kind === 'item' && node.action !== undefined);
     expect(rowAction).toMatchObject({
       kind: 'item',
       action: { qualifiedId: 'examples.descriptor-only/open-preview', generation: '11' },
     });
-    expect(listModel!.nodes.some((node) => node.kind === 'action' && node.variant === 'destructive')).toBe(true);
+    expect(listNodes.some((node) => node.kind === 'action' && node.variant === 'destructive')).toBe(true);
 
     // The example stays far inside the node budget (plan §EU-9 bounds disposition).
-    expect(listModel!.nodes.length).toBeLessThan(64);
+    expect(listNodes.length).toBeLessThan(64);
   });
 });

@@ -1,4 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { DEFAULT_AUTOMATION_V3_MAX_ACTIVE_RUNS_PER_MACHINE } from '@happier-dev/protocol';
 
 const { axiosGet, axiosPost } = vi.hoisted(() => ({
   axiosGet: vi.fn(),
@@ -29,6 +30,10 @@ const START_CURRENTNESS = {
   contentKeyFingerprint: null,
 };
 
+const DEFAULT_WORKER_SETTINGS = {
+  maxActiveRunsPerMachine: DEFAULT_AUTOMATION_V3_MAX_ACTIVE_RUNS_PER_MACHINE,
+} as const;
+
 const START_RESPONSE = {
   run: {
     id: 'run/1',
@@ -49,6 +54,7 @@ const START_RESPONSE = {
     replyHandoffState: 'none' as const,
     replyHandoffAttempt: 0,
     replyHandoffDueAt: null,
+    contentRemovedAt: null,
     createdAt: 1_723_247_201_000,
     updatedAt: 1_723_247_201_001,
   },
@@ -87,10 +93,22 @@ describe('createAutomationClaimClient', () => {
   });
 
   it('fetches current V3 worker assignments with auth headers and machine query', async () => {
-    axiosGet.mockResolvedValue({ data: { assignments: [] } });
+    axiosGet.mockResolvedValue({
+      data: {
+        assignments: [],
+        settings: DEFAULT_WORKER_SETTINGS,
+      },
+    });
+    const createPublisherHeader = vi.fn(async () => 'signed-machine-proof');
 
-    const client = createAutomationClaimClient({ token: 'token-123' });
+    const client = createAutomationClaimClient({ token: 'token-123', createPublisherHeader });
     await client.fetchAssignments('machine-1');
+
+    expect(createPublisherHeader).toHaveBeenCalledWith({
+      method: 'GET',
+      path: '/v3/automations/worker/assignments',
+      body: null,
+    });
 
     expect(axiosGet).toHaveBeenCalledWith(
       expect.stringMatching(/\/v3\/automations\/worker\/assignments$/),
@@ -100,13 +118,46 @@ describe('createAutomationClaimClient', () => {
         headers: expect.objectContaining({
           Authorization: 'Bearer token-123',
           'Content-Type': 'application/json',
+          'x-happier-plugin-installation-manifest-publisher': 'signed-machine-proof',
         }),
       }),
     );
   });
 
-  it('claims current V3 runs with machine and lease parameters after current assignment negotiation', async () => {
+  it('rejects a V3 assignment response that omits the server-owned execution setting', async () => {
     axiosGet.mockResolvedValue({ data: { assignments: [] } });
+
+    const client = createAutomationClaimClient({ token: 'token-v3-malformed-settings' });
+
+    await expect(client.fetchAssignments('machine-1')).rejects.toThrow();
+  });
+
+  it('projects the server-owned V3 per-machine execution budget without inventing it in the client', async () => {
+    axiosGet.mockResolvedValue({
+      data: {
+        assignments: [{
+          machineId: 'machine-1',
+          automationId: 'automation-1',
+          nextClaimAt: 1_723_247_201_000,
+        }],
+        settings: { maxActiveRunsPerMachine: 2 },
+      },
+    });
+
+    const client = createAutomationClaimClient({ token: 'token-settings' });
+
+    await expect(client.fetchAssignments('machine-1')).resolves.toEqual({
+      assignments: [{
+        machineId: 'machine-1',
+        automationId: 'automation-1',
+        nextClaimAt: 1_723_247_201_000,
+      }],
+      settings: { maxActiveRunsPerMachine: 2 },
+    });
+  });
+
+  it('claims current V3 runs with machine and lease parameters after current assignment negotiation', async () => {
+    axiosGet.mockResolvedValue({ data: { assignments: [], settings: DEFAULT_WORKER_SETTINGS } });
     const frozenExecutionInput = JSON.stringify({
       kind: 'happier_automation_run_execution_input_v1',
       targetType: 'new_session',
@@ -164,7 +215,7 @@ describe('createAutomationClaimClient', () => {
   });
 
   it('preserves the server-frozen final-result correspondence on a V3 claim', async () => {
-    axiosGet.mockResolvedValue({ data: { assignments: [] } });
+    axiosGet.mockResolvedValue({ data: { assignments: [], settings: DEFAULT_WORKER_SETTINGS } });
     axiosPost.mockResolvedValue({
       data: {
         run: {
@@ -216,7 +267,7 @@ describe('createAutomationClaimClient', () => {
   });
 
   it('sends lifecycle events to current V3 run-scoped endpoints', async () => {
-    axiosGet.mockResolvedValue({ data: { assignments: [] } });
+    axiosGet.mockResolvedValue({ data: { assignments: [], settings: DEFAULT_WORKER_SETTINGS } });
     axiosPost
       .mockResolvedValueOnce({ data: START_RESPONSE })
       .mockResolvedValue({ data: undefined });
@@ -290,6 +341,7 @@ describe('createAutomationClaimClient', () => {
     const client = createAutomationClaimClient({ token: 'token-v2' });
     await expect(client.fetchAssignments('machine-1')).resolves.toEqual({
       assignments: [{ machineId: 'machine-1', automationId: 'automation-schedule', nextClaimAt: 1234 }],
+      settings: DEFAULT_WORKER_SETTINGS,
     });
 
     expect(axiosGet.mock.calls.map((call) => call[0])).toEqual([
@@ -320,6 +372,7 @@ describe('createAutomationClaimClient', () => {
               automationId: 'automation-event',
               nextClaimAt: 5678,
             }],
+            settings: DEFAULT_WORKER_SETTINGS,
           },
         });
       }
@@ -336,11 +389,13 @@ describe('createAutomationClaimClient', () => {
     const client = createAutomationClaimClient({ token: 'token-upgrade' });
     await expect(client.fetchAssignments('machine-1')).resolves.toEqual({
       assignments: [{ machineId: 'machine-1', automationId: 'automation-schedule', nextClaimAt: 1234 }],
+      settings: DEFAULT_WORKER_SETTINGS,
     });
 
     v3Available = true;
     await expect(client.fetchAssignments('machine-1')).resolves.toEqual({
       assignments: [{ machineId: 'machine-1', automationId: 'automation-event', nextClaimAt: 5678 }],
+      settings: DEFAULT_WORKER_SETTINGS,
     });
     expect(axiosGet.mock.calls.map((call) => call[0])).toEqual([
       expect.stringMatching(/\/v3\/automations\/worker\/assignments$/),
@@ -388,6 +443,7 @@ describe('createAutomationClaimClient', () => {
               automationId: 'automation-event',
               nextClaimAt: 5678,
             }],
+            settings: DEFAULT_WORKER_SETTINGS,
           },
         });
       }
@@ -404,6 +460,7 @@ describe('createAutomationClaimClient', () => {
 
     await expect(client.fetchAssignments('machine-1')).resolves.toEqual({
       assignments: [{ machineId: 'machine-1', automationId: 'automation-event', nextClaimAt: 5678 }],
+      settings: DEFAULT_WORKER_SETTINGS,
     });
     resolveOlderV2({
       data: {
@@ -442,6 +499,7 @@ describe('createAutomationClaimClient', () => {
               automationId: 'automation-event',
               nextClaimAt: 5678,
             }],
+            settings: DEFAULT_WORKER_SETTINGS,
           },
         });
       }
@@ -494,6 +552,7 @@ describe('createAutomationClaimClient', () => {
               automationId: 'automation-event',
               nextClaimAt: 1,
             }],
+            settings: DEFAULT_WORKER_SETTINGS,
           },
         });
       }
@@ -569,6 +628,7 @@ describe('createAutomationClaimClient', () => {
           automationId: 'event-automation',
           nextClaimAt: 1,
         }],
+        settings: DEFAULT_WORKER_SETTINGS,
       },
     });
     axiosPost
@@ -621,6 +681,7 @@ describe('createAutomationClaimClient', () => {
           automationId: 'automation-event',
           nextClaimAt: 1,
         }],
+        settings: DEFAULT_WORKER_SETTINGS,
       },
     });
     axiosPost.mockImplementation((url: unknown) => {

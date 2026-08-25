@@ -62,6 +62,86 @@ function endpointProjection(
 }
 
 describe('managed server durability owner', () => {
+    // A managed child is spawned detached, so a killed or crashed Session runner leaves it running
+    // with its port, listener and injected credential. The projection already records the exact pid
+    // and process birthday, which is what lets the daemon retire the real child and refuse to
+    // signal a recycled pid.
+    it('terminates the exact managed children an exited Session runner owned', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-managed-orphan-'));
+        const terminated: number[] = [];
+        const owner = createManagedServiceDurabilityOwner({
+            rootDir: root,
+            observeProcessStartIdentity: async (pid) => (
+                pid === 41 ? 'start-41'
+                    : pid === 42 ? 'start-recycled'
+                        : null
+            ),
+            terminateProcessTree: async ({ pid }) => {
+                terminated.push(pid);
+            },
+        });
+        const live = endpointProjection(record('live-child', 41));
+        const recycled = endpointProjection(record('recycled-pid', 42));
+        const otherSession = {
+            ...endpointProjection(record('other-session', 43)),
+            sessionId: 'session-two',
+        };
+        const daemonOwned = {
+            ...endpointProjection(record('daemon-owned', 44)),
+            custodyOwner: 'daemon' as const,
+        };
+        const attached: ManagedServiceEndpointProjectionInputV1 = {
+            ...endpointProjection(record('attached', 45)),
+            mode: 'externalAttach' as const,
+            process: null,
+        };
+        for (const projection of [live, recycled, otherSession, daemonOwned, attached]) {
+            await owner.publishEndpointProjection(projection);
+        }
+
+        await expect(owner.retireSessionRunnerOwnedProjections({
+            sessionId: 'session-one',
+        })).resolves.toEqual([41]);
+
+        // The recycled pid belongs to somebody else now, and an attached server belongs to the
+        // operator: neither is signalled. Both records still go, because the runner that published
+        // them can no longer release them.
+        expect(terminated).toEqual([41]);
+        const remaining = (await readdir(join(root, 'endpoint-projections')))
+            .filter((entry) => entry.endsWith('.json'));
+        const remainingInstanceIds = await Promise.all(remaining.map(async (entry) => (
+            JSON.parse(await readFile(join(root, 'endpoint-projections', entry), 'utf8')) as {
+                instanceId: string;
+            }
+        ).instanceId));
+        expect(remainingInstanceIds.sort()).toEqual(['daemon-owned', 'other-session']);
+    });
+
+    it('leaves a projection alone when the process birthday cannot be observed', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-managed-orphan-unknown-'));
+        const terminated: number[] = [];
+        const owner = createManagedServiceDurabilityOwner({
+            rootDir: root,
+            observeProcessStartIdentity: async () => {
+                throw new Error('process identity is unavailable');
+            },
+            terminateProcessTree: async ({ pid }) => {
+                terminated.push(pid);
+            },
+        });
+        await owner.publishEndpointProjection(endpointProjection(record('unknown-state', 41)));
+
+        await expect(owner.retireSessionRunnerOwnedProjections({
+            sessionId: 'session-one',
+        })).resolves.toEqual([]);
+
+        expect(terminated).toEqual([]);
+        expect(
+            (await readdir(join(root, 'endpoint-projections')))
+                .filter((entry) => entry.endsWith('.json')),
+        ).toHaveLength(1);
+    });
+
     it('rejects omitted durable-log retention instead of owning a default', async () => {
         const root = await mkdtemp(join(tmpdir(), 'happier-managed-log-retention-'));
         const owner = createManagedServiceDurabilityOwner({ rootDir: root });

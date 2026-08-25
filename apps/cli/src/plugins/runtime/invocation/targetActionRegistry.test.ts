@@ -69,10 +69,6 @@ function createRegistry(
 ) {
     return createTargetActionInvocationRegistry({
         resolveAuthorizationFacts: (resolvedAction) => ({
-            packageTrust: {
-                packageIdentity: resolvedAction.qualifiedId,
-                reviewedPackageIdentity: resolvedAction.qualifiedId,
-            },
             generation: {
                 targetGeneration: resolvedAction.generation,
                 desiredGeneration: resolvedAction.generation,
@@ -487,17 +483,13 @@ describe('target action invocation registry', () => {
         await serviceOwners.dispose();
     });
 
-    it('fails closed when late-bound package authorization no longer matches the registered action', async () => {
+    it('fails closed when late-bound generation currentness no longer matches the registered action', async () => {
         const handler = vi.fn(async () => ({ echoed: 'should-not-run' }));
         const registry = createRegistry({
             resolveAuthorizationFacts: (resolvedAction) => ({
-                packageTrust: {
-                    packageIdentity: resolvedAction.qualifiedId,
-                    reviewedPackageIdentity: null,
-                },
                 generation: {
                     targetGeneration: resolvedAction.generation,
-                    desiredGeneration: resolvedAction.generation,
+                    desiredGeneration: null,
                     appliedGeneration: resolvedAction.generation,
                 },
                 resourceSelections: [],
@@ -509,7 +501,7 @@ describe('target action invocation registry', () => {
 
         await expect(registry.invoke({
             pluginId: 'acme.alpha', localId: 'run', input: { value: 'x' }, surface: 'cli',
-        })).resolves.toMatchObject({ status: 'unavailable', code: 'plugin_action_package_untrusted' });
+        })).resolves.toMatchObject({ status: 'unavailable', code: 'plugin_action_generation_retired' });
         expect(handler).not.toHaveBeenCalled();
     });
 
@@ -1167,6 +1159,58 @@ describe('target action invocation registry', () => {
         await expect(registry.invoke({
             pluginId: 'acme.alpha', localId: 'run', input: { value: 'x' }, surface: 'cli',
         })).resolves.toEqual({ status: 'executed', value: { echoed: 'lazy' } });
+    });
+
+    it('does not recompile an unchanged action generation when the index is refreshed', async () => {
+        // Compiling an Action's JSON Schema is the expensive part of building the index: it
+        // constructs an AJV instance and generates a validator. A schema whose `properties` is a
+        // getter counts how many times the compiler actually read it, so this asserts the work
+        // itself is bounded rather than asserting on any call wiring.
+        let schemaReads = 0;
+        const countingInputSchema = new Proxy({
+            type: 'object',
+            properties: { value: { type: 'string' } },
+            required: ['value'],
+            additionalProperties: false,
+        }, {
+            ownKeys(target) {
+                // The schema compiler walks the schema's own property descriptors exactly once
+                // per compilation, so this counts real compilations of this Action's schema.
+                schemaReads += 1;
+                return Reflect.ownKeys(target);
+            },
+        });
+        const base = action();
+        const registration = {
+            ...base,
+            immutableGenerationId: 'bytes-7',
+            definition: { ...base.definition, inputSchema: countingInputSchema, resultSchema: undefined },
+            handler: vi.fn(async () => ({ echoed: 'kept' })),
+        } as unknown as Parameters<typeof createTargetActionInvocationRegistry>[0]['actions'][number];
+        let actions = [registration];
+        const registry = createRegistry({ actions, readActions: () => actions });
+
+        expect(schemaReads).toBeGreaterThan(0);
+        const compiledOnce = schemaReads;
+
+        registry.refresh();
+        registry.refresh();
+
+        expect(schemaReads).toBe(compiledOnce);
+        // The reused invocation must still be the live one that dispatches.
+        await expect(registry.invoke({
+            pluginId: 'acme.alpha', localId: 'run', input: { value: 'x' }, surface: 'cli',
+        })).resolves.toEqual({ status: 'executed', value: { echoed: 'kept' } });
+
+        // A genuinely new generation of the same Action must be recompiled, so this cannot be
+        // satisfied by never recompiling.
+        actions = [{
+            ...registration,
+            generation: '8',
+            immutableGenerationId: 'bytes-8',
+        } as typeof registration];
+        registry.refresh();
+        expect(schemaReads).toBeGreaterThan(compiledOnce);
     });
 
     it('links caller and generation cancellation and rejects stale results after retirement', async () => {

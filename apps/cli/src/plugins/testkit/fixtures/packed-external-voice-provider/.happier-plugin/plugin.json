@@ -18,7 +18,8 @@
     ]
   },
   "entrypoints": {
-    "daemon": "./dist/daemon.js"
+    "daemon": "./dist/daemon.js",
+    "development": "./src/voiceDaemon.ts"
   },
   "hostAccess": {
     "required": [
@@ -40,6 +41,26 @@
     "optional": []
   },
   "contributes": {
+    "actions": [
+      {
+        "id": "open-packed-current-context",
+        "title": "Open packed current context",
+        "description": "Runs the mounted packed Voice fixture current-context Action.",
+        "scopes": ["global"],
+        "surfaces": ["ui", "voice"],
+        "placementBindings": ["detailsPanel"],
+        "execution": {
+          "target": "client",
+          "client": {
+            "artifactId": "voice-runtime-web",
+            "modulePath": "./voiceRuntime",
+            "exportName": "activate"
+          },
+          "platforms": ["web", "ios", "android"]
+        },
+        "dangerLevel": "safe"
+      }
+    ],
     "agents": [
       {
         "id": "voice-agent",
@@ -64,9 +85,10 @@
         "title": "Packed Conversation",
         "kind": "conversation",
         "roles": ["conversation_stt", "conversation_tts", "realtime_conversation", "turn_control"],
-        "platforms": ["web"],
+        "platforms": ["web", "ios", "android"],
         "capabilities": {
-          "turn": { "cancelResponse": true, "bargeIn": false }
+          "turn": { "cancelResponse": true, "bargeIn": false },
+          "tools": { "effectCalls": "stable_ids" }
         },
         "execution": {
           "kind": "experimental_agent_session_realtime",
@@ -307,7 +329,7 @@
         "title": "Packed Raw Conversation",
         "kind": "conversation",
         "roles": ["realtime_conversation"],
-        "platforms": ["web"],
+        "platforms": ["web", "ios", "android"],
         "capabilities": {
           "turn": { "cancelResponse": true, "bargeIn": true }
         },
@@ -331,6 +353,24 @@
                     "origin": "https://voice.example.test",
                     "headerNames": ["authorization"]
                   }
+                },
+                {
+                  "realm": "ios",
+                  "phase": "connection",
+                  "request": {
+                    "kind": "httpHeaders",
+                    "origin": "https://voice.example.test",
+                    "headerNames": ["authorization"]
+                  }
+                },
+                {
+                  "realm": "android",
+                  "phase": "connection",
+                  "request": {
+                    "kind": "httpHeaders",
+                    "origin": "https://voice.example.test",
+                    "headerNames": ["authorization"]
+                  }
                 }
               ]
             },
@@ -343,6 +383,24 @@
               "rawGrants": [
                 {
                   "realm": "web",
+                  "phase": "connection",
+                  "request": {
+                    "kind": "httpHeaders",
+                    "origin": "https://voice.example.test",
+                    "headerNames": ["authorization"]
+                  }
+                },
+                {
+                  "realm": "ios",
+                  "phase": "connection",
+                  "request": {
+                    "kind": "httpHeaders",
+                    "origin": "https://voice.example.test",
+                    "headerNames": ["authorization"]
+                  }
+                },
+                {
+                  "realm": "android",
                   "phase": "connection",
                   "request": {
                     "kind": "httpHeaders",
@@ -419,6 +477,26 @@
           }
         }
       }
-    ]
+    ],
+    "ui": {
+      "views": [
+        {
+          "id": "packed-current-context",
+          "container": "appPage",
+          "target": { "kind": "app" },
+          "renderer": "packed-current-context-renderer",
+          "title": "Packed current context",
+          "instancePolicy": "singleton"
+        }
+      ],
+      "renderers": [
+        {
+          "id": "packed-current-context-renderer",
+          "kind": "reactNative",
+          "artifact": "voice-runtime-web",
+          "requiredHostMethods": ["publishCurrentUiContext"]
+        }
+      ]
+    }
   }
 }

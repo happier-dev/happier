@@ -16,7 +16,7 @@ import {
 } from './voiceInferenceWorkerConfig';
 import type { RuntimeLoader } from './voiceInferenceWorker.shared';
 import type { DaemonPublicVoiceModelPackRuntime } from './publicModelPacks/runtime';
-import { reconcileModelPackPromotions } from './modelPackInstallerHost.node';
+import { reconcileModelPackPromotions } from './nodeModelPackInstallerHost';
 import { resolveVoiceInferencePaths } from './voiceInferencePaths';
 
 export type VoiceInferenceWorkerHandle = Readonly<

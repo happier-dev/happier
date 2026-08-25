@@ -24,6 +24,7 @@ import type {
   PluginHostedWebContributionV1,
   PluginSessionHeaderActionDescriptorV1,
   PluginTranscriptActivityContributionV1,
+  PluginSessionInfoSectionContributionV1,
   PluginMcpDiscoverySourceContributionV1,
   PluginMcpServerContributionV1,
   PluginRequestInterceptorContributionV1,
@@ -58,12 +59,11 @@ import type {
   PluginComposerRegionContributionV1,
   PreparedPluginJsonSchema,
   PluginTargetedContributionV1,
+  RehydratedPluginContributionPointOperationV1,
 } from '@happier-dev/protocol';
 import type { HostStructuredMessageDescriptorV1 } from '@/plugins/runtime/invocation/services/structuredMessageDescriptor';
 import type { PluginUiArtifactsManifestV1 } from '@happier-dev/protocol/plugins/ui';
 import type { PluginRuntimeRegistration } from '@happier-dev/plugin-sdk/host/registration';
-import type { TargetedContributionPointRef } from '@happier-dev/plugin-sdk';
-import type { TargetedContributionPointSemanticOperation } from '@happier-dev/plugin-sdk/host/targeted-contributions';
 import type { ProtocolJsonValue } from '@happier-dev/plugin-sdk/protocol';
 import type { AgentCliRuntimeDescriptor } from '@happier-dev/cli-common/agents';
 import type { AgentCatalogEntry } from '@/agent/catalog/types';
@@ -130,14 +130,7 @@ export type ResolvedVoiceProviderContribution = ResolvedTargetUiContribution<Voi
 }>;
 export type ResolvedAccountCollectionContribution = ResolvedTargetUiContribution<NormalizedPluginAccountCollectionContractV1>;
 /** Cold target-owned declarations; admission remains below this registry boundary. */
-export type ResolvedPluginContributionPointDeclaration = ResolvedTargetUiContribution<PluginContributionPointV1> & Readonly<{
-    /**
-     * Exact target-authored point refs available from the current static
-     * target definition. They carry no contributor authority and are consumed
-     * only by the registry's one cold semantic projection.
-     */
-    semanticPointRefs?: readonly TargetedContributionPointRef<unknown>[];
-}>;
+export type ResolvedPluginContributionPointDeclaration = ResolvedTargetUiContribution<PluginContributionPointV1>;
 /** Cold contributor declarations; they have no execution authority until admitted. */
 export type ResolvedTargetedPluginContributionDeclaration = ResolvedTargetUiContribution<PluginTargetedContributionV1>;
 
@@ -173,7 +166,7 @@ export type AdmittedTargetedContributionOperation = Readonly<{
      */
     selectedActionInput: AdmittedTargetedContributionActionInputSelection;
     /** Exact target-owned parser pair retained only in the opaque Action handle binding. */
-    targetProtocol: TargetedContributionPointSemanticOperation;
+    targetProtocol: RehydratedPluginContributionPointOperationV1;
 }>;
 
 /**
@@ -387,6 +380,7 @@ type ActionDefinitionV1NonExecutionFields = Pick<ActionDefinitionV1,
     | 'examples'
     | 'surfaces'
     | 'toolExposure'
+    | 'contextualDefaults'
     | 'inputHints'
     | 'outputSchema'
     | 'operation'
@@ -551,6 +545,7 @@ export type ResolvedSessionHeaderActionContribution = Readonly<{
     definition: PluginSessionHeaderActionDescriptorV1;
 }>;
 export type ResolvedTranscriptActivityContribution = ResolvedTargetUiContribution<PluginTranscriptActivityContributionV1>;
+export type ResolvedSessionInfoSectionContribution = ResolvedTargetUiContribution<PluginSessionInfoSectionContributionV1>;
 
 export type ResolvedHostedWebContribution = Readonly<{
     provenance: ResolvedContributionProvenance;
@@ -842,6 +837,7 @@ export type ResolvedContributionInputs = Readonly<{
     structuredMessages?: readonly ResolvedStructuredMessageContribution[];
     sessionHeaderActions?: readonly ResolvedSessionHeaderActionContribution[];
     transcriptActivities?: readonly ResolvedTranscriptActivityContribution[];
+    sessionInfoSections?: readonly ResolvedSessionInfoSectionContribution[];
     hostedWeb?: readonly ResolvedHostedWebContribution[];
     browserTargets?: readonly ResolvedBrowserTargetContribution[];
     browserActions?: readonly ResolvedBrowserActionContribution[];
@@ -894,6 +890,7 @@ export type ResolvedContributionRegistry = Readonly<{
     structuredMessages?: readonly ResolvedStructuredMessageContribution[];
     sessionHeaderActions?: readonly ResolvedSessionHeaderActionContribution[];
     transcriptActivities?: readonly ResolvedTranscriptActivityContribution[];
+    sessionInfoSections?: readonly ResolvedSessionInfoSectionContribution[];
     hostedWeb?: readonly ResolvedHostedWebContribution[];
     browserTargets?: readonly ResolvedBrowserTargetContribution[];
     browserActions?: readonly ResolvedBrowserActionContribution[];
@@ -937,6 +934,7 @@ export type ResolvedContributionRegistry = Readonly<{
     structuredMessagesById?: ReadonlyMap<string, ResolvedStructuredMessageContribution>;
     sessionHeaderActionsById?: ReadonlyMap<string, ResolvedSessionHeaderActionContribution>;
     transcriptActivitiesById?: ReadonlyMap<string, ResolvedTranscriptActivityContribution>;
+    sessionInfoSectionsById?: ReadonlyMap<string, ResolvedSessionInfoSectionContribution>;
     hostedWebById?: ReadonlyMap<string, ResolvedHostedWebContribution>;
     browserTargetsById?: ReadonlyMap<string, ResolvedBrowserTargetContribution>;
     browserActionsById?: ReadonlyMap<string, ResolvedBrowserActionContribution>;

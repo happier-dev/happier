@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { constants } from 'node:fs';
 import { copyFile, lstat, mkdir, readFile, readdir, realpath, rename, rm, writeFile } from 'node:fs/promises';
-import { createRequire } from 'node:module';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
@@ -17,6 +17,7 @@ import {
 
 import { writeJsonAtomic } from '@/utils/fs/writeJsonAtomic';
 import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
+import { resolveCliRuntimeRootPath } from '@/packagedRuntime/assets/resolveCliRuntimeAssetPath';
 import { pluginInstallReviewPrincipalPresentationMatchesDigest } from '@/plugins/daemon/installReviewPrincipal';
 import { asHostProtocolZod } from '@/plugins/runtime/protocolComposableZodAdapter';
 import {
@@ -663,6 +664,19 @@ async function persistRetiredPluginGenerationMarker(input: Readonly<{
 
 type ImmutablePluginGenerationFile = ImmutablePluginGenerationRecord['files'][number];
 
+/**
+ * Immutable generations need independent writable inodes, not eager duplicate
+ * blocks. COPYFILE_FICLONE asks supporting filesystems for copy-on-write and
+ * deliberately falls back to the ordinary copy semantics everywhere else.
+ */
+export async function copyOwnedPluginGenerationFile(
+  sourcePath: string,
+  destinationPath: string,
+  copyFileImpl: typeof copyFile = copyFile,
+): Promise<void> {
+  await copyFileImpl(sourcePath, destinationPath, constants.COPYFILE_FICLONE);
+}
+
 function createImmutablePluginGenerationRecord(input: Readonly<{
   pluginId: string;
   manifestRelativePath: string;
@@ -1057,22 +1071,72 @@ export function resolveBundledImmutablePluginArtifact(input: Readonly<{
     : null;
 }
 
-async function resolveBundledPackageEntry(packageName: string): Promise<string> {
-  return createRequire(import.meta.url).resolve(packageName);
+function bundledPackageNameSegments(packageName: string): string[] {
+  const segments = packageName.split('/');
+  if (segments.some((segment) => (
+    segment.length === 0
+    || segment === '.'
+    || segment === '..'
+    || segment.includes('\\')
+  ))) {
+    throw new Error(`Bundled plugin package name is not a contained package path: '${packageName}'`);
+  }
+  return segments;
+}
+
+async function resolveBundledPackageEntry(
+  packageName: string,
+  packageEntryRelativePath: string,
+): Promise<string> {
+  // Standalone daemon code is embedded in its binary, while the packaged
+  // workspace closure is staged beside that binary. A bundled artifact already
+  // declares its exact package entry, so resolve that contained physical path
+  // directly instead of asking the embedded Bun runtime to resolve a package.
+  const packageRoot = join(
+    resolveCliRuntimeRootPath(),
+    'node_modules',
+    ...bundledPackageNameSegments(packageName),
+  );
+  const normalizedEntryRelativePath = PortableRelativePathSchema.parse(packageEntryRelativePath);
+  await assertContainedRegularFile(
+    packageRoot,
+    'package.json',
+    'Bundled plugin package metadata',
+  );
+  let packageMetadata: unknown;
+  try {
+    packageMetadata = JSON.parse(await readFile(join(packageRoot, 'package.json'), 'utf8'));
+  } catch {
+    throw new Error(`Bundled plugin package metadata is invalid for '${packageName}'`);
+  }
+  const parsedPackageMetadata = z.object({ name: z.string() }).passthrough().safeParse(packageMetadata);
+  if (!parsedPackageMetadata.success || parsedPackageMetadata.data.name !== packageName) {
+    throw new Error(`Bundled plugin package metadata name mismatch for '${packageName}'`);
+  }
+  return join(packageRoot, ...normalizedEntryRelativePath.split('/'));
 }
 
 async function admitBundledImmutablePluginGeneration(input: Readonly<{
   artifact: BundledImmutablePluginArtifact;
-  resolvePackageEntry: (packageName: string) => Promise<string>;
+  resolvePackageEntry: (
+    packageName: string,
+    packageEntryRelativePath: string,
+  ) => Promise<string>;
 }>): Promise<CurrentCommittedPluginGeneration> {
   const artifact = Object.freeze({
     ...input.artifact,
+    packageEntryRelativePath: PortableRelativePathSchema.parse(
+      input.artifact.packageEntryRelativePath,
+    ),
     record: ImmutablePluginGenerationRecordSchema.parse({
       ...input.artifact.record,
       sourceProvenance: pluginSourceProvenanceForKind('bundled'),
     }),
   });
-  const lexicalEntryPath = resolve(await input.resolvePackageEntry(artifact.packageName));
+  const lexicalEntryPath = resolve(await input.resolvePackageEntry(
+    artifact.packageName,
+    artifact.packageEntryRelativePath,
+  ));
   const entrySegments = artifact.packageEntryRelativePath.split('/');
   let lexicalRootPath = lexicalEntryPath;
   for (let index = 0; index < entrySegments.length; index += 1) lexicalRootPath = dirname(lexicalRootPath);
@@ -1130,7 +1194,10 @@ export async function readCurrentCommittedPluginGenerations(
   paths: PluginStorePaths,
   options?: Readonly<{
     bundledArtifacts?: readonly BundledImmutablePluginArtifact[];
-    resolveBundledPackageEntry?: (packageName: string) => Promise<string>;
+    resolveBundledPackageEntry?: (
+      packageName: string,
+      packageEntryRelativePath: string,
+    ) => Promise<string>;
     isolateInvalidInstalledGenerations?: boolean;
   }>,
 ): Promise<Readonly<{
@@ -1459,7 +1526,7 @@ async function prepareImmutablePluginGenerationWithReuse(input: Readonly<{
             ...(canReuse ? { requireExclusiveInode: true } : {}),
           },
         );
-        await copyFile(source, destination);
+        await copyOwnedPluginGenerationFile(source, destination);
       }
       copiedFileCount += 1;
       copiedByteCount += file.byteLength;
@@ -1919,9 +1986,12 @@ export async function prepareOwnedPluginDevelopmentGenerationFromEdit(input: Rea
             'Owned development generation edit source',
             { expectedByteLength: file.byteLength },
           );
-          await copyFile(source, destination);
+          await copyOwnedPluginGenerationFile(source, destination);
         } else {
-          await copyFile(join(priorRootPath, ...file.relativePath.split('/')), destination);
+          await copyOwnedPluginGenerationFile(
+            join(priorRootPath, ...file.relativePath.split('/')),
+            destination,
+          );
         }
         await assertContainedRegularFile(
           rootPath,
@@ -2088,6 +2158,7 @@ export async function readCurrentPluginImmutableGenerationIntegrityCurrentness(
     requiredAgentSessionRunnerFactoryLocalAgentId?: string;
     resolveBundledPackageEntry?: (
       packageName: string,
+      packageEntryRelativePath: string,
     ) => Promise<string>;
   }>,
 ): Promise<boolean> {

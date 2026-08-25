@@ -14,7 +14,6 @@ import {
 import {
   type ResolvedLocalPathPluginSourceSuccess,
 } from '@/plugins/discovery/sources/localPath';
-import { resolveLocalPluginSourceManifestAuthority } from '@/plugins/manifest/bundledFirstPartyAuthority';
 import { serializeCanonicalPluginManifest } from '@/plugins/manifest/serialize';
 import type { CanonicalPluginManifest } from '@/plugins/manifest/types';
 import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
@@ -132,15 +131,6 @@ type PackOperationSource = Readonly<{
   locator: string;
   authoringKind: 'code' | 'manifest';
   authoringEntryKind?: 'singleFile' | 'packageRoot';
-  /**
-   * Decided once, here, from the root the operation actually copied. Pack works
-   * from an isolated copy in the system temporary directory, which is outside
-   * the checkout the canonical predicate inspects, so every later phase of the
-   * operation - the pre-staging manifest read, the packed package contract, and
-   * the archive staging validator - reads this decision instead of re-deriving
-   * `external` from the copy's location.
-   */
-  manifestAuthority: 'external' | 'bundled_first_party';
   cleanup: () => Promise<void>;
 }>;
 
@@ -154,11 +144,6 @@ async function createPackOperationSource(locator: string): Promise<
   const originalRootPath = sourceResolution.kind === 'manifest'
     ? sourceResolution.source.pluginRootPath
     : sourceResolution.entry.packageRoot;
-  // Authority is derived from the root the operation is about to copy, while
-  // that root is still the path it actually is.
-  const manifestAuthority = await resolveLocalPluginSourceManifestAuthority({
-    pluginRootPath: originalRootPath,
-  });
   // The operation copy must stay outside the author tree: a remote one-way
   // replica owns that tree and can remove process-created sibling directories.
   // Package-root dependency preparation stays scoped to this copied project;
@@ -192,7 +177,6 @@ async function createPackOperationSource(locator: string): Promise<
         operationRootPath,
         locator: operationLocator,
         authoringKind: sourceResolution.kind,
-        manifestAuthority,
         ...(sourceResolution.kind === 'code'
           ? { authoringEntryKind: sourceResolution.entry.kind }
           : {}),
@@ -286,7 +270,6 @@ type PackPackageContract = Readonly<{
   name: string;
   version: string;
   files: readonly string[];
-  bundledFirstPartyWorkspace: boolean;
 }>;
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
@@ -295,7 +278,6 @@ function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
 
 async function readPackPackageContract(params: Readonly<{
   packageRootPath: string;
-  manifestAuthority: 'external' | 'bundled_first_party';
   pluginVersion: string;
 }>): Promise<PackPackageContract> {
   let value: unknown;
@@ -317,11 +299,10 @@ async function readPackPackageContract(params: Readonly<{
     && value.keywords.includes('happier-plugin');
   const declaresPublicManifest = isRecord(value.happier)
     && value.happier.manifest === '.happier-plugin/plugin.json';
-  const bundledFirstPartyWorkspace = params.manifestAuthority === 'bundled_first_party';
-  if (!declaresPublicKeyword && !bundledFirstPartyWorkspace) {
+  if (!declaresPublicKeyword) {
     throw new Error('Plugin package.json must declare the happier-plugin keyword');
   }
-  if (!declaresPublicManifest && !bundledFirstPartyWorkspace) {
+  if (!declaresPublicManifest) {
     throw new Error('Plugin package.json happier.manifest must be exactly .happier-plugin/plugin.json');
   }
   const files = readPortableNpmPackageFiles(value.files);
@@ -329,7 +310,6 @@ async function readPackPackageContract(params: Readonly<{
     name: packageName,
     version: params.pluginVersion,
     files,
-    bundledFirstPartyWorkspace,
   });
 }
 
@@ -439,37 +419,33 @@ async function writeStagedPackageFiles(params: Readonly<{
   manifest: CanonicalPluginManifest;
   generatedRuntimeSelectors?: readonly string[];
   rewriteSelectedFiles?: boolean;
-  preserveBundledWorkspacePackageContract: boolean;
 }>): Promise<void> {
   const packageJsonPath = join(params.stagedRootPath, 'package.json');
   const packageJson = JSON.parse(await readFile(packageJsonPath, 'utf8')) as Record<string, unknown>;
-  if ((params.generatedRuntimeSelectors || params.rewriteSelectedFiles)
-    && !params.preserveBundledWorkspacePackageContract) {
+  if (params.generatedRuntimeSelectors || params.rewriteSelectedFiles) {
     packageJson.files = [...new Set([
       ...params.selectedFiles.filter((path) => path !== 'package.json'),
       '.happier-plugin/plugin.json',
       ...(params.generatedRuntimeSelectors ?? []),
     ])].sort(compareCodeUnits);
   }
-  if (!params.preserveBundledWorkspacePackageContract) {
-    if (!isRecord(packageJson.happier) || packageJson.happier.manifest !== '.happier-plugin/plugin.json') {
-      throw new Error('Plugin pack requires a public package.json happier.manifest contract');
-    }
-    const generatedUiArtifacts = await readGeneratedPluginUiArtifactsManifest(params.stagedRootPath)
-      ?? { version: 1 as const, entries: [] as const };
-    const compatibilityProjection = createPluginCompatibilityProjectionV1({
-      manifest: params.manifest,
-      uiArtifacts: generatedUiArtifacts,
-    });
-    packageJson.happier = {
-      ...packageJson.happier,
-      compatibilityProjection,
-      marketplaceDiscovery: createMarketplaceNpmDiscoveryProjectionV1({
-        compatibility: compatibilityProjection,
-        manifestDigest: canonicalManifestDigest(params.manifest),
-      }),
-    };
+  if (!isRecord(packageJson.happier) || packageJson.happier.manifest !== '.happier-plugin/plugin.json') {
+    throw new Error('Plugin pack requires a public package.json happier.manifest contract');
   }
+  const generatedUiArtifacts = await readGeneratedPluginUiArtifactsManifest(params.stagedRootPath)
+    ?? { version: 1 as const, entries: [] as const };
+  const compatibilityProjection = createPluginCompatibilityProjectionV1({
+    manifest: params.manifest,
+    uiArtifacts: generatedUiArtifacts,
+  });
+  packageJson.happier = {
+    ...packageJson.happier,
+    compatibilityProjection,
+    marketplaceDiscovery: createMarketplaceNpmDiscoveryProjectionV1({
+      compatibility: compatibilityProjection,
+      manifestDigest: canonicalManifestDigest(params.manifest),
+    }),
+  };
   await writeFile(packageJsonPath, `${JSON.stringify(packageJson, null, 2)}\n`, 'utf8');
 }
 
@@ -498,14 +474,11 @@ function projectLocalPackSource(
   };
 }
 
-async function resolvePackSource(
-  locator: string,
-  inheritedManifestAuthority: 'external' | 'bundled_first_party',
-): Promise<
+async function resolvePackSource(locator: string): Promise<
   | Readonly<{ ok: true; source: ResolvedPackSource }>
   | Readonly<{ ok: false; diagnostics: readonly PluginCompatibilityDiagnostic[] }>
 > {
-  const sourceResolution = await resolvePluginAuthoringSource(locator, { inheritedManifestAuthority });
+  const sourceResolution = await resolvePluginAuthoringSource(locator);
   if (!sourceResolution.ok) return sourceResolution;
   if (sourceResolution.kind === 'manifest') {
     return projectLocalPackSource(sourceResolution.source);
@@ -598,7 +571,7 @@ export async function packLocalPlugin(params: Readonly<{
     if (authoringPreparationDiagnostics) {
       return { ok: false, diagnostics: authoringPreparationDiagnostics };
     }
-    const sourceResolution = await resolvePackSource(operation.locator, operation.manifestAuthority);
+    const sourceResolution = await resolvePackSource(operation.locator);
     if (!sourceResolution.ok) return sourceResolution;
     const resolvedSource = sourceResolution.source;
     // Manifest-only/UI-only sources do not run the executable author build, so
@@ -671,7 +644,6 @@ export async function packLocalPlugin(params: Readonly<{
       }
       const packageContract = await readPackPackageContract({
         packageRootPath: resolvedSource.pluginRootPath,
-        manifestAuthority: operation.manifestAuthority,
         pluginVersion: resolvedSource.manifest.version,
       });
       const selectedFiles = await collectSelectedFiles({
@@ -715,7 +687,6 @@ export async function packLocalPlugin(params: Readonly<{
         manifest: resolvedSource.manifest,
         ...(generatedRuntimeSelectors ? { generatedRuntimeSelectors } : {}),
         ...(filteredPackFiles.filtered ? { rewriteSelectedFiles: true } : {}),
-        preserveBundledWorkspacePackageContract: packageContract.bundledFirstPartyWorkspace,
       });
       const archiveEntries = await collectStagedArchiveEntries(stagingDir);
       await tar.c({
@@ -746,9 +717,6 @@ export async function packLocalPlugin(params: Readonly<{
           provenance: Object.freeze({ status: 'absent' }),
         }),
         stagingParentPath: validationParentPath,
-        ...(packageContract.bundledFirstPartyWorkspace
-          ? { manifestAuthority: 'bundled_first_party' as const }
-          : {}),
       });
       if (!staged.ok) {
         throw new Error(`Packed npm candidate rejected (${staged.rejection.code}): ${staged.rejection.message}`);

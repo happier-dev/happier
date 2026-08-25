@@ -2,10 +2,13 @@ import { describe, expect, it } from 'vitest';
 
 import {
     createPluginContributionIdentity,
-    type PluginContributionPointV1,
     type PluginTargetedContributionV1,
 } from '@happier-dev/protocol';
+import { definePlugin } from '@happier-dev/plugin-sdk';
+import { defineContributionProtocol } from '@happier-dev/plugin-sdk/contributions';
+import { defineProtocolObject } from '@happier-dev/plugin-sdk/protocol';
 
+import { readCanonicalPluginManifest } from '@/plugins/manifest/normalize';
 import { resolveAdmittedTargetedContributions } from './targetedContributions';
 import type {
     ResolvedPluginContributionPointDeclaration,
@@ -17,19 +20,42 @@ const contributorPluginId = 'examples.contributor';
 const pointId = 'providers';
 const protocol = { id: 'provider', version: 1 } as const;
 
-function point(
-    operations: PluginContributionPointV1['protocols'][number]['operations'],
-    surfaces?: PluginContributionPointV1['protocols'][number]['surfaces'],
-): ResolvedPluginContributionPointDeclaration {
-    const definition: PluginContributionPointV1 = {
-        id: pointId,
-        maxContributionsPerContributor: 1,
-        protocols: [{
-            ...protocol,
-            operations,
-            ...(surfaces === undefined ? {} : { surfaces }),
-        }],
-    };
+/** Builds a canonical target manifest declaration for the admission owner. */
+function point(params: Readonly<{ optionalSurface?: boolean }> = {}): ResolvedPluginContributionPointDeclaration {
+    const target = definePlugin({
+        id: targetPluginId,
+        version: '0.1.0',
+        contributionPoints: {
+            [pointId]: defineContributionProtocol({
+                id: protocol.id,
+                version: protocol.version,
+                operations: params.optionalSurface === true ? {} : {
+                    setup: {
+                        required: false,
+                        input: { kind: 'contributorDefined' },
+                        resultSchema: defineProtocolObject({}, { policy: 'closed' }),
+                        action: { surface: 'plugin', dangerLevel: 'safe' },
+                    },
+                },
+                ...(params.optionalSurface === true
+                    ? {
+                        surfaces: {
+                            detail: {
+                                required: false,
+                                inputSchema: defineProtocolObject({}, { policy: 'closed' }),
+                                presentation: 'content',
+                            },
+                        },
+                    }
+                    : {}),
+            }).point({ maxContributionsPerContributor: 1 }),
+        },
+    });
+    const definition = readCanonicalPluginManifest(target.manifest)
+        ?.contributes?.pluginContributionPoints?.find((candidate) => candidate.id === pointId);
+    if (!definition) {
+        throw new Error('Expected one canonical target contribution point');
+    }
     return {
         provenance: 'external',
         source: { kind: 'path' },
@@ -72,14 +98,7 @@ function admit(params: Readonly<{
 describe('targeted contribution optional-role admission', () => {
     it('rejects an unknown optional operation whose same-contributor Action is absent', () => {
         const result = admit({
-            point: point({
-                setup: {
-                    required: false,
-                    input: { kind: 'contributorDefined' },
-                    resultSchema: { type: 'object' },
-                    action: { surface: 'plugin', dangerLevel: 'safe' },
-                },
-            }),
+            point: point(),
             contribution: contribution({
                 id: 'provider-a',
                 target: { pluginId: targetPluginId, pointId },
@@ -99,13 +118,7 @@ describe('targeted contribution optional-role admission', () => {
 
     it('rejects an unknown optional surface whose same-contributor renderer is absent', () => {
         const result = admit({
-            point: point({}, {
-                detail: {
-                    required: false,
-                    inputSchema: { type: 'object' },
-                    presentation: 'content',
-                },
-            }),
+            point: point({ optionalSurface: true }),
             contribution: contribution({
                 id: 'provider-a',
                 target: { pluginId: targetPluginId, pointId },

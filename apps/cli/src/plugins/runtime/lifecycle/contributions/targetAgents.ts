@@ -29,6 +29,7 @@ import {
     validateAgentExternalSessionTakeoverResolveLaunchResult,
     type AgentExternalSessionSource,
     type AgentExternalSessionTakeoverContribution,
+    type AgentExternalSessionTakeoverLaunchPlan,
     type AgentExternalSessionTakeoverResolveLaunchRequest,
     type AgentExternalSessionTakeoverResolveLaunchResult,
 } from '@happier-dev/plugin-sdk/sessions/external';
@@ -64,6 +65,7 @@ import type {
     AgentContributionRuntimeRegistration,
     ContributionRuntimeRegistration,
 } from '../../api/registrationRightsHost';
+import { isAgentRuntimeGenerationCurrent } from './agentGenerationCurrentness';
 import type { ActivationTarget } from '../activation/targets';
 import { runWithOptionalTimeout } from '../utils';
 import {
@@ -115,8 +117,64 @@ type GenerationBoundExternalSessionHooks = Readonly<{
 type GenerationBoundExternalSessionTakeover = Readonly<{
     resolveLaunch(
         request: AgentExternalSessionTakeoverResolveLaunchRequest,
-    ): Promise<AgentExternalSessionTakeoverResolveLaunchResult>;
+    ): Promise<GenerationBoundExternalSessionTakeoverResolveLaunchResult>;
 }>;
+
+/**
+ * The public SDK result remains strict. This one host-private field is
+ * admitted only at the generation-bound callback seam, then carried through
+ * the daemon-owned spawn and respawn path that owns its use.
+ */
+type GenerationBoundExternalSessionTakeoverResolveLaunchResult =
+    | Extract<AgentExternalSessionTakeoverResolveLaunchResult, { ok: false }>
+    | Readonly<{
+        ok: true;
+        value: AgentExternalSessionTakeoverLaunchPlan;
+        nativeResumeReference?: string;
+    }>;
+
+const HOST_PRIVATE_NATIVE_RESUME_REFERENCE_KEY = 'nativeResumeReference';
+
+function extractHostPrivateNativeResumeReference(rawResult: unknown): Readonly<{
+    publicResult: unknown;
+    nativeResumeReference?: string;
+}> {
+    if (rawResult === null
+        || typeof rawResult !== 'object'
+        || Array.isArray(rawResult)) {
+        return { publicResult: rawResult };
+    }
+
+    const descriptor = Object.getOwnPropertyDescriptor(
+        rawResult,
+        HOST_PRIVATE_NATIVE_RESUME_REFERENCE_KEY,
+    );
+    if (!descriptor) {
+        return { publicResult: rawResult };
+    }
+    if (!descriptor.enumerable || !('value' in descriptor)) {
+        throw new TypeError(
+            'Agent External Session takeover native resume reference must be an enumerable data property',
+        );
+    }
+    const nativeResumeReference = descriptor.value;
+    if (typeof nativeResumeReference !== 'string'
+        || nativeResumeReference.length === 0
+        || nativeResumeReference.length
+            > AGENT_EXTERNAL_SESSION_TAKEOVER_LIMITS.maxDirectoryCodeUnits) {
+        throw new TypeError(
+            'Agent External Session takeover native resume reference must contain 1-10000 code units',
+        );
+    }
+
+    const publicResult = Object.create(Object.getPrototypeOf(rawResult));
+    for (const key of Reflect.ownKeys(rawResult)) {
+        if (key === HOST_PRIVATE_NATIVE_RESUME_REFERENCE_KEY) continue;
+        const property = Object.getOwnPropertyDescriptor(rawResult, key);
+        if (property) Object.defineProperty(publicResult, key, property);
+    }
+    return { publicResult, nativeResumeReference };
+}
 
 export type GenerationBoundExternalSessionObservation = Readonly<{
     describeResource:
@@ -219,7 +277,10 @@ function readGenerationBoundDaemonSpawnHookFailure(params: Readonly<{
     retirementSignal: AbortSignal;
     signal: AbortSignal;
 }>): Readonly<{ ok: false; reasonCode: string; errorMessage: string }> | null {
-    if (!params.isGenerationActive() || params.retirementSignal.aborted) {
+    if (!isAgentRuntimeGenerationCurrent({
+        isCurrent: params.isGenerationActive,
+        retirementSignal: params.retirementSignal,
+    })) {
         return Object.freeze({
             ok: false,
             reasonCode: 'plugin_generation_stale',
@@ -1146,16 +1207,30 @@ function createGenerationBoundExternalSessionTakeover(params: Readonly<{
                     }),
                 ]);
                 assertAdmissible(request.signal);
+                const privateCarrier =
+                    extractHostPrivateNativeResumeReference(rawResult);
                 const result =
                     validateAgentExternalSessionTakeoverResolveLaunchResult(
-                        rawResult,
+                        privateCarrier.publicResult,
                     );
-                if (serializedBytes(result) > maxSerializedBytes) {
+                if (serializedBytes(rawResult) > maxSerializedBytes) {
                     throw new TypeError(
                         "Agent External Session takeover 'resolveLaunch' result exceeds its serialized-byte limit",
                     );
                 }
                 assertAdmissible(request.signal);
+                if (privateCarrier.nativeResumeReference !== undefined) {
+                    if (!result.ok) {
+                        throw new TypeError(
+                            'Agent External Session takeover native resume reference requires a successful launch result',
+                        );
+                    }
+                    return Object.freeze({
+                        ...result,
+                        nativeResumeReference:
+                            privateCarrier.nativeResumeReference,
+                    });
+                }
                 return result;
             } finally {
                 if (timeout) clearTimeout(timeout);

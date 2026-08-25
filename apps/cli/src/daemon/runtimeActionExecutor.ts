@@ -3,7 +3,10 @@ import {
   type RuntimeActionExecute,
 } from '@happier-dev/protocol';
 
-import { createBrowserDaemonRuntimeActionExecutor } from './browser/actions/runtimeActionExecutor';
+import {
+  createBrowserDaemonRuntimeActionExecutor,
+  type ProvisionBrowserAutomationRuntime,
+} from './browser/actions/runtimeActionExecutor';
 import type { BrowserAutomationRoutes } from './browser/automation/routes';
 import { createBrowserDaemonFeatureGate } from './browser/featureGate';
 import type { BrowserDaemonControlRoutes } from './browser/control/routes';
@@ -35,6 +38,12 @@ export type DaemonRuntimeActionRouteOwners = Readonly<{
   browserControl?: BrowserDaemonControlRoutes | null;
   browserContext?: BrowserContextRoutes | null;
   browserAutomation?: BrowserAutomationRoutes | null;
+  /**
+   * Provisions the managed browser runtime when an agent asks for automation and no route exists
+   * (user ruling, 2026-08-23: install on first automation attempt, never at daemon startup).
+   * Resolved per dispatch like every other owner here.
+   */
+  provisionBrowserAutomationRuntime?: ProvisionBrowserAutomationRuntime | null;
   browserDiagnostics?: BrowserDiagnosticsActionRoutes | null;
   browserRecording?: BrowserRecordingRoutes | null;
   attachBrowserRecordingToComposer?: (
@@ -127,6 +136,9 @@ export function createDaemonRuntimeActionExecutor(
       ...(routes.browserControl ? { control: routes.browserControl } : {}),
       ...(routes.browserContext ? { context: routes.browserContext } : {}),
       ...(routes.browserAutomation ? { automation: routes.browserAutomation } : {}),
+      ...(routes.provisionBrowserAutomationRuntime
+        ? { provisionAutomationRuntime: routes.provisionBrowserAutomationRuntime }
+        : {}),
       ...(routes.browserDiagnostics ? { diagnostics: routes.browserDiagnostics } : {}),
       ...(browserRecordingActionRoutes ? { recording: browserRecordingActionRoutes } : {}),
       ...(browserRecordingAttachToComposer ? { recordingAttach: browserRecordingAttachToComposer } : {}),

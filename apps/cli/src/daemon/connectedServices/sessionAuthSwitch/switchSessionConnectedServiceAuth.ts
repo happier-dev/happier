@@ -9,10 +9,11 @@ import {
   isConnectedServiceCredentialHealthStatusUsable,
   normalizeConnectedServiceCredentialHealthStatus,
   type ConnectedServiceUxDiagnosticV1,
-  type ConnectedServiceAuthGroupV1,
   type ConnectedServiceBindingsV1,
   type ConnectedServiceId,
   type ConnectedServiceMaterializationIdentityV1,
+  type QualifiedConnectedAccountGroupV4,
+  type QualifiedConnectedAccountProfileV4,
 } from '@happier-dev/protocol';
 import { AGENTS_CORE } from '@happier-dev/agents';
 
@@ -58,6 +59,8 @@ import {
   runPostSwitchVerification,
   type RuntimeAuthSelectionsByServiceId,
 } from './verification/runPostSwitchVerification';
+import type { ConnectedServiceQualifiedAuthGroupApi } from '../resolveConnectedServiceAuthForSpawn';
+import { resolveFirstPartyQualifiedConnectedAccountServiceForLegacyServiceId } from '@/plugins/projection/registry/connectedAccountPurposeCompatibility';
 
 type ConnectedServiceBinding = ConnectedServiceBindingsV1['bindingsByServiceId'][string];
 type AgentConnectedServiceSupport = Readonly<{
@@ -560,10 +563,6 @@ type ConnectedServiceProfilesApi = Readonly<{
       status: 'connected' | 'refreshing' | 'needs_reauth' | 'refresh_failed_retryable';
     }>>;
   }>>;
-  getConnectedServiceAuthGroup(input: Readonly<{
-    serviceId: ConnectedServiceId;
-    groupId: string;
-  }>): Promise<ConnectedServiceAuthGroupV1 | null>;
 }>;
 
 type EffectiveBinding = Readonly<{
@@ -627,6 +626,7 @@ export type SwitchSessionConnectedServiceAuthInput = Readonly<{
     candidatePersistedSessionFile?: string | null;
   }> | null>;
   api: ConnectedServiceProfilesApi;
+  qualifiedConnectedAccountApi: ConnectedServiceQualifiedAuthGroupApi;
   resolveContinuity(input: Readonly<{
     tracked: TrackedSession | null;
     sessionId: string;
@@ -870,14 +870,14 @@ function readGroupGeneration(value: unknown): number {
 }
 
 function resolveGroupFallbackProfileId(input: Readonly<{
-  group: ConnectedServiceAuthGroupV1;
+  group: QualifiedConnectedAccountGroupV4;
   requestedFallbackProfileId?: string | null;
   activeProfileId: string;
 }>): string {
   const requestedFallbackProfileId = readNonEmptyString(input.requestedFallbackProfileId);
   if (requestedFallbackProfileId) {
     const requestedFallbackMember = input.group.members.find((member) =>
-      member.profileId === requestedFallbackProfileId && member.enabled !== false
+      member.connectedAccountId === requestedFallbackProfileId && member.enabled !== false
     ) ?? null;
     if (requestedFallbackMember) return requestedFallbackProfileId;
   }
@@ -885,11 +885,11 @@ function resolveGroupFallbackProfileId(input: Readonly<{
 }
 
 function groupHasEnabledMember(input: Readonly<{
-  group: ConnectedServiceAuthGroupV1;
+  group: QualifiedConnectedAccountGroupV4;
   profileId: string;
 }>): boolean {
   return input.group.members.some((member) =>
-    member.profileId === input.profileId && member.enabled !== false
+    member.connectedAccountId === input.profileId && member.enabled !== false
   );
 }
 
@@ -936,11 +936,11 @@ function normalizeSwitchAttemptEventReason(
   }
 }
 
-function resolveAuthGroupLabel(group: ConnectedServiceAuthGroupV1): string {
+function resolveAuthGroupLabel(group: QualifiedConnectedAccountGroupV4): string {
   const displayName = typeof group.displayName === 'string'
     ? group.displayName.replace(/\s+/g, ' ').trim()
     : '';
-  return displayName || group.groupId;
+  return displayName || group.ref.groupId;
 }
 
 function toEffectiveBinding(
@@ -1337,8 +1337,38 @@ async function validateConnectedProfile(input: Readonly<{
   return null;
 }
 
+function validateQualifiedConnectedProfile(input: Readonly<{
+  serviceId: ConnectedServiceId;
+  profileId: string;
+  profiles: readonly QualifiedConnectedAccountProfileV4[];
+}>): SessionConnectedServiceAuthSwitchFailure | null {
+  const profile = input.profiles.find((candidate) => (
+    candidate.ref.accountId === input.profileId
+  )) ?? null;
+  if (!profile) {
+    return { ok: false, errorCode: 'profile_missing', serviceId: input.serviceId };
+  }
+  const healthStatus = normalizeConnectedServiceCredentialHealthStatus(profile.status);
+  if (isConnectedServiceCredentialHealthStatusReconnectRequired(healthStatus)) {
+    return failureResult('profile_action_required', {
+      serviceId: input.serviceId,
+      failurePhase: 'normalization',
+      actionRequired: {
+        kind: 'reconnect_profile',
+        profileId: input.profileId,
+        healthStatus: 'needs_reauth',
+      },
+    });
+  }
+  if (!isConnectedServiceCredentialHealthStatusUsable(healthStatus)) {
+    return { ok: false, errorCode: 'profile_disconnected', serviceId: input.serviceId };
+  }
+  return null;
+}
+
 async function normalizeRequestedBindings(input: Readonly<{
   api: ConnectedServiceProfilesApi;
+  qualifiedConnectedAccountApi: ConnectedServiceQualifiedAuthGroupApi;
   agentId: CatalogAgentId;
   request: SessionConnectedServiceAuthSwitchRequest;
   dryRun?: boolean;
@@ -1384,11 +1414,30 @@ async function normalizeRequestedBindings(input: Readonly<{
     }
 
     if (binding.selection === 'group') {
-      const group = await input.api.getConnectedServiceAuthGroup({
+      const qualifiedService = resolveFirstPartyQualifiedConnectedAccountServiceForLegacyServiceId(
         serviceId,
+      );
+      if (!qualifiedService) {
+        return { ok: false, errorCode: 'group_missing', serviceId };
+      }
+      const group = await input.qualifiedConnectedAccountApi.readGroup({
+        service: qualifiedService,
         groupId: binding.groupId,
       });
       if (!group) {
+        return { ok: false, errorCode: 'group_missing', serviceId };
+      }
+      const listedAccounts = await input.qualifiedConnectedAccountApi.listAccounts({
+        service: qualifiedService,
+      });
+      if (
+        listedAccounts.service.pluginId !== qualifiedService.pluginId
+        || listedAccounts.service.localId !== qualifiedService.localId
+        || listedAccounts.accounts.some((profile) => (
+          profile.ref.service.pluginId !== qualifiedService.pluginId
+          || profile.ref.service.localId !== qualifiedService.localId
+        ))
+      ) {
         return { ok: false, errorCode: 'group_missing', serviceId };
       }
       const expectedGeneration = readExpectedGeneration(input.request.expectedGroupGenerationByServiceId, serviceId);
@@ -1417,14 +1466,17 @@ async function normalizeRequestedBindings(input: Readonly<{
       }
       const activeProfileId = isProspectiveDryRunGeneration
         ? prospectiveProfileId
-        : typeof group.activeProfileId === 'string' ? group.activeProfileId.trim() : '';
+        : typeof group.activeConnectedAccountId === 'string' ? group.activeConnectedAccountId.trim() : '';
       if (!activeProfileId) {
         return { ok: false, errorCode: 'profile_missing', serviceId };
       }
-      const profileError = await validateConnectedProfile({
-        api: input.api,
+      if (!groupHasEnabledMember({ group, profileId: activeProfileId })) {
+        return { ok: false, errorCode: 'profile_missing', serviceId };
+      }
+      const profileError = validateQualifiedConnectedProfile({
         serviceId,
         profileId: activeProfileId,
+        profiles: listedAccounts.accounts,
       });
       if (profileError) return profileError;
       const fallbackProfileId = resolveGroupFallbackProfileId({
@@ -2143,6 +2195,7 @@ async function applyConnectedServiceAuthGenerationToTrackedSessionWithGroupConve
 
     const normalized = await normalizeRequestedBindings({
       api: input.api,
+      qualifiedConnectedAccountApi: input.qualifiedConnectedAccountApi,
       agentId: inactiveAgentId,
       request: input.request,
       dryRun: input.dryRun === true,
@@ -2254,6 +2307,7 @@ async function applyConnectedServiceAuthGenerationToTrackedSessionWithGroupConve
 
   const normalized = await normalizeRequestedBindings({
     api: input.api,
+    qualifiedConnectedAccountApi: input.qualifiedConnectedAccountApi,
     agentId: trackedAgentId,
     request: input.request,
     dryRun: input.dryRun === true,

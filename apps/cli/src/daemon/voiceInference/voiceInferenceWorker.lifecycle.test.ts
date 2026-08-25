@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -9,6 +9,20 @@ import { createEnvKeyScope } from '@/testkit/env/envScope';
 
 const ZIPFORMER_PACK_ID = 'sherpa-onnx-streaming-zipformer-en-20M-2023-02-17';
 const KOKORO_PACK_ID = 'kokoro-82m-v1.0-onnx-q8-wasm';
+
+function deferred<T>(): Readonly<{
+  promise: Promise<T>;
+  resolve: (value: T | PromiseLike<T>) => void;
+  reject: (reason?: unknown) => void;
+}> {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
 
 function createKokoroCatalogManifest(): ModelPackManifest {
   const catalogEntry = getModelPackCatalogEntry(KOKORO_PACK_ID);
@@ -556,6 +570,102 @@ describe('createVoiceInferenceWorkerLifecycle', () => {
     await lifecycle.stop();
   });
 
+  it.each([
+    { kind: 'timeout', code: 'runtime_timeout', message: 'voice_inference_worker_request_timeout' },
+    { kind: 'termination', code: 'runtime_unavailable', message: 'voice_inference_worker_terminated' },
+  ])('does not publish a ready runtime after priming reports a fork-invalidating $kind', async ({ code, message }) => {
+    const homeDir = await createHomeDir();
+    const { createVoiceInferenceWorkerLifecycle } = await importLifecycleModuleForHome(homeDir);
+    const { resolveVoiceInferencePaths } = await import('./voiceInferencePaths');
+    const { manifest } = createZipformerCatalogManifest();
+    const packDir = join(resolveVoiceInferencePaths().packsRootDir, manifest.packId);
+    await mkdir(packDir, { recursive: true });
+    await writeFile(join(packDir, 'pack.json'), JSON.stringify(manifest), 'utf8');
+
+    const releasedPackIds: string[] = [];
+    const lifecycle = createVoiceInferenceWorkerLifecycle({
+      runtimeLoader: async () => ({
+        warmModel: async () => {},
+        primeModel: async () => {
+          throw Object.assign(new Error(message), { code });
+        },
+        releaseModel: async ({ packId }) => {
+          releasedPackIds.push(packId);
+        },
+        synthesizeTts: async () => {
+          throw new Error('not exercised');
+        },
+        transcribeAudio: async () => {
+          throw new Error('not exercised');
+        },
+      }),
+    });
+
+    await expect(lifecycle.warmRuntimeForPack(manifest.packId)).rejects.toMatchObject({
+      code,
+    });
+    expect(releasedPackIds).toEqual([manifest.packId]);
+    const status = await lifecycle.getStatus();
+    expect(status.serviceState).not.toBe('ready');
+    expect(status).toMatchObject({
+      models: [
+        expect.objectContaining({
+          packId: manifest.packId,
+          runtimeState: 'cold',
+        }),
+      ],
+    });
+
+    await lifecycle.stop();
+  });
+
+  it('publishes a ready runtime when a non-invalidating prime failure is best-effort', async () => {
+    const homeDir = await createHomeDir();
+    const { createVoiceInferenceWorkerLifecycle } = await importLifecycleModuleForHome(homeDir);
+    const { resolveVoiceInferencePaths } = await import('./voiceInferencePaths');
+    const { manifest } = createZipformerCatalogManifest();
+    const packDir = join(resolveVoiceInferencePaths().packsRootDir, manifest.packId);
+    await mkdir(packDir, { recursive: true });
+    await writeFile(join(packDir, 'pack.json'), JSON.stringify(manifest), 'utf8');
+
+    const releasedPackIds: string[] = [];
+    const runtime = {
+      warmModel: async () => {},
+      primeModel: async () => {
+        throw new Error('best_effort_prime_failed');
+      },
+      releaseModel: async ({ packId }: Readonly<{ packId: string }>) => {
+        releasedPackIds.push(packId);
+      },
+      synthesizeTts: async () => {
+        throw new Error('not exercised');
+      },
+      transcribeAudio: async () => {
+        throw new Error('not exercised');
+      },
+    };
+    const lifecycle = createVoiceInferenceWorkerLifecycle({
+      runtimeLoader: async () => runtime,
+    });
+
+    await expect(lifecycle.warmRuntimeForPack(manifest.packId)).resolves.toMatchObject({
+      runtime,
+    });
+    expect(releasedPackIds).toEqual([]);
+    await expect(lifecycle.getStatus()).resolves.toMatchObject({
+      serviceState: 'ready',
+      models: [
+        expect.objectContaining({
+          packId: manifest.packId,
+          runtimeState: 'ready',
+        }),
+      ],
+    });
+
+    await lifecycle.stop();
+    expect(releasedPackIds).toEqual([manifest.packId]);
+  });
+
   it('releases a warmed runtime when priming is cancelled before publication', async () => {
     const homeDir = await createHomeDir();
     const { createVoiceInferenceWorkerLifecycle } = await importLifecycleModuleForHome(homeDir);
@@ -631,6 +741,203 @@ describe('createVoiceInferenceWorkerLifecycle', () => {
     });
 
     await lifecycle.stop();
+  });
+
+  it('releases the exact evicted runtime while retaining a replacement that serves the next inference', async () => {
+    vi.useFakeTimers();
+    const oldReleaseGate = deferred<void>();
+    let stopLifecycle: (() => Promise<void>) | null = null;
+
+    try {
+      const homeDir = await createHomeDir();
+      const { createVoiceInferenceWorkerLifecycle } = await importLifecycleModuleForHome(homeDir);
+      const { createVoiceInferenceWorkerExecution } = await import('./voiceInferenceWorker.execution');
+      const { resolveVoiceInferencePaths } = await import('./voiceInferencePaths');
+      const manifest: ModelPackManifest = {
+        packId: KOKORO_PACK_ID,
+        kind: 'tts_sherpa',
+        model: 'kokoro',
+        version: 'replacement-race-fixture',
+        files: [{
+          path: 'model.onnx',
+          url: 'https://example.invalid/model.onnx',
+          sha256: 'a'.repeat(64),
+          sizeBytes: 4,
+        }],
+      };
+      const packDir = join(resolveVoiceInferencePaths().packsRootDir, manifest.packId);
+      await mkdir(packDir, { recursive: true });
+      await writeFile(join(packDir, 'pack.json'), JSON.stringify(manifest), 'utf8');
+
+      const oldReleaseStarted = deferred<void>();
+      const replacementReleaseStarted = deferred<void>();
+      const releasedRuntimeIds: string[] = [];
+      const warmedRuntimeIds: string[] = [];
+      const createRuntime = (runtimeId: 'old' | 'replacement') => ({
+        warmModel: async () => {
+          warmedRuntimeIds.push(runtimeId);
+        },
+        releaseModel: async () => {
+          releasedRuntimeIds.push(runtimeId);
+          if (runtimeId === 'old') {
+            oldReleaseStarted.resolve();
+            await oldReleaseGate.promise;
+            return;
+          }
+          replacementReleaseStarted.resolve();
+        },
+        synthesizeTts: async () => ({
+          bytes: Buffer.from(runtimeId, 'utf8'),
+          output: { codec: 'wav' as const, mimeType: 'audio/wav' as const },
+          name: `${runtimeId}.wav`,
+        }),
+        transcribeAudio: async () => ({ text: 'unused', language: null }),
+      });
+      const oldRuntime = createRuntime('old');
+      const replacementRuntime = createRuntime('replacement');
+      const runtimeLoader = vi.fn(async () => {
+        const nextRuntime = [oldRuntime, replacementRuntime][warmedRuntimeIds.length];
+        if (!nextRuntime) {
+          throw new Error('unexpected_runtime_load');
+        }
+        return nextRuntime;
+      });
+
+      const lifecycle = createVoiceInferenceWorkerLifecycle({
+        enforceCatalogRuntimeManifest: false,
+        residencyMs: 1_000,
+        runtimeLoader,
+      });
+      stopLifecycle = lifecycle.stop;
+      const firstWarm = await lifecycle.warmRuntimeForPack(manifest.packId);
+      expect(firstWarm.runtime).toBe(oldRuntime);
+
+      const lifecycleLockEntered = deferred<void>();
+      const releaseLifecycleLock = deferred<void>();
+      const heldLifecycleLock = lifecycle.runLifecycleExclusive(manifest.packId, async () => {
+        lifecycleLockEntered.resolve();
+        await releaseLifecycleLock.promise;
+      });
+      await lifecycleLockEntered.promise;
+
+      // The residency timer removes the old coordinator entry, but its asynchronous release
+      // callback is deliberately queued behind this lock. A subsequent warm must therefore
+      // publish a new runtime before the old callback reaches the lifecycle map.
+      await vi.advanceTimersByTimeAsync(1_000);
+      const replacementWarm = await lifecycle.warmRuntimeForPack(manifest.packId);
+      expect(replacementWarm.runtime).toBe(replacementRuntime);
+      expect(warmedRuntimeIds).toEqual(['old', 'replacement']);
+
+      releaseLifecycleLock.resolve();
+      await heldLifecycleLock;
+
+      const releasedByEviction = await Promise.race([
+        oldReleaseStarted.promise.then(() => 'old' as const),
+        replacementReleaseStarted.promise.then(() => 'replacement' as const),
+      ]);
+      expect(releasedByEviction).toBe('old');
+      await expect(lifecycle.getModelsStatus([manifest.packId])).resolves.toEqual([
+        expect.objectContaining({
+          packId: manifest.packId,
+          runtimeState: 'ready',
+          loadedArtifactBytes: 4,
+        }),
+      ]);
+
+      oldReleaseGate.resolve();
+      const execution = createVoiceInferenceWorkerExecution({ lifecycle });
+      const synthesized = await execution.synthesizeTts({
+        requestId: 'replacement-runtime-inference',
+        text: 'hello',
+        packId: manifest.packId,
+        voiceId: null,
+        speed: null,
+        output: { codec: 'wav', mimeType: 'audio/wav' },
+      });
+      await expect(readFile(synthesized.filePath, 'utf8')).resolves.toBe('replacement');
+      expect(releasedRuntimeIds).toEqual(['old']);
+
+      await lifecycle.stop();
+      stopLifecycle = null;
+      expect(releasedRuntimeIds).toEqual(['old', 'replacement']);
+    } finally {
+      oldReleaseGate.resolve();
+      await stopLifecycle?.();
+      vi.useRealTimers();
+    }
+  });
+
+  it('aborts a public warm during daemon stop and rejects a late native success before readiness publication', async () => {
+    const homeDir = await createHomeDir();
+    const { createVoiceInferenceWorkerLifecycle } = await importLifecycleModuleForHome(homeDir);
+    const { resolveVoiceInferencePaths } = await import('./voiceInferencePaths');
+    const { manifest } = createZipformerCatalogManifest();
+    const packDir = join(resolveVoiceInferencePaths().packsRootDir, manifest.packId);
+    await mkdir(packDir, { recursive: true });
+    await writeFile(join(packDir, 'pack.json'), JSON.stringify(manifest), 'utf8');
+
+    const warmStarted = deferred<void>();
+    const allowIgnoredNativeWarmToReturn = deferred<void>();
+    let observedWarmSignal: AbortSignal | null = null;
+    let releaseCalls = 0;
+    const lifecycle = createVoiceInferenceWorkerLifecycle({
+      runtimeLoader: async () => ({
+        warmModel: async ({ signal }) => {
+          observedWarmSignal = signal ?? null;
+          warmStarted.resolve();
+          await Promise.race([
+            allowIgnoredNativeWarmToReturn.promise,
+            new Promise<void>((resolve) => {
+              if (signal?.aborted) {
+                resolve();
+                return;
+              }
+              signal?.addEventListener('abort', () => resolve(), { once: true });
+            }),
+          ]);
+          // This deliberately reports normal completion after cancellation, like a synchronous
+          // native call that only observes its signal after returning to JavaScript.
+        },
+        releaseModel: async () => {
+          releaseCalls += 1;
+        },
+        synthesizeTts: async () => {
+          throw new Error('not exercised');
+        },
+        transcribeAudio: async () => {
+          throw new Error('not exercised');
+        },
+      }),
+    });
+
+    const warming = lifecycle.warmModelPack(manifest.packId);
+    // Stop intentionally races the caller's await below. Attach a handler now so the expected
+    // cancellation cannot be reported as unhandled between the stop and that assertion.
+    void warming.catch(() => undefined);
+    let stopPromise: Promise<void> | null = null;
+    try {
+      await warmStarted.promise;
+      stopPromise = lifecycle.stop();
+
+      await expect(Promise.race([
+        stopPromise.then(() => 'stopped' as const),
+        new Promise<'pending'>((resolve) => setTimeout(() => resolve('pending'), 50)),
+      ])).resolves.toBe('stopped');
+      expect(observedWarmSignal).not.toBeNull();
+      expect(observedWarmSignal!.aborted).toBe(true);
+      await expect(warming).rejects.toMatchObject({ code: 'cancelled' });
+      expect(releaseCalls).toBe(1);
+      await expect(lifecycle.getStatus()).resolves.toMatchObject({
+        models: [expect.objectContaining({ packId: manifest.packId, runtimeState: 'cold' })],
+      });
+    } finally {
+      // Keep the valid RED cleanup bounded: before the stop signal reaches public warm, this
+      // models the native call eventually returning so the test leaves no lifecycle lock behind.
+      allowIgnoredNativeWarmToReturn.resolve();
+      await warming.catch(() => undefined);
+      await stopPromise?.catch(() => undefined);
+      await lifecycle.stop().catch(() => undefined);
+    }
   });
 
   it('aborts an in-flight model-pack install so stop does not wait behind the lifecycle lock', async () => {

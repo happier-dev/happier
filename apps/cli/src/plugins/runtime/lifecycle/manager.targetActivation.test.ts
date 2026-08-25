@@ -775,18 +775,28 @@ describe('target activation publication', () => {
             agentDefinitionsById: new Map(),             pluginDiagnosticsByPluginId: Object.freeze({}),
         } as unknown as ResolvedContributionRegistry;
 
+        const onTerminalActivationFailure = vi.fn();
         const activated = await activatePluginRuntimeRegistry({
             contributes: registry,
             generation: 6,
+            onTerminalActivationFailure,
             resolveActivationSource: await createCommittedFileBackedFixtureActivationSource({
                 pluginId: 'acme.target.load-failure',
                 root,
                 entryPath: join(root, 'missing.mjs'),
             }),
         });
+        expect(onTerminalActivationFailure).not.toHaveBeenCalled();
         await activated.activateContributionsOnDemand([{
             pluginId: 'acme.target.load-failure', family: 'actions', localId: 'run',
         }]);
+
+        expect(onTerminalActivationFailure).toHaveBeenCalledOnce();
+        expect(onTerminalActivationFailure).toHaveBeenCalledWith('acme.target.load-failure');
+        await activated.activateContributionsOnDemand([{
+            pluginId: 'acme.target.load-failure', family: 'actions', localId: 'run',
+        }]);
+        expect(onTerminalActivationFailure).toHaveBeenCalledOnce();
 
         expect(activated.targetActivationFacts).toMatchObject([{
             pluginId: 'acme.target.load-failure', pluginVersion: '2.0.0', source: 'development',
@@ -829,9 +839,11 @@ describe('target activation publication', () => {
         });
         const load = vi.fn(async () => ({ activate }));
 
+        const onTerminalActivationFailure = vi.fn();
         const activated = await activatePluginRuntimeRegistry({
             contributes: registry,
             generation: 7,
+            onTerminalActivationFailure,
             resolveActivationSource: () => ({
                 kind: 'bundled',
                 moduleId: '@happier-dev/plugins-target-lazy/daemon',
@@ -840,6 +852,7 @@ describe('target activation publication', () => {
         });
 
         expect(load).not.toHaveBeenCalled();
+        expect(onTerminalActivationFailure).not.toHaveBeenCalled();
         await Promise.all([
             activated.activateContributionsOnDemand([{ pluginId: 'acme.target.lazy', family: 'actions', localId: 'run' }]),
             activated.activateContributionsOnDemand([{ pluginId: 'acme.target.lazy', family: 'actions', localId: 'run' }]),
@@ -847,6 +860,7 @@ describe('target activation publication', () => {
         expect(load).toHaveBeenCalledTimes(1);
         expect(activate).toHaveBeenCalledTimes(1);
         expect(activated.activatedPluginIds.has('acme.target.lazy')).toBe(true);
+        expect(onTerminalActivationFailure).not.toHaveBeenCalled();
 
         await activated.dispose();
     });
@@ -1345,7 +1359,7 @@ describe('target activation publication', () => {
             resolvePromptAssetBlocks: async () => [],
             createAgentInvocationServices: async () => createUnavailablePluginServices(),
             retireConsumers: () => {},
-            retirePluginConsumers: (pluginIds) => {
+            retirePluginConsumers: async (pluginIds) => {
                 activated.retireBackgroundServices(pluginIds);
             },
             settleRetiredBackgroundServices: async (pluginIds) => {

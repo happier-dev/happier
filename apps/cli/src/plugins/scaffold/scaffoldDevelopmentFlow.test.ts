@@ -263,7 +263,7 @@ describe('CLI scaffold development flow', () => {
     }
   }, 60_000);
 
-  it('takes a clean external code-defined scaffold through create, dev, author checks, and doctor without an author-owned SDK resolver', async () => {
+  it('takes a clean external code-defined scaffold through create, dev, development checks, and doctor without an author-owned SDK resolver', async () => {
     const workspaceRoot = await realpath(fileURLToPath(new URL('../../../../../', import.meta.url)));
     const cliPackageRoot = join(workspaceRoot, 'apps', 'cli');
     const workspaceBundles = resolveWorkspaceBundlesFromPackageJson({
@@ -585,12 +585,20 @@ describe('CLI scaffold development flow', () => {
         devOutput.restore();
       }
 
-      expect(await runCliCommand(['author', 'typecheck', targetDir]))
-        .toContain('Plugin author typecheck completed');
-      expect(await runCliCommand(['author', 'build', targetDir]))
-        .toContain('Plugin author build completed');
+      expect(await runCliCommand(['dev', 'typecheck', targetDir]))
+        .toContain('Plugin development typecheck completed');
+      expect(await runCliCommand(['dev', 'build', targetDir]))
+        .toContain('Plugin development build completed');
       expect(await runCliCommand(['test', targetDir]))
-        .toContain('Plugin author test completed');
+        .toContain('Plugin development test completed');
+      await expect(readFile(
+        join(targetDir, 'node_modules', '.cache', 'happier', 'plugin-author.tsbuildinfo'),
+        'utf8',
+      )).resolves.toContain('fileNames');
+      await expect(readFile(
+        join(targetDir, 'node_modules', '.cache', 'happier', 'plugin-author.typecheck.tsbuildinfo'),
+        'utf8',
+      )).resolves.toContain('fileNames');
       expect(await runCliCommand(['doctor', targetDir]))
         .toContain('evaluated in');
 
@@ -600,7 +608,10 @@ describe('CLI scaffold development flow', () => {
       expect(isCanonicalAbsolutePathInsideRoot(workspaceRoot, resolvedInstalledSdkRoot)).toBe(false);
       expect(await readFile(join(installedSdkRoot, 'API.md'), 'utf8'))
         .toContain('> Generated from `api-surface.json`. Do not hand-edit.');
-      expect(managedPnpmCalls.length).toBeGreaterThanOrEqual(5);
+      // Cold development prepares once. Focused typecheck/build/test and doctor
+      // all reuse the already materialized author root instead of running four
+      // redundant package-manager installs.
+      expect(managedPnpmCalls).toHaveLength(1);
       await expect(lstat(join(targetDir, 'pnpm-workspace.yaml'))).rejects.toMatchObject({ code: 'ENOENT' });
       for (const materializedSdkRoot of materializedSdkRoots) {
         await expect(lstat(materializedSdkRoot)).rejects.toMatchObject({ code: 'ENOENT' });

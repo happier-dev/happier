@@ -5,23 +5,109 @@
       "contributionId": "voice-runtime-web",
       "tier": "reactNative",
       "platform": "web",
-      "entry": "react-native/voice-runtime-web/index.js",
+      "entry": "react-native-web/voice-runtime-web/entry.mjs.bundle",
       "files": [
         {
-          "relativePath": "react-native/voice-runtime-web/index.js",
-          "digest": "sha256:92946f94ea3e111e3afefdbf15425f753208399b144f5fd8e7221ab7b6e11cb2",
-          "byteSize": 10802
+          "relativePath": "react-native-web/voice-runtime-web/entry.mjs.bundle",
+          "digest": "sha256:146b038efe4df18f6437720c6a6426f0b2e8f78b3b5bd0945e50a37a023fef79",
+          "byteSize": 18726
         }
       ],
-      "digest": "sha256:60fbda9f98d2e9d0d40a9156ecf57313fda0fb0fcf31226d165a9a1f21ee9cca",
+      "digest": "sha256:43ec964e413c66d6e8f147b7f0563b639c205b5aac6599f7410310582efd6033",
       "builtWith": {
         "bundler": "vite",
-        "version": "7.0.0"
+        "version": "7.3.1"
       },
       "hostUiApiVersion": "1.0.0",
       "compat": {
         "react": "19.2.0",
-        "reactNative": "0.83.4"
+        "reactNative": "0.83.5"
+      }
+    },
+    {
+      "contributionId": "voice-runtime-web",
+      "tier": "reactNative",
+      "platform": "ios",
+      "entry": "react-native/voice-runtime-web/ios/ios.bundle",
+      "files": [
+        {
+          "relativePath": "react-native/voice-runtime-web/ios/ios.bundle",
+          "digest": "sha256:45ee84fcb0b2066c3480e57b8a8ea50b0e252cf1e938754701436e6de63ab40a",
+          "byteSize": 33496
+        },
+        {
+          "relativePath": "react-native/voice-runtime-web/ios/ios.bundle.map",
+          "digest": "sha256:ee82b4a121b4827d2fa8bc04513175ebbd2c3562443ab417468c0e014b68ef29",
+          "byteSize": 5772
+        },
+        {
+          "relativePath": "react-native/voice-runtime-web/ios/src_voiceRuntime_tsx.chunk.bundle",
+          "digest": "sha256:2c8313727aecba6b50636a6bcce9a850e0befb444b73477bcdba506040d8c3f2",
+          "byteSize": 31453
+        },
+        {
+          "relativePath": "react-native/voice-runtime-web/ios/src_voiceRuntime_tsx.chunk.bundle.map",
+          "digest": "sha256:5790d2abdc58ad19bba5cb061b38bab15459eca80975d2a196cd389348de5efc",
+          "byteSize": 14117
+        }
+      ],
+      "digest": "sha256:34318c17b635cf69240ab4e61e156b423aa5926ac5c0529b90bc7fdc996a06cd",
+      "builtWith": {
+        "bundler": "repack",
+        "version": "5.2.5"
+      },
+      "repack": {
+        "containerName": "happier_plugin_acme_packed_voice_voice_runtime_web",
+        "modulePath": "./voiceRuntime",
+        "exportName": "activate"
+      },
+      "hostUiApiVersion": "1.0.0",
+      "compat": {
+        "react": "19.2.0",
+        "reactNative": "0.83.5"
+      }
+    },
+    {
+      "contributionId": "voice-runtime-web",
+      "tier": "reactNative",
+      "platform": "android",
+      "entry": "react-native/voice-runtime-web/android/android.bundle",
+      "files": [
+        {
+          "relativePath": "react-native/voice-runtime-web/android/android.bundle",
+          "digest": "sha256:985f638b854a313a4395924f59c653e249753ac3aa81296068edb53b4908b9be",
+          "byteSize": 33500
+        },
+        {
+          "relativePath": "react-native/voice-runtime-web/android/android.bundle.map",
+          "digest": "sha256:534016021bf976fc94a9b93c00b0a7b7b6e1b5bec55b582ac4bf9f96787747d7",
+          "byteSize": 5776
+        },
+        {
+          "relativePath": "react-native/voice-runtime-web/android/src_voiceRuntime_tsx.chunk.bundle",
+          "digest": "sha256:2c8313727aecba6b50636a6bcce9a850e0befb444b73477bcdba506040d8c3f2",
+          "byteSize": 31453
+        },
+        {
+          "relativePath": "react-native/voice-runtime-web/android/src_voiceRuntime_tsx.chunk.bundle.map",
+          "digest": "sha256:5790d2abdc58ad19bba5cb061b38bab15459eca80975d2a196cd389348de5efc",
+          "byteSize": 14117
+        }
+      ],
+      "digest": "sha256:0759b6a5438463f6c1c9a688c89f872c7a5a16327c81696c11a61344316eabd3",
+      "builtWith": {
+        "bundler": "repack",
+        "version": "5.2.5"
+      },
+      "repack": {
+        "containerName": "happier_plugin_acme_packed_voice_voice_runtime_web",
+        "modulePath": "./voiceRuntime",
+        "exportName": "activate"
+      },
+      "hostUiApiVersion": "1.0.0",
+      "compat": {
+        "react": "19.2.0",
+        "reactNative": "0.83.5"
       }
     }
   ]

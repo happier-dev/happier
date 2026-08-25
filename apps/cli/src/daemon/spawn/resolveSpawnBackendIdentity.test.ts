@@ -299,6 +299,32 @@ describe('resolveSpawnBackendIdentity credential precedence', () => {
     });
   });
 
+  it('keeps a host-private exact native reference over a linked id during the one takeover spawn', async () => {
+    const selectedSessionFile = '/home/lee/.pi/agent/sessions/workspace-a/pi-shared.jsonl';
+    resolveExistingSessionAttachContextMock.mockResolvedValueOnce({
+      ok: true,
+      attachPayload: { v: 2, encryptionMode: 'plain' },
+      vendorResumeId: 'pi-shared',
+      linkedVendorResumeId: 'pi-shared',
+      backendTarget: { kind: 'builtInAgent', agentId: 'pi' },
+    });
+
+    const input = {
+      existingSessionId: 'sess-linked-pi',
+      resume: selectedSessionFile,
+      nativeResumeReference: selectedSessionFile,
+      backendTarget: { kind: 'backend' as const, backendId: 'pi', sourceKind: 'built_in' as const },
+      credentials: createLegacyCredentials('live-token', 16),
+      loadLocalHandoffMetadataByVendorResumeId: async () => null,
+    };
+    const result = await resolveSpawnBackendIdentity(input);
+
+    expect(result).toMatchObject({
+      ok: true,
+      effectiveResume: selectedSessionFile,
+    });
+  });
+
   it('preserves configured ACP backend targets as canonical V2 targets', async () => {
     const liveCredentials = createLegacyCredentials('live-token', 5);
     resolveExistingSessionAttachContextMock.mockResolvedValueOnce({

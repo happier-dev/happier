@@ -24,6 +24,7 @@ import type {
     ConnectedServiceProviderRuntimeAuthAdapter,
     ConnectedServiceRuntimeAuthTargetInput,
 } from '@/daemon/connectedServices/runtimeAuth/types';
+import { readTrimmedString } from './readTrimmedString';
 
 type RuntimeAuthAdapterResolver = (
     agentId: CatalogAgentId,
@@ -42,10 +43,6 @@ export type CreateSessionHandleAuthServiceParams = Readonly<{
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
     return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-}
-
-function readTrimmedString(value: unknown): string | null {
-    return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
 }
 
 function readRefreshFailureReason(value: unknown, fallback: string): string {

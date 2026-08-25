@@ -31,8 +31,10 @@ import { PluginStateFileV1Schema, PluginStateRecordSchema } from '../state';
 import { ensurePluginStoreDirectories, resolvePluginStorePaths, type PluginStorePaths } from '../paths';
 import { createPluginRegistryCommitCoordinator } from './commitCoordinator';
 import {
+  PluginRegistryCommitRecordInvalidError,
   PluginRegistryCommitRecordSchema,
   pluginRegistryCommitRecordsEqual,
+  quarantineInvalidPluginRegistryCommitRecord,
   type PluginRegistryCommitRecord,
 } from './commitRecord';
 import {
@@ -227,6 +229,17 @@ export function createPluginRegistryStateStore(params?: Readonly<{
   generationCustodyRetirement?: PluginGenerationCustodyRetirementRemoteDependencies;
   retainedCurrentHostGenerationIds?: readonly string[];
   runtimeLifecycle?: PluginRegistryRuntimeLifecycle;
+  /**
+   * Explicit operator recovery start. An unreadable durable current record is
+   * moved aside instead of failing the process, so the documented repair
+   * affordance covers the one failure that persists across every start.
+   */
+  pluginRecovery?: boolean;
+  onCommitRecordQuarantined?: (info: Readonly<{
+    filePath: string;
+    quarantinePath: string;
+    issues: readonly string[];
+  }>) => void;
   onApplied?: (record: PluginRegistryCommitRecord) => void;
   onReconciliationPending?: (diagnostic: Readonly<{
     operation: string;
@@ -291,6 +304,27 @@ export function createPluginRegistryStateStore(params?: Readonly<{
   const onReconciliationPending = params?.onReconciliationPending;
   const runHardRevocationCurrentnessChange = params?.runHardRevocationCurrentnessChange;
   const coordinator = createPluginRegistryCommitCoordinator({ paths, owner, nowMs });
+  const pluginRecovery = params?.pluginRecovery === true;
+  const onCommitRecordQuarantined = params?.onCommitRecordQuarantined;
+  /**
+   * The durable current record is the one startup input whose rejection recurs
+   * forever. A normal start still fails closed rather than discarding plugin
+   * state, and only an explicitly requested recovery start moves it aside.
+   */
+  async function readCurrentCommit(): Promise<PluginRegistryCommitRecord | null> {
+    try {
+      return await coordinator.readCurrent();
+    } catch (error) {
+      if (!pluginRecovery || !(error instanceof PluginRegistryCommitRecordInvalidError)) throw error;
+      const quarantinePath = await quarantineInvalidPluginRegistryCommitRecord({ paths, nowMs });
+      onCommitRecordQuarantined?.({
+        filePath: error.filePath,
+        quarantinePath,
+        issues: error.issues,
+      });
+      return null;
+    }
+  }
   async function readVerifiedRollbackGeneration(
     retention: PluginInstallationStateRevision['rollbackRetention'][number],
   ): Promise<Awaited<ReturnType<typeof readPreparedImmutablePluginGeneration>>> {
@@ -409,7 +443,7 @@ export function createPluginRegistryStateStore(params?: Readonly<{
   async function bootstrap(): Promise<PluginRegistryCommitRecord> {
     await ensurePluginStoreDirectories({ happyHomeDir: paths.happyHomeDir });
     while (true) {
-      const existing = await coordinator.readCurrent();
+      const existing = await readCurrentCommit();
       if (existing) return existing;
       const transactionId = `cutover-${randomUUID()}`;
       const result = await coordinator.commit({
@@ -462,7 +496,7 @@ export function createPluginRegistryStateStore(params?: Readonly<{
     revision: PluginInstallationStateRevision;
     catalog: PluginStateFileV1;
   }>> {
-    const commit = await coordinator.readCurrent() ?? await bootstrap();
+    const commit = await readCurrentCommit() ?? await bootstrap();
     const current = await readCommittedState(commit);
     // Derived surfaces never decide currentness. A retryable reconciliation
     // leaves the durable commit authoritative and is retried by the next
@@ -479,7 +513,7 @@ export function createPluginRegistryStateStore(params?: Readonly<{
     revision: PluginInstallationStateRevision;
     catalog: PluginStateFileV1;
   }> | null> {
-    const commit = await coordinator.readCurrent();
+    const commit = await readCurrentCommit();
     if (!commit) return null;
     return await readCommittedState(commit);
   }

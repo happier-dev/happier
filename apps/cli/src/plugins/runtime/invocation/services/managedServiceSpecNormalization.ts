@@ -1,5 +1,8 @@
 import { PluginError } from '@happier-dev/plugin-sdk';
-import { ManagedServiceLocalIdSchema } from '@happier-dev/protocol';
+import {
+    ManagedServiceLocalIdSchema,
+    normalizeProviderPublicHeaders,
+} from '@happier-dev/protocol';
 import type {
     ManagedServiceHealthCheck,
     ManagedServiceSpec,
@@ -119,6 +122,26 @@ function validatedBoundedInteger(
     return resolved;
 }
 
+/**
+ * Static health headers are ordinary public request headers authored in the
+ * managed-service specification. They reach the same supervisor fetch as the
+ * plugin's own managed-service requests, so they use the one canonical
+ * public-header contract: transport-owned and credential-bearing names are
+ * refused, values and counts are bounded, and names are canonicalized. Host
+ * credentials are merged after this normalization by their own owner.
+ */
+function normalizedStaticHealthHeaders(
+    headers: Readonly<Record<string, string>>,
+): Readonly<Record<string, string>> {
+    try {
+        return normalizeProviderPublicHeaders(headers);
+    } catch {
+        return specInvalid(
+            'Managed-service health-check headers are invalid',
+        );
+    }
+}
+
 export function normalizeManagedServiceHealthyWaitTimeout(
     timeoutMs: number | undefined,
     startupTimeoutMs: number,
@@ -167,6 +190,14 @@ export function normalizeManagedServiceSpec(
         ? spec.healthCheck
         : Object.freeze({
             ...spec.healthCheck,
+            ...(spec.healthCheck.kind === 'http'
+                && spec.healthCheck.headers !== undefined
+                ? {
+                    headers: normalizedStaticHealthHeaders(
+                        spec.healthCheck.headers,
+                    ),
+                }
+                : {}),
             timeoutMs: validatedBoundedInteger(
                 spec.healthCheck.timeoutMs,
                 MANAGED_SERVICE_NUMERIC_CONTRACT.healthTimeoutMs.defaultValue,

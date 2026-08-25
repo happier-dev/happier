@@ -170,27 +170,13 @@ describe('Plugin authoring Actions', () => {
       });
       await expect(readFile(join(targetDir, 'package.json'), 'utf8')).resolves.toContain('happier-plugin-acme-external-author');
 
-      await expect(executor.execute('plugins.dev' as never, {
+      await expect(executor.execute('plugins.dev.submit' as never, {
         projectRoot: targetDir,
       }, { surface: 'agent', bypassApprovals: true })).resolves.toMatchObject({
-        ok: true,
-        result: {
-          ok: false,
-          kind: 'plugins_dev',
-          outcome: 'reviewRequired',
-          pendingReview: {
-            kind: 'sourceRootReviewRequired',
-            pendingChangeId: 'pending-external-author-1',
-          },
-        },
+        ok: false,
+        errorCode: 'present_user_required',
       });
-      expect(requestDevelopmentChange).toHaveBeenCalledWith(expect.objectContaining({
-        request: expect.objectContaining({
-          kind: 'development',
-          sourceRootPath: await realpath(targetDir),
-        }),
-        approval: 'none',
-      }));
+      expect(requestDevelopmentChange).not.toHaveBeenCalled();
 
       // The ordinary author journey edits the external scaffold. This descriptor
       // shape keeps the test focused on the public Action projection; the
@@ -198,8 +184,8 @@ describe('Plugin authoring Actions', () => {
       await writeDescriptorOnlyPluginManifest(targetDir);
 
       for (const [actionId, input, kind] of [
-        ['plugins.author.typecheck', { projectRoot: targetDir }, 'plugins_author_typecheck'],
-        ['plugins.author.test', { projectRoot: targetDir }, 'plugins_author_test'],
+        ['plugins.dev.typecheck', { projectRoot: targetDir }, 'plugins_dev_typecheck'],
+        ['plugins.dev.test', { projectRoot: targetDir }, 'plugins_dev_test'],
         ['plugins.doctor', { locator: targetDir }, 'plugins_doctor'],
       ] as const) {
         await expect(executor.execute(actionId as never, input, {

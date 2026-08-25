@@ -4,6 +4,7 @@ import {
   buildConnectedServiceCredentialRecord,
   ConnectedServiceCredentialRevisionV1Schema,
   type ConnectedServiceCredentialRecordV1,
+  type QualifiedConnectedAccountGroupV4,
 } from '@happier-dev/protocol';
 
 import type { ApiClient } from '@/api/api';
@@ -12,6 +13,7 @@ import {
   HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY,
   type ConnectedServiceChildSelection,
 } from '../connectedServiceChildEnvironment';
+import { DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1 } from '../accountGroups/selection/selectConnectedServiceAuthGroupCandidate';
 import { ConnectedServiceRuntimeRegistry } from '../runtimeRegistry/registry';
 import {
   ConnectedServiceRefreshCoordinator,
@@ -31,6 +33,42 @@ function selectionEnv(
   return {
     [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]:
       JSON.stringify(selections),
+  };
+}
+
+const qualifiedOpenAiService = {
+  pluginId: 'happier.agent.codex',
+  localId: 'openai-codex',
+} as const;
+
+function qualifiedGroupForCanonicalRefresh(input: Readonly<{
+  activeAccountId: string;
+  generation: number;
+}>): QualifiedConnectedAccountGroupV4 {
+  return {
+    v: 1,
+    ref: { service: qualifiedOpenAiService, groupId: 'pool' },
+    incarnation: 'qualified-group-row-pool',
+    displayName: 'Pool',
+    policy: {
+      ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1,
+      autoSwitch: false,
+    },
+    activeConnectedAccountId: input.activeAccountId,
+    generation: input.generation,
+    runtimeStateRevision: 0,
+    state: {},
+    createdAt: 1,
+    updatedAt: 1,
+    members: [{
+      v: 1,
+      connectedAccountId: input.activeAccountId,
+      priority: 1,
+      enabled: true,
+      state: {},
+      createdAt: 1,
+      updatedAt: 1,
+    }],
   };
 }
 
@@ -67,14 +105,11 @@ describe('ConnectedServiceRefreshCoordinator canonical group distribution', () =
         credentialRevision: sourceRevision,
       }]),
     });
-    const api = {
-      getConnectedServiceAuthGroup: vi.fn(async () => ({
-        serviceId: 'openai-codex',
-        groupId: 'pool',
-        activeProfileId,
-        generation,
-      })),
-    } as unknown as ApiClient;
+    const readGroup = vi.fn(async () => qualifiedGroupForCanonicalRefresh({
+      activeAccountId: activeProfileId,
+      generation,
+    }));
+    const api = {} as ApiClient;
     const coordinator = new ConnectedServiceRefreshCoordinator({
       api,
       credentials: {
@@ -88,6 +123,10 @@ describe('ConnectedServiceRefreshCoordinator canonical group distribution', () =
       refreshLeaseMs: 30_000,
       now: () => now,
       runtimeRegistry,
+      qualifiedConnectedAccountRuntime: {
+        resolvePeerClass: () => 'advertised_v4',
+        readGroup,
+      } as unknown as QualifiedConnectedAccountRefreshRuntime,
     });
     const target = runtimeRegistry.listRefreshTargets()[0];
     if (!target) throw new Error('fixture target must be refreshable');
@@ -112,6 +151,10 @@ describe('ConnectedServiceRefreshCoordinator canonical group distribution', () =
     expect(current?.childSelectionsByServiceId?.get('openai-codex')).toMatchObject({
       activeProfileId: 'backup',
       generation: 8,
+    });
+    expect(readGroup).toHaveBeenLastCalledWith({
+      service: qualifiedOpenAiService,
+      groupId: 'pool',
     });
   });
 
@@ -147,7 +190,6 @@ describe('ConnectedServiceRefreshCoordinator canonical group distribution', () =
         content: { t: 'plain' as const, v: record },
       })),
       getConnectedServiceCredentialSealed: vi.fn(async () => null),
-      getConnectedServiceAuthGroup: vi.fn(async () => null),
       acquireConnectedServiceRefreshLease: vi.fn(async () => ({
         acquired: true,
         leaseUntil: now + 60_000,

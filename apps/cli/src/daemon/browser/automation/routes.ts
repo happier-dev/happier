@@ -5,6 +5,7 @@ import {
   getActionSpec,
   type BrowserAutomationActionResultV1,
   type BrowserAutomationCancelActiveResultV1,
+  type ActionExecutorContext,
   type BrowserAutomationTimelineV1,
   type RuntimeActionIdV1,
 } from '@happier-dev/protocol';
@@ -25,7 +26,11 @@ export type BrowserAutomationRouteResult =
   | BrowserAutomationRouteFailure;
 
 export type BrowserAutomationRoutes = Readonly<{
-  dispatch(actionId: RuntimeActionIdV1, input: unknown): Promise<BrowserAutomationRouteResult>;
+  dispatch(
+    actionId: RuntimeActionIdV1,
+    input: unknown,
+    context?: ActionExecutorContext,
+  ): Promise<BrowserAutomationRouteResult>;
 }>;
 
 const invalidParameters: BrowserAutomationRouteFailure = {
@@ -70,7 +75,7 @@ export function createBrowserAutomationRoutes(input: Readonly<{
   service: BrowserAutomationDaemonService;
 }>): BrowserAutomationRoutes {
   return {
-    async dispatch(actionId, rawInput) {
+    async dispatch(actionId, rawInput, context) {
       if (actionId === 'browser.automation.status') {
         const view = readViewRef(rawInput);
         if (!view) return invalidParameters;
@@ -95,10 +100,18 @@ export function createBrowserAutomationRoutes(input: Readonly<{
       }
 
       if (actionId === 'browser.automation.cancelActive') {
-        const view = readViewRef(rawInput);
+        const parsed = getActionSpec(actionId).inputSchema.safeParse(rawInput ?? {});
+        if (!parsed.success) return invalidParameters;
+        const view = readViewRef(parsed.data);
         if (!view) return invalidParameters;
-        const requesterRef = readRequesterRef(rawInput) ?? { kind: 'agent', id: `${view.browserSessionId}` };
-        const canceled = input.service.cancelActive({ ...view, requesterRef });
+        if (context?.authority !== 'present_user') {
+          return BrowserAutomationCancelActiveResultV1Schema.parse({
+            v: 1,
+            outcome: 'owner_mismatch',
+            canceledCount: 0,
+          });
+        }
+        const canceled = input.service.cancelActive({ ...view, authority: 'present_user' });
         return canceled.ok
           ? BrowserAutomationCancelActiveResultV1Schema.parse({
               v: 1,
@@ -120,14 +133,4 @@ export function createBrowserAutomationRoutes(input: Readonly<{
       return input.service.execute(request.data);
     },
   };
-}
-
-function readRequesterRef(input: unknown): Readonly<{ kind: string; id: string }> | null {
-  if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
-  const ref = (input as Record<string, unknown>).requesterRef;
-  if (!ref || typeof ref !== 'object' || Array.isArray(ref)) return null;
-  const kind = (ref as Record<string, unknown>).kind;
-  const id = (ref as Record<string, unknown>).id;
-  if (typeof kind !== 'string' || typeof id !== 'string' || !kind || !id) return null;
-  return { kind, id };
 }

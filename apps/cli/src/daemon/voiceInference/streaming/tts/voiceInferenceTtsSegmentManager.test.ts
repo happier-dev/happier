@@ -245,6 +245,109 @@ describe('createVoiceInferenceTtsSegmentManager', () => {
     pending.resolve();
   });
 
+  it('keeps a client-driven stream alive well past the abandonment deadline', async () => {
+    vi.useFakeTimers();
+    const root = await createTempDir();
+    const cancelTts = vi.fn(async () => {});
+    const manager = createVoiceInferenceTtsSegmentManager({
+      voiceInferenceWorker: {
+        // The manager consumes and deletes each synthesized file, so every
+        // segment needs its own.
+        synthesizeTts: vi.fn(async (input: any) => {
+          const filePath = join(root, `${input.requestId}.wav`);
+          await writeFile(filePath, Buffer.from('audio'));
+          return {
+            requestId: input.requestId,
+            output: input.output,
+            filePath,
+            sizeBytes: 5,
+            name: 'segment.wav',
+          };
+        }),
+        cancelTts,
+      },
+      streamRoot: root,
+      prefetchDepth: 1,
+      ackTimeoutMs: 100,
+    });
+
+    const started = await manager.start({
+      requestId: 'tts-stream-long-playback',
+      text: 'First sentence. Second sentence. Third sentence.',
+      packId: 'kokoro-82m-v1.0-onnx-q8-wasm',
+      voiceId: null,
+      speed: null,
+      output: { codec: 'wav', mimeType: 'audio/wav' },
+    });
+    if (!started.ok) throw new Error('start failed');
+
+    // Reading a long reply aloud outlasts the abandonment deadline several times
+    // over. Every next and every ack is the client proving it is still driving
+    // the stream, so the deadline must move forward instead of retiring audio the
+    // user is still listening to. Each hop is shorter than the deadline; the
+    // total elapsed time is more than three times it.
+    for (let index = 0; index < 3; index += 1) {
+      await vi.advanceTimersByTimeAsync(60);
+      await expect(manager.next({
+        streamId: started.streamId,
+        generation: started.generation,
+      })).resolves.toMatchObject({ ok: true, event: { type: 'segment', segmentIndex: index } });
+      await vi.advanceTimersByTimeAsync(60);
+      await expect(manager.ack({
+        streamId: started.streamId,
+        generation: started.generation,
+        segmentId: `${started.streamId}:${index}`,
+        segmentIndex: index,
+      })).resolves.toMatchObject({ ok: true, ackedSegmentIndex: index, complete: index === 2 });
+    }
+    expect(cancelTts).not.toHaveBeenCalled();
+  });
+
+  it('rejects an acknowledgement before the matching segment is delivered', async () => {
+    const root = await createTempDir();
+    const audioPath = join(root, 'segment.wav');
+    await writeFile(audioPath, Buffer.from('audio'));
+    const manager = createVoiceInferenceTtsSegmentManager({
+      voiceInferenceWorker: {
+        synthesizeTts: vi.fn(async (input: any) => ({
+          requestId: input.requestId,
+          output: input.output,
+          filePath: audioPath,
+          sizeBytes: 5,
+          name: 'segment.wav',
+        })),
+        cancelTts: vi.fn(async () => {}),
+      },
+      streamRoot: root,
+      prefetchDepth: 1,
+    });
+
+    const started = await manager.start({
+      requestId: 'tts-stream-ack-before-delivery',
+      text: 'Deliver before acknowledging.',
+      packId: 'kokoro-82m-v1.0-onnx-q8-wasm',
+      voiceId: null,
+      speed: null,
+      output: { codec: 'wav', mimeType: 'audio/wav' },
+    });
+    if (!started.ok) throw new Error('start failed');
+
+    await expect(manager.ack({
+      streamId: started.streamId,
+      generation: started.generation,
+      segmentId: `${started.streamId}:0`,
+      segmentIndex: 0,
+    })).resolves.toMatchObject({ ok: false, errorCode: 'invalid_stream_state' });
+
+    await expect(manager.next({
+      streamId: started.streamId,
+      generation: started.generation,
+    })).resolves.toMatchObject({
+      ok: true,
+      event: { type: 'segment', segmentIndex: 0 },
+    });
+  });
+
   it('does not emit done before the delivered segment is playback-acked', async () => {
     const root = await createTempDir();
     const audioPath = join(root, 'segment.wav');

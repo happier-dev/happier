@@ -15,6 +15,7 @@ import {
   type ConnectedServiceOauthCredentialRawMetadata,
   type QualifiedConnectedAccountPurposeBindingV1,
   type QualifiedConnectedAccountCredentialSnapshotV4,
+  type QualifiedConnectedAccountGroupV4,
   type QualifiedConnectedAccountProfileV4,
   type QualifiedConnectedAccountRef,
 } from '@happier-dev/protocol';
@@ -23,11 +24,13 @@ import { randomBytes } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 
 import type { ApiClient } from '@/api/api';
+import {
+  resolveFirstPartyQualifiedConnectedAccountServiceForLegacyServiceInput,
+} from '@/plugins/projection/registry/connectedAccountPurposeCompatibility';
 import type {
   QualifiedConnectedAccountPeerClass,
   QualifiedConnectedAccountPeerOperationTransport,
 } from '@/api/client/qualifiedConnectedAccountApi';
-import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';
 import type { CatalogAgentId } from '@/agent/catalog/ids';
 import { requireAccountEncryptionCredentials } from '@/api/client/encryptionKey';
 import type { StoredCredentials } from '@/persistence';
@@ -97,6 +100,7 @@ import type {
 import {
   refreshQualifiedConnectedAccount,
 } from './refreshQualifiedConnectedAccount';
+import { sanitizeConnectedServiceDiagnosticError } from '../runtimeAuth/sanitizeConnectedServiceDiagnosticString';
 
 type BoundProfile = Readonly<{ serviceId: ConnectedServiceId; profileId: string }>;
 
@@ -121,6 +125,10 @@ export type QualifiedConnectedAccountRefreshRuntime = Readonly<{
     token: string;
     ref: QualifiedConnectedAccountRef;
   }>): Promise<QualifiedConnectedAccountCredentialSnapshotV4 | null>;
+  readGroup?(input: Readonly<{
+    service: QualifiedConnectedAccountRef['service'];
+    groupId: string;
+  }>): Promise<QualifiedConnectedAccountGroupV4 | null>;
   acquireRefreshLease(input: Readonly<{
     token: string;
     lease: unknown;
@@ -631,10 +639,11 @@ export async function persistConnectedServiceCredentialHealthForMaterializationF
   } catch (error) {
     logger.warn('[DAEMON RUN] Failed to update connected-service credential health after materialization failure', {
       serviceId: input.binding.serviceId,
-      profileId: input.binding.profileId,
       materializationCode: input.diagnostic.code,
       reason: input.diagnostic.reason ?? null,
-      error: serializeAxiosErrorForLog(error),
+      error: sanitizeConnectedServiceDiagnosticError(error, {
+        redactedValues: [input.binding.profileId],
+      }),
     });
   }
 }
@@ -751,7 +760,10 @@ async function persistUpdatedCredential(params: Readonly<{
 
 export class ConnectedServiceRefreshCoordinator {
   private readonly runtimeRegistry: ConnectedServiceRuntimeRegistry;
-  private readonly inFlightRefreshes = new Map<string, Promise<ConnectedServiceCredentialRefreshResult>>();
+  private readonly inFlightRefreshes = new Map<string, Readonly<{
+    credentialReady: Promise<ConnectedServiceCredentialRefreshResult>;
+    completion: Promise<ConnectedServiceCredentialRefreshResult>;
+  }>>();
   private readonly inFlightRefreshRematerializations = new Map<string, Promise<RematerializedTargetsResult>>();
   private readonly inFlightRefreshAuthUpdatedNotifications = new Map<string, Promise<void>>();
   // RR-1: rotate+distribute is ONE transaction on the single 'refreshed' completion path. This guard
@@ -1276,8 +1288,9 @@ export class ConnectedServiceRefreshCoordinator {
         '[DAEMON RUN] Qualified Connected Account scheduled refresh did not settle',
         {
           service: profile.ref.service,
-          accountId: profile.ref.accountId,
-          error: serializeAxiosErrorForLog(error),
+          error: sanitizeConnectedServiceDiagnosticError(error, {
+            redactedValues: [profile.ref.accountId],
+          }),
         },
       );
       throw error;
@@ -1314,7 +1327,11 @@ export class ConnectedServiceRefreshCoordinator {
     const result = await this.refreshOauthBinding(
       binding,
       this.params.now(),
-      { reason: 'spawn_preflight', force: input.force },
+      {
+        reason: 'spawn_preflight',
+        force: input.force,
+        adoptCredentialReadyFromInFlightRefresh: true,
+      },
     );
     if (result.status === 'not_needed') {
       const rematerialization = await this.maybeRematerializeStaleMaterializedHomesForFreshStoreBinding(binding);
@@ -1496,8 +1513,9 @@ export class ConnectedServiceRefreshCoordinator {
         '[DAEMON RUN] Qualified Connected Account request-auth refresh did not settle',
         {
           service: input.account.service,
-          accountId: input.account.accountId,
-          error: serializeAxiosErrorForLog(error),
+          error: sanitizeConnectedServiceDiagnosticError(error, {
+            redactedValues: [input.account.accountId],
+          }),
         },
       );
       return false;
@@ -1888,9 +1906,10 @@ export class ConnectedServiceRefreshCoordinator {
       } catch (error) {
         logger.debug('[ConnectedServiceRefreshCoordinator] materialized home freshness check failed; rematerializing target', {
           serviceId: binding.serviceId,
-          profileId: binding.profileId,
           agentId: target.agentId,
-          error: error instanceof Error ? error.message : String(error),
+          error: sanitizeConnectedServiceDiagnosticError(error, {
+            redactedValues: [binding.profileId],
+          }),
         });
         stale = true;
       }
@@ -1908,44 +1927,47 @@ export class ConnectedServiceRefreshCoordinator {
       force?: boolean;
       reason: ConnectedServiceCredentialRefreshReason;
       expectedCredentialRevision?: ConnectedServiceCredentialRevisionV1;
+      adoptCredentialReadyFromInFlightRefresh?: boolean;
     }>,
   ): Promise<ConnectedServiceCredentialRefreshResult> {
-    // Coalesce + serialize per `{serviceId, profileId}` binding (NOT split on `force`). A rotation
-    // consumes the refresh token server-side, so two concurrent refreshes for one binding could each
-    // present the same record and mint a superseded (401-bound) token. Any caller that arrives while a
-    // refresh is in flight awaits it; a forced caller adopts that result when it rotated, otherwise it
-    // runs its own refresh chained strictly after (never concurrently) so it reads the freshly
-    // persisted record.
+    // Coalesce + serialize the credential rotation per `{serviceId, profileId}` binding (NOT split on
+    // `force`). Downstream distribution is deliberately tracked as a separate completion: a restarted
+    // runner's spawn preflight may need the credential that the owner has already persisted while that
+    // same owner is waiting for the runner to respawn before distribution can finish. Making the
+    // credential-ready result wait on distribution creates a circular wait and poisons the daemon's
+    // global spawn gate. The initiating caller still owns and awaits the one distribution transaction;
+    // only a joining spawn preflight may adopt the already-persisted rotation early.
     const key = bindingKey(binding);
-    const existing = this.inFlightRefreshes.get(key);
-    if (existing) {
-      // A rejecting in-flight refresh represents an attempt that re-running concurrently would not
-      // improve; every joiner adopts the same rejection rather than firing a duplicate refresh.
-      const observed = await existing;
-      if (inFlightResultSatisfiesCaller(observed, options)) {
-        return observed;
+    while (true) {
+      const existing = this.inFlightRefreshes.get(key);
+      if (existing) {
+        // A rejecting credential rotation represents an attempt that re-running concurrently would
+        // not improve; every joiner adopts the same rejection rather than firing a duplicate refresh.
+        const observed = await existing.credentialReady;
+        if (inFlightResultSatisfiesCaller(observed, options)) {
+          return options.adoptCredentialReadyFromInFlightRefresh === true && observed.status === 'refreshed'
+            ? observed
+            : await existing.completion;
+        }
+        // Preserve the existing serialized forced-after-non-forced contract: health persistence and
+        // any non-rotation completion work settle before the forced retry re-reads canonical state.
+        await existing.completion;
+        continue;
       }
-      // Forced caller behind a non-rotating `not_needed`: run a fresh refresh, serialized after it.
-    }
 
-    const previous = this.inFlightRefreshes.get(key);
-    const promise = (async () => {
-      if (previous) {
-        // Serialize behind any refresh already running for this binding before reading/rotating so a
-        // chained refresh reads the freshly persisted (rotated) record instead of racing it.
-        await previous.catch(() => undefined);
-      }
-      return await this.finalizeRefreshResult(
+      const credentialReady = this.refreshOauthBindingUnserialized(binding, now, options);
+      const completion = credentialReady.then(async (result) => await this.finalizeRefreshResult(
         binding,
-        await this.refreshOauthBindingUnserialized(binding, now, options),
-      );
-    })();
-    this.inFlightRefreshes.set(key, promise);
-    try {
-      return await promise;
-    } finally {
-      if (this.inFlightRefreshes.get(key) === promise) {
-        this.inFlightRefreshes.delete(key);
+        result,
+      ));
+      const inFlight = { credentialReady, completion } as const;
+      this.inFlightRefreshes.set(key, inFlight);
+      try {
+        return await completion;
+      } finally {
+        if (this.inFlightRefreshes.get(key) === inFlight) {
+          this.inFlightRefreshes.delete(key);
+        }
       }
     }
   }
@@ -2078,9 +2100,10 @@ export class ConnectedServiceRefreshCoordinator {
         '[DAEMON RUN] Qualified Connected Account status probe did not settle',
         {
           serviceId: binding.serviceId,
-          profileId: binding.profileId,
           reason: options.reason,
-          error: serializeAxiosErrorForLog(error),
+          error: sanitizeConnectedServiceDiagnosticError(error, {
+            redactedValues: [binding.profileId],
+          }),
         },
       );
       return { status: 'unavailable' };
@@ -2415,9 +2438,10 @@ export class ConnectedServiceRefreshCoordinator {
         '[DAEMON RUN] Qualified Connected Account refresh did not settle',
         {
           serviceId: binding.serviceId,
-          profileId: binding.profileId,
           reason: options.reason,
-          error: serializeAxiosErrorForLog(error),
+          error: sanitizeConnectedServiceDiagnosticError(error, {
+            redactedValues: [binding.profileId],
+          }),
         },
       );
       return {
@@ -3081,10 +3105,11 @@ export class ConnectedServiceRefreshCoordinator {
     } catch (error) {
       logger.warn('[DAEMON RUN] Failed to update connected-service credential health after refresh', {
         serviceId: diagnostic.serviceId,
-        profileId: diagnostic.profileId,
         status: diagnostic.status,
         category: diagnostic.category ?? null,
-        error: serializeAxiosErrorForLog(error),
+        error: sanitizeConnectedServiceDiagnosticError(error, {
+          redactedValues: [diagnostic.profileId],
+        }),
       });
       return false;
     }
@@ -3395,10 +3420,11 @@ export class ConnectedServiceRefreshCoordinator {
     } catch (error) {
       logger.warn('[DAEMON RUN] Failed to dispatch connected-service credential health notification', {
         serviceId: diagnostic.serviceId,
-        profileId: diagnostic.profileId,
         status: diagnostic.status,
         category: diagnostic.category ?? null,
-        error: serializeAxiosErrorForLog(error),
+        error: sanitizeConnectedServiceDiagnosticError(error, {
+          redactedValues: [diagnostic.profileId],
+        }),
       });
     }
   }
@@ -3445,26 +3471,45 @@ export class ConnectedServiceRefreshCoordinator {
   ): Promise<CanonicalGroupStateForRefresh | null> {
     const key = `${input.serviceId}::${input.groupId}`;
     let group: CanonicalGroupStateForRefresh | null = null;
-    const reader = this.params.api.getConnectedServiceAuthGroup;
-    if (typeof reader === 'function') {
-      try {
-        const value = await reader.call(this.params.api, {
-          serviceId: input.serviceId,
+    const runtime = this.params.qualifiedConnectedAccountRuntime;
+    const service =
+      resolveFirstPartyQualifiedConnectedAccountServiceForLegacyServiceInput(
+        input.serviceId,
+      );
+    try {
+      if (
+        runtime
+        && runtime.resolvePeerClass() === 'advertised_v4'
+        && runtime.readGroup
+        && service
+      ) {
+        const value = await runtime.readGroup({
+          service,
           groupId: input.groupId,
         });
-        group = value
-          ? {
-              activeProfileId: typeof value.activeProfileId === 'string' && value.activeProfileId.trim().length > 0
-                ? value.activeProfileId
-                : null,
-              generation: typeof value.generation === 'number' && Number.isFinite(value.generation)
-                ? Math.trunc(value.generation)
-                : 0,
-            }
-          : null;
-      } catch {
-        group = null;
+        if (
+          value
+          && value.ref.groupId === input.groupId
+          && value.ref.service.pluginId === service.pluginId
+          && value.ref.service.localId === service.localId
+        ) {
+          const activeConnectedAccountId = value.activeConnectedAccountId;
+          const activeMember = activeConnectedAccountId
+            ? value.members.find((member) => (
+                member.connectedAccountId === activeConnectedAccountId
+                && member.enabled
+              ))
+            : null;
+          group = activeMember
+            ? {
+                activeProfileId: activeMember.connectedAccountId,
+                generation: value.generation,
+              }
+            : null;
+        }
       }
+    } catch {
+      group = null;
     }
     this.canonicalGroupStateCache.set(key, { atMs: now, group });
     return group;

@@ -80,7 +80,7 @@ describe('ConnectedServiceQuotasCoordinator startup current-source refresh sched
       registerProviderAccountUsageSnapshotPlain: vi.fn(async () => {}),
       getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
       getConnectedServiceCredentialSealed: vi.fn(async () => null),
-    } satisfies QuotaApi;
+    };
     const fetcher: ConnectedServiceQuotaFetcher = {
       serviceId: 'openai-codex',
       loadQuota: vi.fn(async () => refreshedUsageSnapshot),

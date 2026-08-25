@@ -29,6 +29,7 @@ import {
 import {
     createRunnerManagedServiceEndpointProjectionBinding,
     createRunnerManagedServiceInvocationOwner,
+    RUNNER_MANAGED_SERVICE_MAX_ACTIVE_ENDPOINT_READS,
 } from './createRunnerManagedServiceInvocationOwner';
 import {
     createAgentSessionRunnerFactoryBinding,
@@ -364,6 +365,89 @@ describe('runner managed-service invocation owner endpoint binding', () => {
             .rejects.toMatchObject({
                 code: 'plugin_managed_server_projection_identity_mismatch',
             });
+    });
+
+    function exactHandleReadHarness(chunks: readonly Uint8Array[]) {
+        const request = vi.fn(async () => Object.freeze({
+            ok: true,
+            status: 200,
+            statusText: 'OK',
+            headers: Object.freeze({}),
+            body: new ReadableStream<Uint8Array>({
+                start(controller) {
+                    for (const chunk of chunks) controller.enqueue(chunk);
+                    controller.close();
+                },
+            }),
+        }));
+        const binding = createRunnerManagedServiceEndpointProjectionBinding({
+            publishEndpointProjection: async (input) =>
+                createManagedServiceEndpointProjectionV1(input).projectionToken,
+            releaseEndpointProjection: async () => true,
+        }, {
+            resolveExactHandleRequestPort: () => Object.freeze({
+                request,
+                isCurrent: async () => true,
+            }),
+        });
+        const route = {
+            kind: 'exactHandle' as const,
+            claim: exactHandleClaim(),
+            serviceId: 'provider-wrapper',
+        };
+        const open = async (requestId: string) => await binding.endpointReadPort.open({
+            v: 1,
+            requestId,
+            route,
+            pathAndQuery: '/session/events',
+            method: 'GET',
+            headers: {},
+            timeoutMs: 1_000,
+        });
+        return { binding, route, open };
+    }
+
+    // The public request contract gives post-header body lifetime to the caller signal and the
+    // exact handle. A backpressured consumer that spends a long time on one chunk is still a
+    // current caller, so the transport must not decide on its own that the stream is abandoned.
+    it('keeps an admitted response readable across a long consumer gap', async () => {
+        vi.useFakeTimers();
+        try {
+            const { binding, route, open } = exactHandleReadHarness([
+                new Uint8Array([1]),
+                new Uint8Array([2]),
+            ]);
+            const requestId = '00000000-0000-4000-8000-0000000000a1';
+
+            await expect(open(requestId)).resolves.toMatchObject({ status: 'opened' });
+            await expect(binding.endpointReadPort.next({ v: 1, requestId, route }))
+                .resolves.toMatchObject({ status: 'chunk' });
+
+            await vi.advanceTimersByTimeAsync(600_000);
+
+            await expect(binding.endpointReadPort.next({ v: 1, requestId, route }))
+                .resolves.toMatchObject({ status: 'chunk' });
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    // Admission capacity is a real runner resource bound: every live entry retains an abort
+    // controller plus a Fetch body reader and its socket. It is a bound, not a lifetime — a
+    // cancelled read must return its slot immediately.
+    it('bounds concurrent reads at the documented capacity and re-admits after a cancel', async () => {
+        const { binding, route, open } = exactHandleReadHarness([new Uint8Array([1])]);
+        const requestIdFor = (index: number) =>
+            `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`;
+
+        for (let index = 0; index < RUNNER_MANAGED_SERVICE_MAX_ACTIVE_ENDPOINT_READS; index += 1) {
+            await expect(open(requestIdFor(index))).resolves.toMatchObject({ status: 'opened' });
+        }
+        await expect(open(requestIdFor(9_999))).resolves.toMatchObject({ status: 'unavailable' });
+
+        await expect(binding.endpointReadPort.cancel({ v: 1, requestId: requestIdFor(0), route }))
+            .resolves.toMatchObject({ status: 'cancelled', cancelled: true });
+        await expect(open(requestIdFor(9_999))).resolves.toMatchObject({ status: 'opened' });
     });
 
     it('preserves exact-handle currentness and cancellation without endpoint projection authority', async () => {

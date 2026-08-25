@@ -1993,12 +1993,10 @@ describe('createDaemonPathPluginChangePreparer', () => {
     await expect(readFile(counterPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
-  // The reserved `happier.*` namespace stops a distributed third-party artifact
-  // from impersonating a first-party plugin. It must not stop a maintainer from
-  // running the dev loop against the plugins this checkout actually ships:
-  // every bundled manifest uses a reserved id, so a blanket external default
-  // locks first-party development out of its own product.
-  it('prepares a development install of a plugin this checkout bundles under its reserved first-party id', async () => {
+  // Local development remains externally admitted even when its source is also
+  // used to generate a bundled artifact. Exact generated artifact custody is a
+  // separate fact owned by the generated-artifact resolver.
+  it('prepares a local development source under its reserved id without granting bundled authority', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-plugin-home-bundled-dev-'));
     roots.push(happyHomeDir);
     const bundledManifest = JSON.parse(

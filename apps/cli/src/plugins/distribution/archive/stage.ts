@@ -278,7 +278,7 @@ function validatePublishedEntrypoints(
 
 type ExpectedUiArtifact = Readonly<{
   tier: 'hostedWeb' | 'reactNative';
-  voicePlatforms?: ReadonlySet<'web' | 'ios' | 'android'>;
+  reactNativePlatforms?: ReadonlySet<'web' | 'ios' | 'android'>;
   expectedRepackModule?: Readonly<{
     modulePath: string;
     exportName: string;
@@ -290,7 +290,7 @@ function expectedUiArtifacts(manifest: CanonicalPluginManifest): ReadonlyMap<str
   const claim = (artifact: Readonly<{
     id: string;
     tier: 'hostedWeb' | 'reactNative';
-    voicePlatforms?: readonly ('web' | 'ios' | 'android')[];
+    reactNativePlatforms?: readonly ('web' | 'ios' | 'android')[];
     expectedRepackModule?: Readonly<{
       modulePath: string;
       exportName: string;
@@ -298,10 +298,10 @@ function expectedUiArtifacts(manifest: CanonicalPluginManifest): ReadonlyMap<str
   }>): void => {
     const current = expected.get(artifact.id);
     if (current && current.tier !== artifact.tier) {
-      reject('manifest_invalid', `UI artifact ${artifact.id} is assigned conflicting renderer tiers`);
+      reject('manifest_invalid', `UI artifact ${artifact.id} is assigned conflicting UI artifact tiers`);
     }
-    const voicePlatforms = artifact.voicePlatforms || current?.voicePlatforms
-      ? new Set([...(current?.voicePlatforms ?? []), ...(artifact.voicePlatforms ?? [])])
+    const reactNativePlatforms = artifact.reactNativePlatforms || current?.reactNativePlatforms
+      ? new Set([...(current?.reactNativePlatforms ?? []), ...(artifact.reactNativePlatforms ?? [])])
       : undefined;
     if (
       current?.expectedRepackModule
@@ -316,7 +316,7 @@ function expectedUiArtifacts(manifest: CanonicalPluginManifest): ReadonlyMap<str
     const expectedRepackModule = current?.expectedRepackModule ?? artifact.expectedRepackModule;
     expected.set(artifact.id, Object.freeze({
       tier: artifact.tier,
-      ...(voicePlatforms ? { voicePlatforms } : {}),
+      ...(reactNativePlatforms ? { reactNativePlatforms } : {}),
       ...(expectedRepackModule ? { expectedRepackModule } : {}),
     }));
   };
@@ -334,10 +334,22 @@ function expectedUiArtifacts(manifest: CanonicalPluginManifest): ReadonlyMap<str
     claim({
       id: provider.client.artifactId,
       tier: 'reactNative',
-      voicePlatforms: provider.platforms,
+      reactNativePlatforms: provider.platforms,
       expectedRepackModule: Object.freeze({
         modulePath: provider.client.modulePath,
         exportName: provider.client.exportName,
+      }),
+    });
+  }
+  for (const action of manifest.contributes.actions) {
+    if (action.execution.target !== 'client') continue;
+    claim({
+      id: action.execution.client.artifactId,
+      tier: 'reactNative',
+      reactNativePlatforms: action.execution.platforms,
+      expectedRepackModule: Object.freeze({
+        modulePath: action.execution.client.modulePath,
+        exportName: action.execution.client.exportName,
       }),
     });
   }
@@ -398,7 +410,7 @@ async function validateUiArtifacts(input: Readonly<{
     .sort((left, right) => left.localeCompare(right));
   if (expectedIds.length === 0) {
     if (manifestFile || packagedFiles.length > 0) {
-      reject('ui_artifact_identity_mismatch', 'Candidate contains generated UI artifacts that no renderer declares');
+      reject('ui_artifact_identity_mismatch', 'Candidate contains generated UI artifacts that no contribution declares');
     }
     return Object.freeze({
       contributionIds: Object.freeze([]),
@@ -424,17 +436,17 @@ async function validateUiArtifacts(input: Readonly<{
   }
 
   for (const [artifactId, expectation] of expected) {
-    if (!expectation.voicePlatforms) continue;
+    if (!expectation.reactNativePlatforms) continue;
     const actualPlatforms = new Set(parsed.data.entries
       .filter((entry) => entry.contributionId === artifactId && entry.tier === 'reactNative')
       .flatMap((entry) => entry.platform ? [entry.platform] : []));
     if (
-      actualPlatforms.size !== expectation.voicePlatforms.size
-      || [...expectation.voicePlatforms].some((platform) => !actualPlatforms.has(platform))
+      actualPlatforms.size !== expectation.reactNativePlatforms.size
+      || [...expectation.reactNativePlatforms].some((platform) => !actualPlatforms.has(platform))
     ) {
       reject(
         'ui_artifact_identity_mismatch',
-        `Generated Voice UI artifact platforms do not exactly match the declaration: ${artifactId}`,
+        `Generated React Native UI artifact platforms do not exactly match the declaration: ${artifactId}`,
       );
     }
   }
@@ -444,7 +456,7 @@ async function validateUiArtifacts(input: Readonly<{
   for (const entry of parsed.data.entries) {
     const expectation = expected.get(entry.contributionId);
     if (expectation?.tier !== entry.tier) {
-      reject('ui_artifact_identity_mismatch', `Generated UI artifact tier does not match renderer: ${entry.contributionId}`);
+      reject('ui_artifact_identity_mismatch', `Generated UI artifact tier does not match its declaring contribution: ${entry.contributionId}`);
     }
     if (
       entry.repack
@@ -456,7 +468,7 @@ async function validateUiArtifacts(input: Readonly<{
     ) {
       reject(
         'ui_artifact_identity_mismatch',
-        `Generated Voice UI artifact Re.Pack identity does not match the declaration: ${entry.contributionId}`,
+        `Generated React Native UI artifact Re.Pack identity does not match the declaration: ${entry.contributionId}`,
       );
     }
     if (

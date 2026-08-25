@@ -24,10 +24,6 @@ function addEntry(
     entriesById[entry.id] = Object.freeze(entry);
 }
 
-function displayText(value: string | Readonly<{ fallback: string }>): string {
-    return typeof value === 'string' ? value : value.fallback;
-}
-
 function resolveReference(
     pluginId: string,
     reference: string | Readonly<{ pluginId: string; localId: string }>,
@@ -50,7 +46,6 @@ function projectBrowserTargets(
             continue;
         }
         const id = `browserTarget:${pluginId}:${contribution.definition.id}`;
-        const title = displayText(contribution.definition.title);
         addEntry(entriesById, {
             id,
             pluginId,
@@ -62,15 +57,13 @@ function projectBrowserTargets(
                 url: contribution.definition.url,
             }),
             display: Object.freeze({
-                title,
+                title: contribution.definition.title,
                 addressLabel: contribution.definition.url,
             }),
             currentUrl: contribution.definition.url,
             launchMode: contribution.definition.launch,
             profileMode: contribution.definition.profile,
-            description: contribution.definition.description
-                ? displayText(contribution.definition.description)
-                : undefined,
+            description: contribution.definition.description,
             availability: contribution.definition.availability,
             metadata: contribution.definition.metadata,
         });
@@ -98,12 +91,10 @@ function projectBrowserActions(
             targetId: `browserTarget:${targetReference.pluginId}:${targetReference.localId}`,
             placement: contribution.definition.placement,
             display: Object.freeze({
-                title: displayText(contribution.definition.title),
+                title: contribution.definition.title,
                 ...(contribution.definition.icon ? { iconToken: contribution.definition.icon } : {}),
             }),
-            description: contribution.definition.description
-                ? displayText(contribution.definition.description)
-                : undefined,
+            description: contribution.definition.description,
             order: contribution.definition.order,
             availability: contribution.definition.availability,
             metadata: contribution.definition.metadata,

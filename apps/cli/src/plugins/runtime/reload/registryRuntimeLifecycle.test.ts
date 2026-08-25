@@ -428,6 +428,64 @@ async function invokeIdentity(
 }
 
 describe('daemon plugin registry runtime lifecycle owner', () => {
+  it('preserves an external installation materialization in the committed runtime registry', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-daemon-plugin-origin-materialization-'));
+    const reloadController = createPluginReloadController({ happyHomeDir });
+    const runtimeLifecycle = createDaemonPluginRegistryRuntimeLifecycle({
+      happyHomeDir,
+      reloadController,
+      resolveCurrentMachineId: () => 'machine-lifecycle',
+      resolveCurrentMachineExecutionOriginContext: async () => ({
+        serverIdentityId: 'srv_lifecycle',
+        machineId: 'machine-lifecycle',
+      }),
+    });
+    const store = createPluginRegistryStateStore({ happyHomeDir, runtimeLifecycle });
+    const pluginId = 'acme.origin-materialization';
+    const fixture = await createExecutableInstallFixture(happyHomeDir, pluginId);
+
+    await store.initialize();
+    await expect(installFixtureCandidate(store, fixture.input)).resolves.toMatchObject({ status: 'committed' });
+    const snapshot = await store.readSnapshot();
+    const materializationId = snapshot.materializationIdsByPluginId[pluginId];
+    expect(materializationId).toEqual(expect.any(String));
+
+    const lease = await reloadController.acquireRuntimeRegistry();
+    try {
+      expect(lease.registry.contributes.materializationIdsByPluginId).toMatchObject({
+        [pluginId]: materializationId,
+      });
+      await expect(lease.registry.activateContributionsOnDemand([{
+        pluginId,
+        family: 'actions',
+        localId: 'identity',
+      }])).resolves.toEqual([{
+        pluginId,
+        diagnostics: [],
+      }]);
+      expect(lease.registry.activatedPluginIds).toContain(pluginId);
+      expect(lease.registry.resolveCurrentPluginMaterializationRef?.(pluginId)).toEqual({
+        pluginId,
+        machineId: 'machine-lifecycle',
+        materializationId,
+      });
+      await expect(invokeIdentity(lease.registry, pluginId)).resolves.toMatchObject({
+        status: 'executed',
+      });
+      await expect(lease.registry.resolveCurrentPluginExecutionOrigin?.(pluginId)).resolves.toEqual({
+        serverIdentityId: 'srv_lifecycle',
+        materializationRef: {
+          pluginId,
+          machineId: 'machine-lifecycle',
+          materializationId,
+        },
+      });
+    } finally {
+      await lease.release();
+      await reloadController.shutdown({ timeoutMs: 5_000 });
+    }
+  });
+
   it('keeps a retained Agent hook lease current while a peer plugin is adopted', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-daemon-plugin-retained-agent-hook-'));
     const reloadController = createPluginReloadController({ happyHomeDir });

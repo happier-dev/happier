@@ -246,6 +246,42 @@ describe('resolveSessionRuntimeSnapshot', () => {
     expect(result.spawnOptions.resume).toBeUndefined();
   });
 
+  it('restores the persisted canonical Codex runtime descriptor for a default respawn', async () => {
+    const runtimeSnapshot = await loadRuntimeSnapshotModule();
+    expect(runtimeSnapshot).not.toBeNull();
+    if (!runtimeSnapshot) return;
+
+    const defaultCodexOptions = {
+      directory: '/tmp/repo',
+      existingSessionId: 'session-1',
+      backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
+    } satisfies SpawnSessionOptions;
+    const runtimeDescriptorV1 = {
+      v: 1,
+      agentId: 'codex',
+      agent: {
+        backendMode: 'appServer',
+        providerSessionId: 'codex-thread-from-metadata',
+      },
+    } as const;
+
+    const result = runtimeSnapshot.resolveSessionRuntimeSnapshot({
+      incomingOptions: defaultCodexOptions,
+      trackedSpawnOptions: defaultCodexOptions,
+      persistedMetadata: {
+        flavor: 'codex',
+        codexSessionId: 'codex-thread-from-metadata',
+        runtimeDescriptorV1,
+      },
+    });
+
+    expect(result.snapshot.vendorResumeId).toEqual({
+      value: 'codex-thread-from-metadata',
+      updatedAt: null,
+    });
+    expect(result.spawnOptions.runtimeDescriptorV1).toEqual(runtimeDescriptorV1);
+  });
+
   it('prefers the persisted provider identity over stale tracked observation', async () => {
     const runtimeSnapshot = await loadRuntimeSnapshotModule();
     expect(runtimeSnapshot).not.toBeNull();

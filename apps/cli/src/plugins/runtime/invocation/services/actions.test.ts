@@ -1086,14 +1086,8 @@ describe('plugin invocation ActionsService', () => {
         expect(execute).not.toHaveBeenCalled();
     });
 
-    it('projects Session-subagent reads while rejecting lifecycle writes', async () => {
-        const execute = vi.fn()
-            .mockResolvedValueOnce({ ok: true as const, result: [] })
-            .mockResolvedValueOnce({ ok: true as const, result: null })
-            .mockResolvedValueOnce({
-                ok: true as const,
-                result: { kind: 'snapshot' as const, subagents: [] },
-            });
+    it('keeps every raw Session-subagent Action unavailable to plugin callers', async () => {
+        const execute = vi.fn();
         const service = createPluginInvocationActionsService({
             seed: {
                 plugin: { id: 'acme.caller', version: '1.0.0' },
@@ -1108,42 +1102,19 @@ describe('plugin invocation ActionsService', () => {
             invokeContributedAction: vi.fn(),
         });
 
-        for (const [actionId, input, expected] of [
-            ['sessions.subagents.list', { parentSessionId: 'session-outside' }, []],
-            ['sessions.subagents.get', { id: 'subagent-outside', parentSessionId: 'session-outside' }, null],
-            ['sessions.subagents.watch', {
-                id: 'subagent-outside',
-                parentSessionId: 'session-outside',
-            }, { kind: 'snapshot', subagents: [] }],
+        for (const actionId of [
+            'sessions.subagents.list',
+            'sessions.subagents.get',
+            'sessions.subagents.watch',
+            'sessions.subagents.upsert',
+            'sessions.subagents.updateStatus',
+            'sessions.subagents.complete',
         ] as const) {
-            await expect(Reflect.apply(service.execute, service, [actionId, input]))
-                .resolves.toEqual(expected);
-        }
-
-        for (const [actionId, input] of [
-            ['sessions.subagents.upsert', {
-                id: 'subagent-outside',
-                parentSessionId: 'session-outside',
-                origin: 'agent',
-                kind: 'native',
-                agentRef: { agentId: 'acme.caller' },
-            }],
-            ['sessions.subagents.updateStatus', {
-                id: 'subagent-outside',
-                parentSessionId: 'session-outside',
-                status: 'running',
-            }],
-            ['sessions.subagents.complete', {
-                id: 'subagent-outside',
-                parentSessionId: 'session-outside',
-                status: 'completed',
-            }],
-        ] as const) {
-            await expect(Reflect.apply(service.execute, service, [actionId, input]))
+            await expect(Reflect.apply(service.execute, service, [actionId, {}]))
                 .rejects.toMatchObject({ code: 'plugin_action_not_available' });
         }
 
-        expect(execute).toHaveBeenCalledTimes(3);
+        expect(execute).not.toHaveBeenCalled();
     });
 
     it('invokes an executor-backed runtime action through its exact canonical schemas', async () => {

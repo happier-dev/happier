@@ -1,7 +1,6 @@
-import { execFile as execFileCallback } from 'node:child_process';
 import { win32 as windowsPath } from 'node:path';
-import { promisify } from 'node:util';
 
+import { execFileWithDeadline, isPidPresent } from '@happier-dev/cli-common/process';
 import { taskkillWindowsProcessTree } from '@/subprocess/supervision/taskkillWindowsProcessTree';
 
 import { readProcessIdentityByPid } from '../../processIdentity';
@@ -13,11 +12,8 @@ import type {
 import { parseWindowsCommandLine } from './windowsCommandLine';
 import {
   readWindowsProcessInventory,
-  type WindowsProcessInventoryExecFile,
   type WindowsProcessInventoryFact,
 } from './windowsProcessInventory';
-
-const execFile = promisify(execFileCallback);
 
 export type WindowsTerminalLaunchCustody = Readonly<{
   executablePath: string;
@@ -51,15 +47,6 @@ export type WindowsProcessCustodyDependencies = Readonly<{
   sleepFn?: (ms: number) => Promise<void>;
   quiescenceMs?: number;
 }>;
-
-function isPidAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 function normalizeWindowsExecutablePath(value: string): string {
   const trimmed = value.trim().replace(/^\\\\\?\\/u, '');
@@ -140,7 +127,10 @@ export function createExactWindowsProcessCancellation(
     params.readProcessIdentityByPidFn ?? readProcessIdentityByPid;
   const terminateProcessTree =
     params.terminateProcessTreeFn ?? taskkillWindowsProcessTree;
-  const checkPidAlive = params.isPidAliveFn ?? isPidAlive;
+  // Shared canonical probe, not a local copy: custody's own version used a bare `catch`, so an
+  // access-denied process read as dead and this function reported `{ status: 'stopped' }` for a
+  // process that was still running.
+  const checkPidAlive = params.isPidAliveFn ?? isPidPresent;
   let cancellation: ReturnType<CancelStartupLaunch> | null = null;
 
   return () => {
@@ -229,13 +219,10 @@ export function createExactWindowsProcessCancellation(
 export async function readAllWindowsProcessFacts(): Promise<
   ReadonlyMap<number, WindowsProcessInventoryFact>
 > {
-  const execFileBoundary: WindowsProcessInventoryExecFile =
-    async (command, args, options) => {
-      const result = await execFile(command, [...args], options);
-      return { stdout: result.stdout };
-    };
   return await readWindowsProcessInventory({
-    execFile: execFileBoundary,
+    // Deadline-owning boundary: a `child_process` `timeout` turns a completed inventory into an
+    // empty one that still reports success, i.e. "no such process" for every live pid.
+    execFile: execFileWithDeadline,
   });
 }
 

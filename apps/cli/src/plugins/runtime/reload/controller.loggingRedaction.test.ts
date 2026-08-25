@@ -49,7 +49,7 @@ function createRuntimeRegistry(): ResolvedExecutablePluginRuntimeRegistry {
         activateContributionsOnDemand: async () => [],
         resolvePromptAssetBlocks: async () => [],
         retireConsumers: () => undefined,
-        retirePluginConsumers: () => undefined,
+        retirePluginConsumers: async () => undefined,
         addRuntimeDisposable: (_pluginId, disposable) => disposable,
         createAgentInvocationServices: async () => {
             throw new Error('Reload-listener logging fixture does not invoke Agent services');

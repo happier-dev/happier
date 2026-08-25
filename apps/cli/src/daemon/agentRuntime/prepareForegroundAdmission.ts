@@ -79,7 +79,7 @@ import type { DaemonSpawnHooks } from '@/daemon/spawnHooks';
 import { ensurePrivateConnectedServiceMaterializedRoot } from '@/daemon/connectedServices/materialize/privateMaterializedRoot';
 import { normalizeMaterializationKeyForPath } from '@/daemon/connectedServices/materialize/normalizeMaterializationKeyForPath';
 import { createBestEffortCleanupDirectory } from '@/daemon/connectedServices/materialization/materializer';
-import { readDeclaredCatalogConnectedServiceIds } from '@/agent/catalog/registry';
+import { isLegacyServiceKeyedCompatibilityCatalogAgent } from '@/agent/catalog/registry';
 
 import type {
   ForegroundAgentRuntimeAdmissionOwnerRequestV1,
@@ -459,19 +459,6 @@ export async function prepareForegroundAgentRuntimeAdmission(
       lease,
     });
     if (providerLaunch && !providerLaunch.ok) {
-      if (
-        'kind' in providerLaunch
-        && providerLaunch.kind === 'managed_provider_requires_daemon'
-      ) {
-        return refusal(createProviderErrorV1(
-          'provider_agent_runtime_unsupported',
-          {
-            connectionId:
-              request.selection?.ref.providerConnectionId ?? undefined,
-            machineId: request.machineId,
-          },
-        ));
-      }
       return refusal(providerLaunch.error);
     }
     if (providerLaunch?.ok && providerLaunch.kind !== 'provider') {
@@ -551,9 +538,9 @@ export async function prepareForegroundAgentRuntimeAdmission(
         ? activeProviderLaunch.connectedServices
         : request.connectedServices ?? null;
     const legacyConnectedServiceCatalogAgent =
-      readDeclaredCatalogConnectedServiceIds(
+      isLegacyServiceKeyedCompatibilityCatalogAgent(
         lease.registry.contributes.catalogEntriesById[request.agentId],
-      ).length > 0;
+      );
     const externalPurposeDeclarations = !legacyConnectedServiceCatalogAgent
       ? resolveQualifiedPurposeDeclarationSnapshotForAgentSpawn({
           agentId: request.agentId,

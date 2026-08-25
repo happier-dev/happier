@@ -204,6 +204,62 @@ describe('managed-service attach client access', () => {
         expect(serialized).not.toContain(expectedAuthorization);
     });
 
+    it('refuses a static credential-bearing health header before any supervisor effect', async () => {
+        const harness = createAttachHarness();
+        const services = harness.owner.bindScope(harness.scope, exec);
+
+        await expect(services.supervise({
+            ...ATTACH_SPEC,
+            healthCheck: {
+                ...ATTACH_SPEC.healthCheck,
+                headers: { Authorization: 'Basic c3RhdGlj' },
+            },
+            clientAccess: { kind: 'none' },
+        })).rejects.toMatchObject({
+            code: 'plugin_managed_service_spec_invalid',
+        });
+        expect(harness.supervise).not.toHaveBeenCalled();
+    });
+
+    it('merges the host credential after ordinary canonicalized health headers', async () => {
+        const harness = createAttachHarness({
+            resolveDeclaredSecret: async () => declaredSecretLease('hunter2'),
+        });
+        const services = harness.owner.bindScope(harness.scope, exec);
+
+        await services.supervise({
+            ...ATTACH_SPEC,
+            healthCheck: {
+                ...ATTACH_SPEC.healthCheck,
+                headers: { 'X-Probe': 'ready' },
+            },
+            clientAccess: {
+                kind: 'declaredSecretBasic',
+                username: 'opencode',
+                passwordSecretId: 'opencodeServerPassword',
+            },
+        });
+
+        const ownedSpec = harness.supervise.mock.calls[0]?.[0];
+        expect(ownedSpec?.healthCheck?.kind === 'http'
+            ? ownedSpec.healthCheck.headers
+            : undefined).toEqual({ 'x-probe': 'ready' });
+        const resolveHealthHeaders = ownedSpec?.healthCheck?.kind === 'http'
+            ? ownedSpec.healthCheck.resolveHeaders
+            : undefined;
+        if (!resolveHealthHeaders) {
+            throw new Error('expected a current declared-secret health resolver');
+        }
+        await expect(resolveHealthHeaders()).resolves.toMatchObject({
+            headers: {
+                authorization: `Basic ${Buffer.from(
+                    'opencode:hunter2',
+                    'utf8',
+                ).toString('base64')}`,
+            },
+        });
+    });
+
     it('keeps an unconfigured attach unauthenticated while re-resolving its declared secret', async () => {
         let recorded: string | null = null;
         const hostFetch = vi.fn<typeof globalThis.fetch>(async () =>

@@ -1,6 +1,6 @@
-import { execFile } from 'node:child_process';
 import { readFile, readdir, readlink } from 'node:fs/promises';
-import { promisify } from 'node:util';
+
+import { execFileWithDeadline } from '@happier-dev/cli-common/process';
 
 import type {
     LocalServiceInventoryDiagnostic,
@@ -21,11 +21,18 @@ export type LocalServicesScanResult = Readonly<{
     diagnostics: readonly LocalServiceInventoryDiagnostic[];
 }>;
 
-/** The single platform boundary used by inventory and managed endpoint detection. */
+/**
+ * The single platform boundary used by inventory and managed endpoint detection.
+ *
+ * darwin (`lsof`/`ps`) and windows (`netstat`/`powershell`) run through `execFileWithDeadline`
+ * rather than a `child_process` `timeout`, which reports a killed scan as a SUCCESS with empty
+ * stdout on a stalled loop — indistinguishable from "nothing is listening". Linux reads `/proc`
+ * and spawns nothing, so it has never been exposed to it.
+ */
 export async function scanPlatformLocalServices(): Promise<LocalServicesScanResult> {
     if (process.platform === 'darwin') {
         const result = await readDarwinLocalServiceListeners({
-            execFile: promisify(execFile),
+            execFile: execFileWithDeadline,
         });
         return {
             listeners: result.listeners,
@@ -37,7 +44,7 @@ export async function scanPlatformLocalServices(): Promise<LocalServicesScanResu
 
     if (process.platform === 'win32') {
         const result = await readWindowsLocalServiceListeners({
-            execFile: promisify(execFile),
+            execFile: execFileWithDeadline,
         });
         return {
             listeners: result.listeners,

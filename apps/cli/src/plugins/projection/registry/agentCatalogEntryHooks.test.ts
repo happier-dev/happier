@@ -846,6 +846,10 @@ describe('createAgentRuntimeCatalogEntryHooks', () => {
                         probeInputs.push([params]);
                         return [{ id: 'config-from-plugin', name: 'Config from plugin' }];
                     },
+                    probePassiveRealtimeSetupRaw: async (params: Readonly<Record<string, unknown>>) => {
+                        probeInputs.push([params]);
+                        return { v: 1, status: 'ready' };
+                    },
                 },
             },
         })();
@@ -887,6 +891,12 @@ describe('createAgentRuntimeCatalogEntryHooks', () => {
             backendTarget: undefined,
             accountSettings: null,
         })).resolves.toEqual([{ id: 'config-from-plugin', name: 'Config from plugin' }]);
+        await expect(adapter?.probePassiveRealtimeSetupRaw?.({
+            cwd: '/workspace',
+            timeoutMs: 1_500,
+            backendTarget: undefined,
+            accountSettings: null,
+        })).resolves.toEqual({ v: 1, status: 'ready' });
         expect(probeInputs[0]?.[0]).toEqual(expect.objectContaining({
             cwd: '/workspace',
             timeoutMs: 1_500,
@@ -903,6 +913,7 @@ describe('createAgentRuntimeCatalogEntryHooks', () => {
         }));
         expect(probeInputs[1]?.[0]).toEqual(expect.objectContaining({ probeKind: 'modes' }));
         expect(probeInputs[2]?.[0]).toEqual(expect.objectContaining({ probeKind: 'configOptions' }));
+        expect(probeInputs[3]?.[0]).toEqual(expect.objectContaining({ probeKind: 'passiveRealtimeSetup' }));
     });
 
     it('uses the declared system-tool resolver for externally contributed Agent preflight probes', async () => {
@@ -1002,6 +1013,7 @@ describe('createAgentRuntimeCatalogEntryHooks', () => {
             expect(adapter?.probeModelsRaw).toBeTypeOf('function');
             expect(adapter?.probeModesRaw).toBeTypeOf('function');
             expect(adapter?.probeConfigOptionsRaw).toBeTypeOf('function');
+            expect(adapter?.probePassiveRealtimeSetupRaw).toBeTypeOf('function');
         } finally {
             if (previousOpenAiApiKey === undefined) {
                 delete process.env.OPENAI_API_KEY;
@@ -2935,4 +2947,5 @@ describe('createAgentRuntimeCatalogEntryHooks', () => {
             await rm(root, { recursive: true, force: true });
         }
     });
+
 });

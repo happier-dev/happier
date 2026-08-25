@@ -1,13 +1,11 @@
 import os from 'os';
-import { execFile } from 'child_process';
-import { promisify } from 'util';
+
+import { execFileWithDeadline } from '@happier-dev/cli-common/process';
 
 import { configuration } from '@/configuration';
 import { projectPath } from '@/projectPath';
 import type { MachineMetadata } from '@/api/types';
 import packageJson from '../../../package.json';
-
-const execFileAsync = promisify(execFile);
 
 export async function getPreferredHostName(): Promise<string> {
   const fallback = os.hostname();
@@ -17,8 +15,11 @@ export async function getPreferredHostName(): Promise<string> {
 
   const tryScutil = async (key: 'HostName' | 'LocalHostName' | 'ComputerName'): Promise<string | null> => {
     try {
-      const { stdout } = await execFileAsync('scutil', ['--get', key], { timeout: 400 });
-      const value = typeof stdout === 'string' ? stdout.trim() : '';
+      // 400 ms is a very small budget on a loop that stalls for seconds; with a `child_process`
+      // `timeout` that turns a completed `scutil` into an empty success, which reads exactly like
+      // "this key is not set" and silently demotes the machine to its `os.hostname()` fallback.
+      const { stdout } = await execFileWithDeadline('scutil', ['--get', key], { timeout: 400 });
+      const value = String(stdout).trim();
       return value.length > 0 ? value : null;
     } catch {
       return null;

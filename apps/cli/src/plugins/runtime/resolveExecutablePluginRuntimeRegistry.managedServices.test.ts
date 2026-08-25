@@ -1,11 +1,14 @@
 import {
+    chmod,
     copyFile,
     mkdir,
     mkdtemp,
     readFile,
+    realpath,
     rm,
     stat,
     symlink,
+    writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { delimiter, isAbsolute, join, relative, resolve, sep } from 'node:path';
@@ -24,9 +27,66 @@ import {
     createNativeAgentCurrentSessionUiServices,
 } from '@/agent/runtime/registry/engineRegistry/nativeAgentSessionInteractions';
 
-import { resolveExecutablePluginRuntimeRegistry } from './resolveExecutablePluginRuntimeRegistry';
+import {
+    resolveExecutablePluginRuntimeRegistry,
+} from './resolveExecutablePluginRuntimeRegistry';
+import {
+    resolveCurrentInstalledPluginGenerationRuntimeExecutable,
+} from './installedGenerationRuntimeExecutable';
 
 describe('resolveExecutablePluginRuntimeRegistry managed-services production owner', () => {
+    it('resolves only the current declared binary in the installed generation root', async () => {
+        const root = await mkdtemp(join(
+            tmpdir(),
+            'happier-installed-generation-runtime-',
+        ));
+        const generationRoot = join(root, 'provider-p');
+        const binaryName = process.platform === 'win32'
+            ? 'provider-runtime.exe'
+            : 'provider-runtime';
+        const relativePath = ['tools', 'unpacked', binaryName].join('/');
+        const binaryPath = join(
+            generationRoot,
+            ...relativePath.split('/'),
+        );
+        const binaryBytes = '#!/bin/sh\nexit 0\n';
+        let current = true;
+        try {
+            await mkdir(join(generationRoot, 'tools', 'unpacked'), {
+                recursive: true,
+            });
+            await writeFile(binaryPath, binaryBytes, 'utf8');
+            if (process.platform !== 'win32') {
+                await chmod(binaryPath, 0o755);
+            }
+
+            const input = {
+                executable: {
+                    kind: 'packaged-runtime-binary' as const,
+                    directorySegments: ['tools', 'unpacked'] as const,
+                    executableBaseName: 'provider-runtime',
+                },
+                rootPath: generationRoot,
+                files: [{
+                    relativePath,
+                    byteLength: Buffer.byteLength(binaryBytes),
+                }],
+                isCurrent: async () => current,
+            };
+
+            await expect(
+                resolveCurrentInstalledPluginGenerationRuntimeExecutable(input),
+            ).resolves.toBe(await realpath(binaryPath));
+
+            current = false;
+            await expect(
+                resolveCurrentInstalledPluginGenerationRuntimeExecutable(input),
+            ).resolves.toBeNull();
+        } finally {
+            await rm(root, { recursive: true, force: true });
+        }
+    });
+
     it('materializes private Connected Account files for daemon custody and removes them with the registry lifecycle', async () => {
         const happyHomeDir = await mkdtemp(
             join(tmpdir(), 'happier-daemon-managed-service-files-home-'),

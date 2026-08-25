@@ -52,10 +52,15 @@ describe.sequential('doctor clean process custody', () => {
       HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID: 'cloud',
       HAPPIER_SERVER_URL: 'https://api.happier.dev',
     });
+    // The command must be recognizable to `classifyHappyProcess` from any working
+    // directory: deriving it from `process.cwd()` only classifies when the checkout
+    // path happens to contain a recognized marker, so the fixture silently stopped
+    // exercising the custody rule under other roots (repo root vs execution mirror).
+    // `cli-dist-snapshot/src/index.ts` is the canonical source-snapshot daemon shape.
     psListMock.mockResolvedValue([{
       pid: daemonPid,
       name: 'node',
-      cmd: `${process.execPath} ${process.cwd()}/apps/cli/src/index.ts daemon start-sync`,
+      cmd: `${process.execPath} /opt/happier-test/cli-dist-snapshot/src/index.ts daemon start-sync`,
     }]);
 
     try {

@@ -1,74 +1,52 @@
 import {
-  ConnectedServiceAuthGroupV1Schema,
   ConnectedServiceIdSchema,
   ConnectedServiceUsageSourceV1Schema,
-  type ConnectedServiceAuthGroupV1,
+  QualifiedConnectedAccountGroupV4Schema,
+  QualifiedConnectedAccountProfileV4Schema,
+  QualifiedConnectedAccountServiceRefSchema,
+  QualifiedConnectedServiceUsageSourceV4Schema,
   type ConnectedServiceId,
   type ConnectedServiceUsageSourceV1,
   type ProviderAccountUsageRecordId,
-  type ProviderAccountUsageSnapshotV1,
-  type SealedProviderAccountUsageSnapshotV1,
+  type QualifiedConnectedAccountGroupV4,
+  type QualifiedConnectedAccountProfileV4,
+  type QualifiedConnectedAccountServiceRef,
+  type QualifiedConnectedServiceUsageSourceV4,
 } from '@happier-dev/protocol';
 
+import {
+  resolveFirstPartyQualifiedConnectedAccountServiceForLegacyServiceId,
+} from '@/plugins/projection/registry/connectedAccountPurposeCompatibility';
 import type { StoredCredentials } from '@/persistence';
 
 import {
   buildProviderAccountUsageCurrentSourceKey,
   hydrateProviderAccountUsageStoreFromCurrentSources,
   type ProviderAccountUsageCurrentSourceHydrationDisposition,
+  type ProviderAccountUsageCurrentSourceResolution,
+  type ProviderAccountUsageHydrationApi,
+  type ProviderAccountUsageHydrationSource,
 } from './hydration';
 import { createProviderAccountUsageStore, type ProviderAccountUsageStore } from './store';
 
-type CurrentSourceApi = Readonly<{
-  listConnectedServiceProfiles: (params: Readonly<{
-    serviceId: ConnectedServiceId;
-    forceRefresh?: boolean;
+type CurrentSourceApi = ProviderAccountUsageHydrationApi & Readonly<{
+  listAccounts: (params: Readonly<{
+    service: QualifiedConnectedAccountServiceRef;
   }>) => Promise<Readonly<{
-    serviceId: ConnectedServiceId;
-    profiles: readonly Readonly<{ profileId: string }>[];
+    service: QualifiedConnectedAccountServiceRef;
+    accounts: readonly QualifiedConnectedAccountProfileV4[];
   }>>;
-  listConnectedServiceAuthGroups: (params: Readonly<{ serviceId: ConnectedServiceId }>) =>
-    Promise<readonly ConnectedServiceAuthGroupV1[]>;
-  resolveProviderAccountUsageSource: (params: Readonly<{ source: ConnectedServiceUsageSourceV1 }>) =>
-    Promise<Readonly<{
-      source: ConnectedServiceUsageSourceV1;
-      recordId: ProviderAccountUsageRecordId;
-      providerAccountId: string;
-      fetchedAt: number | null;
-      staleAfterMs: number | null;
-    }> | null>;
-  getAccountEncryptionMode?: () => Promise<'plain' | 'e2ee' | 'unknown'>;
-  getProviderAccountUsageSnapshotPlain?: (params: Readonly<{ recordId: ProviderAccountUsageRecordId }>) =>
-    Promise<null | Readonly<{
-      content: Readonly<{ t: 'plain'; v: ProviderAccountUsageSnapshotV1 }>;
-      sources?: readonly ConnectedServiceUsageSourceV1[];
-    }>>;
-  getProviderAccountUsageSnapshotSealed?: (params: Readonly<{ recordId: ProviderAccountUsageRecordId }>) =>
-    Promise<null | Readonly<{
-      sealed: SealedProviderAccountUsageSnapshotV1;
-      metadata?: Readonly<{
-        fetchedAt: number;
-        staleAfterMs: number;
-        status: 'ok' | 'unavailable' | 'estimated' | 'error';
-        materialFingerprint?: string;
-      }>;
-      sources?: readonly ConnectedServiceUsageSourceV1[];
-    }>>;
-  registerProviderAccountUsageSnapshotSealed?: (args: Readonly<{
-    recordId: ProviderAccountUsageRecordId;
-    recordKey: ProviderAccountUsageSnapshotV1['recordKey'];
-    source?: ConnectedServiceUsageSourceV1;
-    sealed: SealedProviderAccountUsageSnapshotV1;
-    metadata: {
-      fetchedAt: number;
-      staleAfterMs: number;
-      status: 'ok' | 'unavailable' | 'estimated' | 'error';
-      materialFingerprint?: string;
-    };
-  }>) => Promise<void>;
+  listGroups: (params: Readonly<{
+    service: QualifiedConnectedAccountServiceRef;
+  }>) => Promise<Readonly<{
+    groups: readonly QualifiedConnectedAccountGroupV4[];
+  }>>;
+  resolveSource: (params: Readonly<{
+    source: QualifiedConnectedServiceUsageSourceV4;
+  }>) => Promise<ProviderAccountUsageCurrentSourceResolution | null>;
 }>;
 
-type SourceResolution = Awaited<ReturnType<CurrentSourceApi['resolveProviderAccountUsageSource']>>;
+type SourceResolution = Awaited<ReturnType<CurrentSourceApi['resolveSource']>>;
 
 const CURRENT_SOURCE_RESOLUTION_CONCURRENCY = 4;
 
@@ -90,36 +68,109 @@ export type ConnectedServiceCurrentSourceHydrationResult = Readonly<{
   }>;
 }>;
 
+function sameQualifiedService(
+  leftInput: QualifiedConnectedAccountServiceRef,
+  rightInput: QualifiedConnectedAccountServiceRef,
+): boolean {
+  const left = QualifiedConnectedAccountServiceRefSchema.parse(leftInput);
+  const right = QualifiedConnectedAccountServiceRefSchema.parse(rightInput);
+  return left.pluginId === right.pluginId && left.localId === right.localId;
+}
+
+function buildQualifiedUsageSourceKey(
+  sourceInput: QualifiedConnectedServiceUsageSourceV4,
+): string {
+  const source = QualifiedConnectedServiceUsageSourceV4Schema.parse(sourceInput);
+  return source.bindingKind === 'account'
+    ? JSON.stringify([
+      source.ref.service.pluginId,
+      source.ref.service.localId,
+      source.ref.accountId,
+      'account',
+    ])
+    : JSON.stringify([
+      source.ref.service.pluginId,
+      source.ref.service.localId,
+      source.ref.accountId,
+      'group_member',
+      source.groupId,
+      source.groupGeneration ?? null,
+    ]);
+}
+
+function sourcePairsMatch(
+  left: ProviderAccountUsageHydrationSource,
+  right: ProviderAccountUsageHydrationSource,
+): boolean {
+  return buildProviderAccountUsageCurrentSourceKey(left.localSource)
+    === buildProviderAccountUsageCurrentSourceKey(right.localSource)
+    && buildQualifiedUsageSourceKey(left.qualifiedSource)
+      === buildQualifiedUsageSourceKey(right.qualifiedSource);
+}
+
 function buildCurrentSources(input: Readonly<{
   serviceId: ConnectedServiceId;
-  profiles: Readonly<{ serviceId: ConnectedServiceId; profiles: readonly Readonly<{ profileId: string }>[] }>;
-  groups: readonly ConnectedServiceAuthGroupV1[];
-}>): ConnectedServiceUsageSourceV1[] {
-  if (input.profiles.serviceId !== input.serviceId) {
-    throw new Error('Connected service profile inventory returned a mismatched service');
+  qualifiedService: QualifiedConnectedAccountServiceRef;
+  accounts: Readonly<{
+    service: QualifiedConnectedAccountServiceRef;
+    accounts: readonly QualifiedConnectedAccountProfileV4[];
+  }>;
+  groups: Readonly<{ groups: readonly QualifiedConnectedAccountGroupV4[] }>;
+}>): ProviderAccountUsageHydrationSource[] {
+  const qualifiedService = QualifiedConnectedAccountServiceRefSchema.parse(
+    input.qualifiedService,
+  );
+  const accountsService = QualifiedConnectedAccountServiceRefSchema.parse(
+    input.accounts.service,
+  );
+  if (!sameQualifiedService(accountsService, qualifiedService)) {
+    throw new Error('Qualified connected-account inventory returned a mismatched service');
   }
-  const sources = input.profiles.profiles.map((profile) => ConnectedServiceUsageSourceV1Schema.parse({
-    serviceId: input.serviceId,
-    profileId: profile.profileId,
-    bindingKind: 'profile',
-  }));
-  for (const rawGroup of input.groups) {
-    const group = ConnectedServiceAuthGroupV1Schema.parse(rawGroup);
-    if (group.serviceId !== input.serviceId) {
-      throw new Error('Connected service group inventory returned a mismatched service');
+
+  const sources: ProviderAccountUsageHydrationSource[] = [];
+  for (const rawAccount of input.accounts.accounts) {
+    const account = QualifiedConnectedAccountProfileV4Schema.parse(rawAccount);
+    if (!sameQualifiedService(account.ref.service, qualifiedService)) {
+      throw new Error('Qualified connected-account profile inventory is inconsistent');
+    }
+    sources.push({
+      localSource: ConnectedServiceUsageSourceV1Schema.parse({
+        serviceId: input.serviceId,
+        profileId: account.ref.accountId,
+        bindingKind: 'profile',
+      }),
+      qualifiedSource: QualifiedConnectedServiceUsageSourceV4Schema.parse({
+        ref: account.ref,
+        bindingKind: 'account',
+      }),
+    });
+  }
+
+  for (const rawGroup of input.groups.groups) {
+    const group = QualifiedConnectedAccountGroupV4Schema.parse(rawGroup);
+    if (!sameQualifiedService(group.ref.service, qualifiedService)) {
+      throw new Error('Qualified connected-account group inventory returned a mismatched service');
     }
     for (const member of group.members) {
       if (!member.enabled) continue;
-      if (member.serviceId !== input.serviceId || member.groupId !== group.groupId) {
-        throw new Error('Connected service group member inventory is inconsistent');
-      }
-      sources.push(ConnectedServiceUsageSourceV1Schema.parse({
-        serviceId: input.serviceId,
-        profileId: member.profileId,
-        bindingKind: 'group_member',
-        groupId: group.groupId,
-        groupGeneration: group.generation,
-      }));
+      sources.push({
+        localSource: ConnectedServiceUsageSourceV1Schema.parse({
+          serviceId: input.serviceId,
+          profileId: member.connectedAccountId,
+          bindingKind: 'group_member',
+          groupId: group.ref.groupId,
+          groupGeneration: group.generation,
+        }),
+        qualifiedSource: QualifiedConnectedServiceUsageSourceV4Schema.parse({
+          ref: {
+            service: qualifiedService,
+            accountId: member.connectedAccountId,
+          },
+          bindingKind: 'group_member',
+          groupId: group.ref.groupId,
+          groupGeneration: group.generation,
+        }),
+      });
     }
   }
   return sources;
@@ -127,23 +178,42 @@ function buildCurrentSources(input: Readonly<{
 
 async function listCurrentSources(input: Readonly<{
   serviceIds: readonly ConnectedServiceId[];
-  api: Pick<CurrentSourceApi, 'listConnectedServiceProfiles' | 'listConnectedServiceAuthGroups'>;
-}>): Promise<ConnectedServiceUsageSourceV1[]> {
+  api: Pick<CurrentSourceApi, 'listAccounts' | 'listGroups'>;
+}>): Promise<ProviderAccountUsageHydrationSource[]> {
   const inventories = await Promise.all(input.serviceIds.map(async (serviceId) => {
-    const [profiles, groups] = await Promise.all([
-      input.api.listConnectedServiceProfiles({ serviceId, forceRefresh: true }),
-      input.api.listConnectedServiceAuthGroups({ serviceId }),
+    const qualifiedService = resolveFirstPartyQualifiedConnectedAccountServiceForLegacyServiceId(
+      serviceId,
+    );
+    if (!qualifiedService) {
+      throw new Error(`Connected-service PAU V4 identity is unavailable for ${serviceId}`);
+    }
+    const [accounts, groups] = await Promise.all([
+      input.api.listAccounts({ service: qualifiedService }),
+      input.api.listGroups({ service: qualifiedService }),
     ]);
-    return buildCurrentSources({ serviceId, profiles, groups });
+    return buildCurrentSources({
+      serviceId,
+      qualifiedService,
+      accounts,
+      groups,
+    });
   }));
-  return [...new Map(inventories.flat().map((source) => [
-    buildProviderAccountUsageCurrentSourceKey(source), source,
-  ])).values()];
+
+  const sourcesByLocalKey = new Map<string, ProviderAccountUsageHydrationSource>();
+  for (const source of inventories.flat()) {
+    const localKey = buildProviderAccountUsageCurrentSourceKey(source.localSource);
+    const existing = sourcesByLocalKey.get(localKey);
+    if (existing && !sourcePairsMatch(existing, source)) {
+      throw new Error('Connected-service PAU V4 inventory has conflicting source ownership');
+    }
+    sourcesByLocalKey.set(localKey, source);
+  }
+  return [...sourcesByLocalKey.values()];
 }
 
 async function resolveSources(input: Readonly<{
-  sources: readonly ConnectedServiceUsageSourceV1[];
-  resolve: CurrentSourceApi['resolveProviderAccountUsageSource'];
+  sources: readonly ProviderAccountUsageHydrationSource[];
+  resolve: CurrentSourceApi['resolveSource'];
 }>): Promise<Map<string, SourceResolution>> {
   const resolutions = new Array<SourceResolution>(input.sources.length);
   let nextIndex = 0;
@@ -155,7 +225,9 @@ async function resolveSources(input: Readonly<{
       const index = nextIndex;
       nextIndex += 1;
       try {
-        resolutions[index] = await input.resolve({ source: input.sources[index]! });
+        resolutions[index] = await input.resolve({
+          source: input.sources[index]!.qualifiedSource,
+        });
       } catch (error) {
         if (!failed) {
           failed = true;
@@ -166,59 +238,63 @@ async function resolveSources(input: Readonly<{
   }));
   if (failed) throw firstError;
   return new Map(input.sources.map((source, index) => [
-    buildProviderAccountUsageCurrentSourceKey(source),
+    buildQualifiedUsageSourceKey(source.qualifiedSource),
     resolutions[index] ?? null,
   ]));
 }
 
 function inventoriesMatch(
-  first: readonly ConnectedServiceUsageSourceV1[],
-  second: readonly ConnectedServiceUsageSourceV1[],
+  first: readonly ProviderAccountUsageHydrationSource[],
+  second: readonly ProviderAccountUsageHydrationSource[],
 ): boolean {
   if (first.length !== second.length) return false;
-  const keys = new Set(second.map(buildProviderAccountUsageCurrentSourceKey));
-  return first.every((source) => keys.has(buildProviderAccountUsageCurrentSourceKey(source)));
+  const secondByLocalKey = new Map(second.map((source) => [
+    buildProviderAccountUsageCurrentSourceKey(source.localSource),
+    source,
+  ]));
+  return first.every((source) => {
+    const current = secondByLocalKey.get(
+      buildProviderAccountUsageCurrentSourceKey(source.localSource),
+    );
+    return current !== undefined && sourcePairsMatch(source, current);
+  });
 }
 
-function resolutionMatches(first: NonNullable<SourceResolution>, second: SourceResolution): boolean {
+function resolutionMatches(
+  first: NonNullable<SourceResolution>,
+  second: SourceResolution,
+): boolean {
   return second !== null
-    && buildProviderAccountUsageCurrentSourceKey(first.source) === buildProviderAccountUsageCurrentSourceKey(second.source)
+    && buildQualifiedUsageSourceKey(first.source)
+      === buildQualifiedUsageSourceKey(second.source)
     && first.recordId === second.recordId
     && first.providerAccountId.trim() === second.providerAccountId.trim();
 }
 
-/** Hydrates only from the exact current connected-service inventory, committing atomically after revalidation. */
+/** Hydrates only from the exact current V4 inventory, committing atomically after revalidation. */
 export async function hydrateProviderAccountUsageStoreFromConnectedServiceInventory(input: Readonly<{
   serviceIds: Iterable<ConnectedServiceId>;
   api: CurrentSourceApi;
   credentials: StoredCredentials;
   store: Pick<ProviderAccountUsageStore, 'recordSnapshot'>;
   nowMs: number;
-  randomBytes?: (length: number) => Uint8Array;
 }>): Promise<ConnectedServiceCurrentSourceHydrationResult> {
   const serviceIds = [...new Set([...input.serviceIds].map((id) => ConnectedServiceIdSchema.parse(id)))];
   const sources = await listCurrentSources({ serviceIds, api: input.api });
   const firstResolutions = await resolveSources({
     sources,
-    resolve: async (params) => await input.api.resolveProviderAccountUsageSource(params),
+    resolve: async (params) => await input.api.resolveSource(params),
   });
   const stagingStore = createProviderAccountUsageStore();
   const hydration = await hydrateProviderAccountUsageStoreFromCurrentSources({
     sources,
-    resolveRecordIdForSource: async (source) => {
-      const resolution = firstResolutions.get(buildProviderAccountUsageCurrentSourceKey(source)) ?? null;
-      return resolution ? {
-        recordId: resolution.recordId,
-        providerAccountId: resolution.providerAccountId,
-        fetchedAt: resolution.fetchedAt,
-        staleAfterMs: resolution.staleAfterMs,
-      } : null;
-    },
+    resolveRecordIdForSource: async (source) => (
+      firstResolutions.get(buildQualifiedUsageSourceKey(source)) ?? null
+    ),
     api: input.api,
     credentials: input.credentials,
     store: stagingStore,
     nowMs: input.nowMs,
-    ...(input.randomBytes ? { randomBytes: input.randomBytes } : {}),
   });
   const currentSources = await listCurrentSources({ serviceIds, api: input.api });
   if (!inventoriesMatch(sources, currentSources)) {
@@ -228,10 +304,10 @@ export async function hydrateProviderAccountUsageStoreFromConnectedServiceInvent
   }
   const secondResolutions = await resolveSources({
     sources,
-    resolve: async (params) => await input.api.resolveProviderAccountUsageSource(params),
+    resolve: async (params) => await input.api.resolveSource(params),
   });
   for (const source of sources) {
-    const key = buildProviderAccountUsageCurrentSourceKey(source);
+    const key = buildQualifiedUsageSourceKey(source.qualifiedSource);
     const first = firstResolutions.get(key) ?? null;
     if (first && !resolutionMatches(first, secondResolutions.get(key) ?? null)) {
       throw new ConnectedServiceCurrentSourceHydrationConflictError(
@@ -246,5 +322,8 @@ export async function hydrateProviderAccountUsageStoreFromConnectedServiceInvent
       sources: hydration.dispositions.flatMap((item) => item.recordId === recordId ? [item.source] : []),
     });
   }
-  return { sources, hydration };
+  return {
+    sources: sources.map((source) => source.localSource),
+    hydration,
+  };
 }

@@ -5,7 +5,8 @@ import {
 import { describe, expect, it, vi } from 'vitest';
 
 import { createSidecarCdpBrowserContextSource } from './productSource';
-import { createBrowserContextDiagnosticsRingBuffer } from '../diagnostics/ringBuffer';
+import { createBrowserDiagnosticsDaemonStore } from '../../diagnostics/store';
+import { createBrowserContextDiagnosticsSummarySource } from '../diagnostics/summary';
 import type { BrowserSidecarContextCaptureSurface } from '../../sidecar/controlAdapter';
 import type { TransferPathAllowanceRegistry } from '@/transfers/targets/createTransferPathAllowanceRegistry';
 
@@ -45,15 +46,20 @@ function networkEvent(): BrowserDiagnosticEventV1 {
 }
 
 describe('sidecar cdp browser context source (production wiring)', () => {
-    it('serves diagnostics summaries from the ring buffer when present', async () => {
-        const ring = createBrowserContextDiagnosticsRingBuffer({ now: () => 10_000, windowMs: 5_000 });
-        ring.record(networkEvent());
+    it('serves diagnostics summaries from the store-backed summary source when present', async () => {
+        const store = createBrowserDiagnosticsDaemonStore({ machineId: 'machine_1' });
+        store.publishEvent(networkEvent());
+        const summaries = createBrowserContextDiagnosticsSummarySource({
+            store,
+            now: () => 10_000,
+            windowMs: 5_000,
+        });
 
         const source = createSidecarCdpBrowserContextSource({
             contextCapture: captureSurface(() => ({})),
             workingDirectory: '/tmp/happier-test',
             pathAllowanceRegistry: fakeRegistry(),
-            diagnosticsRingBuffer: ring,
+            diagnosticsSummarySource: summaries,
             screenshotMediaWriter: { write: vi.fn() },
         });
 
@@ -64,7 +70,7 @@ describe('sidecar cdp browser context source (production wiring)', () => {
         expect(result.summary).toContain('200');
     });
 
-    it('fails closed for diagnostics summaries without a ring buffer', async () => {
+    it('fails closed for diagnostics summaries without a summary source', async () => {
         const source = createSidecarCdpBrowserContextSource({
             contextCapture: captureSurface(() => ({})),
             workingDirectory: '/tmp/happier-test',

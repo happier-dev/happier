@@ -21,6 +21,8 @@ const service = Object.freeze({ pluginId: 'acme.accounts', localId: 'work' });
 // addresses rather than by the hostname's spelling.
 const RESOLVED_ADDRESSES_BY_HOSTNAME: Readonly<Record<string, readonly string[]>> = Object.freeze({
     'api.example.test': ['93.184.216.34'],
+    'us.example.test': ['93.184.216.40'],
+    'de.example.test': ['93.184.216.41'],
     'static.example.test': ['93.184.216.35'],
     'other.example.test': ['93.184.216.36'],
     'dev.azure.test': ['93.184.216.37'],
@@ -41,6 +43,13 @@ const configuration = Object.freeze({
     values: Object.freeze({ endpoint: 'https://API.EXAMPLE.test/' }),
     getSecret: async () => null,
 });
+
+function configuredEndpoint(
+    origin: string,
+    grantTargetKind: 'connectedAccountOrigin' | 'fixedOrigin' = 'connectedAccountOrigin',
+) {
+    return Object.freeze({ origin, base: origin, grantTargetKind });
+}
 
 function networkRequest(input: Readonly<{
     id: string;
@@ -268,6 +277,7 @@ describe('connected-account configured origins', () => {
         })).toEqual([{
             origin: 'https://dev.azure.test',
             base: 'https://dev.azure.test/acme',
+            grantTargetKind: 'connectedAccountOrigin',
         }]);
         // A trailing slash is normalization, not a different deployment, and the
         // path case is preserved because a collection segment is case-bearing.
@@ -278,6 +288,7 @@ describe('connected-account configured origins', () => {
         })).toEqual([{
             origin: 'https://server.example.test',
             base: 'https://server.example.test/tfs/DefaultCollection',
+            grantTargetKind: 'connectedAccountOrigin',
         }]);
         // HostAccess keeps governing by the origin alone: the base never widens
         // or narrows the admitted network target.
@@ -301,6 +312,7 @@ describe('connected-account configured origins', () => {
         })).toEqual([{
             origin: 'https://192.168.4.7',
             base: 'https://192.168.4.7/tfs/DefaultCollection',
+            grantTargetKind: 'connectedAccountOrigin',
         }]);
         // The path is routing, never a network-policy input.
         expect(resolveHostOwnedConnectedAccountConfiguredEndpoints({
@@ -310,6 +322,7 @@ describe('connected-account configured origins', () => {
         })).toEqual([{
             origin: 'https://dev.azure.test',
             base: 'https://dev.azure.test/127.0.0.1',
+            grantTargetKind: 'connectedAccountOrigin',
         }]);
     });
 
@@ -354,9 +367,9 @@ describe('connected-account configured origins', () => {
                     }),
                 },
             ],
-            resolveHostOwnedConfiguredOrigins: () => [
-                'https://api.example.test',
-                'https://api.example.test',
+            resolveHostOwnedConfiguredEndpoints: () => [
+                configuredEndpoint('https://api.example.test'),
+                configuredEndpoint('https://api.example.test'),
             ],
             isConfigurationCurrent: () => configurationCurrent,
             isGenerationCurrent: () => generationCurrent,
@@ -399,6 +412,102 @@ describe('connected-account configured origins', () => {
         expect(await binding.networkCurrentness?.()).toBe(false);
     });
 
+    it('keeps a fixed configured endpoint on its exact fixed-origin grant', async () => {
+        const descriptor = PluginConnectedAccountDescriptorContributionV2Schema.parse({
+            id: service.localId,
+            title: 'Acme Work',
+            authentication: {
+                defaultModeId: 'manual',
+                modes: [{
+                    id: 'manual',
+                    kind: 'manual',
+                    outcomeReconciliation: 'none',
+                    fields: [{
+                        id: 'token',
+                        title: 'Token',
+                        secret: true,
+                        schema: { type: 'string', minLength: 1 },
+                    }],
+                    configuration: {
+                        scope: 'account',
+                        changeBehavior: 'reconnect',
+                        fields: [{
+                            id: 'region',
+                            title: 'Region',
+                            semantic: 'connectedAccountFixedOrigin',
+                            required: true,
+                            schema: { type: 'string', enum: ['us', 'de'] },
+                            originByValue: {
+                                us: 'https://us.example.test',
+                                de: 'https://de.example.test',
+                            },
+                        }],
+                    },
+                }],
+            },
+        });
+        const configured = Object.freeze({
+            ...configuration,
+            target: Object.freeze({
+                kind: 'account' as const,
+                account: Object.freeze({ service, accountId: 'account-1' }),
+                modeId: 'manual',
+            }),
+            values: Object.freeze({ region: 'de' }),
+        });
+        const fixedGrant = {
+            request: PluginHostAccessRequestV2Schema.parse({
+                id: 'cloud',
+                capability: 'network',
+                reason: 'Read the selected Cloud region',
+                scope: {
+                    targets: [
+                        { kind: 'fixedOrigin', origin: 'https://us.example.test' },
+                        { kind: 'fixedOrigin', origin: 'https://de.example.test' },
+                    ],
+                    methods: ['GET'],
+                },
+            }),
+            required: true,
+            status: 'available' as const,
+        };
+        const freeConfiguredGrant = networkRequest({
+            id: 'self-hosted',
+            methods: ['GET'],
+            privateNetwork: true,
+        });
+
+        const resolution = await resolveConnectedAccountConfiguredOrigins({
+            pluginId: service.pluginId,
+            service,
+            generation: 'process-fixed-provenance',
+            configuration: configured,
+            hostAccessRequests: [fixedGrant, freeConfiguredGrant],
+            resolveHostOwnedConfiguredEndpoints: () => (
+                resolveHostOwnedConnectedAccountConfiguredEndpoints({
+                    service,
+                    descriptor,
+                    configuration: configured,
+                })
+            ),
+            isConfigurationCurrent: () => true,
+            isGenerationCurrent: () => true,
+            resolveNetworkAddresses,
+        });
+
+        expect(resolution.networkScopes).toEqual([
+            {
+                authority: 'selectedResource',
+                accessId: 'cloud',
+                required: true,
+                origins: ['https://de.example.test', 'https://us.example.test'],
+                methods: ['GET'],
+                privateNetwork: false,
+                connectedAccountService: service,
+            },
+        ]);
+    });
+
     it.each([
         'https://user:secret@api.example.test',
         'http://api.example.test',
@@ -410,7 +519,7 @@ describe('connected-account configured origins', () => {
             generation: 'process-4',
             configuration,
             hostAccessRequests: [networkRequest({ id: 'read' })],
-            resolveHostOwnedConfiguredOrigins: () => [origin],
+            resolveHostOwnedConfiguredEndpoints: () => [configuredEndpoint(origin)],
             isConfigurationCurrent: () => true,
             isGenerationCurrent: () => true,
             resolveNetworkAddresses,
@@ -418,7 +527,9 @@ describe('connected-account configured origins', () => {
     });
 
     it('projects a current same-plugin network.client origin only into the exact websocket binding', async () => {
-        const resolveHostOwnedConfiguredOrigins = vi.fn(() => ['https://api.example.test']);
+        const resolveHostOwnedConfiguredEndpoints = vi.fn(() => [
+            configuredEndpoint('https://api.example.test'),
+        ]);
         const configurationRevocation = new AbortController();
         const resolution = await resolveConnectedAccountConfiguredOrigins({
             pluginId: 'acme.accounts',
@@ -438,7 +549,7 @@ describe('connected-account configured origins', () => {
                 required: true,
                 status: 'available',
             }],
-            resolveHostOwnedConfiguredOrigins,
+            resolveHostOwnedConfiguredEndpoints,
             isConfigurationCurrent: () => true,
             isGenerationCurrent: () => true,
             resolveNetworkAddresses,
@@ -449,7 +560,7 @@ describe('connected-account configured origins', () => {
             resolution,
         );
 
-        expect(resolveHostOwnedConfiguredOrigins).toHaveBeenCalledOnce();
+        expect(resolveHostOwnedConfiguredEndpoints).toHaveBeenCalledOnce();
         expect(binding.networkScopes).toBeUndefined();
         expect(binding.networkClientScopes).toEqual([{
             authority: 'selectedResource',
@@ -487,7 +598,7 @@ describe('connected-account configured origins', () => {
                 required: true,
                 status: 'available' as const,
             }],
-            resolveHostOwnedConfiguredOrigins: () => ['https://localhost:4311'],
+            resolveHostOwnedConfiguredEndpoints: () => [configuredEndpoint('https://localhost:4311')],
             isConfigurationCurrent: () => true,
             isGenerationCurrent: () => true,
             resolveNetworkAddresses,
@@ -517,7 +628,7 @@ describe('connected-account configured origins', () => {
                 id: privateNetwork ? 'resolved-private-allowed' : 'resolved-private-denied',
                 ...(privateNetwork ? { privateNetwork: true } : {}),
             })],
-            resolveHostOwnedConfiguredOrigins: () => ['https://git.internal.example'],
+            resolveHostOwnedConfiguredEndpoints: () => [configuredEndpoint('https://git.internal.example')],
             isConfigurationCurrent: () => true,
             isGenerationCurrent: () => true,
             resolveNetworkAddresses,
@@ -544,7 +655,7 @@ describe('connected-account configured origins', () => {
                 fixedOrigin: 'https://git.internal.example',
                 ...(privateNetwork ? { privateNetwork: true } : {}),
             })],
-            resolveHostOwnedConfiguredOrigins: () => [],
+            resolveHostOwnedConfiguredEndpoints: () => [],
             isConfigurationCurrent: () => true,
             isGenerationCurrent: () => true,
             resolveNetworkAddresses,

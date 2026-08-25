@@ -2,12 +2,12 @@ import type { LocalServiceListenerFact } from '../scanner';
 import type { LocalServiceInventoryDiagnostic } from '../scanner';
 import { LOCAL_SERVICE_PROCESS_LINEAGE_MAX_DEPTH, type LocalServiceProcessFact } from '../provenance';
 import { collectLocalServiceProcessLineageFacts } from './processLineage';
-import { classifyPosixProcessOwnership, resolveDaemonPosixUserId } from './processOwnership';
+import { classifyProcessOwnershipByIdentity, resolveDaemonPosixUserId } from './processOwnership';
 
 export type DarwinExecFileBoundary = (
     command: string,
     args: readonly string[],
-    options: Readonly<{ timeout: number; maxBuffer: number }>,
+    options: Readonly<{ timeout: number; maxBuffer: number; env?: NodeJS.ProcessEnv }>,
 ) => Promise<Readonly<{ stdout: string | Buffer }>>;
 
 export type DarwinLocalServiceScanResult = Readonly<{
@@ -97,6 +97,13 @@ function parseDarwinLstartDate(value: string): number | undefined {
 /**
  * `ps -o pid=,ppid=,uid=,lstart=,command=`. The uid column rides along on the call the scan
  * already makes, so process ownership costs nothing extra on darwin.
+ *
+ * `lstart` is rendered through the caller's time locale, and only the C layout
+ * (`weekday month day hh:mm:ss year`) is parsed here. A daemon that inherited a German or French
+ * locale gets `Mo. 24 Aug. 23:26:49 2026` / `lun. 24 aout 23:26:49 2026`, whose date falls into the
+ * command field and leaves `processStartTimeMs` absent — which every generation check downstream
+ * reads as "this pid has no identity". `readDarwinProcessFacts` therefore pins `LC_ALL=C` for this
+ * one command instead of teaching the parser every locale.
  */
 function parseDarwinPsProcessOutput(
     output: string,
@@ -115,7 +122,7 @@ function parseDarwinPsProcessOutput(
         const pid = Number(pidRaw);
         const ppid = Number(ppidRaw);
         if (!Number.isInteger(pid) || pid <= 0) continue;
-        const processOwnership = classifyPosixProcessOwnership(uidRaw, daemonUserId);
+        const processOwnership = classifyProcessOwnershipByIdentity(uidRaw, daemonUserId);
         processes.set(pid, {
             pid,
             ...(Number.isInteger(ppid) && ppid > 0 ? { ppid } : {}),
@@ -137,7 +144,7 @@ export async function readDarwinProcessFacts(input: Readonly<{
     const result = await input.execFile(
         'ps',
         ['-o', 'pid=,ppid=,uid=,lstart=,command=', '-p', pids.join(',')],
-        { timeout: 2_000, maxBuffer: 1024 * 1024 },
+        { timeout: 2_000, maxBuffer: 1024 * 1024, env: { ...process.env, LC_ALL: 'C' } },
     );
     return parseDarwinPsProcessOutput(
         stdoutTextFromExecFileResult(result),

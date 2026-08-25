@@ -35,6 +35,9 @@ describe('readProcessIdentityByPid', () => {
       ppid: 12,
       processStartTimeMs: Date.UTC(2025, 5, 30, 12, 34, 56, 123),
       command: 'provider.exe serve --hostname=127.0.0.1 --port=43111',
+      // `readProcessIdentityByPid` spreads the raw Windows CIM row, which still carries an
+      // executable path of its own; only the local-services `LocalServiceProcessFact` field
+      // (which had no reader) was removed.
       executablePath: 'C:\\Tools\\provider.exe',
     });
     expect(execFile).toHaveBeenCalledWith(
@@ -118,7 +121,6 @@ describe('readProcessIdentityByPid', () => {
         },
         readdir: async () => [],
         readlink: async (path) => {
-          if (path === '/proc/777/exe') return '/usr/bin/provider';
           if (path === '/proc/777/cwd') return '/repo';
           throw new Error(`missing ${path}`);
         },
@@ -128,7 +130,6 @@ describe('readProcessIdentityByPid', () => {
       ppid: 1,
       processStartTimeMs: 1_717_171_000_190,
       command: 'provider serve --port=43111',
-      executablePath: '/usr/bin/provider',
       cwd: '/repo',
     });
   });

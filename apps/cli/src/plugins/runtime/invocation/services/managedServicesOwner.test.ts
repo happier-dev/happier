@@ -1117,13 +1117,15 @@ describe('managed-services SVC09 owner', () => {
                 code: 'plugin_managed_service_unavailable',
             });
         }
+        // The caller cancelled itself. Reporting that as service unavailability would tell the
+        // plugin its endpoint, credentials or generation are gone and invite re-establishment.
         const aborted = new AbortController();
         aborted.abort('caller canceled');
         await expect(handle.request({
             pathAndQuery: '/session',
             signal: aborted.signal,
         })).rejects.toMatchObject({
-            code: 'plugin_managed_service_unavailable',
+            code: 'plugin_operation_aborted',
         });
         expect(hostFetch).not.toHaveBeenCalled();
 
@@ -1185,6 +1187,71 @@ describe('managed-services SVC09 owner', () => {
             });
         }
         expect(hostFetch).not.toHaveBeenCalled();
+    });
+
+    // Cancellation provenance while response headers are still outstanding. Both cases fail at the
+    // same owner statement, so they are only distinguishable if that statement reads the caller's
+    // own signal instead of the composed lifetime.
+    it.each([
+        {
+            label: 'the caller cancels',
+            expectedCode: 'plugin_operation_aborted',
+            end: (input: Readonly<{
+                caller: AbortController;
+                authorization: { current: boolean };
+                settle: () => void;
+            }>) => input.caller.abort('caller canceled'),
+        },
+        {
+            label: 'the generation stops being current',
+            expectedCode: 'plugin_managed_service_unavailable',
+            end: (input: Readonly<{
+                caller: AbortController;
+                authorization: { current: boolean };
+                settle: () => void;
+            }>) => {
+                input.authorization.current = false;
+                input.settle();
+            },
+        },
+    ])('reports establishment failure as $expectedCode when $label', async ({ expectedCode, end }) => {
+        let settleFetch!: () => void;
+        const hostFetch = vi.fn<typeof globalThis.fetch>((_request, init) =>
+            new Promise<Response>((resolve, reject) => {
+                settleFetch = () => resolve(new Response(null, { status: 204 }));
+                init?.signal?.addEventListener(
+                    'abort',
+                    () => reject(new DOMException('The operation was aborted.', 'AbortError')),
+                    { once: true },
+                );
+            }));
+        const harness = createHarness(hostFetch);
+        const handle = await harness.owner.bindScope(
+            harness.scope,
+            exec,
+        ).supervise({
+            id: 'gateway',
+            mode: {
+                kind: 'spawn',
+                launch: { executable: {} as never },
+                endpoint: {
+                    kind: 'assignAndInject',
+                    port: { kind: 'fixed', port: 4312 },
+                },
+            },
+        });
+        const caller = new AbortController();
+        const pending = handle.request({
+            pathAndQuery: '/session',
+            signal: caller.signal,
+        });
+        await vi.waitFor(() => expect(hostFetch).toHaveBeenCalledOnce());
+
+        end({ caller, authorization: harness.authorization, settle: () => settleFetch() });
+
+        await expect(pending).rejects.toMatchObject({ code: expectedCode });
+        harness.authorization.current = true;
+        await handle.dispose();
     });
 
     it.each(['stop', 'dispose'] as const)(
@@ -1271,7 +1338,7 @@ describe('managed-services SVC09 owner', () => {
             const next = reader.read();
             caller.abort('caller canceled');
             await expect(next).rejects.toMatchObject({
-                code: 'plugin_managed_service_unavailable',
+                code: 'plugin_operation_aborted',
             });
             await vi.waitFor(() => expect(cancel).toHaveBeenCalledOnce());
         } finally {

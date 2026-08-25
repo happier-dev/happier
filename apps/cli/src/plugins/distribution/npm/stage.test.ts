@@ -49,6 +49,16 @@ type FixtureOverrides = Readonly<{
   additionalVoiceProviderModulePath?: string;
   nativeVoiceArtifactModulePath?: string;
   nativeVoiceArtifactExportName?: string;
+  clientAction?: Readonly<{
+    id?: string;
+    artifactId?: string;
+    modulePath?: string;
+    exportName?: string;
+    platforms?: readonly ('web' | 'ios' | 'android')[];
+  }>;
+  additionalClientActionArtifactPlatforms?: readonly ('ios' | 'android')[];
+  nativeClientActionArtifactModulePath?: string;
+  nativeClientActionArtifactExportName?: string;
   duplicateArtifactSlot?: boolean;
   extraPackageJson?: Readonly<Record<string, unknown>>;
   packageAssets?: readonly Readonly<{
@@ -82,6 +92,11 @@ async function createCandidateFixture(overrides: FixtureOverrides = {}): Promise
   const duplicateUiDigest = computePluginUiArtifactFileSetSha256DigestV1([
     { relativePath: duplicateUiEntryPath, bytes: duplicateUiBytes },
   ]);
+  const clientAction = overrides.clientAction;
+  const clientActionId = clientAction?.id ?? 'open-client-preview';
+  const clientActionArtifactId = clientAction?.artifactId ?? 'client-actions';
+  const clientActionModulePath = clientAction?.modulePath ?? './clientActions';
+  const clientActionExportName = clientAction?.exportName ?? 'activate';
   const packageJson = {
     name: overrides.packageName ?? '@acme/happier-plugin',
     version: overrides.packageVersion ?? '1.2.3',
@@ -146,6 +161,23 @@ async function createCandidateFixture(overrides: FixtureOverrides = {}): Promise
           },
         }] : []),
       ] : [],
+      actions: clientAction ? [{
+        id: clientActionId,
+        title: 'Open client preview',
+        scopes: ['session'],
+        surfaces: ['ui'],
+        execution: {
+          target: 'client',
+          client: {
+            artifactId: clientActionArtifactId,
+            modulePath: clientActionModulePath,
+            exportName: clientActionExportName,
+          },
+          platforms: clientAction.platforms ?? ['web'],
+        },
+        placementBindings: ['detailsPanel'],
+        dangerLevel: 'safe',
+      }] : [],
       resources: (overrides.packageAssets ?? []).map((asset) => ({
         id: asset.id,
         kind: 'asset',
@@ -196,6 +228,26 @@ async function createCandidateFixture(overrides: FixtureOverrides = {}): Promise
           compat: { react: '19.2.0', reactNative: '0.83.4' },
         };
       })),
+      ...((overrides.additionalClientActionArtifactPlatforms ?? []).map((platform) => {
+        const relativePath = `react-native/${clientActionArtifactId}/${platform}.bundle`;
+        const bytes = Buffer.from(`export function activate() { /* ${platform} */ }\n`);
+        return {
+          contributionId: clientActionArtifactId,
+          tier: 'reactNative' as const,
+          platform,
+          entry: relativePath,
+          files: [uiArtifactFile(relativePath, bytes)],
+          digest: computePluginUiArtifactFileSetSha256DigestV1([{ relativePath, bytes }]),
+          builtWith: { bundler: 'repack' as const, version: '5.2.5' },
+          repack: {
+            containerName: 'happier_client_actions_native',
+            modulePath: overrides.nativeClientActionArtifactModulePath ?? clientActionModulePath,
+            exportName: overrides.nativeClientActionArtifactExportName ?? clientActionExportName,
+          },
+          hostUiApiVersion: '1.0.0',
+          compat: { react: '19.2.0', reactNative: '0.83.4' },
+        };
+      })),
       ...(overrides.duplicateArtifactSlot ? [{
         contributionId: overrides.artifactContributionId ?? 'panel-web',
         tier: overrides.artifactTier ?? 'hostedWeb',
@@ -225,6 +277,10 @@ async function createCandidateFixture(overrides: FixtureOverrides = {}): Promise
     { name: `package/dist/happier-plugin-ui/${uiEntryPath}`, body: uiBytes },
     ...((overrides.additionalVoiceArtifactPlatforms ?? []).map((platform) => ({
       name: `package/dist/happier-plugin-ui/react-native/voice-runtime-web/${platform}.bundle`,
+      body: `export function activate() { /* ${platform} */ }\n`,
+    }))),
+    ...((overrides.additionalClientActionArtifactPlatforms ?? []).map((platform) => ({
+      name: `package/dist/happier-plugin-ui/react-native/${clientActionArtifactId}/${platform}.bundle`,
       body: `export function activate() { /* ${platform} */ }\n`,
     }))),
     ...(overrides.duplicateArtifactSlot
@@ -405,6 +461,67 @@ describe('stageDownloadedNpmArtifactCandidate', () => {
       candidate: fixture.candidate,
       stagingParentPath: fixture.stagingParentPath,
     })).resolves.toMatchObject({ ok: true });
+  });
+
+  it('accepts exactly the generated Vite/Re.Pack siblings declared by a client Action', async () => {
+    const fixture = await createCandidateFixture({
+      includeUiRenderer: false,
+      clientAction: { platforms: ['web', 'ios', 'android'] },
+      artifactContributionId: 'client-actions',
+      artifactTier: 'reactNative',
+      additionalClientActionArtifactPlatforms: ['ios', 'android'],
+    });
+
+    await expect(stageDownloadedNpmArtifactCandidate({
+      candidate: fixture.candidate,
+      stagingParentPath: fixture.stagingParentPath,
+    })).resolves.toMatchObject({
+      ok: true,
+      candidate: { generatedUiArtifacts: { contributionIds: ['client-actions'] } },
+    });
+  });
+
+  it('rejects a client Action artifact whose native Re.Pack module differs from its declaration', async () => {
+    const fixture = await createCandidateFixture({
+      includeUiRenderer: false,
+      clientAction: { platforms: ['web', 'ios'] },
+      artifactContributionId: 'client-actions',
+      artifactTier: 'reactNative',
+      additionalClientActionArtifactPlatforms: ['ios'],
+      nativeClientActionArtifactModulePath: './otherClientActions',
+    });
+
+    await expect(stageDownloadedNpmArtifactCandidate({
+      candidate: fixture.candidate,
+      stagingParentPath: fixture.stagingParentPath,
+    })).resolves.toMatchObject({
+      ok: false,
+      rejection: {
+        code: 'ui_artifact_identity_mismatch',
+        message: 'Generated React Native UI artifact Re.Pack identity does not match the declaration: client-actions',
+      },
+    });
+  });
+
+  it('rejects a client Action artifact that adds an undeclared native platform sibling', async () => {
+    const fixture = await createCandidateFixture({
+      includeUiRenderer: false,
+      clientAction: { platforms: ['web', 'ios'] },
+      artifactContributionId: 'client-actions',
+      artifactTier: 'reactNative',
+      additionalClientActionArtifactPlatforms: ['ios', 'android'],
+    });
+
+    await expect(stageDownloadedNpmArtifactCandidate({
+      candidate: fixture.candidate,
+      stagingParentPath: fixture.stagingParentPath,
+    })).resolves.toMatchObject({
+      ok: false,
+      rejection: {
+        code: 'ui_artifact_identity_mismatch',
+        message: 'Generated React Native UI artifact platforms do not exactly match the declaration: client-actions',
+      },
+    });
   });
 
   it.each([

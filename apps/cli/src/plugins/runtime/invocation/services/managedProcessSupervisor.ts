@@ -16,7 +16,7 @@ import {
 } from '@happier-dev/protocol';
 
 import type {
-    ManagedServiceDurabilityOwner,
+    ManagedServiceProcessDurabilityOwner,
     ManagedServiceDurableLogCapture,
 } from './managedServiceDurability';
 import {
@@ -32,7 +32,7 @@ import {
 } from '@/providers/lifecycle/resolveManagedProviderRuntimeLaunch';
 import { normalizeLocalServiceScan } from '@/daemon/local/services/inventory/scanner';
 import { scanPlatformLocalServices } from '@/daemon/local/services/inventory/platform/scan';
-import { selectManagedOwnedTreeEndpoint } from '@/daemon/local/services/managed/registry';
+import { selectManagedOwnedTreeEndpoint } from './managedOwnedTreeEndpoint';
 import {
     reserveLoopbackPort,
     type LoopbackHost,
@@ -728,7 +728,7 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
         preferredPort?: number,
         signal?: AbortSignal,
     ) => Promise<LoopbackPortReservation>;
-    durability?: ManagedServiceDurabilityOwner;
+    durability?: ManagedServiceProcessDurabilityOwner;
     captureProcessStartIdentity?: (pid: number) => Promise<string | null>;
     custodyOwner?: 'daemon' | 'sessionRunner';
     authorizeRunnerSupervision?: (

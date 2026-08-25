@@ -91,6 +91,63 @@ describe.sequential('daemon control client PID safety', () => {
     }
   }, 30_000);
 
+  it('stopDaemon reports a completed stop when the recorded daemon PID has already exited', async () => {
+    // F-DAEMON-6: `happier daemon restart` stopped the daemon and then refused its own force-kill
+    // with "daemon identity does not match the active lifecycle owner", leaving the stack daemonless.
+    // The refused pid was already gone. A pid that is provably absent is a COMPLETED stop, not a
+    // hostile identity: there is nothing left to signal and nothing left to protect.
+    const homeDir = createTempDirSync('happier-cli-daemon-stop-exited-');
+    try {
+      envScope.patch({
+        HAPPIER_HOME_DIR: homeDir,
+        HAPPIER_DAEMON_HTTP_TIMEOUT: '150',
+      });
+
+      // A real pid that we watch exit, so "gone" is observed rather than assumed.
+      const child = spawn(process.execPath, ['-e', 'process.exit(0)'], { stdio: 'ignore' });
+      const exitedPid = child.pid;
+      if (!exitedPid) throw new Error('missing pid for child');
+      await new Promise<void>((resolve) => child.once('exit', () => resolve()));
+      expect(() => process.kill(exitedPid, 0)).toThrow();
+
+      vi.resetModules();
+      const [{ configuration }, { stopDaemon }] = await Promise.all([
+        import('@/configuration'),
+        import('./controlClient'),
+      ]);
+
+      // Exactly the observed precondition: state and lock both still name the dead daemon
+      // (nothing cleans them up, because the refusal happens before cleanup), and the HTTP
+      // port is dead so the graceful stop falls through to the force path.
+      writeFileSync(
+        configuration.daemonStateFile,
+        JSON.stringify({
+          pid: exitedPid,
+          httpPort: 1,
+          startedAt: Date.now(),
+          startedWithCliVersion: '0.0.0-test',
+          controlToken: 'token-123',
+        }, null, 2),
+        'utf-8',
+      );
+      writeFileSync(
+        configuration.daemonLockFile,
+        JSON.stringify({
+          t: 'happier_daemon_lock_v1',
+          pid: exitedPid,
+          ownerToken: '00000000-0000-4000-8000-000000000123',
+          processStartedAtMs: Date.now() - 60_000,
+          createdAtMs: Date.now() - 60_000,
+        }),
+        'utf-8',
+      );
+
+      await expect(stopDaemon()).resolves.toMatchObject({ status: 'stopped' });
+    } finally {
+      removeTempDirSync(homeDir);
+    }
+  }, 30_000);
+
   it('checkIfDaemonRunningAndCleanupStaleState probes /ping when controlToken is present', async () => {
     const homeDir = createTempDirSync('happier-cli-daemon-ping-');
     envScope.patch({

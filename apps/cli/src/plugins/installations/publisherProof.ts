@@ -12,7 +12,7 @@ import {
 import { readCurrentMachineInstallation } from '@/daemon/identity/currentMachineInstallation';
 
 export type CreatePluginInstallationPublisherHeader = (request: Readonly<{
-    method: 'POST';
+    method: 'GET' | 'POST';
     path: string;
     body: unknown;
 }>) => Promise<string | null> | string | null;
@@ -26,6 +26,7 @@ export function signPluginInstallationPublisherHeader(params: Readonly<{
     machineId: string;
     path: string;
     body: unknown;
+    method?: 'GET' | 'POST';
 }>): string {
     const proof = {
         v: 1 as const,
@@ -34,7 +35,7 @@ export function signPluginInstallationPublisherHeader(params: Readonly<{
         installationId: params.identity.installationId,
         issuedAt: Date.now(),
         nonce: randomUUID(),
-        method: 'POST' as const,
+        method: params.method ?? 'POST',
         path: params.path,
         bodySha256Base64Url: createHash('sha256')
             .update(stringifyPluginInstallationManifestCanonicalJsonV1(params.body ?? null))
@@ -76,6 +77,7 @@ export async function createDefaultPluginInstallationPublisherHeader(
     return signPluginInstallationPublisherHeader({
         identity: current.identity,
         machineId: current.machineId,
+        method: request.method,
         path: request.path,
         body: request.body,
     });

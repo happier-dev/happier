@@ -325,6 +325,80 @@ describe('packagedVoiceInferenceRuntime', () => {
         ]);
     });
 
+    it('does not cache a Kokoro runtime when native construction finishes after cancellation', async () => {
+        const rootDir = await createTempDir();
+        const packId = 'kokoro-82m-v1.0-onnx-q8-wasm';
+        const manifest = {
+            packId,
+            kind: 'tts_sherpa' as const,
+            model: 'kokoro',
+            version: '2026-04-17',
+            files: manifestFiles([
+                ...ZIPFORMER_SUPPORT_PATHS,
+                'model.onnx',
+                'voices.bin',
+                'tokens.txt',
+                'espeak-ng-data/en_dict',
+            ]),
+        };
+        await mkdir(join(rootDir, 'LICENSES'));
+        await Promise.all([
+            mkdir(join(rootDir, 'espeak-ng-data')),
+            writeFile(join(rootDir, 'model.onnx'), 'tts-model', 'utf8'),
+            writeFile(join(rootDir, 'voices.bin'), 'tts-voices', 'utf8'),
+            writeFile(join(rootDir, 'tokens.txt'), 'shared-tokens', 'utf8'),
+            writeFile(join(rootDir, 'espeak-ng-data/en_dict'), 'dictionary', 'utf8'),
+            ...ZIPFORMER_SUPPORT_PATHS.map((path) => writeFile(join(rootDir, path), 'support', 'utf8')),
+        ]);
+
+        const abortController = new AbortController();
+        let constructed = 0;
+        let disposed = 0;
+        vi.doMock('sherpa-onnx-node', () => ({
+            OfflineTts: class MockOfflineTts {
+                constructor() {
+                    constructed += 1;
+                    // Native construction has no precise abort API. The current attempt ends
+                    // while the exact constructor owns initialization.
+                    abortController.abort();
+                }
+
+                dispose() {
+                    disposed += 1;
+                }
+
+                generate() {
+                    return {
+                        samples: new Float32Array([0.1, 0.2]),
+                        sampleRate: 16_000,
+                    };
+                }
+            },
+        }));
+
+        const { voiceInferenceRuntimeEngine } = await import('./packagedVoiceInferenceRuntime');
+        const warmModel = voiceInferenceRuntimeEngine.warmModel;
+        if (!warmModel) {
+            throw new Error('expected_warm_model');
+        }
+
+        await expect(warmModel({
+            packId,
+            packDir: rootDir,
+            manifest,
+            signal: abortController.signal,
+        })).rejects.toMatchObject({ code: 'cancelled' });
+        expect(constructed).toBe(1);
+        expect(disposed).toBe(1);
+
+        await warmModel({
+            packId,
+            packDir: rootDir,
+            manifest,
+        });
+        expect(constructed).toBe(2);
+    });
+
     it('disposes warmed cached runtimes when releaseModel is invoked', async () => {
         const rootDir = await createTempDir();
         const ttsManifest = {

@@ -8,6 +8,7 @@ import type { ResolvedContributionRegistry, ResolvedSettingsContribution } from 
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 
 import { resolveDeclarativeProjectionModels } from './declarativeModels';
+import { listDeclarativeNodesInPreorder } from '@/plugins/runtime/invocation/services/declarativeModel.testkit';
 
 function registry(): ResolvedContributionRegistry {
     return {
@@ -307,7 +308,7 @@ describe('declarative projection models', () => {
             generation: 43,
         })['acme.forms\0preferences'];
 
-        expect(model?.nodes[2]).toMatchObject({ kind: 'action', enabled: false });
+        expect(listDeclarativeNodesInPreorder(model!.root)[2]).toMatchObject({ kind: 'action', enabled: false });
     });
 
     it('keeps a model inert when current action policy evaluation fails', () => {
@@ -322,7 +323,7 @@ describe('declarative projection models', () => {
             },
         });
 
-        expect(models['acme.forms\0preferences']?.nodes[2]).toMatchObject({
+        expect(listDeclarativeNodesInPreorder(models['acme.forms\0preferences']!.root)[2]).toMatchObject({
             kind: 'action',
             enabled: false,
         });
@@ -352,7 +353,7 @@ describe('declarative projection models', () => {
             },
         });
 
-        expect(models['acme.forms\0preferences']?.nodes[2]).toMatchObject({
+        expect(listDeclarativeNodesInPreorder(models['acme.forms\0preferences']!.root)[2]).toMatchObject({
             kind: 'action',
             enabled: false,
         });

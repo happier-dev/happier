@@ -2,6 +2,7 @@ import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import cliDistBuildManifest from '@happier-dev/cli-common/cliDistBuildManifest';
 import {
   readDefaultManagedReleaseChannelSync,
   resolveInstalledFirstPartyComponentPaths,
@@ -267,16 +268,69 @@ export function resolveAuthoritativePackagedRuntimeProjectRoot(params: Readonly<
   return exactShimRoot ? { root: exactShimRoot, provenance: 'packaged-shim' } : null;
 }
 
+const PACKAGED_RUNTIME_TREES = ['package-dist', 'dist'] as const;
+
+export type PackagedRuntimeTree = (typeof PACKAGED_RUNTIME_TREES)[number];
+
+function normalizeRootForEquality(root: string): string {
+  const normalized = normalizePathLike(root).replace(/\/+$/u, '');
+  return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
+}
+
+/**
+ * The packaged tree the *current* process is executing from, derived from this module's
+ * own location. `bin/happier.mjs` rewrites `process.argv` to the wrapper path before the
+ * runtime is imported (`bin/_importRuntimeEntrypoint.mjs`), so argv cannot report which of
+ * `dist/` and `package-dist/` was actually loaded — but `import.meta.url` always can.
+ */
+export function resolveExecutingPackagedRuntimeTree(
+  moduleUrl: string,
+): Readonly<{ root: string; tree: PackagedRuntimeTree }> | null {
+  try {
+    const modulePath = normalizePathLike(fileURLToPath(moduleUrl));
+    if (!modulePath || isEmbeddedBunBundlePath(modulePath)) return null;
+    // A pinned runner snapshot is its own runtime root and is selected before any tree.
+    if (resolveRunnerSnapshotRuntimeRootFromPath(modulePath)) return null;
+    // The innermost tree wins, so a runtime nested under a directory that merely happens to be
+    // named `dist`/`package-dist` still reports its own root.
+    let innermost: { root: string; tree: PackagedRuntimeTree } | null = null;
+    let innermostIndex = -1;
+    for (const tree of PACKAGED_RUNTIME_TREES) {
+      const markerIndex = modulePath.lastIndexOf(`/${tree}/`);
+      if (markerIndex < 0 || markerIndex <= innermostIndex) continue;
+      innermostIndex = markerIndex;
+      innermost = { root: modulePath.slice(0, markerIndex), tree };
+    }
+    if (innermost) return innermost.root ? innermost : null;
+  } catch {
+    // Module evidence is unavailable; the caller falls back to candidate probing.
+  }
+  return null;
+}
+
 export function resolvePackagedRuntimeEntrypoint(
   relativePath: string,
-  options: Readonly<{ packageDistOnly?: boolean }> = {},
+  options: Readonly<{ packageDistOnly?: boolean; moduleUrl?: string }> = {},
 ): string {
   const normalizedRelativePath = String(relativePath ?? '').trim();
   if (!normalizedRelativePath) {
     throw new Error('relativePath is required');
   }
 
-  const projectRoots = resolvePackagedRuntimeProjectRoots();
+  const executingRuntime = resolveExecutingPackagedRuntimeTree(options.moduleUrl ?? import.meta.url);
+  const discoveredRoots = resolvePackagedRuntimeProjectRoots();
+  // Module evidence is the strongest statement of which installation is executing — the same
+  // authority order `resolveAuthoritativePackagedRuntimeProjectRoot` already applies. Without it
+  // a checkout launched through its `bin/` wrapper hands children a managed install's bundle,
+  // because argv carries the wrapper path rather than a runtime entrypoint.
+  const projectRoots = executingRuntime
+    ? [
+        executingRuntime.root,
+        ...discoveredRoots.filter(
+          (root) => normalizeRootForEquality(root) !== normalizeRootForEquality(executingRuntime.root),
+        ),
+      ]
+    : discoveredRoots;
   let firstCandidate: string | null = null;
 
   for (const root of projectRoots) {
@@ -291,18 +345,47 @@ export function resolvePackagedRuntimeEntrypoint(
       }
       continue;
     }
-    const candidates = [
-      ...(isSnapshotRoot ? [join(root, normalizedRelativePath)] : []),
-      join(root, 'package-dist', normalizedRelativePath),
-      join(root, 'dist', normalizedRelativePath),
-    ];
+
+    if (isSnapshotRoot) {
+      const snapshotEntrypoint = join(root, normalizedRelativePath);
+      firstCandidate ??= snapshotEntrypoint;
+      if (existsSync(snapshotEntrypoint)) return snapshotEntrypoint;
+    }
+
+    // A child process must execute the same runtime bundle as its parent. Without this the
+    // resolver re-derives a tree from scratch and hands the child whatever `package-dist`
+    // happens to contain — on a development checkout, a bundle from the last package build.
+    const inheritedTree = executingRuntime
+      && normalizeRootForEquality(executingRuntime.root) === normalizeRootForEquality(root)
+      ? executingRuntime.tree
+      : null;
+    const orderedTrees: readonly PackagedRuntimeTree[] = inheritedTree === 'dist'
+      ? ['dist', 'package-dist']
+      : PACKAGED_RUNTIME_TREES;
+    const candidates = orderedTrees.map((tree) => join(root, tree, normalizedRelativePath));
     firstCandidate ??= candidates[0] ?? null;
 
-    for (const candidate of candidates) {
-      if (existsSync(candidate)) {
-        return candidate;
-      }
+    const existingCandidates = candidates.filter((candidate) => existsSync(candidate));
+    if (existingCandidates.length === 0) continue;
+    if (inheritedTree || existingCandidates.length === 1) {
+      return existingCandidates[0]!;
     }
+
+    // Two trees and no inherited evidence (a source/tsx parent). Presence alone is what let a
+    // build-in-progress directory win, so prefer a tree whose build recorded a manifest — a
+    // build writes it last. Presence remains the fallback for installed payloads published
+    // before the build-manifest corridor, which carry no manifest at all.
+    //
+    // This is deliberately the *recorded* read, not `readCliDistBuildManifest`: that one walks
+    // and hashes the entire closure (~2s for a real bundle) and this runs on every CLI and
+    // daemon subprocess spawn. Closure integrity is verified where the bytes are executed, by
+    // `bin/_resolveRuntimeEntrypoint.mjs`.
+    const recordedCandidate = existingCandidates.find(
+      (candidate) => cliDistBuildManifest.readRecordedCliDistBuildManifestFingerprint(
+        dirname(candidate),
+      ) !== null,
+    );
+    return recordedCandidate ?? existingCandidates[0]!;
   }
 
   return firstCandidate ?? join(projectPath(), 'package-dist', normalizedRelativePath);

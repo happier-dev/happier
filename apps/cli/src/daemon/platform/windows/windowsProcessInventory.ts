@@ -1,3 +1,5 @@
+import { windowsSystemToolCommand } from '@happier-dev/cli-common/process';
+
 export type WindowsProcessInventoryFact = Readonly<{
   pid: number;
   name?: string;
@@ -5,6 +7,10 @@ export type WindowsProcessInventoryFact = Readonly<{
   processStartTimeMs?: number;
   command?: string;
   executablePath?: string;
+  /** Owning principal's SID, present only for pids named in `ownerSidPids`. */
+  ownerSid?: string;
+  /** The querying identity's SID, so the caller compares two values from the same read. */
+  currentUserSid?: string;
 }>;
 
 export type WindowsProcessInventoryExecFile = (
@@ -26,6 +32,8 @@ type WindowsProcessJsonRow = Readonly<{
   CreationDate?: unknown;
   CommandLine?: unknown;
   ExecutablePath?: unknown;
+  OwnerSid?: unknown;
+  CurrentUserSid?: unknown;
 }>;
 
 function parsePositiveInteger(value: unknown): number | null {
@@ -114,6 +122,12 @@ export function parseWindowsProcessInventoryJson(
       typeof row.ExecutablePath === 'string'
         ? row.ExecutablePath.trim()
         : '';
+    const ownerSid =
+      typeof row.OwnerSid === 'string' ? row.OwnerSid.trim() : '';
+    const currentUserSid =
+      typeof row.CurrentUserSid === 'string'
+        ? row.CurrentUserSid.trim()
+        : '';
     processes.set(pid, {
       pid,
       ...(name ? { name } : {}),
@@ -123,6 +137,8 @@ export function parseWindowsProcessInventoryJson(
         : {}),
       ...(command ? { command } : {}),
       ...(executablePath ? { executablePath } : {}),
+      ...(ownerSid ? { ownerSid } : {}),
+      ...(currentUserSid ? { currentUserSid } : {}),
     });
   }
   return processes;
@@ -132,6 +148,12 @@ export async function readWindowsProcessInventory(
   input: Readonly<{
     execFile: WindowsProcessInventoryExecFile;
     pids?: readonly number[];
+    /**
+     * Resolve the owning principal's SID for these pids only. `GetOwnerSid` is a per-object WMI
+     * method call, so it is opt-in and pid-scoped: the terminate ownership gate needs it for
+     * listener pids, and the unfiltered custody/doctor inventory must not pay for it.
+     */
+    ownerSidPids?: readonly number[];
   }>,
 ): Promise<ReadonlyMap<number, WindowsProcessInventoryFact>> {
   const pids = input.pids
@@ -146,12 +168,31 @@ export async function readWindowsProcessInventory(
         pids.map((pid) => `ProcessId = ${pid}`).join(' OR ')
       }"`
     : 'Get-CimInstance Win32_Process';
+  const ownerSidPids = pids
+    ? [...new Set((input.ownerSidPids ?? []).filter(
+        (pid) => Number.isInteger(pid) && pid > 0 && pids.includes(pid),
+      ))]
+    : [];
+  // `GetOwnerSid` is a per-object WMI method call, so the projection is only added when a caller
+  // asked for specific pids. The current identity is resolved once in the same shell and stamped
+  // on each row, so ownership is decided from two values read by one invocation — no second
+  // PowerShell start-up, and no window between reading the owner and reading who we are.
+  const ownerSidProjection = ownerSidPids.length > 0
+    ? `,@{Name='OwnerSid';Expression={if ($ownerPids -contains $_.ProcessId) { (Invoke-CimMethod -InputObject $_ -MethodName GetOwnerSid).Sid } else { $null }}},@{Name='CurrentUserSid';Expression={$currentSid}}`
+    : '';
+  const ownerSidPreamble = ownerSidPids.length > 0
+    ? [
+      `$ownerPids = @(${ownerSidPids.join(',')})`,
+      '$currentSid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value',
+    ]
+    : [];
   const script = [
-    `$rows = ${source} | Select-Object ProcessId,Name,ParentProcessId,@{Name='ProcessStartTimeMs';Expression={([DateTimeOffset]$_.CreationDate).ToUnixTimeMilliseconds()}},CommandLine,ExecutablePath`,
+    ...ownerSidPreamble,
+    `$rows = ${source} | Select-Object ProcessId,Name,ParentProcessId,@{Name='ProcessStartTimeMs';Expression={([DateTimeOffset]$_.CreationDate).ToUnixTimeMilliseconds()}},CommandLine,ExecutablePath${ownerSidProjection}`,
     "if ($null -eq $rows) { Write-Output '[]' } else { $rows | ConvertTo-Json -Compress }",
   ].join('; ');
   const result = await input.execFile(
-    'powershell.exe',
+    windowsSystemToolCommand('powershell.exe'),
     ['-NoProfile', '-NonInteractive', '-Command', script],
     {
       timeout: WINDOWS_PROCESS_INVENTORY_TIMEOUT_MS,

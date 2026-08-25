@@ -445,19 +445,11 @@ function registry(params: Readonly<{
 }
 
 function authorizationFacts(overrides: Readonly<{
-    packageIdentity?: string;
-    reviewedPackageIdentity?: string | null;
     desiredGeneration?: string | null;
     appliedGeneration?: string | null;
     resourceSelections?: TargetActionAuthorizationFacts['resourceSelections'];
 }> = {}): TargetActionAuthorizationFacts {
     return Object.freeze({
-        packageTrust: Object.freeze({
-            packageIdentity: overrides.packageIdentity ?? 'package:acme.alpha:generation-7',
-            reviewedPackageIdentity: overrides.reviewedPackageIdentity === undefined
-                ? 'package:acme.alpha:generation-7'
-                : overrides.reviewedPackageIdentity,
-        }),
         generation: Object.freeze({
             targetGeneration: '7',
             desiredGeneration: overrides.desiredGeneration === undefined ? '7' : overrides.desiredGeneration,
@@ -495,10 +487,6 @@ describe('buildTargetActionInvocationRegistry', () => {
             scopes: Object.freeze(['global']),
             surfaces: Object.freeze(['cli']),
             authorization: Object.freeze({
-                packageTrust: Object.freeze({
-                    packageIdentity: 'package:acme.alpha:generation-7',
-                    reviewedPackageIdentity: 'package:acme.alpha:generation-7',
-                }),
                 generation: Object.freeze({
                     targetGeneration: '7',
                     desiredGeneration: '7',
@@ -1164,7 +1152,7 @@ describe('buildTargetActionInvocationRegistry', () => {
         });
     });
 
-    it('uses committed package authorization instead of the discovery source trust string', async () => {
+    it('uses exact committed generation currentness instead of the discovery source trust string', async () => {
         const committedHandler = vi.fn(handler);
         const committed = buildRegistry({
             contributes: registry({ trustPolicy: 'prompt' }),
@@ -1188,12 +1176,12 @@ describe('buildTargetActionInvocationRegistry', () => {
                 registration: { family: 'actions', localId: 'run', value: uncommittedHandler },
             }],
             targetActivationFacts: [fact()],
-            resolveAuthorizationFacts: () => authorizationFacts({ reviewedPackageIdentity: null }),
+            resolveAuthorizationFacts: () => authorizationFacts({ desiredGeneration: null }),
         });
         await expect(uncommitted.invoke({
             pluginId: 'acme.alpha', localId: 'run', input: {}, surface: 'cli',
         })).resolves.toMatchObject({
-            status: 'unavailable', code: 'plugin_action_package_untrusted',
+            status: 'unavailable', code: 'plugin_action_generation_retired',
         });
         expect(uncommittedHandler).not.toHaveBeenCalled();
     });
@@ -1379,7 +1367,6 @@ describe('buildTargetActionInvocationRegistry', () => {
     it.each([
         ['desired generation', { desiredGeneration: '8' }],
         ['applied generation', { appliedGeneration: '8' }],
-        ['package identity', { packageIdentity: 'package:acme.alpha:generation-8' }],
     ] as const)('rechecks %s after present intent before calling the handler', async (_label, changedFacts) => {
         let facts = authorizationFacts();
         const actionHandler = vi.fn(handler);

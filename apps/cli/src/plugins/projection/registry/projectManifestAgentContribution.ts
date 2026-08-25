@@ -77,12 +77,14 @@ function projectManifestAgentCatalogEntry(params: Readonly<{
     definition: PluginAgentContributionV2;
     cli: PluginAgentContributionV2['cli'] | null;
     systemTools: readonly PluginSystemToolContributionV1[];
+    provenance: ResolvedContributionProvenance;
 }>): ResolvedCatalogEntry | null {
     const base = createManifestAgentCatalogEntry({
         agentId: params.agentId,
         pluginId: params.pluginId,
         definition: params.definition,
         cli: params.cli ?? null,
+        provenance: params.provenance,
     });
     if (!base) return null;
     const createHooks = createAgentRuntimeCatalogEntryHooks({
@@ -163,6 +165,7 @@ export function projectManifestAgentContribution(params: Readonly<{
             definition: params.definition,
             cli: cliMetadata,
             systemTools: params.systemTools ?? EMPTY_SYSTEM_TOOLS,
+            provenance: params.provenance,
         }),
         ...(params.sourceSpec ? { sourceSpec: params.sourceSpec } : {}),
         pluginId: params.pluginId,

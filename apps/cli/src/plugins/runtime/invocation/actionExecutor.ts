@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto';
 import {
   createPluginActionPresentUserGate,
+  projectPluginActionFailureCode,
+  type TargetActionApprovalReplayPlacementV1,
   type PluginActionPresentUserGatePolicy,
 } from '@happier-dev/protocol';
 import { isPluginError, type JsonValue } from '@happier-dev/plugin-sdk';
@@ -20,6 +22,7 @@ import type { PluginInvocationServiceBinding } from './services/types';
 
 export type TargetActionExecutionResult = Readonly<
   | { status: 'executed'; value: JsonValue | null }
+  | { status: 'deferred'; artifactId: string }
   | {
     status: 'unavailable' | 'invalid' | 'failed';
     code: string;
@@ -95,11 +98,14 @@ export type TargetActionCurrentIntentRequest = Readonly<{
   surface: string;
   /** Actual host invocation surface that the approval binds. */
   invocationSurface?: string;
+  /** Immutable host-stamped target for a deferred API approval replay. */
+  replayPlacement?: TargetActionApprovalReplayPlacementV1;
   signal?: AbortSignal;
 }>;
 
 export type TargetActionCurrentIntentResult = Readonly<
   | { status: 'approved'; fingerprint: string }
+  | { status: 'deferred'; artifactId: string }
   | { status: 'rejected' | 'unavailable'; code: string }
 >;
 
@@ -151,12 +157,6 @@ function failed(
   });
 }
 
-function projectTargetActionFailureCode(value: string): string {
-  return /^[a-z][a-z0-9_.:-]{0,119}$/iu.test(value)
-    ? value
-    : 'plugin_action_execution_failed';
-}
-
 /**
  * A target's published failure payload crosses to its caller, so it must not
  * become the one unredacted route out of an invocation whose credential
@@ -164,24 +164,71 @@ function projectTargetActionFailureCode(value: string): string {
  * redactor is applied to every string leaf and key; a redactor failure is
  * caught by the caller, which then withholds the payload entirely.
  *
- * The payload already passed the shared Action JSON bound and depth limit at
- * the Protocol projection, so this walk is bounded by that same admission.
+ * The payload already passed shared Action JSON admission. That carrier has no
+ * generic depth quota, so redaction must use an iterative work list rather
+ * than treating the JavaScript call stack as a privacy limit.
  */
 function redactTargetActionFailureData(
   value: JsonValue,
   redact: (value: string) => string,
 ): JsonValue {
   if (typeof value === 'string') return redact(value);
-  if (Array.isArray(value)) {
-    return value.map((item) => redactTargetActionFailureData(item, redact));
+  if (value === null || typeof value !== 'object') return value;
+
+  type PendingRedaction =
+    | Readonly<{
+      kind: 'array';
+      source: readonly JsonValue[];
+      destination: JsonValue[];
+    }>
+    | Readonly<{
+      kind: 'record';
+      source: Readonly<Record<string, JsonValue>>;
+      destination: Record<string, JsonValue>;
+    }>;
+  const isJsonArray = (candidate: JsonValue): candidate is readonly JsonValue[] => (
+    Array.isArray(candidate)
+  );
+  const root: PendingRedaction = isJsonArray(value)
+    ? { kind: 'array', source: value, destination: [] }
+    : { kind: 'record', source: value, destination: {} };
+  const pending: PendingRedaction[] = [root];
+  const project = (candidate: JsonValue): JsonValue => {
+    if (typeof candidate === 'string') return redact(candidate);
+    if (candidate === null || typeof candidate !== 'object') return candidate;
+    if (isJsonArray(candidate)) {
+      const next: PendingRedaction = {
+        kind: 'array',
+        source: candidate,
+        destination: [],
+      };
+      pending.push(next);
+      return next.destination;
+    }
+    const next: PendingRedaction = {
+      kind: 'record',
+      source: candidate,
+      destination: {},
+    };
+    pending.push(next);
+    return next.destination;
+  };
+
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (!current) continue;
+    if (current.kind === 'array') {
+      for (let index = 0; index < current.source.length; index += 1) {
+        current.destination[index] = project(current.source[index]!);
+      }
+      continue;
+    }
+    for (const [key, candidate] of Object.entries(current.source)) {
+      current.destination[redact(key)] = project(candidate);
+    }
   }
-  if (value !== null && typeof value === 'object') {
-    return Object.fromEntries(Object.entries(value).map(([key, item]) => [
-      redact(key),
-      redactTargetActionFailureData(item, redact),
-    ]));
-  }
-  return value;
+
+  return root.destination;
 }
 
 function isCurrentServiceBinding(
@@ -225,6 +272,10 @@ export function resolvePresentUserGatePolicy(
     // The Protocol gate already fingerprints normalized policy facts. Preserve
     // the daemon-only binding choices that are not expressed by the generic
     // evaluator so approval cannot authorize a replacement service selection.
+    // Exact API replay placement is instead a durable approval-subject field:
+    // it is captured only after this gate determines that an approval is
+    // needed, then checked again before replay. Including it here would force
+    // a materialized execution origin before an Allowed Action can run.
     fingerprintContext: Object.freeze({
       input: action.input,
       accountId: action.accountId ?? null,
@@ -247,7 +298,20 @@ export function createTargetActionExecutor(deps: Readonly<{
   redactFailureText?: (action: ResolvedTargetAction, value: string) => string;
   diagnostic?: (fact: Readonly<{ qualifiedId: string; generation: string; surface: string; status: string; code?: string }>) => void | Promise<void>;
 }>) {
-  type ExecuteArgs = Readonly<{ pluginId: string; localId: string; input: unknown; surface: string; invocationSurface?: string; sessionId?: string; signal?: AbortSignal; requestCurrentIntent?: (request: TargetActionCurrentIntentRequest) => Promise<TargetActionCurrentIntentResult> }>;
+  type ExecuteArgs = Readonly<{
+    pluginId: string;
+    localId: string;
+    input: unknown;
+    surface: string;
+    invocationSurface?: string;
+    sessionId?: string;
+    signal?: AbortSignal;
+    /** Immutable replay subject injected only by the host dispatcher. */
+    replayPlacement?: TargetActionApprovalReplayPlacementV1;
+    /** Revalidate a persisted approval even if current policy no longer asks. */
+    requireCurrentIntent?: true;
+    requestCurrentIntent?: (request: TargetActionCurrentIntentRequest) => Promise<TargetActionCurrentIntentResult>;
+  }>;
 
   const prepare = async (args: ExecuteArgs): Promise<Readonly<
     | { kind: 'settled'; result: TargetActionExecutionResult }
@@ -258,7 +322,7 @@ export function createTargetActionExecutor(deps: Readonly<{
       const finish = async (result: TargetActionExecutionResult): Promise<TargetActionExecutionResult> => {
         let publicResult = result;
         if (result.status === 'failed') {
-          let code = projectTargetActionFailureCode(result.code);
+          let code = projectPluginActionFailureCode(result.code);
           let message = result.message;
           let data = result.data;
           const redactedAction = action;
@@ -270,7 +334,7 @@ export function createTargetActionExecutor(deps: Readonly<{
             try {
               const redactedCode = redactFailureText(redactedAction, result.code);
               code = redactedCode === result.code
-                ? projectTargetActionFailureCode(result.code)
+                ? projectPluginActionFailureCode(result.code)
                 : 'plugin_action_execution_failed';
               message = redactFailureText(redactedAction, result.message);
               data = result.data === undefined
@@ -370,6 +434,9 @@ export function createTargetActionExecutor(deps: Readonly<{
               fingerprint: request.fingerprint,
               surface: request.surface,
               invocationSurface: request.invocationSurface,
+              ...(args.replayPlacement === undefined
+                ? {}
+                : { replayPlacement: args.replayPlacement }),
               ...(request.signal === undefined ? {} : { signal: request.signal }),
             }),
           }
@@ -381,12 +448,19 @@ export function createTargetActionExecutor(deps: Readonly<{
         invocationSurface,
         ...(args.sessionId === undefined ? {} : { sessionId: args.sessionId }),
         ...(args.signal === undefined ? {} : { signal: args.signal }),
+        ...(args.requireCurrentIntent === true ? { requireCurrentIntent: true as const } : {}),
       });
       if (admission.status !== 'admitted') {
         if (admission.status === 'failed') {
           return Object.freeze({
             kind: 'settled' as const,
             result: await finish(failed(admission.code, new Error(admission.message), 'notStarted')),
+          });
+        }
+        if (admission.status === 'deferred') {
+          return Object.freeze({
+            kind: 'settled' as const,
+            result: Object.freeze({ status: 'deferred' as const, artifactId: admission.artifactId }),
           });
         }
         return Object.freeze({

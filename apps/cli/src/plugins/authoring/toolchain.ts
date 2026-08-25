@@ -29,7 +29,6 @@ import {
 } from '@happier-dev/cli-common/workspaces';
 import { BUILD_CONFIG_BASENAMES } from '@happier-dev/plugin-sdk/ui/build';
 
-import { resolveLocalPluginSourceManifestAuthority } from '@/plugins/manifest/bundledFirstPartyAuthority';
 import { readPluginManifest } from '@/plugins/manifest/read';
 import {
   findPluginDiagnosticSourceLocation,
@@ -157,6 +156,8 @@ const PREPUBLICATION_AUTHOR_PACKAGE_NAMES = [
 ] as const;
 const PREPUBLICATION_PLUGIN_SDK_VERSION = '0.0.0';
 const TRANSIENT_PNPM_WORKSPACE_FILE_NAME = 'pnpm-workspace.yaml';
+const PLUGIN_AUTHOR_TYPECHECK_BUILD_INFO_PATH =
+  'node_modules/.cache/happier/plugin-author.typecheck.tsbuildinfo';
 
 export type PluginAuthorBundledPrepublicationMaterialization = Readonly<{
   packageRootsByName: ReadonlyMap<string, string>;
@@ -730,9 +731,10 @@ export async function runManagedPluginPnpm(
 /**
  * Cheap idempotent probe for a materialized author root. It answers only
  * whether the package materializer has already produced a resolvable package
- * tree in the directory the author edits, so the dev loop can prepare an author
- * root exactly once instead of reinstalling on every watch start. Refreshing a
- * stale tree stays the explicit job of `happier plugins dev install`.
+ * tree in the directory the author edits, so development commands can prepare
+ * an author root exactly once instead of reinstalling before each check.
+ * Refreshing a stale tree stays the explicit job of
+ * `happier plugins dev install`.
  *
  * A bare `node_modules` is not that evidence: the managed package materializer
  * creates its store directory before any package lands, so an interrupted first
@@ -843,7 +845,7 @@ function failedResult(params: Readonly<{
 function processFailureMessage(operation: PluginAuthorToolchainOperation, result: PluginAuthorToolchainSpawnResult): string {
   const detail = `${result.stderr}\n${result.stdout}`.trim();
   const suffix = detail ? `: ${detail}` : '';
-  return `Plugin author ${operation} failed with ${result.signal ?? result.exitCode ?? 'unknown status'}${suffix}`;
+  return `Plugin development ${operation} failed with ${result.signal ?? result.exitCode ?? 'unknown status'}${suffix}`;
 }
 
 /**
@@ -924,7 +926,7 @@ export async function cleanupPluginAuthorGeneratedArtifacts(projectRoot: string)
  * as the local working tree it is. The reserved `happier.*` namespace and the
  * release-stamped engine range stop a *distributed* artifact from impersonating
  * a first-party plugin; a project root on this machine is not one, and the dev
- * loop reaches this classifier through `plugins.author.build`/`test`. Enforcing
+ * loop reaches this classifier through `plugins.dev.build`/`test`. Enforcing
  * them here refused external authors the loop bundled plugins get, while the
  * rules stay fully enforced where custody actually transfers — archive staging
  * on install rejects the same id whatever produced it.
@@ -933,9 +935,7 @@ export async function classifyPluginAuthorDaemonBuild(
   projectRoot: string,
 ): Promise<PluginAuthorDaemonBuildClassification> {
   const manifestPath = join(projectRoot, PLUGIN_MANIFEST_RELATIVE_PATH);
-  const manifestAuthority = await resolveLocalPluginSourceManifestAuthority({
-    pluginRootPath: projectRoot,
-  });
+  const manifestAuthority = 'external' as const;
   const manifestRead = await readPluginManifest({ manifestPath, manifestAuthority, sourceProvenance: 'localSource' });
   if (!manifestRead.ok) {
     if (manifestRead.diagnostics.every((diagnostic) => diagnostic.code === 'plugin_manifest_missing')) {
@@ -1120,22 +1120,32 @@ export async function runPluginAuthorToolchain(
       runtimeCommand = resolvedRuntimeCommand;
     }
 
-    const dependencyPreparation = await preparePluginAuthorDependencies({
-      projectRoot,
-      sdkRegistryOrigin: params.sdkRegistryOrigin,
-      ...(params.signal ? { signal: params.signal } : {}),
-    }, deps);
-    if (!dependencyPreparation.ok) {
-      return failedResult({
-        operation: params.operation,
-        projectRoot: dependencyPreparation.projectRoot,
-        diagnostic: dependencyPreparation.diagnostic,
-      });
+    // `plugins dev` and the focused checks share one author-root readiness
+    // owner. Once the SDK resolves, rerunning pnpm before every typecheck,
+    // build, or test adds no compiler evidence; dependency refresh stays the
+    // explicit `plugins dev install` operation. An explicit registry selection
+    // is itself a request to rematerialize from that source.
+    const shouldPrepareDependencies = params.operation === 'install'
+      || typeof params.sdkRegistryOrigin === 'string'
+      || !(await isPluginAuthorRootMaterialized(projectRoot));
+    if (shouldPrepareDependencies) {
+      const dependencyPreparation = await preparePluginAuthorDependencies({
+        projectRoot,
+        sdkRegistryOrigin: params.sdkRegistryOrigin,
+        ...(params.signal ? { signal: params.signal } : {}),
+      }, deps);
+      if (!dependencyPreparation.ok) {
+        return failedResult({
+          operation: params.operation,
+          projectRoot: dependencyPreparation.projectRoot,
+          diagnostic: dependencyPreparation.diagnostic,
+        });
+      }
+      projectRoot = dependencyPreparation.projectRoot;
     }
     if (params.operation === 'install') {
-      return { ok: true, operation: params.operation, projectRoot: dependencyPreparation.projectRoot };
+      return { ok: true, operation: params.operation, projectRoot };
     }
-    projectRoot = dependencyPreparation.projectRoot;
     if (!runtimeCommand) {
       return failedResult({
         operation: params.operation,
@@ -1197,7 +1207,9 @@ export async function runPluginAuthorToolchain(
           command: runtimeCommand,
           args: [
             compilerPath,
-            ...(params.operation === 'typecheck' ? ['--noEmit'] : []),
+            ...(params.operation === 'typecheck'
+              ? ['--noEmit', '--tsBuildInfoFile', PLUGIN_AUTHOR_TYPECHECK_BUILD_INFO_PATH]
+              : []),
             '-p',
             'tsconfig.json',
           ],

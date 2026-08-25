@@ -11,6 +11,7 @@ import type { SessionExecutionTargetV1 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { describe, expect, it } from 'vitest';
 
+import { createOneBitGrayscalePng } from '@/testkit/media/pngFixtures';
 import { createStablePluginComposerContentOwner } from './composerContent';
 import { createPluginFileSystemService } from './filesystem';
 import type { PluginInvocationServicesSeed } from './types';
@@ -22,7 +23,7 @@ import { registerTransferUploadRpcHandlers } from '@/transfers/rpc/registerTrans
 import { TransferSessionStore } from '@/transfers/core/transferSessionStore';
 import { createComposerMediaStageStore } from '@/transfers/staging/composerMediaStageStore';
 
-const PNG_BYTES = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+const PNG_BYTES = createOneBitGrayscalePng(1, 1);
 const TARGET = Object.freeze({
     serverId: 'server-1',
     machineId: 'machine-1',

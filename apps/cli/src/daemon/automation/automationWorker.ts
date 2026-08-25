@@ -9,7 +9,10 @@ import {
   resolveValidatedAutomationAccountEncryptionV1,
 } from '@/plugins/runtime/automations/automationAccountCurrentness';
 import { createAutomationAssignmentCache } from './automationAssignmentCache';
-import { classifyAutomationWorkerError, nextAutomationRetryDelayMs } from './automationBackoffPolicy';
+import {
+  classifyAutomationWorkerError,
+  nextAutomationRetryDelayMs,
+} from './automationBackoffPolicy';
 import {
   createAutomationClaimClient,
 } from './automationClaimClient';
@@ -22,7 +25,6 @@ import type {
   AutomationClaimedRunPayload,
   AutomationClaimRunResponse,
 } from './automationTypes';
-import type { ExecutionBudgetRegistry } from '@/daemon/executionBudget/ExecutionBudgetRegistry';
 import type { Update } from '@/api/types';
 import type { StoredCredentials } from '@/persistence';
 import type {
@@ -31,12 +33,12 @@ import type {
   SessionServerStartDispatchResultV1,
   SessionServerStartIngressRequestV1,
 } from '@happier-dev/protocol';
+import { DEFAULT_AUTOMATION_V3_MAX_ACTIVE_RUNS_PER_MACHINE } from '@happier-dev/protocol';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { invalidateActiveAutomationRun } from './automationRunInvalidation';
 
 const ASSIGNMENT_RECONCILIATION_DELAY_MS = 45_000;
 const ASSIGNMENT_RECONCILIATION_JITTER_MS = 15_000;
-
 export type AutomationWorkerHandle = Readonly<{
   stop: () => void;
   refreshAssignments: () => Promise<void>;
@@ -67,7 +69,6 @@ export function startAutomationWorker(params: {
     request: SessionServerStartIngressRequestV1,
     options?: Readonly<{ signal?: AbortSignal }>,
   ) => Promise<SessionServerStartDispatchResultV1>;
-  budgetRegistry?: ExecutionBudgetRegistry;
   env?: NodeJS.ProcessEnv;
 }): AutomationWorkerHandle {
   const env = params.env ?? process.env;
@@ -97,19 +98,21 @@ export function startAutomationWorker(params: {
   const claimClient = createAutomationClaimClient({ token: params.token });
   const actionExecutor = params.credentials
     ? createCliActionExecutorFromCredentials({
-        credentials: params.credentials,
-        ...(params.machineAdmissionTransport
-          ? { machineAdmissionTransport: params.machineAdmissionTransport }
-          : {}),
-      })
+      credentials: params.credentials,
+      ...(params.machineAdmissionTransport
+        ? { machineAdmissionTransport: params.machineAdmissionTransport }
+        : {}),
+    })
     : null;
   const assignments = createAutomationAssignmentCache();
-  const budgetTokenId = `automation_worker:${params.machineId}`;
 
   let stopped = false;
   let paused = false;
-  let consecutiveFailures = 0;
-  let retryAfter = 0;
+  // These values govern only the one claim request loop. A per-Run executor
+  // failure is already reflected in that Run's server-owned lifecycle and
+  // must not race another claim's retry state.
+  let claimConsecutiveFailures = 0;
+  let claimRetryAfter = 0;
   let noWorkCooldownUntil = 0;
   let pendingQueuedWake = false;
   let nextAssignmentReconciliationAt = 0;
@@ -119,13 +122,15 @@ export function startAutomationWorker(params: {
   let claimTimerAt = 0;
   let claimInFlight = false;
   let refreshSoonTimer: NodeJS.Timeout | null = null;
-  // This worker executes at most one claimed Run at a time. The controller is
-  // invocation-local currentness, not a second Automation cancellation owner.
-  let activeExecution: {
+  // This map is the one Automation execution budget: a Run enters it as soon
+  // as this daemon receives the durable claim and leaves only after its local
+  // execution settles. The server still owns every durable lifecycle fact.
+  const activeExecutions = new Map<string, {
     runId: string;
     attempt: number;
     controller: AbortController;
-  } | null = null;
+  }>();
+  let maxActiveRunsPerMachine = DEFAULT_AUTOMATION_V3_MAX_ACTIVE_RUNS_PER_MACHINE;
 
   const nullClaimBackoffMs = Math.min(
     60_000,
@@ -140,7 +145,12 @@ export function startAutomationWorker(params: {
     }
   }
 
-  function scheduleClaimAt(whenMs: number, reason: string, force = false) {
+  function scheduleClaimAt(
+    whenMs: number,
+    reason: string,
+    force = false,
+    forceCapacityRefill = false,
+  ) {
     if (stopped) return;
     if (paused) return;
     const at = Math.max(Date.now(), Math.floor(whenMs));
@@ -152,12 +162,20 @@ export function startAutomationWorker(params: {
     claimTimer = setTimeout(() => {
       claimTimer = null;
       claimTimerAt = 0;
-      void runTick(reason);
+      void runTick(reason, forceCapacityRefill);
     }, Math.max(0, at - Date.now()));
   }
 
   function scheduleClaimSoon(reason: string) {
     scheduleClaimAt(Date.now(), reason);
+  }
+
+  function scheduleCapacityRefill(reason: string) {
+    if (!hasExecutionCapacity()) return;
+    // Yield through the existing claim timer. A synchronous mock or a very
+    // fast terminal executor must not create an unbounded microtask chain
+    // that starves cancellation, assignment refreshes, or the next timer.
+    scheduleClaimAt(Date.now(), reason, true, true);
   }
 
   function scheduleAssignmentsRefreshSoon(reason: string) {
@@ -193,11 +211,19 @@ export function startAutomationWorker(params: {
     nextAssignmentReconciliationAt = Date.now() + ASSIGNMENT_RECONCILIATION_DELAY_MS + jitterMs;
   }
 
+  function hasExecutionCapacity(): boolean {
+    return activeExecutions.size < maxActiveRunsPerMachine;
+  }
+
   function rescheduleClaim(reason: string, force = false) {
     if (stopped) return;
+    if (!hasExecutionCapacity()) {
+      clearClaimTimer();
+      return;
+    }
     const rows = assignments.getAll();
     const now = Date.now();
-    const blockedUntil = Math.max(retryAfter, noWorkCooldownUntil);
+    const blockedUntil = Math.max(claimRetryAfter, noWorkCooldownUntil);
     const claimBlocked = blockedUntil > now;
     const nextRunAt = rows.length === 0 ? null : getNextAssignedRunAtMs();
     const candidates = [
@@ -217,7 +243,9 @@ export function startAutomationWorker(params: {
   const stopWorker = (reason: 'manual' | 'unsupported-endpoint') => {
     if (stopped) return;
     stopped = true;
-    activeExecution?.controller.abort();
+    for (const active of activeExecutions.values()) {
+      active.controller.abort();
+    }
     clearClaimTimer();
     if (refreshSoonTimer) {
       clearTimeout(refreshSoonTimer);
@@ -230,11 +258,13 @@ export function startAutomationWorker(params: {
   };
 
   const invalidateActiveExecution = (update: Update) => {
-    invalidateActiveAutomationRun({
-      update,
-      active: activeExecution,
-      machineId: params.machineId,
-    });
+    for (const active of activeExecutions.values()) {
+      invalidateActiveAutomationRun({
+        update,
+        active,
+        machineId: params.machineId,
+      });
+    }
   };
 
   const refreshAssignments = async () => {
@@ -247,6 +277,11 @@ export function startAutomationWorker(params: {
       // reconciliation. Only the newest request may replace the canonical cache or
       // its wake timer; otherwise a late older snapshot can erase newer work.
       if (request !== latestAssignmentRefreshRequest) return;
+      const previousMaxActiveRunsPerMachine = maxActiveRunsPerMachine;
+      // The server is the settings authority. The V2 compatibility adapter
+      // has already normalized its observed predecessor shape to the
+      // Protocol-owned default, so every worker refresh has this one input.
+      maxActiveRunsPerMachine = response.settings.maxActiveRunsPerMachine;
       assignments.replace(response.assignments);
       scheduleNextAssignmentReconciliation();
       logAutomationInfo('Assignments refreshed', {
@@ -259,6 +294,13 @@ export function startAutomationWorker(params: {
           return;
         }
         pendingQueuedWake = false;
+      }
+      if (
+        maxActiveRunsPerMachine > previousMaxActiveRunsPerMachine
+        && response.assignments.length > 0
+      ) {
+        scheduleCapacityRefill('assignment-settings-capacity-increased');
+        return;
       }
       rescheduleClaim('assignments-refreshed', true);
     } catch (error) {
@@ -278,10 +320,11 @@ export function startAutomationWorker(params: {
     }
   };
 
-  const runTick = async (_reason: string) => {
+  const runTick = async (_reason: string, forceCapacityRefill = false) => {
     if (stopped) return;
     if (paused) return;
     if (claimInFlight) return;
+    if (!hasExecutionCapacity()) return;
 
     if (nextAssignmentReconciliationAt > 0 && Date.now() >= nextAssignmentReconciliationAt) {
       // Keep a bounded retry scheduled if the authoritative read fails. A successful
@@ -304,7 +347,7 @@ export function startAutomationWorker(params: {
       return;
     }
 
-    if (!pendingQueuedWake) {
+    if (!forceCapacityRefill && !pendingQueuedWake) {
       const nextRunAt = getNextAssignedRunAtMs();
       if (nextRunAt !== null && nextRunAt > Date.now()) {
         rescheduleClaim('next-run-not-due');
@@ -312,7 +355,7 @@ export function startAutomationWorker(params: {
       }
     }
 
-    if (Date.now() < retryAfter) {
+    if (Date.now() < claimRetryAfter) {
       rescheduleClaim('retry-after');
       return;
     }
@@ -321,14 +364,7 @@ export function startAutomationWorker(params: {
       return;
     }
 
-    const budgetRegistry = params.budgetRegistry;
-    // Automation runs should respect the shared daemon one-shot budget so we don't
-    // starve other daemon work (and vice-versa).
-    if (budgetRegistry && !budgetRegistry.tryAcquireOneShotTask(budgetTokenId, 'automation')) {
-      // Try again on the next schedule tick.
-      rescheduleClaim('budget-blocked');
-      return;
-    }
+    let claimedRunStarted = false;
     try {
       claimInFlight = true;
       pendingQueuedWake = false;
@@ -337,12 +373,15 @@ export function startAutomationWorker(params: {
         leaseDurationMs: scheduler.leaseDurationMs,
       });
 
+      // A completed claim is authoritative progress for this loop, regardless
+      // of whether the server had a Run ready for this machine.
+      claimConsecutiveFailures = 0;
+      claimRetryAfter = 0;
+
       const claimed = toClaimableRunPayload(claimResult);
       if (!claimed) {
-        consecutiveFailures = 0;
-        retryAfter = 0;
         const nextRunAt = getNextAssignedRunAtMs();
-        if (nextRunAt !== null && nextRunAt <= Date.now()) {
+        if (nextRunAt !== null && (forceCapacityRefill || nextRunAt <= Date.now())) {
           // Another machine likely claimed (or our clock is ahead). Back off to avoid a thundering herd.
           noWorkCooldownUntil = Date.now() + nullClaimBackoffMs;
           scheduleAssignmentsRefreshSoon('no-work-due-refresh');
@@ -353,62 +392,82 @@ export function startAutomationWorker(params: {
       }
 
       const executionController = new AbortController();
-      activeExecution = {
+      activeExecutions.set(claimed.run.id, {
         runId: claimed.run.id,
         attempt: claimed.run.attempt,
         controller: executionController,
-      };
-      try {
-        await executeClaimedRun({
-          token: params.token,
-          ...(params.credentials ? { credentials: params.credentials } : {}),
-          machineId: params.machineId,
-          claimClient,
-          spawnSession: params.spawnSession,
-          heartbeatMs: scheduler.heartbeatMs,
-          leaseDurationMs: scheduler.leaseDurationMs,
-          encryption: params.encryption,
-          ...(params.machineAdmissionTransport
-            ? { machineAdmissionTransport: params.machineAdmissionTransport }
-            : {}),
-          ...(params.dispatchSessionServerStart
-            ? { dispatchSessionServerStart: params.dispatchSessionServerStart }
-            : {}),
-          resolveAutomationAccountEncryption: async (signal) => await resolveValidatedAutomationAccountEncryptionV1({
-            signal,
-            resolveAccountEncryptionCurrentness: async (currentnessSignal) =>
-              await fetchAccountEncryptionCurrentness({
-                token: params.token,
-                ...(currentnessSignal ? { signal: currentnessSignal } : {}),
-              }),
-            resolveAccountEncryptionMaterial: async () => (
-              params.credentials
-                ? createAutomationAccountEncryptionMaterialSnapshotV1(params.credentials)
-                : null
-            ),
-          }),
-          ...(actionExecutor ? { executeAction: actionExecutor.execute } : {}),
-          signal: executionController.signal,
-          claimed,
-        });
-      } finally {
-        if (activeExecution?.controller === executionController) {
-          activeExecution = null;
-        }
-      }
-
-      // Pull a fresh assignments snapshot so we have an updated nextRunAt after the run transitions/enqueue.
-      await refreshAssignments().catch((error) => {
-        logAutomationWarn('Failed to refresh automation assignments after run', error, {
-          machineId: params.machineId,
-          runId: claimed.run.id,
-          automationId: claimed.automation.id,
-        });
       });
+      claimedRunStarted = true;
 
-      consecutiveFailures = 0;
-      retryAfter = 0;
-      noWorkCooldownUntil = 0;
+      void (async () => {
+        try {
+          await executeClaimedRun({
+            token: params.token,
+            ...(params.credentials ? { credentials: params.credentials } : {}),
+            machineId: params.machineId,
+            claimClient,
+            spawnSession: params.spawnSession,
+            heartbeatMs: scheduler.heartbeatMs,
+            leaseDurationMs: scheduler.leaseDurationMs,
+            encryption: params.encryption,
+            ...(params.machineAdmissionTransport
+              ? { machineAdmissionTransport: params.machineAdmissionTransport }
+              : {}),
+            ...(params.dispatchSessionServerStart
+              ? { dispatchSessionServerStart: params.dispatchSessionServerStart }
+              : {}),
+            resolveAutomationAccountEncryption: async (signal) => await resolveValidatedAutomationAccountEncryptionV1({
+              signal,
+              resolveAccountEncryptionCurrentness: async (currentnessSignal) =>
+                await fetchAccountEncryptionCurrentness({
+                  token: params.token,
+                  ...(currentnessSignal ? { signal: currentnessSignal } : {}),
+                }),
+              resolveAccountEncryptionMaterial: async () => (
+                params.credentials
+                  ? createAutomationAccountEncryptionMaterialSnapshotV1(params.credentials)
+                  : null
+              ),
+            }),
+            ...(actionExecutor ? { executeAction: actionExecutor.execute } : {}),
+            signal: executionController.signal,
+            claimed,
+          });
+
+          // Pull a fresh assignments snapshot so we have an updated nextRunAt after the run transitions/enqueue.
+          await refreshAssignments().catch((error) => {
+            logAutomationWarn('Failed to refresh automation assignments after run', error, {
+              machineId: params.machineId,
+              runId: claimed.run.id,
+              automationId: claimed.automation.id,
+            });
+          });
+
+        } catch (error) {
+          const errorClass = classifyAutomationWorkerError(error);
+          // A Run's terminal/retry facts are settled by its lifecycle owner.
+          // Keep this diagnostic local to the Run; changing the shared claim
+          // retry state here would let concurrently settling executions erase
+          // or extend each other's claim backoff.
+          logAutomationWarn('Automation worker execution failed', error, {
+            machineId: params.machineId,
+            errorClass,
+            runId: claimed.run.id,
+            automationId: claimed.automation.id,
+          });
+        } finally {
+          const active = activeExecutions.get(claimed.run.id);
+          if (active?.controller === executionController) {
+            activeExecutions.delete(claimed.run.id);
+          }
+          if (!stopped && !paused) {
+            // This is the same bounded map's capacity continuation. The
+            // server still chooses the next durable Run, and a null claim
+            // installs the normal no-work cooldown before another refill.
+            scheduleCapacityRefill('run-settled-capacity-available');
+          }
+        }
+      })();
     } catch (error) {
       if (claimClient.isMissingEndpointError(error, [
         '/v3/automations/runs/claim',
@@ -419,28 +478,33 @@ export function startAutomationWorker(params: {
       }
       const errorClass = classifyAutomationWorkerError(error);
       if (errorClass === 'transient') {
-        consecutiveFailures += 1;
+        claimConsecutiveFailures += 1;
       } else {
-        consecutiveFailures = 0;
+        claimConsecutiveFailures = 0;
       }
       const backoffMs = nextAutomationRetryDelayMs({
-        failureCount: consecutiveFailures,
+        failureCount: claimConsecutiveFailures,
         error,
       });
-      retryAfter = Date.now() + backoffMs;
+      claimRetryAfter = Date.now() + backoffMs;
       logAutomationWarn('Automation worker tick failed', error, {
         machineId: params.machineId,
         errorClass,
-        consecutiveFailures,
+        consecutiveFailures: claimConsecutiveFailures,
         backoffMs,
         assignmentCount: assignments.getAll().length,
       });
     } finally {
       claimInFlight = false;
-      if (budgetRegistry) {
-        budgetRegistry.releaseOneShotTask(budgetTokenId);
-      }
 
+      if (claimedRunStarted && hasExecutionCapacity()) {
+        // Refill directly from the same bounded map after the claim releases
+        // its admission slot. This is not a second scheduler: the next claim
+        // still consults the one durable server claim owner and stops at the
+        // map's configured capacity.
+        scheduleCapacityRefill('claimed-run-capacity-available');
+        return;
+      }
       if (pendingQueuedWake && assignments.getAll().length > 0) {
         scheduleClaimSoon('queued-wake-pending');
         return;

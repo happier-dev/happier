@@ -77,3 +77,17 @@ export function shouldPreserveHealthyDiagnostics(error: unknown): boolean {
     || errorCode === 'unsupported_codec'
   );
 }
+
+/**
+ * A runtime timeout, availability, or validity failure means the runtime itself can no longer be trusted.
+ * Forked-worker deadlines and termination errors arrive through these existing codes after the
+ * client has retired its exact child. Other prime failures remain best-effort.
+ */
+export function isVoiceInferenceRuntimeInvalidatingError(error: unknown): boolean {
+  const errorCode = readVoiceInferenceErrorCode(error);
+  return (
+    errorCode === 'runtime_timeout'
+    || errorCode === 'runtime_unavailable'
+    || errorCode === 'runtime_invalid'
+  );
+}

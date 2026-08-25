@@ -20,17 +20,10 @@ const action = {
 } as const;
 
 function authorizationFacts(overrides: Readonly<{
-  reviewedPackageIdentity?: string | null;
   desiredGeneration?: string | null;
   appliedGeneration?: string | null;
 }> = {}) {
   return {
-    packageTrust: {
-      packageIdentity: action.qualifiedId,
-      reviewedPackageIdentity: overrides.reviewedPackageIdentity === undefined
-        ? action.qualifiedId
-        : overrides.reviewedPackageIdentity,
-    },
     generation: {
       targetGeneration: action.generation,
       desiredGeneration: overrides.desiredGeneration === undefined
@@ -180,13 +173,7 @@ describe('evaluateTargetActionPolicy', () => {
     },
   );
 
-  it('distinguishes reviewed package trust from desired and applied currentness', () => {
-    expect(evaluateTargetActionPolicy({
-      action,
-      authorizationFacts: authorizationFacts({ reviewedPackageIdentity: 'acme.other@1' }),
-      surface: 'cli',
-    })).toMatchObject({ outcome: 'denied', code: 'plugin_action_package_untrusted' });
-
+  it('distinguishes desired from applied currentness', () => {
     expect(evaluateTargetActionPolicy({
       action,
       authorizationFacts: authorizationFacts({ appliedGeneration: '6' }),
