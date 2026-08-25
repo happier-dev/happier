@@ -30,14 +30,14 @@ describe('OpenCode ACP runtime permission mode wiring', () => {
     await runtime.startOrLoad({});
     expect(createSpy).toHaveBeenCalledTimes(1);
     expect(createCalls).toHaveLength(1);
-    expect(createCalls[0]).toEqual({ agentId: 'opencode', permissionMode: 'default' });
+    expect(createCalls[0]).toEqual({ agentId: 'opencode', happierSessionId: 'test-session-id', permissionMode: 'default' });
 
     permissionMode = 'yolo';
     await runtime.reset();
     await runtime.startOrLoad({});
     expect(createSpy).toHaveBeenCalledTimes(2);
     expect(createCalls).toHaveLength(2);
-    expect(createCalls[1]).toEqual({ agentId: 'opencode', permissionMode: 'yolo' });
+    expect(createCalls[1]).toEqual({ agentId: 'opencode', happierSessionId: 'test-session-id', permissionMode: 'yolo' });
   });
 
   it('passes undefined permissionMode when getPermissionMode is not provided', async () => {
@@ -56,6 +56,6 @@ describe('OpenCode ACP runtime permission mode wiring', () => {
 
     await runtime.startOrLoad({});
     expect(createSpy).toHaveBeenCalledTimes(1);
-    expect(createCalls[0]).toEqual({ agentId: 'opencode', permissionMode: undefined });
+    expect(createCalls[0]).toEqual({ agentId: 'opencode', happierSessionId: 'test-session-id', permissionMode: undefined });
   });
 });
