@@ -32,6 +32,7 @@ const alert = vi.hoisted(() => vi.fn());
 const synthesize = vi.hoisted(() => vi.fn());
 const executeSettingsAction = vi.hoisted(() => vi.fn());
 const playAudioBytesWithStopper = vi.hoisted(() => vi.fn());
+const fireAndForgetPromises = vi.hoisted(() => [] as Promise<unknown>[]);
 const settingsActionState = vi.hoisted(() => ({
   voice: null as unknown,
   settingsVersion: 4,
@@ -258,6 +259,14 @@ vi.mock('@/voice/credentials/bundledSpeechClient', () => ({
   },
 }));
 
+vi.mock('@/utils/system/fireAndForget', () => ({
+  fireAndForget: (promise: Promise<unknown> | null | undefined) => {
+    if (!promise) return;
+    fireAndForgetPromises.push(promise);
+    void promise.catch(() => undefined);
+  },
+}));
+
 vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
   const {
     createLiveStorageStoreMock,
@@ -368,6 +377,7 @@ describe('BundledSpeechSettings', () => {
     synthesize.mockReset();
     synthesize.mockResolvedValue({ bytes: new Uint8Array([1, 2, 3]), mimeType: 'audio/mpeg' });
     executeSettingsAction.mockReset();
+    fireAndForgetPromises.length = 0;
     settingsActionState.voice = voiceSettingsDefaults;
     settingsActionState.settingsVersion = 4;
     settingsActionState.mutationApplied = false;
@@ -492,15 +502,19 @@ describe('BundledSpeechSettings', () => {
       testID: 'voice-settings-action-refresh-model',
     });
 
+    let pressedAction: Promise<unknown> | undefined;
     await act(async () => {
       action.props.onPress();
-      await vi.waitFor(() => expect(executeSettingsAction).toHaveBeenCalledWith({
-        entry,
-        actionId: 'refresh-model',
-        signal: expect.any(AbortSignal),
-      }));
+      pressedAction = fireAndForgetPromises.at(-1);
+      if (!pressedAction) throw new Error('settings action press did not start');
+      await pressedAction;
     });
-    await vi.waitFor(() => expect(settingsActionState.mutationApplied).toBe(true));
+    expect(executeSettingsAction).toHaveBeenCalledWith({
+      entry,
+      actionId: 'refresh-model',
+      signal: expect.any(AbortSignal),
+    });
+    expect(settingsActionState.mutationApplied).toBe(true);
     expect(readVoiceProviderSettingsConfig(settingsActionState.voice as VoiceSettings, providerId))
       .toEqual({ model: 'speech-2' });
   });
