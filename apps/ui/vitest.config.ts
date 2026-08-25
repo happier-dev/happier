@@ -47,6 +47,10 @@ function resolveExpoNodeModuleStub(id: string, importer?: string): string | null
 
 const workspacePackages: readonly WorkspacePackageSpec[] = [
     {
+        packageName: '@happier-dev/brand',
+        packageSourceRoot: resolve('../../packages/brand/src'),
+    },
+    {
         packageName: '@happier-dev/protocol',
         packageSourceRoot: resolve('../../packages/protocol/src'),
     },

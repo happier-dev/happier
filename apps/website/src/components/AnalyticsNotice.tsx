@@ -45,7 +45,7 @@ export function AnalyticsNotice() {
                       : 'Analytics off — your browser asked us not to.'}
             </span>
             <a
-                href="https://docs.happier.dev/legal/privacy#website-analytics"
+                href="https://docs.happier.dev/legal/privacy#analytics-posthog"
                 target="_blank"
                 rel="noreferrer"
                 className="underline underline-offset-2 transition-opacity hover:opacity-100"

@@ -1,0 +1,28 @@
+{
+  "name": "@happier-dev/brand",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./product-story": {
+      "types": "./dist/product-story.d.ts",
+      "default": "./dist/product-story.js"
+    }
+  },
+  "files": ["dist", "package.json"],
+  "scripts": {
+    "build": "node ../../scripts/workspaces/buildTypeScriptPackageDist.mjs -p tsconfig.json",
+    "prepack": "node ../../scripts/workspaces/buildTypeScriptPackageDist.mjs -p tsconfig.json",
+    "typecheck": "../../apps/stack/bin/hstack-exec --script=typecheck:local",
+    "typecheck:local": "node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2"
+  }
+}

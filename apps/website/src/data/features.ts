@@ -1,4 +1,8 @@
 import type { ImageId } from './generatedImages';
+import {
+    PRODUCT_STORY_FEATURES,
+    PRODUCT_STORY_WEBSITE_COPY_ENGLISH,
+} from '@happier-dev/brand/product-story';
 
 export type FeatureImage = {
     /** Typed key into the build-generated responsive image manifest. */
@@ -98,13 +102,10 @@ export type GridFeature = {
  * against real product strings (e.g. the "Needs attention" / "Working"
  * session groups, the cockpit tab set, cross-backend subagent runs).
  */
-export const PRIMARY_FEATURES: ReadonlyArray<Feature> = [
+const WEBSITE_PRIMARY_FEATURES: ReadonlyArray<Omit<Feature, 'availability' | 'title' | 'body'>> = [
     {
         id: 'anywhere',
-        availability: 'shipped',
         eyebrow: 'Every device',
-        title: 'Start coding anywhere. Continue everywhere.',
-        body: 'Launch a session on your laptop. Follow it live, send messages, and approve permissions from your phone, tablet, browser, or desktop — without losing context.',
         visual: 'mobileAndDesktop',
         accent: 'sun',
         image: {
@@ -114,10 +115,7 @@ export const PRIMARY_FEATURES: ReadonlyArray<Feature> = [
     },
     {
         id: 'existingSessions',
-        availability: 'shipped',
         eyebrow: 'Adoption-free',
-        title: 'Your existing sessions? Already there.',
-        body: 'Open any Claude Code, Codex, or OpenCode session running on your machine — live, from any device. Nothing to migrate, nothing to learn.',
         visual: 'mobileAndDesktop',
         accent: 'indigo',
         image: {
@@ -126,10 +124,7 @@ export const PRIMARY_FEATURES: ReadonlyArray<Feature> = [
     },
     {
         id: 'terminalTuis',
-        availability: 'shipped',
         eyebrow: 'Stay in the terminal',
-        title: 'You love the terminal? We do too.',
-        body: 'Keep running Claude Code, Codex, or OpenCode in their native TUI. Happier mirrors them to every device, so you can follow along, send messages, and approve permissions from anywhere — and switch between the terminal and Happier whenever you like.',
         visual: 'desktop',
         accent: 'coral',
         image: {
@@ -138,7 +133,6 @@ export const PRIMARY_FEATURES: ReadonlyArray<Feature> = [
     },
     {
         id: 'cockpit',
-        availability: 'shipped',
         eyebrow: 'Mobile cockpit',
         // "Everything you need" was the old title, and it named nothing: it is
         // the same sentence a project-management tool or a note-taking app would
@@ -155,8 +149,6 @@ export const PRIMARY_FEATURES: ReadonlyArray<Feature> = [
         // `saveFileEdits` to `onSaveEditingFile`
         // (apps/ui/sources/components/sessions/files/views/SessionFileDetailsView.tsx:368,604).
         // So the title names the capability and the body names the route to it.
-        title: 'Editor. Git. Terminal. One tap away.',
-        body: 'Chat, files, Git, and a live terminal, each its own tab. Open a file to read or edit it, review the diff, manage branches, and open a pull request — from your pocket.',
         visual: 'mobile',
         accent: 'blue',
         image: {
@@ -165,7 +157,6 @@ export const PRIMARY_FEATURES: ReadonlyArray<Feature> = [
     },
     {
         id: 'sessionTeam',
-        availability: 'shipped',
         eyebrow: 'Multi-agent',
         // WHY THIS STOPPED BEING A SUBAGENT CARD. "One session. A whole team of
         // agents." described the smaller half of what ships. Subagents are a
@@ -188,8 +179,6 @@ export const PRIMARY_FEATURES: ReadonlyArray<Feature> = [
         // the body because they are still true — subagents.delegate.start and
         // subagents.plan.start take `backendTargetKeys` against
         // `execution.backends.enabled`.
-        title: 'Your sessions work as a team.',
-        body: 'A session can start another session, send it messages, and read its transcript — so a Claude session and a Codex session can split the work between them. Each one still runs its own subagents, on whichever backend you choose: Claude, Codex, or any ACP-compatible CLI.',
         visual: 'mobileAndDesktop',
         accent: 'magenta',
         image: {
@@ -198,19 +187,13 @@ export const PRIMARY_FEATURES: ReadonlyArray<Feature> = [
     },
     {
         id: 'queue',
-        availability: 'shipped',
         eyebrow: 'Stay in control',
-        title: 'Queue it. Steer it. Fork it.',
-        body: 'Queue messages while the agent works — reorder, edit, or send them now. Steer a running turn without interrupting it, or roll back to any earlier message and take a different path.',
         visual: 'mobile',
         accent: 'rose',
     },
     {
         id: 'attention',
-        availability: 'shipped',
         eyebrow: 'Stay on top',
-        title: 'Always know what needs you.',
-        body: 'Sessions waiting on a decision rise to a “Needs attention” group at the top of your list; everything actively running gathers under “Working.” Run a dozen agents at once and never lose the thread.',
         visual: 'mobile',
         accent: 'sun',
         image: {
@@ -219,10 +202,7 @@ export const PRIMARY_FEATURES: ReadonlyArray<Feature> = [
     },
     {
         id: 'review',
-        availability: 'shipped',
         eyebrow: 'Code review',
-        title: 'Review the diff. Send notes to your agents.',
-        body: 'Browse your agent’s changes. Mark the exact lines you want to address. Choose which notes to send, and hand them straight back — same session, or a new one.',
         visual: 'desktop',
         accent: 'coral',
         image: {
@@ -255,10 +235,7 @@ export const PRIMARY_FEATURES: ReadonlyArray<Feature> = [
          * file, `returningAgentLastSeenSeq`.
          */
         id: 'agentSwitching',
-        availability: 'shipped',
         eyebrow: 'Never locked in',
-        title: 'Start in Codex. Finish in Claude.',
-        body: 'Change the engine mid-conversation and the same session keeps going. Your recent conversation carries over, and the new agent gets tools to read the rest — plus the previous agent’s own transcript, where it keeps one. Switch back later and it resumes its own thread, receiving only what it missed.',
         visual: 'mobileAndDesktop',
         accent: 'blue',
         /**
@@ -296,10 +273,7 @@ export const PRIMARY_FEATURES: ReadonlyArray<Feature> = [
          * including the browser — carries the sentence and Ctrl+Tab follows it.
          */
         id: 'navigation',
-        availability: 'shipped',
         eyebrow: 'Move between sessions',
-        title: 'Swipe to teleport. Or Ctrl+Tab.',
-        body: 'Swipe across the bottom bar to slide between sessions — keep going in one gesture to skip several, each one named as you pass it. At a keyboard, Alt+↑/↓ walks the list and Ctrl+Tab walks your most recent sessions. Every shortcut is remappable.',
         visual: 'mobileAndDesktop',
         accent: 'blue',
         /**
@@ -314,10 +288,7 @@ export const PRIMARY_FEATURES: ReadonlyArray<Feature> = [
     },
     {
         id: 'voice',
-        availability: 'shipped',
         eyebrow: 'Hands-free',
-        title: 'A colleague you can talk to.',
-        body: 'The voice assistant watches every running session. Brainstorm the next change, approve a permission, or send a message — all without picking up the phone.',
         visual: 'mobile',
         accent: 'magenta',
         image: {
@@ -326,7 +297,6 @@ export const PRIMARY_FEATURES: ReadonlyArray<Feature> = [
     },
     {
         id: 'machines',
-        availability: 'shipped',
         eyebrow: 'Every computer',
         // WHY THIS IS A PRIMARY CARD AND NOT A GRID LINE. Choosing where a
         // session runs is a decision the reader makes before they make any other
@@ -354,14 +324,11 @@ export const PRIMARY_FEATURES: ReadonlyArray<Feature> = [
         //                 (apps/docs/content/docs/clients/cli.mdx:89), so the
         //                 examples here are not invented. "VM" is deliberately
         //                 absent: nothing in the tree says it.
-        title: 'Run sessions on every computer you own.',
-        body: 'Connect your laptop, your desktop, a VPS, or a dev box, then pick which one runs each session. The picker marks which are online, and starts sessions on those. Add another over SSH, from the app or the CLI.',
         visual: 'mobileAndDesktop',
         accent: 'coral',
     },
     {
         id: 'surfaces',
-        availability: 'shipped',
         eyebrow: 'App, voice, CLI, MCP',
         // THE CARD THE PAGE WAS MISSING. Everything else on this page describes a
         // screen. This describes the thing under all the screens: one registry of
@@ -412,8 +379,6 @@ export const PRIMARY_FEATURES: ReadonlyArray<Feature> = [
         // `session.spawn_new` and `session.message.send` declare
         // ui_button/voice/session_agent/mcp/cli true (actionSpecs.ts), and the
         // CLI form of both is in the `code` block below.
-        title: 'Spawn and manage sessions from the app, voice, the CLI and MCP.',
-        body: 'Every action Happier can take — create a session, send it a message, set the model, start a review — is defined once, in one registry. The app, slash commands, voice, in-session agents, the CLI, and an external MCP host all call the same definition, and for each action you choose which of those surfaces can run it and which have to ask you first.',
         // VERIFIED, LINE BY LINE, AGAINST THE RELEASED CLI'S OWN USAGE STRINGS.
         //   happier mcp serve
         //     apps/cli/src/cli/commands/mcp.ts:17
@@ -444,10 +409,7 @@ export const PRIMARY_FEATURES: ReadonlyArray<Feature> = [
     },
     {
         id: 'mcp',
-        availability: 'shipped',
         eyebrow: 'Configure once',
-        title: 'Your MCP servers. Every provider, every machine.',
-        body: 'Define your MCP servers once. Happier makes them available across every backend — even ones with no native MCP support — and on every machine you connect. No reinstalling per provider, per device.',
         visual: 'desktop',
         accent: 'blue',
         image: {
@@ -456,10 +418,7 @@ export const PRIMARY_FEATURES: ReadonlyArray<Feature> = [
     },
     {
         id: 'subscriptions',
-        availability: 'shipped',
         eyebrow: 'Bring your own keys',
-        title: 'Use the subscriptions you already pay for.',
-        body: 'Happier reuses the subscriptions and logins your existing CLIs already use — Claude, Codex, Cursor, Gemini, OpenCode. No new bill. No double billing.',
         visual: 'mobile',
         accent: 'indigo',
         image: {
@@ -468,7 +427,6 @@ export const PRIMARY_FEATURES: ReadonlyArray<Feature> = [
     },
     {
         id: 'accounts',
-        availability: 'shipped',
         // "Never hit a wall" was the old eyebrow, and it is the same overreach
         // as the old title in miniature: you will still hit the wall. What
         // changes is what happens next. Duller and true beats punchy and false.
@@ -486,8 +444,6 @@ export const PRIMARY_FEATURES: ReadonlyArray<Feature> = [
         // and Codex" is a limit, not a name-drop, and must not be dropped for
         // rhythm. The per-turn ceiling is
         // ConnectedServiceAuthGroupPolicyV1Schema's `maxSwitchesPerTurn` default.
-        title: 'Pool your accounts. Keep the session going.',
-        body: 'Link multiple accounts per provider into a pool and watch usage and quota resets for every one of them in the app. Nothing switches until you build a pool — once you have, Claude Code and Codex sessions can change account without stopping, moving to whichever member has the most quota left, at most once a turn and never past a reset time the provider has published.',
         visual: 'mobile',
         accent: 'rose',
         image: {
@@ -496,23 +452,43 @@ export const PRIMARY_FEATURES: ReadonlyArray<Feature> = [
     },
     {
         id: 'customization',
-        availability: 'shipped',
         eyebrow: 'Make it yours',
-        title: 'Configure (almost) everything.',
-        body: 'Modes, models, and permissions per session. Tool-timeline detail levels. Notification routing. Custom themes you can build, import, and share. Tune Happier to exactly how you work.',
         visual: 'desktop',
         accent: 'sun',
     },
     {
         id: 'privacy',
-        availability: 'shipped',
         eyebrow: 'Open & encrypted',
-        title: 'Open-source. End-to-end encrypted.',
-        body: 'Your code, prompts, and session content are encrypted on your device before they ever reach a server. Private by design. Open by default. Self-host in one command.',
         visual: 'mobileAndDesktop',
         accent: 'indigo',
     },
 ];
+
+const websitePrimaryFeatureById = new Map(WEBSITE_PRIMARY_FEATURES.map((feature) => [feature.id, feature]));
+
+/**
+ * The shared brand story owns which primary features appear and in which order.
+ * This website adapter owns only website presentation (eyebrows, accents, art,
+ * and device composition); shared copy and claim availability come from Brand.
+ */
+export const PRIMARY_FEATURES: ReadonlyArray<Feature> = PRODUCT_STORY_FEATURES
+    .filter((feature) => feature.placements.website === 'primary')
+    .map((storyFeature) => {
+        const websiteFeature = websitePrimaryFeatureById.get(storyFeature.id);
+        if (!websiteFeature) {
+            throw new Error(`Missing website presentation for primary product story feature: ${storyFeature.id}`);
+        }
+        const copy = PRODUCT_STORY_WEBSITE_COPY_ENGLISH[storyFeature.id as keyof typeof PRODUCT_STORY_WEBSITE_COPY_ENGLISH];
+        if (!copy) {
+            throw new Error(`Missing website copy for primary product story feature: ${storyFeature.id}`);
+        }
+        return {
+            ...websiteFeature,
+            availability: storyFeature.availability,
+            title: copy.title,
+            body: copy.body,
+        };
+    });
 
 /**
  * Grid features shown in the compact 4x4 card grid.

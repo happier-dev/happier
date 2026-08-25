@@ -31,6 +31,7 @@
     "i18n:slice": "node scripts/i18n-slice-overlays.mjs"
   },
   "dependencies": {
+    "@happier-dev/brand": "0.0.0",
     "@happier-dev/protocol": "0.0.0",
     "clsx": "^2.1.1",
     "posthog-js": "1.414.0",

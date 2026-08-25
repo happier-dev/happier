@@ -136,6 +136,7 @@
     "@expo/vector-icons": "^15.0.2",
     "@happier-dev/agents": "0.0.0",
     "@happier-dev/audio-stream-native": "0.0.0",
+    "@happier-dev/brand": "0.0.0",
     "@happier-dev/cli-common": "0.0.0",
     "@happier-dev/connection-supervisor": "0.0.0",
     "@happier-dev/peer-mediation": "0.0.0",

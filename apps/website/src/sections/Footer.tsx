@@ -93,8 +93,8 @@ export function Footer({ isHome = true }: { isHome?: boolean } = {}) {
                             The analytics disclosure and its switch. See the
                             docblock in AnalyticsNotice: it is deliberately a
                             footer line rather than a banner, because a modal
-                            asking consent for something we do not do — no
-                            cookie, no identifier — is worse than a true
+                            asking consent for something we do not do — analytics writes
+                            no cookie and no identifier to the device — is worse than a true
                             sentence and a working control. It was written for
                             this spot and had never been mounted anywhere, so
                             the site was collecting with no reachable opt-out.
