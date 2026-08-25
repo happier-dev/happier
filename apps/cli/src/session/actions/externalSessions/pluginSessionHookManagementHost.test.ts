@@ -2342,7 +2342,7 @@ describe('createPluginSessionHookManagementHost', () => {
         },
     );
 
-    it('keeps bootstrap missing credentials and reload rotation failures non-admitted without mutating custody', async () => {
+    it('keeps bootstrap missing credentials non-admitted and durably disables failed reload rotation', async () => {
         const missing = createFixture({
             dependencyOverrides: {
                 readInventoryPage: vi.fn(async () => ({
@@ -2379,6 +2379,7 @@ describe('createPluginSessionHookManagementHost', () => {
             }],
         });
 
+        let reloadRecord = installationRecord();
         const reload = createFixture({
             dependencyOverrides: {
                 readInventoryPage: vi.fn(async () => ({
@@ -2386,6 +2387,23 @@ describe('createPluginSessionHookManagementHost', () => {
                     records: [inventoryRecord(fixtureHostInstallationId)],
                     diagnostics: [],
                 })),
+                readInstallationRecord: vi.fn(async () => reloadRecord),
+                applyInstallationAction: vi.fn(async (request) => {
+                    if (request.action !== 'disable') {
+                        throw new Error(`Unexpected action ${request.action}`);
+                    }
+                    reloadRecord = {
+                        ...reloadRecord,
+                        state: 'disabled',
+                        revision: reloadRecord.revision + 1,
+                    };
+                    return {
+                        ok: true as const,
+                        state: 'installed_disabled' as const,
+                        changedConfiguration: false,
+                        revision: reloadRecord.revision,
+                    };
+                }),
             },
         });
         reload.listener.rotateCredential.mockRejectedValue(
@@ -2394,7 +2412,24 @@ describe('createPluginSessionHookManagementHost', () => {
         await reload.host.hydrate({ reason: 'plugin_reload' });
         expect(reload.listener.enable).not.toHaveBeenCalled();
         expect(reload.listener.disable).toHaveBeenCalled();
-        expect(reload.applyInstallationAction).not.toHaveBeenCalled();
+        expect(reload.applyInstallationAction).toHaveBeenCalledOnce();
+        expect(reload.applyInstallationAction).toHaveBeenCalledWith({
+            action: 'disable',
+            activeServerDir: '/tmp/happier-host-test',
+            machineId: 'machine-1',
+            qualifiedAgent: agent,
+            hostInstallationId: fixtureHostInstallationId,
+            installationIdentity: reloadRecord.installationIdentity,
+            executableIdentity: reloadRecord.executableIdentity,
+            ingressPrincipalRef: reloadRecord.ingressPrincipalRef,
+        });
+        expect(reload.listener.revokeDurableCredential).toHaveBeenCalledWith({
+            qualifiedContributionId: agent,
+            hostInstallationId: fixtureHostInstallationId,
+            installationPrincipalRef: reloadRecord.ingressPrincipalRef,
+            eventId: 'session-start',
+        });
+        expect(reloadRecord.state).toBe('disabled');
     });
 
     it('disposal awaits an active hydration page and prevents every later effect', async () => {

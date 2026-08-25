@@ -386,6 +386,9 @@ describe('External Sessions hook installation configuration', () => {
         try {
             const initialPath = join(f.configDir, 'Settings.json');
             const replacementPath = join(f.configDir, 'settings.json');
+            const physicalConfigDir = await realpath(f.configDir);
+            const physicalInitialPath = join(physicalConfigDir, 'Settings.json');
+            const physicalReplacementPath = join(physicalConfigDir, 'settings.json');
             let configurationBytes: Buffer | null = null;
             const writes: string[] = [];
             const missing = () => Object.assign(new Error('missing'), {
@@ -438,10 +441,10 @@ describe('External Sessions hook installation configuration', () => {
                 });
             });
 
-            expect(writes).toEqual([initialPath, replacementPath]);
+            expect(writes).toEqual([physicalInitialPath, physicalReplacementPath]);
             expect(await readExternalSessionHookInstallationRecord(recordPath(first)))
                 .toMatchObject({
-                    targets: [{ absolutePath: replacementPath }],
+                    targets: [{ absolutePath: physicalReplacementPath }],
                 });
         } finally {
             await rm(f.root, { recursive: true, force: true });
