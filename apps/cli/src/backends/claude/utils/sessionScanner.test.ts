@@ -684,6 +684,42 @@ describe('sessionScanner', () => {
     expect(uuids).not.toContain('old-row-after-replacement')
   })
 
+  it('keeps a live row replayable when its message callback fails before custody', async () => {
+    const altProjectDir = join(testDir, 'alt-project-live-callback-retry')
+    await mkdir(altProjectDir, { recursive: true })
+
+    const sessionId = '22222222-2222-2222-2222-222222222224'
+    const transcriptPath = join(altProjectDir, `${sessionId}.jsonl`)
+    await writeFile(transcriptPath, '')
+
+    let attempts = 0
+    scanner = await createSessionScanner({
+      sessionId,
+      transcriptPath,
+      workingDirectory: testDir,
+      onMessage: async () => {
+        attempts += 1
+        if (attempts === 1) throw new Error('transcript custody unavailable')
+      },
+    })
+
+    const row = JSON.stringify({
+      type: 'assistant',
+      uuid: 'live-row-requires-retry',
+      timestamp: new Date(Date.now() + 60_000).toISOString(),
+      message: { role: 'assistant', content: [{ type: 'text', text: 'retry me after reset' }] },
+    }) + '\n'
+    await appendFile(transcriptPath, row)
+    await waitFor(() => attempts === 1, 2000)
+
+    const replacementPath = `${transcriptPath}.replacement`
+    await writeFile(replacementPath, row)
+    await rename(replacementPath, transcriptPath)
+
+    await waitFor(() => attempts === 2, 4000)
+    expect(attempts).toBe(2)
+  })
+
   it('does not observe replay-suppressed snapshot rows on the raw side-effect channel', async () => {
     const sessionId = '22222222-2222-2222-2222-222222222226'
     const sessionFile = join(projectDir, `${sessionId}.jsonl`)

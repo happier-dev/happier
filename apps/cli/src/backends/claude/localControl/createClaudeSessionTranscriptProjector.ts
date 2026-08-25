@@ -108,7 +108,7 @@ export function createClaudeSessionTranscriptProjector(params: Readonly<{
    */
   workflowActivitySource?: ClaudeWorkflowActivitySource | null;
 }>): Readonly<{
-  observe(message: RawJSONLines): void;
+  observe(message: RawJSONLines): Promise<void>;
   observeCommitted(message: RawJSONLines): Promise<void>;
   observeRaw(
     value: unknown,
@@ -321,10 +321,16 @@ export function createClaudeSessionTranscriptProjector(params: Readonly<{
   };
 
   return {
-    observe(message) {
+    async observe(message) {
+      const commits: Promise<void>[] = [];
       observeWithVisibleSender(message, (visibleMessage) => {
-        params.session.client.sendClaudeSessionMessage(visibleMessage);
+        const commit = params.session.client.sendClaudeSessionMessageCommittedExact;
+        if (!commit) {
+          throw new Error('Claude live transcript ordering requires exact committed custody');
+        }
+        commits.push(commit.call(params.session.client, visibleMessage));
       });
+      await Promise.all(commits);
     },
     async observeCommitted(message) {
       if (!buildClaudeJsonlMessageKey(message)) {

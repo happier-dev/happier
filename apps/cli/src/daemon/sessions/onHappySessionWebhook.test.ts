@@ -108,6 +108,28 @@ describe('createOnHappySessionWebhook', () => {
     expect(pidToAwaiter.has(789)).toBe(false);
   });
 
+  it('preserves an established Happier session id when a later webhook reports another identity', async () => {
+    const tracked: TrackedSession = {
+      pid: 790,
+      startedBy: 'daemon',
+      happySessionId: 'happier-session-790',
+    };
+    const pidToTrackedSession = new Map<number, TrackedSession>([[790, tracked]]);
+    const pidToAwaiter = new Map<number, (session: TrackedSession) => void>();
+
+    const onWebhook = createOnHappySessionWebhook({
+      pidToTrackedSession,
+      pidToAwaiter,
+      getParentPidFn: () => null,
+      findHappyProcessByPidFn: async () => null,
+      writeSessionMarkerFn: async () => {},
+    });
+
+    await onWebhook('vendor-session-790', createMetadata(790, 'daemon'));
+
+    expect(pidToTrackedSession.get(790)?.happySessionId).toBe('happier-session-790');
+  });
+
   it('matches a Windows Terminal child webhook to the pending daemon launch pid', () => {
     const windowsTerminalPid = 13764;
     const runnerPid = 5500;

@@ -20,6 +20,25 @@ function isPidPlaceholderSessionId(value: string): boolean {
   return /^PID-\d+$/.test(value);
 }
 
+function adoptReportedHappySessionId(tracked: TrackedSession, reportedSessionId: string): string {
+  const currentSessionId = normalizeNonEmptyString(tracked.happySessionId);
+  if (
+    tracked.startedBy === 'daemon'
+    && currentSessionId
+    && !isPidPlaceholderSessionId(currentSessionId)
+    && currentSessionId !== reportedSessionId
+  ) {
+    logger.infoFile('[DAEMON RUN] Ignoring conflicting session identity for an established daemon session', {
+      pid: tracked.pid,
+      currentSessionId,
+      reportedSessionId,
+    });
+    return currentSessionId;
+  }
+  tracked.happySessionId = reportedSessionId;
+  return reportedSessionId;
+}
+
 function resolveParentPidLookupTimeoutMs(): number {
   const raw = String(process.env[PARENT_PID_LOOKUP_TIMEOUT_ENV_KEY] ?? '').trim();
   if (!raw) return DEFAULT_PARENT_PID_LOOKUP_TIMEOUT_MS;
@@ -161,7 +180,7 @@ export function createOnHappySessionWebhook(params: Readonly<{
       trackedForPid = existingSession;
 
       // Update tracked session with latest webhook data.
-      existingSession.happySessionId = sessionId;
+      adoptReportedHappySessionId(existingSession, sessionId);
       existingSession.happySessionMetadataFromLocalWebhook = normalizedMetadata;
       if (existingSession.startedBy === 'daemon') {
         logger.debug(`[DAEMON RUN] Updated daemon-spawned session ${sessionId} with metadata`);
@@ -196,7 +215,7 @@ export function createOnHappySessionWebhook(params: Readonly<{
       const trackedByRunnerPid = findTrackedSessionByRunnerPid(pidToTrackedSession, pid);
       if (trackedByRunnerPid) {
         trackedForPid = trackedByRunnerPid;
-        trackedByRunnerPid.happySessionId = sessionId;
+        adoptReportedHappySessionId(trackedByRunnerPid, sessionId);
         trackedByRunnerPid.happySessionMetadataFromLocalWebhook = normalizedMetadata;
         logger.debug(`[DAEMON RUN] Refreshed daemon session via previously recorded runner PID ${pid}`);
 
@@ -241,7 +260,7 @@ export function createOnHappySessionWebhook(params: Readonly<{
           if (parentEligible && ppid && parentSession) {
             trackedForPid = parentSession;
             parentSession.sessionRunnerPid = pid;
-            parentSession.happySessionId = sessionId;
+            adoptReportedHappySessionId(parentSession, sessionId);
             parentSession.happySessionMetadataFromLocalWebhook = normalizedMetadata;
             logger.debug(`[DAEMON RUN] Matched session webhook PID ${pid} to daemon wrapper PID ${ppid}`);
 
@@ -269,7 +288,7 @@ export function createOnHappySessionWebhook(params: Readonly<{
               const wrapperPid = windowsTerminalSession.pid;
               trackedForPid = windowsTerminalSession;
               windowsTerminalSession.sessionRunnerPid = pid;
-              windowsTerminalSession.happySessionId = sessionId;
+              adoptReportedHappySessionId(windowsTerminalSession, sessionId);
               windowsTerminalSession.happySessionMetadataFromLocalWebhook = normalizedMetadata;
               logger.debug(
                 `[DAEMON RUN] Matched Windows Terminal webhook PID ${pid} to daemon launch PID ${wrapperPid}`,
@@ -380,7 +399,7 @@ export function createOnHappySessionWebhook(params: Readonly<{
           : null;
       await writeSessionMarkerFn({
         pid,
-        happySessionId: sessionId,
+        happySessionId: trackedForPid?.happySessionId ?? sessionId,
         startedBy: normalizedMetadata.startedBy ?? 'terminal',
         cwd: normalizedPath,
         processCommandHash,
