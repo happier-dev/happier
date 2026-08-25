@@ -39,6 +39,7 @@ import {
     resolveClaudeUltracodeForModel,
 } from '@/backends/claude/utils/claudeEffort';
 import { resolveClaudeCodeXdgIsolation } from '@/backends/claude/utils/resolveClaudeCodeXdgIsolation';
+import { normalizeCurrentHappierSessionId } from '@/agent/runtime/session/currentSessionIdEnv';
 
 import type { SDKMessage, SDKSystemMessage, SDKUserMessage } from '@/backends/claude/sdk';
 import type { PermissionResult } from '@/backends/claude/sdk/types';
@@ -131,6 +132,7 @@ function argsContainMcpConfigFlag(args?: string[] | null): boolean {
 export async function claudeRemoteAgentSdk(opts: {
             // Fixed parameters
             sessionId: string | null;
+            happySessionId?: string | null;
             transcriptPath: string | null;
             path: string;
             claudeArgs?: string[];
@@ -726,7 +728,13 @@ export async function claudeRemoteAgentSdk(opts: {
             if (resolvedUltracode) out.settings = buildClaudeUltracodeSettingsJson();
             return Object.keys(out).length > 0 ? out : undefined;
         })();
-        const claudeSubprocessEnv = { ...xdgIsolationEnv, ...buildClaudeSubprocessEnv(), ...experimentalEnvOverlay };
+        const happierSessionId = normalizeCurrentHappierSessionId(opts.happySessionId);
+        const claudeSubprocessEnv = {
+            ...xdgIsolationEnv,
+            ...buildClaudeSubprocessEnv(),
+            ...experimentalEnvOverlay,
+            ...(happierSessionId ? { HAPPIER_SESSION_ID: happierSessionId } : {}),
+        };
         logClaudeRuntimeAuthEnvDiagnostic({
             logPrefix: 'claudeRemoteAgentSdk',
             sessionId: opts.sessionId ?? null,

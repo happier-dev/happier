@@ -86,7 +86,7 @@ export async function runOpenCode(opts: StandardAcpProviderRunOptions & {
       mountRemoteUi = controller.mount;
       unmountRemoteUi = controller.unmount;
     },
-    createRuntime: ({ directory, machineId, session, messageBuffer, mcpServers, permissionHandler, setThinking, getPermissionMode, memoryRecallGuidanceEnabled, pendingQueueDrainMaxPopPerWake, providerInputConsumer }) => {
+    createRuntime: ({ directory, machineId, session, messageBuffer, mcpServers, permissionHandler, setThinking, getPermissionMode, memoryRecallGuidanceEnabled, processEnv, pendingQueueDrainMaxPopPerWake, providerInputConsumer }) => {
       if (backendMode === 'acp') {
         return createOpenCodeAcpRuntime({
           directory,
@@ -98,6 +98,7 @@ export async function runOpenCode(opts: StandardAcpProviderRunOptions & {
           onThinkingChange: setThinking,
           memoryRecallGuidanceEnabled,
           getPermissionMode,
+          processEnv,
           pendingQueueDrainMaxPopPerWake,
           providerInputConsumer,
         });
@@ -112,6 +113,7 @@ export async function runOpenCode(opts: StandardAcpProviderRunOptions & {
         permissionHandler,
         onThinkingChange: setThinking,
         getPermissionMode,
+        env: processEnv,
         pendingQueue: {
           drainPending: (drainOpts) => providerInputConsumer.drainPending(drainOpts),
           drainAfterStartOrLoad: true,

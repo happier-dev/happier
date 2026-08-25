@@ -19,6 +19,7 @@ export function createKimiAcpRuntime(params: {
   onThinkingChange: (thinking: boolean) => void;
   memoryRecallGuidanceEnabled?: boolean;
   getPermissionMode?: () => PermissionMode | null | undefined;
+  processEnv?: NodeJS.ProcessEnv;
   kimiAcpPythonSelector?: KimiAcpPythonSelector;
   pendingQueueDrainMaxPopPerWake?: number;
   providerInputConsumer: SessionProviderInputConsumer<unknown, unknown>;
@@ -33,6 +34,7 @@ export function createKimiAcpRuntime(params: {
     permissionHandler: params.permissionHandler,
     sessionIdentity: { kind: 'manifest-metadata' },
     backendOptions: params.kimiAcpPythonSelector ? { kimiAcpPythonSelector: params.kimiAcpPythonSelector } : undefined,
+    processEnv: params.processEnv,
     onThinkingChange: params.onThinkingChange,
     memoryRecallGuidance: {
       enabled: params.memoryRecallGuidanceEnabled === true,

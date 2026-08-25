@@ -95,5 +95,6 @@ describe('claudeLocalLauncher (Agent Teams env)', () => {
     expect(result).toEqual({ type: 'exit', code: 0 });
     expect(mockClaudeLocal).toHaveBeenCalled();
     expect(firstOpts?.envOverlay?.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS).toBe('1');
+    expect(firstOpts?.envOverlay?.HAPPIER_SESSION_ID).toBe('api-session-1');
   });
 });

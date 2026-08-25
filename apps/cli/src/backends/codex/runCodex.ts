@@ -1643,7 +1643,7 @@ export async function runCodex(opts: {
     mcpServers = happierBridge.mcpServers;
     if (useCodexAppServer) {
         codexAppServerConfigOverrides = buildCodexAppServerConfigOverrides(mcpServers, {
-            happierSessionId: session.sessionId,
+            happierSessionId: codexProviderProcessEnv.HAPPIER_SESSION_ID,
         });
     }
     const resolveFreshSessionSystemPrompt = async (baseOverride?: string | null): Promise<string> =>

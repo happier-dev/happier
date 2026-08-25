@@ -130,6 +130,7 @@ describe('buildClaudeUnifiedTerminalSpawn', () => {
     });
 
     const launchSpec = await readLaunchSpecFromSpawn(spawn);
+    expect(launchSpec.env).toMatchObject({ HAPPIER_SESSION_ID: 'happy-session-id' });
     expect(launchSpec.diagnostics).toMatchObject({
       sessionId: 'happy-session-id',
     });

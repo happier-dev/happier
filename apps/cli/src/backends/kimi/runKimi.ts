@@ -32,7 +32,7 @@ export async function runKimi(opts: StandardAcpProviderRunOptions & {
     supportsMcpServers: false,
     machineMetadata: initialMachineMetadata,
     terminalDisplay: KimiTerminalDisplay,
-    createRuntime: ({ directory, machineId, session, messageBuffer, mcpServers, permissionHandler, setThinking, getPermissionMode, memoryRecallGuidanceEnabled, pendingQueueDrainMaxPopPerWake, providerInputConsumer }) => createKimiAcpRuntime({
+    createRuntime: ({ directory, machineId, session, messageBuffer, mcpServers, permissionHandler, setThinking, getPermissionMode, memoryRecallGuidanceEnabled, processEnv, pendingQueueDrainMaxPopPerWake, providerInputConsumer }) => createKimiAcpRuntime({
       directory,
       machineId,
       session,
@@ -42,6 +42,7 @@ export async function runKimi(opts: StandardAcpProviderRunOptions & {
       onThinkingChange: setThinking,
       memoryRecallGuidanceEnabled,
       getPermissionMode,
+      processEnv,
       kimiAcpPythonSelector: opts.kimiAcpPythonSelector,
       pendingQueueDrainMaxPopPerWake,
       providerInputConsumer,

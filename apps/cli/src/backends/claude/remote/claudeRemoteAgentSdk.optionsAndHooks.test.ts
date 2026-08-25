@@ -193,8 +193,8 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
             return { message: 'hello', mode: makeMode({ permissionMode: 'default' } as any) };
         });
 
-            await claudeRemoteAgentSdk({
-                sessionId: null,
+        await claudeRemoteAgentSdk({
+            sessionId: null,
                 transcriptPath: null,
                 path: '/tmp',
                 claudeArgs: [],
@@ -1292,8 +1292,8 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
             return { message: 'hello', mode: makeMode({ permissionMode: 'default' } as any) };
         });
 
-            await claudeRemoteAgentSdk({
-                sessionId: null,
+        await claudeRemoteAgentSdk({
+            sessionId: null,
                 transcriptPath: null,
                 path: '/tmp',
                 claudeArgs: [],
@@ -1591,6 +1591,7 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
 
             await claudeRemoteAgentSdk({
                 sessionId: null,
+                happySessionId: 'managed-session-1',
                 transcriptPath: null,
                 path: '/tmp',
                 claudeArgs: [],
@@ -1607,6 +1608,7 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
             expect(capturedOptions).toBeTruthy();
             expect(capturedOptions.env).toBeTruthy();
             expect(capturedOptions.env.GITHUB_TOKEN).toBe('ghp_test');
+            expect(capturedOptions.env.HAPPIER_SESSION_ID).toBe('managed-session-1');
             expect(capturedOptions.env.HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON).toBeUndefined();
         } finally {
             if (originalToken === undefined) delete process.env.GITHUB_TOKEN;

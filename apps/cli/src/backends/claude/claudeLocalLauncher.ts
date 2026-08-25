@@ -40,6 +40,7 @@ import { createClaudeWorkflowActivitySourceForSession } from './workflows/create
 import { createWorkflowAgentTranscriptRegistrar } from './remote/sidechains/createWorkflowAgentTranscriptRegistrar';
 import type { ClaudeRemoteSubagentFileCollector } from './remote/sidechains/claudeRemoteSubagentFileCollector';
 import { loadClaudeJsonlReplayBaseline } from './utils/loadClaudeJsonlReplayBaseline';
+import { normalizeCurrentHappierSessionId } from '@/agent/runtime/session/currentSessionIdEnv';
 
 function upsertClaudePermissionModeArgs(
     args: string[] | undefined,
@@ -453,6 +454,7 @@ export async function claudeLocalLauncher(
                 });
 
                 const { mcpConfigJson: baseMcpConfigJson } = await session.getOrCreateHappierMcpBridge();
+                const happierSessionId = normalizeCurrentHappierSessionId(session.client.sessionId);
 
                 try {
                     await claudeLocal({
@@ -464,9 +466,12 @@ export async function claudeLocalLauncher(
                         abort: processAbortController.signal,
                         claudeArgs: session.claudeArgs,
                         systemPromptText: session.defaultSystemPromptText,
-                        envOverlay: resolveClaudeCodeExperimentalEnvOverlay({
-                            claudeCodeExperimentalAgentTeamsEnabled: session.claudeCodeExperimentalAgentTeamsEnabled,
-                        }),
+                        envOverlay: {
+                            ...resolveClaudeCodeExperimentalEnvOverlay({
+                                claudeCodeExperimentalAgentTeamsEnabled: session.claudeCodeExperimentalAgentTeamsEnabled,
+                            }),
+                            ...(happierSessionId ? { HAPPIER_SESSION_ID: happierSessionId } : {}),
+                        },
                         happierMcpConfigJson: baseMcpConfigJson,
                         hookSettingsPath: session.hookSettingsPath,
                         hookPluginDir: session.hookPluginDir,

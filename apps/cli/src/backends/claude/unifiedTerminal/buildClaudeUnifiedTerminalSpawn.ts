@@ -39,6 +39,7 @@ import {
   resolveClaudeLaunchSettingsOverlayArg,
 } from '../utils/resolveClaudeLaunchSettingsOverlay';
 import { materializeClaudeMcpConfigArgsForSpawn } from '../utils/materializeClaudeMcpConfigArgsForSpawn';
+import { normalizeCurrentHappierSessionId } from '@/agent/runtime/session/currentSessionIdEnv';
 
 export type ClaudeUnifiedTerminalSpawn = Readonly<{
   spawnArgv: readonly string[];
@@ -461,6 +462,8 @@ export async function buildClaudeUnifiedTerminalSpawn<Mode extends EnhancedMode 
   // Env first: the statusline overlay resolves the user's original statusline command from the
   // EFFECTIVE config root of the spawned process (CLAUDE_CONFIG_DIR / HOME in the child env).
   const env = buildClaudeEnv(input.envOverlay);
+  const happierSessionId = normalizeCurrentHappierSessionId(input.happySessionId);
+  if (happierSessionId) env.HAPPIER_SESSION_ID = happierSessionId;
   const statuslineSettings = resolveStatuslineOverlaySettings({ input, deps, env });
   const materializedMcpConfig = await materializeClaudeMcpConfigArgsForSpawn(
     buildClaudeArgs(input, statuslineSettings),
@@ -505,7 +508,7 @@ export async function buildClaudeUnifiedTerminalSpawn<Mode extends EnhancedMode 
     }
 
     const splitEnv = splitTerminalLaunchSpecEnv(env);
-    const happySessionId = typeof input.happySessionId === 'string' ? input.happySessionId.trim() : '';
+    const happySessionId = happierSessionId ?? '';
     const specPath = await writeTerminalLaunchSpec({
       command: childInvocation.command,
       args: childInvocation.args,

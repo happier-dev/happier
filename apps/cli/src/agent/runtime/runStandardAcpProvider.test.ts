@@ -333,6 +333,23 @@ describe('runStandardAcpProvider', () => {
     expect(runtimeOptions).not.toHaveProperty('runtimeActivityContributionHandle');
   });
 
+  it('binds the managed Happier session id into every standard ACP provider environment', async () => {
+    const harness = createHarness();
+    let runtimeOptions: Record<string, unknown> | null = null;
+    harness.config.createRuntime = (options: Record<string, unknown>) => {
+      runtimeOptions = options;
+      return harness.runtime;
+    };
+
+    await runStandardAcpProvider(harness.opts, harness.config, harness.deps);
+
+    expect(runtimeOptions).toMatchObject({
+      processEnv: {
+        HAPPIER_SESSION_ID: 'session-1',
+      },
+    });
+  });
+
   it('does not emit idle keepAlive heartbeats at the thinking cadence', async () => {
     vi.useFakeTimers();
     const harness = createHarness();

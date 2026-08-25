@@ -116,6 +116,7 @@ import { formatGeminiPromptDebugSummary } from '@/backends/gemini/runtime/format
 import { buildGeminiPromptForMessage } from '@/backends/gemini/utils/buildGeminiPromptForMessage';
 import { resolveGeminiSystemPromptText } from '@/backends/gemini/prompting/resolveGeminiSystemPromptText';
 import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
+import { withCurrentHappierSessionId } from '@/agent/runtime/session/currentSessionIdEnv';
 
 
 function buildGeminiTurnOutcomeError(outcome: AcpTurnOutcome | null | undefined | void): Error {
@@ -280,6 +281,8 @@ export async function runGemini(opts: {
   session = initializedSession.session;
   bindProviderInputOutcomeProducer(session);
   reconnectionHandle = initializedSession.reconnectionHandle;
+  const resolveGeminiProviderProcessEnv = (): NodeJS.ProcessEnv =>
+    withCurrentHappierSessionId(process.env, session.sessionId);
   const geminiSessionIdPublisher = createVendorResumeIdMetadataPublisher({
     agentId: 'gemini',
     getMetadataSnapshot: () => session.getMetadataSnapshot(),
@@ -860,6 +863,7 @@ export async function runGemini(opts: {
         const modelToUse = message.mode?.model === undefined ? undefined : (message.mode.model || null);
         const backendResult = await createGeminiBackendInstance({
           cwd: process.cwd(),
+          processEnv: resolveGeminiProviderProcessEnv(),
           mcpServers,
           permissionHandler,
           currentUserEmail,
@@ -967,6 +971,7 @@ export async function runGemini(opts: {
             const modelToUse = message.mode?.model === undefined ? undefined : (message.mode.model || null);
             const backendResult = await createGeminiBackendInstance({
               cwd: process.cwd(),
+              processEnv: resolveGeminiProviderProcessEnv(),
               mcpServers,
               permissionHandler,
               currentUserEmail,
