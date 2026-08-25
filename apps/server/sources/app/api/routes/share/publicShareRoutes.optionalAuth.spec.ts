@@ -767,6 +767,10 @@ describe("publicShareRoutes optional auth (no reply-already-sent)", () => {
             },
         }));
         expect(inTx).toHaveBeenCalledTimes(1);
-        expect(payload).toEqual({ messages: [{ id: "m1", seq: 1, content: "c", localId: "l1", createdAt: 1, updatedAt: 2 }] });
+        expect(payload).toEqual({
+            messages: [{ id: "m1", seq: 1, content: "c", localId: "l1", createdAt: 1, updatedAt: 2 }],
+            hasMore: false,
+            nextBeforeSeq: null,
+        });
     });
 });
