@@ -35,6 +35,7 @@ import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScop
 import type { ScmReviewUnifiedDiffFetcher } from '@/components/workspaces/scm/review/scmReviewDiffFetcher';
 import type { Theme } from '@/theme';
 import { Icon } from '@/components/ui/icons/Icon';
+import { preserveWebScrollAnchorAfterToggle } from './preserveWebScrollAnchorAfterToggle';
 
 const ViewWithClick = View as unknown as React.ComponentType<
     React.ComponentPropsWithRef<typeof View> & { onClick?: any; onKeyDown?: any; tabIndex?: number }
@@ -603,39 +604,22 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
 
         if ((beforeTop === null || !Number.isFinite(beforeTop)) && beforeAnchorTop === null) return;
 
-        const restore = (remainingFrames: number) => {
-            const currentRoot = webScrollRootRef.current ?? resolveWebScrollRoot();
-            if (currentRoot && typeof (currentRoot as any).scrollTop === 'number') {
-                let nextTop: number | null = null;
-                const currentTop = Number((currentRoot as any).scrollTop);
+        const anchorY = beforeAnchorTop ?? beforeTop;
+        if (anchorY === null || !Number.isFinite(anchorY)) return;
+        preserveWebScrollAnchorAfterToggle({
+            anchorY,
+            requestFrame: scheduleWebFrame,
+            readCurrentAnchor: () => {
+                const currentRoot = webScrollRootRef.current ?? resolveWebScrollRoot();
+                if (!currentRoot || typeof (currentRoot as any).scrollTop !== 'number') return null;
                 const currentAnchorTop = beforeAnchorTop === null ? null : readWebAnchorTop(path);
-                if (
-                    beforeAnchorTop !== null
-                    && Number.isFinite(beforeAnchorTop)
-                    && currentAnchorTop !== null
-                    && Number.isFinite(currentAnchorTop)
-                    && Number.isFinite(currentTop)
-                ) {
-                    nextTop = Math.max(0, currentTop + (currentAnchorTop - beforeAnchorTop));
-                } else if (beforeTop !== null && Number.isFinite(beforeTop)) {
-                    nextTop = beforeTop;
-                }
-
-                if (nextTop !== null && Number.isFinite(nextTop)) {
-                    try {
-                        (currentRoot as any).scrollTop = nextTop;
-                    } catch {
-                        // ignore
-                    }
-                    reportScrollTop(nextTop);
-                }
-            }
-
-            if (remainingFrames <= 0) return;
-            scheduleWebFrame(() => restore(remainingFrames - 1));
-        };
-
-        scheduleWebFrame(() => restore(3));
+                const currentY = currentAnchorTop ?? Number((currentRoot as any).scrollTop);
+                return Number.isFinite(currentY)
+                    ? { scrollRoot: currentRoot, anchorY: currentY }
+                    : null;
+            },
+            onRestored: reportScrollTop,
+        });
     }, [readWebAnchorTop, reportScrollTop, resolveWebScrollRoot, scheduleWebFrame, toggleCollapsed]);
 
     const expandPath = React.useCallback((path: string) => {
