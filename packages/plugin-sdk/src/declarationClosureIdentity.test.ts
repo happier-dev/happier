@@ -62,6 +62,17 @@ function exportedTypeAlias(
     ));
 }
 
+function exportedInterface(
+    sourceFile: ts.SourceFile,
+    name: string,
+): ts.InterfaceDeclaration | undefined {
+    return sourceFile.statements.find((statement): statement is ts.InterfaceDeclaration => (
+        ts.isInterfaceDeclaration(statement)
+        && statement.name.text === name
+        && statement.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword) === true
+    ));
+}
+
 function importedName(
     sourceFile: ts.SourceFile,
     moduleSpecifier: string,
@@ -378,6 +389,11 @@ describe('normal SDK declaration closure identities', () => {
             manifest: [],
             connectedAccounts: [
                 '@happier-dev/protocol/account/settings/connected-services',
+                // The published classification carries the canonical quota-scope
+                // identity. A restated local union used to hide this seam, which is
+                // precisely how a Protocol-owned DTO could evolve without a compile
+                // failure here.
+                '@happier-dev/protocol/connect/account-usage-primitives',
                 '@happier-dev/protocol/connect/connected-account-purpose-bindings',
                 '@happier-dev/protocol/connect/connected-account-purposes',
                 '@happier-dev/protocol/connect/connected-account-request-auth',
@@ -1030,14 +1046,26 @@ describe('normal SDK declaration closure identities', () => {
         const sourceText = await readFile(new URL('./connectedAccounts.ts', import.meta.url), 'utf8');
         const sourceFile = parseSource('connectedAccounts.ts', sourceText);
 
+        // Connected Accounts must not restate a Protocol- or classifier-owned DTO.
+        // A local alias compiles and passes structural assignability while the
+        // canonical owner evolves, which is exactly how the private group copy
+        // silently lost `incarnation`. Neither a local declaration nor a
+        // Protocol-root re-export is acceptable for these names.
+        for (const name of [
+            'ProviderAccountUsageQuotaScope',
+            'QualifiedConnectedAccountGroupV4',
+            'ProviderLimitEvidenceClassification',
+        ]) {
+            expect(reexportedName(sourceFile, '@happier-dev/protocol', name), name).toBeUndefined();
+            expect(exportedTypeAlias(sourceFile, name), name).toBeUndefined();
+            expect(exportedInterface(sourceFile, name), name).toBeUndefined();
+        }
+        // The one published classification type is the classifier owner's type.
         expect(reexportedName(
             sourceFile,
-            '@happier-dev/protocol',
-            'ProviderAccountUsageQuotaScope',
-        )).toBeUndefined();
-        for (const name of ['ProviderAccountUsageQuotaScope']) {
-            expect(exportedTypeAlias(sourceFile, name), name).toBeDefined();
-        }
+            './cloud/providerLimitEvidence.js',
+            'ProviderLimitEvidenceClassification',
+        )).toBe('ProviderLimitEvidenceClassification');
 
         for (const name of ['buildConnectedServiceCredentialRecord']) {
             const declarationType = exportedCallableTypeText(sourceFile, name);

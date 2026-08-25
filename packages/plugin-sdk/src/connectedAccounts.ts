@@ -14,6 +14,10 @@ import {
     CLAUDE_OAUTH_TOKEN_URL,
 } from '@happier-dev/protocol/providers/claude/oauth-profile';
 import {
+    CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1 as canonicalClaudeSubscriptionMaterializationContractV1,
+    CLAUDE_SUBSCRIPTION_SETUP_TOKEN_ENVIRONMENT_REQUEST_V1 as canonicalClaudeSubscriptionSetupTokenEnvironmentRequestV1,
+} from '@happier-dev/protocol';
+import {
     OPENAI_CODEX_AUTH_BASE_URL,
     OPENAI_CODEX_AUTHORIZE_URL,
     OPENAI_CODEX_CLIENT_ID,
@@ -35,7 +39,6 @@ import type {
     PluginConnectedAccountMaterializationKind,
 } from '@happier-dev/protocol/connect/connected-account-purposes';
 import type {
-    ConnectedServiceAuthGroupId,
     ConnectedServiceId,
 } from '@happier-dev/protocol/connect/connected-service-bindings';
 import type {
@@ -68,6 +71,9 @@ import {
     classifyProviderLimitEvidence as canonicalClassifyProviderLimitEvidence,
 } from './cloud/providerLimitEvidence.js';
 import type {
+    ProviderLimitEvidenceClassification,
+} from './cloud/providerLimitEvidence.js';
+import type {
     PluginConnectedAccountAuthenticationModeRuntime,
     PluginConnectedAccountHealthResult,
     PluginConnectedAccountMutationContext,
@@ -91,6 +97,42 @@ export const CLAUDE_SUBSCRIPTION_OAUTH_PROFILE: Readonly<{
     clientId: CLAUDE_OAUTH_CLIENT_ID,
     tokenUrl: CLAUDE_OAUTH_TOKEN_URL,
 });
+
+/**
+ * Public structural view of the Protocol-owned Claude Subscription
+ * materialization contract. The SDK preserves the canonical runtime identity
+ * while keeping the emitted plugin declaration self-contained.
+ */
+export type ClaudeSubscriptionMaterializationContractV1 = Readonly<{
+    service: Readonly<{
+        pluginId: string;
+        localId: string;
+    }>;
+    setupToken: Readonly<{
+        authenticationModeId: string;
+        environmentKey: string;
+    }>;
+    oauth: Readonly<{
+        authenticationModeId: string;
+        requestAuthRequiredErrorCode: string;
+    }>;
+    unsupportedEnvironmentRequestErrorCode: string;
+}>;
+
+/**
+ * Public structural view of the setup-token environment request emitted by
+ * the Protocol-owned Claude Subscription materialization contract.
+ */
+export type ClaudeSubscriptionSetupTokenEnvironmentRequestV1 = Readonly<{
+    kind: 'environment';
+    keys: readonly string[];
+}>;
+
+export const CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1:
+ClaudeSubscriptionMaterializationContractV1 = canonicalClaudeSubscriptionMaterializationContractV1;
+
+export const CLAUDE_SUBSCRIPTION_SETUP_TOKEN_ENVIRONMENT_REQUEST_V1:
+ClaudeSubscriptionSetupTokenEnvironmentRequestV1 = canonicalClaudeSubscriptionSetupTokenEnvironmentRequestV1;
 
 /**
  * Public, nonsecret OAuth and device-flow metadata used by the first-party
@@ -163,6 +205,7 @@ export type {
     ConnectedAccountRequestAuthMaterializationV1 as ConnectedAccountRequestAuthMaterialization,
     ConnectedAccountRequestAuthUseV1 as ConnectedAccountRequestAuthUse,
 } from '@happier-dev/protocol/connect/connected-account-request-auth';
+export type { ProviderAccountUsageQuotaScopeV1 } from '@happier-dev/protocol/connect/account-usage-primitives';
 export type {
     QualifiedConnectedAccountRef,
 } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
@@ -254,6 +297,7 @@ export {
 };
 export type {
     ProviderLimitCategory,
+    ProviderLimitEvidenceClassification,
     ProviderLimitEvidenceConfidence,
     ProviderLimitEvidenceContext,
     ProviderLimitEvidenceProvenance,
@@ -446,53 +490,7 @@ export type ConnectedAccountListedMaterializationRequest = Readonly<{
     materialization: ConnectedAccountMaterializationRequest;
 }>;
 export type QualifiedConnectedAccountServiceRef = PluginContributionRef;
-export type ProviderAccountUsageQuotaScope =
-    | 'account'
-    | 'workspace'
-    | 'organization'
-    | 'project'
-    | 'model'
-    | 'provider'
-    | 'unknown';
 
-/** A normalized quota-limit classification detached from Protocol's private DTO alias. */
-export type ProviderLimitEvidenceClassification = Readonly<{
-    category:
-        | 'usage_limit'
-        | 'rate_limit'
-        | 'capacity'
-        | 'temporary_throttle'
-        | 'auth_invalid'
-        | 'plan_invalid'
-        | 'validation_failed'
-        | 'disabled'
-        | 'unknown';
-    confidence: 'high' | 'diagnostic' | 'none';
-    quotaScope:
-        | 'account'
-        | 'workspace'
-        | 'organization'
-        | 'project'
-        | 'model'
-        | 'provider'
-        | 'unknown';
-    provenance:
-        | Readonly<{
-            kind: 'structured';
-            httpStatus?: number;
-            providerCode?: string;
-        }>
-        | Readonly<{
-            kind: 'pinnedProviderTerminal';
-            producer: 'pi';
-            producerVersion: string;
-            provider: string;
-            signatureId: string;
-        }>
-        | Readonly<{ kind: 'stableProviderMessage' }>
-        | Readonly<{ kind: 'unknown' }>;
-    piRetryable?: boolean;
-}>;
 /** @realm daemon */
 export const classifyProviderLimitEvidence: (
     value: unknown,
@@ -589,24 +587,6 @@ export interface ConnectedAccountsService {
     ): Disposable;
 }
 
-export type QualifiedConnectedAccountGroupV4 = Readonly<{
-    v: 1;
-    ref: Readonly<{
-        service: QualifiedConnectedAccountServiceRef;
-        groupId: ConnectedServiceAuthGroupId;
-    }>;
-    displayName: string | null;
-    activeConnectedAccountId: string | null;
-    generation: number;
-    members: readonly Readonly<{
-        v: 1;
-        connectedAccountId: string;
-        priority: number;
-        enabled: boolean;
-        createdAt: number;
-        updatedAt: number;
-    }>[];
-}>;
 /** @realm daemon */
 export const buildConnectedServiceCredentialRecord: (
     params:

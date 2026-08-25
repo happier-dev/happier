@@ -55,27 +55,7 @@ function ReviewFrame({
     );
 }
 
-function ReviewOverview({ context }: Readonly<{ context: RenderContext }>) {
-    React.useEffect(() => {
-        context.hostApi.publishCurrentUiContext({
-            entity: {
-                kind: 'review',
-                label: 'Review assistant',
-                summary: 'Review guidance and status are available on this mounted surface.',
-            },
-            detail: { source: 'public-authoring-review-overview' },
-            commands: [{
-                title: 'Open review status',
-                description: 'Open the existing review-status destination on this client.',
-                command: {
-                    kind: 'executeAction',
-                    action: 'open-review-status',
-                },
-            }],
-        });
-        return () => context.hostApi.publishCurrentUiContext(null);
-    }, [context.hostApi]);
-
+function ReviewOverview() {
     return (
         <ReviewFrame>
             <Card padding="large">
@@ -97,9 +77,35 @@ function ReviewOverview({ context }: Readonly<{ context: RenderContext }>) {
     );
 }
 
-function ReviewSessionStatusPanel({ activity = false }: Readonly<{ activity?: boolean }>) {
+function ReviewSessionStatusPanel({
+    context,
+    activity = false,
+}: Readonly<{
+    context: RenderContext;
+    activity?: boolean;
+}>) {
     const { resource, refresh } = useLivePluginResource('review-session-status');
     const title = activity ? 'Project Companion activity' : 'Review status';
+    React.useEffect(() => {
+        if (!activity) return;
+        context.hostApi.publishCurrentUiContext({
+            entity: {
+                kind: 'review',
+                label: 'Project Companion activity',
+                summary: 'Review guidance and status are available for this Session.',
+            },
+            detail: { source: 'public-authoring-project-companion-activity' },
+            commands: [{
+                title: 'Open review status',
+                description: 'Open the existing review-status destination on this client.',
+                command: {
+                    kind: 'executeAction',
+                    action: 'open-review-status',
+                },
+            }],
+        });
+        return () => context.hostApi.publishCurrentUiContext(null);
+    }, [activity, context.hostApi]);
     const refreshAction = <Action.Refresh title="Refresh status" onRefresh={refresh} />;
     const detailsAction = activity
         ? <Action.OpenSurface view={REVIEW_SESSION_STATUS_VIEW_ID} title="Open review details" variant="primary" />
@@ -327,7 +333,7 @@ function ReviewPanel(context: RenderContext) {
     const destinationLocalId = readDestinationLocalId(context);
     if (destinationLocalId === REVIEW_SESSION_STATUS_VIEW_ID) {
         return context.surface.target.kind === 'session'
-            ? <ReviewSessionStatusPanel />
+            ? <ReviewSessionStatusPanel context={context} />
             : (
                 <ReviewFrame>
                     <ErrorState
@@ -340,7 +346,7 @@ function ReviewPanel(context: RenderContext) {
 
     if (destinationLocalId === PROJECT_COMPANION_ACTIVITY_VIEW_ID) {
         return context.surface.target.kind === 'session'
-            ? <ReviewSessionStatusPanel activity />
+            ? <ReviewSessionStatusPanel context={context} activity />
             : (
                 <ReviewFrame accessibilityLabel="Project Companion activity">
                     <ErrorState
@@ -376,7 +382,7 @@ function ReviewPanel(context: RenderContext) {
             : <ReviewOpenableContentPanel context={context} handle={reference.handle} />;
     }
 
-    return <ReviewOverview context={context} />;
+    return <ReviewOverview />;
 }
 
 export const renderSurface = defineUiSurface(ReviewPanel);

@@ -98,19 +98,19 @@ describe('author package boundary', () => {
     }
   });
 
-  it('describes the tarball the declared files inventory actually produces', () => {
+  it('describes the published contents selected by the declared files inventory', () => {
     // The README used to promise "only compiled `dist` output, `package.json`,
     // and this README" while `files` also shipped three API-governance
-    // artifacts. `npm pack` reads `files`, so that inventory is the only
-    // authority the prose can be checked against.
+    // artifacts. Release publication reads `files`, so that inventory is the
+    // only authority the prose can be checked against.
     const packageRoot = join(new URL('.', import.meta.url).pathname, '..');
     const files = (JSON.parse(readFileSync(join(packageRoot, 'package.json'), 'utf8')) as {
       files?: readonly string[];
     }).files ?? [];
     expect(files.length).toBeGreaterThan(0);
     const readme = readFileSync(join(packageRoot, 'README.md'), 'utf8');
-    const sectionStart = readme.indexOf('## Package tarball contents');
-    expect(sectionStart, 'README.md has no "## Package tarball contents" section').toBeGreaterThanOrEqual(0);
+    const sectionStart = readme.indexOf('## Published package contents');
+    expect(sectionStart, 'README.md has no "## Published package contents" section').toBeGreaterThanOrEqual(0);
     const section = readme.slice(sectionStart);
 
     const documented = new Set(

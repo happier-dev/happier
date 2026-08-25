@@ -58,7 +58,6 @@ export type AgentUiRuntimeDescriptorAgentExtraV1 = {
 };
 
 export type AgentUiRuntimeDescriptorLinkExtrasV1 = {
-  providerId: string;
   backendMode: { values: string[] };
   sourceFields: string[];
   runtimeDescriptorOutputKey?: string;
@@ -71,8 +70,14 @@ export type AgentUiBehaviorDeclarationV1 = {
   attachedSessionTerminal?: { supported?: boolean };
   pendingDelivery?: { custodyLabelKey?: string; interruptAndRun?: boolean };
   guidance?: { includeInSessionGettingStartedCliExamples?: boolean };
-  mcpServers?: { supportsDetectedConfigScan?: boolean };
   permissions?: {
+    /**
+     * Which permission-prompt conversation this Agent speaks. It selects the
+     * footer's whole semantic action model — button set, handlers and terminal
+     * decision reading — not just its wording. Absent means the neutral
+     * Claude-shaped default.
+     */
+    promptProtocol?: 'claude' | 'codexDecision';
     footer?: {
       usePermissionUpdates?: boolean;
       forceReadOnlyAfterStop?: boolean;
@@ -82,7 +87,6 @@ export type AgentUiBehaviorDeclarationV1 = {
   };
   workState?: {
     editableGoals?: {
-      providerId?: string;
       capabilityDriven?: boolean;
       modeValues?: string[];
       activeModeValues?: string[];
@@ -129,9 +133,20 @@ export type AgentUiBehaviorDeclarationV1 = {
   };
   payload?: {
     spawnSessionExtras?: { kind: 'static'; value: Record<string, unknown> };
-    sessionExtras?: { providerId: string; outputKey: string; values: string[] };
+    /**
+     * A backend-mode fact this Agent contributes to the spawn/resume envelope.
+     * The mode comes from the named account setting and, for an existing
+     * Session, from the canonical runtime-descriptor envelope carrying this
+     * Agent's id.
+     */
+    sessionExtras?: {
+      outputKey: string;
+      values: string[];
+      settingKey?: string;
+      aliases?: Record<string, string>;
+      defaultValue?: string;
+    };
     environmentVariables?: {
-      providerId: string;
       backendMode: {
         envKey: string;
         settingKey: string;
@@ -156,7 +171,6 @@ export type AgentUiBehaviorDeclarationV1 = {
       agentExtra?: AgentUiRuntimeDescriptorAgentExtraV1;
     };
     backendTransport?: {
-      providerId: string;
       backendMode: {
         values: string[];
         aliases?: Record<string, string>;
@@ -219,25 +233,44 @@ export type AgentUiMessageDeclarationV1 = {
   }[];
 };
 
+/**
+ * Host-owned controls and public inline surfaces an Agent places in a named
+ * slot.
+ *
+ * A boolean-option `chip` selects the host-owned control. Session-subagent
+ * slots instead name a `surfaceId` from the same plugin and carry only the
+ * host-owned placement/resource metadata needed to mount that ordinary public
+ * UI view. `componentId` is deliberately absent because it names code compiled
+ * into the app rather than a public plugin contribution.
+ */
 export type AgentUiComponentsDeclarationV1 = {
-  slots?: {
-    id: string;
-    slot: string;
-    chip?: {
-      kind: 'booleanOption';
-      optionStateKey: string;
+  slots?: (
+    | {
+      id: string;
+      slot: string;
+      chip: {
+        kind: 'booleanOption';
+        optionStateKey: string;
+        iconName: string;
+        onLabelKey: string;
+        offLabelKey: string;
+      };
+    }
+    | {
+      id: string;
+      slot: 'sessionSubagents.launchCards';
+      surfaceId: string;
+      props?: { teamIds?: { kind: 'subagentGroupKeys'; subagentKinds?: string[] } };
+    }
+    | {
+      id: string;
+      slot: 'sessionSubagents.teammateDetailsTab';
+      surfaceId: string;
+      resourceKind: string;
       iconName: string;
-      onLabelKey: string;
-      offLabelKey: string;
-    };
-    props?: {
-      teamIds?: { kind: 'subagentGroupKeys'; subagentKinds?: string[] };
-      optionStateKey?: string;
-    };
-    resourceKind?: string;
-    iconName?: string;
-    tab?: { keyPrefix: string; titleKey: string; subtitleKey?: string };
-  }[];
+      tab: { keyPrefix: string; titleKey: string; subtitleKey?: string };
+    }
+  )[];
 };
 
 /**
@@ -426,6 +459,7 @@ export type PluginManifestAuthorInput = {
       | 'tools'
       | 'resources'
       | 'transcriptActivities'
+      | 'sessionInfoSections'
       | 'sessionHeaderActions'
       | 'settings'
       | 'events'
@@ -606,6 +640,10 @@ export type PluginManifestAuthorInput = {
             machineIdPath?: string;
           }>;
         }>
+        | Readonly<{
+          container: 'sessionSubagentLaunch' | 'sessionSubagentDetails';
+          target: Readonly<{ kind: 'session'; sessionIdPath?: string }>;
+        }>
       ))[];
       // Raw renderer declarations remain an advanced manifest route until the
       // complete renderer union has one published author owner. Supported SDK
@@ -677,6 +715,7 @@ export type PluginContributes = Readonly<{
   tools: NonNullable<NonNullable<PluginManifestAuthorInput['contributes']>['tools']>;
   resources: NonNullable<NonNullable<PluginManifestAuthorInput['contributes']>['resources']>;
   transcriptActivities: NonNullable<NonNullable<PluginManifestAuthorInput['contributes']>['transcriptActivities']>;
+  sessionInfoSections: NonNullable<NonNullable<PluginManifestAuthorInput['contributes']>['sessionInfoSections']>;
   sessionHeaderActions: NonNullable<NonNullable<PluginManifestAuthorInput['contributes']>['sessionHeaderActions']>;
   settings: NonNullable<NonNullable<PluginManifestAuthorInput['contributes']>['settings']>;
   events: NonNullable<NonNullable<PluginManifestAuthorInput['contributes']>['events']>;

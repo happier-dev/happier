@@ -36,6 +36,27 @@ describe('shared Action form semantics', () => {
     )).toEqual({ kind: 'select', value: ['a', '2'], multiple: true });
   });
 
+  it('preserves incomplete numeric edits until they become admissible finite numbers', () => {
+    const integer = resolveHappierActionFieldPresentation(
+      { widget: 'integer' },
+      undefined,
+    );
+    const number = resolveHappierActionFieldPresentation(
+      { widget: 'number' },
+      undefined,
+    );
+
+    expect(integer.parseText?.('-')).toBe('-');
+    expect(integer.parseText?.('-5')).toBe(-5);
+    expect(integer.parseText?.('1.5')).toBe('1.5');
+    expect(number.parseText?.('1.')).toBe('1.');
+    expect(number.parseText?.('1.5')).toBe(1.5);
+    expect(number.parseText?.('1e')).toBe('1e');
+    expect(number.parseText?.('1e2')).toBe(100);
+    expect(number.parseText?.('Infinity')).toBe('Infinity');
+    expect(number.parseText?.('')).toBeUndefined();
+  });
+
   it('consumes host-normalized Connected Account option values without parsing raw refs', () => {
     const account = {
       service: { pluginId: 'com.acme.accounts', localId: 'service' },

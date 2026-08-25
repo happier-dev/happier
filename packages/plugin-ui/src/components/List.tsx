@@ -9,6 +9,7 @@ import {
   useState,
   type ReactElement,
   type ReactNode,
+  type RefObject,
 } from 'react';
 import { FlatList, I18nManager, Platform, SectionList, View } from 'react-native';
 
@@ -55,7 +56,7 @@ import {
   type ListMultiSelectionStore,
 } from './ListMultiSelection.js';
 import { Row, Stack } from './Layout.js';
-import { Menu } from './Overlay.js';
+import { ContextMenu } from './Overlay.js';
 import { usePluginTranslation } from './PluginUiProvider.js';
 import { resolveAuthorText } from './resolveAuthorText.js';
 
@@ -1224,6 +1225,12 @@ function renderListItem(
   props: ItemProps & Readonly<{ rovingCollectionItem?: HappierRovingCollectionItem }>,
   defaultSecondaryActionAccessibilityLabel: string,
   suppressListItemRole = false,
+  secondaryActionsControl?: Readonly<{
+    open: boolean;
+    onOpenChange(open: boolean): void;
+    focusReturnRef: RefObject<unknown>;
+    onContextMenu(event: unknown): void;
+  }>,
 ): ReactElement {
   const { secondaryActions, secondaryActionAccessibilityLabel, onSecondaryAction, accessory, ...item } = props;
   const hasSecondaryActions = secondaryActions !== undefined
@@ -1243,14 +1250,21 @@ function renderListItem(
       secondaryActionsEnabled={secondaryActionsEnabled}
       accessibilityLabel={secondaryActionAccessibilityLabel ?? defaultSecondaryActionAccessibilityLabel}
       onSelect={onSecondaryAction}
+      {...(secondaryActionsControl === undefined ? {} : {
+        open: secondaryActionsControl.open,
+        onOpenChange: secondaryActionsControl.onOpenChange,
+        focusReturnRef: secondaryActionsControl.focusReturnRef,
+      })}
       renderMenu={(input) => (
-        <Menu
+        <ContextMenu
           open={input.open}
           onOpenChange={input.onOpenChange}
           trigger={input.trigger}
           triggerAccessibilityLabel={input.triggerAccessibilityLabel}
           testID={input.testID}
           disabled={input.disabled}
+          triggerTabIndex={input.triggerTabIndex}
+          focusReturnRef={input.focusReturnRef}
           items={input.actions.map((action) => ({ id: action.id, label: action.label, disabled: action.disabled }))}
           onSelect={input.onSelect}
         />
@@ -1265,6 +1279,7 @@ function renderListItem(
   return (
     <HappierListItem
       {...item}
+      onContextMenu={secondaryActionsControl?.onContextMenu}
       accessory={composedAccessory}
       hasSecondaryActions={hasSecondaryActions}
       accessoryOutsidePressable={hasSecondaryActions}
@@ -1276,6 +1291,8 @@ function renderListItem(
 function ListItem(props: ListItemProps): ReactElement {
   const translate = usePluginTranslation();
   const selection = useContext(ListItemSelectionContext);
+  const [secondaryActionsOpen, setSecondaryActionsOpen] = useState(false);
+  const rowFocusRef = useRef<HappierFocusable | null>(null);
   const defaultSecondaryActionAccessibilityLabel = translate(LIST_MORE_ACTIONS_TRANSLATION_KEY, 'More actions');
   const { accessibilityLabelKey, accessibilityHintKey, ...authorProps } = props;
   const resolvedProps = {
@@ -1283,19 +1300,60 @@ function ListItem(props: ListItemProps): ReactElement {
     accessibilityLabel: resolveAuthorText(translate, props.accessibilityLabel, accessibilityLabelKey),
     accessibilityHint: resolveAuthorText(translate, props.accessibilityHint, accessibilityHintKey),
   } as ListItemProps;
+  const hasSecondaryActions = resolvedProps.secondaryActions !== undefined
+    && resolvedProps.secondaryActions.length > 0
+    && resolvedProps.onSecondaryAction !== undefined;
+  const secondaryActionsEnabled = resolveHappierItemBehavior({
+    disabled: resolvedProps.disabled,
+    busy: resolvedProps.busy,
+    hasPrimaryAction: resolvedProps.onPress !== undefined,
+    hasSecondaryActions,
+  }).secondaryActionsEnabled
+    && resolvedProps.secondaryActions?.some((action) => action.disabled !== true) === true;
+  const openSecondaryActionsFromContext = useCallback((event: unknown) => {
+    if (!secondaryActionsEnabled) return;
+    const candidate = event as Readonly<{
+      preventDefault?: () => void;
+      stopPropagation?: () => void;
+    }>;
+    candidate.preventDefault?.();
+    candidate.stopPropagation?.();
+    setSecondaryActionsOpen(true);
+  }, [secondaryActionsEnabled]);
   if (selection === null) return renderListItem(resolvedProps, defaultSecondaryActionAccessibilityLabel);
+  const rovingCollectionItem: HappierRovingCollectionItem = {
+    ...selection.roving,
+    register: (target) => {
+      rowFocusRef.current = target;
+      selection.roving.register(target);
+    },
+    onKeyDown: (key, event) => {
+      const opensSecondaryActions = key === 'ContextMenu'
+        || (key === 'F10' && readHappierPointerModifiers(event).shiftKey);
+      if (opensSecondaryActions && secondaryActionsEnabled) {
+        setSecondaryActionsOpen(true);
+        return true;
+      }
+      return selection.roving.onKeyDown(key, event);
+    },
+  };
   return renderListItem({
     ...resolvedProps,
     selected: selection.selected,
     accessibilityRole: 'option',
     accessibilityPositionInSet: selection.positionInSet,
     accessibilitySetSize: selection.setSize,
-    rovingCollectionItem: selection.roving,
+    rovingCollectionItem,
     onPress: (event) => {
       selection.select(event);
       return props.onPress?.(event);
     },
-  }, defaultSecondaryActionAccessibilityLabel, true);
+  }, defaultSecondaryActionAccessibilityLabel, true, {
+    open: secondaryActionsOpen,
+    onOpenChange: setSecondaryActionsOpen,
+    focusReturnRef: rowFocusRef,
+    onContextMenu: openSecondaryActionsFromContext,
+  });
 }
 
 /** Standalone semantic row; identical owner and behavior to `List.Item`. */

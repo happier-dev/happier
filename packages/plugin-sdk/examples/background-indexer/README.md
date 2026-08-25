@@ -18,10 +18,9 @@ Run the normal external-author commands from this directory:
 ```sh
 happier plugins dev typecheck .
 happier plugins test .
-happier plugins pack .
+happier plugins dev
 ```
 
 The source workload measurement is gated by
-`HAPPIER_RUN_DAEMON_DATABASE_WORKLOAD=1` in the CLI database owner test. Packed
-install/restart/reload and Windows/Linux/macOS evidence remain separate live
-product gates.
+`HAPPIER_RUN_DAEMON_DATABASE_WORKLOAD=1` in the CLI database owner test. Managed source-development activation/restart/reload and Windows/Linux/macOS
+evidence remain separate live product gates on the existing stack.

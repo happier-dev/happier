@@ -1,7 +1,9 @@
 import {
   ExternalActionHttpErrorV1Schema,
   parseExternalActionResponseEnvelopeV1,
+  parseQualifiedPluginActionId,
 } from '@happier-dev/protocol/actions';
+import { request as requestWithUndici } from 'undici';
 
 import { createGeneratedActions, MUTATING_PUBLIC_ACTION_IDS } from './actions/generated.js';
 import { HappierActionError, HappierClientClosedError, HappierTransportError } from './errors.js';
@@ -63,8 +65,36 @@ function transportErrorCode(body: unknown): string | undefined {
   return typeof candidate.error === 'string' ? candidate.error : undefined;
 }
 
+function responseHeader(
+  headers: Readonly<Record<string, string | string[] | undefined>>,
+  name: string,
+): string | undefined {
+  const value = headers[name.toLowerCase()];
+  return Array.isArray(value) ? value[0] : value;
+}
+
+function isDeferredApprovalRequest(
+  value: unknown,
+  actionId: string,
+): value is Readonly<{
+  kind: 'approval_request_created';
+  artifactId: string;
+  actionId: string;
+}> {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
+  const candidate = value as Readonly<Record<string, unknown>>;
+  return candidate.kind === 'approval_request_created'
+    && typeof candidate.artifactId === 'string'
+    && candidate.artifactId.trim().length > 0
+    && candidate.actionId === actionId;
+}
+
 export type HappierActions = ReturnType<typeof createGeneratedActions> & Readonly<{
   execute: ActionExecute;
+  get: (
+    input: PublicActionInputById['action.spec.get'],
+    options?: ActionExecutionOptions,
+  ) => Promise<PublicActionResultById['action.spec.get']>;
   search: (
     input: PublicActionInputById['action.spec.search'],
     options?: ActionExecutionOptions,
@@ -97,6 +127,10 @@ type MachineBoundActionMethods<T> = T extends (
 /** The generated Action tree with routing fixed by `client.machine(machineId)`. */
 export type HappierMachineActions = MachineBoundActionMethods<ReturnType<typeof createGeneratedActions>> & Readonly<{
   execute: HappierMachineActionExecute;
+  get: (
+    input: PublicActionInputById['action.spec.get'],
+    options?: HappierMachineActionExecutionOptions,
+  ) => Promise<PublicActionResultById['action.spec.get']>;
   search: (
     input: PublicActionInputById['action.spec.search'],
     options?: HappierMachineActionExecutionOptions,
@@ -159,12 +193,21 @@ function createActions(execute: ActionExecute): HappierActions {
   return Object.freeze({
     ...generated,
     execute,
+    get: (input: PublicActionInputById['action.spec.get'], options?: ActionExecutionOptions) => (
+      execute('action.spec.get', input, options)
+    ),
     search: (input: PublicActionInputById['action.spec.search'], options?: ActionExecutionOptions) => (
       execute('action.spec.search', input, options)
     ),
-    invoke: (action: ContributedActionId, input: unknown, options?: ActionExecutionOptions) => (
-      execute('action.invoke', { action, input }, options)
-    ),
+    invoke: (action: ContributedActionId, input: unknown, options?: ActionExecutionOptions) => {
+      const identity = typeof action === 'string' ? parseQualifiedPluginActionId(action) : action;
+      if (identity === null) {
+        throw new TypeError(
+          'Contributed Action id must use the canonical <pluginId>/actions/<localId> spelling.',
+        );
+      }
+      return execute('action.invoke', { action: identity, input }, options);
+    },
   });
 }
 
@@ -200,9 +243,12 @@ function createClient(
     const requestSignal = params.allowAfterClose === true
       ? params.signal
       : combinedSignal(params.signal, lifecycle.controller.signal);
-    let response: Response;
+    let response: Awaited<ReturnType<typeof requestWithUndici>>;
     try {
-      response = await fetch(new URL(params.path, endpoint), {
+      // Session Actions may wait for their declared maximum. Native Node fetch
+      // applies Undici's hidden 300-second header limit, which is shorter than
+      // a valid Action wait. Caller cancellation remains the SDK deadline.
+      response = await requestWithUndici(new URL(params.path, endpoint), {
         method: params.method,
         headers: {
           authorization: `Bearer ${token}`,
@@ -210,6 +256,7 @@ function createClient(
         },
         ...(params.body === undefined ? {} : { body: params.body }),
         ...(requestSignal === undefined ? {} : { signal: requestSignal }),
+        headersTimeout: 0,
       });
     } catch (error) {
       if (lifecycle.controller.signal.aborted && params.allowAfterClose !== true) {
@@ -221,21 +268,30 @@ function createClient(
 
     let body: unknown;
     try {
-      body = await response.json();
+      body = await response.body.json();
     } catch (error) {
       if (lifecycle.controller.signal.aborted && params.allowAfterClose !== true) {
         throw lifecycle.controller.signal.reason;
       }
       if (params.signal?.aborted) throw params.signal.reason;
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        const code = responseHeader(response.headers, 'x-happier-retry-reason');
+        throw new HappierTransportError(
+          code === 'server_unavailable'
+            ? 'The Happier API is unavailable.'
+            : `The Happier API returned HTTP ${response.statusCode}.`,
+          { code, status: response.statusCode },
+        );
+      }
       throw new HappierTransportError('The Happier API returned invalid JSON.', {
-        status: response.status,
+        status: response.statusCode,
         cause: error,
       });
     }
-    if (!response.ok) {
-      throw new HappierTransportError(`The Happier API returned HTTP ${response.status}.`, {
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw new HappierTransportError(`The Happier API returned HTTP ${response.statusCode}.`, {
         code: transportErrorCode(body),
-        status: response.status,
+        status: response.statusCode,
         details: body,
       });
     }
@@ -275,6 +331,13 @@ function createClient(
         externalActionResponse.execution.errorCode,
         externalActionResponse.execution.error,
         externalActionResponse.execution.details,
+      );
+    }
+    if (isDeferredApprovalRequest(externalActionResponse.execution.result, actionId)) {
+      throw new HappierActionError(
+        'approval_required',
+        `The ${actionId} Action requires user approval before it can execute.`,
+        externalActionResponse.execution.result,
       );
     }
     return externalActionResponse.execution.result as PublicActionResultById[K];

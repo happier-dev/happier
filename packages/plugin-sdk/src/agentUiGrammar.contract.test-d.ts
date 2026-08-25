@@ -16,13 +16,13 @@ const supported: AgentContributions = [{
     id: 'acme.agent',
     ui: {
         behavior: {
-            mcpServers: { supportsDetectedConfigScan: true },
             newSession: {
                 transcriptStorageModes: ['persisted', 'direct'],
                 agentOptions: [{ key: 'allowIndexing', kind: 'boolean', spawnConfigOption: true }],
             },
             payload: {
                 spawnSessionExtras: { kind: 'static', value: { acmeMode: 'fast' } },
+                sessionExtras: { outputKey: 'acmeMode', values: ['fast', 'thorough'] },
             },
             externalSessions: { browse: { order: 4 } },
         },
@@ -67,6 +67,22 @@ const unknownBehaviorBlock: AgentContributions = [{
     },
 }];
 
+const repeatedAgentIdentity: AgentContributions = [{
+    id: 'acme.agent',
+    ui: {
+        behavior: {
+            payload: {
+                sessionExtras: {
+                    // @ts-expect-error nested behavior inherits `contributes.agents[].id`.
+                    providerId: 'another.agent',
+                    outputKey: 'acmeMode',
+                    values: ['fast'],
+                },
+            },
+        },
+    },
+}];
+
 /**
  * The compiled first-party escape hatches. They name components, adapters and
  * meta descriptors built into the app, so no manifest can satisfy them; the
@@ -103,6 +119,7 @@ export type _AgentUiGrammarFixtures = [
     typeof supported,
     typeof misspelledOptionKind,
     typeof unknownBehaviorBlock,
+    typeof repeatedAgentIdentity,
     typeof compiledComponentId,
     typeof compiledPayloadAdapter,
     typeof compiledMessageMetaDescriptors,

@@ -3,10 +3,10 @@ import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { describe, expect, it, vi } from 'vitest';
+import { rehydratePluginContributionPointSemanticsV1 } from '@happier-dev/protocol';
 import type { DefinedPlugin } from '@happier-dev/plugin-sdk';
 
 import { parsePluginManifest, type PluginManifest } from '../manifest.js';
-import * as targetedContributionsHost from '../host/targeted-contributions/index.public.js';
 import type { NotificationsService } from '../notifications.js';
 import type { SecretsService } from '../secrets.js';
 import { createPluginTestkit } from '../testing/index.js';
@@ -69,39 +69,20 @@ function expectTriageSourcePointSemantics(
 ): void {
     const parsed = parsePluginManifest(manifest);
     if (!parsed.ok) throw new Error(`targeted_contribution_${pointId}_manifest_invalid`);
-    const point = targetedContributionsHost
-        .readTargetedContributionPointSemanticRefs(manifest)
-        .find((candidate) => candidate.id === pointId
-            && candidate.protocol.id === protocolId
-            && candidate.protocol.version === 1);
-    if (!point) throw new Error(`targeted_contribution_${pointId}_semantic_ref_missing`);
     const declaration = parsed.manifest.contributes.pluginContributionPoints
         .find((candidate) => candidate.id === pointId);
     const protocol = declaration?.protocols.find((candidate) =>
-        candidate.id === point.protocol.id && candidate.version === point.protocol.version);
+        candidate.id === protocolId && candidate.version === 1);
     if (!protocol) throw new Error(`targeted_contribution_${pointId}_manifest_protocol_missing`);
-    const operations = Object.keys(protocol.operations)
-        .sort()
-        .map((role) => ({ role }));
+    const semantics = rehydratePluginContributionPointSemanticsV1(protocol);
+    if (!semantics || !semantics.descriptor) {
+        throw new Error(`targeted_contribution_${pointId}_semantic_rehydration_unavailable`);
+    }
 
-    const input = {
-        protocol: point.protocol,
-        descriptor,
-        operations,
-        surfaces: [{ role: 'detail', presentation: 'content' as const }],
-    };
-    expect(targetedContributionsHost.decodeTargetedContributionPointSemantics(point, input)).toEqual({
-        ok: true,
-        projection: {
-            descriptor,
-            operations: operations.map(({ role }) => expect.objectContaining({ role })),
-            surfaces: [{ role: 'detail', presentation: 'content' }],
-        },
-    });
-    expect(targetedContributionsHost.decodeTargetedContributionPointSemantics(point, {
-        ...input,
-        descriptor: { kind: 'issue' },
-    })).toEqual({ ok: false, code: 'descriptor_semantic_invalid' });
+    expect(semantics.descriptor.safeParse(descriptor).success).toBe(true);
+    expect(semantics.descriptor.safeParse({ kind: 'issue' }).success).toBe(false);
+    expect(semantics.operations.map(({ role }) => role)).toEqual(Object.keys(protocol.operations).sort());
+    expect(semantics.surfaces).toEqual([{ role: 'detail', presentation: 'content' }]);
 }
 
 describe('cross-plugin contribution public authoring example', () => {
@@ -140,7 +121,7 @@ describe('cross-plugin contribution public authoring example', () => {
         expect(operationTargetSource).toContain('browserActions:');
         expect(operationTargetSource).toContain('requestInterceptors:');
         expect(operationTargetSource).not.toContain("capability: 'network.intercept'");
-        expect(operationTargetSource).not.toContain('hostAccess:');
+        expect(operationTargetSource).toContain("capability: 'filesystem'");
         expect(operationContributorSource).toMatch(/\.contribute\(\{[\s\S]*?\bsurfaces\s*:/u);
         expect(triageContributorSource).toContain("descriptor: { kind: 'issue', label: 'Project issues' }");
         expect(triageContributorSource).toMatch(/\.contribute\(\{[\s\S]*?\bsurfaces\s*:/u);
@@ -214,11 +195,20 @@ describe('cross-plugin contribution public authoring example', () => {
                 }],
             },
         });
-        // `definePlugin` emits cold declaration facts only, so a target that
-        // declares no host access omits the family instead of materializing
-        // empty `required`/`optional` arrays; `parsePluginManifest` is the
-        // sole normalizer that supplies them to host consumers.
-        expect(target.manifest.hostAccess).toBeUndefined();
+        // `definePlugin` emits the example's narrow declared filesystem
+        // authority as a cold declaration fact; host manifest parsing remains
+        // the sole normalizer for consumers.
+        expect(target.manifest.hostAccess).toEqual({
+            required: [{
+                id: 'document-review-service-files',
+                capability: 'filesystem',
+                reason: 'Inspect and remove the plugin-local document review service check.',
+                scope: {
+                    locations: [{ root: 'pluginData', pathPrefix: 'service-check' }],
+                    access: ['read', 'write', 'delete'],
+                },
+            }],
+        });
         expect(contributor.manifest).toMatchObject({
             id: 'examples.action-contract-consumer',
             contributes: {
@@ -308,29 +298,37 @@ describe('cross-plugin contribution public authoring example', () => {
             watchPreferences: () => Object.freeze({ dispose(): void {} }),
         }) satisfies NotificationsService;
 
-        expect(target.manifest).toMatchObject({
-            contributes: {
-                commands: [{
-                    id: 'send-document-review-ready-command',
-                    path: ['document-review', 'notify-ready'],
-                    action: 'send-document-review-ready',
-                }],
-                tools: [{
-                    id: 'send-document-review-ready-tool',
-                    name: 'document_review_notify_ready',
-                    action: 'send-document-review-ready',
-                }],
-                notifications: [{
-                    id: 'document-review-ready',
-                    defaultChannels: ['webhook'],
-                }],
-                notificationChannels: [{
-                    id: 'webhook',
-                    configurable: true,
-                    settings: [{ id: 'endpoint' }],
-                }],
-            },
-        });
+        const contributes = target.manifest.contributes;
+        expect(contributes).toBeDefined();
+        if (!contributes) throw new Error('target_manifest_contributions_missing');
+
+        expect(contributes.commands).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                id: 'send-document-review-ready-command',
+                path: ['document-review', 'notify-ready'],
+                action: 'send-document-review-ready',
+            }),
+        ]));
+        expect(contributes.tools).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                id: 'send-document-review-ready-tool',
+                name: 'document_review_notify_ready',
+                action: 'send-document-review-ready',
+            }),
+        ]));
+        expect(contributes.notifications).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                id: 'document-review-ready',
+                defaultChannels: ['webhook'],
+            }),
+        ]));
+        expect(contributes.notificationChannels).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                id: 'webhook',
+                configurable: true,
+                settings: [expect.objectContaining({ id: 'endpoint' })],
+            }),
+        ]));
 
         const testkit = await createPluginTestkit({
             manifest: target.manifest,

@@ -56,6 +56,12 @@ test('retains the portable production reference package contract', async () => {
   const projectCompanionDashboard = manifest.contributes.ui.views.find(
     (view) => view.id === 'project-companion-dashboard',
   );
+  assert.deepEqual(manifest.contributes.sessionInfoSections, [{
+    id: 'project-companion-status',
+    resourceId: 'project-companion-dashboard-document',
+    order: 40,
+    actions: ['open-review-status'],
+  }]);
   assert.deepEqual(projectCompanionDashboard, {
     id: 'project-companion-dashboard',
     container: 'rightPane',
@@ -91,7 +97,7 @@ test('retains the portable production reference package contract', async () => {
   assert.deepEqual(openProjectCompanionDashboard, {
     id: 'open-project-companion-dashboard',
     title: 'Open Project Companion',
-    action: {
+    command: {
       kind: 'openSurface',
       destination: 'project-companion-dashboard',
     },
@@ -126,7 +132,7 @@ test('retains the portable production reference package contract', async () => {
   assert.deepEqual(openProjectCompanionActivity, {
     id: 'open-project-companion-activity',
     title: 'Open Project Companion activity',
-    action: {
+    command: {
       kind: 'openSurface',
       destination: 'project-companion-activity-log',
     },

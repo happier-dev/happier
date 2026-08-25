@@ -89,8 +89,11 @@ export { HAPPIER_BASE_SYSTEM_PROMPT_LINKED_WORKSPACE_FILES_V1 } from '../../exte
 export { HAPPIER_BASE_SYSTEM_PROMPT_OPTIONS_V1 } from '../../externalSessions.js';
 export { HAPPIER_BASE_SYSTEM_PROMPT_SESSION_TITLE_INITIAL_V1 } from '../../externalSessions.js';
 export { compareExternalSessionCandidatePrecedence } from '../external.js';
+export { createAgentExternalSessionsProducerOverflowFailure } from '../../externalSessions.js';
 export { deriveExternalSessionActivity } from '../external.js';
+export { getAgentExternalSessionsInvocationFailure } from '../../externalSessions.js';
 export { isAgentExternalSessionsFailureCode } from '../../externalSessions.js';
+export { isAgentExternalSessionsResultWithinByteBudget } from '../../externalSessions.js';
 export { resolveExternalSessionCandidateIdentityKey } from '../external.js';
 export { validateAgentExternalSessionHookMapEventRequest } from '../../externalSessionHooks.js';
 export { validateAgentExternalSessionHookMapEventResult } from '../../externalSessionHooks.js';

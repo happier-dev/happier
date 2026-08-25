@@ -26,5 +26,5 @@ last-known-good error states without a daemon tunnel or a second query path.
 SDK build owner derives its operation-local Vite and Re.Pack configuration; no
 package-root bundler config or generated artifact is checked in. This source
 package does not by itself prove empty-workspace installation,
-emitted-artifact loading, daemon-offline behavior, or device rendering; those
-are separate packed/live validation gates.
+daemon-offline behavior, or device rendering; those are separate loaded-runtime
+validation gates on the existing development stack.

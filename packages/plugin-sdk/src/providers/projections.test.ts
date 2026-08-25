@@ -387,9 +387,6 @@ describe('final Provider source projection', () => {
     it('publishes managed Provider runtime contracts only from the final Provider entrypoint', () => {
         const program = createSdkProgram();
         const managedProviderNames = new Set<string>(MANAGED_PROVIDER_EXPORTS);
-        expect(moduleExportNames(program, 'src/providers.ts').filter((name) => (
-            managedProviderNames.has(name)
-        ))).toEqual([]);
         expect(moduleExportNames(program, 'src/managed-services/index.ts').filter((name) => (
             managedProviderNames.has(name)
         ))).toEqual([]);

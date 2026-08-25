@@ -53,6 +53,7 @@ function unsupportedBrowserHostMethod(): never {
 
 const browserHostApi: PluginUiHostApi = {
   version: () => ({ apiVersion: PUBLIC_TOOLCHAIN_COMPATIBILITY_V1.ui.hostApiVersion, wireVersion: 1, methods: ['context', 'watchContext'] as const }),
+  publishCurrentUiContext: () => undefined,
   context: async () => initialContext,
   watchContext: async () => ({ dispose() {} }),
   executeAction: async () => unsupportedBrowserHostMethod(),

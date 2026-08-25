@@ -124,6 +124,66 @@ export type AgentExternalSessionsInvocation =
         exec: ExecService;
     }>;
 
+/**
+ * The canonical terminal classification for one bounded External Sessions
+ * contribution call. It intentionally establishes only host-owned invocation
+ * facts; source-specific failures remain owned by each Agent contribution.
+ */
+export function getAgentExternalSessionsInvocationFailure(
+    invocation: AgentExternalSessionsInvocationBounds,
+): AgentExternalSessionsResult<never> | null {
+    if (invocation.signal.aborted) {
+        return {
+            ok: false,
+            code: 'cancelled',
+            message: 'External-session operation was cancelled.',
+        };
+    }
+    if (Date.now() >= invocation.deadlineAtMs) {
+        return {
+            ok: false,
+            code: 'timeout',
+            message: 'External-session operation exceeded its deadline.',
+            retryable: true,
+        };
+    }
+    if (!Number.isFinite(invocation.maxSerializedBytes) || invocation.maxSerializedBytes < 1) {
+        return {
+            ok: false,
+            code: 'invalid_request',
+            message: 'External-session result byte bound must be positive.',
+        };
+    }
+    return null;
+}
+
+/**
+ * Measures the complete contribution result, including its success/failure
+ * envelope, with the same UTF-8 JSON contract the host enforces.
+ */
+export function isAgentExternalSessionsResultWithinByteBudget(
+    result: AgentExternalSessionsResult<unknown>,
+    maxSerializedBytes: number,
+): boolean {
+    return Buffer.byteLength(JSON.stringify(result), 'utf8') <= maxSerializedBytes;
+}
+
+/**
+ * A valid host result bound that cannot fit an Agent-produced value is an
+ * Agent fault, never a malformed caller request. It is nonretryable because
+ * repeating the same contribution output cannot make it fit.
+ */
+export function createAgentExternalSessionsProducerOverflowFailure(
+    message: string,
+): AgentExternalSessionsResult<never> {
+    return {
+        ok: false,
+        code: 'agent_error',
+        message,
+        retryable: false,
+    };
+}
+
 export type AgentExternalSessionCandidate = Readonly<{
     remoteSessionId: string;
     title?: string;

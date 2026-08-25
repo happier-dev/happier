@@ -62,6 +62,8 @@ const APPROVED_CATALOG_VOCABULARY = [
 type DeclarativeDisposition = Readonly<{
   kind: 'node';
   node: 'text' | 'markdown' | 'stack' | 'group' | 'field' | 'status' | 'action' | 'list' | 'section' | 'item' | 'state' | 'metadata' | 'actionPanel';
+  /** Exact node-local adapter that joins this catalog row to the renderer. */
+  rendererSymbol: string;
 }> | Readonly<{
   /**
    * A mounted-only declarative node whose physical mount is supplied by the
@@ -105,7 +107,11 @@ type PositiveConsumer = Readonly<{
 type GraduatedFamily = Readonly<{
   /** Exact author-visible component or compound member. */
   publicName: string;
-  /** Exact exported prop type; `never` is used only for intentionally absent rows. */
+  /**
+   * The exact exported type that names this member's public contract: its
+   * props for a component, and the store contract it produces for the one
+   * selection factory. `never` is used only for intentionally absent rows.
+   */
   propTypeName: string;
   family: string;
   disposition: CatalogDisposition;
@@ -190,7 +196,7 @@ const GRADUATED_FAMILIES: readonly GraduatedFamily[] = [
     pluginOwner: { module: 'components/Layout.tsx', symbol: 'Stack' },
     coreConsumers: ['components/plugins/shared/declarativeNodes.tsx'],
     devMountSymbols: ['Stack as PluginStack'],
-    declarative: { kind: 'node', node: 'stack' },
+    declarative: { kind: 'node', node: 'stack', rendererSymbol: 'HappierStack' },
   },
   {
     publicName: 'Row',
@@ -236,7 +242,7 @@ const GRADUATED_FAMILIES: readonly GraduatedFamily[] = [
     coreConsumers: ['components/ui/text/Text.tsx'],
     corePresentationMechanism: { module: 'presentation/text/Text.tsx', symbol: 'useHappierTextPresentation' },
     devMountSymbols: ['Text as PluginText'],
-    declarative: { kind: 'node', node: 'text' },
+    declarative: { kind: 'node', node: 'text', rendererSymbol: 'Text' },
   },
   {
     publicName: 'Spinner',
@@ -267,7 +273,7 @@ const GRADUATED_FAMILIES: readonly GraduatedFamily[] = [
     pluginOwner: { module: 'components/Status.tsx', symbol: 'Status' },
     coreConsumers: ['components/plugins/shared/declarativeNodes.tsx'],
     devMountSymbols: ['Status as PluginStatus'],
-    declarative: { kind: 'node', node: 'status' },
+    declarative: { kind: 'node', node: 'status', rendererSymbol: 'HappierStatus' },
   },
   {
     publicName: 'State',
@@ -282,7 +288,7 @@ const GRADUATED_FAMILIES: readonly GraduatedFamily[] = [
     pluginOwner: { module: 'components/State.tsx', symbol: 'State' },
     coreConsumers: ['components/ui/empty/EmptyState.tsx'],
     devMountSymbols: ['State as PluginState'],
-    declarative: { kind: 'node', node: 'state' },
+    declarative: { kind: 'node', node: 'state', rendererSymbol: 'HappierInfoState' },
   },
   {
     publicName: 'LoadingState',
@@ -297,7 +303,7 @@ const GRADUATED_FAMILIES: readonly GraduatedFamily[] = [
     pluginOwner: { module: 'components/State.tsx', symbol: 'LoadingState' },
     coreConsumers: ['components/ui/empty/EmptyState.tsx'],
     devMountSymbols: ['LoadingState as PluginLoadingState'],
-    declarative: { kind: 'node', node: 'state' },
+    declarative: { kind: 'node', node: 'state', rendererSymbol: 'HappierInfoState' },
   },
   {
     publicName: 'EmptyState',
@@ -312,7 +318,7 @@ const GRADUATED_FAMILIES: readonly GraduatedFamily[] = [
     pluginOwner: { module: 'components/State.tsx', symbol: 'EmptyState' },
     coreConsumers: ['components/ui/empty/EmptyState.tsx'],
     devMountSymbols: ['EmptyState as PluginEmptyState'],
-    declarative: { kind: 'node', node: 'state' },
+    declarative: { kind: 'node', node: 'state', rendererSymbol: 'HappierInfoState' },
   },
   {
     publicName: 'ErrorState',
@@ -327,7 +333,7 @@ const GRADUATED_FAMILIES: readonly GraduatedFamily[] = [
     pluginOwner: { module: 'components/State.tsx', symbol: 'ErrorState' },
     coreConsumers: ['components/ui/empty/EmptyState.tsx'],
     devMountSymbols: ['ErrorState as PluginErrorState'],
-    declarative: { kind: 'node', node: 'state' },
+    declarative: { kind: 'node', node: 'state', rendererSymbol: 'HappierInfoState' },
   },
   {
     publicName: 'Button',
@@ -349,7 +355,7 @@ const GRADUATED_FAMILIES: readonly GraduatedFamily[] = [
       pathFromRepoRoot: 'packages/plugins/inspector/src/ui/renderSurface.tsx',
     },
     devMountSymbols: ['Button as PluginButton'],
-    declarative: { kind: 'node', node: 'action' },
+    declarative: { kind: 'node', node: 'action', rendererSymbol: 'renderActionAffordance' },
     // Before extraction, BOTH core buttons carried their own press→pending
     // machine: `IconButton` detected a thenable with a local `isPromiseLike` and
     // guarded reentry with a `busyRef`, while `RoundButton` ran a separate
@@ -397,7 +403,7 @@ const GRADUATED_FAMILIES: readonly GraduatedFamily[] = [
       pathFromRepoRoot: 'packages/plugins/inspector/src/ui/renderSurface.tsx',
     },
     devMountSymbols: ['Action as PluginAction'],
-    declarative: { kind: 'node', node: 'action' },
+    declarative: { kind: 'node', node: 'action', rendererSymbol: 'renderActionAffordance' },
   },
   {
     publicName: 'Action.Copy',
@@ -416,7 +422,7 @@ const GRADUATED_FAMILIES: readonly GraduatedFamily[] = [
       pathFromRepoRoot: 'packages/plugins/inspector/src/ui/renderSurface.tsx',
     },
     devMountSymbols: ['Action as PluginAction'],
-    declarative: { kind: 'node', node: 'action' },
+    declarative: { kind: 'node', node: 'action', rendererSymbol: 'renderActionAffordance' },
   },
   {
     publicName: 'Action.OpenExternal',
@@ -435,7 +441,7 @@ const GRADUATED_FAMILIES: readonly GraduatedFamily[] = [
       pathFromRepoRoot: 'packages/plugins/inspector/src/ui/renderSurface.tsx',
     },
     devMountSymbols: ['Action as PluginAction'],
-    declarative: { kind: 'node', node: 'action' },
+    declarative: { kind: 'node', node: 'action', rendererSymbol: 'renderActionAffordance' },
   },
   {
     publicName: 'Action.OpenSurface',
@@ -454,7 +460,7 @@ const GRADUATED_FAMILIES: readonly GraduatedFamily[] = [
       pathFromRepoRoot: 'packages/plugins/inspector/src/ui/renderSurface.tsx',
     },
     devMountSymbols: ['Action as PluginAction'],
-    declarative: { kind: 'node', node: 'action' },
+    declarative: { kind: 'node', node: 'action', rendererSymbol: 'renderActionAffordance' },
   },
   {
     publicName: 'Action.Refresh',
@@ -473,7 +479,7 @@ const GRADUATED_FAMILIES: readonly GraduatedFamily[] = [
       pathFromRepoRoot: 'packages/plugins/inspector/src/ui/renderSurface.tsx',
     },
     devMountSymbols: ['Action as PluginAction'],
-    declarative: { kind: 'node', node: 'action' },
+    declarative: { kind: 'node', node: 'action', rendererSymbol: 'renderActionAffordance' },
   },
   {
     publicName: 'ActionPanel',
@@ -492,7 +498,7 @@ const GRADUATED_FAMILIES: readonly GraduatedFamily[] = [
       pathFromRepoRoot: 'packages/plugins/inspector/src/ui/renderSurface.tsx',
     },
     devMountSymbols: ['ActionPanel as PluginActionPanel'],
-    declarative: { kind: 'node', node: 'actionPanel' },
+    declarative: { kind: 'node', node: 'actionPanel', rendererSymbol: 'HappierActionPanel' },
   },
   {
     publicName: 'ActionPanel.Section',
@@ -564,7 +570,7 @@ const GRADUATED_FAMILIES: readonly GraduatedFamily[] = [
       pathFromRepoRoot: 'packages/plugins/inspector/src/ui/renderSurface.tsx',
     },
     devMountSymbols: ['List as PluginList'],
-    declarative: { kind: 'node', node: 'list' },
+    declarative: { kind: 'node', node: 'list', rendererSymbol: 'HappierList' },
     deletedPackagePaths: ['components/primitiveElement.ts'],
   },
   {
@@ -584,7 +590,7 @@ const GRADUATED_FAMILIES: readonly GraduatedFamily[] = [
       pathFromRepoRoot: 'packages/plugins/inspector/src/ui/renderSurface.tsx',
     },
     devMountSymbols: ['List as PluginList'],
-    declarative: { kind: 'node', node: 'section' },
+    declarative: { kind: 'node', node: 'section', rendererSymbol: 'HappierListSection' },
     deletedPackagePaths: ['components/primitiveElement.ts'],
   },
   {
@@ -604,7 +610,7 @@ const GRADUATED_FAMILIES: readonly GraduatedFamily[] = [
       pathFromRepoRoot: 'packages/plugins/inspector/src/ui/renderSurface.tsx',
     },
     devMountSymbols: ['List as PluginList'],
-    declarative: { kind: 'node', node: 'item' },
+    declarative: { kind: 'node', node: 'item', rendererSymbol: 'HappierListItem' },
     deletedPackagePaths: ['components/primitiveElement.ts'],
   },
   {
@@ -624,7 +630,7 @@ const GRADUATED_FAMILIES: readonly GraduatedFamily[] = [
       pathFromRepoRoot: 'packages/plugins/inspector/src/ui/renderSurface.tsx',
     },
     devMountSymbols: ['Item as PluginItem'],
-    declarative: { kind: 'node', node: 'item' },
+    declarative: { kind: 'node', node: 'item', rendererSymbol: 'HappierListItem' },
   },
   {
     publicName: 'ItemGroup',
@@ -803,7 +809,7 @@ const GRADUATED_FAMILIES: readonly GraduatedFamily[] = [
     pluginOwner: { module: 'components/Foundation.tsx', symbol: 'Metadata' },
     coreConsumers: ['components/plugins/shared/declarativeNodes.tsx'],
     devMountSymbols: ['Metadata as PluginMetadata'],
-    declarative: { kind: 'node', node: 'metadata' },
+    declarative: { kind: 'node', node: 'metadata', rendererSymbol: 'HappierMetadata' },
   },
   {
     publicName: 'Link',
@@ -917,7 +923,7 @@ const GRADUATED_FAMILIES: readonly GraduatedFamily[] = [
       pathFromRepoRoot: 'packages/plugins/inspector/src/ui/renderSurface.tsx',
     },
     devMountSymbols: ['Markdown as PluginMarkdown'],
-    declarative: { kind: 'node', node: 'markdown' },
+    declarative: { kind: 'node', node: 'markdown', rendererSymbol: 'HappierMarkdown' },
   },
   {
     publicName: 'CodeBlock',
@@ -995,7 +1001,7 @@ const GRADUATED_FAMILIES: readonly GraduatedFamily[] = [
     ['Form.Toggle', 'ToggleProps', 'Toggle', 'field'],
     ['Form.Select', 'SelectProps', 'Select', 'field'],
     ['Form.ValidationMessage', 'ValidationMessageProps', 'ValidationMessage', 'field'],
-    ['Form.Actions', 'FormActionsProps', 'FormActions', 'action'],
+    ['Form.Actions', 'FormActionsProps', 'FormActions', 'field'],
   ] as const).map(([publicName, propTypeName, symbol, node]) => ({
     publicName,
     propTypeName,
@@ -1020,7 +1026,7 @@ const GRADUATED_FAMILIES: readonly GraduatedFamily[] = [
       pathFromRepoRoot: 'packages/plugin-ui/fixtures/external-authoring/src/browser.tsx',
     },
     devMountSymbols: ['Form as PluginForm'],
-    declarative: { kind: 'node' as const, node },
+    declarative: { kind: 'node' as const, node, rendererSymbol: 'context.renderField' },
   })),
   {
     publicName: 'Tabs',
@@ -1065,9 +1071,11 @@ const GRADUATED_FAMILIES: readonly GraduatedFamily[] = [
     propTypeName: 'TargetedSurfaceProps',
     family: 'Targeted embedded surface',
     disposition: 'required',
-    // The source API, bridge, and declared physical mount path are real, but
-    // no maintained product surface renders this public component yet.
-    // Compile-only authoring fixtures do not make it a graduated family.
+    // Triage's source-detail region is the maintained consumer: the aggregate
+    // owns the common header and lends the exact typed contribution handle plus
+    // the published detail-role input to this component, and the source's own
+    // renderer mounts beneath it. That closes the author half; graduation still
+    // waits on the same packed-platform evidence Progress and BrandMark wait on.
     proofTier: 'behavior-owning',
     phase: 'in-progress',
     publiclyExported: true,
@@ -1075,6 +1083,13 @@ const GRADUATED_FAMILIES: readonly GraduatedFamily[] = [
     sharedSymbol: 'useOptionalPluginUiPresentationHost',
     pluginOwner: { module: 'components/TargetedSurface.tsx', symbol: 'TargetedSurface' },
     coreConsumers: [],
+    positiveConsumer: {
+      kind: 'plugin-surface',
+      pathFromRepoRoot: 'packages/plugins/triage/src/ui/detail/region.tsx',
+    },
+    // A dev-gallery mount would have to invent an admitted contributor,
+    // point/protocol epoch and renderer chain; §8.2 forbids crediting this
+    // family from a gallery, so the real mount above is the only proof.
     devMountSymbols: [],
     declarative: { kind: 'mounted-node', node: 'targetedSurface', bridgeSymbol: 'renderTargetedSurface' },
     hostComposition: {
@@ -1368,14 +1383,18 @@ function catalogProblems(
       }
     }
 
-    if (entry.declarative.kind === 'node' && entry.coreConsumers.includes(declarativeNodeRendererPath)) {
+    if (entry.declarative.kind === 'node') {
       const rendererSource = sourceForDeclarativeNodeRenderer(
         declarativeNodeRendererSource,
         entry.declarative.node,
       );
-          const expectedOwner = entry.corePresentationMechanism?.symbol ?? entry.coreAdapter?.symbol ?? entry.sharedSymbol;
-      if (!rendererSource || !new RegExp(`\\b${expectedOwner}\\b`, 'u').test(rendererSource)) {
-        problems.push(`${entry.publicName} declarative node ${entry.declarative.node} does not reach ${expectedOwner}`);
+      const reachesRendererSymbol = rendererSource && (
+        entry.declarative.rendererSymbol.includes('.')
+          ? rendererSource.includes(entry.declarative.rendererSymbol)
+          : new RegExp(`\\b${entry.declarative.rendererSymbol}\\b`, 'u').test(rendererSource)
+      );
+      if (!reachesRendererSymbol) {
+        problems.push(`${entry.publicName} declarative node ${entry.declarative.node} does not reach ${entry.declarative.rendererSymbol}`);
       }
     }
 
@@ -1547,20 +1566,22 @@ describe('graduated shared presentation families (§8.2)', () => {
   });
 
   it('rejects a declarative node mapping that cannot reach its shared owner', () => {
-    const wrongMetadataMapping: readonly GraduatedFamily[] = GRADUATED_FAMILIES.map((entry): GraduatedFamily => (
-      entry.publicName === 'Metadata'
+    const wrongTextMapping: readonly GraduatedFamily[] = GRADUATED_FAMILIES.map((entry): GraduatedFamily => (
+      entry.publicName === 'Text'
         ? {
             ...entry,
-            declarative: { kind: 'node', node: 'status' },
+            declarative: { kind: 'node', node: 'metadata', rendererSymbol: 'Text' },
           }
         : entry
     ));
 
-    const problems = catalogProblems(wrongMetadataMapping, (path) => (
+    const problems = catalogProblems(wrongTextMapping, (path) => (
       path === '(absent)' ? '' : read(join(packageSourceRoot, path))
     ));
 
-    expect(problems).toContain('Metadata declarative node status does not reach HappierMetadata');
+    // Text's unrelated core consumer is `components/ui/text/Text.tsx`, so this
+    // proves declarative ownership cannot disappear behind consumer bookkeeping.
+    expect(problems).toContain('Text declarative node metadata does not reach Text');
   });
 
   it('does not let a maintained public non-Image consumer credit Image', () => {
@@ -1716,15 +1737,28 @@ describe('graduated shared presentation families (§8.2)', () => {
     )).toBe(true);
   });
 
-  it('keeps TargetedSurface source-available but in progress until a maintained public consumer exists', () => {
+  it('records the Triage source-detail adoption that gives TargetedSurface its maintained consumer', () => {
     const targetedSurface = GRADUATED_FAMILIES.find((entry) => entry.publicName === 'TargetedSurface');
 
     expect(targetedSurface).toMatchObject({
       disposition: 'required',
       publiclyExported: true,
+      // Still short of graduation for the same reason Progress and BrandMark
+      // are: packed-platform evidence is owned by 03g. The consumer half is no
+      // longer the gap.
       phase: 'in-progress',
+      positiveConsumer: {
+        kind: 'plugin-surface',
+        pathFromRepoRoot: 'packages/plugins/triage/src/ui/detail/region.tsx',
+      },
     });
-    expect(targetedSurface?.positiveConsumer).toBeUndefined();
+    // The deciding half. The catalog row alone would keep passing if Triage
+    // stopped mounting the source's own detail body and went back to rendering
+    // its own facts, which is exactly the state this family was stuck in.
+    expect(sourceRendersPublicPluginUiComponent(
+      read(join(repoRoot, 'packages/plugins/triage/src/ui/detail/region.tsx')),
+      'TargetedSurface',
+    )).toBe(true);
   });
 
   it('records Triage bulk source adoption for List.SelectionActionBar', () => {
@@ -1890,15 +1924,20 @@ describe('graduated shared presentation families (§8.2)', () => {
     expect(markers).toEqual([]);
   });
 
-  it('leaves no Happier core module implementing a graduated mechanism locally', () => {
-    const survivors = graduatedEntries.flatMap((entry) => (
-      (entry.deletedCoreDuplicates ?? [])
-        .filter((duplicate) => (
-          new RegExp(`\\b${duplicate.symbol}\\b`, 'u')
-            .test(withoutCommentProse(read(join(appSourceRoot, duplicate.path))))
-        ))
-        .map((duplicate) => `${duplicate.path} still implements ${entry.family} locally (${duplicate.symbol})`)
-    ));
+  it('leaves no Happier core module implementing a cataloged mechanism locally', () => {
+    // Every family whose shared owner is real, not only the graduated ones: an
+    // in-progress family that has already replaced a core-local implementation
+    // must not silently regain one while it waits for its public consumer.
+    const survivors = GRADUATED_FAMILIES
+      .filter((entry) => entry.phase !== 'absent')
+      .flatMap((entry) => (
+        (entry.deletedCoreDuplicates ?? [])
+          .filter((duplicate) => (
+            new RegExp(`\\b${duplicate.symbol}\\b`, 'u')
+              .test(withoutCommentProse(read(join(appSourceRoot, duplicate.path))))
+          ))
+          .map((duplicate) => `${duplicate.path} still implements ${entry.family} locally (${duplicate.symbol})`)
+      ));
 
     expect(survivors).toEqual([]);
   });

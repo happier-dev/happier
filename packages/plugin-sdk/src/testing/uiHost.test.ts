@@ -949,10 +949,12 @@ describe('createPluginUiTestkit', () => {
             subPath: 'reviews/current',
             adapter: semantic.adapter,
             handlers: {
-                executeAction: async ({ action, input, signal }) => {
+                executeAction: async (request) => {
+                    const { action, input, signal } = request;
                     calls.push(`action:${typeof action === 'string' ? action : action.localId}`);
                     expect(signal.aborted).toBe(false);
-                    return { accepted: input };
+                    expect(Object.hasOwn(request, 'input')).toBe(true);
+                    return input === undefined ? 'omitted' : { accepted: input };
                 },
                 selectActionInput: async ({ request, signal }) => {
                     if (!('operation' in request)) throw new Error('expected targeted Action request');
@@ -1004,6 +1006,8 @@ describe('createPluginUiTestkit', () => {
 
         await expect(fixture.context.hostApi.executeAction('save-review', { reviewId: 'review-7' }))
             .resolves.toEqual({ accepted: { reviewId: 'review-7' } });
+        await expect(fixture.context.hostApi.executeAction('save-review'))
+            .resolves.toBe('omitted');
         await expect(fixture.context.hostApi.selectActionInput({
             operation: {
                 point: { pointId: 'connection', protocol: { id: 'connection', version: 1 } },

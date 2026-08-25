@@ -412,7 +412,7 @@ export function readPluginUiTestkitTargetedSurfaceAdmission(input: Readonly<{
 
 export type PluginUiTestkitExecuteActionInput = Readonly<{
     action: PluginReference;
-    input: JsonValue;
+    input?: JsonValue;
     /**
      * The exact transient selected-input settlement carried by an outer Action.
      * It remains separate from the JSON Action input just as it does in the
@@ -1081,6 +1081,13 @@ async function createPluginUiTestkitInternal<TSurface>(
         return Object.freeze(context);
     }
 
+    function renderContextSnapshot(): JsonValue {
+        return {
+            surface: currentSurface,
+            activity: { active },
+        };
+    }
+
     async function handleRequest(
         message: Extract<PluginUiHostApiWireEnvelopeV1, { kind: 'request' }>,
         signal: AbortSignal,
@@ -1088,7 +1095,7 @@ async function createPluginUiTestkitInternal<TSurface>(
         assertActive();
         switch (message.method) {
             case 'context':
-                return currentSurface;
+                return renderContextSnapshot();
             case 'publishCurrentUiContext': {
                 if (!handlers.publishCurrentUiContext) {
                     throw fixtureError('unsupported_method', 'publishCurrentUiContext is not installed.');
@@ -1117,7 +1124,7 @@ async function createPluginUiTestkitInternal<TSurface>(
                 }
                 return await handlers.executeAction({
                     action: payload.data.action,
-                    input: payload.data.input ?? null,
+                    input: payload.data.input,
                     ...(selectedActionInput === undefined ? {} : { selectedActionInput: selectedActionInput.data }),
                     ...(message.consumeSelectedActionInput === undefined
                         ? {}
@@ -1652,7 +1659,7 @@ async function createPluginUiTestkitInternal<TSurface>(
                         kind: 'subscription',
                         identity,
                         subscriptionId,
-                        event: surface,
+                        event: renderContextSnapshot(),
                     });
                 }
             }

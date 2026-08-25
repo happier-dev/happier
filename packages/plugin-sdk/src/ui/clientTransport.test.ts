@@ -60,7 +60,7 @@ describe('plugin UI domain client transport adapter', () => {
                             identity,
                             requestId: message.requestId,
                             method: 'context',
-                            result: protocolSurface,
+                            result: { surface: protocolSurface, activity: { active: true } },
                         });
                     }
                     if (message.kind === 'subscribe' && message.method === 'watchContext') {
@@ -83,7 +83,7 @@ describe('plugin UI domain client transport adapter', () => {
             kind: 'subscription',
             identity,
             subscriptionId: 'surface-context-subscription',
-            event: protocolSurface,
+            event: { surface: protocolSurface, activity: { active: true } },
         });
 
         await expect(api.context()).resolves.toEqual(sdkSurface);
@@ -452,7 +452,7 @@ describe('plugin UI domain client transport adapter', () => {
                             identity,
                             requestId: message.requestId,
                             method: 'context',
-                            result: surface,
+                            result: { surface, activity: { active: true } },
                         });
                     }
                 },
@@ -543,9 +543,12 @@ describe('plugin UI domain client transport adapter', () => {
         let nextRequestId = 0;
         let nextSubscriptionId = 0;
         let hostSurface = initialSurface;
+        let hostActive = true;
+        const activities: boolean[] = [];
         const sent: PluginUiHostApiWireEnvelopeV1[] = [];
         const api = await createPluginUiHostApiClientFromTransport({
             identity,
+            onContextActivity: (activity) => activities.push(activity.active),
             createRequestId: () => `request-${++nextRequestId}`,
             createSubscriptionId: () => `subscription-${++nextSubscriptionId}`,
             transport: {
@@ -565,7 +568,7 @@ describe('plugin UI domain client transport adapter', () => {
                         identity,
                         requestId: message.requestId,
                         method: 'context',
-                        result: hostSurface,
+                        result: { surface: hostSurface, activity: { active: hostActive } },
                     });
                 },
                 subscribe(listener) {
@@ -601,31 +604,33 @@ describe('plugin UI domain client transport adapter', () => {
             kind: 'subscription',
             identity,
             subscriptionId: firstSubscriptionId,
-            event: darkSurface,
+            event: { surface: darkSurface, activity: { active: true } },
         });
         expect(firstContexts).toEqual([darkSurface]);
         await expect(api.context()).resolves.toEqual(darkSurface);
 
         firstSubscription.dispose();
         hostSurface = lightSurface;
+        hostActive = false;
         receive?.({
             wireVersion: 1,
             kind: 'subscription',
             identity,
             subscriptionId: firstSubscriptionId,
-            event: lightSurface,
+            event: { surface: lightSurface, activity: { active: false } },
         });
         receive?.({
             wireVersion: 1,
             kind: 'subscription',
             identity,
             subscriptionId: secondSubscriptionId,
-            event: lightSurface,
+            event: { surface: lightSurface, activity: { active: false } },
         });
 
         expect(firstContexts).toEqual([darkSurface]);
         expect(secondContexts).toEqual([lightSurface]);
         await expect(api.context()).resolves.toEqual(lightSurface);
+        expect(activities).toEqual([true, true, false, false]);
         expect(sent.filter((message) => message.kind === 'disposeHostResource')).toHaveLength(1);
         secondSubscription.dispose();
         hostSurface = hostOnlySurface;
@@ -1187,7 +1192,7 @@ describe('plugin UI domain client transport adapter', () => {
                                 identity,
                                 requestId: message.requestId,
                                 method: 'context',
-                                result: surfaceContext,
+                                result: { surface: surfaceContext, activity: { active: true } },
                             });
                         }
                     },
@@ -1239,7 +1244,7 @@ describe('plugin UI domain client transport adapter', () => {
                                 identity,
                                 requestId: message.requestId,
                                 method: 'context',
-                                result: surfaceContext,
+                                result: { surface: surfaceContext, activity: { active: true } },
                             });
                         }
                     },
@@ -1357,7 +1362,7 @@ describe('plugin UI domain client transport adapter', () => {
             kind: 'subscription',
             identity,
             subscriptionId: 'subscription-1',
-            event: surface,
+            event: { surface, activity: { active: true } },
         });
         receive?.({
             wireVersion: 1,
@@ -1402,7 +1407,8 @@ describe('plugin UI domain client transport adapter', () => {
         // establishment promise must not settle until the host acknowledges.
         receive?.({
             wireVersion: 1, kind: 'subscription', identity,
-            subscriptionId: 'subscription-ordered', event: { ...surface, locale: 'fr' },
+            subscriptionId: 'subscription-ordered',
+            event: { surface: { ...surface, locale: 'fr' }, activity: { active: true } },
         });
         await Promise.resolve();
         expect(settled).toBe(false);
@@ -1418,7 +1424,8 @@ describe('plugin UI domain client transport adapter', () => {
         const subscription = await establishing;
         receive?.({
             wireVersion: 1, kind: 'subscription', identity,
-            subscriptionId: 'subscription-ordered', event: { ...surface, locale: 'de' },
+            subscriptionId: 'subscription-ordered',
+            event: { surface: { ...surface, locale: 'de' }, activity: { active: true } },
         });
 
         expect(locales).toEqual(['fr', 'de']);
@@ -1546,13 +1553,13 @@ describe('plugin UI domain client transport adapter', () => {
         await throwing;
         expect(() => receive?.({
             wireVersion: 1, kind: 'subscription', identity,
-            subscriptionId: throwingId, event: surface,
+            subscriptionId: throwingId, event: { surface, activity: { active: true } },
         })).not.toThrow();
         expect(throwingDeliveries).toBe(1);
         // The listener failure is isolated: the subscription stays live.
         receive?.({
             wireVersion: 1, kind: 'subscription', identity,
-            subscriptionId: throwingId, event: surface,
+            subscriptionId: throwingId, event: { surface, activity: { active: true } },
         });
         expect(throwingDeliveries).toBe(2);
 
@@ -1569,7 +1576,7 @@ describe('plugin UI domain client transport adapter', () => {
         // event is not delivered, and the host was told to retire it.
         receive?.({
             wireVersion: 1, kind: 'subscription', identity,
-            subscriptionId: malformedId, event: surface,
+            subscriptionId: malformedId, event: { surface, activity: { active: true } },
         });
         expect(malformedDeliveries).toBe(0);
         expect(sent.filter((message) => message.kind === 'disposeHostResource')).toHaveLength(1);

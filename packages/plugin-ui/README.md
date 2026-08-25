@@ -134,7 +134,7 @@ Pass `createPluginUiRnwSemanticSurfaceAdapter()` as the testkit `adapter` in a
 React Native Web test environment. The fixture observes bounded semantics only:
 the adapter never returns a DOM node, React/native tree, raw test renderer, or
 host-private controller. Do not use it to prove layout, portals, focus,
-accessibility runtime behavior, native reconciliation, or packed-artifact
+accessibility runtime behavior, native reconciliation, or loaded-host lifecycle
 state. Supply `handlers` for genuine host boundaries; a public `PluginError`
 thrown by a handler remains a typed host-operation failure.
 
@@ -145,7 +145,7 @@ radio-group, tab-panel, and separator semantics; it is not a DOM selector API.
 
 This is deliberately not a host-registry or package test: it does not decide
 trust, installation, Surface Registry admission, on-demand activation, native
-reconciliation, or packed-artifact behavior. Prove those outcomes through the
+reconciliation, or loaded-host lifecycle behavior. Prove those outcomes through the
 real CLI/daemon/UI lane rather than inventing a fixture-only mount refusal.
 
 ### Graduation status
@@ -177,10 +177,10 @@ The root component props are deliberately curated. In particular, `Form` and
 schema source instructions or host account metadata; List and overlay adapters
 derive host-only injection props from their public semantic inputs.
 
-## Package tarball contents
+## Published package contents
 
-`npm pack` emits exactly what `files` in `package.json` selects. Verified with
-`npm pack --ignore-scripts --dry-run --json` against the current `dist`:
+Release automation publishes what `files` in `package.json` selects. The
+source-owned inclusion contract is:
 
 | Entry | What it is |
 |---|---|
@@ -194,4 +194,6 @@ derive host-only injection props from their public semantic inputs.
 The three API-governance artifacts ship deliberately: they are the published
 record of the public surface, and an author reads `API.md` from
 `node_modules/@happier-dev/plugin-ui/` rather than guessing export names. No
-`src/**`, test, fixture, or config file is included.
+`src/**`, test, fixture, or config file is included. Feature QA proves this
+selection through source-owned inclusion tests and does not create or install a
+local release archive.

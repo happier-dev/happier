@@ -45,7 +45,8 @@ describe('hosted-web plugin UI public client factory', () => {
                     });
                     if (message.kind === 'request' && message.method === 'context') listener?.({
                         wireVersion: 1, kind: 'result', identity,
-                        requestId: message.requestId, method: message.method, result: surface,
+                        requestId: message.requestId, method: message.method,
+                        result: { surface, activity: { active: true } },
                     });
                 },
             },
@@ -107,7 +108,7 @@ describe('hosted-web plugin UI public client factory', () => {
                             identity,
                             requestId: payload.requestId,
                             method: 'context',
-                            result: surface,
+                            result: { surface, activity: { active: true } },
                         },
                     });
                 }
@@ -200,7 +201,8 @@ describe('hosted-web plugin UI public client factory', () => {
                     });
                     if (message.kind === 'request' && message.method === 'context') listener?.({
                         wireVersion: 1, kind: 'result', identity,
-                        requestId: message.requestId, method: message.method, result: surface,
+                        requestId: message.requestId, method: message.method,
+                        result: { surface, activity: { active: true } },
                     });
                     // The host retires the surface while the author is mid-call.
                     if (message.kind === 'request' && message.method !== 'context') listener?.({
@@ -217,6 +219,7 @@ describe('hosted-web plugin UI public client factory', () => {
         expect(context.surface.mount).toEqual(surface.mount);
         expect('view' in context).toBe(false);
         expect(context.surface).toEqual(surface);
+        expect(context.activity).toEqual({ active: true });
         expect(context.launchInput).toEqual({ noteId: 'note-7' });
         expect(context.subPath).toBe('work/ideas.md');
         expect(context.signal.aborted).toBe(false);
@@ -242,7 +245,8 @@ describe('hosted-web plugin UI public client factory', () => {
                     });
                     if (message.kind === 'request' && message.method === 'context') listener?.({
                         wireVersion: 1, kind: 'result', identity,
-                        requestId: message.requestId, method: message.method, result: surface,
+                        requestId: message.requestId, method: message.method,
+                        result: { surface, activity: { active: true } },
                     });
                 },
             },
@@ -272,7 +276,8 @@ describe('hosted-web plugin UI public client factory', () => {
                     });
                     if (message.kind === 'request' && message.method === 'context') listener?.({
                         wireVersion: 1, kind: 'result', identity,
-                        requestId: message.requestId, method: message.method, result: surface,
+                        requestId: message.requestId, method: message.method,
+                        result: { surface, activity: { active: true } },
                     });
                 },
             },

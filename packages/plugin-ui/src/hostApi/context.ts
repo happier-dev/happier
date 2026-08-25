@@ -28,6 +28,7 @@ type PluginHostApiContextValue = Readonly<{
   hostApi: PluginUiHostApi;
   resourceStore: PluginUiResourceStore;
   composerRef: ComposerRefV1 | null;
+  surfaceActive: boolean;
 }>;
 
 const PluginHostApiContext = createContext<PluginHostApiContextValue | null>(null);
@@ -49,6 +50,7 @@ export type PluginHostApiProviderInternalProps = PluginHostApiProviderProps & Re
   mountedPluginId?: string;
   /** Host-validated Composer mount identity; never author-supplied. */
   composerRef?: ComposerRefV1 | null;
+  surfaceActivity?: Readonly<{ active: boolean }>;
 }>;
 
 export function PluginHostApiProvider(props: PluginHostApiProviderProps) {
@@ -72,6 +74,9 @@ export function PluginHostApiProvider(props: PluginHostApiProviderProps) {
       ...(privateProps.composerRef === undefined
         ? {}
         : { composerRef: privateProps.composerRef }),
+      ...(privateProps.surfaceActivity === undefined
+        ? {}
+        : { surfaceActivity: privateProps.surfaceActivity }),
     },
     props.children,
   );
@@ -84,6 +89,7 @@ export function PluginHostApiProviderInternal({
   resourceStoreGeneration,
   mountedPluginId,
   composerRef = null,
+  surfaceActivity,
   children,
 }: PluginHostApiProviderInternalProps) {
   const resourceClient = useMemo(
@@ -100,8 +106,8 @@ export function PluginHostApiProviderInternal({
   );
   useEffect(() => () => resourceStore.dispose(), [resourceStore]);
   const value = useMemo(
-    () => Object.freeze({ hostApi, resourceStore, composerRef }),
-    [hostApi, resourceStore, composerRef],
+    () => Object.freeze({ hostApi, resourceStore, composerRef, surfaceActive: surfaceActivity?.active ?? false }),
+    [hostApi, resourceStore, composerRef, surfaceActivity, surfaceActivity?.active],
   );
   return createElement(PluginHostApiContext.Provider, { value }, children);
 }
@@ -130,4 +136,13 @@ export function usePluginHostApiComposerRef(): ComposerRefV1 | null {
     throw new Error('PluginHostApiProvider is required before using plugin UI host API hooks.');
   }
   return context.composerRef;
+}
+
+/** Current host-owned activity for this retained physical surface mount. */
+export function usePluginSurfaceActivity(): Readonly<{ active: boolean }> {
+  const context = useContext(PluginHostApiContext);
+  if (!context) {
+    throw new Error('PluginHostApiProvider is required before reading plugin surface activity.');
+  }
+  return useMemo(() => Object.freeze({ active: context.surfaceActive }), [context.surfaceActive]);
 }

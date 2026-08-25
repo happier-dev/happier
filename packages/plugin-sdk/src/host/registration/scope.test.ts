@@ -11,6 +11,7 @@ import type {
     HostingProviderRuntime,
     PluginMcpServerRuntime,
 } from '../../activation.js';
+import type { PluginInvocationContext } from '../../invocation.js';
 import type { PromptAssetAdapter } from '../../resources.js';
 import type { ManagedProviderRuntime } from '../../managed-services/contract.js';
 import type { VoiceProvidersRegistrationApi } from '../../voice/projections.js';
@@ -317,6 +318,38 @@ describe('plugin registration scope targets', () => {
         expect(registration.value.encodeTextTurn('captured'))
             .toEqual([{ kind: 'conversation', text: 'captured' }]);
         expect(registration.value.microphoneMode).toBe('host_pcm');
+    });
+
+    it('rejects a provider-managed conversation runtime without an input mute setter before publication', () => {
+        const scope = createPluginRegistrationScope({
+            pluginId: 'acme.voice',
+            target: clientTarget,
+            rights: [{
+                family: 'voiceProviders',
+                localId: 'conversation',
+                target: clientRightTarget,
+                voiceProviderDeclaration: conversationDeclaration,
+            }],
+        });
+        const runtime = {
+            kind: 'conversation' as const,
+            protocol: {
+                async prepare() { return { kind: 'unavailable' as const, reason: 'test' }; },
+                decodeControl() { return []; },
+                encodeTurnControl() { return null; },
+            },
+            async createConnection() { return {} as never; },
+            encodeToolResults() { return []; },
+            encodeToolContinuation() { return {}; },
+            encodeContextUpdate() { return []; },
+            encodeTextTurn() { return []; },
+            microphoneMode: 'provider_managed' as const,
+        } as unknown as RegisteredVoiceProviderRuntime;
+
+        scope.api.voiceProviders.register('conversation', runtime);
+
+        expect(() => scope.commit()).toThrow(/invalid 'voiceProviders\/conversation' runtime/i);
+        expect(scope.registrations()).toEqual([]);
     });
 
     it.each([
@@ -1258,7 +1291,8 @@ describe('plugin registration scope targets', () => {
         (runtime as unknown as { search: () => Promise<unknown> }).search = async () => ({
             marker: 'late',
         });
-        await expect(registration.value.search('issue', new AbortController().signal))
+        const signal = new AbortController().signal;
+        await expect(registration.value.search('issue', { signal } as PluginInvocationContext))
             .resolves.toEqual({ marker: 'replacement' });
         expect(registration.value).not.toHaveProperty('unrelated');
     });

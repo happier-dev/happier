@@ -11,6 +11,8 @@ export type { ProjectKeyV1 } from '../services/sessions.js';
 export { ProjectKeyV1Schema } from '../services/sessions.js';
 export { SPAWN_SESSION_ERROR_CODES } from '../services/sessions.js';
 export type { SessionAuthService } from '../services/sessions.js';
+export type { SessionAuthoringCheckoutCreationDraftV1 } from '../services/sessions.js';
+export { SessionAuthoringCheckoutCreationDraftV1Schema } from '../services/sessions.js';
 export type { SessionEvent } from '../services/sessions.js';
 export type { SessionHandle } from '../services/sessions.js';
 export type { SessionId } from '../services/sessions.js';
@@ -61,6 +63,11 @@ export type { SessionSystemRecordPage } from '../services/sessions.js';
 export type { SessionSystemRecordReadRequest } from '../services/sessions.js';
 export type { SessionSystemRecordRevision } from '../services/sessions.js';
 export type { SessionSystemRecordUpsertRequest } from '../services/sessions.js';
+export type {
+    SessionSystemRecordReadRequestV1,
+    SessionSystemRecordReadResultV1,
+    SessionSystemRecordWriteRequestV1,
+} from './scoped.js';
 export type { SessionUsageLimitRecoveryResumePromptModeV1 } from '../services/sessions.js';
 export type { SessionUsageLimitRecoveryV1 } from '../services/sessions.js';
 export { SessionUsageLimitRecoveryV1Schema } from '../services/sessions.js';
@@ -76,6 +83,10 @@ export { isChangeTitleToolNameAlias } from '../services/sessions.js';
 export { isSlashCommandSupported } from '../services/sessions.js';
 export { normalizeSessionAttachmentUploadPath } from '../services/sessions.js';
 export { normalizeSlashCommandName } from '../services/sessions.js';
+export {
+    isNonSteerablePromptPayload,
+    parseSpecialCommand,
+} from '@happier-dev/protocol/sessions/messages/special-commands';
 export { readHappierStructuredInputV1FromMeta } from '../services/sessions.js';
 export { readLeadingSlashCommandName } from '../services/sessions.js';
 export { readPendingLocalId } from '../services/sessions.js';

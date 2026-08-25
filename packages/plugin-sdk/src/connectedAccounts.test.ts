@@ -56,6 +56,9 @@ import * as providerLimitEvidence from './cloud/providerLimitEvidence.js';
 import * as connectedAccounts from './connectedAccounts.js';
 import * as envConstants from './envConstants.js';
 import type {
+    ConnectedAccountRequestAuthClientSourceParams as PublicConnectedAccountRequestAuthClientSourceParams,
+} from './connected-accounts/index.js';
+import type {
     ConnectedAccountHttpHeadersRequest as SdkConnectedAccountHttpHeadersRequest,
     ConnectedAccountMaterializationOptions as SdkConnectedAccountMaterializationOptions,
     ConnectedAccountMaterializationRequest as SdkConnectedAccountMaterializationRequest,
@@ -176,7 +179,11 @@ const EXPECTED_EXPORTS = [
     'ConnectedAccountAuthFailureRequestV1Schema',
     'ConnectedAccountAuthenticationContext',
     'ConnectedAccountAuthenticationModeRuntime',
+    'CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1',
     'CLAUDE_SUBSCRIPTION_OAUTH_PROFILE',
+    'CLAUDE_SUBSCRIPTION_SETUP_TOKEN_ENVIRONMENT_REQUEST_V1',
+    'ClaudeSubscriptionMaterializationContractV1',
+    'ClaudeSubscriptionSetupTokenEnvironmentRequestV1',
     'ConnectedAccountBindingEvent',
     'ConnectedAccountBindingSummary',
     'ConnectedAccountCredentialStore',
@@ -247,13 +254,12 @@ const EXPECTED_EXPORTS = [
     'PluginConnectedAccountDescriptorContributionV2',
     'PluginConnectedAccountMaterializationKind',
     'PluginConnectedAccountRegistrationApi',
-    'ProviderAccountUsageQuotaScope',
+    'ProviderAccountUsageQuotaScopeV1',
     'ProviderLimitCategory',
     'ProviderLimitEvidenceClassification',
     'ProviderLimitEvidenceConfidence',
     'ProviderLimitEvidenceContext',
     'ProviderLimitEvidenceProvenance',
-    'QualifiedConnectedAccountGroupV4',
     'QualifiedConnectedAccountGroupV4Schema',
     'QualifiedConnectedAccountListResponseV4Schema',
     'QualifiedConnectedAccountRef',
@@ -388,6 +394,20 @@ describe('Connected Accounts final package-local projection', () => {
             .toBe(accountUsage.unsupportedAccountUsage);
         expect(connectedAccounts.HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON_ENV)
             .toBe(envConstants.HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON_ENV);
+        expect(connectedAccounts.CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1)
+            .toBe(protocol.CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1);
+        expect(connectedAccounts.CLAUDE_SUBSCRIPTION_SETUP_TOKEN_ENVIRONMENT_REQUEST_V1)
+            .toBe(protocol.CLAUDE_SUBSCRIPTION_SETUP_TOKEN_ENVIRONMENT_REQUEST_V1);
+        expect(publicConnectedAccounts.CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1)
+            .toBe(connectedAccounts.CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1);
+        expect(publicConnectedAccounts.CLAUDE_SUBSCRIPTION_SETUP_TOKEN_ENVIRONMENT_REQUEST_V1)
+            .toBe(connectedAccounts.CLAUDE_SUBSCRIPTION_SETUP_TOKEN_ENVIRONMENT_REQUEST_V1);
+        expect(publicConnectedAccounts.CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV)
+            .toBe(agents.CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV);
+        expect(publicConnectedAccounts.buildConnectedAccountRequestAuthClientSource)
+            .toBe(agents.buildConnectedAccountRequestAuthClientSource);
+        expectTypeOf<PublicConnectedAccountRequestAuthClientSourceParams>()
+            .toEqualTypeOf<agents.ConnectedAccountRequestAuthClientSourceParams>();
     });
 
     it('projects localized Connected Account purpose presentation from the Protocol owner', () => {

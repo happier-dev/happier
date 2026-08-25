@@ -106,6 +106,7 @@ function createAuthorRenderContext(context: RenderContext): RenderContext {
     surface: context.surface,
     hostApi: context.hostApi,
     signal: context.signal,
+    ...(context.activity === undefined ? {} : { activity: context.activity }),
     ...(context.launchInput === undefined ? {} : { launchInput: context.launchInput }),
     ...(context.subPath === undefined ? {} : { subPath: context.subPath }),
   });
@@ -131,6 +132,7 @@ export function defineUiSurface(Surface: UiSurfaceComponent): RenderSurface {
         context: context.surface,
         mountedPluginId: context.plugin.id,
         composerRef,
+        ...(context.activity === undefined ? {} : { surfaceActivity: context.activity }),
         ...(dataClient === undefined ? {} : { dataClient }),
       },
       createElement(Surface, authorContext),

@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import {
   cp,
@@ -30,8 +31,6 @@ const externalTargetedContributorPackageSourceRoot = join(
   'packages/plugin-sdk/fixtures/external-targeted-packages/contributor',
 );
 const requireFromPluginUi = createRequire(join(packageRoot, 'package.json'));
-const requireFromPluginSdk = createRequire(join(repositoryRoot, 'packages/plugin-sdk/package.json'));
-const requireFromUiApp = createRequire(join(repositoryRoot, 'apps/ui/package.json'));
 const SDK_PACKAGE_NAME = '@happier-dev/plugin-sdk';
 const PLUGIN_UI_PACKAGE_NAME = '@happier-dev/plugin-ui';
 
@@ -44,15 +43,17 @@ const EXTERNAL_SEMANTIC_FRAMEWORK_ENTRIES = Object.freeze([
   Object.freeze({ label: 'React Native Web', path: ['node_modules', 'react-native-web', 'dist', 'index.js'] }),
 ]);
 
-// These declaration-only packages are not part of the public toolchain packet.
-// Every runtime/framework/build package must instead come from the exact
-// installed SDK's PUBLIC_TOOLCHAIN_SCAFFOLD_BINDINGS_V1 below.
-const EXTERNAL_AUTHORING_SUPPLEMENTAL_SUPPORT_PACKAGES = Object.freeze([
-  Object.freeze({ name: '@types/react-dom', resolver: requireFromUiApp }),
-  Object.freeze({ name: 'csstype', resolver: requireFromPluginUi }),
-  Object.freeze({ name: 'zod', resolver: requireFromPluginSdk }),
-  Object.freeze({ name: 'undici-types', resolver: requireFromPluginSdk }),
-]);
+// The single declaration-only package this fixture owns, because its own browser entry imports
+// `react-dom/client`. It is not part of the public toolchain packet, so its spec comes from the
+// importing package's declared devDependency — the same owner the React DOM declaration contract
+// test pins to the workspace browser app.
+//
+// Nothing else may be added here. `zod`, `undici-types`, and `csstype` used to be installed from
+// repository copies; they belong to the exact candidate's own dependency closure (the SDK declares
+// `zod` and `@types/node`, and the packet-owned `@types/react` pulls `csstype`). Supplying them
+// from the checkout let a candidate that failed to declare or ship them still compile here, which
+// is exactly the defect this fixture exists to catch.
+const EXTERNAL_AUTHORING_FIXTURE_OWNED_TYPE_PACKAGES = Object.freeze(['@types/react-dom']);
 const EXACT_PAIR_PACKAGE_NAMES = new Set([SDK_PACKAGE_NAME, PLUGIN_UI_PACKAGE_NAME]);
 
 function pathIsInside(rootPath, candidatePath) {
@@ -199,12 +200,13 @@ async function assertExternalTargetedPackageDeclarations(targetRoot) {
   return Object.freeze(declarationPaths);
 }
 
-function resolvePackageVersion(packageName, resolver) {
-  const packageJson = resolver(`${packageName}/package.json`);
-  if (!packageJson || typeof packageJson.version !== 'string' || packageJson.version.trim() === '') {
-    throw new Error(`Support package ${packageName} has no published version`);
+function readFixtureOwnedTypePackageSpec(packageName) {
+  const declared = JSON.parse(readFileSync(join(packageRoot, 'package.json'), 'utf8'))
+    .devDependencies?.[packageName];
+  if (typeof declared !== 'string' || declared.trim() === '') {
+    throw new Error(`Fixture-owned type package ${packageName} is not declared by ${PLUGIN_UI_PACKAGE_NAME}`);
   }
-  return packageJson.version;
+  return declared;
 }
 
 function readFlag(argv, flag) {
@@ -324,8 +326,9 @@ export async function resolveInstalledExternalAuthoringToolchainBindings({ consu
 
 /**
  * Resolves every framework/build dependency from the exact installed SDK
- * packet. The narrow supplementary declaration set is deliberately kept out
- * of that packet because it is not an authored runtime/toolchain contract.
+ * packet, so the candidate's own closure is the only authority for anything it
+ * ships. The one fixture-owned declaration package is deliberately kept out of
+ * that packet because it is not an authored runtime/toolchain contract.
  */
 export async function resolveExternalAuthoringSupportPackageVersions({ consumerRoot } = {}) {
   const bindings = await resolveInstalledExternalAuthoringToolchainBindings({ consumerRoot });
@@ -333,9 +336,9 @@ export async function resolveExternalAuthoringSupportPackageVersions({ consumerR
     ...bindings.dependencies,
     ...bindings.devDependencies,
   }).filter(([packageName]) => !EXACT_PAIR_PACKAGE_NAMES.has(packageName));
-  const supplementalDependencies = EXTERNAL_AUTHORING_SUPPLEMENTAL_SUPPORT_PACKAGES.map(({ name, resolver }) => [
+  const supplementalDependencies = EXTERNAL_AUTHORING_FIXTURE_OWNED_TYPE_PACKAGES.map((name) => [
     name,
-    resolvePackageVersion(name, resolver),
+    readFixtureOwnedTypePackageSpec(name),
   ]);
   return Object.freeze(Object.fromEntries([
     ...packetOwnedDependencies,

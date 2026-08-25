@@ -13,14 +13,14 @@ established by the current source tree, and a workspace build must not be
 presented as a published SDK.
 
 Developer Preview is not a per-symbol stability tier. The publisher-generated
-API inventory is the exact public census and retains publication-derived
-`@since` metadata; structured deprecation remains separate. A future published
-artifact's generated `capability-matrix.json` is the availability authority for
-that exact artifact. Source exports, examples, host wiring, and source-only
-tests establish source readiness, not packed or public availability.
+API inventory is the public census and retains publication-derived `@since`
+metadata; structured deprecation remains separate. The generated
+`capability-matrix.json` is the availability authority. Source exports,
+examples, host wiring, source tests, and loaded development-stack lifecycle QA
+establish feature readiness.
 
 Tool and Command declarations are currently deferred for external authors.
-Both require exact packed external proof through their canonical host catalogs,
+Both require their canonical host-catalog and loaded development-stack proof,
 including replacement, disable, and uninstall currentness, before their
 generated availability metadata or public docs can advertise them as usable.
 Preview status does not waive correctness, installability, lifecycle cleanup,
@@ -131,13 +131,13 @@ an isolated Vite artifact and the canonical guest bootstrap client. The
 selection itself does not advertise a packaged runtime platform; the host may
 load that artifact only after its platform-specific frame adapter is present
 and verified.
-The generated package scripts use the managed lower-level author checks. After
-developing, build, test, and pack the same project:
+The generated package scripts use the managed lower-level author checks. Build,
+test, and exercise the same project through source development:
 
 ```bash
 happier plugins dev build .
 happier plugins test .
-happier plugins pack .
+happier plugins dev
 ```
 
 Focused typecheck diagnostics remain available through
@@ -150,16 +150,6 @@ reproducible build.
 Installed SDK packages include maintained public patterns under
 `node_modules/@happier-dev/plugin-sdk/examples/`. Start from the smallest
 matching example and use the generated `API.md` as the import authority.
-
-Install the emitted npm-compatible tarball with:
-
-```bash
-happier plugins install <archive-path> --kind archive
-```
-
-Use the archive path emitted by `pack`; its exact filename can vary with package
-metadata and `--out`. In an interactive terminal the daemon presents the exact
-package facts before the single **Install and trust** decision.
 
 `plugins dev` is the normal automatic watch-and-replace loop. For a deliberate
 watcher-free update, use the same development-source path and reload from the
@@ -178,13 +168,13 @@ generation serving.
 
 `happier plugins test .` runs the scaffold's focused
 `test/index.test.mjs` suite through Happier's managed JavaScript runtime. The
-generated test loads `dist/index.js`, passes its exported `manifest` and
-`activate` through the public testkit, and invokes the declared `save-note`
-action without starting a daemon or mutating installed plugin state.
-`happier plugins test . --packed` packs the project, installs and trusts it in
-an isolated disposable daemon home, activates it, invokes a safe empty-input
-CLI action when available, restarts the daemon, and invokes it again. It never
-uses or mutates the user's installed plugin state.
+generated `save-note` contract passes from an untouched scaffold and shows the
+shape for the first domain contract your plugin must preserve; the adjacent example then loads `dist/index.js`,
+passes its exported `manifest` and `activate` through the public testkit, and
+invokes the declared `save-note` Action without starting a daemon or mutating
+installed plugin state. Use the
+managed source-development lifecycle for daemon activation, replacement,
+restart, and cleanup QA.
 
 ## 2. Author a code-defined plugin
 
@@ -252,14 +242,13 @@ await plugin.dispose();
 ```
 
 The testkit validates projection, activation, registrations, actions, and
-cleanup without mutating installed state. It is not packed/install evidence.
-Run the source suite first, then the packed daemon boundary for claims about an
-installed plugin:
+cleanup without mutating installed state. Run the source suite, then exercise
+the managed source-development daemon boundary for claims about activation,
+replacement, restart, and cleanup:
 
 ```bash
 happier plugins test .
-happier plugins test . --packed
-happier plugins pack .
+happier plugins dev
 ```
 
 ## Manual ABI (advanced conformance)
@@ -528,6 +517,13 @@ types from `/voice/speech`. Each binds through
 STT and TTS implementations separate contribution ids. The similarly named UI
 client path is only the hosted-web bootstrap and is not a Voice runtime API.
 
+When a realtime `prepare` result can reconnect to the same provider response,
+it may set `session.toolResultReplay: 'stable_ids'`. Set it only for the exact
+prepared carrier that can accept already-settled tool results under the
+original response and call ids; omit it (or set `'none'`) for a fresh carrier.
+The host treats omission as fail-closed and never reruns a settled effect to
+make a fresh provider session accept it.
+
 ## Plugin UI
 
 - Declarative surfaces are validated and rendered by the host.
@@ -585,8 +581,8 @@ flows in a real host.
 
 Canonical author docs live in `apps/docs/content/docs/plugins/`. Source examples
 under this package are compile fixtures; the CLI scaffold's code-defined module
-is the external development authoring source of truth, while packed and installed
-discovery consumes its generated cold manifest.
+is the external development authoring source of truth, and managed source
+development consumes its generated cold manifest.
 
 ## Repository validation
 
@@ -598,5 +594,5 @@ yarn workspace @happier-dev/plugin-sdk typecheck
 yarn workspace @happier-dev/plugin-sdk build
 ```
 
-Publication also requires a packed tarball and out-of-repository proof; workspace
-links are not release evidence.
+Feature QA validates the current source and loaded development stack. Release
+automation owns publication output and its release-only verification.

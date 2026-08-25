@@ -5,11 +5,15 @@ imports the canonical versioned `@happier-dev/triage-protocol`, which declares
 the source descriptor, required source Action roles, and required detail surface.
 The paired contributor imports that same feature-owned value. Neither plugin
 recreates the protocol or imports the other plugin's implementation. The target
-has no contributor registry, runtime callback, or Action lookup.
+has no contributor registry, runtime callback, or Action lookup. Its
+`list-document-reviewers` Action demonstrates the live target side: it reserves
+an `observeForSelf(...)` observation from its generated typed point, reads the
+complete admitted snapshot, and disposes the observation in `finally`.
 
-This pair is a first-party Preview reference because the Triage contract includes
-descriptor and embedded-surface roles. The externally supported author product
-remains operation-only; this example does not broaden that support promise.
+This pair is a first-party Developer Preview reference because the Triage
+contract includes descriptor and embedded-surface roles. The generated
+`capability-matrix.json` remains the availability authority; the example does
+not create a separate support tier.
 
 It also shows the public browser and request-policy declarations: a browser
 target, a browser Action bound to this plugin's canonical Action, and a
@@ -35,13 +39,13 @@ rotation loses instead of overwriting, reads the value back at the point of use
 with a user-readable reason, and returns only the state and revision. The value
 is never written to settings, plugin storage, an Action result, or a log line.
 
-The paired contributor is `../action-contract-consumer`. The
-`fixtures/external-targeted-packages/` proof, rather than this ordinary author
-example, owns the specialized independently installed SDK-copy contract.
+The paired contributor is `../action-contract-consumer`.
 
-Build and pack this plugin with the normal author commands:
+Build, test, and load this plugin through the normal managed source-author
+commands:
 
 ```sh
 happier plugins dev build .
-happier plugins pack .
+happier plugins test .
+happier plugins dev
 ```

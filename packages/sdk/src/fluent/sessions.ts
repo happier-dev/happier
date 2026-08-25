@@ -29,6 +29,11 @@ export type HappierSessionSpawnInput = Readonly<
   }>
 >;
 
+/** Additional Action input for `session.sendAndWait()`, whose Session and wait mode are fixed by the fluent handle. */
+export type HappierSessionSendAndWaitInput = Readonly<
+  Omit<PublicActionInputById['session.message.send'], 'sessionId' | 'message' | 'wait'>
+>;
+
 /** Per-call controls for an unbound fluent Session client. */
 export type HappierSessionSpawnOptions = ActionExecutionOptions;
 
@@ -69,6 +74,11 @@ export type HappierSession<TOptions extends ActionExecutionOptions = ActionExecu
   id: string;
   send: (
     message: string,
+    options?: TOptions,
+  ) => Promise<PublicActionResultById['session.message.send']>;
+  sendAndWait: (
+    message: string,
+    input?: HappierSessionSendAndWaitInput,
     options?: TOptions,
   ) => Promise<PublicActionResultById['session.message.send']>;
   waitForIdle: (
@@ -159,6 +169,11 @@ export function createSessions<TOptions extends ActionExecutionOptions = ActionE
       send: (message: string, options?: TOptions) => params.execute(
         'session.message.send',
         { sessionId: id, message },
+        options,
+      ),
+      sendAndWait: (message: string, input = {}, options?: TOptions) => params.execute(
+        'session.message.send',
+        { ...input, sessionId: id, message, wait: true },
         options,
       ),
       waitForIdle: (input = {}, options?: TOptions) => params.execute(

@@ -227,11 +227,26 @@ test('external authoring support versions are projected from the exact installed
     }
     assert.equal(Object.hasOwn(supportPackageVersions, '@happier-dev/plugin-sdk'), false);
     assert.equal(Object.hasOwn(supportPackageVersions, '@happier-dev/plugin-ui'), false);
-    assert.match(
-      supportPackageVersions['@types/react-dom'] ?? '',
-      /^\d/u,
-      'the browser entry must typecheck against React DOM without ambient declarations',
+    // The only support package the fixture may own is the React DOM declaration set its own
+    // browser entry needs. Its spec is the importing package's declared devDependency, never a
+    // version resolved out of some other workspace install.
+    assert.equal(
+      supportPackageVersions['@types/react-dom'],
+      JSON.parse(readFileSync(join(packageRoot, 'package.json'), 'utf8'))
+        .devDependencies?.['@types/react-dom'],
+      'the browser entry must typecheck against the importing package\'s declared React DOM types',
     );
+    // `zod`, `undici-types`, and `csstype` belong to the exact candidate's own dependency
+    // closure. Installing repository copies of them would let a candidate that fails to declare
+    // or ship them still compile in the clean consumer, which is the one defect this fixture
+    // exists to catch.
+    for (const candidateClosureDependency of ['zod', 'undici-types', 'csstype']) {
+      assert.equal(
+        Object.hasOwn(supportPackageVersions, candidateClosureDependency),
+        false,
+        `${candidateClosureDependency} must come from the installed candidate, not the checkout`,
+      );
+    }
     for (const retiredDependency of [
       'jsdom',
       'react-test-renderer',
@@ -421,6 +436,12 @@ test('external author source compile boundary keeps the complete public Host API
       `the browser fixture must typecheck against PluginUiHostApi.${publicComposerHostMethod}`,
     );
   }
+
+  assert.match(
+    browserSource,
+    /\bpublishCurrentUiContext:\s*\(\)\s*=>\s*undefined,/u,
+    'the browser fixture must model the required synchronous current-UI publication seam without inventing host authority',
+  );
 
   assert.match(runtimeSource, /from '@happier-dev\/plugin-sdk\/manifest'/u);
   assert.match(runtimeSource, /parsePluginManifest\(externalAuthoringManifest\)/u);

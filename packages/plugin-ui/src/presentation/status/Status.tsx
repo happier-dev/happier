@@ -29,6 +29,15 @@ export type HappierStatusProps = Readonly<{
   testID?: string;
   /** Hosts control whether a dynamically changing status should announce. */
   accessibilityLiveRegion?: HappierAccessibilityLiveRegion;
+  /**
+   * The complete meaning of this status, in words, for the one status region.
+   *
+   * Tone is a colour. An adapter whose vocabulary lets the semantic state live
+   * in `tone` while `label`/`value` stay neutral supplies the composed wording
+   * here, so assistive technology receives what a sighted user sees. The public
+   * executable `Status` already requires `label` to say it, and passes nothing.
+   */
+  accessibilityLabel?: string;
 }>;
 
 function textStyle(
@@ -76,6 +85,9 @@ export function HappierStatus(props: HappierStatusProps) {
       role="status"
       tabIndex={props.controlRef ? -1 : undefined}
       testID={props.testID}
+      {...(props.accessibilityLabel === undefined
+        ? {}
+        : { accessibilityLabel: props.accessibilityLabel, 'aria-label': props.accessibilityLabel })}
       accessibilityLiveRegion={accessibilityLiveRegion}
       aria-live={ariaLive}
       style={{ flexDirection: 'row', alignItems: 'center', gap: props.theme.spacing.small }}

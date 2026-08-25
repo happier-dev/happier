@@ -5,9 +5,15 @@ export {
     CURRENT_UI_CONTEXT_MAX_UTF8_BYTES_V1,
     MAX_COMPOSER_ATTACHMENT_DESCRIPTION_CODE_POINTS_V1,
     MAX_COMPOSER_ATTACHMENT_LABEL_CODE_POINTS_V1,
+    MAX_COMPOSER_CONTENT_INSPECT_BYTES_V1,
+    COMPOSER_CONTROL_STATE_CONTENT_TYPE_V1,
+    MAX_COMPOSER_CONTROL_STATE_RESOURCE_BYTES_V1,
     ComposerContentHandleV1Schema,
     ComposerContentInspectRequestV1Schema,
+    ComposerContentInspectWireResultV1Schema,
     ComposerContentPickMediaRequestV1Schema,
+    ComposerControlStateContentTypeV1Schema,
+    ComposerControlStateV1Schema,
     ComposerDecorationResultV1Schema,
     ComposerDecorationSetV1Schema,
     ComposerFocusResultV1Schema,
@@ -31,6 +37,11 @@ export type { ComposerSurfaceInputV1 } from './hostApi.js';
 export type { ComposerSnapshotV1 } from './hostApi.js';
 export type { ComposerTransactionResultV1 } from './hostApi.js';
 export type { ComposerTransactionV1 } from './hostApi.js';
+export type {
+    ComposerContentInspectWireResultV1,
+    ComposerControlStateContentTypeV1,
+    ComposerControlStateV1,
+} from './hostApi.js';
 export {
     definePluginDeclarativeDocumentV1,
     PLUGIN_DECLARATIVE_DOCUMENT_CONTENT_TYPE_V1,
@@ -68,6 +79,12 @@ export {
     normalizePluginUiSubPathV1,
 } from './hostApi.js';
 export { pluginUiTargetedContributionOperationKey } from './hostApi.js';
+export {
+    selectTargetedContribution,
+    selectTargetedContributionOperation,
+    selectTargetedContributionSurface,
+} from './hostApi.js';
+export type { PluginUiTargetedContributionSelectorV1 } from './hostApi.js';
 export type { PluginUiIconTokenV1 } from '../ui.js';
 export type { PluginUiToneV1 } from '../ui.js';
 export type { PluginUiAttachmentToneV1 } from '../ui.js';

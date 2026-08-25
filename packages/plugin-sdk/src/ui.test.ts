@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 
 import { describe, expect, it } from 'vitest';
 
+import * as protocol from '@happier-dev/protocol';
 import {
     CURRENT_UI_CONTEXT_BOUNDED_INCOMPLETENESS_V1 as canonicalCurrentUiContextBoundedIncompletenessV1,
     CURRENT_UI_CONTEXT_MAX_COMMANDS_V1 as canonicalCurrentUiContextMaxCommandsV1,
@@ -10,6 +11,9 @@ import {
     MAX_COMPOSER_ATTACHMENT_DESCRIPTION_CODE_POINTS_V1 as canonicalComposerAttachmentDescriptionCodePointsV1,
     MAX_COMPOSER_ATTACHMENT_LABEL_CODE_POINTS_V1 as canonicalComposerAttachmentLabelCodePointsV1,
     pluginUiTargetedContributionOperationKey as canonicalPluginUiTargetedContributionOperationKey,
+    selectPluginUiTargetedContributionOperationV1 as canonicalSelectTargetedContributionOperation,
+    selectPluginUiTargetedContributionSurfaceV1 as canonicalSelectTargetedContributionSurface,
+    selectPluginUiTargetedContributionV1 as canonicalSelectTargetedContribution,
 } from '@happier-dev/protocol/plugins/ui/client';
 
 import {
@@ -27,6 +31,8 @@ import * as pluginSessionsPackageSurface from './sessions/index.js';
 import * as pluginSessionsAuthorSurface from './sessions/index.public.js';
 import * as pluginUiBuild from './ui/build/index.js';
 import * as hostedWebClient from './ui/client';
+import * as pluginResourcesPackageSurface from './resources/index.js';
+import * as pluginResourcesAuthorSurface from './resources/index.public.js';
 import type { PluginUiHostApi as ClientPluginUiHostApi } from './ui.js';
 import type { PluginUiChannel } from './ui.js';
 
@@ -40,6 +46,49 @@ type _ClientMustExportDomainApi = ClientPluginUiHostApi;
 const desktopUiChannel: PluginUiChannel = 'desktop';
 
 describe('plugin UI public surface', () => {
+    it('re-exports canonical media and transcript-resource contracts through browser-safe SDK UI/resource entries', () => {
+        const uiContracts = pluginUiPackageSurface as Readonly<Record<string, unknown>>;
+        const uiAuthorContracts = pluginUiAuthorSurface as Readonly<Record<string, unknown>>;
+        const resourceContracts = pluginResourcesPackageSurface as Readonly<Record<string, unknown>>;
+        const resourceAuthorContracts = pluginResourcesAuthorSurface as Readonly<Record<string, unknown>>;
+
+        for (const surface of [uiContracts, uiAuthorContracts]) {
+            expect(surface['MAX_COMPOSER_CONTENT_INSPECT_BYTES_V1'])
+                .toBe(protocol.MAX_COMPOSER_CONTENT_INSPECT_BYTES_V1);
+            expect(surface['ComposerContentInspectWireResultV1Schema'])
+                .toBe(protocol.ComposerContentInspectWireResultV1Schema);
+            expect(surface['COMPOSER_CONTROL_STATE_CONTENT_TYPE_V1'])
+                .toBe(protocol.COMPOSER_CONTROL_STATE_CONTENT_TYPE_V1);
+            expect(surface['MAX_COMPOSER_CONTROL_STATE_RESOURCE_BYTES_V1'])
+                .toBe(protocol.MAX_COMPOSER_CONTROL_STATE_RESOURCE_BYTES_V1);
+            expect(surface['ComposerControlStateContentTypeV1Schema'])
+                .toBe(protocol.ComposerControlStateContentTypeV1Schema);
+            expect(surface['ComposerControlStateV1Schema'])
+                .toBe(protocol.ComposerControlStateV1Schema);
+        }
+
+        for (const surface of [resourceContracts, resourceAuthorContracts]) {
+            expect(surface['PLUGIN_TRANSCRIPT_ACTIVITY_CONTENT_TYPE_V1'])
+                .toBe(protocol.PLUGIN_TRANSCRIPT_ACTIVITY_CONTENT_TYPE_V1);
+            expect(surface['MAX_PLUGIN_TRANSCRIPT_ACTIVITIES_PER_RESOURCE_V1'])
+                .toBe(protocol.MAX_PLUGIN_TRANSCRIPT_ACTIVITIES_PER_RESOURCE_V1);
+            expect(surface['MAX_PLUGIN_TRANSCRIPT_ACTIVITY_RESOURCE_BYTES_V1'])
+                .toBe(protocol.MAX_PLUGIN_TRANSCRIPT_ACTIVITY_RESOURCE_BYTES_V1);
+            expect(surface['PluginTranscriptActivityResourceSnapshotV1Schema'])
+                .toBe(protocol.PluginTranscriptActivityResourceSnapshotV1Schema);
+        }
+    });
+
+    it('keeps transcript Resource author exports behind the SDK-local projection', () => {
+        const publicResourcesSource = readFileSync(
+            new URL('./resources/index.public.ts', import.meta.url),
+            'utf8',
+        );
+
+        expect(publicResourcesSource).toContain("from './transcriptActivities.js';");
+        expect(publicResourcesSource).not.toContain('@happier-dev/protocol/plugins/ui/client');
+    });
+
     it('publishes selected Action execution options from the canonical UI public spec', () => {
         const publicSpecSource = readFileSync(
             new URL('./ui/index.public.ts', import.meta.url),
@@ -59,6 +108,23 @@ describe('plugin UI public surface', () => {
             'pluginUiTargetedContributionOperationKey',
             canonicalPluginUiTargetedContributionOperationKey,
         );
+    });
+
+    it('projects canonical targeted contribution selectors through every public UI entry', () => {
+        for (const surface of [pluginUiPackageSurface, pluginUiAuthorSurface]) {
+            expect(surface).toHaveProperty(
+                'selectTargetedContribution',
+                canonicalSelectTargetedContribution,
+            );
+            expect(surface).toHaveProperty(
+                'selectTargetedContributionSurface',
+                canonicalSelectTargetedContributionSurface,
+            );
+            expect(surface).toHaveProperty(
+                'selectTargetedContributionOperation',
+                canonicalSelectTargetedContributionOperation,
+            );
+        }
     });
 
     it('keeps the exact Composer ref parser on the UI Host API surface, not /sessions', () => {

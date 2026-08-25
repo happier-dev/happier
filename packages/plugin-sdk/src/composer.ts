@@ -1,8 +1,19 @@
 import type { JsonValue } from './identity.js';
-import type { PluginContributionRef } from './identity.js';
 import type { ProtocolComposableSchema } from './protocol/protocolFacade.js';
 import {
     COMPOSER_MEDIA_CONTENT_CAPABILITY_V1 as canonicalComposerMediaContentCapabilityV1,
+    MAX_COMPOSER_CONTENT_INSPECT_BYTES_V1 as canonicalMaxComposerContentInspectBytesV1,
+} from '@happier-dev/protocol/plugins/ui/client';
+export type {
+    ComposerContentHandleV1,
+    ComposerContentInspectRequestV1,
+    ComposerContentInspectWireResultV1,
+    ComposerContentMediaKindV1,
+    ComposerContentMimeTypeV1,
+    ComposerContentPickMediaRequestV1,
+    ComposerMediaContentCapabilityV1,
+    ComposerSessionMediaContentV1,
+    ComposerStagedMediaContentV1,
 } from '@happier-dev/protocol/plugins/ui/client';
 import type {
     PluginComposerAttachmentDefinition,
@@ -13,48 +24,7 @@ import type {
 
 /** The one negotiated operation required before media selection, staging, or submission. */
 export const COMPOSER_MEDIA_CONTENT_CAPABILITY_V1 = canonicalComposerMediaContentCapabilityV1;
-export type ComposerMediaContentCapabilityV1 = typeof COMPOSER_MEDIA_CONTENT_CAPABILITY_V1;
-
-export type ComposerContentMediaKindV1 = 'image' | 'video';
-export type ComposerContentMimeTypeV1 =
-    | 'image/png'
-    | 'image/jpeg'
-    | 'image/webp'
-    | 'image/gif'
-    | 'video/webm';
-
-/** Public opaque claim for completed transfer-owned staged media. */
-export type ComposerContentHandleV1 = Readonly<{
-    v: 1;
-    id: string;
-    executionTarget: Readonly<{ serverId: string; machineId: string }>;
-    owner: PluginContributionRef;
-    mediaKind: ComposerContentMediaKindV1;
-    mimeType: ComposerContentMimeTypeV1;
-    name: string;
-    sizeBytes: number;
-    sha256: string;
-}>;
-
-export type ComposerStagedMediaContentV1 = Readonly<{
-    kind: 'stagedMedia';
-    handle: ComposerContentHandleV1;
-}>;
-
-export type ComposerSessionMediaContentV1 = Readonly<{
-    kind: 'sessionMedia';
-    mediaId: string;
-}>;
-
-export type ComposerContentPickMediaRequestV1 = Readonly<{
-    attachmentLocalId: string;
-    kinds: readonly ComposerContentMediaKindV1[];
-}>;
-
-export type ComposerContentInspectRequestV1 = Readonly<{
-    offset: number;
-    maxBytes: number;
-}>;
+export const MAX_COMPOSER_CONTENT_INSPECT_BYTES_V1 = canonicalMaxComposerContentInspectBytesV1;
 
 /** A bounded inspection result; transfer/session implementation details remain host-private. */
 export type ComposerContentInspectResultV1 = Readonly<{

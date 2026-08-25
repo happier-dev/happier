@@ -83,6 +83,7 @@ import {
   type VoiceRealtimeCanonicalEvent,
   type VoiceRealtimeConnection,
   type VoiceRealtimeJsonValue,
+  type VoiceRealtimePreparation,
   type VoiceRealtimeToolResultV1,
   type VoiceGuidanceAvailability,
   type VoiceRuntimePlatform,
@@ -244,6 +245,18 @@ describe('Voice author source contract', () => {
     expectTypeOf<Parameters<VoiceProvidersRegistrationApi['register']>[1]>()
       .toEqualTypeOf<RegisteredVoiceProviderRuntime>();
     expectTypeOf<RealtimeVoiceProviderRuntime['kind']>().toEqualTypeOf<'conversation'>();
+    type ProviderManagedRealtimeRuntime = Extract<
+      RealtimeVoiceProviderRuntime,
+      Readonly<{ microphoneMode: 'provider_managed' }>
+    >;
+    type HostCaptureRealtimeRuntime = Extract<
+      RealtimeVoiceProviderRuntime,
+      Readonly<{ microphoneMode: 'host_webrtc' | 'host_pcm' }>
+    >;
+    expectTypeOf<ProviderManagedRealtimeRuntime['setInputMuted']>()
+      .toEqualTypeOf<(muted: boolean) => Promise<void> | void>();
+    expectTypeOf<HostCaptureRealtimeRuntime['setInputMuted']>()
+      .toEqualTypeOf<((muted: boolean) => Promise<void> | void) | undefined>();
     expectTypeOf<SpeechProviderRuntime['kind']>().toEqualTypeOf<'speech'>();
     expectTypeOf<keyof VoiceSpeechOperationContext>()
       .toEqualTypeOf<'credentials' | 'settings' | 'http' | 'signal'>();
@@ -396,7 +409,7 @@ describe('Voice author source contract', () => {
     expectTypeOf<VoiceRuntimePlatform>().not.toEqualTypeOf<CanonicalVoiceRuntimePlatform>();
   });
 
-  it('projects the strict Agent realtime runtime-version declaration by canonical identity', () => {
+  it('projects the optional Agent realtime runtime-version author capability by canonical identity', () => {
     expect(VoiceProviderContributionSchema.parse({
       id: 'agent-realtime',
       title: 'Agent realtime',
@@ -417,15 +430,39 @@ describe('Voice author source contract', () => {
         supportedRuntimeVersions: ['1.2.3'],
       },
     });
+    expect(VoiceProviderContributionSchema.parse({
+      id: 'agent-realtime-with-feature-admission',
+      title: 'Agent realtime with feature admission',
+      kind: 'conversation',
+      roles: ['realtime_conversation'],
+      platforms: ['web'],
+      capabilities: { turn: { cancelResponse: false, bargeIn: false } },
+      execution: {
+        kind: 'experimental_agent_session_realtime',
+        agent: 'codex',
+      },
+      client: { artifactId: 'voice-runtime-web', modulePath: './voice', exportName: 'activate' },
+    })).toMatchObject({
+      execution: {
+        kind: 'experimental_agent_session_realtime',
+        agent: 'codex',
+      },
+    });
   });
 
   it('gives connection operations the existing UI host and caller lifetime', () => {
     type ConnectionInput = Parameters<RealtimeVoiceProviderRuntime['createConnection']>[0];
+    type PreparedSession = Extract<VoiceRealtimePreparation, { kind: 'prepared' }>['session'];
 
     expectTypeOf<keyof ConnectionInput>().toEqualTypeOf<
       'session' | 'attemptId' | 'mic' | 'interruption' | 'levels' | 'media' | 'tools' | 'ui' | 'signal' | 'execution' | 'credentials'
     >();
     expectTypeOf<ConnectionInput['signal']>().toEqualTypeOf<AbortSignal>();
+    expectTypeOf<ConnectionInput['session']>().toEqualTypeOf<PreparedSession>();
+    expectTypeOf<keyof PreparedSession>()
+      .toEqualTypeOf<'config' | 'safeMetadata' | 'toolResultReplay'>();
+    expectTypeOf<PreparedSession['toolResultReplay']>()
+      .toEqualTypeOf<'none' | 'stable_ids' | undefined>();
     expectTypeOf<ConnectionInput['ui']>().toEqualTypeOf<PluginUiHostApi>();
     expectTypeOf<ConnectionInput['media']>().toEqualTypeOf<VoiceConnectionMediaHost>();
     expectTypeOf<ConnectionInput['execution']>().toEqualTypeOf<VoiceProviderExecutionAuthority>();

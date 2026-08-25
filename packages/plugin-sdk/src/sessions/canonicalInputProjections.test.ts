@@ -12,10 +12,12 @@ import {
     type AgentPermissionIntentV1 as CanonicalAgentPermissionIntentV1,
 } from '@happier-dev/protocol/sessions/general';
 import {
+    SessionAuthoringCheckoutCreationDraftV1Schema as canonicalSessionAuthoringCheckoutCreationDraftV1Schema,
     SessionSpawnNewInputV2Schema as canonicalSessionSpawnNewInputV2Schema,
     SessionServerStartSpawnDraftV1Schema as canonicalSessionServerStartSpawnDraftV1Schema,
 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import type {
+    SessionAuthoringCheckoutCreationDraftV1 as CanonicalSessionAuthoringCheckoutCreationDraftV1,
     SessionSpawnNewInputV2 as CanonicalSessionSpawnNewInputV2,
     SessionServerStartSpawnDraftV1 as CanonicalSessionServerStartSpawnDraftV1,
 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
@@ -25,6 +27,7 @@ import * as sessions from './index.js';
 import type {
     AgentPermissionIntentV1 as PublicAgentPermissionIntentV1,
     SessionId as PublicSessionId,
+    SessionAuthoringCheckoutCreationDraftV1 as PublicSessionAuthoringCheckoutCreationDraftV1,
     SessionServerStartSpawnDraftV1 as PublicSessionServerStartSpawnDraftV1,
     SessionSpawnNewInputV2 as PublicSessionSpawnNewInputV2,
 } from './index.js';
@@ -37,6 +40,8 @@ describe('Session input canonical SDK projections', () => {
             .toBe(SessionIndexedIdentifierMaxLengthV1);
         expect(sessions.AgentPermissionIntentV1Schema)
             .toBe(AgentPermissionIntentV1Schema);
+        expect(sessions.SessionAuthoringCheckoutCreationDraftV1Schema)
+            .toBe(canonicalSessionAuthoringCheckoutCreationDraftV1Schema);
         expect(sessions.SessionSpawnNewInputV2Schema)
             .toBe(canonicalSessionSpawnNewInputV2Schema);
         expect(sessions.SessionServerStartSpawnDraftV1Schema)
@@ -44,6 +49,7 @@ describe('Session input canonical SDK projections', () => {
         expect('SessionIdSchema' in root).toBe(false);
         expect('SessionIndexedIdentifierMaxLengthV1' in root).toBe(false);
         expect('AgentPermissionIntentV1Schema' in root).toBe(false);
+        expect('SessionAuthoringCheckoutCreationDraftV1Schema' in root).toBe(false);
         expect('SessionSpawnNewInputV2Schema' in root).toBe(false);
         expect('SessionServerStartSpawnDraftV1Schema' in root).toBe(false);
 
@@ -55,7 +61,23 @@ describe('Session input canonical SDK projections', () => {
                 identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
             },
         } as const;
+        const checkoutCreationDraft = {
+            kind: 'git_worktree',
+            displayName: 'feature/session-create',
+            baseRef: 'main',
+            branchMode: 'new',
+        } as const;
+        expect(sessions.SessionAuthoringCheckoutCreationDraftV1Schema
+            .safeParse(checkoutCreationDraft).success).toBe(true);
+        expect(sessions.SessionAuthoringCheckoutCreationDraftV1Schema.safeParse({
+            ...checkoutCreationDraft,
+            unexpected: true,
+        }).success).toBe(false);
         expect(sessions.SessionSpawnNewInputV2Schema.safeParse(validSpawnInput).success).toBe(true);
+        expect(sessions.SessionSpawnNewInputV2Schema.parse({
+            ...validSpawnInput,
+            checkoutCreationDraft,
+        }).checkoutCreationDraft).toEqual(checkoutCreationDraft);
         expect(sessions.SessionSpawnNewInputV2Schema.safeParse({
             ...validSpawnInput,
             unexpected: true,
@@ -72,6 +94,10 @@ describe('Session input canonical SDK projections', () => {
         expectTypeOf<PublicSessionId>().toEqualTypeOf<CanonicalSessionId>();
         expectTypeOf<PublicAgentPermissionIntentV1>()
             .toEqualTypeOf<CanonicalAgentPermissionIntentV1>();
+        expectTypeOf<PublicSessionAuthoringCheckoutCreationDraftV1>()
+            .toEqualTypeOf<CanonicalSessionAuthoringCheckoutCreationDraftV1>();
+        expectTypeOf<NonNullable<PublicSessionSpawnNewInputV2['checkoutCreationDraft']>>()
+            .toEqualTypeOf<CanonicalSessionAuthoringCheckoutCreationDraftV1>();
         expectTypeOf<CanonicalSessionSpawnNewInputV2>()
             .toMatchTypeOf<PublicSessionSpawnNewInputV2>();
         expectTypeOf<CanonicalSessionServerStartSpawnDraftV1>()
@@ -97,6 +123,9 @@ describe('Session input canonical SDK projections', () => {
         expect(emitted.diagnostics).toEqual([]);
         expect(emitted.outputText).toContain(
             'AgentPermissionIntentV1Schema: ProtocolComposableSchema<AgentPermissionIntentV1>;',
+        );
+        expect(emitted.outputText).toContain(
+            'SessionAuthoringCheckoutCreationDraftV1Schema: SessionSchema<SessionAuthoringCheckoutCreationDraftV1>;',
         );
         expect(emitted.outputText).toContain('SessionIdSchema: ProtocolComposableSchema<SessionId>;');
     });

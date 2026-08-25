@@ -73,13 +73,22 @@ export type ExternalSessionTranscriptQuery =
     }>;
 
 /**
- * One transcript item delivered to a consuming plugin. `data` is the
- * recipient-safe projection of the producing Agent contribution's
- * `AgentExternalSessionTranscriptItem.raw` record: the field is deliberately
- * named `data` and typed as plain JSON because projection is free to omit
- * host-private facts, so it promises JSON shape rather than the producer's
- * transcript-record contract. Reading `.raw` off this item yields `undefined`;
- * the record contract lives on the Agent-direction producer facet.
+ * One transcript item delivered to a trusted consuming plugin. `data` is the
+ * semantic projection of the producing Agent contribution's
+ * `AgentExternalSessionTranscriptItem.raw` record. It intentionally preserves
+ * transcript content such as tool names, arguments, results, commands, and
+ * paths: declared External Sessions read authority is semantic-content
+ * authority, not an outward sharing surface.
+ *
+ * The host rebuilds this item without producer-only routing/custody carriers:
+ * there is no `raw`, `localId`, `sidechainId`, `userProjection`, `source`,
+ * `linkMetadata`, `machineId`, `accountId`, `generation`, `operationRow`, or
+ * `progress` member. Those are envelope fields only: arbitrary nested semantic
+ * JSON is not reinterpreted or redacted merely because a tool's arguments or result
+ * uses a similarly named key. The field remains plain JSON because semantic
+ * event bodies vary by Agent. Reading `.raw` off this item yields `undefined`;
+ * the record contract lives on the Agent-direction producer facet. Recipient/public-share
+ * projection is a separate, narrower host owner and must not be reused here.
  */
 export type ExternalSessionTranscriptItem = Readonly<{
     id: string;

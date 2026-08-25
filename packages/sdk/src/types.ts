@@ -25,4 +25,7 @@ export type HappierConnectOptions = Readonly<{
   token: string;
 }>;
 
-export type ContributedActionId = PublicActionInputById['action.invoke']['action'];
+/** A structured contributed-Action identity or its canonical qualified discovery id. */
+export type ContributedActionId =
+  | PublicActionInputById['action.invoke']['action']
+  | string;

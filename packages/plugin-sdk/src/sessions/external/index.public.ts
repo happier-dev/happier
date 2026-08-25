@@ -1,10 +1,13 @@
 export { AGENT_EXTERNAL_SESSION_HOOK_LIMITS } from '../../externalSessionHooks.js';
 export { AGENT_EXTERNAL_SESSION_TAKEOVER_LIMITS } from '../externalSessionTakeover.js';
 export {
+    createAgentExternalSessionsProducerOverflowFailure,
+    getAgentExternalSessionsInvocationFailure,
     HAPPIER_BASE_SYSTEM_PROMPT_ATTACHMENTS_V1,
     HAPPIER_BASE_SYSTEM_PROMPT_LINKED_WORKSPACE_FILES_V1,
     HAPPIER_BASE_SYSTEM_PROMPT_OPTIONS_V1,
     HAPPIER_BASE_SYSTEM_PROMPT_SESSION_TITLE_INITIAL_V1,
+    isAgentExternalSessionsResultWithinByteBudget,
 } from '../../externalSessions.js';
 export type { AgentExternalSessionCandidate } from '../../externalSessions.js';
 export type { AgentExternalSessionHookCustodiedEntryProjection } from '../../externalSessionHooks.js';

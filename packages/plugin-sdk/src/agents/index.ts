@@ -24,6 +24,8 @@ export type { PluginAgentCapabilitySurfaceV2 } from '../agents.js';
 export type { PluginAgentDefinition } from '../definePlugin.js';
 export type { PluginAgentExecutionRunCapabilitiesV2 } from '../agents.js';
 export type { PluginAgentSessionCapabilitiesV2 } from '../agents.js';
+export type { PluginAgentToolsCapabilityV2 } from '../agents.js';
+export type { PluginAgentToolsDeliveryV2 } from '../agents.js';
 export type { PluginCustomAgentDeclaration } from '../definePlugin.js';
 export type { PluginHostOwnedAgentDeclaration } from '../definePlugin.js';
 export { buildAgentTargetKeyV2 } from '../agents.js';

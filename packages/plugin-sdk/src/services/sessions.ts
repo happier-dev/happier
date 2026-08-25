@@ -24,6 +24,7 @@ import type { AgentSessionAuthRefreshRequest } from '../agentRuntime/context.js'
 import type { PluginActionInputById } from '../actions/actionTypeMap.generated.js';
 import type { ProtocolComposableSchema } from '../protocol/protocolFacade.js';
 import type { ExternalSessionsService } from './externalSessions.js';
+import type { SubagentLaunchV1 } from '@happier-dev/protocol/sessions/subagents';
 import {
     AgentPermissionIntentV1Schema as protocolAgentPermissionIntentV1Schema,
     isSlashCommandSupported as protocolIsSlashCommandSupported,
@@ -41,6 +42,7 @@ import {
     SPAWN_SESSION_ERROR_CODES as protocolSpawnSessionErrorCodes,
 } from '@happier-dev/protocol/sessions/general';
 import {
+    SessionAuthoringCheckoutCreationDraftV1Schema as protocolSessionAuthoringCheckoutCreationDraftV1Schema,
     SessionServerStartSpawnDraftV1Schema as protocolSessionServerStartSpawnDraftV1Schema,
     SessionSpawnNewInputV2Schema as protocolSessionSpawnNewInputV2Schema,
 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
@@ -79,6 +81,20 @@ export const ProjectKeyV1Schema: SessionSchema<ProjectKeyV1> = protocolProjectKe
 export type SessionSpawnNewInputV2 = PluginActionInputById['session.spawn_new'];
 /** Browser-safe Session-create input projected at the SDK author boundary. */
 export const SessionSpawnNewInputV2Schema: SessionSchema<SessionSpawnNewInputV2> = protocolSessionSpawnNewInputV2Schema;
+
+/**
+ * SDK-local author declaration for the one Protocol-owned worktree draft.
+ * Session spawning and target preparation consume this exact schema; this
+ * structural projection keeps external declarations independent of Protocol.
+ */
+export type SessionAuthoringCheckoutCreationDraftV1 = {
+    kind: 'git_worktree';
+    displayName: string;
+    baseRef: string | null;
+    branchMode?: 'new' | 'existing';
+};
+export const SessionAuthoringCheckoutCreationDraftV1Schema:
+    SessionSchema<SessionAuthoringCheckoutCreationDraftV1> = protocolSessionAuthoringCheckoutCreationDraftV1Schema;
 
 export type SessionServerStartSpawnDraftV1 = Omit<
     SessionSpawnNewInputV2,
@@ -358,9 +374,18 @@ export type SessionSummary = Readonly<{
  * attachment admission, `prepareForSend` and `resolveForDispatch` lifecycle.
  */
 export type SessionSendAttachment = NonNullable<
-    PluginActionInputById['session.message.send']['attachments']
+    Exclude<
+        PluginActionInputById['session.message.send'],
+        Readonly<{ kind: 'sessionSubagentLaunch' }>
+    >['attachments']
 >[number];
-export type SessionSendRequest = Readonly<{
+export type SessionSendRequest =
+  | Readonly<{
+      kind: 'sessionSubagentLaunch';
+      launch: SubagentLaunchV1;
+      idempotencyKey: string;
+  }>
+  | Readonly<{
     kind: 'userText';
     text: string;
     idempotencyKey: string;
@@ -381,7 +406,7 @@ export type SessionSendRequest = Readonly<{
         }>;
         contentProvenance?: 'original' | 'forwarded' | 'viaBot';
     }>;
-}>;
+  }>;
 export type SessionSendResult =
     | Readonly<{ status: 'accepted' | 'alreadyAccepted'; localId: string }>
     | Readonly<{ status: 'rejected'; code: string }>

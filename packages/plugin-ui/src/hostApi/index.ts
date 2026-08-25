@@ -19,6 +19,7 @@ export type { PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';
 
 export {
   usePluginHostApi,
+  usePluginSurfaceActivity,
 } from './context.js';
 export {
   type ComposerHandle,

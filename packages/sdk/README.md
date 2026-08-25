@@ -13,7 +13,11 @@ For a daemon-local endpoint, use the root client. Its Action requests omit a
 target, so the daemon executes on its current Machine.
 
 ```ts
-import { connect } from '@happier-dev/sdk';
+import {
+  connect,
+  HappierSessionInitialInputError,
+  type HappierSession,
+} from '@happier-dev/sdk';
 
 const apiToken = process.env.HAPPIER_TOKEN;
 if (!apiToken) throw new Error('Set HAPPIER_TOKEN to an API Token.');
@@ -25,15 +29,32 @@ const happier = connect({
   token: apiToken,
 });
 
-const session = await happier.sessions.spawn({
-  directory: process.cwd(),
-  agent: 'codex',
-  initialMessage: 'Inspect the failing tests.',
-});
+try {
+  let session: HappierSession;
+  try {
+    session = await happier.sessions.spawn({
+      directory: process.cwd(),
+      agent: 'codex',
+      initialMessage: 'Inspect the failing tests.',
+    });
+  } catch (error) {
+    if (error instanceof HappierSessionInitialInputError) {
+      await error.session.stop();
+    }
+    throw error;
+  }
 
-await session.send('Please fix the smallest owning cause.');
-await session.waitForIdle();
-happier.close();
+  try {
+    await session.sendAndWait('Please fix the smallest owning cause.', {
+      localId: 'fix-owning-cause',
+      timeoutSeconds: 300,
+    });
+  } finally {
+    await session.stop();
+  }
+} finally {
+  happier.close();
+}
 ```
 
 For daemon-local use, obtain the current port from the daemon status contract;
@@ -60,23 +81,49 @@ Session:
 
 ```ts
 const serverAccount = connect({ endpoint, token: apiToken });
-const machine = (await serverAccount.machines.list()).find((candidate) => (
+const eligibleMachines = (await serverAccount.machines.list()).filter((candidate) => (
   candidate.active && candidate.revokedAt === null && candidate.replacedByMachineId === null
 ));
-if (!machine) throw new Error('No active machine is available.');
+const [machine] = eligibleMachines;
+if (!machine) {
+  throw new Error('No eligible active machine is available.');
+}
+if (eligibleMachines.length > 1) {
+  const candidateIds = eligibleMachines.map((candidate) => candidate.id).join(', ');
+  throw new Error(`Select one machine explicitly: ${candidateIds}`);
+}
 const serverClient = serverAccount.machine(machine.id);
 const session = await serverClient.sessions.spawn({ directory: process.cwd(), agent: 'codex' });
 ```
 
 The machine-bound client keeps that target fixed for its inventory lookup and
-Session creation. The packaged basic example makes this endpoint choice
+Session creation. The checked-in basic example makes this endpoint choice
 explicit: `HAPPIER_ENDPOINT_MODE=daemon` omits a target, while
-`HAPPIER_ENDPOINT_MODE=server` enumerates and selects one.
+`HAPPIER_ENDPOINT_MODE=server` auto-selects only when exactly one eligible
+machine exists and otherwise requires `HAPPIER_MACHINE_ID`.
+Its console output is deliberately a compact summary, not a raw transcript
+dump.
 
-`HappierActionError` means the Action API admitted the request and the Action
-failed with a typed result. `HappierTransportError` instead means the SDK could
-not complete or validate the HTTP exchange, such as a network failure, a
+`machine(id)` returns a target-bound view that shares the root client's
+lifecycle. Calling `close()` on either view aborts outstanding work for both.
+
+For a correlated send that settles only after the target Session becomes idle,
+use `session.sendAndWait(message, input?, executionOptions?)`. It calls the
+canonical `session.message.send` Action with `wait: true`; `input` can include
+the retry-safe `localId` and `timeoutSeconds`. It does not start a second wait.
+
+`HappierActionError` means the Action API admitted the request but could not
+produce its typed Action result, either because the Action failed or because
+it requires approval. `HappierTransportError` instead means the SDK could not
+complete or validate the HTTP exchange, such as a network failure, a
 non-success HTTP status, invalid JSON, or an invalid response envelope.
+
+When policy defers an Action for user approval, typed SDK calls reject with
+`HappierActionError` whose `code` is `approval_required`. Its `details`
+preserve the canonical approval result
+`{ kind: 'approval_request_created', artifactId, actionId }`. The SDK neither
+waits for nor decides that approval; for `sessions.spawn()`, no Session has
+been created yet.
 
 Both the daemon-local and server origins cap the complete serialized response
 envelope—not only the Action result—at 24,000,000 UTF-8 bytes. If execution
@@ -96,14 +143,41 @@ Session was committed but that message is `rejected`, `outcomeUnknown`, or
 `notRequested`, it rejects with `HappierSessionInitialInputError`. Its
 `session` is the committed Session handle and `result.initialInput` preserves
 the canonical disposition; no retry or Session deletion is performed. Recover
-explicitly, for example with `error.session.send(...)`.
+explicitly, for example with `error.session.send(...)`. The basic example
+instead stops `error.session` before rethrowing because it cannot continue a
+demonstration Session after a rejected initial message.
+
+If Session creation itself does not commit a Session, `sessions.spawn()`
+rejects with `HappierSessionSpawnError`. Its `result` preserves the canonical
+creation outcome, including a typed code and retryability when supplied; there
+is no Session handle to stop or clean up in that case.
 
 `actions.execute(actionId, input, options)` is the raw Action call. Each
 namespaced Action method offers the same call with typed input and output. Use
-`actions.action.spec.search(...)` (also available as the `actions.search(...)`
-convenience method) to discover a contributed Action's qualified id,
-`actions.action.spec.get(...)` to read its declared input schema, and
-`actions.invoke(...)` with its `{ pluginId, localId }` identity to invoke it.
+`actions.search(...)` to discover a contributed Action's qualified id,
+`actions.get(...)` to read its declared input schema, and
+`actions.invoke(...)` with the qualified id returned by discovery to invoke it:
+
+For a server endpoint, call these methods on the machine-bound `serverClient`
+created above, not on the unbound `serverAccount`: every external Action needs
+an exact daemon target. A daemon-local endpoint uses its root client because
+the daemon supplies its current Machine when the target is omitted.
+
+```ts
+const discovered = await happier.actions.search({ query: 'connections' });
+const qualifiedId = discovered.actionSpecs[0]?.id;
+if (!qualifiedId) throw new Error('No matching Action is available.');
+const { actionSpec } = await happier.actions.get({ id: qualifiedId });
+console.log(actionSpec.inputSchema);
+await happier.actions.invoke(qualifiedId, {});
+```
+
+The convenience method also accepts the canonical structured
+`{ pluginId, localId }` identity. A string must use the exact
+`<pluginId>/actions/<localId>` discovery spelling; malformed strings reject
+locally with `TypeError` before any HTTP request. The generated raw
+`actions.action.spec.search(...)`, `actions.action.spec.get(...)`, and
+`actions.action.invoke(...)` methods retain the Protocol Action input shapes.
 
 The API setting starts Allowed for API-eligible built-in and contributed
 Actions, so Action Settings add no approval prompt by default. A non-safe
@@ -122,14 +196,15 @@ default machine for a server Action request.
 
 ## API reference
 
-The generated [API inventory](./API.md) is a census of exported package symbols,
-not a complete Action method reference. Its companion `api-declarations.md`
-records exported signatures. Use the generated
-[Host Actions reference](https://happier.dev/plugins/api/host-actions) for
-built-in Action contracts. At runtime, use `actions.search(...)` and
-`actions.action.spec.get(...)` for discovery, then call
-`actions.execute(...)` when the Action id is selected dynamically. Do not
-replace those sources with a hand-maintained method list.
+Use the package's exported types as the canonical static contract for SDK
+methods, inputs, and results. The generated [API inventory](./API.md) lists the
+public exports, and its companion `api-declarations.md` records their
+signatures. At runtime, use `actions.search(...)` and `actions.get(...)` for
+discovery, then call `actions.execute(...)` when the Action id is selected
+dynamically. At a server endpoint, do that through a machine-bound client. The
+generated raw `actions.action.spec.search(...)` and
+`actions.action.spec.get(...)` methods remain available. Do not replace those
+sources with a hand-maintained method list.
 
 The client accepts an API Token only. It never reads CLI profiles,
 persists credentials, accepts Account signing or encryption material, retries a

@@ -23,6 +23,8 @@ export type {
     PluginAgentContributionV2 as AgentContribution,
     PluginAgentExecutionRunCapabilitiesV2,
     PluginAgentSessionCapabilitiesV2,
+    PluginAgentToolsCapabilityV2,
+    PluginAgentToolsDeliveryV2,
 } from '@happier-dev/protocol';
 export type { PluginAgentDefinition } from './definePlugin.js';
 

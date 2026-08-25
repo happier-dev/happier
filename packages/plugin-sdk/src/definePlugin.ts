@@ -769,7 +769,7 @@ export type DefinePluginInput<
     TPluginId extends string = string,
     TContributionPoints extends Readonly<Record<
         PluginContributionLocalId,
-        ContributionPointAuthorDefinition
+        ContributionPointAuthorDefinition<readonly unknown[]>
     >> = Readonly<Record<string, never>>,
 > = Readonly<
     Omit<
@@ -792,6 +792,10 @@ export type DefinePluginInput<
         transcriptActivities?: Readonly<Record<
             PluginContributionLocalId,
             Omit<NonNullable<NonNullable<PluginManifest['contributes']>['transcriptActivities']>[number], 'id'>
+        >>;
+        sessionInfoSections?: Readonly<Record<
+            PluginContributionLocalId,
+            Omit<NonNullable<NonNullable<PluginManifest['contributes']>['sessionInfoSections']>[number], 'id'>
         >>;
         sessionHeaderActions?: Readonly<Record<
             PluginContributionLocalId,
@@ -2167,6 +2171,7 @@ const COMPOSER_ADAPTER: DefinePluginFamilyAdapter = Object.freeze({
 const COMMANDS_ADAPTER = descriptorFamilyAdapter('commands');
 const TOOLS_ADAPTER = descriptorFamilyAdapter('tools');
 const TRANSCRIPT_ACTIVITIES_ADAPTER = descriptorFamilyAdapter('transcriptActivities');
+const SESSION_INFO_SECTIONS_ADAPTER = descriptorFamilyAdapter('sessionInfoSections');
 const SESSION_HEADER_ACTIONS_ADAPTER = descriptorFamilyAdapter('sessionHeaderActions');
 const BROWSER_TARGETS_ADAPTER = descriptorFamilyAdapter('browserTargets');
 const BROWSER_ACTIONS_ADAPTER = descriptorFamilyAdapter('browserActions');
@@ -2354,6 +2359,7 @@ export const DEFINE_PLUGIN_FAMILY_POLICY_V2 = Object.freeze({
     tools: { classification: 'descriptor-only', authorKey: 'tools', inputShape: 'descriptor', adapter: TOOLS_ADAPTER },
     resources: { classification: 'adapter', authorKey: 'resources', inputShape: 'descriptor', adapter: RESOURCES_ADAPTER },
     transcriptActivities: { classification: 'descriptor-only', authorKey: 'transcriptActivities', inputShape: 'descriptor', adapter: TRANSCRIPT_ACTIVITIES_ADAPTER },
+    sessionInfoSections: { classification: 'descriptor-only', authorKey: 'sessionInfoSections', inputShape: 'descriptor', adapter: SESSION_INFO_SECTIONS_ADAPTER },
     sessionHeaderActions: { classification: 'descriptor-only', authorKey: 'sessionHeaderActions', inputShape: 'descriptor', adapter: SESSION_HEADER_ACTIONS_ADAPTER },
     browserTargets: { classification: 'descriptor-only', authorKey: 'browserTargets', inputShape: 'descriptor', adapter: BROWSER_TARGETS_ADAPTER },
     browserActions: { classification: 'descriptor-only', authorKey: 'browserActions', inputShape: 'descriptor', adapter: BROWSER_ACTIONS_ADAPTER },
@@ -2589,7 +2595,7 @@ function definePluginImplementation<
     const TPluginId extends string = string,
     const TContributionPoints extends Readonly<Record<
         PluginContributionLocalId,
-        ContributionPointAuthorDefinition
+        ContributionPointAuthorDefinition<readonly unknown[]>
     >> = Readonly<Record<string, never>>,
 >(input: DefinePluginInput<
     TActions,
@@ -2676,7 +2682,7 @@ export function definePlugin<
     const TPluginId extends string = string,
     const TContributionPoints extends Readonly<Record<
         PluginContributionLocalId,
-        ContributionPointAuthorDefinition
+        ContributionPointAuthorDefinition<readonly unknown[]>
     >> = Readonly<Record<string, never>>,
 >(
     input: DefinePluginInput<

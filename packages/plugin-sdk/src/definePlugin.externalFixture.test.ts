@@ -366,10 +366,6 @@ async function prepareExternalTargetedPackageBuild(): Promise<ExternalTargetedPa
                 join(packageRoot, 'dist', 'contributions', 'index.d.ts'),
                 'contributions declaration entrypoint',
             ),
-            requireBuiltSdkArtifact(
-                join(packageRoot, 'dist', 'host', 'targeted-contributions', 'index.js'),
-                'targeted contribution host decoder',
-            ),
             requireBuiltSdkArtifact(join(packageRoot, 'dist', 'ui', 'index.d.ts'), 'public UI contract'),
             requireBuiltSdkArtifact(join(packageRoot, 'dist', 'ui', 'build', 'index.d.ts'), 'public UI build contract'),
             requireBuiltSdkArtifact(join(pluginUiPackageRoot, 'dist', 'index.d.ts'), 'Plugin UI declarations'),
@@ -456,7 +452,6 @@ async function runExternalTargetedRuntimeProof(
         join(build.contributorRoot, 'dist', 'index.js'),
         join(build.targetSdkRoot, 'dist', 'index.js'),
         join(build.contributorSdkRoot, 'dist', 'index.js'),
-        join(build.contributorSdkRoot, 'dist', 'host', 'targeted-contributions', 'index.js'),
     ]);
     return JSON.parse(runtimeOutput) as ExternalTargetedRuntimeProof;
 }
@@ -612,6 +607,9 @@ builtArtifactDescribe('external physical target and contributor packages', { tim
         expect(build.targetDeclaration).toContain('TargetedContributionSnapshot');
         expect(build.targetSurfaceDeclaration).toContain('renderPhysicalCopyTargetSurface');
         expect(build.targetDeclaration).toContain('physicalCopyTargetDetailNode');
+        expect(build.targetDeclaration).toMatch(
+            /from ['"]@happier-dev\/plugin-sdk\/sessions['"]/u,
+        );
         for (const sourcePath of [
             join(externalTargetedPackageFixtureRoot, 'target', 'src', 'index.ts'),
             join(externalTargetedPackageFixtureRoot, 'target', 'src', 'pluginUiBuild.ts'),

@@ -148,6 +148,34 @@ describe('plugin-ui resource state renders real React Native semantics', () => {
     mount.unmount();
   });
 
+  it('speaks a composed status meaning once when the shared owner is given one', () => {
+    const context = createSurfaceContext();
+    const mount = mountThroughReactNativeWeb(
+      <PluginUiProvider hostApi={createHostApiStub(context)} context={context}>
+        <HappierStatus
+          tone="danger"
+          theme={context.theme}
+          testID="declarative-status"
+          // A neutral label plus a `danger` tone is the exact shape that reaches
+          // sighted users as colour and assistive technology as nothing at all.
+          label="Deployment"
+          value="12 minutes"
+          accessibilityLabel="Error: Deployment: 12 minutes"
+        />
+      </PluginUiProvider>,
+    );
+
+    const status = mount.container.querySelector<HTMLElement>('[data-testid="declarative-status"]');
+    expect(status?.getAttribute('role')).toBe('status');
+    expect(status?.getAttribute('aria-label')).toBe('Error: Deployment: 12 minutes');
+    // The dot stays decoration and nothing beneath the region repeats the
+    // meaning: it is named exactly once, on the region itself.
+    expect(status?.querySelector('[role="img"]')).toBeNull();
+    expect(status?.querySelectorAll('[aria-label]')).toHaveLength(0);
+
+    mount.unmount();
+  });
+
   it('makes the shared status indicator more distinct in high-contrast mode', () => {
     const context = createSurfaceContext({ contrast: 'high' });
     const mount = mountSurface(<Status tone="success" label="Connected" testID="connection-status" />, context);

@@ -194,8 +194,8 @@ export interface PluginNotificationRegistrationApi {
 
 /** @realm daemon */
 export type ComposerReferenceRuntime = Readonly<{
-    search(query: string, signal: AbortSignal): Promise<ComposerReferenceCandidatePageV1>;
-    resolve(candidateId: string, signal: AbortSignal): Promise<ComposerReferenceResolutionV1>;
+    search(query: string, context: PluginInvocationContext): Promise<ComposerReferenceCandidatePageV1>;
+    resolve(candidateId: string, context: PluginInvocationContext): Promise<ComposerReferenceResolutionV1>;
 }>;
 /** @realm daemon */
 export interface ComposerReferencesRegistrationApi {

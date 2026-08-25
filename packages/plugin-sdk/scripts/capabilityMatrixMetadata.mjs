@@ -15,9 +15,9 @@ function deferred(unblockCondition, sourceMetadata = {}) {
   });
 }
 
-function deferredExternalAuthorProof(capability) {
+function deferredExternalDevelopmentSourceProof(capability) {
   return deferred(
-    `A maintained operation-only external plugin proves ${capability} through a clean install, pack, load, replacement, disable, and uninstall lifecycle.`,
+    `A maintained external development-source plugin proves ${capability} through the current loaded development stack: lifecycle, real invocation, and replacement, disable, and uninstall currentness.`,
   );
 }
 
@@ -35,23 +35,22 @@ export const CAPABILITY_MATRIX_DECLARATIONS_V1 = Object.freeze({
     providers: available('packages/plugins/openai-models/src/manifest.ts'),
     actions: available('packages/plugins/channels/src/manifest.ts'),
     commands: deferred(
-      'An exact packed external Command invokes its Action through the canonical plugin command catalog and proves replacement, disable, and uninstall currentness.',
+      'A maintained external development-source plugin invokes its Command Action through the canonical plugin command catalog in the current loaded development stack and proves lifecycle, real invocation, and replacement, disable, and uninstall currentness.',
     ),
     tools: deferred(
-      'An exact packed external Tool invokes its Action through the real daemon MCP catalog and proves replacement, disable, and uninstall currentness.',
+      'A maintained external development-source plugin invokes its Tool Action through the real daemon MCP catalog in the current loaded development stack and proves lifecycle, real invocation, and replacement, disable, and uninstall currentness.',
     ),
     resources: available('packages/plugins/channels/src/manifest.ts'),
     transcriptActivities: available('packages/plugins/channels/src/manifest.ts'),
-    sessionHeaderActions: deferred(
-      'A maintained plugin author declares a session header Action and proves the canonical Session UI lifecycle.',
-    ),
-    browserTargets: deferredExternalAuthorProof('browser target authoring'),
-    browserActions: deferredExternalAuthorProof('browser Action authoring'),
+    sessionInfoSections: available('packages/plugins/channels/src/manifest.ts'),
+    sessionHeaderActions: available('packages/plugins/channels/src/manifest.ts'),
+    browserTargets: available('packages/plugin-sdk/examples/action-contract-producer/src/index.ts'),
+    browserActions: available('packages/plugin-sdk/examples/action-contract-producer/src/index.ts'),
     settings: available('packages/plugins/inspector/src/manifest.ts'),
     events: available('packages/plugins/scm-github/src/manifest.ts'),
     executionRunProfiles: available('packages/plugins/review-deepsec/src/manifest.ts'),
-    notifications: deferredExternalAuthorProof('notification category authoring'),
-    notificationChannels: deferredExternalAuthorProof('notification channel authoring'),
+    notifications: deferredExternalDevelopmentSourceProof('notification category authoring'),
+    notificationChannels: deferredExternalDevelopmentSourceProof('notification channel authoring'),
     scmHostingProviders: available('packages/plugins/scm-github/src/manifest.ts'),
     scmBackends: available('packages/plugins/scm-git/src/manifest.ts'),
     connectedAccountDescriptors: available('packages/plugins/gemini/src/manifest.ts'),
@@ -59,7 +58,7 @@ export const CAPABILITY_MATRIX_DECLARATIONS_V1 = Object.freeze({
     systemTools: available('packages/plugins/antigravity/src/manifest.ts'),
     promptAssets: available('packages/plugins/review-deepsec/src/manifest.ts'),
     hooks: available('packages/plugins/gemini/src/manifest.ts'),
-    requestInterceptors: deferredExternalAuthorProof('request-interceptor authoring'),
+    requestInterceptors: available('packages/plugin-sdk/examples/action-contract-producer/src/index.ts'),
     voiceModelPacks: deferred(
       'A maintained Voice plugin author declares a model pack and proves the canonical Voice lifecycle.',
     ),
@@ -68,18 +67,10 @@ export const CAPABILITY_MATRIX_DECLARATIONS_V1 = Object.freeze({
     daemonDatabases: deferred(
       'A maintained plugin author declares a daemon database and proves its canonical migration and lifecycle owner.',
     ),
-    composerReferences: deferred(
-      'A maintained plugin author declares composer.references and proves the canonical picker, search, and resolution lifecycle.',
-    ),
-    composerAttachments: deferred(
-      'A maintained plugin author declares composer.attachments and proves preparation, Message admission, dispatch resolution, and fallback lifecycle.',
-    ),
-    composerControls: deferred(
-      'A maintained plugin author declares composer.controls and proves canonical control projection and interaction lifecycle.',
-    ),
-    composerRegions: deferred(
-      'A maintained plugin author declares composer.regions and proves canonical before/after composer mount lifecycle.',
-    ),
+    composerReferences: available('packages/plugin-ui/fixtures/external-authoring/src/index.ts'),
+    composerAttachments: available('packages/plugins/triage/src/manifest.ts'),
+    composerControls: available('packages/plugins/triage/src/manifest.ts'),
+    composerRegions: available('packages/plugin-ui/fixtures/external-authoring/src/index.ts'),
     openableContentViewers: deferred(
       'A maintained plugin author declares an openable-content viewer and proves the canonical host read lifecycle.',
     ),
@@ -102,25 +93,17 @@ export const CAPABILITY_MATRIX_DECLARATIONS_V1 = Object.freeze({
     logger: available('packages/plugins/pi/src/agent/runtime/engine.ts'),
     storage: available('packages/plugins/channels/src/requiredAccountStorage.ts'),
     settings: available('packages/plugins/cursor/src/agent/acp/connection.ts'),
-    secrets: deferredExternalAuthorProof('the SecretsService'),
-    events: deferred(
-      'A maintained plugin author invokes the canonical EventsService through an invocation lifecycle.',
-    ),
+    secrets: deferredExternalDevelopmentSourceProof('the SecretsService'),
+    events: deferredExternalDevelopmentSourceProof('the EventsService'),
     http: available('packages/plugins/channel-telegram/src/channelActions.ts'),
-    fs: deferred(
-      'A maintained plugin author invokes the canonical FileSystemService through an invocation lifecycle.',
-    ),
+    fs: deferredExternalDevelopmentSourceProof('the FileSystemService'),
     exec: available('packages/plugins/review-coderabbit/src/agent/reviews/nativeRun.ts'),
-    providers: deferred(
-      'A maintained plugin author invokes the canonical ProvidersService through an invocation lifecycle.',
-    ),
+    providers: deferredExternalDevelopmentSourceProof('the ProvidersService'),
     managedServices: available('packages/plugins/opencode/src/agent/runtime/server/runtimeContext.ts'),
     sessions: available('packages/plugins/channels/src/ingress.ts'),
-    resources: deferred(
-      'A maintained plugin author invokes the canonical ResourcesService through an invocation lifecycle.',
-    ),
+    resources: deferredExternalDevelopmentSourceProof('the ResourcesService'),
     mcp: available('packages/plugins/antigravity/src/agent/runtime/nativeSession.ts'),
-    notifications: deferredExternalAuthorProof('the NotificationsService'),
+    notifications: deferredExternalDevelopmentSourceProof('the NotificationsService'),
     connectedAccounts: available('packages/plugins/channel-discord/src/discordActions.ts'),
     actions: available('packages/plugins/channels/src/ingress.ts'),
     targetedContributions: available('packages/plugins/channels/src/ingress.ts'),
@@ -184,7 +167,7 @@ export const CAPABILITY_MATRIX_DECLARATIONS_V1 = Object.freeze({
     './async': available('packages/plugins/pi/src/agent/runtime/rpc/operations.ts'),
     './automations': available('packages/plugins/channels/src/automationResultDelivery.ts'),
     './background-services': available('packages/plugin-sdk/examples/advanced-package-root/background/refreshCatalog.ts'),
-    './browser': deferredExternalAuthorProof('the browser entrypoint'),
+    './browser': available('packages/plugin-sdk/examples/action-contract-producer/src/index.ts'),
     './connected-accounts': available('packages/plugins/gemini/src/connectedAccounts/runtime.ts'),
     './collections': available('packages/plugins/channels/src/collections.ts'),
     './events': available('packages/plugins/scm-github/src/githubAutomationEventActions.ts'),
@@ -197,7 +180,7 @@ export const CAPABILITY_MATRIX_DECLARATIONS_V1 = Object.freeze({
     './managed-services': available('packages/plugins/ollama/src/provider/publicManagedRuntime.ts'),
     './manifest': available('packages/plugins/channels/src/manifest.ts'),
     './mcp': available('packages/plugins/opencode/src/manifest.ts'),
-    './notifications': deferredExternalAuthorProof('the notifications entrypoint'),
+    './notifications': deferredExternalDevelopmentSourceProof('the notifications entrypoint'),
     './providers': available('packages/plugins/openai-compat/src/voice/speech.ts'),
     './protocol': available('packages/plugins/channels/src/bindingTransition.ts'),
     './contributions': available(

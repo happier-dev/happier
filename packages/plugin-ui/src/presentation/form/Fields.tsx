@@ -619,9 +619,19 @@ export function HappierSelect<Value = string>(props: Readonly<{
   const selected = props.multiple
     ? (Array.isArray(props.value) ? props.value : [])
     : (props.value === undefined ? [] : [props.value as Value]);
-  const minimumSelections = props.multiple
-    ? Math.max(0, Math.floor(props.minimumSelections ?? 0))
+  const declaredMinimumSelections = typeof props.minimumSelections === 'number'
+    && Number.isFinite(props.minimumSelections)
+    ? Math.max(0, Math.floor(props.minimumSelections))
     : 0;
+  const minimumSelections = props.multiple
+    ? Math.max(props.required ? 1 : 0, declaredMinimumSelections)
+    : 0;
+  const declaredMaxSelections = props.maxSelections === undefined || !Number.isFinite(props.maxSelections)
+    ? undefined
+    : Math.max(0, Math.floor(props.maxSelections));
+  const maximumSelections = declaredMaxSelections === undefined
+    ? undefined
+    : Math.max(minimumSelections, declaredMaxSelections);
   const usedKeys = new Set<string>();
   const options = props.options.map((option, index) => {
     const isSelected = selected.some((value) => isEqual(value, option.value));
@@ -632,7 +642,13 @@ export function HappierSelect<Value = string>(props: Readonly<{
     // retained selection below. Disabling it would make a required
     // max-one field impossible to change and would misreport that option
     // as unavailable to assistive technology.
-    const disabled = props.disabled || option.disabled || selectionFloorReached;
+    const selectionCeilingPreventsAddition = props.multiple
+      && !isSelected
+      && maximumSelections === 0;
+    const disabled = props.disabled
+      || option.disabled
+      || selectionFloorReached
+      || selectionCeilingPreventsAddition;
     const baseKey = props.keyForOption?.(option, index) ?? defaultHappierSelectOptionKey(option, index);
     const key = usedKeys.has(baseKey) ? `${baseKey}:duplicate:${index}` : baseKey;
     usedKeys.add(key);
@@ -658,9 +674,9 @@ export function HappierSelect<Value = string>(props: Readonly<{
           // interactive replacement and submitted draft use one stable
           // retention order without giving this presentation authority
           // over Action input normalization.
-          props.onChange(props.maxSelections === undefined
+          props.onChange(maximumSelections === undefined
             ? nextSelection
-            : nextSelection.slice(-props.maxSelections));
+            : nextSelection.slice(-maximumSelections));
         }}
       />
     );

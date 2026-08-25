@@ -37,6 +37,70 @@ const CHANNELS_RESOURCE_PUBLIC_TYPE_IMPORTS = [
   },
 ] as const;
 
+const CLAUDE_SUBSCRIPTION_MATERIALIZATION_PUBLIC_VALUE_IMPORTS = [
+  {
+    sourcePath: join(
+      pluginSourceRoot,
+      'pi',
+      'src',
+      'agent',
+      'runtime',
+      'qualifiedConnectedAccounts.ts',
+    ),
+    symbols: [
+      'CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1',
+      'CLAUDE_SUBSCRIPTION_SETUP_TOKEN_ENVIRONMENT_REQUEST_V1',
+    ],
+  },
+  {
+    sourcePath: join(
+      pluginSourceRoot,
+      'opencode',
+      'src',
+      'agent',
+      'auth',
+      'services',
+      'qualifiedPurposeLaunch.ts',
+    ),
+    symbols: [
+      'CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1',
+      'CLAUDE_SUBSCRIPTION_SETUP_TOKEN_ENVIRONMENT_REQUEST_V1',
+    ],
+  },
+  {
+    sourcePath: join(
+      pluginSourceRoot,
+      'ohmypi',
+      'src',
+      'agent',
+      'runtime',
+      'engine.ts',
+    ),
+    symbols: [
+      'CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1',
+      'CLAUDE_SUBSCRIPTION_SETUP_TOKEN_ENVIRONMENT_REQUEST_V1',
+    ],
+  },
+  {
+    sourcePath: join(
+      pluginSourceRoot,
+      'ohmypi',
+      'src',
+      'agent',
+      'auth',
+      'services',
+      'accountPurposes.ts',
+    ),
+    symbols: ['CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1'],
+  },
+] as const;
+
+const CPX_CONNECTED_ACCOUNT_CONSUMER_PLUGIN_IDS = [
+  'pi',
+  'opencode',
+  'ohmypi',
+] as const;
+
 const AGENT_RUNTIME_EVENT_TEST_IMPORTS = {
   'packages/plugins/antigravity/src/agent/cliPrint/runtime.test.ts': [
     'AgentSessionRuntimeEventSchema',
@@ -45,6 +109,98 @@ const AGENT_RUNTIME_EVENT_TEST_IMPORTS = {
     'AgentSessionRuntimeEventSchema',
   ],
 } as const;
+
+const GENERIC_REQUEST_AUTH_PUBLIC_VALUE_IMPORTS = [
+  {
+    sourcePath: join(
+      pluginSourceRoot,
+      'pi',
+      'src',
+      'agent',
+      'auth',
+      'services',
+      'requestAuth',
+      'env.ts',
+    ),
+    symbols: ['CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV'],
+  },
+  {
+    sourcePath: join(
+      pluginSourceRoot,
+      'pi',
+      'src',
+      'agent',
+      'auth',
+      'services',
+      'requestAuth',
+      'assets.ts',
+    ),
+    symbols: [
+      'CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV',
+      'buildConnectedAccountRequestAuthClientSource',
+    ],
+  },
+  {
+    sourcePath: join(
+      pluginSourceRoot,
+      'opencode',
+      'src',
+      'agent',
+      'auth',
+      'services',
+      'requestAuth',
+      'env.ts',
+    ),
+    symbols: ['CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV'],
+  },
+  {
+    sourcePath: join(
+      pluginSourceRoot,
+      'opencode',
+      'src',
+      'agent',
+      'auth',
+      'services',
+      'requestAuth',
+      'assets.ts',
+    ),
+    symbols: [
+      'CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV',
+      'buildConnectedAccountRequestAuthClientSource',
+    ],
+  },
+] as const;
+
+const GENERIC_SESSION_AND_PROMPT_PUBLIC_IMPORTS = [
+  {
+    sourcePath: join(
+      pluginSourceRoot,
+      'claude',
+      'src',
+      'agent',
+      'workflowRecords',
+      'workflowRuntime.ts',
+    ),
+    symbols: [
+      'SessionSystemRecordReadRequestV1',
+      'SessionSystemRecordReadResultV1',
+      'SessionSystemRecordWriteRequestV1',
+    ],
+  },
+  {
+    sourcePath: join(
+      pluginSourceRoot,
+      'claude',
+      'src',
+      'agent',
+      'runtime',
+      'terminal',
+      'unified',
+      'turnOperations.ts',
+    ),
+    symbols: ['isNonSteerablePromptPayload', 'parseSpecialCommand'],
+  },
+] as const;
 
 function isProtocolModulePath(value: string): boolean {
   return value === '@happier-dev/protocol' || value.startsWith('@happier-dev/protocol/');
@@ -146,6 +302,25 @@ async function readPublicSdkOwners(symbols: readonly string[]): Promise<Readonly
   }));
 }
 
+async function readPublicSdkValueOwners(symbols: readonly string[]): Promise<Readonly<Record<string, string>>> {
+  const inventory = JSON.parse(await readFile(apiSurfaceInventoryPath, 'utf8')) as Readonly<{
+    symbols: readonly Readonly<{
+      specifier: string;
+      exportName: string;
+      kind: string;
+    }>[];
+  }>;
+  return Object.fromEntries(symbols.map((symbol) => {
+    const owners = inventory.symbols.filter((entry) => (
+      entry.exportName === symbol && entry.kind === 'value'
+    ));
+    if (owners.length !== 1) {
+      throw new Error(`Expected one public SDK value owner for ${symbol}, found ${owners.length}`);
+    }
+    return [symbol, owners[0]!.specifier];
+  }));
+}
+
 /**
  * The host workspace packages a first-party plugin runtime source still reaches,
  * keyed by plugin directory.
@@ -158,18 +333,11 @@ async function readPublicSdkOwners(symbols: readonly string[]): Promise<Readonly
  * below instead of landing silently.
  */
 const EXPECTED_PLUGIN_RUNTIME_HOST_PACKAGE_REACHES: Readonly<Record<string, readonly string[]>> = {
-  // Claude Agent policy the Claude plugin owns end to end, plus the one
-  // host-recognised dialog-choice discriminant. `apps/cli`'s permission handler
-  // and `apps/ui`'s AskUserQuestion renderer read that exact string, so Protocol
-  // is its only shared owner; an external plugin declares its own request source
-  // rather than emitting another plugin's identity.
-  claude: [
-    '@happier-dev/agents',
-    '@happier-dev/agents/providers/claude-model-options',
-    '@happier-dev/protocol/agents/claude',
-  ],
-  opencode: ['@happier-dev/agents/request-auth'],
-  pi: ['@happier-dev/agents/request-auth'],
+  // The host-recognised dialog-choice discriminant remains Protocol-owned:
+  // apps/cli's permission handler and apps/ui's AskUserQuestion renderer read
+  // that exact string. All generic helpers use the narrow public SDK domains,
+  // while Claude-specific model policy stays inside the Claude plugin.
+  claude: ['@happier-dev/protocol/agents/claude'],
 };
 
 /** The Happier packages the plugin scaffold actually installs for an author. */
@@ -315,6 +483,54 @@ describe('first-party plugin public SDK import fence', () => {
     }
   });
 
+  it('projects Claude Subscription setup-token materialization through the Connected Accounts SDK seam', async () => {
+    const expectedOwners = {
+      CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1:
+        './connected-accounts',
+      CLAUDE_SUBSCRIPTION_SETUP_TOKEN_ENVIRONMENT_REQUEST_V1:
+        './connected-accounts',
+    };
+    expect(await readPublicSdkValueOwners(Object.keys(expectedOwners)))
+      .toEqual(expectedOwners);
+
+    for (const { sourcePath, symbols } of CLAUDE_SUBSCRIPTION_MATERIALIZATION_PUBLIC_VALUE_IMPORTS) {
+      expect(await readNamedImports(
+        sourcePath,
+        '@happier-dev/plugin-sdk/connected-accounts',
+      )).toEqual(expect.arrayContaining([...symbols]));
+      const forbiddenProtocolSymbols = new Set<string>(symbols);
+      expect((await readProtocolImports(sourcePath)).filter((symbol) => (
+        forbiddenProtocolSymbols.has(symbol)
+      ))).toEqual([]);
+    }
+
+    for (const pluginId of CPX_CONNECTED_ACCOUNT_CONSUMER_PLUGIN_IDS) {
+      const manifest = JSON.parse(await readFile(
+        join(pluginSourceRoot, pluginId, 'package.json'),
+        'utf8',
+      )) as Readonly<{
+        dependencies?: Readonly<Record<string, string>>;
+      }>;
+      expect(manifest.dependencies?.['@happier-dev/protocol']).toBeUndefined();
+    }
+  });
+
+  it('routes generic request-auth, Session-record, and prompt helpers through narrow public SDK domains', async () => {
+    for (const { sourcePath, symbols } of GENERIC_REQUEST_AUTH_PUBLIC_VALUE_IMPORTS) {
+      expect(await readNamedImports(
+        sourcePath,
+        '@happier-dev/plugin-sdk/connected-accounts',
+      )).toEqual(expect.arrayContaining([...symbols]));
+      expect(await readNamedImports(sourcePath, '@happier-dev/agents/request-auth')).toEqual([]);
+    }
+
+    for (const { sourcePath, symbols } of GENERIC_SESSION_AND_PROMPT_PUBLIC_IMPORTS) {
+      expect(await readNamedImports(sourcePath, '@happier-dev/plugin-sdk/sessions'))
+        .toEqual(expect.arrayContaining([...symbols]));
+      expect(await readNamedImports(sourcePath, '@happier-dev/agents')).toEqual([]);
+    }
+  });
+
   it('keeps every first-party plugin runtime source inside the public author toolchain', async () => {
     const authorPackages = readAuthorReachableHappierPackages();
     expect([...authorPackages].sort()).toEqual([
@@ -324,7 +540,10 @@ describe('first-party plugin public SDK import fence', () => {
 
     const measured = await readMeasuredPluginRuntimeHostPackageReaches();
     expect(measured).toEqual(EXPECTED_PLUGIN_RUNTIME_HOST_PACKAGE_REACHES);
-  });
+    // This is the one full first-party-plugin source inventory. Under shared
+    // compiler/build contention it exceeded Vitest's 5s default (7.545s
+    // observed), so retain a bounded allowance without weakening the fence.
+  }, 20_000);
 
   it('keeps Protocol out of first-party plugin runtime sources apart from the host-recognised Claude dialog source', async () => {
     const reaches = await readMeasuredPluginRuntimeHostPackageReaches();

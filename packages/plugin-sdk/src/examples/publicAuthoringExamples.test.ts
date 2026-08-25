@@ -59,6 +59,11 @@ import {
 import type {
     VoiceAccountOperationService,
 } from '../voice/index.js';
+import {
+    VoiceRealtimeJsonValueSchema,
+    type VoiceRealtimeJsonValue,
+    type VoiceSdkHandleConnectionDriver,
+} from '../voice/client.js';
 import type { VoiceProvidersRegistrationApi } from '../voice/projections.js';
 import type { SpeechProviderRuntime } from '../voice/speech.js';
 import {
@@ -877,6 +882,44 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
         expect(existsSync(join(examplesRoot, 'code-defined', '.happier-plugin', 'plugin.json'))).toBe(false);
     });
 
+    it('runs the copyable cross-plugin target against its declared contributor through public fixtures', async () => {
+        const targetModule = await import(pathToFileURL(join(
+            examplesRoot,
+            'action-contract-producer',
+            'src',
+            'index.ts',
+        )).href) as Pick<DefinedPlugin, 'manifest' | 'activate'>;
+        const contributorModule = await import(pathToFileURL(join(
+            examplesRoot,
+            'action-contract-consumer',
+            'src',
+            'index.ts',
+        )).href) as Pick<DefinedPlugin, 'manifest' | 'activate'>;
+        const contributor = await createPluginTestkit({
+            manifest: contributorModule.manifest,
+            module: contributorModule,
+        });
+        const target = await createPluginTestkit({
+            manifest: targetModule.manifest,
+            module: targetModule,
+            targetedContributionContributors: [contributor],
+        });
+
+        try {
+            await expect(target.invokeAction('list-document-reviewers', {})).resolves.toEqual({
+                generation: expect.any(String),
+                contributors: [{
+                    pluginId: 'examples.action-contract-consumer',
+                    contributionId: 'local-document-reviewer',
+                    displayName: 'local-document-reviewer',
+                }],
+            });
+        } finally {
+            await target.dispose();
+            await contributor.dispose();
+        }
+    });
+
     it('does not synthesize a host engine constraint into code-defined authoring examples', async () => {
         const [codeDefined, advanced] = await Promise.all([
             import(pathToFileURL(join(examplesRoot, 'code-defined', 'index.ts')).href),
@@ -1203,10 +1246,8 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
         expect(hostedSource).not.toMatch(/(?:createObjectURL|data:image|<img)/u);
         expect(existsSync(join(hostedRoot, 'test', 'index.test.mjs'))).toBe(true);
         expect(hostedReadme).toMatch(/brand presentation owns byte validation and its neutral\s+fallback/u);
-        expect(hostedReadme).toContain(
-            'real emitted graph is checked against the incumbent installed-Artifact',
-        );
-        expect(hostedReadme).toContain('there is no global fixed candidate');
+        expect(hostedReadme).toContain('Its emitted graph is checked through the incumbent resolver');
+        expect(hostedReadme).toContain('No separate release representation is created for feature QA.');
     });
 
     it('uses cold JSON only for cold-manifest examples and code-defined public authoring without startup activation', () => {
@@ -1812,13 +1853,17 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
             expect(provider).toBeDefined();
             if (!provider) throw new Error('review_reference_provider_not_registered');
 
-            const candidates = await provider.search('security', new AbortController().signal);
+            const searchContext = createReviewContextCompanionInvocationContext(
+                createReviewContextCompanionSessionBoundary(),
+                new AbortController().signal,
+            );
+            const candidates = await provider.search('security', searchContext);
             expect(candidates).toEqual([{
                 id: 'security-check',
                 label: 'Security review',
                 description: 'Focus on authorization, secrets, and trust boundaries.',
             }]);
-            const resolution = await provider.resolve('security-check', new AbortController().signal);
+            const resolution = await provider.resolve('security-check', searchContext);
             expect(resolution).toEqual({
                 ...candidates[0],
                 context: 'Review focus: authorization, secrets, and trust boundaries.',
@@ -1826,7 +1871,10 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
 
             const cancelled = new AbortController();
             cancelled.abort('test_cancelled');
-            await expect(provider.search('security', cancelled.signal)).rejects.toMatchObject({
+            await expect(provider.search('security', createReviewContextCompanionInvocationContext(
+                createReviewContextCompanionSessionBoundary(),
+                cancelled.signal,
+            ))).rejects.toMatchObject({
                 name: 'AbortError',
             });
         } finally {
@@ -2368,6 +2416,12 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
             hostAccess: ['review-resource-account'],
             maxBytes: 8192,
         });
+        expect(manifest.contributes.sessionInfoSections).toEqual([{
+            id: 'project-companion-status',
+            resourceId: 'project-companion-dashboard-document',
+            order: 40,
+            actions: ['open-review-status'],
+        }]);
         const dashboardRenderer = manifest.contributes.ui.renderers.find(
             (renderer) => renderer.id === 'project-companion-dashboard-renderer',
         );
@@ -2402,7 +2456,7 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
         expect(manifest.contributes.sessionHeaderActions).toContainEqual({
             id: 'open-project-companion-dashboard',
             title: 'Open Project Companion',
-            action: {
+            command: {
                 kind: 'openSurface',
                 destination: 'project-companion-dashboard',
             },
@@ -2559,6 +2613,35 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
     });
 
     it('executes declared Voice account operations through the provider runtime owner', async () => {
+        const manifest = readExampleManifest('public-authoring');
+        const credentialedDeclaration = manifest.contributes.voiceProviders.find(
+            ({ id }) => id === 'credentialed-browser',
+        );
+        const rawDeclaration = manifest.contributes.voiceProviders.find(
+            ({ id }) => id === 'raw-browser',
+        );
+        const readEffectCalls = (declaration: unknown): unknown => {
+            const record = declaration !== null
+                && typeof declaration === 'object'
+                && !Array.isArray(declaration)
+                ? declaration as Readonly<Record<string, unknown>>
+                : null;
+            const capabilities = record?.capabilities;
+            const capabilityRecord = capabilities !== null
+                && typeof capabilities === 'object'
+                && !Array.isArray(capabilities)
+                ? capabilities as Readonly<Record<string, unknown>>
+                : null;
+            const tools = capabilityRecord?.tools;
+            return tools !== null
+                && typeof tools === 'object'
+                && !Array.isArray(tools)
+                ? (tools as Readonly<Record<string, unknown>>).effectCalls
+                : null;
+        };
+        expect(readEffectCalls(credentialedDeclaration)).toBe('stable_ids');
+        expect(readEffectCalls(rawDeclaration)).toBe('none');
+
         const voiceModule = await import(pathToFileURL(
             join(examplesRoot, 'public-authoring', 'voiceProvider.ts'),
         ).href) as Readonly<{
@@ -2673,7 +2756,25 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
         const executeAction = vi.fn(async (): Promise<never> => {
             throw new Error('ui_execute_action_must_not_own_voice_account_operations');
         });
-        const manifest = readExampleManifest('public-authoring');
+        const readCurrentUiContext = vi.fn(async () => ({
+            navigation: { area: 'session', screen: 'review' },
+            commands: [{
+                id: 'current-ui-command:review-status',
+                title: 'Open review status',
+            }],
+        }));
+        const invokeCurrentUiCommand = vi.fn(async () => ({ ok: true }));
+        const currentUiTools = [{
+            name: 'readCurrentUiContext',
+            description: 'Read the current UI context.',
+            parameters: {},
+            execute: readCurrentUiContext,
+        }, {
+            name: 'invokeCurrentUiCommand',
+            description: 'Invoke an opaque current UI command.',
+            parameters: {},
+            execute: invokeCurrentUiCommand,
+        }];
         const uiFixture = await createPluginUiTestkit({
             identity: {
                 pluginId: manifest.id,
@@ -2697,8 +2798,12 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
         const unexpectedMediaCall = (): never => {
             throw new Error('unexpected_voice_media_call');
         };
-        try {
-            const connection = await runtime.createConnection({
+        const createTestConnection = (tools: typeof currentUiTools) => {
+            let driver: VoiceSdkHandleConnectionDriver | null = null;
+            let connectionState: 'idle' | 'connecting' | 'open' | 'closed' = 'idle';
+            const controls: VoiceRealtimeJsonValue[] = [];
+            const connectionIsClosed = (): boolean => connectionState === 'closed';
+            return runtime.createConnection({
                 session: preparation.session,
                 attemptId: 1,
                 mic: {
@@ -2711,11 +2816,50 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
                 interruption: { duckGain: 0.25, retainedOutputMaxMs: 500 },
                 levels: { onOutputLevel: () => undefined },
                 media: {
-                    createSdkHandleConnection: unexpectedMediaCall,
+                    createSdkHandleConnection(input) {
+                        driver = input.driver;
+                        return {
+                            kind: 'sdk_handle',
+                            async connect(connectionSignal) {
+                                if (!driver) throw new Error('voice_sdk_handle_driver_missing');
+                                connectionState = 'connecting';
+                                await driver.open({
+                                    signal: connectionSignal,
+                                    onControl(event) {
+                                        controls.push(VoiceRealtimeJsonValueSchema.parse(event));
+                                    },
+                                    onTransport() {},
+                                    onRemoteClose() {
+                                        connectionState = 'closed';
+                                    },
+                                });
+                                if (!connectionIsClosed()) connectionState = 'open';
+                            },
+                            async sendControl(event) {
+                                if (!driver) throw new Error('voice_sdk_handle_driver_missing');
+                                await driver.sendControl(event);
+                            },
+                            controlEvents: async function* () {
+                                while (controls.length > 0) {
+                                    yield controls.shift()!;
+                                }
+                            },
+                            transportEvents: async function* () {},
+                            async close(reason) {
+                                connectionState = 'closed';
+                                if (driver) await driver.close(reason);
+                            },
+                            state: () => connectionState,
+                            currentProviderSessionId: () => null,
+                            playbackCursorMs: () => null,
+                            beginOutputInterruptionCandidate: () => 'unsupported' as const,
+                            resolveOutputInterruptionCandidate() {},
+                        };
+                    },
                     createWebRtcConnection: unexpectedMediaCall,
                     createPcmConnection: unexpectedMediaCall,
                 },
-                tools: [],
+                tools,
                 ui: uiFixture.context.hostApi,
                 signal,
                 execution: { kind: 'direct_media' },
@@ -2725,8 +2869,191 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
                     raw: null,
                 },
             });
+        };
+        try {
+            const connection = await createTestConnection(currentUiTools);
             await connection.connect(signal);
             expect(executeAction).not.toHaveBeenCalled();
+            expect(readCurrentUiContext).not.toHaveBeenCalled();
+            expect(invokeCurrentUiCommand).not.toHaveBeenCalled();
+            const [textTurn] = runtime.encodeTextTurn('run current UI context conformance');
+            expect(textTurn).toEqual({
+                type: 'input_text',
+                text: 'run current UI context conformance',
+            });
+            if (!textTurn) {
+                throw new Error('public_authoring_voice_text_turn_missing');
+            }
+            const controls = connection.controlEvents(signal)[Symbol.asyncIterator]();
+            await connection.sendControl(textTurn);
+            const readControl = await controls.next();
+            expect(readControl).toEqual({
+                done: false,
+                value: {
+                    type: 'tool_call',
+                    responseId: 'public-authoring-current-ui-read-response-1',
+                    callId: 'public-authoring-current-ui-read-call-1',
+                    toolName: 'readCurrentUiContext',
+                    arguments: {},
+                },
+            });
+            if (readControl.done) {
+                throw new Error('public_authoring_voice_read_tool_call_missing');
+            }
+            const decodedReadControl = runtime.protocol.decodeControl(readControl.value);
+            expect(decodedReadControl).toEqual([{
+                type: 'tool_calls',
+                responseId: 'public-authoring-current-ui-read-response-1',
+                calls: [{
+                    v: 1,
+                    responseId: 'public-authoring-current-ui-read-response-1',
+                    callId: 'public-authoring-current-ui-read-call-1',
+                    toolName: 'readCurrentUiContext',
+                    order: 0,
+                    arguments: {},
+                }],
+            }]);
+            expect(runtime.protocol.decodeControl(readControl.value)).toEqual(decodedReadControl);
+            const [readResults] = runtime.encodeToolResults([{
+                v: 1,
+                responseId: 'public-authoring-current-ui-read-response-1',
+                callId: 'public-authoring-current-ui-read-call-1',
+                toolName: 'readCurrentUiContext',
+                order: 0,
+                status: 'success',
+                output: {
+                    navigation: { area: 'session', screen: 'review' },
+                    commands: [{
+                        id: 'current-ui-command:review-status',
+                        title: 'Open review status',
+                    }],
+                },
+            }]);
+            expect(readResults).toEqual({
+                type: 'tool_results',
+                results: [expect.objectContaining({
+                    responseId: 'public-authoring-current-ui-read-response-1',
+                    callId: 'public-authoring-current-ui-read-call-1',
+                })],
+            });
+            if (!readResults) {
+                throw new Error('public_authoring_voice_read_results_missing');
+            }
+            const readContinuation = runtime.encodeToolContinuation(
+                'public-authoring-current-ui-read-response-1',
+            );
+            expect(readContinuation).toEqual({
+                type: 'response_continue',
+                responseId: 'public-authoring-current-ui-read-response-1',
+            });
+            await connection.sendControl(readResults);
+            await connection.sendControl(readContinuation);
+            const invokeControl = await controls.next();
+            expect(invokeControl).toEqual({
+                done: false,
+                value: {
+                    type: 'tool_call',
+                    responseId: 'public-authoring-current-ui-invoke-response-1',
+                    callId: 'public-authoring-current-ui-invoke-call-1',
+                    toolName: 'invokeCurrentUiCommand',
+                    arguments: { commandId: 'current-ui-command:review-status' },
+                },
+            });
+            if (invokeControl.done) {
+                throw new Error('public_authoring_voice_invoke_tool_call_missing');
+            }
+            const decodedInvokeControl = runtime.protocol.decodeControl(invokeControl.value);
+            expect(decodedInvokeControl).toEqual([{
+                type: 'tool_calls',
+                responseId: 'public-authoring-current-ui-invoke-response-1',
+                calls: [{
+                    v: 1,
+                    responseId: 'public-authoring-current-ui-invoke-response-1',
+                    callId: 'public-authoring-current-ui-invoke-call-1',
+                    toolName: 'invokeCurrentUiCommand',
+                    order: 0,
+                    arguments: { commandId: 'current-ui-command:review-status' },
+                }],
+            }]);
+            expect(runtime.protocol.decodeControl(invokeControl.value)).toEqual(decodedInvokeControl);
+
+            await connection.sendControl(textTurn);
+            const secondReadControl = await controls.next();
+            expect(secondReadControl).toEqual({
+                done: false,
+                value: {
+                    type: 'tool_call',
+                    responseId: 'public-authoring-current-ui-read-response-2',
+                    callId: 'public-authoring-current-ui-read-call-2',
+                    toolName: 'readCurrentUiContext',
+                    arguments: {},
+                },
+            });
+            if (secondReadControl.done) {
+                throw new Error('public_authoring_voice_second_read_tool_call_missing');
+            }
+            expect(runtime.protocol.decodeControl(secondReadControl.value)).toEqual([{
+                type: 'tool_calls',
+                responseId: 'public-authoring-current-ui-read-response-2',
+                calls: [{
+                    v: 1,
+                    responseId: 'public-authoring-current-ui-read-response-2',
+                    callId: 'public-authoring-current-ui-read-call-2',
+                    toolName: 'readCurrentUiContext',
+                    order: 0,
+                    arguments: {},
+                }],
+            }]);
+            const [secondReadResults] = runtime.encodeToolResults([{
+                v: 1,
+                responseId: 'public-authoring-current-ui-read-response-2',
+                callId: 'public-authoring-current-ui-read-call-2',
+                toolName: 'readCurrentUiContext',
+                order: 0,
+                status: 'success',
+                output: {
+                    navigation: { area: 'session', screen: 'review' },
+                    commands: [{
+                        id: 'current-ui-command:review-status',
+                        title: 'Open review status',
+                    }],
+                },
+            }]);
+            if (!secondReadResults) {
+                throw new Error('public_authoring_voice_second_read_results_missing');
+            }
+            await connection.sendControl(secondReadResults);
+            await connection.sendControl(runtime.encodeToolContinuation(
+                'public-authoring-current-ui-read-response-2',
+            ));
+            const secondInvokeControl = await controls.next();
+            expect(secondInvokeControl).toEqual({
+                done: false,
+                value: {
+                    type: 'tool_call',
+                    responseId: 'public-authoring-current-ui-invoke-response-2',
+                    callId: 'public-authoring-current-ui-invoke-call-2',
+                    toolName: 'invokeCurrentUiCommand',
+                    arguments: { commandId: 'current-ui-command:review-status' },
+                },
+            });
+            if (secondInvokeControl.done) {
+                throw new Error('public_authoring_voice_second_invoke_tool_call_missing');
+            }
+            expect(runtime.protocol.decodeControl(secondInvokeControl.value)).toEqual([{
+                type: 'tool_calls',
+                responseId: 'public-authoring-current-ui-invoke-response-2',
+                calls: [{
+                    v: 1,
+                    responseId: 'public-authoring-current-ui-invoke-response-2',
+                    callId: 'public-authoring-current-ui-invoke-call-2',
+                    toolName: 'invokeCurrentUiCommand',
+                    order: 0,
+                    arguments: { commandId: 'current-ui-command:review-status' },
+                }],
+            }]);
+            expect(readCurrentUiContext).not.toHaveBeenCalled();
+            expect(invokeCurrentUiCommand).not.toHaveBeenCalled();
             await connection.close({ code: 'user_stop' });
         } finally {
             await uiFixture.dispose();
@@ -2993,7 +3320,7 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
     });
 
     it('keeps hosted source/build claims distinct from unavailable app-adoption evidence', () => {
-        const hostedUnavailable = 'Packaged hosted-web rendering availability is reported per host; a host that cannot construct its frame adapter reports a typed unavailable reason instead.';
+        const hostedUnavailable = 'Hosted-web rendering availability is reported per host; a host that cannot construct its frame adapter reports a typed unavailable reason instead.';
         for (const exampleName of ['hosted-web', 'multi-mode-fallback'] as const) {
             const manifest = readExampleManifest(exampleName);
             expect(manifest.contributes.ui.renderers).toContainEqual(
@@ -3015,10 +3342,10 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
             /This reference proves code-defined public authoring and its source build entry\s+shape\./u,
         );
         expect(productionReference).toMatch(
-            /It does \*\*not\*\* claim a packed archive, package-load, loaded Artifact\s+adoption, or browser, iOS, or Android proof\./u,
+            /Browser, iOS, and Android rows run independently against the observed\s+current source and loaded runtime identities they exercise through the canonical\s+frame owner\./u,
         );
-        expect(productionReference).toContain('when the canonical publisher/artifact is available');
-        expect(productionReference).toContain('there is no global fixed candidate');
+        expect(productionReference).toContain('source test and loaded development-runtime lifecycle');
+        expect(productionReference).toContain('Do not create a separate release representation.');
         expect(productionReference).not.toContain(hostedUnavailable);
     });
 

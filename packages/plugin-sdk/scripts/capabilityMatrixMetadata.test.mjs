@@ -6,44 +6,51 @@ import test from 'node:test';
 import { CAPABILITY_MATRIX_DECLARATIONS_V1 } from './capabilityMatrixMetadata.mjs';
 
 const EXTERNAL_AUTHOR_PROOF = 'packages/plugin-sdk/examples/action-contract-producer/src/index.ts';
+const EXTERNAL_COMPOSER_AUTHOR_PROOF = 'packages/plugin-ui/fixtures/external-authoring/src/index.ts';
+const TRIAGE_COMPOSER_PROOF = 'packages/plugins/triage/src/manifest.ts';
+const CHANNELS_COMPOSER_PROOF = 'packages/plugins/channels/src/manifest.ts';
 
-function assertDeferredExternalProof(declaration) {
+function assertDeferredExternalDevelopmentProof(declaration) {
   assert.equal(declaration.availabilityDisposition, 'deferred');
   assert.equal(declaration.provingConsumer, 'no current positive consumer');
-  assert.match(declaration.unblockCondition, /maintained operation-only external plugin/u);
+  assert.match(declaration.unblockCondition, /maintained external development-source plugin/u);
+  assert.match(declaration.unblockCondition, /current loaded development stack/u);
+  assert.match(declaration.unblockCondition, /real invocation/u);
+  assert.match(declaration.unblockCondition, /currentness/u);
 }
 
-test('does not advertise the first-party Triage preview pair as external capability proof', () => {
+test('keeps unsupported capability families deferred without treating the external author fixture as proof', () => {
   const declarations = [
-    ...['browserTargets', 'browserActions', 'notifications', 'notificationChannels', 'requestInterceptors']
+    ...['notifications', 'notificationChannels']
       .map((family) => CAPABILITY_MATRIX_DECLARATIONS_V1.manifestFamilies[family]),
     CAPABILITY_MATRIX_DECLARATIONS_V1.services.secrets,
     CAPABILITY_MATRIX_DECLARATIONS_V1.services.notifications,
-    CAPABILITY_MATRIX_DECLARATIONS_V1.subpaths['./browser'],
     CAPABILITY_MATRIX_DECLARATIONS_V1.subpaths['./notifications'],
   ];
 
   for (const declaration of declarations) {
-    assertDeferredExternalProof(declaration);
+    assertDeferredExternalDevelopmentProof(declaration);
     assert.notEqual(declaration.provingConsumer, EXTERNAL_AUTHOR_PROOF);
   }
 });
 
 test('HostAccess declarations name the terminal session path and deferred declaration sources', () => {
-  assert.deepEqual(CAPABILITY_MATRIX_DECLARATIONS_V1.hostAccess.terminal, {
-    producer: 'apps/cli/src/agent/runtime/registry/engineRegistry/nativeAgentSessionHostServiceOwners.ts',
-    lifecycle: 'session-runtime',
-    specialistOwner: 'apps/cli/src/plugins/runtime/context/terminalHost.ts',
-    availabilityDisposition: 'available',
-    provingConsumer: 'packages/plugins/claude/src/manifest.ts',
-  });
+  const terminal = CAPABILITY_MATRIX_DECLARATIONS_V1.hostAccess.terminal;
+  assert.equal(
+    terminal.producer,
+    'apps/cli/src/agent/runtime/registry/engineRegistry/nativeAgentSessionHostServiceOwners.ts',
+  );
+  assert.equal(terminal.lifecycle, 'session-runtime');
+  assert.equal(terminal.specialistOwner, 'apps/cli/src/plugins/runtime/context/terminalHost.ts');
+  assert.equal(terminal.availabilityDisposition, 'available');
+  assert.equal(terminal.provingConsumer, 'packages/plugins/claude/src/manifest.ts');
   assert.notEqual(
-    CAPABILITY_MATRIX_DECLARATIONS_V1.hostAccess.terminal.producer,
-    CAPABILITY_MATRIX_DECLARATIONS_V1.hostAccess.terminal.provingConsumer,
+    terminal.producer,
+    terminal.provingConsumer,
   );
   assert.notEqual(
-    CAPABILITY_MATRIX_DECLARATIONS_V1.hostAccess.terminal.specialistOwner,
-    CAPABILITY_MATRIX_DECLARATIONS_V1.hostAccess.terminal.provingConsumer,
+    terminal.specialistOwner,
+    terminal.provingConsumer,
   );
   assert.equal(
     Object.hasOwn(CAPABILITY_MATRIX_DECLARATIONS_V1.hostAccess, 'network.intercept'),
@@ -61,41 +68,32 @@ test('HostAccess declarations name the terminal session path and deferred declar
   }
 });
 
-test('records the public request-interception pair without promoting unrelated HostAccess capabilities', () => {
-  for (const family of ['browserTargets', 'browserActions', 'requestInterceptors']) {
-    assertDeferredExternalProof(CAPABILITY_MATRIX_DECLARATIONS_V1.manifestFamilies[family]);
-  }
-  assert.equal(
-    Object.hasOwn(CAPABILITY_MATRIX_DECLARATIONS_V1.hostAccess, 'network.intercept'),
-    false,
-  );
-
-  for (const capability of ['browser', 'clipboard', 'externalLinks']) {
-    const declaration = CAPABILITY_MATRIX_DECLARATIONS_V1.hostAccess[capability];
-    assert.equal(declaration.availabilityDisposition, 'deferred');
-    assert.equal(declaration.provingConsumer, 'no current positive consumer');
-    assert.equal(typeof declaration.unblockCondition, 'string');
-    assert.notEqual(declaration.unblockCondition.length, 0);
-  }
-});
-
-test('retains public browser descriptor source coverage without claiming external lifecycle proof', async () => {
-  const consumerPath = EXTERNAL_AUTHOR_PROOF;
+test('publishes r0.47 browser and request-policy authoring without promoting HostAccess browser', async () => {
   const repoRoot = resolve(import.meta.dirname, '..', '..', '..');
+  const availableExternalAuthorProof = {
+    availabilityDisposition: 'available',
+    provingConsumer: EXTERNAL_AUTHOR_PROOF,
+  };
 
-  assertDeferredExternalProof(CAPABILITY_MATRIX_DECLARATIONS_V1.subpaths['./browser']);
-  assert.equal(CAPABILITY_MATRIX_DECLARATIONS_V1.hostAccess.browser.availabilityDisposition, 'deferred');
+  for (const family of ['browserTargets', 'browserActions', 'requestInterceptors']) {
+    assert.deepEqual(
+      CAPABILITY_MATRIX_DECLARATIONS_V1.manifestFamilies[family],
+      availableExternalAuthorProof,
+    );
+  }
+  assert.deepEqual(CAPABILITY_MATRIX_DECLARATIONS_V1.subpaths['./browser'], availableExternalAuthorProof);
+  assert.equal(CAPABILITY_MATRIX_DECLARATIONS_V1.subpaths['./http'].availabilityDisposition, 'available');
   assert.equal(
     Object.hasOwn(CAPABILITY_MATRIX_DECLARATIONS_V1.hostAccess, 'network.intercept'),
     false,
   );
-  for (const family of ['browserTargets', 'browserActions', 'requestInterceptors']) {
-    assertDeferredExternalProof(CAPABILITY_MATRIX_DECLARATIONS_V1.manifestFamilies[family]);
-  }
+  assert.equal(CAPABILITY_MATRIX_DECLARATIONS_V1.hostAccess.browser.availabilityDisposition, 'deferred');
+  assert.equal(CAPABILITY_MATRIX_DECLARATIONS_V1.hostAccess.browser.provingConsumer, 'no current positive consumer');
+  assert.equal(typeof CAPABILITY_MATRIX_DECLARATIONS_V1.hostAccess.browser.unblockCondition, 'string');
 
   const [browserEntrypoint, consumer] = await Promise.all([
     readFile(resolve(repoRoot, 'packages/plugin-sdk/src/browser/index.ts'), 'utf8'),
-    readFile(resolve(repoRoot, consumerPath), 'utf8'),
+    readFile(resolve(repoRoot, EXTERNAL_AUTHOR_PROOF), 'utf8'),
   ]);
   assert.match(browserEntrypoint, /export \{ PUBLIC_TOOLCHAIN_COMPATIBILITY_V1 \} from '\.\.\/ui\/build\/publicToolchainCompatibility\.generated\.js';/u);
   assert.match(browserEntrypoint, /export \{ defineBrowserAction \} from '\.\/actions\.js';/u);
@@ -107,36 +105,35 @@ test('retains public browser descriptor source coverage without claiming externa
   assert.match(consumer, /browserActions:\s*\{/u);
   assert.match(consumer, /requestInterceptors:\s*\{/u);
   assert.doesNotMatch(consumer, /capability:\s*'network\.intercept'/u);
-  assert.doesNotMatch(consumer, /hostAccess:\s*\{/u);
 });
 
-test('keeps external Commands and Tools deferred until packed lifecycle proof', async () => {
+test('keeps external Commands and Tools deferred until loaded development-source proof', async () => {
   const consumerPath = EXTERNAL_AUTHOR_PROOF;
   const repoRoot = resolve(import.meta.dirname, '..', '..', '..');
 
-  assert.deepEqual(CAPABILITY_MATRIX_DECLARATIONS_V1.manifestFamilies.commands, {
-    availabilityDisposition: 'deferred',
-    provingConsumer: 'no current positive consumer',
-    unblockCondition: 'An exact packed external Command invokes its Action through the canonical plugin command catalog and proves replacement, disable, and uninstall currentness.',
-  });
-  assert.deepEqual(CAPABILITY_MATRIX_DECLARATIONS_V1.manifestFamilies.tools, {
-    availabilityDisposition: 'deferred',
-    provingConsumer: 'no current positive consumer',
-    unblockCondition: 'An exact packed external Tool invokes its Action through the real daemon MCP catalog and proves replacement, disable, and uninstall currentness.',
-  });
+  assertDeferredExternalDevelopmentProof(CAPABILITY_MATRIX_DECLARATIONS_V1.manifestFamilies.commands);
+  assert.match(CAPABILITY_MATRIX_DECLARATIONS_V1.manifestFamilies.commands.unblockCondition, /canonical plugin command catalog/u);
+  assertDeferredExternalDevelopmentProof(CAPABILITY_MATRIX_DECLARATIONS_V1.manifestFamilies.tools);
+  assert.match(CAPABILITY_MATRIX_DECLARATIONS_V1.manifestFamilies.tools.unblockCondition, /real daemon MCP catalog/u);
 
   const consumer = await readFile(resolve(repoRoot, consumerPath), 'utf8');
   assert.match(consumer, /commands:\s*\{/u);
   assert.match(consumer, /tools:\s*\{/u);
 });
 
+test('keeps unproven invocation services deferred until loaded development-source proof', () => {
+  for (const service of ['events', 'fs', 'providers', 'resources']) {
+    assertDeferredExternalDevelopmentProof(CAPABILITY_MATRIX_DECLARATIONS_V1.services[service]);
+  }
+});
+
 test('retains notification source coverage without claiming external lifecycle proof', async () => {
   const repoRoot = resolve(import.meta.dirname, '..', '..', '..');
   for (const family of ['notifications', 'notificationChannels']) {
-    assertDeferredExternalProof(CAPABILITY_MATRIX_DECLARATIONS_V1.manifestFamilies[family]);
+    assertDeferredExternalDevelopmentProof(CAPABILITY_MATRIX_DECLARATIONS_V1.manifestFamilies[family]);
   }
-  assertDeferredExternalProof(CAPABILITY_MATRIX_DECLARATIONS_V1.services.notifications);
-  assertDeferredExternalProof(CAPABILITY_MATRIX_DECLARATIONS_V1.subpaths['./notifications']);
+  assertDeferredExternalDevelopmentProof(CAPABILITY_MATRIX_DECLARATIONS_V1.services.notifications);
+  assertDeferredExternalDevelopmentProof(CAPABILITY_MATRIX_DECLARATIONS_V1.subpaths['./notifications']);
 
   const consumer = await readFile(resolve(repoRoot, EXTERNAL_AUTHOR_PROOF), 'utf8');
   assert.match(consumer, /from '@happier-dev\/plugin-sdk\/notifications'/u);
@@ -148,7 +145,7 @@ test('retains notification source coverage without claiming external lifecycle p
 
 test('retains SecretsService source coverage without claiming external lifecycle proof', async () => {
   const repoRoot = resolve(import.meta.dirname, '..', '..', '..');
-  assertDeferredExternalProof(CAPABILITY_MATRIX_DECLARATIONS_V1.services.secrets);
+  assertDeferredExternalDevelopmentProof(CAPABILITY_MATRIX_DECLARATIONS_V1.services.secrets);
 
   const consumer = await readFile(resolve(repoRoot, EXTERNAL_AUTHOR_PROOF), 'utf8');
   assert.match(consumer, /secrets:\s*\[\{\s*id:\s*DOCUMENT_REVIEW_WEBHOOK_TOKEN\s*\}\]/u);
@@ -162,19 +159,34 @@ test('retains SecretsService source coverage without claiming external lifecycle
   assert.match(consumer, /expectedRevision:\s*current\.revision/u);
 });
 
-test('records the r1.0 Composer families as deferred until a maintained public plugin proves each live lifecycle', () => {
-  for (const family of [
-    'composerReferences',
-    'composerAttachments',
-    'composerControls',
-    'composerRegions',
-  ]) {
+test('records current Composer and Session-header source consumers without promoting unrecorded loaded or release proof', async () => {
+  const expectedConsumers = {
+    composerReferences: EXTERNAL_COMPOSER_AUTHOR_PROOF,
+    composerAttachments: TRIAGE_COMPOSER_PROOF,
+    composerControls: TRIAGE_COMPOSER_PROOF,
+    composerRegions: EXTERNAL_COMPOSER_AUTHOR_PROOF,
+    sessionHeaderActions: CHANNELS_COMPOSER_PROOF,
+  };
+
+  for (const [family, sourceConsumer] of Object.entries(expectedConsumers)) {
     const declaration = CAPABILITY_MATRIX_DECLARATIONS_V1.manifestFamilies[family];
-    assert.deepEqual(declaration.availabilityDisposition, 'deferred');
-    assert.equal(declaration.provingConsumer, 'no current positive consumer');
-    assert.equal(typeof declaration.unblockCondition, 'string');
-    assert.notEqual(declaration.unblockCondition.length, 0);
+    assert.equal(declaration.availabilityDisposition, 'available');
+    assert.equal(declaration.provingConsumer, sourceConsumer);
+    assert.equal(Object.hasOwn(declaration, 'unblockCondition'), false);
   }
+
+  const repoRoot = resolve(import.meta.dirname, '..', '..', '..');
+  const [externalAuthor, triage, channels] = await Promise.all([
+    readFile(resolve(repoRoot, EXTERNAL_COMPOSER_AUTHOR_PROOF), 'utf8'),
+    readFile(resolve(repoRoot, TRIAGE_COMPOSER_PROOF), 'utf8'),
+    readFile(resolve(repoRoot, CHANNELS_COMPOSER_PROOF), 'utf8'),
+  ]);
+  assert.match(externalAuthor, /composer:\s*\{/u);
+  assert.match(externalAuthor, /references:\s*\{/u);
+  assert.match(externalAuthor, /regions:\s*\{/u);
+  assert.match(triage, /attachments:\s*\{/u);
+  assert.match(triage, /controls:\s*\{/u);
+  assert.match(channels, /sessionHeaderActions:\s*\{/u);
   assert.equal(
     Object.hasOwn(CAPABILITY_MATRIX_DECLARATIONS_V1.manifestFamilies, 'composerReferenceProviders'),
     false,

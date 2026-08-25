@@ -45,6 +45,10 @@ export type PopoverProps = Readonly<{
   placement?: 'auto' | 'top' | 'bottom' | 'left' | 'right';
   disabled?: boolean;
   testID?: string;
+  /** Optional composite-owner tab stop for the built-in trigger. */
+  triggerTabIndex?: -1 | 0;
+  /** Optional composite-owner focus target used when the overlay closes. */
+  focusReturnRef?: RefObject<unknown>;
 }>;
 
 type OverlayTriggerMode = 'toggle' | 'context';
@@ -84,6 +88,8 @@ function PopoverPresentation({
   placement,
   disabled,
   testID,
+  triggerTabIndex,
+  focusReturnRef: requestedFocusReturnRef,
   autoFocusOnOpen = false,
   triggerMode = 'toggle',
   presentation = 'popover',
@@ -100,7 +106,8 @@ function PopoverPresentation({
   const host = useOptionalPluginUiPresentationHost();
   const followScrollRef = useOptionalPluginUiPopoverScrollSource();
   const anchorRef = useRef<View | null>(null);
-  const focusReturnRef = useRef<View | null>(null);
+  const ownedFocusReturnRef = useRef<View | null>(null);
+  const focusReturnRef = requestedFocusReturnRef ?? ownedFocusReturnRef;
   const toggle = useCallback(() => onOpenChange(triggerMode === 'context' ? true : !open), [onOpenChange, open, triggerMode]);
   const openContextMenu = useCallback((event: unknown) => {
     requestContextOpen(event, onOpenChange);
@@ -136,7 +143,7 @@ function PopoverPresentation({
     <View ref={anchorRef} collapsable={false}>
       <HappierPressable
         controlRef={(node) => {
-          focusReturnRef.current = node as View | null;
+          if (requestedFocusReturnRef === undefined) ownedFocusReturnRef.current = node as View | null;
         }}
         onPress={toggle}
         onLongPress={triggerMode === 'context' ? openContextMenu : undefined}
@@ -147,6 +154,7 @@ function PopoverPresentation({
         hasPopup={isMenuPresentation ? 'menu' : hasContent ? 'dialog' : undefined}
         accessibilityLabel={triggerAccessibilityLabel}
         accessibilityRole="button"
+        tabIndex={triggerTabIndex}
         testID={testID}
         style={(state) => ({
           ...(nativeMinimumTouchTarget === undefined ? {} : {
@@ -167,7 +175,7 @@ function PopoverPresentation({
             open,
             anchorRef: anchorRef as React.RefObject<unknown>,
             ...(followScrollRef ? { followScrollRef } : {}),
-            focusReturnRef: focusReturnRef as React.RefObject<unknown>,
+            focusReturnRef,
             initialFocusRef,
             placement: placement ?? 'auto',
             presentation,

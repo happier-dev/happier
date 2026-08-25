@@ -130,6 +130,8 @@ export type HappierListItemProps = Readonly<{
    * modifier keys one press was made with.
    */
   onPress?: (event?: HappierGestureResponderEvent) => unknown;
+  /** @internal Composite-owner secondary action request. */
+  onContextMenu?: (event: unknown) => void;
   disabled?: boolean;
   busy?: boolean;
   selected?: boolean;
@@ -284,6 +286,7 @@ export function HappierListItem({
   accessoryOutsidePressable,
   tone = 'neutral',
   onPress,
+  onContextMenu,
   disabled,
   busy,
   selected,
@@ -448,6 +451,7 @@ export function HappierListItem({
       controlRef={roving?.register}
       tabIndex={behavior.tabIndex}
       onKeyDown={roving?.onKeyDown}
+      onContextMenu={onContextMenu}
       onPress={(event) => onPress?.(event)}
       style={(state) => ({
         width: '100%',

@@ -37,7 +37,6 @@ const VOICE_CONVERSATION_OPTIONAL_METHODS = Object.freeze([
     'dispose',
     'encodePostCancelControls',
     'encodePostBargeInControls',
-    'setInputMuted',
 ] as const);
 
 const requireObject = requireStaticRegistrationObject;
@@ -285,16 +284,6 @@ export function snapshotVoiceProviderRuntime(
             );
             return Object.freeze({ ...(listCatalog ? { listCatalog } : {}) });
         })();
-    const optionalMethods: Record<string, unknown> = {};
-    for (const methodName of VOICE_CONVERSATION_OPTIONAL_METHODS) {
-        const method = captureStaticRegistrationMethod(
-            receiver,
-            methodName,
-            `Voice conversation runtime.${methodName}`,
-            false,
-        );
-        if (method !== undefined) optionalMethods[methodName] = method;
-    }
     const microphoneMode = readVoiceRuntimeMember(
         receiver,
         'microphoneMode',
@@ -321,6 +310,23 @@ export function snapshotVoiceProviderRuntime(
         && outputLevelMeter !== 'unavailable') {
         throw new TypeError('Voice conversation runtime.outputLevelMeter must be measured or unavailable');
     }
+    const optionalMethods: Record<string, unknown> = {};
+    for (const methodName of VOICE_CONVERSATION_OPTIONAL_METHODS) {
+        const method = captureStaticRegistrationMethod(
+            receiver,
+            methodName,
+            `Voice conversation runtime.${methodName}`,
+            false,
+        );
+        if (method !== undefined) optionalMethods[methodName] = method;
+    }
+    const setInputMuted = captureStaticRegistrationMethod(
+        receiver,
+        'setInputMuted',
+        'Voice conversation runtime.setInputMuted',
+        microphoneMode === 'provider_managed',
+    );
+    if (setInputMuted !== undefined) optionalMethods.setInputMuted = setInputMuted;
     return Object.freeze({
         kind: 'conversation' as const,
         protocol,

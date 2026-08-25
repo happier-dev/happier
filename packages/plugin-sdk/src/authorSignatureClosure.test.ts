@@ -12,6 +12,51 @@ function hasExportedType(sourceFile: ts.SourceFile, name: string): boolean {
 }
 
 describe('author signature closure source contract', () => {
+    it('publishes the Protocol-owned quota scope used by Connected Accounts classifications', async () => {
+        const [connectedAccountsSource, connectedAccountsPublicSource] = await Promise.all([
+            readFile(new URL('./connectedAccounts.ts', import.meta.url), 'utf8'),
+            readFile(new URL('./connected-accounts/index.public.ts', import.meta.url), 'utf8'),
+        ]);
+
+        expect(connectedAccountsSource).toContain(
+            "export type { ProviderAccountUsageQuotaScopeV1 } from '@happier-dev/protocol/connect/account-usage-primitives';",
+        );
+        expect(connectedAccountsPublicSource).toContain(
+            "export type { ProviderAccountUsageQuotaScopeV1 } from '../connectedAccounts.js';",
+        );
+    });
+
+    it('names targeted-contribution selector signatures through Protocol-owned public aliases', async () => {
+        const [publicContractText, uiPublicSource] = await Promise.all([
+            readFile(new URL('./ui/publicContract.ts', import.meta.url), 'utf8'),
+            readFile(new URL('./ui/index.public.ts', import.meta.url), 'utf8'),
+        ]);
+        const sourceFile = ts.createSourceFile(
+            'publicContract.ts',
+            publicContractText,
+            ts.ScriptTarget.Latest,
+            true,
+            ts.ScriptKind.TS,
+        );
+        const declarationText = (name: string): string => {
+            const declaration = sourceFile.statements.find((statement): statement is ts.TypeAliasDeclaration => (
+                ts.isTypeAliasDeclaration(statement) && statement.name.text === name
+            ));
+            return declaration?.type.getText(sourceFile) ?? '';
+        };
+
+        for (const name of [
+            'PluginUiTargetedContributionV1',
+            'PluginUiTargetedContributionsV1',
+            'PluginUiTargetedContributionSurfaceV1',
+            'PluginUiTargetedContributionOperationV1',
+            'PluginUiTargetedContributionSelectorV1',
+        ]) {
+            expect(declarationText(name), name).toBe(`Protocol${name}`);
+            expect(uiPublicSource, name).toContain(name);
+        }
+    });
+
     it('publishes the exact Action and Agent declaration dependencies of definePlugin', async () => {
         const [sourceText, actionPublicSource, agentPublicSource] = await Promise.all([
             readFile(new URL('./definePlugin.ts', import.meta.url), 'utf8'),

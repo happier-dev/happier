@@ -16,8 +16,11 @@ import type {
     SessionSystemRecordListQuery as PublicSessionSystemRecordListQuery,
     SessionSystemRecordPage as PublicSessionSystemRecordPage,
     SessionSystemRecordReadRequest as PublicSessionSystemRecordReadRequest,
+    SessionSystemRecordReadRequestV1 as PublicSessionSystemRecordReadRequestV1,
+    SessionSystemRecordReadResultV1 as PublicSessionSystemRecordReadResultV1,
     SessionSystemRecordRevision as PublicSessionSystemRecordRevision,
     SessionSystemRecordUpsertRequest as PublicSessionSystemRecordUpsertRequest,
+    SessionSystemRecordWriteRequestV1 as PublicSessionSystemRecordWriteRequestV1,
 } from './index.js';
 import * as subagents from './subagents.js';
 import * as workState from './workState.js';
@@ -180,6 +183,9 @@ describe('General Sessions package-local projections', () => {
             .toBe(protocol.SessionMessageProvenanceV1Schema);
         expect(publicSessions.SessionMessageProvenanceV1Schema)
             .toBe(protocol.SessionMessageProvenanceV1Schema);
+        expect(publicSessions.isNonSteerablePromptPayload)
+            .toBe(agents.isNonSteerablePromptPayload);
+        expect(publicSessions.parseSpecialCommand).toBe(agents.parseSpecialCommand);
         expect(sessions.CHANGE_TITLE_TOOL_NAME_ALIASES).toBe(protocolTools.CHANGE_TITLE_TOOL_NAME_ALIASES);
         expect(sessions.isChangeTitleToolNameAlias).toBe(protocolTools.isChangeTitleToolNameAlias);
         expect(sessions.HappierStructuredInputV1Schema).toBe(protocolRuntime.HappierStructuredInputV1Schema);
@@ -290,6 +296,12 @@ describe('General Sessions package-local projections', () => {
         expectTypeOf<PublicSessionSystemRecordReadRequest>().toEqualTypeOf<SessionSystemRecordReadRequest>();
         expectTypeOf<PublicSessionSystemRecordRevision>().toEqualTypeOf<SessionSystemRecordRevision>();
         expectTypeOf<PublicSessionSystemRecordUpsertRequest>().toEqualTypeOf<SessionSystemRecordUpsertRequest>();
+        expectTypeOf<PublicSessionSystemRecordReadRequestV1>()
+            .toEqualTypeOf<agents.SessionSystemRecordReadRequestV1>();
+        expectTypeOf<PublicSessionSystemRecordReadResultV1>()
+            .toEqualTypeOf<agents.SessionSystemRecordReadResultV1>();
+        expectTypeOf<PublicSessionSystemRecordWriteRequestV1>()
+            .toEqualTypeOf<agents.SessionSystemRecordWriteRequestV1>();
         expectTypeOf<SessionHandle>().not.toHaveProperty('readMetadata');
         expectTypeOf<SessionHandle>().not.toHaveProperty('setDisplayTitle');
         expectTypeOf<SessionHandle['listSystemRecords']>().toEqualTypeOf<(
@@ -319,7 +331,7 @@ describe('General Sessions package-local projections', () => {
         expectTypeOf<SessionMediaService>().toHaveProperty('registerSourceRoot');
         expectTypeOf<SessionMediaSourceRoot>().toHaveProperty('publishGenerated');
         expectTypeOf<SessionMessagePart>().toHaveProperty('kind');
-        expectTypeOf<SessionSendRequest>().toMatchTypeOf<Readonly<{
+        expectTypeOf<Extract<SessionSendRequest, { kind: 'userText' }>>().toMatchTypeOf<Readonly<{
             kind: 'userText';
             text: string;
             idempotencyKey: string;

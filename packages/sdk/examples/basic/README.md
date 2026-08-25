@@ -1,24 +1,27 @@
 # Basic SDK example
 
-Install the exact candidate tarball and the TypeScript loader in a fresh
-consumer directory:
-
-```sh
-SDK_TARBALL=/absolute/path/to/happier-dev-sdk-<version>.tgz
-npm install --ignore-scripts --no-audit --no-fund "$SDK_TARBALL"
-npm install --save-dev --no-audit --no-fund tsx
-```
-
-Then set `HAPPIER_API_ENDPOINT` and `HAPPIER_TOKEN` (an API Token) and run
-the installed example with Node.js:
+Run this example from the current repository source against the existing
+development stack. Set `HAPPIER_API_ENDPOINT` and `HAPPIER_TOKEN` (an API
+Token), then invoke the checked-in example:
 
 ```sh
 HAPPIER_API_ENDPOINT=https://account.example \
 HAPPIER_TOKEN='hap_v1_…' \
 HAPPIER_ENDPOINT_MODE=server \
 HAPPIER_AGENT_ID=codex \
-node --import tsx ./node_modules/@happier-dev/sdk/examples/basic/index.ts
+yarn tsx packages/sdk/examples/basic/index.ts
 ```
+
+Publication remains separately authorized.
+
+For contributed Actions, use `happier.actions.search(...)`, then
+`happier.actions.get({ id })`, before passing the qualified id to
+`happier.actions.invoke(id, input)`. Here `happier` is the root client for
+daemon-local use and the selected machine-bound client for server use; do not
+invoke external Actions through an unbound server `account` client. Qualified
+ids use the canonical `<pluginId>/actions/<localId>` spelling; do not split the
+string manually to reconstruct a plugin identity. The generated raw
+`actions.action.spec.get(...)` path remains available.
 
 For a daemon-local endpoint, read the daemon's current HTTP port instead of
 assuming a fixed port:
@@ -35,9 +38,11 @@ current machine; it does not call `machines.list()` and does not require
 `HAPPIER_MACHINE_ID`.
 
 Set `HAPPIER_ENDPOINT_MODE=server` for an Account-server endpoint. The example
-uses the authenticated machine-list bootstrap to select an active machine, then
-binds subsequent Actions to that exact id. `HAPPIER_MACHINE_ID` is an optional
-server-mode override when the caller already knows the intended machine.
+uses the authenticated machine-list bootstrap and auto-selects only when exactly
+one active, non-revoked, non-replaced machine is eligible. With no eligible
+machine it stops with an error. With several, it prints the candidate ids and
+requires `HAPPIER_MACHINE_ID`; it never silently selects the first row. After
+selection, the example binds subsequent Actions to that exact id.
 
 Optional environment variables are `HAPPIER_MACHINE_ID`,
 `HAPPIER_WORKSPACE_PATH`, and `HAPPIER_AGENT_ID`. They respectively override
@@ -48,7 +53,11 @@ the catalog Agent routing id.
 qualified plugin identity. The example spawns a session, waits, consumes one
 item from `followTranscript()`, and leaves the async iterator early so its
 follow lease is released. It then sends a follow-up, waits again, prints JSON
-containing the session id and both followed and snapshot transcript data, and
-stops the session. The package also supports bounded execution-run streams
-through `client.runs.startStream(...)`; their iterator is cancelled on normal
+containing the session id, followed-item count, and up to three 160-character
+semantic history rows (`id`, `role`, `kind`, and `text`). It does not print raw
+follow payloads or raw transcript rows, then stops the session. If its initial
+message is rejected after Session creation, the example stops the committed
+Session from `HappierSessionInitialInputError` before reporting that error. The
+package also supports bounded execution-run streams through
+`client.runs.startStream(...)`; their iterator is cancelled on normal
 completion, early return, abort, or `client.close()`.

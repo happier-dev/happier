@@ -84,8 +84,8 @@ function requireReviewSessionStatusScope(
 }
 
 export const reviewReferenceProvider = {
-    async search(query, signal) {
-        requireActiveReviewOperation(signal);
+    async search(query, context) {
+        requireActiveReviewOperation(context.signal);
         const normalized = query.trim().toLowerCase();
         const candidates = normalized.length === 0
             ? REVIEW_REFERENCE_CANDIDATES
@@ -93,16 +93,16 @@ export const reviewReferenceProvider = {
                 [candidate.id, candidate.label, candidate.description]
                     .some((value) => value.toLowerCase().includes(normalized))
             ));
-        requireActiveReviewOperation(signal);
+        requireActiveReviewOperation(context.signal);
         return candidates;
     },
-    async resolve(candidateId, signal) {
-        requireActiveReviewOperation(signal);
+    async resolve(candidateId, context) {
+        requireActiveReviewOperation(context.signal);
         const candidate = REVIEW_REFERENCE_CANDIDATES.find((entry) => entry.id === candidateId);
         if (!candidate) {
             throw new Error('review_reference_not_found');
         }
-        requireActiveReviewOperation(signal);
+        requireActiveReviewOperation(context.signal);
         return {
             ...candidate,
             context: 'Review focus: authorization, secrets, and trust boundaries.',

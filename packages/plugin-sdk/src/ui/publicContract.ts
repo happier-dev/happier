@@ -14,7 +14,19 @@ import type {
     CurrentUiContextBoundedIncompletenessV1 as ProtocolCurrentUiContextBoundedIncompletenessV1,
     CurrentUiContextEntityV1 as ProtocolCurrentUiContextEntityV1,
     CurrentUiContextSnapshotV1 as ProtocolCurrentUiContextSnapshotV1,
+    ComposerControlStateContentTypeV1 as ProtocolComposerControlStateContentTypeV1,
+    ComposerControlStateV1 as ProtocolComposerControlStateV1,
     PluginUiContextEnrichmentV1 as ProtocolPluginUiContextEnrichmentV1,
+    PluginTargetedContributionSelectionV1 as ProtocolPluginUiTargetedContributionSelectionV1,
+    PluginUiTargetedContributionOperationV1 as ProtocolPluginUiTargetedContributionOperationV1,
+    PluginUiTargetedContributionPointRefV1 as ProtocolPluginUiTargetedContributionPointRefV1,
+    PluginUiTargetedContributionPointSnapshotV1 as ProtocolPluginUiTargetedContributionPointSnapshotV1,
+    PluginUiTargetedContributionProtocolSnapshotV1 as ProtocolPluginUiTargetedContributionProtocolSnapshotV1,
+    PluginUiTargetedContributionProtocolV1 as ProtocolPluginUiTargetedContributionProtocolV1,
+    PluginUiTargetedContributionSelectorV1 as ProtocolPluginUiTargetedContributionSelectorV1,
+    PluginUiTargetedContributionSurfaceV1 as ProtocolPluginUiTargetedContributionSurfaceV1,
+    PluginUiTargetedContributionV1 as ProtocolPluginUiTargetedContributionV1,
+    PluginUiTargetedContributionsV1 as ProtocolPluginUiTargetedContributionsV1,
 } from '@happier-dev/protocol/plugins/ui/client';
 
 /** Type-only public projection; Host API payloads remain ordinary JSON values. */
@@ -28,6 +40,7 @@ export type {
     ComposerContentHandleV1,
     ComposerContentInspectRequestV1,
     ComposerContentInspectResultV1,
+    ComposerContentInspectWireResultV1,
     ComposerContentMediaKindV1,
     ComposerContentMimeTypeV1,
     ComposerContentPickMediaRequestV1,
@@ -35,6 +48,8 @@ export type {
     ComposerSessionMediaContentV1,
     ComposerStagedMediaContentV1,
 } from '../composer.js';
+export type ComposerControlStateContentTypeV1 = ProtocolComposerControlStateContentTypeV1;
+export type ComposerControlStateV1 = ProtocolComposerControlStateV1;
 
 /**
  * Declaration-only projections for public UI author contracts.
@@ -162,7 +177,10 @@ export type PluginUiContainerV1 =
     | 'detailsPane'
     | 'bottomPane'
     | 'browserPanel'
-    | 'servicesPanel';
+    | 'servicesPanel'
+    | 'sessionSubagentLaunch'
+    | 'sessionSubagentDetails'
+    | 'sessionInfoSection';
 
 export type PluginUiMountContextV1 =
     | Readonly<{
@@ -239,69 +257,18 @@ export type PluginUiHostApiSurfaceThemeV1 = {
     };
 };
 
-export type PluginUiTargetedContributionProtocolV1 = Readonly<{
-    id: string;
-    version: number;
-}>;
-
-export type PluginUiTargetedContributionPointRefV1 = Readonly<{
-    pointId: string;
-    protocol: PluginUiTargetedContributionProtocolV1;
-}>;
-
-export type PluginUiTargetedContributionTargetV1 = Readonly<{
-    pluginId: string;
-    immutableGenerationId: string;
-}>;
-
-export type PluginUiTargetedContributionContributorV1 = Readonly<{
-    pluginId: string;
-    contributionId: string;
-    immutableGenerationId: string;
-}>;
-
-/** Exact-generation operation identity; its key is descriptive, never authority. */
-export type PluginUiTargetedContributionOperationV1 = {
-    point: PluginUiTargetedContributionPointRefV1;
-    contributor: PluginUiTargetedContributionContributorV1;
-    role: string;
-    action: PluginUiContributionIdentityV1;
-};
-
-/**
- * The exact current snapshot surface may be supplied directly to Plugin UI's
- * `TargetedSurface`; the mounted host rematches it before a child is rendered.
- */
-export type PluginUiTargetedContributionSurfaceV1 = {
-    point: PluginUiTargetedContributionPointRefV1;
-    contributor: PluginUiTargetedContributionContributorV1;
-    role: string;
-    presentation: 'content' | 'fill';
-};
-
-export type PluginUiTargetedContributionV1 = {
-    contributor: PluginUiTargetedContributionContributorV1;
-    protocol: PluginUiTargetedContributionProtocolV1;
-    descriptor?: PluginJsonValueV2;
-    operations: PluginUiTargetedContributionOperationV1[];
-    surfaces: PluginUiTargetedContributionSurfaceV1[];
-};
-
-export type PluginUiTargetedContributionProtocolSnapshotV1 = {
-    protocol: PluginUiTargetedContributionProtocolV1;
-    contributions: PluginUiTargetedContributionV1[];
-};
-
-export type PluginUiTargetedContributionPointSnapshotV1 = {
-    pointId: string;
-    protocols: PluginUiTargetedContributionProtocolSnapshotV1[];
-};
-
-/** The one target-filtered, immutable-generation admission snapshot for a mount. */
-export type PluginUiTargetedContributionsV1 = {
-    target: PluginUiTargetedContributionTargetV1;
-    points: PluginUiTargetedContributionPointSnapshotV1[];
-};
+/** Protocol owns the targeted-contribution grammar; SDK only names its author-facing aliases. */
+export type PluginUiTargetedContributionProtocolV1 = ProtocolPluginUiTargetedContributionProtocolV1;
+export type PluginUiTargetedContributionPointRefV1 = ProtocolPluginUiTargetedContributionPointRefV1;
+export type PluginUiTargetedContributionTargetV1 = ProtocolPluginUiTargetedContributionsV1['target'];
+export type PluginUiTargetedContributionContributorV1 = ProtocolPluginUiTargetedContributionV1['contributor'];
+export type PluginUiTargetedContributionOperationV1 = ProtocolPluginUiTargetedContributionOperationV1;
+export type PluginUiTargetedContributionSurfaceV1 = ProtocolPluginUiTargetedContributionSurfaceV1;
+export type PluginUiTargetedContributionV1 = ProtocolPluginUiTargetedContributionV1;
+export type PluginUiTargetedContributionProtocolSnapshotV1 = ProtocolPluginUiTargetedContributionProtocolSnapshotV1;
+export type PluginUiTargetedContributionPointSnapshotV1 = ProtocolPluginUiTargetedContributionPointSnapshotV1;
+export type PluginUiTargetedContributionsV1 = ProtocolPluginUiTargetedContributionsV1;
+export type PluginUiTargetedContributionSelectorV1 = ProtocolPluginUiTargetedContributionSelectorV1;
 
 /**
  * Portable author declaration for the Protocol-owned strict rich context.
@@ -383,11 +350,7 @@ export type OpenableContentReadResultV1 =
     | { status: 'tooLarge'; sizeBytes: number }
     | { status: 'unavailable' | 'changed' | 'unsupported' | 'cancelled' };
 
-export type PluginUiTargetedContributionSelectionV1 = {
-    target: PluginUiTargetedContributionTargetV1;
-    point: PluginUiTargetedContributionPointRefV1;
-    contributor: PluginUiTargetedContributionContributorV1;
-};
+export type PluginUiTargetedContributionSelectionV1 = ProtocolPluginUiTargetedContributionSelectionV1;
 
 export type PluginUiSelectActionInputTargetedRequestV1 = {
     operation: PluginUiTargetedContributionOperationV1;
@@ -876,6 +839,12 @@ export type PluginUiViewDestinationBindingInputV2 =
         target: PluginUiViewTargetV2 & { kind: 'services' };
         instancePolicy?: 'singleton';
         headerActions?: [];
+    }
+    | {
+        container: 'sessionSubagentLaunch' | 'sessionSubagentDetails';
+        target: { kind: 'session'; sessionIdPath?: string };
+        instancePolicy?: 'singleton';
+        headerActions?: [];
     };
 
 export type PluginUiPageHeaderActionV1 = {
@@ -885,7 +854,7 @@ export type PluginUiPageHeaderActionV1 = {
     icon?: PluginUiIconTokenV1;
     order?: number;
     /** A same-plugin Action local id, or one explicit semantic command. */
-    action: string | PluginUiSemanticCommandV1;
+    command: string | PluginUiSemanticCommandV1;
 };
 
 export type PluginUiViewV2Input = PluginUiViewDestinationBindingInputV2 & {
@@ -921,7 +890,7 @@ export type PluginSessionHeaderActionDescriptor = {
     icon?: PluginUiIconTokenV1;
     order?: number;
     /** A same-plugin Action local id, or one explicit semantic command. */
-    action: string | PluginUiSemanticCommandV1;
+    command: string | PluginUiSemanticCommandV1;
     availability?: PluginAvailabilityDescriptor;
 };
 

@@ -246,16 +246,6 @@ const INVENTORY = Object.freeze({
         default: './dist/host/fs/json-owner-file-lock/index.js',
       }),
     }),
-    Object.freeze({
-      specifier: './host/targeted-contributions',
-      sourceModule: 'src/host/targeted-contributions/index.ts',
-      visibility: 'host',
-      realm: 'daemon',
-      conditions: Object.freeze({
-        types: './dist/host/targeted-contributions/index.d.ts',
-        default: './dist/host/targeted-contributions/index.js',
-      }),
-    }),
   ]),
   symbols: Object.freeze([
     Object.freeze({
@@ -310,43 +300,6 @@ const INVENTORY = Object.freeze({
       sourceExport: 'withJsonOwnerFileLock',
       realm: 'daemon',
     }),
-    Object.freeze({
-      specifier: './host/targeted-contributions',
-      exportName: 'decodeTargetedContributionPointSemantics',
-      kind: 'value',
-      sourceModule: 'src/targetedContributionAuthoring.ts',
-      sourceExport: 'decodeTargetedContributionPointSemantics',
-      realm: 'daemon',
-    }),
-    Object.freeze({
-      specifier: './host/targeted-contributions',
-      exportName: 'projectDefinedTargetedContributionPointSemanticRefs',
-      kind: 'value',
-      sourceModule: 'src/targetedContributionAuthoring.ts',
-      sourceExport: 'projectDefinedTargetedContributionPointSemanticRefs',
-      realm: 'daemon',
-    }),
-    Object.freeze({
-      specifier: './host/targeted-contributions',
-      exportName: 'readTargetedContributionPointSemanticRefs',
-      kind: 'value',
-      sourceModule: 'src/targetedContributionAuthoring.ts',
-      sourceExport: 'readTargetedContributionPointSemanticRefs',
-      realm: 'daemon',
-    }),
-    ...[
-      'TargetedContributionPointSemanticInput',
-      'TargetedContributionPointSemanticOperation',
-      'TargetedContributionPointSemanticProjection',
-      'TargetedContributionPointSemanticSurface',
-    ].map((exportName) => Object.freeze({
-      specifier: './host/targeted-contributions',
-      exportName,
-      kind: 'type',
-      sourceModule: 'src/targetedContributionAuthoring.ts',
-      sourceExport: exportName,
-      realm: 'daemon',
-    })),
   ]),
 });
 
@@ -392,10 +345,6 @@ async function createPackageFixture(root = undefined) {
       './host/fs/json-owner-file-lock': {
         types: './dist/host/fs/json-owner-file-lock/index.d.ts',
         default: './dist/host/fs/json-owner-file-lock/index.js',
-      },
-      './host/targeted-contributions': {
-        types: './dist/host/targeted-contributions/index.d.ts',
-        default: './dist/host/targeted-contributions/index.js',
       },
     },
   };
@@ -445,31 +394,6 @@ async function createPackageFixture(root = undefined) {
       '',
       ].join('\n'),
   );
-  await writeFixtureFile(
-    root,
-    'src/targetedContributionAuthoring.ts',
-    [
-      '/** @moduleRealm daemon */',
-      'export type TargetedContributionPointSemanticInput = Readonly<{ point: string }>;',
-      'export type TargetedContributionPointSemanticOperation = Readonly<{ id: string }>;',
-      'export type TargetedContributionPointSemanticProjection = Readonly<{ point: string }>;',
-      'export type TargetedContributionPointSemanticSurface = Readonly<{ id: string }>;',
-      'export function decodeTargetedContributionPointSemantics() { return null; }',
-      'export function projectDefinedTargetedContributionPointSemanticRefs() { return []; }',
-      'export function readTargetedContributionPointSemanticRefs() { return []; }',
-      '',
-    ].join('\n'),
-  );
-  await writeFixtureFile(root, 'src/host/targeted-contributions/index.ts', [
-    "export type { TargetedContributionPointSemanticInput } from '../../targetedContributionAuthoring.js';",
-    "export type { TargetedContributionPointSemanticOperation } from '../../targetedContributionAuthoring.js';",
-    "export type { TargetedContributionPointSemanticProjection } from '../../targetedContributionAuthoring.js';",
-    "export type { TargetedContributionPointSemanticSurface } from '../../targetedContributionAuthoring.js';",
-    "export { decodeTargetedContributionPointSemantics } from '../../targetedContributionAuthoring.js';",
-    "export { projectDefinedTargetedContributionPointSemanticRefs } from '../../targetedContributionAuthoring.js';",
-    "export { readTargetedContributionPointSemanticRefs } from '../../targetedContributionAuthoring.js';",
-    '',
-  ].join('\n'));
   await seedFixturePublicationSpecs(root);
   return root;
 }
@@ -1010,6 +934,19 @@ test('source harness keeps local export declarations out of direct Protocol sche
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test('SDK Voice runtime public signature closes through the author inventory', async () => {
+  const report = await readCurrentPackageSourceReport();
+
+  assert.equal(
+    report.inventory.symbols.some((symbol) => (
+      symbol.specifier === './voice/client'
+      && symbol.exportName === 'RealtimeVoiceProviderRuntime'
+      && symbol.kind === 'type'
+    )),
+    true,
+  );
 });
 
 test('SDK source inventory assigns Voice exports to the three author publication specs', async () => {
@@ -3363,49 +3300,6 @@ test('current author signature closure terminates for recursive public author gr
       realm: 'any',
     },
   );
-  assert.deepEqual(
-    report.inventory.symbols
-      .filter((symbol) => symbol.specifier === './host/targeted-contributions')
-      .map(({ exportName, kind, realm }) => ({ exportName, kind, realm }))
-      .sort((left, right) => left.exportName.localeCompare(right.exportName)),
-    [
-      {
-        exportName: 'decodeTargetedContributionPointSemantics',
-        kind: 'value',
-        realm: 'daemon',
-      },
-      {
-        exportName: 'projectDefinedTargetedContributionPointSemanticRefs',
-        kind: 'value',
-        realm: 'daemon',
-      },
-      {
-        exportName: 'readTargetedContributionPointSemanticRefs',
-        kind: 'value',
-        realm: 'daemon',
-      },
-      {
-        exportName: 'TargetedContributionPointSemanticInput',
-        kind: 'type',
-        realm: 'daemon',
-      },
-      {
-        exportName: 'TargetedContributionPointSemanticOperation',
-        kind: 'type',
-        realm: 'daemon',
-      },
-      {
-        exportName: 'TargetedContributionPointSemanticProjection',
-        kind: 'type',
-        realm: 'daemon',
-      },
-      {
-        exportName: 'TargetedContributionPointSemanticSurface',
-        kind: 'type',
-        realm: 'daemon',
-      },
-    ],
-  );
 });
 
 test('CLI exempts standard library types that have ambient declaration merges', async () => {
@@ -4075,6 +3969,7 @@ test('current Actions canonical source does not reach its generated entrypoint b
       'export type PluginRegistrationRight = Readonly<{ family: string }>;',
       'export type PluginAgentRuntimeRegistration = Readonly<{ localId: string }>;',
       'export type PluginRuntimeRegistration = Readonly<{ family: string }>;',
+      'export function createPluginActionHandlerNotStartedError() { return new Error(\'not started\'); }',
       'export function createPluginRegistrationScope() {}',
       '',
     ].join('\n'));
@@ -4084,37 +3979,17 @@ test('current Actions canonical source does not reach its generated entrypoint b
       'export function withJsonOwnerFileLock() {}',
       '',
     ].join('\n'));
-    await writeFixtureFile(root, 'src/apiSurfaceTargetedContributionsProbe.ts', [
-      '/** @moduleRealm daemon */',
-      'export type TargetedContributionPointSemanticInput = Readonly<{ point: string }>;',
-      'export type TargetedContributionPointSemanticOperation = Readonly<{ id: string }>;',
-      'export type TargetedContributionPointSemanticProjection = Readonly<{ point: string }>;',
-      'export type TargetedContributionPointSemanticSurface = Readonly<{ id: string }>;',
-      'export function decodeTargetedContributionPointSemantics() { return null; }',
-      'export function projectDefinedTargetedContributionPointSemanticRefs() { return []; }',
-      'export function readTargetedContributionPointSemanticRefs() { return []; }',
-      '',
-    ].join('\n'));
     await writeFixtureFile(root, 'src/host/registration/index.public.ts', [
       "export type { PluginAgentRuntimeRegistration } from '../../apiSurfaceReachabilityProbe.js';",
       "export type { PluginRegistrationRight } from '../../apiSurfaceReachabilityProbe.js';",
       "export type { PluginRuntimeRegistration } from '../../apiSurfaceReachabilityProbe.js';",
+      "export { createPluginActionHandlerNotStartedError } from '../../apiSurfaceReachabilityProbe.js';",
       "export { createPluginRegistrationScope } from '../../apiSurfaceReachabilityProbe.js';",
       '',
     ].join('\n'));
     await writeFixtureFile(root, 'src/host/fs/json-owner-file-lock/index.public.ts', [
       "export { reclaimJsonOwnerFileLockSnapshot } from '../../../apiSurfaceLockProbe.js';",
       "export { withJsonOwnerFileLock } from '../../../apiSurfaceLockProbe.js';",
-      '',
-    ].join('\n'));
-    await writeFixtureFile(root, 'src/host/targeted-contributions/index.public.ts', [
-      "export type { TargetedContributionPointSemanticInput } from '../../apiSurfaceTargetedContributionsProbe.js';",
-      "export type { TargetedContributionPointSemanticOperation } from '../../apiSurfaceTargetedContributionsProbe.js';",
-      "export type { TargetedContributionPointSemanticProjection } from '../../apiSurfaceTargetedContributionsProbe.js';",
-      "export type { TargetedContributionPointSemanticSurface } from '../../apiSurfaceTargetedContributionsProbe.js';",
-      "export { decodeTargetedContributionPointSemantics } from '../../apiSurfaceTargetedContributionsProbe.js';",
-      "export { projectDefinedTargetedContributionPointSemanticRefs } from '../../apiSurfaceTargetedContributionsProbe.js';",
-      "export { readTargetedContributionPointSemanticRefs } from '../../apiSurfaceTargetedContributionsProbe.js';",
       '',
     ].join('\n'));
     const result = runJsonCli(root, ['--write']);

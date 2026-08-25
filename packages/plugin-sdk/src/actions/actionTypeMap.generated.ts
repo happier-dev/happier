@@ -62,7 +62,7 @@ export type ActionSurfaceBindingCaller = Readonly<{
     origin: 'schedule' | 'manual' | 'event' | 'conversation';
 }>;
 export type ActionSurfaceBindingContext = {
-    readonly actionId: 'action.spec.search' | 'action.spec.get' | 'action.options.resolve' | 'action.invoke' | 'session.open' | 'session.fork' | 'session.continue_with_replay' | 'session.rollback' | 'session.checkpoint_code_rollback' | 'session.checkpoint' | 'session.restore' | 'session.handoff' | 'session.handoff.prepare_target' | 'session.handoff.prepare_target.resume' | 'session.handoff.prepare_target_result.get' | 'session.handoff.commit' | 'session.handoff.abort' | 'session.handoff.status.get' | 'session.spawn_new' | 'paths.list_recent' | 'projects.list' | 'prompts.invocations.list' | 'prompts.invocation.resolve' | 'machines.list' | 'servers.list' | 'review.engines.list' | 'agents.backends.list' | 'agents.models.list' | 'agents.config_options.list' | 'agents.session_modes.list' | 'sessions.spawn.profiles.list' | 'sessions.spawn.connected_services.list' | 'sessions.spawn.mcp_servers.preview' | 'session.message.send' | 'session.stop' | 'session.title.set' | 'session.model.set' | 'session.permission_mode.set' | 'session.archive' | 'session.unarchive' | 'session.status.get' | 'session.work_state.get' | 'session.goal.get' | 'session.goal.set' | 'session.goal.clear' | 'session.usageLimit.waitResume.enable' | 'session.usageLimit.waitResume.cancel' | 'session.usageLimit.checkNow' | 'session.usageLimit.consumeResetCredit' | 'session.terminalComposer.clear' | 'session.pendingInput.interruptAndRun' | 'session.vendor_plugin_catalog.list' | 'session.skill_catalog.list' | 'session.history.get' | 'session.wait.idle' | 'review.start' | 'subagents.plan.start' | 'subagents.delegate.start' | 'voice_agent.start' | 'reviews.comments.create' | 'reviews.comments.list' | 'reviews.comments.get' | 'reviews.comments.transition' | 'reviews.comments.edit' | 'reviews.comments.reply' | 'reviews.comments.redact' | 'reviews.comments.setDisposition' | 'reviews.comments.attachEvidence' | 'reviews.comments.bulkTransition' | 'sessions.subagents.list' | 'sessions.subagents.get' | 'sessions.subagents.watch' | 'sessions.subagents.upsert' | 'sessions.subagents.updateStatus' | 'sessions.subagents.complete' | 'execution.run.start' | 'execution.run.list' | 'execution.run.get' | 'execution.run.send' | 'execution.run.ensure' | 'execution.run.ensure_or_start' | 'execution.run.stream.start' | 'execution.run.stream.read' | 'execution.run.stream.cancel' | 'execution.run.stop' | 'execution.run.action' | 'execution.run.wait' | 'session.target.primary.set' | 'session.target.tracked.set' | 'session.list' | 'session.activity.get' | 'session.messages.recent.get' | 'session.transcript.get' | 'session.events.get' | 'session.log.tail' | 'transcript.page' | 'transcript.readAfter' | 'transcript.follow' | 'transcript.unfollow' | 'transcript.import' | 'transcript.search' | 'session.permission.respond' | 'session.permission.remote.pending.list' | 'session.permission.remote.respond' | 'session.permission.remote.grants.list' | 'session.permission.remote.grants.revoke' | 'session.user_action.answer' | 'session.mode.set' | 'sessions.external.candidates.list' | 'sessions.external.link.ensure' | 'sessions.external.follow' | 'sessions.external.unfollow' | 'sessions.external.backgroundFollow.set' | 'sessions.external.status.get' | 'sessions.external.transcript.page' | 'sessions.external.transcript.readAfter' | 'sessions.external.takeover' | 'sessions.external.materialize.start' | 'sessions.external.takeover.start' | 'sessions.external.operation.status.get' | 'sessions.external.operation.cancel' | 'sessions.external.operation.resume' | 'sessions.external.operation.retry' | 'sessions.external.operation.discard' | 'ui.voice_global.reset' | 'ui.voice_agent.teleport' | 'ui.current_context.read' | 'ui.current_context.command.invoke' | 'ui.pet.choose' | 'memory.search' | 'memory.get_window' | 'memory.ensure_up_to_date' | 'prompt_doc.update' | 'prompt_bundle.update' | 'prompt_asset.export' | 'prompt_registry.install' | 'daemon.promptAssets.discover' | 'daemon.promptAssets.delete' | 'daemon.promptRegistry.scanSource' | 'daemon.promptRegistry.install' | 'daemon.filesystem.readFile' | 'daemon.filesystem.writeFile' | 'daemon.filesystem.listDirectory' | 'daemon.filesystem.getDirectoryTree' | 'daemon.filesystem.listRoots' | 'daemon.filesystem.browseDirectory' | 'bugreport.collectDiagnostics' | 'bugreport.getLogTail' | 'bugreport.uploadArtifact' | 'browser.view.open' | 'browser.view.close' | 'browser.view.focus' | 'browser.target.set' | 'browser.navigate' | 'browser.reload' | 'browser.goBack' | 'browser.goForward' | 'browser.stop' | 'browser.diagnostics.snapshot' | 'browser.diagnostics.clear' | 'browser.diagnostics.pause' | 'browser.diagnostics.resume' | 'browser.diagnostics.eval' | 'browser.diagnostics.getProperties' | 'browser.diagnostics.releaseObjectGroup' | 'browser.diagnostics.elementPicker.start' | 'browser.diagnostics.elementPicker.cancel' | 'browser.context.capturePage' | 'browser.context.captureScreenshot' | 'browser.context.captureSelectedElement' | 'browser.context.captureNetworkSummary' | 'browser.context.captureConsoleSummary' | 'browser.context.annotation.start' | 'browser.context.annotation.cancel' | 'browser.context.annotation.captureRegion' | 'browser.context.annotation.captureElement' | 'browser.context.annotation.attachComment' | 'browser.context.annotation.attachStroke' | 'browser.context.annotation.attachStyleIntent' | 'browser.context.attachToComposer' | 'browser.context.attachToAgentTurn' | 'browser.context.clear' | 'browser.automation.status' | 'browser.automation.snapshot' | 'browser.automation.semanticSnapshot' | 'browser.automation.queryElements' | 'browser.automation.waitFor' | 'browser.automation.timeline.get' | 'browser.automation.cancelActive' | 'browser.automation.navigate' | 'browser.automation.reload' | 'browser.automation.goBack' | 'browser.automation.goForward' | 'browser.automation.click' | 'browser.automation.tap' | 'browser.automation.type' | 'browser.automation.press' | 'browser.automation.scroll' | 'browser.automation.hover' | 'browser.automation.focus' | 'browser.automation.select' | 'browser.automation.setValue' | 'browser.automation.upload' | 'browser.automation.drag' | 'browser.recording.start' | 'browser.recording.stop' | 'browser.recording.cancel' | 'browser.recording.status' | 'browser.recording.listForView' | 'browser.recording.discard' | 'browser.recording.cleanupExpired' | 'browser.recording.attachToComposer' | 'localServices.inventory.list' | 'localServices.inventory.refresh' | 'localServices.launcher.snapshot' | 'localServices.launcher.start' | 'localServices.launcher.openPreview' | 'localServices.launcher.registerPreview' | 'localServices.launcher.history.clear' | 'localServices.preview.openOrCreate' | 'localServices.preview.status' | 'localServices.preview.revoke' | 'localServices.publicPreview.create' | 'localServices.publicPreview.status' | 'localServices.publicPreview.revoke' | 'localServices.publicPreview.copyUrl' | 'localServices.actions.copyUrl' | 'localServices.actions.openPreview' | 'localServices.actions.forget' | 'localServices.actions.stopManaged' | 'localServices.actions.restartManaged' | 'localServices.actions.terminateDetected' | 'peerMediation.observability.snapshot' | 'peerMediation.observability.subscribe' | 'peerMediation.observability.unsubscribe' | 'devices.simulator.list' | 'devices.simulator.stream.keyframe' | 'devices.simulator.stream.snapshot' | 'devices.simulator.stream.quality.set' | 'devices.simulator.stream.fps.set' | 'devices.simulator.stream.scale.set' | 'devices.simulator.lease.acquire' | 'devices.simulator.lease.renew' | 'devices.simulator.lease.release' | 'devices.simulator.input.tap' | 'devices.simulator.input.swipe' | 'devices.simulator.input.text' | 'devices.simulator.input.key' | 'devices.simulator.input.button' | 'devices.simulator.input.orientation' | 'devices.simulator.input.pinch' | 'devices.simulator.input.rotate' | 'devices.simulator.sideband.request' | 'approval.request.list' | 'approval.request.get' | 'approval.request.create' | 'approval.request.decide' | 'plugins.scaffold' | 'plugins.install' | 'plugins.uninstall' | 'plugins.dev.submit' | 'plugins.dev.install' | 'plugins.dev.typecheck' | 'plugins.dev.build' | 'plugins.dev.test' | 'plugins.doctor' | 'plugins.pack' | 'plugins.reload' | 'plugins.list' | 'plugins.change.status' | 'plugins.sessionHooks.status.get' | 'plugins.sessionHooks.install' | 'plugins.sessionHooks.disable' | 'plugins.sessionHooks.enable' | 'plugins.sessionHooks.uninstall' | 'plugins.settings.list' | 'plugins.settings.get' | 'plugins.settings.set' | 'plugins.settings.reset' | 'plugins.settings.secret.status' | 'plugins.settings.secret.bind' | 'plugins.settings.secret.unbind' | 'plugins.settings.secret.delete' | 'plugins.permissions.grants.list' | 'plugins.permissions.grants.request' | 'plugins.permissions.grants.grant' | 'plugins.permissions.grants.revoke' | 'plugins.permissions.grants.dismissRequest' | 'plugin.webhook.endpoint.ensure' | 'plugin.webhook.endpoint.read' | 'plugin.webhook.endpoint.revoke' | 'plugin.webhook.endpoint.retarget' | 'plugin.webhook.endpoint.checkCorrespondence' | 'plugin.webhook.delivery.movePending' | 'plugin.webhook.endpoint.credential.configure' | 'plugin.webhook.endpoint.credential.rotate' | 'plugin.webhook.endpoint.credential.finishRotation' | 'account.plugins.data.erase' | 'account.sessions.signOutEverywhere' | 'account.apiTokens.create' | 'account.apiTokens.list' | 'account.apiTokens.revoke' | 'account.apiTokens.revokeAll' | 'automation.event.sources.list' | 'automation.event.admit' | 'automation.event.source.status.report' | 'automation.conversation.targets.list' | 'automation.conversation.target.verify' | 'automation.conversation.admit' | 'scm.pullRequest.list' | 'scm.pullRequest.get' | 'scm.pullRequest.openOrReuse' | 'scm.pullRequest.openCompose' | 'scm.pullRequest.checkout' | 'scm.pullRequest.prepareWorktree' | 'scm.reviewWorkspace.materializePrepared' | 'scm.pullRequest.runStacked' | 'scm.repository.clone' | 'scm.repository.init' | 'scm.repository.removeIndexLock' | 'scm.hostingRepository.describePublishTargets' | 'scm.hostingRepository.publish' | 'scm.diffSummary.generate';
+    readonly actionId: 'action.spec.search' | 'action.spec.get' | 'action.options.resolve' | 'action.invoke' | 'session.open' | 'session.fork' | 'session.continue_with_replay' | 'session.rollback' | 'session.checkpoint_code_rollback' | 'session.checkpoint' | 'session.restore' | 'session.handoff' | 'session.handoff.prepare_target' | 'session.handoff.prepare_target.resume' | 'session.handoff.prepare_target_result.get' | 'session.handoff.commit' | 'session.handoff.abort' | 'session.handoff.status.get' | 'session.spawn_new' | 'paths.list_recent' | 'projects.list' | 'prompts.invocations.list' | 'prompts.invocation.resolve' | 'machines.list' | 'servers.list' | 'review.engines.list' | 'agents.backends.list' | 'agents.models.list' | 'agents.config_options.list' | 'agents.session_modes.list' | 'sessions.spawn.profiles.list' | 'sessions.spawn.connected_services.list' | 'sessions.spawn.mcp_servers.preview' | 'session.message.send' | 'session.stop' | 'session.title.set' | 'session.model.set' | 'session.permission_mode.set' | 'session.archive' | 'session.unarchive' | 'session.status.get' | 'session.work_state.get' | 'session.goal.get' | 'session.goal.set' | 'session.goal.clear' | 'session.usageLimit.waitResume.enable' | 'session.usageLimit.waitResume.cancel' | 'session.usageLimit.checkNow' | 'session.usageLimit.consumeResetCredit' | 'session.terminalComposer.clear' | 'session.pendingInput.interruptAndRun' | 'session.vendor_plugin_catalog.list' | 'session.skill_catalog.list' | 'session.history.get' | 'session.wait.idle' | 'review.start' | 'subagents.plan.start' | 'subagents.delegate.start' | 'voice_agent.start' | 'reviews.comments.create' | 'reviews.comments.list' | 'reviews.comments.get' | 'reviews.comments.transition' | 'reviews.comments.edit' | 'reviews.comments.reply' | 'reviews.comments.redact' | 'reviews.comments.setDisposition' | 'reviews.comments.attachEvidence' | 'reviews.comments.bulkTransition' | 'reviews.comments.claimPublicationDispatch' | 'sessions.subagents.list' | 'sessions.subagents.get' | 'sessions.subagents.watch' | 'sessions.subagents.upsert' | 'sessions.subagents.updateStatus' | 'sessions.subagents.complete' | 'execution.run.start' | 'execution.run.list' | 'execution.run.get' | 'execution.run.send' | 'execution.run.ensure' | 'execution.run.ensure_or_start' | 'execution.run.stream.start' | 'execution.run.stream.read' | 'execution.run.stream.cancel' | 'execution.run.stop' | 'execution.run.action' | 'execution.run.wait' | 'session.target.primary.set' | 'session.target.tracked.set' | 'session.list' | 'session.activity.get' | 'session.messages.recent.get' | 'session.transcript.get' | 'session.events.get' | 'session.log.tail' | 'transcript.page' | 'transcript.readAfter' | 'transcript.follow' | 'transcript.unfollow' | 'transcript.import' | 'transcript.search' | 'session.permission.respond' | 'session.permission.remote.pending.list' | 'session.permission.remote.respond' | 'session.user_action.remote.answer' | 'session.permission.remote.grants.list' | 'session.permission.remote.grants.revoke' | 'session.user_action.answer' | 'session.mode.set' | 'sessions.external.candidates.list' | 'sessions.external.link.ensure' | 'sessions.external.follow' | 'sessions.external.unfollow' | 'sessions.external.backgroundFollow.set' | 'sessions.external.status.get' | 'sessions.external.transcript.page' | 'sessions.external.transcript.readAfter' | 'sessions.external.takeover' | 'sessions.external.materialize.start' | 'sessions.external.takeover.start' | 'sessions.external.operation.status.get' | 'sessions.external.operation.cancel' | 'sessions.external.operation.resume' | 'sessions.external.operation.retry' | 'sessions.external.operation.discard' | 'ui.voice_global.reset' | 'ui.voice_agent.teleport' | 'ui.current_context.read' | 'ui.current_context.command.invoke' | 'ui.pet.choose' | 'memory.search' | 'memory.get_window' | 'memory.ensure_up_to_date' | 'prompt_doc.update' | 'prompt_bundle.update' | 'prompt_asset.export' | 'prompt_registry.install' | 'daemon.promptAssets.discover' | 'daemon.promptAssets.delete' | 'daemon.promptRegistry.scanSource' | 'daemon.promptRegistry.install' | 'daemon.filesystem.readFile' | 'daemon.filesystem.writeFile' | 'daemon.filesystem.listDirectory' | 'daemon.filesystem.getDirectoryTree' | 'daemon.filesystem.listRoots' | 'daemon.filesystem.browseDirectory' | 'bugreport.collectDiagnostics' | 'bugreport.getLogTail' | 'bugreport.uploadArtifact' | 'browser.view.open' | 'browser.view.close' | 'browser.view.focus' | 'browser.target.set' | 'browser.navigate' | 'browser.reload' | 'browser.goBack' | 'browser.goForward' | 'browser.stop' | 'browser.diagnostics.snapshot' | 'browser.diagnostics.clear' | 'browser.diagnostics.pause' | 'browser.diagnostics.resume' | 'browser.diagnostics.eval' | 'browser.diagnostics.getProperties' | 'browser.diagnostics.releaseObjectGroup' | 'browser.diagnostics.elementPicker.start' | 'browser.diagnostics.elementPicker.cancel' | 'browser.context.capturePage' | 'browser.context.captureScreenshot' | 'browser.context.captureSelectedElement' | 'browser.context.captureNetworkSummary' | 'browser.context.captureConsoleSummary' | 'browser.context.annotation.start' | 'browser.context.annotation.cancel' | 'browser.context.annotation.captureRegion' | 'browser.context.annotation.captureElement' | 'browser.context.annotation.attachComment' | 'browser.context.annotation.attachStroke' | 'browser.context.annotation.attachStyleIntent' | 'browser.context.attachToComposer' | 'browser.context.attachToAgentTurn' | 'browser.context.clear' | 'browser.automation.status' | 'browser.automation.snapshot' | 'browser.automation.semanticSnapshot' | 'browser.automation.queryElements' | 'browser.automation.waitFor' | 'browser.automation.timeline.get' | 'browser.automation.cancelActive' | 'browser.automation.navigate' | 'browser.automation.reload' | 'browser.automation.goBack' | 'browser.automation.goForward' | 'browser.automation.click' | 'browser.automation.tap' | 'browser.automation.type' | 'browser.automation.press' | 'browser.automation.scroll' | 'browser.automation.hover' | 'browser.automation.focus' | 'browser.automation.select' | 'browser.automation.setValue' | 'browser.automation.upload' | 'browser.automation.drag' | 'browser.recording.start' | 'browser.recording.stop' | 'browser.recording.cancel' | 'browser.recording.status' | 'browser.recording.listForView' | 'browser.recording.discard' | 'browser.recording.cleanupExpired' | 'browser.recording.attachToComposer' | 'localServices.inventory.list' | 'localServices.inventory.refresh' | 'localServices.launcher.snapshot' | 'localServices.launcher.start' | 'localServices.launcher.openPreview' | 'localServices.launcher.registerPreview' | 'localServices.launcher.history.clear' | 'localServices.preview.openOrCreate' | 'localServices.preview.status' | 'localServices.preview.revoke' | 'localServices.publicPreview.create' | 'localServices.publicPreview.status' | 'localServices.publicPreview.revoke' | 'localServices.publicPreview.copyUrl' | 'localServices.actions.copyUrl' | 'localServices.actions.openPreview' | 'localServices.actions.forget' | 'localServices.actions.stopManaged' | 'localServices.actions.restartManaged' | 'localServices.actions.terminateDetected' | 'peerMediation.observability.snapshot' | 'peerMediation.observability.subscribe' | 'peerMediation.observability.unsubscribe' | 'devices.simulator.list' | 'devices.simulator.stream.keyframe' | 'devices.simulator.stream.snapshot' | 'devices.simulator.stream.quality.set' | 'devices.simulator.stream.fps.set' | 'devices.simulator.stream.scale.set' | 'devices.simulator.lease.acquire' | 'devices.simulator.lease.renew' | 'devices.simulator.lease.release' | 'devices.simulator.input.tap' | 'devices.simulator.input.swipe' | 'devices.simulator.input.text' | 'devices.simulator.input.key' | 'devices.simulator.input.button' | 'devices.simulator.input.orientation' | 'devices.simulator.input.pinch' | 'devices.simulator.input.rotate' | 'devices.simulator.sideband.request' | 'approval.request.list' | 'approval.request.get' | 'approval.request.create' | 'approval.request.decide' | 'plugins.scaffold' | 'plugins.install' | 'plugins.uninstall' | 'plugins.dev.submit' | 'plugins.dev.install' | 'plugins.dev.typecheck' | 'plugins.dev.build' | 'plugins.dev.test' | 'plugins.doctor' | 'plugins.pack' | 'plugins.reload' | 'plugins.list' | 'plugins.change.status' | 'plugins.sessionHooks.status.get' | 'plugins.sessionHooks.install' | 'plugins.sessionHooks.disable' | 'plugins.sessionHooks.enable' | 'plugins.sessionHooks.uninstall' | 'plugins.settings.list' | 'plugins.settings.get' | 'plugins.settings.set' | 'plugins.settings.reset' | 'plugins.settings.secret.status' | 'plugins.settings.secret.bind' | 'plugins.settings.secret.unbind' | 'plugins.settings.secret.delete' | 'plugins.permissions.grants.list' | 'plugins.permissions.grants.request' | 'plugins.permissions.grants.grant' | 'plugins.permissions.grants.revoke' | 'plugins.permissions.grants.dismissRequest' | 'plugin.webhook.endpoint.ensure' | 'plugin.webhook.endpoint.read' | 'plugin.webhook.endpoint.revoke' | 'plugin.webhook.endpoint.retarget' | 'plugin.webhook.endpoint.checkCorrespondence' | 'plugin.webhook.delivery.movePending' | 'plugin.webhook.endpoint.credential.configure' | 'plugin.webhook.endpoint.credential.rotate' | 'plugin.webhook.endpoint.credential.finishRotation' | 'account.plugins.data.erase' | 'account.sessions.signOutEverywhere' | 'account.apiTokens.create' | 'account.apiTokens.list' | 'account.apiTokens.revoke' | 'account.apiTokens.revokeAll' | 'automation.event.sources.list' | 'automation.event.admit' | 'automation.event.source.status.report' | 'automation.conversation.targets.list' | 'automation.conversation.target.verify' | 'automation.conversation.admit' | 'scm.pullRequest.list' | 'scm.pullRequest.get' | 'scm.pullRequest.openOrReuse' | 'scm.pullRequest.openCompose' | 'scm.pullRequest.checkout' | 'scm.pullRequest.prepareWorktree' | 'scm.reviewWorkspace.materializePrepared' | 'scm.pullRequest.runStacked' | 'scm.repository.clone' | 'scm.repository.init' | 'scm.repository.removeIndexLock' | 'scm.hostingRepository.describePublishTargets' | 'scm.hostingRepository.publish' | 'scm.diffSummary.generate';
     readonly surface: 'plugin' | 'api' | 'rpc';
     readonly caller: ActionCaller;
     readonly defaultSessionId?: string | null | undefined;
@@ -78,7 +78,7 @@ export type ActionSurfaceBindingContext = {
     readonly input?: unknown;
 };
 export type ActionSurfaceBindingTransform = (value: unknown, context: Readonly<{
-    actionId: 'action.spec.search' | 'action.spec.get' | 'action.options.resolve' | 'action.invoke' | 'session.open' | 'session.fork' | 'session.continue_with_replay' | 'session.rollback' | 'session.checkpoint_code_rollback' | 'session.checkpoint' | 'session.restore' | 'session.handoff' | 'session.handoff.prepare_target' | 'session.handoff.prepare_target.resume' | 'session.handoff.prepare_target_result.get' | 'session.handoff.commit' | 'session.handoff.abort' | 'session.handoff.status.get' | 'session.spawn_new' | 'paths.list_recent' | 'projects.list' | 'prompts.invocations.list' | 'prompts.invocation.resolve' | 'machines.list' | 'servers.list' | 'review.engines.list' | 'agents.backends.list' | 'agents.models.list' | 'agents.config_options.list' | 'agents.session_modes.list' | 'sessions.spawn.profiles.list' | 'sessions.spawn.connected_services.list' | 'sessions.spawn.mcp_servers.preview' | 'session.message.send' | 'session.stop' | 'session.title.set' | 'session.model.set' | 'session.permission_mode.set' | 'session.archive' | 'session.unarchive' | 'session.status.get' | 'session.work_state.get' | 'session.goal.get' | 'session.goal.set' | 'session.goal.clear' | 'session.usageLimit.waitResume.enable' | 'session.usageLimit.waitResume.cancel' | 'session.usageLimit.checkNow' | 'session.usageLimit.consumeResetCredit' | 'session.terminalComposer.clear' | 'session.pendingInput.interruptAndRun' | 'session.vendor_plugin_catalog.list' | 'session.skill_catalog.list' | 'session.history.get' | 'session.wait.idle' | 'review.start' | 'subagents.plan.start' | 'subagents.delegate.start' | 'voice_agent.start' | 'reviews.comments.create' | 'reviews.comments.list' | 'reviews.comments.get' | 'reviews.comments.transition' | 'reviews.comments.edit' | 'reviews.comments.reply' | 'reviews.comments.redact' | 'reviews.comments.setDisposition' | 'reviews.comments.attachEvidence' | 'reviews.comments.bulkTransition' | 'sessions.subagents.list' | 'sessions.subagents.get' | 'sessions.subagents.watch' | 'sessions.subagents.upsert' | 'sessions.subagents.updateStatus' | 'sessions.subagents.complete' | 'execution.run.start' | 'execution.run.list' | 'execution.run.get' | 'execution.run.send' | 'execution.run.ensure' | 'execution.run.ensure_or_start' | 'execution.run.stream.start' | 'execution.run.stream.read' | 'execution.run.stream.cancel' | 'execution.run.stop' | 'execution.run.action' | 'execution.run.wait' | 'session.target.primary.set' | 'session.target.tracked.set' | 'session.list' | 'session.activity.get' | 'session.messages.recent.get' | 'session.transcript.get' | 'session.events.get' | 'session.log.tail' | 'transcript.page' | 'transcript.readAfter' | 'transcript.follow' | 'transcript.unfollow' | 'transcript.import' | 'transcript.search' | 'session.permission.respond' | 'session.permission.remote.pending.list' | 'session.permission.remote.respond' | 'session.permission.remote.grants.list' | 'session.permission.remote.grants.revoke' | 'session.user_action.answer' | 'session.mode.set' | 'sessions.external.candidates.list' | 'sessions.external.link.ensure' | 'sessions.external.follow' | 'sessions.external.unfollow' | 'sessions.external.backgroundFollow.set' | 'sessions.external.status.get' | 'sessions.external.transcript.page' | 'sessions.external.transcript.readAfter' | 'sessions.external.takeover' | 'sessions.external.materialize.start' | 'sessions.external.takeover.start' | 'sessions.external.operation.status.get' | 'sessions.external.operation.cancel' | 'sessions.external.operation.resume' | 'sessions.external.operation.retry' | 'sessions.external.operation.discard' | 'ui.voice_global.reset' | 'ui.voice_agent.teleport' | 'ui.current_context.read' | 'ui.current_context.command.invoke' | 'ui.pet.choose' | 'memory.search' | 'memory.get_window' | 'memory.ensure_up_to_date' | 'prompt_doc.update' | 'prompt_bundle.update' | 'prompt_asset.export' | 'prompt_registry.install' | 'daemon.promptAssets.discover' | 'daemon.promptAssets.delete' | 'daemon.promptRegistry.scanSource' | 'daemon.promptRegistry.install' | 'daemon.filesystem.readFile' | 'daemon.filesystem.writeFile' | 'daemon.filesystem.listDirectory' | 'daemon.filesystem.getDirectoryTree' | 'daemon.filesystem.listRoots' | 'daemon.filesystem.browseDirectory' | 'bugreport.collectDiagnostics' | 'bugreport.getLogTail' | 'bugreport.uploadArtifact' | 'browser.view.open' | 'browser.view.close' | 'browser.view.focus' | 'browser.target.set' | 'browser.navigate' | 'browser.reload' | 'browser.goBack' | 'browser.goForward' | 'browser.stop' | 'browser.diagnostics.snapshot' | 'browser.diagnostics.clear' | 'browser.diagnostics.pause' | 'browser.diagnostics.resume' | 'browser.diagnostics.eval' | 'browser.diagnostics.getProperties' | 'browser.diagnostics.releaseObjectGroup' | 'browser.diagnostics.elementPicker.start' | 'browser.diagnostics.elementPicker.cancel' | 'browser.context.capturePage' | 'browser.context.captureScreenshot' | 'browser.context.captureSelectedElement' | 'browser.context.captureNetworkSummary' | 'browser.context.captureConsoleSummary' | 'browser.context.annotation.start' | 'browser.context.annotation.cancel' | 'browser.context.annotation.captureRegion' | 'browser.context.annotation.captureElement' | 'browser.context.annotation.attachComment' | 'browser.context.annotation.attachStroke' | 'browser.context.annotation.attachStyleIntent' | 'browser.context.attachToComposer' | 'browser.context.attachToAgentTurn' | 'browser.context.clear' | 'browser.automation.status' | 'browser.automation.snapshot' | 'browser.automation.semanticSnapshot' | 'browser.automation.queryElements' | 'browser.automation.waitFor' | 'browser.automation.timeline.get' | 'browser.automation.cancelActive' | 'browser.automation.navigate' | 'browser.automation.reload' | 'browser.automation.goBack' | 'browser.automation.goForward' | 'browser.automation.click' | 'browser.automation.tap' | 'browser.automation.type' | 'browser.automation.press' | 'browser.automation.scroll' | 'browser.automation.hover' | 'browser.automation.focus' | 'browser.automation.select' | 'browser.automation.setValue' | 'browser.automation.upload' | 'browser.automation.drag' | 'browser.recording.start' | 'browser.recording.stop' | 'browser.recording.cancel' | 'browser.recording.status' | 'browser.recording.listForView' | 'browser.recording.discard' | 'browser.recording.cleanupExpired' | 'browser.recording.attachToComposer' | 'localServices.inventory.list' | 'localServices.inventory.refresh' | 'localServices.launcher.snapshot' | 'localServices.launcher.start' | 'localServices.launcher.openPreview' | 'localServices.launcher.registerPreview' | 'localServices.launcher.history.clear' | 'localServices.preview.openOrCreate' | 'localServices.preview.status' | 'localServices.preview.revoke' | 'localServices.publicPreview.create' | 'localServices.publicPreview.status' | 'localServices.publicPreview.revoke' | 'localServices.publicPreview.copyUrl' | 'localServices.actions.copyUrl' | 'localServices.actions.openPreview' | 'localServices.actions.forget' | 'localServices.actions.stopManaged' | 'localServices.actions.restartManaged' | 'localServices.actions.terminateDetected' | 'peerMediation.observability.snapshot' | 'peerMediation.observability.subscribe' | 'peerMediation.observability.unsubscribe' | 'devices.simulator.list' | 'devices.simulator.stream.keyframe' | 'devices.simulator.stream.snapshot' | 'devices.simulator.stream.quality.set' | 'devices.simulator.stream.fps.set' | 'devices.simulator.stream.scale.set' | 'devices.simulator.lease.acquire' | 'devices.simulator.lease.renew' | 'devices.simulator.lease.release' | 'devices.simulator.input.tap' | 'devices.simulator.input.swipe' | 'devices.simulator.input.text' | 'devices.simulator.input.key' | 'devices.simulator.input.button' | 'devices.simulator.input.orientation' | 'devices.simulator.input.pinch' | 'devices.simulator.input.rotate' | 'devices.simulator.sideband.request' | 'approval.request.list' | 'approval.request.get' | 'approval.request.create' | 'approval.request.decide' | 'plugins.scaffold' | 'plugins.install' | 'plugins.uninstall' | 'plugins.dev.submit' | 'plugins.dev.install' | 'plugins.dev.typecheck' | 'plugins.dev.build' | 'plugins.dev.test' | 'plugins.doctor' | 'plugins.pack' | 'plugins.reload' | 'plugins.list' | 'plugins.change.status' | 'plugins.sessionHooks.status.get' | 'plugins.sessionHooks.install' | 'plugins.sessionHooks.disable' | 'plugins.sessionHooks.enable' | 'plugins.sessionHooks.uninstall' | 'plugins.settings.list' | 'plugins.settings.get' | 'plugins.settings.set' | 'plugins.settings.reset' | 'plugins.settings.secret.status' | 'plugins.settings.secret.bind' | 'plugins.settings.secret.unbind' | 'plugins.settings.secret.delete' | 'plugins.permissions.grants.list' | 'plugins.permissions.grants.request' | 'plugins.permissions.grants.grant' | 'plugins.permissions.grants.revoke' | 'plugins.permissions.grants.dismissRequest' | 'plugin.webhook.endpoint.ensure' | 'plugin.webhook.endpoint.read' | 'plugin.webhook.endpoint.revoke' | 'plugin.webhook.endpoint.retarget' | 'plugin.webhook.endpoint.checkCorrespondence' | 'plugin.webhook.delivery.movePending' | 'plugin.webhook.endpoint.credential.configure' | 'plugin.webhook.endpoint.credential.rotate' | 'plugin.webhook.endpoint.credential.finishRotation' | 'account.plugins.data.erase' | 'account.sessions.signOutEverywhere' | 'account.apiTokens.create' | 'account.apiTokens.list' | 'account.apiTokens.revoke' | 'account.apiTokens.revokeAll' | 'automation.event.sources.list' | 'automation.event.admit' | 'automation.event.source.status.report' | 'automation.conversation.targets.list' | 'automation.conversation.target.verify' | 'automation.conversation.admit' | 'scm.pullRequest.list' | 'scm.pullRequest.get' | 'scm.pullRequest.openOrReuse' | 'scm.pullRequest.openCompose' | 'scm.pullRequest.checkout' | 'scm.pullRequest.prepareWorktree' | 'scm.reviewWorkspace.materializePrepared' | 'scm.pullRequest.runStacked' | 'scm.repository.clone' | 'scm.repository.init' | 'scm.repository.removeIndexLock' | 'scm.hostingRepository.describePublishTargets' | 'scm.hostingRepository.publish' | 'scm.diffSummary.generate';
+    actionId: 'action.spec.search' | 'action.spec.get' | 'action.options.resolve' | 'action.invoke' | 'session.open' | 'session.fork' | 'session.continue_with_replay' | 'session.rollback' | 'session.checkpoint_code_rollback' | 'session.checkpoint' | 'session.restore' | 'session.handoff' | 'session.handoff.prepare_target' | 'session.handoff.prepare_target.resume' | 'session.handoff.prepare_target_result.get' | 'session.handoff.commit' | 'session.handoff.abort' | 'session.handoff.status.get' | 'session.spawn_new' | 'paths.list_recent' | 'projects.list' | 'prompts.invocations.list' | 'prompts.invocation.resolve' | 'machines.list' | 'servers.list' | 'review.engines.list' | 'agents.backends.list' | 'agents.models.list' | 'agents.config_options.list' | 'agents.session_modes.list' | 'sessions.spawn.profiles.list' | 'sessions.spawn.connected_services.list' | 'sessions.spawn.mcp_servers.preview' | 'session.message.send' | 'session.stop' | 'session.title.set' | 'session.model.set' | 'session.permission_mode.set' | 'session.archive' | 'session.unarchive' | 'session.status.get' | 'session.work_state.get' | 'session.goal.get' | 'session.goal.set' | 'session.goal.clear' | 'session.usageLimit.waitResume.enable' | 'session.usageLimit.waitResume.cancel' | 'session.usageLimit.checkNow' | 'session.usageLimit.consumeResetCredit' | 'session.terminalComposer.clear' | 'session.pendingInput.interruptAndRun' | 'session.vendor_plugin_catalog.list' | 'session.skill_catalog.list' | 'session.history.get' | 'session.wait.idle' | 'review.start' | 'subagents.plan.start' | 'subagents.delegate.start' | 'voice_agent.start' | 'reviews.comments.create' | 'reviews.comments.list' | 'reviews.comments.get' | 'reviews.comments.transition' | 'reviews.comments.edit' | 'reviews.comments.reply' | 'reviews.comments.redact' | 'reviews.comments.setDisposition' | 'reviews.comments.attachEvidence' | 'reviews.comments.bulkTransition' | 'reviews.comments.claimPublicationDispatch' | 'sessions.subagents.list' | 'sessions.subagents.get' | 'sessions.subagents.watch' | 'sessions.subagents.upsert' | 'sessions.subagents.updateStatus' | 'sessions.subagents.complete' | 'execution.run.start' | 'execution.run.list' | 'execution.run.get' | 'execution.run.send' | 'execution.run.ensure' | 'execution.run.ensure_or_start' | 'execution.run.stream.start' | 'execution.run.stream.read' | 'execution.run.stream.cancel' | 'execution.run.stop' | 'execution.run.action' | 'execution.run.wait' | 'session.target.primary.set' | 'session.target.tracked.set' | 'session.list' | 'session.activity.get' | 'session.messages.recent.get' | 'session.transcript.get' | 'session.events.get' | 'session.log.tail' | 'transcript.page' | 'transcript.readAfter' | 'transcript.follow' | 'transcript.unfollow' | 'transcript.import' | 'transcript.search' | 'session.permission.respond' | 'session.permission.remote.pending.list' | 'session.permission.remote.respond' | 'session.user_action.remote.answer' | 'session.permission.remote.grants.list' | 'session.permission.remote.grants.revoke' | 'session.user_action.answer' | 'session.mode.set' | 'sessions.external.candidates.list' | 'sessions.external.link.ensure' | 'sessions.external.follow' | 'sessions.external.unfollow' | 'sessions.external.backgroundFollow.set' | 'sessions.external.status.get' | 'sessions.external.transcript.page' | 'sessions.external.transcript.readAfter' | 'sessions.external.takeover' | 'sessions.external.materialize.start' | 'sessions.external.takeover.start' | 'sessions.external.operation.status.get' | 'sessions.external.operation.cancel' | 'sessions.external.operation.resume' | 'sessions.external.operation.retry' | 'sessions.external.operation.discard' | 'ui.voice_global.reset' | 'ui.voice_agent.teleport' | 'ui.current_context.read' | 'ui.current_context.command.invoke' | 'ui.pet.choose' | 'memory.search' | 'memory.get_window' | 'memory.ensure_up_to_date' | 'prompt_doc.update' | 'prompt_bundle.update' | 'prompt_asset.export' | 'prompt_registry.install' | 'daemon.promptAssets.discover' | 'daemon.promptAssets.delete' | 'daemon.promptRegistry.scanSource' | 'daemon.promptRegistry.install' | 'daemon.filesystem.readFile' | 'daemon.filesystem.writeFile' | 'daemon.filesystem.listDirectory' | 'daemon.filesystem.getDirectoryTree' | 'daemon.filesystem.listRoots' | 'daemon.filesystem.browseDirectory' | 'bugreport.collectDiagnostics' | 'bugreport.getLogTail' | 'bugreport.uploadArtifact' | 'browser.view.open' | 'browser.view.close' | 'browser.view.focus' | 'browser.target.set' | 'browser.navigate' | 'browser.reload' | 'browser.goBack' | 'browser.goForward' | 'browser.stop' | 'browser.diagnostics.snapshot' | 'browser.diagnostics.clear' | 'browser.diagnostics.pause' | 'browser.diagnostics.resume' | 'browser.diagnostics.eval' | 'browser.diagnostics.getProperties' | 'browser.diagnostics.releaseObjectGroup' | 'browser.diagnostics.elementPicker.start' | 'browser.diagnostics.elementPicker.cancel' | 'browser.context.capturePage' | 'browser.context.captureScreenshot' | 'browser.context.captureSelectedElement' | 'browser.context.captureNetworkSummary' | 'browser.context.captureConsoleSummary' | 'browser.context.annotation.start' | 'browser.context.annotation.cancel' | 'browser.context.annotation.captureRegion' | 'browser.context.annotation.captureElement' | 'browser.context.annotation.attachComment' | 'browser.context.annotation.attachStroke' | 'browser.context.annotation.attachStyleIntent' | 'browser.context.attachToComposer' | 'browser.context.attachToAgentTurn' | 'browser.context.clear' | 'browser.automation.status' | 'browser.automation.snapshot' | 'browser.automation.semanticSnapshot' | 'browser.automation.queryElements' | 'browser.automation.waitFor' | 'browser.automation.timeline.get' | 'browser.automation.cancelActive' | 'browser.automation.navigate' | 'browser.automation.reload' | 'browser.automation.goBack' | 'browser.automation.goForward' | 'browser.automation.click' | 'browser.automation.tap' | 'browser.automation.type' | 'browser.automation.press' | 'browser.automation.scroll' | 'browser.automation.hover' | 'browser.automation.focus' | 'browser.automation.select' | 'browser.automation.setValue' | 'browser.automation.upload' | 'browser.automation.drag' | 'browser.recording.start' | 'browser.recording.stop' | 'browser.recording.cancel' | 'browser.recording.status' | 'browser.recording.listForView' | 'browser.recording.discard' | 'browser.recording.cleanupExpired' | 'browser.recording.attachToComposer' | 'localServices.inventory.list' | 'localServices.inventory.refresh' | 'localServices.launcher.snapshot' | 'localServices.launcher.start' | 'localServices.launcher.openPreview' | 'localServices.launcher.registerPreview' | 'localServices.launcher.history.clear' | 'localServices.preview.openOrCreate' | 'localServices.preview.status' | 'localServices.preview.revoke' | 'localServices.publicPreview.create' | 'localServices.publicPreview.status' | 'localServices.publicPreview.revoke' | 'localServices.publicPreview.copyUrl' | 'localServices.actions.copyUrl' | 'localServices.actions.openPreview' | 'localServices.actions.forget' | 'localServices.actions.stopManaged' | 'localServices.actions.restartManaged' | 'localServices.actions.terminateDetected' | 'peerMediation.observability.snapshot' | 'peerMediation.observability.subscribe' | 'peerMediation.observability.unsubscribe' | 'devices.simulator.list' | 'devices.simulator.stream.keyframe' | 'devices.simulator.stream.snapshot' | 'devices.simulator.stream.quality.set' | 'devices.simulator.stream.fps.set' | 'devices.simulator.stream.scale.set' | 'devices.simulator.lease.acquire' | 'devices.simulator.lease.renew' | 'devices.simulator.lease.release' | 'devices.simulator.input.tap' | 'devices.simulator.input.swipe' | 'devices.simulator.input.text' | 'devices.simulator.input.key' | 'devices.simulator.input.button' | 'devices.simulator.input.orientation' | 'devices.simulator.input.pinch' | 'devices.simulator.input.rotate' | 'devices.simulator.sideband.request' | 'approval.request.list' | 'approval.request.get' | 'approval.request.create' | 'approval.request.decide' | 'plugins.scaffold' | 'plugins.install' | 'plugins.uninstall' | 'plugins.dev.submit' | 'plugins.dev.install' | 'plugins.dev.typecheck' | 'plugins.dev.build' | 'plugins.dev.test' | 'plugins.doctor' | 'plugins.pack' | 'plugins.reload' | 'plugins.list' | 'plugins.change.status' | 'plugins.sessionHooks.status.get' | 'plugins.sessionHooks.install' | 'plugins.sessionHooks.disable' | 'plugins.sessionHooks.enable' | 'plugins.sessionHooks.uninstall' | 'plugins.settings.list' | 'plugins.settings.get' | 'plugins.settings.set' | 'plugins.settings.reset' | 'plugins.settings.secret.status' | 'plugins.settings.secret.bind' | 'plugins.settings.secret.unbind' | 'plugins.settings.secret.delete' | 'plugins.permissions.grants.list' | 'plugins.permissions.grants.request' | 'plugins.permissions.grants.grant' | 'plugins.permissions.grants.revoke' | 'plugins.permissions.grants.dismissRequest' | 'plugin.webhook.endpoint.ensure' | 'plugin.webhook.endpoint.read' | 'plugin.webhook.endpoint.revoke' | 'plugin.webhook.endpoint.retarget' | 'plugin.webhook.endpoint.checkCorrespondence' | 'plugin.webhook.delivery.movePending' | 'plugin.webhook.endpoint.credential.configure' | 'plugin.webhook.endpoint.credential.rotate' | 'plugin.webhook.endpoint.credential.finishRotation' | 'account.plugins.data.erase' | 'account.sessions.signOutEverywhere' | 'account.apiTokens.create' | 'account.apiTokens.list' | 'account.apiTokens.revoke' | 'account.apiTokens.revokeAll' | 'automation.event.sources.list' | 'automation.event.admit' | 'automation.event.source.status.report' | 'automation.conversation.targets.list' | 'automation.conversation.target.verify' | 'automation.conversation.admit' | 'scm.pullRequest.list' | 'scm.pullRequest.get' | 'scm.pullRequest.openOrReuse' | 'scm.pullRequest.openCompose' | 'scm.pullRequest.checkout' | 'scm.pullRequest.prepareWorktree' | 'scm.reviewWorkspace.materializePrepared' | 'scm.pullRequest.runStacked' | 'scm.repository.clone' | 'scm.repository.init' | 'scm.repository.removeIndexLock' | 'scm.hostingRepository.describePublishTargets' | 'scm.hostingRepository.publish' | 'scm.diffSummary.generate';
     surface: 'plugin' | 'api' | 'rpc';
     caller: ActionCaller;
     defaultSessionId?: string | null | undefined;
@@ -560,7 +560,7 @@ export type PluginCommandContributionV2 = {
 };
 export type ActionSpec = {
     [x: string]: unknown;
-    id: 'action.spec.search' | 'action.spec.get' | 'action.options.resolve' | 'action.invoke' | 'session.open' | 'session.fork' | 'session.continue_with_replay' | 'session.rollback' | 'session.checkpoint_code_rollback' | 'session.checkpoint' | 'session.restore' | 'session.handoff' | 'session.handoff.prepare_target' | 'session.handoff.prepare_target.resume' | 'session.handoff.prepare_target_result.get' | 'session.handoff.commit' | 'session.handoff.abort' | 'session.handoff.status.get' | 'session.spawn_new' | 'paths.list_recent' | 'projects.list' | 'prompts.invocations.list' | 'prompts.invocation.resolve' | 'machines.list' | 'servers.list' | 'review.engines.list' | 'agents.backends.list' | 'agents.models.list' | 'agents.config_options.list' | 'agents.session_modes.list' | 'sessions.spawn.profiles.list' | 'sessions.spawn.connected_services.list' | 'sessions.spawn.mcp_servers.preview' | 'session.message.send' | 'session.stop' | 'session.title.set' | 'session.model.set' | 'session.permission_mode.set' | 'session.archive' | 'session.unarchive' | 'session.status.get' | 'session.work_state.get' | 'session.goal.get' | 'session.goal.set' | 'session.goal.clear' | 'session.usageLimit.waitResume.enable' | 'session.usageLimit.waitResume.cancel' | 'session.usageLimit.checkNow' | 'session.usageLimit.consumeResetCredit' | 'session.terminalComposer.clear' | 'session.pendingInput.interruptAndRun' | 'session.vendor_plugin_catalog.list' | 'session.skill_catalog.list' | 'session.history.get' | 'session.wait.idle' | 'review.start' | 'subagents.plan.start' | 'subagents.delegate.start' | 'voice_agent.start' | 'reviews.comments.create' | 'reviews.comments.list' | 'reviews.comments.get' | 'reviews.comments.transition' | 'reviews.comments.edit' | 'reviews.comments.reply' | 'reviews.comments.redact' | 'reviews.comments.setDisposition' | 'reviews.comments.attachEvidence' | 'reviews.comments.bulkTransition' | 'sessions.subagents.list' | 'sessions.subagents.get' | 'sessions.subagents.watch' | 'sessions.subagents.upsert' | 'sessions.subagents.updateStatus' | 'sessions.subagents.complete' | 'execution.run.start' | 'execution.run.list' | 'execution.run.get' | 'execution.run.send' | 'execution.run.ensure' | 'execution.run.ensure_or_start' | 'execution.run.stream.start' | 'execution.run.stream.read' | 'execution.run.stream.cancel' | 'execution.run.stop' | 'execution.run.action' | 'execution.run.wait' | 'session.target.primary.set' | 'session.target.tracked.set' | 'session.list' | 'session.activity.get' | 'session.messages.recent.get' | 'session.transcript.get' | 'session.events.get' | 'session.log.tail' | 'transcript.page' | 'transcript.readAfter' | 'transcript.follow' | 'transcript.unfollow' | 'transcript.import' | 'transcript.search' | 'session.permission.respond' | 'session.permission.remote.pending.list' | 'session.permission.remote.respond' | 'session.permission.remote.grants.list' | 'session.permission.remote.grants.revoke' | 'session.user_action.answer' | 'session.mode.set' | 'sessions.external.candidates.list' | 'sessions.external.link.ensure' | 'sessions.external.follow' | 'sessions.external.unfollow' | 'sessions.external.backgroundFollow.set' | 'sessions.external.status.get' | 'sessions.external.transcript.page' | 'sessions.external.transcript.readAfter' | 'sessions.external.takeover' | 'sessions.external.materialize.start' | 'sessions.external.takeover.start' | 'sessions.external.operation.status.get' | 'sessions.external.operation.cancel' | 'sessions.external.operation.resume' | 'sessions.external.operation.retry' | 'sessions.external.operation.discard' | 'ui.voice_global.reset' | 'ui.voice_agent.teleport' | 'ui.current_context.read' | 'ui.current_context.command.invoke' | 'ui.pet.choose' | 'memory.search' | 'memory.get_window' | 'memory.ensure_up_to_date' | 'prompt_doc.update' | 'prompt_bundle.update' | 'prompt_asset.export' | 'prompt_registry.install' | 'daemon.promptAssets.discover' | 'daemon.promptAssets.delete' | 'daemon.promptRegistry.scanSource' | 'daemon.promptRegistry.install' | 'daemon.filesystem.readFile' | 'daemon.filesystem.writeFile' | 'daemon.filesystem.listDirectory' | 'daemon.filesystem.getDirectoryTree' | 'daemon.filesystem.listRoots' | 'daemon.filesystem.browseDirectory' | 'bugreport.collectDiagnostics' | 'bugreport.getLogTail' | 'bugreport.uploadArtifact' | 'browser.view.open' | 'browser.view.close' | 'browser.view.focus' | 'browser.target.set' | 'browser.navigate' | 'browser.reload' | 'browser.goBack' | 'browser.goForward' | 'browser.stop' | 'browser.diagnostics.snapshot' | 'browser.diagnostics.clear' | 'browser.diagnostics.pause' | 'browser.diagnostics.resume' | 'browser.diagnostics.eval' | 'browser.diagnostics.getProperties' | 'browser.diagnostics.releaseObjectGroup' | 'browser.diagnostics.elementPicker.start' | 'browser.diagnostics.elementPicker.cancel' | 'browser.context.capturePage' | 'browser.context.captureScreenshot' | 'browser.context.captureSelectedElement' | 'browser.context.captureNetworkSummary' | 'browser.context.captureConsoleSummary' | 'browser.context.annotation.start' | 'browser.context.annotation.cancel' | 'browser.context.annotation.captureRegion' | 'browser.context.annotation.captureElement' | 'browser.context.annotation.attachComment' | 'browser.context.annotation.attachStroke' | 'browser.context.annotation.attachStyleIntent' | 'browser.context.attachToComposer' | 'browser.context.attachToAgentTurn' | 'browser.context.clear' | 'browser.automation.status' | 'browser.automation.snapshot' | 'browser.automation.semanticSnapshot' | 'browser.automation.queryElements' | 'browser.automation.waitFor' | 'browser.automation.timeline.get' | 'browser.automation.cancelActive' | 'browser.automation.navigate' | 'browser.automation.reload' | 'browser.automation.goBack' | 'browser.automation.goForward' | 'browser.automation.click' | 'browser.automation.tap' | 'browser.automation.type' | 'browser.automation.press' | 'browser.automation.scroll' | 'browser.automation.hover' | 'browser.automation.focus' | 'browser.automation.select' | 'browser.automation.setValue' | 'browser.automation.upload' | 'browser.automation.drag' | 'browser.recording.start' | 'browser.recording.stop' | 'browser.recording.cancel' | 'browser.recording.status' | 'browser.recording.listForView' | 'browser.recording.discard' | 'browser.recording.cleanupExpired' | 'browser.recording.attachToComposer' | 'localServices.inventory.list' | 'localServices.inventory.refresh' | 'localServices.launcher.snapshot' | 'localServices.launcher.start' | 'localServices.launcher.openPreview' | 'localServices.launcher.registerPreview' | 'localServices.launcher.history.clear' | 'localServices.preview.openOrCreate' | 'localServices.preview.status' | 'localServices.preview.revoke' | 'localServices.publicPreview.create' | 'localServices.publicPreview.status' | 'localServices.publicPreview.revoke' | 'localServices.publicPreview.copyUrl' | 'localServices.actions.copyUrl' | 'localServices.actions.openPreview' | 'localServices.actions.forget' | 'localServices.actions.stopManaged' | 'localServices.actions.restartManaged' | 'localServices.actions.terminateDetected' | 'peerMediation.observability.snapshot' | 'peerMediation.observability.subscribe' | 'peerMediation.observability.unsubscribe' | 'devices.simulator.list' | 'devices.simulator.stream.keyframe' | 'devices.simulator.stream.snapshot' | 'devices.simulator.stream.quality.set' | 'devices.simulator.stream.fps.set' | 'devices.simulator.stream.scale.set' | 'devices.simulator.lease.acquire' | 'devices.simulator.lease.renew' | 'devices.simulator.lease.release' | 'devices.simulator.input.tap' | 'devices.simulator.input.swipe' | 'devices.simulator.input.text' | 'devices.simulator.input.key' | 'devices.simulator.input.button' | 'devices.simulator.input.orientation' | 'devices.simulator.input.pinch' | 'devices.simulator.input.rotate' | 'devices.simulator.sideband.request' | 'approval.request.list' | 'approval.request.get' | 'approval.request.create' | 'approval.request.decide' | 'plugins.scaffold' | 'plugins.install' | 'plugins.uninstall' | 'plugins.dev.submit' | 'plugins.dev.install' | 'plugins.dev.typecheck' | 'plugins.dev.build' | 'plugins.dev.test' | 'plugins.doctor' | 'plugins.pack' | 'plugins.reload' | 'plugins.list' | 'plugins.change.status' | 'plugins.sessionHooks.status.get' | 'plugins.sessionHooks.install' | 'plugins.sessionHooks.disable' | 'plugins.sessionHooks.enable' | 'plugins.sessionHooks.uninstall' | 'plugins.settings.list' | 'plugins.settings.get' | 'plugins.settings.set' | 'plugins.settings.reset' | 'plugins.settings.secret.status' | 'plugins.settings.secret.bind' | 'plugins.settings.secret.unbind' | 'plugins.settings.secret.delete' | 'plugins.permissions.grants.list' | 'plugins.permissions.grants.request' | 'plugins.permissions.grants.grant' | 'plugins.permissions.grants.revoke' | 'plugins.permissions.grants.dismissRequest' | 'plugin.webhook.endpoint.ensure' | 'plugin.webhook.endpoint.read' | 'plugin.webhook.endpoint.revoke' | 'plugin.webhook.endpoint.retarget' | 'plugin.webhook.endpoint.checkCorrespondence' | 'plugin.webhook.delivery.movePending' | 'plugin.webhook.endpoint.credential.configure' | 'plugin.webhook.endpoint.credential.rotate' | 'plugin.webhook.endpoint.credential.finishRotation' | 'account.plugins.data.erase' | 'account.sessions.signOutEverywhere' | 'account.apiTokens.create' | 'account.apiTokens.list' | 'account.apiTokens.revoke' | 'account.apiTokens.revokeAll' | 'automation.event.sources.list' | 'automation.event.admit' | 'automation.event.source.status.report' | 'automation.conversation.targets.list' | 'automation.conversation.target.verify' | 'automation.conversation.admit' | 'scm.pullRequest.list' | 'scm.pullRequest.get' | 'scm.pullRequest.openOrReuse' | 'scm.pullRequest.openCompose' | 'scm.pullRequest.checkout' | 'scm.pullRequest.prepareWorktree' | 'scm.reviewWorkspace.materializePrepared' | 'scm.pullRequest.runStacked' | 'scm.repository.clone' | 'scm.repository.init' | 'scm.repository.removeIndexLock' | 'scm.hostingRepository.describePublishTargets' | 'scm.hostingRepository.publish' | 'scm.diffSummary.generate';
+    id: 'action.spec.search' | 'action.spec.get' | 'action.options.resolve' | 'action.invoke' | 'session.open' | 'session.fork' | 'session.continue_with_replay' | 'session.rollback' | 'session.checkpoint_code_rollback' | 'session.checkpoint' | 'session.restore' | 'session.handoff' | 'session.handoff.prepare_target' | 'session.handoff.prepare_target.resume' | 'session.handoff.prepare_target_result.get' | 'session.handoff.commit' | 'session.handoff.abort' | 'session.handoff.status.get' | 'session.spawn_new' | 'paths.list_recent' | 'projects.list' | 'prompts.invocations.list' | 'prompts.invocation.resolve' | 'machines.list' | 'servers.list' | 'review.engines.list' | 'agents.backends.list' | 'agents.models.list' | 'agents.config_options.list' | 'agents.session_modes.list' | 'sessions.spawn.profiles.list' | 'sessions.spawn.connected_services.list' | 'sessions.spawn.mcp_servers.preview' | 'session.message.send' | 'session.stop' | 'session.title.set' | 'session.model.set' | 'session.permission_mode.set' | 'session.archive' | 'session.unarchive' | 'session.status.get' | 'session.work_state.get' | 'session.goal.get' | 'session.goal.set' | 'session.goal.clear' | 'session.usageLimit.waitResume.enable' | 'session.usageLimit.waitResume.cancel' | 'session.usageLimit.checkNow' | 'session.usageLimit.consumeResetCredit' | 'session.terminalComposer.clear' | 'session.pendingInput.interruptAndRun' | 'session.vendor_plugin_catalog.list' | 'session.skill_catalog.list' | 'session.history.get' | 'session.wait.idle' | 'review.start' | 'subagents.plan.start' | 'subagents.delegate.start' | 'voice_agent.start' | 'reviews.comments.create' | 'reviews.comments.list' | 'reviews.comments.get' | 'reviews.comments.transition' | 'reviews.comments.edit' | 'reviews.comments.reply' | 'reviews.comments.redact' | 'reviews.comments.setDisposition' | 'reviews.comments.attachEvidence' | 'reviews.comments.bulkTransition' | 'reviews.comments.claimPublicationDispatch' | 'sessions.subagents.list' | 'sessions.subagents.get' | 'sessions.subagents.watch' | 'sessions.subagents.upsert' | 'sessions.subagents.updateStatus' | 'sessions.subagents.complete' | 'execution.run.start' | 'execution.run.list' | 'execution.run.get' | 'execution.run.send' | 'execution.run.ensure' | 'execution.run.ensure_or_start' | 'execution.run.stream.start' | 'execution.run.stream.read' | 'execution.run.stream.cancel' | 'execution.run.stop' | 'execution.run.action' | 'execution.run.wait' | 'session.target.primary.set' | 'session.target.tracked.set' | 'session.list' | 'session.activity.get' | 'session.messages.recent.get' | 'session.transcript.get' | 'session.events.get' | 'session.log.tail' | 'transcript.page' | 'transcript.readAfter' | 'transcript.follow' | 'transcript.unfollow' | 'transcript.import' | 'transcript.search' | 'session.permission.respond' | 'session.permission.remote.pending.list' | 'session.permission.remote.respond' | 'session.user_action.remote.answer' | 'session.permission.remote.grants.list' | 'session.permission.remote.grants.revoke' | 'session.user_action.answer' | 'session.mode.set' | 'sessions.external.candidates.list' | 'sessions.external.link.ensure' | 'sessions.external.follow' | 'sessions.external.unfollow' | 'sessions.external.backgroundFollow.set' | 'sessions.external.status.get' | 'sessions.external.transcript.page' | 'sessions.external.transcript.readAfter' | 'sessions.external.takeover' | 'sessions.external.materialize.start' | 'sessions.external.takeover.start' | 'sessions.external.operation.status.get' | 'sessions.external.operation.cancel' | 'sessions.external.operation.resume' | 'sessions.external.operation.retry' | 'sessions.external.operation.discard' | 'ui.voice_global.reset' | 'ui.voice_agent.teleport' | 'ui.current_context.read' | 'ui.current_context.command.invoke' | 'ui.pet.choose' | 'memory.search' | 'memory.get_window' | 'memory.ensure_up_to_date' | 'prompt_doc.update' | 'prompt_bundle.update' | 'prompt_asset.export' | 'prompt_registry.install' | 'daemon.promptAssets.discover' | 'daemon.promptAssets.delete' | 'daemon.promptRegistry.scanSource' | 'daemon.promptRegistry.install' | 'daemon.filesystem.readFile' | 'daemon.filesystem.writeFile' | 'daemon.filesystem.listDirectory' | 'daemon.filesystem.getDirectoryTree' | 'daemon.filesystem.listRoots' | 'daemon.filesystem.browseDirectory' | 'bugreport.collectDiagnostics' | 'bugreport.getLogTail' | 'bugreport.uploadArtifact' | 'browser.view.open' | 'browser.view.close' | 'browser.view.focus' | 'browser.target.set' | 'browser.navigate' | 'browser.reload' | 'browser.goBack' | 'browser.goForward' | 'browser.stop' | 'browser.diagnostics.snapshot' | 'browser.diagnostics.clear' | 'browser.diagnostics.pause' | 'browser.diagnostics.resume' | 'browser.diagnostics.eval' | 'browser.diagnostics.getProperties' | 'browser.diagnostics.releaseObjectGroup' | 'browser.diagnostics.elementPicker.start' | 'browser.diagnostics.elementPicker.cancel' | 'browser.context.capturePage' | 'browser.context.captureScreenshot' | 'browser.context.captureSelectedElement' | 'browser.context.captureNetworkSummary' | 'browser.context.captureConsoleSummary' | 'browser.context.annotation.start' | 'browser.context.annotation.cancel' | 'browser.context.annotation.captureRegion' | 'browser.context.annotation.captureElement' | 'browser.context.annotation.attachComment' | 'browser.context.annotation.attachStroke' | 'browser.context.annotation.attachStyleIntent' | 'browser.context.attachToComposer' | 'browser.context.attachToAgentTurn' | 'browser.context.clear' | 'browser.automation.status' | 'browser.automation.snapshot' | 'browser.automation.semanticSnapshot' | 'browser.automation.queryElements' | 'browser.automation.waitFor' | 'browser.automation.timeline.get' | 'browser.automation.cancelActive' | 'browser.automation.navigate' | 'browser.automation.reload' | 'browser.automation.goBack' | 'browser.automation.goForward' | 'browser.automation.click' | 'browser.automation.tap' | 'browser.automation.type' | 'browser.automation.press' | 'browser.automation.scroll' | 'browser.automation.hover' | 'browser.automation.focus' | 'browser.automation.select' | 'browser.automation.setValue' | 'browser.automation.upload' | 'browser.automation.drag' | 'browser.recording.start' | 'browser.recording.stop' | 'browser.recording.cancel' | 'browser.recording.status' | 'browser.recording.listForView' | 'browser.recording.discard' | 'browser.recording.cleanupExpired' | 'browser.recording.attachToComposer' | 'localServices.inventory.list' | 'localServices.inventory.refresh' | 'localServices.launcher.snapshot' | 'localServices.launcher.start' | 'localServices.launcher.openPreview' | 'localServices.launcher.registerPreview' | 'localServices.launcher.history.clear' | 'localServices.preview.openOrCreate' | 'localServices.preview.status' | 'localServices.preview.revoke' | 'localServices.publicPreview.create' | 'localServices.publicPreview.status' | 'localServices.publicPreview.revoke' | 'localServices.publicPreview.copyUrl' | 'localServices.actions.copyUrl' | 'localServices.actions.openPreview' | 'localServices.actions.forget' | 'localServices.actions.stopManaged' | 'localServices.actions.restartManaged' | 'localServices.actions.terminateDetected' | 'peerMediation.observability.snapshot' | 'peerMediation.observability.subscribe' | 'peerMediation.observability.unsubscribe' | 'devices.simulator.list' | 'devices.simulator.stream.keyframe' | 'devices.simulator.stream.snapshot' | 'devices.simulator.stream.quality.set' | 'devices.simulator.stream.fps.set' | 'devices.simulator.stream.scale.set' | 'devices.simulator.lease.acquire' | 'devices.simulator.lease.renew' | 'devices.simulator.lease.release' | 'devices.simulator.input.tap' | 'devices.simulator.input.swipe' | 'devices.simulator.input.text' | 'devices.simulator.input.key' | 'devices.simulator.input.button' | 'devices.simulator.input.orientation' | 'devices.simulator.input.pinch' | 'devices.simulator.input.rotate' | 'devices.simulator.sideband.request' | 'approval.request.list' | 'approval.request.get' | 'approval.request.create' | 'approval.request.decide' | 'plugins.scaffold' | 'plugins.install' | 'plugins.uninstall' | 'plugins.dev.submit' | 'plugins.dev.install' | 'plugins.dev.typecheck' | 'plugins.dev.build' | 'plugins.dev.test' | 'plugins.doctor' | 'plugins.pack' | 'plugins.reload' | 'plugins.list' | 'plugins.change.status' | 'plugins.sessionHooks.status.get' | 'plugins.sessionHooks.install' | 'plugins.sessionHooks.disable' | 'plugins.sessionHooks.enable' | 'plugins.sessionHooks.uninstall' | 'plugins.settings.list' | 'plugins.settings.get' | 'plugins.settings.set' | 'plugins.settings.reset' | 'plugins.settings.secret.status' | 'plugins.settings.secret.bind' | 'plugins.settings.secret.unbind' | 'plugins.settings.secret.delete' | 'plugins.permissions.grants.list' | 'plugins.permissions.grants.request' | 'plugins.permissions.grants.grant' | 'plugins.permissions.grants.revoke' | 'plugins.permissions.grants.dismissRequest' | 'plugin.webhook.endpoint.ensure' | 'plugin.webhook.endpoint.read' | 'plugin.webhook.endpoint.revoke' | 'plugin.webhook.endpoint.retarget' | 'plugin.webhook.endpoint.checkCorrespondence' | 'plugin.webhook.delivery.movePending' | 'plugin.webhook.endpoint.credential.configure' | 'plugin.webhook.endpoint.credential.rotate' | 'plugin.webhook.endpoint.credential.finishRotation' | 'account.plugins.data.erase' | 'account.sessions.signOutEverywhere' | 'account.apiTokens.create' | 'account.apiTokens.list' | 'account.apiTokens.revoke' | 'account.apiTokens.revokeAll' | 'automation.event.sources.list' | 'automation.event.admit' | 'automation.event.source.status.report' | 'automation.conversation.targets.list' | 'automation.conversation.target.verify' | 'automation.conversation.admit' | 'scm.pullRequest.list' | 'scm.pullRequest.get' | 'scm.pullRequest.openOrReuse' | 'scm.pullRequest.openCompose' | 'scm.pullRequest.checkout' | 'scm.pullRequest.prepareWorktree' | 'scm.reviewWorkspace.materializePrepared' | 'scm.pullRequest.runStacked' | 'scm.repository.clone' | 'scm.repository.init' | 'scm.repository.removeIndexLock' | 'scm.hostingRepository.describePublishTargets' | 'scm.hostingRepository.publish' | 'scm.diffSummary.generate';
     title: string;
     safety: 'safe' | 'danger';
     approval: {
@@ -1166,6 +1166,23 @@ export type PluginActionInputById = {
                 };
             };
         }[] | undefined;
+    } | {
+        sessionId: string;
+        kind: 'sessionSubagentLaunch';
+        launch: {
+            [x: string]: unknown;
+            kind: 'agent_team_create';
+            teamId: string;
+            description?: string | undefined;
+        } | {
+            [x: string]: unknown;
+            kind: 'agent_team_member_create';
+            teamId: string;
+            memberLabel: string;
+            instructions: string;
+            runInBackground?: boolean | undefined;
+        };
+        idempotencyKey: string;
     };
     readonly "session.stop": {
         [x: string]: unknown;
@@ -1874,21 +1891,18 @@ export type PluginActionInputById = {
             c: string;
         } | undefined;
     };
-    readonly "sessions.subagents.list": {
-        [x: string]: unknown;
-        parentSessionId?: string | undefined;
-        groupId?: string | null | undefined;
-        limit?: number | undefined;
-    };
-    readonly "sessions.subagents.get": {
-        [x: string]: unknown;
-        id: string;
-        parentSessionId?: string | undefined;
-    };
-    readonly "sessions.subagents.watch": {
-        [x: string]: unknown;
-        parentSessionId?: string | undefined;
-        id?: string | undefined;
+    readonly "reviews.comments.claimPublicationDispatch": {
+        commentId: string;
+        target: {
+            providerId: string;
+            configuredAccountId: string;
+            entryRef: {
+                sourceId: string;
+                kindId: string;
+                collisionScope: string;
+                entryId: string;
+            };
+        };
     };
     readonly "execution.run.start": {
         [x: string]: unknown;
@@ -2273,6 +2287,17 @@ export type PluginActionInputById = {
         };
         decision: 'allow' | 'deny';
         scope: 'session' | 'request';
+    };
+    readonly "session.user_action.remote.answer": {
+        sessionId: string;
+        turnId: string;
+        requestId: string;
+        sourceRef: string;
+        sourceRevisionOrEpoch: string;
+        answers: {
+            questionIndex: number;
+            values: string[];
+        }[];
     };
     readonly "session.permission.remote.grants.list": {
         sessionId: string;
@@ -5050,7 +5075,7 @@ export type PluginActionInputById = {
     };
     readonly "approval.request.create": {
         [x: string]: unknown;
-        actionId: 'action.spec.search' | 'action.spec.get' | 'action.options.resolve' | 'action.invoke' | 'session.open' | 'session.fork' | 'session.continue_with_replay' | 'session.rollback' | 'session.checkpoint_code_rollback' | 'session.checkpoint' | 'session.restore' | 'session.handoff' | 'session.handoff.prepare_target' | 'session.handoff.prepare_target.resume' | 'session.handoff.prepare_target_result.get' | 'session.handoff.commit' | 'session.handoff.abort' | 'session.handoff.status.get' | 'session.spawn_new' | 'paths.list_recent' | 'projects.list' | 'prompts.invocations.list' | 'prompts.invocation.resolve' | 'machines.list' | 'servers.list' | 'review.engines.list' | 'agents.backends.list' | 'agents.models.list' | 'agents.config_options.list' | 'agents.session_modes.list' | 'sessions.spawn.profiles.list' | 'sessions.spawn.connected_services.list' | 'sessions.spawn.mcp_servers.preview' | 'session.message.send' | 'session.stop' | 'session.title.set' | 'session.model.set' | 'session.permission_mode.set' | 'session.archive' | 'session.unarchive' | 'session.status.get' | 'session.work_state.get' | 'session.goal.get' | 'session.goal.set' | 'session.goal.clear' | 'session.usageLimit.waitResume.enable' | 'session.usageLimit.waitResume.cancel' | 'session.usageLimit.checkNow' | 'session.usageLimit.consumeResetCredit' | 'session.terminalComposer.clear' | 'session.pendingInput.interruptAndRun' | 'session.vendor_plugin_catalog.list' | 'session.skill_catalog.list' | 'session.history.get' | 'session.wait.idle' | 'review.start' | 'subagents.plan.start' | 'subagents.delegate.start' | 'voice_agent.start' | 'reviews.comments.create' | 'reviews.comments.list' | 'reviews.comments.get' | 'reviews.comments.transition' | 'reviews.comments.edit' | 'reviews.comments.reply' | 'reviews.comments.redact' | 'reviews.comments.setDisposition' | 'reviews.comments.attachEvidence' | 'reviews.comments.bulkTransition' | 'sessions.subagents.list' | 'sessions.subagents.get' | 'sessions.subagents.watch' | 'sessions.subagents.upsert' | 'sessions.subagents.updateStatus' | 'sessions.subagents.complete' | 'execution.run.start' | 'execution.run.list' | 'execution.run.get' | 'execution.run.send' | 'execution.run.ensure' | 'execution.run.ensure_or_start' | 'execution.run.stream.start' | 'execution.run.stream.read' | 'execution.run.stream.cancel' | 'execution.run.stop' | 'execution.run.action' | 'execution.run.wait' | 'session.target.primary.set' | 'session.target.tracked.set' | 'session.list' | 'session.activity.get' | 'session.messages.recent.get' | 'session.transcript.get' | 'session.events.get' | 'session.log.tail' | 'transcript.page' | 'transcript.readAfter' | 'transcript.follow' | 'transcript.unfollow' | 'transcript.import' | 'transcript.search' | 'session.permission.respond' | 'session.permission.remote.pending.list' | 'session.permission.remote.respond' | 'session.permission.remote.grants.list' | 'session.permission.remote.grants.revoke' | 'session.user_action.answer' | 'session.mode.set' | 'sessions.external.candidates.list' | 'sessions.external.link.ensure' | 'sessions.external.follow' | 'sessions.external.unfollow' | 'sessions.external.backgroundFollow.set' | 'sessions.external.status.get' | 'sessions.external.transcript.page' | 'sessions.external.transcript.readAfter' | 'sessions.external.takeover' | 'sessions.external.materialize.start' | 'sessions.external.takeover.start' | 'sessions.external.operation.status.get' | 'sessions.external.operation.cancel' | 'sessions.external.operation.resume' | 'sessions.external.operation.retry' | 'sessions.external.operation.discard' | 'ui.voice_global.reset' | 'ui.voice_agent.teleport' | 'ui.current_context.read' | 'ui.current_context.command.invoke' | 'ui.pet.choose' | 'memory.search' | 'memory.get_window' | 'memory.ensure_up_to_date' | 'prompt_doc.update' | 'prompt_bundle.update' | 'prompt_asset.export' | 'prompt_registry.install' | 'daemon.promptAssets.discover' | 'daemon.promptAssets.delete' | 'daemon.promptRegistry.scanSource' | 'daemon.promptRegistry.install' | 'daemon.filesystem.readFile' | 'daemon.filesystem.writeFile' | 'daemon.filesystem.listDirectory' | 'daemon.filesystem.getDirectoryTree' | 'daemon.filesystem.listRoots' | 'daemon.filesystem.browseDirectory' | 'bugreport.collectDiagnostics' | 'bugreport.getLogTail' | 'bugreport.uploadArtifact' | 'browser.view.open' | 'browser.view.close' | 'browser.view.focus' | 'browser.target.set' | 'browser.navigate' | 'browser.reload' | 'browser.goBack' | 'browser.goForward' | 'browser.stop' | 'browser.diagnostics.snapshot' | 'browser.diagnostics.clear' | 'browser.diagnostics.pause' | 'browser.diagnostics.resume' | 'browser.diagnostics.eval' | 'browser.diagnostics.getProperties' | 'browser.diagnostics.releaseObjectGroup' | 'browser.diagnostics.elementPicker.start' | 'browser.diagnostics.elementPicker.cancel' | 'browser.context.capturePage' | 'browser.context.captureScreenshot' | 'browser.context.captureSelectedElement' | 'browser.context.captureNetworkSummary' | 'browser.context.captureConsoleSummary' | 'browser.context.annotation.start' | 'browser.context.annotation.cancel' | 'browser.context.annotation.captureRegion' | 'browser.context.annotation.captureElement' | 'browser.context.annotation.attachComment' | 'browser.context.annotation.attachStroke' | 'browser.context.annotation.attachStyleIntent' | 'browser.context.attachToComposer' | 'browser.context.attachToAgentTurn' | 'browser.context.clear' | 'browser.automation.status' | 'browser.automation.snapshot' | 'browser.automation.semanticSnapshot' | 'browser.automation.queryElements' | 'browser.automation.waitFor' | 'browser.automation.timeline.get' | 'browser.automation.cancelActive' | 'browser.automation.navigate' | 'browser.automation.reload' | 'browser.automation.goBack' | 'browser.automation.goForward' | 'browser.automation.click' | 'browser.automation.tap' | 'browser.automation.type' | 'browser.automation.press' | 'browser.automation.scroll' | 'browser.automation.hover' | 'browser.automation.focus' | 'browser.automation.select' | 'browser.automation.setValue' | 'browser.automation.upload' | 'browser.automation.drag' | 'browser.recording.start' | 'browser.recording.stop' | 'browser.recording.cancel' | 'browser.recording.status' | 'browser.recording.listForView' | 'browser.recording.discard' | 'browser.recording.cleanupExpired' | 'browser.recording.attachToComposer' | 'localServices.inventory.list' | 'localServices.inventory.refresh' | 'localServices.launcher.snapshot' | 'localServices.launcher.start' | 'localServices.launcher.openPreview' | 'localServices.launcher.registerPreview' | 'localServices.launcher.history.clear' | 'localServices.preview.openOrCreate' | 'localServices.preview.status' | 'localServices.preview.revoke' | 'localServices.publicPreview.create' | 'localServices.publicPreview.status' | 'localServices.publicPreview.revoke' | 'localServices.publicPreview.copyUrl' | 'localServices.actions.copyUrl' | 'localServices.actions.openPreview' | 'localServices.actions.forget' | 'localServices.actions.stopManaged' | 'localServices.actions.restartManaged' | 'localServices.actions.terminateDetected' | 'peerMediation.observability.snapshot' | 'peerMediation.observability.subscribe' | 'peerMediation.observability.unsubscribe' | 'devices.simulator.list' | 'devices.simulator.stream.keyframe' | 'devices.simulator.stream.snapshot' | 'devices.simulator.stream.quality.set' | 'devices.simulator.stream.fps.set' | 'devices.simulator.stream.scale.set' | 'devices.simulator.lease.acquire' | 'devices.simulator.lease.renew' | 'devices.simulator.lease.release' | 'devices.simulator.input.tap' | 'devices.simulator.input.swipe' | 'devices.simulator.input.text' | 'devices.simulator.input.key' | 'devices.simulator.input.button' | 'devices.simulator.input.orientation' | 'devices.simulator.input.pinch' | 'devices.simulator.input.rotate' | 'devices.simulator.sideband.request' | 'approval.request.list' | 'approval.request.get' | 'approval.request.create' | 'approval.request.decide' | 'plugins.scaffold' | 'plugins.install' | 'plugins.uninstall' | 'plugins.dev.submit' | 'plugins.dev.install' | 'plugins.dev.typecheck' | 'plugins.dev.build' | 'plugins.dev.test' | 'plugins.doctor' | 'plugins.pack' | 'plugins.reload' | 'plugins.list' | 'plugins.change.status' | 'plugins.sessionHooks.status.get' | 'plugins.sessionHooks.install' | 'plugins.sessionHooks.disable' | 'plugins.sessionHooks.enable' | 'plugins.sessionHooks.uninstall' | 'plugins.settings.list' | 'plugins.settings.get' | 'plugins.settings.set' | 'plugins.settings.reset' | 'plugins.settings.secret.status' | 'plugins.settings.secret.bind' | 'plugins.settings.secret.unbind' | 'plugins.settings.secret.delete' | 'plugins.permissions.grants.list' | 'plugins.permissions.grants.request' | 'plugins.permissions.grants.grant' | 'plugins.permissions.grants.revoke' | 'plugins.permissions.grants.dismissRequest' | 'plugin.webhook.endpoint.ensure' | 'plugin.webhook.endpoint.read' | 'plugin.webhook.endpoint.revoke' | 'plugin.webhook.endpoint.retarget' | 'plugin.webhook.endpoint.checkCorrespondence' | 'plugin.webhook.delivery.movePending' | 'plugin.webhook.endpoint.credential.configure' | 'plugin.webhook.endpoint.credential.rotate' | 'plugin.webhook.endpoint.credential.finishRotation' | 'account.plugins.data.erase' | 'account.sessions.signOutEverywhere' | 'account.apiTokens.create' | 'account.apiTokens.list' | 'account.apiTokens.revoke' | 'account.apiTokens.revokeAll' | 'automation.event.sources.list' | 'automation.event.admit' | 'automation.event.source.status.report' | 'automation.conversation.targets.list' | 'automation.conversation.target.verify' | 'automation.conversation.admit' | 'scm.pullRequest.list' | 'scm.pullRequest.get' | 'scm.pullRequest.openOrReuse' | 'scm.pullRequest.openCompose' | 'scm.pullRequest.checkout' | 'scm.pullRequest.prepareWorktree' | 'scm.reviewWorkspace.materializePrepared' | 'scm.pullRequest.runStacked' | 'scm.repository.clone' | 'scm.repository.init' | 'scm.repository.removeIndexLock' | 'scm.hostingRepository.describePublishTargets' | 'scm.hostingRepository.publish' | 'scm.diffSummary.generate';
+        actionId: 'action.spec.search' | 'action.spec.get' | 'action.options.resolve' | 'action.invoke' | 'session.open' | 'session.fork' | 'session.continue_with_replay' | 'session.rollback' | 'session.checkpoint_code_rollback' | 'session.checkpoint' | 'session.restore' | 'session.handoff' | 'session.handoff.prepare_target' | 'session.handoff.prepare_target.resume' | 'session.handoff.prepare_target_result.get' | 'session.handoff.commit' | 'session.handoff.abort' | 'session.handoff.status.get' | 'session.spawn_new' | 'paths.list_recent' | 'projects.list' | 'prompts.invocations.list' | 'prompts.invocation.resolve' | 'machines.list' | 'servers.list' | 'review.engines.list' | 'agents.backends.list' | 'agents.models.list' | 'agents.config_options.list' | 'agents.session_modes.list' | 'sessions.spawn.profiles.list' | 'sessions.spawn.connected_services.list' | 'sessions.spawn.mcp_servers.preview' | 'session.message.send' | 'session.stop' | 'session.title.set' | 'session.model.set' | 'session.permission_mode.set' | 'session.archive' | 'session.unarchive' | 'session.status.get' | 'session.work_state.get' | 'session.goal.get' | 'session.goal.set' | 'session.goal.clear' | 'session.usageLimit.waitResume.enable' | 'session.usageLimit.waitResume.cancel' | 'session.usageLimit.checkNow' | 'session.usageLimit.consumeResetCredit' | 'session.terminalComposer.clear' | 'session.pendingInput.interruptAndRun' | 'session.vendor_plugin_catalog.list' | 'session.skill_catalog.list' | 'session.history.get' | 'session.wait.idle' | 'review.start' | 'subagents.plan.start' | 'subagents.delegate.start' | 'voice_agent.start' | 'reviews.comments.create' | 'reviews.comments.list' | 'reviews.comments.get' | 'reviews.comments.transition' | 'reviews.comments.edit' | 'reviews.comments.reply' | 'reviews.comments.redact' | 'reviews.comments.setDisposition' | 'reviews.comments.attachEvidence' | 'reviews.comments.bulkTransition' | 'reviews.comments.claimPublicationDispatch' | 'sessions.subagents.list' | 'sessions.subagents.get' | 'sessions.subagents.watch' | 'sessions.subagents.upsert' | 'sessions.subagents.updateStatus' | 'sessions.subagents.complete' | 'execution.run.start' | 'execution.run.list' | 'execution.run.get' | 'execution.run.send' | 'execution.run.ensure' | 'execution.run.ensure_or_start' | 'execution.run.stream.start' | 'execution.run.stream.read' | 'execution.run.stream.cancel' | 'execution.run.stop' | 'execution.run.action' | 'execution.run.wait' | 'session.target.primary.set' | 'session.target.tracked.set' | 'session.list' | 'session.activity.get' | 'session.messages.recent.get' | 'session.transcript.get' | 'session.events.get' | 'session.log.tail' | 'transcript.page' | 'transcript.readAfter' | 'transcript.follow' | 'transcript.unfollow' | 'transcript.import' | 'transcript.search' | 'session.permission.respond' | 'session.permission.remote.pending.list' | 'session.permission.remote.respond' | 'session.user_action.remote.answer' | 'session.permission.remote.grants.list' | 'session.permission.remote.grants.revoke' | 'session.user_action.answer' | 'session.mode.set' | 'sessions.external.candidates.list' | 'sessions.external.link.ensure' | 'sessions.external.follow' | 'sessions.external.unfollow' | 'sessions.external.backgroundFollow.set' | 'sessions.external.status.get' | 'sessions.external.transcript.page' | 'sessions.external.transcript.readAfter' | 'sessions.external.takeover' | 'sessions.external.materialize.start' | 'sessions.external.takeover.start' | 'sessions.external.operation.status.get' | 'sessions.external.operation.cancel' | 'sessions.external.operation.resume' | 'sessions.external.operation.retry' | 'sessions.external.operation.discard' | 'ui.voice_global.reset' | 'ui.voice_agent.teleport' | 'ui.current_context.read' | 'ui.current_context.command.invoke' | 'ui.pet.choose' | 'memory.search' | 'memory.get_window' | 'memory.ensure_up_to_date' | 'prompt_doc.update' | 'prompt_bundle.update' | 'prompt_asset.export' | 'prompt_registry.install' | 'daemon.promptAssets.discover' | 'daemon.promptAssets.delete' | 'daemon.promptRegistry.scanSource' | 'daemon.promptRegistry.install' | 'daemon.filesystem.readFile' | 'daemon.filesystem.writeFile' | 'daemon.filesystem.listDirectory' | 'daemon.filesystem.getDirectoryTree' | 'daemon.filesystem.listRoots' | 'daemon.filesystem.browseDirectory' | 'bugreport.collectDiagnostics' | 'bugreport.getLogTail' | 'bugreport.uploadArtifact' | 'browser.view.open' | 'browser.view.close' | 'browser.view.focus' | 'browser.target.set' | 'browser.navigate' | 'browser.reload' | 'browser.goBack' | 'browser.goForward' | 'browser.stop' | 'browser.diagnostics.snapshot' | 'browser.diagnostics.clear' | 'browser.diagnostics.pause' | 'browser.diagnostics.resume' | 'browser.diagnostics.eval' | 'browser.diagnostics.getProperties' | 'browser.diagnostics.releaseObjectGroup' | 'browser.diagnostics.elementPicker.start' | 'browser.diagnostics.elementPicker.cancel' | 'browser.context.capturePage' | 'browser.context.captureScreenshot' | 'browser.context.captureSelectedElement' | 'browser.context.captureNetworkSummary' | 'browser.context.captureConsoleSummary' | 'browser.context.annotation.start' | 'browser.context.annotation.cancel' | 'browser.context.annotation.captureRegion' | 'browser.context.annotation.captureElement' | 'browser.context.annotation.attachComment' | 'browser.context.annotation.attachStroke' | 'browser.context.annotation.attachStyleIntent' | 'browser.context.attachToComposer' | 'browser.context.attachToAgentTurn' | 'browser.context.clear' | 'browser.automation.status' | 'browser.automation.snapshot' | 'browser.automation.semanticSnapshot' | 'browser.automation.queryElements' | 'browser.automation.waitFor' | 'browser.automation.timeline.get' | 'browser.automation.cancelActive' | 'browser.automation.navigate' | 'browser.automation.reload' | 'browser.automation.goBack' | 'browser.automation.goForward' | 'browser.automation.click' | 'browser.automation.tap' | 'browser.automation.type' | 'browser.automation.press' | 'browser.automation.scroll' | 'browser.automation.hover' | 'browser.automation.focus' | 'browser.automation.select' | 'browser.automation.setValue' | 'browser.automation.upload' | 'browser.automation.drag' | 'browser.recording.start' | 'browser.recording.stop' | 'browser.recording.cancel' | 'browser.recording.status' | 'browser.recording.listForView' | 'browser.recording.discard' | 'browser.recording.cleanupExpired' | 'browser.recording.attachToComposer' | 'localServices.inventory.list' | 'localServices.inventory.refresh' | 'localServices.launcher.snapshot' | 'localServices.launcher.start' | 'localServices.launcher.openPreview' | 'localServices.launcher.registerPreview' | 'localServices.launcher.history.clear' | 'localServices.preview.openOrCreate' | 'localServices.preview.status' | 'localServices.preview.revoke' | 'localServices.publicPreview.create' | 'localServices.publicPreview.status' | 'localServices.publicPreview.revoke' | 'localServices.publicPreview.copyUrl' | 'localServices.actions.copyUrl' | 'localServices.actions.openPreview' | 'localServices.actions.forget' | 'localServices.actions.stopManaged' | 'localServices.actions.restartManaged' | 'localServices.actions.terminateDetected' | 'peerMediation.observability.snapshot' | 'peerMediation.observability.subscribe' | 'peerMediation.observability.unsubscribe' | 'devices.simulator.list' | 'devices.simulator.stream.keyframe' | 'devices.simulator.stream.snapshot' | 'devices.simulator.stream.quality.set' | 'devices.simulator.stream.fps.set' | 'devices.simulator.stream.scale.set' | 'devices.simulator.lease.acquire' | 'devices.simulator.lease.renew' | 'devices.simulator.lease.release' | 'devices.simulator.input.tap' | 'devices.simulator.input.swipe' | 'devices.simulator.input.text' | 'devices.simulator.input.key' | 'devices.simulator.input.button' | 'devices.simulator.input.orientation' | 'devices.simulator.input.pinch' | 'devices.simulator.input.rotate' | 'devices.simulator.sideband.request' | 'approval.request.list' | 'approval.request.get' | 'approval.request.create' | 'approval.request.decide' | 'plugins.scaffold' | 'plugins.install' | 'plugins.uninstall' | 'plugins.dev.submit' | 'plugins.dev.install' | 'plugins.dev.typecheck' | 'plugins.dev.build' | 'plugins.dev.test' | 'plugins.doctor' | 'plugins.pack' | 'plugins.reload' | 'plugins.list' | 'plugins.change.status' | 'plugins.sessionHooks.status.get' | 'plugins.sessionHooks.install' | 'plugins.sessionHooks.disable' | 'plugins.sessionHooks.enable' | 'plugins.sessionHooks.uninstall' | 'plugins.settings.list' | 'plugins.settings.get' | 'plugins.settings.set' | 'plugins.settings.reset' | 'plugins.settings.secret.status' | 'plugins.settings.secret.bind' | 'plugins.settings.secret.unbind' | 'plugins.settings.secret.delete' | 'plugins.permissions.grants.list' | 'plugins.permissions.grants.request' | 'plugins.permissions.grants.grant' | 'plugins.permissions.grants.revoke' | 'plugins.permissions.grants.dismissRequest' | 'plugin.webhook.endpoint.ensure' | 'plugin.webhook.endpoint.read' | 'plugin.webhook.endpoint.revoke' | 'plugin.webhook.endpoint.retarget' | 'plugin.webhook.endpoint.checkCorrespondence' | 'plugin.webhook.delivery.movePending' | 'plugin.webhook.endpoint.credential.configure' | 'plugin.webhook.endpoint.credential.rotate' | 'plugin.webhook.endpoint.credential.finishRotation' | 'account.plugins.data.erase' | 'account.sessions.signOutEverywhere' | 'account.apiTokens.create' | 'account.apiTokens.list' | 'account.apiTokens.revoke' | 'account.apiTokens.revokeAll' | 'automation.event.sources.list' | 'automation.event.admit' | 'automation.event.source.status.report' | 'automation.conversation.targets.list' | 'automation.conversation.target.verify' | 'automation.conversation.admit' | 'scm.pullRequest.list' | 'scm.pullRequest.get' | 'scm.pullRequest.openOrReuse' | 'scm.pullRequest.openCompose' | 'scm.pullRequest.checkout' | 'scm.pullRequest.prepareWorktree' | 'scm.reviewWorkspace.materializePrepared' | 'scm.pullRequest.runStacked' | 'scm.repository.clone' | 'scm.repository.init' | 'scm.repository.removeIndexLock' | 'scm.hostingRepository.describePublishTargets' | 'scm.hostingRepository.publish' | 'scm.diffSummary.generate';
         actionArgs: unknown;
         summary: string;
         createdBy: {
@@ -5490,6 +5515,15 @@ export type PluginActionInputById = {
         pageSize?: number | undefined;
         cursor?: string | undefined;
         knownRevision?: string | undefined;
+        checkpointRetirementCandidates?: {
+            automationId: string;
+            eventRef: {
+                pluginId: string;
+                localId: string;
+            };
+            sourceSelectorId: string;
+            sourceContractVersion: number;
+        }[] | undefined;
     };
     readonly "automation.event.admit": {
         definitions: {
@@ -5778,38 +5812,11 @@ export type PluginActionInputById = {
 export type PluginActionResultById = {
     readonly "action.spec.search": {
         actionSpecs: {
-            [x: string]: unknown;
             id: string;
             title: string;
             description: string | null;
             safety: 'safe' | 'danger';
             placements: ('agent_input_chips' | 'browser_context' | 'session_header' | 'session_info' | 'session_action_menu' | 'pending_messages' | 'command_palette' | 'slash_command' | 'voice_panel' | 'run_list' | 'run_card')[];
-            slash: {
-                [x: string]: unknown;
-                tokens: string[];
-            } | null;
-            bindings: {
-                [x: string]: unknown;
-                voiceClientToolName?: string | undefined;
-                mcpToolName?: string | undefined;
-                sdkMethod?: string | undefined;
-                rpcMethod?: string | undefined;
-            } | null;
-            examples: {
-                [x: string]: unknown;
-                voice?: {
-                    [x: string]: unknown;
-                    argsExample?: string | undefined;
-                } | null | undefined;
-                mcp?: {
-                    [x: string]: unknown;
-                    argsExample?: string | undefined;
-                } | null | undefined;
-                sdk?: {
-                    [x: string]: unknown;
-                    codeExample?: string | undefined;
-                } | null | undefined;
-            } | null;
             surfaces: {
                 ui: boolean;
                 voice: boolean;
@@ -5847,6 +5854,27 @@ export type PluginActionResultById = {
                 title?: string | undefined;
                 description?: string | undefined;
                 submitLabel?: string | undefined;
+            } | null;
+            slash: {
+                tokens: string[];
+            } | null;
+            bindings: {
+                voiceClientToolName?: string | undefined;
+                mcpToolName?: string | undefined;
+                sdkMethod?: string | undefined;
+                rpcMethod?: string | undefined;
+                rpcMethodAliases?: string[] | undefined;
+            } | null;
+            examples: {
+                voice?: {
+                    argsExample?: string | undefined;
+                } | null | undefined;
+                mcp?: {
+                    argsExample?: string | undefined;
+                } | null | undefined;
+                sdk?: {
+                    codeExample?: string | undefined;
+                } | null | undefined;
             } | null;
             approval?: {
                 result: 'optional' | 'required' | 'none';
@@ -5864,19 +5892,6 @@ export type PluginActionResultById = {
                 machineId?: 'current_session_machine' | undefined;
             } | undefined;
             outputSchema?: Record<string, unknown> | undefined;
-            execution?: {
-                [x: string]: unknown;
-                handler?: string | {
-                    [x: string]: unknown;
-                    target: 'host' | 'plugin' | 'daemon';
-                    exportName?: string | undefined;
-                    registrationId?: string | undefined;
-                } | undefined;
-                transport?: 'host' | 'plugin' | 'api' | 'rpc' | undefined;
-                routing?: string | undefined;
-                approvalPolicy?: string | undefined;
-                resultSchema?: Record<string, unknown> | undefined;
-            } | undefined;
             sideEffectClass?: 'external' | 'danger' | 'none' | 'read' | 'write' | undefined;
             operation?: {
                 version: 1;
@@ -5886,42 +5901,26 @@ export type PluginActionResultById = {
                     onStart: 'activity' | 'current' | 'detail';
                 };
             } | undefined;
+            execution?: {
+                handler?: string | {
+                    target: 'host' | 'plugin' | 'daemon';
+                    exportName?: string | undefined;
+                    registrationId?: string | undefined;
+                } | undefined;
+                transport?: 'host' | 'plugin' | 'api' | 'rpc' | undefined;
+                routing?: string | undefined;
+                approvalPolicy?: string | undefined;
+                resultSchema?: Record<string, unknown> | undefined;
+            } | undefined;
         }[];
     };
     readonly "action.spec.get": {
         actionSpec: {
-            [x: string]: unknown;
             id: string;
             title: string;
             description: string | null;
             safety: 'safe' | 'danger';
             placements: ('agent_input_chips' | 'browser_context' | 'session_header' | 'session_info' | 'session_action_menu' | 'pending_messages' | 'command_palette' | 'slash_command' | 'voice_panel' | 'run_list' | 'run_card')[];
-            slash: {
-                [x: string]: unknown;
-                tokens: string[];
-            } | null;
-            bindings: {
-                [x: string]: unknown;
-                voiceClientToolName?: string | undefined;
-                mcpToolName?: string | undefined;
-                sdkMethod?: string | undefined;
-                rpcMethod?: string | undefined;
-            } | null;
-            examples: {
-                [x: string]: unknown;
-                voice?: {
-                    [x: string]: unknown;
-                    argsExample?: string | undefined;
-                } | null | undefined;
-                mcp?: {
-                    [x: string]: unknown;
-                    argsExample?: string | undefined;
-                } | null | undefined;
-                sdk?: {
-                    [x: string]: unknown;
-                    codeExample?: string | undefined;
-                } | null | undefined;
-            } | null;
             surfaces: {
                 ui: boolean;
                 voice: boolean;
@@ -5959,6 +5958,27 @@ export type PluginActionResultById = {
                 title?: string | undefined;
                 description?: string | undefined;
                 submitLabel?: string | undefined;
+            } | null;
+            slash: {
+                tokens: string[];
+            } | null;
+            bindings: {
+                voiceClientToolName?: string | undefined;
+                mcpToolName?: string | undefined;
+                sdkMethod?: string | undefined;
+                rpcMethod?: string | undefined;
+                rpcMethodAliases?: string[] | undefined;
+            } | null;
+            examples: {
+                voice?: {
+                    argsExample?: string | undefined;
+                } | null | undefined;
+                mcp?: {
+                    argsExample?: string | undefined;
+                } | null | undefined;
+                sdk?: {
+                    codeExample?: string | undefined;
+                } | null | undefined;
             } | null;
             kindVersion: 1;
             inputSchema: Record<string, unknown>;
@@ -5978,19 +5998,6 @@ export type PluginActionResultById = {
                 machineId?: 'current_session_machine' | undefined;
             } | undefined;
             outputSchema?: Record<string, unknown> | undefined;
-            execution?: {
-                [x: string]: unknown;
-                handler?: string | {
-                    [x: string]: unknown;
-                    target: 'host' | 'plugin' | 'daemon';
-                    exportName?: string | undefined;
-                    registrationId?: string | undefined;
-                } | undefined;
-                transport?: 'host' | 'plugin' | 'api' | 'rpc' | undefined;
-                routing?: string | undefined;
-                approvalPolicy?: string | undefined;
-                resultSchema?: Record<string, unknown> | undefined;
-            } | undefined;
             sideEffectClass?: 'external' | 'danger' | 'none' | 'read' | 'write' | undefined;
             operation?: {
                 version: 1;
@@ -5999,6 +6006,17 @@ export type PluginActionResultById = {
                 presentation: {
                     onStart: 'activity' | 'current' | 'detail';
                 };
+            } | undefined;
+            execution?: {
+                handler?: string | {
+                    target: 'host' | 'plugin' | 'daemon';
+                    exportName?: string | undefined;
+                    registrationId?: string | undefined;
+                } | undefined;
+                transport?: 'host' | 'plugin' | 'api' | 'rpc' | undefined;
+                routing?: string | undefined;
+                approvalPolicy?: string | undefined;
+                resultSchema?: Record<string, unknown> | undefined;
             } | undefined;
             compatibility?: Record<string, unknown> | undefined;
         };
@@ -10012,183 +10030,9 @@ export type PluginActionResultById = {
             error: string;
         }[];
     };
-    readonly "sessions.subagents.list": {
-        [x: string]: unknown;
-        id: string;
-        parentSessionId: string;
-        origin: 'plugin' | 'agent' | 'happier';
-        kind: 'custom' | 'native' | 'execution-run';
-        status: 'completed' | 'failed' | 'running' | 'pending' | 'aborted';
-        createdAt: number;
-        agentRef?: {
-            [x: string]: unknown;
-            agentId: string;
-            agentKind?: string | undefined;
-        } | undefined;
-        lifecycleDetail?: {
-            [x: string]: unknown;
-            agentState?: string | undefined;
-            reason?: string | undefined;
-        } | undefined;
-        completedAt?: number | undefined;
-        transcript?: {
-            [x: string]: unknown;
-            parentSessionId: string;
-            sidechainId: string;
-        } | undefined;
-        spawnRef?: {
-            [x: string]: unknown;
-            toolCallId?: string | undefined;
-        } | undefined;
-        runRef?: {
-            [x: string]: unknown;
-            runId: string;
-        } | undefined;
-        groupRef?: {
-            [x: string]: unknown;
-            groupId: string;
-            groupKind: 'custom' | 'team' | 'pool' | 'workflow';
-            memberId: string;
-            providerGroupKind?: string | undefined;
-            groupLabel?: string | undefined;
-            memberLabel?: string | undefined;
-            memberRole?: string | undefined;
-            supportsBroadcast?: boolean | undefined;
-        } | undefined;
-        vendorRef?: {
-            [x: string]: unknown;
-            agentSessionId: string;
-            vendorSource?: string | undefined;
-            resumeMetadata?: Record<string, unknown> | undefined;
-        } | undefined;
-        label?: string | undefined;
-        display?: {
-            [x: string]: unknown;
-            label?: string | undefined;
-            iconRef?: string | undefined;
-            colorToken?: string | undefined;
-        } | undefined;
-        agentMetadata?: Record<string, unknown> | undefined;
-    }[];
-    readonly "sessions.subagents.get": {
-        [x: string]: unknown;
-        id: string;
-        parentSessionId: string;
-        origin: 'plugin' | 'agent' | 'happier';
-        kind: 'custom' | 'native' | 'execution-run';
-        status: 'completed' | 'failed' | 'running' | 'pending' | 'aborted';
-        createdAt: number;
-        agentRef?: {
-            [x: string]: unknown;
-            agentId: string;
-            agentKind?: string | undefined;
-        } | undefined;
-        lifecycleDetail?: {
-            [x: string]: unknown;
-            agentState?: string | undefined;
-            reason?: string | undefined;
-        } | undefined;
-        completedAt?: number | undefined;
-        transcript?: {
-            [x: string]: unknown;
-            parentSessionId: string;
-            sidechainId: string;
-        } | undefined;
-        spawnRef?: {
-            [x: string]: unknown;
-            toolCallId?: string | undefined;
-        } | undefined;
-        runRef?: {
-            [x: string]: unknown;
-            runId: string;
-        } | undefined;
-        groupRef?: {
-            [x: string]: unknown;
-            groupId: string;
-            groupKind: 'custom' | 'team' | 'pool' | 'workflow';
-            memberId: string;
-            providerGroupKind?: string | undefined;
-            groupLabel?: string | undefined;
-            memberLabel?: string | undefined;
-            memberRole?: string | undefined;
-            supportsBroadcast?: boolean | undefined;
-        } | undefined;
-        vendorRef?: {
-            [x: string]: unknown;
-            agentSessionId: string;
-            vendorSource?: string | undefined;
-            resumeMetadata?: Record<string, unknown> | undefined;
-        } | undefined;
-        label?: string | undefined;
-        display?: {
-            [x: string]: unknown;
-            label?: string | undefined;
-            iconRef?: string | undefined;
-            colorToken?: string | undefined;
-        } | undefined;
-        agentMetadata?: Record<string, unknown> | undefined;
-    } | null;
-    readonly "sessions.subagents.watch": {
-        [x: string]: unknown;
-        kind: 'snapshot';
-        subagents: {
-            [x: string]: unknown;
-            id: string;
-            parentSessionId: string;
-            origin: 'plugin' | 'agent' | 'happier';
-            kind: 'custom' | 'native' | 'execution-run';
-            status: 'completed' | 'failed' | 'running' | 'pending' | 'aborted';
-            createdAt: number;
-            agentRef?: {
-                [x: string]: unknown;
-                agentId: string;
-                agentKind?: string | undefined;
-            } | undefined;
-            lifecycleDetail?: {
-                [x: string]: unknown;
-                agentState?: string | undefined;
-                reason?: string | undefined;
-            } | undefined;
-            completedAt?: number | undefined;
-            transcript?: {
-                [x: string]: unknown;
-                parentSessionId: string;
-                sidechainId: string;
-            } | undefined;
-            spawnRef?: {
-                [x: string]: unknown;
-                toolCallId?: string | undefined;
-            } | undefined;
-            runRef?: {
-                [x: string]: unknown;
-                runId: string;
-            } | undefined;
-            groupRef?: {
-                [x: string]: unknown;
-                groupId: string;
-                groupKind: 'custom' | 'team' | 'pool' | 'workflow';
-                memberId: string;
-                providerGroupKind?: string | undefined;
-                groupLabel?: string | undefined;
-                memberLabel?: string | undefined;
-                memberRole?: string | undefined;
-                supportsBroadcast?: boolean | undefined;
-            } | undefined;
-            vendorRef?: {
-                [x: string]: unknown;
-                agentSessionId: string;
-                vendorSource?: string | undefined;
-                resumeMetadata?: Record<string, unknown> | undefined;
-            } | undefined;
-            label?: string | undefined;
-            display?: {
-                [x: string]: unknown;
-                label?: string | undefined;
-                iconRef?: string | undefined;
-                colorToken?: string | undefined;
-            } | undefined;
-            agentMetadata?: Record<string, unknown> | undefined;
-        }[];
+    readonly "reviews.comments.claimPublicationDispatch": {
+        disposition: 'dispatch' | 'reconcile';
+        publicationCorrelationId: string;
     };
     readonly "execution.run.start": {
         [x: string]: unknown;
@@ -10599,7 +10443,8 @@ export type PluginActionResultById = {
         ok: true;
     };
     readonly "session.permission.remote.pending.list": {
-        requests: {
+        requests: ({
+            kind: 'permission';
             requestId: string;
             turnId: string;
             createdAtMs: number;
@@ -10609,7 +10454,28 @@ export type PluginActionResultById = {
             ] | [
                 'request'
             ];
-        }[];
+            agentRequestSummary: {
+                kind: 'permission';
+                toolLabel: string;
+                title: string;
+                detail: string;
+            };
+        } | {
+            kind: 'user_action';
+            requestId: string;
+            turnId: string;
+            createdAtMs: number;
+            agentRequestSummary: {
+                kind: 'user_action';
+                questions: {
+                    question: string;
+                    selection: 'text' | 'single' | 'multiple';
+                    required: boolean;
+                    allowCustom: boolean;
+                    choices: string[];
+                }[];
+            };
+        })[];
         truncated: boolean;
         nextCursor: string | null;
     };
@@ -10638,6 +10504,13 @@ export type PluginActionResultById = {
     } | {
         status: 'rejected';
         code: 'canceled' | 'requestNotFound' | 'requestNotPending' | 'decisionConflict' | 'remoteApprovalDisabled' | 'scopeExceedsPolicy' | 'sessionScopeUnsupported' | 'sessionGrantCapacityExceeded' | 'permissionCeilingExceeded' | 'actorUnattributable' | 'mediationStateUnavailable' | 'sessionUnavailable' | 'ownerMachineUnavailable';
+    };
+    readonly "session.user_action.remote.answer": {
+        status: 'applied';
+        requestId: string;
+    } | {
+        status: 'rejected';
+        code: 'canceled' | 'requestNotFound' | 'requestNotPending' | 'mediationStateUnavailable' | 'sessionUnavailable' | 'ownerMachineUnavailable' | 'answerInvalid';
     };
     readonly "session.permission.remote.grants.list": {
         grants: {
@@ -27307,6 +27180,15 @@ export type PluginActionResultById = {
     } | {
         kind: 'unchanged';
         revision: string;
+        checkpointRetirements?: {
+            automationId: string;
+            eventRef: {
+                pluginId: string;
+                localId: string;
+            };
+            sourceSelectorId: string;
+            sourceContractVersion: number;
+        }[] | undefined;
     } | {
         kind: 'cursorStale';
         currentRevision: string;
@@ -27340,6 +27222,10 @@ export type PluginActionResultById = {
             automationId: string;
             templateVersion: number;
             label: string;
+            execution: {
+                targetType: 'new_session' | 'existing_session' | 'execution_run';
+                enabled: boolean;
+            };
         }[];
         nextCursor: string | null;
     };

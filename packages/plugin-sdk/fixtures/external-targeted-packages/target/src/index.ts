@@ -16,6 +16,11 @@ import {
   defineProtocolUnion,
   defineProtocolUtf8String,
 } from '@happier-dev/plugin-sdk/protocol';
+import {
+  SessionAuthoringCheckoutCreationDraftV1Schema,
+  type SessionAuthoringCheckoutCreationDraftV1,
+  type SessionSpawnNewInputV2,
+} from '@happier-dev/plugin-sdk/sessions';
 
 export {
   selectPhysicalCopyDetailSurface,
@@ -59,6 +64,27 @@ export function serializeTargetDiagnostic(diagnostic: string): string {
 
 export function parseTargetDiagnostic(serialized: string) {
   return targetDiagnosticSchema.safeParse(JSON.parse(serialized));
+}
+
+/** An external author uses the exact bounded checkout draft exposed by spawn. */
+export const externalCheckoutCreationDraft: SessionAuthoringCheckoutCreationDraftV1 = {
+  kind: 'git_worktree',
+  displayName: 'feature/external-copy',
+  baseRef: 'main',
+  branchMode: 'new',
+};
+
+export const externalSpawnInputWithCheckout: Pick<
+  SessionSpawnNewInputV2,
+  'checkoutCreationDraft'
+> = {
+  checkoutCreationDraft: externalCheckoutCreationDraft,
+};
+
+export function parseExternalCheckoutCreationDraft(
+  value: unknown,
+): SessionAuthoringCheckoutCreationDraftV1 {
+  return SessionAuthoringCheckoutCreationDraftV1Schema.parse(value);
 }
 
 /** The target's separately installed SDK copy defines the target protocol. */

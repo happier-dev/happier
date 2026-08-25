@@ -5,10 +5,12 @@ import {
     MessageActionAvailableSnapshotV1Schema,
     PluginMachineExecutionOriginV1Schema,
     PluginMachineMaterializationRefV1Schema,
+    rehydratePluginContributionPointSemanticsV1,
 } from '@happier-dev/protocol';
 import type {
     PluginMachineExecutionOriginV1,
     PluginMachineMaterializationRefV1,
+    RehydratedPluginContributionPointOperationV1,
 } from '@happier-dev/protocol';
 import {
     derivePluginDaemonContributionRegistrationRights,
@@ -51,10 +53,6 @@ import type {
     TargetedContributionSnapshot,
     TargetedContributionsService,
 } from '../services/targetedContributions.js';
-import { decodeTargetedContributionPointSemantics } from '../targetedContributionAuthoring.js';
-import type {
-    TargetedContributionPointSemanticOperation,
-} from '../targetedContributionAuthoring.js';
 import type {
     PluginTestServicesFixture,
     PluginTestkit,
@@ -134,25 +132,16 @@ type TestkitAdmittedTargetedOperationBinding = Readonly<{
      * incumbent Action invocation, so a testkit handle that dropped it would
      * pass an author's test where production rejects.
      */
-    targetProtocol: TargetedContributionPointSemanticOperation;
+    targetProtocol: RehydratedPluginContributionPointOperationV1;
 }>;
 const admittedTargetedOperationBindings = new WeakMap<
     object,
     TestkitAdmittedTargetedOperationBinding
 >();
 
-type TestkitFixtureProtocol = Readonly<{
-    id: string;
-    version: number;
-    operations: Readonly<Record<string, Readonly<{ required: boolean }>>>;
-    surfaces?: Readonly<Record<string, Readonly<{ presentation: string }>>>;
-}>;
+type TestkitFixtureProtocol = ParsedPluginManifest['contributes']['pluginContributionPoints'][number]['protocols'][number];
 
-type TestkitFixturePoint = Readonly<{
-    id: string;
-    maxContributionsPerContributor?: number;
-    protocols: readonly TestkitFixtureProtocol[];
-}>;
+type TestkitFixturePoint = ParsedPluginManifest['contributes']['pluginContributionPoints'][number];
 
 type TestkitFixtureContributionDeclaration = Readonly<{
     id: string;
@@ -324,7 +313,7 @@ function invalidAdmittedTargetedOperationHandle(): PluginError {
  * match the production owner.
  */
 function parseAdmittedTargetedOperationInput(
-    targetProtocol: TargetedContributionPointSemanticOperation,
+    targetProtocol: RehydratedPluginContributionPointOperationV1,
     input: JsonValue,
 ): JsonValue {
     if (targetProtocol.input.kind === 'contributorDefined') return input;
@@ -341,7 +330,7 @@ function parseAdmittedTargetedOperationInput(
 }
 
 function parseAdmittedTargetedOperationResult(
-    targetProtocol: TargetedContributionPointSemanticOperation,
+    targetProtocol: RehydratedPluginContributionPointOperationV1,
     result: JsonValue | null,
 ): JsonValue {
     try {
@@ -732,25 +721,16 @@ export async function createPluginTestkit(
     }
 
     /**
-     * Replays the target's own executable operation semantics for this point
-     * through the canonical decoder. The manifest carries only the structural
-     * declaration, so the parser pair has to come from the authored point
-     * reference — exactly as cold admission supplies it in production.
+     * Rehydrates the target's parser pairs from the parsed cold manifest
+     * through the same Protocol owner used by CLI admission. Point refs stay
+     * structural, so independently copied refs cannot carry hidden semantics.
      */
     function readFixtureOperationSemantics(
-        point: TargetedContributionPointRef<unknown>,
         protocol: TestkitFixtureProtocol,
-    ): ReadonlyMap<string, TargetedContributionPointSemanticOperation> {
-        const decoded = decodeTargetedContributionPointSemantics(point, {
-            protocol: { id: protocol.id, version: protocol.version },
-            operations: Object.keys(protocol.operations).map((role) => ({ role })),
-            surfaces: Object.entries(protocol.surfaces ?? {}).map(([role, surface]) => ({
-                role,
-                presentation: surface.presentation,
-            })),
-        });
-        if (!decoded.ok) throw fixtureUnavailable();
-        return new Map(decoded.projection.operations.map((operation) => [operation.role, operation]));
+    ): ReadonlyMap<string, RehydratedPluginContributionPointOperationV1> {
+        const semantics = rehydratePluginContributionPointSemanticsV1(protocol);
+        if (!semantics) throw fixtureUnavailable();
+        return new Map(semantics.operations.map((operation) => [operation.role, operation]));
     }
 
     function createFixtureOperationHandle(
@@ -759,7 +739,7 @@ export async function createPluginTestkit(
         contributor: TestkitActionTarget,
         role: string,
         actionLocalId: PluginContributionLocalId,
-        targetProtocol: TargetedContributionPointSemanticOperation,
+        targetProtocol: RehydratedPluginContributionPointOperationV1,
     ): AdmittedTargetedOperationExecutionHandle {
         const identity = Object.freeze({
             target: Object.freeze({ pluginId: manifest.id }),
@@ -803,7 +783,7 @@ export async function createPluginTestkit(
     ): TargetedContributionSnapshot<TContribution> {
         assertFixtureCurrent(signal);
         const targetPoint = readFixturePoint(point);
-        const operationSemantics = readFixtureOperationSemantics(point, targetPoint.protocol);
+        const operationSemantics = readFixtureOperationSemantics(targetPoint.protocol);
         const contributions: unknown[] = [];
 
         for (const contributor of fixtureContributorTargets) {

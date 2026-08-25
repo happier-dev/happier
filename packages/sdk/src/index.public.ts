@@ -28,6 +28,7 @@ export {
   type HappierAgentUnavailableReason,
   type HappierMachineSessions,
   type HappierSession,
+  type HappierSessionSendAndWaitInput,
   type HappierSessionSpawnInput,
   type HappierSessionSpawnOptions,
   type HappierSessions,

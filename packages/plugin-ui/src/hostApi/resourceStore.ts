@@ -494,7 +494,10 @@ export function createPluginUiResourceStore(input: Readonly<{
     }
     const previous = entry.snapshot;
     const hasValue = previous.value !== undefined;
-    entry.watchFailureTerminal = true;
+    // These events retire the current subscription id, not the Resource's
+    // watch capability for the rest of the mounted provider lifetime. A later
+    // live consumer may establish a fresh subscription; only a terminal
+    // watch-open refusal latches against reopening this exact mount.
     stopWatch(entry, false);
     if (event.kind === 'complete') {
       // `complete` is a graceful protocol arm, not a Resource failure. Keep

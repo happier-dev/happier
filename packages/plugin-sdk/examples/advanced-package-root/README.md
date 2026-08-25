@@ -16,19 +16,18 @@ realms, so neither module may depend on a process-global singleton.
 
 The example is compiled outside the workspace through only public SDK exports
 by `src/examples/publicAuthoringExamples.test.ts`. That owner also verifies
-the action through the public testkit. Run the package-local lifecycle with the
-canonical author, pack, and disposable-daemon owners:
+the action through the public testkit. Run the package-local lifecycle with the canonical managed source-author owner:
 
 ```bash
 happier plugins dev typecheck .
 happier plugins dev build .
 happier plugins test .
-happier plugins test . --packed
+happier plugins dev
 ```
 
-The final command packs, trusts, installs, restarts, and invokes this package's
-safe empty-input `summarize` Action. It is package/load evidence only; it does
-not claim a mounted host or settled-candidate proof.
+Use the existing development stack to exercise activation, restart, invocation,
+and mounted-host behavior. Do not create a separate release archive for this
+feature QA.
 
 The provider's attach URL and Agent runtime are illustrative only; they do not
 contact or launch a real service. Copy the ownership pattern, then replace

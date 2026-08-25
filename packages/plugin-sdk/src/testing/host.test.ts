@@ -33,7 +33,7 @@ import type {
   PluginTestkitOptions,
   PluginTestkitRegistrationByFamily,
 } from './types.js';
-import type { ProvidersService } from '../providers.js';
+import type { ProvidersService } from '../providers/index.js';
 import type { VoiceProvidersRegistrationApi } from '../voice/projections.js';
 import type {
   VoiceSpeechSynthesizeRequest,
@@ -511,6 +511,36 @@ describe('createPluginTestkit', () => {
       });
       expect(Object.hasOwn(received, 'cause')).toBe(false);
       expect(received.data).toEqual(original.data);
+    } finally {
+      await testkit.dispose();
+    }
+  });
+
+  it('rebuilds a direct Action failure with the stable code and multibyte message projection', async () => {
+    const message = `ACTION_FAILURE_MARKER ${'🚫'.repeat(700)}`;
+    const testkit = await createPluginTestkit({
+      manifest,
+      module: {
+        activate(api) {
+          api.actions.register('echo', () => {
+            throw new PluginError({
+              code: 'Provider Failure',
+              message,
+            });
+          });
+        },
+      },
+    });
+
+    try {
+      const received = await testkit.invokeAction('echo', null).catch((error: unknown) => error);
+
+      expect(isPluginError(received)).toBe(true);
+      if (!isPluginError(received)) throw new Error('Expected a PluginError');
+      expect(received.code).toBe('plugin_action_execution_failed');
+      expect(received.message.startsWith('ACTION_FAILURE_MARKER')).toBe(true);
+      expect(new TextEncoder().encode(received.message).byteLength).toBeLessThanOrEqual(2_048);
+      expect(received.message).not.toContain('\uFFFD');
     } finally {
       await testkit.dispose();
     }
@@ -1140,6 +1170,121 @@ describe('createPluginTestkit', () => {
         notStarted: false,
       });
       expect(contributorHandler).toHaveBeenCalledTimes(2);
+    } finally {
+      await target.dispose();
+      await contributor.dispose();
+    }
+  });
+
+  it('rehydrates carrierless targeted-operation semantics from the target manifest', async () => {
+    const resultSchema = defineProtocolObject({
+      accepted: defineProtocolLiteral(true),
+    }, { policy: 'additive-open/drop' });
+    const protocol = defineContributionProtocol({
+      id: 'acme.testkit/cold-manifest-providers',
+      version: 1,
+      operations: {
+        publish: {
+          required: true,
+          input: { kind: 'contributorDefined' },
+          resultSchema,
+          action: { surface: 'plugin', dangerLevel: 'safe' },
+        },
+      },
+    });
+    const targetDefinition = definePlugin({
+      id: 'acme.testkit.cold-manifest-target',
+      version: '1.0.0',
+      contributionPoints: {
+        providers: protocol.point({ maxContributionsPerContributor: 1 }),
+      },
+      actions: {
+        capture: {
+          title: 'Capture provider',
+          execution: { target: 'daemon' },
+          scopes: ['global'],
+          surfaces: ['cli'],
+          dangerLevel: 'safe',
+          run: async () => null,
+        },
+        send: {
+          title: 'Send provider request',
+          execution: { target: 'daemon' },
+          scopes: ['global'],
+          surfaces: ['cli'],
+          dangerLevel: 'safe',
+          run: async () => null,
+        },
+      },
+    });
+    const coldPoint = Object.freeze({
+      targetPluginId: targetDefinition.manifest.id,
+      id: 'providers',
+      protocol: Object.freeze({ id: protocol.id, version: protocol.version }),
+    }) satisfies TargetedContributionPointRef<unknown>;
+    const contributorDefinition = definePlugin({
+      id: 'acme.testkit.cold-manifest-contributor',
+      version: '1.0.0',
+      actions: {
+        publish: {
+          title: 'Publish provider',
+          execution: { target: 'daemon' },
+          scopes: ['global'],
+          surfaces: ['plugin'],
+          inputSchema: { type: 'null' },
+          resultSchema: { type: 'object' },
+          dangerLevel: 'safe',
+          run: async () => ({ accepted: true, ignoredByTargetSchema: true }),
+        },
+      },
+      contributesTo: {
+        'acme.testkit.cold-manifest-target': {
+          providers: {
+            primary: protocol.contribute({
+              operations: { publish: protocol.operations.publish.bind('publish') },
+            }),
+          },
+        },
+      },
+    });
+    const contributor = await createPluginTestkit({
+      manifest: contributorDefinition.manifest,
+      module: {
+        activate(api) {
+          api.actions.register('publish', async () => ({ accepted: true, ignoredByTargetSchema: true }));
+        },
+      },
+    });
+    const operation: TestkitTargetedOperationRef = { current: undefined };
+    const target = await createPluginTestkit({
+      manifest: targetDefinition.manifest,
+      targetedContributionContributors: [contributor],
+      module: {
+        activate(api) {
+          api.actions.register('capture', async (_input, context) => {
+            const observation = context.services.targetedContributions.observeForSelf(
+              coldPoint,
+              { onInvalidated: () => {} },
+            );
+            try {
+              const snapshot = await observation.readCurrent({ signal: context.signal });
+              operation.current = snapshot.contributions[0]?.operations.publish;
+              return { count: snapshot.contributions.length };
+            } finally {
+              observation.dispose();
+            }
+          });
+          api.actions.register('send', async (_input, context) => {
+            if (!operation.current) throw new Error('No captured operation.');
+            return context.services.actions.executeAdmittedTargetedOperation(operation.current, null);
+          });
+        },
+      },
+    });
+
+    try {
+      await expect(target.invokeAction('capture', null)).resolves.toEqual({ count: 1 });
+      await expect(target.invokeAction('send', null)).resolves.toEqual({ accepted: true });
     } finally {
       await target.dispose();
       await contributor.dispose();

@@ -550,6 +550,68 @@ describe('plugin host API hooks', () => {
     store.dispose();
   });
 
+  const reopenableTerminalWatchEvents: readonly Readonly<{
+    label: string;
+    event: ResourceSubscriptionEvent;
+  }>[] = [
+    {
+      label: 'completes',
+      event: { version: 1, subscriptionId: 'watch-1', kind: 'complete', diagnostics: [] },
+    },
+    {
+      label: 'errors',
+      event: {
+        version: 1,
+        subscriptionId: 'watch-1',
+        kind: 'error',
+        code: 'unavailable',
+        diagnostics: ['transport ended'],
+      },
+    },
+  ];
+
+  it.each(reopenableTerminalWatchEvents)(
+    'allows a later live consumer to reopen after the prior watch $label',
+    async ({ event }) => {
+      const value: ResourceContent = {
+        contentType: 'application/json',
+        digest: `sha256:${'4'.repeat(64)}`,
+        bytes: new TextEncoder().encode('{"status":"reopen-after-complete"}'),
+      };
+      const deliveries: Array<(event: ResourceSubscriptionEvent) => void> = [];
+      const client: PluginUiResourceClient = {
+        readResource: vi.fn(async () => value),
+        watchResource: vi.fn(async (_resource, listener) => {
+          deliveries.push(listener);
+          return { dispose: vi.fn() };
+        }),
+      };
+      const store = createPluginUiResourceStore({ client, pluginId: 'acme.preview' });
+      const entry = store.getEntry('review-summary');
+      const firstUnsubscribe = entry.subscribe(() => {}, true);
+
+      await vi.waitFor(() => {
+        expect(entry.getSnapshot().subscription).toBe('live');
+        expect(deliveries).toHaveLength(1);
+      });
+      await act(async () => {
+        deliveries[0]?.(event);
+      });
+      expect(entry.getSnapshot().subscription).toBe('ended');
+      firstUnsubscribe();
+
+      const secondUnsubscribe = entry.subscribe(() => {}, true);
+      await vi.waitFor(() => {
+        expect(client.watchResource).toHaveBeenCalledTimes(2);
+        expect(deliveries).toHaveLength(2);
+        expect(entry.getSnapshot().subscription).toBe('live');
+      });
+
+      secondUnsubscribe();
+      store.dispose();
+    },
+  );
+
   // The removed "exposes the canonical SDK host API identity without a
   // framework-local facade" case only asserted that the `vi.fn()` stub above
   // returned what the same file told it to return, and would have passed

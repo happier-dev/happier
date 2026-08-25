@@ -1,9 +1,13 @@
 import ts from 'typescript';
 
 const AVAILABILITY_DISPOSITIONS = new Set(['available', 'deferred', 'retired']);
+const SOURCE_API_AVAILABILITY = new Set(['present', 'absent']);
+const LOADED_PLATFORM_PROOF = new Set(['not-recorded', 'established']);
+const RELEASE_AVAILABILITY = new Set(['not-published', 'published']);
 const MAINTAINED_PUBLIC_CONSUMER_PREFIXES = Object.freeze([
   'packages/plugins/',
   'packages/plugin-sdk/examples/',
+  'packages/plugin-ui/fixtures/',
   'packages/tests/fixtures/plugin-platform/',
 ]);
 const NO_CURRENT_POSITIVE_CONSUMER = 'no current positive consumer';
@@ -243,6 +247,9 @@ function validateAvailabilityConsumer(label, metadata, diagnostics) {
         `${label} provingConsumer must name a distinct maintained public plugin/example leaf, not its producer or specialist owner`,
       );
     }
+    if (metadata.sourceConsumer !== metadata.provingConsumer) {
+      diagnostics.push(`${label} available sourceConsumer must match provingConsumer`);
+    }
     return;
   }
   if (
@@ -253,6 +260,15 @@ function validateAvailabilityConsumer(label, metadata, diagnostics) {
       `${label} deferred provingConsumer must be ${JSON.stringify(NO_CURRENT_POSITIVE_CONSUMER)}`,
     );
   }
+}
+
+function optionalMaintainedPublicConsumer(value, label, diagnostics) {
+  if (value === null) return null;
+  if (!isMaintainedPublicConsumerPath(value)) {
+    diagnostics.push(`${label} must be null or name a maintained public plugin/example consumer`);
+    return null;
+  }
+  return value;
 }
 
 function assertExactMetadataKeys(label, metadata, canonicalIds, diagnostics) {
@@ -294,6 +310,26 @@ function normalizeMetadataRow(label, value, diagnostics, { disposition = false, 
       diagnostics.push(`${label}.unblockCondition is only valid for deferred availability`);
     }
   }
+  // Every row joins a canonical public catalog/entrypoint, so source API
+  // availability is a matrix-owned fact. Loaded-platform and release evidence
+  // remain independently unrecorded until their owners establish them.
+  const sourceApiAvailability = value.sourceApiAvailability ?? 'present';
+  if (!SOURCE_API_AVAILABILITY.has(sourceApiAvailability)) {
+    diagnostics.push(`${label}.sourceApiAvailability must be present or absent`);
+  }
+  const sourceConsumer = optionalMaintainedPublicConsumer(
+    value.sourceConsumer ?? (availabilityDisposition === 'available' ? provingConsumer : null),
+    `${label}.sourceConsumer`,
+    diagnostics,
+  );
+  const loadedPlatformProof = value.loadedPlatformProof ?? 'not-recorded';
+  if (!LOADED_PLATFORM_PROOF.has(loadedPlatformProof)) {
+    diagnostics.push(`${label}.loadedPlatformProof must be not-recorded or established`);
+  }
+  const releaseAvailability = value.releaseAvailability ?? 'not-published';
+  if (!RELEASE_AVAILABILITY.has(releaseAvailability)) {
+    diagnostics.push(`${label}.releaseAvailability must be not-published or published`);
+  }
   if (!producer || (lifecycle && !normalizedLifecycle) || !provingConsumer || !specialistOwner || !predecessorRemoval) {
     return null;
   }
@@ -303,6 +339,10 @@ function normalizeMetadataRow(label, value, diagnostics, { disposition = false, 
     provingConsumer,
     specialistOwner,
     predecessorRemoval,
+    sourceApiAvailability,
+    sourceConsumer,
+    loadedPlatformProof,
+    releaseAvailability,
     ...(disposition && AVAILABILITY_DISPOSITIONS.has(availabilityDisposition)
       ? {
           availabilityDisposition,
@@ -722,6 +762,24 @@ export function renderCapabilityMatrix(matrix) {
 }
 
 /**
+ * Source availability is established when a row joins the canonical catalog;
+ * source consumers, loaded-runtime proof, and release availability remain
+ * separate facts. This is the single metadata choke point before projection.
+ */
+function withEvidenceLifecycleFacts(declaration) {
+  if (!isRecord(declaration)) return declaration;
+  const availabilityDisposition = declaration.availabilityDisposition;
+  return Object.freeze({
+    ...declaration,
+    sourceApiAvailability: declaration.sourceApiAvailability ?? 'present',
+    sourceConsumer: declaration.sourceConsumer
+      ?? (availabilityDisposition === 'available' ? declaration.provingConsumer : null),
+    loadedPlatformProof: declaration.loadedPlatformProof ?? 'not-recorded',
+    releaseAvailability: declaration.releaseAvailability ?? 'not-published',
+  });
+}
+
+/**
  * Fills only facts that already have one canonical source. Declarations own
  * availability and positive-consumer (or deferred-unblock) facts for every
  * public capability family; catalogs and inventories retain identity, source,
@@ -751,12 +809,14 @@ export function deriveCapabilityMatrixMetadata({
         producer: `packages/protocol/src/plugins/contributions/catalog.ts#${entry.manifestKey}`,
         specialistOwner: `packages/protocol/src/plugins/contributions/catalog.ts#${entry.manifestKey}`,
         predecessorRemoval: `catalog-disposition:${entry.disposition}`,
-        ...declaration,
+        ...withEvidenceLifecycleFacts(declaration),
       });
     }
   }
   for (const [family, declaration] of Object.entries(declarations.manifestFamilies ?? {})) {
-    if (!Object.hasOwn(manifestFamilies, family)) manifestFamilies[family] = declaration;
+    if (!Object.hasOwn(manifestFamilies, family)) {
+      manifestFamilies[family] = withEvidenceLifecycleFacts(declaration);
+    }
   }
   const serviceMetadata = {};
   for (const service of serviceEntries) {
@@ -773,12 +833,14 @@ export function deriveCapabilityMatrixMetadata({
         lifecycle: 'invocation-scoped',
         specialistOwner: `packages/plugin-sdk/src/services/index.ts#PluginServices.${service.property}`,
         predecessorRemoval: 'none',
-        ...declaration,
+        ...withEvidenceLifecycleFacts(declaration),
       });
     }
   }
   for (const [serviceId, declaration] of Object.entries(declarations.services ?? {})) {
-    if (!Object.hasOwn(serviceMetadata, serviceId)) serviceMetadata[serviceId] = declaration;
+    if (!Object.hasOwn(serviceMetadata, serviceId)) {
+      serviceMetadata[serviceId] = withEvidenceLifecycleFacts(declaration);
+    }
   }
   const hostAccessMetadata = {};
   for (const entry of hostAccess) {
@@ -790,12 +852,14 @@ export function deriveCapabilityMatrixMetadata({
         lifecycle: 'invocation-scoped',
         specialistOwner: 'apps/cli/src/plugins/runtime/hostAccess/resolve.ts',
         predecessorRemoval: 'none',
-        ...declaration,
+        ...withEvidenceLifecycleFacts(declaration),
       });
     }
   }
   for (const [capability, declaration] of Object.entries(declarations.hostAccess ?? {})) {
-    if (!Object.hasOwn(hostAccessMetadata, capability)) hostAccessMetadata[capability] = declaration;
+    if (!Object.hasOwn(hostAccessMetadata, capability)) {
+      hostAccessMetadata[capability] = withEvidenceLifecycleFacts(declaration);
+    }
   }
   const subpathMetadata = {};
   for (const entrypoint of entrypoints) {
@@ -806,12 +870,14 @@ export function deriveCapabilityMatrixMetadata({
           lifecycle: 'published',
           specialistOwner: entrypoint.sourceModule,
           predecessorRemoval: 'none',
-          ...declaration,
+          ...withEvidenceLifecycleFacts(declaration),
       });
     }
   }
   for (const [specifier, declaration] of Object.entries(declarations.subpaths ?? {})) {
-    if (!Object.hasOwn(subpathMetadata, specifier)) subpathMetadata[specifier] = declaration;
+    if (!Object.hasOwn(subpathMetadata, specifier)) {
+      subpathMetadata[specifier] = withEvidenceLifecycleFacts(declaration);
+    }
   }
   return deepFreeze({
     manifestFamilies,

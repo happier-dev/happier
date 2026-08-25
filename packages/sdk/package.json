@@ -63,7 +63,8 @@
   ],
   "dependencies": {
     "@happier-dev/agents": "0.0.0",
-    "@happier-dev/protocol": "0.0.0"
+    "@happier-dev/protocol": "0.0.0",
+    "undici": "^6.23.0"
   },
   "devDependencies": {
     "@types/node": "^22.18.0",

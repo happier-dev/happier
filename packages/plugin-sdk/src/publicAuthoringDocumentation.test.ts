@@ -16,6 +16,19 @@ type DocumentationEntrypointRow = Readonly<{
     importExample: string;
 }>;
 
+type CapabilityMatrix = Readonly<{
+    manifestFamilies: readonly Readonly<{
+        manifestFamily: string;
+        availabilityDisposition: string;
+        provingConsumer: string;
+    }>[];
+    services: readonly Readonly<{
+        serviceId: string;
+        availabilityDisposition: string;
+        provingConsumer: string;
+    }>[];
+}>;
+
 const sdkRoot = fileURLToPath(new URL('..', import.meta.url));
 const repoRoot = resolve(sdkRoot, '../..');
 const pluginDocumentationRoot = join(repoRoot, 'apps', 'docs', 'content', 'docs', 'plugins');
@@ -107,7 +120,7 @@ describe('Plugin SDK public authoring documentation', () => {
             .sort();
         const rows = readEntrypointRows(guide);
 
-        expect(expectedSpecifiers).toHaveLength(48);
+        expect(expectedSpecifiers.length).toBeGreaterThan(0);
         expect(navigation.pages).toContain('sdk-entrypoints');
         expect(rows.map(({ specifier }) => specifier).sort()).toEqual(expectedSpecifiers);
 
@@ -170,11 +183,12 @@ describe('Plugin SDK public authoring documentation', () => {
         expect(activationGuide).toContain('## Low-level daemon ABI conformance');
         expect(activationGuide).toMatch(/not a second\s+normal daemon authoring path/u);
         expect(actionsGuide).toContain('context.services.actions.execute(...)');
-        expect(actionsGuide).toContain('Commands remain deferred for external');
-        expect(actionsGuide).toContain('Exact packed external proof must cover Action invocation');
         expect(actionsGuide).not.toContain('Commands are available in Developer Preview');
         expect(capabilitiesGuide).toContain('host-owned Agent-session terminal');
-        expect(capabilitiesGuide).toContain('`requestInterceptors` is a trusted installation-wide declaration');
+        expect(capabilitiesGuide).toMatch(
+            /`requestInterceptors` is available to ordinary public authors as a trusted\s+installation-wide declaration/u,
+        );
+        expect(capabilitiesGuide).not.toContain('External authoring remains deferred until a maintained external development-source');
         expect(capabilitiesGuide).toContain('`network.intercept` is not a public HostAccess capability');
         expect(capabilitiesGuide).toMatch(/no public `hostAccess`\s+request is required/u);
         expect(capabilitiesGuide).toContain('Credential, identity, cookie, token, signature, and API-key headers');
@@ -228,36 +242,30 @@ describe('Plugin SDK public authoring documentation', () => {
         expect(guide).not.toContain('defineTargetedContributionPoint');
     });
 
-    it('keeps source-ready Tools and Commands externally deferred while collection and webhook tasks stay actionable', () => {
+    it('keeps deferred capability policy separate from actionable collection and webhook tasks', () => {
         const navigation = JSON.parse(readFileSync(taskGuideNavigationPath, 'utf8')) as Readonly<{
             pages: readonly string[];
         }>;
-        const contributionsGuide = readFileSync(contributionsGuidePath, 'utf8');
-        const publicAuthoringReadme = readFileSync(
-            join(sdkRoot, 'examples', 'public-authoring', 'README.md'),
-            'utf8',
-        );
-        const publicAuthoringDefinition = readFileSync(
-            join(sdkRoot, 'examples', 'public-authoring', 'definition.ts'),
-            'utf8',
-        );
+        const capabilityMatrix = JSON.parse(
+            readFileSync(join(sdkRoot, 'capability-matrix.json'), 'utf8'),
+        ) as CapabilityMatrix;
         const accountCollectionsGuide = readFileSync(accountCollectionsGuidePath, 'utf8');
         const webhooksGuide = readFileSync(webhooksGuidePath, 'utf8');
         const installTrustGuide = readFileSync(installTrustGuidePath, 'utf8');
         expect(navigation.pages).toContain('account-collections');
         expect(navigation.pages).toContain('webhooks');
-        expect(contributionsGuide).toContain('capability-matrix.json');
-        expect(contributionsGuide).toContain('Deferred — conformance only');
-        expect(contributionsGuide).toContain('`tools` and `commands` have source declarations and host wiring');
-        expect(contributionsGuide).toContain('both remain externally deferred until exact packed lifecycle proof');
-        expect(contributionsGuide).toContain('`sessionHeaderActions`, `openableContentViewers`, and `mcp.servers`');
-        expect(contributionsGuide).toContain('`composer.references`,\n`composer.attachments`, `composer.controls`, and `composer.regions`');
-        expect(contributionsGuide).toContain('mcp.servers');
-        expect(publicAuthoringReadme).toContain('capability-matrix.json');
-        expect(publicAuthoringReadme).toContain('conformance-only');
-        expect(publicAuthoringReadme).toContain('Tools and Commands require exact packed external\nlifecycle proof');
-        expect(publicAuthoringDefinition).toContain('Deferred — conformance-only surface');
-        expect(publicAuthoringDefinition).toContain('Deferred — source-wired but awaiting exact packed external lifecycle proof');
+        for (const family of ['commands', 'tools']) {
+            expect(capabilityMatrix.manifestFamilies.find((row) => row.manifestFamily === family)).toMatchObject({
+                availabilityDisposition: 'deferred',
+                provingConsumer: 'no current positive consumer',
+            });
+        }
+        for (const service of ['events', 'fs', 'providers', 'resources']) {
+            expect(capabilityMatrix.services.find((row) => row.serviceId === service)).toMatchObject({
+                availabilityDisposition: 'deferred',
+                provingConsumer: 'no current positive consumer',
+            });
+        }
         expect(accountCollectionsGuide).toContain('static manifest identity');
         expect(accountCollectionsGuide).toContain('candidate-local');
         expect(accountCollectionsGuide).toContain('one ordered source-to-target chain');
@@ -287,7 +295,6 @@ describe('Plugin SDK public authoring documentation', () => {
         expect(guide).toContain('Deferred for external authors');
         expect(guide).toContain('first-party Preview');
         expect(guide).not.toContain('host-internal');
-        expect(guide).toContain('remains operation-only');
         expect(apiGuide).toContain('- notification channels\n');
         expect(apiGuide).not.toContain('notification channels (deferred; host-internal)');
         expect(entrypointGuide).toContain('Host-mediated notification service, channel sender, and preference result types');

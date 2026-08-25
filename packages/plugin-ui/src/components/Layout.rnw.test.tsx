@@ -14,8 +14,11 @@ import { Row, Screen, ScrollArea, Stack } from './Layout.js';
  */
 const DOM_LAYOUT_HANDLER_NAME = '__reactLayoutHandler';
 
-function mountLayout(children: React.ReactNode) {
-  const context = createSurfaceContext();
+function mountLayout(
+  children: React.ReactNode,
+  overrides?: Partial<ReturnType<typeof createSurfaceContext>>,
+) {
+  const context = createSurfaceContext(overrides);
   return mountThroughReactNativeWeb(
     <PluginUiProvider hostApi={createHostApiStub(context)} context={context}>
       {children}
@@ -24,7 +27,7 @@ function mountLayout(children: React.ReactNode) {
 }
 
 describe('plugin-ui semantic layout', () => {
-  it('renders real RN hosts with semantic direction, spacing, and safe-area padding', () => {
+  it('renders real RN hosts for every layout box', () => {
     const mount = mountLayout(
       <Screen testID="screen" safeArea>
         <Stack testID="stack" gap="large">
@@ -40,6 +43,32 @@ describe('plugin-ui semantic layout', () => {
     expect(mount.container.querySelector('[data-testid="stack"]')).not.toBeNull();
     expect(mount.container.querySelector('[data-testid="row"]')).not.toBeNull();
     mount.unmount();
+  });
+
+  it('keeps Row logical under an RTL surface context instead of reversing it manually', () => {
+    // Physical reversal and a blanket `writingDirection` are the two wrong
+    // answers here: a horizontal Row is logical order under the layout
+    // direction the platform already resolves, so reversing children or the
+    // flex axis would double-reverse a real RTL mount. Whether a surface may
+    // carry a direction that differs from the ambient one is still an unproven
+    // loaded-runtime question; this gate only holds the base components to
+    // logical output so that question stays answerable.
+    for (const direction of ['ltr', 'rtl'] as const) {
+      const mount = mountLayout(
+        <Row testID="row" gap="small">
+          <Stack testID="nested" />
+        </Row>,
+        { direction },
+      );
+
+      const row = mount.container.querySelector('[data-testid="row"]') as HTMLElement | null;
+      expect(row).not.toBeNull();
+      const style = row === null ? null : row.ownerDocument.defaultView?.getComputedStyle(row);
+      expect(style?.flexDirection).toBe('row');
+      expect(row?.style.getPropertyValue('writing-mode')).toBe('');
+      expect(row?.getAttribute('dir')).toBeNull();
+      mount.unmount();
+    }
   });
 
   it('uses one scroll owner and exposes the collection name to assistive technology', () => {

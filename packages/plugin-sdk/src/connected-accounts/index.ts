@@ -21,7 +21,11 @@ export type { AuthenticateOptions } from '../connectedAccounts.js';
 export type { AuthenticateResult } from '../connectedAccounts.js';
 export type { Authenticator } from '../connectedAccounts.js';
 export type { AuthenticatorContext } from '../connectedAccounts.js';
+export { CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1 } from '../connectedAccounts.js';
 export { CLAUDE_SUBSCRIPTION_OAUTH_PROFILE } from '../connectedAccounts.js';
+export { CLAUDE_SUBSCRIPTION_SETUP_TOKEN_ENVIRONMENT_REQUEST_V1 } from '../connectedAccounts.js';
+export type { ClaudeSubscriptionMaterializationContractV1 } from '../connectedAccounts.js';
+export type { ClaudeSubscriptionSetupTokenEnvironmentRequestV1 } from '../connectedAccounts.js';
 export type { PluginConnectedAccountAuthCompletionResult as ConnectedAccountAuthCompletionResult } from '../services/connectedAccounts.js';
 export type { PluginConnectedAccountAuthenticationAttempt as ConnectedAccountAuthenticationAttempt } from '../services/connectedAccounts.js';
 export type { ConnectedAccountAuthenticationContext } from '../connectedAccounts.js';
@@ -59,6 +63,11 @@ export type { ConnectedAccountsService } from '../connectedAccounts.js';
 export type { ConnectedServiceCredentialRecordV1 } from '../connectedAccounts.js';
 export type { ConnectedServiceId } from '../connectedAccounts.js';
 export type { CredentialRequirementOptions } from '../connectedAccounts.js';
+export {
+    CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV,
+    buildConnectedAccountRequestAuthClientSource,
+} from '@happier-dev/agents/request-auth';
+export type { ConnectedAccountRequestAuthClientSourceParams } from '@happier-dev/agents/request-auth';
 export { HAPPIER_CONNECTED_SERVICE_MATERIALIZED_ENV_KEYS_JSON_ENV } from '../connectedAccounts.js';
 export { HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON_ENV } from '../connectedAccounts.js';
 export { OPENAI_CODEX_OAUTH_PROFILE } from '../connectedAccounts.js';
@@ -73,6 +82,7 @@ export type { PluginConnectedAccountConfigurationV2 } from '../connectedAccounts
 export type { PluginConnectedAccountDescriptorContributionV2 } from '../connectedAccounts.js';
 export type { PluginConnectedAccountMaterializationKind } from '../connectedAccounts.js';
 export type { PluginConnectedAccountRegistrationApi } from '../services/connectedAccounts.js';
+export type { ProviderAccountUsageQuotaScopeV1 } from '../connectedAccounts.js';
 export type { ProviderLimitCategory } from '../connectedAccounts.js';
 export type { ProviderLimitEvidenceClassification } from '../connectedAccounts.js';
 export type { ProviderLimitEvidenceConfidence } from '../connectedAccounts.js';

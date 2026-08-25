@@ -10,7 +10,6 @@ const [
   contributorEntry,
   targetSdkEntry,
   contributorSdkEntry,
-  contributorHostEntry,
 ] = process.argv.slice(2).map((value, index) => requireArgument(value, `argument ${index + 1}`));
 
 const [
@@ -18,13 +17,11 @@ const [
   contributor,
   targetSdk,
   contributorSdk,
-  contributorHost,
 ] = await Promise.all([
   import(pathToFileURL(targetEntry).href),
   import(pathToFileURL(contributorEntry).href),
   import(pathToFileURL(targetSdkEntry).href),
   import(pathToFileURL(contributorSdkEntry).href),
-  import(pathToFileURL(contributorHostEntry).href),
 ]);
 
 if (targetSdk.definePlugin === contributorSdk.definePlugin) {
@@ -123,9 +120,9 @@ const contribution = contributor.manifest.contributes?.targetedPluginContributio
 if (!targetPointDeclaration || !contribution) {
   throw new Error('Expected one target point and one contributor wire declaration');
 }
-if (!Object.hasOwn(targetPoint, 'semanticCarrier')
+if (Object.keys(targetPoint).sort().join(',') !== 'id,protocol,targetPluginId'
   || Object.getOwnPropertySymbols(targetPoint).length !== 0) {
-  throw new Error('Target point did not expose one ordinary structural semantic carrier');
+  throw new Error('Target point did not expose one ordinary structural reference');
 }
 if (contribution.operations.inspect !== 'non-protocol-local-action') {
   throw new Error('The contributor lost its arbitrary local Action id');
@@ -146,33 +143,12 @@ if (targetOperationRoles.length !== 1
   || contributorOperationRoles[0] !== 'inspect') {
   throw new Error('Physical-copy target and contributor did not agree on the inspect operation-role census');
 }
-const operations = targetOperationRoles.map((role) => ({ role }));
-
-const surfaces = Object.keys(contribution.surfaces ?? {}).map((role) => {
-  const presentation = targetProtocolDeclaration.surfaces?.[role]?.presentation;
-  if (presentation !== 'content' && presentation !== 'fill') {
-    throw new Error(`Target wire declaration omitted presentation for ${role}`);
-  }
-  return { role, presentation };
-});
-
-const decoded = contributorHost.decodeTargetedContributionPointSemantics({ ...targetPoint }, {
-  protocol: contribution.protocol,
-  descriptor: contribution.descriptor,
-  operations,
-  surfaces,
-});
-if (!decoded.ok) {
-  throw new Error(`Cross-copy target semantic decode failed: ${decoded.code}`);
-}
-if (decoded.projection.descriptor?.kind !== 'issue'
-  || decoded.projection.descriptor.label !== 'Physical package source') {
-  throw new Error('Cross-copy target semantic decode changed the descriptor');
-}
-if (decoded.projection.surfaces.length !== 1
-  || decoded.projection.surfaces[0]?.role !== 'detail'
-  || decoded.projection.surfaces[0]?.presentation !== 'content') {
-  throw new Error('Cross-copy target semantic decode changed the required surface');
+const detailPresentation = targetProtocolDeclaration.surfaces?.detail?.presentation;
+if (contribution.descriptor?.kind !== 'issue'
+  || contribution.descriptor.label !== 'Physical package source'
+  || detailPresentation !== 'content'
+  || !Object.hasOwn(contribution.surfaces ?? {}, 'detail')) {
+  throw new Error('Cross-copy target and contributor changed their manifest wire contract');
 }
 
 const targetRenderers = target.manifest.contributes?.ui?.renderers ?? [];
@@ -322,8 +298,8 @@ if (region.placement !== 'afterComposer'
 
 process.stdout.write(JSON.stringify({
   actionId: contribution.operations.inspect,
-  descriptor: decoded.projection.descriptor,
-  surface: decoded.projection.surfaces[0],
+  descriptor: contribution.descriptor,
+  surface: { role: 'detail', presentation: detailPresentation },
   targetedSurface: {
     reactRenderer: reactTargetRenderer.id,
     declarativeRenderer: declarativeTargetRenderer.id,

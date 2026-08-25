@@ -268,7 +268,19 @@ export type VoiceRealtimePreflight =
 export type VoiceRealtimePreparation =
     | Readonly<{
         kind: 'prepared';
-        session: Readonly<{ config: VoiceRealtimeJsonValue; safeMetadata: VoiceRealtimeJsonValue }>;
+        session: Readonly<{
+            config: VoiceRealtimeJsonValue;
+            safeMetadata: VoiceRealtimeJsonValue;
+            /**
+             * Exact-call replay custody for this prepared provider carrier.
+             *
+             * `stable_ids` is valid only when this concrete session can accept
+             * a previously settled result under its original response and call
+             * identifiers after reconnect. Omission is fail-closed and has the
+             * same meaning as `none`.
+             */
+            toolResultReplay?: 'none' | 'stable_ids';
+        }>;
     }>
     | Readonly<{ kind: 'declined'; code: string }>
     | Readonly<{ kind: 'aborted' }>;
@@ -310,9 +322,14 @@ export type VoiceClientToolDefinition = Readonly<{
     description: string;
     parameters: Readonly<Record<string, VoiceRealtimeJsonValue>>;
     /**
-     * Attempt-scoped execution boundary. The host owns policy, execution,
+     * Attempt-scoped direct read boundary. The host owns policy, execution,
      * privacy redaction, and stale-attempt fencing; provider leaves only adapt
      * the already-sanitized result to their native SDK.
+     *
+     * Effectful Action definitions reject here because a direct callback has no
+     * stable response/call identity. Providers deliver those through canonical
+     * `tool_calls`, where the host barrier owns authorization, settlement,
+     * cancellation, and replay custody.
      */
     execute(parameters: VoiceRealtimeJsonValue): Promise<VoiceRealtimeJsonValue>;
 }>;
@@ -426,15 +443,17 @@ export type RealtimeVoiceProviderSettingsOperations = Readonly<{
     ): Promise<readonly VoiceRealtimeJsonValue[]>;
 }>;
 
+/**
+ * A provider that owns input capture must expose the operation that applies
+ * the host-owned mute state to that capture. Host-capture modes may opt into
+ * the same operation for a provider-native secondary input path.
+ */
 export type RealtimeVoiceProviderRuntime = Readonly<{
     kind: 'conversation';
     protocol: RealtimeVoiceProviderProtocol;
     settingsOperations?: RealtimeVoiceProviderSettingsOperations;
     createConnection(input: Readonly<{
-        session: Readonly<{
-            config: VoiceRealtimeJsonValue;
-            safeMetadata: VoiceRealtimeJsonValue;
-        }>;
+        session: Extract<VoiceRealtimePreparation, Readonly<{ kind: 'prepared' }>>['session'];
         attemptId: number;
         mic: VoiceMicSession;
         interruption: Readonly<{ duckGain: number; retainedOutputMaxMs: number }>;
@@ -454,8 +473,6 @@ export type RealtimeVoiceProviderRuntime = Readonly<{
     dispose?(): Promise<void> | void;
     encodePostCancelControls?(): readonly VoiceRealtimeJsonValue[];
     encodePostBargeInControls?(): readonly VoiceRealtimeJsonValue[];
-    microphoneMode: VoiceMicrophoneMode;
-    setInputMuted?(muted: boolean): Promise<void> | void;
     encodeContextUpdate(text: string): readonly VoiceRealtimeJsonValue[];
     /**
      * Encode one typed user turn. Element zero is the user-input acceptance
@@ -464,4 +481,13 @@ export type RealtimeVoiceProviderRuntime = Readonly<{
      */
     encodeTextTurn(text: string): readonly VoiceRealtimeJsonValue[];
     outputLevelMeter?: 'measured' | 'unavailable';
-}>;
+}> & (
+    | Readonly<{
+        microphoneMode: 'provider_managed';
+        setInputMuted(muted: boolean): Promise<void> | void;
+    }>
+    | Readonly<{
+        microphoneMode: 'host_webrtc' | 'host_pcm';
+        setInputMuted?(muted: boolean): Promise<void> | void;
+    }>
+);

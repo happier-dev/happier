@@ -145,6 +145,7 @@ export const MUTATING_PUBLIC_ACTION_IDS: ReadonlySet<PublicActionId> = new Set([
   "review.start",
   "reviews.comments.attachEvidence",
   "reviews.comments.bulkTransition",
+  "reviews.comments.claimPublicationDispatch",
   "reviews.comments.create",
   "reviews.comments.edit",
   "reviews.comments.redact",
@@ -548,6 +549,7 @@ export type GeneratedActions = Readonly<{
     readonly comments: Readonly<{
       readonly attachEvidence: (input: PublicActionInputById["reviews.comments.attachEvidence"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["reviews.comments.attachEvidence"]>;
       readonly bulkTransition: (input: PublicActionInputById["reviews.comments.bulkTransition"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["reviews.comments.bulkTransition"]>;
+      readonly claimPublicationDispatch: (input: PublicActionInputById["reviews.comments.claimPublicationDispatch"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["reviews.comments.claimPublicationDispatch"]>;
       readonly create: (input: PublicActionInputById["reviews.comments.create"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["reviews.comments.create"]>;
       readonly edit: (input: PublicActionInputById["reviews.comments.edit"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["reviews.comments.edit"]>;
       readonly get: (input: PublicActionInputById["reviews.comments.get"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["reviews.comments.get"]>;
@@ -1135,6 +1137,7 @@ export function createGeneratedActions(execute: ActionExecute): GeneratedActions
       comments: {
         attachEvidence: (input: PublicActionInputById["reviews.comments.attachEvidence"], options?: ActionExecutionOptions) => execute("reviews.comments.attachEvidence", input, options),
         bulkTransition: (input: PublicActionInputById["reviews.comments.bulkTransition"], options?: ActionExecutionOptions) => execute("reviews.comments.bulkTransition", input, options),
+        claimPublicationDispatch: (input: PublicActionInputById["reviews.comments.claimPublicationDispatch"], options?: ActionExecutionOptions) => execute("reviews.comments.claimPublicationDispatch", input, options),
         create: (input: PublicActionInputById["reviews.comments.create"], options?: ActionExecutionOptions) => execute("reviews.comments.create", input, options),
         edit: (input: PublicActionInputById["reviews.comments.edit"], options?: ActionExecutionOptions) => execute("reviews.comments.edit", input, options),
         get: (input: PublicActionInputById["reviews.comments.get"], options?: ActionExecutionOptions) => execute("reviews.comments.get", input, options),

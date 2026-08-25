@@ -467,6 +467,55 @@ describe('canonical Action Form presentation', () => {
     mount.unmount();
   });
 
+  it('keeps the effective selection cap at or above the required floor', async () => {
+    const changes = vi.fn();
+    const mount = mountForm(
+      <HappierSelect
+        label="Review engines"
+        multiple
+        required
+        minimumSelections={2}
+        maxSelections={1}
+        options={[
+          { value: 'claude', label: 'Claude' },
+          { value: 'codex', label: 'Codex' },
+          { value: 'gemini', label: 'Gemini' },
+        ]}
+        value={['claude', 'codex']}
+        onChange={changes}
+        theme={SURFACE_THEME_FIXTURE}
+      />,
+    );
+    const gemini = [...mount.container.querySelectorAll<HTMLElement>('[role="checkbox"]')]
+      .find((option) => option.textContent?.includes('Gemini'));
+
+    await act(async () => { gemini?.click(); });
+
+    expect(changes).toHaveBeenCalledWith(['codex', 'gemini']);
+    mount.unmount();
+  });
+
+  it('exposes a zero optional selection cap as unavailable choices', () => {
+    const changes = vi.fn();
+    const mount = mountForm(
+      <HappierSelect
+        label="Review engines"
+        multiple
+        maxSelections={0}
+        options={[{ value: 'claude', label: 'Claude' }]}
+        value={[]}
+        onChange={changes}
+        theme={SURFACE_THEME_FIXTURE}
+      />,
+    );
+    const claude = mount.container.querySelector<HTMLElement>('[role="checkbox"]');
+
+    expect(claude?.getAttribute('aria-disabled')).toBe('true');
+    claude?.click();
+    expect(changes).not.toHaveBeenCalled();
+    mount.unmount();
+  });
+
   it('scales text-entry metrics with the projected 200% text preference', () => {
     const context = createSurfaceContext({ textScale: 2 });
     const mount = mountForm(

@@ -321,6 +321,73 @@ describe('plugin-ui List item presentation', () => {
     mount.unmount();
   });
 
+  it('opens the focused row secondary actions from Shift+F10 and Context Menu and restores row focus', async () => {
+    const context = createSurfaceContext();
+    const selected: string[] = [];
+    const secondary: string[] = [];
+    const presentationHost = {
+      renderMarkdown: () => null,
+      renderCodeBlock: () => null,
+      renderPopover: (input) => input.content({
+        requestClose: () => {
+          input.onRequestClose();
+          const target = input.focusReturnRef?.current as Readonly<{ focus?: () => void }> | null;
+          target?.focus?.();
+        },
+        maxHeight: 240,
+      }),
+      renderIcon: () => null,
+    } satisfies PluginUiPresentationHost;
+    const rows = [
+      { id: 'first', title: 'First entry' },
+      { id: 'second', title: 'Second entry' },
+    ] as const;
+    const mount = mountThroughReactNativeWeb(
+      <PluginUiProvider hostApi={createHostApiStub(context)} context={context}>
+        <PluginUiPresentationHostProviderInternal host={presentationHost}>
+          <List
+            accessibilityLabel="Entries"
+            items={rows}
+            keyForItem={(item) => item.id}
+            renderItem={(item) => (
+              <List.Item
+                title={item.title}
+                secondaryActions={[{ id: 'pin', label: `Pin ${item.title}` }]}
+                onSecondaryAction={(actionId) => { secondary.push(`${item.id}:${actionId}`); }}
+              />
+            )}
+            selection={{
+              selectedKey: 'first',
+              onSelectedKeyChange: (key) => { selected.push(key); },
+            }}
+          />
+        </PluginUiPresentationHostProviderInternal>
+      </PluginUiProvider>,
+    );
+    const options = Array.from(mount.container.querySelectorAll<HTMLElement>('[role="option"]'));
+    const focusedRow = options[1];
+    expect(focusedRow).toBeDefined();
+    await act(async () => { focusedRow?.focus(); });
+
+    for (const event of [
+      new KeyboardEvent('keydown', { key: 'F10', shiftKey: true, bubbles: true, cancelable: true }),
+      new KeyboardEvent('keydown', { key: 'ContextMenu', bubbles: true, cancelable: true }),
+      new MouseEvent('contextmenu', { bubbles: true, cancelable: true }),
+    ]) {
+      await act(async () => { focusedRow?.dispatchEvent(event); });
+      const action = mount.container.querySelector<HTMLElement>('[role="menuitem"][aria-label="Pin Second entry"]');
+      expect(action).not.toBeNull();
+      await act(async () => { action?.click(); });
+      expect(document.activeElement).toBe(focusedRow);
+    }
+
+    expect(secondary).toEqual(['second:pin', 'second:pin', 'second:pin']);
+    expect(selected).toEqual([]);
+    expect(Array.from(mount.container.querySelectorAll<HTMLElement>('[aria-label="More actions"]'))
+      .map((trigger) => trigger.getAttribute('tabindex'))).toEqual(['-1', '-1']);
+    mount.unmount();
+  });
+
   it('projects an expandable row state through the shared pressable owner', () => {
     const mount = mountList(
       <List.Item

@@ -1,11 +1,31 @@
 import { afterEach, describe, expect, expectTypeOf, it, vi } from 'vitest';
 
+const undiciRequest = vi.hoisted(() => vi.fn(async (
+  url: URL | RequestInfo,
+  options?: RequestInit,
+) => {
+  const response = await fetch(url, options);
+  const headers: Record<string, string> = {};
+  response.headers.forEach((value, name) => {
+    headers[name] = value;
+  });
+  return {
+    statusCode: response.status,
+    headers,
+    body: { json: () => response.json() },
+  };
+}));
+
+vi.mock('undici', () => ({ request: undiciRequest }));
+
 import {
+  HappierActionError,
   HappierAgentUnavailableError,
   HappierClientClosedError,
   type HappierExecutionRunStream,
   HappierSessionInitialInputError,
   type HappierMachineClient,
+  HappierSessionSpawnError,
   type HappierSessionSpawnInput,
   HappierTransportError,
   type HappierTranscriptItem,
@@ -28,7 +48,10 @@ function isHappierSessionInitialInputError(
 }
 
 describe('Happier SDK client', () => {
-  afterEach(() => vi.unstubAllGlobals());
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    undiciRequest.mockClear();
+  });
 
   it('executes one raw typed Action through the frozen HTTP envelope', async () => {
     const fetch = vi.fn(async () => response({
@@ -48,6 +71,46 @@ describe('Happier SDK client', () => {
         headers: expect.objectContaining({ authorization: 'Bearer pat_secret' }),
         body: JSON.stringify({ v: 1, input: {} }),
       }),
+    );
+  });
+
+  it('sends and waits through the correlated session Action', async () => {
+    const fetch = vi.fn(async (_url: URL | RequestInfo, _init?: RequestInit) => response({
+      v: 1,
+      actionId: 'session.message.send',
+      execution: { ok: true, result: { accepted: true } },
+    }));
+    vi.stubGlobal('fetch', fetch);
+
+    await connect({ endpoint: 'http://daemon', token: 'pat' })
+      .machine('machine-7')
+      .sessions
+      .get('session-1')
+      .sendAndWait(
+        'Inspect the failure, then report back.',
+        { localId: 'input-1', timeoutSeconds: 3600 },
+        { requestId: 'request-1' },
+      );
+
+    expect(fetch).toHaveBeenCalledWith(
+      new URL('http://daemon/v1/actions/session.message.send'),
+      expect.objectContaining({ method: 'POST' }),
+    );
+    expect(JSON.parse(String(fetch.mock.calls[0]?.[1]?.body))).toEqual({
+      v: 1,
+      requestId: 'request-1',
+      target: { kind: 'machine', machineId: 'machine-7' },
+      input: {
+        sessionId: 'session-1',
+        message: 'Inspect the failure, then report back.',
+        localId: 'input-1',
+        timeoutSeconds: 3600,
+        wait: true,
+      },
+    });
+    expect(undiciRequest).toHaveBeenCalledWith(
+      new URL('http://daemon/v1/actions/session.message.send'),
+      expect.objectContaining({ headersTimeout: 0 }),
     );
   });
 
@@ -75,6 +138,8 @@ describe('Happier SDK client', () => {
       machine.actions.machines.list({}, { target: otherMachine });
       // @ts-expect-error Action discovery is also sealed when accessed from a machine client.
       machine.actions.search({ query: 'machine' }, { target: otherMachine });
+      // @ts-expect-error Action-definition lookup is also sealed when accessed from a machine client.
+      machine.actions.get({ id: 'session.status.get' }, { target: otherMachine });
       // @ts-expect-error Contributed Action invocation is also sealed when accessed from a machine client.
       machine.actions.invoke({ pluginId: 'acme.notes', localId: 'save' }, {}, { target: otherMachine });
     }
@@ -89,6 +154,10 @@ describe('Happier SDK client', () => {
     })).rejects.toMatchObject({ code: 'machine_target_conflict' });
     await expect(machine.actions.search({ query: 'machine' }, {
       // @ts-expect-error The search convenience method also rejects an attempted runtime redirect.
+      target: otherMachine,
+    })).rejects.toMatchObject({ code: 'machine_target_conflict' });
+    await expect(machine.actions.get({ id: 'session.status.get' }, {
+      // @ts-expect-error The definition convenience method also rejects an attempted runtime redirect.
       target: otherMachine,
     })).rejects.toMatchObject({ code: 'machine_target_conflict' });
     await expect(machine.actions.invoke({ pluginId: 'acme.notes', localId: 'save' }, {}, {
@@ -297,6 +366,55 @@ describe('Happier SDK client', () => {
       },
     ]);
 
+  });
+
+  it('surfaces deferred Session-creation approval as a typed Action error', async () => {
+    const approval = {
+      kind: 'approval_request_created',
+      artifactId: 'approval-1',
+      actionId: 'session.spawn_new',
+    } as const;
+    const actionIds: string[] = [];
+    const fetch = vi.fn(async (url: URL | RequestInfo) => {
+      const actionId = decodeURIComponent(new URL(String(url)).pathname.split('/').at(-1) ?? '');
+      actionIds.push(actionId);
+      if (actionId === 'agents.backends.list') {
+        return response({
+          v: 1,
+          actionId,
+          execution: {
+            ok: true,
+            result: {
+              items: [{
+                targetKey: 'backend:happier.agent.codex',
+                label: 'Codex',
+                enabled: true,
+                agentId: 'codex',
+                identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+              }],
+            },
+          },
+        });
+      }
+      return response({
+        v: 1,
+        actionId,
+        execution: { ok: true, result: approval },
+      });
+    });
+    vi.stubGlobal('fetch', fetch);
+
+    const failure = connect({ endpoint: 'http://daemon', token: 'pat' })
+      .machine('machine-7')
+      .sessions.spawn({ directory: '/repo', agent: 'codex' });
+
+    await expect(failure).rejects.toBeInstanceOf(HappierActionError);
+    await expect(failure).rejects.toMatchObject({
+      code: 'approval_required',
+      details: approval,
+    });
+    await expect(failure).rejects.not.toBeInstanceOf(HappierSessionSpawnError);
+    expect(actionIds).toEqual(['agents.backends.list', 'session.spawn_new']);
   });
 
   it('maps compact daemon-local session creation without a target', async () => {
@@ -680,8 +798,29 @@ describe('Happier SDK client', () => {
 
     await expect(failure).rejects.toMatchObject({
       name: 'HappierTransportError',
+      message: 'The Happier API returned invalid JSON.',
       status: 200,
       cause: invalidJson,
+    });
+  });
+
+  it('surfaces a non-JSON proxy outage without exposing its response body', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('Server unavailable: retry later.', {
+      status: 503,
+      headers: {
+        'content-type': 'text/plain; charset=utf-8',
+        'x-happier-retry-reason': 'server_unavailable',
+      },
+    })));
+
+    const failure = connect({ endpoint: 'http://daemon', token: 'pat' }).actions.execute('machines.list', {});
+
+    await expect(failure).rejects.toMatchObject({
+      name: 'HappierTransportError',
+      message: 'The Happier API is unavailable.',
+      code: 'server_unavailable',
+      status: 503,
+      details: undefined,
     });
   });
 
@@ -744,6 +883,72 @@ describe('Happier SDK client', () => {
         requestId: expect.any(String),
       },
     ]);
+  });
+
+  it('exposes canonical Action-definition lookup on root and machine-bound clients', async () => {
+    const requests: Array<Readonly<{ actionId: string; body: Record<string, unknown> }>> = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: URL | RequestInfo, init?: RequestInit) => {
+      const actionId = decodeURIComponent(new URL(String(url)).pathname.split('/').at(-1) ?? '');
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      requests.push({ actionId, body });
+      return response({ v: 1, actionId, execution: { ok: true, result: {} } });
+    }));
+
+    const client = connect({ endpoint: 'http://daemon', token: 'pat' });
+    await client.actions.get({ id: 'session.status.get' });
+    await client.machine('machine-7').actions.get({ id: 'session.status.get' });
+
+    expect(requests).toEqual([
+      {
+        actionId: 'action.spec.get',
+        body: { v: 1, input: { id: 'session.status.get' } },
+      },
+      {
+        actionId: 'action.spec.get',
+        body: {
+          v: 1,
+          target: { kind: 'machine', machineId: 'machine-7' },
+          input: { id: 'session.status.get' },
+        },
+      },
+    ]);
+  });
+
+  it('invokes the canonical qualified contributed Action id returned by discovery', async () => {
+    const requests: Array<Readonly<{ actionId: string; input: unknown }>> = [];
+    const fetch = vi.fn(async (url: URL | RequestInfo, init?: RequestInit) => {
+      const actionId = decodeURIComponent(new URL(String(url)).pathname.split('/').at(-1) ?? '');
+      const envelope = JSON.parse(String(init?.body));
+      requests.push({ actionId, input: envelope.input });
+      return response({ v: 1, actionId, execution: { ok: true, result: { status: 'executed', value: null } } });
+    });
+    vi.stubGlobal('fetch', fetch);
+
+    const actions = connect({ endpoint: 'http://daemon', token: 'pat' }).actions;
+    const invokeDiscoveredId = (discoveredId: PublicActionResultById[
+        'action.spec.search'
+      ]['actionSpecs'][number]['id']) => actions.invoke(discoveredId, {});
+    void invokeDiscoveredId;
+    await actions.invoke(
+      'happier.channels/actions/provider/connections-list-v1',
+      { accountId: 'account-1' },
+    );
+
+    expect(requests).toEqual([{
+      actionId: 'action.invoke',
+      input: {
+        action: {
+          pluginId: 'happier.channels',
+          localId: 'provider/connections-list-v1',
+        },
+        input: { accountId: 'account-1' },
+      },
+    }]);
+
+    expect(() => actions.invoke('happier.channels/provider/connections-list-v1', {})).toThrow(
+      new TypeError('Contributed Action id must use the canonical <pluginId>/actions/<localId> spelling.'),
+    );
+    expect(fetch).toHaveBeenCalledTimes(1);
   });
 
   it('surfaces HTTP authentication failures with their protocol code', async () => {

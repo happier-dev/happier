@@ -14,10 +14,12 @@ Before selecting an authoring family, read the installed
 `capability-matrix.json`; it is the sole availability authority. The Composer
 references, attachments, controls, and regions; `openableContentViewers`;
 tools; commands; and Session-header actions in this broad companion are
-deferred, conformance-only surfaces. They intentionally remain here to
-exercise their declared SDK shape and source wiring, not to claim packed or
-public availability. Tools and Commands require exact packed external
-lifecycle proof before publication metadata can advertise them as usable.
+deferred. They are not supported or advertised for ordinary author use; do not
+rely on them; consult each row's unblock condition in
+`capability-matrix.json`. Their presence exercises declared SDK shape and
+source wiring only; it does not claim public availability. Tools and Commands
+need a maintained external development-source proof in the current loaded
+development stack before publication metadata can advertise them as usable.
 
 The React Native artifact is one package graph for web, iOS, Android, and
 desktop. The hosted-web artifact is a declared multi-file graph: its entry
@@ -26,26 +28,31 @@ waits for the host-issued ready/bootstrap lifecycle through the public
 Resource through `hostApi.readResource`, and never parses launch facts from a
 URL or reaches into a parent frame.
 
-The mounted React Native review overview demonstrates the source-complete
-Developer Preview current-UI contract: it publishes bounded semantic data and
-an opaque Action command with `publishCurrentUiContext(...)`, then clears it on
-unmount through that same Host API. `currentUiContextMode: 'off'` exposes no
-current-UI read or command tool and sends no updates; `'on_demand'` permits an
-explicit read; and `'automatic'` adds metadata-only transitions. A read may
-disclose opaque command descriptors, but command invocation is a separate
-effectful capability:
-the provider must declare stable effect-call custody. The `open-review-status`
+The mounted React Native **Session** Project Companion activity demonstrates
+the source-complete Developer Preview current-UI contract: it publishes bounded
+semantic data and an opaque Action command with `publishCurrentUiContext(...)`,
+then clears it on unmount through that same Host API. The app-level review
+overview does not publish this Session-only command. `currentUiContextMode:
+'off'` exposes no current-UI read or command tool and sends no updates;
+`'on_demand'` permits an explicit read; and `'automatic'` adds metadata-only
+transitions. A read may disclose opaque command descriptors, but command
+invocation is a separate effectful capability: the account-mediated
+`credentialed-browser` provider declares `effectCalls: 'stable_ids'`. After a
+normal text control, it emits the ordinary provider tool-call sequence:
+`readCurrentUiContext`, then, after the host returns that tool result and its
+normal response continuation, `invokeCurrentUiCommand` using the opaque
+command id. Both calls retain stable provider call ids, so the incumbent host
+effect barrier owns execution, result delivery, and replay/conflict protection.
+It emits no invoke call when the current read has no command and does nothing
+on bare connection. The raw browser provider remains `effectCalls: 'none'`. The `open-review-status`
 Action has one declaration with `ui` and `voice` invocation surfaces and one
 web/iOS/Android client target. Its `reviewClientActions.activate(api)` entry
 registers the handler once, so it runs only in the invoking client through
 `context.ui.openSurface(...)`; it never falls back to the daemon. The separate
 `open-review-status-web-only-fixture` retains the web-only Voice artifact only
-to demonstrate a typed unavailable platform admission. This companion's
-current `effectCalls: 'none'` Voice leaves can expose the explicit read but do
-not advertise that effectful invocation path. This is source-complete Developer
-Preview documentation only. Source-level contract checks cover this shape;
-exact packed and loaded web/iOS/Android parity remains open, so it is not
-shipped availability.
+to demonstrate a typed unavailable platform admission. This remains Developer
+Preview documentation: the source test and loaded development-runtime lifecycle
+gate must pass before it can be treated as shipped availability.
 
 The Composer portion of `definition.ts` uses the one nested `composer` map and
 all four public helper families. `references.review-references` returns one
@@ -98,11 +105,10 @@ for the same public create-or-update call. The activated Session owner decides
 record retention and server capability availability.
 
 This reference proves code-defined public authoring and its source build entry
-shape. It does **not** claim a packed archive, package-load, loaded Artifact
-adoption, or browser, iOS, or Android proof. Those rows run independently on
-the exact package/Artifact and loaded runtime identities they exercise through
-the canonical Artifact frame owner; there is no global fixed candidate. Do not
-substitute a source URL, dev server, loopback server, or private host bridge.
+shape. Browser, iOS, and Android rows run independently against the observed
+current source and loaded runtime identities they exercise through the canonical
+frame owner. Do not substitute a private host bridge or a knowingly stale
+runtime.
 
 It is advanced reference material, not the ordinary starting path. Prefer the
 CLI scaffold and `definePlugin(...)` for a normal plugin. For a compiled
@@ -125,21 +131,18 @@ the staged `.happier-plugin/plugin.json` and emits the declared
 `activate`; these can be different realms and must not share a process-global
 singleton.
 
-Run its package-local lifecycle through the canonical author and packed-test
-owners:
+Run its package-local lifecycle through the canonical managed source-author
+owner:
 
 ```bash
 happier plugins dev typecheck .
 happier plugins dev build .
 happier plugins test .
-happier plugins test . --packed
+happier plugins dev
 ```
 
-The packed command is the later archive/package-load gate: it creates an
-archive, trusts and installs it into a disposable daemon, restarts that daemon,
-and invokes this package's empty-input `review-summary` Action. Run it only
-when the canonical publisher/artifact is available. It is package/load evidence
-only, not mounted-host or settled-candidate proof.
+Use the existing development stack for daemon restart, invocation, mounted-host,
+and lifecycle QA. Do not create a separate release representation.
 
 Start a normal plugin with the smaller scaffold:
 

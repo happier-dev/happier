@@ -10,11 +10,17 @@ import {
     PLUGIN_UI_SUB_PATH_MAX_UTF8_BYTES_V1 as canonicalPluginUiSubPathMaxUtf8BytesV1,
     normalizePluginUiSubPathV1 as canonicalNormalizePluginUiSubPathV1,
     COMPOSER_MEDIA_CONTENT_CAPABILITY_V1 as canonicalComposerMediaContentCapabilityV1,
+    COMPOSER_CONTROL_STATE_CONTENT_TYPE_V1 as canonicalComposerControlStateContentTypeV1,
+    MAX_COMPOSER_CONTENT_INSPECT_BYTES_V1 as canonicalMaxComposerContentInspectBytesV1,
+    MAX_COMPOSER_CONTROL_STATE_RESOURCE_BYTES_V1 as canonicalMaxComposerControlStateResourceBytesV1,
     MAX_COMPOSER_ATTACHMENT_DESCRIPTION_CODE_POINTS_V1 as canonicalMaxComposerAttachmentDescriptionCodePointsV1,
     MAX_COMPOSER_ATTACHMENT_LABEL_CODE_POINTS_V1 as canonicalMaxComposerAttachmentLabelCodePointsV1,
     ComposerContentHandleV1Schema as canonicalComposerContentHandleV1Schema,
     ComposerContentInspectRequestV1Schema as canonicalComposerContentInspectRequestV1Schema,
+    ComposerContentInspectWireResultV1Schema as canonicalComposerContentInspectWireResultV1Schema,
     ComposerContentPickMediaRequestV1Schema as canonicalComposerContentPickMediaRequestV1Schema,
+    ComposerControlStateContentTypeV1Schema as canonicalComposerControlStateContentTypeV1Schema,
+    ComposerControlStateV1Schema as canonicalComposerControlStateV1Schema,
     ComposerDecorationResultV1Schema as canonicalComposerDecorationResultV1Schema,
     ComposerDecorationSetV1Schema as canonicalComposerDecorationSetV1Schema,
     ComposerFocusResultV1Schema as canonicalComposerFocusResultV1Schema,
@@ -27,6 +33,9 @@ import {
     ComposerTransactionResultV1Schema as canonicalComposerTransactionResultV1Schema,
     ComposerTransactionV1Schema as canonicalComposerTransactionV1Schema,
     pluginUiTargetedContributionOperationKey as canonicalPluginUiTargetedContributionOperationKey,
+    selectPluginUiTargetedContributionOperationV1 as canonicalSelectPluginUiTargetedContributionOperationV1,
+    selectPluginUiTargetedContributionSurfaceV1 as canonicalSelectPluginUiTargetedContributionSurfaceV1,
+    selectPluginUiTargetedContributionV1 as canonicalSelectPluginUiTargetedContributionV1,
 } from '@happier-dev/protocol/plugins/ui/client';
 export const MAX_COMPOSER_ATTACHMENT_DESCRIPTION_CODE_POINTS_V1: number =
     canonicalMaxComposerAttachmentDescriptionCodePointsV1;
@@ -34,6 +43,11 @@ export const MAX_COMPOSER_ATTACHMENT_LABEL_CODE_POINTS_V1: number =
     canonicalMaxComposerAttachmentLabelCodePointsV1;
 export const COMPOSER_MEDIA_CONTENT_CAPABILITY_V1: ComposerMediaContentCapabilityV1 =
     canonicalComposerMediaContentCapabilityV1;
+export const MAX_COMPOSER_CONTENT_INSPECT_BYTES_V1: number = canonicalMaxComposerContentInspectBytesV1;
+export const COMPOSER_CONTROL_STATE_CONTENT_TYPE_V1: ComposerControlStateContentTypeV1 =
+    canonicalComposerControlStateContentTypeV1;
+export const MAX_COMPOSER_CONTROL_STATE_RESOURCE_BYTES_V1: number =
+    canonicalMaxComposerControlStateResourceBytesV1;
 /** Canonical current-UI context authoring bounds and incomplete-data marker. */
 export const CURRENT_UI_CONTEXT_MAX_COMMANDS_V1: number = canonicalCurrentUiContextMaxCommandsV1;
 export const CURRENT_UI_CONTEXT_MAX_UTF8_BYTES_V1: number = canonicalCurrentUiContextMaxUtf8BytesV1;
@@ -69,7 +83,10 @@ import type {
     ComposerContentHandleV1,
     ComposerContentInspectRequestV1,
     ComposerContentInspectResultV1,
+    ComposerContentInspectWireResultV1,
     ComposerContentPickMediaRequestV1,
+    ComposerControlStateContentTypeV1,
+    ComposerControlStateV1,
     ComposerDecorationResultV1,
     ComposerDecorationSetV1,
     ComposerFocusResultV1,
@@ -103,9 +120,13 @@ import type {
     PluginUiSelectedActionInputCarrierV1,
     PluginUiSelectActionInputRequestV1,
     PluginUiSelectActionInputResultV1,
+    PluginUiTargetedContributionSurfaceV1,
+    PluginUiTargetedContributionV1,
     PluginUiTargetedContributionOperationV1,
     PluginUiTargetedContributionPointSnapshotV1,
+    PluginUiTargetedContributionSelectorV1,
     PluginUiTargetedContributionTargetV1,
+    PluginUiTargetedContributionsV1,
 } from './publicContract.js';
 
 
@@ -119,9 +140,12 @@ export type {
     ComposerContentHandleV1,
     ComposerContentInspectRequestV1,
     ComposerContentInspectResultV1,
+    ComposerContentInspectWireResultV1,
     ComposerContentMediaKindV1,
     ComposerContentMimeTypeV1,
     ComposerContentPickMediaRequestV1,
+    ComposerControlStateContentTypeV1,
+    ComposerControlStateV1,
     ComposerDecorationResultV1,
     ComposerDecorationSetV1,
     ComposerFocusResultV1,
@@ -163,6 +187,7 @@ export type {
     PluginUiTargetedContributionProtocolSnapshotV1,
     PluginUiTargetedContributionProtocolV1,
     PluginUiTargetedContributionSelectionV1,
+    PluginUiTargetedContributionSelectorV1,
     PluginUiTargetedContributionSurfaceV1,
     PluginUiTargetedContributionTargetV1,
     PluginUiTargetedContributionV1,
@@ -195,8 +220,14 @@ export const ComposerContentHandleV1Schema: PluginUiSchema<ComposerContentHandle
     canonicalComposerContentHandleV1Schema;
 export const ComposerContentInspectRequestV1Schema: PluginUiSchema<ComposerContentInspectRequestV1> =
     canonicalComposerContentInspectRequestV1Schema;
+export const ComposerContentInspectWireResultV1Schema: PluginUiSchema<ComposerContentInspectWireResultV1> =
+    canonicalComposerContentInspectWireResultV1Schema;
 export const ComposerContentPickMediaRequestV1Schema: PluginUiSchema<ComposerContentPickMediaRequestV1> =
     canonicalComposerContentPickMediaRequestV1Schema;
+export const ComposerControlStateContentTypeV1Schema: PluginUiSchema<ComposerControlStateContentTypeV1> =
+    canonicalComposerControlStateContentTypeV1Schema;
+export const ComposerControlStateV1Schema: PluginUiSchema<ComposerControlStateV1> =
+    canonicalComposerControlStateV1Schema;
 
 /**
  * The bounded invalidation/retirement signal a resource subscription delivers
@@ -220,6 +251,30 @@ export type ResourceSubscriptionEvent = PluginUiResourceSubscriptionEventV1;
 export const pluginUiTargetedContributionOperationKey: (
     operation: PluginUiTargetedContributionOperationV1,
 ) => string = canonicalPluginUiTargetedContributionOperationKey;
+
+/**
+ * Pure target-local lookups over the host-stamped `SurfaceContext`
+ * snapshot. They return the exact admitted objects, perform no IO, own no
+ * currentness, and create no service: without them every target repeats the
+ * protocol-owned point/epoch/contributor/role walk and they drift apart.
+ */
+export const selectTargetedContribution: (
+    targetedContributions: PluginUiTargetedContributionsV1,
+    selector: PluginUiTargetedContributionSelectorV1,
+) => PluginUiTargetedContributionV1 | undefined =
+    canonicalSelectPluginUiTargetedContributionV1;
+
+export const selectTargetedContributionSurface: (
+    targetedContributions: PluginUiTargetedContributionsV1,
+    selector: PluginUiTargetedContributionSelectorV1 & Readonly<{ role: string }>,
+) => PluginUiTargetedContributionSurfaceV1 | undefined =
+    canonicalSelectPluginUiTargetedContributionSurfaceV1;
+
+export const selectTargetedContributionOperation: (
+    targetedContributions: PluginUiTargetedContributionsV1,
+    selector: PluginUiTargetedContributionSelectorV1 & Readonly<{ role: string }>,
+) => PluginUiTargetedContributionOperationV1 | undefined =
+    canonicalSelectPluginUiTargetedContributionOperationV1;
 
 /**
  * UI transport always carries JSON. A producer Action whose runtime result is
@@ -385,7 +440,7 @@ export interface PluginUiHostApi {
      */
     executeAction<TAction extends PluginUiActionReference>(
         action: TAction,
-        input: NoInfer<PluginUiActionInputFor<NoInfer<TAction>>>,
+        input?: NoInfer<PluginUiActionInputFor<NoInfer<TAction>>>,
         options?: PluginUiActionExecutionOptions,
     ): Promise<PluginUiActionResultFor<NoInfer<TAction>>>;
     selectActionInput(
@@ -575,6 +630,8 @@ export interface RenderContext {
     readonly surface: SurfaceContext;
     readonly hostApi: PluginUiHostApi;
     readonly signal: AbortSignal;
+    /** Host-owned mount activity; updates rerender the retained surface without redefining its lifecycle. */
+    readonly activity?: Readonly<{ active: boolean }>;
     /**
      * The bounded, immutable input the opener passed to
      * `hostApi.openSurface(view, input)` when this surface was selected.

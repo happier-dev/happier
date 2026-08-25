@@ -27,6 +27,15 @@ import {
   readCurrentApiSurfaceInventory,
 } from './apiSurfaceCli.mjs';
 
+function assertDeferredExternalDevelopmentProof(declaration) {
+  assert.equal(declaration.availabilityDisposition, 'deferred');
+  assert.equal(declaration.provingConsumer, 'no current positive consumer');
+  assert.match(declaration.unblockCondition, /maintained external development-source plugin/u);
+  assert.match(declaration.unblockCondition, /current loaded development stack/u);
+  assert.match(declaration.unblockCondition, /real invocation/u);
+  assert.match(declaration.unblockCondition, /currentness/u);
+}
+
 test('accepts the canonical Account storage guard as a storage service invocation', () => {
   const source = [
     "import { requireAccountStorage } from '@happier-dev/plugin-sdk/storage';",
@@ -332,6 +341,13 @@ test('declares transcript activities with the maintained Channels resource autho
   });
 });
 
+test('declares session info sections with the maintained Channels resource author', () => {
+  assert.deepEqual(CAPABILITY_MATRIX_DECLARATIONS_V1.manifestFamilies.sessionInfoSections, {
+    availabilityDisposition: 'available',
+    provingConsumer: 'packages/plugins/channels/src/manifest.ts',
+  });
+});
+
 test('derives operation-only targeted contribution availability through the maintained PostHog manifest', () => {
   const targetedContributionCatalogEntry = PLUGIN_CONTRIBUTION_CATALOG_V2.find(
     (entry) => entry.manifestKey === 'targetedPluginContributions',
@@ -352,6 +368,10 @@ test('derives operation-only targeted contribution availability through the main
     predecessorRemoval: `catalog-disposition:${targetedContributionCatalogEntry.disposition}`,
     availabilityDisposition: 'available',
     provingConsumer: 'packages/plugins/posthog/src/manifest.ts',
+    sourceApiAvailability: 'present',
+    sourceConsumer: 'packages/plugins/posthog/src/manifest.ts',
+    loadedPlatformProof: 'not-recorded',
+    releaseAvailability: 'not-published',
   });
 });
 
@@ -363,17 +383,17 @@ test('keeps MCP servers deferred until a maintained plugin author declares and r
   });
 });
 
-test('keeps Tools and Commands deferred until exact packed external lifecycle proof', () => {
-  assert.deepEqual(CAPABILITY_MATRIX_DECLARATIONS_V1.manifestFamilies.commands, {
-    availabilityDisposition: 'deferred',
-    provingConsumer: 'no current positive consumer',
-    unblockCondition: 'An exact packed external Command invokes its Action through the canonical plugin command catalog and proves replacement, disable, and uninstall currentness.',
-  });
-  assert.deepEqual(CAPABILITY_MATRIX_DECLARATIONS_V1.manifestFamilies.tools, {
-    availabilityDisposition: 'deferred',
-    provingConsumer: 'no current positive consumer',
-    unblockCondition: 'An exact packed external Tool invokes its Action through the real daemon MCP catalog and proves replacement, disable, and uninstall currentness.',
-  });
+test('keeps Tools and Commands deferred until loaded development-source proof', () => {
+  assertDeferredExternalDevelopmentProof(CAPABILITY_MATRIX_DECLARATIONS_V1.manifestFamilies.commands);
+  assert.match(CAPABILITY_MATRIX_DECLARATIONS_V1.manifestFamilies.commands.unblockCondition, /canonical plugin command catalog/u);
+  assertDeferredExternalDevelopmentProof(CAPABILITY_MATRIX_DECLARATIONS_V1.manifestFamilies.tools);
+  assert.match(CAPABILITY_MATRIX_DECLARATIONS_V1.manifestFamilies.tools.unblockCondition, /real daemon MCP catalog/u);
+});
+
+test('keeps unproven invocation services deferred until loaded development-source proof', () => {
+  for (const service of ['events', 'fs', 'providers', 'resources']) {
+    assertDeferredExternalDevelopmentProof(CAPABILITY_MATRIX_DECLARATIONS_V1.services[service]);
+  }
 });
 
 test('names the Inspector settings declaration as the maintained settings and field consumer', () => {
@@ -420,6 +440,10 @@ test('derives HostAccess metadata from the terminal/session and deferred declara
     specialistOwner: 'apps/cli/src/plugins/runtime/context/terminalHost.ts',
     predecessorRemoval: 'none',
     availabilityDisposition: 'available',
+    sourceApiAvailability: 'present',
+    sourceConsumer: 'packages/plugins/claude/src/manifest.ts',
+    loadedPlatformProof: 'not-recorded',
+    releaseAvailability: 'not-published',
   });
   assert.equal(Object.hasOwn(metadata.hostAccess, 'network.intercept'), false);
   for (const capability of ['browser', 'clipboard', 'externalLinks']) {
@@ -706,7 +730,35 @@ test('joins the current canonical catalogs without a missing, stale, or disposit
     specialistOwner: 'apps/cli/src/plugins/runtime/context/terminalHost.ts',
     predecessorRemoval: 'none',
     availabilityDisposition: 'available',
+    sourceApiAvailability: 'present',
+    sourceConsumer: 'packages/plugins/claude/src/manifest.ts',
+    loadedPlatformProof: 'not-recorded',
+    releaseAvailability: 'not-published',
   });
+  assert.deepEqual(
+    matrix.manifestFamilies.find((row) => row.manifestFamily === 'composerReferences'),
+    {
+      manifestFamily: 'composerReferences',
+      pluginApiRegistrationFamily: 'composerReferences',
+      registrationHost: 'daemon',
+      definePluginAuthorKey: 'composer',
+      definePluginInputShape: 'structured',
+      definePluginClassification: 'adapter',
+      authorEntrypoint: '.',
+      realm: 'any',
+      lifecycle: ['declared', 'normalized', 'projected', 'bound', 'active', 'unavailable', 'invalid'],
+      catalogDisposition: 'reshaped',
+      producer: 'packages/protocol/src/plugins/contributions/catalog.ts#composerReferences',
+      provingConsumer: 'packages/plugin-ui/fixtures/external-authoring/src/index.ts',
+      specialistOwner: 'packages/protocol/src/plugins/contributions/catalog.ts#composerReferences',
+      predecessorRemoval: 'catalog-disposition:reshaped',
+      availabilityDisposition: 'available',
+      sourceApiAvailability: 'present',
+      sourceConsumer: 'packages/plugin-ui/fixtures/external-authoring/src/index.ts',
+      loadedPlatformProof: 'not-recorded',
+      releaseAvailability: 'not-published',
+    },
+  );
   assert.equal(matrix.hostAccess.some((entry) => entry.capability === 'network.intercept'), false);
   for (const capability of ['browser', 'clipboard', 'externalLinks']) {
     const row = matrix.hostAccess.find((entry) => entry.capability === capability);
@@ -829,7 +881,7 @@ test('selects each distinct available proving-consumer source path for package s
   assert.equal(Object.isFrozen(paths), true);
 });
 
-test('excludes first-party Preview examples from package staging when external availability is deferred', async () => {
+test('stages the maintained external author proof for available browser and request-policy capability rows', async () => {
   const packageRoot = resolve(import.meta.dirname, '..');
   const paths = await resolveAvailableCapabilityMatrixProvingConsumerSourcePaths({ packageRoot });
 
@@ -840,7 +892,7 @@ test('excludes first-party Preview examples from package staging when external a
   assert.equal(paths.includes('packages/plugins/posthog/src/manifest.ts'), true);
   assert.equal(paths.includes('packages/tests/fixtures/plugin-platform/out-of-tree-channel-socket-provider/src/index.mjs'), true);
   assert.equal(paths.includes('packages/tests/fixtures/plugin-platform/packed-targeted-contribution-projection/public-protocol.ts'), true);
-  assert.equal(paths.includes('packages/plugin-sdk/examples/action-contract-producer/src/index.ts'), false);
+  assert.equal(paths.includes('packages/plugin-sdk/examples/action-contract-producer/src/index.ts'), true);
   assert.equal(new Set(paths).size, paths.length);
   assert.deepEqual(paths, [...paths].sort());
 });
@@ -866,5 +918,9 @@ test('plans the current author-source matrix through the sole publisher output',
     specialistOwner: 'packages/plugin-sdk/src/services/index.ts#PluginServices.targetedContributions',
     predecessorRemoval: 'none',
     availabilityDisposition: 'available',
+    sourceApiAvailability: 'present',
+    sourceConsumer: 'packages/plugins/channels/src/ingress.ts',
+    loadedPlatformProof: 'not-recorded',
+    releaseAvailability: 'not-published',
   });
 });

@@ -26,6 +26,7 @@ import {
     PluginUiWatchComposerRequestV1Schema,
     PluginUiExecuteActionRequestV1Schema,
     PluginUiHostApiSurfaceContextV1Schema,
+    PluginUiHostApiRenderContextSnapshotV1Schema,
     PluginUiSelectActionInputRequestV1Schema,
     PluginUiSelectActionInputResultV1Schema,
     PluginUiSelectedActionInputCarrierV1Schema,
@@ -134,6 +135,8 @@ export interface CreatePluginUiHostApiClientFromTransportOptions {
      * and it is not part of the published author surface.
      */
     readonly onDisconnected?: (reason: string) => void;
+    /** Host-private projection of the current retained-mount activity fact. */
+    readonly onContextActivity?: (activity: Readonly<{ active: boolean }>) => void;
 }
 
 export class PluginUiHostApiClientError extends PluginError {
@@ -233,13 +236,13 @@ function isAdvertisableHostMethod(
 function asJsonReference(reference: PluginReference): JsonValue {
     return typeof reference === 'string' ? reference : { pluginId: reference.pluginId, localId: reference.localId };
 }
-function createExecuteActionRequest(action: PluginReference, input: JsonValue) {
+function createExecuteActionRequest(action: PluginReference, input?: JsonValue) {
     const parsed = PluginUiExecuteActionRequestV1Schema.safeParse({
         // Preserve the author-provided runtime shape for the strict Protocol
         // owner. Projecting first would silently drop unknown object fields and
         // create a second, weaker Action grammar at this transport boundary.
         action,
-        input,
+        ...(input === undefined ? {} : { input }),
     });
     if (!parsed.success) {
         throw new PluginUiHostApiClientError('invalid_payload', 'executeAction request is invalid.');
@@ -291,6 +294,19 @@ function readSurface(value: JsonValue): SurfaceContext {
     }
     const surface: CanonicalSurfaceContext = parsed.data;
     return surface;
+}
+function readRenderContextSnapshot(value: JsonValue): Readonly<{
+    surface: SurfaceContext;
+    activity: Readonly<{ active: boolean }>;
+}> {
+    const parsed = PluginUiHostApiRenderContextSnapshotV1Schema.safeParse(value);
+    if (!parsed.success) {
+        throw new PluginUiHostApiClientError('invalid_payload', 'Host returned an invalid render context snapshot.');
+    }
+    return Object.freeze({
+        surface: readSurface(parsed.data.surface),
+        activity: Object.freeze({ active: parsed.data.activity.active }),
+    });
 }
 function decodeBase64(value: string): Uint8Array {
     if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(value)) {
@@ -783,18 +799,20 @@ export async function createPluginUiHostApiClientFromTransport(
             if (result === undefined) {
                 throw new PluginUiHostApiClientError('invalid_payload', 'Host context response is missing.');
             }
-            const nextSurface = readSurface(result);
-            currentSurface = nextSurface;
-            return nextSurface;
+            const next = readRenderContextSnapshot(result);
+            currentSurface = next.surface;
+            options.onContextActivity?.(next.activity);
+            return next.surface;
         },
         watchContext: async (listener, requestOptions) => {
             const subscription = await subscribe(
                 'watchContext',
                 undefined,
                 (value) => {
-                    const nextSurface = readSurface(value);
-                    currentSurface = nextSurface;
-                    listener(nextSurface);
+                    const next = readRenderContextSnapshot(value);
+                    currentSurface = next.surface;
+                    options.onContextActivity?.(next.activity);
+                    listener(next.surface);
                 },
                 requestOptions?.signal,
             );
@@ -804,7 +822,7 @@ export async function createPluginUiHostApiClientFromTransport(
         // transport is uniform, so it implements the general JSON signature once.
         executeAction: (async (
             action: PluginReference,
-            input: JsonValue,
+            input?: JsonValue,
             requestOptions?: PluginUiActionExecutionOptions,
         ) => {
             const explicitSelectedActionInput = requestOptions?.selectedActionInput;

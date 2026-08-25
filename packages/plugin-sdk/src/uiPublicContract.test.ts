@@ -366,9 +366,9 @@ describe('UI/testing public type contract', () => {
             .toEqualTypeOf<PluginUiPageHeaderActionV1[] | undefined>();
         // A header action names the same semantic command grammar the canonical
         // parser admits, not `unknown`.
-        expectTypeOf<PluginUiPageHeaderActionV1['action']>()
+        expectTypeOf<PluginUiPageHeaderActionV1['command']>()
             .toEqualTypeOf<string | PluginUiSemanticCommandV1>();
-        expectTypeOf<PluginSessionHeaderActionDescriptor['action']>()
+        expectTypeOf<PluginSessionHeaderActionDescriptor['command']>()
             .toEqualTypeOf<string | PluginUiSemanticCommandV1>();
     });
 

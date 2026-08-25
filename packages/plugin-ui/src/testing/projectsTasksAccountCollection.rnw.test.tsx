@@ -270,6 +270,12 @@ describe('Projects and Tasks Account Collection surface', () => {
       batch: vi.fn(async () => {
         throw new Error('Projects and Tasks does not create a batch mutation in this journey.');
       }),
+      limits: vi.fn(async () => {
+        throw new Error('Projects and Tasks does not read Collection limits in this journey.');
+      }),
+      measureBatch: vi.fn(async () => {
+        throw new Error('Projects and Tasks does not measure a batch in this journey.');
+      }),
     }) satisfies TasksCollection;
     const openCollectionQuery: PluginUiDataClient['openCollectionQuery'] = vi.fn(async (input) => (
       input.parameters.projectId === 'project-a' ? selectedPager : emptyPager

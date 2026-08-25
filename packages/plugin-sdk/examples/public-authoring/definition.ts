@@ -240,8 +240,15 @@ export const publicAuthoringDefinition: PublicAuthoringDefinition = {
             runtime: projectCompanionDashboardResource,
         },
     },
-    // Deferred — conformance-only surface. The capability matrix remains the
-    // availability owner while this companion preserves the public shape.
+    sessionInfoSections: {
+        'project-companion-status': {
+            resourceId: 'project-companion-dashboard-document',
+            order: 40,
+            actions: ['open-review-status'],
+        },
+    },
+    // Deferred — not supported or advertised for ordinary author use. Do not
+    // rely on this illustrative declaration; its matrix row owns the unblock condition.
     composer: {
         references: {
             'review-references': defineComposerReference({
@@ -297,7 +304,7 @@ export const publicAuthoringDefinition: PublicAuthoringDefinition = {
             }),
         },
     },
-    // Deferred — conformance-only surface.
+    // Deferred — not supported or advertised for ordinary author use. Do not rely on it.
     openableContentViewers: {
         'review-text-viewer': {
             destination: 'review-openable-content',
@@ -309,7 +316,7 @@ export const publicAuthoringDefinition: PublicAuthoringDefinition = {
     accountCollections: {
         'review-session-statuses': reviewSessionStatusCollection,
     },
-    // Deferred — conformance-only surface.
+    // Deferred — not supported or advertised for ordinary author use. Do not rely on it.
     tools: {
         'review-summary-tool': {
             name: 'review_summary',
@@ -331,7 +338,7 @@ export const publicAuthoringDefinition: PublicAuthoringDefinition = {
             priority: 50,
         },
     },
-    // Deferred — source-wired but awaiting exact packed external lifecycle proof.
+    // Deferred — source-wired but not supported or advertised for ordinary author use.
     commands: {
         'review-summary-command': {
             title: 'Summarize review transcript',
@@ -339,18 +346,18 @@ export const publicAuthoringDefinition: PublicAuthoringDefinition = {
             action: 'review-summary',
         },
     },
-    // Deferred — conformance-only surface.
+    // Deferred — not supported or advertised for ordinary author use. Do not rely on it.
     sessionHeaderActions: {
         'open-project-companion-dashboard': {
             title: 'Open Project Companion',
-            action: {
+            command: {
                 kind: 'openSurface',
                 destination: 'project-companion-dashboard',
             },
         },
         'open-project-companion-activity': {
             title: 'Open Project Companion activity',
-            action: {
+            command: {
                 kind: 'openSurface',
                 destination: 'project-companion-activity-log',
             },
@@ -610,7 +617,7 @@ export const publicAuthoringDefinition: PublicAuthoringDefinition = {
                 platforms: ['web'],
                 capabilities: {
                     turn: { cancelResponse: false, bargeIn: false },
-                    tools: { effectCalls: 'none' },
+                    tools: { effectCalls: 'stable_ids' },
                 },
                 credentials: {
                     slot: {

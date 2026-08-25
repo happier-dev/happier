@@ -125,7 +125,7 @@ const bundleCases = [
     {
         name: 'Session input canonical projection',
         entry: resolve(import.meta.dirname, './sessions/index.ts'),
-        source: 'export { AgentPermissionIntentV1Schema, SessionIdSchema, SessionIndexedIdentifierMaxLengthV1, SessionSpawnNewInputV2Schema } from ENTRY;',
+        source: 'export { AgentPermissionIntentV1Schema, SessionAuthoringCheckoutCreationDraftV1Schema, SessionIdSchema, SessionIndexedIdentifierMaxLengthV1, SessionSpawnNewInputV2Schema } from ENTRY;',
     },
     {
         name: 'Secrets schema publication projection',

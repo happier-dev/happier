@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
-import type { PluginManifest } from './manifest.js';
+import type { PluginManifest } from '../manifest.js';
 import {
   ProviderContributionV1Schema,
-  type ProviderContributionV1,
-} from './providers.js';
+  type ProviderContribution,
+} from './index.js';
 
-describe('experimental Provider authoring through the public manifest SDK', () => {
+describe('Provider authoring through the public manifest SDK', () => {
   it('authors the same declarative contribution shape used by bundled Providers', () => {
     const provider = {
       v: 1,
@@ -36,7 +36,7 @@ describe('experimental Provider authoring through the public manifest SDK', () =
         }],
       },
       catalog: { source: 'manual', manualModelPolicy: 'allowed' },
-    } satisfies ProviderContributionV1;
+    } satisfies ProviderContribution;
 
     const manifest = {
       schemaVersion: 2,

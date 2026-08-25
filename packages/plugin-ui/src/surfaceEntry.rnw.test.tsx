@@ -1,4 +1,4 @@
-import { act, cloneElement, type ReactElement } from 'react';
+import { act, cloneElement, useEffect, type ReactElement } from 'react';
 import type { Disposable } from '@happier-dev/plugin-sdk';
 import type { ComposerRefV1, RenderContext, SurfaceContext } from '@happier-dev/plugin-sdk/ui';
 import { describe, expect, it, vi } from 'vitest';
@@ -10,7 +10,7 @@ import { usePluginTheme, useSurfaceContext } from './components/PluginUiProvider
 import { usePluginUiDataClient, type PluginUiDataClient } from './data/index.js';
 import { createUnavailablePluginUiAccountKv } from './data/accountKv.js';
 import { createUnavailablePluginUiAccountSettings } from './data/accountSettings.js';
-import { useComposer, usePluginResource } from './hostApi/index.js';
+import { useComposer, usePluginResource, usePluginSurfaceActivity } from './hostApi/index.js';
 import type { PluginUiPresentationHost } from './presentationHost/context.js';
 import { mountThroughReactNativeWebAsync } from './rnwMount.testSupport.js';
 import { createHostApiStub, createSurfaceContext } from './surfaceFixture.testSupport.js';
@@ -155,6 +155,17 @@ function ComposerAuthorSurface(context: RenderContext) {
   />;
 }
 
+let activityAuthorContext: RenderContext | undefined;
+let activityMounts = 0;
+function ActivityAuthorSurface(context: RenderContext) {
+  activityAuthorContext = context;
+  const activity = usePluginSurfaceActivity();
+  useEffect(() => {
+    activityMounts += 1;
+  }, []);
+  return <Text value={activity.active ? 'surface-active' : 'surface-inactive'} testID="surface-activity" />;
+}
+
 function createDeferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((nextResolve) => {
@@ -164,6 +175,29 @@ function createDeferred<T>() {
 }
 
 describe('defineUiSurface', () => {
+  it('projects host-owned activity into a retained author surface', async () => {
+    activityMounts = 0;
+    const surface = createSurfaceContext();
+    const context = Object.freeze({
+      ...createRenderContext(surface),
+      activity: Object.freeze({ active: true }),
+    }) satisfies RenderContext;
+    const mount = await mountThroughReactNativeWebAsync(
+      defineUiSurface(ActivityAuthorSurface)(context) as ReactElement,
+    );
+
+    expect(mount.container.textContent).toBe('surface-active');
+    expect(activityAuthorContext?.activity).toEqual({ active: true });
+    const inactiveContext = Object.freeze({
+      ...context,
+      activity: Object.freeze({ active: false }),
+    }) satisfies RenderContext;
+    await mount.render(defineUiSurface(ActivityAuthorSurface)(inactiveContext) as ReactElement);
+    expect(mount.container.textContent).toBe('surface-inactive');
+    expect(activityMounts).toBe(1);
+    mount.unmount();
+  });
+
   it('carries current Composer only from the host-private mounted carrier', async () => {
     const surface = createSurfaceContext();
     const composer = Object.freeze({

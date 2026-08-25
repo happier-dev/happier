@@ -64,6 +64,17 @@ function readTextList(field: HappierActionInputField, value: unknown): readonly 
   return value.map((item) => String(item ?? '').trim()).filter(Boolean);
 }
 
+function parseNumericDraft(widget: 'number' | 'integer', text: string): number | string | undefined {
+  const trimmed = text.trim();
+  if (trimmed === '') return undefined;
+  const complete = widget === 'integer'
+    ? /^[+-]?\d+$/.test(trimmed)
+    : /^[+-]?(?:\d+|\d+\.\d+|\.\d+)(?:[eE][+-]?\d+)?$/.test(trimmed);
+  if (!complete) return text;
+  const parsed = Number(trimmed);
+  return Number.isFinite(parsed) ? parsed : text;
+}
+
 /**
  * One widget/display/text-parser decision shared by public Form and core Actions.
  *
@@ -114,7 +125,7 @@ export function resolveHappierActionFieldPresentation<OptionValue = unknown>(
         : 'default',
     parseText(text: string): unknown {
       if (field.widget === 'number' || field.widget === 'integer') {
-        return text.trim() === '' ? undefined : Number(text);
+        return parseNumericDraft(field.widget, text);
       }
       if (isList) {
         return text.split(newlineList ? '\n' : ',').map((item) => item.trim()).filter(Boolean);

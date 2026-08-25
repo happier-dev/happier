@@ -61,12 +61,17 @@ export const createPluginUiRenderContext = async (
 ): Promise<RenderContext> => {
     const bootstrap = await requireBootstrap(options);
     const retirement = new AbortController();
+    let active = false;
+    const activity = Object.freeze({
+        get active(): boolean { return active; },
+    });
     const hostApi = await createPluginUiHostApiClientFromTransport({
         identity: bootstrap.identity,
         transport: bootstrap.transport,
         ...(bootstrap.apiRange === undefined ? {} : { apiRange: bootstrap.apiRange }),
         ...(options.signal === undefined ? {} : { signal: options.signal }),
         onDisconnected: (reason) => { retirement.abort(reason); },
+        onContextActivity: (next) => { active = next.active; },
     });
     const surface = await hostApi.context();
     const context = {
@@ -77,6 +82,7 @@ export const createPluginUiRenderContext = async (
         surface,
         hostApi,
         signal: retirement.signal,
+        activity,
         // Absent stays absent: spreading an `undefined` key would make "opened
         // without input" indistinguishable from "opened with an explicit
         // undefined" for an author reading the key.

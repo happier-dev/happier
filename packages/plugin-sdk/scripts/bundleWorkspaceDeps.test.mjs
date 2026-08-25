@@ -176,6 +176,11 @@ test('plugin-sdk keeps publication preparation separate from ordinary source val
   assert.equal(packageJson.scripts['test:source'], 'vitest run --config vitest.source.config.ts');
   assert.equal(packageJson.scripts['test:local'], 'yarn -s test:source && yarn -s test:local:adjacent');
   assert.doesNotMatch(packageJson.scripts['test:local:adjacent'], /bundleWorkspaceDeps|prepare:declarations/u);
+  assert.match(
+    packageJson.scripts['test:local:adjacent'],
+    /^yarn --cwd examples\/public-authoring build && node --test .*examples\/public-authoring\/test\/index\.test\.mjs/u,
+    'the managed public-authoring build must immediately precede its dist-import test in the SDK unit lane',
+  );
   assert.equal(
     packageJson.scripts['typecheck:source'],
     'node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json',

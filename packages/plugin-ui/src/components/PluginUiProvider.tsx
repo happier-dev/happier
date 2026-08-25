@@ -73,6 +73,7 @@ export type PluginUiProviderInternalProps = PluginUiProviderProps & Readonly<{
   resourceStoreGeneration?: unknown;
   mountedPluginId?: string;
   composerRef?: ComposerRefV1 | null;
+  surfaceActivity?: Readonly<{ active: boolean }>;
   presentationHost?: PluginUiPresentationHost;
   dataClient?: PluginUiDataClient;
 }>;
@@ -103,6 +104,7 @@ export function PluginUiProviderInternal({
   resourceStoreGeneration,
   mountedPluginId,
   composerRef,
+  surfaceActivity,
   presentationHost,
   dataClient,
   context,
@@ -201,6 +203,7 @@ export function PluginUiProviderInternal({
       {...(resourceStoreGeneration === undefined ? {} : { resourceStoreGeneration })}
       {...(mountedPluginId === undefined ? {} : { mountedPluginId })}
       {...(composerRef === undefined ? {} : { composerRef })}
+      {...(surfaceActivity === undefined ? {} : { surfaceActivity })}
     >
       <PluginSurfaceContextContext.Provider value={effectiveContext}>
         <HappierUiEnvironmentProvider environment={environment}>
