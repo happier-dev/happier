@@ -1,8 +1,9 @@
 import * as React from 'react';
+import { Platform } from 'react-native';
 import { describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { renderScreen } from '@/dev/testkit';
-import { installEmbeddedTerminalPaneCommonModuleMocks } from './embeddedTerminalPaneTestHelpers';
+import type { EmbeddedTerminalRendererHandle } from '@/components/terminal/embedded/embeddedTerminalRendererHandle';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -16,6 +17,7 @@ const surfaceState = vi.hoisted(() => ({
     termuxProps: null as unknown,
     ghosttySurfaceIds: [] as string[],
     termuxSurfaceIds: [] as string[],
+    ghosttyCopySelection: vi.fn(),
 }));
 
 const featureState = vi.hoisted(() => ({
@@ -31,34 +33,52 @@ const nativeAvailabilityState = vi.hoisted(() => ({
 
 const localSettingState = vi.hoisted(() => ({
     terminalRendererPreference: 'auto',
+    terminalNativeRendererQuarantine: null as unknown,
 }));
 
-installEmbeddedTerminalPaneCommonModuleMocks({
-    reactNative: async () => {
-        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-        return createReactNativeWebMock({
-            Platform: {
-                get OS() {
-                    return platformState.os;
-                },
-                select: (value: Record<string, unknown>) => value[platformState.os] ?? value.default ?? null,
+const localSettingMutations = vi.hoisted(() => ({
+    setTerminalNativeRendererQuarantine: vi.fn((value: unknown) => {
+        localSettingState.terminalNativeRendererQuarantine = value;
+    }),
+}));
+
+const clipboardState = vi.hoisted(() => ({
+    setClipboardStringSafe: vi.fn(async () => true),
+}));
+
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock({
+        Platform: {
+            get OS() {
+                return platformState.os;
             },
-        });
-    },
-    unistyles: async () => {
-        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-        return createUnistylesMock();
-    },
-    text: async () => {
-        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-        return createTextModuleMock({ translate: (key: string) => key });
-    },
+            select: (value: Record<string, unknown>) => value[platformState.os] ?? value.default ?? null,
+        },
+    });
+});
+
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
+
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string) => key });
 });
 
 vi.mock('@/sync/domains/state/storage', () => ({
     useLocalSetting: (key: string) => {
         if (key === 'terminalRendererPreference') return localSettingState.terminalRendererPreference;
+        if (key === 'terminalNativeRendererQuarantine') return localSettingState.terminalNativeRendererQuarantine;
         return 1;
+    },
+    useLocalSettingMutable: (key: string) => {
+        if (key === 'terminalNativeRendererQuarantine') {
+            return [localSettingState.terminalNativeRendererQuarantine, localSettingMutations.setTerminalNativeRendererQuarantine];
+        }
+        return [1, vi.fn()];
     },
 }));
 
@@ -68,6 +88,7 @@ vi.mock('@/hooks/ui/useKeyboardHeight', () => ({
 
 vi.mock('@/utils/ui/clipboard', () => ({
     getClipboardStringTrimmedSafe: vi.fn(async () => ''),
+    setClipboardStringSafe: clipboardState.setClipboardStringSafe,
 }));
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
@@ -93,7 +114,8 @@ vi.mock('@/components/terminal/xterm/webview/XtermWebViewSurface.native', () => 
 }));
 
 vi.mock('@/components/terminal/ghostty/surface.native', () => ({
-    GhosttyTerminalSurface: React.forwardRef<unknown, Readonly<{ children?: React.ReactNode; surfaceId?: string }>>((props, _ref) => {
+    GhosttyTerminalSurface: React.forwardRef<unknown, Readonly<{ children?: React.ReactNode; surfaceId?: string }>>((props, ref) => {
+        React.useImperativeHandle(ref, () => ({ copySelection: surfaceState.ghosttyCopySelection }));
         surfaceState.ghosttyProps = props;
         if (props.surfaceId) surfaceState.ghosttySurfaceIds.push(props.surfaceId);
         React.useEffect(() => () => {
@@ -125,7 +147,9 @@ vi.mock('@/components/ui/code/editor/codeEditorFontMetrics', () => ({
 import { EmbeddedTerminalPane } from './EmbeddedTerminalPane.native';
 import type { EmbeddedTerminalPaneController } from './types';
 
-function makeController(): EmbeddedTerminalPaneController {
+function makeController(): EmbeddedTerminalPaneController & Readonly<{
+    copySelection: ReturnType<typeof vi.fn>;
+}> {
     return {
         status: 'connected',
         error: null,
@@ -135,6 +159,7 @@ function makeController(): EmbeddedTerminalPaneController {
         onResize: vi.fn(),
         onReady: vi.fn(),
         onWriteComplete: vi.fn(),
+        copySelection: vi.fn(),
         clearTerminal: vi.fn(),
         requestRestart: vi.fn(),
         retryConnect: vi.fn(),
@@ -148,8 +173,12 @@ function resetSurfaceState() {
     surfaceState.termuxProps = null;
     surfaceState.ghosttySurfaceIds = [];
     surfaceState.termuxSurfaceIds = [];
+    surfaceState.ghosttyCopySelection.mockReset();
     featureState.enabled = {};
     localSettingState.terminalRendererPreference = 'auto';
+    localSettingState.terminalNativeRendererQuarantine = null;
+    localSettingMutations.setTerminalNativeRendererQuarantine.mockClear();
+    clipboardState.setClipboardStringSafe.mockReset();
     nativeAvailabilityState.availability = {
         available: false,
         reason: 'native-module-missing',
@@ -219,6 +248,25 @@ describe('EmbeddedTerminalPane native renderer selection', () => {
         expect(surfaceState.xtermProps).not.toBeNull();
         expect(surfaceState.ghosttyProps).toBeNull();
         expect(surfaceState.termuxProps).toBeNull();
+    });
+
+    it('routes xterm WebView paste envelopes through the terminal controller policy', async () => {
+        platformState.os = 'android';
+        resetSurfaceState();
+        const controller = makeController();
+
+        await renderScreen(
+            <EmbeddedTerminalPane
+                title="Terminal"
+                controller={controller}
+                terminalRef={{ current: null }}
+            />,
+        );
+
+        expect(surfaceState.xtermProps).not.toBeNull();
+        expect((surfaceState.xtermProps as {
+            onPaste?: (text: string) => void;
+        }).onPaste).toBe(controller.onPaste);
     });
 
     it('selects iOS Ghostty from canonical feature and native availability gates without an override prop', async () => {
@@ -307,6 +355,271 @@ describe('EmbeddedTerminalPane native renderer selection', () => {
         expect(surfaceState.ghosttyProps).not.toBeNull();
         expect(surfaceState.xtermProps).toBeNull();
         expect(surfaceState.termuxProps).toBeNull();
+    });
+
+    it('routes Ghostty copy events through the host clipboard owner', async () => {
+        platformState.os = 'ios';
+        resetSurfaceState();
+        localSettingState.terminalRendererPreference = 'native-experimental';
+        featureState.enabled = {
+            'terminal.transport.byteStream': true,
+            'terminal.renderer.native': true,
+            'terminal.renderer.iosGhostty': true,
+        };
+        nativeAvailabilityState.availability = {
+            available: true,
+            platform: 'ios',
+            renderer: 'ios-ghosttykit',
+            moduleVersion: '0.0.0',
+            accessibility: 'fallback-required',
+        };
+
+        const controller = makeController();
+        await renderScreen(
+            <EmbeddedTerminalPane
+                title="Terminal"
+                controller={controller}
+                terminalRef={{ current: null }}
+            />,
+        );
+
+        await act(async () => {
+            (surfaceState.ghosttyProps as {
+                onCopy?: (event: Readonly<{ surfaceId: string; text: string }>) => void;
+            }).onCopy?.({
+                surfaceId: 'embedded-terminal:ios-ghosttykit:embedded-terminal',
+                text: 'selected terminal output',
+            });
+        });
+
+        expect(controller.copySelection).toHaveBeenCalledWith({
+            source: 'user-selection',
+            text: 'selected terminal output',
+        });
+        expect(clipboardState.setClipboardStringSafe).not.toHaveBeenCalled();
+    });
+
+    it('asks the selected iOS Ghostty surface to copy its real selection through the host clipboard path', async () => {
+        platformState.os = 'ios';
+        resetSurfaceState();
+        localSettingState.terminalRendererPreference = 'native-experimental';
+        featureState.enabled = {
+            'terminal.transport.byteStream': true,
+            'terminal.renderer.native': true,
+            'terminal.renderer.iosGhostty': true,
+        };
+        nativeAvailabilityState.availability = {
+            available: true,
+            platform: 'ios',
+            renderer: 'ios-ghosttykit',
+            moduleVersion: '0.0.0',
+            accessibility: 'fallback-required',
+        };
+        const terminalRef = { current: null } as React.MutableRefObject<EmbeddedTerminalRendererHandle | null>;
+        const screen = await renderScreen(
+            <EmbeddedTerminalPane
+                title="Terminal"
+                controller={makeController()}
+                terminalRef={terminalRef}
+                testIdPrefix="terminal"
+            />,
+        );
+
+        await act(async () => {
+            screen.tree?.root.findByProps({ testID: 'terminal-copy-selection' }).props.onPress();
+        });
+
+        expect(surfaceState.ghosttyCopySelection).toHaveBeenCalledTimes(1);
+
+        await act(async () => {
+            (surfaceState.ghosttyProps as {
+                onCopy?: (event: Readonly<{ surfaceId: string; text: string }>) => void;
+            }).onCopy?.({
+                surfaceId: 'embedded-terminal:ios-ghosttykit:terminal',
+                text: 'only Ghostty selection text',
+            });
+        });
+
+        expect(clipboardState.setClipboardStringSafe).toHaveBeenCalledWith('only Ghostty selection text');
+    });
+
+    it('routes Android Termux copy events through the host clipboard owner', async () => {
+        platformState.os = 'android';
+        resetSurfaceState();
+        localSettingState.terminalRendererPreference = 'native-experimental';
+        featureState.enabled = {
+            'terminal.transport.byteStream': true,
+            'terminal.renderer.native': true,
+            'terminal.renderer.androidTermux': true,
+        };
+        nativeAvailabilityState.availability = {
+            available: true,
+            platform: 'android',
+            renderer: 'android-termux',
+            moduleVersion: '0.0.0',
+            accessibility: 'fallback-required',
+        };
+        expect(Platform.OS).toBe('android');
+
+        const controller = makeController();
+        await renderScreen(
+            <EmbeddedTerminalPane
+                title="Terminal"
+                controller={controller}
+                terminalRef={{ current: null }}
+            />,
+        );
+
+        expect(surfaceState.termuxProps).not.toBeNull();
+        expect(surfaceState.xtermProps).toBeNull();
+
+        await act(async () => {
+            (surfaceState.termuxProps as {
+                onCopy?: (event: Readonly<{ surfaceId: string; text: string }>) => void;
+            }).onCopy?.({
+                surfaceId: 'embedded-terminal:android-termux:embedded-terminal',
+                text: 'selected Android terminal output',
+            });
+        });
+
+        expect(controller.copySelection).toHaveBeenCalledWith({
+            source: 'user-selection',
+            text: 'selected Android terminal output',
+        });
+        expect(clipboardState.setClipboardStringSafe).not.toHaveBeenCalled();
+    });
+
+    it('persists a next-launch quarantine only for an attributed fatal native renderer termination', async () => {
+        platformState.os = 'ios';
+        resetSurfaceState();
+        localSettingState.terminalRendererPreference = 'native-experimental';
+        featureState.enabled = {
+            'terminal.transport.byteStream': true,
+            'terminal.renderer.native': true,
+            'terminal.renderer.iosGhostty': true,
+        };
+        nativeAvailabilityState.availability = {
+            available: true,
+            platform: 'ios',
+            renderer: 'ios-ghosttykit',
+            moduleVersion: '0.0.0',
+            accessibility: 'fallback-required',
+        };
+        const now = vi.spyOn(Date, 'now').mockReturnValue(1_700_000_000_000);
+
+        try {
+            await renderScreen(
+                <EmbeddedTerminalPane
+                    title="Terminal"
+                    controller={makeController()}
+                    terminalRef={{ current: null }}
+                />,
+            );
+
+            await act(async () => {
+                (surfaceState.ghosttyProps as {
+                    onRendererCrash?: (event: Readonly<{ surfaceId: string; reason: string; fatal?: boolean }>) => void;
+                }).onRendererCrash?.({
+                    surfaceId: 'embedded-terminal:ios-ghosttykit:embedded-terminal',
+                    reason: 'renderer-terminated',
+                    fatal: true,
+                });
+            });
+
+            expect(localSettingMutations.setTerminalNativeRendererQuarantine).toHaveBeenCalledWith({
+                renderer: 'ios-ghosttykit',
+                expiresAtMs: 1_700_086_400_000,
+            });
+            expect(surfaceState.xtermProps).not.toBeNull();
+        } finally {
+            now.mockRestore();
+        }
+    });
+
+    it('keeps recoverable native unavailability in-memory and out of the persisted fatal quarantine', async () => {
+        platformState.os = 'ios';
+        resetSurfaceState();
+        localSettingState.terminalRendererPreference = 'native-experimental';
+        featureState.enabled = {
+            'terminal.transport.byteStream': true,
+            'terminal.renderer.native': true,
+            'terminal.renderer.iosGhostty': true,
+        };
+        nativeAvailabilityState.availability = {
+            available: true,
+            platform: 'ios',
+            renderer: 'ios-ghosttykit',
+            moduleVersion: '0.0.0',
+            accessibility: 'fallback-required',
+        };
+
+        await renderScreen(
+            <EmbeddedTerminalPane
+                title="Terminal"
+                controller={makeController()}
+                terminalRef={{ current: null }}
+            />,
+        );
+
+        await act(async () => {
+            (surfaceState.ghosttyProps as { onUnavailable?: (reason: string) => void }).onUnavailable?.('renderer-unavailable');
+        });
+
+        expect(surfaceState.xtermProps).not.toBeNull();
+        expect(localSettingMutations.setTerminalNativeRendererQuarantine).not.toHaveBeenCalled();
+    });
+
+    it('uses an unexpired fatal quarantine for xterm fallback and clears it once it expires', async () => {
+        platformState.os = 'ios';
+        resetSurfaceState();
+        localSettingState.terminalRendererPreference = 'native-experimental';
+        featureState.enabled = {
+            'terminal.transport.byteStream': true,
+            'terminal.renderer.native': true,
+            'terminal.renderer.iosGhostty': true,
+        };
+        nativeAvailabilityState.availability = {
+            available: true,
+            platform: 'ios',
+            renderer: 'ios-ghosttykit',
+            moduleVersion: '0.0.0',
+            accessibility: 'fallback-required',
+        };
+        const now = vi.spyOn(Date, 'now').mockReturnValue(1_700_000_000_000);
+
+        try {
+            localSettingState.terminalNativeRendererQuarantine = {
+                renderer: 'ios-ghosttykit',
+                expiresAtMs: 1_700_086_400_000,
+            };
+            await renderScreen(
+                <EmbeddedTerminalPane
+                    title="Terminal"
+                    controller={makeController()}
+                    terminalRef={{ current: null }}
+                />,
+            );
+
+            expect(surfaceState.xtermProps).not.toBeNull();
+            expect(surfaceState.ghosttyProps).toBeNull();
+
+            localSettingState.terminalNativeRendererQuarantine = {
+                renderer: 'ios-ghosttykit',
+                expiresAtMs: 1_699_999_999_999,
+            };
+            await renderScreen(
+                <EmbeddedTerminalPane
+                    title="Terminal"
+                    controller={makeController()}
+                    terminalRef={{ current: null }}
+                />,
+            );
+
+            expect(surfaceState.ghosttyProps).not.toBeNull();
+            expect(localSettingMutations.setTerminalNativeRendererQuarantine).toHaveBeenCalledWith(null);
+        } finally {
+            now.mockRestore();
+        }
     });
 
     it('uses terminal instance identity instead of UI test ids for native surface ids', async () => {

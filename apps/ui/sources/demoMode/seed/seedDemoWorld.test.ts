@@ -85,7 +85,7 @@ describe('seedDemoWorld and clearDemoWorld', () => {
             });
 
             await seedDemoWorld();
-            storage.getState().updateSessionDraft(DEMO_RICH_SESSION_ID, 'demo mutation through reducer');
+            storage.getState().markSessionViewed(DEMO_RICH_SESSION_ID);
             storage.getState().applySessions([foreignSession]);
             storage.getState().applyMachines([foreignMachine], false, { sourceServerId: 'foreign-server' });
             const withForeignWrite = takeStoreSnapshot(storage.getState());

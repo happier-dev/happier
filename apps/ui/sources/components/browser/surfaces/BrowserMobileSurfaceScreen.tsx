@@ -42,6 +42,8 @@ export function BrowserMobileSurfaceScreen(props: Readonly<{
         sessionId: props.sessionId,
         machineId,
         serverId,
+        pluginUiProjection: pluginProjection.pluginUiProjection,
+        pluginBrowserProjection: pluginProjection.pluginBrowserProjection,
     });
     const recordingRuntime = useSessionBrowserRecordingRuntime({
         enabled: true,

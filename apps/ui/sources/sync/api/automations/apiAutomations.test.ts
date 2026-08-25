@@ -3,21 +3,21 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import {
     AutomationApiError,
-    cancelAutomationRunV3,
-    clearAutomationRunHistoryV3,
-    createPluginEventAutomationDefinitionV3,
-    getAutomationSettingsV3,
-    deleteAutomationDefinitionV3,
-    getAutomationDefinitionV3,
-    getAutomationRunDetailV3,
-    listAutomationDefinitionsV3,
-    pauseAutomationDefinitionV3,
-    replaceAutomationDefinitionAssignmentsV3,
-    resumeAutomationDefinitionV3,
-    runAutomationDefinitionNowV3,
-    updateAutomationSettingsV3,
+    cancelAutomationRun,
+    clearAutomationRunHistory,
+    createPluginEventAutomationDefinition,
+    getAutomationSettings,
+    deleteAutomationDefinition,
+    getAutomationDefinition,
+    getAutomationRunDetail,
+    listAutomationDefinitions,
+    pauseAutomationDefinition,
+    replaceAutomationDefinitionAssignments,
+    resumeAutomationDefinition,
+    runAutomationDefinitionNow,
+    updateAutomationSettings,
     runAutomationNow,
-    updatePluginEventAutomationDefinitionV3,
+    updatePluginEventAutomationDefinition,
 } from './apiAutomations';
 
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
@@ -31,7 +31,7 @@ vi.mock('@/sync/domains/server/serverRuntime', () => ({
 
 const credentials: AuthCredentials = { token: 'token-1', secret: 'secret-1' };
 
-const v3EventSummary = {
+const eventSummary = {
     id: 'automation-event-1',
     name: 'Repository updates',
     description: null,
@@ -64,7 +64,7 @@ const v3EventSummary = {
     assignments: [{ machineId: 'machine-1', enabled: true, priority: 0, updatedAt: 1_786_257_600_000 }],
 };
 
-const v3ExecutionRecipe = {
+const eventExecutionRecipe = {
     v: 1 as const,
     templateVersion: 3,
     template: {
@@ -78,7 +78,7 @@ const v3ExecutionRecipe = {
     },
 };
 
-const v3EventCreate = {
+const eventCreate = {
     name: 'Repository updates',
     description: null,
     enabled: true,
@@ -106,20 +106,20 @@ const v3EventCreate = {
         filter: null,
         maximumObservationAgeMs: 60_000,
     },
-    executionRecipe: v3ExecutionRecipe,
+    executionRecipe: eventExecutionRecipe,
     assignments: [{ machineId: 'machine-1' }],
 };
 
-const v3EventDetail = {
-    ...v3EventSummary,
-    executionRecipe: v3ExecutionRecipe,
+const eventDetail = {
+    ...eventSummary,
+    executionRecipe: eventExecutionRecipe,
     triggerDefinitionEnvelope: JSON.stringify({
         t: 'plain',
         v: { sourceInstanceId: 'github:repository:1234' },
     }),
 };
 
-const v3Run = {
+const runSummary = {
     id: 'run-1',
     automationId: 'automation-event-1',
     state: 'queued' as const,
@@ -146,8 +146,8 @@ const v3Run = {
     updatedAt: 1_786_257_600_000,
 };
 
-const v3RunDetail = {
-    ...v3Run,
+const runDetail = {
+    ...runSummary,
     triggerEvidenceEnvelope: null,
     executionInputEnvelope: null,
     resultEnvelope: null,
@@ -215,28 +215,28 @@ describe('apiAutomations', () => {
         expect(headers.get('Content-Type')).toBeNull();
     });
 
-    it('keeps V3 list summaries private-content-free and reads detail only by id', async () => {
+    it('keeps current list summaries private-content-free and reads detail only by id', async () => {
         const fetchSpy = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async (input) => {
             const url = toUrlString(input);
             if (url.includes('/v3/automations/automation-event-1')) {
                 return {
                     ok: true,
                     status: 200,
-                    json: async () => v3EventDetail,
+                    json: async () => eventDetail,
                 } as Response;
             }
             return {
                 ok: true,
                 status: 200,
-                json: async () => ({ automations: [v3EventSummary] }),
+                json: async () => ({ automations: [eventSummary] }),
             } as Response;
         });
         vi.stubGlobal('fetch', fetchSpy as unknown as typeof fetch);
 
-        const summaries = await listAutomationDefinitionsV3(credentials);
-        const detail = await getAutomationDefinitionV3(credentials, 'automation-event-1');
+        const summaries = await listAutomationDefinitions(credentials);
+        const detail = await getAutomationDefinition(credentials, 'automation-event-1');
 
-        expect(summaries).toEqual([v3EventSummary]);
+        expect(summaries).toEqual([eventSummary]);
         expect(summaries[0]).not.toHaveProperty('triggerDefinitionEnvelope');
         expect(detail).toMatchObject({
             id: 'automation-event-1',
@@ -249,8 +249,8 @@ describe('apiAutomations', () => {
         ]));
     });
 
-    it('reads one direct V3 Run detail and cancels a Run through the incumbent V3 owner', async () => {
-        const cancelledRun = { ...v3Run, state: 'cancelled' as const, finishedAt: 1_786_257_601_000 };
+    it('reads one direct Run detail and cancels a Run through the incumbent owner', async () => {
+        const cancelledRun = { ...runSummary, state: 'cancelled' as const, finishedAt: 1_786_257_601_000 };
         const fetchSpy = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async (input, init) => {
             const url = toUrlString(input);
             if (url.endsWith('/v3/automations/runs/run-1/cancel')) {
@@ -266,15 +266,15 @@ describe('apiAutomations', () => {
             return {
                 ok: true,
                 status: 200,
-                json: async () => v3RunDetail,
+                json: async () => runDetail,
             } as Response;
         });
         vi.stubGlobal('fetch', fetchSpy as unknown as typeof fetch);
 
-        const detail = await getAutomationRunDetailV3(credentials, 'automation-event-1', 'run-1');
-        const cancelled = await cancelAutomationRunV3(credentials, 'run-1');
+        const detail = await getAutomationRunDetail(credentials, 'automation-event-1', 'run-1');
+        const cancelled = await cancelAutomationRun(credentials, 'run-1');
 
-        expect(detail).toEqual(v3RunDetail);
+        expect(detail).toEqual(runDetail);
         expect(cancelled).toEqual(cancelledRun);
         expect(fetchSpy.mock.calls.map(([input]) => toUrlString(input))).toEqual([
             expect.stringContaining('/v3/automations/automation-event-1/runs/run-1'),
@@ -282,7 +282,7 @@ describe('apiAutomations', () => {
         ]);
     });
 
-    it('reads and replaces strict account Automation settings, then clears one definition history through V3', async () => {
+    it('reads and replaces strict account Automation settings, then clears one definition history', async () => {
         const settings = {
             maxActiveRunsPerMachine: 4,
             runRetention: 'thirtyDays' as const,
@@ -307,9 +307,9 @@ describe('apiAutomations', () => {
         });
         vi.stubGlobal('fetch', fetchSpy as unknown as typeof fetch);
 
-        await expect(getAutomationSettingsV3(credentials)).resolves.toEqual(settings);
-        await expect(updateAutomationSettingsV3(credentials, settings)).resolves.toEqual(settings);
-        await expect(clearAutomationRunHistoryV3(credentials, 'automation-event-1')).resolves.toEqual({ clearedRuns: 3 });
+        await expect(getAutomationSettings(credentials)).resolves.toEqual(settings);
+        await expect(updateAutomationSettings(credentials, settings)).resolves.toEqual(settings);
+        await expect(clearAutomationRunHistory(credentials, 'automation-event-1')).resolves.toEqual({ clearedRuns: 3 });
 
         const calls = fetchSpy.mock.calls.map(([input, init]) => ({
             url: toUrlString(input),
@@ -337,33 +337,33 @@ describe('apiAutomations', () => {
         expect(calls[2]?.headers.get('Content-Type')).toBeNull();
     });
 
-    it('rejects private definition content in a V3 list response instead of treating it as a summary', async () => {
+    it('rejects private definition content in a current list response instead of treating it as a summary', async () => {
         const fetchSpy = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async () => ({
             ok: true,
             status: 200,
             json: async () => ({
                 automations: [{
-                    ...v3EventSummary,
-                    triggerDefinitionEnvelope: v3EventDetail.triggerDefinitionEnvelope,
+                    ...eventSummary,
+                    triggerDefinitionEnvelope: eventDetail.triggerDefinitionEnvelope,
                 }],
             }),
         }) as Response);
         vi.stubGlobal('fetch', fetchSpy as unknown as typeof fetch);
 
-        await expect(listAutomationDefinitionsV3(credentials)).rejects.toThrow();
+        await expect(listAutomationDefinitions(credentials)).rejects.toThrow();
     });
 
-    it('posts a strict Event create and full versioned patch only to the V3 owner', async () => {
+    it('posts a strict Event create and full versioned patch only to the current owner', async () => {
         const fetchSpy = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async () => ({
             ok: true,
             status: 200,
-            json: async () => v3EventDetail,
+            json: async () => eventDetail,
         }) as Response);
         vi.stubGlobal('fetch', fetchSpy as unknown as typeof fetch);
 
-        await createPluginEventAutomationDefinitionV3(credentials, v3EventCreate);
-        await updatePluginEventAutomationDefinitionV3(credentials, 'automation-event-1', {
-            ...v3EventCreate,
+        await createPluginEventAutomationDefinition(credentials, eventCreate);
+        await updatePluginEventAutomationDefinition(credentials, 'automation-event-1', {
+            ...eventCreate,
             expectedTemplateVersion: 3,
         });
 
@@ -374,10 +374,10 @@ describe('apiAutomations', () => {
             toUrlString(input).includes('/v3/automations/automation-event-1') && init?.method === 'PATCH',
         );
         expect(createCall).toBeTruthy();
-        expect(JSON.parse(String(createCall?.[1]?.body))).toEqual(v3EventCreate);
+        expect(JSON.parse(String(createCall?.[1]?.body))).toEqual(eventCreate);
         expect(patchCall).toBeTruthy();
         expect(JSON.parse(String(patchCall?.[1]?.body))).toEqual({
-            ...v3EventCreate,
+            ...eventCreate,
             expectedTemplateVersion: 3,
         });
     });
@@ -394,22 +394,22 @@ describe('apiAutomations', () => {
         }) as Response);
         vi.stubGlobal('fetch', fetchSpy as unknown as typeof fetch);
 
-        await expect(updatePluginEventAutomationDefinitionV3(credentials, 'automation-event-1', {
-            ...v3EventCreate,
+        await expect(updatePluginEventAutomationDefinition(credentials, 'automation-event-1', {
+            ...eventCreate,
             expectedTemplateVersion: 3,
         })).rejects.toMatchObject({
             name: 'AutomationApiError',
             code: 'automation_template_version_conflict',
             status: 409,
         } satisfies Partial<AutomationApiError>);
-        await expect(createPluginEventAutomationDefinitionV3(credentials, v3EventCreate)).rejects.toMatchObject({
+        await expect(createPluginEventAutomationDefinition(credentials, eventCreate)).rejects.toMatchObject({
             name: 'AutomationApiError',
             code: 'automation_stored_content_unavailable',
             status: 409,
         } satisfies Partial<AutomationApiError>);
     });
 
-    it('keeps Event lifecycle mutations in the incumbent V3 owner', async () => {
+    it('keeps Event lifecycle mutations in the incumbent owner', async () => {
         const fetchSpy = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async (input, init) => {
             const url = toUrlString(input);
             if (init?.method === 'DELETE') {
@@ -422,20 +422,20 @@ describe('apiAutomations', () => {
             return {
                 ok: true,
                 status: 200,
-                json: async () => url.endsWith('/run-now') ? { run: v3Run } : v3EventDetail,
+                json: async () => url.endsWith('/run-now') ? { run: runSummary } : eventDetail,
             } as Response;
         });
         vi.stubGlobal('fetch', fetchSpy as unknown as typeof fetch);
 
-        await pauseAutomationDefinitionV3(credentials, 'automation-event-1');
-        await resumeAutomationDefinitionV3(credentials, 'automation-event-1');
-        await replaceAutomationDefinitionAssignmentsV3(credentials, 'automation-event-1', [{
+        await pauseAutomationDefinition(credentials, 'automation-event-1');
+        await resumeAutomationDefinition(credentials, 'automation-event-1');
+        await replaceAutomationDefinitionAssignments(credentials, 'automation-event-1', [{
             machineId: 'machine-2',
             enabled: true,
             priority: 10,
         }]);
-        await runAutomationDefinitionNowV3(credentials, 'automation-event-1');
-        await deleteAutomationDefinitionV3(credentials, 'automation-event-1');
+        await runAutomationDefinitionNow(credentials, 'automation-event-1');
+        await deleteAutomationDefinition(credentials, 'automation-event-1');
 
         const calls = fetchSpy.mock.calls.map(([input, init]) => ({
             url: toUrlString(input),

@@ -110,6 +110,40 @@ const nativeBack = vi.hoisted(() => {
     };
 });
 
+/**
+ * React Navigation removing this screen — the ONE fact behind a browser Back
+ * button, an iOS header Back and an iOS edge-swipe.
+ *
+ * `usePreventRemove` is re-invoked on every render, so only the newest pair
+ * speaks for the mounted tree; keeping older ones would let a retired render
+ * answer a removal.
+ */
+const routeRemoval = vi.hoisted(() => {
+    type RemovalCallback = (event: Readonly<{ data: Readonly<{ action: unknown }> }>) => void;
+    let current: Readonly<{ preventRemove: boolean; callback: RemovalCallback }> | null = null;
+    return {
+        dispatched: [] as unknown[],
+        observe(preventRemove: boolean, callback: RemovalCallback) {
+            current = { preventRemove, callback };
+        },
+        /**
+         * Perform the removal React Navigation was asked for. Nothing armed, or
+         * an armed participant that redispatches, means the user leaves.
+         */
+        remove(action: unknown) {
+            if (current?.preventRemove !== true) {
+                this.dispatched.push(action);
+                return;
+            }
+            current.callback({ data: { action } });
+        },
+        reset() {
+            current = null;
+            this.dispatched.length = 0;
+        },
+    };
+});
+
 const pluginSurfaceConnectivity = vi.hoisted(() => ({
     endpointStatus: 'online' as 'online' | 'offline',
     machineOnline: true,
@@ -275,9 +309,13 @@ vi.mock('expo-router', async () => {
     return runtime.module;
 });
 
-vi.mock('@react-navigation/native', () => ({
-    useIsFocused: () => true,
-}));
+vi.mock('@react-navigation/native', async () => {
+    const { createReactNavigationNativeMock } = await import('@/dev/testkit/mocks/reactNavigation');
+    return createReactNavigationNativeMock({
+        navigation: { dispatch: (action: unknown) => { routeRemoval.dispatched.push(action); } },
+        usePreventRemove: (preventRemove, callback) => { routeRemoval.observe(preventRemove, callback); },
+    });
+});
 
 vi.mock('@/components/plugins/reactNative/PluginReactNativeSurface', async () => {
     const ReactModule = await import('react');
@@ -625,6 +663,7 @@ async function loadPageHost(): Promise<React.ComponentType<PageHostProps>> {
                 },
                 nav: {
                     push: (routePath: string) => { routerPushes.push(routePath); },
+                    openNewSession: () => {},
                     navigateToSession: () => {},
                 },
                 auth: { logout: async () => {} },
@@ -688,6 +727,7 @@ beforeEach(async () => {
     routerPushes.length = 0;
     routerReplacements.length = 0;
     nativeBack.reset();
+    routeRemoval.reset();
     stackOptions.length = 0;
     routerLocation.pathname = '/';
     pluginSurfaceAccountLifetime.value = pluginSurfaceAccountLifetime.create('server-1');
@@ -778,7 +818,7 @@ describe('plugin app page host route (EU-5b)', () => {
                     id: 'open-notes',
                     title: 'Open notes',
                     icon: 'action',
-                    action: {
+                    command: {
                         kind: 'openSurface',
                         destination: { pluginId: NOTES_PLUGIN_ID, localId: 'notes' },
                         input: { source: 'page-header' },
@@ -799,7 +839,7 @@ describe('plugin app page host route (EU-5b)', () => {
                     id: 'refresh-notes',
                     title: 'Refresh notes',
                     icon: 'action',
-                    action: {
+                    command: {
                         kind: 'executeAction',
                         action: { pluginId: NOTES_PLUGIN_ID, localId: 'refresh' },
                     },
@@ -834,7 +874,7 @@ describe('plugin app page host route (EU-5b)', () => {
                     id: 'refresh-notes',
                     title: 'Refresh notes',
                     icon: 'action',
-                    action: {
+                    command: {
                         kind: 'executeAction',
                         action: { pluginId: NOTES_PLUGIN_ID, localId: 'refresh' },
                     },
@@ -1003,6 +1043,89 @@ describe('plugin app page host route (EU-5b)', () => {
         // navigation leaves the page. A participant that stayed armed here
         // would trap the user on a page they cannot Back out of.
         expect(nativeBack.press()).toBe(false);
+        expect(routerReplacements).toHaveLength(2);
+    });
+
+    it('spends the page step when the route is removed, then lets the removal through', async () => {
+        // A browser Back button, an iOS header Back and an iOS edge-swipe are
+        // not three mechanisms: each removes the route. Before this the page
+        // participated in Android's hardware Back alone, so on every other
+        // client the first Back left the page entirely while the detail the
+        // user was looking at was still open behind it.
+        const { act } = await import('react-test-renderer');
+        const { NavigationContext, useNavigation } = await import('@react-navigation/native');
+        const NavigationProvider = ({ children }: React.PropsWithChildren) => (
+            <NavigationContext.Provider value={useNavigation()}>
+                {children}
+            </NavigationContext.Provider>
+        );
+        nativeBack.platformOS = 'web';
+        await renderPage({
+            subPath: 'entries',
+            wrap: (children) => (
+                <NavigationProvider>
+                    {children}
+                </NavigationProvider>
+            ),
+        });
+
+        // With no step declared the page leaves on the first removal. The
+        // participant is mounted, so it is the REDISPATCH that has to be
+        // exercised here: a page that intercepted and then swallowed a removal
+        // it had no step for would trap the user on a page they cannot leave.
+        await act(async () => { routeRemoval.remove({ type: 'POP', id: 'no-step' }); });
+        expect(routeRemoval.dispatched).toEqual([{ type: 'POP', id: 'no-step' }]);
+        expect(routerReplacements).toEqual([]);
+        routeRemoval.dispatched.length = 0;
+
+        const hostApi = readRenderContext().hostApi;
+        await act(async () => {
+            await hostApi.replacePageLocation('entries/7', { backLocation: 'entries' });
+        });
+        expect(routerReplacements).toEqual([`${NOTES_PAGE_PATH}/entries/7`]);
+
+        // First removal: the page's own step, and the user stays.
+        await act(async () => { routeRemoval.remove({ type: 'POP' }); });
+        expect(routerReplacements).toEqual([
+            `${NOTES_PAGE_PATH}/entries/7`,
+            `${NOTES_PAGE_PATH}/entries`,
+        ]);
+        expect(routeRemoval.dispatched).toEqual([]);
+
+        // Second removal: out of steps. The exact action React Navigation was
+        // going to perform is redispatched rather than swallowed.
+        await act(async () => { routeRemoval.remove({ type: 'POP' }); });
+        expect(routeRemoval.dispatched).toEqual([{ type: 'POP' }]);
+        expect(routerReplacements).toHaveLength(2);
+    });
+
+    it('consumes Escape with the page step on desktop and yields when it has none', async () => {
+        // Escape is the desktop keyboard's Back and it is deliberately NOT the
+        // route participant above: it has to be ordered against overlays,
+        // popovers and modals, which only the app's Escape layer stack can do.
+        const { act } = await import('react-test-renderer');
+        const { dispatchEscapeToLayerStack } = await import('@/keyboard/escape');
+        nativeBack.platformOS = 'web';
+        await renderPage({ subPath: 'entries' });
+
+        // Nothing declared: the page must not eat a press it cannot act on, or
+        // every surface below it stops seeing Escape while a plugin page is up.
+        expect(dispatchEscapeToLayerStack({ key: 'Escape' })).toBe(false);
+
+        const hostApi = readRenderContext().hostApi;
+        await act(async () => {
+            await hostApi.replacePageLocation('entries/7', { backLocation: 'entries' });
+        });
+
+        await act(async () => { expect(dispatchEscapeToLayerStack({ key: 'Escape' })).toBe(true); });
+        expect(routerReplacements).toEqual([
+            `${NOTES_PAGE_PATH}/entries/7`,
+            `${NOTES_PAGE_PATH}/entries`,
+        ]);
+
+        // The step was single-shot, so the next press belongs to whatever is
+        // under the page again.
+        expect(dispatchEscapeToLayerStack({ key: 'Escape' })).toBe(false);
         expect(routerReplacements).toHaveLength(2);
     });
 

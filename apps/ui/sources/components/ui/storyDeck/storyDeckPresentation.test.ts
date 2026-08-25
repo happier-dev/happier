@@ -17,7 +17,7 @@ describe('resolveStoryDeckPresentation', () => {
             mediaSurface: 'desktop',
             cardLayout: 'wide',
             frameMaxWidth: 860,
-            frameMaxHeight: 530,
+            frameMaxHeight: 620,
         });
     });
 });

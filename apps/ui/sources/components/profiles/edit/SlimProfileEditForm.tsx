@@ -14,6 +14,7 @@ import { t } from '@/text';
 
 import { buildSlimProfileSave, isSlimProfileReservedEnvironmentAuthorityReady } from './slimProfileDraft';
 import { getAllAgentProviderOwnedEnvironmentKeys } from '@/agents/catalog/catalog';
+import { SlimProfilePlacementFields } from './SlimProfilePlacementFields';
 import { SlimProfilePromptBehaviorFields } from './SlimProfilePromptBehaviorFields';
 import { SlimProfileRoutingFields } from './SlimProfileRoutingFields';
 import { useSlimProfileAgentEntries } from './useSlimProfileAgentEntries';
@@ -44,6 +45,8 @@ export function SlimProfileEditForm(props: SlimProfileEditFormProps) {
     });
     const [preferredAgentTargetKey, setPreferredAgentTargetKey] = React.useState(props.profile.preferredAgentTargetKey);
     const [preferredModelSelection, setPreferredModelSelection] = React.useState(props.profile.preferredModelSelection);
+    const [placement, setPlacement] = React.useState(props.profile.placement);
+    const [checkout, setCheckout] = React.useState(props.profile.checkout);
     const [codingPromptBehaviorOverrides, setCodingPromptBehaviorOverrides] = React.useState(
         props.profile.codingPromptBehaviorOverrides,
     );
@@ -55,6 +58,8 @@ export function SlimProfileEditForm(props: SlimProfileEditFormProps) {
         defaultPersistenceModeByTargetKey: props.profile.defaultPersistenceModeByTargetKey,
         preferredAgentTargetKey: props.profile.preferredAgentTargetKey,
         preferredModelSelection: props.profile.preferredModelSelection,
+        placement: props.profile.placement,
+        checkout: props.profile.checkout,
         codingPromptBehaviorOverrides: props.profile.codingPromptBehaviorOverrides,
     }));
     const { entries, projection: daemonProjection, serverId } = useSlimProfileAgentEntries(
@@ -81,15 +86,19 @@ export function SlimProfileEditForm(props: SlimProfileEditFormProps) {
             defaultPersistenceModeByTargetKey,
             preferredAgentTargetKey,
             preferredModelSelection,
+            placement,
+            checkout,
             codingPromptBehaviorOverrides,
         }) !== initialSnapshot.current);
     }, [
+        checkout,
         codingPromptBehaviorOverrides,
         defaultPermissionModeByTargetKey,
         defaultPersistenceModeByTargetKey,
         description,
         extraEnvironmentVariables,
         name,
+        placement,
         preferredAgentTargetKey,
         preferredModelSelection,
         props.onDirtyChange,
@@ -106,6 +115,8 @@ export function SlimProfileEditForm(props: SlimProfileEditFormProps) {
                 defaultPersistenceModeByTargetKey,
                 preferredAgentTargetKey,
                 preferredModelSelection,
+                placement,
+                checkout,
                 codingPromptBehaviorOverrides,
             },
             Date.now,
@@ -125,12 +136,14 @@ export function SlimProfileEditForm(props: SlimProfileEditFormProps) {
         }
         return props.onSave(result.profile);
     }, [
+        checkout,
         codingPromptBehaviorOverrides,
         defaultPermissionModeByTargetKey,
         defaultPersistenceModeByTargetKey,
         description,
         extraEnvironmentVariables,
         name,
+        placement,
         preferredAgentTargetKey,
         preferredModelSelection,
         props,
@@ -193,6 +206,15 @@ export function SlimProfileEditForm(props: SlimProfileEditFormProps) {
                 onPersistenceDefaultsChange={setDefaultPersistenceModeByTargetKey}
                 onPreferredAgentChange={setPreferredAgentTargetKey}
                 onPreferredModelChange={setPreferredModelSelection}
+            />
+
+            <SlimProfilePlacementFields
+                machineId={props.machineId}
+                serverId={serverId}
+                placement={placement}
+                checkout={checkout}
+                onPlacementChange={setPlacement}
+                onCheckoutChange={setCheckout}
             />
 
             <SlimProfilePromptBehaviorFields

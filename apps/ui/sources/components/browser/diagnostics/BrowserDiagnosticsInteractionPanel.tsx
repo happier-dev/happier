@@ -47,19 +47,22 @@ const stylesheet = StyleSheet.create((theme) => ({
         gap: 8,
     },
     title: {
-        color: theme.colors.text.primary,
-        fontSize: 12,
+        ...Typography.rowMeta(),
         ...Typography.default('semiBold'),
+        color: theme.colors.text.primary,
     },
     meta: {
+        ...Typography.rowMeta(),
         color: theme.colors.text.secondary,
-        fontSize: 12,
-        ...Typography.default(),
     },
     warning: {
-        color: theme.colors.state.warning.foreground,
-        fontSize: 12,
+        ...Typography.rowMeta(),
         ...Typography.default('semiBold'),
+        // Q2 measured the theme's semantic FOREGROUNDS as text at 2.20–3.55:1 in light theme —
+        // they are fill colours, not text colours. The words carry their own meaning here, so
+        // they take `text.primary`; the hue stays on the border/glyph beside them, where it is a
+        // redundant cue rather than the only one.
+        color: theme.colors.text.primary,
     },
     button: {
         alignSelf: 'flex-start',
@@ -71,9 +74,9 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingVertical: 5,
     },
     buttonText: {
-        color: theme.colors.text.primary,
-        fontSize: 12,
+        ...Typography.rowMeta(),
         ...Typography.default('semiBold'),
+        color: theme.colors.text.primary,
     },
 }));
 

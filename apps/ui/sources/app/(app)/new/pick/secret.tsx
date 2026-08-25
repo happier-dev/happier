@@ -11,7 +11,7 @@ import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { buildBackendTargetRouteParams, resolveRouteCloseoutFallbackTarget } from '@/agents/backendCatalog/backendTargetRouteParams';
 import { resolvePreferredBackendTargetFromProjection } from '@/agents/backendCatalog/resolvePreferredBackendTargetFromProjection';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
-import { pickNewSessionRouteParams, setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
+import { buildNewSessionPickerFallbackHref, pickNewSessionRouteParams, setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
 import { resolveSpawnServerRouteParam } from '@/components/sessions/new/navigation/spawnServerRouteParam';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { useNewSessionPickerRoutePresentation } from '@/components/sessions/new/navigation/newSessionContainedModalScreen';
@@ -40,6 +40,7 @@ export default React.memo(function SecretPickerScreen() {
     const currentRouteParams = React.useMemo(() => {
         return pickNewSessionRouteParams(params);
     }, [params]);
+    const pickerFallbackHref = React.useMemo(() => buildNewSessionPickerFallbackHref(params), [params]);
     const spawnServerId = resolveSpawnServerRouteParam(params.spawnServerId);
     const machineIdParam = typeof params.machineId === 'string' ? params.machineId : null;
     const daemonMergedProjection = useDaemonMergedProjectionInputs({
@@ -96,7 +97,7 @@ export default React.memo(function SecretPickerScreen() {
             },
         });
         if (returnMode === 'dispatch') {
-            safeRouterBack({ router, navigation, fallbackHref: '/new' });
+            safeRouterBack({ router, navigation, fallbackHref: pickerFallbackHref });
         }
     }, [
         currentRouteParams,
@@ -117,13 +118,13 @@ export default React.memo(function SecretPickerScreen() {
     ]);
 
     const handleBackPress = React.useCallback(() => {
-        safeRouterBack({ router, navigation, fallbackHref: '/new' });
-    }, [navigation, router]);
+        safeRouterBack({ router, navigation, fallbackHref: pickerFallbackHref });
+    }, [navigation, pickerFallbackHref, router]);
 
     React.useEffect(() => {
         if (hasUsableRouteState) return;
-        safeRouterBack({ router, navigation, fallbackHref: '/new' });
-    }, [hasUsableRouteState, navigation, router]);
+        safeRouterBack({ router, navigation, fallbackHref: pickerFallbackHref });
+    }, [hasUsableRouteState, navigation, pickerFallbackHref, router]);
 
     const headerTitle = t('settings.secrets');
     const headerBackTitle = t('common.back');

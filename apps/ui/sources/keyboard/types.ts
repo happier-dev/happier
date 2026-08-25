@@ -3,6 +3,10 @@ import type { TranslationKeyNoParams } from '@/text';
 export type KeyboardPlatform = 'macos' | 'ios' | 'windows' | 'linux' | 'android' | 'web';
 
 export type KeyboardCommandId =
+    | 'browser.address.focus'
+    | 'browser.back'
+    | 'browser.forward'
+    | 'browser.reload'
     | 'composer.abortConfirm'
     | 'composer.focus'
     | 'composer.sendImmediate'
@@ -48,6 +52,10 @@ export type KeyboardCommandId =
 
 export type KeyboardCommandSettingsTitleKey = Extract<
     TranslationKeyNoParams,
+    | 'settingsKeyboard.commands.browserAddressFocus'
+    | 'settingsKeyboard.commands.browserBack'
+    | 'settingsKeyboard.commands.browserForward'
+    | 'settingsKeyboard.commands.browserReload'
     | 'settingsKeyboard.commands.composerAbortConfirm'
     | 'settingsKeyboard.commands.composerFocus'
     | 'settingsKeyboard.commands.composerSendImmediate'

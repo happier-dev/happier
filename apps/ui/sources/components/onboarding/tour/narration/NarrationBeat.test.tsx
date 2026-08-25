@@ -159,7 +159,7 @@ describe('NarrationBeat', () => {
         // D17: the ACT eyebrow row is killed — no "Act N" label above the title.
         expect(screen.findByTestId('narration-beat-eyebrow')).toBeNull();
         expect(screen.getTextContent()).not.toContain('Act 1');
-        expect(screen.getTextContent()).toContain('Start anywhere.');
+        expect(screen.getTextContent()).toContain('Start coding anywhere.');
         expect(screen.getTextContent()).toContain('Continue everywhere.');
         expect(screen.getTextContent()).toContain('Begin with one session that follows you across terminal, desktop, web, and phone.');
     });
@@ -247,8 +247,8 @@ describe('NarrationBeat', () => {
         const screen = await renderScreen(<NarrationBeat beat={beat!} testID="narration-beat" />);
         const wordHosts = screen.findAllByTestId('narration-beat-title-word')
             .filter((node) => typeof node.type === 'string');
-        expect(wordHosts).toHaveLength(4);
-        expect(screen.findAllByType(RevealTitleWordText).map((node) => node.props.word.delayMs)).toEqual([0, 70, 140, 210]);
+        expect(wordHosts).toHaveLength(5);
+        expect(screen.findAllByType(RevealTitleWordText).map((node) => node.props.word.delayMs)).toEqual([0, 70, 140, 210, 280]);
     });
 
     it('holds the staggered reveal back by the pane settle window but always schedules it at mount', async () => {
@@ -258,6 +258,7 @@ describe('NarrationBeat', () => {
         const screen = await renderScreen(<NarrationBeat beat={beat!} testID="narration-beat" />);
 
         expect(screen.findAllByType(RevealTitleWordText).map((node) => node.props.reducedMotion)).toEqual([
+            false,
             false,
             false,
             false,
@@ -273,8 +274,9 @@ describe('NarrationBeat', () => {
             settle + 70,
             settle + 140,
             settle + 210,
+            settle + 280,
         ]);
-        expect(reanimatedCalls.withTiming.map((call) => call.value)).toEqual([1, 1, 1, 1]);
+        expect(reanimatedCalls.withTiming.map((call) => call.value)).toEqual([1, 1, 1, 1, 1]);
         const firstWordHost = screen.findAllByTestId('narration-beat-title-word')
             .find((node) => typeof node.type === 'string');
         expect(flattenStyle(firstWordHost?.props.style)).toMatchObject({
@@ -298,20 +300,21 @@ describe('NarrationBeat', () => {
                 .map((node) => flattenStyle(node.props.style));
 
             // The reveal is scheduled, and the motion runtime never advances it.
-            expect(readWordStyles().map((style) => style.opacity)).toEqual([0, 0, 0, 0]);
+            expect(readWordStyles().map((style) => style.opacity)).toEqual([0, 0, 0, 0, 0]);
 
             // Past its own reveal window every word is at its resting, legible
             // style with no animation having run. The headline is a title, not a
             // reward for a completed animation: on beat A11 the words stayed at
             // opacity 0 and the beat rendered as a body sentence with no subject.
             await flushHookEffects({
-                advanceTimersMs: buildRevealTitleWords('Start anywhere. Continue everywhere.')
+                advanceTimersMs: buildRevealTitleWords('Start coding anywhere. Continue everywhere.')
                     .reduce((max, word) => Math.max(max, word.delayMs), 0)
                     + NARRATION_TITLE_WORD_REVEAL_DURATION_MS,
             });
 
-            expect(readWordStyles().map((style) => style.opacity)).toEqual([1, 1, 1, 1]);
+            expect(readWordStyles().map((style) => style.opacity)).toEqual([1, 1, 1, 1, 1]);
             expect(readWordStyles().map((style) => style.transform)).toEqual([
+                [{ translateY: 0 }],
                 [{ translateY: 0 }],
                 [{ translateY: 0 }],
                 [{ translateY: 0 }],
@@ -334,7 +337,7 @@ describe('NarrationBeat', () => {
                 .filter((node) => typeof node.type === 'string')
                 .map((node) => flattenStyle(node.props.style));
             const latestWordSettleMs = NARRATION_TITLE_REVEAL_DELAY_MS
-                + buildRevealTitleWords('Start anywhere. Continue everywhere.')
+                + buildRevealTitleWords('Start coding anywhere. Continue everywhere.')
                     .reduce((max, word) => Math.max(max, word.delayMs), 0)
                 + NARRATION_TITLE_WORD_REVEAL_DURATION_MS;
 
@@ -347,8 +350,9 @@ describe('NarrationBeat', () => {
                 await screen.update(<NarrationBeat beat={beat!} testID="narration-beat" />);
             }
 
-            expect(readWordStyles().map((style) => style.opacity)).toEqual([1, 1, 1, 1]);
+            expect(readWordStyles().map((style) => style.opacity)).toEqual([1, 1, 1, 1, 1]);
             expect(readWordStyles().map((style) => style.transform)).toEqual([
+                [{ translateY: 0 }],
                 [{ translateY: 0 }],
                 [{ translateY: 0 }],
                 [{ translateY: 0 }],
@@ -370,15 +374,16 @@ describe('NarrationBeat', () => {
                 .filter((node) => typeof node.type === 'string')
                 .map((node) => flattenStyle(node.props.style));
             const latestWordSettleMs = NARRATION_TITLE_REVEAL_DELAY_MS
-                + buildRevealTitleWords('Start anywhere. Continue everywhere.')
+                + buildRevealTitleWords('Start coding anywhere. Continue everywhere.')
                     .reduce((max, word) => Math.max(max, word.delayMs), 0)
                 + NARRATION_TITLE_WORD_REVEAL_DURATION_MS;
 
-            expect(readWordStyles().map((style) => style.opacity)).toEqual([0, 0, 0, 0]);
+            expect(readWordStyles().map((style) => style.opacity)).toEqual([0, 0, 0, 0, 0]);
             await flushHookEffects({ cycles: 1, advanceTimersMs: latestWordSettleMs });
 
-            expect(readWordStyles().map((style) => style.opacity)).toEqual([1, 1, 1, 1]);
+            expect(readWordStyles().map((style) => style.opacity)).toEqual([1, 1, 1, 1, 1]);
             expect(readWordStyles().map((style) => style.transform)).toEqual([
+                [{ translateY: 0 }],
                 [{ translateY: 0 }],
                 [{ translateY: 0 }],
                 [{ translateY: 0 }],
@@ -402,14 +407,16 @@ describe('NarrationBeat', () => {
             true,
             true,
             true,
+            true,
         ]);
         expect(reanimatedCalls.withDelay).toEqual([]);
         expect(reanimatedCalls.withTiming).toEqual([]);
         const wordStyles = screen.findAllByTestId('narration-beat-title-word')
             .filter((node) => typeof node.type === 'string')
             .map((node) => flattenStyle(node.props.style));
-        expect(wordStyles.map((style) => style.opacity)).toEqual([1, 1, 1, 1]);
+        expect(wordStyles.map((style) => style.opacity)).toEqual([1, 1, 1, 1, 1]);
         expect(wordStyles.map((style) => style.transform)).toEqual([
+            [{ translateY: 0 }],
             [{ translateY: 0 }],
             [{ translateY: 0 }],
             [{ translateY: 0 }],

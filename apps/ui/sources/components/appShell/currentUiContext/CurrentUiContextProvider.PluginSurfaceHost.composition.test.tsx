@@ -1,16 +1,19 @@
 import * as React from 'react';
+import { readFile } from 'node:fs/promises';
 
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { PluginClientApi } from '@happier-dev/plugin-sdk';
 import type { PluginClientActionHandler } from '@happier-dev/plugin-sdk/actions';
+import type { RenderContext } from '@happier-dev/plugin-sdk/ui';
 import {
     PluginProjectionInstalledPackageV2Schema,
     PluginProjectedActionV2Schema,
     type PluginMachineExecutionOriginV1,
 } from '@happier-dev/protocol';
 import {
+    computePluginUiArtifactSha256DigestV1,
     normalizePluginUiDestinationBindingV1,
     PluginUiArtifactsManifestEntryV1Schema,
     type CurrentUiContextSnapshotV1,
@@ -19,12 +22,14 @@ import {
 } from '@happier-dev/protocol/plugins/ui';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { createPluginSurfaceContextFixture } from '@/dev/testkit/fixtures/pluginSurfaceContextFixture';
 import { useHostActivelyViewed } from '@/utils/runtime/useHostActivelyViewed';
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { PluginSurfacePlacementHost } from '@/components/plugins/surfaces/PluginSurfaceHost';
 import type { PluginSurfaceHostApiV1 } from '@/components/plugins/surfaces/createPluginSurfaceHostApi';
 import { createPluginReactNativeBundleCache } from '@/components/plugins/reactNative/bundleCache';
+import { createCanonicalPluginReactNativeHostApiAdapter } from '@/components/plugins/reactNative/hostApi';
 import {
     getInstalledPluginUiClientExecutableComposition,
     type PluginUiClientExecutableActivation,
@@ -35,6 +40,8 @@ import type {
     PluginReactNativeExecutableExport,
     PluginReactNativeLoaderBackend,
 } from '@/components/plugins/reactNative/loader';
+import { loadPluginReactNativeBundleExport } from '@/components/plugins/reactNative/loader';
+import { createReactNativeWebLoaderBackend } from '@/components/plugins/reactNative/webLoaderBackend.web';
 import {
     EMPTY_PLUGIN_UI_PROJECTION,
     type PluginUiProjectionModel,
@@ -81,6 +88,7 @@ const hostedRenderer = vi.hoisted(() => ({
     currentUiReader: null as CurrentUiContextReader | null,
     currentUiLabelBeforeBPublication: undefined as string | null | undefined,
     hostApi: null as PluginSurfaceHostApiV1 | null,
+    packedRenderSurface: null as ((context: RenderContext) => React.ReactElement | null) | null,
     surfaceContext: null as PluginUiSurfaceContextV1 | null,
     responses: [] as Array<Readonly<{ subPath: string; response: unknown }>>,
 }));
@@ -172,11 +180,46 @@ type HostedWebPaneBoundaryProps = Readonly<{
  */
 vi.mock('@/components/plugins/hostedWeb/PluginHostedWebPane', async () => {
     const ReactModule = await import('react');
+    const { createCanonicalPluginReactNativeHostApiAdapter } = await import(
+        '@/components/plugins/reactNative/hostApi'
+    );
+    const { createPluginSurfaceContextFixture } = await import(
+        '@/dev/testkit/fixtures/pluginSurfaceContextFixture'
+    );
+    const PackedArtifactSurface = (props: HostedWebPaneBoundaryProps): React.ReactElement | null => {
+        const renderSurface = hostedRenderer.packedRenderSurface;
+        const abortController = ReactModule.useMemo(() => new AbortController(), []);
+        const surface = ReactModule.useMemo(
+            () => createPluginSurfaceContextFixture(),
+            [],
+        );
+        const adapter = ReactModule.useMemo(() => createCanonicalPluginReactNativeHostApiAdapter({
+            surface,
+            requestSurface: props.surfaceContext,
+            requestIdPrefix: `packed-current-context:${props.subPath ?? ''}`,
+            handleRequest: props.hostApi.handleRequest,
+            installedMethods: props.hostApi.installedMethods,
+            getInstalledMethods: () => props.hostApi.installedMethods,
+            getAdmissionMethods: () => props.hostApi.admissionMethods,
+        }), [props.hostApi, props.subPath, props.surfaceContext, surface]);
+        ReactModule.useLayoutEffect(() => () => {
+            abortController.abort();
+            adapter.dispose();
+        }, [abortController, adapter]);
+        const context = ReactModule.useMemo(() => Object.freeze({
+            plugin: Object.freeze({ id: props.surfaceContext.pluginId, version: '1.0.0' }),
+            surface,
+            hostApi: adapter.api,
+            signal: abortController.signal,
+        }) satisfies RenderContext, [abortController.signal, adapter.api, props.surfaceContext.pluginId, surface]);
+        return renderSurface ? renderSurface(context) as React.ReactElement : null;
+    };
     const PluginHostedWebPane = (props: HostedWebPaneBoundaryProps): React.ReactElement => {
         ReactModule.useLayoutEffect(() => {
             hostedRenderer.hostApi = props.hostApi;
             hostedRenderer.surfaceContext = props.surfaceContext;
             const subPath = props.subPath ?? '';
+            if (hostedRenderer.packedRenderSurface) return;
             if (subPath === 'notes/b') {
                 hostedRenderer.currentUiLabelBeforeBPublication = (
                     hostedRenderer.currentUiReader?.readCurrentUiContext()?.entity?.label ?? null
@@ -223,6 +266,9 @@ vi.mock('@/components/plugins/hostedWeb/PluginHostedWebPane', async () => {
                 },
             );
         }, [props.hostApi, props.subPath, props.surfaceContext]);
+        if (hostedRenderer.packedRenderSurface) {
+            return ReactModule.createElement(PackedArtifactSurface, props);
+        }
         return ReactModule.createElement('View', {
             testID: `hosted-current-ui:${props.subPath ?? 'root'}`,
         });
@@ -326,10 +372,6 @@ const CLIENT_ACTION_ORIGIN_PROJECTION = Object.freeze({
     executionOrigin: CLIENT_ACTION_ORIGIN,
 });
 const CLIENT_ACTION_AUTHORIZATION = Object.freeze({
-    packageTrust: Object.freeze({
-        packageIdentity: `${placement.pluginId}/actions/${CLIENT_ACTION_ID}`,
-        reviewedPackageIdentity: `${placement.pluginId}/actions/${CLIENT_ACTION_ID}`,
-    }),
     generation: Object.freeze({
         targetGeneration: String(projectionGeneration),
         desiredGeneration: String(projectionGeneration),
@@ -522,12 +564,60 @@ function renderComposedSurface(input: Readonly<{
     );
 }
 
+async function loadPackedExternalVoiceFixtureRenderSurface(): Promise<(
+    context: RenderContext,
+) => React.ReactElement | null> {
+    const fixtureRoot = new URL(
+        '../../../../../cli/src/plugins/testkit/fixtures/packed-external-voice-provider/',
+        import.meta.url,
+    );
+    const artifactBytes = await readFile(new URL(
+        'dist/happier-plugin-ui/react-native-web/voice-runtime-web/entry.mjs.bundle',
+        fixtureRoot,
+    ));
+    const bytes = new Uint8Array(artifactBytes);
+    const digest = computePluginUiArtifactSha256DigestV1(bytes);
+    const identity: PluginReactNativeBundleCacheIdentity = Object.freeze({
+        pluginId: 'acme.packed-voice',
+        contributionId: 'voice-runtime-web',
+        artifactDigest: digest,
+        hostAppVersion: '2.0.0',
+        hostUiApiVersion: '1.0.0',
+        reactVersion: '19.2.0',
+        reactNativeVersion: '0.83.5',
+        platform: 'web',
+        channel: 'internal',
+        nativeCapabilitiesDigest: `sha256:${'a'.repeat(64)}`,
+        projectionGeneration: 12,
+    });
+    const cache = createPluginReactNativeBundleCache();
+    cache.putInstalledArtifact({ identity, bytes, format: 'plainJs' });
+    const source = new TextDecoder().decode(bytes);
+    const backend = createReactNativeWebLoaderBackend({
+        importModule: async () => import(
+            /* @vite-ignore */ `data:text/javascript,${encodeURIComponent(source)}#${digest}`
+        ) as Promise<Readonly<{ default?: unknown } & Record<string, unknown>>>,
+    });
+    const loaded = await loadPluginReactNativeBundleExport({
+        cache,
+        identity,
+        moduleReference: { exportName: 'renderSurface' },
+        backend,
+        hostPlatform: 'web',
+    });
+    if (!loaded.ok) {
+        throw new Error(`packed_external_voice_fixture_render_surface_unavailable:${loaded.code}`);
+    }
+    return loaded.exported as unknown as (context: RenderContext) => React.ReactElement | null;
+}
+
 beforeEach(async () => {
     await getInstalledPluginUiClientExecutableComposition().unload();
     nativeHostLifecycle.appState = 'active';
     hostedRenderer.currentUiReader = null;
     hostedRenderer.currentUiLabelBeforeBPublication = undefined;
     hostedRenderer.hostApi = null;
+    hostedRenderer.packedRenderSurface = null;
     hostedRenderer.surfaceContext = null;
     hostedRenderer.responses.length = 0;
     accountCredentials.value = { token: 'acme.current-ui-composition-test-token' };
@@ -557,6 +647,7 @@ afterEach(async () => {
     hostedRenderer.currentUiReader = null;
     hostedRenderer.currentUiLabelBeforeBPublication = undefined;
     hostedRenderer.hostApi = null;
+    hostedRenderer.packedRenderSurface = null;
     hostedRenderer.surfaceContext = null;
     hostedRenderer.responses.length = 0;
     nativeHostLifecycle.appState = 'active';
@@ -617,6 +708,90 @@ describe('CurrentUiContextProvider + PluginSurfaceHost composition', () => {
         expect(receivedContext).toEqual(currentReader.readCurrentUiContext());
 
         await screen.unmount();
+    });
+
+    it('publishes the packed external Voice artifact through the mounted SDK Host API and retires its opaque command with the mount', async () => {
+        const profile = upsertServerProfile({
+            serverUrl: 'https://packed-external-voice-current-context.test',
+            name: 'Packed external Voice current context',
+        });
+        setActiveServerId(profile.id, { scope: 'device' });
+        const accountScope = Object.freeze({
+            serverId: profile.id,
+            accountId: 'packed-external-voice-current-context-account',
+        });
+        storage.getState().activateProfileScope(accountScope);
+        registerStorageStateReader(() => storage.getState());
+
+        hostedRenderer.packedRenderSurface = await loadPackedExternalVoiceFixtureRenderSurface();
+        let reader: CurrentUiContextReader | null = null;
+        let screen: Awaited<ReturnType<typeof renderScreen>> | null = null;
+        try {
+            screen = await renderScreen(renderComposedSurface({
+                serverId: profile.id,
+                subPath: 'notes/a',
+                onReader: (next) => { reader = next; },
+            }));
+            const currentReader = requireReader(reader);
+            await vi.waitFor(() => {
+                expect(currentReader.readCurrentUiContext()?.entity).toEqual({
+                    kind: 'voice',
+                    label: 'Packed Voice current context',
+                    summary: 'The packed external Voice fixture publishes this mounted semantic context.',
+                });
+            });
+            const commandA = currentReader.readCurrentUiContext()?.commands[0]?.id ?? '';
+            expect(commandA).toMatch(/^current-ui-command:/);
+            expect(currentReader.resolveCurrentUiCommand(commandA)?.command).toEqual({
+                kind: 'executeAction',
+                action: {
+                    pluginId: placement.pluginId,
+                    localId: 'open-packed-current-context',
+                },
+            });
+
+            await screen.update(renderComposedSurface({
+                serverId: profile.id,
+                subPath: 'notes/a',
+                showSurface: false,
+                onReader: (next) => { reader = next; },
+            }));
+            await vi.waitFor(() => {
+                expect(currentReader.readCurrentUiContext()).toEqual({
+                    navigation: {
+                        area: 'plugin',
+                        presentation: 'screen',
+                        screen: 'page',
+                    },
+                    commands: [],
+                });
+                expect(currentReader.resolveCurrentUiCommand(commandA)).toBeNull();
+            });
+
+            await screen.update(renderComposedSurface({
+                serverId: profile.id,
+                subPath: 'notes/a',
+                onReader: (next) => { reader = next; },
+            }));
+            await vi.waitFor(() => {
+                expect(currentReader.readCurrentUiContext()?.entity?.label)
+                    .toBe('Packed Voice current context');
+            });
+            const commandB = currentReader.readCurrentUiContext()?.commands[0]?.id ?? '';
+            expect(commandB).toMatch(/^current-ui-command:/);
+            expect(commandB).not.toBe(commandA);
+            expect(currentReader.resolveCurrentUiCommand(commandA)).toBeNull();
+            expect(currentReader.resolveCurrentUiCommand(commandB)?.command).toEqual({
+                kind: 'executeAction',
+                action: {
+                    pluginId: placement.pluginId,
+                    localId: 'open-packed-current-context',
+                },
+            });
+        } finally {
+            await screen?.unmount();
+            hostedRenderer.packedRenderSurface = null;
+        }
     });
 
     it('publishes through the real bound host, retires A before B, and leaves no reader or Voice port record after unmount', async () => {

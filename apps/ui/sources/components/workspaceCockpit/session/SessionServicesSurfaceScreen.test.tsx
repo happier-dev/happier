@@ -4,7 +4,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FeatureDecision, FeatureId, RuntimeActionExecute } from '@happier-dev/protocol';
 import {
     buildLocalServiceInventoryState,
-    buildManagedLocalServicesState,
     pressTestInstanceAsync,
     renderScreen,
 } from '@/dev/testkit';
@@ -144,7 +143,6 @@ describe('SessionServicesSurfaceScreen', () => {
         const screen = await renderScreen(
             <SessionServicesSurfaceScreen
                 inventoryState={buildLocalServiceInventoryState({ rows: [] })}
-                managedState={buildManagedLocalServicesState({ rows: [] })}
                 launcherState={buildLauncherState()}
             />,
         );
@@ -169,7 +167,6 @@ describe('SessionServicesSurfaceScreen', () => {
                 serverId="server-a"
                 machineId="machine-a"
                 inventoryState={buildLocalServiceInventoryState({ rows: [] })}
-                managedState={buildManagedLocalServicesState({ rows: [] })}
                 launcherState={buildLauncherState()}
                 publicPreviewStatusClient={publicPreviewStatusClient}
             />,
@@ -199,7 +196,6 @@ describe('SessionServicesSurfaceScreen', () => {
                 serverId="server-a"
                 machineId="machine-a"
                 inventoryState={buildLocalServiceInventoryState({ rows: [] })}
-                managedState={buildManagedLocalServicesState({ rows: [] })}
                 launcherState={buildLauncherState()}
                 runtimeActionExecute={runtimeActionExecute}
             />,
@@ -269,7 +265,6 @@ describe('SessionServicesSurfaceScreen', () => {
                 serverId="server-a"
                 machineId="machine-a"
                 inventoryState={buildLocalServiceInventoryState({ rows: [] })}
-                managedState={buildManagedLocalServicesState({ rows: [] })}
                 launcherState={buildPublicPreviewLauncherState()}
                 publicPreviewState={buildPublicPreviewState()}
                 runtimeActionExecute={runtimeActionExecute}

@@ -3,6 +3,7 @@ import { Platform } from 'react-native';
 import { act, type ReactTestInstance } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+    createCapturingLegendListMock,
     createDeferred,
     findTestInstanceByTypeContainingText,
     flushHookEffects,
@@ -12,6 +13,14 @@ import {
 } from '@/dev/testkit';
 import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { installAutomationScreensCommonModuleMocks } from './automationScreensTestHelpers';
+
+const legendListMock = createCapturingLegendListMock({ renderItems: true });
+
+// The canonical list testkit supplies the virtualized list boundary. Mocking
+// the app abstraction keeps Vitest from parsing Legend's native distribution.
+vi.mock('@/components/ui/lists/virtualized', () => ({
+    VirtualizedList: legendListMock.module.LegendList,
+}));
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -162,7 +171,25 @@ describe('AutomationsScreen', () => {
         expect(createButton.props.accessibilityLabel).toBe('automations.screen.createAutomationA11y');
         await pressTestInstanceAsync(createButton);
 
-        expect(routerPushSpy).toHaveBeenCalledWith('/new?automation=1');
+        expect(routerPushSpy).toHaveBeenCalledWith({
+            pathname: '/new',
+            params: {
+                automation: '1',
+                draftId: expect.any(String),
+            },
+        });
+    });
+
+    it('keeps the server-owned automation settings reachable before any machine is connected', async () => {
+        const { AutomationsScreen } = await import('./AutomationsScreen');
+
+        const screen = await renderScreen(React.createElement(AutomationsScreen));
+        await flushHookEffects();
+
+        const settings = screen.findByProps({ testID: 'automations-open-settings' });
+        await pressTestInstanceAsync(settings);
+
+        expect(routerPushSpy).toHaveBeenCalledWith('/automations/settings');
     });
 
     it('keeps the hydrated automation list visible while the mount refresh is pending', async () => {
@@ -245,6 +272,37 @@ describe('AutomationsScreen', () => {
 
         await pressTestInstanceAsync(screen.findByProps({ testID: 'automations-stale-refresh-retry' }));
         expect(syncSpies.refreshAutomations).toHaveBeenCalledTimes(2);
+    });
+
+    it('hands a high-cardinality Account list to the canonical virtualized owner in bounded chunks', async () => {
+        // This asserts that a high-cardinality catalog does not materialise one
+        // group per definition; the virtualized owner decides what is mounted.
+        automationsState.list = Array.from({ length: 200 }, (_unused, index) => ({
+            id: `a${index}`,
+            name: `Automation ${index}`,
+            description: null,
+            enabled: true,
+            trigger: {
+                kind: 'schedule' as const,
+                schedule: { kind: 'interval' as const, everyMs: 900_000, scheduleExpr: null, timezone: null },
+            },
+            nextRunAt: null,
+        }));
+
+        const { AutomationsScreen } = await import('./AutomationsScreen');
+        await renderScreen(React.createElement(AutomationsScreen));
+        await flushHookEffects();
+
+        const listProps = legendListMock.state.props;
+        expect(listProps, 'Expected the Account Automation list to render through the canonical virtualized list.')
+            .not.toBeNull();
+        const rows = listProps.data as ReadonlyArray<{ kind: string; automations?: readonly unknown[] }>;
+        expect(rows.length).toBeGreaterThan(1);
+        const total = rows.reduce((sum, row) => sum + (row.automations?.length ?? 0), 0);
+        expect(total, 'Every matching Automation must remain reachable; chunking may not truncate the list.')
+            .toBe(200);
+        const largestChunk = rows.reduce((max, row) => Math.max(max, row.automations?.length ?? 0), 0);
+        expect(largestChunk).toBeLessThanOrEqual(8);
     });
 
     it('keeps list navigation semantic while its controls remain independent', async () => {

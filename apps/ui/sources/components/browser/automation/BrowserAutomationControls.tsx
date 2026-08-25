@@ -1,15 +1,19 @@
 import * as React from 'react';
-import { View } from 'react-native';
+import { Platform, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
+import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { Text } from '@/components/ui/text/Text';
+import { Typography } from '@/constants/Typography';
 import type { BrowserControlViewState } from '@/sync/domains/browser/control';
 import type {
     BrowserAutomationControlService,
     BrowserAutomationTimelineEntry,
 } from '@/sync/domains/browser/automation';
 import { t } from '@/text';
+
+import { BROWSER_CHROME_WIDTH } from '../browserChromeDensity';
 
 const stylesheet = StyleSheet.create((theme) => ({
     root: {
@@ -20,7 +24,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     statusPill: {
         minHeight: 34,
-        maxWidth: 220,
+        maxWidth: BROWSER_CHROME_WIDTH.chip,
         borderRadius: 6,
         borderWidth: 1,
         borderColor: theme.colors.border.default,
@@ -33,11 +37,15 @@ const stylesheet = StyleSheet.create((theme) => ({
         borderColor: theme.colors.state.warning.foreground,
     },
     statusText: {
+        ...Typography.rowMeta(),
         color: theme.colors.text.secondary,
-        fontSize: 12,
     },
     statusTextActive: {
-        color: theme.colors.state.warning.foreground,
+        // Q2 measured the theme's semantic FOREGROUNDS as text at 2.20–3.55:1 in light theme —
+        // they are fill colours, not text colours. The words carry their own meaning here, so
+        // they take `text.primary`; the hue stays on the border/glyph beside them, where it is a
+        // redundant cue rather than the only one.
+        color: theme.colors.text.primary,
     },
     timeline: {
         flexDirection: 'row',
@@ -47,7 +55,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     timelineEntry: {
         minHeight: 26,
-        maxWidth: 160,
+        maxWidth: BROWSER_CHROME_WIDTH.pill,
         borderRadius: 6,
         borderWidth: 1,
         borderColor: theme.colors.border.default,
@@ -57,8 +65,8 @@ const stylesheet = StyleSheet.create((theme) => ({
         justifyContent: 'center',
     },
     timelineText: {
+        ...Typography.rowMeta(),
         color: theme.colors.text.secondary,
-        fontSize: 11,
     },
 }));
 
@@ -233,6 +241,8 @@ export function BrowserAutomationControls(props: Readonly<{
                 accessibilityLabel={t('browserAutomation.actions.cancel')}
                 tooltip={t('browserAutomation.actions.cancel')}
                 size={34}
+                minimumInteractiveTargetSize={resolveMinimumInteractiveTargetSize(Platform.OS)}
+                interactiveTargetGapPx={6}
                 disabled={cancelDisabled}
                 onPress={() => {
                     if (!props.view || !activeRequestId) return;

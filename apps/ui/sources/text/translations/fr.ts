@@ -14,9 +14,11 @@ import { pluginWebhookAdministrationTranslations } from './pluginWebhookAdminist
 import { pluginAccountDataEraseTranslations } from './pluginAccountDataEraseTranslations';
 import { apiTokenSettingsTranslations } from './apiTokenSettingsTranslations';
 import { pluginAccountReleaseSelectionTranslations } from './pluginAccountReleaseSelectionTranslations';
+import { pluginMachineMatrixTranslations } from './pluginMachineMatrixTranslations';
 import { pluginInvocationLogTranslations } from './pluginInvocationLogTranslations';
 import { eventAutomationComposerTranslations } from './eventAutomationComposerTranslations';
 import { actionOperationInboxTranslations } from './actionOperationInboxTranslations';
+import { sessionDraftTranslations } from './sessionDraftTranslations';
 
 const mcpServersUxTranslationExtension = {
   mcpServersConfiguredEmptySubtitle: 'Crée un serveur, importe du JSON hôte ou installe un préréglage recommandé.',
@@ -609,6 +611,7 @@ function plural({
  * Must match the exact structure of the English translations
  */
 export const fr = {
+    ...sessionDraftTranslations,
     transferRecovery: {
         title: 'Terminer l’upload en attente',
         message: 'L’upload a atteint la machine, mais l’enregistrement final nécessite ton attention. Réessaie uniquement l’étape d’enregistrement final, ou supprime l’upload en attente.',
@@ -676,6 +679,10 @@ export const fr = {
             composerSendImmediate: 'Envoyer immédiatement',
             composerSendPending: 'Envoyer dans la file d’attente',
             commandPaletteOpen: 'Ouvrir la palette de commandes',
+            browserAddressFocus: 'Activer la barre d’adresse du navigateur',
+            browserBack: 'Précédent dans le navigateur',
+            browserForward: 'Suivant dans le navigateur',
+            browserReload: 'Recharger la page du navigateur',
             modeCycle: 'Changer de mode',
             shortcutsHelpOpen: 'Ouvrir l’aide des raccourcis',
             sessionNew: 'Créer une session',
@@ -814,7 +821,7 @@ export const fr = {
 
 
   inbox: {
-    ...actionOperationInboxTranslations,
+        ...actionOperationInboxTranslations,
     openSession: ({ session }: { session: string }) => `Ouvrir la session : ${session}`,
     // Inbox screen
     emptyTitle: "Tu es à jour",
@@ -1175,6 +1182,18 @@ export const fr = {
         "Crée-en une depuis le flux Nouvelle session pour lancer des sessions planifiées sur tes machines.",
       createAutomationA11y: "Créer une automatisation",
     },
+    settings: {
+      title: "Réglages des automatisations",
+      openSubtitle: "Configure la capacité et la rétention de l’historique des exécutions.",
+      failedToLoad: "Impossible de charger les réglages des automatisations.",
+      updateFailed: "Impossible de mettre à jour les réglages des automatisations.",
+      maxActiveRunsPerMachine: "Nombre maximal d’exécutions actives par machine",
+      maxActiveRunsPerMachineSubtitle: "Limite le nombre d’exécutions que chaque machine peut réclamer activement à la fois.",
+      maxActiveRunsPerMachinePrompt: "Saisis un nombre entier de 1 à 2 147 483 647.",
+      maxActiveRunsPerMachineInvalid: "Saisis un nombre entier de 1 à 2 147 483 647.",
+      runRetention: "Conserver l’historique des exécutions indéfiniment",
+      runRetentionSubtitle: "Lorsqu’elle est désactivée, les exécutions terminées éligibles sont conservées pendant 30 jours.",
+    },
     detail: {
       invalidId: "Id d’automatisation invalide.",
       notFound: "Automatisation introuvable.",
@@ -1197,6 +1216,7 @@ export const fr = {
         endpointTitle: "Endpoint webhook",
         endpointObservingSince: ({ time }: { time: string }) => `Reçoit des livraisons depuis ${time}`,
         sourceStatusUnreported: "En attente du premier rapport",
+        sourceStatusUnavailable: "État de la source indisponible",
         sourceCatalogStatusUnavailable: "Actualité de la source indisponible",
         watcherMachineUnknown: "Cette machine n'est plus dans votre compte, donc cet observateur ne peut pas observer d'événements.",
         watcherMachineRevoked: "Cette machine a été révoquée, donc cet observateur ne peut pas observer d'événements.",
@@ -1217,6 +1237,12 @@ export const fr = {
       deleteConfirmTitle: "Supprimer l’automatisation",
       deleteConfirmMessage: "Cette automatisation et sa planification seront supprimées.",
       deleteConfirmButton: "Supprimer",
+      clearHistory: "Effacer l’historique des exécutions",
+      clearHistorySubtitle: "Supprime les exécutions terminées pouvant être supprimées. Les exécutions actives restent disponibles.",
+      clearHistoryConfirmTitle: "Effacer l’historique des exécutions ?",
+      clearHistoryConfirmMessage: "Les exécutions terminées éligibles seront supprimées définitivement. Les exécutions actives resteront disponibles.",
+      clearHistoryConfirmButton: "Effacer l’historique",
+      clearHistoryFailed: "Impossible d’effacer l’historique des exécutions.",
       machineAssignmentsTitle: "Affectations de machines",
       machineAssignmentsFooter:
         "Active au moins une machine pour que cette automatisation s’exécute.",
@@ -1253,9 +1279,10 @@ export const fr = {
         admitted: ({ time }: { time: string }) => `Admis : ${time}`,
         occurrenceTitle: "Occurrence",
         sourceTitle: "Source d’observation",
-        scheduled: ({ time }: { time: string }) => `Planifiée : ${time}`,
-        updated: ({ time }: { time: string }) => `Mise à jour : ${time}`,
-        error: ({ message }: { message: string }) => `Erreur : ${message}`,
+                scheduled: ({ time }: { time: string }) => `Planifiée : ${time}`,
+                updated: ({ time }: { time: string }) => `Mise à jour : ${time}`,
+                contentRemoved: 'Contenu de l’exécution supprimé',
+                error: ({ message }: { message: string }) => `Erreur : ${message}`,
         attemptTitle: "Tentative",
         attempt: ({ attempt }: { attempt: number }) => `Tentative ${attempt}`,
         claimedByTitle: "Pris en charge par",
@@ -3015,6 +3042,8 @@ export const fr = {
       fallbackDisabled: 'Le repli de compte est désactivé sur ce serveur.',
       duplicateMember: 'Ce compte est déjà dans le groupe.',
       groupAlreadyExists: 'Un groupe de comptes avec cet id existe déjà.',
+      groupCapacityExhausted: 'Ce compte a déjà le nombre maximal de groupes de comptes. Supprimez-en un dont vous n’avez plus besoin, puis réessayez.',
+      connectedAccountCapacityExhausted: 'Ce compte a déjà le nombre maximal de comptes connectés. Déconnectez-en un dont vous n’avez plus besoin, puis réessayez.',
       invalidGroup: 'Ce groupe de comptes est invalide. Vérifie ses réglages et réessaie.',
       requestFailedWithStatus: ({ status }: { status: number }) => `La requête du service connecté a échoué (${status}). Actualise et réessaie.`,
       generic: 'L’action du service connecté a échoué. Actualise et réessaie.',
@@ -6511,6 +6540,12 @@ export const fr = {
 
   voiceAssistant: {
     connecting: "Connexion…",
+    reconnecting: "Reconnexion…",
+    listening: "À l’écoute",
+    thinking: "Réflexion…",
+    speaking: "Parle",
+    microphonePermissionRequired: "Accès au micro requis",
+    interrupted: "Interrompu",
     active: "Assistant vocal actif",
     connectionError: "Erreur de connexion",
     label: "Assistant vocal",
@@ -6521,6 +6556,19 @@ export const fr = {
     endVoice: "Arrêter Voice",
     transcribing: "Transcription…",
     endDictation: "Arrêter la dictée",
+    dictationNoSpeech: "Aucune parole détectée",
+    dictationErrors: {
+      captureFailed: "La dictée s’est arrêtée car la capture du micro a échoué. Vérifie l’accès au micro et réessaie.",
+      providerUnavailable: "Le provider de dictée sélectionné est indisponible. Vérifie sa configuration, puis réessaie.",
+      captureStartDeadlineExceeded: "La dictée n’a pas pu démarrer en 60 secondes. Vérifie l’accès au micro, puis réessaie.",
+      captureDurationExceeded: "La dictée a atteint la limite d’écoute de 60 secondes. Relance-la pour continuer.",
+      transcriptionDeadlineExceeded: "La transcription a pris plus de 30 secondes. Réessaie avec une dictée plus courte.",
+      transcriptLimitExceeded: "Le texte dicté est trop long pour le composeur. Essaie une dictée plus courte.",
+      recordedAudioSizeUnavailable: "Happier n’a pas pu vérifier la taille de l’enregistrement. Enregistre à nouveau.",
+      recordedAudioLimitExceeded: "L’enregistrement dépasse la limite de 8 Mo. Essaie une dictée plus courte.",
+      microphoneOwnedByVoice: "Termine Voice avant de démarrer la dictée.",
+      microphoneOwnedByDictation: "La dictée utilise déjà le micro. Termine la dictée en cours avant d’en démarrer une autre.",
+    },
   },
 
   voiceSurface: {
@@ -6528,6 +6576,7 @@ export const fr = {
     connectAgent: 'Connecter',
     installAgentRuntime: 'Installer',
     updateAgentRuntime: 'Mettre à jour',
+    reconnect: 'Se reconnecter',
     start: "Démarrer",
     stop: "Arrêter",
     selectSessionToStart: "Sélectionne une session pour démarrer la voix",
@@ -6564,6 +6613,8 @@ export const fr = {
   voiceActivity: {
     title: "Activité vocale",
     empty: "Aucune activité vocale pour l’instant.",
+    partial: "En direct",
+    corrected: "Mis à jour",
     clear: "Effacer",
     format: {
       voiceAgent: "Agent vocal",
@@ -7869,6 +7920,10 @@ export const fr = {
       "Aucune modification du dernier tour détectée pour l’instant.",
     notRepo: "Pas un dépôt sous gestion de version",
     notUnderSourceControl: "Ce dossier n’est pas sous gestion de version",
+    sourceControlStale: {
+        title: 'La gestion de version nécessite votre attention',
+        body: 'Affichage de la dernière mise à jour réussie. La mise à jour la plus récente ne s’est pas terminée.',
+    },
     repositoryInit: {
       initialize: "Initialiser le dépôt",
       initializing: "Initialisation…",
@@ -8225,7 +8280,7 @@ export const fr = {
           pushCurrentBranch: "Pousser la branche actuelle",
           publish: "Publier le dépôt",
           publishing: "Publication…",
-          noTargets: "Connecte GitHub ou identifie-toi avec le CLI gh pour publier ce dépôt.",
+          targetsUnavailable: "Impossible de vérifier où ce dépôt peut être publié.",
           errors: {
             targetRequired: "Choisis un compte ou une organisation GitHub.",
             nameRequired: "Saisis un nom de dépôt.",
@@ -8507,7 +8562,6 @@ export const fr = {
       disabledLimitSubtitle: 'Limite d’aperçus publics atteinte. Révoque un lien existant avant d’en créer un autre.',
       disabledNoPreviewSubtitle: 'Ouvre un aperçu local avant de créer un lien public.',
       disabledReason: {
-        auditRequirementDisabled: 'La journalisation d’audit des aperçus publics est obligatoire mais désactivée sur le serveur.',
         auditUnavailable: 'La journalisation d’audit des aperçus publics est indisponible.',
         dnsTlsUnavailable: 'Les aperçus publics attendent que le DNS/TLS soit prêt.',
         expired: 'Ce lien d’aperçu public a expiré.',
@@ -8527,6 +8581,7 @@ export const fr = {
         sessionNotAuthorized: 'Tu n’as pas accès à la création d’un lien public pour cette session.',
         tunnelPortsUnconfigured: 'Le serveur n’autorise aucun port de tunnel.',
         tunnelRelayDisabled: 'Le relais du serveur pour les tunnels de machine est désactivé.',
+        tunnelSigningUnconfigured: 'Le serveur n’a pas de clé de signature pour les tunnels de machine.',
       },
       createActionA11y: 'Créer un lien d’aperçu public',
       revokeActionA11y: 'Révoquer le lien d’aperçu public',
@@ -8537,6 +8592,15 @@ export const fr = {
             revokeConfirmTitle: 'Révoquer le lien public ?',
             revokeConfirmMessage: ({ url }: { url: string }) => `Révoquer le lien d’aperçu public ${url} ? Toute personne qui l’utilise perdra l’accès.`,
             revokeConfirmCta: 'Révoquer le lien',
+            consequenceReach: 'Toute personne qui a le lien peut ouvrir ce service. Aucune connexion n’est requise.',
+            consequenceExpiry: 'Le lien cesse de fonctionner tout seul dès que la durée indiquée ci-dessous est écoulée.',
+            consequenceRevoke: 'Tu peux le révoquer à tout moment, depuis ce panneau.',
+            lifetimeLabel: 'Durée',
+            linkTypeLabel: 'Type de lien',
+            revealUrlA11y: 'Afficher le lien complet',
+            hideUrlA11y: 'Masquer le lien',
+            expiresInClock: ({ clock }: { clock: string }) => `Expire dans ${clock}`,
+            groupFooter: 'Les liens publics sont enregistrés dans le journal d’audit de cette machine.',
     },
     actions: {
       terminateDetectedA11y: 'Terminer le service local détecté',
@@ -8549,6 +8613,25 @@ export const fr = {
             stopConfirmTitle: 'Arrêter le service ?',
             stopConfirmMessage: ({ service }: { service: string }) => `Arrêter ${service} ? Le service ne sera plus joignable jusqu’à son prochain démarrage.`,
             stopConfirmCta: 'Arrêter',
+            startA11y: 'Démarrer le service',
+            failure: {
+                title: 'L’action n’a pas abouti',
+                refused: 'La machine a refusé cette action. Vérifie les autorisations des services locaux de cette machine et réessaie.',
+                unavailable: 'Cette action n’est pas disponible pour ce service sur cette machine.',
+                incomplete: 'L’action ne s’est pas terminée. Tu peux réessayer.',
+            },
+            failureTitle: {
+                start: ({ service }: { service: string }) => `Impossible de démarrer ${service}`,
+                open: ({ service }: { service: string }) => `Impossible d’ouvrir ${service}`,
+                terminate: ({ service }: { service: string }) => `Impossible de terminer ${service}`,
+                forget: ({ service }: { service: string }) => `Impossible de masquer ${service}`,
+                stop: ({ service }: { service: string }) => `Impossible d’arrêter ${service}`,
+                restart: ({ service }: { service: string }) => `Impossible de redémarrer ${service}`,
+                copyAddress: 'Impossible de copier l’adresse',
+                expose: 'Impossible de créer le lien public',
+                revokeExposure: 'Impossible de révoquer le lien public',
+                copyExposure: 'Impossible de copier le lien public',
+            },
     },
   },
 
@@ -9331,6 +9414,14 @@ export const fr = {
     },
 
 settingsSession: {
+    newSessionDraftEntry: {
+        title: 'Brouillons de nouvelle session',
+        footer: 'Choisissez si Nouvelle session reprend le brouillon de cet appareil ou en ouvre un nouveau.',
+        resumeTitle: 'Reprendre le brouillon précédent',
+        resumeSubtitle: 'Continuez le brouillon commencé depuis Nouvelle session sur cet appareil.',
+        freshTitle: 'Toujours repartir de zéro',
+        freshSubtitle: 'Ouvrez un nouveau brouillon à chaque sélection de Nouvelle session.',
+    },
 	      sessionList: {
 	          title: 'Liste des sessions',
 	          footer: 'Apparence et comportement de la liste des sessions dans la barre latérale.',
@@ -10110,7 +10201,7 @@ settingsSession: {
     },
     setupCheck: {
       title: 'État de préparation du provider',
-      footer: 'Vérifier la config lit uniquement les réglages enregistrés et les informations locales actuelles. Cela n’ouvre pas le micro, ne démarre pas la voix, n’envoie pas d’audio et ne contacte pas le provider.',
+      footer: 'Vérifier la config lit uniquement les réglages enregistrés et les informations locales actuelles. Cela n’ouvre pas le micro, ne démarre pas la voix, n’envoie pas d’audio et ne contacte pas le provider. Le démarrage de Voice vérifie à nouveau la capacité liée à la session.',
       check: 'Vérifier la config',
       checkSubtitle: 'Passe en revue passivement la configuration du provider vocal sélectionné.',
       result: 'État de la config',
@@ -11033,6 +11124,13 @@ settingsSession: {
         },
       },
       models: {
+          nativeOptions: {
+              kokoroEnvironmentDefaultTitle: "Par défaut (depuis l’environnement)",
+              kokoroDefaultSubtitle: "Modèle vocal neuronal local par défaut.",
+              kokoroHigherQualitySubtitle: "Modèle vocal Kokoro local de meilleure qualité.",
+              kokoroEnvironmentDefaultSubtitle: "Utilise les réglages par défaut du pack de modèles Kokoro configurés dans l’environnement.",
+              sherpaStreamingRecommendedSubtitle: "Diffusion en continu, faible latence (recommandé).",
+          },
           title: "Modèles de voix locale",
           statusTitle: "Service de modèles",
           footer: "Installe des packs de modèles de voix locale sur ton daemon voice-home et choisis celui par défaut pour chaque type.",
@@ -11237,6 +11335,7 @@ settingsSession: {
     },
     defaultTitle: "Nouveautés",
     onboardingShowcase: {
+        details: PRODUCT_STORY_DETAILS_ENGLISH,
                 "title": "Bienvenue dans Happier",
                 "subtitle": "Tes agents IA, partout où tu travailles.",
                 "cards": {
@@ -11845,7 +11944,7 @@ settingsSession: {
           webDesktopHandoffCliOption: 'Avec le terminal (CLI)',
           webDesktopHandoffCliSubtitle: 'Exécute quelques commandes pour héberger un serveur, puis colle ici l’URL du serveur affichée.',
           webDesktopOnlyRelayInstallTitle: 'Installer un serveur avec la CLI',
-	          webDesktopOnlyRelayInstallSubtitle: 'Exécute ceci sur l’ordinateur qui hébergera ton serveur.\n\nPuis colle ici l’URL du serveur affichée.',
+	          webDesktopOnlyRelayInstallSubtitle: 'Exécute ceci sur l’ordinateur qui hébergera ton serveur.',
 	          webDesktopOnlyRelayStatusTitle: 'Récupérer l’URL de ton serveur',
 	          webDesktopOnlyRelayStatusSubtitle: 'Exécute ceci pour afficher l’URL du serveur, puis colle-la ici.',
 	          webDesktopOnlyOptionalNextTitle: 'Optionnel : accès sécurisé et providers',
@@ -11879,6 +11978,7 @@ settingsSession: {
         setupThisComputerTitle: 'Configurer cet ordinateur',
 	    controlPanelTitle: 'Résumé de l’état',
     activeRelaySummaryTitle: 'Relay actif',
+    selectedRelaySummaryTitle: 'Relay sélectionné',
     thisComputerSummaryTitle: 'Cet ordinateur',
     nextActionSummaryTitle: 'Prochaine action',
     thisComputerReady: 'Prêt pour ce relay',
@@ -12167,6 +12267,10 @@ settingsSession: {
     discarded: "Abandonné",
     recoveredHistory: "Historique récupéré",
     pluginAttribution: ({ pluginId }: { pluginId: string }) => `Du plugin ${pluginId}`,
+    pluginAttributionExternal: ({ sender, pluginId }: { sender: string; pluginId: string }) => `De ${sender} via le plugin ${pluginId}`,
+    pluginAttributionExternalForwarded: ({ sender, pluginId }: { sender: string; pluginId: string }) => `Transféré par ${sender} via le plugin ${pluginId}`,
+    pluginAttributionExternalSender: 'un expéditeur externe',
+    pluginAttributionExternalBot: 'un bot externe',
     unknownEvent: "Événement inconnu",
     runtimeConfigOutcomeAppliesBeforeNextMessage: 'S’applique avant ton prochain message',
     runtimeConfigOutcomeQueuedUntilReady: 'En file d’attente jusqu’à disponibilité',
@@ -12641,6 +12745,24 @@ settingsSession: {
   },
 
   profiles: {
+      launchPlacement: {
+          title: 'Où les sessions s’exécutent',
+          footer: 'Une préférence, résolue au démarrage de la session. Elle n’enregistre jamais une machine comme réponse.',
+          none: 'Aucune préférence',
+          automatic: 'Résoudre automatiquement',
+          ask: 'Toujours demander',
+          fixed: 'Toujours cette machine',
+          directory: 'Répertoire',
+          directoryPlaceholder: 'Laissez vide pour la racine du projet résolu',
+      },
+      launchCheckout: {
+          title: 'Copie de travail',
+          footer: 'Comment une session obtient sa copie de travail quand elle s’exécute dans un projet.',
+          none: 'Aucune préférence',
+          reuseWorkspace: 'Réutiliser la copie du projet',
+          createWorktree: 'Créer un worktree',
+          ask: 'Toujours demander',
+      },
     // Profile management feature
     title: "Profils",
     subtitle: "Gère les profils de variables d’environnement pour les sessions",
@@ -13017,6 +13139,7 @@ settingsSession: {
       ...pluginWebhookAdministrationTranslations['fr'],
       ...pluginAccountDataEraseTranslations.fr,
       ...pluginAccountReleaseSelectionTranslations.fr,
+      ...pluginMachineMatrixTranslations.fr,
       ...pluginInvocationLogTranslations.fr,
       ...eventAutomationComposerTranslations.fr,
     title: "Marketplace de plugins",
@@ -13043,7 +13166,7 @@ settingsSession: {
     developmentSourceInstallSucceeded: "Source de développement approuvée et projetée.",
     developmentSourceInstallFailed: ({ outcome }: { outcome: string }) => `La source de développement n’a pas été installée (${outcome}).`,
     developmentTrustSourceRootTitle: "Faire confiance à ce dossier de plugin ?",
-    developmentTrustSourceRootBody: ({ path }: { path: string }) => `Happier va installer des dépendances dans ce dossier, le builder et exécuter son code :\n\n${path}\n\nNe continue que si tu fais confiance à tout ce que contient ce dossier et à tout ce qu’il peut télécharger. Tu examineras le plugin lui-même à l’étape suivante.`,
+    developmentTrustSourceRootBody: ({ path, machine, server }: { path: string; machine: string; server: string }) => `Happier va installer des dépendances dans ce dossier, le builder et exécuter son code :\n\n${path} sur ${machine} (${server})\n\nNe continue que si tu fais confiance à tout ce que contient ce dossier et à tout ce qu’il peut télécharger. Tu examineras le plugin lui-même à l’étape suivante.`,
     developmentTrustSourceRootConfirm: "Approuver le dossier",
     pendingChangesTitle: "En attente de votre décision",
     pendingChangesFooter: "Modifications de plugin préparées sur cette machine. Un agent peut en préparer une, mais vous seul pouvez l'approuver.",
@@ -13120,7 +13243,8 @@ settingsSession: {
     marketplaceInstallReviewBody: ({ identity, verification, executableRealms, contributions, uiArtifacts, requiredAccess, optionalAccess, compatibility }: { identity: string; verification: string; executableRealms: string; contributions: string; uiArtifacts: string; requiredAccess: string; optionalAccess: string; compatibility: string }) => `Identité :\n${identity}\n\nSignaux de vérification :\n${verification}\n\nCode exécutable : ${executableRealms}\nContributions : ${contributions}\nArtefacts UI : ${uiArtifacts}\n\nLe code daemon et React Native approuvé s’exécute avec l’autorité de l’app ou du processus et peut utiliser directement les fichiers, le réseau, l’environnement et les processus. Les accès hôte listés ci-dessous décrivent des services médiés par Happier ; ce n’est pas un sandbox pour le code exécutable des plugins.\n\nDéclarations requises et services coopératifs :\n${requiredAccess}\n\nRessources optionnelles détenues par l’hôte (désactivées par défaut) :\n${optionalAccess}\n\nCompatibilité et mises à jour :\n${compatibility}`,
     marketplaceInstallDecisionFailed: ({ outcome }: { outcome: string }) => `Le plugin n’a pas été installé (${outcome}).`,
     marketplaceChangeDecisionFailed: ({ action, outcome }: { action: string; outcome: string }) => `${action} a échoué (${outcome}).`,
-    pluginChangeConfirmBody: ({ action, name }: { action: string; name: string }) => `Confirmer ${action} pour ${name}.`,
+    pluginChangeConfirmBody: ({ action, name, machine, server }: { action: string; name: string; machine: string; server: string }) => `Confirmer ${action} pour ${name} sur ${machine} (${server}).`,
+    pluginChangeConfirmTarget: ({ machine, server }: { machine: string; server: string }) => `Cela s’applique à ${machine} (${server}).`,
     forgetTrust: "Oublier l’approbation",
     rollback: "Revenir en arrière",
     uninstall: "Désinstaller",
@@ -13310,3 +13434,4 @@ settingsSession: {
   },} as const;
 
 export type TranslationsFr = typeof fr;
+import { PRODUCT_STORY_DETAILS_ENGLISH } from '@happier-dev/brand/product-story';

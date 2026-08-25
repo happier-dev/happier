@@ -35,6 +35,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     button: {
         width: '100%',
         maxWidth: HANDOFF_TEXT_MAX_WIDTH,
+        alignSelf: 'center',
     },
     title: {
         textAlign: 'left',

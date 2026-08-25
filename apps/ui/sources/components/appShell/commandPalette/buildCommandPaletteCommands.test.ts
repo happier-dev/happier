@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { vi } from 'vitest';
+import {
+  PluginProjectedActionV2Schema,
+  type PluginProjectedActionV2,
+} from '@happier-dev/protocol';
 
 import type { Command } from './types';
 import type { CompactAppDestination } from '@/components/appShell/destinations/compactAppDestinationCatalog';
@@ -46,6 +50,32 @@ function buildSettingsWithExecutionRunsEnabled() {
 const PLUGIN_ID = 'acme.commands';
 const MACHINE_ID = 'machine-command-palette';
 const SERVER_ID = 'server-command-palette';
+
+/** Keep the presentation fixture paired with the authoritative raw Action descriptor. */
+function projectedDaemonAction(
+  pluginId: string,
+  action: PluginProjectionAction,
+): PluginProjectedActionV2 | null {
+  const projected = PluginProjectedActionV2Schema.safeParse({
+    id: action.id,
+    pluginId,
+    title: action.title,
+    ...(action.description ? { description: action.description } : {}),
+    ...(action.icon ? { icon: action.icon } : {}),
+    scopes: action.scopes,
+    surfaces: action.surfaces,
+    execution: { target: 'daemon' },
+    ...(action.placementBindings.length > 0 ? { placementBindings: action.placementBindings } : {}),
+    ...(action.inputSchema ? { inputSchema: action.inputSchema } : {}),
+    ...(action.inputHints ? { inputHints: action.inputHints } : {}),
+    ...(action.slash ? { slash: action.slash } : {}),
+    priority: action.priority ?? 0,
+    dangerLevel: action.dangerLevel,
+    ...(action.confirmation ? { confirmation: action.confirmation } : {}),
+    ...(action.available === null ? {} : { available: action.available }),
+  });
+  return projected.success ? projected.data : null;
+}
 
 function pluginAction(input: Partial<PluginProjectionAction> & Readonly<{
   id: string;
@@ -96,9 +126,15 @@ function pluginActionSnapshot(input: Readonly<{
   sessionId?: string;
 }>): PluginContributedActionCurrentSnapshot {
   const generation = input.generation ?? 7;
+  const actionsById = new Map(input.actions.map((action) => [action.id, action] as const));
   return {
     pluginProjectionById: {
       [PLUGIN_ID]: pluginEntry(input.actions, generation),
+    },
+    resolveContributedAction: (identity) => {
+      if (identity.pluginId !== PLUGIN_ID) return null;
+      const action = actionsById.get(identity.localId);
+      return action ? projectedDaemonAction(PLUGIN_ID, action) : null;
     },
     host: {
       machineId: MACHINE_ID,
@@ -120,7 +156,7 @@ function buildCommandsWithPluginActions(input: Readonly<{
     isDev: false,
     activeSessionId: input.scope === 'session' ? 'session-command-palette' : null,
     features: { executionRunsEnabled: false, voiceEnabled: false, memorySearchEnabled: false },
-    nav: { push: () => {}, navigateToSession: () => {} },
+    nav: { push: () => {}, openNewSession: () => {}, navigateToSession: () => {} },
     auth: { logout: async () => {} },
     actions: { execute: async () => ({ ok: true, result: {} }) },
     alert: async () => {},
@@ -132,6 +168,68 @@ function buildCommandsWithPluginActions(input: Readonly<{
 }
 
 describe('buildCommandPaletteCommands', () => {
+  it('delegates the new-session command to the caller-owned ordinary-entry callback', async () => {
+    const openNewSession = vi.fn();
+    mockedState = { createSessionActionDraft: createSessionActionDraftSpy, settings: {} };
+
+    const commands = buildCommandPaletteCommands({
+      sessionsById: {},
+      isDev: false,
+      activeSessionId: null,
+      features: { executionRunsEnabled: false, voiceEnabled: false, memorySearchEnabled: false },
+      nav: {
+        push: vi.fn(),
+        openNewSession,
+        navigateToSession: () => {},
+      },
+      auth: { logout: async () => {} },
+      actions: { execute: async () => ({ ok: true, result: {} }) },
+      alert: async () => {},
+    });
+
+    await commands.find((command) => command.id === 'new-session')?.action();
+
+    expect(openNewSession).toHaveBeenCalledTimes(1);
+  });
+
+  it('omits hidden system sessions before selecting recent session commands', () => {
+    mockedState = { createSessionActionDraft: createSessionActionDraftSpy, settings: {} };
+
+    const commands = buildCommandPaletteCommands({
+      sessionsById: {
+        'voice-history-hidden': {
+          id: 'voice-history-hidden',
+          updatedAt: 200,
+          metadataLayoutVersion: 1,
+          metadataUnavailable: false,
+          metadata: {
+            name: 'Voice History carrier',
+            systemSessionV1: { v: 1, key: 'voice_transcript_history', hidden: true },
+          },
+        },
+        'ordinary-recent': {
+          id: 'ordinary-recent',
+          updatedAt: 100,
+          metadata: { name: 'Ordinary recent session' },
+        },
+      },
+      isDev: false,
+      activeSessionId: null,
+      features: { executionRunsEnabled: false, voiceEnabled: false, memorySearchEnabled: false },
+      nav: { push: () => {}, openNewSession: () => {}, navigateToSession: () => {} },
+      auth: { logout: async () => {} },
+      actions: { execute: async () => ({ ok: true, result: {} }) },
+      alert: async () => {},
+    });
+
+    expect(commands).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'session-voice-history-hidden' }),
+    ]));
+    expect(commands).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'session-ordinary-recent' }),
+    ]));
+  });
+
   it('projects an admitted command-palette Action with its canonical presentation and executor', async () => {
     const dispatch = vi.fn(async () => ({ ok: true as const, result: { applied: true } }));
     const controller = createPluginContributedActionController({
@@ -338,6 +436,7 @@ describe('buildCommandPaletteCommands', () => {
       features: { executionRunsEnabled: false, voiceEnabled: false, memorySearchEnabled: false },
       nav: {
         push: (path: string) => pushes.push(path),
+        openNewSession: () => {},
         navigateToSession: () => {},
       },
       auth: { logout: async () => {} },
@@ -381,7 +480,7 @@ describe('buildCommandPaletteCommands', () => {
       isDev: false,
       activeSessionId: null,
       features: { executionRunsEnabled: false, voiceEnabled: false, memorySearchEnabled: false },
-      nav: { push: () => {}, navigateToSession: () => {} },
+      nav: { push: () => {}, openNewSession: () => {}, navigateToSession: () => {} },
       auth: { logout: async () => {} },
       actions: { execute: async () => ({ ok: true, result: {} }) },
       alert: async () => {},
@@ -416,6 +515,7 @@ describe('buildCommandPaletteCommands', () => {
       features: { executionRunsEnabled: true, voiceEnabled: true, memorySearchEnabled: false },
       nav: {
         push: (path) => pushes.push(path),
+        openNewSession: () => {},
         navigateToSession: () => {},
       },
       auth: {
@@ -463,6 +563,7 @@ describe('buildCommandPaletteCommands', () => {
       features: { executionRunsEnabled: true, voiceEnabled: false, memorySearchEnabled: false },
       nav: {
         push: (path) => pushes.push(path),
+        openNewSession: () => {},
         navigateToSession: () => {},
       },
       auth: { logout: async () => {} },
@@ -494,6 +595,7 @@ describe('buildCommandPaletteCommands', () => {
       features: { executionRunsEnabled: true, voiceEnabled: false, memorySearchEnabled: false },
       nav: {
         push: () => {},
+        openNewSession: () => {},
         navigateToSession: () => {},
       },
       auth: { logout: async () => {} },
@@ -527,6 +629,7 @@ describe('buildCommandPaletteCommands', () => {
       features: { executionRunsEnabled: true, voiceEnabled: false, memorySearchEnabled: false },
       nav: {
         push: () => {},
+        openNewSession: () => {},
         navigateToSession: () => {},
       },
       auth: { logout: async () => {} },
@@ -586,6 +689,7 @@ describe('buildCommandPaletteCommands', () => {
       features: { executionRunsEnabled: true, voiceEnabled: false, memorySearchEnabled: false },
       nav: {
         push: () => {},
+        openNewSession: () => {},
         navigateToSession: () => {},
       },
       auth: { logout: async () => {} },
@@ -623,6 +727,7 @@ describe('buildCommandPaletteCommands', () => {
       features: { executionRunsEnabled: true, voiceEnabled: false, memorySearchEnabled: false },
       nav: {
         push: () => {},
+        openNewSession: () => {},
         navigateToSession: () => {},
       },
       auth: { logout: async () => {} },
@@ -644,6 +749,7 @@ describe('buildCommandPaletteCommands', () => {
       features: { executionRunsEnabled: false, voiceEnabled: false, memorySearchEnabled: true },
       nav: {
         push: (path) => pushes.push(path),
+        openNewSession: () => {},
         navigateToSession: () => {},
       },
       auth: { logout: async () => {} },
@@ -670,6 +776,7 @@ describe('buildCommandPaletteCommands', () => {
       },
       nav: {
         push: () => {},
+        openNewSession: () => {},
         navigateToSession: () => {},
       },
       auth: { logout: async () => {} },
@@ -692,6 +799,7 @@ describe('buildCommandPaletteCommands', () => {
       features: { executionRunsEnabled: false, voiceEnabled: false, memorySearchEnabled: false },
       nav: {
         push: () => {},
+        openNewSession: () => {},
         navigateToSession: () => {},
       },
       auth: { logout: async () => {} },
@@ -713,6 +821,7 @@ describe('buildCommandPaletteCommands', () => {
       features: { executionRunsEnabled: false, voiceEnabled: false, memorySearchEnabled: false },
       nav: {
         push: (path) => pushes.push(path),
+        openNewSession: () => {},
         navigateToSession: () => {},
       },
       auth: { logout: async () => {} },
@@ -753,6 +862,7 @@ describe('buildCommandPaletteCommands', () => {
       },
       nav: {
         push: (path: string) => pushes.push(path),
+        openNewSession: () => {},
         navigateToSession: () => {},
       },
       auth: { logout: async () => {} },
@@ -802,6 +912,7 @@ describe('buildCommandPaletteCommands', () => {
       },
       nav: {
         push: () => {},
+        openNewSession: () => {},
         navigateToSession: () => {},
       },
       auth: { logout: async () => {} },

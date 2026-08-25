@@ -7,7 +7,12 @@ import {
     sealAutomationTriggerDefinitionStoredEnvelopeV1,
     type AutomationV3DefinitionDetail,
 } from '@happier-dev/protocol';
-import { findTestInstanceByTypeContainingText, pressTestInstance, renderScreen } from '@/dev/testkit';
+import {
+    createCapturingLegendListMock,
+    findTestInstanceByTypeContainingText,
+    pressTestInstance,
+    renderScreen,
+} from '@/dev/testkit';
 import { installAutomationScreensCommonModuleMocks } from './automationScreensTestHelpers';
 
 type AutomationScreenFixture = {
@@ -64,6 +69,8 @@ type FetchAutomationRuns = (
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+const runHistoryListMock = createCapturingLegendListMock({ renderItems: true });
+
 const routerPushSpy = vi.hoisted(() => vi.fn());
 const routerBackSpy = vi.hoisted(() => vi.fn());
 const routerReplaceSpy = vi.hoisted(() => vi.fn());
@@ -79,6 +86,7 @@ const syncSpies = vi.hoisted(() => ({
     pauseAutomation: vi.fn(async () => {}),
     resumeAutomation: vi.fn(async () => {}),
     deleteAutomation: vi.fn(async () => {}),
+    clearAutomationRunHistory: vi.fn(async () => ({ clearedRuns: 0 })),
     replaceAutomationAssignments: vi.fn(async () => {}),
 }));
 const automationState = vi.hoisted((): { automation: AutomationScreenFixture; missing: boolean } => ({
@@ -149,6 +157,9 @@ installAutomationScreensCommonModuleMocks({
                 'automations.detail.runDetail.target': 'Frozen target',
                 'automations.detail.runDetail.outputCeiling': 'Output limit',
                 'automations.detail.runDetail.executionRun': `Execution run · ${String(params?.permissionMode ?? '')}`,
+                'automations.detail.event.sourceStatusUnavailable': 'Source status unavailable',
+                'settingsPlugins.eventAutomationComposer.sourceStatusState.observing': 'Observing',
+                'settingsPlugins.eventAutomationComposer.sourceCatalogStatusState.current': 'Current',
                 'settingsPlugins.eventAutomationComposer.sourceStatusState.backingOff': 'Waiting to retry',
                 'settingsPlugins.eventAutomationComposer.sourceCatalogStatusState.reconciliationLate': 'Reconciliation delayed',
                 'settingsPlugins.eventAutomationComposer.sourceStatusCode.rateLimited': 'Rate limited',
@@ -173,6 +184,18 @@ installAutomationScreensCommonModuleMocks({
             }
             if (key === 'settingsPlugins.eventAutomationComposer.sourceStatusNextRetry') {
                 return `Next retry: ${String(params?.time ?? '')}`;
+            }
+            if (key === 'settingsPlugins.eventAutomationComposer.sourceStatusObservedCount') {
+                return `Events observed: ${String(params?.count ?? '')}`;
+            }
+            if (key === 'settingsPlugins.eventAutomationComposer.sourceStatusAdmittedCount') {
+                return `Events admitted: ${String(params?.count ?? '')}`;
+            }
+            if (key === 'settingsPlugins.eventAutomationComposer.sourceStatusSkippedCount') {
+                return `Events skipped: ${String(params?.count ?? '')}`;
+            }
+            if (key === 'settingsPlugins.eventAutomationComposer.sourceStatusLastObserved') {
+                return `Last observed: ${String(params?.time ?? '')}`;
             }
             if (key === 'settingsPlugins.eventAutomationComposer.sourceCatalogStatusObservedRevision') {
                 return `Observed revision: ${String(params?.revision ?? '')}`;
@@ -224,6 +247,9 @@ vi.mock('@expo/vector-icons', () => ({
 
 vi.mock('@/components/ui/icons/Icon', () => ({
     Icon: (props: any) => React.createElement('Icon', props),
+    // AutomationHistoryGapRecoveryAction reaches the shared Action/List row
+    // path, which reads this real public sizing contract during module load.
+    ICON_SIZE: { xs: 14, sm: 16, md: 20, lg: 24, xl: 29 },
 }));
 
 vi.mock('@/components/ui/feedback/ActivitySpinner', () => ({
@@ -236,6 +262,24 @@ vi.mock('@/utils/platform/deferOnWeb', () => ({
 
 vi.mock('@/components/ui/lists/ItemList', () => ({
     ItemList: (props: any) => React.createElement('ItemList', props, props.children),
+}));
+
+// The detail surface owns one scroll container. Its history must go through
+// the same canonical virtualized-list boundary as the Automation index rather
+// than nesting a recycler inside the old ItemList scroll owner.
+vi.mock('@/components/ui/lists/virtualized', () => ({
+    VirtualizedList: (props: any) => React.createElement(
+        React.Fragment,
+        null,
+        props.ListHeaderComponent ?? null,
+        React.createElement(runHistoryListMock.module.LegendList, {
+            ...props,
+            // The real list renders its header outside individual rows. Keep
+            // it out of the host mock props too, so renderer JSON inspection
+            // remains acyclic while the captured list data stays observable.
+            ListHeaderComponent: null,
+        }),
+    ),
 }));
 
 vi.mock('@/components/ui/lists/ItemGroup', () => ({
@@ -282,6 +326,7 @@ vi.mock('@/sync/sync', () => ({
 
 describe('AutomationDetailScreen', () => {
     beforeEach(() => {
+        runHistoryListMock.state.reset();
         routeParamsState.id = 'a1';
         automationState.missing = false;
         automationState.automation = {
@@ -310,6 +355,8 @@ describe('AutomationDetailScreen', () => {
         modalAlertSpy.mockReset();
         syncSpies.deleteAutomation.mockReset();
         syncSpies.deleteAutomation.mockResolvedValue(undefined);
+        syncSpies.clearAutomationRunHistory.mockReset();
+        syncSpies.clearAutomationRunHistory.mockResolvedValue({ clearedRuns: 0 });
         syncSpies.refreshAutomations.mockReset();
         syncSpies.refreshAutomations.mockResolvedValue(undefined);
         syncSpies.refreshAutomationDefinitionDetail.mockReset();
@@ -569,6 +616,141 @@ describe('AutomationDetailScreen', () => {
         expect(watcher?.props.subtitle).toBeUndefined();
     });
 
+    it.each([
+        {
+            name: 'an offline machine',
+            machines: [{
+                id: 'watcher-machine',
+                active: false,
+                activeAt: 1,
+                revokedAt: null,
+                installationId: 'watcher-installation',
+                metadata: { displayName: 'Build box' },
+            }],
+            impediment: 'This machine is offline, so this watcher is not observing events right now.',
+        },
+        {
+            name: 'a revoked machine',
+            machines: [{
+                id: 'watcher-machine',
+                active: true,
+                activeAt: Date.now(),
+                revokedAt: 10,
+                installationId: 'watcher-installation',
+                metadata: { displayName: 'Build box' },
+            }],
+            impediment: 'This machine was revoked, so this watcher cannot observe events.',
+        },
+    ])('refuses to present a retained observing/current provider summary while the watcher on $name cannot observe', async ({ machines, impediment }) => {
+        // The provider summaries describe the last report, not whether the
+        // reporter is still running. Rendering them verbatim next to a watcher
+        // that cannot observe tells the user a stopped source is healthy.
+        machinesState.list = machines as typeof machinesState.list;
+        automationState.automation = {
+            ...currentEventDefinitionForEditor('executionRun'),
+            sourceStatus: {
+                automationId: 'a1',
+                eventRef: { pluginId: 'happier.scm.github', localId: 'repository-event-v1' },
+                sourceSelectorId: '11111111-1111-4111-8111-111111111111',
+                templateVersion: 3,
+                reporterMaterializationRef: {
+                    pluginId: 'happier.scm.github',
+                    machineId: 'watcher-machine',
+                    materializationId: 'github-materialization',
+                },
+                state: 'observing' as const,
+                code: null,
+                lastObservedAt: 1,
+                lastDispositionAt: 2,
+                nextRetryAt: null,
+                observedCount: 4,
+                admittedCount: 5,
+                skippedCount: 6,
+                revision: 7,
+            },
+            sourceCatalogStatus: {
+                observedRevision: '7',
+                adoptedRevision: '7',
+                state: 'current' as const,
+                scanStartedAt: null,
+                nextRetryAt: null,
+            },
+        };
+        const { AutomationDetailScreen } = await import('./AutomationDetailScreen');
+
+        const screen = await renderScreen(React.createElement(AutomationDetailScreen));
+        await act(async () => {
+            await Promise.resolve();
+        });
+
+        const status = screen.findAllByType('Pressable' as any).find(
+            (instance: any) => instance.props.accessibilityLabel === 'Observation source',
+        );
+        const catalogStatus = screen.findAllByType('Pressable' as any).find(
+            (instance: any) => instance.props.accessibilityLabel === 'Catalog reconciliation',
+        );
+        expect(status?.props.detail).toBe('Source status unavailable');
+        expect(status?.props.subtitle).toBe(impediment);
+        expect(catalogStatus?.props.detail).toBe('Source currentness unavailable');
+        expect(catalogStatus?.props.subtitle).toBe(impediment);
+    });
+
+    it('still presents the provider summaries verbatim while the watcher can observe', async () => {
+        machinesState.list = [{
+            id: 'watcher-machine',
+            active: true,
+            activeAt: Date.now(),
+            revokedAt: null,
+            installationId: 'watcher-installation',
+            metadata: { displayName: 'Build box' },
+        }] as typeof machinesState.list;
+        automationState.automation = {
+            ...currentEventDefinitionForEditor('executionRun'),
+            sourceStatus: {
+                automationId: 'a1',
+                eventRef: { pluginId: 'happier.scm.github', localId: 'repository-event-v1' },
+                sourceSelectorId: '11111111-1111-4111-8111-111111111111',
+                templateVersion: 3,
+                reporterMaterializationRef: {
+                    pluginId: 'happier.scm.github',
+                    machineId: 'watcher-machine',
+                    materializationId: 'github-materialization',
+                },
+                state: 'observing' as const,
+                code: null,
+                lastObservedAt: 1,
+                lastDispositionAt: 2,
+                nextRetryAt: null,
+                observedCount: 4,
+                admittedCount: 5,
+                skippedCount: 6,
+                revision: 7,
+            },
+            sourceCatalogStatus: {
+                observedRevision: '7',
+                adoptedRevision: '7',
+                state: 'current' as const,
+                scanStartedAt: null,
+                nextRetryAt: null,
+            },
+        };
+        const { AutomationDetailScreen } = await import('./AutomationDetailScreen');
+
+        const screen = await renderScreen(React.createElement(AutomationDetailScreen));
+        await act(async () => {
+            await Promise.resolve();
+        });
+
+        const status = screen.findAllByType('Pressable' as any).find(
+            (instance: any) => instance.props.accessibilityLabel === 'Observation source',
+        );
+        const catalogStatus = screen.findAllByType('Pressable' as any).find(
+            (instance: any) => instance.props.accessibilityLabel === 'Catalog reconciliation',
+        );
+        expect(status?.props.detail).toBe('Observing');
+        expect(catalogStatus?.props.detail).toBe('Current');
+    });
+
     it('renders missing Event source and catalog status as explicit states rather than omitting the rows', async () => {
         automationState.automation = {
             ...automationState.automation,
@@ -670,6 +852,13 @@ describe('AutomationDetailScreen', () => {
         expect(status?.props.detail).toBe('Waiting to retry');
         expect(status?.props.subtitle).toContain('Rate limited');
         expect(status?.props.subtitle).toContain('Next retry:');
+        // The admission tallies and the last observation are the only facts
+        // that say whether this source is still seeing anything, so a status
+        // row that drops them reads as healthy while the source is starving.
+        expect(status?.props.subtitle).toContain('Events observed: 4');
+        expect(status?.props.subtitle).toContain('Events admitted: 5');
+        expect(status?.props.subtitle).toContain('Events skipped: 6');
+        expect(status?.props.subtitle).toContain('Last observed:');
         const catalogStatus = screen.findAllByType('Pressable' as any).find(
             (instance: any) => instance.props.accessibilityLabel === 'Catalog reconciliation',
         );
@@ -867,6 +1056,7 @@ describe('AutomationDetailScreen', () => {
             replyHandoffState: 'none',
             replyHandoffAttempt: 0,
             replyHandoffDueAt: null,
+            contentRemovedAt: null,
             createdAt: 10,
             updatedAt: 11,
         }];
@@ -1196,6 +1386,25 @@ describe('AutomationDetailScreen', () => {
         expect(routerReplaceSpy).not.toHaveBeenCalled();
     });
 
+    it('confirms clear-history and delegates the retained-run refresh to the canonical Sync owner', async () => {
+        const { AutomationDetailScreen } = await import('./AutomationDetailScreen');
+
+        const screen = await renderScreen(React.createElement(AutomationDetailScreen));
+        const clearHistoryButton = screen.findByProps({ testID: 'automation-detail-clear-history' });
+        const fetchCallsBeforeClear = syncSpies.fetchAutomationRuns.mock.calls.length;
+        await act(async () => {
+            await pressTestInstance(clearHistoryButton, 'Clear run history');
+        });
+
+        expect(modalConfirmSpy).toHaveBeenCalledWith(
+            'automations.detail.clearHistoryConfirmTitle',
+            'automations.detail.clearHistoryConfirmMessage',
+            { destructive: true, confirmText: 'automations.detail.clearHistoryConfirmButton' },
+        );
+        expect(syncSpies.clearAutomationRunHistory).toHaveBeenCalledWith('a1');
+        expect(syncSpies.fetchAutomationRuns).toHaveBeenCalledTimes(fetchCallsBeforeClear);
+    });
+
     it('does not navigate after a deletion from an earlier reused route settles', async () => {
         const deferredDelete = createDeferred();
         syncSpies.deleteAutomation.mockImplementationOnce(() => deferredDelete.promise);
@@ -1421,6 +1630,74 @@ describe('AutomationDetailScreen', () => {
         expect(syncSpies.fetchAutomationRuns).toHaveBeenNthCalledWith(2, 'a1', 20, 'opaque-next-page');
     });
 
+    it('renders a retained high-cardinality history one canonical page at a time', async () => {
+        // A fully traversed history can retain a partial final page even after
+        // the server cursor is exhausted; that page must remain reachable
+        // without remounting every earlier row or issuing a made-up request.
+        automationRunCursorState.nextCursor = null;
+        automationRunsState.list = Array.from({ length: 25 }, (_unused, index) => ({
+            id: `run-${index}`,
+            automationId: 'a1',
+            state: 'succeeded',
+            origin: { kind: 'manual', invokedAt: index },
+            dueAt: index,
+            claimedAt: null,
+            startedAt: null,
+            finishedAt: null,
+            claimedByMachineId: null,
+            leaseExpiresAt: null,
+            attempt: 0,
+            errorCode: null,
+            producedSessionId: null,
+            executionDispatchState: null,
+            executionAttempt: 0,
+            replyHandoffState: 'none',
+            replyHandoffAttempt: 0,
+            replyHandoffDueAt: null,
+            contentRemovedAt: null,
+            createdAt: index,
+            updatedAt: index,
+        }));
+        const { AutomationDetailScreen } = await import('./AutomationDetailScreen');
+
+        const screen = await renderScreen(React.createElement(AutomationDetailScreen));
+        const historyListProps = runHistoryListMock.state.props;
+        expect(historyListProps, 'Expected history to use the canonical virtualized scroll owner.').not.toBeNull();
+        expect(screen.findAllByType('ItemList' as any)).toHaveLength(0);
+        const firstPageRows = (historyListProps?.data as ReadonlyArray<{ kind: string }>).filter(
+            (row) => row.kind === 'run',
+        );
+        expect(firstPageRows).toHaveLength(20);
+        const renderedRunRows = screen.findAllByType('Pressable' as any).filter(
+            (row: any) => row.props.accessibilityLabel === 'Succeeded',
+        );
+        expect(renderedRunRows).toHaveLength(20);
+        const loadMoreButton = findTestInstanceByTypeContainingText(screen, 'Pressable', 'Load more runs');
+        expect(loadMoreButton).toBeTruthy();
+        const fetchesBeforeShowingRetainedPage = syncSpies.fetchAutomationRuns.mock.calls.length;
+
+        await act(async () => {
+            pressTestInstance(loadMoreButton, 'Load more runs');
+        });
+
+        const laterPageRows = screen.findAllByType('Pressable' as any).filter(
+            (row: any) => row.props.accessibilityLabel === 'Succeeded',
+        );
+        expect(laterPageRows).toHaveLength(5);
+        expect(syncSpies.fetchAutomationRuns).toHaveBeenCalledTimes(fetchesBeforeShowingRetainedPage);
+
+        const newerPageButton = findTestInstanceByTypeContainingText(screen, 'Pressable', 'common.previous');
+        expect(newerPageButton).toBeTruthy();
+        await act(async () => {
+            pressTestInstance(newerPageButton, 'common.previous');
+        });
+
+        const restoredNewerPageRows = screen.findAllByType('Pressable' as any).filter(
+            (row: any) => row.props.accessibilityLabel === 'Succeeded',
+        );
+        expect(restoredNewerPageRows).toHaveLength(20);
+    });
+
     it('does not infer cancellation availability from a run state before the server projects action authority', async () => {
         automationRunsState.list = [{
             id: 'run-1',
@@ -1441,6 +1718,7 @@ describe('AutomationDetailScreen', () => {
             replyHandoffState: 'none',
             replyHandoffAttempt: 0,
             replyHandoffDueAt: null,
+            contentRemovedAt: null,
             createdAt: 10,
             updatedAt: 11,
         }];
@@ -1471,6 +1749,7 @@ describe('AutomationDetailScreen', () => {
             replyHandoffState: 'none',
             replyHandoffAttempt: 0,
             replyHandoffDueAt: null,
+            contentRemovedAt: null,
             createdAt: 10,
             updatedAt: 11,
         }];

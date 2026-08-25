@@ -49,7 +49,7 @@ export interface LegacyProfileEditFormProps {
      * Return true when the profile was successfully saved.
      * Return false when saving failed (e.g. validation error).
      */
-    onSave: (profile: AIBackendProfile) => boolean;
+    onSave: (profile: AIBackendProfile, secretBindings: Readonly<Record<string, string>>) => boolean;
     onCancel: () => void;
     onDirtyChange?: (isDirty: boolean) => void;
     containerStyle?: ViewStyle;
@@ -262,7 +262,11 @@ export function LegacyProfileEditForm({
             const explicit = readProfileTargetKeyValueForEntry(explicitByTargetKey, entry);
             const profileTargetKey = resolveProfileBackendTargetKeyForEntry(entry);
             out[profileTargetKey] = explicit === 'direct' || explicit === 'persisted' ? explicit : null;
-            if (!supportsDirectTranscriptStorageForNewSession({ agentId: permissionAgentId, settings: transcriptStorageSettings })) {
+            if (!supportsDirectTranscriptStorageForNewSession({
+                agentId: permissionAgentId,
+                machineId: resolvedMachineId,
+                settings: transcriptStorageSettings,
+            })) {
                 out[profileTargetKey] = null;
             }
         }
@@ -339,10 +343,11 @@ export function LegacyProfileEditForm({
             const runtimeCarrierAgentId = getRuntimeCarrierAgentIdForEntry(entry);
             return runtimeCarrierAgentId !== null && supportsDirectTranscriptStorageForNewSession({
                 agentId: runtimeCarrierAgentId,
+                machineId: resolvedMachineId,
                 settings: transcriptStorageSettings,
             });
         });
-    }, [getRuntimeCarrierAgentIdForEntry, resolvedBackendEntries, transcriptStorageSettings]);
+    }, [getRuntimeCarrierAgentIdForEntry, resolvedBackendEntries, resolvedMachineId, transcriptStorageSettings]);
 
     const accountTranscriptStorageDefaults = React.useMemo(() => {
         return readAccountTranscriptStorageDefaults({
@@ -488,7 +493,7 @@ export function LegacyProfileEditForm({
             defaultTranscriptStorageModesByTargetKey,
             compatibilityByTargetKey: compatibilityByTargetKeyState,
             updatedAt: Date.now(),
-        }));
+        }), profileSecretBindings);
     }, [
         compatibilityByTargetKeyState,
         defaultPermissionModesByTargetKey,
@@ -500,6 +505,7 @@ export function LegacyProfileEditForm({
         name,
         onSave,
         profile,
+        profileSecretBindings,
         resolvedBackendEntries,
         supportedDirectBackendEntries,
     ]);

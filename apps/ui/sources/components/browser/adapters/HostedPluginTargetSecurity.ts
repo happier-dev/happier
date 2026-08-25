@@ -1,4 +1,4 @@
-import type { PluginHostedWebSecurityPolicyV1 } from '@happier-dev/protocol';
+import { isLoopbackHostname, type PluginHostedWebSecurityPolicyV1 } from '@happier-dev/protocol';
 
 import type { PluginHostedWebSandboxPolicy } from '@/components/plugins/hostedWeb/sandbox';
 
@@ -35,19 +35,7 @@ export function isLoopbackHostedWebUrl(url: string): boolean {
     if (!parsed) {
         return false;
     }
-    // URL.hostname can retain IPv6 brackets. Normalize that parser
-    // representation at the one hosted-target security owner before applying
-    // the address classification.
-    const hostname = parsed.hostname
-        .toLowerCase()
-        .replace(/^\[|\]$/gu, '')
-        .replace(/\.$/u, '');
-    return hostname === 'localhost'
-        || hostname.endsWith('.localhost')
-        || /^127(?:\.[0-9]{1,3}){3}$/u.test(hostname)
-        || hostname === '::1'
-        || hostname.startsWith('::ffff:127.')
-        || hostname.startsWith('::ffff:7f');
+    return isLoopbackHostname(parsed.hostname);
 }
 
 export function canLoadHostedPluginTargetUrl(input: Readonly<{

@@ -13,6 +13,10 @@ import { Text } from '@/components/ui/text/Text';
 import { useConnectionHealth } from '@/components/navigation/connectionStatus/useConnectionHealth';
 import { AppUpdateStatusTag } from '@/components/ui/feedback/AppUpdateStatusTag';
 import { Icon } from '@/components/ui/icons/Icon';
+import {
+    shouldForceFreshNewSessionEntryFromPressEvent,
+    useResolveNewSessionOrdinaryEntryRoute,
+} from '@/components/sessions/new/navigation/newSessionOrdinaryEntryRoute';
 
 
 const stylesheet = StyleSheet.create((theme, runtime) => ({
@@ -104,13 +108,20 @@ export const HomeHeaderNotAuth = React.memo(() => {
 
 function HeaderRight() {
     const router = useRouter();
+    const resolveNewSessionOrdinaryEntryRoute = useResolveNewSessionOrdinaryEntryRoute();
     const styles = stylesheet;
     const { theme } = useUnistyles();
+    const handleNewSession = React.useCallback((event?: unknown) => {
+        const { draftId, draftOrigin } = resolveNewSessionOrdinaryEntryRoute({
+            forceFresh: shouldForceFreshNewSessionEntryFromPressEvent(event),
+        });
+        router.push({ pathname: '/new', params: { draftId, draftOrigin } });
+    }, [resolveNewSessionOrdinaryEntryRoute, router]);
 
     return (
         <Pressable
             testID="home-header-start-new-session"
-            onPress={() => router.push('/new')}
+            onPress={handleNewSession}
             hitSlop={15}
             style={styles.headerButton}
         >

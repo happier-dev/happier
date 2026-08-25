@@ -87,7 +87,11 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     message: {
         ...Typography.rowMeta(),
-        color: theme.colors.status.error,
+        // Q2 measured the theme's semantic FOREGROUNDS as text at 2.20–3.55:1 in light theme —
+        // they are fill colours, not text colours. The words carry their own meaning here, so
+        // they take `text.primary`; the hue stays on the border/glyph beside them, where it is a
+        // redundant cue rather than the only one.
+        color: theme.colors.text.primary,
     },
     copiedPill: {
         position: 'absolute',
@@ -112,8 +116,17 @@ function messageForResult(result: BrowserAddressNormalizationResult): string | n
     }
 }
 
+/** UB-6: the imperative surface the focus-address shortcut needs, and nothing more. */
+export type BrowserUrlFieldHandle = Readonly<{ focus: () => void }>;
+
 export type BrowserUrlFieldProps = Readonly<{
     testID: string;
+    /**
+     * UB-6: focus handle for the browser's focus-address keyboard shortcut. A plain ref object
+     * rather than a `forwardRef` conversion, so this stays an ordinary component and the shortcut
+     * owner gets exactly one method.
+     */
+    focusRef?: React.MutableRefObject<BrowserUrlFieldHandle | null>;
     /** The authoritative URL this field reflects. Empty for a new-tab entry box. */
     value: string;
     disabled?: boolean;
@@ -151,6 +164,12 @@ export function BrowserUrlField(props: BrowserUrlFieldProps): React.ReactElement
     const density = DENSITY[props.density ?? 'toolbar'];
     const trailingAction = props.trailingAction ?? 'none';
     const inputRef = React.useRef<RNTextInput | null>(null);
+    React.useImperativeHandle(props.focusRef, () => ({
+        focus: () => {
+            if (props.disabled) return;
+            inputRef.current?.focus();
+        },
+    }), [props.disabled]);
     const copyFeedback = useTemporaryCopyFeedback();
     const [focused, setFocused] = React.useState(false);
     const [message, setMessage] = React.useState<string | null>(null);
@@ -237,7 +256,10 @@ export function BrowserUrlField(props: BrowserUrlFieldProps): React.ReactElement
     }, [copyFeedback, props.disabled, props.value]);
 
     const fieldRowStyle = React.useMemo(() => ({
-        height: density.height,
+        // `minHeight`, not `height`: Q2 measured that the app's `uiFontScale` GROWS the line box, so a
+        // fixed-height field is what actually clips scaled text. The field grows with the user's
+        // setting instead of cropping it.
+        minHeight: density.height,
         borderRadius: density.radius,
         paddingLeft: density.paddingLeft,
         paddingRight: density.paddingRight,

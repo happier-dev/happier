@@ -12,6 +12,7 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { layout } from '@/components/ui/layout/layout';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { Icon } from '@/components/ui/icons/Icon';
 import {
     captureActiveServerAccountScopeLifetime,
     type ActiveServerAccountScopeLifetime,
@@ -505,7 +506,12 @@ export function AutomationRunDetailScreen(): React.ReactElement {
     const run = directDetailIsCurrent
         ? directDetail.detail
         : cachedRun;
-    const privateContent = directDetailIsCurrent ? directDetail.privateContent : null;
+    // Compaction is a server-authored retention fact. Even if an older direct
+    // response is still held route-locally, never let it disclose private
+    // envelopes once the current Run projection says that content is gone.
+    const privateContent = directDetailIsCurrent && directDetail.detail.contentRemovedAt === null
+        ? directDetail.privateContent
+        : null;
     const loading = loadingState.generation !== routeGeneration || loadingState.value;
     const loadFailed = loadFailureState.generation === routeGeneration && loadFailureState.value;
     const cancelling = cancellingState.generation === routeGeneration && cancellingState.value;
@@ -551,6 +557,21 @@ export function AutomationRunDetailScreen(): React.ReactElement {
         if (!cachedRun) {
             setLoadingState({ generation: request.generation, value: true });
         }
+        const cachedRunContentRemoved = cachedRun !== null && cachedRun.contentRemovedAt !== null;
+        if (cachedRunContentRemoved) {
+            // The bounded Run projection is the canonical retention fact. Do
+            // not issue an envelope/detail read or run decryption merely to
+            // rediscover a record the server has already compacted.
+            directReadEpochRef.current += 1;
+            setDirectDetailState({
+                generation: request.generation,
+                accountLifetime: request.accountLifetime,
+                value: null,
+            });
+            setLoadingState({ generation: request.generation, value: false });
+            return;
+        }
+
         const directRead = sync.getAutomationRunDetailInspection(automationId, runId)
             .then((detail) => {
                 if (
@@ -646,6 +667,7 @@ export function AutomationRunDetailScreen(): React.ReactElement {
         ? directDetail.detail.executionNativeSidechainId
         : null;
     const runHistory = directDetailIsCurrent ? directDetail.detail.events : [];
+    const contentRemovedAt = run?.contentRemovedAt ?? null;
     const claimedByMachine = run?.claimedByMachineId
         ? machines.find((candidate) => candidate.id === run.claimedByMachineId)
         : undefined;
@@ -655,6 +677,35 @@ export function AutomationRunDetailScreen(): React.ReactElement {
         <ItemList style={{ paddingTop: 0 }}>
             <Stack.Screen options={{ headerShown: true, headerTitle: title }} />
             <View style={{ maxWidth: layout.maxWidth, alignSelf: 'center', width: '100%' }}>
+                {/*
+                  * A refresh that fails while a cached Run is on screen used to
+                  * change nothing visible, so a reader could not tell a settled
+                  * Run from one whose status simply stopped arriving. The
+                  * cached projection stays — clearing it would destroy the only
+                  * data the reader has — but it is announced as stale and
+                  * carries the same retry the cold-load state offers.
+                  */}
+                {loadFailed && run ? (
+                    <ItemGroup>
+                        <Item
+                            testID="automation-run-detail-stale-refresh-error"
+                            title={t('runs.runDetails.failedToLoad')}
+                            icon={<Icon name="warning" size={20} color={theme.colors.state.warning.foreground} />}
+                            mode="info"
+                            showChevron={false}
+                            accessibilityRole="alert"
+                            accessibilityLiveRegion="assertive"
+                            webRole="alert"
+                        />
+                        <Item
+                            testID="automation-run-detail-stale-refresh-retry"
+                            title={t('common.retry')}
+                            icon={<Icon name="arrow-clockwise" size={20} color={theme.colors.accent.blue} />}
+                            onPress={refresh}
+                            showChevron={false}
+                        />
+                    </ItemGroup>
+                ) : null}
                 {loading ? (
                     <View style={styles.loading}>
                         <ActivitySpinner size="small" color={theme.colors.text.secondary} />
@@ -745,6 +796,15 @@ export function AutomationRunDetailScreen(): React.ReactElement {
                                 showChevron={false}
                                 mode="info"
                             />
+                            {contentRemovedAt !== null ? (
+                                <Item
+                                    testID="automation-run-detail-content-removed"
+                                    title={t('automations.detail.runMeta.contentRemoved')}
+                                    detail={formatDate(contentRemovedAt, unknownDate)}
+                                    showChevron={false}
+                                    mode="info"
+                                />
+                            ) : null}
                             {run.attempt > 1 ? (
                                 <Item
                                     title={t('automations.detail.runMeta.attemptTitle')}

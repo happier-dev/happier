@@ -284,6 +284,12 @@ describe('UnauthenticatedSplitShell', () => {
             </UnauthenticatedSplitShell>,
         );
         expect(screenWithBack.findByTestId('unauth-shell-back-chevron')).toBeTruthy();
+        const backRow = screenWithBack.findByTestId('unauth-shell-back-row');
+        expect(backRow).toBeTruthy();
+        expect(flattenStyle(backRow?.props.style)).toMatchObject({
+            position: 'absolute',
+            zIndex: 1,
+        });
         screenWithBack.pressByTestId('unauth-shell-back-chevron');
         expect(onBack).toHaveBeenCalledTimes(1);
 

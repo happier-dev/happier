@@ -45,16 +45,16 @@ vi.mock('react-native-mmkv', () => {
 });
 
 const retireLifetime = vi.hoisted(() => vi.fn());
-const createPluginEventAutomationDefinitionV3 = vi.hoisted(() => vi.fn());
-const updatePluginEventAutomationDefinitionV3 = vi.hoisted(() => vi.fn());
-const getAutomationRunDetailV3 = vi.hoisted(() => vi.fn());
+const createPluginEventAutomationDefinition = vi.hoisted(() => vi.fn());
+const updatePluginEventAutomationDefinition = vi.hoisted(() => vi.fn());
+const getAutomationRunDetail = vi.hoisted(() => vi.fn());
 const fetchAccountEncryptionCurrentness = vi.hoisted(() => vi.fn());
-const cancelAutomationRunV3 = vi.hoisted(() => vi.fn());
-const deleteAutomationDefinitionV3 = vi.hoisted(() => vi.fn());
-const runAutomationDefinitionNowV3 = vi.hoisted(() => vi.fn());
-const getAutomationSettingsV3 = vi.hoisted(() => vi.fn());
-const updateAutomationSettingsV3 = vi.hoisted(() => vi.fn());
-const clearAutomationRunHistoryV3 = vi.hoisted(() => vi.fn());
+const cancelAutomationRun = vi.hoisted(() => vi.fn());
+const deleteAutomationDefinition = vi.hoisted(() => vi.fn());
+const runAutomationDefinitionNow = vi.hoisted(() => vi.fn());
+const getAutomationSettings = vi.hoisted(() => vi.fn());
+const updateAutomationSettings = vi.hoisted(() => vi.fn());
+const clearAutomationRunHistory = vi.hoisted(() => vi.fn());
 vi.mock('./domains/scope/activeServerAccountScope', () => ({
     getActiveServerAccountScope: () => null,
     captureActiveServerAccountScopeLifetime: () => null,
@@ -114,15 +114,15 @@ vi.mock('./api/automations/apiAutomations', async (importOriginal) => {
     const actual = await importOriginal<typeof import('./api/automations/apiAutomations')>();
     return {
         ...actual,
-        createPluginEventAutomationDefinitionV3,
-        updatePluginEventAutomationDefinitionV3,
-        getAutomationRunDetailV3,
-        cancelAutomationRunV3,
-        deleteAutomationDefinitionV3,
-        runAutomationDefinitionNowV3,
-        getAutomationSettingsV3,
-        updateAutomationSettingsV3,
-        clearAutomationRunHistoryV3,
+        createPluginEventAutomationDefinition,
+        updatePluginEventAutomationDefinition,
+        getAutomationRunDetail,
+        cancelAutomationRun,
+        deleteAutomationDefinition,
+        runAutomationDefinitionNow,
+        getAutomationSettings,
+        updateAutomationSettings,
+        clearAutomationRunHistory,
     };
 });
 
@@ -423,18 +423,18 @@ describe('Sync Server/Account lifetime reset boundary', () => {
                 templateVersion: 4,
             },
         });
-        createPluginEventAutomationDefinitionV3.mockReset();
-        updatePluginEventAutomationDefinitionV3.mockReset();
-        createPluginEventAutomationDefinitionV3.mockResolvedValue(createdDetail);
-        updatePluginEventAutomationDefinitionV3.mockResolvedValue(updatedDetail);
+        createPluginEventAutomationDefinition.mockReset();
+        updatePluginEventAutomationDefinition.mockReset();
+        createPluginEventAutomationDefinition.mockResolvedValue(createdDetail);
+        updatePluginEventAutomationDefinition.mockResolvedValue(updatedDetail);
         owner.credentials = credentials;
 
         try {
             const created = await owner.createPluginEventAutomationDefinition(eventCreateRequest);
             const updated = await owner.updatePluginEventAutomationDefinition(createdDetail.id, patchRequest);
 
-            expect(createPluginEventAutomationDefinitionV3).toHaveBeenCalledWith(credentials, eventCreateRequest);
-            expect(updatePluginEventAutomationDefinitionV3).toHaveBeenCalledWith(
+            expect(createPluginEventAutomationDefinition).toHaveBeenCalledWith(credentials, eventCreateRequest);
+            expect(updatePluginEventAutomationDefinition).toHaveBeenCalledWith(
                 credentials,
                 createdDetail.id,
                 patchRequest,
@@ -471,8 +471,8 @@ describe('Sync Server/Account lifetime reset boundary', () => {
         const pendingRead = new Promise<typeof eventRunDetail>((resolve) => {
             resolveRead = resolve;
         });
-        getAutomationRunDetailV3.mockReset();
-        getAutomationRunDetailV3.mockReturnValue(pendingRead);
+        getAutomationRunDetail.mockReset();
+        getAutomationRunDetail.mockReturnValue(pendingRead);
         owner.credentials = credentials;
 
         try {
@@ -484,7 +484,7 @@ describe('Sync Server/Account lifetime reset boundary', () => {
             resolveRead(eventRunDetail);
 
             await expect(operation).rejects.toThrow('Automation server-account scope changed');
-            expect(getAutomationRunDetailV3).toHaveBeenCalledWith(
+            expect(getAutomationRunDetail).toHaveBeenCalledWith(
                 credentials,
                 eventRunDetail.automationId,
                 eventRunDetail.id,
@@ -499,8 +499,8 @@ describe('Sync Server/Account lifetime reset boundary', () => {
         const owner = sync as unknown as SyncResetOwnerTestSeam;
         const credentials: AuthCredentials = { token: 'token-event-run-inspection', secret: 'secret-event-run-inspection' };
         const previousCredentials = owner.credentials;
-        getAutomationRunDetailV3.mockReset();
-        getAutomationRunDetailV3.mockResolvedValue(eventRunDetail);
+        getAutomationRunDetail.mockReset();
+        getAutomationRunDetail.mockResolvedValue(eventRunDetail);
         fetchAccountEncryptionCurrentness.mockReset();
         fetchAccountEncryptionCurrentness.mockRejectedValue(new Error('currentness unavailable'));
         owner.credentials = credentials;
@@ -517,7 +517,7 @@ describe('Sync Server/Account lifetime reset boundary', () => {
                     failureDetail: { kind: 'unavailable', reason: 'currentnessUnavailable' },
                 },
             });
-            expect(getAutomationRunDetailV3).toHaveBeenCalledWith(
+            expect(getAutomationRunDetail).toHaveBeenCalledWith(
                 credentials,
                 eventRunDetail.automationId,
                 eventRunDetail.id,
@@ -538,8 +538,8 @@ describe('Sync Server/Account lifetime reset boundary', () => {
             finishedAt: 2,
             updatedAt: 2,
         };
-        cancelAutomationRunV3.mockReset();
-        cancelAutomationRunV3.mockResolvedValue(cancelledRun);
+        cancelAutomationRun.mockReset();
+        cancelAutomationRun.mockResolvedValue(cancelledRun);
         owner.credentials = credentials;
 
         try {
@@ -547,7 +547,7 @@ describe('Sync Server/Account lifetime reset boundary', () => {
                 id: eventRunDetail.id,
                 state: 'cancelled',
             });
-            expect(cancelAutomationRunV3).toHaveBeenCalledWith(credentials, eventRunDetail.id);
+            expect(cancelAutomationRun).toHaveBeenCalledWith(credentials, eventRunDetail.id);
         } finally {
             owner.credentials = previousCredentials;
         }
@@ -562,15 +562,15 @@ describe('Sync Server/Account lifetime reset boundary', () => {
             runRetention: 'thirtyDays',
         };
         const fetchRuns = vi.spyOn(owner, 'fetchAutomationRuns').mockResolvedValue({ nextCursor: null });
-        getAutomationSettingsV3.mockReset();
-        getAutomationSettingsV3.mockResolvedValue(settings);
-        updateAutomationSettingsV3.mockReset();
-        updateAutomationSettingsV3.mockResolvedValue({
+        getAutomationSettings.mockReset();
+        getAutomationSettings.mockResolvedValue(settings);
+        updateAutomationSettings.mockReset();
+        updateAutomationSettings.mockResolvedValue({
             maxActiveRunsPerMachine: 2,
             runRetention: 'keepForever',
         });
-        clearAutomationRunHistoryV3.mockReset();
-        clearAutomationRunHistoryV3.mockResolvedValue({ clearedRuns: 3 });
+        clearAutomationRunHistory.mockReset();
+        clearAutomationRunHistory.mockResolvedValue({ clearedRuns: 3 });
         owner.credentials = credentials;
 
         try {
@@ -581,9 +581,9 @@ describe('Sync Server/Account lifetime reset boundary', () => {
             });
             await expect(owner.clearAutomationRunHistory('automation-event-1')).resolves.toEqual({ clearedRuns: 3 });
 
-            expect(getAutomationSettingsV3).toHaveBeenCalledWith(credentials);
-            expect(updateAutomationSettingsV3).toHaveBeenCalledWith(credentials, settings);
-            expect(clearAutomationRunHistoryV3).toHaveBeenCalledWith(credentials, 'automation-event-1');
+            expect(getAutomationSettings).toHaveBeenCalledWith(credentials);
+            expect(updateAutomationSettings).toHaveBeenCalledWith(credentials, settings);
+            expect(clearAutomationRunHistory).toHaveBeenCalledWith(credentials, 'automation-event-1');
             expect(fetchRuns).toHaveBeenCalledWith('automation-event-1');
         } finally {
             owner.credentials = previousCredentials;
@@ -603,8 +603,8 @@ describe('Sync Server/Account lifetime reset boundary', () => {
             resolveClear = resolve;
         });
         const fetchRuns = vi.spyOn(owner, 'fetchAutomationRuns').mockResolvedValue({ nextCursor: null });
-        clearAutomationRunHistoryV3.mockReset();
-        clearAutomationRunHistoryV3.mockReturnValue(pendingClear);
+        clearAutomationRunHistory.mockReset();
+        clearAutomationRunHistory.mockReturnValue(pendingClear);
         owner.credentials = credentials;
 
         try {
@@ -633,8 +633,8 @@ describe('Sync Server/Account lifetime reset boundary', () => {
             resolveDelete = resolve;
         });
         const removeAutomation = vi.spyOn(storage.getState(), 'removeAutomation');
-        deleteAutomationDefinitionV3.mockReset();
-        deleteAutomationDefinitionV3.mockReturnValue(pendingDelete);
+        deleteAutomationDefinition.mockReset();
+        deleteAutomationDefinition.mockReturnValue(pendingDelete);
         owner.credentials = credentials;
 
         try {
@@ -663,8 +663,8 @@ describe('Sync Server/Account lifetime reset boundary', () => {
             resolveRun = resolve;
         });
         const upsertAutomationRun = vi.spyOn(storage.getState(), 'upsertAutomationRun');
-        runAutomationDefinitionNowV3.mockReset();
-        runAutomationDefinitionNowV3.mockReturnValue(pendingRun);
+        runAutomationDefinitionNow.mockReset();
+        runAutomationDefinitionNow.mockReturnValue(pendingRun);
         owner.credentials = credentials;
 
         try {

@@ -1,0 +1,45 @@
+export const sessionDraftTranslations = {
+    sessionDrafts: {
+        sectionTitle: 'Drafts',
+        badge: 'Draft',
+        untitled: 'Untitled draft',
+        continueEditing: 'Continue editing',
+        startAnother: 'Start another',
+        status: {
+            offline: 'Offline — saved on this device',
+            syncing: 'Syncing…',
+            conflict: 'Needs review',
+            startInterrupted: 'Start interrupted',
+        },
+        availability: {
+            machineUnavailable: 'Machine unavailable',
+            pluginUnavailable: 'Plugin unavailable',
+            attachmentNeedsAttention: 'Attachment needs attention',
+        },
+        new: { action: 'New session' },
+        delete: {
+            action: 'Delete draft',
+            confirmTitle: 'Delete this draft?',
+            confirmDescription: 'This removes the draft from your synced devices.',
+        },
+        conflict: {
+            title: 'Review conflicting changes',
+            description: 'Choose which version to keep for each field. You can copy your device version before replacing it.',
+            mine: 'This device',
+            synced: 'Synced version',
+            useSynced: 'Use synced',
+            keepDevice: 'Keep this device',
+            copyMine: 'Copy mine',
+            copied: 'Copied',
+            copyFailed: 'Could not copy this value.',
+            field: {
+                text: 'Message',
+                mentions: 'Mentions',
+                attachments: 'Attachments',
+                recipient: 'Recipient',
+                agentContinuation: 'Agent continuation',
+                executionRunDelivery: 'Run delivery',
+            },
+        },
+    },
+} as const;

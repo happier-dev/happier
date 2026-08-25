@@ -41,26 +41,6 @@ export const onboardingWizardSurfaceStylesheet = StyleSheet.create((theme) => ({
         lineHeight: 24,
         color: theme.colors.state.warning.foreground,
     },
-    relayHintBlock: {
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: 5,
-        flexDirection: 'row',
-        paddingHorizontal: 8,
-        paddingVertical: 2,
-        backgroundColor: theme.colors.surface.selected,
-        borderRadius: 999,
-    },
-    relayHintLine: {
-        ...Typography.default(),
-        fontSize: 12,
-        lineHeight: 16,
-        color: theme.colors.text.secondary,
-        textAlign: 'left',
-    },
-    relayHintIcon: {
-        color: theme.colors.text.secondary,
-    },
     relayGroupTitle: {
         ...Typography.default('semiBold'),
         fontSize: 13,

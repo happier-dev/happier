@@ -14,9 +14,11 @@ import { pluginWebhookAdministrationTranslations } from './pluginWebhookAdminist
 import { pluginAccountDataEraseTranslations } from './pluginAccountDataEraseTranslations';
 import { apiTokenSettingsTranslations } from './apiTokenSettingsTranslations';
 import { pluginAccountReleaseSelectionTranslations } from './pluginAccountReleaseSelectionTranslations';
+import { pluginMachineMatrixTranslations } from './pluginMachineMatrixTranslations';
 import { pluginInvocationLogTranslations } from './pluginInvocationLogTranslations';
 import { eventAutomationComposerTranslations } from './eventAutomationComposerTranslations';
 import { actionOperationInboxTranslations } from './actionOperationInboxTranslations';
+import { sessionDraftTranslations } from './sessionDraftTranslations';
 
 /**
  * Japanese translations for the Happier app
@@ -592,6 +594,7 @@ const settingsSessionHandoffTranslationExtensions = {
 } as const;
 
 export const ja = {
+    ...sessionDraftTranslations,
     transferRecovery: {
         title: '一時アップロードを完了',
         message: 'アップロードはマシンに届きましたが、最後の保存を完了できませんでした。最終処理だけを再試行するか、一時アップロードを破棄してください。',
@@ -659,6 +662,10 @@ export const ja = {
             composerSendImmediate: 'すぐに送信',
             composerSendPending: '保留キューに送信',
             commandPaletteOpen: 'コマンドパレットを開く',
+            browserAddressFocus: 'ブラウザーのアドレスバーにフォーカス',
+            browserBack: 'ブラウザーで戻る',
+            browserForward: 'ブラウザーで進む',
+            browserReload: 'ブラウザーのページを再読み込み',
             modeCycle: 'モードを切り替え',
             shortcutsHelpOpen: 'ショートカットヘルプを開く',
             sessionNew: '新しいセッションを作成',
@@ -797,7 +804,7 @@ export const ja = {
 
 
   inbox: {
-    ...actionOperationInboxTranslations,
+        ...actionOperationInboxTranslations,
     openSession: ({ session }: { session: string }) => `セッションを開く: ${session}`,
     // Inbox screen
     emptyTitle: "すべて完了です",
@@ -1157,6 +1164,18 @@ export const ja = {
         "「新しいセッション」フローから作成して、マシン上でスケジュールされたセッションを実行できます。",
       createAutomationA11y: "オートメーションを作成",
     },
+    settings: {
+      title: "オートメーション設定",
+      openSubtitle: "容量と実行履歴の保持を設定します。",
+      failedToLoad: "オートメーション設定の読み込みに失敗しました。",
+      updateFailed: "オートメーション設定の更新に失敗しました。",
+      maxActiveRunsPerMachine: "マシンごとの最大アクティブ実行数",
+      maxActiveRunsPerMachineSubtitle: "各マシンが同時にアクティブに取得できる実行数を制限します。",
+      maxActiveRunsPerMachinePrompt: "1 から 2,147,483,647 までの整数を入力してください。",
+      maxActiveRunsPerMachineInvalid: "1 から 2,147,483,647 までの整数を入力してください。",
+      runRetention: "実行履歴を無期限に保持",
+      runRetentionSubtitle: "オフの場合、対象となる完了済み実行は 30 日間保持されます。",
+    },
     detail: {
       invalidId: "無効なオートメーションIDです。",
       notFound: "オートメーションが見つかりません。",
@@ -1179,6 +1198,7 @@ export const ja = {
         endpointTitle: "Webhook エンドポイント",
         endpointObservingSince: ({ time }: { time: string }) => `${time} から配信を受信中`,
         sourceStatusUnreported: "最初の報告を待機中",
+        sourceStatusUnavailable: "ソースの状態を取得できません",
         sourceCatalogStatusUnavailable: "ソースの最新性が不明です",
         watcherMachineUnknown: "このマシンはアカウントに存在しないため、この監視はイベントを監視できません。",
         watcherMachineRevoked: "このマシンは失効しているため、この監視はイベントを監視できません。",
@@ -1200,6 +1220,12 @@ export const ja = {
       deleteConfirmMessage:
         "このオートメーションとスケジュールは削除されます。",
       deleteConfirmButton: "削除",
+      clearHistory: "実行履歴を削除",
+      clearHistorySubtitle: "削除可能な完了済み実行を削除します。実行中の実行は引き続き利用できます。",
+      clearHistoryConfirmTitle: "実行履歴を削除しますか？",
+      clearHistoryConfirmMessage: "削除対象の完了済み実行は完全に削除されます。実行中の実行は引き続き利用できます。",
+      clearHistoryConfirmButton: "履歴を削除",
+      clearHistoryFailed: "実行履歴を削除できませんでした。",
       machineAssignmentsTitle: "マシン割り当て",
       machineAssignmentsFooter:
         "このオートメーションを実行するには、少なくとも1台のマシンを有効にしてください。",
@@ -1235,9 +1261,10 @@ export const ja = {
         admitted: ({ time }: { time: string }) => `受付: ${time}`,
         occurrenceTitle: "発生 ID",
         sourceTitle: "監視ソース",
-        scheduled: ({ time }: { time: string }) => `スケジュール: ${time}`,
-        updated: ({ time }: { time: string }) => `更新: ${time}`,
-        error: ({ message }: { message: string }) => `エラー: ${message}`,
+                scheduled: ({ time }: { time: string }) => `スケジュール: ${time}`,
+                updated: ({ time }: { time: string }) => `更新: ${time}`,
+                contentRemoved: '実行コンテンツを削除しました',
+                error: ({ message }: { message: string }) => `エラー: ${message}`,
         attemptTitle: "試行",
         attempt: ({ attempt }: { attempt: number }) => `試行 ${attempt}`,
         claimedByTitle: "担当マシン",
@@ -1506,6 +1533,24 @@ export const ja = {
   },
 
   profiles: {
+      launchPlacement: {
+          title: 'セッションの実行場所',
+          footer: 'セッション開始時に解決される設定です。マシンを答えとして保存することはありません。',
+          none: '指定なし',
+          automatic: '自動で解決',
+          ask: '常に確認する',
+          fixed: '常にこのマシン',
+          directory: 'ディレクトリ',
+          directoryPlaceholder: '空欄にすると解決されたプロジェクトのルートを使います',
+      },
+      launchCheckout: {
+          title: '作業コピー',
+          footer: 'プロジェクト内で実行するとき、セッションが作業コピーをどう取得するか。',
+          none: '指定なし',
+          reuseWorkspace: 'プロジェクトのチェックアウトを再利用',
+          createWorktree: 'worktree を作成',
+          ask: '常に確認する',
+      },
     title: "プロファイル",
     subtitle: "セッション用の環境変数プロファイルを管理",
     sessionUses: ({ profile }: { profile: string }) =>
@@ -3308,6 +3353,8 @@ localTailscale: {
       fallbackDisabled: 'このサーバーではアカウントフォールバックが無効です。',
       duplicateMember: 'このアカウントはすでにグループに含まれています。',
       groupAlreadyExists: 'この id のアカウントグループはすでに存在します。',
+      groupCapacityExhausted: 'このアカウントはアカウントグループの上限に達しています。不要なグループを削除してから、もう一度お試しください。',
+      connectedAccountCapacityExhausted: 'このアカウントは連携アカウントの上限に達しています。不要なアカウントの連携を解除してから、もう一度お試しください。',
       invalidGroup: 'このアカウントグループは無効です。設定を確認して再試行してください。',
       requestFailedWithStatus: ({ status }: { status: number }) => `The connected-service request failed (${status}). Refresh and try again.`,
       generic: '接続サービスの操作に失敗しました。更新して再試行してください。',
@@ -6766,6 +6813,12 @@ localTailscale: {
 
   voiceAssistant: {
     connecting: "接続中...",
+    reconnecting: "再接続中…",
+    listening: "聞いています",
+    thinking: "考えています…",
+    speaking: "話しています",
+    microphonePermissionRequired: "マイクへのアクセスが必要です",
+    interrupted: "中断されました",
     active: "音声アシスタントが有効です",
     connectionError: "接続エラー",
     label: "音声アシスタント",
@@ -6776,6 +6829,19 @@ localTailscale: {
     endVoice: "音声を終了",
     transcribing: "文字起こし中…",
     endDictation: "音声入力を終了",
+    dictationNoSpeech: "音声を検出できませんでした",
+    dictationErrors: {
+      captureFailed: "マイクの録音に失敗したため、ディクテーションを停止しました。マイクへのアクセスを確認して、もう一度お試しください。",
+      providerUnavailable: "選択したディクテーションプロバイダーを利用できません。設定を確認して、もう一度お試しください。",
+      captureStartDeadlineExceeded: "ディクテーションを 60 秒以内に開始できませんでした。マイクへのアクセスを確認して、もう一度お試しください。",
+      captureDurationExceeded: "ディクテーションが 60 秒の聞き取り上限に達しました。続けるにはもう一度開始してください。",
+      transcriptionDeadlineExceeded: "文字起こしに 30 秒以上かかりました。短いディクテーションでもう一度お試しください。",
+      transcriptLimitExceeded: "ディクテーションしたテキストが入力欄には長すぎます。短いディクテーションをお試しください。",
+      recordedAudioSizeUnavailable: "Happier は録音のサイズを確認できませんでした。もう一度録音してください。",
+      recordedAudioLimitExceeded: "録音が 8 MB の上限を超えています。短いディクテーションをお試しください。",
+      microphoneOwnedByVoice: "ディクテーションを開始する前に Voice を終了してください。",
+      microphoneOwnedByDictation: "ディクテーションがすでにマイクを使用しています。新しいディクテーションを開始する前に、現在のディクテーションを終了してください。",
+    },
   },
 
   voiceSurface: {
@@ -6783,6 +6849,7 @@ localTailscale: {
     connectAgent: '接続',
     installAgentRuntime: 'インストール',
     updateAgentRuntime: '更新',
+    reconnect: '再接続',
     start: "開始",
     stop: "停止",
     selectSessionToStart: "音声を開始するセッションを選択してください",
@@ -6819,6 +6886,8 @@ localTailscale: {
   voiceActivity: {
     title: "音声アクティビティ",
     empty: "音声アクティビティはまだありません。",
+    partial: "ライブ",
+    corrected: "更新済み",
     clear: "クリア",
     format: {
       voiceAgent: "音声エージェント",
@@ -8119,6 +8188,10 @@ localTailscale: {
       "直近のターンの変更は検出されていません。",
     notRepo: "ソース管理リポジトリではありません",
     notUnderSourceControl: "このディレクトリはソース管理下にありません",
+    sourceControlStale: {
+        title: 'ソース管理に注意が必要です',
+        body: '最後に成功した更新を表示しています。最新の更新は完了しませんでした。',
+    },
     repositoryInit: {
       initialize: "リポジトリを初期化",
       initializing: "初期化中…",
@@ -8471,7 +8544,7 @@ localTailscale: {
           pushCurrentBranch: "現在のブランチをプッシュ",
           publish: "リポジトリを公開",
           publishing: "公開中…",
-          noTargets: "このリポジトリを公開するには GitHub を接続するか gh CLI でサインインしてください。",
+          targetsUnavailable: "このリポジトリの公開先を確認できませんでした。",
           errors: {
             targetRequired: "GitHub アカウントまたは組織を選択してください。",
             nameRequired: "リポジトリ名を入力してください。",
@@ -8753,7 +8826,6 @@ localTailscale: {
       disabledLimitSubtitle: '公開プレビューの上限に達しました。別のリンクを作成する前に既存のリンクを取り消してください。',
       disabledNoPreviewSubtitle: '公開リンクを作成する前にローカルプレビューを開いてください。',
       disabledReason: {
-        auditRequirementDisabled: '公開プレビューの監査ログは必須ですが、サーバーで無効になっています。',
         auditUnavailable: '公開プレビューの監査ログを利用できません。',
         dnsTlsUnavailable: '公開プレビューは DNS/TLS の準備完了を待っています。',
         expired: 'この公開プレビューリンクは期限切れです。',
@@ -8773,6 +8845,7 @@ localTailscale: {
         sessionNotAuthorized: 'このセッションの公開リンクを作成する権限がありません。',
         tunnelPortsUnconfigured: 'サーバーはトンネルポートを許可していません。',
         tunnelRelayDisabled: 'マシントンネル用のサーバーリレーが無効になっています。',
+        tunnelSigningUnconfigured: 'サーバーにマシントンネル用の署名キーがありません。',
       },
       createActionA11y: '公開プレビューリンクを作成',
       revokeActionA11y: '公開プレビューリンクを取り消す',
@@ -8783,6 +8856,15 @@ localTailscale: {
             revokeConfirmTitle: '公開リンクを取り消しますか？',
             revokeConfirmMessage: ({ url }: { url: string }) => `公開プレビューリンク ${url} を取り消しますか？利用中のユーザーはアクセスできなくなります。`,
             revokeConfirmCta: 'リンクを取り消す',
+            consequenceReach: 'リンクを知っている人は誰でもこのサービスを開けます。サインインは不要です。',
+            consequenceExpiry: '下に表示された有効期間が切れると、リンクは自動的に使えなくなります。',
+            consequenceRevoke: 'このパネルからいつでも取り消せます。',
+            lifetimeLabel: '有効期間',
+            linkTypeLabel: 'リンクの種類',
+            revealUrlA11y: 'リンク全体を表示',
+            hideUrlA11y: 'リンクを非表示',
+            expiresInClock: ({ clock }: { clock: string }) => `あと${clock}で期限切れ`,
+            groupFooter: '公開リンクはこのマシンの監査ログに記録されます。',
     },
     actions: {
       terminateDetectedA11y: '検出されたローカルサービスを終了',
@@ -8795,6 +8877,25 @@ localTailscale: {
             stopConfirmTitle: 'サービスを停止しますか？',
             stopConfirmMessage: ({ service }: { service: string }) => `${service} を停止しますか？再起動するまでサービスに接続できなくなります。`,
             stopConfirmCta: '停止',
+            startA11y: 'サービスを開始',
+            failure: {
+                title: '操作が完了しませんでした',
+                refused: 'マシンがこの操作を拒否しました。このマシンのローカルサービスの権限を確認してから、もう一度お試しください。',
+                unavailable: 'この操作は、このマシンのこのサービスでは利用できません。',
+                incomplete: '操作が最後まで進みませんでした。もう一度お試しいただけます。',
+            },
+            failureTitle: {
+                start: ({ service }: { service: string }) => `${service} を開始できませんでした`,
+                open: ({ service }: { service: string }) => `${service} を開けませんでした`,
+                terminate: ({ service }: { service: string }) => `${service} を終了できませんでした`,
+                forget: ({ service }: { service: string }) => `${service} を非表示にできませんでした`,
+                stop: ({ service }: { service: string }) => `${service} を停止できませんでした`,
+                restart: ({ service }: { service: string }) => `${service} を再起動できませんでした`,
+                copyAddress: 'アドレスをコピーできませんでした',
+                expose: '公開リンクを作成できませんでした',
+                revokeExposure: '公開リンクを取り消せませんでした',
+                copyExposure: '公開リンクをコピーできませんでした',
+            },
     },
   },
 
@@ -9577,6 +9678,14 @@ localTailscale: {
     },
 
 settingsSession: {
+    newSessionDraftEntry: {
+        title: '新規セッションの下書き',
+        footer: '「新規セッション」でこのデバイスの下書きを再開するか、新しい下書きを開くかを選択します。',
+        resumeTitle: '前回の下書きを再開',
+        resumeSubtitle: 'このデバイスで「新規セッション」から始めた下書きを続けます。',
+        freshTitle: '常に新しく始める',
+        freshSubtitle: '「新規セッション」を選ぶたびに新しい下書きを開きます。',
+    },
 	    sessionList: {
 	        title: 'セッション一覧',
 	        footer: '各セッション行に表示する内容をカスタマイズします。',
@@ -10352,7 +10461,7 @@ settingsSession: {
     },
     setupCheck: {
       title: 'プロバイダーの準備状況',
-      footer: '保存済み設定と現在のローカル準備情報だけを確認します。マイクを開いたり、音声機能を開始したり、音声を送信したり、プロバイダーへ接続したりしません。',
+      footer: '保存済み設定と現在のローカル準備情報だけを確認します。マイクを開いたり、音声機能を開始したり、音声を送信したり、プロバイダーへ接続したりしません。音声機能を開始すると、セッションに紐づく機能が再確認されます。',
       check: '設定を確認',
       checkSubtitle: '選択した音声プロバイダー設定を受動的に確認します。',
       result: '設定状態',
@@ -11263,6 +11372,13 @@ settingsSession: {
         },
       },
       models: {
+          nativeOptions: {
+              kokoroEnvironmentDefaultTitle: "既定（環境から）",
+              kokoroDefaultSubtitle: "標準のローカルニューラル音声モデル。",
+              kokoroHigherQualitySubtitle: "より高品質なローカル Kokoro 音声モデル。",
+              kokoroEnvironmentDefaultSubtitle: "環境で設定された Kokoro モデルパックの既定値を使用します。",
+              sherpaStreamingRecommendedSubtitle: "ストリーミング、低遅延（推奨）。",
+          },
           title: "ローカル音声モデル",
           statusTitle: "モデルサービス",
           footer: "音声ホームのデーモンにローカル音声モデルパックをインストールし、種類ごとの既定を選択します。",
@@ -11464,6 +11580,7 @@ settingsSession: {
     },
     defaultTitle: "新着情報",
     onboardingShowcase: {
+        details: PRODUCT_STORY_DETAILS_ENGLISH,
                 "title": "Happierへようこそ",
                 "subtitle": "あなたのAIエージェントを、働くすべての場所で。",
                 "cards": {
@@ -12071,7 +12188,7 @@ settingsSession: {
           webDesktopHandoffCliOption: 'ターミナル（CLI）を使う',
           webDesktopHandoffCliSubtitle: 'いくつかのコマンドで Relay をホストし、表示された Relay URL をここに貼り付けます。',
           webDesktopOnlyRelayInstallTitle: 'このコンピューターで Relay をホスト',
-	          webDesktopOnlyRelayInstallSubtitle: 'Relay ホストをインストールして起動します。表示された Relay URL をここに貼り付けてください。',
+	          webDesktopOnlyRelayInstallSubtitle: 'Relay ホストをインストールして起動します。',
 	          webDesktopOnlyRelayStatusTitle: 'Relay の URL を取得',
 	          webDesktopOnlyRelayStatusSubtitle: 'このコマンドで Relay の URL を表示し、ここに貼り付けてください。',
 	          webDesktopOnlyOptionalNextTitle: '任意: セキュアアクセスとプロバイダー',
@@ -12098,6 +12215,7 @@ settingsSession: {
     setupThisComputerTitle: 'このコンピューターをセットアップ',
     controlPanelTitle: '準備状況の概要',
     activeRelaySummaryTitle: 'アクティブな Relay',
+    selectedRelaySummaryTitle: '選択中の Relay',
     thisComputerSummaryTitle: 'このコンピューター',
     nextActionSummaryTitle: '次のアクション',
     thisComputerReady: 'この Relay で準備完了',
@@ -12393,6 +12511,10 @@ settingsSession: {
     discarded: "破棄済み",
     recoveredHistory: "復元された履歴",
     pluginAttribution: ({ pluginId }: { pluginId: string }) => `プラグイン ${pluginId} から`,
+    pluginAttributionExternal: ({ sender, pluginId }: { sender: string; pluginId: string }) => `プラグイン ${pluginId} 経由で ${sender} から`,
+    pluginAttributionExternalForwarded: ({ sender, pluginId }: { sender: string; pluginId: string }) => `プラグイン ${pluginId} 経由で ${sender} が転送`,
+    pluginAttributionExternalSender: '外部の送信者',
+    pluginAttributionExternalBot: '外部のボット',
     unknownEvent: "不明なイベント",
     runtimeConfigOutcomeAppliesBeforeNextMessage: '次のメッセージの前に適用されます',
     runtimeConfigOutcomeQueuedUntilReady: '準備ができるまで待機中',
@@ -12917,6 +13039,7 @@ settingsSession: {
       ...pluginWebhookAdministrationTranslations['ja'],
       ...pluginAccountDataEraseTranslations.ja,
       ...pluginAccountReleaseSelectionTranslations.ja,
+      ...pluginMachineMatrixTranslations.ja,
       ...pluginInvocationLogTranslations.ja,
       ...eventAutomationComposerTranslations.ja,
     title: "プラグイン カタログ",
@@ -12943,7 +13066,7 @@ settingsSession: {
     developmentSourceInstallSucceeded: "開発ソースを承認し、投影しました。",
     developmentSourceInstallFailed: ({ outcome }: { outcome: string }) => `開発ソースをインストールできませんでした（${outcome}）。`,
     developmentTrustSourceRootTitle: "このプラグインフォルダーを信頼しますか？",
-    developmentTrustSourceRootBody: ({ path }: { path: string }) => `Happier は次の場所で依存関係をインストールし、コードをビルドして実行します:\n\n${path}\n\nそのフォルダー内のすべてと、そこから取得されうるすべてを信頼できる場合にのみ続行してください。プラグイン自体は次のステップで確認します。`,
+    developmentTrustSourceRootBody: ({ path, machine, server }: { path: string; machine: string; server: string }) => `Happier は次の場所で依存関係をインストールし、コードをビルドして実行します:\n\n${path}（${machine} / ${server}）\n\nそのフォルダー内のすべてと、そこから取得されうるすべてを信頼できる場合にのみ続行してください。プラグイン自体は次のステップで確認します。`,
     developmentTrustSourceRootConfirm: "フォルダーを信頼",
     pendingChangesTitle: "あなたの判断待ち",
     pendingChangesFooter: "このマシンで準備されたプラグイン変更です。エージェントは準備できますが、承認できるのはあなただけです。",
@@ -13020,7 +13143,8 @@ settingsSession: {
     marketplaceInstallReviewBody: ({ identity, verification, executableRealms, contributions, uiArtifacts, requiredAccess, optionalAccess, compatibility }: { identity: string; verification: string; executableRealms: string; contributions: string; uiArtifacts: string; requiredAccess: string; optionalAccess: string; compatibility: string }) => `識別情報:\n${identity}\n\n検証シグナル:\n${verification}\n\n実行可能コード: ${executableRealms}\nコントリビューション: ${contributions}\nUI アーティファクト: ${uiArtifacts}\n\n信頼されたデーモンおよび React Native コードは、アプリまたはプロセスの権限で実行され、ファイル、ネットワーク、環境、プロセスを直接使用できます。以下のホストアクセスは Happier が仲介するサービスを示すものであり、実行可能なプラグインコードのサンドボックスではありません。\n\n必須の開示と協調サービス:\n${requiredAccess}\n\n任意のホスト所有リソース（既定ではオフ）:\n${optionalAccess}\n\n互換性と更新:\n${compatibility}`,
     marketplaceInstallDecisionFailed: ({ outcome }: { outcome: string }) => `プラグインはインストールされませんでした（${outcome}）。`,
     marketplaceChangeDecisionFailed: ({ action, outcome }: { action: string; outcome: string }) => `${action}に失敗しました（${outcome}）。`,
-    pluginChangeConfirmBody: ({ action, name }: { action: string; name: string }) => `${name} に対する「${action}」を確認してください。`,
+    pluginChangeConfirmBody: ({ action, name, machine, server }: { action: string; name: string; machine: string; server: string }) => `${server} の ${machine} 上の ${name} に対する「${action}」を確認してください。`,
+    pluginChangeConfirmTarget: ({ machine, server }: { machine: string; server: string }) => `対象は ${server} の ${machine} です。`,
     forgetTrust: "信頼を解除",
     rollback: "ロールバック",
     uninstall: "アンインストール",
@@ -13204,3 +13328,4 @@ settingsSession: {
             skipToContent: "コンテンツに移動",
         },
   },} as const;
+import { PRODUCT_STORY_DETAILS_ENGLISH } from '@happier-dev/brand/product-story';

@@ -18,12 +18,13 @@ import { Text } from '@/components/ui/text/Text';
 import { PaneLoadingFallback } from '@/components/ui/panels/PaneLoadingFallback';
 import { PluginReactNativeUnavailable } from '@/components/plugins/reactNative/PluginReactNativeUnavailable';
 import { Typography } from '@/constants/Typography';
-import { t } from '@/text';
+import { getPreferredLanguage, t } from '@/text';
 import type { LocalServicePreviewPlatform } from '@/sync/domains/local/services/preview/url';
 import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
 import type { PluginUiProjectionPhase } from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
 import { selectPluginRightSidebarTabPlacements } from '@/sync/domains/plugins/ui/surfacePlacementSelectors';
 import { useAppShellPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import { createPluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 import { RightSidebarIconTabBar } from './RightSidebarIconTabBar';
 import {
     resolveRightSidebarTabSelection,
@@ -94,6 +95,11 @@ function AppScopeRightSidebarContent(props: AppScopeRightSidebarProps): React.Re
         ? props.pluginUiProjection
         : pluginProjection.pluginUiProjection;
     const projectionPhase = props.projectionPhase ?? pluginProjection.phase;
+    const pluginLocale = getPreferredLanguage();
+    const localizePluginText = React.useMemo(
+        () => createPluginLocalizedTextResolver({ projection, locale: pluginLocale }),
+        [pluginLocale, projection],
+    );
     const machineId = props.machineId !== undefined ? props.machineId : pluginProjection.machineId;
     const serverId = props.serverId !== undefined ? props.serverId : pluginProjection.serverId;
     const platform = props.platform ?? pluginProjection.platform;
@@ -115,7 +121,8 @@ function AppScopeRightSidebarContent(props: AppScopeRightSidebarProps): React.Re
         scope: 'app',
         pluginPlacements: placements,
         projectionGeneration: projection?.generation ?? null,
-    }), [placements, projection?.generation]);
+        localize: localizePluginText,
+    }), [localizePluginText, placements, projection?.generation]);
 
     const requestedDestinationKey = props.requestedDestination
         ? `${props.requestedDestination.pluginId}\u0000${props.requestedDestination.localId}`

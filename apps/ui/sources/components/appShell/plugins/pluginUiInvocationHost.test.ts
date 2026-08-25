@@ -61,10 +61,6 @@ const CLIENT_ACTION_ORIGIN: PluginMachineExecutionOriginV1 = Object.freeze({
     }),
 });
 const CLIENT_ACTION_AUTHORIZATION = Object.freeze({
-    packageTrust: Object.freeze({
-        packageIdentity: `${CLIENT_ACTION_PLUGIN_ID}/actions/${CLIENT_ACTION_LOCAL_ID}`,
-        reviewedPackageIdentity: `${CLIENT_ACTION_PLUGIN_ID}/actions/${CLIENT_ACTION_LOCAL_ID}`,
-    }),
     generation: Object.freeze({
         targetGeneration: String(CLIENT_ACTION_GENERATION),
         desiredGeneration: String(CLIENT_ACTION_GENERATION),

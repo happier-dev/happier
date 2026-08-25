@@ -14,9 +14,11 @@ import { pluginWebhookAdministrationTranslations } from './pluginWebhookAdminist
 import { pluginAccountDataEraseTranslations } from './pluginAccountDataEraseTranslations';
 import { apiTokenSettingsTranslations } from './apiTokenSettingsTranslations';
 import { pluginAccountReleaseSelectionTranslations } from './pluginAccountReleaseSelectionTranslations';
+import { pluginMachineMatrixTranslations } from './pluginMachineMatrixTranslations';
 import { pluginInvocationLogTranslations } from './pluginInvocationLogTranslations';
 import { eventAutomationComposerTranslations } from './eventAutomationComposerTranslations';
 import { actionOperationInboxTranslations } from './actionOperationInboxTranslations';
+import { sessionDraftTranslations } from './sessionDraftTranslations';
 
 const mcpServersUxTranslationExtension = {
   mcpServersConfiguredEmptySubtitle: 'Создайте сервер, импортируйте JSON хоста или установите рекомендуемый пресет.',
@@ -624,6 +626,7 @@ function plural({
  * Must match the exact structure of the English translations
  */
 export const ru = {
+    ...sessionDraftTranslations,
     transferRecovery: {
         title: 'Завершить подготовленную загрузку',
         message: 'Файл загружен на машину, но финальное сохранение требует внимания. Повторите только завершение или удалите подготовленную загрузку.',
@@ -691,6 +694,10 @@ export const ru = {
             composerSendImmediate: 'Отправить сразу',
             composerSendPending: 'Отправить в очередь ожидания',
             commandPaletteOpen: 'Открыть палитру команд',
+            browserAddressFocus: 'Перейти в адресную строку браузера',
+            browserBack: 'Назад в браузере',
+            browserForward: 'Вперёд в браузере',
+            browserReload: 'Обновить страницу браузера',
             modeCycle: 'Переключить режим',
             shortcutsHelpOpen: 'Открыть справку по сочетаниям',
             sessionNew: 'Создать новый сеанс',
@@ -829,7 +836,7 @@ export const ru = {
 
 
   inbox: {
-    ...actionOperationInboxTranslations,
+        ...actionOperationInboxTranslations,
     openSession: ({ session }: { session: string }) => `Открыть сессию: ${session}`,
     // Inbox screen
     emptyTitle: "Вы в курсе всего",
@@ -1202,6 +1209,18 @@ export const ru = {
         "Создайте её через поток «Новая сессия», чтобы запускать запланированные сессии на ваших машинах.",
       createAutomationA11y: "Создать автоматизацию",
     },
+    settings: {
+      title: "Настройки автоматизации",
+      openSubtitle: "Настройте ёмкость и хранение истории запусков.",
+      failedToLoad: "Не удалось загрузить настройки автоматизации.",
+      updateFailed: "Не удалось обновить настройки автоматизации.",
+      maxActiveRunsPerMachine: "Максимум активных запусков на машину",
+      maxActiveRunsPerMachineSubtitle: "Ограничивает число запусков, которые каждая машина может одновременно активно принять.",
+      maxActiveRunsPerMachinePrompt: "Введите целое число от 1 до 2 147 483 647.",
+      maxActiveRunsPerMachineInvalid: "Введите целое число от 1 до 2 147 483 647.",
+      runRetention: "Хранить историю запусков всегда",
+      runRetentionSubtitle: "Когда выключено, подходящие завершённые запуски хранятся 30 дней.",
+    },
     detail: {
       invalidId: "Недопустимый идентификатор автоматизации.",
       notFound: "Автоматизация не найдена.",
@@ -1224,6 +1243,7 @@ export const ru = {
         endpointTitle: "Конечная точка вебхука",
         endpointObservingSince: ({ time }: { time: string }) => `Принимает доставки с ${time}`,
         sourceStatusUnreported: "Ожидание первого отчёта",
+        sourceStatusUnavailable: "Статус источника недоступен",
         sourceCatalogStatusUnavailable: "Актуальность источника недоступна",
         watcherMachineUnknown: "Этой машины больше нет в вашем аккаунте, поэтому этот наблюдатель не может отслеживать события.",
         watcherMachineRevoked: "Эта машина отозвана, поэтому этот наблюдатель не может отслеживать события.",
@@ -1244,6 +1264,12 @@ export const ru = {
       deleteConfirmTitle: "Удалить автоматизацию",
       deleteConfirmMessage: "Эта автоматизация и её расписание будут удалены.",
       deleteConfirmButton: "Удалить",
+      clearHistory: "Очистить историю запусков",
+      clearHistorySubtitle: "Удаляет завершённые запуски, которые можно удалить. Активные запуски остаются доступными.",
+      clearHistoryConfirmTitle: "Очистить историю запусков?",
+      clearHistoryConfirmMessage: "Подходящие завершённые запуски будут удалены безвозвратно. Активные запуски останутся доступными.",
+      clearHistoryConfirmButton: "Очистить историю",
+      clearHistoryFailed: "Не удалось очистить историю запусков.",
       machineAssignmentsTitle: "Назначения машин",
       machineAssignmentsFooter:
         "Включите хотя бы одну машину, чтобы автоматизация могла выполняться.",
@@ -1281,6 +1307,7 @@ export const ru = {
         sourceTitle: "Источник наблюдения",
         scheduled: ({ time }: { time: string }) => `Запланировано: ${time}`,
         updated: ({ time }: { time: string }) => `Обновлено: ${time}`,
+        contentRemoved: 'Содержимое запуска удалено',
         error: ({ message }: { message: string }) => `Ошибка: ${message}`,
         attemptTitle: "Попытка",
         attempt: ({ attempt }: { attempt: number }) => `Попытка ${attempt}`,
@@ -2968,6 +2995,8 @@ export const ru = {
       fallbackDisabled: 'Резервный выбор аккаунтов отключён на этом сервере.',
       duplicateMember: 'Этот аккаунт уже есть в группе.',
       groupAlreadyExists: 'Группа аккаунтов с таким id уже существует.',
+      groupCapacityExhausted: 'В этом аккаунте уже максимальное число групп аккаунтов. Удалите ненужную группу и попробуйте снова.',
+      connectedAccountCapacityExhausted: 'В этом аккаунте уже максимальное число подключённых аккаунтов. Отключите ненужный аккаунт и попробуйте снова.',
       invalidGroup: 'Эта группа аккаунтов недействительна. Проверьте настройки и повторите попытку.',
       requestFailedWithStatus: ({ status }: { status: number }) => `The connected-service request failed (${status}). Refresh and try again.`,
       generic: 'Действие подключённого сервиса не выполнено. Обновите данные и повторите попытку.',
@@ -7008,6 +7037,12 @@ export const ru = {
 
       voiceAssistant: {
         connecting: "Подключение...",
+        reconnecting: "Переподключение…",
+        listening: "Слушает",
+        thinking: "Думает…",
+        speaking: "Говорит",
+        microphonePermissionRequired: "Требуется доступ к микрофону",
+        interrupted: "Прервано",
         active: "Голосовой ассистент активен",
         connectionError: "Ошибка соединения",
         label: "Голосовой ассистент",
@@ -7018,6 +7053,19 @@ export const ru = {
       endVoice: "Завершить голос",
       transcribing: "Расшифровка…",
       endDictation: "Завершить диктовку",
+        dictationNoSpeech: "Речь не распознана",
+        dictationErrors: {
+            captureFailed: "Диктовка остановлена: не удалось записать звук с микрофона. Проверьте доступ к микрофону и попробуйте ещё раз.",
+            providerUnavailable: "Выбранный провайдер диктовки недоступен. Проверьте его настройку и попробуйте ещё раз.",
+            captureStartDeadlineExceeded: "Диктовка не смогла начаться за 60 секунд. Проверьте доступ к микрофону и попробуйте ещё раз.",
+            captureDurationExceeded: "Диктовка достигла предела прослушивания в 60 секунд. Начните заново, чтобы продолжить.",
+            transcriptionDeadlineExceeded: "Расшифровка заняла больше 30 секунд. Попробуйте более короткую диктовку.",
+            transcriptLimitExceeded: "Продиктованный текст слишком длинный для поля ввода. Попробуйте более короткую диктовку.",
+            recordedAudioSizeUnavailable: "Happier не смог проверить размер записи. Запишите ещё раз.",
+            recordedAudioLimitExceeded: "Запись превышает лимит в 8 МБ. Попробуйте более короткую диктовку.",
+            microphoneOwnedByVoice: "Завершите Voice, прежде чем начать диктовку.",
+            microphoneOwnedByDictation: "Диктовка уже использует микрофон. Завершите текущую диктовку, прежде чем начать новую.",
+        },
     },
 
         voiceSurface: {
@@ -7025,6 +7073,7 @@ export const ru = {
             connectAgent: 'Подключить',
             installAgentRuntime: 'Установить',
             updateAgentRuntime: 'Обновить',
+            reconnect: 'Переподключить',
           start: "Старт",
           stop: "Стоп",
           selectSessionToStart: "Выберите сессию, чтобы запустить голос",
@@ -7061,6 +7110,8 @@ export const ru = {
       voiceActivity: {
         title: "Голосовая активность",
         empty: "Пока нет голосовой активности.",
+        partial: "Идёт",
+        corrected: "Обновлено",
         clear: "Очистить",
         format: {
           voiceAgent: "Голосовой агент",
@@ -7863,6 +7914,10 @@ export const ru = {
       "Изменения последнего хода пока не обнаружены.",
     notRepo: "Не является репозиторием системы контроля версий",
     notUnderSourceControl: "Эта папка не находится под управлением системы контроля версий",
+    sourceControlStale: {
+        title: 'Система контроля версий требует внимания',
+        body: 'Показано последнее успешное обновление. Последняя попытка обновления не завершилась.',
+    },
     repositoryInit: {
       initialize: "Инициализировать репозиторий",
       initializing: "Инициализация…",
@@ -8217,7 +8272,7 @@ export const ru = {
           pushCurrentBranch: "Отправить текущую ветку",
           publish: "Опубликовать репозиторий",
           publishing: "Публикация…",
-          noTargets: "Подключите GitHub или войдите через gh CLI, чтобы опубликовать этот репозиторий.",
+          targetsUnavailable: "Не удалось проверить, куда можно опубликовать этот репозиторий.",
           errors: {
             targetRequired: "Выберите аккаунт или организацию GitHub.",
             nameRequired: "Введите имя репозитория.",
@@ -8499,7 +8554,6 @@ export const ru = {
       disabledLimitSubtitle: 'Достигнут лимит публичных предпросмотров. Отзовите существующую ссылку перед созданием новой.',
       disabledNoPreviewSubtitle: 'Откройте локальный предпросмотр перед созданием публичной ссылки.',
       disabledReason: {
-        auditRequirementDisabled: 'Журналирование аудита публичных предпросмотров обязательно, но отключено на сервере.',
         auditUnavailable: 'Журнал аудита публичного предпросмотра недоступен.',
         dnsTlsUnavailable: 'Публичные предпросмотры ожидают готовности DNS/TLS.',
         expired: 'Эта ссылка публичного предпросмотра истекла.',
@@ -8519,6 +8573,7 @@ export const ru = {
         sessionNotAuthorized: 'У вас нет доступа для создания публичной ссылки для этой сессии.',
         tunnelPortsUnconfigured: 'Сервер не разрешает ни один порт туннеля.',
         tunnelRelayDisabled: 'Ретрансляция сервера для туннелей машин отключена.',
+        tunnelSigningUnconfigured: 'На сервере нет ключа подписи для туннелей машин.',
       },
       createActionA11y: 'Создать публичную ссылку предпросмотра',
       revokeActionA11y: 'Отозвать публичную ссылку предпросмотра',
@@ -8529,6 +8584,15 @@ export const ru = {
             revokeConfirmTitle: 'Отозвать публичную ссылку?',
             revokeConfirmMessage: ({ url }: { url: string }) => `Отозвать публичную ссылку предпросмотра ${url}? Все, кто ее использует, потеряют доступ.`,
             revokeConfirmCta: 'Отозвать ссылку',
+            consequenceReach: 'Любой, у кого есть ссылка, может открыть этот сервис. Вход в аккаунт не требуется.',
+            consequenceExpiry: 'Ссылка перестанет работать сама, когда истечёт срок действия, указанный ниже.',
+            consequenceRevoke: 'Вы можете отозвать её в любой момент на этой панели.',
+            lifetimeLabel: 'Срок действия',
+            linkTypeLabel: 'Тип ссылки',
+            revealUrlA11y: 'Показать ссылку целиком',
+            hideUrlA11y: 'Скрыть ссылку',
+            expiresInClock: ({ clock }: { clock: string }) => `Истекает через ${clock}`,
+            groupFooter: 'Публичные ссылки записываются в журнал аудита этой машины.',
     },
     actions: {
       terminateDetectedA11y: 'Завершить обнаруженный локальный сервис',
@@ -8541,6 +8605,25 @@ export const ru = {
             stopConfirmTitle: 'Остановить службу?',
             stopConfirmMessage: ({ service }: { service: string }) => `Остановить ${service}? Служба будет недоступна, пока не запустится снова.`,
             stopConfirmCta: 'Остановить',
+            startA11y: 'Запустить службу',
+            failure: {
+                title: 'Действие не выполнено',
+                refused: 'Машина отклонила это действие. Проверьте разрешения локальных служб на этой машине и попробуйте снова.',
+                unavailable: 'Это действие недоступно для этой службы на этой машине.',
+                incomplete: 'Действие не завершилось. Вы можете попробовать ещё раз.',
+            },
+            failureTitle: {
+                start: ({ service }: { service: string }) => `Не удалось запустить ${service}`,
+                open: ({ service }: { service: string }) => `Не удалось открыть ${service}`,
+                terminate: ({ service }: { service: string }) => `Не удалось завершить ${service}`,
+                forget: ({ service }: { service: string }) => `Не удалось скрыть ${service}`,
+                stop: ({ service }: { service: string }) => `Не удалось остановить ${service}`,
+                restart: ({ service }: { service: string }) => `Не удалось перезапустить ${service}`,
+                copyAddress: 'Не удалось скопировать адрес',
+                expose: 'Не удалось создать публичную ссылку',
+                revokeExposure: 'Не удалось отозвать публичную ссылку',
+                copyExposure: 'Не удалось скопировать публичную ссылку',
+            },
     },
   },
 
@@ -9323,6 +9406,14 @@ export const ru = {
     },
 
 settingsSession: {
+    newSessionDraftEntry: {
+        title: 'Черновики новых сессий',
+        footer: 'Выберите, продолжать ли черновик на этом устройстве или открывать новый при выборе «Новая сессия».',
+        resumeTitle: 'Продолжить предыдущий черновик',
+        resumeSubtitle: 'Продолжить черновик, начатый через «Новую сессию» на этом устройстве.',
+        freshTitle: 'Всегда начинать заново',
+        freshSubtitle: 'Открывать новый черновик при каждом выборе «Новая сессия».',
+    },
 	    sessionList: {
 	        title: 'Список сессий',
 	        footer: 'Настройте, что показывается в каждой строке сессии.',
@@ -10100,7 +10191,7 @@ settingsSession: {
     },
     setupCheck: {
       title: 'Готовность поставщика',
-      footer: 'Проверка только читает сохранённые настройки и текущие локальные данные готовности. Она не включает микрофон, не запускает Голос, не отправляет аудио и не обращается к поставщику.',
+      footer: 'Проверка только читает сохранённые настройки и текущие локальные данные готовности. Она не включает микрофон, не запускает Голос, не отправляет аудио и не обращается к поставщику. При запуске Голос повторно проверяет возможности, привязанные к сессии.',
       check: 'Проверить настройку',
       checkSubtitle: 'Пассивно проверить конфигурацию выбранного поставщика Голоса.',
       result: 'Состояние настройки',
@@ -11013,6 +11104,13 @@ settingsSession: {
         },
       },
       models: {
+          nativeOptions: {
+              kokoroEnvironmentDefaultTitle: "По умолчанию (из окружения)",
+              kokoroDefaultSubtitle: "Локальная нейросетевая голосовая модель по умолчанию.",
+              kokoroHigherQualitySubtitle: "Более качественная локальная голосовая модель Kokoro.",
+              kokoroEnvironmentDefaultSubtitle: "Использует заданные в окружении значения по умолчанию для пакета модели Kokoro.",
+              sherpaStreamingRecommendedSubtitle: "Потоковая обработка с низкой задержкой (рекомендуется).",
+          },
           title: "Локальные голосовые модели",
           statusTitle: "Служба моделей",
           footer: "Установите пакеты локальных голосовых моделей на голосовой демон и выберите модель по умолчанию для каждого типа.",
@@ -11202,6 +11300,7 @@ settingsSession: {
     },
     defaultTitle: "Что нового",
     onboardingShowcase: {
+        details: PRODUCT_STORY_DETAILS_ENGLISH,
                 "title": "Добро пожаловать в Happier",
                 "subtitle": "Ваши AI-агенты везде, где вы работаете.",
                 "cards": {
@@ -11745,7 +11844,7 @@ settingsSession: {
     webDesktopHandoffCliOption: "С помощью терминала (CLI)",
     webDesktopHandoffCliSubtitle: "Выполните несколько команд, чтобы разместить Relay, затем вставьте сюда выведенный URL Relay.",
     webDesktopOnlyRelayInstallTitle: "Запустите Relay на этом компьютере",
-	    webDesktopOnlyRelayInstallSubtitle: "Это установит и запустит хост Relay. Затем вставьте сюда показанный URL Relay.",
+	    webDesktopOnlyRelayInstallSubtitle: "Это установит и запустит хост Relay.",
 	    webDesktopOnlyRelayStatusTitle: "Получите URL Relay",
 	    webDesktopOnlyRelayStatusSubtitle: "Выполните команду, чтобы увидеть URL Relay, затем вставьте его здесь.",
 	    webDesktopOnlyOptionalNextTitle: "Необязательно: защищённый доступ и провайдеры",
@@ -11772,6 +11871,7 @@ settingsSession: {
     setupThisComputerTitle: "Настроить этот компьютер",
     controlPanelTitle: "Сводка готовности",
     activeRelaySummaryTitle: "Активный Relay",
+    selectedRelaySummaryTitle: 'Выбранный Relay',
     thisComputerSummaryTitle: "Этот компьютер",
     nextActionSummaryTitle: "Следующее действие",
     thisComputerReady: "Готов к этому Relay",
@@ -12066,6 +12166,10 @@ settingsSession: {
     discarded: "Отброшено",
     recoveredHistory: "Восстановленная история",
     pluginAttribution: ({ pluginId }: { pluginId: string }) => `От плагина ${pluginId}`,
+    pluginAttributionExternal: ({ sender, pluginId }: { sender: string; pluginId: string }) => `От ${sender} через плагин ${pluginId}`,
+    pluginAttributionExternalForwarded: ({ sender, pluginId }: { sender: string; pluginId: string }) => `Переслано пользователем ${sender} через плагин ${pluginId}`,
+    pluginAttributionExternalSender: 'внешний отправитель',
+    pluginAttributionExternalBot: 'внешний бот',
     unknownEvent: "Неизвестное событие",
     runtimeConfigOutcomeAppliesBeforeNextMessage: 'Применится перед вашим следующим сообщением',
     runtimeConfigOutcomeQueuedUntilReady: 'В очереди до готовности',
@@ -12565,6 +12669,24 @@ settingsSession: {
   },
 
   profiles: {
+      launchPlacement: {
+          title: 'Где запускаются сессии',
+          footer: 'Это предпочтение, которое разрешается при старте сессии. Машина не сохраняется как ответ.',
+          none: 'Без предпочтения',
+          automatic: 'Определять автоматически',
+          ask: 'Всегда спрашивать',
+          fixed: 'Всегда эта машина',
+          directory: 'Каталог',
+          directoryPlaceholder: 'Оставьте пустым для корня найденного проекта',
+      },
+      launchCheckout: {
+          title: 'Рабочая копия',
+          footer: 'Как сессия получает рабочую копию, когда запускается в проекте.',
+          none: 'Без предпочтения',
+          reuseWorkspace: 'Использовать копию проекта',
+          createWorktree: 'Создать worktree',
+          ask: 'Всегда спрашивать',
+      },
     // Profile management feature
     title: "Профили",
     subtitle: "Управление профилями переменных окружения для сессий",
@@ -12940,6 +13062,7 @@ settingsSession: {
       ...pluginWebhookAdministrationTranslations['ru'],
       ...pluginAccountDataEraseTranslations.ru,
       ...pluginAccountReleaseSelectionTranslations.ru,
+      ...pluginMachineMatrixTranslations.ru,
       ...pluginInvocationLogTranslations.ru,
       ...eventAutomationComposerTranslations.ru,
     title: "Каталог плагинов",
@@ -12966,7 +13089,7 @@ settingsSession: {
     developmentSourceInstallSucceeded: "Источник разработки одобрен и спроецирован.",
     developmentSourceInstallFailed: ({ outcome }: { outcome: string }) => `Источник разработки не установлен (${outcome}).`,
     developmentTrustSourceRootTitle: "Доверять этой папке плагина?",
-    developmentTrustSourceRootBody: ({ path }: { path: string }) => `Happier установит зависимости, соберёт и выполнит код из:\n\n${path}\n\nПродолжайте, только если доверяете всему в этой папке и всему, что она может загрузить. Сам плагин вы проверите на следующем шаге.`,
+    developmentTrustSourceRootBody: ({ path, machine, server }: { path: string; machine: string; server: string }) => `Happier установит зависимости, соберёт и выполнит код из:\n\n${path} на ${machine} (${server})\n\nПродолжайте, только если доверяете всему в этой папке и всему, что она может загрузить. Сам плагин вы проверите на следующем шаге.`,
     developmentTrustSourceRootConfirm: "Доверять папке",
     pendingChangesTitle: "Ожидает вашего решения",
     pendingChangesFooter: "Изменения плагинов, подготовленные на этой машине. Агент может подготовить изменение, но одобрить его можете только вы.",
@@ -13043,7 +13166,8 @@ settingsSession: {
     marketplaceInstallReviewBody: ({ identity, verification, executableRealms, contributions, uiArtifacts, requiredAccess, optionalAccess, compatibility }: { identity: string; verification: string; executableRealms: string; contributions: string; uiArtifacts: string; requiredAccess: string; optionalAccess: string; compatibility: string }) => `Идентификация:\n${identity}\n\nСигналы проверки:\n${verification}\n\nИсполняемый код: ${executableRealms}\nВозможности: ${contributions}\nАртефакты интерфейса: ${uiArtifacts}\n\nДоверенный код демона и React Native выполняется с полномочиями приложения или процесса и может напрямую использовать файлы, сеть, окружение и процессы. Указанный ниже доступ к хосту описывает сервисы, посредником для которых выступает Happier; это не песочница для исполняемого кода плагина.\n\nОбязательные раскрытия и кооперативные сервисы:\n${requiredAccess}\n\nНеобязательные ресурсы хоста (по умолчанию отключены):\n${optionalAccess}\n\nСовместимость и обновления:\n${compatibility}`,
     marketplaceInstallDecisionFailed: ({ outcome }: { outcome: string }) => `Плагин не установлен (${outcome}).`,
     marketplaceChangeDecisionFailed: ({ action, outcome }: { action: string; outcome: string }) => `${action}: сбой (${outcome}).`,
-    pluginChangeConfirmBody: ({ action, name }: { action: string; name: string }) => `Подтвердите «${action}» для ${name}.`,
+    pluginChangeConfirmBody: ({ action, name, machine, server }: { action: string; name: string; machine: string; server: string }) => `Подтвердите «${action}» для ${name} на ${machine} (${server}).`,
+    pluginChangeConfirmTarget: ({ machine, server }: { machine: string; server: string }) => `Это применяется к ${machine} (${server}).`,
     forgetTrust: "Забыть доверие",
     rollback: "Откатить",
     uninstall: "Удалить плагин",
@@ -13229,3 +13353,4 @@ settingsSession: {
   },} as const;
 
 export type TranslationsRu = typeof ru;
+import { PRODUCT_STORY_DETAILS_ENGLISH } from '@happier-dev/brand/product-story';

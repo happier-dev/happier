@@ -59,6 +59,7 @@ describe('WizardTerminalHandoff', () => {
                 showCopyButton?: boolean;
                 wrap?: boolean;
                 scrollTestID?: string;
+                containerStyle?: unknown;
             };
         };
         expect(codeBlock.props.showHeaderRow).toBe(false);
@@ -67,6 +68,7 @@ describe('WizardTerminalHandoff', () => {
         // to multiple lines instead of overflowing behind a horizontal fade.
         expect(codeBlock.props.wrap).toBe(true);
         expect(codeBlock.props.scrollTestID).toBe('handoff-cli');
+        expect(flattenStyle(codeBlock.props.containerStyle).backgroundColor).toBeTruthy();
     });
 
     it('renders a platform toggle when a Windows variant is provided', async () => {

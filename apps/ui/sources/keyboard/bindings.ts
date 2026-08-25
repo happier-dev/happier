@@ -19,6 +19,12 @@ export const browserShortcutConflicts: readonly Readonly<{
     { binding: 'Mod+W', platforms: ['web'], reason: 'browser-reserved' },
     { binding: 'Ctrl+Tab', platforms: ['web'], reason: 'browser-reserved' },
     { binding: 'Ctrl+Shift+Tab', platforms: ['web'], reason: 'browser-reserved' },
+    // The host browser owns address-bar focus, reload and history on the web surface, so the
+    // in-app browser chrome binds Alt there instead (see `browser.*` in `commands.ts`).
+    { binding: 'Mod+L', platforms: ['web'], reason: 'browser-reserved' },
+    { binding: 'Mod+R', platforms: ['web'], reason: 'browser-reserved' },
+    { binding: 'Mod+[', platforms: ['web'], reason: 'browser-reserved' },
+    { binding: 'Mod+]', platforms: ['web'], reason: 'browser-reserved' },
 ];
 
 const codeByDisplayKey: Readonly<Record<string, string>> = {
@@ -37,6 +43,8 @@ const codeByDisplayKey: Readonly<Record<string, string>> = {
     Backspace: 'Backspace',
     Delete: 'Delete',
     '.': 'Period',
+    '[': 'BracketLeft',
+    ']': 'BracketRight',
     Slash: 'Slash',
     '?': 'Slash',
 };
@@ -75,6 +83,8 @@ const labelByCode: Readonly<Record<string, string>> = {
     Backspace: 'Backspace',
     Delete: 'Delete',
     Period: '.',
+    BracketLeft: '[',
+    BracketRight: ']',
     Slash: 'Slash',
 };
 

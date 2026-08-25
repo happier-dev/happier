@@ -12,7 +12,9 @@ import { Icon } from '@/components/ui/icons/Icon';
 const stylesheet = StyleSheet.create((theme) => ({
     trigger: {
         width: 34,
-        height: 34,
+        // `minHeight`, not `height`. Q2 measured that the app's `uiFontScale` GROWS the line box —
+        // a fixed-height container is what actually clips scaled text, not a missing `lineHeight`.
+        minHeight: 34,
         borderRadius: 6,
         alignItems: 'center',
         justifyContent: 'center',

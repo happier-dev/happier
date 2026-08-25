@@ -8,6 +8,7 @@ import {
     resolvePluginSurfaceDestinations,
 } from '@/components/plugins/surfaces/pluginSurfaceDestinations';
 import type { PluginUiPolicyEvaluationContext } from '@/sync/domains/plugins/ui/policy';
+import type { PluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 import type { PluginUiSurfacePlacementProjection } from '@/sync/domains/plugins/ui/projection';
 import type {
     RightSidebarPluginTabDefinition,
@@ -24,6 +25,7 @@ export type ResolveRightSidebarPluginTabsInput = Readonly<{
     placements?: readonly PluginUiSurfacePlacementProjection[];
     projectionGeneration?: number | null;
     policyContext?: PluginUiPolicyEvaluationContext;
+    localize?: PluginLocalizedTextResolver;
     /** Current mounted host facts for catalog admission. */
     runtimeAdmission?: RightSidebarPluginTabRuntimeAdmission;
 }>;
@@ -38,10 +40,12 @@ function resolveRightSidebarPluginDestinations(input: Readonly<{
     scope: RightSidebarScope;
     placements?: readonly PluginUiSurfacePlacementProjection[];
     policyContext?: PluginUiPolicyEvaluationContext;
+    localize?: PluginLocalizedTextResolver;
 }>) {
     return resolvePluginSurfaceDestinations({
         ...(input.placements ? { placements: input.placements } : {}),
         ...(input.policyContext ? { policyContext: input.policyContext } : {}),
+        ...(input.localize ? { localize: input.localize } : {}),
         select: (placement) => {
             if (
                 placement.binding.container !== 'rightSidebarTab'

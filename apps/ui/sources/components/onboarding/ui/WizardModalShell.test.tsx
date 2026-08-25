@@ -53,7 +53,7 @@ describe('WizardModalShell', () => {
         expect(screen.findByTestId('wizard-shell-body')).toBeTruthy();
     });
 
-    it('forces the relay footer hint to render as a single ellipsized line (so long URLs do not wrap)', async () => {
+    it('renders structured footer hints unchanged so their canonical component owns truncation', async () => {
         const { WizardModalShell } = await import('./WizardModalShell');
 
         const footerHint = React.createElement(
@@ -83,8 +83,8 @@ describe('WizardModalShell', () => {
         );
 
         const relayLine = screen.findByTestId('wizard-shell-relay-hint-line')!;
-        expect(relayLine.props.numberOfLines).toBe(1);
-        expect(relayLine.props.ellipsizeMode).toBe('middle');
+        expect(relayLine.props.numberOfLines).toBeUndefined();
+        expect(relayLine.props.ellipsizeMode).toBeUndefined();
     });
 
     it('disables the internal WizardCardLayout scrim when nested in a BaseModal (avoids double-dimming; BaseModal owns the backdrop)', async () => {

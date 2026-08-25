@@ -143,7 +143,9 @@ describe('AnnotationEditorOverlay (ANNO-1)', () => {
         expect(screen.findByTestId('anno-mark-target_1')).toBeTruthy();
         expect(screen.findByTestId('anno-mark-region_1')).toBeTruthy();
         expect(screen.findByTestId('anno-mark-stroke_1')).toBeTruthy();
-        expect(screen.findByTestId('anno-mark-stroke_1-point-0')).toBeTruthy();
+        // U-7: one SVG path (plus its legibility casing), not up to 512 point Views.
+        expect(screen.findByTestId('anno-mark-stroke_1-path')).toBeTruthy();
+        expect(screen.findByTestId('anno-mark-stroke_1-point-0')).toBeNull();
     });
 
     it('disables capture with an explicit reason when the engine has no producer', async () => {

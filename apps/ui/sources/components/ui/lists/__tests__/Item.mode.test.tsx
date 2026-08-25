@@ -170,6 +170,15 @@ describe('Item mode prop', () => {
         uiItemDensitySetting = 'comfortable';
     });
 
+    it('allows a list owner to override the title line allowance', async () => {
+        const { Item } = await import('../Item');
+        const screen = await renderScreen(
+            <Item title="A saved draft with a longer title" subtitle="Syncing" titleLines={2} />,
+        );
+
+        expect(findTextNode(screen, 'A saved draft with a longer title')?.props.numberOfLines).toBe(2);
+    });
+
     it('applies the resolved density to right-side detail text', async () => {
         uiItemDensitySetting = 'compact';
         const { Item } = await import('../Item');

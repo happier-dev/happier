@@ -94,7 +94,7 @@ export const RoundButton = React.memo((props: {
      * action with no explanation.
      */
     accessibilityHint?: string,
-    onPress?: () => void,
+    onPress?: HappierPressableProps['onPress'],
     action?: () => Promise<any>
 }) => {
     const { theme } = useUnistyles();
@@ -106,9 +106,9 @@ export const RoundButton = React.memo((props: {
      * its own `setLoading` around the same await, with no guard against a second
      * press landing in the same tick.
      */
-    const doAction = React.useCallback(() => {
+    const doAction = React.useCallback((event?: Parameters<HappierPressableProps['onPress']>[0]) => {
         if (props.onPress) {
-            props.onPress();
+            props.onPress(event);
             return undefined;
         }
         return props.action?.();

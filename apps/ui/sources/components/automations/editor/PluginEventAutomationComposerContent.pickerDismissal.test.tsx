@@ -7,6 +7,7 @@ import {
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { createPassThroughModule } from '@/dev/testkit/mocks/components';
+import { createCapturingLegendListMock } from '@/dev/testkit/mocks/legendList';
 import { dispatchEscapeToLayerStack } from '@/keyboard/escape';
 import type { PluginMachineExecutionOriginCandidateV1 } from '@/sync/domains/machines/administration/pluginExecutionOrigin';
 
@@ -17,13 +18,62 @@ Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
 installAutomationComponentCommonModuleMocks();
 
+// SelectionList owns its render/filter/activation behavior in this test. Its
+// third-party native recycler remains the system boundary, matching the
+// primitive's own harness so it can render virtual rows deterministically.
+const selectionListLegendMock = createCapturingLegendListMock({
+    renderItems: true,
+    // A recycler receives every option but mounts only its viewport. Rendering
+    // all 60 Item trees in react-test-renderer would erase the very
+    // virtualization behavior this test is intended to exercise.
+    renderItemLimit: 5,
+});
+
+vi.mock('@legendapp/list/react-native', () => ({
+    LegendList: selectionListLegendMock.module.LegendList,
+}));
+
+vi.mock('@/sync/store/hooks', () => ({
+    // Item rows inside the real SelectionList read the local density setting.
+    // The persistent settings store is outside this composer's presentation
+    // contract, so keep that boundary deterministic without replacing list logic.
+    useLocalSetting: (key: string) => key === 'uiItemDensity' ? 'comfortable' : null,
+}));
+
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
+        // ItemGroup resolves its content-width preference through this
+        // persistent-store boundary. SelectionList still owns all search,
+        // filtering, virtualization, and activation behavior below it.
+        useLocalSetting: (key: string) => {
+            if (key === 'uiContentWidthMode') return 'medium';
+            if (key === 'uiFontScale') return 1;
+            if (key === 'uiItemDensity') return 'comfortable';
+            return undefined;
+        },
+    });
+});
+
+vi.mock('@/sync/domains/state/storageStore', () => ({
+    getStorage: () => ({
+        getState: () => ({ localSettings: { uiContentWidthMode: 'medium' } }),
+    }),
+}));
+
 vi.mock('@/components/plugins/shared/InstalledPluginBrandMark', () => ({
     InstalledPluginBrandMark: () => null,
 }));
 vi.mock('@/components/plugins/shared/installedPluginBrandPresentation', () => ({
     useInstalledPluginBrandPresentation: () => null,
 }));
-vi.mock('@/components/ui/icons/Icon', () => ({ Icon: () => null }));
+vi.mock('@/components/ui/icons/Icon', () => ({
+    Icon: () => null,
+    // Item density metrics are part of real SelectionList row composition.
+    // Keep the icon/native boundary shape compatible rather than replacing
+    // the row or list internals under test.
+    ICON_SIZE: { xs: 14, sm: 16, md: 20, lg: 24, xl: 29 },
+}));
 vi.mock('@/components/ui/text/Text', () => createPassThroughModule(['Text', 'TextInput']));
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: () => null,
@@ -122,6 +172,8 @@ function createModel(event: ReturnType<typeof createEvent>): PluginEventAutomati
         observationTransport: 'checkpointedPull',
         setObservationTransport: vi.fn(),
         webhookEndpoint: null,
+        refreshWebhookEndpoint: null,
+        webhookEndpointRefreshing: false,
         configureSource: vi.fn(),
         watcherCandidates,
         selectedWatcherOrigin: {
@@ -173,6 +225,45 @@ async function renderComposer(triggerFocus: Readonly<{
 describe('PluginEventAutomationComposerContent picker dismissal', () => {
     afterEach(() => {
         standardCleanup();
+    });
+
+    it('searches a large existing-session target list before selecting its canonical option', async () => {
+        const selectExistingSession = vi.fn();
+        const existingSessionOptions = Array.from({ length: 60 }, (_, index) => ({
+            sessionId: `session-${index}`,
+            serverId: 'srv-account-a',
+            label: `Work session ${index}`,
+        }));
+        const model = {
+            ...createModel(createEvent()),
+            targetKind: 'existingSession' as const,
+            existingSessionOptions,
+            selectExistingSession,
+        };
+        const { PluginEventAutomationComposerContent } = await import('./PluginEventAutomationComposerContent');
+        const screen = await renderScreen(<PluginEventAutomationComposerContent model={model} />);
+
+        await act(async () => {
+            screen.findByProps({ testID: 'automation-event-existing-session-picker' }).props.onPress();
+        });
+
+        const search = screen.findByTestId('automation-event-existing-session-search');
+        expect(search).toBeTruthy();
+        expect(screen.findByTestId('automation-event-existing-session-list:section:existing-sessions:virtualized')).toBeTruthy();
+        expect(selectionListLegendMock.state.props?.data).toHaveLength(existingSessionOptions.length);
+
+        await act(async () => {
+            search?.props.onChangeText('Work session 59');
+        });
+
+        const option = screen.findByTestId('automation-event-existing-session-option-session-59');
+        expect(option).toBeTruthy();
+        await act(async () => {
+            option?.props.onPress();
+        });
+
+        expect(selectExistingSession).toHaveBeenCalledWith(existingSessionOptions[59]);
+        expect(screen.findByTestId('automation-event-existing-session-picker-options')).toBeNull();
     });
 
     it('returns focus to the owning trigger when an expanded picker collapses on selection', async () => {

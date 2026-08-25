@@ -4,6 +4,7 @@ import { useUnistyles } from 'react-native-unistyles';
 import {
     getTerminalNativeAvailability,
     normalizeTerminalNativeAvailability,
+    type TerminalNativeCopyEvent,
     type TerminalNativeRuntimePlatform,
 } from '@happier-dev/terminal-native';
 
@@ -12,7 +13,7 @@ import { Text } from '@/components/ui/text/Text';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useKeyboardHeight } from '@/hooks/ui/useKeyboardHeight';
 import { useLocalSetting } from '@/sync/domains/state/storage';
-import { getClipboardStringTrimmedSafe } from '@/utils/ui/clipboard';
+import { getClipboardStringTrimmedSafe, setClipboardStringSafe } from '@/utils/ui/clipboard';
 import { XtermWebViewSurface, type XtermWebViewSurfaceHandle } from '@/components/terminal/xterm/webview/XtermWebViewSurface.native';
 import { resolveGhosttyRendererSelection, type GhosttyRendererSelectionOptions } from '@/components/terminal/ghostty/availability';
 import { GhosttyTerminalSurface } from '@/components/terminal/ghostty/surface.native';
@@ -102,6 +103,12 @@ export const EmbeddedTerminalPane = React.memo(function EmbeddedTerminalPaneNati
         if (!text) return;
         void props.controller.onPaste(text);
     }, [props.controller]);
+    const onNativeCopy = React.useCallback((event: TerminalNativeCopyEvent) => {
+        void setClipboardStringSafe(event.text);
+    }, []);
+    const onCopySelection = React.useCallback(() => {
+        props.terminalRef.current?.copySelection?.();
+    }, [props.terminalRef]);
 
     const footer = props.showQuickKeys ? (
         <ScrollView
@@ -132,6 +139,7 @@ export const EmbeddedTerminalPane = React.memo(function EmbeddedTerminalPaneNati
             controller={props.controller}
             onRequestClose={props.onRequestClose}
             onPaste={onPaste}
+            onCopySelection={effectiveRenderer === 'ios-ghosttykit' ? onCopySelection : null}
             toolbarActionsStart={props.toolbarActionsStart}
             testIdPrefix={props.testIdPrefix}
             footer={footer}
@@ -147,9 +155,11 @@ export const EmbeddedTerminalPane = React.memo(function EmbeddedTerminalPaneNati
                             lineHeightPx={fontMetrics.lineHeight}
                             accessibilityAccepted={nativeAccessibilityAccepted}
                             onInput={props.controller.onInput}
+                            onPaste={props.controller.onPaste}
                             onLink={(event) => props.controller.onLink?.(event.url)}
                             onTitle={(event) => props.controller.onTitle?.(event.title)}
                             onBell={(event) => props.controller.onBell?.(event.label ?? '')}
+                            onCopy={onNativeCopy}
                             onResize={props.controller.onResize}
                             onReady={props.controller.onReady}
                             onWriteComplete={props.controller.onWriteComplete}
@@ -166,6 +176,7 @@ export const EmbeddedTerminalPane = React.memo(function EmbeddedTerminalPaneNati
                             onLink={(event) => props.controller.onLink?.(event.url)}
                             onTitle={(event) => props.controller.onTitle?.(event.title)}
                             onBell={(event) => props.controller.onBell?.(event.label ?? '')}
+                            onCopy={onNativeCopy}
                             onResize={props.controller.onResize}
                             onReady={props.controller.onReady}
                             onWriteComplete={props.controller.onWriteComplete}
@@ -178,6 +189,7 @@ export const EmbeddedTerminalPane = React.memo(function EmbeddedTerminalPaneNati
                             fontSize={fontMetrics.fontSize}
                             lineHeightPx={fontMetrics.lineHeight}
                             onInput={props.controller.onInput}
+                            onPaste={props.controller.onPaste}
                             onLink={props.controller.onLink}
                             onResize={props.controller.onResize}
                             onReady={props.controller.onReady}

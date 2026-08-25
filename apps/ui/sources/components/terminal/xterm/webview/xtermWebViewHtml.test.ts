@@ -78,7 +78,7 @@ describe('buildXtermWebViewHtml', () => {
             allowCdnFallback: false,
         });
 
-        for (const token of ['ready', 'resize', 'input', 'write', 'writeBytes', 'writeComplete', 'clear', 'setTheme', 'setFontSize', 'focus']) {
+        for (const token of ['ready', 'resize', 'input', 'paste', 'write', 'writeBytes', 'writeComplete', 'clear', 'setTheme', 'setFontSize', 'focus']) {
             expect(html).toContain(token);
         }
     });
@@ -137,6 +137,36 @@ describe('buildXtermWebViewHtml', () => {
         expect(html).toContain("root.addEventListener('touchstart', focusTerminal");
         expect(html).toContain("root.addEventListener('mousedown', focusTerminal");
         expect(html).toContain('focusTerminal();');
+    });
+
+    it('captures real WebView clipboard paste before xterm emits ordinary input', async () => {
+        vi.resetModules();
+        vi.doMock('./xtermWebViewAssets.generated', () => ({
+            XTERM_WEBVIEW_BUNDLE_JS: '/* bundled-xterm */',
+            XTERM_WEBVIEW_CSS: '',
+        }));
+
+        const { buildXtermWebViewHtml } = await import('./xtermWebViewHtml');
+
+        const html = buildXtermWebViewHtml({
+            theme: {
+                backgroundColor: '#000',
+                textColor: '#fff',
+                cursorColor: '#fff',
+                selectionBackgroundColor: '#222',
+                isDark: true,
+            },
+            fontSizePx: 14,
+            lineHeightPx: 18,
+            maxChunkBytes: 64_000,
+            allowCdnFallback: false,
+        });
+
+        expect(html).toContain("root.addEventListener('paste'");
+        expect(html).toContain("type: 'paste'");
+        expect(html).toContain('event.preventDefault()');
+        expect(html).toContain('event.stopPropagation()');
+        expect(html).toContain("getData('text/plain')");
     });
 
     it('decodes base64 byte writes before passing Uint8Array chunks into xterm', async () => {

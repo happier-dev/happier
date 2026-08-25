@@ -274,6 +274,7 @@ export default function UnistylesDemo() {
                     <View style={styles.switchContainer}>
                         <Text style={{ fontSize: 16, color: '#333' }}>Show Runtime Details</Text>
                         <Switch
+                            accessibilityLabel="Show Runtime Details"
                             value={showRuntimeInfo}
                             onValueChange={setShowRuntimeInfo}
                         />

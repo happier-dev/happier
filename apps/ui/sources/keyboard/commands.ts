@@ -1,6 +1,51 @@
 import type { KeyboardCommand, KeyboardCommandId, KeyboardCommandSettingsTitleKey, KeybindingRule } from './types';
 
 export const defaultKeyboardCommands: readonly KeyboardCommand[] = [
+    // Browser chrome (UB-6). Guest<->host policy: these are HOST shortcuts and fire only while the
+    // app chrome owns the keyboard. A page loaded in the in-app browser lives in a separate frame
+    // or a native child webview, so its key events never reach this document's listener and it can
+    // never be hijacked by them; equally, none of these steal a key from the page while it is
+    // focused. `when: !isEditableTarget` keeps them out of the address bar and any other field.
+    //
+    // On the `web` surface (which includes the Tauri desktop app, whose bundle is the web bundle)
+    // Mod+L / Mod+R / Mod+[ / Mod+] belong to the HOST browser and are listed in
+    // `browserShortcutConflicts`, so the web bindings use Alt like the other web-surface commands.
+    {
+        id: 'browser.address.focus',
+        settingsTitleKey: 'settingsKeyboard.commands.browserAddressFocus',
+        defaultBindings: [
+            { binding: 'Alt+L', platforms: ['web'] },
+            { binding: 'Mod+L', blockedSurfaces: ['web'] },
+        ],
+        when: (context) => !context.isEditableTarget,
+    },
+    {
+        id: 'browser.back',
+        settingsTitleKey: 'settingsKeyboard.commands.browserBack',
+        defaultBindings: [
+            { binding: 'Alt+[', platforms: ['web'] },
+            { binding: 'Mod+[', blockedSurfaces: ['web'] },
+        ],
+        when: (context) => !context.isEditableTarget,
+    },
+    {
+        id: 'browser.forward',
+        settingsTitleKey: 'settingsKeyboard.commands.browserForward',
+        defaultBindings: [
+            { binding: 'Alt+]', platforms: ['web'] },
+            { binding: 'Mod+]', blockedSurfaces: ['web'] },
+        ],
+        when: (context) => !context.isEditableTarget,
+    },
+    {
+        id: 'browser.reload',
+        settingsTitleKey: 'settingsKeyboard.commands.browserReload',
+        defaultBindings: [
+            { binding: 'Alt+R', platforms: ['web'] },
+            { binding: 'Mod+R', blockedSurfaces: ['web'] },
+        ],
+        when: (context) => !context.isEditableTarget,
+    },
     {
         id: 'composer.abortConfirm',
         settingsTitleKey: 'settingsKeyboard.commands.composerAbortConfirm',

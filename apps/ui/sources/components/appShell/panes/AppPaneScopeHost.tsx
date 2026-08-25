@@ -8,6 +8,7 @@ import {
     createPluginSurfacePaneLaunchStore,
     PluginSurfaceDestinationNavigationBindingProvider,
     stagePluginSurfacePaneLaunch,
+    usePluginSurfaceDestinationNavigationBinding,
     usePluginSurfaceDestinationNavigationBindingForScope,
     useRegisterPluginSurfaceDestinationNavigationOwner,
     usePluginSurfacePaneLaunch,
@@ -232,6 +233,7 @@ function PluginAppPaneSurface(props: Readonly<{
 }
 
 const AppPaneScopeHostContent = React.memo((props: AppPaneScopeHostProps) => {
+    const enclosingNavigationBinding = usePluginSurfaceDestinationNavigationBinding();
     const { theme } = useUnistyles();
     const { dispatch, state, getDriver, driverRegistryVersion } = useAppPaneContext();
     const pane = useAppPaneScope(props.scopeId);
@@ -416,6 +418,7 @@ const AppPaneScopeHostContent = React.memo((props: AppPaneScopeHostProps) => {
         accountLifetime,
         scopedLaunchFacts,
         runtimeAdmission,
+        enclosingOpenSurface: enclosingNavigationBinding?.openSurface,
     });
     const paneNavigationBinding = paneSurfaceScope ? targetNavigationBinding : null;
     const rightPaneOwner = React.useMemo(() => paneSurfaceScope

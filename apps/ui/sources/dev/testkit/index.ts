@@ -5,6 +5,7 @@ export * from './fixtures/localServices';
 export * from './fixtures/machineFixtures';
 export * from './fixtures/permissionFixtures';
 export * from './fixtures/pluginProviderDaemonProjection';
+export * from './fixtures/pluginImageFixtures';
 export * from './fixtures/reviewComments';
 export * from './fixtures/sessionAgentTransitionFixtures';
 export * from './fixtures/sessionFixtures';

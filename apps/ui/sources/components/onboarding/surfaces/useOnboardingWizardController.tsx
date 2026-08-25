@@ -5,6 +5,7 @@ import { useUnistyles } from 'react-native-unistyles';
 
 import type { AuthEntryOptions } from '@/components/account/auth/useAuthEntryOptions';
 import { Text } from '@/components/ui/text/Text';
+import { ActiveRelaySummary } from '@/components/onboarding/ui/ActiveRelaySummary';
 import {
     resolveStepTransitionDirection,
     type StepTransitionDirection,
@@ -830,7 +831,8 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
     }, [applyWizardAdvanceResolution, canonicalCloudUrl, state, urlDraft]);
 
     const showBack = stepId !== 'welcome';
-    const showSkip = canSkipWizardStep(state.context, stepId)
+    const showSkip = stepId !== 'relay_select'
+        && canSkipWizardStep(state.context, stepId)
         && !(
             stepId === 'welcome'
             && welcomeHasKnownRelay
@@ -853,16 +855,6 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
             : stepId === 'desktop_handoff'
                 ? t('setupOnboarding.webDesktopOnlyPrimary')
             : t('common.continue');
-
-    const renderRelayHint = React.useCallback((params: Readonly<{
-        testID: string;
-        relayLine: string;
-    }>) => (
-        <View testID={params.testID} style={styles.relayHintBlock}>
-            <Icon name="cloud" size={14} color={theme.colors.text.secondary} />
-            <Text testID={`${params.testID}-line`} style={styles.relayHintLine}>{params.relayLine}</Text>
-        </View>
-    ), [styles]);
 
     const selectedRelayFooterUrl = React.useMemo(() => {
         if (stepId !== 'relay_select') return null;
@@ -895,11 +887,16 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
         if (stepId === 'relay_select') {
             const resolvedRelayUrl = selectedRelayFooterUrl || lastKnownSnapshotRelayUrlRef.current;
             if (!resolvedRelayUrl) return null;
-            const relayLine = t('setupOnboarding.currentRelayDescription', { relayUrl: toServerUrlDisplay(resolvedRelayUrl) });
-            return renderRelayHint({
-                testID: `${props.testID ?? 'onboarding-wizard'}-relay-hint`,
-                relayLine,
-            });
+            const status = snapshotRelayUrl && isSameServerUrl(snapshotRelayUrl, resolvedRelayUrl)
+                ? 'active'
+                : 'selected';
+            return (
+                <ActiveRelaySummary
+                    idPrefix={`${props.testID ?? 'onboarding-wizard'}-relay-hint`}
+                    relayUrl={resolvedRelayUrl}
+                    status={status}
+                />
+            );
         }
         if (stepId === 'welcome' && !welcomeHasKnownRelay) return null;
         const rawRelayUrl = state.context.relaySelection.serverUrl ? String(state.context.relaySelection.serverUrl).trim() : '';
@@ -908,13 +905,14 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
             ? (welcomeRelayUrl || rawRelayUrl || lastKnownSnapshotRelayUrlRef.current)
             : (rawRelayUrl || fallbackRelayUrl);
         if (!resolvedRelayUrl) return null;
-        const relayLine = t('setupOnboarding.currentRelayDescription', { relayUrl: toServerUrlDisplay(resolvedRelayUrl) });
-        return renderRelayHint({
-            testID: `${props.testID ?? 'onboarding-wizard'}-relay-hint`,
-            relayLine,
-        });
+        return (
+            <ActiveRelaySummary
+                idPrefix={`${props.testID ?? 'onboarding-wizard'}-relay-hint`}
+                relayUrl={resolvedRelayUrl}
+                status="active"
+            />
+        );
     }, [
-        renderRelayHint,
         selectedRelayFooterUrl,
         snapshotRelayUrl,
         state.context.relaySelection.choiceId,
@@ -1139,7 +1137,6 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
 
     const skipLabel = React.useMemo(() => {
         if (stepId === 'welcome') return welcomeHasAuthActions ? t('common.login') : t('common.start');
-        if (stepId === 'relay_select') return t('common.next');
         return t('common.skip');
     }, [stepId, welcomeHasAuthActions]);
 
@@ -1154,15 +1151,11 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
                 ? () => handleWelcomeLogin()
                 : () => handleWelcomeAdvance();
         }
-        if (stepId === 'relay_select') {
-            return async () => handleRelaySelectAdvance();
-        }
         if (stepId === 'auth_restore' || stepId === 'auth_secret_key' || stepId === 'auth_lost_access') {
             return () => dispatch({ type: 'wizard/goToStep', stepId: 'auth' });
         }
         return () => dispatch({ type: 'wizard/advance' });
     }, [
-        handleRelaySelectAdvance,
         handleWelcomeAdvance,
         handleWelcomeLogin,
         showSkip,
@@ -1172,7 +1165,7 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
     ]);
 
     const skipDisabled = activeSkipOverride?.disabled ?? (
-        showSkip && (stepId === 'relay_select' || stepId === 'welcome')
+        showSkip && stepId === 'welcome'
             ? primaryDisabled
             : false
     );

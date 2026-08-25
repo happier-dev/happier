@@ -25,7 +25,7 @@ import {
 import { PluginReactNativeUnavailable } from '@/components/plugins/reactNative/PluginReactNativeUnavailable';
 import { PaneLoadingFallback } from '@/components/ui/panels/PaneLoadingFallback';
 import { RetainedPanelSurface } from '@/components/ui/panels/RetainedPanelSurface';
-import { t } from '@/text';
+import { getPreferredLanguage, t } from '@/text';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { resolvePluginUiRuntimeFormFactor } from '@/components/appShell/panes/layout/resolveMultiPaneDeviceType';
 
@@ -41,6 +41,7 @@ import { useProjectSurfaceController } from './useProjectSurfaceController';
 import { selectPluginRightSidebarTabPlacements } from '@/sync/domains/plugins/ui/surfacePlacementSelectors';
 import { Icon } from '@/components/ui/icons/Icon';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { createPluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 
 type ProjectRightTabId = string;
 
@@ -116,6 +117,14 @@ export const ProjectRightPanel = React.memo((props: ProjectRightPanelProps) => {
             ? selectPluginRightSidebarTabPlacements(pluginProjection.pluginUiProjection, 'project')
             : []
     ), [pluginProjection.pluginUiProjection]);
+    const pluginLocale = getPreferredLanguage();
+    const localizePluginText = React.useMemo(
+        () => createPluginLocalizedTextResolver({
+            projection: pluginProjection.pluginUiProjection,
+            locale: pluginLocale,
+        }),
+        [pluginLocale, pluginProjection.pluginUiProjection],
+    );
     const runtimeAdmission = React.useMemo(() => Object.freeze({
         platform: pluginProjection.platform,
         formFactor: resolvePluginUiRuntimeFormFactor({ deviceType }),
@@ -125,7 +134,14 @@ export const ProjectRightPanel = React.memo((props: ProjectRightPanelProps) => {
         pluginPlacements: pluginRightSidebarPlacements,
         projectionGeneration: pluginProjection.pluginUiProjection?.generation ?? null,
         runtimeAdmission,
-    }), [deviceType, pluginProjection.pluginUiProjection?.generation, pluginRightSidebarPlacements, runtimeAdmission]);
+        localize: localizePluginText,
+    }), [
+        deviceType,
+        localizePluginText,
+        pluginProjection.pluginUiProjection?.generation,
+        pluginRightSidebarPlacements,
+        runtimeAdmission,
+    ]);
     const availableTabIds = React.useMemo(() => new Set(rightPanelTabs.map((tab) => tab.id)), [rightPanelTabs]);
     const controller = useProjectSurfaceController({
         scopeId: props.scopeId,

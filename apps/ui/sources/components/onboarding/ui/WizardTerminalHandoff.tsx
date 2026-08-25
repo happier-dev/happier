@@ -73,6 +73,9 @@ const stylesheet = StyleSheet.create((theme) => ({
         color: theme.colors.text.primary,
         ...Typography.default('semiBold'),
     },
+    codeBlockSurface: {
+        backgroundColor: theme.colors.surface.base,
+    },
 }));
 
 export function WizardTerminalHandoff(props: WizardTerminalHandoffProps) {
@@ -178,6 +181,7 @@ export function WizardTerminalHandoff(props: WizardTerminalHandoffProps) {
                         wrap
                         showCopyButton
                         scrollTestID={`${props.testID}-${step.scrollTestIDSuffix}`}
+                        containerStyle={styles.codeBlockSurface}
                     />
                 </View>
             ))}

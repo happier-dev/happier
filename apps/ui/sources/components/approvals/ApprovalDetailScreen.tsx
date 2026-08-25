@@ -19,7 +19,10 @@ import { Modal } from '@/modal';
 import { t } from '@/text';
 import { sync } from '@/sync/sync';
 import { storage, useArtifact, useMachine, useSession } from '@/sync/domains/state/storage';
-import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
+import {
+  createDefaultActionExecutor,
+  replayApprovalRequestAtExactDaemon,
+} from '@/sync/ops/actions/defaultActionExecutor';
 import { readDisplayMachineIdForSession } from '@/sync/ops/sessionMachineTarget';
 import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
 import { useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
@@ -245,6 +248,23 @@ export const ApprovalDetailScreen = React.memo((props: Readonly<{ artifactId: st
         decisionInFlightRef.current = true;
         setIsDeciding(true);
         if (parsed.kind === 'target') {
+          if (parsed.request.replayPlacement !== undefined && decision !== 'cancel') {
+            const replay = await replayApprovalRequestAtExactDaemon({
+              artifactId: props.artifactId,
+              decision,
+              executionTarget: parsed.request.replayPlacement,
+            });
+            if (replay !== null
+              && typeof replay === 'object'
+              && 'ok' in replay
+              && replay.ok === false) {
+              const errorCode = 'errorCode' in replay && typeof replay.errorCode === 'string'
+                ? replay.errorCode
+                : 'approval_decision_failed';
+              throw new Error(errorCode);
+            }
+            return;
+          }
           const now = Date.now();
           const nextRequest: TargetActionApprovalRequestV1 = decision === 'cancel'
             ? { ...parsed.request, status: 'canceled', updatedAtMs: now }
@@ -366,6 +386,11 @@ export const ApprovalDetailScreen = React.memo((props: Readonly<{ artifactId: st
   const targetActionParts = parsed.kind === 'target'
     ? parsed.request.qualifiedActionId.split('/actions/')
     : null;
+  const executionFailure = parsed.kind === 'host_action'
+    || parsed.request.status !== 'failed'
+    || parsed.request.execution?.ok !== false
+    ? null
+    : parsed.request.execution.error || parsed.request.execution.errorCode || null;
 
   return (
     <View style={styles.container}>
@@ -393,6 +418,9 @@ export const ApprovalDetailScreen = React.memo((props: Readonly<{ artifactId: st
           <View style={styles.statusCard}>
             <Text style={styles.statusLabel}>{t('approvals.fieldStatus')}</Text>
             <Text style={styles.statusValue}>{statusLabel}</Text>
+            {executionFailure ? (
+              <Text testID="approvals.execution-failure" style={styles.statusMeta}>{executionFailure}</Text>
+            ) : null}
             <Text style={styles.statusLabel}>{t('approvals.fieldAction')}</Text>
             <Text style={styles.statusValue}>{actionTitle ?? (parsed.kind === 'target' ? parsed.request.qualifiedActionId : String(parsed.request.actionId))}</Text>
             {actionTitle && parsed.kind === 'built_in' && actionTitle !== parsed.request.actionId ? (

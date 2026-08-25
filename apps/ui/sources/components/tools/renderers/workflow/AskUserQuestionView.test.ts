@@ -259,14 +259,12 @@ describe('AskUserQuestionView', () => {
         scopedPluginSettingsRead.mockResolvedValue({
             status: 'ready',
             snapshot: {
-                scope: { kind: 'daemon' },
+                scope: { kind: 'account' },
                 target: {
-                    kind: 'daemon',
-                    machineId: 'machine-1',
-                    serverId: 'server-a',
+                    kind: 'account',
                     serverIdentityId: 'srv_server_a',
                 },
-                revision: { kind: 'daemon', value: '1' },
+                revision: { kind: 'account', value: 1 },
                 values: {},
             },
         });
@@ -274,14 +272,12 @@ describe('AskUserQuestionView', () => {
         scopedPluginSettingsWrite.mockResolvedValue({
             status: 'ready',
             snapshot: {
-                scope: { kind: 'daemon' },
+                scope: { kind: 'account' },
                 target: {
-                    kind: 'daemon',
-                    machineId: 'machine-1',
-                    serverId: 'server-a',
+                    kind: 'account',
                     serverIdentityId: 'srv_server_a',
                 },
-                revision: { kind: 'daemon', value: '2' },
+                revision: { kind: 'account', value: 2 },
                 values: {
                     claudeUnifiedTerminalWorkspaceTrust: 'always_trust_happier_workspaces',
                 },
@@ -713,13 +709,16 @@ describe('AskUserQuestionView', () => {
         expect(sessionAllowWithAnswers).toHaveBeenCalledWith('s1', 'toolu_1', {
             'How should Claude continue?': ['trust_always'],
         });
+        // Claude declares both remembered choices in its single `scope: 'account'`
+        // Agent Settings contribution, and its runtime reads them back through
+        // `services.settings.forScope({ kind: 'account' })`. A daemon-scoped
+        // operation is refused by the daemon's exact-declaration filter, so the
+        // user's answer would settle while the preference silently disappeared.
         expect(scopedPluginSettingsRead).toHaveBeenCalledWith({
             pluginId: 'claude',
-            scope: { kind: 'daemon' },
+            scope: { kind: 'account' },
             target: {
-                kind: 'daemon',
-                machineId: 'machine-1',
-                serverId: 'server-a',
+                kind: 'account',
                 serverIdentityId: 'srv_server_a',
             },
             fields: [{ key: 'claudeUnifiedTerminalWorkspaceTrust', redacted: false }],
@@ -728,12 +727,10 @@ describe('AskUserQuestionView', () => {
             pluginId: 'claude',
             fieldId: 'claudeUnifiedTerminalWorkspaceTrust',
             mutation: { kind: 'set', value: 'always_trust_happier_workspaces' },
-            expectedRevision: { kind: 'daemon', value: '1' },
-            scope: { kind: 'daemon' },
+            expectedRevision: { kind: 'account', value: 1 },
+            scope: { kind: 'account' },
             target: {
-                kind: 'daemon',
-                machineId: 'machine-1',
-                serverId: 'server-a',
+                kind: 'account',
                 serverIdentityId: 'srv_server_a',
             },
             fields: [{ key: 'claudeUnifiedTerminalWorkspaceTrust', redacted: false }],
@@ -794,11 +791,9 @@ describe('AskUserQuestionView', () => {
         });
         expect(scopedPluginSettingsRead).toHaveBeenCalledWith({
             pluginId: 'claude',
-            scope: { kind: 'daemon' },
+            scope: { kind: 'account' },
             target: {
-                kind: 'daemon',
-                machineId: 'machine-1',
-                serverId: 'server-a',
+                kind: 'account',
                 serverIdentityId: 'srv_server_a',
             },
             fields: [{ key: 'claudeUnifiedTerminalResumeChoice', redacted: false }],
@@ -807,12 +802,10 @@ describe('AskUserQuestionView', () => {
             pluginId: 'claude',
             fieldId: 'claudeUnifiedTerminalResumeChoice',
             mutation: { kind: 'set', value: 'resume_from_summary' },
-            expectedRevision: { kind: 'daemon', value: '1' },
-            scope: { kind: 'daemon' },
+            expectedRevision: { kind: 'account', value: 1 },
+            scope: { kind: 'account' },
             target: {
-                kind: 'daemon',
-                machineId: 'machine-1',
-                serverId: 'server-a',
+                kind: 'account',
                 serverIdentityId: 'srv_server_a',
             },
             fields: [{ key: 'claudeUnifiedTerminalResumeChoice', redacted: false }],
@@ -869,17 +862,21 @@ describe('AskUserQuestionView', () => {
         expect(scopedPluginSettingsWrite).not.toHaveBeenCalled();
         expect(modalAlert).toHaveBeenCalledWith(
             'common.error',
-            'Unable to persist Claude workspace trust without an exact server target.',
+            'Unable to persist Claude workspace trust without an exact Account target.',
         );
     });
 
-    it('does not fall back to layout1 shared metadata for workspace-trust persistence', async () => {
+    it('persists the remembered Account preference without consulting any machine identity', async () => {
         activeAskUserQuestionRequest = {
             tool: 'AskUserQuestion',
             kind: 'user_action',
             source: 'claude_unified_terminal_dialog_choice',
         };
+        // Layout1 `metadata.machineId` is a shared decoy and there is no owner
+        // view at all. An Account preference is not addressed by machine, so
+        // neither fact may participate in — or block — this write.
         askUserQuestionSessionState.current = {
+            serverId: 'server-a',
             metadataLayoutVersion: 1,
             metadata: { machineId: 'shared-decoy-machine' },
             ownerMetadataView: null,
@@ -920,9 +917,69 @@ describe('AskUserQuestionView', () => {
         await chooseOptionAndSubmit(screen, 'Trust and remember');
 
         expect(machinePluginSettingsSet).not.toHaveBeenCalled();
+        expect(modalAlert).not.toHaveBeenCalled();
+        const writeCall = scopedPluginSettingsWrite.mock.calls[0]?.[0] as
+            | { target?: Record<string, unknown> }
+            | undefined;
+        expect(writeCall?.target).toEqual({ kind: 'account', serverIdentityId: 'srv_server_a' });
+        expect(JSON.stringify(writeCall ?? {})).not.toContain('shared-decoy-machine');
+    });
+
+    it('keeps an accepted answer settled when only the remembered preference fails to persist', async () => {
+        activeAskUserQuestionRequest = {
+            tool: 'AskUserQuestion',
+            kind: 'user_action',
+            source: 'claude_unified_terminal_dialog_choice',
+        };
+        askUserQuestionSessionState.current = {
+            serverId: 'server-a',
+            metadataLayoutVersion: 1,
+            ownerMetadataView: { machineId: 'machine-1' },
+            agentState: {
+                capabilities: { askUserQuestionAnswersInPermission: true },
+                requests: {
+                    toolu_1: {
+                        tool: 'AskUserQuestion',
+                        kind: 'user_action',
+                        source: 'claude_unified_terminal_dialog_choice',
+                        arguments: {},
+                        createdAt: 1,
+                    },
+                },
+            },
+        };
+        sessionAllowWithAnswers.mockResolvedValueOnce(undefined);
+        scopedPluginSettingsWrite.mockResolvedValue({ status: 'unavailable', reason: 'transport' });
+        const screen = await renderView(makeTool({
+            input: {
+                happierDialog: { kind: 'recognized', dialogId: 'trust_folder', secondaryAction: 'open_terminal' },
+                questions: [{
+                    header: 'Workspace trust',
+                    question: 'How should Claude continue?',
+                    multiSelect: false,
+                    options: [{
+                        choice: 'trust_always',
+                        label: 'Trust and remember',
+                        description: '',
+                        settingMutation: {
+                            settingId: 'claudeUnifiedTerminalWorkspaceTrust',
+                            value: 'always_trust_happier_workspaces',
+                        },
+                    }],
+                }],
+            },
+        }));
+
+        await chooseOptionAndSubmit(screen, 'Trust and remember');
+
+        // The answer reached the agent exactly once and is terminal. Only the
+        // side-effecting preference failed, so the dialog must not re-offer a
+        // submit affordance that would answer the same request twice.
+        expect(sessionAllowWithAnswers).toHaveBeenCalledTimes(1);
+        expect(findPressableByLabel(screen, 'tools.askUserQuestion.submit')).toBeFalsy();
         expect(modalAlert).toHaveBeenCalledWith(
             'common.error',
-            'Unable to persist Claude workspace trust without a session machine.',
+            'Unable to persist Claude workspace trust.',
         );
     });
 

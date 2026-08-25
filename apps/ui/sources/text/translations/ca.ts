@@ -14,9 +14,11 @@ import { pluginWebhookAdministrationTranslations } from './pluginWebhookAdminist
 import { pluginAccountDataEraseTranslations } from './pluginAccountDataEraseTranslations';
 import { apiTokenSettingsTranslations } from './apiTokenSettingsTranslations';
 import { pluginAccountReleaseSelectionTranslations } from './pluginAccountReleaseSelectionTranslations';
+import { pluginMachineMatrixTranslations } from './pluginMachineMatrixTranslations';
 import { pluginInvocationLogTranslations } from './pluginInvocationLogTranslations';
 import { eventAutomationComposerTranslations } from './eventAutomationComposerTranslations';
 import { actionOperationInboxTranslations } from './actionOperationInboxTranslations';
+import { sessionDraftTranslations } from './sessionDraftTranslations';
 
 const mcpServersUxTranslationExtension = {
   mcpServersConfiguredEmptySubtitle: 'Crea un servidor, importa JSON de l’amfitrió o instal·la un preajust recomanat.',
@@ -599,6 +601,7 @@ function plural({ count, singular, plural }: { count: number; singular: string; 
  * Must match the exact structure of the English translations
  */
 export const ca = {
+    ...sessionDraftTranslations,
     transferRecovery: {
         title: 'Finalitza la pujada preparada',
         message: 'La pujada ha arribat a la màquina, però cal completar el desament final. Torna a provar només la finalització o descarta la pujada preparada.',
@@ -666,6 +669,10 @@ export const ca = {
             composerSendImmediate: 'Envia immediatament',
             composerSendPending: 'Envia a la cua pendent',
             commandPaletteOpen: 'Obre la paleta d’ordres',
+            browserAddressFocus: 'Enfoca la barra d’adreces del navegador',
+            browserBack: 'Enrere al navegador',
+            browserForward: 'Endavant al navegador',
+            browserReload: 'Torna a carregar la pàgina del navegador',
             modeCycle: 'Canvia de mode',
             shortcutsHelpOpen: 'Obre l’ajuda de dreceres',
             sessionNew: 'Crea una sessió nova',
@@ -1158,6 +1165,18 @@ export const ca = {
                 'Crea\'n una des del flux de Sessió nova per executar sessions programades a les teves màquines.',
             createAutomationA11y: 'Crea automatització',
         },
+        settings: {
+            title: 'Configuració d\'automatitzacions',
+            openSubtitle: 'Configura la capacitat i la retenció de l\'historial d\'execucions.',
+            failedToLoad: 'No s\'ha pogut carregar la configuració d\'automatitzacions.',
+            updateFailed: 'No s\'ha pogut actualitzar la configuració d\'automatitzacions.',
+            maxActiveRunsPerMachine: 'Màxim d\'execucions actives per màquina',
+            maxActiveRunsPerMachineSubtitle: 'Limita quantes execucions pot reclamar activament cada màquina alhora.',
+            maxActiveRunsPerMachinePrompt: 'Introdueix un nombre enter de l\'1 al 2.147.483.647.',
+            maxActiveRunsPerMachineInvalid: 'Introdueix un nombre enter de l\'1 al 2.147.483.647.',
+            runRetention: 'Conserva l\'historial d\'execucions per sempre',
+            runRetentionSubtitle: 'Quan està desactivat, les execucions completades elegibles es conserven durant 30 dies.',
+        },
         detail: {
             invalidId: 'ID d\'automatització no vàlid.',
             notFound: 'No s\'ha trobat l\'automatització.',
@@ -1180,6 +1199,7 @@ export const ca = {
                 endpointTitle: 'Punt final de webhook',
                 endpointObservingSince: ({ time }: { time: string }) => `Rep lliuraments des de ${time}`,
                 sourceStatusUnreported: "A l'espera del primer informe",
+                sourceStatusUnavailable: "Estat de la font no disponible",
                 sourceCatalogStatusUnavailable: 'Actualitat de la font no disponible',
                 watcherMachineUnknown: 'Aquesta màquina ja no és al teu compte, així que aquest observador no pot observar esdeveniments.',
                 watcherMachineRevoked: 'Aquesta màquina s’ha revocat, així que aquest observador no pot observar esdeveniments.',
@@ -1200,6 +1220,12 @@ export const ca = {
             deleteConfirmTitle: 'Elimina automatització',
             deleteConfirmMessage: 'Aquesta automatització i la seva programació s\'eliminaran.',
             deleteConfirmButton: 'Elimina',
+            clearHistory: 'Esborra l\'historial d\'execucions',
+            clearHistorySubtitle: 'Elimina les execucions completades que es poden eliminar. Les execucions actives continuen disponibles.',
+            clearHistoryConfirmTitle: 'Vols esborrar l\'historial d\'execucions?',
+            clearHistoryConfirmMessage: 'Les execucions completades elegibles se suprimiran permanentment. Les execucions actives continuaran disponibles.',
+            clearHistoryConfirmButton: 'Esborra l\'historial',
+            clearHistoryFailed: 'No s\'ha pogut esborrar l\'historial d\'execucions.',
             machineAssignmentsTitle: 'Assignacions de màquina',
             machineAssignmentsFooter:
                 'Habilita com a mínim una màquina perquè aquesta automatització s\'executi.',
@@ -1237,6 +1263,7 @@ export const ca = {
                 sourceTitle: 'Font d\'observació',
                 scheduled: ({ time }: { time: string }) => `Programada: ${time}`,
                 updated: ({ time }: { time: string }) => `Actualitzada: ${time}`,
+                contentRemoved: 'Contingut de l’execució eliminat',
                 error: ({ message }: { message: string }) => `Error: ${message}`,
                 attemptTitle: 'Intent',
                 attempt: ({ attempt }: { attempt: number }) => `Intent ${attempt}`,
@@ -2684,6 +2711,8 @@ export const ca = {
             fallbackDisabled: 'La reserva de comptes està desactivada en aquest servidor.',
             duplicateMember: 'Aquest compte ja és al grup.',
             groupAlreadyExists: 'Ja existeix un grup de comptes amb aquest id.',
+            groupCapacityExhausted: 'Aquest compte ja té el nombre màxim de grups de comptes. Elimina’n un que ja no necessitis i torna-ho a provar.',
+            connectedAccountCapacityExhausted: 'Aquest compte ja té el nombre màxim de comptes connectats. Desconnecta’n un que ja no necessitis i torna-ho a provar.',
             invalidGroup: 'Aquest grup de comptes no és vàlid. Revisa’n la configuració i torna-ho a provar.',
             requestFailedWithStatus: ({ status }: { status: number }) => `The connected-service request failed (${status}). Refresh and try again.`,
             generic: 'L’acció del servei connectat ha fallat. Actualitza i torna-ho a provar.',
@@ -5730,6 +5759,12 @@ deps: {
 
       voiceAssistant: {
           connecting: 'Connectant...',
+          reconnecting: 'S’està tornant a connectar…',
+          listening: 'Escoltant',
+          thinking: 'Pensant…',
+          speaking: 'Parlant',
+          microphonePermissionRequired: 'Cal accés al micròfon',
+          interrupted: 'Interromput',
           active: 'Assistent de veu actiu',
           connectionError: 'Error de connexió',
         label: 'Assistent de veu',
@@ -5740,6 +5775,19 @@ deps: {
         endVoice: 'Finalitza Veu',
         transcribing: 'Transcrivint…',
         endDictation: 'Finalitza el dictat',
+          dictationNoSpeech: 'No s’ha detectat cap veu',
+          dictationErrors: {
+              captureFailed: 'El dictat s’ha aturat perquè ha fallat la captura del micròfon. Comprova l’accés al micròfon i torna-ho a provar.',
+              providerUnavailable: 'El proveïdor de dictat seleccionat no està disponible. Revisa’n la configuració i torna-ho a provar.',
+              captureStartDeadlineExceeded: 'El dictat no ha pogut començar en 60 segons. Comprova l’accés al micròfon i torna-ho a provar.',
+              captureDurationExceeded: 'El dictat ha arribat al límit d’escolta de 60 segons. Torna a començar per continuar.',
+              transcriptionDeadlineExceeded: 'La transcripció ha trigat més de 30 segons. Torna-ho a provar amb un dictat més curt.',
+              transcriptLimitExceeded: 'El text dictat és massa llarg per al redactor. Prova un dictat més curt.',
+              recordedAudioSizeUnavailable: 'Happier no ha pogut verificar la mida de l’enregistrament. Torna a enregistrar.',
+              recordedAudioLimitExceeded: 'L’enregistrament supera el límit de 8 MB. Prova un dictat més curt.',
+              microphoneOwnedByVoice: 'Finalitza Voice abans d’iniciar el dictat.',
+              microphoneOwnedByDictation: 'El dictat ja està fent servir el micròfon. Finalitza el dictat actual abans d’iniciar-ne un altre.',
+          },
     },
 
       voiceSurface: {
@@ -5747,6 +5795,7 @@ deps: {
         connectAgent: 'Connecta',
         installAgentRuntime: 'Instal·la',
         updateAgentRuntime: 'Actualitza',
+        reconnect: 'Torna a connectar',
           start: 'Inicia',
           stop: 'Atura',
           selectSessionToStart: 'Selecciona una sessio per iniciar la veu',
@@ -5775,12 +5824,16 @@ deps: {
 	              microphoneInactive: 'Micròfon inactiu',
 	              microphoneMuted: 'Micròfon silenciat',
 	              providerDataDisclosure: ({ provider }: { provider: string }) => `Com ${provider} gestiona les dades de veu`,
+	              mute: 'Silencia el micròfon',
+	              unmute: 'Activa el micròfon',
 	          },
 	      },
 
       voiceActivity: {
           title: 'Activitat de veu',
           empty: 'Encara no hi ha activitat de veu.',
+          partial: 'En directe',
+          corrected: 'Actualitzat',
           clear: 'Neteja',
           format: {
               voiceAgent: 'Agent de veu',
@@ -5827,6 +5880,22 @@ deps: {
         transcriptEmpty: "Encara no hi ha cap transcripció QA.",
         activityTitle: "Activitat de veu",
         activityEmpty: "Encara no s'ha capturat activitat de veu per a la sessió QA activa.",
+        recordedAudio: {
+          title: "QA d'STT amb àudio enregistrat",
+          uriLabel: "URI de l'àudio enregistrat",
+          uriPlaceholder: "file:///enregistrament.wav o tria un fitxer web",
+          daemonPackIdLabel: "Substitució de l'ID del paquet STT del dimoni",
+          daemonPackIdPlaceholder: "Opcional: aplica la configuració QA d'STT local_neural del dimoni abans de transcriure",
+          daemonMachineIdLabel: "Substitució de l'ID de màquina del dimoni",
+          daemonMachineIdPlaceholder: "Opcional: fixa una màquina de destinació per a l'ID de sessió de l'àudio enregistrat",
+          daemonBasePathLabel: "Substitució de la ruta base del dimoni",
+          daemonBasePathPlaceholder: "Opcional: fixa la ruta base de la màquina per a l'STT del dimoni",
+          chooseFile: "Tria l'àudio enregistrat",
+          noFileSelected: "No s'ha seleccionat cap àudio enregistrat",
+          transcribe: "Transcriu l'àudio enregistrat",
+          statusLabel: "Estat",
+          noResult: "Cap resultat de transcripció",
+        },
       },
 
     server: {
@@ -6952,6 +7021,10 @@ deps: {
         noLatestTurnChanges: 'No s’han detectat canvis de l’últim torn.',
         notRepo: 'No és un repositori de control de versions',
         notUnderSourceControl: 'Aquest directori no està sota control de versions',
+        sourceControlStale: {
+            title: 'El control de versions necessita atenció',
+            body: 'Es mostra la darrera actualització correcta. La comprovació més recent no ha finalitzat.',
+        },
         repositoryInit: {
             initialize: 'Inicialitza el repositori',
             initializing: 'Inicialitzant…',
@@ -7266,7 +7339,7 @@ deps: {
                     pushCurrentBranch: 'Fes push de la branca actual',
                     publish: 'Publica repositori',
                     publishing: 'Publicant…',
-                    noTargets: 'Connecta GitHub o inicia sessió amb gh CLI per publicar aquest repositori.',
+                    targetsUnavailable: "No s'ha pogut comprovar on es pot publicar aquest repositori.",
                     errors: {
                         targetRequired: 'Tria un compte o organització de GitHub.',
                         nameRequired: 'Introdueix un nom de repositori.',
@@ -7545,7 +7618,6 @@ deps: {
             disabledLimitSubtitle: 'S’ha assolit el límit de previsualitzacions públiques. Revoca un enllaç existent abans de crear-ne un altre.',
             disabledNoPreviewSubtitle: 'Obre una previsualització local abans de crear un enllaç públic.',
             disabledReason: {
-                auditRequirementDisabled: 'El registre d’auditoria de les previsualitzacions públiques és obligatori però està desactivat al servidor.',
                 auditUnavailable: 'El registre d’auditoria de la previsualització pública no està disponible.',
                 dnsTlsUnavailable: 'Les previsualitzacions públiques esperen que DNS/TLS estigui a punt.',
                 expired: 'Aquest enllaç de previsualització pública ha caducat.',
@@ -7565,6 +7637,7 @@ deps: {
                 sessionNotAuthorized: 'No tens accés per crear un enllaç públic per a aquesta sessió.',
                 tunnelPortsUnconfigured: 'El servidor no permet cap port de túnel.',
                 tunnelRelayDisabled: 'El relé del servidor per als túnels de màquina està desactivat.',
+                tunnelSigningUnconfigured: 'El servidor no té clau de signatura per als túnels de màquina.',
             },
             createActionA11y: 'Crea un enllaç de previsualització pública',
             revokeActionA11y: 'Revoca l’enllaç de previsualització pública',
@@ -7575,6 +7648,15 @@ deps: {
             revokeConfirmTitle: 'Revocar l’enllaç públic?',
             revokeConfirmMessage: ({ url }: { url: string }) => `Vols revocar l’enllaç de previsualització pública ${url}? Tothom qui l’utilitzi perdrà l’accés.`,
             revokeConfirmCta: 'Revoca l’enllaç',
+            consequenceReach: 'Qualsevol persona que tingui l’enllaç pot obrir aquest servei. No cal iniciar sessió.',
+            consequenceExpiry: 'L’enllaç deixa de funcionar tot sol quan s’esgota la durada indicada a sota.',
+            consequenceRevoke: 'El pots revocar en qualsevol moment, des d’aquest tauler.',
+            lifetimeLabel: 'Durada',
+            linkTypeLabel: 'Tipus d’enllaç',
+            revealUrlA11y: 'Mostra l’enllaç complet',
+            hideUrlA11y: 'Amaga l’enllaç',
+            expiresInClock: ({ clock }: { clock: string }) => `Caduca en ${clock}`,
+            groupFooter: 'Els enllaços públics es registren al registre d’auditoria d’aquesta màquina.',
         },
         actions: {
             terminateDetectedA11y: 'Finalitza el servei local detectat',
@@ -7587,6 +7669,25 @@ deps: {
             stopConfirmTitle: 'Aturar el servei?',
             stopConfirmMessage: ({ service }: { service: string }) => `Vols aturar ${service}? El servei no serà accessible fins que torni a iniciar-se.`,
             stopConfirmCta: 'Atura',
+            startA11y: 'Inicia el servei',
+            failure: {
+                title: 'L’acció no s’ha completat',
+                refused: 'La màquina ha rebutjat aquesta acció. Comprova els permisos de serveis locals d’aquesta màquina i torna-ho a provar.',
+                unavailable: 'Aquesta acció no està disponible per a aquest servei en aquesta màquina.',
+                incomplete: 'L’acció no ha acabat. Pots tornar-ho a provar.',
+            },
+            failureTitle: {
+                start: ({ service }: { service: string }) => `No s’ha pogut iniciar ${service}`,
+                open: ({ service }: { service: string }) => `No s’ha pogut obrir ${service}`,
+                terminate: ({ service }: { service: string }) => `No s’ha pogut finalitzar ${service}`,
+                forget: ({ service }: { service: string }) => `No s’ha pogut amagar ${service}`,
+                stop: ({ service }: { service: string }) => `No s’ha pogut aturar ${service}`,
+                restart: ({ service }: { service: string }) => `No s’ha pogut reiniciar ${service}`,
+                copyAddress: 'No s’ha pogut copiar l’adreça',
+                expose: 'No s’ha pogut crear l’enllaç públic',
+                revokeExposure: 'No s’ha pogut revocar l’enllaç públic',
+                copyExposure: 'No s’ha pogut copiar l’enllaç públic',
+            },
         },
     },
 
@@ -8426,6 +8527,14 @@ deps: {
     },
 
 settingsSession: {
+    newSessionDraftEntry: {
+        title: 'Esborranys de sessió nova',
+        footer: 'Tria si Sessió nova continua l’esborrany d’aquest dispositiu o n’obre un de nou.',
+        resumeTitle: 'Reprèn l’esborrany anterior',
+        resumeSubtitle: 'Continua l’esborrany iniciat des de Sessió nova en aquest dispositiu.',
+        freshTitle: 'Comença sempre de nou',
+        freshSubtitle: 'Obre un esborrany nou cada vegada que triïs Sessió nova.',
+    },
 	            sessionList: {
 	                title: 'Llista de sessions',
 	                footer: 'Personalitza què apareix a cada fila de sessió.',
@@ -9133,7 +9242,7 @@ settingsSession: {
         },
         setupCheck: {
             title: 'Preparació del proveïdor',
-            footer: 'La comprovació només llegeix la configuració desada i les dades locals de preparació. No obre el micròfon, no inicia la veu, no envia àudio ni contacta el proveïdor.',
+            footer: 'La comprovació només llegeix la configuració desada i les dades locals de preparació. No obre el micròfon, no inicia la veu, no envia àudio ni contacta el proveïdor. En iniciar la veu, es torna a comprovar la capacitat vinculada a la sessió.',
             check: 'Comprova la configuració',
             checkSubtitle: 'Revisa passivament la configuració del proveïdor de veu seleccionat.',
             result: 'Estat de la configuració',
@@ -9958,6 +10067,13 @@ settingsSession: {
                 },
             },
             models: {
+                nativeOptions: {
+                    kokoroEnvironmentDefaultTitle: "Predeterminat (des de l’entorn)",
+                    kokoroDefaultSubtitle: "Model de veu neuronal local predeterminat.",
+                    kokoroHigherQualitySubtitle: "Model de veu Kokoro local de més qualitat.",
+                    kokoroEnvironmentDefaultSubtitle: "Fa servir els valors predeterminats del paquet de models Kokoro configurats a l’entorn.",
+                    sherpaStreamingRecommendedSubtitle: "Transmissió en continu, baixa latència (recomanat).",
+                },
                 title: "Models de veu locals",
                 statusTitle: "Servei de models",
                 footer: "Instal·la paquets de models de veu locals al teu dimoni de veu i tria el predeterminat per a cada tipus.",
@@ -10147,6 +10263,7 @@ settingsSession: {
         },
         defaultTitle: 'Què hi ha de nou',
         onboardingShowcase: {
+            details: PRODUCT_STORY_DETAILS_ENGLISH,
                 "title": "Benvingut a Happier",
                 "subtitle": "Els teus agents d’IA, a tot arreu on treballes.",
                 "cards": {
@@ -10677,7 +10794,7 @@ settingsSession: {
         webDesktopHandoffCliOption: 'Amb el terminal (CLI)',
         webDesktopHandoffCliSubtitle: 'Executa unes quantes ordres per allotjar un Relay i enganxa aquí l’URL del Relay.',
         webDesktopOnlyRelayInstallTitle: 'Allotja un Relay en aquest ordinador',
-        webDesktopOnlyRelayInstallSubtitle: 'Això instal·la i inicia l’amfitrió del Relay. Després enganxa aquí l’URL del Relay que es mostri.',
+        webDesktopOnlyRelayInstallSubtitle: 'Això instal·la i inicia l’amfitrió del Relay.',
         webDesktopOnlyRelayStatusTitle: 'Obtén l’URL del Relay',
         webDesktopOnlyRelayStatusSubtitle: 'Executa això per veure l’URL del Relay i després enganxa-la aquí.',
         webDesktopOnlyOptionalNextTitle: 'Opcional: accés segur i proveïdors',
@@ -10711,6 +10828,7 @@ settingsSession: {
         setupThisComputerTitle: 'Configura aquest ordinador',
         controlPanelTitle: 'Resum de preparació',
         activeRelaySummaryTitle: 'Relay actiu',
+        selectedRelaySummaryTitle: 'Relay seleccionat',
         thisComputerSummaryTitle: 'Aquest ordinador',
         nextActionSummaryTitle: 'Acció següent',
         thisComputerReady: 'A punt per a aquest Relay',
@@ -10972,6 +11090,10 @@ settingsSession: {
         discarded: 'Descartat',
         recoveredHistory: 'Historial recuperat',
         pluginAttribution: ({ pluginId }: { pluginId: string }) => `Del connector ${pluginId}`,
+        pluginAttributionExternal: ({ sender, pluginId }: { sender: string; pluginId: string }) => `De ${sender} mitjançant el connector ${pluginId}`,
+        pluginAttributionExternalForwarded: ({ sender, pluginId }: { sender: string; pluginId: string }) => `Reenviat per ${sender} mitjançant el connector ${pluginId}`,
+        pluginAttributionExternalSender: 'un remitent extern',
+        pluginAttributionExternalBot: 'un bot extern',
         unknownEvent: 'Esdeveniment desconegut',
         runtimeConfigOutcomeAppliesBeforeNextMessage: "S'aplicarà abans del teu proper missatge",
         runtimeConfigOutcomeQueuedUntilReady: 'En cua fins que estigui a punt',
@@ -11363,6 +11485,24 @@ settingsSession: {
         },},
 
     profiles: {
+        launchPlacement: {
+            title: 'On s’executen les sessions',
+            footer: 'És una preferència que es resol quan s’inicia la sessió. Mai desa una màquina com a resposta.',
+            none: 'Sense preferència',
+            automatic: 'Resol automàticament',
+            ask: 'Pregunta sempre',
+            fixed: 'Sempre aquesta màquina',
+            directory: 'Directori',
+            directoryPlaceholder: 'Deixa-ho buit per a l’arrel del projecte resolt',
+        },
+        launchCheckout: {
+            title: 'Còpia de treball',
+            footer: 'Com obté una sessió la seva còpia de treball quan s’executa en un projecte.',
+            none: 'Sense preferència',
+            reuseWorkspace: 'Reutilitza la còpia del projecte',
+            createWorktree: 'Crea un worktree',
+            ask: 'Pregunta sempre',
+        },
         title: 'Perfils',
         subtitle: 'Gestiona els teus perfils de configuració',
         sessionUses: ({ profile }: { profile: string }) => `Aquesta sessió utilitza: ${profile}`,
@@ -11737,6 +11877,7 @@ settingsSession: {
       ...pluginWebhookAdministrationTranslations['ca'],
       ...pluginAccountDataEraseTranslations.ca,
       ...pluginAccountReleaseSelectionTranslations.ca,
+      ...pluginMachineMatrixTranslations.ca,
       ...pluginInvocationLogTranslations.ca,
       ...eventAutomationComposerTranslations.ca,
       title: "Catàleg de connectors",
@@ -11763,7 +11904,7 @@ settingsSession: {
       developmentSourceInstallSucceeded: "Font de desenvolupament aprovada i projectada.",
       developmentSourceInstallFailed: ({ outcome }: { outcome: string }) => `No s'ha instal·lat la font de desenvolupament (${outcome}).`,
       developmentTrustSourceRootTitle: "Vols confiar en aquesta carpeta de connector?",
-      developmentTrustSourceRootBody: ({ path }: { path: string }) => `Happier instal·larà dependències, compilarà i executarà codi des de:\n\n${path}\n\nContinua només si confies en tot el que hi ha en aquesta carpeta i en tot el que pugui descarregar. Revisaràs el connector al pas següent.`,
+      developmentTrustSourceRootBody: ({ path, machine, server }: { path: string; machine: string; server: string }) => `Happier instal·larà dependències, compilarà i executarà codi des de:\n\n${path} a ${machine} (${server})\n\nContinua només si confies en tot el que hi ha en aquesta carpeta i en tot el que pugui descarregar. Revisaràs el connector al pas següent.`,
       developmentTrustSourceRootConfirm: "Confia en la carpeta",
       pendingChangesTitle: "Esperant la teva decisió",
       pendingChangesFooter: "Canvis de connector preparats en aquesta màquina. Un agent en pot preparar un, però només tu el pots aprovar.",
@@ -11840,7 +11981,8 @@ settingsSession: {
       marketplaceInstallReviewBody: ({ identity, verification, executableRealms, contributions, uiArtifacts, requiredAccess, optionalAccess, compatibility }: { identity: string; verification: string; executableRealms: string; contributions: string; uiArtifacts: string; requiredAccess: string; optionalAccess: string; compatibility: string }) => `Identitat:\n${identity}\n\nSenyals de verificació:\n${verification}\n\nCodi executable: ${executableRealms}\nContribucions: ${contributions}\nArtefactes de la interfície: ${uiArtifacts}\n\nEl codi de dimoni i React Native de confiança s'executa amb l'autoritat de l'aplicació o del procés i pot utilitzar directament fitxers, xarxa, entorn i processos. L'accés a l'amfitrió que s'indica a continuació descriu serveis mediats per Happier; no és un entorn aïllat per al codi executable del connector.\n\nDivulgacions i serveis cooperatius obligatoris:\n${requiredAccess}\n\nRecursos opcionals de l'amfitrió (desactivats per defecte):\n${optionalAccess}\n\nCompatibilitat i actualitzacions:\n${compatibility}`,
       marketplaceInstallDecisionFailed: ({ outcome }: { outcome: string }) => `El connector no s'ha instal·lat (${outcome}).`,
       marketplaceChangeDecisionFailed: ({ action, outcome }: { action: string; outcome: string }) => `${action} ha fallat (${outcome}).`,
-      pluginChangeConfirmBody: ({ action, name }: { action: string; name: string }) => `Confirma l'acció «${action}» per a ${name}.`,
+      pluginChangeConfirmBody: ({ action, name, machine, server }: { action: string; name: string; machine: string; server: string }) => `Confirma l'acció «${action}» per a ${name} a ${machine} (${server}).`,
+      pluginChangeConfirmTarget: ({ machine, server }: { machine: string; server: string }) => `Aquesta acció s'aplica a ${machine} ({server}).`,
       forgetTrust: "Oblida la confiança",
       rollback: "Reverteix",
       uninstall: "Desinstal·la",
@@ -12026,3 +12168,4 @@ settingsSession: {
     },} as const;
 
 export type TranslationsCa = typeof ca;
+import { PRODUCT_STORY_DETAILS_ENGLISH } from '@happier-dev/brand/product-story';

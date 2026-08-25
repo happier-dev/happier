@@ -50,9 +50,9 @@ const stylesheet = StyleSheet.create((theme) => ({
         gap: 8,
     },
     title: {
-        color: theme.colors.text.primary,
-        fontSize: 12,
+        ...Typography.rowMeta(),
         ...Typography.default('semiBold'),
+        color: theme.colors.text.primary,
     },
     inputRow: {
         flexDirection: 'row',
@@ -60,6 +60,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         gap: 8,
     },
     input: {
+        ...Typography.keyHint(),
         flex: 1,
         borderRadius: 6,
         borderWidth: 1,
@@ -68,8 +69,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingHorizontal: 10,
         paddingVertical: 6,
         color: theme.colors.text.primary,
-        fontSize: 12,
-        ...Typography.mono(),
     },
     submit: {
         borderRadius: 6,
@@ -80,9 +79,9 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingVertical: 6,
     },
     submitText: {
-        color: theme.colors.text.primary,
-        fontSize: 12,
+        ...Typography.rowMeta(),
         ...Typography.default('semiBold'),
+        color: theme.colors.text.primary,
     },
     entry: {
         gap: 4,
@@ -94,24 +93,25 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingVertical: 6,
     },
     expression: {
+        ...Typography.keyHint(),
         color: theme.colors.text.primary,
-        fontSize: 12,
-        ...Typography.mono(),
     },
     meta: {
+        ...Typography.rowMeta(),
         color: theme.colors.text.secondary,
-        fontSize: 12,
-        ...Typography.default(),
     },
     error: {
-        color: theme.colors.state.warning.foreground,
-        fontSize: 12,
+        ...Typography.rowMeta(),
         ...Typography.default('semiBold'),
+        // Q2 measured the theme's semantic FOREGROUNDS as text at 2.20–3.55:1 in light theme —
+        // they are fill colours, not text colours. The words carry their own meaning here, so
+        // they take `text.primary`; the hue stays on the border/glyph beside them, where it is a
+        // redundant cue rather than the only one.
+        color: theme.colors.text.primary,
     },
     empty: {
+        ...Typography.rowMeta(),
         color: theme.colors.text.secondary,
-        fontSize: 12,
-        ...Typography.default(),
     },
     node: {
         gap: 2,
@@ -123,14 +123,12 @@ const stylesheet = StyleSheet.create((theme) => ({
         gap: 6,
     },
     nodeName: {
+        ...Typography.keyHint(),
         color: theme.colors.text.primary,
-        fontSize: 12,
-        ...Typography.mono(),
     },
     nodeValue: {
+        ...Typography.keyHint(),
         color: theme.colors.text.secondary,
-        fontSize: 12,
-        ...Typography.mono(),
     },
     toggle: {
         borderRadius: 4,
@@ -141,9 +139,9 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingVertical: 1,
     },
     toggleText: {
-        color: theme.colors.text.secondary,
-        fontSize: 11,
+        ...Typography.rowMeta(),
         ...Typography.default('semiBold'),
+        color: theme.colors.text.secondary,
     },
     children: {
         gap: 2,

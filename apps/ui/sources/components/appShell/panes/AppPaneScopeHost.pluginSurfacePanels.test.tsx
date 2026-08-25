@@ -161,6 +161,51 @@ function setPaneState(input: Readonly<{
 }
 
 describe('AppPaneScopeHost plugin destinations', () => {
+    it('hands a destination outside a nested Session pane scope to the enclosing semantic owner', async () => {
+        const { AppPaneScopeHost } = await import('./AppPaneScopeHost');
+        const {
+            PluginSurfaceDestinationNavigationBindingProvider,
+        } = await import('@/components/plugins/surfaces/pluginSurfaceDestinationNavigation');
+        const enclosingOpenSurface = vi.fn(async () => ({ ok: true as const }));
+        const enclosingBinding = {
+            targetKind: 'app' as const,
+            openSurface: enclosingOpenSurface,
+            registerOwner: () => () => undefined,
+        };
+        let nestedOpenSurface: ((request: Readonly<{
+            destination: { pluginId: string; localId: string };
+        }>) => Promise<unknown>) | undefined;
+
+        await renderScreen(
+            <PluginSurfaceDestinationNavigationBindingProvider binding={enclosingBinding}>
+                <AppPaneScopeHost
+                    scopeId="scope1"
+                    main={<div />}
+                    surfaceScope={{
+                        targetKind: 'session',
+                        sessionId: 'session-1',
+                        pluginUiProjection: projectionWith(),
+                        projectionPhase: 'current',
+                        machineId: 'machine-1',
+                        serverId: 'server-1',
+                        platform: 'web',
+                        interactionEnabled: true,
+                    }}
+                    onPluginSurfaceOpenChange={(handler) => {
+                        nestedOpenSurface = handler
+                            ? async (request) => await handler(request)
+                            : undefined;
+                    }}
+                />
+            </PluginSurfaceDestinationNavigationBindingProvider>,
+        );
+
+        expect(nestedOpenSurface).toBeTypeOf('function');
+        const request = { destination: { pluginId: 'acme.app', localId: 'overview' } };
+        await expect(nestedOpenSurface!(request)).resolves.toEqual({ ok: true });
+        expect(enclosingOpenSurface).toHaveBeenCalledExactlyOnceWith(request);
+    });
+
     it('rejects a phone-sized web pane destination while retaining tablet-web admission', async () => {
         const { AppPaneScopeHost } = await import('./AppPaneScopeHost');
         const { PluginReactNativeUnavailable } = await import('@/components/plugins/reactNative/PluginReactNativeUnavailable');

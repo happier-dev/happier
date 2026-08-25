@@ -4,12 +4,6 @@ import {
     type LocalServiceInventoryRow,
     type LocalServiceInventoryState,
 } from '@/sync/domains/local/services/inventory/store';
-import {
-    applyManagedLocalServicesSnapshot,
-    createManagedLocalServicesState,
-    type ManagedLocalServiceRow,
-    type ManagedLocalServicesState,
-} from '@/sync/domains/local/services/managed/store';
 
 export function buildLocalServiceInventoryRow(
     overrides: Partial<LocalServiceInventoryRow> = {},
@@ -46,39 +40,6 @@ export function buildLocalServiceInventoryState(input: Readonly<{
         generatedAt: input.generatedAt ?? 1_000,
         refreshState: input.refreshState ?? 'idle',
         entries: input.rows ?? [],
-        diagnostics: input.diagnostics ?? [],
-    });
-}
-
-export function buildManagedLocalServiceRow(
-    overrides: Partial<ManagedLocalServiceRow> = {},
-): ManagedLocalServiceRow {
-    return {
-        id: 'managed-1',
-        ownerLabel: 'Plugin preview',
-        phase: 'running',
-        launchMode: 'detectAfterLaunch',
-        routeName: 'plugin-preview',
-        inventoryId: 'inventory-1',
-        port: 5173,
-        url: 'http://127.0.0.1:5173',
-        supportedActions: [],
-        diagnostics: [],
-        updatedAt: 1_000,
-        ...overrides,
-    };
-}
-
-export function buildManagedLocalServicesState(input: Readonly<{
-    generatedAt?: number;
-    refreshState?: 'idle' | 'refreshing' | 'error';
-    rows?: readonly ManagedLocalServiceRow[];
-    diagnostics?: readonly unknown[];
-}> = {}): ManagedLocalServicesState {
-    return applyManagedLocalServicesSnapshot(createManagedLocalServicesState(), {
-        generatedAt: input.generatedAt ?? 1_000,
-        refreshState: input.refreshState ?? 'idle',
-        rows: input.rows ?? [],
         diagnostics: input.diagnostics ?? [],
     });
 }

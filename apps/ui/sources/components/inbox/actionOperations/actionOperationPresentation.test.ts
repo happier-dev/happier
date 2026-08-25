@@ -4,6 +4,7 @@ import type { ActionOperationProjection } from '@/sync/domains/actionOperations/
 import {
     classifyActionOperationSection,
     readActionOperationDestinationSessionId,
+    readActionOperationDestinationServerId,
     readActionOperationPluginIdentity,
     resolveActionOperationStatus,
 } from './actionOperationPresentation';
@@ -63,6 +64,15 @@ describe('action operation inbox presentation', () => {
             settledAt: 2_000,
             result: { sessionId: 'spawned-session' },
         }))).toBe('spawned-session');
+        expect(readActionOperationDestinationServerId(operation({
+            actionId: 'session.spawn_new',
+            state: 'succeeded',
+            settledAt: 2_000,
+            result: {
+                sessionId: 'spawned-session',
+                executionTarget: { serverId: 'server-b', machineId: 'machine-1' },
+            },
+        }))).toBe('server-b');
         expect(readActionOperationDestinationSessionId(operation({
             actionId: 'session.handoff',
             state: 'succeeded',

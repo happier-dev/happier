@@ -8,6 +8,7 @@ import {
     ItemGroupSelectionContext,
 } from '@/components/ui/lists/ItemGroup';
 import { useItemGroupRowPosition } from '@/components/ui/lists/ItemGroupRowPosition';
+import { ItemRowAccessibleNameProvider } from '@/components/ui/lists/ItemRowAccessibleName';
 import { getItemGroupRowCornerRadii } from '@/components/ui/lists/itemGroupRowCorners';
 import {
     resolveItemSubtitleMaxLines,
@@ -29,6 +30,7 @@ import {
     ITEM_ICON_GLYPH_SIZE,
     MENU_ROW_METRICS,
     ITEM_ICON_MARGIN_RIGHT,
+    ITEM_ROW_PADDING_HORIZONTAL,
     ITEM_SUBTITLE_TEXT_METRICS,
     ITEM_TITLE_TEXT_METRICS,
 } from '@/components/ui/lists/itemDensityMetrics';
@@ -57,10 +59,14 @@ type ItemTextEllipsizeMode = NonNullable<TextProps['ellipsizeMode']>;
 
 export interface ItemProps {
     testID?: string;
+    /** Imperative focus target for list owners that restore focus after row removal. */
+    pressableRef?: React.Ref<React.ComponentRef<typeof Pressable>>;
     title: React.ReactNode;
     subtitle?: React.ReactNode;
     subtitleTestID?: string;
     subtitleAccessory?: React.ReactNode;
+    /** Override the primitive title line allowance; defaults to one with a subtitle, two otherwise. */
+    titleLines?: number;
     subtitleLines?: number; // set 0 or undefined for auto/multiline
     detail?: string;
     detailTestID?: string;
@@ -154,21 +160,21 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     container: {
         flexDirection: 'row',
         alignItems: 'center',
-        paddingHorizontal: 16,
+        paddingHorizontal: ITEM_ROW_PADDING_HORIZONTAL.comfortable,
         minHeight: Platform.select({ ios: 44, default: 56 }),
     },
     containerCompact: {
-        paddingHorizontal: 12,
+        paddingHorizontal: ITEM_ROW_PADDING_HORIZONTAL.compact,
         // Compact rows are used heavily in right rails (files/SCM) and should feel editor-like on web/tablet.
         // Keep iOS slightly taller for touch affordance, but reduce desktop web density.
         minHeight: Platform.select({ ios: 38, default: 34 }),
     },
     containerCozy: {
-        paddingHorizontal: 14,
+        paddingHorizontal: ITEM_ROW_PADDING_HORIZONTAL.cozy,
         minHeight: Platform.select({ ios: 42, default: 44 }),
     },
     containerTight: {
-        paddingHorizontal: 10,
+        paddingHorizontal: ITEM_ROW_PADDING_HORIZONTAL.tight,
         // Tight density is reserved for file trees / editor-like lists where users expect high information density.
         // Keep iOS sufficiently tall for touch affordance.
         minHeight: Platform.select({ ios: 36, default: 24 }),
@@ -320,10 +326,12 @@ export const Item = React.memo<ItemProps>((props) => {
     
     const {
         testID,
+        pressableRef,
         title,
         subtitle,
         subtitleTestID,
         subtitleAccessory,
+        titleLines,
         subtitleLines,
         detail,
         detailTestID,
@@ -479,6 +487,13 @@ export const Item = React.memo<ItemProps>((props) => {
         busy: loading,
     });
     const isGroupedRadio = groupItem.grouped;
+    const assignPressableRef = React.useCallback((target: React.ComponentRef<typeof Pressable> | null) => {
+        const refs = [isGroupedRadio ? groupItem.targetRef : null, pressableRef];
+        for (const ref of refs) {
+            if (typeof ref === 'function') ref(target);
+            else if (ref && 'current' in ref) (ref as React.MutableRefObject<typeof target>).current = target;
+        }
+    }, [groupItem.targetRef, isGroupedRadio, pressableRef]);
     const isKeyboardActivatableRole = isRadioRole
         || inferredInteractiveWebRole === 'option'
         || inferredInteractiveWebRole === 'button';
@@ -604,7 +619,26 @@ export const Item = React.memo<ItemProps>((props) => {
         const candidate = (isHovered ? leftElementWhenHovered : null) ?? leftElement ?? sizedIcon ?? null;
         return normalizeNodeForView(candidate);
     }, [isHovered, leftElement, leftElementWhenHovered, sizedIcon]);
-    const rightAccessory = React.useMemo(() => normalizeNodeForView(rightElement ?? null), [rightElement]);
+    /**
+     * The name this row lends to an accessory control that has none of its own.
+     *
+     * The title alone — not the row's full `title. subtitle. detail` label — because a
+     * control announces its own state next to it, and because that is already the
+     * convention at every call site that names its switch by hand.
+     */
+    const accessoryAccessibleName = React.useMemo(
+        () => accessibilityLabel ?? buildActionRowAccessibilityLabel([title]),
+        [accessibilityLabel, title],
+    );
+    const rightAccessory = React.useMemo(() => {
+        const normalized = normalizeNodeForView(rightElement ?? null);
+        if (normalized == null) return null;
+        return (
+            <ItemRowAccessibleNameProvider value={accessoryAccessibleName}>
+                {normalized}
+            </ItemRowAccessibleNameProvider>
+        );
+    }, [accessoryAccessibleName, rightElement]);
     const subtitleAccessoryNode = React.useMemo(() => normalizeNodeForView(subtitleAccessory ?? null), [subtitleAccessory]);
     const chevronAccessory = React.useMemo(() => {
         if (!showAccessory) return null;
@@ -675,7 +709,7 @@ export const Item = React.memo<ItemProps>((props) => {
                     renderPrimitiveText({
                         value: title,
                         style: [styles.title, titleSizeStyle, titleColor, titleStyle],
-                        numberOfLines: resolveItemTitleMaxLines(Boolean(subtitle)),
+                        numberOfLines: titleLines ?? resolveItemTitleMaxLines(Boolean(subtitle)),
                         ellipsizeMode: titleEllipsizeMode,
                     })
                 ) : (
@@ -793,6 +827,7 @@ export const Item = React.memo<ItemProps>((props) => {
         title,
         titleColor,
         titleEllipsizeMode,
+        titleLines,
         titleSizeStyle,
         titleStyle,
         theme.colors.text.secondary,
@@ -887,7 +922,7 @@ export const Item = React.memo<ItemProps>((props) => {
             <>
                 <View style={[containerCore, style]}>
                     <Pressable
-                        ref={isGroupedRadio ? groupItem.targetRef as any : undefined}
+                        ref={assignPressableRef}
                         testID={testID}
                         {...webTestIdProps}
                         {...webDisabledProps}
@@ -956,7 +991,7 @@ export const Item = React.memo<ItemProps>((props) => {
     if (isInteractive) {
         return (
             <Pressable
-                ref={isGroupedRadio ? groupItem.targetRef as any : undefined}
+                ref={assignPressableRef}
                 testID={testID}
                 {...webTestIdProps}
                 {...webDisabledProps}

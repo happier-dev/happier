@@ -64,6 +64,14 @@ export const ITEM_SUBTITLE_TEXT_METRICS: Record<ResolvedItemDensity, Readonly<{
     },
 };
 
+/** Canonical horizontal inset for each Item density. */
+export const ITEM_ROW_PADDING_HORIZONTAL: Record<ResolvedItemDensity, number> = {
+    comfortable: 16,
+    cozy: 14,
+    compact: 12,
+    tight: 10,
+};
+
 export const ITEM_ICON_BOX_SIZE: Record<ResolvedItemDensity, number> = {
     comfortable: selectValue({ ios: 32, default: 32 }),
     cozy: selectValue({ ios: 22, default: 24 }),

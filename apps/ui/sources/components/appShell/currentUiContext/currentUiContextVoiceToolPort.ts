@@ -2,6 +2,7 @@ import * as React from 'react';
 
 import {
     arePluginMachineExecutionOriginsEqual,
+    formatQualifiedPluginActionId,
     type ActionDefinitionV1,
     type PluginContributionIdentityV1,
     type PluginProjectedActionV2,
@@ -27,6 +28,7 @@ import {
 } from '@/components/plugins/surfaces/pluginSurfaceFeedback';
 import {
     createPluginUiProjectedActionResolver,
+    isPluginProjectedActionExecutable,
     type PluginUiProjectionModel,
 } from '@/sync/domains/plugins/ui/projection';
 import { resolvePluginProjectedActionPresentation } from '@/sync/domains/plugins/ui/actionPresentation';
@@ -215,7 +217,7 @@ function projectedActionToDefinition(
         : { result: 'required', flow: 'blocking' };
     return Object.freeze({
         kindVersion: 1,
-        id: `${action.pluginId}/${action.id}`,
+        id: formatQualifiedPluginActionId({ pluginId: action.pluginId, localId: action.id }),
         title: presentation.title,
         description: presentation.description,
         safety: action.dangerLevel === 'safe' ? 'safe' : 'danger',
@@ -249,7 +251,7 @@ function listCurrentContributedActionDefinitions(
     const readSnapshot = () => projection;
     return Object.values(projection.actionsById)
         .filter((action) => {
-            if (action.available !== true || !action.surfaces.includes('voice')) return false;
+            if (!isPluginProjectedActionExecutable(action) || !action.surfaces.includes('voice')) return false;
             const resolved = resolveCurrentAction(readSnapshot, {
                 pluginId: action.pluginId,
                 localId: action.id,
@@ -392,6 +394,7 @@ export function createCurrentUiContextVoiceToolPort(
                 },
                 signal: request.signal ?? new AbortController().signal,
                 isCurrent,
+                pluginUiProjection: input.readProjection(),
             })
             : undefined;
 

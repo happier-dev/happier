@@ -1,3 +1,4 @@
+import { PRODUCT_STORY_DETAILS_ENGLISH } from '@happier-dev/brand/product-story';
 import { externalSessionOperationTranslations } from './externalSessionOperationTranslations';
 import { externalSessionSettingsTranslations } from './externalSessionSettingsTranslations';
 import { pluginPermissionTranslations } from './pluginPermissionTranslations';
@@ -8,9 +9,11 @@ import { pluginWebhookAdministrationTranslations } from './pluginWebhookAdminist
 import { pluginAccountDataEraseTranslations } from './pluginAccountDataEraseTranslations';
 import { apiTokenSettingsTranslations } from './apiTokenSettingsTranslations';
 import { pluginAccountReleaseSelectionTranslations } from './pluginAccountReleaseSelectionTranslations';
+import { pluginMachineMatrixTranslations } from './pluginMachineMatrixTranslations';
 import { pluginInvocationLogTranslations } from './pluginInvocationLogTranslations';
 import { eventAutomationComposerTranslations } from './eventAutomationComposerTranslations';
 import { actionOperationInboxTranslations } from './actionOperationInboxTranslations';
+import { sessionDraftTranslations } from './sessionDraftTranslations';
 
 const mcpServersUxTranslationExtension = {
   mcpServersConfiguredEmptySubtitle: 'Create a server, import host JSON, or install a recommended preset.',
@@ -476,6 +479,7 @@ function plural({ count, singular, plural }: { count: number; singular: string; 
  * - New translation keys must be added to ALL language files
  */
 export const en = {
+    ...sessionDraftTranslations,
     transferRecovery: {
         title: 'Finish staged upload',
         message: 'The upload reached the machine, but the final save needs attention. Retry only the final save step, or discard the staged upload.',
@@ -555,6 +559,10 @@ export const en = {
             composerSendImmediate: 'Send immediately',
             composerSendPending: 'Send to pending queue',
             commandPaletteOpen: 'Open command palette',
+            browserAddressFocus: 'Focus browser address bar',
+            browserBack: 'Browser back',
+            browserForward: 'Browser forward',
+            browserReload: 'Reload browser page',
             modeCycle: 'Cycle mode',
             shortcutsHelpOpen: 'Open shortcuts help',
             sessionNew: 'Create new session',
@@ -1064,6 +1072,24 @@ export const en = {
                 cronSubtitle: 'Advanced schedule expression.',
                 cronHelpText: 'Standard 5-field cron: minute hour day-of-month month day-of-week.',
             },
+            confirm: {
+                createTitle: ({ name }: { name: string }) => `Create “${name}”?`,
+                editTitle: ({ name }: { name: string }) => `Save changes to “${name}”?`,
+                createConfirm: 'Create automation',
+                editConfirm: 'Save automation',
+                trigger: ({ pluginId, eventLocalId }: { pluginId: string; eventLocalId: string }) =>
+                    `Trigger: ${eventLocalId} from ${pluginId}`,
+                observationCheckpointedPull: 'Events arrive by polling the source.',
+                observationDurablePush: 'Events arrive through a Happier-hosted webhook. The Happier server receives and verifies each provider delivery.',
+                watcher: ({ machineId }: { machineId: string }) => `Watched by machine ${machineId}`,
+                executors: ({ machineIds }: { machineIds: string }) => `Runs on machine ${machineIds}`,
+                targetNewSession: 'Each matching event creates a new session unattended.',
+                targetExistingSession: 'Each matching event sends work into the selected existing session unattended.',
+                targetExecutionRun: ({ permissionMode }: { permissionMode: string }) =>
+                    `Each matching event starts an unattended execution run with permission mode “${permissionMode}”.`,
+                enabled: 'It is enabled and will run as soon as a matching event arrives.',
+                disabled: 'It is saved disabled and will not run until you enable it.',
+            },
             trigger: {
                 schedule: 'Schedule',
                 event: 'Event',
@@ -1095,6 +1121,8 @@ export const en = {
                 webhookEndpointUrl: 'PAYLOAD URL',
                 webhookEndpointSecret: 'SECRET (SHOWN ONCE)',
                 webhookEndpointSecretLost: 'This endpoint already exists and its secret was shown once. Rotate the credential from the webhook settings to get a new one.',
+                webhookEndpointAwaitingConfirmation: 'Happier has not received a verified delivery from this webhook yet, so it is not a working delivery path. Save the webhook in the provider, then recheck. The trigger can be saved either way, but it will not run until a signed delivery arrives.',
+                webhookEndpointRecheck: 'Recheck webhook',
                 eventFilter: 'EVENT FILTER (OPTIONAL)',
                 eventFilterPlaceholder: '{"v":1,"all":[…]}',
                 eventFilterInvalid: 'Enter a valid Event filter.',
@@ -1167,6 +1195,18 @@ export const en = {
             emptyBody: 'Create one from the New Session flow to run scheduled sessions on your machines.',
             createAutomationA11y: 'Create automation',
         },
+        settings: {
+            title: 'Automation settings',
+            openSubtitle: 'Configure capacity and run-history retention.',
+            failedToLoad: 'Failed to load automation settings.',
+            updateFailed: 'Failed to update automation settings.',
+            maxActiveRunsPerMachine: 'Maximum active runs per machine',
+            maxActiveRunsPerMachineSubtitle: 'Limits how many runs each machine can actively claim at once.',
+            maxActiveRunsPerMachinePrompt: 'Enter a whole number from 1 to 2,147,483,647.',
+            maxActiveRunsPerMachineInvalid: 'Enter a whole number from 1 to 2,147,483,647.',
+            runRetention: 'Keep run history forever',
+            runRetentionSubtitle: 'When off, eligible completed runs are retained for 30 days.',
+        },
         detail: {
             invalidId: 'Invalid automation id.',
             notFound: 'Automation not found.',
@@ -1189,6 +1229,7 @@ export const en = {
                 endpointTitle: 'Webhook endpoint',
                 endpointObservingSince: ({ time }: { time: string }) => `Receiving deliveries since ${time}`,
                 sourceStatusUnreported: 'Waiting for the first report',
+                sourceStatusUnavailable: 'Source status unavailable',
                 sourceCatalogStatusUnavailable: 'Source currentness unavailable',
                 watcherMachineUnknown: 'This machine is no longer in your account, so this watcher cannot observe events.',
                 watcherMachineRevoked: 'This machine was revoked, so this watcher cannot observe events.',
@@ -1208,6 +1249,12 @@ export const en = {
             deleteConfirmTitle: 'Delete automation',
             deleteConfirmMessage: 'This automation and its schedule will be removed.',
             deleteConfirmButton: 'Delete',
+            clearHistory: 'Clear run history',
+            clearHistorySubtitle: 'Remove completed runs that are eligible for removal. Active runs stay available.',
+            clearHistoryConfirmTitle: 'Clear run history?',
+            clearHistoryConfirmMessage: 'Eligible completed runs will be permanently removed. Active runs will stay available.',
+            clearHistoryConfirmButton: 'Clear history',
+            clearHistoryFailed: 'Failed to clear run history.',
             machineAssignmentsTitle: 'Machine assignments',
             machineAssignmentsFooter: 'Enable at least one machine for this automation to run.',
             refreshFailed: 'Failed to refresh automation.',
@@ -1244,6 +1291,7 @@ export const en = {
                 sourceTitle: 'Observation source',
                 scheduled: ({ time }: { time: string }) => `Scheduled: ${time}`,
                 updated: ({ time }: { time: string }) => `Updated: ${time}`,
+                contentRemoved: 'Run content removed',
                 error: ({ message }: { message: string }) => `Error: ${message}`,
                 attemptTitle: 'Attempt',
                 attempt: ({ attempt }: { attempt: number }) => `Attempt ${attempt}`,
@@ -2944,6 +2992,8 @@ export const en = {
             fallbackDisabled: 'Account fallback is disabled on this server.',
             duplicateMember: 'This account is already in the group.',
             groupAlreadyExists: 'An account group with this id already exists.',
+            groupCapacityExhausted: 'This account already has the maximum number of account groups. Delete one you no longer need and try again.',
+            connectedAccountCapacityExhausted: 'This account already has the maximum number of connected accounts. Disconnect one you no longer need and try again.',
             invalidGroup: 'This account group is invalid. Review its settings and try again.',
             requestFailedWithStatus: ({ status }: { status: number }) => `The connected-service request failed (${status}). Refresh and try again.`,
             generic: 'The connected-service action failed. Refresh and try again.',
@@ -4554,6 +4604,10 @@ export const en = {
             disabledDescription: 'Enable this provider before using its models.',
             unreachableTitle: 'Provider is unreachable',
             unreachableDescription: 'Check that the service is running and the endpoint is correct, then try again.',
+            machineUnavailableTitle: 'Selected machine is unavailable',
+            machineUnavailableDescription: 'Reconnect the selected machine, then try again.',
+            managedRequiresDaemonTitle: 'This provider needs the Happier daemon',
+            managedRequiresDaemonDescription: 'Start this session through Happier so the daemon can manage the provider, then try again.',
             rpcResponseInvalidTitle: 'Provider response could not be read',
             rpcResponseInvalidDescription: 'Happier received an unexpected response from the selected machine. Try again.',
             mutationOutcomeUnknownTitle: 'Provider change needs review',
@@ -6609,6 +6663,9 @@ export const en = {
         transcript: {
             olderLoadFailedTitle: 'Couldn’t load older messages',
             olderLoadFailedBody: 'The rest of this conversation is still here. Try loading the older messages again.',
+            olderLoadContinueTitle: 'Load older messages',
+            olderLoadContinueBody: 'More messages are available. Load the next page to continue reading.',
+            olderLoadContinueAction: 'Load older messages',
         },
 
         sharing: {
@@ -8043,6 +8100,10 @@ export const en = {
           noLatestTurnChanges: 'No latest-turn changes currently detected.',
           notRepo: 'Not a source-control repository',
           notUnderSourceControl: 'This directory is not under source control',
+          sourceControlStale: {
+              title: 'Source control needs attention',
+              body: 'Showing the last update that succeeded. The latest refresh did not complete.',
+          },
           repositoryInit: {
               initialize: 'Initialize repository',
               initializing: 'Initializing…',
@@ -8360,7 +8421,7 @@ export const en = {
                     pushCurrentBranch: 'Push current branch',
                     publish: 'Publish repository',
                     publishing: 'Publishing…',
-                    noTargets: 'Connect GitHub or sign in with gh CLI to publish this repository.',
+                    targetsUnavailable: 'Could not check where this repository can be published.',
                     errors: {
                         targetRequired: 'Choose a GitHub account or organization.',
                         nameRequired: 'Enter a repository name.',
@@ -8639,7 +8700,6 @@ export const en = {
             disabledLimitSubtitle: 'Public preview limit reached. Revoke an existing link before creating another.',
             disabledNoPreviewSubtitle: 'Open a local preview before creating a public link.',
             disabledReason: {
-                auditRequirementDisabled: 'Public preview audit logging is required but turned off on the server.',
                 auditUnavailable: 'Public preview audit logging is unavailable.',
                 dnsTlsUnavailable: 'Public previews are waiting for DNS/TLS to be ready.',
                 expired: 'This public preview link has expired.',
@@ -8659,6 +8719,7 @@ export const en = {
                 sessionNotAuthorized: 'You do not have access to create a public link for this session.',
                 tunnelPortsUnconfigured: 'The server allows no tunnel ports.',
                 tunnelRelayDisabled: 'The server relay for machine tunnels is turned off.',
+                tunnelSigningUnconfigured: 'The server has no signing key for machine tunnels.',
             },
             createActionA11y: 'Create public preview link',
             revokeActionA11y: 'Revoke public preview link',
@@ -8669,6 +8730,15 @@ export const en = {
             revokeConfirmTitle: 'Revoke public link?',
             revokeConfirmMessage: ({ url }: { url: string }) => `Revoke the public preview link ${url}? Anyone using it will lose access.`,
             revokeConfirmCta: 'Revoke link',
+            consequenceReach: 'Anyone who has the link can open this service. No sign-in is required.',
+            consequenceExpiry: 'The link stops working on its own when the lifetime below runs out.',
+            consequenceRevoke: 'You can revoke it at any time, from this pane.',
+            lifetimeLabel: 'Lifetime',
+            linkTypeLabel: 'Link type',
+            revealUrlA11y: 'Show the full link',
+            hideUrlA11y: 'Hide the link',
+            expiresInClock: ({ clock }: { clock: string }) => `Expires in ${clock}`,
+            groupFooter: 'Public links are recorded in this machine’s audit log.',
         },
         actions: {
             terminateDetectedA11y: 'Terminate detected local service',
@@ -8681,6 +8751,25 @@ export const en = {
             stopConfirmTitle: 'Stop service?',
             stopConfirmMessage: ({ service }: { service: string }) => `Stop ${service}? The service will no longer be reachable until it starts again.`,
             stopConfirmCta: 'Stop',
+            startA11y: 'Start service',
+            failure: {
+                title: 'Action did not complete',
+                refused: 'The machine refused this action. Check this machine’s local-service permissions and try again.',
+                unavailable: 'This action is not available for this service on this machine.',
+                incomplete: 'The action did not finish. You can try it again.',
+            },
+            failureTitle: {
+                start: ({ service }: { service: string }) => `Could not start ${service}`,
+                open: ({ service }: { service: string }) => `Could not open ${service}`,
+                terminate: ({ service }: { service: string }) => `Could not terminate ${service}`,
+                forget: ({ service }: { service: string }) => `Could not hide ${service}`,
+                stop: ({ service }: { service: string }) => `Could not stop ${service}`,
+                restart: ({ service }: { service: string }) => `Could not restart ${service}`,
+                copyAddress: 'Could not copy the address',
+                expose: 'Could not create the public link',
+                revokeExposure: 'Could not revoke the public link',
+                copyExposure: 'Could not copy the public link',
+            },
         },
     },
 
@@ -9520,6 +9609,14 @@ export const en = {
     },
 
 settingsSession: {
+    newSessionDraftEntry: {
+        title: 'New session drafts',
+        footer: 'Choose whether New session continues this device’s draft or opens a fresh one.',
+        resumeTitle: 'Resume previous draft',
+        resumeSubtitle: 'Continue the draft started from New session on this device.',
+        freshTitle: 'Always start fresh',
+        freshSubtitle: 'Open a new draft whenever you choose New session.',
+    },
 	          sessionList: {
 	              title: 'Session List',
 	              footer: 'Appearance and behavior of the session sidebar list.',
@@ -10289,7 +10386,7 @@ settingsSession: {
         },
         setupCheck: {
             title: 'Provider readiness',
-            footer: 'Check setup reads saved settings and current local readiness facts only. It does not open the microphone, start Voice, send audio, or contact the provider.',
+            footer: 'Check setup reads saved settings and current local readiness facts only. It does not open the microphone, start Voice, send audio, or contact the provider. Starting Voice rechecks the session-bound capability.',
             check: 'Check setup',
             checkSubtitle: 'Passively review the selected Voice provider configuration.',
             result: 'Setup status',
@@ -11315,6 +11412,13 @@ settingsSession: {
                 },
             },
             models: {
+                nativeOptions: {
+                    kokoroEnvironmentDefaultTitle: 'Default (from env)',
+                    kokoroDefaultSubtitle: 'Default local neural voice model.',
+                    kokoroHigherQualitySubtitle: 'Higher-quality local Kokoro voice model.',
+                    kokoroEnvironmentDefaultSubtitle: 'Uses environment-configured Kokoro model-pack defaults.',
+                    sherpaStreamingRecommendedSubtitle: 'Streaming, low latency (recommended).',
+                },
                 title: 'Local voice models',
                 statusTitle: 'Model service',
                 footer: 'Install local voice model packs on your voice-home daemon and choose the default for each kind.',
@@ -11572,8 +11676,8 @@ settingsSession: {
                 "cards": {
                     "welcome": {
                         "title": "Welcome to Happier",
-                        "everywhereTitle": "Your AI agents, everywhere you work",
-                        "everywhereBody": "Claude Code, Codex, OpenCode, Pi, and much more: on your phone, tablet, browser, or desktop.",
+                        "everywhereTitle": "Control your sessions, your way.",
+                        "everywhereBody": "Use the app, voice, CLI, or MCP to start, follow, and steer sessions wherever you work.",
                         "cockpitTitle": "Your mobile cockpit",
                         "cockpitBody": "Chat, files, Git, editor, terminal. Everything you need to build & ship your next project, at your fingertips.",
                         "existingTitle": "Existing sessions, already there",
@@ -11610,8 +11714,8 @@ settingsSession: {
                         row3Title: 'Private by default',
                         row3Body: 'End-to-end encrypted so your work stays yours.',},
                     "anywhere": {
-                        "title": "Start anywhere. Continue everywhere.",
-                        "wideTitle": "Start anywhere.\nContinue everywhere.",
+                        "title": "Start coding anywhere. Continue everywhere.",
+                        "wideTitle": "Start coding anywhere.\nContinue everywhere.",
                         "body": "Launch a session from anywhere. Follow it live, send messages, and approve permissions from your phone, browser or desktop.",
                         "alt": "Abstract placeholder image for cross-device agent sessions."
                     },
@@ -11622,9 +11726,9 @@ settingsSession: {
                         "alt": "Abstract placeholder image for terminal UI syncing."
                     },
                     "cockpit": {
-                        "title": "Everything you need. One tap away.",
+                        "title": "Your coding cockpit. One tap away.",
                         "wideTitle": "Everything you need.\nOne tap away",
-                        "body": "Chat, files, Git, editor, terminal. Interact with your agent, browse and edit files, review diffs, manage Git branches, open PRs, and open a live terminal.",
+                        "body": "Browse, edit, review, branch, and open a live shell without leaving the session.",
                         "alt": "Abstract placeholder image for the mobile cockpit."
                     ,
                         row1Title: "Cockpit mode",
@@ -11656,7 +11760,7 @@ settingsSession: {
                         row3Title: "Keep context attached",
                         row3Body: "Send structured review context to the current session or a new workspace session.",},
                     "subagents": {
-                        "title": "One session, multi-provider subagents",
+                        "title": "Start in Codex. Finish in Claude.",
                         "body": "Start Codex, Claude, or any other subagents in any session. Use the strength of each one and have them all work in the same session, together.",
                         "alt": "Abstract placeholder image for cross-provider subagents."
                     },
@@ -11682,18 +11786,18 @@ settingsSession: {
                         "alt": "Abstract placeholder image for scheduled agent automations."
                     },
                     "accounts": {
-                        "title": "Multi-account & quota tracking",
-                        "body": "Link multiple OpenAI or Claude accounts. Monitor usage and quotas for each directly in the app.",
+                        "title": "Use your existing subscriptions.",
+                        "body": "Connect the coding-agent subscriptions you already pay for and monitor their usage directly in Happier.",
                         "alt": "Abstract placeholder image for connected accounts and quotas."
                     },
                     "privacy": {
-                        "title": "Open-source. End-to-end encrypted.",
+                        "title": "Open-source. Private by design.",
                         "wideTitle": "Open-source.\nEnd-to-end encrypted.",
-                        "body": "Your code, prompts, and session content are encrypted on your device before they reach any server. Private by design. Open by default.",
+                        "body": "Choose an end-to-end encrypted account when you want the relay to store only encrypted session data. Happier is open-source and self-hostable.",
                         "alt": "Abstract placeholder image for privacy and self-hosting."
                     },
                     "pets": {
-                        "title": "Never feel alone. Meet Pets.",
+                        "title": "Meet Pets.",
                         "wideTitle": "Never feel alone.\nMeet Pets.",
                         "body": "A small companion that helps you stay on track across sessions. Useful? Maybe. Charming? Definitely.",
                         "alt": "Abstract placeholder image for Pets."
@@ -11748,7 +11852,93 @@ settingsSession: {
                     row2Body: "Window and session surfaces stay out of the way.",
                     row3Title: "Safer layout",
                     row3Body: "Desktop spacing handles platform chrome and notched displays better.",
-                },}
+                },},
+                details: {
+                    anywhere: {
+                        wideTitle: 'Start coding anywhere.\nContinue everywhere.',
+                        body: 'The session keeps its context while you move between terminal, desktop, web, tablet, and phone. You can step away from the machine without stepping away from the work.',
+                    },
+                    existingSessions: {
+                        wideTitle: 'Your sessions?\nAlready there.',
+                        body: 'Happier discovers sessions that are already running on your computers and brings them into one familiar place. There is no project import and no new workflow to adopt.',
+                    },
+                    terminalTuis: {
+                        wideTitle: 'Love the terminal?\nSo do we.',
+                        body: 'Keep the native Claude Code, Codex, or OpenCode TUI as your home base. Happier mirrors the same live session when a larger screen—or your phone—is the better tool.',
+                    },
+                    cockpit: {
+                        wideTitle: 'Your coding cockpit.\nOne tap away.',
+                        body: 'Move from the conversation to a file, a diff, a branch, or a live shell without leaving the session. Each tool has its own focused surface, sized for the device in your hand.',
+                    },
+                    sessionTeam: {
+                        wideTitle: 'Sessions that work\nas a team.',
+                        body: 'A session can start another, send it a focused task, and read the result. Split work across Claude, Codex, and compatible agents while each session keeps a clear transcript.',
+                    },
+                    queue: {
+                        wideTitle: 'Queue it. Steer it.\nFork it.',
+                        body: 'Line up follow-ups while an agent works, reorder or edit them, and steer the current turn when direction changes. Fork or roll back when you want to explore a different path.',
+                    },
+                    attention: {
+                        wideTitle: 'Always know\nwhat needs you.',
+                        body: 'Waiting approvals and questions rise above the noise while actively working sessions stay grouped together. Run many agents without repeatedly opening each transcript to check its state.',
+                    },
+                    review: {
+                        wideTitle: 'Review the diff.\nSend precise notes.',
+                        body: 'Attach feedback to exact changed lines, choose which comments to include, and send structured review context back to the current agent—or use it to start a focused follow-up session.',
+                    },
+                    agentSwitching: {
+                        wideTitle: 'Start in Codex.\nFinish in Claude.',
+                        body: 'Change the agent that continues a session when another model is a better fit. Happier carries forward the useful context while preserving the session as one coherent place to work.',
+                    },
+                    navigation: {
+                        wideTitle: 'Move through work,\nnot window chrome.',
+                        body: 'Jump between sessions, files, changes, terminal tabs, and the places that need attention. Navigation stays close to the work instead of forcing you through nested setup screens.',
+                    },
+                    voice: {
+                        wideTitle: 'A colleague\nyou can talk to.',
+                        body: 'Ask what is running, brainstorm the next change, approve a request, or send a message while your hands are busy. Voice is another way into the same sessions—not a separate assistant silo.',
+                    },
+                    machines: {
+                        wideTitle: 'On every computer\nyou own.',
+                        body: 'Connect laptops, desktops, VPSs, and development boxes you control. Choose where each session executes and keep the code and tools on the machine where they belong.',
+                    },
+                    surfaces: {
+                        wideTitle: 'App, voice, CLI,\nand MCP.',
+                        body: 'Start and steer work from the interface that fits the moment. These are several doors into the same Happier sessions, with one shared view of progress and attention.',
+                    },
+                    mcp: {
+                        wideTitle: 'One MCP config.\nEvery agent.',
+                        body: 'Define servers once and reuse them across supported coding agents, including agents whose native MCP setup differs. Happier can also expose its own session actions over MCP.',
+                    },
+                    subscriptions: {
+                        wideTitle: 'Use the subscriptions\nyou already have.',
+                        body: 'Connect the Claude and OpenAI accounts you already pay for instead of buying another model bundle. See usage in the app and choose the right account for the next session.',
+                    },
+                    accounts: {
+                        wideTitle: 'More accounts.\nFewer hard stops.',
+                        body: 'Keep personal, work, and team accounts available together and understand their limits before a long task stalls. Pick deliberately rather than discovering quota trouble mid-session.',
+                    },
+                    customization: {
+                        wideTitle: 'Make Happier\nfeel like yours.',
+                        body: 'Tune themes, profiles, prompts, and working preferences around how you actually build. The product adapts without hiding the underlying agent or machine from you.',
+                    },
+                    privacy: {
+                        wideTitle: 'Open source.\nPrivate by design.',
+                        body: 'Choose end-to-end encryption so the relay stores only encrypted session data, or self-host the relay on infrastructure you control. The source is open for inspection and contribution.',
+                    },
+                    automations: {
+                        wideTitle: 'Your agents,\non a schedule.',
+                        body: 'Turn a recurring task into a scheduled session: monitor a pull request, check an issue queue, or run a maintenance prompt. The result appears alongside the rest of your work.',
+                    },
+                    prompts: {
+                        wideTitle: 'Keep the prompts\nthat work.',
+                        body: 'Save reusable instructions, skills, and agent profiles instead of reconstructing them for every session. Bring proven ways of working to whichever device starts the next task.',
+                    },
+                    pets: {
+                        wideTitle: 'Never work alone.\nMeet Pets.',
+                        body: 'A small companion follows session activity across Happier and adds a little warmth to long-running work. It is optional, playful, and more charming than strictly necessary.',
+                    },
+                },
             },
     },
 
@@ -11898,7 +12088,7 @@ settingsSession: {
             `The Relay at ${serverUrl} returned an unexpected response. Update that Relay or choose a different Relay to continue.`,
 
         // Unified onboarding redesign — BrandPanel (left pane / mobile hero)
-        brandTaglineLine1: 'Start anywhere.',
+        brandTaglineLine1: 'Start coding anywhere.',
         brandTaglineLine2: 'Continue everywhere.',
         brandSubTagline: 'One control room for every coding agent — on every device you own.',
         brandTrustStrip: 'END-TO-END ENCRYPTED · OPEN SOURCE · SELF-HOSTABLE',
@@ -12046,12 +12236,12 @@ settingsSession: {
         beats: {
             a1: {
                 eyebrow: 'Act 1',
-                title: 'Start anywhere. Continue everywhere.',
+                title: 'Start coding anywhere. Continue everywhere.',
                 body: 'Begin with one session that follows you across terminal, desktop, web, and phone.',
             },
             a2: {
                 eyebrow: 'Already here',
-                title: "Already running sessions? They're already here.",
+                title: 'Your sessions? Already there.',
                 body: 'Happier gathers the sessions you already started, so you begin on familiar ground.',
             },
             a3: {
@@ -12066,12 +12256,12 @@ settingsSession: {
             },
             a5: {
                 eyebrow: 'Team',
-                title: 'One session. A whole team of agents.',
+                title: 'Your sessions work as a team.',
                 body: 'Send focused jobs out to other agents, and their results land back in the session you started.',
             },
             a6: {
                 eyebrow: 'Queue',
-                title: 'Queue it. Steer it. Fork it.',
+                title: 'Queue. Steer. Fork.',
                 body: 'Stack up follow-ups, change direction midstream, or fork a promising path without losing context.',
             },
             a7: {
@@ -12081,7 +12271,7 @@ settingsSession: {
             },
             a8: {
                 eyebrow: 'Review',
-                title: 'Review the diff. Send notes.',
+                title: 'Review code. Send notes.',
                 body: 'Read the diff line by line and send precise notes straight back to the agent.',
             },
             a9: {
@@ -12096,17 +12286,17 @@ settingsSession: {
             },
             a11: {
                 eyebrow: 'MCP',
-                title: 'Your MCP servers. Every agent, every machine.',
+                title: 'One MCP setup. Every agent.',
                 body: 'Configure once, then make those tools available wherever your agents run.',
             },
             a12: {
                 eyebrow: 'Pools',
-                title: 'Pool your accounts. Sail past usage limits.',
+                title: 'Pool accounts. Keep going.',
                 body: 'Gather your accounts into pools, and a long day rolls on to the next account instead of stopping at a limit.',
             },
             a13: {
                 eyebrow: 'Customize',
-                title: 'Configure (almost) everything.',
+                title: 'Configure almost everything.',
                 body: 'Start with themes of your own, then shape sessions, agents, and workflows around the way you already work.',
             },
             a14: {
@@ -12180,11 +12370,11 @@ settingsSession: {
                     body: 'Share a session with teammates, manage who can see and act, and collaborate in real time.',
                 },
                 automations: {
-                    title: 'On a schedule.',
+                    title: 'Agents on a schedule.',
                     body: 'Run sessions on a cadence to watch pull requests, track issues, or repeat any task automatically.',
                 },
                 handoff: {
-                    title: 'Hand off mid-session.',
+                    title: 'Move between sessions, instantly.',
                     body: 'Move a live session from one machine to another and keep the same thread - pick up exactly where you left off.',
                 },
                 notifications: {
@@ -12192,7 +12382,7 @@ settingsSession: {
                     body: 'Smart notifications route taps to the exact session and server - approve or answer right from the alert.',
                 },
                 crossPlatform: {
-                    title: 'macOS, Linux, Windows.',
+                    title: 'Run sessions on every computer you own.',
                     body: 'Native apps for iOS and Android, a desktop app for every OS, and a web app - all in sync.',
                 },
             },
@@ -12258,7 +12448,7 @@ settingsSession: {
         webDesktopHandoffCliOption: 'Using the terminal (CLI)',
         webDesktopHandoffCliSubtitle: 'Run a few commands to host a server, then paste the printed server URL here.',
         webDesktopOnlyRelayInstallTitle: 'Install a server using the CLI',
-        webDesktopOnlyRelayInstallSubtitle: 'Run this on the computer that will host your server.\n\nThen paste the printed server URL back here.',
+        webDesktopOnlyRelayInstallSubtitle: 'Run this on the computer that will host your server.',
         webDesktopOnlyRelayStatusTitle: 'Get your server URL',
         webDesktopOnlyRelayStatusSubtitle: 'Run this to display the server URL, then paste it back here.',
         webRelayHostInvalidUrl: 'Enter a valid http:// or https:// Relay URL before continuing.',
@@ -12295,6 +12485,7 @@ settingsSession: {
         setupThisComputerConnectHonesty: 'Setup is not complete until a machine connects to this Relay.',
         controlPanelTitle: 'Readiness summary',
         activeRelaySummaryTitle: 'Active Relay',
+        selectedRelaySummaryTitle: 'Selected Relay',
         thisComputerSummaryTitle: 'This computer',
         nextActionSummaryTitle: 'Next action',
         thisComputerReady: 'Ready for this Relay',
@@ -12575,6 +12766,10 @@ settingsSession: {
         discarded: 'Discarded',
         recoveredHistory: 'Recovered history',
         pluginAttribution: ({ pluginId }: { pluginId: string }) => `From plugin ${pluginId}`,
+        pluginAttributionExternal: ({ sender, pluginId }: { sender: string; pluginId: string }) => `From ${sender} via plugin ${pluginId}`,
+        pluginAttributionExternalForwarded: ({ sender, pluginId }: { sender: string; pluginId: string }) => `Forwarded by ${sender} via plugin ${pluginId}`,
+        pluginAttributionExternalSender: 'an external sender',
+        pluginAttributionExternalBot: 'an external bot',
         unknownEvent: 'Unknown event',
         runtimeConfigOutcomeAppliesBeforeNextMessage: 'Applies before your next message',
         runtimeConfigOutcomeQueuedUntilReady: 'Queued until ready',
@@ -13050,6 +13245,24 @@ settingsSession: {
     },
 
     profiles: {
+        launchPlacement: {
+            title: 'Where sessions run',
+            footer: 'A preference, resolved when a session starts. It never stores a machine as an answer.',
+            none: 'No preference',
+            automatic: 'Resolve automatically',
+            ask: 'Always ask',
+            fixed: 'Always this machine',
+            directory: 'Directory',
+            directoryPlaceholder: 'Leave empty for the resolved project root',
+        },
+        launchCheckout: {
+            title: 'Working copy',
+            footer: 'How a session obtains its checkout when it runs in a project.',
+            none: 'No preference',
+            reuseWorkspace: 'Reuse the project checkout',
+            createWorktree: 'Create a worktree',
+            ask: 'Always ask',
+        },
         // Profile management feature
         title: 'Profiles',
         subtitle: 'Manage environment variable profiles for sessions',
@@ -13387,6 +13600,7 @@ settingsSession: {
       ...pluginWebhookAdministrationTranslations['en'],
       ...pluginAccountDataEraseTranslations.en,
       ...pluginAccountReleaseSelectionTranslations.en,
+      ...pluginMachineMatrixTranslations.en,
       ...pluginInvocationLogTranslations.en,
       ...eventAutomationComposerTranslations.en,
       title: "Plugin marketplace",
@@ -13413,7 +13627,7 @@ settingsSession: {
       developmentSourceInstallSucceeded: "Development source approved and projected.",
       developmentSourceInstallFailed: ({ outcome }: { outcome: string }) => `The development source was not installed (${outcome}).`,
       developmentTrustSourceRootTitle: "Trust this plugin folder?",
-      developmentTrustSourceRootBody: ({ path }: { path: string }) => `Happier will install dependencies in, build, and run code from:\n\n${path}\n\nOnly continue if you trust everything in that folder and everything it can pull in. You will review the plugin itself in the next step.`,
+      developmentTrustSourceRootBody: ({ path, machine, server }: { path: string; machine: string; server: string }) => `Happier will install dependencies in, build, and run code from:\n\n${path} on ${machine} (${server})\n\nOnly continue if you trust everything in that folder and everything it can pull in. You will review the plugin itself in the next step.`,
       developmentTrustSourceRootConfirm: "Trust folder",
       pendingChangesTitle: "Waiting for your decision",
       pendingChangesFooter: "Plugin changes prepared on this machine. An agent can prepare one, but only you can approve it.",
@@ -13462,7 +13676,8 @@ settingsSession: {
       marketplaceInstallReviewBody: ({ identity, verification, executableRealms, contributions, uiArtifacts, requiredAccess, optionalAccess, compatibility }: { identity: string; verification: string; executableRealms: string; contributions: string; uiArtifacts: string; requiredAccess: string; optionalAccess: string; compatibility: string }) => `Identity:\n${identity}\n\nVerification signals:\n${verification}\n\nExecutable code: ${executableRealms}\nContributions: ${contributions}\nUI artifacts: ${uiArtifacts}\n\nTrusted daemon and React Native code runs with the app or process authority and can directly use files, network, environment, and processes. The host access listed below describes Happier-mediated services; it is not a sandbox for executable plugin code.\n\nRequired disclosures and cooperative services:\n${requiredAccess}\n\nOptional host-owned resources (off by default):\n${optionalAccess}\n\nCompatibility and updates:\n${compatibility}`,
       marketplaceInstallDecisionFailed: ({ outcome }: { outcome: string }) => `The plugin was not installed (${outcome}).`,
       marketplaceChangeDecisionFailed: ({ action, outcome }: { action: string; outcome: string }) => `${action} failed (${outcome}).`,
-      pluginChangeConfirmBody: ({ action, name }: { action: string; name: string }) => `Confirm ${action} for ${name}.`,
+      pluginChangeConfirmBody: ({ action, name, machine, server }: { action: string; name: string; machine: string; server: string }) => `Confirm ${action} for ${name} on ${machine} (${server}).`,
+      pluginChangeConfirmTarget: ({ machine, server }: { machine: string; server: string }) => `This applies to ${machine} (${server}).`,
       forgetTrust: "Forget trust",
       rollback: "Roll back",
       uninstall: "Uninstall",
@@ -13674,6 +13889,10 @@ settingsSession: {
             skipToContent: 'Skip to content',
         },
     },};
+
+// Keep the literal keys above as the compile-time locale shape, while the shared
+// brand owner supplies the canonical English values used at runtime.
+Object.assign(en.releaseNotes.onboardingShowcase.details, PRODUCT_STORY_DETAILS_ENGLISH);
 
 type DeepTranslationShape<T> =
     T extends (...args: infer Args) => infer Return

@@ -100,6 +100,7 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
 });
 
 vi.mock('@/components/workspaces/scm/states', () => ({
+    SourceControlStaleSnapshotNotice: () => null,
     NotSourceControlRepositoryState: (props: any) => {
         capturedNotRepositoryProps = props;
         return React.createElement('NotSourceControlRepositoryState', props);

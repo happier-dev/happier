@@ -40,6 +40,7 @@ type FakeHost = Readonly<{
     setFocused: (focused: boolean) => void;
     emitAppState: (state: string) => void;
     documentListenerCount: (event: string) => number;
+    windowListenerCount: (event: string) => number;
     restore: () => void;
 }>;
 
@@ -108,6 +109,7 @@ function installHost(options: Readonly<{
             for (const listener of [...host.appStateListeners]) listener(next);
         },
         documentListenerCount: (event) => documentListeners.get(event)?.size ?? 0,
+        windowListenerCount: (event) => viewListeners.get(event)?.size ?? 0,
         restore: () => {
             if (previousDocument === undefined) delete globals.document;
             else globals.document = previousDocument;
@@ -145,12 +147,50 @@ describe('useHostActivelyViewed', () => {
 
     it('reports a visible but unfocused desktop window as viewed', async () => {
         // The hands-free posture: the user is talking to Voice while their
-        // editor holds focus. The window is on screen, so its context is still
-        // what the user is looking at and its motion is still watched.
+        // editor holds focus. The window is on screen, so its context remains
+        // current for ordinary visibility consumers; Voice energy separately
+        // consumes the narrower focused projection.
         const fake = installHost({ tauri: true, visibility: 'visible', focused: false });
         try {
             const { readHostActivelyViewed } = await import('./useHostActivelyViewed');
             expect(readHostActivelyViewed()).toBe(true);
+        } finally {
+            fake.restore();
+        }
+    });
+
+    it('projects focused desktop presence separately while sharing the existing host watch', async () => {
+        const fake = installHost({ tauri: true, visibility: 'visible', focused: false });
+        try {
+            const {
+                readHostActivelyFocused,
+                readHostActivelyViewed,
+                useHostActivelyFocused,
+                useHostActivelyViewed,
+            } = await import('./useHostActivelyViewed');
+
+            function Consumer(): React.ReactElement | null {
+                useHostActivelyViewed();
+                useHostActivelyFocused();
+                return null;
+            }
+
+            await renderScreen(<Consumer />);
+
+            // Current-UI and other visibility consumers keep their visible-window
+            // fact. Voice energy consumes the focus projection instead.
+            expect(readHostActivelyViewed()).toBe(true);
+            expect(readHostActivelyFocused()).toBe(false);
+            // Both projections must reuse the module's one app-lifetime watch,
+            // rather than installing a Voice-specific focus/blur observer.
+            expect(fake.documentListenerCount('visibilitychange')).toBe(1);
+            expect(fake.windowListenerCount('focus')).toBe(1);
+            expect(fake.windowListenerCount('blur')).toBe(1);
+
+            act(() => {
+                fake.setFocused(true);
+            });
+            expect(readHostActivelyFocused()).toBe(true);
         } finally {
             fake.restore();
         }

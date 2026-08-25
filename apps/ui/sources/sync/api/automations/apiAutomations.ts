@@ -60,10 +60,10 @@ export type AutomationCreateInput = Readonly<{
 export type AutomationPatchInput = Readonly<Partial<AutomationCreateInput>>;
 
 /**
- * Current V3 list items deliberately exclude private definition and recipe
+ * Current list items deliberately exclude private definition and recipe
  * content. Consumers that need those bytes must read the exact definition.
  */
-export async function listAutomationDefinitionsV3(
+export async function listAutomationDefinitions(
     credentials: AuthCredentials,
 ): Promise<AutomationV3DefinitionListItem[]> {
     const response = await serverFetch('/v3/automations', {
@@ -73,8 +73,8 @@ export async function listAutomationDefinitionsV3(
     return AutomationV3DefinitionListResponseSchema.parse(raw).automations;
 }
 
-/** Account-scoped settings are read through their strict V3 owner, never inferred from definitions or runs. */
-export async function getAutomationSettingsV3(
+/** Account-scoped settings are read through their strict owner, never inferred from definitions or runs. */
+export async function getAutomationSettings(
     credentials: AuthCredentials,
 ): Promise<AutomationV3Settings> {
     const response = await serverFetch('/v3/automations/settings', {
@@ -85,7 +85,7 @@ export async function getAutomationSettingsV3(
 }
 
 /** A complete strict record replaces the server-owned Automation settings projection. */
-export async function updateAutomationSettingsV3(
+export async function updateAutomationSettings(
     credentials: AuthCredentials,
     input: AutomationV3SettingsUpdateRequest,
 ): Promise<AutomationV3Settings> {
@@ -100,7 +100,7 @@ export async function updateAutomationSettingsV3(
 }
 
 /** Direct authenticated definition read; this is the only UI API that returns private Event authoring content. */
-export async function getAutomationDefinitionV3(
+export async function getAutomationDefinition(
     credentials: AuthCredentials,
     automationId: string,
 ): Promise<AutomationV3DefinitionDetail> {
@@ -115,7 +115,7 @@ export async function getAutomationDefinitionV3(
  * First Event writer. The Protocol schema is re-applied at the UI boundary so
  * a caller cannot accidentally send server-owned fields or a legacy V2 shape.
  */
-export async function createPluginEventAutomationDefinitionV3(
+export async function createPluginEventAutomationDefinition(
     credentials: AuthCredentials,
     input: AutomationV3PluginEventDefinitionCreateRequest,
 ): Promise<AutomationV3DefinitionDetail> {
@@ -129,8 +129,8 @@ export async function createPluginEventAutomationDefinitionV3(
     return AutomationV3DefinitionDetailSchema.parse(raw);
 }
 
-/** Event edits are full V3 replacement requests guarded by the displayed current template version. */
-export async function updatePluginEventAutomationDefinitionV3(
+/** Event edits are full replacement requests guarded by the displayed current template version. */
+export async function updatePluginEventAutomationDefinition(
     credentials: AuthCredentials,
     automationId: string,
     input: AutomationV3PluginEventDefinitionPatchRequest,
@@ -145,8 +145,8 @@ export async function updatePluginEventAutomationDefinitionV3(
     return AutomationV3DefinitionDetailSchema.parse(raw);
 }
 
-/** Lifecycle mutations remain on the V3 definition owner for Event Automations. */
-export async function pauseAutomationDefinitionV3(
+/** Lifecycle mutations remain on the definition owner for Event Automations. */
+export async function pauseAutomationDefinition(
     credentials: AuthCredentials,
     automationId: string,
 ): Promise<AutomationV3DefinitionDetail> {
@@ -158,7 +158,7 @@ export async function pauseAutomationDefinitionV3(
     return AutomationV3DefinitionDetailSchema.parse(raw);
 }
 
-export async function resumeAutomationDefinitionV3(
+export async function resumeAutomationDefinition(
     credentials: AuthCredentials,
     automationId: string,
 ): Promise<AutomationV3DefinitionDetail> {
@@ -170,7 +170,7 @@ export async function resumeAutomationDefinitionV3(
     return AutomationV3DefinitionDetailSchema.parse(raw);
 }
 
-export async function replaceAutomationDefinitionAssignmentsV3(
+export async function replaceAutomationDefinitionAssignments(
     credentials: AuthCredentials,
     automationId: string,
     assignments: ReadonlyArray<AutomationV3AssignmentInput>,
@@ -185,7 +185,7 @@ export async function replaceAutomationDefinitionAssignmentsV3(
     return AutomationV3DefinitionDetailSchema.parse(raw);
 }
 
-export async function runAutomationDefinitionNowV3(
+export async function runAutomationDefinitionNow(
     credentials: AuthCredentials,
     automationId: string,
 ): Promise<AutomationV3RunListItem> {
@@ -198,7 +198,7 @@ export async function runAutomationDefinitionNowV3(
 }
 
 /** Direct Run detail stays route-owned; the bounded Run list never carries these private envelopes. */
-export async function getAutomationRunDetailV3(
+export async function getAutomationRunDetail(
     credentials: AuthCredentials,
     automationId: string,
     runId: string,
@@ -213,7 +213,7 @@ export async function getAutomationRunDetailV3(
 }
 
 /** Removes only server-eligible terminal Run history for one Automation. */
-export async function clearAutomationRunHistoryV3(
+export async function clearAutomationRunHistory(
     credentials: AuthCredentials,
     automationId: string,
 ): Promise<AutomationV3ClearRunHistoryResponse> {
@@ -225,8 +225,8 @@ export async function clearAutomationRunHistoryV3(
     return AutomationV3ClearRunHistoryResponseSchema.parse(raw);
 }
 
-/** Cancellation remains one V3 Run mutation; callers receive the refreshed bounded Run projection. */
-export async function cancelAutomationRunV3(
+/** Cancellation remains one Run mutation; callers receive the refreshed bounded Run projection. */
+export async function cancelAutomationRun(
     credentials: AuthCredentials,
     runId: string,
 ): Promise<AutomationV3RunListItem> {
@@ -238,7 +238,7 @@ export async function cancelAutomationRunV3(
     return AutomationV3RunMutationResponseSchema.parse(raw).run;
 }
 
-export async function deleteAutomationDefinitionV3(
+export async function deleteAutomationDefinition(
     credentials: AuthCredentials,
     automationId: string,
 ): Promise<void> {

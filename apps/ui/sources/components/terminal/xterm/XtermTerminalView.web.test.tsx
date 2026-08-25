@@ -6,6 +6,8 @@ import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { createTerminalStreamRuntime } from '@/sync/domains/terminal/stream/runtime';
+
 import type { XtermTerminalHandle } from './XtermTerminalView.web';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -35,11 +37,25 @@ function requireTerminalHandle(ref: React.RefObject<XtermTerminalHandle | null>)
     return ref.current;
 }
 
+function createClipboardPasteEvent(text: string): ClipboardEvent {
+    const event = typeof ClipboardEvent === 'function'
+        ? new ClipboardEvent('paste', { bubbles: true, cancelable: true })
+        : new Event('paste', { bubbles: true, cancelable: true }) as ClipboardEvent;
+    Object.defineProperty(event, 'clipboardData', {
+        configurable: true,
+        value: {
+            getData: (format: string) => format === 'text/plain' ? text : '',
+        },
+    });
+    return event;
+}
+
 class MockTerminal {
     cols = 80;
     rows = 24;
     options: Record<string, unknown> = {};
     element: HTMLElement | null = null;
+    textarea: HTMLTextAreaElement | null = null;
     disposed = false;
     _core = {
         viewport: {
@@ -65,6 +81,16 @@ class MockTerminal {
     loadAddon = loadAddonSpy;
     open = vi.fn((container: HTMLElement) => {
         this.element = container;
+        this.textarea = document.createElement('textarea');
+        // Match xterm's real plain-text paste boundary: its handler feeds paste through onData.
+        this.textarea.addEventListener('paste', (event) => {
+            event.stopPropagation();
+            const text = event.clipboardData?.getData('text/plain') ?? '';
+            if (text) {
+                onDataSpy(text);
+            }
+        });
+        container.appendChild(this.textarea);
         openSpy(container);
         if (scheduleInternalViewportSync) {
             window.setTimeout(() => {
@@ -360,6 +386,7 @@ describe('XtermTerminalView.web', () => {
                 seq: 7,
                 byteOffset: 11,
                 bytes,
+                writeGeneration: 1,
             });
             await new Promise((resolve) => setTimeout(resolve, 40));
         });
@@ -393,6 +420,7 @@ describe('XtermTerminalView.web', () => {
                     0x64, 0x65, 0x74, 0x65, 0x72, 0x6d, 0x69, 0x6e, 0x69, 0x73, 0x74, 0x69, 0x63,
                     0x2d, 0x6d, 0x61, 0x72, 0x6b, 0x65, 0x72,
                 ]),
+                writeGeneration: 1,
             });
             await new Promise((resolve) => setTimeout(resolve, 40));
         });
@@ -427,6 +455,7 @@ describe('XtermTerminalView.web', () => {
                 seq: 2,
                 byteOffset: 100,
                 bytes: new Uint8Array([1, 2, 3, 4]),
+                writeGeneration: 2,
             });
             await new Promise((resolve) => setTimeout(resolve, 40));
         });
@@ -444,6 +473,7 @@ describe('XtermTerminalView.web', () => {
             byteOffset: 100,
             byteLength: 4,
             ackedByteOffset: 104,
+            writeGeneration: 2,
         });
     });
 
@@ -473,6 +503,7 @@ describe('XtermTerminalView.web', () => {
                 seq: 3,
                 byteOffset: 200,
                 bytes: new Uint8Array([5, 6]),
+                writeGeneration: 3,
             });
             await new Promise((resolve) => setTimeout(resolve, 40));
         });
@@ -483,6 +514,70 @@ describe('XtermTerminalView.web', () => {
             root.unmount();
         });
 
+        pendingWriteCallbacks.shift()?.();
+
+        expect(onWriteComplete).not.toHaveBeenCalled();
+    });
+
+    it('keeps byte replay queued and suppresses parser completion after unmount', async () => {
+        deferWriteCallbacks = true;
+        const { XtermTerminalView } = await import('./XtermTerminalView.web');
+        const onWriteComplete = vi.fn();
+        const ref = React.createRef<XtermTerminalHandle>();
+
+        await act(async () => {
+            root.render(
+                <XtermTerminalView
+                    ref={ref}
+                    testID="terminal"
+                    fontSize={14}
+                    onInput={() => {}}
+                    onResize={() => {}}
+                    onReady={() => {}}
+                    onWriteComplete={onWriteComplete}
+                />,
+            );
+        });
+
+        const runtime = createTerminalStreamRuntime({
+            terminalId: 'terminal-replay',
+            rendererId: 'xterm-web',
+            renderer: requireTerminalHandle(ref),
+            surfaceEpoch: 1,
+        });
+        let applied: ReturnType<typeof runtime.applyFrames> | null = null;
+
+        await act(async () => {
+            applied = runtime.applyFrames([{
+                t: 'bytes',
+                terminalId: 'terminal-replay',
+                seq: 4,
+                byteOffset: 12,
+                byteLength: 2,
+                bytes: new Uint8Array([0x41, 0x42]),
+                source: 'byte-stream',
+            }]);
+            await new Promise((resolve) => setTimeout(resolve, 40));
+        });
+
+        expect(applied).toEqual({
+            status: 'active',
+            acceptedByteOffset: null,
+            rejectedByteOffset: null,
+            queuedWrite: {
+                terminalId: 'terminal-replay',
+                seq: 4,
+                byteOffset: 12,
+                byteLength: 2,
+                ackedByteOffset: 14,
+                writeGeneration: 1,
+            },
+        });
+        expect(pendingWriteCallbacks).toHaveLength(1);
+
+        await act(async () => {
+            root.unmount();
+        });
         pendingWriteCallbacks.shift()?.();
 
         expect(onWriteComplete).not.toHaveBeenCalled();
@@ -513,12 +608,14 @@ describe('XtermTerminalView.web', () => {
                 seq: 1,
                 byteOffset: 0,
                 bytes: new Uint8Array([1]),
+                writeGeneration: 1,
             });
             handle.writeBytes({
                 terminalId: 'terminal-pressure',
                 seq: 2,
                 byteOffset: 1,
                 bytes: new Uint8Array([2]),
+                writeGeneration: 1,
             });
             await new Promise((resolve) => setTimeout(resolve, 40));
         });
@@ -571,6 +668,38 @@ describe('XtermTerminalView.web', () => {
         expect(result).toBe(false);
         expect(onPaste).toHaveBeenCalledWith('clipboard text');
         expect(onInput).not.toHaveBeenCalledWith('clipboard text');
+    });
+
+    it('captures real DOM ClipboardEvent paste before xterm turns it into ordinary input', async () => {
+        const { XtermTerminalView } = await import('./XtermTerminalView.web');
+        const onInput = vi.fn();
+        const onPaste = vi.fn();
+
+        await act(async () => {
+            root.render(
+                <XtermTerminalView
+                    testID="terminal"
+                    fontSize={14}
+                    onInput={onInput}
+                    onPaste={onPaste}
+                    onResize={() => {}}
+                    onReady={() => {}}
+                />,
+            );
+        });
+
+        const textarea = terminalInstances.at(-1)?.textarea;
+        expect(textarea).not.toBeNull();
+        const event = createClipboardPasteEvent('first line\nsecond line');
+
+        await act(async () => {
+            textarea!.dispatchEvent(event);
+            await Promise.resolve();
+        });
+
+        expect(event.defaultPrevented).toBe(true);
+        expect(onPaste).toHaveBeenCalledWith('first line\nsecond line');
+        expect(onInput).not.toHaveBeenCalled();
     });
 
     it('routes detected web links through the host policy handler instead of xterm default opens', async () => {

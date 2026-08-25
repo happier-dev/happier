@@ -133,11 +133,22 @@ export function changeTextTestInstance(
 }
 
 function invokeChangeText(target: ReactTestInstance, testID: string, value: string): void {
-    const handler = target.props?.onChangeText;
-    if (typeof handler !== 'function') {
-        throw new Error(`Node "${testID}" does not expose onChangeText`);
+    const changeText = target.props?.onChangeText;
+    if (typeof changeText === 'function') {
+        changeText(value);
+        return;
     }
-    handler(value);
+    // React Native's TextInput reports every edit through both `onChangeText` and
+    // `onChange`. A control that needs the host event — IME composition state
+    // travels on it — legitimately wires only `onChange`, so drive that shape the
+    // way the host does instead of forcing every such control to keep a second
+    // handler alive for tests.
+    const change = target.props?.onChange;
+    if (typeof change === 'function') {
+        change({ nativeEvent: { text: value } });
+        return;
+    }
+    throw new Error(`Node "${testID}" does not expose onChangeText or onChange`);
 }
 
 function collectTextContent(value: unknown, parts: string[]): void {

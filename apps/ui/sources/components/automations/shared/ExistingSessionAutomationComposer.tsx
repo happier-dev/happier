@@ -20,8 +20,8 @@ import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput
 import type { ComposerStructuredInputMention } from '@/components/sessions/agentInput/structuredInputMentions';
 import {
     composerReferencesFromStructuredMentions,
-    composerStructuredMentionsFromReferences,
 } from '@/components/sessions/composer/composerScopeAdapters';
+import { useEphemeralComposerDocumentOwner } from '@/components/sessions/composer/useEphemeralComposerDocumentOwner';
 import { useSessionMachineTarget } from '@/components/sessions/model/useSessionMachineTarget';
 import {
     notifyComposerPresentationTargetChanged,
@@ -69,13 +69,6 @@ function sameAutomationComposerRef(left: ComposerRefV1, right: ComposerRefV1): b
         && left.instanceId === right.instanceId;
 }
 
-function sameAutomationComposerDocument(
-    left: AutomationComposerDocument,
-    right: AutomationComposerDocument,
-): boolean {
-    return left.text === right.text && JSON.stringify(left.mentions) === JSON.stringify(right.mentions);
-}
-
 export function ExistingSessionAutomationComposer(props: Readonly<{
     context: ExistingSessionAutomationAuthoringContext;
     onChangeDraft: React.Dispatch<React.SetStateAction<SessionAuthoringDraft | null>>;
@@ -112,19 +105,27 @@ export function ExistingSessionAutomationComposer(props: Readonly<{
     const composerFocusRequestRef = React.useRef<(() => void) | null>(null);
     const onChangeDraftRef = React.useRef(props.onChangeDraft);
     onChangeDraftRef.current = props.onChangeDraft;
-    const documentRef = React.useRef<AutomationComposerDocument>({
-        text: props.context.draft.prompt,
-        mentions: [],
-    });
-    const revisionRef = React.useRef(0);
     const lastScopeRef = React.useRef<ComposerRefV1>(composerRef);
-    const [, forceComposerDocumentRender] = React.useReducer((version: number) => version + 1, 0);
 
     const isAutomationComposerCurrent = React.useCallback(() => (
         mountedRef.current
         && sameAutomationComposerRef(composerRefRef.current, composerRef)
         && (composerAccountLifetime === null || composerAccountLifetime.isCurrent())
     ), [composerAccountLifetime, composerRef]);
+    const automationComposerDocumentOwner = useEphemeralComposerDocumentOwner({
+        ref: composerRef,
+        capabilities: { text: true, references: true, attachments: false, submit: false },
+        initialDocument: {
+            text: props.context.draft.prompt,
+            structuredInputMentions: [],
+            composerAttachments: [],
+        },
+        isCurrent: isAutomationComposerCurrent,
+    });
+    const readAutomationDocument = React.useCallback((): AutomationComposerDocument => {
+        const document = automationComposerDocumentOwner.read().document;
+        return { text: document.text, mentions: document.structuredInputMentions };
+    }, [automationComposerDocumentOwner]);
     const composerInputEffects = useComposerPresentationInputEffects({
         ref: composerRef,
     });
@@ -207,14 +208,15 @@ export function ExistingSessionAutomationComposer(props: Readonly<{
     }, [composerRef]);
 
     const updateAutomationComposerDocument = React.useCallback((next: AutomationComposerDocument, notify: boolean): number => {
-        if (!sameAutomationComposerRef(composerRefRef.current, composerRef)) return revisionRef.current;
-        if (sameAutomationComposerDocument(documentRef.current, next)) return revisionRef.current;
-        documentRef.current = next;
-        revisionRef.current += 1;
-        forceComposerDocumentRender();
+        if (!sameAutomationComposerRef(composerRefRef.current, composerRef)) return automationComposerDocumentOwner.read().revision;
+        const revision = automationComposerDocumentOwner.replaceDocument({
+            text: next.text,
+            structuredInputMentions: next.mentions,
+            composerAttachments: [],
+        });
         if (notify) notifyComposerPresentationTargetChanged(composerRef);
-        return revisionRef.current;
-    }, [composerRef]);
+        return revision;
+    }, [automationComposerDocumentOwner, composerRef]);
 
     const writeAutomationDraftPrompt = React.useCallback((prompt: string) => {
         onChangeDraftRef.current((current) => current
@@ -225,7 +227,7 @@ export function ExistingSessionAutomationComposer(props: Readonly<{
     React.useEffect(() => {
         const scopeChanged = !sameAutomationComposerRef(lastScopeRef.current, composerRef);
         lastScopeRef.current = composerRef;
-        const current = documentRef.current;
+        const current = readAutomationDocument();
         const next: AutomationComposerDocument = scopeChanged
             ? { text: props.context.draft.prompt, mentions: [] }
             : current.text === props.context.draft.prompt
@@ -235,10 +237,10 @@ export function ExistingSessionAutomationComposer(props: Readonly<{
     }, [composerRef, props.context.draft.prompt, updateAutomationComposerDocument]);
 
     const readAutomationComposerSnapshot = React.useCallback((): ComposerSnapshotV1 => {
-        const document = documentRef.current;
+        const document = readAutomationDocument();
         const inputLock = composerInputEffects.readComposerInputLock();
         return {
-            revision: revisionRef.current,
+            revision: automationComposerDocumentOwner.read().revision,
             ref: composerRef,
             text: document.text,
             references: [...composerReferencesFromStructuredMentions({
@@ -262,33 +264,26 @@ export function ExistingSessionAutomationComposer(props: Readonly<{
                 ...(inputLock ? { inputLock } : {}),
             },
         };
-    }, [composerInputEffects.readComposerInputLock, composerRef]);
+    }, [automationComposerDocumentOwner, composerInputEffects.readComposerInputLock, composerRef, readAutomationDocument]);
 
     const commitAutomationComposerDocument = React.useCallback((input: Readonly<{
         expectedRevision: number;
         mutation: ComposerPresentationDocumentMutation;
     }>): ComposerTransactionResultV1 => {
-        if (!sameAutomationComposerRef(composerRefRef.current, composerRef) || revisionRef.current !== input.expectedRevision) {
-            return { status: 'conflict', currentRevision: revisionRef.current };
+        if (!sameAutomationComposerRef(composerRefRef.current, composerRef)) return { status: 'composerUnavailable' };
+        const previous = readAutomationDocument();
+        const result = automationComposerDocumentOwner.apply(input.expectedRevision, input.mutation);
+        if (result.status === 'applied' && previous.text !== input.mutation.text) {
+            writeAutomationDraftPrompt(input.mutation.text);
         }
-        const previous = documentRef.current;
-        const next: AutomationComposerDocument = {
-            text: input.mutation.text,
-            mentions: composerStructuredMentionsFromReferences({
-                references: input.mutation.references,
-                existing: previous.mentions,
-            }),
-        };
-        const revision = updateAutomationComposerDocument(next, false);
-        if (previous.text !== next.text) writeAutomationDraftPrompt(next.text);
-        return { status: 'applied', revision };
-    }, [composerRef, updateAutomationComposerDocument, writeAutomationDraftPrompt]);
+        return result;
+    }, [automationComposerDocumentOwner, composerRef, readAutomationDocument, writeAutomationDraftPrompt]);
 
     const composerTarget = useStableComposerPresentationTarget(composerRef, {
-        readRevision: () => revisionRef.current,
+        readRevision: () => automationComposerDocumentOwner.read().revision,
         replace: (text, expectedRevision) => {
-            if (revisionRef.current !== expectedRevision) return revisionRef.current;
-            const previous = documentRef.current;
+            if (automationComposerDocumentOwner.read().revision !== expectedRevision) return automationComposerDocumentOwner.read().revision;
+            const previous = readAutomationDocument();
             const revision = updateAutomationComposerDocument({ ...previous, text }, true);
             if (previous.text !== text) writeAutomationDraftPrompt(text);
             return revision;
@@ -334,7 +329,7 @@ export function ExistingSessionAutomationComposer(props: Readonly<{
      * program renders, so it keeps working here.
      */
     const submitAutomationComposerDocument = React.useCallback(() => {
-        const current = documentRef.current;
+        const current = readAutomationDocument();
         const unsupportedReference = composerReferencesFromStructuredMentions({
             text: current.text,
             mentions: current.mentions,
@@ -348,7 +343,7 @@ export function ExistingSessionAutomationComposer(props: Readonly<{
         props.onSubmit();
     }, [props.onSubmit]);
 
-    const document = documentRef.current;
+    const document = readAutomationDocument();
     const extraActionChips = React.useMemo(() => [
         ...(props.extraActionChips ?? []),
         ...automationComposerPresentation.extraActionChips,
@@ -365,14 +360,14 @@ export function ExistingSessionAutomationComposer(props: Readonly<{
             composerDecorations={composerInputEffects.composerDecorations}
             composerInputLock={composerInputEffects.composerInputLock}
             onChangeText={(value) => {
-                const previous = documentRef.current;
+                const previous = readAutomationDocument();
                 updateAutomationComposerDocument({ ...previous, text: value }, true);
                 if (previous.text !== value) writeAutomationDraftPrompt(value);
             }}
             structuredInputMentions={document.mentions}
             onStructuredInputMentionsChange={(mentions) => {
                 updateAutomationComposerDocument({
-                    ...documentRef.current,
+                    ...readAutomationDocument(),
                     mentions,
                 }, true);
             }}

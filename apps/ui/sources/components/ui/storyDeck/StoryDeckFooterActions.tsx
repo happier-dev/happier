@@ -9,8 +9,10 @@ export type StoryDeckFooterActionsProps = Readonly<{
     isLastSlide: boolean;
     onPrimary: () => void;
     onSecondary?: () => void;
+    onSkip?: () => void;
     primaryLabel?: string;
     secondaryLabel?: string;
+    skipLabel?: string;
     primaryDisabled?: boolean;
     testID?: string;
 }>;
@@ -43,6 +45,15 @@ export function StoryDeckFooterActions(props: StoryDeckFooterActionsProps) {
                     size="normal"
                     display="inverted"
                     onPress={props.onSecondary}
+                />
+            ) : null}
+            {props.onSkip ? (
+                <RoundButton
+                    testID={`${props.testID ?? 'story-deck'}-skip`}
+                    title={props.skipLabel ?? t('common.skip')}
+                    size="normal"
+                    display="inverted"
+                    onPress={props.onSkip}
                 />
             ) : null}
         </View>

@@ -72,14 +72,10 @@ import {
 import { PluginDetailGenericSettingsSection } from '@/components/settings/plugins/detail/PluginDetailGenericSettingsSection';
 import type { ScopedPluginSettingsTarget } from '@/sync/domains/plugins/settings/scopedPluginSettingsAdapter';
 import { resolveScopedPluginSettingsServerIdentity } from '@/sync/domains/plugins/settings/scopedPluginSettingsRuntime';
-import { ExternalSessionsAgentSettingsSection } from '@/components/settings/externalSessions/ExternalSessionsAgentSettingsSection';
+import { AgentDetailExternalSessionsSection } from '@/components/settings/externalSessions/AgentDetailExternalSessionsSection';
 import type {
     ExternalSessionsQualifiedAgent,
 } from '@/components/settings/externalSessions/externalSessionsIntegrationModel';
-import { useExternalSessionsIntegrationController } from '@/components/settings/externalSessions/externalSessionsIntegrationController';
-import { useExternalSessionsAutoLinkSources } from '@/components/settings/externalSessions/useExternalSessionsAutoLinkSources';
-import { buildExternalSessionsAgentBrowseHref } from '@/components/sessions/external/browse/externalSessionBrowseNavigation';
-import { resolveAgentUiBehavior } from '@/agents/registry/registryUiBehavior';
 import { Icon } from '@/components/ui/icons/Icon';
 import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 } from '@/sync/domains/machines/administration/selectionPreferences';
 import { machineAdministrationTargetsEqual } from '@/sync/domains/machines/administration/targetSelection';
@@ -88,6 +84,8 @@ import {
     type FreshMachineAdministrationExecutionTargetV1,
     type MachineAdministrationTargetSelectionV1,
 } from '@/sync/domains/machines/administration/useTargetSelection';
+import { isMachineAdministrationExecutionTargetCurrent } from '@/sync/domains/machines/administration/operationCurrentness';
+import { isAdministrationScopedPluginSettingsTargetCurrent } from '@/sync/domains/machines/administration/scopedPluginSettingsTarget';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 
 function resolveExternalSessionsAgentBinding(
@@ -231,8 +229,61 @@ const AgentSettingsNotFound = React.memo(function AgentSettingsNotFound(props: R
     );
 });
 
+/**
+ * The Agent-targeted settings an installed plugin contributes, rendered through
+ * the one canonical plugin settings section.
+ *
+ * Both Agent presentations reach it: the full Agent screen and the reduced
+ * screen an Agent with no bundled runtime carrier and no CLI auth resolves to.
+ * Without a single owner the reduced screen silently dropped the projection it
+ * had already resolved, so an Agent that ships settings but no CLI had no way
+ * to expose them.
+ */
+export const AgentContributedSettingsSection = React.memo(function AgentContributedSettingsSection(props: Readonly<{
+    pluginSettingsProjection: PluginProjectionEntry | null;
+    targetSelection: MachineAdministrationTargetSelectionV1;
+    executionTarget: FreshMachineAdministrationExecutionTargetV1 | null;
+    daemonOperationsAvailable: boolean;
+}>) {
+    const { pluginSettingsProjection, targetSelection, executionTarget, daemonOperationsAvailable } = props;
+    const activeServer = useActiveServerSnapshot();
+    const accountServerIdentityId = React.useMemo(
+        () => resolveScopedPluginSettingsServerIdentity(activeServer.serverId),
+        [activeServer.serverId],
+    );
+    const isDaemonSettingsTargetCurrent = React.useCallback((target: Extract<ScopedPluginSettingsTarget, { kind: 'daemon' }>) => {
+        return isAdministrationScopedPluginSettingsTargetCurrent({
+            target,
+            expectedExecutionTarget: executionTarget,
+            resolveCurrentExecutionTarget: targetSelection.resolveExecutionTarget,
+        });
+    }, [executionTarget, targetSelection.resolveExecutionTarget]);
+    if (!pluginSettingsProjection) return null;
+    return (
+        <PluginDetailGenericSettingsSection
+            pluginId={pluginSettingsProjection.pluginId}
+            projection={pluginSettingsProjection}
+            machineId={executionTarget?.machine.id ?? null}
+            serverId={executionTarget?.serverId ?? null}
+            accountServerIdentityId={accountServerIdentityId}
+            daemonServerIdentityId={executionTarget?.target.serverIdentityId ?? null}
+            perActiveServerIdentityId={targetSelection.selectedTarget?.serverIdentityId ?? null}
+            daemonOperationsAvailable={daemonOperationsAvailable}
+            isDaemonTargetCurrent={isDaemonSettingsTargetCurrent}
+        />
+    );
+});
+
 const AgentSettingsFallbackScreenInner = React.memo(function AgentSettingsFallbackScreenInner(props: Readonly<{
     projection: ResolvedAgentCatalogEntry;
+    pluginSettingsProjection: PluginProjectionEntry | null;
+    targetSelection: MachineAdministrationTargetSelectionV1;
+    executionTarget: FreshMachineAdministrationExecutionTargetV1 | null;
+    daemonOperationsAvailable: boolean;
+    externalSessionsProjectionPhase: 'idle' | 'loading' | 'ready' | 'unsupported' | 'error';
+    externalSessionsAgent: ExternalSessionsQualifiedAgent | null;
+    externalSessionsBrowseAvailable: boolean;
+    externalSessionsRefreshKey: string | null;
 }>) {
     const { theme } = useUnistyles();
     const settings = useSettings();
@@ -255,6 +306,30 @@ const AgentSettingsFallbackScreenInner = React.memo(function AgentSettingsFallba
 
     return (
         <ItemList style={{ paddingTop: 0 }}>
+            <AgentContributedSettingsSection
+                pluginSettingsProjection={props.pluginSettingsProjection}
+                targetSelection={props.targetSelection}
+                executionTarget={props.executionTarget}
+                daemonOperationsAvailable={props.daemonOperationsAvailable}
+            />
+            {/*
+              * External Sessions reachability belongs to the Agent, not to
+              * whether it also carries a bundled runtime or a login screen:
+              * Protocol admits an auxiliary-only Agent that declares only the
+              * `externalSessions` surface, and that Agent lands here.
+              */}
+            <AgentDetailExternalSessionsSection
+                agentId={props.projection.agentId}
+                behaviorAgentId={props.projection.agentId}
+                agentTitle={props.projection.title}
+                machineId={props.executionTarget?.machine.id ?? null}
+                daemonStateVersion={props.executionTarget?.machine.daemonStateVersion ?? null}
+                serverId={props.executionTarget?.serverId ?? null}
+                agent={props.externalSessionsAgent}
+                browseAvailable={props.externalSessionsBrowseAvailable}
+                refreshKey={props.externalSessionsRefreshKey}
+                projectionPhase={props.externalSessionsProjectionPhase}
+            />
             <ItemGroup title={title} footer={t('settingsAgents.footer')}>
                 <Item
                     title={title}
@@ -326,11 +401,6 @@ const AgentSettingsScreenInner = React.memo(function AgentSettingsScreenInner(pr
         installIntent,
     } = props;
     const providerIconName = resolveProjectionIconName(projection);
-    const activeServer = useActiveServerSnapshot();
-    const accountServerIdentityId = React.useMemo(
-        () => resolveScopedPluginSettingsServerIdentity(activeServer.serverId),
-        [activeServer.serverId],
-    );
     const profile = useProfile();
     const settings = useSettings();
     const paneScopeId = React.useMemo(
@@ -340,11 +410,6 @@ const AgentSettingsScreenInner = React.memo(function AgentSettingsScreenInner(pr
     const pane = useAppPaneScope(paneScopeId);
     const applySettings = useApplySettings();
     const accountGroupsEnabled = useFeatureEnabled('connectedServices.accountGroups');
-    const externalSessionsEnabled = useFeatureEnabled('sessions.direct');
-    const externalSessionsExpected = React.useMemo(
-        () => resolveAgentUiBehavior(projection.agentId).externalSessions !== undefined,
-        [projection.agentId],
-    );
 
     const popoverBoundaryRef = React.useRef<any>(null);
     const [openMenu, setOpenMenu] = React.useState<null | string>(null);
@@ -501,92 +566,18 @@ const AgentSettingsScreenInner = React.memo(function AgentSettingsScreenInner(pr
 
     const primaryMachine = executionTarget?.machine ?? null;
     const capabilityServerId = executionTarget?.serverId ?? null;
-    const capabilityServerIdentityId = executionTarget?.target.serverIdentityId ?? null;
     const resolveCurrentExecutionTarget = React.useCallback(() => {
-        const expectedTarget = executionTarget?.target;
+        if (!executionTarget) return null;
         const resolvedTarget = targetSelection.resolveExecutionTarget();
-        if (
-            !expectedTarget
-            || !resolvedTarget
-            || !machineAdministrationTargetsEqual(expectedTarget, resolvedTarget.target)
-        ) {
-            return null;
-        }
+        if (!resolvedTarget || !isMachineAdministrationExecutionTargetCurrent({
+            expectedTarget: executionTarget,
+            resolveCurrentTarget: () => resolvedTarget,
+        })) return null;
         return {
             machineId: resolvedTarget.machine.id,
             serverId: resolvedTarget.serverId,
         };
-    }, [executionTarget?.target, targetSelection]);
-    const isDaemonSettingsTargetCurrent = React.useCallback((target: Extract<ScopedPluginSettingsTarget, { kind: 'daemon' }>) => {
-        const resolvedTarget = targetSelection.resolveExecutionTarget();
-        return resolvedTarget !== null
-            && resolvedTarget.machine.id === target.machineId
-            && resolvedTarget.serverId === target.serverId
-            && resolvedTarget.target.serverIdentityId === target.serverIdentityId;
-    }, [targetSelection]);
-    const externalSessionsControllerAgent = React.useMemo(() => (
-        externalSessionsAgent
-            ? {
-                agent: externalSessionsAgent,
-                agentTitle: projection.title,
-            }
-            : null
-    ), [externalSessionsAgent, projection.title]);
-    const externalSessionsController = useExternalSessionsIntegrationController({
-        machineId: primaryMachine?.id ?? null,
-        serverId: capabilityServerId,
-        projectionGeneration: `${externalSessionsRefreshKey ?? ''}:${primaryMachine?.daemonStateVersion ?? 0}`,
-        agent: externalSessionsControllerAgent,
-        enabled: externalSessionsEnabled && externalSessionsAgent !== null && primaryMachine !== null,
-    });
-    const externalSessionsInventoryState = React.useMemo(() => {
-        if (
-            !externalSessionsEnabled
-            || !primaryMachine
-            || externalSessionsAgent
-            || !externalSessionsExpected
-        ) {
-            return externalSessionsController.inventoryState;
-        }
-        if (externalSessionsProjectionPhase === 'loading') {
-            return {
-                status: 'loading' as const,
-                diagnosticCodes: [],
-            };
-        }
-        return {
-            status: 'error' as const,
-            diagnosticCodes: [
-                externalSessionsProjectionPhase === 'unsupported'
-                    ? 'external_sessions_projection_unsupported'
-                    : 'external_sessions_projection_unavailable',
-            ],
-        };
-    }, [
-        externalSessionsAgent,
-        externalSessionsController.inventoryState,
-        externalSessionsEnabled,
-        externalSessionsExpected,
-        externalSessionsProjectionPhase,
-        primaryMachine,
-    ]);
-    const externalSessionsAutoLinkKnownAgents = React.useMemo(
-        () => externalSessionsControllerAgent ? [externalSessionsControllerAgent] : [],
-        [externalSessionsControllerAgent],
-    );
-    const externalSessionsAutoLinkSources = useExternalSessionsAutoLinkSources({
-        rawSettings: settings.externalSessionsSettingsV1,
-        knownAgents: externalSessionsAutoLinkKnownAgents,
-        enabled: primaryMachine !== null && externalSessionsAgent !== null,
-        ...(primaryMachine && externalSessionsAgent
-            ? {
-                scope: {
-                    machineId: primaryMachine.id,
-                    agent: externalSessionsAgent,
-                },
-            }
-            : {}),
-    });
+    }, [executionTarget, targetSelection]);
     const automaticLoginStatusAgentIds = React.useMemo(
         () => (runtimeAgentId && isAgentAuthProbeSafeForBackgroundChecks(runtimeAgentId) ? [runtimeAgentId] : []),
         [runtimeAgentId],
@@ -702,18 +693,12 @@ const AgentSettingsScreenInner = React.memo(function AgentSettingsScreenInner(pr
                     selection={targetSelection}
                     testIDPrefix="settings.agents.administration.target"
                 />
-                {pluginSettingsProjection ? (
-                    <PluginDetailGenericSettingsSection
-                        pluginId={pluginSettingsProjection.pluginId}
-                        projection={pluginSettingsProjection}
-                        machineId={primaryMachine?.id ?? null}
-                        serverId={capabilityServerId}
-                        accountServerIdentityId={accountServerIdentityId}
-                        daemonServerIdentityId={capabilityServerIdentityId}
-                        daemonOperationsAvailable={daemonOperationsAvailable}
-                        isDaemonTargetCurrent={isDaemonSettingsTargetCurrent}
-                    />
-                ) : null}
+                <AgentContributedSettingsSection
+                    pluginSettingsProjection={pluginSettingsProjection}
+                    targetSelection={targetSelection}
+                    executionTarget={executionTarget}
+                    daemonOperationsAvailable={daemonOperationsAvailable}
+                />
                 <ItemGroup title={t('settingsAgents.configuration')} footer={core ? t(core.subtitleKey) : t('settingsAgents.footer')}>
                 <Item
                     title={projection.title}
@@ -951,47 +936,18 @@ const AgentSettingsScreenInner = React.memo(function AgentSettingsScreenInner(pr
                     ) : null}
                 </ItemGroup>
 
-                {externalSessionsEnabled ? (
-                    <ExternalSessionsAgentSettingsSection
-                        machineId={primaryMachine?.id ?? null}
-                        agent={externalSessionsAgent}
-                        agentTitle={projection.title}
-                        integrations={externalSessionsController.integrations}
-                        autoLinkSources={externalSessionsAutoLinkSources}
-                        operations={externalSessionsController.operations}
-                        inventoryState={externalSessionsInventoryState}
-                        onRetryInventory={
-                            externalSessionsAgent
-                                ? externalSessionsController.retryInventory
-                                : null
-                        }
-                        hasMoreInventory={externalSessionsController.hasMoreInventory}
-                        loadingMoreInventory={externalSessionsController.loadingMoreInventory}
-                        onLoadMoreInventory={externalSessionsController.loadMoreInventory}
-                        onBrowse={
-                            primaryMachine
-                            && externalSessionsAgent
-                            && externalSessionsBrowseAvailable
-                                ? () => {
-                                    router.push(buildExternalSessionsAgentBrowseHref({
-                                        machineId: primaryMachine.id,
-                                        serverId: capabilityServerId,
-                                        agentId,
-                                        agent: externalSessionsAgent,
-                                    }));
-                                }
-                                : null
-                        }
-                        onManageAll={() => {
-                            router.push({
-                                pathname: '/settings/external-sessions',
-                                params: {
-                                    machineId: primaryMachine?.id ?? '',
-                                },
-                            });
-                        }}
-                    />
-                ) : null}
+                <AgentDetailExternalSessionsSection
+                    agentId={agentId}
+                    behaviorAgentId={projection.agentId}
+                    agentTitle={projection.title}
+                    machineId={primaryMachine?.id ?? null}
+                    daemonStateVersion={primaryMachine?.daemonStateVersion ?? null}
+                    serverId={capabilityServerId}
+                    agent={externalSessionsAgent}
+                    browseAvailable={externalSessionsBrowseAvailable}
+                    refreshKey={externalSessionsRefreshKey}
+                    projectionPhase={externalSessionsProjectionPhase}
+                />
 
                 {core ? (
                     <>
@@ -1340,7 +1296,19 @@ export default React.memo(function AgentSettingsScreen() {
         return <AgentSettingsNotFound theme={theme} targetSelection={administrationTargetSelection} />;
     }
     if (!runtimeAgentId && !projection.authPlugin) {
-        return <AgentSettingsFallbackScreenInner projection={projection} />;
+        return (
+            <AgentSettingsFallbackScreenInner
+                projection={projection}
+                pluginSettingsProjection={pluginSettingsProjection}
+                targetSelection={administrationTargetSelection}
+                executionTarget={executionTarget}
+                daemonOperationsAvailable={executionTarget !== null && daemonMergedProjection.phase === 'ready'}
+                externalSessionsProjectionPhase={daemonMergedProjection.phase}
+                externalSessionsAgent={externalSessionsBinding?.agent ?? null}
+                externalSessionsBrowseAvailable={externalSessionsBinding?.browseAvailable === true}
+                externalSessionsRefreshKey={externalSessionsRefreshKey}
+            />
+        );
     }
 
     return (

@@ -160,6 +160,7 @@ describe('WorkspaceDetailsPanel review comment launcher', () => {
         expect(routerPushSpy).toHaveBeenCalledWith({
             pathname: '/new',
             params: {
+                draftId: expect.any(String),
                 machineId: 'machine-1',
                 directory: '/repo/worktree-a',
                 spawnServerId: 'server-1',

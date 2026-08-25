@@ -13,7 +13,7 @@ import { buildBackendTargetRouteParams, resolveRouteCloseoutFallbackTarget } fro
 import { resolvePreferredBackendTargetFromProjection } from '@/agents/backendCatalog/resolvePreferredBackendTargetFromProjection';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { NewSessionScreenPortalScope, useNewSessionContainedModalScreenOptions } from '@/components/sessions/new/navigation/newSessionContainedModalScreen';
-import { pickNewSessionRouteParams, setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
+import { buildNewSessionPickerFallbackHref, pickNewSessionRouteParams, setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
 import { NewSessionPathSelectionContent } from '@/components/sessions/new/components/NewSessionPathSelectionContent';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { resolveSpawnServerRouteParam } from '@/components/sessions/new/navigation/spawnServerRouteParam';
@@ -46,6 +46,7 @@ export default React.memo(function PathPickerScreen() {
     const currentRouteParams = React.useMemo(() => {
         return pickNewSessionRouteParams(params);
     }, [params]);
+    const pickerFallbackHref = React.useMemo(() => buildNewSessionPickerFallbackHref(params), [params]);
     const spawnServerId = resolveSpawnServerRouteParam(params.spawnServerId);
     const machineIdParam = typeof params.machineId === 'string' ? params.machineId : null;
     const hasUsableRouteState = Boolean(
@@ -143,7 +144,7 @@ export default React.memo(function PathPickerScreen() {
             },
         });
         if (returnMode === 'dispatch') {
-            safeRouterBack({ router, navigation, fallbackHref: '/new' });
+            safeRouterBack({ router, navigation, fallbackHref: pickerFallbackHref });
         }
     }, [
         currentRouteParams,
@@ -160,13 +161,13 @@ export default React.memo(function PathPickerScreen() {
     ]);
 
     const handleBackPress = React.useCallback(() => {
-        safeRouterBack({ router, navigation, fallbackHref: '/new' });
-    }, [navigation, router]);
+        safeRouterBack({ router, navigation, fallbackHref: pickerFallbackHref });
+    }, [navigation, pickerFallbackHref, router]);
 
     React.useEffect(() => {
         if (hasUsableRouteState) return;
-        safeRouterBack({ router, navigation, fallbackHref: '/new' });
-    }, [hasUsableRouteState, navigation, router]);
+        safeRouterBack({ router, navigation, fallbackHref: pickerFallbackHref });
+    }, [hasUsableRouteState, navigation, pickerFallbackHref, router]);
 
     const headerTitle = t('newSession.selectPathTitle');
     const headerBackTitle = t('common.back');

@@ -22,10 +22,13 @@ import { useLocalServicePreviewState } from '@/sync/domains/local/services/previ
 import type { LocalServicePreviewSnapshotClient } from '@/sync/domains/local/services/preview/useLocalServicePreviewState';
 import type { LocalServicePreviewPlatform } from '@/sync/domains/local/services/preview/url';
 import type { PluginBrowserProjectionModel } from '@/sync/domains/plugins/browser/targets';
+import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
+import { createPluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 import {
     createPluginUiPolicyEvaluationContext,
     type PluginUiPolicyEvaluationContext,
 } from '@/sync/domains/plugins/ui/policy';
+import { getPreferredLanguage } from '@/text';
 
 import {
     reconcileBrowserPresentationSlots,
@@ -77,6 +80,7 @@ export type BrowserSurfaceHostPropsInput = Readonly<{
     localServicePreviewState?: LocalServicePreviewState | null;
     localServicePreviewSnapshotClient?: LocalServicePreviewSnapshotClient;
     pluginBrowserProjection?: PluginBrowserProjectionModel | null;
+    pluginUiProjection?: PluginUiProjectionModel | null;
     pluginBrowserPolicyContext?: PluginUiPolicyEvaluationContext;
 }>;
 
@@ -208,12 +212,21 @@ export function useBrowserSurfaceHostProps(
     });
     const localServicePreviewState = input.localServicePreviewState !== undefined
         ? input.localServicePreviewState
-        : liveLocalServicePreviewState;
+            : liveLocalServicePreviewState;
+    const pluginLocale = getPreferredLanguage();
+    const localizePluginText = React.useMemo(
+        () => createPluginLocalizedTextResolver({
+            projection: input.pluginUiProjection,
+            locale: pluginLocale,
+        }),
+        [input.pluginUiProjection, pluginLocale],
+    );
 
     const feed = React.useMemo<BrowserSurfaceHostFeedAssembly>(() => buildBrowserLaunchpadModel({
         launcherSnapshot: snapshotFromLocalServiceLauncherState(launcherState),
         localServicePreviewState,
         pluginBrowserProjection: input.pluginBrowserProjection,
+        localizePluginText,
         pluginBrowserPolicyContext: createPluginUiPolicyEvaluationContext(
             { platform },
             input.pluginBrowserPolicyContext,
@@ -223,6 +236,7 @@ export function useBrowserSurfaceHostProps(
         input.nowMs,
         input.pluginBrowserProjection,
         input.pluginBrowserPolicyContext,
+        localizePluginText,
         launcherState,
         localServicePreviewState,
         platform,

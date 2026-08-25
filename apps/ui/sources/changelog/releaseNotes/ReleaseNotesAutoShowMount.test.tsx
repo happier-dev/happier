@@ -20,6 +20,10 @@ const modalState = vi.hoisted(() => ({
     activeCount: 0,
 }));
 
+const onboardingState = vi.hoisted(() => ({
+    hasUnread: false,
+}));
+
 vi.mock('expo-router', () => createExpoRouterMock().module);
 
 vi.mock('@/auth/context/AuthContext', () => ({
@@ -29,9 +33,9 @@ vi.mock('@/auth/context/AuthContext', () => ({
     }),
 }));
 
-vi.mock('@/onboarding/showcase', () => {
-    throw new Error('ReleaseNotesAutoShowMount must not import the retired onboarding showcase module.');
-});
+vi.mock('@/onboarding/showcase', () => ({
+    useOnboardingShowcaseState: () => onboardingState,
+}));
 
 vi.mock('@/sync/domains/pending/pendingSetupIntent', () => ({
     getPendingSetupIntent: () => setupIntentState.pending,
@@ -68,6 +72,7 @@ describe('ReleaseNotesAutoShowMount', () => {
         authState.credentials = { token: 'token', secret: 'secret' };
         setupIntentState.pending = null;
         modalState.activeCount = 0;
+        onboardingState.hasUnread = false;
         releaseNotesLauncherState.open.mockClear();
         vi.useFakeTimers();
     });
@@ -87,9 +92,16 @@ describe('ReleaseNotesAutoShowMount', () => {
         expect(releaseNotesLauncherState.open).toHaveBeenCalledTimes(1);
     });
 
-    it('does not import the retired onboarding showcase gate', async () => {
+    it('waits until the first-open onboarding showcase has been resolved', async () => {
+        onboardingState.hasUnread = true;
         const { ReleaseNotesAutoShowMount } = await import('./ReleaseNotesAutoShowMount');
-        await renderScreen(<ReleaseNotesAutoShowMount />);
+        const screen = await renderScreen(<ReleaseNotesAutoShowMount />);
+        await vi.advanceTimersByTimeAsync(800);
+
+        expect(releaseNotesLauncherState.open).not.toHaveBeenCalled();
+
+        onboardingState.hasUnread = false;
+        await screen.update(<ReleaseNotesAutoShowMount />);
         await vi.advanceTimersByTimeAsync(800);
 
         expect(releaseNotesLauncherState.open).toHaveBeenCalledTimes(1);

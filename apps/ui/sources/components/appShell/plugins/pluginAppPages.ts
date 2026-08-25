@@ -8,6 +8,7 @@ import {
     type PluginSurfaceDestination,
 } from '@/components/plugins/surfaces/pluginSurfaceDestinations';
 import type { PluginUiPolicyEvaluationContext } from '@/sync/domains/plugins/ui/policy';
+import type { PluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 import type {
     PluginUiProjectionModel,
     PluginUiSurfacePlacementProjection,
@@ -100,10 +101,12 @@ export function selectPluginAppPagePlacements(
 export function resolvePluginAppPages(input: Readonly<{
     placements?: readonly PluginUiSurfacePlacementProjection[];
     policyContext?: PluginUiPolicyEvaluationContext;
+    localize?: PluginLocalizedTextResolver;
 }>): readonly PluginAppPage[] {
     const destinations = resolvePluginSurfaceDestinations({
         ...(input.placements ? { placements: input.placements } : {}),
         ...(input.policyContext ? { policyContext: input.policyContext } : {}),
+        ...(input.localize ? { localize: input.localize } : {}),
         select: (placement) => {
             const binding = placement.binding;
             // The Registry-normalized binding is the public page identity. A

@@ -459,6 +459,24 @@ export function useMachineTerminalSession(params: Readonly<{
                     }));
                 }
 
+                if (read.mode === 'byte-offset' && applied.acceptedByteOffset !== null) {
+                    const state = terminalCreditStateRef.current;
+                    if (state) {
+                        const ack = {
+                            terminalId,
+                            rendererId: embeddedTerminalRendererId,
+                            surfaceEpoch: state.surfaceEpoch,
+                            ackedByteOffset: applied.acceptedByteOffset,
+                            creditBytes: state.creditBytes,
+                        };
+                        const ackResult = applyTerminalRendererAck(state, ack);
+                        if (ackResult.accepted) {
+                            terminalCreditStateRef.current = ackResult.state;
+                            void carrier.acknowledge(ack);
+                        }
+                    }
+                }
+
                 if (applied.rejectedByteOffset !== null) {
                     idleCount = Math.min(10, idleCount + 1);
                     await delay(Math.min(250, 60 + idleCount * 10));
@@ -535,26 +553,23 @@ export function useMachineTerminalSession(params: Readonly<{
 
     const onWriteComplete = React.useCallback((event: EmbeddedTerminalWriteCompleteEvent) => {
         const pendingWrite = pendingRendererWriteRef.current;
-        if (pendingWrite) {
-            if (!isMatchingRendererWrite(event, pendingWrite)
-                || event.ackedByteOffset !== pendingWrite.ackedByteOffset) {
-                return;
-            }
-            if (pendingWrite.previewText) {
-                recordTerminalPreviewOutput(pendingWrite.previewText);
-            }
-            pendingRendererWriteRef.current = null;
-            pendingWritePreviewTextRef.current.delete(getRendererWriteKey(pendingWrite));
-            const nextCursor = pendingWrite.nextCursor.value;
-            cursorModeRef.current = pendingWrite.nextCursor.mode;
-            if (nextCursor !== cursorRef.current) {
-                cursorRef.current = nextCursor;
-                updateSurfaceState((current) => ({
-                    ...current,
-                    terminalId: event.terminalId,
-                    cursor: nextCursor,
-                }));
-            }
+        if (!pendingWrite || !isMatchingRendererWrite(event, pendingWrite)) {
+            return;
+        }
+        if (pendingWrite.previewText) {
+            recordTerminalPreviewOutput(pendingWrite.previewText);
+        }
+        pendingRendererWriteRef.current = null;
+        pendingWritePreviewTextRef.current.delete(getRendererWriteKey(pendingWrite));
+        const nextCursor = pendingWrite.nextCursor.value;
+        cursorModeRef.current = pendingWrite.nextCursor.mode;
+        if (nextCursor !== cursorRef.current) {
+            cursorRef.current = nextCursor;
+            updateSurfaceState((current) => ({
+                ...current,
+                terminalId: event.terminalId,
+                cursor: nextCursor,
+            }));
         }
 
         const state = terminalCreditStateRef.current;
@@ -602,8 +617,8 @@ function isQueuedRendererWriteResult(
     return typeof result === 'object' && result !== null && result.status === 'queued';
 }
 
-function getRendererWriteKey(input: Pick<EmbeddedTerminalWriteCompleteEvent, 'terminalId' | 'seq' | 'byteOffset'>): string {
-    return `${input.terminalId}:${input.seq}:${input.byteOffset}`;
+function getRendererWriteKey(input: Pick<EmbeddedTerminalWriteCompleteEvent, 'terminalId' | 'seq' | 'byteOffset' | 'writeGeneration'>): string {
+    return `${input.terminalId}:${input.seq}:${input.byteOffset}:${input.writeGeneration}`;
 }
 
 function isMatchingRendererWrite(
@@ -612,5 +627,8 @@ function isMatchingRendererWrite(
 ): boolean {
     return event.terminalId === pending.terminalId
         && event.seq === pending.seq
-        && event.byteOffset === pending.byteOffset;
+        && event.byteOffset === pending.byteOffset
+        && event.byteLength === pending.byteLength
+        && event.ackedByteOffset === pending.ackedByteOffset
+        && event.writeGeneration === pending.writeGeneration;
 }

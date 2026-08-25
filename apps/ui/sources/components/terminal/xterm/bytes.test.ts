@@ -28,12 +28,14 @@ describe('xterm byte helpers', () => {
             seq: 9,
             byteOffset: 12,
             bytes: new Uint8Array([1, 2, 3]),
+            writeGeneration: 7,
         })).toEqual({
             terminalId: 'terminal-1',
             seq: 9,
             byteOffset: 12,
             byteLength: 3,
             ackedByteOffset: 15,
+            writeGeneration: 7,
         });
     });
 });

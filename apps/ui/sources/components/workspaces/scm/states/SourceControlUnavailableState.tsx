@@ -46,6 +46,12 @@ export function SourceControlUnavailableState(props: {
     details?: string | null;
     errorCode?: ScmOperationErrorCode | string | null;
     onRetry?: () => void;
+    /**
+     * Scopes this card's markers, including the Retry button's `${testID}-action`. Callers that can
+     * be mounted alongside another source-control surface pass their own so the two Retry controls
+     * stay distinguishable — a text locator cannot tell them apart.
+     */
+    testID?: string;
 }): React.ReactElement {
     const { theme } = useUnistyles();
     const trimmedDetails = typeof props.details === 'string' ? props.details.trim() : '';
@@ -55,6 +61,7 @@ export function SourceControlUnavailableState(props: {
 
     return (
         <SurfaceStateCard
+            testID={props.testID ?? 'source-control-unavailable'}
             kind="error"
             title={t('common.error')}
             reason={t(bodyKey)}

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View } from 'react-native';
+import { Platform, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type {
     BrowserDiagnosticFidelityV1,
@@ -12,6 +12,7 @@ import type {
 import { resolveBrowserRecordingCaptureProfile } from '@happier-dev/protocol';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
+import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { Text } from '@/components/ui/text/Text';
 import type { BrowserControlViewState } from '@/sync/domains/browser/control';
 import {
@@ -45,7 +46,11 @@ const stylesheet = StyleSheet.create((theme) => ({
         color: theme.colors.text.secondary,
     },
     statusTextActive: {
-        color: theme.colors.state.danger.foreground,
+        // Q2 measured the theme's semantic FOREGROUNDS as text at 2.20–3.55:1 in light theme —
+        // they are fill colours, not text colours. The words carry their own meaning here, so
+        // they take `text.primary`; the hue stays on the border/glyph beside them, where it is a
+        // redundant cue rather than the only one.
+        color: theme.colors.text.primary,
     },
 }));
 
@@ -299,6 +304,8 @@ export function BrowserRecordingControls(props: BrowserRecordingControlsProps): 
                         accessibilityLabel={t('browserRecording.actions.stop')}
                         tooltip={t('browserRecording.actions.stop')}
                         size={34}
+                        minimumInteractiveTargetSize={resolveMinimumInteractiveTargetSize(Platform.OS)}
+                        interactiveTargetGapPx={6}
                         disabled={!props.onStopRecording}
                         onPress={stopRecording}
                     />
@@ -308,6 +315,8 @@ export function BrowserRecordingControls(props: BrowserRecordingControlsProps): 
                         accessibilityLabel={t('browserRecording.actions.cancel')}
                         tooltip={t('browserRecording.actions.cancel')}
                         size={34}
+                        minimumInteractiveTargetSize={resolveMinimumInteractiveTargetSize(Platform.OS)}
+                        interactiveTargetGapPx={6}
                         disabled={!props.onCancelRecording}
                         onPress={cancelRecording}
                     />
@@ -331,6 +340,8 @@ export function BrowserRecordingControls(props: BrowserRecordingControlsProps): 
                         tooltip={t('browserRecording.actions.start')}
                         disabledReason={unavailable?.message ?? undefined}
                         size={34}
+                        minimumInteractiveTargetSize={resolveMinimumInteractiveTargetSize(Platform.OS)}
+                        interactiveTargetGapPx={6}
                         disabled={!canStart}
                         onPress={startRecording}
                     />

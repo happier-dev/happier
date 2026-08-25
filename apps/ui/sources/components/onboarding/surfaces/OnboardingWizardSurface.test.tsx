@@ -623,7 +623,7 @@ describe('OnboardingWizardSurface', () => {
         expect(controller.contentTransitionDirection).toBe('forward');
         expect(controller.showBack).toBe(true);
         expect(controller.onBack).toEqual(expect.any(Function));
-        expect(controller.skipLabel).toBe('common.next');
+        expect(controller.skipLabel).toBe('common.skip');
 
         await act(async () => {
             controller.onBack?.();
@@ -635,7 +635,7 @@ describe('OnboardingWizardSurface', () => {
         expect(controller.contentTransitionDirection).toBe('backward');
     });
 
-    it('labels the welcome action as start and the relay selection action as next', async () => {
+    it('labels the welcome action as start without retaining a duplicate relay next action', async () => {
         const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
         const screen = await renderScreen(
             React.createElement(OnboardingWizardSurface, {
@@ -657,7 +657,8 @@ describe('OnboardingWizardSurface', () => {
         });
         await flushHookEffects({ cycles: 2, turns: 2 });
 
-        expect(screen.findByType(WizardModalShell as never).props.skipLabel).toBe('common.next');
+        expect(screen.findByType(WizardModalShell as never).props.skipLabel).toBe('common.skip');
+        expect(screen.findByTestId('onboarding-wizard-skip')).toBeNull();
     });
 
     it('passes backward transition direction when returning to an earlier wizard step', async () => {
@@ -750,7 +751,7 @@ describe('OnboardingWizardSurface', () => {
         expect(screen.findByTestId('onboarding-wizard-primary')).toBeTruthy();
     });
 
-    it('renders bare skip affordance when the controller exposes skip for a non-welcome step', async () => {
+    it('keeps the primary action as the only relay-selection advance affordance in bare mode', async () => {
         const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
         const screen = await renderScreen(
             React.createElement(OnboardingWizardSurface, {
@@ -766,7 +767,8 @@ describe('OnboardingWizardSurface', () => {
             }),
         );
 
-        expect(screen.findByTestId('onboarding-wizard-skip')).toBeTruthy();
+        expect(screen.findByTestId('onboarding-wizard-primary')).toBeTruthy();
+        expect(screen.findByTestId('onboarding-wizard-skip')).toBeNull();
     });
 
     it('uses the physical screen size (not the window size) for web QR-scanner heuristics on desktop shells', async () => {
@@ -3767,8 +3769,8 @@ describe('OnboardingWizardSurface', () => {
 
         expect(screen.findByTestId('onboarding-wizard-relay-hint')).toBeTruthy();
         expect(screen.findByTestId('onboarding-wizard-relay-hint-line')).toBeTruthy();
-        expect(screen.findByTestId('onboarding-wizard-relay-hint-label')).toBeNull();
-        expect(screen.findByTestId('onboarding-wizard-relay-hint-value')).toBeNull();
+        expect(screen.findByTestId('onboarding-wizard-relay-hint-label')).toBeTruthy();
+        expect(screen.getTextContent()).toContain('setupOnboarding.selectedRelaySummaryTitle');
         expect(screen.findByTestId('onboarding-wizard-relay-hint-url')).toBeNull();
     });
 
@@ -4188,7 +4190,7 @@ describe('OnboardingWizardSurface', () => {
         expect(localRelayRow?.props.disabled).toBe(false);
         expect(screen.findByProps({ testID: 'onboarding-wizard-relay:thisComputer' } as never)?.props.selected).toBe(false);
         expect(screen.findByTestId('onboarding-wizard-primary')?.props.disabled).toBe(true);
-        expect(screen.getTextContent()).toContain('setupOnboarding.currentRelayDescription');
+        expect(screen.getTextContent()).toContain('setupOnboarding.activeRelaySummaryTitle');
 
         runtimeFetchMock.mockImplementation(previousFetchImpl ?? (async (input: RequestInfo | URL, init?: RequestInit) => new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'content-type': 'application/json' } })));
     });
@@ -4326,7 +4328,7 @@ describe('OnboardingWizardSurface', () => {
         await flushHookEffects({ cycles: 2, turns: 2 });
 
         expect(screen.findByTestId('onboarding-wizard-primary')?.props.disabled).toBe(true);
-        expect(screen.findByTestId('onboarding-wizard-skip')?.props.disabled).toBe(true);
+        expect(screen.findByTestId('onboarding-wizard-skip')).toBeNull();
 
         const cloudChoice = screen.root.findAll((node) => {
             const props = node.props as Record<string, unknown>;

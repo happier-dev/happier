@@ -6,6 +6,7 @@ import { ActivityLocalNotificationRuntime } from '@/activity/notifications/runti
 import { PushNotificationPermissionPrimingRuntime } from '@/activity/notifications/permission/PushNotificationPermissionPrimingRuntime';
 import { DesktopActivityOverlayRuntime } from '@/activity/adapters/desktop/runtime/DesktopActivityOverlayRuntime';
 import { ReleaseNotesAutoShowMount } from '@/changelog/releaseNotes';
+import { OnboardingShowcaseAutoShowMount } from '@/onboarding/showcase';
 import { DesktopTrayRuntime } from '@/desktop/tray/DesktopTrayRuntime';
 import { DesktopTrayDaemonLifecycleRuntime } from '@/desktop/tray/DesktopTrayDaemonLifecycleRuntime';
 import { CompanionNoDragRegionProvider } from '@/components/companion/interaction/CompanionNoDragRegion';
@@ -89,6 +90,7 @@ export const AuthenticatedAppRuntimeMounts = React.memo(function AuthenticatedAp
             <ActivityBadgeRuntime />
             <IosActivitySurfacesRuntimeMount />
             <ActivityLocalNotificationRuntime />
+            <OnboardingShowcaseAutoShowMount />
             {props.isAuthenticated ? <ActionOperationRuntime /> : null}
             {props.isAuthenticated ? <PushNotificationPermissionPrimingRuntime /> : null}
             {props.isAuthenticated ? <CurrentSessionPresentationRuntime /> : null}

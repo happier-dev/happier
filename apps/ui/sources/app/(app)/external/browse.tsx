@@ -52,12 +52,13 @@ const ExternalSessionsBrowseRouteContent = React.memo(function ExternalSessionsB
             || projectedExternalSessions.generation !== projection.generation
             || projectedExternalSessions.agent.pluginId !== agent.pluginId
             || projectedExternalSessions.agent.localId !== agent.localId
-            || !canBrowseExternalSessions({ agentId, projection })
+            || !canBrowseExternalSessions({ agentId, projection, machineId })
         ) {
             return null;
         }
         const source = resolveExternalSessionBrowseLockedSource({
             providerId: agentId,
+            machineId,
             profile,
             settings,
             projection,

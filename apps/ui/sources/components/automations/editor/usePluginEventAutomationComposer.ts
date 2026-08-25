@@ -38,12 +38,15 @@ import {
     useSettings,
 } from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';
-import { getSessionName } from '@/utils/sessions/sessionUtils';
 import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 import {
     useActivePluginAccountAvailabilityReader,
     useActivePluginAccountAvailabilityReleaseClassifier,
 } from '@/sync/domains/plugins/availability/projection';
+import {
+    arePluginContributionIdentitiesEqual,
+    arePluginMachineMaterializationRefsEqual,
+} from '@/components/automations/pluginEventAutomationCurrentness';
 
 import {
     createPluginEventAutomationAuthoringDraft,
@@ -54,6 +57,7 @@ import {
     type PluginEventAutomationObservationDraft,
 } from './pluginEventAutomationDraft';
 import {
+    applyRefreshedPluginEventAutomationWebhookEndpoint,
     readPluginEventAutomationWebhookEndpoint,
     type PluginEventAutomationWebhookEndpointBinding,
     type PluginEventAutomationWebhookEndpoint,
@@ -74,6 +78,11 @@ import {
     type PluginEventAutomationResolvedTarget,
     type PluginEventAutomationTargetKind,
 } from './pluginEventAutomationTarget';
+import {
+    buildPluginEventAutomationExistingSessionOptions,
+    type PluginEventAutomationExistingSessionOption,
+} from './pluginEventAutomationExistingSessionOptions';
+export type { PluginEventAutomationExistingSessionOption } from './pluginEventAutomationExistingSessionOptions';
 
 type EventComposerMode = 'schedule' | 'event';
 
@@ -83,16 +92,15 @@ export type PluginEventAutomationComposerSourceStatus =
     | 'configured'
     | 'unavailable';
 
-export type PluginEventAutomationExistingSessionOption = Readonly<{
-    sessionId: string;
-    serverId: string | null;
-    label: string;
-}>;
-
 export type PluginEventAutomationInitialExistingSessionTarget = Readonly<{
     kind: 'existingSession';
     sessionId: string;
     serverId: string;
+}>;
+
+type WebhookEndpointRefreshRequest = Readonly<{
+    generation: number;
+    setupScope: AbortController;
 }>;
 
 /**
@@ -164,6 +172,15 @@ export type PluginEventAutomationComposerModel = Readonly<{
      * composer keeps them visible until the source is reconfigured.
      */
     webhookEndpoint: PluginEventAutomationWebhookEndpoint | null;
+    /**
+     * Re-reads the ensured endpoint's readiness through the same canonical
+     * webhook owner. Provider configuration happens outside this composer, so
+     * without a recheck the readiness the composer showed at ensure time would
+     * be the only one it ever showed. It is `null` while there is no ensured
+     * endpoint to reread, and never a submission prerequisite.
+     */
+    refreshWebhookEndpoint: (() => void) | null;
+    webhookEndpointRefreshing: boolean;
     watcherCandidates: readonly PluginMachineExecutionOriginCandidateV1[];
     selectedWatcherOrigin: PluginMachineExecutionOriginV1 | null;
     selectWatcher: (candidate: PluginMachineExecutionOriginCandidateV1) => void;
@@ -183,20 +200,13 @@ export type PluginEventAutomationComposerModel = Readonly<{
     revision: number;
 }>;
 
-function sameContributionIdentity(
-    left: Readonly<{ pluginId: string; localId: string }>,
-    right: Readonly<{ pluginId: string; localId: string }>,
-): boolean {
-    return left.pluginId === right.pluginId && left.localId === right.localId;
-}
-
 function sameEligibleEvent(
     left: DaemonContributionRegistryProjectionAutomationEligibleEventV1,
     right: DaemonContributionRegistryProjectionAutomationEligibleEventV1,
 ): boolean {
-    return sameContributionIdentity(left.event.identity, right.event.identity)
+    return arePluginContributionIdentitiesEqual(left.event.identity, right.event.identity)
         && left.event.immutableGenerationId === right.event.immutableGenerationId
-        && sameContributionIdentity(left.setupAction.identity, right.setupAction.identity)
+        && arePluginContributionIdentitiesEqual(left.setupAction.identity, right.setupAction.identity)
         && left.setupAction.immutableGenerationId === right.setupAction.immutableGenerationId;
 }
 
@@ -265,26 +275,17 @@ function readPluginEventAutomationPluginPresentationFacts(
     });
 }
 
-function sameWatcherMaterialization(
-    left: Readonly<{ machineId: string; pluginId: string; materializationId: string }>,
-    right: Readonly<{ machineId: string; pluginId: string; materializationId: string }>,
-): boolean {
-    return left.machineId === right.machineId
-        && left.pluginId === right.pluginId
-        && left.materializationId === right.materializationId;
-}
-
 function resolveCurrentEligibleEventForEditSeed(params: Readonly<{
     eligibleEvents: readonly DaemonContributionRegistryProjectionAutomationEligibleEventV1[];
     seed: PluginEventAutomationEditSeed;
 }>): DaemonContributionRegistryProjectionAutomationEligibleEventV1 | null {
     const matches = params.eligibleEvents.filter((candidate) => (
-        sameContributionIdentity(candidate.event.identity, params.seed.eventRef)
+        arePluginContributionIdentitiesEqual(candidate.event.identity, params.seed.eventRef)
         && candidate.event.automation.source.sourceContractVersion === params.seed.source.sourceContractVersion
         && candidate.event.automation.source.supportedObservationTransports.includes(
             params.seed.observation.kind,
         )
-        && sameContributionIdentity(
+        && arePluginContributionIdentitiesEqual(
             candidate.setupAction.identity,
             candidate.event.automation.source.setupActionRef ?? { pluginId: '', localId: '' },
         )
@@ -401,6 +402,9 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         PluginEventAutomationObservationDraft['kind']
     >('checkpointedPull');
     const [webhookEndpoint, setWebhookEndpoint] = React.useState<PluginEventAutomationWebhookEndpoint | null>(null);
+    const [webhookEndpointRefreshing, setWebhookEndpointRefreshing] = React.useState(false);
+    const nextWebhookEndpointRefreshGenerationRef = React.useRef(0);
+    const activeWebhookEndpointRefreshRef = React.useRef<WebhookEndpointRefreshRequest | null>(null);
     // A durable-push edit re-reads its already-ensured endpoint through the
     // canonical webhook owner. That owner keeps the endpoint's exact target
     // materialization and public URL, so the Automation projection never
@@ -457,40 +461,14 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         [sessionListIndexByServerId],
     );
     const sessionListRowRenderablesByKey = useSessionListRowRenderablesForItems(sessionListItems);
-    const existingSessionOptions = React.useMemo<readonly PluginEventAutomationExistingSessionOption[]>(() => {
-        const options: PluginEventAutomationExistingSessionOption[] = [];
-        const seen = new Set<string>();
-        for (const item of sessionListItems) {
-            const sessionId = normalizeSessionTargetId(item.sessionId);
-            const serverId = normalizeSessionTargetId(item.serverId);
-            if (!sessionId || !serverId) continue;
-            const row = sessionListRowRenderablesByKey.get(`${serverId}:${sessionId}`);
-            if (!row) continue;
-            const key = `${serverId}\u0000${sessionId}`;
-            if (seen.has(key)) continue;
-            seen.add(key);
-            options.push(Object.freeze({
-                sessionId,
-                serverId,
-                label: getSessionName(row),
-            }));
-        }
-        for (const session of sessions) {
-            const sessionId = normalizeSessionTargetId(session.id);
-            const serverId = normalizeSessionTargetId(session.serverId)
-                ?? resolveServerIdForSessionIdFromLocalCache(sessionId ?? '');
-            if (!sessionId || !serverId) continue;
-            const key = `${serverId}\u0000${sessionId}`;
-            if (seen.has(key)) continue;
-            seen.add(key);
-            options.push(Object.freeze({
-                sessionId,
-                serverId,
-                label: getSessionName(session),
-            }));
-        }
-        return Object.freeze(options);
-    }, [sessionListItems, sessionListRowRenderablesByKey, sessions]);
+    const existingSessionOptions = React.useMemo(
+        () => buildPluginEventAutomationExistingSessionOptions({
+            sessionListItems,
+            sessionListRowRenderablesByKey,
+            sessions,
+        }),
+        [sessionListItems, sessionListRowRenderablesByKey, sessions],
+    );
     const selectedExistingSessionId = selectedExistingSession?.sessionId ?? null;
     const selectedExistingSessionServerId = selectedExistingSession?.serverId ?? null;
     const existingSessionHydration = useHydrateSessionForRoute(
@@ -897,7 +875,7 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         const watcher = event && seededMaterializationRef
             ? watcherCandidates.find((candidate) => (
                 isPluginMachineExecutionOriginCandidateSelectable(candidate)
-                && sameWatcherMaterialization(candidate.materialization, seededMaterializationRef)
+                && arePluginMachineMaterializationRefsEqual(candidate.materialization, seededMaterializationRef)
             )) ?? null
             : null;
         const watcherOrigin = watcher ? composePluginMachineExecutionOriginV1(watcher.materialization) : null;
@@ -974,6 +952,12 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         ],
     );
     React.useEffect(() => () => setupScope.abort(), [setupScope]);
+    React.useEffect(() => {
+        const activeRefresh = activeWebhookEndpointRefreshRef.current;
+        if (!activeRefresh || activeRefresh.setupScope === setupScope) return;
+        activeWebhookEndpointRefreshRef.current = null;
+        setWebhookEndpointRefreshing(false);
+    }, [setupScope]);
 
     const configureSource = React.useCallback(() => {
         void (async () => {
@@ -1041,6 +1025,68 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         maximumObservationAgeMs.value,
         resolveExecutionOrigin,
         setupScope,
+    ]);
+
+    const webhookEndpointId = webhookEndpoint?.webhookEndpointId ?? null;
+    const webhookEndpointPluginId = configuredSetup?.draft.eventRef.pluginId ?? null;
+    // The endpoint was ensured against the setup result's source instance, and
+    // the writer persists that same value as the routing source instance, so
+    // one reread key covers both create and edit.
+    const webhookEndpointSourceInstanceId = configuredSetup?.draft.source.sourceInstanceId ?? null;
+    const refreshWebhookEndpoint = React.useCallback(() => {
+        if (
+            !webhookEndpointId
+            || !webhookEndpointPluginId
+            || !webhookEndpointSourceInstanceId
+            || !accountLifetime
+            || setupScope.signal.aborted
+        ) {
+            return;
+        }
+        if (activeWebhookEndpointRefreshRef.current?.setupScope === setupScope) return;
+        const request = Object.freeze({
+            generation: nextWebhookEndpointRefreshGenerationRef.current + 1,
+            setupScope,
+        });
+        nextWebhookEndpointRefreshGenerationRef.current = request.generation;
+        activeWebhookEndpointRefreshRef.current = request;
+        setWebhookEndpointRefreshing(true);
+        void (async () => {
+            const result = await readPluginEventAutomationWebhookEndpoint({
+                webhookEndpointId,
+                expectedPluginId: webhookEndpointPluginId,
+                expectedSourceInstanceId: webhookEndpointSourceInstanceId,
+                accountLifetime,
+                signal: request.setupScope.signal,
+            });
+            const activeRefresh = activeWebhookEndpointRefreshRef.current;
+            if (
+                !activeRefresh
+                || activeRefresh.generation !== request.generation
+                || activeRefresh.setupScope !== request.setupScope
+            ) {
+                return;
+            }
+            activeWebhookEndpointRefreshRef.current = null;
+            setWebhookEndpointRefreshing(false);
+            if (request.setupScope.signal.aborted || !accountLifetime.isCurrent()) return;
+            // A reread that cannot reach the owner, or that finds the binding
+            // no longer current, keeps the disclosed URL and one-time secret
+            // on screen: dropping them would destroy the only copy the user
+            // has, and the readiness alert already says the path is unproven.
+            if (result.kind !== 'available') return;
+            setWebhookEndpoint((current) => applyRefreshedPluginEventAutomationWebhookEndpoint(
+                current,
+                result.binding.endpoint,
+            ));
+            advanceRevision();
+        })();
+    }, [
+        accountLifetime,
+        setupScope,
+        webhookEndpointId,
+        webhookEndpointPluginId,
+        webhookEndpointSourceInstanceId,
     ]);
 
     const createDraft = React.useMemo<PluginEventAutomationCreateDraft | null>(() => {
@@ -1115,6 +1161,8 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         observationTransport: effectiveObservationTransport,
         setObservationTransport,
         webhookEndpoint,
+        refreshWebhookEndpoint: webhookEndpointId === null ? null : refreshWebhookEndpoint,
+        webhookEndpointRefreshing,
         watcherCandidates,
         selectedWatcherOrigin,
         selectWatcher,
@@ -1141,6 +1189,9 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         effectiveObservationTransport,
         setObservationTransport,
         webhookEndpoint,
+        webhookEndpointId,
+        webhookEndpointRefreshing,
+        refreshWebhookEndpoint,
         eligibleEvents,
         eventCatalogStatus,
         existingSessionAvailability,

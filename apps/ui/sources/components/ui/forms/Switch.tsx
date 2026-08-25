@@ -3,6 +3,7 @@ import { Platform, Switch as RNSwitch, SwitchProps } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
+import { useItemRowAccessibleName } from '@/components/ui/lists/ItemRowAccessibleName';
 
 import { Deferred } from './Deferred';
 
@@ -21,11 +22,14 @@ export const Switch = React.forwardRef<React.ElementRef<typeof RNSwitch>, AppSwi
     ref,
 ) {
     const { theme } = useUnistyles();
+    const rowAccessibleName = useItemRowAccessibleName();
+    const accessibleName = props.accessibilityLabel ?? props['aria-label'] ?? rowAccessibleName;
     return (
         <Deferred enabled={Platform.OS === 'android'}>
             <RNSwitch
                 ref={ref}
                 {...props}
+                accessibilityLabel={accessibleName}
                 style={[style, MINIMUM_INTERACTIVE_TARGET_STYLE]}
                 trackColor={{ false: theme.colors.switch.track.inactive, true: theme.colors.switch.track.active }}
                 ios_backgroundColor={theme.colors.switch.track.inactive}

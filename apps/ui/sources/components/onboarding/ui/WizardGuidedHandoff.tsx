@@ -37,22 +37,14 @@ export type WizardGuidedHandoffDividerProps = Readonly<{
 const stylesheet = StyleSheet.create((theme) => ({
     root: {
         width: '100%',
-        gap: 14,
+        gap: 8,
         alignItems: 'flex-start',
     },
     divider: {
         width: '100%',
-        flexDirection: 'row',
         alignItems: 'center',
-        gap: 12,
-        paddingTop: 12,
-        paddingBottom: 4,
-    },
-    dividerLine: {
-        flex: 1,
-        height: 1,
-        backgroundColor: theme.colors.border.default,
-        opacity: 0.8,
+        justifyContent: 'center',
+        paddingVertical: 0,
     },
     dividerText: {
         color: theme.colors.text.secondary,
@@ -107,9 +99,7 @@ export function WizardGuidedHandoffDivider(props: WizardGuidedHandoffDividerProp
 
     return (
         <View testID={props.testID} style={styles.divider}>
-            <View style={styles.dividerLine} />
             <Text style={styles.dividerText}>{t('setupOnboarding.orDividerLabel')}</Text>
-            <View style={styles.dividerLine} />
         </View>
     );
 }

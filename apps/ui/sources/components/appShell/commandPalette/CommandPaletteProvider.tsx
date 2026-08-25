@@ -1,6 +1,6 @@
 import React, { useCallback, useMemo } from 'react';
 import { Platform } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useGlobalSearchParams, useRouter, useSegments } from 'expo-router';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol';
 import { Modal } from '@/modal';
 import {
@@ -12,7 +12,6 @@ import { storage } from '@/sync/domains/state/storage';
 import { useShallow } from 'zustand/react/shallow';
 import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
-import { useSegments } from 'expo-router';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
@@ -47,13 +46,19 @@ import { isDesktopHost } from '@/utils/platform/desktopHost';
 import { buildCommandPaletteCommands, type PetCommandControls } from './buildCommandPaletteCommands';
 import { KeyboardShortcutProvider, buildKeyboardShortcutLabels, resolveKeyboardPlatform, type KeyboardShortcutHandlers } from '@/keyboard';
 import { useOptionalCurrentUiContextReader } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
+import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
+import { projectParameterFreeRoute } from '@/track/parameterFreeRouteProjection';
+import { useResolveNewSessionOrdinaryEntryRoute } from '@/components/sessions/new/navigation/newSessionOrdinaryEntryRoute';
 
-function readActiveSessionIdFromSegments(segments: readonly string[]): string | null {
-    // expo-router segments look like: ['(app)', 'session', '<id>', ...]
-    const idx = segments.indexOf('session');
-    if (idx < 0) return null;
-    const candidate = String(segments[idx + 1] ?? '').trim();
-    return candidate.length > 0 ? candidate : null;
+export function readActiveSessionIdFromRoute(
+    segments: readonly string[],
+    routeId: string | readonly string[] | undefined,
+): string | null {
+    const route = projectParameterFreeRoute(segments);
+    if (route.segments[0] !== 'session' || route.segments[1] !== ':id') return null;
+    const sessionId = normalizeSessionId(routeId);
+    if (!sessionId || projectParameterFreeRoute([sessionId]).segments[0] === ':id') return null;
+    return sessionId;
 }
 
 const EMPTY_KEYBOARD_HANDLERS: KeyboardShortcutHandlers = {};
@@ -195,6 +200,7 @@ export function CommandPaletteProvider({ children }: { children: React.ReactNode
 
 function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) {
     const router = useRouter();
+    const resolveNewSessionOrdinaryEntryRoute = useResolveNewSessionOrdinaryEntryRoute();
     const { logout } = useAuth();
     const {
         commandPaletteEnabled,
@@ -209,7 +215,11 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
     })));
     const navigateToSession = useNavigateToSession();
     const segments = useSegments();
-    const activeSessionId = useMemo(() => readActiveSessionIdFromSegments(segments), [segments]);
+    const routeParams = useGlobalSearchParams<{ id?: string | string[] }>();
+    const activeSessionId = useMemo(
+        () => readActiveSessionIdFromRoute(segments, routeParams.id),
+        [routeParams.id, segments],
+    );
     const pluginActionPresentation = useCommandPalettePluginActionPresentation(activeSessionId);
     const executionRunsEnabled = useFeatureEnabled('execution.runs');
     const voiceEnabled = useFeatureEnabled('voice');
@@ -317,6 +327,11 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
         };
     }, [applyLocalSettings, applySettings, router]);
 
+    const openNewSession = useCallback(() => {
+        const { draftId, draftOrigin } = resolveNewSessionOrdinaryEntryRoute();
+        router.push({ pathname: '/new', params: { draftId, draftOrigin } });
+    }, [resolveNewSessionOrdinaryEntryRoute, router]);
+
     const buildCommands = useCallback(() => {
         return buildCommandPaletteCommands({
             sessionsById: storage.getState().sessions,
@@ -330,6 +345,7 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
             onActivateCompactAppDestination: activateCompactAppDestination,
             nav: {
                 push: (path) => router.push(path as any),
+                openNewSession,
                 navigateToSession,
             },
             auth: {
@@ -346,7 +362,7 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
                 await Modal.alertAsync(title, message);
             },
         });
-    }, [activeSessionId, executionRunsEnabled, voiceEnabled, memorySearchEnabled, petsCompanionEnabled, compactAppDestinations, activateCompactAppDestination, shortcutLabels, petControls, pluginActionPresentation, router, navigateToSession, logout, actionExecutor]);
+    }, [activeSessionId, executionRunsEnabled, voiceEnabled, memorySearchEnabled, petsCompanionEnabled, compactAppDestinations, activateCompactAppDestination, shortcutLabels, petControls, pluginActionPresentation, router, openNewSession, navigateToSession, logout, actionExecutor]);
 
     const showCommandPalette = useCallback(() => {
         if (Platform.OS !== 'web' || !commandPaletteEnabled) return;
@@ -362,14 +378,12 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
     const keyboardHandlers = useMemo<KeyboardShortcutHandlers>(
         () => ({
             ...(commandPaletteEnabled ? { 'commandPalette.open': showCommandPalette } : {}),
-            'session.new': () => {
-                router.push('/new' as any);
-            },
+            'session.new': openNewSession,
             'settings.open': () => {
                 router.push('/settings' as any);
             },
         }),
-        [commandPaletteEnabled, router, showCommandPalette],
+        [commandPaletteEnabled, openNewSession, router, showCommandPalette],
     );
     const keyboardEnabledWhenDisabledCommandIds = useMemo(
         () => commandPaletteEnabled ? ['commandPalette.open'] as const : [],

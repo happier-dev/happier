@@ -13,6 +13,7 @@ type SoftSlideTransitionLayer = Readonly<{
 
 export type SoftSlideTransitionFrameProps = Readonly<{
     children: React.ReactNode;
+    contentStyle?: StyleProp<ViewStyle>;
     direction: StepTransitionDirection;
     reducedMotion: boolean;
     style?: StyleProp<ViewStyle>;
@@ -186,6 +187,7 @@ function WebSoftSlideTransitionFrame(props: SoftSlideTransitionFrameProps) {
             <View
                 style={[
                     styles.currentLayer,
+                    props.contentStyle,
                     cssTransitionStyle('enter', props.reducedMotion),
                     {
                         opacity: currentOpacity,
@@ -377,6 +379,7 @@ function NativeSoftSlideTransitionFrame(props: SoftSlideTransitionFrameProps) {
             <Animated.View
                 style={[
                     styles.currentLayer,
+                    props.contentStyle,
                     {
                         opacity: enterProgress,
                         transform: [{ translateX: enterTranslateX }],

@@ -9,6 +9,7 @@ import { resolveAgentIdForPermissionUi } from '@/agents/catalog/resolve';
 import { useHistoricalTranscriptAgentId } from '@/components/sessions/transcript/attribution/SessionTranscriptAgentAttributionContext';
 import { getPermissionFooterCopy } from '@/agents/catalog/permissionUiCopy';
 import { getAgentBehavior } from '@/agents/catalog/catalog';
+import { resolveSessionMachineId } from '@/sync/domains/session/external/resolveSessionMachineId';
 import { parseParenIdentifier } from '@/components/tools/normalization/parse/parseParenIdentifier';
 import { Text } from '@/components/ui/text/Text';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
@@ -264,8 +265,15 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
     // descriptor, bundled or not; each owner already falls back to a neutral
     // default for one that ships none, so the footer always renders and a
     // pending request is always answerable.
-    const copy = getPermissionFooterCopy(agentId);
-    const permissionFooterBehavior = getAgentBehavior(agentId).permissions?.footer;
+    //
+    // The read is scoped to the machine that owns this Session. An installed
+    // Agent's descriptor is a per-machine fact, and two machines can hold
+    // different versions of it: without the machine, a request on machine B
+    // could be answered with machine A's stop handling, permission-update or
+    // exec-policy behavior.
+    const permissionBehavior = getAgentBehavior(agentId, resolveSessionMachineId(metadata)).permissions;
+    const copy = getPermissionFooterCopy(permissionBehavior?.promptProtocol);
+    const permissionFooterBehavior = permissionBehavior?.footer;
     const isCodexDecision = copy.protocol === 'codexDecision';
     const shouldUsePermissionUpdates = permissionFooterBehavior?.usePermissionUpdates === true || Array.isArray(permission?.suggestions);
     const shouldForceReadOnlyAfterStop = permissionFooterBehavior?.forceReadOnlyAfterStop === true;

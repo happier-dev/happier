@@ -678,6 +678,7 @@ export function BrowserSurfaceHost(props: Readonly<{
                 input,
                 policyContext: pluginBrowserPolicyContext,
                 resolveContributedAction,
+                pluginUiProjection: props.pluginUiProjection,
                 ...(currentUiContextReader
                     ? { readCurrentUiContext: currentUiContextReader.readCurrentUiContext }
                     : {}),

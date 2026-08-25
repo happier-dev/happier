@@ -464,6 +464,20 @@ function installSelectedAppScopePluginFixture(input: Readonly<{
     }];
     serverProfilesState.generation += 1;
 
+    const materialization: PluginAccountAvailabilitySnapshot['materializations'][number] = {
+        serverIdentityId: origin.serverIdentityId,
+        machineId: origin.materializationRef.machineId,
+        materializationId: origin.materializationRef.materializationId,
+        pluginId: origin.materializationRef.pluginId,
+        version: '1.0.0',
+        sourceClass: 'registryPackage',
+        portableRelease: true,
+        archiveDigestSha256: APP_SCOPE_ARCHIVE_DIGEST,
+        uiArtifacts: artifacts.map(({ compatibility: _compatibility, ...artifact }) => artifact),
+        enabled: true,
+        trustState: 'trusted',
+        observedAt: 1,
+    };
     const snapshot: PluginAccountAvailabilitySnapshot = {
         availabilityCursor: 1,
         intentReads: [{
@@ -503,19 +517,12 @@ function installSelectedAppScopePluginFixture(input: Readonly<{
                 uiArtifacts: [],
             },
         }],
-        materializations: [{
-            serverIdentityId: origin.serverIdentityId,
-            machineId: origin.materializationRef.machineId,
-            materializationId: origin.materializationRef.materializationId,
-            pluginId: origin.materializationRef.pluginId,
-            version: '1.0.0',
-            sourceClass: 'registryPackage',
-            portableRelease: true,
-            archiveDigestSha256: APP_SCOPE_ARCHIVE_DIGEST,
-            uiArtifacts: artifacts.map(({ compatibility: _compatibility, ...artifact }) => artifact),
-            enabled: true,
-            trustState: 'trusted',
-            observedAt: 1,
+        materializations: [materialization],
+        snapshots: [{
+            serverIdentityId: materialization.serverIdentityId,
+            machineId: materialization.machineId,
+            revision: 1,
+            materializations: [materialization],
         }],
     };
     replacePluginAccountAvailabilityProjection({

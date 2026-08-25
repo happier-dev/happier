@@ -68,6 +68,7 @@ describe('submitPluginEventAutomation Account fence', () => {
             buildNewSessionSpawn: () => null,
             buildExecutionRun: () => null,
             resolveTarget: () => null,
+            confirmSubmission: async () => true,
             isCurrent: () => true,
         })).resolves.toEqual({ kind: 'unavailable', reason: 'account' });
 
@@ -99,6 +100,7 @@ describe('submitPluginEventAutomation Account fence', () => {
             buildNewSessionSpawn: () => null,
             buildExecutionRun: () => null,
             resolveTarget: () => null,
+            confirmSubmission: async () => true,
             isCurrent: () => true,
         })).resolves.toEqual({ kind: 'unavailable', reason: 'edit' });
 
@@ -161,6 +163,7 @@ describe('submitPluginEventAutomation Account fence', () => {
             buildNewSessionSpawn: () => null,
             buildExecutionRun: () => null,
             resolveTarget: () => null,
+            confirmSubmission: async () => true,
             isCurrent: () => true,
         });
 

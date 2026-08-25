@@ -30,7 +30,7 @@ import { getActiveServerId } from '@/sync/domains/server/serverProfiles';
 import { PopoverScope } from '@/components/ui/popover';
 import { resolveSpawnServerRouteParam } from '@/components/sessions/new/navigation/spawnServerRouteParam';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
-import { pickNewSessionRouteParams, setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
+import { buildNewSessionPickerFallbackHref, pickNewSessionRouteParams, setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
 import { buildSecretRequirementRouteParams } from '@/components/sessions/new/navigation/newSessionRouteParams';
 import { buildProfileEditPickerRouteParams } from '@/components/sessions/new/navigation/buildProfileEditPickerRouteParams';
 import { buildBackendTargetRouteParams, resolveRouteCloseoutFallbackTarget } from '@/agents/backendCatalog/backendTargetRouteParams';
@@ -49,6 +49,7 @@ export default React.memo(function ProfilePickerScreen() {
         backendTarget?: string;
         backendTargetKey?: string;
         dataId?: string;
+        draftId?: string;
         selectedId?: string;
         machineId?: string;
         profileId?: string | string[];
@@ -79,6 +80,7 @@ export default React.memo(function ProfilePickerScreen() {
     const currentRouteParams = React.useMemo(() => {
         return pickNewSessionRouteParams(params);
     }, [params]);
+    const pickerFallbackHref = React.useMemo(() => buildNewSessionPickerFallbackHref(params), [params]);
     const daemonMergedProjection = useDaemonMergedProjectionInputs({
         machineId: machineId ?? null,
         serverId: spawnServerId,
@@ -134,14 +136,14 @@ export default React.memo(function ProfilePickerScreen() {
             },
         });
         if (returnMode === 'dispatch') {
-            safeRouterBack({ router, navigation, fallbackHref: '/new' });
+            safeRouterBack({ router, navigation, fallbackHref: pickerFallbackHref });
         }
     }, [currentRouteParams, dataId, machineId, navigation, roundTripBackendParams, router, spawnServerId]);
 
     React.useEffect(() => {
         if (hasUsableRouteState) return;
-        safeRouterBack({ router, navigation, fallbackHref: '/new' });
-    }, [hasUsableRouteState, navigation, router]);
+        safeRouterBack({ router, navigation, fallbackHref: pickerFallbackHref });
+    }, [hasUsableRouteState, navigation, pickerFallbackHref, router]);
 
     // When the secret requirement screen is used (native), it returns a temp id via params.
     // We handle it here and then return to the previous route with the correct selection.
@@ -223,6 +225,7 @@ export default React.memo(function ProfilePickerScreen() {
                     ...roundTripBackendParams,
                     ...buildSecretRequirementRouteParams({
                         dataId: dataId ?? null,
+                        draftId: params.draftId ?? null,
                         selectedMachineId: machineId ?? null,
                         targetServerId: spawnServerId ?? null,
                     }),
@@ -381,12 +384,13 @@ export default React.memo(function ProfilePickerScreen() {
             params: buildProfileEditPickerRouteParams({
                 backendTargetRouteParams: roundTripBackendParams,
                 dataId,
+                draftId: params.draftId,
                 machineId,
                 spawnServerId: spawnServerId ?? undefined,
                 nextParams,
             }),
         });
-    }, [dataId, machineId, roundTripBackendParams, router, spawnServerId]);
+    }, [dataId, machineId, params.draftId, roundTripBackendParams, router, spawnServerId]);
 
     const openProfileCreate = React.useCallback(() => {
         pushProfileEdit({});

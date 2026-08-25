@@ -7,7 +7,7 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { t } from '@/text';
-import { useMachine, useSession } from '@/sync/domains/state/storage';
+import { useMachine, useSessionListPreferredMetadata } from '@/sync/domains/state/storage';
 import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
 import { useAllActionOperations } from '@/sync/domains/actionOperations/useActionOperations';
@@ -53,15 +53,18 @@ const ActionOperationRow = React.memo(function ActionOperationRow(props: Readonl
 }>) {
     const { theme } = useUnistyles();
     const { snapshot, observation } = props.operation;
-    const session = useSession(snapshot.scope.sessionId ?? '');
-    const machine = useMachine(snapshot.scope.machineId);
+    const sessionId = snapshot.scope.sessionId ?? null;
+    const sessionMetadata = useSessionListPreferredMetadata(sessionId);
+    const machine = useMachine(sessionId ? '' : snapshot.scope.machineId);
     const status = resolveActionOperationStatus(snapshot, observation);
     const statusLabel = status.label.kind === 'producer'
         ? status.label.value
         : translateHostStatus(status.label.value);
-    const context = [session ? getSessionName(session) : null, getMachineDisplayName(machine)]
-        .filter((value): value is string => Boolean(value))
-        .join(' · ');
+    const context = sessionId
+        ? sessionMetadata
+            ? getSessionName({ id: sessionId, metadata: sessionMetadata })
+            : ''
+        : getMachineDisplayName(machine) ?? '';
     const determinateProgress = snapshot.progress?.kind === 'determinate'
         ? t('inbox.actionOperations.progress', {
             current: snapshot.progress.current,

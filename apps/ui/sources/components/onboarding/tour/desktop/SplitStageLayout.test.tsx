@@ -129,7 +129,7 @@ describe('SplitStageLayout', () => {
         });
         expect(screen.findByTestId('unauth-shell-stage-brand-host')).toBeNull();
         expect(screen.findByTestId('unauth-shell-stage-wallpaper-host')).not.toBeNull();
-        expect(screen.getTextContent()).toContain('Start anywhere. Continue everywhere.');
+        expect(screen.getTextContent()).toContain('Start coding anywhere. Continue everywhere.');
         expect(screen.getTextContent()).toContain('Configuration body');
         expect(screen.getTextContent()).not.toContain('Hero demo stage');
         expect(collectUnexpectedRawTextNodes(screen.tree.toJSON())).toEqual([]);

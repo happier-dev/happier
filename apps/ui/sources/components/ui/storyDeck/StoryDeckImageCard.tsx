@@ -28,6 +28,7 @@ import {
     resolveWideStoryDeckMediaSize,
 } from './storyDeckLayout';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { resolveStoryDeckBundledImageAsset } from './storyDeckBundledAssetRegistry';
 
 export type StoryDeckImageCardProps = Readonly<{
     card: ImageCardData;
@@ -74,7 +75,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     details: {
         paddingHorizontal: 30,
         paddingBottom: 18,
-        gap: 6,
+        gap: 12,
         flexShrink: 1,
     },
     detailsWide: {
@@ -84,7 +85,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         justifyContent: 'center',
         paddingHorizontal: 0,
         paddingBottom: 0,
-        gap: 8,
+        gap: 16,
     },
     title: {
         ...Typography.default('semiBold'),
@@ -107,10 +108,32 @@ const stylesheet = StyleSheet.create((theme) => ({
         fontSize: STORY_DECK_WIDE_BODY_FONT_SIZE,
         lineHeight: STORY_DECK_WIDE_BODY_LINE_HEIGHT,
     },
+    bodyStack: {
+        gap: 8,
+    },
+    mediaPlane: {
+        position: 'relative',
+        overflow: 'hidden',
+    },
+    backdropLayer: {
+        position: 'absolute',
+        top: 0,
+        right: 0,
+        bottom: 0,
+        left: 0,
+    },
+    foregroundLayer: {
+        position: 'absolute',
+        top: 0,
+        right: 0,
+        bottom: 0,
+        left: 0,
+        zIndex: 1,
+    },
 }));
 
 export function StoryDeckImageCard(props: StoryDeckImageCardProps) {
-    useUnistyles();
+    const { theme } = useUnistyles();
     const styles = stylesheet;
     const { width: viewportWidth } = useWindowDimensions();
     const [measuredWidth, setMeasuredWidth] = React.useState<number | null>(null);
@@ -139,8 +162,13 @@ export function StoryDeckImageCard(props: StoryDeckImageCardProps) {
     const mediaSize = isWide
         ? clampMediaSize(mediaContainerWidth, mediaContainerWidth, 0)
         : clampMediaSize(mediaContainerWidth);
+    const mediaAspectRatio = media.aspectRatio && media.aspectRatio > 0 ? media.aspectRatio : 1;
+    const mediaHeight = mediaSize / mediaAspectRatio;
 
     const altLabel = tLoose(media.altKey);
+    const backdropSource = resolveStoryDeckBundledImageAsset(
+        theme.dark ? media.backdrop?.darkLocalAssetKey : media.backdrop?.lightLocalAssetKey,
+    );
 
     React.useEffect(() => {
         setLoaded(false);
@@ -190,43 +218,65 @@ export function StoryDeckImageCard(props: StoryDeckImageCardProps) {
                 maxSize={isWide ? mediaContainerWidth : undefined}
                 horizontalPadding={mediaFramePadding}
                 topPadding={mediaFramePadding}
+                aspectRatio={media.aspectRatio}
             >
-                {imageSource && !failed ? (
-                    <>
-                        <Image
-                            testID={`${props.testID ?? 'story-image'}-media-image`}
-                            source={imageSource.source}
-                            style={{ width: mediaSize, height: mediaSize }}
-                            contentFit="cover"
-                            cachePolicy="memory-disk"
-                            onLoad={() => setLoaded(true)}
-                            onError={handleError}
-                            accessibilityLabel={altLabel}
+                <View style={[styles.mediaPlane, { width: mediaSize, height: mediaHeight }]}>
+                    {backdropSource ? (
+                        <View style={styles.backdropLayer}>
+                            <Image
+                                testID={`${props.testID ?? 'story-image'}-media-backdrop`}
+                                source={backdropSource}
+                                style={{ width: mediaSize, height: mediaHeight }}
+                                contentFit="cover"
+                                cachePolicy="memory-disk"
+                                accessibilityElementsHidden
+                                importantForAccessibility="no-hide-descendants"
+                            />
+                        </View>
+                    ) : null}
+                    {imageSource && !failed ? (
+                        <View style={styles.foregroundLayer}>
+                            <Image
+                                testID={`${props.testID ?? 'story-image'}-media-image`}
+                                source={imageSource.source}
+                                style={{ width: mediaSize, height: mediaHeight }}
+                                contentFit={media.contentFit ?? 'cover'}
+                                cachePolicy="memory-disk"
+                                onLoad={() => setLoaded(true)}
+                                onError={handleError}
+                                accessibilityLabel={altLabel}
+                                accessibilityRole="image"
+                            />
+                            {!loaded ? (
+                                <View
+                                    testID={`${props.testID ?? 'story-image'}-media-loading`}
+                                    style={[styles.placeholder, { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 2 }]}
+                                >
+                                    <ActivitySpinner />
+                                </View>
+                            ) : null}
+                        </View>
+                    ) : (
+                        <View
+                            style={styles.failurePlaceholder}
+                            testID={`${props.testID ?? 'story-image'}-media-failed`}
                             accessibilityRole="image"
-                        />
-                        {!loaded ? (
-                            <View
-                                testID={`${props.testID ?? 'story-image'}-media-loading`}
-                                style={[styles.placeholder, { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }]}
-                            >
-                                <ActivitySpinner />
-                            </View>
-                        ) : null}
-                    </>
-                ) : (
-                    <View
-                        style={styles.failurePlaceholder}
-                        testID={`${props.testID ?? 'story-image'}-media-failed`}
-                        accessibilityRole="image"
-                        accessibilityLabel={t('releaseNotes.mediaUnavailable')}
-                    >
-                        <Text style={styles.body}>{t('releaseNotes.mediaUnavailable')}</Text>
-                    </View>
-                )}
+                            accessibilityLabel={t('releaseNotes.mediaUnavailable')}
+                        >
+                            <Text style={styles.body}>{t('releaseNotes.mediaUnavailable')}</Text>
+                        </View>
+                    )}
+                </View>
             </StoryDeckMediaFrame>
             <View style={[styles.details, isWide ? styles.detailsWide : null]}>
                 <Text style={[styles.title, isWide ? styles.titleWide : null]}>{tLoose(titleKey)}</Text>
-                <Text style={[styles.body, isWide ? styles.bodyWide : null]}>{tLoose(props.card.bodyKey)}</Text>
+                <View style={styles.bodyStack}>
+                    {(props.card.paragraphKeys ?? [props.card.bodyKey]).map((paragraphKey) => (
+                        <Text key={paragraphKey} style={[styles.body, isWide ? styles.bodyWide : null]}>
+                            {tLoose(paragraphKey)}
+                        </Text>
+                    ))}
+                </View>
             </View>
         </View>
     );

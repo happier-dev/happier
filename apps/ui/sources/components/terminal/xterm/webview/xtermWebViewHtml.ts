@@ -275,6 +275,7 @@ export function buildXtermWebViewHtml(params: Readonly<{
                 byteOffset: chunk.byteOffset,
                 byteLength: chunk.byteLength,
                 ackedByteOffset: chunk.byteOffset + chunk.byteLength,
+                writeGeneration: chunk.writeGeneration,
               }
             });
           }
@@ -307,6 +308,7 @@ export function buildXtermWebViewHtml(params: Readonly<{
         if (typeof payload.seq !== 'number' || !Number.isFinite(payload.seq)) return;
         if (typeof payload.byteOffset !== 'number' || !Number.isFinite(payload.byteOffset)) return;
         if (typeof payload.byteLength !== 'number' || !Number.isFinite(payload.byteLength) || payload.byteLength < 0) return;
+        if (typeof payload.writeGeneration !== 'number' || !Number.isFinite(payload.writeGeneration)) return;
 
         let bytes;
         try {
@@ -323,6 +325,7 @@ export function buildXtermWebViewHtml(params: Readonly<{
           seq: payload.seq,
           byteOffset: payload.byteOffset,
           byteLength: payload.byteLength,
+          writeGeneration: payload.writeGeneration,
         });
         scheduleWriteFlush();
       }
@@ -520,6 +523,13 @@ export function buildXtermWebViewHtml(params: Readonly<{
         root.addEventListener('pointerdown', focusTerminal, { capture: true, passive: true });
         root.addEventListener('touchstart', focusTerminal, { capture: true, passive: true });
         root.addEventListener('mousedown', focusTerminal, { capture: true, passive: true });
+        root.addEventListener('paste', (event) => {
+          const data = event && event.clipboardData ? event.clipboardData.getData('text/plain') : '';
+          if (!data) return;
+          event.preventDefault();
+          event.stopPropagation();
+          sendEnvelope({ v: 1, type: 'paste', payload: { text: data } });
+        }, true);
         term.onData((data) => {
           if (typeof data === 'string' && data) {
             sendEnvelope({ v: 1, type: 'input', payload: { data } });

@@ -4,6 +4,7 @@ export type EmbeddedTerminalWriteCompleteEvent = Readonly<{
     byteOffset: number;
     byteLength: number;
     ackedByteOffset: number;
+    writeGeneration: number;
 }>;
 
 export type EmbeddedTerminalWriteBytesResult =
@@ -17,10 +18,12 @@ export type EmbeddedTerminalRendererHandle = Readonly<{
         terminalId: string;
         seq: number;
         byteOffset: number;
+        writeGeneration: number;
         bytes: Uint8Array;
     }>) => EmbeddedTerminalWriteBytesResult;
     clear: () => void;
     focus?: () => void;
+    copySelection?: () => void;
     hasSelection?: () => boolean;
     getSelectionText?: () => string;
 }>;

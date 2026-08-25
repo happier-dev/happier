@@ -7,7 +7,6 @@ import {
     ExecutionRunDetachedStartRequestV1Schema,
     PluginMachineExecutionOriginV1Schema,
     PluginWebhookEndpointIdV1Schema,
-    arePluginMachineExecutionOriginsEqual,
     type AcpConfigOptionOverridesV1,
     type AutomationEventFilterV1,
     type AutomationRunExecutionRecipeV1,
@@ -28,6 +27,10 @@ import {
 } from '@happier-dev/protocol';
 
 import type { FreshPluginMachineExecutionOriginV1 } from '@/sync/domains/machines/administration/usePluginExecutionOriginSelection';
+import {
+    arePluginContributionIdentitiesEqual,
+    arePluginMachineExecutionOriginsCurrent,
+} from '@/components/automations/pluginEventAutomationCurrentness';
 
 import { PLUGIN_EVENT_AUTOMATION_WEBHOOK_ENDPOINT_SETUP_V1 } from './pluginEventAutomationWebhookEndpoint';
 import { validatePluginEventAutomationSetupResult } from './pluginEventAutomationSetupResult';
@@ -86,20 +89,6 @@ export type PluginEventAutomationEditTarget = Readonly<{
     expectedTemplateVersion: number;
 }>;
 
-function sameContributionIdentity(
-    left: Readonly<{ pluginId: string; localId: string }>,
-    right: Readonly<{ pluginId: string; localId: string }>,
-): boolean {
-    return left.pluginId === right.pluginId && left.localId === right.localId;
-}
-
-function sameWatcherOrigin(
-    left: PluginMachineExecutionOriginV1,
-    right: PluginMachineExecutionOriginV1,
-): boolean {
-    return arePluginMachineExecutionOriginsEqual(left, right);
-}
-
 /**
  * The declared Event is the only authority on which transports it supports.
  * Durable push additionally requires the declared webhook contribution, which
@@ -120,12 +109,12 @@ function isExactEligibleEventForDraft(
 ): boolean {
     const setupActionRef = eligibleEvent.event.automation.source.setupActionRef;
     return supportsPluginEventAutomationObservationTransport(eligibleEvent, draft.observation.kind)
-        && sameContributionIdentity(eligibleEvent.event.identity, draft.eventRef)
+        && arePluginContributionIdentitiesEqual(eligibleEvent.event.identity, draft.eventRef)
         && eligibleEvent.event.immutableGenerationId === draft.expectedEventImmutableGenerationId
-        && sameContributionIdentity(eligibleEvent.setupAction.identity, draft.setupActionRef)
+        && arePluginContributionIdentitiesEqual(eligibleEvent.setupAction.identity, draft.setupActionRef)
         && eligibleEvent.setupAction.immutableGenerationId === draft.expectedSetupActionImmutableGenerationId
         && setupActionRef !== undefined
-        && sameContributionIdentity(setupActionRef, eligibleEvent.setupAction.identity)
+        && arePluginContributionIdentitiesEqual(setupActionRef, eligibleEvent.setupAction.identity)
         && eligibleEvent.setupAction.identity.pluginId === eligibleEvent.event.identity.pluginId
         && validatePluginEventAutomationSetupResult({
             eligibleEvent,
@@ -196,7 +185,7 @@ export function createPluginEventAutomationAuthoringDraft(params: Readonly<{
     const setupActionRef = params.eligibleEvent.event.automation.source.setupActionRef;
     if (
         setupActionRef === undefined
-        || !sameContributionIdentity(setupActionRef, params.eligibleEvent.setupAction.identity)
+        || !arePluginContributionIdentitiesEqual(setupActionRef, params.eligibleEvent.setupAction.identity)
         || params.eligibleEvent.setupAction.identity.pluginId !== params.eligibleEvent.event.identity.pluginId
     ) {
         return null;
@@ -348,7 +337,7 @@ export function buildPluginEventAutomationDefinitionCreateRequest(params: Readon
     if (
         !eligibleEvent
         || !watcherOrigin.success
-        || !sameWatcherOrigin(params.draft.watcherOrigin, watcherOrigin.data)
+        || !arePluginMachineExecutionOriginsCurrent(params.draft.watcherOrigin, watcherOrigin.data)
         || watcherOrigin.data.materializationRef.pluginId !== eligibleEvent.event.identity.pluginId
         || !executionRecipe.success
     ) {

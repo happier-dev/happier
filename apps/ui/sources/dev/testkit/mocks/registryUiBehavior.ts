@@ -32,12 +32,12 @@ export function createRegistryUiBehaviorModuleMock(
         resolveAgentUiBehaviorFromFlavor: () => ({}),
         resolveAgentUiBehaviorFromSessionMetadata: () => ({}),
         resolveBundledAgentUiBehaviorProjection: () => null,
+        resolveOwningMachineIdForSession: () => null,
         resolvePendingDeliveryLabelKeyForSession: () => null,
         resolvePendingDeliveryTransientActionForSession: () => null,
         resolveSessionGoalActionCapabilityProfile: () => null,
         classifyAgentSessionComposerNonSteerablePayload: () => null,
         isAttachedSessionTerminalAvailableForSession: () => false,
-        supportsDetectedMcpConfigScan: () => false,
         supportsEditableSessionGoals: () => false,
     } satisfies RegistryUiBehaviorModuleMock;
 

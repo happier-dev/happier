@@ -77,6 +77,7 @@ vi.mock('@/sync/sync', () => ({
         encryption: {
             decryptAutomationTemplateRaw: vi.fn(async () => null),
         },
+        reconfigureSessionDraftRepositoryForAccountMode: vi.fn(),
     },
 }));
 

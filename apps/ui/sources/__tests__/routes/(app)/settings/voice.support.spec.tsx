@@ -375,15 +375,20 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
     });
 
     it('keeps the selected provider disclosure in Privacy & data and the policy entry last', async () => {
-        const conversations = await renderSettingsView(<VoiceSettingsIntentDetailsScreen intent="conversations" />);
-        expect(conversations.findByTestId('settings.voice.provider.disclosure.happier.voice.elevenlabs%2Frealtime-elevenlabs')).toBeNull();
-        standardCleanup();
-
+        // This used to also render the Conversations screen and assert the disclosure
+        // row was absent there. That assertion could not fail: with the suppression
+        // flag forced on, the screen still never renders the selected provider's
+        // declarative settings group in this harness, so it stayed green either way.
+        // Privacy & data owning the copy is the contract worth asserting, and the
+        // provider panels no longer contain a second renderer to guard against.
         const privacy = await renderSettingsView(<VoiceSettingsIntentDetailsScreen intent="privacy" />);
         const disclosure = privacy.findByTestId('settings.voice.provider.disclosure.happier.voice.elevenlabs%2Frealtime-elevenlabs');
         const policy = privacy.findByTestId('settings.voice.privacyPolicy');
         expect(disclosure).toBeTruthy();
         expect(policy).toBeTruthy();
+        expect(String(disclosure?.props.subtitle)).toContain(
+            'Audio and conversation content are sent from this device to ElevenLabs',
+        );
 
         const itemRows = privacy.tree.root.findAllByType('Item' as any);
         expect(itemRows[itemRows.length - 1]?.props.testID).toBe('settings.voice.privacyPolicy');

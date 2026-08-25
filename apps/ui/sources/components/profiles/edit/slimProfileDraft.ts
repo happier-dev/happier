@@ -13,6 +13,19 @@ export type SlimProfileEditableDraft = Readonly<{
     preferredAgentTargetKey?: LaunchProfileV2['preferredAgentTargetKey'];
     preferredModelSelection?: LaunchProfileV2['preferredModelSelection'];
     codingPromptBehaviorOverrides?: LaunchProfileV2['codingPromptBehaviorOverrides'];
+    /**
+     * Where a Session authored from this profile should run, and how it should
+     * obtain its checkout. Both are PREFERENCES the profile owner already
+     * defines and every launch already reads; until now nothing could write
+     * one, so they were schema a person could not reach.
+     *
+     * `undefined` is a real answer and means "no preference" — which is why the
+     * save below states them explicitly rather than omitting them: the stored
+     * profile is spread first, so an omitted member would keep the old value
+     * and removing a preference would silently do nothing.
+     */
+    placement?: LaunchProfileV2['placement'];
+    checkout?: LaunchProfileV2['checkout'];
 }>;
 
 export type SlimProfileSaveResult =
@@ -55,6 +68,8 @@ export function buildSlimProfileSave(
             ? { preferredModelSelection: draft.preferredModelSelection }
             : { preferredModelSelection: undefined }),
         codingPromptBehaviorOverrides: draft.codingPromptBehaviorOverrides,
+        placement: draft.placement,
+        checkout: draft.checkout,
         updatedAt: now(),
     });
     if (parsed.success) {

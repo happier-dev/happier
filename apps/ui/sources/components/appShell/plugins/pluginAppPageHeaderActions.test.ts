@@ -58,6 +58,7 @@ function resolveClientTargetAction(
             platforms: ['web'],
         },
         dangerLevel: 'safe',
+        available: true,
     };
 }
 
@@ -72,6 +73,16 @@ function resolveDaemonTargetAction(
         surfaces: ['ui'],
         execution: { target: 'daemon' },
         dangerLevel: 'safe',
+        available: true,
+    };
+}
+
+function resolveUnavailableDaemonTargetAction(
+    identity: PluginContributionIdentityV1,
+): PluginProjectedActionV2 {
+    return {
+        ...resolveDaemonTargetAction(identity),
+        available: false,
     };
 }
 
@@ -83,7 +94,7 @@ describe('dispatchPluginAppPageHeaderAction', () => {
             action: {
                 id: 'refresh',
                 title: 'Refresh',
-                action: {
+                command: {
                     kind: 'executeAction',
                     action: { pluginId: 'acme.notes', localId: 'refresh-index' },
                 },
@@ -114,7 +125,7 @@ describe('dispatchPluginAppPageHeaderAction', () => {
                             id: 'open-details',
                             title: 'Open details',
                             icon: 'action',
-                            action: {
+                            command: {
                                 kind: 'openSurface',
                                 destination: { pluginId: 'acme.details', localId: 'panel' },
                             },
@@ -140,7 +151,7 @@ describe('dispatchPluginAppPageHeaderAction', () => {
         const action: PluginUiPageHeaderActionProjection = {
             id: 'open-details',
             title: 'Open details',
-            action: {
+            command: {
                 kind: 'openSurface',
                 destination: { pluginId: 'acme.details', localId: 'panel' },
                 input: { source: 'page-header' },
@@ -165,11 +176,11 @@ describe('dispatchPluginAppPageHeaderAction', () => {
         });
     });
 
-    it('routes executeAction through the canonical generation-leased dispatcher with the absent-input sentinel', async () => {
+    it('routes executeAction through the canonical generation-leased dispatcher with input absent', async () => {
         const action: PluginUiPageHeaderActionProjection = {
             id: 'refresh',
             title: 'Refresh',
-            action: {
+            command: {
                 kind: 'executeAction',
                 action: { pluginId: 'acme.notes', localId: 'refresh-index' },
             },
@@ -192,9 +203,33 @@ describe('dispatchPluginAppPageHeaderAction', () => {
             serverId: 'server-a',
             expectedGeneration: '7',
             qualifiedActionId: 'acme.notes/refresh-index',
-            input: null,
             executionSurface: 'ui',
         });
+    });
+
+    it('refuses a terminally unavailable projected Action before app-page header dispatch', async () => {
+        const execute = vi.fn();
+
+        await expect(dispatchPluginAppPageHeaderAction({
+            action: {
+                id: 'refresh',
+                title: 'Refresh',
+                command: {
+                    kind: 'executeAction',
+                    action: { pluginId: 'acme.notes', localId: 'refresh-index' },
+                },
+            },
+            page: page(),
+            actionAuthority: actionAuthority(7),
+            openSurface: vi.fn(),
+            resolveContributedAction: resolveUnavailableDaemonTargetAction,
+            execute,
+        })).resolves.toEqual({
+            ok: false,
+            code: 'unavailable',
+            reason: 'plugin_ui_action_unavailable',
+        });
+        expect(execute).not.toHaveBeenCalled();
     });
 
     it('fails closed without dispatch when the page-header invocation is no longer current', async () => {
@@ -207,7 +242,7 @@ describe('dispatchPluginAppPageHeaderAction', () => {
             action: {
                 id: 'refresh',
                 title: 'Refresh',
-                action: {
+                command: {
                     kind: 'executeAction',
                     action: { pluginId: 'acme.notes', localId: 'refresh-index' },
                 },
@@ -234,7 +269,7 @@ describe('dispatchPluginAppPageHeaderAction', () => {
             action: {
                 id: 'refresh',
                 title: 'Refresh',
-                action: {
+                command: {
                     kind: 'executeAction',
                     action: { pluginId: 'acme.notes', localId: 'refresh-index' },
                 },

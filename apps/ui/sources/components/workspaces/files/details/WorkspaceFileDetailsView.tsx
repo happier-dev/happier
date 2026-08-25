@@ -13,7 +13,7 @@ import { useUnistyles, StyleSheet } from 'react-native-unistyles';
 import { layout } from '@/components/ui/layout/layout';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
-import { t } from '@/text';
+import { getPreferredLanguage, t } from '@/text';
 
 import { buildFileLineSelectionFingerprint, canStartLineSelection, canUseLineSelection } from '@/scm/scmLineSelection';
 import { getFileLanguageFromPath } from '@/utils/code/fileLanguage';
@@ -77,6 +77,10 @@ import { createWorkspaceFileOpenableContentBinding, type PluginSurfaceOpenableCo
 import { resolvePluginSurfaceDestinationLabel } from '@/components/plugins/surfaces/pluginSurfaceDestinations';
 import type { PluginSurfaceScopedLaunchFacts } from '@/components/plugins/surfaces/pluginSurfaceLaunchAuthority';
 import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
+import {
+    createPluginLocalizedTextResolver,
+    type PluginLocalizedTextResolver,
+} from '@/sync/domains/plugins/ui/i18n';
 import type { LocalServicePreviewPlatform } from '@/sync/domains/local/services/preview/url';
 import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
 import { resolvePluginUiRuntimeFormFactor } from '@/components/appShell/panes/layout/resolveMultiPaneDeviceType';
@@ -161,6 +165,7 @@ function createWorkspaceFileViewerChoiceChromeModel(input: Readonly<{
     canSelect: boolean;
     selectCandidate: (candidateId: string, details: DetailsSurfaceRenderInputV1) => Promise<void>;
     details: DetailsSurfaceRenderInputV1;
+    localizePluginText: PluginLocalizedTextResolver;
 }>): PluginDetailsViewerChoiceModel {
     return Object.freeze({
         candidates: Object.freeze(input.model.choices.map((choice) => {
@@ -177,7 +182,10 @@ function createWorkspaceFileViewerChoiceChromeModel(input: Readonly<{
                 const selected = choice.candidate.candidate.entry.id === input.selectedPluginViewerId;
                 return Object.freeze({
                     id: choice.candidate.candidate.entry.id,
-                    label: resolvePluginSurfaceDestinationLabel(choice.candidate.candidate.placement),
+                    label: resolvePluginSurfaceDestinationLabel(
+                        choice.candidate.candidate.placement,
+                        input.localizePluginText,
+                    ),
                     detail: choice.candidate.identity.pluginId,
                     selected,
                     ...(input.canSelect || selected ? {} : { disabled: true }),
@@ -208,6 +216,7 @@ function stageWorkspaceFilePluginViewer(input: Readonly<{
     originalBuiltinTabState: DetailsTabState;
     canSelect: boolean;
     selectCandidate: (candidateId: string, details: DetailsSurfaceRenderInputV1) => Promise<void>;
+    localizePluginText: PluginLocalizedTextResolver;
 }>): boolean {
     const replaceTab = input.currentDetails.callbacks.replaceTab;
     if (!replaceTab) return false;
@@ -224,6 +233,7 @@ function stageWorkspaceFilePluginViewer(input: Readonly<{
             canSelect: input.canSelect,
             selectCandidate: input.selectCandidate,
             details: context.details,
+            localizePluginText: input.localizePluginText,
         }),
         unavailableFallback: (fallback) => {
             fallback.details.callbacks.replaceTab?.(
@@ -239,7 +249,10 @@ function stageWorkspaceFilePluginViewer(input: Readonly<{
         createPluginDetailsDestinationTab({
             destination: receipt.resource.destination,
             ...(receipt.resource.instanceKey === undefined ? {} : { instanceKey: receipt.resource.instanceKey }),
-            title: resolvePluginSurfaceDestinationLabel(input.selected.candidate.placement),
+            title: resolvePluginSurfaceDestinationLabel(
+                input.selected.candidate.placement,
+                input.localizePluginText,
+            ),
         }),
         {
             intent: detailsTabIntent(input.originalBuiltinTabState),
@@ -258,6 +271,14 @@ function WorkspaceFileOpenableContentViewerControls(props: Readonly<{
     const settingsVersion = useSettingsVersion();
     const stage = usePluginDetailsDestinationLaunchStaging();
     const host = props.host;
+    const pluginLocale = getPreferredLanguage();
+    const localizePluginText = React.useMemo(
+        () => createPluginLocalizedTextResolver({
+            projection: host?.projection,
+            locale: pluginLocale,
+        }),
+        [host?.projection, pluginLocale],
+    );
     const deviceType = useDeviceType();
     const runtimeFormFactor = host
         ? resolvePluginUiRuntimeFormFactor({ deviceType })
@@ -373,8 +394,18 @@ function WorkspaceFileOpenableContentViewerControls(props: Readonly<{
             originalBuiltinTabState,
             canSelect: true,
             selectCandidate,
+            localizePluginText,
         });
-    }, [binding, candidates, host, originalBuiltinTab, originalBuiltinTabState, stage, stat]);
+    }, [
+        binding,
+        candidates,
+        host,
+        localizePluginText,
+        originalBuiltinTab,
+        originalBuiltinTabState,
+        stage,
+        stat,
+    ]);
 
     React.useEffect(() => {
         if (
@@ -398,8 +429,19 @@ function WorkspaceFileOpenableContentViewerControls(props: Readonly<{
             originalBuiltinTabState,
             canSelect: settingsVersion !== null,
             selectCandidate,
+            localizePluginText,
         });
-    }, [binding, choiceModel, host, originalBuiltinTab, originalBuiltinTabState, selectCandidate, settingsVersion, stage]);
+    }, [
+        binding,
+        choiceModel,
+        host,
+        localizePluginText,
+        originalBuiltinTab,
+        originalBuiltinTabState,
+        selectCandidate,
+        settingsVersion,
+        stage,
+    ]);
 
     if (!host || !choiceModel || choiceModel.selected.kind !== 'builtin') return null;
     const viewerChoice = createWorkspaceFileViewerChoiceChromeModel({
@@ -408,6 +450,7 @@ function WorkspaceFileOpenableContentViewerControls(props: Readonly<{
         canSelect: settingsVersion !== null,
         selectCandidate,
         details: host.details,
+        localizePluginText,
     });
     return <PluginDetailsViewerChoiceChrome model={viewerChoice} />;
 }

@@ -1,6 +1,6 @@
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { renderScreen } from '@/dev/testkit';
+import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -12,7 +12,8 @@ const mockState = vi.hoisted(() => ({
     resolvedTargetServerId: undefined as string | null | undefined,
     localSearchParams: {
         dataId: 'draft-data-id',
-    } as { dataId?: string; spawnServerId?: string },
+        draftId: '8e0a5dd1-b1df-43dd-b51e-b7787b30362e',
+    } as { dataId?: string; spawnServerId?: string; draftId?: string },
     serverListeners: new Set<() => void>(),
     guidanceModelListeners: new Set<() => void>(),
     guidanceKind: 'connect_machine' as 'connect_machine' | 'select_session',
@@ -21,6 +22,10 @@ const mockState = vi.hoisted(() => ({
     newSessionBlockHookCalls: 0,
     wizardRenders: 0,
     portalScopeRenders: 0,
+    draftScopeEnabled: false,
+    routerPush: vi.fn(),
+    routerReplace: vi.fn(),
+    routerSetParams: vi.fn(),
 }));
 
 function setMockServerId(serverId: string): void {
@@ -75,7 +80,9 @@ vi.mock('@/components/sessions/guidance/useShouldBlockNewSessionWithGettingStart
 }));
 
 vi.mock('@/sync/store/hooks', () => ({
-    useActiveServerAccountScope: () => null,
+    useActiveServerAccountScope: () => mockState.draftScopeEnabled
+        ? { serverId: mockState.serverId, accountId: 'account-1' }
+        : null,
     useSettings: () => ({
         serverSelectionGroups: [],
         serverSelectionActiveTargetKind: 'server',
@@ -117,6 +124,11 @@ vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
     const expoRouterMock = createExpoRouterMock({
         params: mockState.localSearchParams,
+        router: {
+            push: (...args: unknown[]) => mockState.routerPush(...args),
+            replace: (...args: unknown[]) => mockState.routerReplace(...args),
+            setParams: (...args: unknown[]) => mockState.routerSetParams(...args),
+        },
     });
     return expoRouterMock.module;
 });
@@ -130,12 +142,63 @@ vi.mock('@/sync/domains/state/persistence', () => ({
     },
 }));
 
+vi.mock('@/sync/ops/sessionDrafts/sessionDraftRepository', () => ({
+    getSessionDraftSnapshot: () => mockState.persistedDraft,
+    subscribeSessionDraft: () => () => {},
+    deleteSessionDraft: vi.fn(async () => {}),
+}));
+
+vi.mock('@/sync/domains/actionOperations/useActionOperations', () => ({
+    useAllActionOperations: () => [],
+}));
+
+vi.mock('@/components/sessions/new/modules/newSessionDraftLaunchCustody', () => ({
+    isNewSessionDraftLaunchInCustody: () => false,
+}));
+
+vi.mock('@/components/sessions/drafts/SessionDraftConflictResolution', () => ({
+    SessionDraftConflictResolution: () => React.createElement('ConflictNotice', { testID: 'draft-conflict-notice' }),
+}));
+
+vi.mock('@/components/sessions/drafts/NewSessionDraftComposerActions', () => ({
+    NewSessionDraftComposerActions: (props: Readonly<{
+        deleteDisabled: boolean;
+        onStartAnother: () => void;
+        onDelete: () => Promise<void>;
+    }>) => React.createElement(
+        'DraftComposerActions',
+        props,
+        React.createElement('Pressable', {
+            testID: 'new-session-draft-start-another',
+            onPress: props.onStartAnother,
+        }),
+        React.createElement('Pressable', {
+            testID: 'new-session-draft-delete',
+            disabled: props.deleteDisabled,
+            onPress: props.onDelete,
+        }),
+    ),
+}));
+
+vi.mock('@/components/ui/icons/Icon', () => ({
+    Icon: (props: Record<string, unknown>) => React.createElement('Icon', props),
+}));
+
+vi.mock('@/components/ui/text/Text', () => ({
+    Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+        React.createElement('Text', props, props.children),
+}));
+
 vi.mock('@/utils/sessions/tempDataStore', () => ({
     peekTempData: () => mockState.tempData,
 }));
 
 vi.mock('@/components/sessions/new/hooks/useNewSessionScreenModel', () => ({
-    useNewSessionScreenModel: () => ({
+    useNewSessionScreenModel: (input: Readonly<{
+        composerTopContent?: React.ReactNode;
+        draftId: string;
+        statusTrailingActions?: React.ReactNode;
+    }>) => ({
         variant: 'wizard',
         popoverBoundaryRef: { current: null },
         wizardProps: {
@@ -143,7 +206,10 @@ vi.mock('@/components/sessions/new/hooks/useNewSessionScreenModel', () => ({
             profiles: null,
             agent: null,
             machine: null,
-            footer: null,
+            footer: {
+                composerTopContent: input.composerTopContent,
+                statusTrailingActions: input.statusTrailingActions,
+            },
         },
     }),
 }));
@@ -155,7 +221,16 @@ vi.mock('@/components/sessions/new/components/NewSessionSimplePanel', () => ({
 vi.mock('@/components/sessions/new/components/NewSessionWizard', () => ({
     NewSessionWizard: (props: Record<string, unknown>) => {
         mockState.wizardRenders += 1;
-        return React.createElement('NewSessionWizard', props);
+        const footer = props.footer as Readonly<{
+            composerTopContent?: React.ReactNode;
+            statusTrailingActions?: React.ReactNode;
+        }> | null;
+        return React.createElement(
+            'NewSessionWizard',
+            props,
+            footer?.composerTopContent,
+            footer?.statusTrailingActions,
+        );
     },
 }));
 
@@ -187,11 +262,16 @@ afterEach(() => {
     mockState.resolvedTargetServerId = undefined;
     mockState.localSearchParams = {
         dataId: 'draft-data-id',
+        draftId: '8e0a5dd1-b1df-43dd-b51e-b7787b30362e',
     };
     mockState.guidanceHookCalls = 0;
     mockState.newSessionBlockHookCalls = 0;
     mockState.wizardRenders = 0;
     mockState.portalScopeRenders = 0;
+    mockState.draftScopeEnabled = false;
+    mockState.routerPush.mockReset();
+    mockState.routerReplace.mockReset();
+    mockState.routerSetParams.mockReset();
 });
 
 describe('/new (blocking guidance)', () => {
@@ -273,5 +353,46 @@ describe('/new (blocking guidance)', () => {
 
         expect(mockState.guidanceHookCalls).toBe(0);
         expect(mockState.wizardRenders).toBe(1);
+    });
+
+    it('opens a materialized draft without duplicate context copy and places conflict plus actions beside the composer', async () => {
+        mockState.draftScopeEnabled = true;
+        mockState.shouldBlockNewSession = true;
+        mockState.persistedDraft = {
+            address: { kind: 'newSession', draftId: mockState.localSearchParams.draftId },
+            document: {
+                v: 1,
+                composer: {
+                    text: { mutationId: 'text-1', value: 'Resume the migration\nwith tests' },
+                    mentions: { mutationId: 'mentions-1', value: [] },
+                    attachments: { mutationId: 'attachments-1', value: [] },
+                },
+                target: { kind: 'newSession', authoring: {} },
+                extensions: {},
+            },
+            status: 'conflict',
+            conflict: { fields: [] },
+            createdAt: 1,
+            updatedAt: 2,
+            materialized: true,
+            deleteWhenEmpty: false,
+            localSupplement: {},
+        };
+
+        const Screen = (await import('@/app/(app)/new')).default;
+        const screen = await renderScreen(React.createElement(Screen));
+
+        expect(() => screen.findByProps({ testID: 'session-draft-context' })).toThrow();
+        expect(screen.findByProps({ testID: 'draft-conflict-notice' })).toBeTruthy();
+        expect(screen.findByProps({ testID: 'new-session-draft-start-another' })).toBeTruthy();
+        expect(screen.findByProps({ testID: 'new-session-draft-delete' }).props.disabled).toBe(false);
+
+        await pressTestInstanceAsync(screen.findByProps({ testID: 'new-session-draft-start-another' }));
+        expect(mockState.routerPush).toHaveBeenCalledWith({
+            pathname: '/new',
+            params: {
+                draftId: expect.stringMatching(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i),
+            },
+        });
     });
 });

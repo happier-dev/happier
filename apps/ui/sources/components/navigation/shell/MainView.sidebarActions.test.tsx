@@ -246,7 +246,16 @@ describe('MainView sidebar actions', () => {
         let tree: renderer.ReactTestRenderer | null = null;
         tree = (await renderScreen(<MainView variant="sidebar" />)).tree;
 
-        expect(() => tree!.findByType('FABWide')).not.toThrow();
+        const fab = tree!.findByType('FABWide');
+        fab.props.onPress({ nativeEvent: { ctrlKey: true } });
+
+        expect(routerPushSpy).toHaveBeenCalledWith({
+            pathname: '/new',
+            params: {
+                draftId: expect.any(String),
+                draftOrigin: 'ordinary',
+            },
+        });
         expect(() => findPressableByLabel(tree!, 'New session')).toThrow();
         expect(() => findPressableByLabel(tree!, 'Open automations')).toThrow();
     });
@@ -262,7 +271,16 @@ describe('MainView sidebar actions', () => {
         expect(headerRight).toBeTruthy();
 
         const renderedHeaderRight = await renderScreen(headerRight);
-        expect(() => renderedHeaderRight.findByProps({ testID: 'main-header-start-new-session' })).not.toThrow();
+        renderedHeaderRight.findByProps({ testID: 'main-header-start-new-session' }).props.onPress({
+            nativeEvent: { ctrlKey: true },
+        });
+        expect(routerPushSpy).toHaveBeenCalledWith({
+            pathname: '/new',
+            params: {
+                draftId: expect.any(String),
+                draftOrigin: 'ordinary',
+            },
+        });
         expect(renderedHeaderRight.findAllByType('FABWide')).toHaveLength(0);
     });
 

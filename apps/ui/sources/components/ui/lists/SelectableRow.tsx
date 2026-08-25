@@ -30,6 +30,7 @@ export type SelectableRowVariant = 'slim' | 'default' | 'selectable';
 export type SelectableRowProps = Readonly<{
     testID?: string;
     title: React.ReactNode;
+    titleLeading?: React.ReactNode;
     titleAccessory?: React.ReactNode;
     subtitle?: React.ReactNode;
     left?: React.ReactNode;
@@ -125,7 +126,8 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignItems: 'center',
         gap: 8,
         minWidth: 0,
-        alignSelf: 'flex-start',
+        width: '100%',
+        alignSelf: 'stretch',
     },
     titleText: {
         flexGrow: 0,
@@ -223,6 +225,7 @@ export const SelectableRow = React.forwardRef<React.ElementRef<typeof Pressable>
     );
     const rightAccessory = React.useMemo(() => normalizeNodeForView(props.right ?? null), [props.right]);
     const titleAccessory = React.useMemo(() => normalizeNodeForView(props.titleAccessory ?? null), [props.titleAccessory]);
+    const titleLeading = React.useMemo(() => normalizeNodeForView(props.titleLeading ?? null), [props.titleLeading]);
     const accessoryTitleAlignmentStyle = props.subtitle ? styles.accessoryTitleAligned : null;
     const explicitWebRole = props.webRole ?? (props.accessibilityRole === 'radio' ? 'radio' : undefined);
     const webRole = Platform.OS === 'web' && props.onPress && (!disabled || explicitWebRole)
@@ -264,8 +267,9 @@ export const SelectableRow = React.forwardRef<React.ElementRef<typeof Pressable>
             ) : null}
 
             <View style={styles.content}>
-                {titleAccessory ? (
+                {titleAccessory || titleLeading ? (
                     <View style={styles.titleRow}>
+                        {titleLeading}
                         <Text style={[styles.title, styles.titleText, titleVariantStyle, titleColorStyle, props.titleStyle]} numberOfLines={1}>
                             {props.title}
                         </Text>

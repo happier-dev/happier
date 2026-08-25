@@ -2,6 +2,7 @@ import * as React from 'react';
 
 import { useAuth } from '@/auth/context/AuthContext';
 import { useOptionalModal } from '@/modal';
+import { useOnboardingShowcaseState } from '@/onboarding/showcase';
 import { getPendingSetupIntent } from '@/sync/domains/pending/pendingSetupIntent';
 
 import { isReleaseNotesStoryCardsEnabled } from './featureGate';
@@ -23,6 +24,7 @@ function hasActiveSetupIntent(): boolean {
  *
  * Auto-show gates (per plan §1.3 #11):
  *   - User is authenticated (no auth/setup redirect pending).
+ *   - The one-time onboarding showcase has already been resolved.
  *   - There is a current release with curated cards.
  *   - That release has not been seen yet.
  *
@@ -31,6 +33,7 @@ function hasActiveSetupIntent(): boolean {
 export function ReleaseNotesAutoShowMount(): null {
     const { credentials } = useAuth();
     const launcher = useReleaseNotesLauncher();
+    const onboarding = useOnboardingShowcaseState();
     const modal = useOptionalModal();
     const setupIntentActive = hasActiveSetupIntent();
     const modalStackActive = (modal?.state.modals.length ?? 0) > 0;
@@ -40,6 +43,7 @@ export function ReleaseNotesAutoShowMount(): null {
     React.useEffect(() => {
         if (ranRef.current) return;
         if (!releaseNotesEnabled) return;
+        if (onboarding.hasUnread) return;
         if (!credentials) return; // wait for auth/setup to resolve.
         if (setupIntentActive) return;
         if (modalStackActive) return;
@@ -69,6 +73,7 @@ export function ReleaseNotesAutoShowMount(): null {
         credentials,
         launcher,
         modalStackActive,
+        onboarding.hasUnread,
         releaseNotesEnabled,
         setupIntentActive,
     ]);

@@ -9,6 +9,10 @@ import type {
 import type { BrowserLaunchpadOpenTargetOptions } from '@/components/browser/launchpad/BrowserLaunchpad';
 import type { DetailsTab } from '@/components/appShell/panes/details/workspace/detailsWorkspaceTypes';
 import type { DesktopWebViewNativeAvailability } from '@/sync/domains/browser/adapters/desktopWebView';
+import {
+    openBrowserExternalTabSelection,
+    selectBrowserTargetAdapter,
+} from '@/sync/domains/browser/adapters/selection';
 import { evaluateBrowserTargetPolicy } from '@/sync/domains/browser/policy/evaluate';
 import { resolveLocalBrowserProfile } from '@/sync/domains/browser/profiles/localBrowserProfile';
 import {
@@ -305,6 +309,30 @@ export function createOpenBrowserTargetInWorkspace(
         target: BrowserViewTargetV1,
         options?: BrowserLaunchpadOpenTargetOptions,
     ): void => {
+        // R-3 (G9): where the platform cannot host an ALLOWED site in-app, the selector resolves to
+        // the fulfilled `openExternalTab` outcome and this opener performs it instead of creating a
+        // tab. Without it, Windows/Linux/pre-14-macOS get a workspace tab whose `openView` is
+        // rejected as `adapter_unavailable` — an empty tab, which is the same dead end R-3 removes
+        // on the in-place seam (`BrowserSurfaceHost#navigateCurrentTabInPlace`). Same selector, same
+        // fulfilment owner, both callers. Scoped to external sites — nothing else can resolve to an
+        // OS-tab handoff, so no other target kind's availability is re-derived here.
+        if (target.kind === 'externalUrl') {
+            const browserSessionId = resolveBrowserTargetSurfaceSessionId(
+                SCOPE_SESSION_ID_PART[deps.scope],
+                target,
+            );
+            const openOptions = resolveOpenOptions(deps, target, options, browserSessionId);
+            const selection = selectBrowserTargetAdapter({
+                target,
+                platform: openOptions.platform,
+                targetPolicyDecision: openOptions.targetPolicyDecision,
+                desktopWebViewAvailability: openOptions.desktopWebViewAvailability,
+            });
+            if (selection.ok && selection.outcome === 'openExternalTab') {
+                void openBrowserExternalTabSelection(selection);
+                return;
+            }
+        }
         // Tab-only resolution: NO throwaway `seededState` compute (B-RC2 / DV-OPEN-SEAM). The live
         // content record is derived once at the renderer from the resource's `target`.
         const resolved = resolveBrowserViewTargetOpenTab(deps, target, options);

@@ -70,6 +70,7 @@ export function createTerminalStreamRuntime(input: Readonly<{
                             terminalId: frame.terminalId,
                             seq: frame.seq,
                             byteOffset: frame.byteOffset,
+                            writeGeneration: input.surfaceEpoch,
                             bytes: frame.bytes,
                         });
                         if (accepted === false) {
@@ -83,6 +84,7 @@ export function createTerminalStreamRuntime(input: Readonly<{
                                 byteOffset: frame.byteOffset,
                                 byteLength: frame.byteLength,
                                 ackedByteOffset: frame.byteOffset + frame.byteLength,
+                                writeGeneration: input.surfaceEpoch,
                             };
                             break;
                         }

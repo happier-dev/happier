@@ -26,13 +26,14 @@ function createMessageId(): string {
 
 export type XtermWebViewSurfaceHandle = Readonly<{
     write: (data: string) => boolean;
-    writeBytes: (input: XtermWriteBytesInput) => boolean;
+    writeBytes: (input: XtermWriteBytesInput) => boolean | Readonly<{ status: 'queued' }>;
     clear: () => void;
     focus: () => void;
 }>;
 
 export type XtermWebViewSurfaceProps = Readonly<{
     onInput: (data: string) => void;
+    onPaste?: (data: string) => void | Promise<unknown>;
     onLink?: (url: string) => void;
     onResize: (cols: number, rows: number) => void;
     onReady: (cols: number, rows: number) => void;
@@ -70,6 +71,7 @@ function readWriteCompleteEvent(value: unknown): XtermWriteCompleteEvent | null 
     if (typeof payload.byteOffset !== 'number' || !Number.isFinite(payload.byteOffset)) return null;
     if (typeof payload.byteLength !== 'number' || !Number.isFinite(payload.byteLength) || payload.byteLength < 0) return null;
     if (typeof payload.ackedByteOffset !== 'number' || !Number.isFinite(payload.ackedByteOffset)) return null;
+    if (typeof payload.writeGeneration !== 'number' || !Number.isFinite(payload.writeGeneration)) return null;
     if (payload.ackedByteOffset !== payload.byteOffset + payload.byteLength) return null;
     return {
         terminalId: payload.terminalId,
@@ -77,6 +79,7 @@ function readWriteCompleteEvent(value: unknown): XtermWriteCompleteEvent | null 
         byteOffset: payload.byteOffset,
         byteLength: payload.byteLength,
         ackedByteOffset: payload.ackedByteOffset,
+        writeGeneration: payload.writeGeneration,
     };
 }
 
@@ -87,6 +90,7 @@ export const XtermWebViewSurface = React.forwardRef<XtermWebViewSurfaceHandle, X
         const readyRef = React.useRef(false);
         const pendingEnvelopeRef = React.useRef<HostEnvelope[]>([]);
         const pendingWriteBytesRef = React.useRef(0);
+        const pendingByteWritesRef = React.useRef(new Set<string>());
         const bootRetryCountRef = React.useRef(0);
         const [reloadNonce, setReloadNonce] = React.useState(0);
         const maxChunkBytes = typeof props.bridgeMaxChunkBytes === 'number' ? props.bridgeMaxChunkBytes : 64_000;
@@ -182,7 +186,8 @@ export const XtermWebViewSurface = React.forwardRef<XtermWebViewSurfaceHandle, X
                     if (input.bytes.byteLength === 0) return true;
                     const bytes = copyTerminalBytes(input.bytes);
                     const completion = buildXtermWriteCompleteEvent({ ...input, bytes });
-                    return enqueueEnvelope({
+                    const writeKey = getWriteKey(completion);
+                    const accepted = enqueueEnvelope({
                         v: 1,
                         type: 'writeBytes',
                         payload: {
@@ -190,13 +195,18 @@ export const XtermWebViewSurface = React.forwardRef<XtermWebViewSurfaceHandle, X
                             seq: completion.seq,
                             byteOffset: completion.byteOffset,
                             byteLength: completion.byteLength,
+                            writeGeneration: completion.writeGeneration,
                             dataBase64: encodeTerminalBytesBase64(bytes),
                         },
                     }, bytes.byteLength);
+                    if (!accepted) return false;
+                    pendingByteWritesRef.current.add(writeKey);
+                    return { status: 'queued' } as const;
                 },
                 clear: () => {
                     pendingEnvelopeRef.current = [];
                     pendingWriteBytesRef.current = 0;
+                    pendingByteWritesRef.current.clear();
                     if (!readyRef.current) return;
                     postEnvelope({ v: 1, type: 'clear', payload: {} });
                 },
@@ -304,6 +314,13 @@ export const XtermWebViewSurface = React.forwardRef<XtermWebViewSurfaceHandle, X
                             return;
                         }
 
+                        if (decoded.type === 'paste') {
+                            const data = readStringPayloadField(decoded.payload, 'text');
+                            if (!data) return;
+                            void props.onPaste?.(data);
+                            return;
+                        }
+
                         if (decoded.type === 'link') {
                             const url = readStringPayloadField(decoded.payload, 'url');
                             if (!url) return;
@@ -314,6 +331,8 @@ export const XtermWebViewSurface = React.forwardRef<XtermWebViewSurfaceHandle, X
                         if (decoded.type === 'writeComplete') {
                             const event = readWriteCompleteEvent(decoded.payload);
                             if (!event) return;
+                            const writeKey = getWriteKey(event);
+                            if (!pendingByteWritesRef.current.delete(writeKey)) return;
                             props.onWriteComplete?.(event);
                             return;
                         }
@@ -333,3 +352,7 @@ export const XtermWebViewSurface = React.forwardRef<XtermWebViewSurfaceHandle, X
         );
     },
 );
+
+function getWriteKey(event: XtermWriteCompleteEvent): string {
+    return `${event.terminalId}:${event.seq}:${event.byteOffset}:${event.byteLength}:${event.ackedByteOffset}:${event.writeGeneration}`;
+}

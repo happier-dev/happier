@@ -21,4 +21,16 @@ describe('BrowserFrameLoading', () => {
         });
         expect(screen.getTextContent()).toContain('common.loading');
     });
+
+    it('names the host it is loading when the caller knows it', async () => {
+        const { BrowserFrameLoading } = await import('./BrowserFrameLoading');
+        const screen = await renderScreen(
+            <BrowserFrameLoading testID="browser-frame" host="preview.happier.test" />,
+        );
+
+        // First paint says WHAT is loading; the spinner already says that it is loading. The host is
+        // rendered verbatim rather than wrapped in a sentence, so it needs no translated string.
+        expect(screen.getTextContent()).toContain('preview.happier.test');
+        expect(screen.getTextContent()).not.toContain('common.loading');
+    });
 });

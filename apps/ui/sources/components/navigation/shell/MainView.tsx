@@ -38,6 +38,10 @@ import {
 import { useMainAppTabState } from '@/components/navigation/mobile/chrome/MainAppTabStateProvider';
 import { Icon } from '@/components/ui/icons/Icon';
 import { ActionOperationActivityButton } from '@/components/inbox/actionOperations/ActionOperationActivityButton';
+import {
+    shouldForceFreshNewSessionEntryFromPressEvent,
+    useResolveNewSessionOrdinaryEntryRoute,
+} from '@/components/sessions/new/navigation/newSessionOrdinaryEntryRoute';
 
 
 interface MainViewProps {
@@ -140,12 +144,19 @@ const HeaderTitle = React.memo(({ activeTab }: { activeTab: ActiveTabType }) => 
 // Header right button - varies by tab
 const HeaderRight = React.memo(({ activeTab }: { activeTab: ActiveTabType }) => {
     const router = useRouter();
+    const resolveNewSessionOrdinaryEntryRoute = useResolveNewSessionOrdinaryEntryRoute();
     const { theme } = useUnistyles();
     const isCustomServer = isUsingCustomServer();
     const friendsIdentityReadiness = useFriendsIdentityReadiness();
     const friendsIdentityReady = friendsIdentityReadiness.isReady;
     const automationsSupport = useAutomationsSupport();
     const showAutomations = automationsSupport?.enabled !== false;
+    const handleNewSession = React.useCallback((event?: unknown) => {
+        const { draftId, draftOrigin } = resolveNewSessionOrdinaryEntryRoute({
+            forceFresh: shouldForceFreshNewSessionEntryFromPressEvent(event),
+        });
+        router.push({ pathname: '/new', params: { draftId, draftOrigin } });
+    }, [resolveNewSessionOrdinaryEntryRoute, router]);
 
     if (activeTab === 'sessions') {
         return (
@@ -162,7 +173,7 @@ const HeaderRight = React.memo(({ activeTab }: { activeTab: ActiveTabType }) => 
                 ) : null}
                 <Pressable
                     testID="main-header-start-new-session"
-                    onPress={() => router.push('/new')}
+                    onPress={handleNewSession}
                     hitSlop={15}
                     style={styles.headerButton}
                 >
@@ -239,11 +250,15 @@ export const MainView = React.memo(({ variant }: MainViewProps) => {
     const { externalSessionsEnabled, storageKind } = useSessionListStorageKind();
     const isTablet = useIsTablet();
     const router = useRouter();
+    const resolveNewSessionOrdinaryEntryRoute = useResolveNewSessionOrdinaryEntryRoute();
     const pathname = usePathname();
 
-    const handleNewSession = React.useCallback(() => {
-        router.push('/new');
-    }, [router]);
+    const handleNewSession = React.useCallback((event?: unknown) => {
+        const { draftId, draftOrigin } = resolveNewSessionOrdinaryEntryRoute({
+            forceFresh: shouldForceFreshNewSessionEntryFromPressEvent(event),
+        });
+        router.push({ pathname: '/new', params: { draftId, draftOrigin } });
+    }, [resolveNewSessionOrdinaryEntryRoute, router]);
 
     if (variant === 'sidebar') {
         const surfaceOwnership = resolveSessionListSurfaceOwnership({

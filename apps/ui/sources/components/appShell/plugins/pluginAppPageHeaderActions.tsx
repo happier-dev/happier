@@ -2,13 +2,14 @@ import * as React from 'react';
 import { Platform, Pressable, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
-import type {
-    PluginUiPageHeaderActionProjection,
-    PluginUiProjectionModel,
+import {
+    createPluginUiProjectedActionResolver,
+    isPluginProjectedActionExecutable,
+    type PluginUiPageHeaderActionProjection,
+    type PluginUiProjectionModel,
 } from '@/sync/domains/plugins/ui/projection';
 import type { CurrentUiContextSnapshotV1 } from '@happier-dev/protocol/plugins/ui';
 import { useOptionalCurrentUiContextReader } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
-import { createPluginUiProjectedActionResolver } from '@/sync/domains/plugins/ui/projection';
 import { comparePluginContributionOrder } from '@/sync/domains/plugins/contributionOrder';
 import { resolvePluginUiText } from '@/sync/domains/plugins/ui/i18n';
 import { getPreferredLanguage } from '@/text';
@@ -58,6 +59,8 @@ export function resolvePluginAppPageHeaderActions(
 export async function dispatchPluginAppPageHeaderAction(input: Readonly<{
     action: PluginUiPageHeaderActionProjection;
     page: PluginAppPage;
+    /** Admitted UI projection; resolves declared confirmation wording. */
+    projection?: PluginUiProjectionModel | null;
     /** Exact selected origin of the page that owns this header's chrome. */
     actionAuthority: PluginSurfaceLaunchAuthority | null | undefined;
     openSurface: PluginSurfaceOpenHandler;
@@ -70,7 +73,7 @@ export async function dispatchPluginAppPageHeaderAction(input: Readonly<{
     PluginSurfaceActionDispatchOutcome
     | PluginSurfaceOpenOutcome
 > {
-    const semanticAction = input.action.action;
+    const semanticAction = input.action.command;
     if (semanticAction.kind === 'openSurface') {
         return await input.openSurface({
             destination: semanticAction.destination,
@@ -81,6 +84,9 @@ export async function dispatchPluginAppPageHeaderAction(input: Readonly<{
     }
 
     const projectedAction = input.resolveContributedAction?.(semanticAction.action) ?? null;
+    if (!isPluginProjectedActionExecutable(projectedAction)) {
+        return { ok: false, code: 'unavailable', reason: 'plugin_ui_action_unavailable' };
+    }
     const authority = input.actionAuthority;
     const generation = authority?.generation ?? null;
     const machineId = authority?.machineId?.trim() ?? '';
@@ -102,14 +108,13 @@ export async function dispatchPluginAppPageHeaderAction(input: Readonly<{
             },
             ...(input.signal ? { signal: input.signal } : {}),
             isCurrent,
+            pluginUiProjection: input.projection,
         })
         : undefined;
     const launched = await launchPluginSurfaceAction({
         callerPluginId: input.page.pluginId,
         action: semanticAction.action,
-        // Absence has one canonical RPC sentinel for a contributed Action;
-        // the page-header action itself retains absence for openSurface.
-        input: semanticAction.input ?? null,
+        ...(semanticAction.input === undefined ? {} : { input: semanticAction.input }),
         ...(input.resolveContributedAction
             ? { resolveContributedAction: input.resolveContributedAction }
             : {}),
@@ -180,9 +185,9 @@ export function PluginAppPageHeaderActions(props: Readonly<{
     if (props.actions.length === 0) return null;
 
     const canExecuteContributedAction = (action: PluginUiPageHeaderActionProjection): boolean => {
-        if (action.action.kind !== 'executeAction') return true;
-        const projectedAction = resolveContributedAction(action.action.action);
-        if (!projectedAction) return false;
+        if (action.command.kind !== 'executeAction') return true;
+        const projectedAction = resolveContributedAction(action.command.action);
+        if (!isPluginProjectedActionExecutable(projectedAction)) return false;
         const locallyCurrent = props.actionAuthority?.accountLifetime?.isCurrent() !== false
             && props.isCurrent?.() !== false;
         if (projectedAction.execution.target === 'client') {
@@ -209,7 +214,7 @@ export function PluginAppPageHeaderActions(props: Readonly<{
                     projection: props.projection,
                     pluginId: props.page.pluginId,
                 });
-                const disabled = action.action.kind === 'executeAction' && !canExecuteContributedAction(action);
+                const disabled = action.command.kind === 'executeAction' && !canExecuteContributedAction(action);
                 return (
                     <Pressable
                         key={action.id}
@@ -221,6 +226,7 @@ export function PluginAppPageHeaderActions(props: Readonly<{
                             fireAndForget(dispatchPluginAppPageHeaderAction({
                                 action,
                                 page: props.page,
+                                projection: props.projection,
                                 actionAuthority: props.actionAuthority,
                                 openSurface: props.openSurface,
                                 resolveContributedAction,

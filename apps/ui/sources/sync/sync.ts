@@ -288,23 +288,23 @@ import type {
 } from './domains/automations/automationTypes';
 import { getUserProfile } from './api/social/apiFriends';
 import {
-    cancelAutomationRunV3,
-    clearAutomationRunHistoryV3,
+    cancelAutomationRun,
+    clearAutomationRunHistory,
     createAutomation as createAutomationApi,
-    createPluginEventAutomationDefinitionV3,
-    deleteAutomationDefinitionV3,
-    getAutomationDefinitionV3,
-    getAutomationRunDetailV3,
-    getAutomationSettingsV3,
+    createPluginEventAutomationDefinition,
+    deleteAutomationDefinition,
+    getAutomationDefinition,
+    getAutomationRunDetail,
+    getAutomationSettings,
     isAutomationApiErrorCode,
-    pauseAutomationDefinitionV3,
-    replaceAutomationDefinitionAssignmentsV3,
-    resumeAutomationDefinitionV3,
-    runAutomationDefinitionNowV3,
+    pauseAutomationDefinition,
+    replaceAutomationDefinitionAssignments,
+    resumeAutomationDefinition,
+    runAutomationDefinitionNow,
     type AutomationCreateInput,
     type AutomationPatchInput,
-    updatePluginEventAutomationDefinitionV3,
-    updateAutomationSettingsV3,
+    updatePluginEventAutomationDefinition,
+    updateAutomationSettings,
     updateAutomation as updateAutomationApi,
 } from './api/automations/apiAutomations';
 import { kvBulkGet } from './api/account/apiKv';
@@ -5602,7 +5602,7 @@ class Sync {
             throw new Error('Not authenticated');
         }
         const shouldContinue = this.createServerScopeGuard();
-        const settings = await getAutomationSettingsV3(credentials);
+        const settings = await getAutomationSettings(credentials);
         if (!shouldContinue()) {
             throw new Error('Automation server-account scope changed');
         }
@@ -5616,7 +5616,7 @@ class Sync {
             throw new Error('Not authenticated');
         }
         const shouldContinue = this.createServerScopeGuard();
-        const settings = await updateAutomationSettingsV3(credentials, input);
+        const settings = await updateAutomationSettings(credentials, input);
         if (!shouldContinue()) {
             throw new Error('Automation server-account scope changed');
         }
@@ -5633,7 +5633,7 @@ class Sync {
             throw new Error('Not authenticated');
         }
         const shouldContinue = this.createServerScopeGuard();
-        const result = await clearAutomationRunHistoryV3(credentials, automationId);
+        const result = await clearAutomationRunHistory(credentials, automationId);
         if (!shouldContinue()) {
             throw new Error('Automation server-account scope changed');
         }
@@ -5668,7 +5668,7 @@ class Sync {
 
     /**
      * Retained schedule writer compatibility. Its V2 response is never put in
-     * the store; the canonical V3 direct reader immediately projects it.
+     * the store; the canonical direct reader immediately projects it.
      */
     public async createAutomation(input: AutomationCreateInput): Promise<AutomationDefinition> {
         if (!this.credentials) {
@@ -5691,7 +5691,7 @@ class Sync {
 
     /**
      * Strict Event creation stays on the incumbent Automation owner: its
-     * direct V3 result is projected into the same summary/detail record rather
+     * direct result is projected into the same summary/detail record rather
      * than creating an Event-specific cache or writer.
      */
     public async createPluginEventAutomationDefinition(
@@ -5701,11 +5701,11 @@ class Sync {
             throw new Error('Not authenticated');
         }
         const shouldContinue = this.createServerScopeGuard();
-        const created = await createPluginEventAutomationDefinitionV3(this.credentials, input);
+        const created = await createPluginEventAutomationDefinition(this.credentials, input);
         return this.projectAndUpsertAutomationDefinition(created, shouldContinue, { replaceEqualRevision: true });
     }
 
-    /** Strict Event edits use the full, version-guarded V3 request only. */
+    /** Strict Event edits use the full, version-guarded request only. */
     public async updatePluginEventAutomationDefinition(
         automationId: string,
         input: AutomationV3PluginEventDefinitionPatchRequest,
@@ -5714,7 +5714,7 @@ class Sync {
             throw new Error('Not authenticated');
         }
         const shouldContinue = this.createServerScopeGuard();
-        const updated = await updatePluginEventAutomationDefinitionV3(this.credentials, automationId, input);
+        const updated = await updatePluginEventAutomationDefinition(this.credentials, automationId, input);
         return this.projectAndUpsertAutomationDefinition(updated, shouldContinue, { replaceEqualRevision: true });
     }
 
@@ -5726,7 +5726,7 @@ class Sync {
             throw new Error('Not authenticated');
         }
         const shouldContinue = this.createServerScopeGuard();
-        const updated = await replaceAutomationDefinitionAssignmentsV3(this.credentials, automationId, assignments);
+        const updated = await replaceAutomationDefinitionAssignments(this.credentials, automationId, assignments);
         return this.projectAndUpsertAutomationDefinition(updated, shouldContinue, { replaceEqualRevision: true });
     }
 
@@ -5735,7 +5735,7 @@ class Sync {
             throw new Error('Not authenticated');
         }
         const shouldContinue = this.createServerScopeGuard();
-        const updated = await pauseAutomationDefinitionV3(this.credentials, automationId);
+        const updated = await pauseAutomationDefinition(this.credentials, automationId);
         return this.projectAndUpsertAutomationDefinition(updated, shouldContinue, { replaceEqualRevision: true });
     }
 
@@ -5744,7 +5744,7 @@ class Sync {
             throw new Error('Not authenticated');
         }
         const shouldContinue = this.createServerScopeGuard();
-        const updated = await resumeAutomationDefinitionV3(this.credentials, automationId);
+        const updated = await resumeAutomationDefinition(this.credentials, automationId);
         return this.projectAndUpsertAutomationDefinition(updated, shouldContinue, { replaceEqualRevision: true });
     }
 
@@ -5778,7 +5778,7 @@ class Sync {
         if (!credentials) {
             throw new Error('Not authenticated');
         }
-        const detail = await getAutomationDefinitionV3(credentials, automationId);
+        const detail = await getAutomationDefinition(credentials, automationId);
         return this.projectAndUpsertAutomationDefinition(detail, shouldContinue);
     }
 
@@ -5836,7 +5836,7 @@ class Sync {
             throw new Error('Not authenticated');
         }
         const shouldContinue = this.createServerScopeGuard();
-        await deleteAutomationDefinitionV3(this.credentials, automationId);
+        await deleteAutomationDefinition(this.credentials, automationId);
         if (!shouldContinue()) {
             throw new Error('Automation server-account scope changed');
         }
@@ -5848,7 +5848,7 @@ class Sync {
             throw new Error('Not authenticated');
         }
         const shouldContinue = this.createServerScopeGuard();
-        const run = await runAutomationDefinitionNowV3(this.credentials, automationId);
+        const run = await runAutomationDefinitionNow(this.credentials, automationId);
         if (!shouldContinue()) {
             throw new Error('Automation server-account scope changed');
         }
@@ -5870,7 +5870,7 @@ class Sync {
             throw new Error('Not authenticated');
         }
         const shouldContinue = this.createServerScopeGuard();
-        const detail = await getAutomationRunDetailV3(credentials, automationId, runId);
+        const detail = await getAutomationRunDetail(credentials, automationId, runId);
         if (!shouldContinue()) {
             throw new Error('Automation server-account scope changed');
         }
@@ -5915,7 +5915,7 @@ class Sync {
             throw new Error('Not authenticated');
         }
         const shouldContinue = this.createServerScopeGuard();
-        const run = await cancelAutomationRunV3(credentials, runId);
+        const run = await cancelAutomationRun(credentials, runId);
         if (!shouldContinue()) {
             throw new Error('Automation server-account scope changed');
         }

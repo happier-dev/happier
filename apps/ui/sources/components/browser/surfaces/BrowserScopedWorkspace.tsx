@@ -1,6 +1,5 @@
 import * as React from 'react';
-import { Pressable } from 'react-native';
-import { useUnistyles } from 'react-native-unistyles';
+import { Platform } from 'react-native';
 
 import { useAppPaneScope, type AppPaneScopeApi } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { DetailsSplitWorkspace } from '@/components/appShell/panes/details/workspace/DetailsSplitWorkspace';
@@ -24,7 +23,8 @@ import {
     resolveBrowserTabPresentation,
 } from './browserSurfaceDetailsTabModel';
 import { createOpenBrowserTargetInWorkspace, type OpenBrowserTargetScope } from './openBrowserTargetInWorkspace';
-import { Icon } from '@/components/ui/icons/Icon';
+import { IconButton } from '@/components/ui/buttons/IconButton';
+import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 
 /**
  * Mobile browser surface, mounted on BOTH the session cockpit and the project cockpit. It hosts the
@@ -60,7 +60,6 @@ export function BrowserScopedWorkspace(props: Readonly<{
     testID?: string;
 }>): React.ReactElement {
     const pane = useAppPaneScope(props.scopeId);
-    const { theme } = useUnistyles();
 
     const openBrowserViewTarget = React.useMemo(() => createOpenBrowserTargetInWorkspace({
         openDetailsTab: pane.openDetailsTab,
@@ -141,17 +140,24 @@ export function BrowserScopedWorkspace(props: Readonly<{
         isPinned: true,
     } as DetailsTabState), [renderTabContent]);
 
+    // The canonical icon-only button, not a bare `Pressable` with `hitSlop`. Q2 finding A3-C9:
+    // react-native-web 0.21 never reads `hitSlop` on `Pressable`/`View` and the desktop app IS the
+    // web bundle, so the declared target did not exist on two of three platforms (and was clipped to
+    // the parent on Android). `IconButton` grows a real press frame with box model instead, and
+    // brings the pressed/hover/focus-visible states this control had none of.
     const renderHeaderActions = React.useCallback(() => (
-        <Pressable
+        <IconButton
             testID={`${props.testID ?? 'browser-scoped-workspace'}-new-tab`}
-            accessibilityRole="button"
+            iconName="plus"
             accessibilityLabel={t('browserShell.tabs.newTab')}
+            tooltip={t('browserShell.tabs.newTab')}
+            variant="plain"
+            size={28}
+            iconSize={16}
+            minimumInteractiveTargetSize={resolveMinimumInteractiveTargetSize(Platform.OS)}
             onPress={openLaunchpad}
-            hitSlop={10}
-        >
-            <Icon name="plus" size={16} color={theme.colors.text.secondary} />
-        </Pressable>
-    ), [openLaunchpad, props.testID, theme.colors.text.secondary]);
+        />
+    ), [openLaunchpad, props.testID]);
 
     const resolveTabIconName = React.useCallback((tab: DetailsTabState) => (
         tab.key === BROWSER_LAUNCHPAD_DETAILS_TAB_KEY ? 'home' : 'globe'

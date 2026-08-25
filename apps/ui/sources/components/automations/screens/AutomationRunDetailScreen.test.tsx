@@ -74,6 +74,7 @@ installAutomationScreensCommonModuleMocks({
             if (key === 'automations.detail.runMeta.occurrenceTitle') return 'Occurrence';
             if (key === 'automations.detail.runMeta.sourceTitle') return 'Observation source';
             if (key === 'automations.detail.runMeta.updated') return `Updated: ${String(params?.time ?? '')}`;
+            if (key === 'automations.detail.runMeta.contentRemoved') return 'Run content removed';
             if (key === 'automations.detail.runMeta.error') return `Error: ${String(params?.message ?? '')}`;
             if (key === 'automations.detail.runMeta.attemptTitle') return 'Attempt';
             if (key === 'automations.detail.runMeta.attempt') return `Attempt ${String(params?.attempt ?? '')}`;
@@ -223,6 +224,7 @@ describe('AutomationRunDetailScreen', () => {
             replyHandoffState: 'none',
             replyHandoffAttempt: 0,
             replyHandoffDueAt: null,
+            contentRemovedAt: null,
             createdAt: 10,
             updatedAt: 11,
         }];
@@ -300,6 +302,27 @@ describe('AutomationRunDetailScreen', () => {
         });
     });
 
+    it('keeps compacted Run content bounded and never requests its private detail', async () => {
+        runsState.list = [{
+            ...runsState.list[0],
+            contentRemovedAt: 1_700_000_000_000,
+            updatedAt: 12,
+        }];
+        const { AutomationRunDetailScreen } = await import('./AutomationRunDetailScreen');
+
+        const screen = await renderScreen(React.createElement(AutomationRunDetailScreen));
+        await act(async () => {
+            await Promise.resolve();
+        });
+
+        const removed = screen.findByTestId('automation-run-detail-content-removed');
+        expect(removed).toBeTruthy();
+        expect(removed?.props.title).toBe('Run content removed');
+        expect(typeof removed?.props.detail).toBe('string');
+        expect(removed?.props.detail.length).toBeGreaterThan(0);
+        expect(syncSpies.getAutomationRunDetailInspection).not.toHaveBeenCalled();
+    });
+
     it('keeps the bounded Run cache visible when its private detail read fails', async () => {
         syncSpies.getAutomationRunDetailInspection.mockRejectedValueOnce(new Error('detail unavailable'));
         const { AutomationRunDetailScreen } = await import('./AutomationRunDetailScreen');
@@ -311,6 +334,31 @@ describe('AutomationRunDetailScreen', () => {
 
         expect(screen.getTextContent()).toContain('Failed');
         expect(screen.findAllByProps({ testID: 'automation-run-detail-load-error' })).toHaveLength(0);
+    });
+
+    it('marks a cached Run stale and offers retry when its refresh fails', async () => {
+        syncSpies.getAutomationRunDetailInspection.mockRejectedValueOnce(new Error('detail unavailable'));
+        const { AutomationRunDetailScreen } = await import('./AutomationRunDetailScreen');
+
+        const screen = await renderScreen(React.createElement(AutomationRunDetailScreen));
+        await vi.waitFor(() => {
+            expect(screen.findByTestId('automation-run-detail-stale-refresh-error')).toBeTruthy();
+        });
+
+        // The cached projection stays on screen, but it must not be presented
+        // as current: a silent failure leaves the reader believing a finished
+        // Run is still running.
+        expect(screen.getTextContent()).toContain('Failed');
+        const staleNotice = screen.findByProps({ testID: 'automation-run-detail-stale-refresh-error' });
+        expect(staleNotice.props.accessibilityRole).toBe('alert');
+        expect(staleNotice.props.accessibilityLiveRegion).toBe('assertive');
+        expect(screen.findAllByProps({ testID: 'automation-run-detail-load-error' })).toHaveLength(0);
+
+        await act(async () => {
+            screen.pressByTestId('automation-run-detail-stale-refresh-retry');
+            await Promise.resolve();
+        });
+        expect(syncSpies.getAutomationRunDetailInspection).toHaveBeenCalledTimes(2);
     });
 
     it('uses fresher direct status while rendering the typed route-local unavailable state', async () => {

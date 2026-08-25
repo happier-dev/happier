@@ -23,6 +23,7 @@ import type {
     AutomationDefinition,
     AutomationDefinitionDetailForTrigger,
 } from '@/sync/domains/automations/automationTypes';
+import { arePluginContributionIdentitiesEqual } from '@/components/automations/pluginEventAutomationCurrentness';
 
 /**
  * The persisted observation transport, in the same discriminated shape the
@@ -75,18 +76,13 @@ export type PluginEventAutomationEditSeed = Readonly<{
      */
     mentions: readonly MentionRefV1[];
     /**
-     * The exact persisted target arm. Target kind is immutable while editing,
-     * but its own fields remain ordinary Event-editor inputs.
+     * The exact persisted target arm, seeded as the editor's starting
+     * selection. A V3 patch replaces the whole strict recipe for future Runs,
+     * so the arm and its own fields are both ordinary Event-editor inputs;
+     * already-admitted Runs keep the recipe they were frozen with.
      */
     target: AutomationRunExecutionTargetV1;
 }>;
-
-function sameContributionIdentity(
-    left: Readonly<{ pluginId: string; localId: string }>,
-    right: Readonly<{ pluginId: string; localId: string }>,
-): boolean {
-    return left.pluginId === right.pluginId && left.localId === right.localId;
-}
 
 function isPluginEventDefinitionDetail(
     detail: unknown,
@@ -132,7 +128,7 @@ export function readPluginEventAutomationPrivateDetail(
         detail.id !== definition.id
         || detail.templateVersion !== definition.templateVersion
         || detail.targetType !== definition.targetType
-        || !sameContributionIdentity(detail.trigger.eventRef, definition.trigger.eventRef)
+        || !arePluginContributionIdentitiesEqual(detail.trigger.eventRef, definition.trigger.eventRef)
         || detail.trigger.sourceSelectorId !== definition.trigger.sourceSelectorId
         || detail.trigger.sourceContractVersion !== definition.trigger.sourceContractVersion
         || typeof detail.triggerDefinitionEnvelope !== 'string'

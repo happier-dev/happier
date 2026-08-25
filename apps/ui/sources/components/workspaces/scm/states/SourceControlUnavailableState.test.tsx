@@ -23,6 +23,26 @@ vi.mock('@/constants/Typography', () => ({
 }));
 
 describe('SourceControlUnavailableState', () => {
+  it('exposes the retry control under a caller-scoped testID', async () => {
+    // The card's Retry could only be reached by its visible text, and a text locator hits the
+    // hidden twin rendered by the other git surface, so the prescribed `F-UI-2` verification could
+    // not be run at all for three sessions. The state card already derives `${testID}-action` for
+    // its primary action; this state just never passed one down.
+    const { SourceControlUnavailableState } = await import('./SourceControlUnavailableState');
+    const onRetry = vi.fn();
+    const screen = await renderScreen(
+      <SourceControlUnavailableState
+        testID="session-git-unavailable"
+        details="boom"
+        onRetry={onRetry}
+      />
+    );
+
+    expect(screen.findByTestId('session-git-unavailable-action')).not.toBeNull();
+    screen.pressByTestId('session-git-unavailable-action');
+    expect(onRetry).toHaveBeenCalledTimes(1);
+  });
+
   it('hides method-unavailable details (non-actionable)', async () => {
     const { SourceControlUnavailableState } = await import('./SourceControlUnavailableState');
     const screen = await renderScreen(

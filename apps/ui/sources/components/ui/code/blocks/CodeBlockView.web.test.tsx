@@ -102,6 +102,19 @@ async function flushReactAsyncWork(): Promise<void> {
 }
 
 describe('CodeBlockView (web)', () => {
+    it('applies an owner-scoped container surface', async () => {
+        const { CodeBlockView } = await import('./CodeBlockView.web');
+
+        const screen = await renderScreen(
+            <CodeBlockView
+                code="happier setup"
+                containerStyle={{ backgroundColor: '#abcdef' }}
+            />,
+        );
+
+        expect(JSON.stringify(screen.tree.toJSON())).toContain('#abcdef');
+    });
+
     it('uses Shiki tokens when advanced highlighting is enabled', async () => {
         featureSpy.mockClear();
         settingSpy.mockClear();

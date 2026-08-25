@@ -1,5 +1,5 @@
 import React from 'react';
-import { Pressable, View } from 'react-native';
+import { Platform, Pressable, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import {
@@ -26,6 +26,7 @@ import {
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Item } from '@/components/ui/lists/Item';
+import { VirtualizedList } from '@/components/ui/lists/virtualized';
 import { Switch } from '@/components/ui/forms/Switch';
 import { Text } from '@/components/ui/text/Text';
 import { layout } from '@/components/ui/layout/layout';
@@ -40,9 +41,11 @@ import {
     readPluginEventAutomationEditSeed,
     readPluginEventAutomationPrivateDetail,
 } from '@/components/automations/editor/pluginEventAutomationEditSeed';
+import type { AutomationDefinitionRun } from '@/sync/domains/automations/automationTypes';
 
 import { AutomationHistoryGapRecoveryAction } from './AutomationHistoryGapRecoveryAction';
 import {
+    canPresentAutomationSourceSummary,
     formatAutomationWatcherImpediment,
     resolveAutomationWatcherHealth,
 } from './automationWatcherHealth';
@@ -98,12 +101,32 @@ const automationSourceCatalogStatusStateLabels = {
     reconciliationLate: () => t('settingsPlugins.eventAutomationComposer.sourceCatalogStatusState.reconciliationLate'),
 } satisfies Record<AutomationV3EventSourceCatalogStatus['state'], () => string>;
 
+/**
+ * The state label alone says how the source feels, not whether it is still
+ * seeing anything. The admission tallies and the last observation are the
+ * facts that separate a healthy observing source from one that is observing
+ * and skipping everything, so they render alongside the impediment.
+ */
 function formatAutomationSourceStatusSubtitle(
     status: AutomationEventSourceStatusV1,
     unknownDate: string,
-): string | undefined {
+): string {
     const details = [
         status.code ? automationSourceStatusCodeLabels[status.code]() : null,
+        t('settingsPlugins.eventAutomationComposer.sourceStatusObservedCount', {
+            count: status.observedCount,
+        }),
+        t('settingsPlugins.eventAutomationComposer.sourceStatusAdmittedCount', {
+            count: status.admittedCount,
+        }),
+        t('settingsPlugins.eventAutomationComposer.sourceStatusSkippedCount', {
+            count: status.skippedCount,
+        }),
+        status.lastObservedAt === null
+            ? null
+            : t('settingsPlugins.eventAutomationComposer.sourceStatusLastObserved', {
+                time: formatDate(status.lastObservedAt, unknownDate),
+            }),
         status.nextRetryAt === null
             ? null
             : t('settingsPlugins.eventAutomationComposer.sourceStatusNextRetry', {
@@ -111,7 +134,7 @@ function formatAutomationSourceStatusSubtitle(
             }),
     ].filter((value): value is string => value !== null);
 
-    return details.length > 0 ? details.join('\n') : undefined;
+    return details.join('\n');
 }
 
 function formatAutomationSourceCatalogStatusSubtitle(
@@ -195,6 +218,17 @@ type RouteScopedState<T> = Readonly<{
     value: T;
 }>;
 
+// Keep the visible history page aligned with the canonical continuation
+// request size. The store owns the accumulated traversal and cursor; this
+// screen owns only which already-retained page it presents.
+const AUTOMATION_RUN_HISTORY_PAGE_SIZE = 20;
+
+type AutomationDetailRunHistoryRow =
+    | Readonly<{ kind: 'run'; key: string; run: AutomationDefinitionRun }>
+    | Readonly<{ kind: 'empty'; key: 'empty' }>
+    | Readonly<{ kind: 'previous'; key: 'previous' }>
+    | Readonly<{ kind: 'loadMore'; key: 'loadMore' }>;
+
 export function AutomationDetailScreen() {
     const { theme } = useUnistyles();
     const styles = stylesheet;
@@ -250,19 +284,39 @@ export function AutomationDetailScreen() {
         generation: routeGeneration,
         value: false,
     });
+    const [runHistoryPageState, setRunHistoryPageState] = React.useState<RouteScopedState<number>>({
+        generation: routeGeneration,
+        value: 0,
+    });
     const [runNowStateForRoute, setRunNowStateForRoute] = React.useState<RouteScopedState<'idle' | 'running' | 'queued'>>({
         generation: routeGeneration,
         value: 'idle',
+    });
+    const [clearingRunHistoryState, setClearingRunHistoryState] = React.useState<RouteScopedState<boolean>>({
+        generation: routeGeneration,
+        value: false,
     });
     const runNowInFlightGenerationsRef = React.useRef(new Map<string, number>());
     // A reused route must remain in loading state until its own refresh begins;
     // otherwise an uncached next Automation can flash a false not-found result.
     const loading = loadingState.generation !== routeGeneration || loadingState.value;
     const loadingMoreRuns = loadingMoreRunsState.generation === routeGeneration && loadingMoreRunsState.value;
+    const runHistoryPage = runHistoryPageState.generation === routeGeneration
+        ? runHistoryPageState.value
+        : 0;
+    const runHistoryPageStart = runHistoryPage * AUTOMATION_RUN_HISTORY_PAGE_SIZE;
+    const visibleRunHistory = runs.slice(
+        runHistoryPageStart,
+        runHistoryPageStart + AUTOMATION_RUN_HISTORY_PAGE_SIZE,
+    );
+    const hasLoadedOlderRunHistoryPage = runHistoryPageStart + AUTOMATION_RUN_HISTORY_PAGE_SIZE < runs.length;
+    const canShowOlderRunHistoryPage = hasLoadedOlderRunHistoryPage || nextRunCursor !== null;
     const refreshFailed = refreshFailureState.generation === routeGeneration && refreshFailureState.value;
     const runNowState = runNowStateForRoute.generation === routeGeneration
         ? runNowStateForRoute.value
         : 'idle';
+    const clearingRunHistory = clearingRunHistoryState.generation === routeGeneration
+        && clearingRunHistoryState.value;
     const runNowPending = runNowState === 'running' || runNowInFlightGenerationsRef.current.has(automationId);
     const mutationsEnabled = !refreshFailed;
 
@@ -300,15 +354,30 @@ export function AutomationDetailScreen() {
     }, [refresh]);
 
     const handleLoadMoreRuns = React.useCallback(async () => {
-        if (!automationId || !nextRunCursor || loadingMoreRuns) return;
+        if (!automationId || !isCurrentRoute(automationId, routeGeneration)) return;
+        if (hasLoadedOlderRunHistoryPage) {
+            setRunHistoryPageState({
+                generation: routeGeneration,
+                value: runHistoryPage + 1,
+            });
+            return;
+        }
+        if (!nextRunCursor || loadingMoreRuns) return;
         const request = {
             automationId,
             cursor: nextRunCursor,
             generation: routeGeneration,
+            page: runHistoryPage,
         };
         try {
             setLoadingMoreRunsState({ generation: request.generation, value: true });
-            await sync.fetchAutomationRuns(request.automationId, 20, request.cursor);
+            await sync.fetchAutomationRuns(
+                request.automationId,
+                AUTOMATION_RUN_HISTORY_PAGE_SIZE,
+                request.cursor,
+            );
+            if (!isCurrentRoute(request.automationId, request.generation)) return;
+            setRunHistoryPageState({ generation: request.generation, value: request.page + 1 });
         } catch (error) {
             if (!isCurrentRoute(request.automationId, request.generation)) return;
             await Modal.alert(
@@ -320,7 +389,23 @@ export function AutomationDetailScreen() {
                 setLoadingMoreRunsState({ generation: request.generation, value: false });
             }
         }
-    }, [automationId, isCurrentRoute, loadingMoreRuns, nextRunCursor, routeGeneration]);
+    }, [
+        automationId,
+        hasLoadedOlderRunHistoryPage,
+        isCurrentRoute,
+        loadingMoreRuns,
+        nextRunCursor,
+        routeGeneration,
+        runHistoryPage,
+    ]);
+
+    const handleShowNewerRuns = React.useCallback(() => {
+        if (!automationId || runHistoryPage === 0 || !isCurrentRoute(automationId, routeGeneration)) return;
+        setRunHistoryPageState({
+            generation: routeGeneration,
+            value: runHistoryPage - 1,
+        });
+    }, [automationId, isCurrentRoute, routeGeneration, runHistoryPage]);
 
     const handleRunNow = React.useCallback(async () => {
         if (!automationId || !mutationsEnabled) return;
@@ -416,6 +501,37 @@ export function AutomationDetailScreen() {
         }
     }, [automationId, isCurrentRoute, mutationsEnabled, routeGeneration, router]);
 
+    const handleClearRunHistory = React.useCallback(async () => {
+        if (!automationId || !mutationsEnabled || clearingRunHistory) return;
+        const request = { automationId, generation: routeGeneration };
+        const confirmed = await Modal.confirm(
+            t('automations.detail.clearHistoryConfirmTitle'),
+            t('automations.detail.clearHistoryConfirmMessage'),
+            { destructive: true, confirmText: t('automations.detail.clearHistoryConfirmButton') },
+        );
+        if (!confirmed || !isCurrentRoute(request.automationId, request.generation)) return;
+
+        try {
+            setClearingRunHistoryState({ generation: request.generation, value: true });
+            await sync.clearAutomationRunHistory(request.automationId);
+            if (!isCurrentRoute(request.automationId, request.generation)) return;
+            // Sync re-seeds the canonical first Run window after the server
+            // applies its eligibility rule. This screen only returns its
+            // presentation to that fresh first page.
+            setRunHistoryPageState({ generation: request.generation, value: 0 });
+        } catch (error) {
+            if (!isCurrentRoute(request.automationId, request.generation)) return;
+            await Modal.alert(
+                t('common.error'),
+                error instanceof Error ? error.message : t('automations.detail.clearHistoryFailed'),
+            );
+        } finally {
+            if (isCurrentRoute(request.automationId, request.generation)) {
+                setClearingRunHistoryState({ generation: request.generation, value: false });
+            }
+        }
+    }, [automationId, clearingRunHistory, isCurrentRoute, mutationsEnabled, routeGeneration]);
+
     const handleEditAutomation = React.useCallback(() => {
         if (!automationId) return;
         navigateWithBlurOnWeb(() => router.push({
@@ -442,6 +558,64 @@ export function AutomationDetailScreen() {
             );
         }
     }, [automation, automationId, isCurrentRoute, mutationsEnabled, routeGeneration]);
+
+    const unknownDate = t('automations.detail.unknownDate');
+    const runHistoryRows = React.useMemo<readonly AutomationDetailRunHistoryRow[]>(() => {
+        const next: AutomationDetailRunHistoryRow[] = visibleRunHistory.map((run) => ({
+            kind: 'run',
+            key: run.id,
+            run,
+        }));
+        if (next.length === 0) next.push({ kind: 'empty', key: 'empty' });
+        if (runHistoryPage > 0) next.push({ kind: 'previous', key: 'previous' });
+        if (canShowOlderRunHistoryPage) next.push({ kind: 'loadMore', key: 'loadMore' });
+        return next;
+    }, [canShowOlderRunHistoryPage, runHistoryPage, visibleRunHistory]);
+    const renderRunHistoryRow = React.useCallback(({
+        item,
+        index,
+    }: {
+        item: AutomationDetailRunHistoryRow;
+        index: number;
+    }) => {
+        const isFirst = index === 0;
+        const isLast = index === runHistoryRows.length - 1;
+        const row = item.kind === 'run' ? (
+            <Item
+                title={formatAutomationRunStateLabel(item.run.state)}
+                subtitle={[
+                    t(getAutomationRunOriginTranslationKey(item.run.origin)),
+                    formatDate(getAutomationDefinitionRunOriginAt(item.run), unknownDate),
+                    t('automations.detail.runMeta.updated', { time: formatDate(item.run.updatedAt, unknownDate) }),
+                    ...(item.run.errorCode ? [t('automations.detail.runMeta.error', { message: item.run.errorCode })] : []),
+                ].join('\n')}
+                subtitleLines={0}
+                onPress={() => handleOpenRun(item.run.id)}
+            />
+        ) : item.kind === 'empty' ? (
+            <Item title={t('runs.empty')} showChevron={false} />
+        ) : item.kind === 'previous' ? (
+            <Item title={t('common.previous')} onPress={handleShowNewerRuns} showChevron={false} />
+        ) : (
+            <Item
+                title={t('automations.detail.loadMoreRuns')}
+                onPress={() => void handleLoadMoreRuns()}
+                loading={loadingMoreRuns}
+                showChevron={false}
+            />
+        );
+
+        return (
+            <View style={{ maxWidth: layout.maxWidth, alignSelf: 'center', width: '100%' }}>
+                <ItemGroup
+                    {...(isFirst ? { title: t('automations.detail.recentRunsTitle') } : {})}
+                    virtualizedSegment={{ first: isFirst, last: isLast }}
+                >
+                    {row}
+                </ItemGroup>
+            </View>
+        );
+    }, [handleLoadMoreRuns, handleOpenRun, handleShowNewerRuns, loadingMoreRuns, runHistoryRows.length, unknownDate]);
 
     if (!automationId) {
         return (
@@ -495,7 +669,6 @@ export function AutomationDetailScreen() {
         );
     }
 
-    const unknownDate = t('automations.detail.unknownDate');
     const nextRunLabel = automation.nextRunAt
         ? formatDate(automation.nextRunAt, unknownDate)
         : t('automations.detail.notScheduled');
@@ -513,29 +686,46 @@ export function AutomationDetailScreen() {
         ? (() => {
             const watcher = automation.trigger.observation.watcher;
             if (!watcher) {
-                return { label: t('automations.detail.event.watcherUnwatched'), impediment: undefined };
+                // An unwatched Event has no watcher whose availability could
+                // contradict a provider summary, and the server projects no
+                // summary without a current reporter.
+                return {
+                    label: t('automations.detail.event.watcherUnwatched'),
+                    impediment: undefined,
+                    canPresentSourceSummary: true,
+                };
             }
             const machine = machines.find((candidate) => candidate.id === watcher.machineId);
+            const health = resolveAutomationWatcherHealth({ watcher, machine });
             return {
                 label: machine ? (getMachineDisplayName(machine) ?? machine.id) : watcher.machineId,
-                impediment: formatAutomationWatcherImpediment(
-                    resolveAutomationWatcherHealth({ watcher, machine }),
-                ),
+                impediment: formatAutomationWatcherImpediment(health),
+                canPresentSourceSummary: canPresentAutomationSourceSummary(health),
             };
         })()
         : null;
+    // A provider summary reports what the watcher last saw, not whether it is
+    // still running. Host-derived availability therefore decides whether the
+    // reported state may be presented at all, and the watcher impediment is
+    // the truthful reason that replaces the retained provider detail.
+    const eventSourceSummaryUnavailable = eventWatcher?.canPresentSourceSummary === false;
+    const eventSourceSummaryImpediment = eventSourceSummaryUnavailable
+        ? eventWatcher?.impediment
+        : undefined;
     const eventSourceStatus = isPluginEventAutomationDefinition(automation)
+        && !eventSourceSummaryUnavailable
         ? automation.sourceStatus ?? null
         : null;
     const eventSourceStatusSubtitle = eventSourceStatus
         ? formatAutomationSourceStatusSubtitle(eventSourceStatus, unknownDate)
-        : undefined;
+        : eventSourceSummaryImpediment;
     const eventSourceCatalogStatus = isPluginEventAutomationDefinition(automation)
+        && !eventSourceSummaryUnavailable
         ? automation.sourceCatalogStatus ?? null
         : null;
     const eventSourceCatalogStatusSubtitle = eventSourceCatalogStatus
         ? formatAutomationSourceCatalogStatusSubtitle(eventSourceCatalogStatus, unknownDate)
-        : undefined;
+        : eventSourceSummaryImpediment;
     const eventPrivateDetail = readPluginEventAutomationPrivateDetail(automation);
     const eventFilterSummary = eventPrivateDetail?.storedDefinition.filter === null
         ? null
@@ -544,8 +734,17 @@ export function AutomationDetailScreen() {
             : null;
 
     return (
-        <ItemList style={{ paddingTop: 0 }}>
-            <View style={{ maxWidth: layout.maxWidth, alignSelf: 'center', width: '100%' }}>
+        <VirtualizedList
+            testID="automation-detail-history"
+            data={runHistoryRows}
+            keyExtractor={(item) => item.key}
+            renderItem={renderRunHistoryRow}
+            style={{ flex: 1 }}
+            contentContainerStyle={{ paddingBottom: Platform.OS === 'ios' ? 34 : 16 }}
+            backendPreference="auto"
+            initialNumToRender={4}
+            ListHeaderComponent={(
+                <View style={{ maxWidth: layout.maxWidth, alignSelf: 'center', width: '100%' }}>
                 {refreshFailed ? (
                     <ItemGroup>
                         <Item
@@ -620,7 +819,9 @@ export function AutomationDetailScreen() {
                                 title={t('settingsPlugins.eventAutomationComposer.sourceStatusTitle')}
                                 detail={eventSourceStatus
                                     ? automationSourceStatusStateLabels[eventSourceStatus.state]()
-                                    : t('automations.detail.event.sourceStatusUnreported')}
+                                    : eventSourceSummaryUnavailable
+                                        ? t('automations.detail.event.sourceStatusUnavailable')
+                                        : t('automations.detail.event.sourceStatusUnreported')}
                                 subtitle={eventSourceStatusSubtitle}
                                 subtitleLines={0}
                                 showChevron={false}
@@ -705,6 +906,17 @@ export function AutomationDetailScreen() {
                         />
                     ) : null}
                     <Item
+                        testID="automation-detail-clear-history"
+                        title={t('automations.detail.clearHistory')}
+                        subtitle={t('automations.detail.clearHistorySubtitle')}
+                        subtitleLines={0}
+                        destructive
+                        onPress={mutationsEnabled ? () => void handleClearRunHistory() : undefined}
+                        disabled={!mutationsEnabled || clearingRunHistory}
+                        loading={clearingRunHistory}
+                        showChevron={false}
+                    />
+                    <Item
                         title={t('automations.detail.deleteAutomation')}
                         destructive
                         onPress={mutationsEnabled ? () => void handleDelete() : undefined}
@@ -753,34 +965,8 @@ export function AutomationDetailScreen() {
                         );
                     })}
                 </ItemGroup>
-
-                <ItemGroup title={t('automations.detail.recentRunsTitle')}>
-                    {runs.length === 0 ? (
-                        <Item title={t('runs.empty')} showChevron={false} />
-                    ) : runs.map((run) => (
-                        <Item
-                            key={run.id}
-                            title={formatAutomationRunStateLabel(run.state)}
-                            subtitle={[
-                                t(getAutomationRunOriginTranslationKey(run.origin)),
-                                formatDate(getAutomationDefinitionRunOriginAt(run), unknownDate),
-                                t('automations.detail.runMeta.updated', { time: formatDate(run.updatedAt, unknownDate) }),
-                                ...(run.errorCode ? [t('automations.detail.runMeta.error', { message: run.errorCode })] : []),
-                            ].join('\n')}
-                            subtitleLines={0}
-                            onPress={() => handleOpenRun(run.id)}
-                        />
-                    ))}
-                    {nextRunCursor ? (
-                        <Item
-                            title={t('automations.detail.loadMoreRuns')}
-                            onPress={() => void handleLoadMoreRuns()}
-                            loading={loadingMoreRuns}
-                            showChevron={false}
-                        />
-                    ) : null}
-                </ItemGroup>
-            </View>
-        </ItemList>
+                </View>
+            )}
+        />
     );
 }

@@ -4,9 +4,17 @@ import { isPluginError } from '@happier-dev/plugin-sdk';
 import type { PluginClientApi } from '@happier-dev/plugin-sdk';
 import type { PluginClientActionHandler } from '@happier-dev/plugin-sdk/actions';
 import {
+    manifest as publicAuthoringManifest,
+} from '../../../../../../packages/plugin-sdk/examples/public-authoring/index.ts';
+import {
+    activate as activatePublicAuthoringReviewClientActions,
+} from '../../../../../../packages/plugin-sdk/examples/public-authoring/ui/reviewClientActions.ts';
+import {
+    formatQualifiedPluginActionId,
     PluginProjectionInstalledPackageV2Schema,
     PluginProjectedActionV2Schema,
     type CurrentUiContextSnapshotV1,
+    type PluginContributionClientPlatform,
     type PluginMachineExecutionOriginV1,
     type PluginProjectedActionV2,
 } from '@happier-dev/protocol';
@@ -17,6 +25,7 @@ import { PLUGIN_UI_CONTRIBUTION_ORIGIN_KEY } from '@/sync/domains/plugins/ui/pro
 import { createPluginReactNativeBundleCache } from '@/components/plugins/reactNative/bundleCache';
 import { getInstalledPluginUiClientExecutableComposition } from '@/components/plugins/reactNative/clientExecutableContributions';
 import { resolveProjectedPluginUiClientExecutables } from '@/components/plugins/reactNative/clientExecutableProjection';
+import { dispatchPluginSurfaceAction } from '@/components/plugins/surfaces/pluginSurfaceActionDispatch';
 import type {
     PluginReactNativeExecutableExport,
     PluginReactNativeLoaderBackend,
@@ -29,9 +38,16 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 // server-scoped daemon RPC is the system boundary at the far end of this
 // AppShell bridge.
 const machineRpcWithServerScopeMock = vi.hoisted(() => vi.fn());
+const clientExecutablePlatformState = vi.hoisted(() => ({
+    platform: 'web' as PluginContributionClientPlatform,
+}));
 
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
     machineRpcWithServerScope: machineRpcWithServerScopeMock,
+}));
+
+vi.mock('@/sync/domains/local/services/preview/platform', () => ({
+    resolveLocalServicePreviewPlatform: () => clientExecutablePlatformState.platform,
 }));
 
 import type { CurrentUiContextResolvedCommand } from './CurrentUiContextProvider';
@@ -45,6 +61,7 @@ import {
 
 const COMMAND_ID = 'current-ui-command:1';
 const ACTION_ID = Object.freeze({ pluginId: 'acme.triage', localId: 'file-ticket' });
+const ACTION_DISCOVERY_ID = formatQualifiedPluginActionId(ACTION_ID);
 const ACTION_ORIGIN = Object.freeze({
     machineId: 'machine-actions',
     serverId: 'server-actions',
@@ -101,10 +118,6 @@ const CLIENT_ACTION_ARTIFACT_GRAPH = PluginUiArtifactsManifestEntryV1Schema.pars
     compat: { react: '19.0.0', reactNative: '0.83.4' },
 });
 const CLIENT_ACTION_AUTHORIZATION = Object.freeze({
-    packageTrust: Object.freeze({
-        packageIdentity: `${CLIENT_ACTION_ID.pluginId}/actions/${CLIENT_ACTION_ID.localId}`,
-        reviewedPackageIdentity: `${CLIENT_ACTION_ID.pluginId}/actions/${CLIENT_ACTION_ID.localId}`,
-    }),
     generation: Object.freeze({
         targetGeneration: String(CLIENT_ACTION_GENERATION),
         desiredGeneration: String(CLIENT_ACTION_GENERATION),
@@ -115,6 +128,215 @@ const CLIENT_ACTION_AUTHORIZATION = Object.freeze({
     serviceAvailability: Object.freeze([]),
     operatingSystemAuthorization: Object.freeze([]),
 });
+
+const PUBLIC_AUTHORING_CLIENT_ACTION_GENERATION = 52;
+const PUBLIC_AUTHORING_CLIENT_ACTION_EXECUTION_ORIGIN: PluginMachineExecutionOriginV1 = Object.freeze({
+    serverIdentityId: 'srv_public_authoring_client_action',
+    materializationRef: Object.freeze({
+        pluginId: 'examples.public-sdk-review-assistant',
+        machineId: 'machine-public-authoring-client-action',
+        materializationId: 'materialization-public-authoring-client-action',
+    }),
+});
+const PUBLIC_AUTHORING_CLIENT_ACTION_HOST_ORIGIN = Object.freeze({
+    machineId: PUBLIC_AUTHORING_CLIENT_ACTION_EXECUTION_ORIGIN.materializationRef.machineId,
+    serverId: 'server-public-authoring-client-action',
+    generation: PUBLIC_AUTHORING_CLIENT_ACTION_GENERATION,
+    interactionEnabled: true,
+    phase: 'current' as const,
+    executionOrigin: PUBLIC_AUTHORING_CLIENT_ACTION_EXECUTION_ORIGIN,
+});
+const PUBLIC_AUTHORING_CLIENT_ACTION_LOCAL_IDS = [
+    'open-review-status',
+    'open-review-status-web-only-fixture',
+] as const;
+type PublicAuthoringClientActionLocalId = (typeof PUBLIC_AUTHORING_CLIENT_ACTION_LOCAL_IDS)[number];
+
+const PUBLIC_AUTHORING_CLIENT_ACTION_ARTIFACT_DIGESTS = Object.freeze({
+    web: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    ios: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+    android: 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+}) satisfies Readonly<Record<
+    PluginContributionClientPlatform,
+    PluginReactNativeBundleCacheIdentity['artifactDigest']
+>>;
+
+function publicAuthoringClientActionArtifactDigest(
+    platform: PluginContributionClientPlatform,
+): PluginReactNativeBundleCacheIdentity['artifactDigest'] {
+    return PUBLIC_AUTHORING_CLIENT_ACTION_ARTIFACT_DIGESTS[platform];
+}
+
+function readPublicAuthoringActionDeclaration(
+    value: unknown,
+    localId: PublicAuthoringClientActionLocalId,
+): object | null {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    return Reflect.get(value, 'id') === localId ? value : null;
+}
+
+function createPublicAuthoringClientActionFixture(input: Readonly<{
+    localId: PublicAuthoringClientActionLocalId;
+    platform: PluginContributionClientPlatform;
+}>) {
+    const declarations = publicAuthoringManifest.contributes.actions ?? [];
+    const declaration = declarations
+        .map((candidate) => readPublicAuthoringActionDeclaration(candidate, input.localId))
+        .find((candidate) => candidate !== null);
+    if (!declaration) {
+        throw new Error(`public_authoring_client_action_missing:${input.localId}`);
+    }
+    const action = PluginProjectedActionV2Schema.parse({
+        ...declaration,
+        pluginId: publicAuthoringManifest.id,
+        serverIdentityId: PUBLIC_AUTHORING_CLIENT_ACTION_EXECUTION_ORIGIN.serverIdentityId,
+        materializationRef: PUBLIC_AUTHORING_CLIENT_ACTION_EXECUTION_ORIGIN.materializationRef,
+        available: true,
+        authorization: {
+            generation: {
+                targetGeneration: String(PUBLIC_AUTHORING_CLIENT_ACTION_GENERATION),
+                desiredGeneration: String(PUBLIC_AUTHORING_CLIENT_ACTION_GENERATION),
+                appliedGeneration: String(PUBLIC_AUTHORING_CLIENT_ACTION_GENERATION),
+            },
+            resourceSelections: [],
+            scopedGrants: [],
+            serviceAvailability: [],
+            operatingSystemAuthorization: [],
+        },
+    });
+    if (action.execution.target !== 'client') {
+        throw new Error(`public_authoring_client_action_not_client:${input.localId}`);
+    }
+    const projectedAction = Object.freeze({
+        ...action,
+        [PLUGIN_UI_CONTRIBUTION_ORIGIN_KEY]: PUBLIC_AUTHORING_CLIENT_ACTION_HOST_ORIGIN,
+    });
+    const supportsPlatform = action.execution.platforms.includes(input.platform);
+    const bundleId = `reactNativeBundle:${action.pluginId}:${action.id}`;
+    const artifactDigest = publicAuthoringClientActionArtifactDigest(input.platform);
+    const cacheIdentity: PluginReactNativeBundleCacheIdentity = Object.freeze({
+        pluginId: action.pluginId,
+        contributionId: action.id,
+        artifactDigest,
+        hostAppVersion: '2.0.0',
+        hostUiApiVersion: '1.0.0',
+        reactVersion: '19.0.0',
+        reactNativeVersion: '0.83.4',
+        platform: input.platform,
+        channel: 'internal',
+        nativeCapabilitiesDigest: 'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
+        projectionGeneration: PUBLIC_AUTHORING_CLIENT_ACTION_GENERATION,
+    });
+    const artifactGraph = supportsPlatform
+        ? PluginUiArtifactsManifestEntryV1Schema.parse({
+            contributionId: action.execution.client.artifactId,
+            tier: 'reactNative',
+            platform: input.platform,
+            entry: input.platform === 'web'
+                ? 'react-native-web/review-client-actions/activate.mjs'
+                : `react-native/review-client-actions/${input.platform}/activate.bundle`,
+            files: [{
+                relativePath: input.platform === 'web'
+                    ? 'react-native-web/review-client-actions/activate.mjs'
+                    : `react-native/review-client-actions/${input.platform}/activate.bundle`,
+                digest: 'sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+                byteSize: 9,
+            }],
+            digest: artifactDigest,
+            builtWith: {
+                bundler: input.platform === 'web' ? 'vite' : 'repack',
+                version: input.platform === 'web' ? '7.0.0' : '5.2.5',
+            },
+            ...(input.platform === 'web' ? {} : {
+                repack: {
+                    containerName: 'examples_public_authoring_review_client_actions',
+                    modulePath: action.execution.client.modulePath,
+                    exportName: action.execution.client.exportName,
+                },
+            }),
+            hostUiApiVersion: '1.0.0',
+            compat: { react: '19.0.0', reactNative: '0.83.4' },
+        })
+        : null;
+    const projection = Object.freeze({
+        ...EMPTY_PLUGIN_UI_PROJECTION,
+        generation: PUBLIC_AUTHORING_CLIENT_ACTION_GENERATION,
+        installedPackagesById: Object.freeze({
+            [action.pluginId]: PluginProjectionInstalledPackageV2Schema.parse({
+                id: action.pluginId,
+                displayName: publicAuthoringManifest.displayName,
+                version: publicAuthoringManifest.version,
+                enabled: true,
+                source: { kind: 'localPath', locator: action.pluginId },
+            }),
+        }),
+        actionsById: Object.freeze({
+            [`${action.pluginId}/${action.id}`]: projectedAction,
+        }),
+        reactNativeBundlesById: Object.freeze(artifactGraph === null ? {} : {
+            [bundleId]: Object.freeze({
+                id: bundleId,
+                pluginId: action.pluginId,
+                contributionKind: 'reactNativeBundle' as const,
+                contributionId: action.id,
+                generatedOwnerKind: 'clientContribution' as const,
+                artifactGraph,
+                runtime: Object.freeze({
+                    decision: Object.freeze({ state: 'load' }),
+                    loadPolicy: Object.freeze({ source: 'installedArtifact' }),
+                    cacheIdentity,
+                }),
+                [PLUGIN_UI_CONTRIBUTION_ORIGIN_KEY]: PUBLIC_AUTHORING_CLIENT_ACTION_HOST_ORIGIN,
+            }),
+        }),
+    }) satisfies PluginUiProjectionModel;
+    const resolved = resolveProjectedPluginUiClientExecutables({
+        actionProjection: Object.freeze({ projection }),
+        platform: input.platform,
+    });
+    const executable = resolved[0];
+    if (supportsPlatform && (!executable || resolved.length !== 1)) {
+        throw new Error('public_authoring_client_action_did_not_resolve_through_generic_projection');
+    }
+    const cache = createPluginReactNativeBundleCache();
+    if (executable) {
+        cache.putInstalledArtifact({
+            identity: executable.cacheIdentity,
+            bytes: new Uint8Array([47, 47, 32, 99, 108, 105, 101, 110, 116]),
+            format: 'plainJs',
+        });
+    }
+    const backend: PluginReactNativeLoaderBackend = Object.freeze({
+        backendId: input.platform === 'web' ? 'reactNativeWebModule' : 'repackScriptManager',
+        available: true,
+        loadInstalledBundle: vi.fn(async () => (
+            activatePublicAuthoringReviewClientActions as PluginReactNativeExecutableExport
+        )),
+    });
+    const activation = executable
+        ? Object.freeze({
+            pluginId: executable.pluginId,
+            ...(executable.pluginVersion === undefined ? {} : { pluginVersion: executable.pluginVersion }),
+            contributes: executable.contributes,
+            target: executable.target,
+            executionOrigin: executable.executionOrigin,
+            projectionGeneration: executable.projectionGeneration,
+            cache,
+            identity: executable.cacheIdentity,
+            moduleReference: executable.moduleReference,
+            backend,
+            authority: executable.authority,
+            isCurrent: () => true,
+        })
+        : null;
+    return Object.freeze({
+        action: projectedAction as PluginProjectedActionV2,
+        projection,
+        resolved,
+        activation,
+        composition: getInstalledPluginUiClientExecutableComposition(),
+    });
+}
 
 function clientActionIdentity(): PluginReactNativeBundleCacheIdentity {
     return Object.freeze({
@@ -448,7 +670,7 @@ describe('current UI context Voice tool port', () => {
 
         expect(port.listCurrentContributedActionDefinitions?.()).toEqual([{
             kindVersion: 1,
-            id: `${ACTION_ID.pluginId}/${ACTION_ID.localId}`,
+            id: ACTION_DISCOVERY_ID,
             title: 'File ticket',
             description: 'Creates an issue in the current project.',
             safety: 'safe',
@@ -610,7 +832,7 @@ describe('current UI context Voice tool port', () => {
 
         expect(port.listCurrentContributedActionDefinitions?.()).toEqual([
             expect.objectContaining({
-                id: `${ACTION_ID.pluginId}/${ACTION_ID.localId}`,
+                id: ACTION_DISCOVERY_ID,
                 inputSchema: {},
             }),
         ]);
@@ -650,6 +872,94 @@ describe('current UI context Voice tool port', () => {
 
         expect(port.listCurrentContributedActionDefinitions?.()).toEqual([]);
     });
+
+    it('activates and dispatches the public-authoring review Action through the generic executable projection on web, iOS, and Android', async () => {
+        const composition = getInstalledPluginUiClientExecutableComposition();
+        await composition.unload();
+        try {
+            for (const platform of ['web', 'ios', 'android'] as const) {
+                clientExecutablePlatformState.platform = platform;
+                const fixture = createPublicAuthoringClientActionFixture({
+                    localId: 'open-review-status',
+                    platform,
+                });
+                if (!fixture.activation) {
+                    throw new Error(`public_authoring_client_action_activation_missing:${platform}`);
+                }
+                const openSurface = vi.fn(async () => ({ ok: true as const }));
+                try {
+                    expect(fixture.resolved).toHaveLength(1);
+                    await fixture.composition.reconcile([fixture.activation]);
+
+                    const outcome = await dispatchPluginSurfaceAction({
+                        action: { pluginId: fixture.action.pluginId, localId: fixture.action.id },
+                        resolveContributedAction: (identity) => (
+                            identity.pluginId === fixture.action.pluginId
+                                && identity.localId === fixture.action.id
+                                ? fixture.action
+                                : null
+                        ),
+                        invocationSurface: 'voice',
+                        clientAction: {
+                            projectionGeneration: PUBLIC_AUTHORING_CLIENT_ACTION_GENERATION,
+                            openSurface,
+                        },
+                        isCurrent: () => true,
+                    });
+
+                    expect(outcome).toEqual({ ok: true, result: null });
+                    expect(openSurface).toHaveBeenCalledWith({
+                        destination: {
+                            pluginId: publicAuthoringManifest.id,
+                            localId: 'review-session-status-details',
+                        },
+                    });
+                } finally {
+                    await fixture.composition.unload();
+                }
+            }
+        } finally {
+            clientExecutablePlatformState.platform = 'web';
+            await composition.unload();
+        }
+    });
+
+    it.each(['ios', 'android'] as const)(
+        'keeps the public-authoring web-only fixture unavailable through the canonical dispatcher on %s',
+        async (platform) => {
+            const composition = getInstalledPluginUiClientExecutableComposition();
+            await composition.unload();
+            clientExecutablePlatformState.platform = platform;
+            const fixture = createPublicAuthoringClientActionFixture({
+                localId: 'open-review-status-web-only-fixture',
+                platform,
+            });
+            try {
+                expect(fixture.resolved).toEqual([]);
+                await expect(dispatchPluginSurfaceAction({
+                    action: { pluginId: fixture.action.pluginId, localId: fixture.action.id },
+                    resolveContributedAction: (identity) => (
+                        identity.pluginId === fixture.action.pluginId
+                            && identity.localId === fixture.action.id
+                            ? fixture.action
+                            : null
+                    ),
+                    invocationSurface: 'voice',
+                    clientAction: {
+                        projectionGeneration: PUBLIC_AUTHORING_CLIENT_ACTION_GENERATION,
+                    },
+                    isCurrent: () => true,
+                })).resolves.toEqual({
+                    ok: false,
+                    code: 'unavailable',
+                    reason: 'plugin_surface_client_action_unavailable',
+                });
+            } finally {
+                clientExecutablePlatformState.platform = 'web';
+                await composition.unload();
+            }
+        },
+    );
 
     it('delegates the exact opaque open-surface command through the incumbent navigation binding without returning its semantic payload', async () => {
         let current: CurrentUiContextResolvedCommand | null = createOpenCommand();

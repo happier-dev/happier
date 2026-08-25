@@ -110,4 +110,19 @@ describe('CodeBlockView (native)', () => {
         expect(frames).toHaveLength(1);
         expect(frames[0]!.props.scrollTestID).toBe('markdown-code-block-scroll');
     });
+
+    it('forwards an owner-scoped container surface to CodeBlockViewFrame', async () => {
+        const { CodeBlockView } = await import('./CodeBlockView');
+        const containerStyle = { backgroundColor: '#abcdef' } as const;
+
+        const screen = await renderScreen(
+            React.createElement(CodeBlockView, {
+                code: 'happier setup',
+                containerStyle,
+            }),
+        );
+
+        const frame = screen.findByType('CodeBlockViewFrame' as any);
+        expect(frame?.props.containerStyle).toBe(containerStyle);
+    });
 });

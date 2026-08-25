@@ -137,3 +137,66 @@ describe('buildSlimProfileSave', () => {
         });
     });
 });
+
+describe('buildSlimProfileSave placement and checkout preferences', () => {
+    /**
+     * `LaunchProfileV2` has owned `placement` and `checkout` since the launch
+     * placement work landed, and `resolveTriageActionPlacementV1` reads them on
+     * every press — but nothing could WRITE one. A preference with a reader and
+     * no author is a schema a person cannot reach, which is the dormant-member
+     * shape this program keeps producing; these are the writer's tests.
+     */
+    it('writes the placement and checkout a person authored', () => {
+        expect(buildSlimProfileSave(base, {
+            name: 'Focused',
+            description: '',
+            extraEnvironmentVariables: [],
+            placement: 'ask',
+            checkout: 'create_worktree',
+        })).toMatchObject({
+            status: 'success',
+            profile: { placement: 'ask', checkout: 'create_worktree' },
+        });
+    });
+
+    it('writes a pinned placement with its directory', () => {
+        expect(buildSlimProfileSave(base, {
+            name: 'Focused',
+            description: '',
+            extraEnvironmentVariables: [],
+            placement: { fixed: { serverId: 'server-1', machineId: 'machine-1' }, directory: '/work' },
+        })).toMatchObject({
+            status: 'success',
+            profile: { placement: { fixed: { serverId: 'server-1', machineId: 'machine-1' }, directory: '/work' } },
+        });
+    });
+
+    it('clears a preference the person removed rather than retaining the stored one', () => {
+        // The save spreads the stored profile, so an omitted member would keep
+        // the old value and "No preference" would silently do nothing.
+        const pinned = {
+            ...base,
+            placement: 'ask' as const,
+            checkout: 'reuse_workspace' as const,
+        };
+        const saved = buildSlimProfileSave(pinned, {
+            name: 'Focused',
+            description: '',
+            extraEnvironmentVariables: [],
+        });
+        expect(saved.status).toBe('success');
+        expect(saved.status === 'success' ? saved.profile.placement : 'unset').toBeUndefined();
+        expect(saved.status === 'success' ? saved.profile.checkout : 'unset').toBeUndefined();
+    });
+
+    it('refuses a pinned placement that names half a machine', () => {
+        expect(buildSlimProfileSave(base, {
+            name: 'Focused',
+            description: '',
+            extraEnvironmentVariables: [],
+            // A pin with no machine is not a weaker pin; it is a target nothing
+            // can run on, and the profile owner is what refuses it.
+            placement: { fixed: { serverId: 'server-1', machineId: '' } },
+        })).toMatchObject({ status: 'error' });
+    });
+});

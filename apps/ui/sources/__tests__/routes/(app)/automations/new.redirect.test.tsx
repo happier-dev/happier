@@ -43,7 +43,13 @@ describe('/automations/new redirect', () => {
 
         await renderScreen(React.createElement(module.default));
 
-        expect(routerReplaceMock).toHaveBeenCalledWith('/new?automation=1');
+        expect(routerReplaceMock).toHaveBeenCalledWith({
+            pathname: '/new',
+            params: {
+                automation: '1',
+                draftId: expect.any(String),
+            },
+        });
     });
 
     it('redirects to the plain new-session route when automations are unavailable', async () => {
@@ -52,6 +58,11 @@ describe('/automations/new redirect', () => {
 
         await renderScreen(React.createElement(module.default));
 
-        expect(routerReplaceMock).toHaveBeenCalledWith('/new');
+        expect(routerReplaceMock).toHaveBeenCalledWith({
+            pathname: '/new',
+            params: {
+                draftId: expect.any(String),
+            },
+        });
     });
 });

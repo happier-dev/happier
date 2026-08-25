@@ -9,7 +9,7 @@ import { t } from '@/text';
 import { LaunchProfileEditForm } from '@/components/profiles/edit';
 import { type AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 import { layout } from '@/components/ui/layout/layout';
-import { useSettingMutable, useSettings } from '@/sync/domains/state/storage';
+import { useSetting, useSettingMutable, useSettings } from '@/sync/domains/state/storage';
 import { DEFAULT_PROFILES, getBuiltInProfile, getBuiltInProfileNameKey, resolveProfileById } from '@/sync/domains/profiles/profileUtils';
 import { convertBuiltInProfileToCustom, createEmptyCustomProfile, duplicateProfileForEdit } from '@/sync/domains/profiles/profileMutations';
 import { Modal } from '@/modal';
@@ -22,7 +22,7 @@ import {
     runUnsavedChangesGuard,
 } from '@/utils/navigation/runGuardedNavigation';
 import { useUnsavedChangesBeforeRemoveGuard } from '@/utils/navigation/useUnsavedChangesBeforeRemoveGuard';
-import { pickNewSessionRouteParams, setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
+import { buildNewSessionPickerFallbackHref, pickNewSessionRouteParams, setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
 import { buildBackendTargetRouteParams, resolveRouteCloseoutFallbackTarget } from '@/agents/backendCatalog/backendTargetRouteParams';
 import { resolvePreferredBackendTargetFromProjection } from '@/agents/backendCatalog/resolvePreferredBackendTargetFromProjection';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
@@ -36,6 +36,7 @@ import {
     readUiAiLaunchProfiles,
     replaceAiLaunchProfile,
 } from '@/sync/domains/profiles/aiLaunchProfileCollection';
+import { useApplyProfileSave } from '@/sync/store/settingsWriters';
 
 export default React.memo(function ProfileEditScreen() {
     const { theme } = useUnistyles();
@@ -95,16 +96,15 @@ export default React.memo(function ProfileEditScreen() {
     const currentRouteParams = React.useMemo(() => {
         return pickNewSessionRouteParams(params);
     }, [params]);
+    const pickerFallbackHref = React.useMemo(() => buildNewSessionPickerFallbackHref(params), [params]);
     const profileIdParam = Array.isArray(params.profileId) ? params.profileId[0] : params.profileId;
     const cloneFromProfileIdParam = Array.isArray(params.cloneFromProfileId) ? params.cloneFromProfileId[0] : params.cloneFromProfileId;
     const profileDataParam = Array.isArray(params.profileData) ? params.profileData[0] : params.profileData;
     const screenWidth = useWindowDimensions().width;
     const headerHeight = useHeaderHeight();
-    const [rawProfiles, setRawProfiles] = useSettingMutable('profiles');
+    const rawProfiles = useSetting('profiles');
     const launchProfiles = React.useMemo(() => readUiAiLaunchProfiles(rawProfiles), [rawProfiles]);
-    const writeRawProfiles = React.useCallback((next: readonly unknown[]) => {
-        setRawProfiles(next as AIBackendProfile[]);
-    }, [setRawProfiles]);
+    const applyProfileSave = useApplyProfileSave();
     const [, setLastUsedProfile] = useSettingMutable('lastUsedProfile');
     const [isDirty, setIsDirty] = React.useState(false);
     const isDirtyRef = React.useRef(false);
@@ -210,7 +210,7 @@ export default React.memo(function ProfileEditScreen() {
         tag: unsavedChangesGuard.tag,
     });
 
-    const handleSave = (savedProfile: AiLaunchProfile): boolean => {
+    const handleSave = (savedProfile: AiLaunchProfile, secretBindings?: Readonly<Record<string, string>>): boolean => {
         if (!savedProfile.name || savedProfile.name.trim() === '') {
             Modal.alert(t('common.error'), t('profiles.nameRequired'));
             return false;
@@ -249,9 +249,14 @@ export default React.memo(function ProfileEditScreen() {
         const exists = launchProfiles.some((entry) => entry.id === profileToSave.id);
         const isNewProfile = !exists;
         const updatedProfile = { ...profileToSave, updatedAt: Date.now() } as AiLaunchProfile;
-        writeRawProfiles(exists
+        const nextRawProfiles = exists
             ? replaceAiLaunchProfile(rawProfiles, profileToSave.id, updatedProfile)
-            : appendAiLaunchProfile(rawProfiles, updatedProfile));
+            : appendAiLaunchProfile(rawProfiles, updatedProfile);
+        applyProfileSave({
+            profiles: nextRawProfiles as typeof rawProfiles,
+            profileId: updatedProfile.id,
+            ...(!isLaunchProfileV2(updatedProfile) && secretBindings !== undefined ? { secretBindings } : {}),
+        });
 
         // Update last used profile for convenience in other screens.
         if (isNewProfile) {
@@ -271,7 +276,7 @@ export default React.memo(function ProfileEditScreen() {
                 currentParams: currentRouteParams,
             });
             if (returnMode === 'dispatch') {
-                safeRouterBack({ router, navigation, fallbackHref: '/new' });
+                safeRouterBack({ router, navigation, fallbackHref: pickerFallbackHref });
             }
             return true;
         }
@@ -287,7 +292,7 @@ export default React.memo(function ProfileEditScreen() {
             currentParams: currentRouteParams,
         });
         if (returnMode === 'dispatch') {
-            safeRouterBack({ router, navigation, fallbackHref: '/new' });
+            safeRouterBack({ router, navigation, fallbackHref: pickerFallbackHref });
         }
         // Prevent the unsaved-changes guard from triggering on successful save.
         isDirtyRef.current = false;
@@ -298,9 +303,9 @@ export default React.memo(function ProfileEditScreen() {
     const handleCancel = React.useCallback(() => {
         void runUnsavedChangesGuard(
             unsavedChangesGuard,
-            () => safeRouterBack({ router, navigation, fallbackHref: '/new' }),
+            () => safeRouterBack({ router, navigation, fallbackHref: pickerFallbackHref }),
         );
-    }, [navigation, router, unsavedChangesGuard]);
+    }, [navigation, pickerFallbackHref, router, unsavedChangesGuard]);
 
     const headerTitle = profile.name ? t('profiles.editProfile') : t('profiles.addProfile');
     const headerBackTitle = t('common.back');

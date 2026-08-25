@@ -12,6 +12,7 @@ import { pluginWebhookAdministrationTranslations } from './pluginWebhookAdminist
 import { pluginAccountDataEraseTranslations } from './pluginAccountDataEraseTranslations';
 import { apiTokenSettingsTranslations } from './apiTokenSettingsTranslations';
 import { pluginAccountReleaseSelectionTranslations } from './pluginAccountReleaseSelectionTranslations';
+import { pluginMachineMatrixTranslations } from './pluginMachineMatrixTranslations';
 import { pluginInvocationLogTranslations } from './pluginInvocationLogTranslations';
 import { eventAutomationComposerTranslations } from './eventAutomationComposerTranslations';
 import { actionOperationInboxTranslations } from './actionOperationInboxTranslations';
@@ -721,6 +722,10 @@ const zhHantOverrides: DeepPartial<typeof zhHans> = {
           composerSendImmediate: '立即傳送',
           composerSendPending: '傳送到待處理佇列',
           commandPaletteOpen: '開啟命令面板',
+          browserAddressFocus: '聚焦瀏覽器網址列',
+          browserBack: '瀏覽器上一頁',
+          browserForward: '瀏覽器下一頁',
+          browserReload: '重新載入瀏覽器頁面',
           modeCycle: '切換模式',
           shortcutsHelpOpen: '開啟快捷鍵說明',
           sessionNew: '建立新工作階段',
@@ -835,13 +840,32 @@ const zhHantOverrides: DeepPartial<typeof zhHans> = {
             emptyBody: '可從「新建工作階段」流程建立，以在你的裝置上執行排程工作階段。',
             createAutomationA11y: '建立自動化',
         },
+        settings: {
+            title: '自動化設定',
+            openSubtitle: '設定容量與執行歷程保留方式。',
+            failedToLoad: '無法載入自動化設定。',
+            updateFailed: '無法更新自動化設定。',
+            maxActiveRunsPerMachine: '每台裝置的最大進行中執行數',
+            maxActiveRunsPerMachineSubtitle: '限制每台裝置同時可主動認領的執行數量。',
+            maxActiveRunsPerMachinePrompt: '請輸入介於 1 到 2,147,483,647 的整數。',
+            maxActiveRunsPerMachineInvalid: '請輸入介於 1 到 2,147,483,647 的整數。',
+            runRetention: '永久保留執行歷程',
+            runRetentionSubtitle: '關閉後，符合條件的已完成執行將保留 30 天。',
+        },
         detail: {
+            clearHistory: '清除執行歷程',
+            clearHistorySubtitle: '移除可清除的已完成執行。進行中的執行仍可使用。',
+            clearHistoryConfirmTitle: '要清除執行歷程嗎？',
+            clearHistoryConfirmMessage: '符合條件的已完成執行將永久移除。進行中的執行仍可使用。',
+            clearHistoryConfirmButton: '清除歷程',
+            clearHistoryFailed: '無法清除執行歷程。',
             event: {
                 watcherTitle: '事件觀察器',
                 watcherUnwatched: '未設定觀察器',
                 endpointTitle: 'Webhook 端點',
                 endpointObservingSince: ({ time }: { time: string }) => `自 ${time} 起接收投遞`,
                 sourceStatusUnreported: '等待首次回報',
+                sourceStatusUnavailable: '來源狀態不可用',
                 sourceCatalogStatusUnavailable: '來源時效性無法取得',
                 watcherMachineUnknown: '這台機器已不在你的帳戶中，因此這個觀察器無法觀察事件。',
                 watcherMachineRevoked: '這台機器已被撤銷，因此這個觀察器無法觀察事件。',
@@ -875,6 +899,7 @@ const zhHantOverrides: DeepPartial<typeof zhHans> = {
                 admitted: ({ time }: { time: string }) => `已接納：${time}`,
                 occurrenceTitle: '事件識別碼',
                 sourceTitle: '觀察來源',
+                contentRemoved: '執行內容已移除',
                 nativeExecutionTitle: '原生執行',
                 nativeExecutionCall: ({ callId }: { callId: string }) => `呼叫 ${callId}`,
                 nativeExecutionSidechain: ({ sidechainId }: { sidechainId: string }) => `Sidechain ${sidechainId}`,
@@ -1192,6 +1217,25 @@ const zhHantOverrides: DeepPartial<typeof zhHans> = {
     },
 
     voiceAssistant: {
+      reconnecting: '正在重新連線…',
+      listening: '正在聆聽',
+      thinking: '正在思考…',
+      speaking: '正在說話',
+      microphonePermissionRequired: '需要麥克風權限',
+      interrupted: '已中斷',
+      dictationNoSpeech: '未偵測到語音',
+      dictationErrors: {
+        captureFailed: '麥克風錄音失敗，聽寫已停止。請檢查麥克風權限後再試一次。',
+        providerUnavailable: '所選的聽寫提供者無法使用。請檢查其設定後再試一次。',
+        captureStartDeadlineExceeded: '聽寫未能在 60 秒內啟動。請檢查麥克風權限後再試一次。',
+        captureDurationExceeded: '聽寫已達 60 秒的聆聽上限。請重新開始以繼續。',
+        transcriptionDeadlineExceeded: '轉錄花費超過 30 秒。請改用較短的聽寫再試一次。',
+        transcriptLimitExceeded: '聽寫的文字對輸入框而言太長。請嘗試較短的聽寫。',
+        recordedAudioSizeUnavailable: 'Happier 無法確認錄音大小。請重新錄製。',
+        recordedAudioLimitExceeded: '錄音超過 8 MB 上限。請嘗試較短的聽寫。',
+        microphoneOwnedByVoice: '請先結束 Voice，再開始聽寫。',
+        microphoneOwnedByDictation: '聽寫已在使用麥克風。請先結束目前的聽寫，再開始新的聽寫。',
+      },
       startVoice: '開始語音',
       startGlobalVoice: '開始全域語音',
       endVoice: '結束語音',
@@ -1203,6 +1247,7 @@ const zhHantOverrides: DeepPartial<typeof zhHans> = {
       connectAgent: '連線',
       installAgentRuntime: '安裝',
       updateAgentRuntime: '更新',
+      reconnect: '重新連線',
       conversationalTranscriptUnavailable: '此語音工作階段的對話轉錄無法使用',
       orbLabel: "語音",
       orbStartHint: "開始語音對話。向上滑動可開啟對話。",
@@ -1231,6 +1276,8 @@ const zhHantOverrides: DeepPartial<typeof zhHans> = {
 	    },
 
     voiceActivity: {
+        partial: '即時',
+        corrected: '已更新',
         format: {
             voiceAgent: '語音代理',
             you: '你',
@@ -1481,6 +1528,8 @@ const zhHantOverrides: DeepPartial<typeof zhHans> = {
             fallbackDisabled: '此伺服器已停用帳號備援。',
             duplicateMember: '此帳號已在群組中。',
             groupAlreadyExists: '已存在使用此 id 的帳號群組。',
+            groupCapacityExhausted: '此帳號的帳號群組數量已達上限。請刪除不再需要的群組後再試一次。',
+            connectedAccountCapacityExhausted: '此帳號的已連結帳號數量已達上限。請中斷不再需要的帳號後再試一次。',
             invalidGroup: '此帳號群組無效。請檢查設定後再試。',
             requestFailedWithStatus: ({ status }: { status: number }) => `The connected-service request failed (${status}). Refresh and try again.`,
             generic: '連線服務動作失敗。請重新整理後再試。',
@@ -6245,6 +6294,10 @@ const zhHantOverrides: DeepPartial<typeof zhHans> = {
         noLatestTurnChanges: '目前未偵測到最近一輪的變更。',
         notRepo: '不是版本控制倉庫',
         notUnderSourceControl: '此目錄不在版本控制下',
+        sourceControlStale: {
+            title: '版本控制需要處理',
+            body: '正在顯示上次成功的更新。最近一次重新整理未完成。',
+        },
         repositoryInit: {
             initialize: '初始化儲存庫',
             initializing: '正在初始化…',
@@ -6554,7 +6607,7 @@ const zhHantOverrides: DeepPartial<typeof zhHans> = {
                     pushCurrentBranch: '推送目前分支',
                     publish: '發佈儲存庫',
                     publishing: '正在發佈…',
-                    noTargets: '連接 GitHub 或使用 gh CLI 登入以發佈此儲存庫。',
+                    targetsUnavailable: "無法確認此存放庫可以發佈到哪裡。",
                     errors: {
                         targetRequired: '請選擇 GitHub 帳戶或組織。',
                         nameRequired: '請輸入儲存庫名稱。',
@@ -6819,7 +6872,6 @@ const zhHantOverrides: DeepPartial<typeof zhHans> = {
             disabledLimitSubtitle: '已達公開預覽數量上限。請先撤銷現有連結再建立新連結。',
             disabledNoPreviewSubtitle: '請先開啟本機預覽，再建立公開連結。',
             disabledReason: {
-                auditRequirementDisabled: '公開預覽稽核記錄為必要項目，但伺服器已將其關閉。',
                 auditUnavailable: '公開預覽稽核記錄不可用。',
                 dnsTlsUnavailable: '公開預覽正在等待 DNS/TLS 就緒。',
                 expired: '此公開預覽連結已過期。',
@@ -6839,6 +6891,7 @@ const zhHantOverrides: DeepPartial<typeof zhHans> = {
                 sessionNotAuthorized: '你無權為此工作階段建立公開連結。',
                 tunnelPortsUnconfigured: '伺服器未允許任何通道連接埠。',
                 tunnelRelayDisabled: '伺服器的機器通道轉送已關閉。',
+                tunnelSigningUnconfigured: '伺服器沒有機器通道的簽章金鑰。',
             },
             createActionA11y: '建立公開預覽連結',
             revokeActionA11y: '撤銷公開預覽連結',
@@ -6849,6 +6902,15 @@ const zhHantOverrides: DeepPartial<typeof zhHans> = {
             revokeConfirmTitle: '撤銷公開連結？',
             revokeConfirmMessage: ({ url }: { url: string }) => `要撤銷公開預覽連結 ${url} 嗎？正在使用它的人都會失去存取權。`,
             revokeConfirmCta: '撤銷連結',
+            consequenceReach: '任何拿到連結的人都能開啟此服務，不需要登入。',
+            consequenceExpiry: '下方的有效期用完後，連結會自動失效。',
+            consequenceRevoke: '你隨時可以在此面板撤銷它。',
+            lifetimeLabel: '有效期',
+            linkTypeLabel: '連結類型',
+            revealUrlA11y: '顯示完整連結',
+            hideUrlA11y: '隱藏連結',
+            expiresInClock: ({ clock }: { clock: string }) => `${clock} 後過期`,
+            groupFooter: '公開連結會記錄在此機器的稽核日誌中。',
         },
         actions: {
             terminateDetectedA11y: '終止偵測到的本機服務',
@@ -6861,6 +6923,25 @@ const zhHantOverrides: DeepPartial<typeof zhHans> = {
             stopConfirmTitle: '停止服務？',
             stopConfirmMessage: ({ service }: { service: string }) => `要停止 ${service} 嗎？服務在重新啟動前將無法連線。`,
             stopConfirmCta: '停止',
+            startA11y: '啟動服務',
+            failure: {
+                title: '操作未完成',
+                refused: '機器拒絕了此操作。請檢查此機器的本機服務權限後再試一次。',
+                unavailable: '此操作不適用於此機器上的該服務。',
+                incomplete: '操作沒有完成，你可以再試一次。',
+            },
+            failureTitle: {
+                start: ({ service }: { service: string }) => `無法啟動 ${service}`,
+                open: ({ service }: { service: string }) => `無法開啟 ${service}`,
+                terminate: ({ service }: { service: string }) => `無法終止 ${service}`,
+                forget: ({ service }: { service: string }) => `無法隱藏 ${service}`,
+                stop: ({ service }: { service: string }) => `無法停止 ${service}`,
+                restart: ({ service }: { service: string }) => `無法重新啟動 ${service}`,
+                copyAddress: '無法複製位址',
+                expose: '無法建立公開連結',
+                revokeExposure: '無法撤銷公開連結',
+                copyExposure: '無法複製公開連結',
+            },
         },
     },
 
@@ -7639,6 +7720,14 @@ const zhHantOverrides: DeepPartial<typeof zhHans> = {
     },
 
 settingsSession: {
+    newSessionDraftEntry: {
+        title: '新工作階段草稿',
+        footer: '選擇「新工作階段」要繼續此裝置上的草稿，還是開啟新草稿。',
+        resumeTitle: '繼續上一份草稿',
+        resumeSubtitle: '繼續此裝置上透過「新工作階段」開始的草稿。',
+        freshTitle: '一律重新開始',
+        freshSubtitle: '每次選擇「新工作階段」時都開啟新草稿。',
+    },
 	          sessionList: {
 	              title: '工作階段列表',
 	              footer: '工作階段側邊欄列表的外觀與行為。',
@@ -8344,7 +8433,7 @@ settingsSession: {
         },
         setupCheck: {
             title: '供應商就緒狀態',
-            footer: '檢查只會讀取已儲存設定和目前的本機就緒資訊。不會開啟麥克風、啟動語音、傳送音訊或聯絡供應商。',
+            footer: '檢查只會讀取已儲存設定和目前的本機就緒資訊。不會開啟麥克風、啟動語音、傳送音訊或聯絡供應商。啟動語音時會重新檢查工作階段綁定的能力。',
             check: '檢查設定',
             checkSubtitle: '被動檢查所選的語音供應商設定。',
             result: '設定狀態',
@@ -8742,6 +8831,13 @@ settingsSession: {
         },
       },
             models: {
+                nativeOptions: {
+                    kokoroEnvironmentDefaultTitle: "預設（來自環境）",
+                    kokoroDefaultSubtitle: "預設的本機神經語音模型。",
+                    kokoroHigherQualitySubtitle: "更高品質的本機 Kokoro 語音模型。",
+                    kokoroEnvironmentDefaultSubtitle: "使用環境中設定的 Kokoro 模型包預設值。",
+                    sherpaStreamingRecommendedSubtitle: "串流處理、低延遲（建議）。",
+                },
                 title: "本機語音模型",
                 statusTitle: "模型服務",
                 footer: "在語音主機常駐程式上安裝本機語音模型包，並為每種類型選擇預設模型。",
@@ -8930,6 +9026,7 @@ settingsSession: {
         },
         defaultTitle: '新功能',
         onboardingShowcase: {
+            details: PRODUCT_STORY_DETAILS_ENGLISH,
                 "title": "歡迎使用 Happier",
                 "subtitle": "你的 AI 代理，出現在每個工作場景。",
                 "cards": {
@@ -9498,7 +9595,7 @@ settingsSession: {
         webDesktopOnlySetupCommandSubtitle: '執行一條指令即可設定 Relay、必要時登入，並安裝背景服務。',
         webDesktopOnlySetupRemotePrereqsSubtitle: '在透過 SSH 設定遠端電腦之前，先執行一條指令來設定 Relay 並登入。',
         webDesktopOnlyRelayInstallTitle: '在這台電腦上託管 Relay',
-        webDesktopOnlyRelayInstallSubtitle: '這會安裝並啟動 Relay 主機。然後把輸出的 Relay URL 貼到這裡。',
+        webDesktopOnlyRelayInstallSubtitle: '這會安裝並啟動 Relay 主機。',
         webDesktopOnlyRelayStatusTitle: '取得 Relay URL',
         webDesktopOnlyRelayStatusSubtitle: '執行此命令查看 Relay URL，然後貼上到這裡。',
         webDesktopOnlyOptionalNextTitle: '可選：安全存取與供應商',
@@ -9523,6 +9620,7 @@ settingsSession: {
         setupThisComputerTitle: '設定這台電腦',
         controlPanelTitle: '準備狀態摘要',
         activeRelaySummaryTitle: '目前中繼',
+        selectedRelaySummaryTitle: '已選中繼',
         thisComputerSummaryTitle: '這台電腦',
         nextActionSummaryTitle: '下一步',
         thisComputerReady: '已為此中繼準備就緒',
@@ -9761,6 +9859,10 @@ settingsSession: {
         switchedToMode: ({ mode }: { mode: string }) => `已切換到 ${mode} 模式`,
         recoveredHistory: '已復原的歷史記錄',
         pluginAttribution: ({ pluginId }: { pluginId: string }) => `來自外掛 ${pluginId}`,
+        pluginAttributionExternal: ({ sender, pluginId }: { sender: string; pluginId: string }) => `來自 ${sender}，經由外掛 ${pluginId}`,
+        pluginAttributionExternalForwarded: ({ sender, pluginId }: { sender: string; pluginId: string }) => `由 ${sender} 轉寄，經由外掛 ${pluginId}`,
+        pluginAttributionExternalSender: '外部寄件者',
+        pluginAttributionExternalBot: '外部機器人',
         unknownEvent: '未知事件',
         runtimeConfigOutcomeAppliesBeforeNextMessage: '將在你的下一則訊息前生效',
         runtimeConfigOutcomeQueuedUntilReady: '已排入佇列，待就緒後套用',
@@ -10142,6 +10244,24 @@ settingsSession: {
     },
 
     profiles: {
+        launchPlacement: {
+            title: '工作階段在哪裡執行',
+            footer: '這是一項偏好，在工作階段啟動時解析，絕不會把某台機器存為答案。',
+            none: '無偏好',
+            automatic: '自動解析',
+            ask: '總是詢問',
+            fixed: '總是這台機器',
+            directory: '目錄',
+            directoryPlaceholder: '留空則使用解析出的專案根目錄',
+        },
+        launchCheckout: {
+            title: '工作副本',
+            footer: '工作階段在專案中執行時如何取得工作副本。',
+            none: '無偏好',
+            reuseWorkspace: '重複使用專案的檢出',
+            createWorktree: '建立 worktree',
+            ask: '總是詢問',
+        },
         // Profile management feature
         title: '設定檔',
         subtitle: '管理工作階段的環境變數設定檔',
@@ -10227,6 +10347,7 @@ settingsSession: {
     ...pluginWebhookAdministrationTranslations['zh-Hant'],
     ...pluginAccountDataEraseTranslations['zh-Hant'],
     ...pluginAccountReleaseSelectionTranslations['zh-Hant'],
+    ...pluginMachineMatrixTranslations['zh-Hant'],
     ...pluginInvocationLogTranslations['zh-Hant'],
     ...eventAutomationComposerTranslations['zh-Hant'],
     title: "外掛程式目錄",
@@ -10253,7 +10374,7 @@ settingsSession: {
     developmentSourceInstallSucceeded: "開發來源已核准並投影。",
     developmentSourceInstallFailed: ({ outcome }: { outcome: string }) => `未能安裝開發來源（${outcome}）。`,
     developmentTrustSourceRootTitle: "要信任這個外掛程式資料夾嗎？",
-    developmentTrustSourceRootBody: ({ path }: { path: string }) => `Happier 會在下列位置安裝相依套件、建置並執行程式碼：\n\n${path}\n\n只有在你信任該資料夾中的所有內容以及它可能取得的所有內容時才繼續。下一步你會審閱外掛程式本身。`,
+    developmentTrustSourceRootBody: ({ path, machine, server }: { path: string; machine: string; server: string }) => `Happier 會在下列位置安裝相依套件、建置並執行程式碼：\n\n${path}（${machine} / ${server}）\n\n只有在你信任該資料夾中的所有內容以及它可能取得的所有內容時才繼續。下一步你會審閱外掛程式本身。`,
     developmentTrustSourceRootConfirm: "信任資料夾",
     pendingChangesTitle: "等待你的決定",
     pendingChangesFooter: "在這台機器上準備好的外掛變更。代理可以準備變更，但只有你能核准。",
@@ -10330,7 +10451,8 @@ settingsSession: {
     marketplaceInstallReviewBody: ({ identity, verification, executableRealms, contributions, uiArtifacts, requiredAccess, optionalAccess, compatibility }: { identity: string; verification: string; executableRealms: string; contributions: string; uiArtifacts: string; requiredAccess: string; optionalAccess: string; compatibility: string }) => `身分：\n${identity}\n\n驗證訊號：\n${verification}\n\n可執行程式碼：${executableRealms}\n貢獻：${contributions}\n介面成品：${uiArtifacts}\n\n受信任的守護程式與 React Native 程式碼會以應用程式或程序的權限執行，並可直接使用檔案、網路、環境與程序。下列主機存取權限描述由 Happier 中介的服務；它不是可執行外掛程式碼的沙箱。\n\n必要的揭露與協作服務：\n${requiredAccess}\n\n選用的主機資源（預設關閉）：\n${optionalAccess}\n\n相容性與更新：\n${compatibility}`,
     marketplaceInstallDecisionFailed: ({ outcome }: { outcome: string }) => `未安裝外掛程式（${outcome}）。`,
     marketplaceChangeDecisionFailed: ({ action, outcome }: { action: string; outcome: string }) => `${action}失敗（${outcome}）。`,
-    pluginChangeConfirmBody: ({ action, name }: { action: string; name: string }) => `確認對 ${name} 執行「${action}」。`,
+    pluginChangeConfirmBody: ({ action, name, machine, server }: { action: string; name: string; machine: string; server: string }) => `確認在 ${server} 的 ${machine} 上對 ${name} 執行「${action}」。`,
+    pluginChangeConfirmTarget: ({ machine, server }: { machine: string; server: string }) => `此操作作用於 ${server} 的 ${machine}。`,
     forgetTrust: "忘記信任",
     rollback: "回復版本",
     uninstall: "解除安裝",
@@ -10516,3 +10638,4 @@ settingsSession: {
     },};
 
 export const zhHant = deepMerge(zhHans, zhHantOverrides);
+import { PRODUCT_STORY_DETAILS_ENGLISH } from '@happier-dev/brand/product-story';

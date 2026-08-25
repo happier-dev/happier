@@ -11,9 +11,10 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Icon } from '@/components/ui/icons/Icon';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { useActionOperation } from '@/sync/domains/actionOperations/useActionOperations';
-import { useMachine, useSession } from '@/sync/domains/state/storage';
+import { useMachine, useSessionListPreferredMetadata } from '@/sync/domains/state/storage';
 import { createActivitySurfaceSessionRoute } from '@/activity/actions/activitySurfaceTargets';
 import { isActionOperationTerminal } from '@/sync/domains/actionOperations/actionOperationStore';
+import { acknowledgeActionOperationPresented } from '@/sync/domains/actionOperations/acknowledgeActionOperationPresented';
 import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
 import { t } from '@/text';
@@ -99,7 +100,8 @@ export const ActionOperationDetailModal = React.memo(function ActionOperationDet
     const router = useRouter();
     const operation = useActionOperation(props.operationId);
     const machine = useMachine(operation?.snapshot.scope.machineId ?? '');
-    const session = useSession(operation?.snapshot.scope.sessionId ?? '');
+    const sessionId = operation?.snapshot.scope.sessionId ?? null;
+    const sessionMetadata = useSessionListPreferredMetadata(sessionId);
     const [cancelPending, setCancelPending] = React.useState(false);
     const [cancelFeedback, setCancelFeedback] = React.useState<
         'requested' | 'unsupported' | 'already_settled' | 'not_found' | 'failed' | null
@@ -126,6 +128,12 @@ export const ActionOperationDetailModal = React.memo(function ActionOperationDet
         });
         return () => props.setChrome?.(null);
     }, [operation?.snapshot.actionId, operation?.snapshot.title, props.setChrome]);
+
+    React.useEffect(() => {
+        if (operation && isActionOperationTerminal(operation.snapshot.state)) {
+            acknowledgeActionOperationPresented(operation.snapshot);
+        }
+    }, [operation]);
 
     if (!operation) {
         return (
@@ -232,11 +240,11 @@ export const ActionOperationDetailModal = React.memo(function ActionOperationDet
                     title={t('inbox.actionOperations.machine')}
                     subtitle={machine ? getMachineDisplayName(machine) : snapshot.scope.machineId}
                 />
-                {snapshot.scope.sessionId ? (
+                {sessionId ? (
                     <Item
                         mode="info"
                         title={t('inbox.actionOperations.session')}
-                        subtitle={session ? getSessionName(session) : snapshot.scope.sessionId}
+                        subtitle={sessionMetadata ? getSessionName({ id: sessionId, metadata: sessionMetadata }) : sessionId}
                     />
                 ) : null}
                 <Item

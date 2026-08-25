@@ -17,6 +17,7 @@ vi.mock('expo-router', async () => {
 describe('legacy automation picker route', () => {
     afterEach(() => {
         standardCleanup();
+        vi.resetModules();
     });
 
     it('redirects to the inline new-session automation flow and preserves automation params', async () => {
@@ -28,6 +29,7 @@ describe('legacy automation picker route', () => {
             automationEveryMinutes: '90',
             automationCronExpr: '0 * * * *',
             automationTimezone: 'Europe/Zurich',
+            draftId: '8e0a5dd1-b1df-43dd-b51e-b7787b30362e',
         });
 
         const module = await import('@/app/(app)/new/pick/automation');
@@ -46,6 +48,23 @@ describe('legacy automation picker route', () => {
                 automationEveryMinutes: '90',
                 automationCronExpr: '0 * * * *',
                 automationTimezone: 'Europe/Zurich',
+                draftId: '8e0a5dd1-b1df-43dd-b51e-b7787b30362e',
+            },
+        });
+    });
+
+    it('allocates an explicit draft identity for a direct legacy automation route', async () => {
+        useLocalSearchParamsMock.mockReturnValue({});
+
+        const module = await import('@/app/(app)/new/pick/automation');
+        const screen = await renderScreen(React.createElement(module.default));
+
+        const redirect = screen.findByType('Redirect' as any);
+        expect(redirect.props.href).toEqual({
+            pathname: '/new',
+            params: {
+                automation: '1',
+                draftId: expect.any(String),
             },
         });
     });

@@ -16,6 +16,7 @@ const backSpy = vi.fn();
 const pushSpy = vi.fn();
 const executeSpy = vi.fn(async () => ({ ok: true as const, result: {} }));
 const createDefaultActionExecutorSpy = vi.fn();
+const replayApprovalRequestAtExactDaemonSpy = vi.fn(async (_args: unknown) => ({ ok: true as const, result: {} }));
 const fetchArtifactWithBodySpy = vi.fn(async (): Promise<unknown> => null);
 const updateArtifactWithHeaderSpy = vi.fn(async (_artifactId: string, _header: unknown, _body: string) => {});
 const resolvePreferredServerIdForSessionIdSpy = vi.fn((_: string) => 'server-cache');
@@ -88,6 +89,24 @@ function createTargetActionApprovalArtifact() {
             subjectFingerprint: 'b'.repeat(64),
             summary: 'Publish the release notes',
             detail: 'This publishes the approved release notes to the configured remote.',
+        }),
+    };
+}
+
+function createApiTargetActionApprovalArtifact() {
+    const targetApproval = createTargetActionApprovalArtifact();
+    return {
+        ...targetApproval,
+        id: 'target-api-artifact-1',
+        body: JSON.stringify({
+            ...JSON.parse(targetApproval.body),
+            createdBy: { surface: 'system' },
+            requestedSurface: 'api',
+            replayPlacement: {
+                serverId: 'server-exact',
+                machineId: 'machine-exact',
+                defaultSessionId: 'session-1',
+            },
         }),
     };
 }
@@ -330,6 +349,7 @@ vi.mock('@/sync/ops/actions/defaultActionExecutor', () => ({
         createDefaultActionExecutorSpy(opts);
         return { execute: executeSpy };
     },
+    replayApprovalRequestAtExactDaemon: (args: unknown) => replayApprovalRequestAtExactDaemonSpy(args),
 }));
 
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId', () => ({
@@ -348,6 +368,7 @@ describe('ApprovalDetailScreen', () => {
         pushSpy.mockReset();
         executeSpy.mockClear();
         createDefaultActionExecutorSpy.mockReset();
+        replayApprovalRequestAtExactDaemonSpy.mockClear();
         fetchArtifactWithBodySpy.mockClear();
         updateArtifactWithHeaderSpy.mockClear();
         resolvePreferredServerIdForSessionIdSpy.mockReset();
@@ -390,6 +411,46 @@ describe('ApprovalDetailScreen', () => {
         });
     });
 
+    it('routes an API target-action approval to its stamped daemon instead of mutating the Artifact locally', async () => {
+        currentArtifact = createApiTargetActionApprovalArtifact();
+        const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
+        const screen = await renderScreen(<ApprovalDetailScreen artifactId="target-api-artifact-1" />);
+
+        await screen.pressByTestIdAsync('approvals.approve');
+
+        expect(replayApprovalRequestAtExactDaemonSpy).toHaveBeenCalledExactlyOnceWith({
+            artifactId: 'target-api-artifact-1',
+            decision: 'approve',
+            executionTarget: {
+                serverId: 'server-exact',
+                machineId: 'machine-exact',
+                defaultSessionId: 'session-1',
+            },
+        });
+        expect(updateArtifactWithHeaderSpy).not.toHaveBeenCalled();
+        expect(executeSpy).not.toHaveBeenCalled();
+    });
+
+    it('routes an API target-action rejection to its stamped daemon without executing client-side', async () => {
+        currentArtifact = createApiTargetActionApprovalArtifact();
+        const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
+        const screen = await renderScreen(<ApprovalDetailScreen artifactId="target-api-artifact-1" />);
+
+        await screen.pressByTestIdAsync('approvals.reject');
+
+        expect(replayApprovalRequestAtExactDaemonSpy).toHaveBeenCalledExactlyOnceWith({
+            artifactId: 'target-api-artifact-1',
+            decision: 'reject',
+            executionTarget: {
+                serverId: 'server-exact',
+                machineId: 'machine-exact',
+                defaultSessionId: 'session-1',
+            },
+        });
+        expect(updateArtifactWithHeaderSpy).not.toHaveBeenCalled();
+        expect(executeSpy).not.toHaveBeenCalled();
+    });
+
     it('renders and updates only the execution-run host-action approval artifact', async () => {
         currentArtifact = createExecutionRunHostActionApprovalArtifact();
         const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
@@ -417,6 +478,36 @@ describe('ApprovalDetailScreen', () => {
             kind: 'execution_run_host_action', status: 'approved',
             decision: { kind: 'approve' }, subjectFingerprint: 'c'.repeat(64),
         });
+    });
+
+    it('shows the authoritative execution failure reason for a terminal target action approval', async () => {
+        const targetApproval = createTargetActionApprovalArtifact();
+        currentArtifact = {
+            ...targetApproval,
+            header: {
+                ...targetApproval.header,
+                approvalStatus: 'failed',
+            },
+            body: JSON.stringify({
+                ...JSON.parse(targetApproval.body),
+                status: 'failed',
+                updatedAtMs: 2,
+                decision: { kind: 'approve', decidedAtMs: 2 },
+                execution: {
+                    executedAtMs: 3,
+                    ok: false,
+                    errorCode: 'machine_offline',
+                    error: 'The selected machine is offline.',
+                },
+            }),
+        };
+        const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
+        const screen = await renderScreen(<ApprovalDetailScreen artifactId="target-artifact-1" />);
+
+        expect(screen.getTextContent()).toContain('The selected machine is offline.');
+        expect(screen.findByTestId('approvals.execution-failure')).not.toBeNull();
+        expect(screen.findByTestId('approvals.approve')).toBeNull();
+        expect(screen.findByTestId('approvals.reject')).toBeNull();
     });
 
     it('fails closed when a target header is paired with a built-in body', async () => {

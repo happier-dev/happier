@@ -1,11 +1,7 @@
 import * as React from 'react';
-import { View } from 'react-native';
-import { useUnistyles } from 'react-native-unistyles';
 
-import { Text } from '@/components/ui/text/Text';
-import { Typography } from '@/constants/Typography';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { resolveReasonCopy } from '@/sync/domains/surfaces/copy';
-import { Icon } from '@/components/ui/icons/Icon';
 
 export type BrowserSurfaceUnavailableReason =
     | 'disabled'
@@ -15,37 +11,40 @@ export type BrowserSurfaceUnavailableReason =
     | 'live_state_lost'
     | 'unsupported_target';
 
+/**
+ * `adapter_recovering` is the one reason that is not terminal — the host is coming back, so the
+ * surface says so with the loading card rather than an unavailable one. Every other reason is a
+ * settled state the user has to act on elsewhere.
+ */
+const RECOVERING_REASON: BrowserSurfaceUnavailableReason = 'adapter_recovering';
+
+/**
+ * The browser surface's unavailable state (U-5).
+ *
+ * It used to hand-roll a centred icon + grey caption with its own inline layout — a sixth private
+ * spelling of a state the app already has ONE card for. `SurfaceStateCard` brings the shared tile,
+ * the per-kind glyph, the live region (this state appears asynchronously when a host drops, so it
+ * has to announce), and the `diagnosticCode` channel that keeps the raw reason code out of visible
+ * text while leaving it addressable for QA.
+ *
+ * Both strings come from `resolveReasonCopy`, which already owns a translated per-kind title and
+ * body for `browserSurface`. No new key: the copy owner had the title the card needed all along.
+ */
 export function BrowserSurfaceFallback(props: Readonly<{
     reason: BrowserSurfaceUnavailableReason;
     testID?: string;
 }>): React.ReactElement {
-    const { theme } = useUnistyles();
+    const recovering = props.reason === RECOVERING_REASON;
+    const copy = resolveReasonCopy({ reasonCode: props.reason, kind: 'browserSurface' });
     return (
-        <View
+        <SurfaceStateCard
             testID={props.testID ?? `browser-surface-unavailable-${props.reason}`}
-            style={{
-                flex: 1,
-                minHeight: 0,
-                minWidth: 0,
-                alignItems: 'center',
-                justifyContent: 'center',
-                padding: 24,
-                backgroundColor: theme.colors.surface.base,
-            }}
-        >
-            <Icon name="globe" size={20} color={theme.colors.text.secondary} />
-            <Text
-                style={{
-                    marginTop: 10,
-                    color: theme.colors.text.secondary,
-                    fontSize: 13,
-                    ...Typography.default(),
-                    textAlign: 'center',
-                    maxWidth: 520,
-                }}
-            >
-                {resolveReasonCopy({ reasonCode: props.reason, kind: 'browserSurface' }).message}
-            </Text>
-        </View>
+            kind={recovering ? 'loading' : 'unavailable'}
+            iconName="globe"
+            title={copy.title}
+            reason={copy.message}
+            diagnosticCode={props.reason}
+            accessibilitySemantics="status"
+        />
     );
 }

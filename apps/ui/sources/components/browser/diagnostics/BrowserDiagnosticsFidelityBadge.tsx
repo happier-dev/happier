@@ -19,9 +19,9 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingVertical: 3,
     },
     text: {
-        color: theme.colors.text.secondary,
-        fontSize: 11,
+        ...Typography.rowMeta(),
         ...Typography.default('semiBold'),
+        color: theme.colors.text.secondary,
     },
 }));
 

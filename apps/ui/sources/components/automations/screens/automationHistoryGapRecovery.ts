@@ -1,5 +1,4 @@
 import {
-    arePluginMachineExecutionOriginsEqual,
     type AutomationEventSourceStatusV1,
     type AutomationV3DefinitionListItem,
     type DaemonContributionRegistryProjectionAutomationEligibleEventV1,
@@ -21,37 +20,16 @@ import {
     createPluginUiProjectedActionResolver,
     normalizePluginUiProjection,
 } from '@/sync/domains/plugins/ui/projection';
+import {
+    areFreshPluginMachineExecutionOriginsCurrent,
+    arePluginContributionIdentitiesEqual,
+    arePluginMachineMaterializationRefsEqual,
+} from '@/components/automations/pluginEventAutomationCurrentness';
 
 type HistoryGapRecoveryOutcome =
     | Readonly<{ kind: 'settled' }>
     | Readonly<{ kind: 'unavailable' }>
     | Readonly<{ kind: 'stale' }>;
-
-function sameContributionIdentity(
-    left: Readonly<{ pluginId: string; localId: string }>,
-    right: Readonly<{ pluginId: string; localId: string }>,
-): boolean {
-    return left.pluginId === right.pluginId && left.localId === right.localId;
-}
-
-function sameFreshExecutionOrigin(
-    left: FreshPluginMachineExecutionOriginV1,
-    right: FreshPluginMachineExecutionOriginV1,
-): boolean {
-    return arePluginMachineExecutionOriginsEqual(left.origin, right.origin)
-        && left.machineTarget.serverId === right.machineTarget.serverId
-        && left.machineTarget.target.serverIdentityId === right.machineTarget.target.serverIdentityId
-        && left.machineTarget.target.machineId === right.machineTarget.target.machineId;
-}
-
-function sameMaterializationRef(
-    left: Readonly<{ pluginId: string; machineId: string; materializationId: string }>,
-    right: Readonly<{ pluginId: string; machineId: string; materializationId: string }>,
-): boolean {
-    return left.pluginId === right.pluginId
-        && left.machineId === right.machineId
-        && left.materializationId === right.materializationId;
-}
 
 function sameCurrentSourceStatus(
     left: AutomationEventSourceStatusV1,
@@ -59,9 +37,9 @@ function sameCurrentSourceStatus(
 ): boolean {
     return left.automationId === right.automationId
         && left.templateVersion === right.templateVersion
-        && sameContributionIdentity(left.eventRef, right.eventRef)
+        && arePluginContributionIdentitiesEqual(left.eventRef, right.eventRef)
         && left.sourceSelectorId === right.sourceSelectorId
-        && sameMaterializationRef(
+        && arePluginMachineMaterializationRefsEqual(
             left.reporterMaterializationRef,
             right.reporterMaterializationRef,
         )
@@ -78,7 +56,7 @@ function sameAutomationEventSource(
     if (!isPluginEventAutomationDefinition(left) || !isPluginEventAutomationDefinition(right)) return false;
     return left.id === right.id
         && left.templateVersion === right.templateVersion
-        && sameContributionIdentity(left.trigger.eventRef, right.trigger.eventRef)
+        && arePluginContributionIdentitiesEqual(left.trigger.eventRef, right.trigger.eventRef)
         && left.trigger.sourceSelectorId === right.trigger.sourceSelectorId
         && left.trigger.observation.kind === right.trigger.observation.kind;
 }
@@ -99,7 +77,7 @@ export function readAutomationHistoryGapRecoveryStatus(
         || status.code !== 'historyGap'
         || status.automationId !== automation.id
         || status.templateVersion !== automation.templateVersion
-        || !sameContributionIdentity(status.eventRef, automation.trigger.eventRef)
+        || !arePluginContributionIdentitiesEqual(status.eventRef, automation.trigger.eventRef)
         || status.sourceSelectorId !== automation.trigger.sourceSelectorId
         || status.reporterMaterializationRef.pluginId !== automation.trigger.eventRef.pluginId
     ) {
@@ -124,10 +102,10 @@ export function readAutomationHistoryGapRecoveryEligibleEvent(params: Readonly<{
             && candidate.event.automation.source.supportedObservationTransports.includes('checkpointedPull')
             && status.reporterImmutableGenerationId !== undefined
             && status.reporterImmutableGenerationId === candidate.event.immutableGenerationId
-            && sameContributionIdentity(candidate.event.identity, automation.trigger.eventRef)
+            && arePluginContributionIdentitiesEqual(candidate.event.identity, automation.trigger.eventRef)
             && candidate.event.identity.pluginId === action.identity.pluginId
             && candidate.event.immutableGenerationId === action.immutableGenerationId
-            && sameContributionIdentity(action.identity, declaredAction)
+            && arePluginContributionIdentitiesEqual(action.identity, declaredAction)
             && declaredAction.pluginId === candidate.event.identity.pluginId;
     });
     return matches.length === 1 ? matches[0]! : null;
@@ -141,9 +119,9 @@ function sameRecoveryEligibleEvent(
     const rightAction = right.historyGapResetAction;
     return leftAction !== undefined
         && rightAction !== undefined
-        && sameContributionIdentity(left.event.identity, right.event.identity)
+        && arePluginContributionIdentitiesEqual(left.event.identity, right.event.identity)
         && left.event.immutableGenerationId === right.event.immutableGenerationId
-        && sameContributionIdentity(leftAction.identity, rightAction.identity)
+        && arePluginContributionIdentitiesEqual(leftAction.identity, rightAction.identity)
         && leftAction.immutableGenerationId === rightAction.immutableGenerationId;
 }
 
@@ -172,7 +150,7 @@ function resolveCurrentRecoverySnapshot(params: Readonly<{
     if (!automation || !status || !origin || params.signal.aborted || !params.accountLifetime.isCurrent()) {
         return { kind: 'unavailable' };
     }
-    if (!sameMaterializationRef(origin.origin.materializationRef, status.reporterMaterializationRef)) {
+    if (!arePluginMachineMaterializationRefsEqual(origin.origin.materializationRef, status.reporterMaterializationRef)) {
         return { kind: 'stale' };
     }
     const event = readAutomationHistoryGapRecoveryEligibleEvent({ inputs: params.inputs, automation });
@@ -222,8 +200,8 @@ function resolveCurrentRecoverySnapshot(params: Readonly<{
                     && currentStatus !== null
                     && sameCurrentSourceStatus(currentStatus, status)
                     && currentOrigin !== null
-                    && sameFreshExecutionOrigin(currentOrigin, origin)
-                    && sameMaterializationRef(
+                    && areFreshPluginMachineExecutionOriginsCurrent(currentOrigin, origin)
+                    && arePluginMachineMaterializationRefsEqual(
                         currentOrigin.origin.materializationRef,
                         currentStatus.reporterMaterializationRef,
                     );
@@ -271,7 +249,7 @@ export async function recoverAutomationHistoryGap(params: Readonly<{
             serverId: origin.machineTarget.serverId,
         });
         const currentOrigin = params.resolveExecutionOrigin();
-        if (!currentOrigin || !sameFreshExecutionOrigin(origin, currentOrigin)) {
+        if (!currentOrigin || !areFreshPluginMachineExecutionOriginsCurrent(origin, currentOrigin)) {
             return { kind: 'stale' } as const;
         }
         return resolveCurrentRecoverySnapshot({
@@ -302,7 +280,7 @@ export async function recoverAutomationHistoryGap(params: Readonly<{
         if ('kind' in currentBeforeSelection) return currentBeforeSelection;
         if (
             !sameRecoveryEligibleEvent(currentBeforeSelection.event, initial.event)
-            || !sameFreshExecutionOrigin(currentBeforeSelection.origin, initial.origin)
+            || !areFreshPluginMachineExecutionOriginsCurrent(currentBeforeSelection.origin, initial.origin)
             || !sameAutomationEventSource(currentBeforeSelection.automation, initial.automation)
             || !sameCurrentSourceStatus(currentBeforeSelection.status, initial.status)
         ) {
@@ -330,7 +308,7 @@ export async function recoverAutomationHistoryGap(params: Readonly<{
         if ('kind' in current) return current;
         if (
             !sameRecoveryEligibleEvent(current.event, initial.event)
-            || !sameFreshExecutionOrigin(current.origin, initial.origin)
+            || !areFreshPluginMachineExecutionOriginsCurrent(current.origin, initial.origin)
             || !sameAutomationEventSource(current.automation, initial.automation)
             || !sameCurrentSourceStatus(current.status, initial.status)
         ) {

@@ -21,6 +21,7 @@ export type EmbeddedTerminalPaneFrameProps = Readonly<{
     keyboardBottomInset?: number;
     onRequestClose?: (() => void) | null;
     onPaste?: (() => void) | null;
+    onCopySelection?: (() => void) | null;
     toolbarActionsStart?: React.ReactNode;
     testIdPrefix?: string | null;
     platformOS?: 'web' | 'ios' | 'android';
@@ -86,6 +87,18 @@ export const EmbeddedTerminalPaneFrame = React.memo(function EmbeddedTerminalPan
                 </View>
                 <View style={styles.toolbarRight}>
                     {props.toolbarActionsStart}
+                    {props.onCopySelection ? (
+                        <IconButton
+                            testID={testId('copy-selection')}
+                            iconName="copy"
+                            accessibilityLabel={t('common.copy')}
+                            tooltip={t('common.copy')}
+                            variant="plain"
+                            size={28}
+                            iconSize={18}
+                            onPress={props.onCopySelection}
+                        />
+                    ) : null}
                     {props.onPaste ? (
                         <IconButton
                             testID={testId('paste')}

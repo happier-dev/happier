@@ -17,6 +17,7 @@ import { shadowLevelStyle } from '@/shadowElevation';
 import { resolveStoryDeckPresentation } from './storyDeckPresentation';
 
 const PHONE_SHEET_MAX_RATIO = 0.85;
+const CENTERED_SHEET_MAX_RATIO = 0.9;
 const PHONE_BREAKPOINT = 480;
 
 const DRAG_DISMISS_FRACTION = 0.3;
@@ -34,6 +35,7 @@ export type StorySheetFrameProps = Readonly<{
      * provide their own external dismiss path (e.g. through the modal system).
      */
     onDismiss?: () => void;
+    topRightAction?: React.ReactNode;
 }>;
 
 const stylesheet = StyleSheet.create((theme) => ({
@@ -59,6 +61,12 @@ const stylesheet = StyleSheet.create((theme) => ({
         borderRadius: theme.borderRadius.modalCard,
         overflow: 'hidden',
         ...shadowLevelStyle(theme.colors.shadowLevels[4]),
+    },
+    topRightAction: {
+        position: 'absolute',
+        top: 8,
+        right: 14,
+        zIndex: 2,
     },
 }));
 
@@ -88,7 +96,7 @@ export function StorySheetFrame(props: StorySheetFrameProps) {
     const canDragDismiss = isPhoneSheet;
     const sheetMaxHeight = isPhoneSheet
         ? Math.max(0, height * PHONE_SHEET_MAX_RATIO)
-        : Math.min(presentation.frameMaxHeight, height * 0.85);
+        : Math.min(presentation.frameMaxHeight, height * CENTERED_SHEET_MAX_RATIO);
     const sheetWidth = isPhoneSheet
         ? width
         : Math.min(width - 32, presentation.frameMaxWidth);
@@ -160,6 +168,14 @@ export function StorySheetFrame(props: StorySheetFrameProps) {
                 props.style,
             ]}
         >
+            {props.topRightAction ? (
+                <View
+                    testID={`${props.testID ?? 'story-sheet'}-top-right-action`}
+                    style={styles.topRightAction}
+                >
+                    {props.topRightAction}
+                </View>
+            ) : null}
             {props.children}
         </Animated.View>
     );

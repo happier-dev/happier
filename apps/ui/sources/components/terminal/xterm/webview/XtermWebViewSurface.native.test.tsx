@@ -55,6 +55,7 @@ vi.mock('react-native-unistyles', async () => {
 });
 
 import { encodeChunkedEnvelope } from '@/components/ui/webview/bridge/chunkedBridge';
+import { createTerminalStreamRuntime } from '@/sync/domains/terminal/stream/runtime';
 
 import { XtermWebViewSurface } from './XtermWebViewSurface.native';
 import type { XtermWebViewSurfaceHandle } from './XtermWebViewSurface.native';
@@ -82,6 +83,16 @@ function findPostedEnvelopeByType(type: string): any {
 
 function findPostedEnvelopePayloadByType(type: string): any {
     return findPostedEnvelopeByType(type)?.payload ?? null;
+}
+
+function writeBytesInput(input: Readonly<{
+    terminalId: string;
+    seq: number;
+    byteOffset: number;
+    bytes: Uint8Array;
+    writeGeneration: number;
+}>): Parameters<XtermWebViewSurfaceHandle['writeBytes']>[0] {
+    return input as Parameters<XtermWebViewSurfaceHandle['writeBytes']>[0];
 }
 
 describe('XtermWebViewSurface (native)', () => {
@@ -130,6 +141,37 @@ describe('XtermWebViewSurface (native)', () => {
 
         emitEnvelope({ v: 1, type: 'input', payload: { data: 'ls' } });
         expect(onInput).toHaveBeenCalledWith('ls');
+    });
+
+    it('forwards WebView paste envelopes through the shared host paste callback', async () => {
+        postMessageSpy.mockClear();
+        lastWebViewProps = null;
+        webViewRenderCount = 0;
+
+        const onInput = vi.fn();
+        const onPaste = vi.fn();
+        const surfaceProps: React.ComponentProps<typeof XtermWebViewSurface> & Readonly<{
+            onPaste: (text: string) => void;
+        }> = {
+            fontSize: 12,
+            lineHeightPx: 18,
+            onInput,
+            onPaste,
+            onResize: vi.fn(),
+            onReady: vi.fn(),
+            bridgeMaxChunkBytes: 64_000,
+        };
+
+        await renderScreen(React.createElement(XtermWebViewSurface, surfaceProps));
+
+        emitEnvelope({
+            v: 1,
+            type: 'paste',
+            payload: { text: 'first line\nsecond line' },
+        });
+
+        expect(onPaste).toHaveBeenCalledWith('first line\nsecond line');
+        expect(onInput).not.toHaveBeenCalled();
     });
 
     it('opts into native keyboard focus and requests WebView focus for ready and focus transitions', async () => {
@@ -194,12 +236,13 @@ describe('XtermWebViewSurface (native)', () => {
         const handle = requireWebViewSurfaceHandle(ref);
         expect(typeof handle.writeBytes).toBe('function');
 
-        handle.writeBytes({
+        expect(handle.writeBytes(writeBytesInput({
             terminalId: 'native-terminal',
             seq: 3,
             byteOffset: 9,
             bytes: new Uint8Array([0x00, 0xff, 0x41, 0xc3, 0x28]),
-        });
+            writeGeneration: 7,
+        }))).toEqual({ status: 'queued' });
         expect(findPostedEnvelopeByType('writeBytes')).toBeNull();
 
         emitEnvelope({ v: 1, type: 'ready', payload: { cols: 80, rows: 24 } });
@@ -212,6 +255,7 @@ describe('XtermWebViewSurface (native)', () => {
                 byteOffset: 9,
                 byteLength: 5,
                 dataBase64: 'AP9Bwyg=',
+                writeGeneration: 7,
             }),
         );
     });
@@ -256,7 +300,65 @@ describe('XtermWebViewSurface (native)', () => {
         expect(writeEnvelopes.map((message) => message.payload.data)).toEqual(['é', 'a']);
     });
 
-    it('reports native WebView byte write completion events from the embedded xterm parser callback', async () => {
+    it('keeps replay queued across a WebView reload before parser completion', async () => {
+        postMessageSpy.mockClear();
+        lastWebViewProps = null;
+        webViewRenderCount = 0;
+
+        const onWriteComplete = vi.fn();
+        const ref = React.createRef<XtermWebViewSurfaceHandle>();
+
+        await renderScreen(React.createElement(XtermWebViewSurface, {
+            ref,
+            fontSize: 12,
+            lineHeightPx: 18,
+            onInput: vi.fn(),
+            onResize: vi.fn(),
+            onReady: vi.fn(),
+            onWriteComplete,
+            bridgeMaxChunkBytes: 64_000,
+        }));
+
+        emitEnvelope({ v: 1, type: 'ready', payload: { cols: 80, rows: 24 } });
+        const runtime = createTerminalStreamRuntime({
+            terminalId: 'native-reload',
+            rendererId: 'xterm-webview',
+            renderer: requireWebViewSurfaceHandle(ref),
+            surfaceEpoch: 11,
+        });
+
+        const applied = runtime.applyFrames([{
+            t: 'bytes',
+            terminalId: 'native-reload',
+            seq: 8,
+            byteOffset: 24,
+            byteLength: 2,
+            bytes: new Uint8Array([0x41, 0x42]),
+            source: 'byte-stream',
+        }]);
+
+        expect(applied).toEqual({
+            status: 'active',
+            acceptedByteOffset: null,
+            rejectedByteOffset: null,
+            queuedWrite: {
+                terminalId: 'native-reload',
+                seq: 8,
+                byteOffset: 24,
+                byteLength: 2,
+                ackedByteOffset: 26,
+                writeGeneration: 11,
+            },
+        });
+
+        await act(async () => {
+            emitEnvelope({ v: 1, type: 'bootError', payload: { code: 'terminal_boot_failed' } });
+        });
+
+        expect(onWriteComplete).not.toHaveBeenCalled();
+    });
+
+    it('forwards only an exact queued WebView parser completion', async () => {
         postMessageSpy.mockClear();
         lastWebViewProps = null;
         webViewRenderCount = 0;
@@ -265,8 +367,10 @@ describe('XtermWebViewSurface (native)', () => {
         const onResize = vi.fn();
         const onReady = vi.fn();
         const onWriteComplete = vi.fn();
+        const ref = React.createRef<XtermWebViewSurfaceHandle>();
 
         await renderScreen(React.createElement(XtermWebViewSurface, {
+                    ref,
                     fontSize: 12,
                     lineHeightPx: 18,
                     onInput,
@@ -275,6 +379,15 @@ describe('XtermWebViewSurface (native)', () => {
                     onWriteComplete,
                     bridgeMaxChunkBytes: 64_000,
                 }));
+
+        emitEnvelope({ v: 1, type: 'ready', payload: { cols: 80, rows: 24 } });
+        expect(requireWebViewSurfaceHandle(ref).writeBytes(writeBytesInput({
+            terminalId: 'native-terminal',
+            seq: 4,
+            byteOffset: 20,
+            bytes: new Uint8Array([0x41, 0x42, 0x43, 0x44, 0x45, 0x46]),
+            writeGeneration: 17,
+        }))).toEqual({ status: 'queued' });
 
         emitEnvelope({
             v: 1,
@@ -285,6 +398,22 @@ describe('XtermWebViewSurface (native)', () => {
                 byteOffset: 20,
                 byteLength: 6,
                 ackedByteOffset: 26,
+                writeGeneration: 18,
+            },
+        });
+
+        expect(onWriteComplete).not.toHaveBeenCalled();
+
+        emitEnvelope({
+            v: 1,
+            type: 'writeComplete',
+            payload: {
+                terminalId: 'native-terminal',
+                seq: 4,
+                byteOffset: 20,
+                byteLength: 6,
+                ackedByteOffset: 26,
+                writeGeneration: 17,
             },
         });
 
@@ -294,6 +423,7 @@ describe('XtermWebViewSurface (native)', () => {
             byteOffset: 20,
             byteLength: 6,
             ackedByteOffset: 26,
+            writeGeneration: 17,
         });
     });
 

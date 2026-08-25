@@ -8,8 +8,6 @@ import type {
     LocalServiceLaunchTarget,
 } from '@/sync/domains/local/services/launch';
 import type { LocalServiceInventoryState } from '@/sync/domains/local/services/inventory/store';
-import type { ManagedLocalServicesState } from '@/sync/domains/local/services/managed/store';
-import type { LocalServiceManagedSnapshotClient } from '@/sync/domains/local/services/managed/useManagedLocalServicesState';
 import type { LocalServicePublicPreviewState } from '@/sync/domains/local/services/publicPreview/store';
 import type { LocalServicePublicPreviewStatusClient } from '@/sync/domains/local/services/publicPreview/useLocalServicePublicPreviewState';
 
@@ -18,8 +16,6 @@ export type ProjectRightPanelServicesViewProps = Readonly<{
     serverId?: string | null;
     workspaceRoot?: string | null;
     inventoryState?: LocalServiceInventoryState;
-    managedState?: ManagedLocalServicesState;
-    managedSnapshotClient?: LocalServiceManagedSnapshotClient;
     launcherState?: LocalServiceLauncherState | null;
     launcherSnapshotClient?: LocalServiceLauncherSnapshotClient;
     publicPreviewState?: LocalServicePublicPreviewState | null;
@@ -36,8 +32,6 @@ export function ProjectRightPanelServicesView(props: ProjectRightPanelServicesVi
             workspaceRoot={props.workspaceRoot}
             scope="workspace"
             inventoryState={props.inventoryState}
-            managedState={props.managedState}
-            managedSnapshotClient={props.managedSnapshotClient}
             launcherState={props.launcherState}
             launcherSnapshotClient={props.launcherSnapshotClient}
             publicPreviewState={props.publicPreviewState}

@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { Pressable, View } from 'react-native';
+import { Typography } from '@/constants/Typography';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Text } from '@/components/ui/text/Text';
@@ -7,6 +8,8 @@ import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
 import { MODAL_AWARE_FLOATING_POPOVER_PORTAL_OPTIONS, Popover } from '@/components/ui/popover';
 import { t } from '@/text';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
+
+import { BROWSER_CHROME_WIDTH } from '../browserChromeDensity';
 
 export type BrowserToolbarOverflowItem = Readonly<{
     id: string;
@@ -22,7 +25,9 @@ export type BrowserToolbarOverflowItem = Readonly<{
 const stylesheet = StyleSheet.create((theme) => ({
     trigger: {
         width: 34,
-        height: 34,
+        // `minHeight`, not `height`. Q2 measured that the app's `uiFontScale` GROWS the line box —
+        // a fixed-height container is what actually clips scaled text, not a missing `lineHeight`.
+        minHeight: 34,
         borderRadius: 6,
         alignItems: 'center',
         justifyContent: 'center',
@@ -35,7 +40,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     body: {
         paddingVertical: 6,
-        minWidth: 220,
+        minWidth: BROWSER_CHROME_WIDTH.chip,
     },
     item: {
         flexDirection: 'row',
@@ -51,8 +56,8 @@ const stylesheet = StyleSheet.create((theme) => ({
         opacity: 0.45,
     },
     itemLabel: {
+        ...Typography.rowMeta(),
         color: theme.colors.text.primary,
-        fontSize: 14,
         flexShrink: 1,
     },
     itemTextStack: {
@@ -60,8 +65,8 @@ const stylesheet = StyleSheet.create((theme) => ({
         minWidth: 0,
     },
     itemReason: {
+        ...Typography.rowMeta(),
         color: theme.colors.text.secondary,
-        fontSize: 12,
         flexShrink: 1,
     },
 }));

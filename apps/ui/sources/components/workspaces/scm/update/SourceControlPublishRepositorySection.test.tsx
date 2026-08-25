@@ -762,4 +762,68 @@ describe('SourceControlPublishRepositorySection', () => {
         expect(onDescribePublishTargets).toHaveBeenCalledTimes(2);
         expect(screen.getTextContent()).not.toContain('old-owner');
     });
+
+    // `F-SCM-4`. A failed discovery is the UNKNOWN state, not the "you are not signed in" state:
+    // the daemon returns `success: false` when its gh probe was cut short or its provider never
+    // resolved, and this surface used to answer that with an instruction to sign in — on hosts
+    // where `gh auth status` succeeds. The real negative arrives as `success: true` with an
+    // `authentication_required` auth summary and is asserted by the remediation tests above.
+    it('offers a recoverable unknown state when publish-target discovery fails', async () => {
+        const failure: ScmHostingRepositoryDescribePublishTargetsResponse = {
+            success: false,
+            error: 'GitHub CLI command did not complete',
+            errorCode: SCM_OPERATION_ERROR_CODES.COMMAND_FAILED,
+        };
+        const succeeded: ScmHostingRepositoryDescribePublishTargetsResponse = {
+            success: true,
+            auth: { state: 'authenticated', profileKind: 'provider_cli' },
+            defaultRepositoryName: 'repo',
+            targets: [{
+                provider: {
+                    id: 'scm.github',
+                    kind: 'github',
+                    displayName: 'GitHub',
+                    baseUrl: 'https://github.com',
+                    urlSafety: { allowedSchemes: ['https:'] },
+                },
+                owner: 'leeroybrun',
+                ownerKind: 'user',
+                label: 'leeroybrun',
+                isDefault: true,
+                supportedVisibilities: ['private', 'public'],
+                supportedRemoteUrlKinds: ['https', 'ssh'],
+                auth: { state: 'authenticated', profileKind: 'provider_cli' },
+            }],
+        };
+        const onDescribePublishTargets = vi.fn()
+            .mockResolvedValueOnce(failure)
+            .mockResolvedValueOnce(succeeded);
+        const screen = await renderScreen(
+            <SourceControlPublishRepositorySection
+                theme={createSourceControlUpdateThemeFixture()}
+                snapshot={createSnapshot()}
+                writeEnabled
+                disabled={false}
+                publishTargets={null}
+                onDescribePublishTargets={onDescribePublishTargets}
+                onPublishRepository={vi.fn()}
+                onRefresh={vi.fn()}
+            />,
+        );
+        await flushHookEffects({ cycles: 6, turns: 3 });
+
+        expect(screen.findByTestId('scm-publish-repository-unavailable')).toBeTruthy();
+        // The publish controls stay hidden — nothing is known about where this can be published.
+        expect(screen.findByTestId('scm-publish-owner-dropdown')).toBeFalsy();
+
+        // The unknown state is not terminal: the same loader re-runs and a later success paints
+        // the real targets.
+        await screen.pressByTestIdAsync('scm-publish-repository-retry');
+        await flushHookEffects({ cycles: 6, turns: 3 });
+
+        expect(onDescribePublishTargets).toHaveBeenCalledTimes(2);
+        expect(screen.findByTestId('scm-publish-repository-unavailable')).toBeFalsy();
+        expect(screen.findByTestId('scm-publish-owner-dropdown')).toBeTruthy();
+        expect(screen.getTextContent()).toContain('leeroybrun');
+    });
 });

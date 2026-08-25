@@ -91,6 +91,29 @@ describe('ItemRowActions', () => {
         popoverCapture.lastProps = null;
     });
 
+    it('forwards the press event to inline actions so modifier-aware navigation stays centralized', async () => {
+        const { ItemRowActions } = await import('./ItemRowActions');
+        const onPress = vi.fn();
+        const stopPropagation = vi.fn();
+        const event = { nativeEvent: { metaKey: true }, stopPropagation };
+        const screen = await renderScreen(React.createElement(ItemRowActions, {
+            title: 'Navigation',
+            compactThreshold: 200,
+            actions: [{
+                id: 'new-session',
+                inlineTestID: 'new-session',
+                title: 'New session',
+                icon: 'plus',
+                onPress,
+            }],
+        }));
+
+        act(() => screen.findByTestId('new-session')?.props.onPress(event));
+
+        expect(stopPropagation).toHaveBeenCalledTimes(1);
+        expect(onPress).toHaveBeenCalledWith(event);
+    });
+
     it('invokes overflow actions even when InteractionManager does not run callbacks', async () => {
         const { ItemRowActions } = await import('./ItemRowActions');
 

@@ -58,6 +58,14 @@ function findBrowserIframe(screen: RenderScreenResult): ReturnType<RenderScreenR
     return screen.findByType('iframe');
 }
 
+// The diagnostics drawer now renders the canonical `SegmentedTabBar`, which reads the app's motion
+// preferences from the settings store. The canonical testkit stub is the boundary owner — without it
+// the store initialisation never settles and the drawer cases time out.
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({});
+});
+
 vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
 
 vi.mock('@/text', async () => {
@@ -369,6 +377,7 @@ describe('BrowserShell', () => {
             ok: false,
             reason: 'unavailable',
         });
+
     });
 
     it('renders capability-conditioned chrome and dispatches navigate commands without touching frame engines directly', async () => {
@@ -391,8 +400,12 @@ describe('BrowserShell', () => {
         expect(screen.findByTestId('browser-shell-tab-view_1')).toBeNull();
         // Blurred address field shows the pretty display URL (scheme/trailing-slash trimmed).
         expect(screen.findByTestId('browser-shell-address')?.props.value).toBe('preview.happier.test');
-        expect(screen.findByTestId('browser-shell-back')?.props.accessibilityState?.disabled).toBe(true);
-        expect(screen.findByTestId('browser-shell-forward')?.props.accessibilityState?.disabled).toBe(true);
+        // The `webIframe` engine in this fixture declares no history capability, and a control the
+        // active engine can NEVER fulfil is HIDDEN, not shipped permanently disabled
+        // (`selectBrowserToolbarModel`'s `showBackForward`). `disabled` is reserved for the
+        // transient case — the engine supports history but there is nowhere to go yet.
+        expect(screen.findByTestId('browser-shell-back')).toBeNull();
+        expect(screen.findByTestId('browser-shell-forward')).toBeNull();
         expect(screen.findByTestId('browser-shell-reload')?.props.accessibilityState?.disabled).toBe(false);
         expect(findBrowserIframe(screen).props.src).toBe('https://preview.happier.test/');
 
@@ -670,8 +683,12 @@ describe('BrowserShell', () => {
 
         // The security posture is now RENDERED (it was tracked but never shown) and the origin chip stays.
         expect(screen.findByTestId('browser-shell-security')).toBeTruthy();
-        expect(screen.findByTestId('browser-shell-origin')).toBeTruthy();
-        expect(screen.findByTestId('browser-shell-title')).toBeTruthy();
+        // The origin-kind pill and the in-toolbar page title were MERGED AWAY: the workspace tab
+        // strip already owns the title, and the origin kind is now this chip's fallback label.
+        // One identity chip, not three near-identical grey pills.
+        expect(screen.findByTestId('browser-shell-origin')).toBeNull();
+        expect(screen.findByTestId('browser-shell-title')).toBeNull();
+        expect(screen.findByTestId('browser-shell-security')).toBeTruthy();
 
         // Secondary single-shot tools (attach-context, annotation) moved OFF the wrapping row into
         // an overflow Popover — they are not rendered inline anymore.
@@ -1229,13 +1246,13 @@ describe('BrowserShell', () => {
 
         // Diagnostics now render inside the collapsible bottom drawer; the
         // host-owned fidelity/trust badge stays on the active section.
-        expect(screen.findByTestId('browser-shell-diagnostics-container-expanded')).toBeTruthy();
+        expect(screen.findByTestId('browser-shell-diagnostics-container-collapsed')).toBeTruthy();
         expect(screen.findByTestId('browser-shell-diagnostics-body')).toBeTruthy();
         expect(screen.findByTestId('browser-shell-diagnostics-body-fidelity-nativeCallback')).toBeTruthy();
 
         // The drawer shows one family at a time; select the pageInfo section to
         // reveal its family panel + event row.
-        await screen.pressByTestIdAsync('browser-shell-diagnostics-tab-pageInfo');
+        await screen.pressByTestIdAsync('browser-shell-diagnostics-tab:pageInfo');
         expect(screen.findByTestId('browser-shell-diagnostics-body-family-pageInfo')).toBeTruthy();
         expect(screen.findByTestId('browser-shell-diagnostics-body-pageInfo-row-evt_page_1')).toBeTruthy();
     });
@@ -1529,7 +1546,7 @@ describe('BrowserShell', () => {
         }));
         // Console is the default drawer section; its family panel + row render
         // inside the drawer body with the trust/fidelity badge preserved.
-        expect(screen.findByTestId('browser-shell-diagnostics-container-expanded')).toBeTruthy();
+        expect(screen.findByTestId('browser-shell-diagnostics-container-collapsed')).toBeTruthy();
         expect(screen.findByTestId('browser-shell-diagnostics-body-fidelity-cdp')).toBeTruthy();
         expect(screen.findByTestId('browser-shell-diagnostics-body-console-panel')).toBeTruthy();
         expect(screen.findByTestId('browser-shell-diagnostics-body-console-row-evt_daemon_console_1')).toBeTruthy();

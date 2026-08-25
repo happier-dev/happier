@@ -14,7 +14,7 @@ export type BrandTaglineProps = Readonly<{
 
 /**
  * Two-line display tagline on the unauth brand pane:
- *   "Start anywhere."
+ *   "Start coding anywhere."
  *   "Continue everywhere."
  *
  * Line 1 uses the full brand-pane foreground; line 2 uses the muted variant.

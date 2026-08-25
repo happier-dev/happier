@@ -36,6 +36,8 @@ import type {
     PluginUiSurfacePlacementProjection,
 } from '@/sync/domains/plugins/ui/projection';
 import type { PluginUiPolicyEvaluationContext } from '@/sync/domains/plugins/ui/policy';
+import { createPluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
+import { getPreferredLanguage } from '@/text';
 
 import {
     buildPluginAppPageRoutePath,
@@ -199,9 +201,18 @@ export function PluginAppPageLaunchInputScope(props: Readonly<{
     // same authority the destination mount will receive.
     const accountLifetime = captureActiveServerAccountScopeLifetime();
     const [, refreshAfterAccountRetirement] = React.useReducer((revision: number) => revision + 1, 0);
+    const pluginLocale = getPreferredLanguage();
+    const localizePluginText = React.useMemo(
+        () => createPluginLocalizedTextResolver({
+            projection: props.pluginUiProjection,
+            locale: pluginLocale,
+        }),
+        [pluginLocale, props.pluginUiProjection],
+    );
     const pages = React.useMemo(() => resolvePluginAppPages({
         placements: selectPluginAppPagePlacements(props.pluginUiProjection),
-    }), [props.pluginUiProjection]);
+        localize: localizePluginText,
+    }), [localizePluginText, props.pluginUiProjection]);
     const authoritiesByPageId = React.useMemo(
         () => resolvePluginAppPageLaunchAuthorities({ pages, accountLifetime }),
         [accountLifetime, pages],

@@ -233,7 +233,7 @@ export function ItemRowActions(props: ItemRowActionsProps) {
                 onPressIn={() => props.onActionPressIn?.()}
                 onPress={(e: GestureResponderEvent) => {
                     e?.stopPropagation?.();
-                    action.onPress?.();
+                    action.onPress?.(e);
                 }}
                 style={(interactionState) => {
                     const webState = interactionState as typeof interactionState & { focused?: boolean };

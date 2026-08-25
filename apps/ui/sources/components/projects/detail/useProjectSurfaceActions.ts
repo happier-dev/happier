@@ -2,6 +2,7 @@ import * as React from 'react';
 
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { buildNewSessionLaunchRouteParams } from '@/components/sessions/new/navigation/newSessionRouteParams';
+import { resolveNewSessionDraftRouteIdentity } from '@/components/sessions/new/navigation/newSessionDraftRouteIdentity';
 import { computeExpandedPathsForReveal } from '@/components/workspaces/files/repositoryTree/computeExpandedPathsForReveal';
 import { storage } from '@/sync/domains/state/storage';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
@@ -74,9 +75,11 @@ export function useProjectSurfaceActions(params: Readonly<{
     }, [pane]);
 
     const openCreateWorktreeFlow = React.useCallback(() => {
+        const draftId = resolveNewSessionDraftRouteIdentity({ routeDraftId: undefined }).draftId;
         routerRef.current.push({
             pathname: '/new',
             params: buildNewSessionLaunchRouteParams({
+                draftId,
                 machineId: params.workspaceRef.machineId,
                 directory: params.activeRootPath,
                 worktree: 'new',

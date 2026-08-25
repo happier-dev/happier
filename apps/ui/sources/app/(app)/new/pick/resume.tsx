@@ -12,7 +12,7 @@ import { NewSessionResumeSelectionContent } from '@/components/sessions/new/comp
 import { openExternalSessionsResumeIdPickerModal } from '@/components/sessions/external/browse/openExternalSessionsResumeIdPickerModal';
 import { NewSessionScreenPortalScope, useNewSessionContainedModalScreenOptions } from '@/components/sessions/new/navigation/newSessionContainedModalScreen';
 import { resolveResumePickerBackendTarget } from '@/components/sessions/new/navigation/resolveResumePickerBackendTarget';
-import { pickNewSessionRouteParams, setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
+import { buildNewSessionPickerFallbackHref, pickNewSessionRouteParams, setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
 import { canBrowseExternalSessions, resolveExternalSessionBrowseLockedSource } from '@/components/sessions/external/browse/resolveExternalSessionBrowseLockedSourceOption';
 import { useModalPortalTarget } from '@/modal/portal/ModalPortalTarget';
 import { readBackendNewSessionOptionStateByTargetKey } from '@/utils/sessions/backendNewSessionOptionState';
@@ -162,6 +162,7 @@ export default function ResumePickerScreen() {
         && canBrowseExternalSessions({
             agentId: operationalAgentId,
             projection: daemonMergedProjectionInputs?.pluginProjectionV2,
+            machineId: effectiveMachineId,
         });
     const roundTripBackendParams = React.useMemo(() => {
         return buildBackendTargetRouteParams({
@@ -174,6 +175,7 @@ export default function ResumePickerScreen() {
     const currentRouteParams = React.useMemo(() => {
         return pickNewSessionRouteParams(params);
     }, [params]);
+    const pickerFallbackHref = React.useMemo(() => buildNewSessionPickerFallbackHref(params), [params]);
 
     const handleSave = React.useCallback((nextValue: string) => {
         const returnMode = setNewSessionPickerReturnParams({
@@ -193,7 +195,7 @@ export default function ResumePickerScreen() {
             },
         });
         if (returnMode === 'dispatch') {
-            safeRouterBack({ router, navigation, fallbackHref: '/new' });
+            safeRouterBack({ router, navigation, fallbackHref: pickerFallbackHref });
         }
     }, [currentRouteParams, navigation, roundTripBackendParams, router, params.dataId, params.machineId, params.spawnServerId]);
 
@@ -215,14 +217,14 @@ export default function ResumePickerScreen() {
             },
         });
         if (returnMode === 'dispatch') {
-            safeRouterBack({ router, navigation, fallbackHref: '/new' });
+            safeRouterBack({ router, navigation, fallbackHref: pickerFallbackHref });
         }
     }, [currentRouteParams, navigation, roundTripBackendParams, router, params.dataId, params.machineId, params.spawnServerId]);
 
     React.useEffect(() => {
         if (hasUsableRouteState) return;
-        safeRouterBack({ router, navigation, fallbackHref: '/new' });
-    }, [hasUsableRouteState, navigation, router]);
+        safeRouterBack({ router, navigation, fallbackHref: pickerFallbackHref });
+    }, [hasUsableRouteState, navigation, pickerFallbackHref, router]);
 
     const headerTitle = t('newSession.resume.pickerTitle');
     const headerBackTitle = t('common.cancel');
@@ -239,7 +241,7 @@ export default function ResumePickerScreen() {
                 onChangeValue={setInputValue}
                 onSave={handleSave}
                 onClear={handleClear}
-                onClose={() => safeRouterBack({ router, navigation, fallbackHref: '/new' })}
+                onClose={() => safeRouterBack({ router, navigation, fallbackHref: pickerFallbackHref })}
                 agentType={agentType}
                 agentLabel={agentLabel}
                 resumeBrowse={resumeBrowseEnabled ? {
@@ -248,6 +250,7 @@ export default function ResumePickerScreen() {
                         if (!effectiveMachineId || !operationalAgentId) return null;
                         const source = resolveExternalSessionBrowseLockedSource({
                             providerId: operationalAgentId,
+                            machineId: effectiveMachineId,
                             agentOptionState,
                             profile: accountProfile,
                             settings,

@@ -132,6 +132,36 @@ describe('UI testkit render helpers', () => {
         expect(onChangeText).toHaveBeenCalledWith('next value');
     });
 
+    it('drives a text control that reports edits only through the host onChange event', async () => {
+        const { renderScreen } = await import('./renderScreen');
+
+        // React Native's TextInput reports every edit through both `onChangeText`
+        // and `onChange`. A control that needs the host event (IME composition
+        // state travels on it) legitimately wires only `onChange`; the driver has
+        // to reach it the same way the host does.
+        const onChange = vi.fn();
+        const screen = await renderScreen(
+            React.createElement('TextInput', { testID: 'settings.change-only-input', onChange }),
+        );
+
+        screen.changeTextByTestId('settings.change-only-input', 'typed value');
+
+        expect(onChange).toHaveBeenCalledTimes(1);
+        expect(onChange.mock.calls[0]?.[0]).toMatchObject({ nativeEvent: { text: 'typed value' } });
+    });
+
+    it('reports a text control that exposes no edit handler at all', async () => {
+        const { renderScreen } = await import('./renderScreen');
+
+        const screen = await renderScreen(
+            React.createElement('View', { testID: 'settings.not-a-field' }),
+        );
+
+        expect(() => screen.changeTextByTestId('settings.not-a-field', 'typed value')).toThrow(
+            /settings\.not-a-field/,
+        );
+    });
+
     it('presses a previously-found test instance through the shared standalone helpers', async () => {
         const { pressTestInstance, pressTestInstanceAsync, renderScreen } = await import('./renderScreen');
 

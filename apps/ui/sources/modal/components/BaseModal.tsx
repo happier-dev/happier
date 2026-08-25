@@ -21,6 +21,7 @@ import {
 } from '@/components/ui/overlays/motion/overlayMotion';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { useWebOverlayFocusContainment } from '@/keyboard/webOverlayFocusContainment';
+import { type FocusReturnRef, useRestoreFocusToTrigger } from '@/keyboard/focusReturn';
 
 const BASE_MODAL_FOCUS_RETURN = { kind: 'activation-time' } as const;
 
@@ -142,6 +143,7 @@ interface BaseModalProps {
     zIndexBase?: number;
     webPlacement?: 'auto' | 'top';
     webPortalTarget?: ModalPortalTarget;
+    focusReturnRef?: FocusReturnRef;
 }
 
 export function BaseModal({
@@ -154,6 +156,7 @@ export function BaseModal({
     zIndexBase,
     webPlacement = 'auto',
     webPortalTarget = null,
+    focusReturnRef,
 }: BaseModalProps) {
     const { theme } = useUnistyles();
     const uiBackdropBlurEnabled = useLocalSetting('uiBackdropBlurEnabled') !== false;
@@ -189,6 +192,11 @@ export function BaseModal({
         containerRef: webContentShellRef,
         focusReturn: BASE_MODAL_FOCUS_RETURN,
     });
+    const restoreNativeFocus = useRestoreFocusToTrigger(focusReturnRef);
+    useEffect(() => {
+        if (isWeb || !visible) return;
+        return () => { restoreNativeFocus(); };
+    }, [restoreNativeFocus, visible]);
 
     // On web, avoid setting React state inside a callback ref. In some browser/portal scenarios,
     // ref attach/detach churn can lead to nested update loops ("Maximum update depth exceeded").

@@ -23,6 +23,7 @@ export type StoryDeckMediaFrameProps = Readonly<{
     topPadding?: number;
     bottomPadding?: number;
     testID?: string;
+    aspectRatio?: number;
 }>;
 
 const stylesheet = StyleSheet.create((theme) => ({
@@ -53,6 +54,7 @@ export function StoryDeckMediaFrame(props: StoryDeckMediaFrameProps) {
     const topPadding = props.topPadding ?? MEDIA_TOP_PADDING_PX;
     const bottomPadding = props.bottomPadding ?? MEDIA_BOTTOM_PADDING_PX;
     const size = clampMediaSize(props.containerWidth, props.maxSize, horizontalPadding);
+    const aspectRatio = props.aspectRatio && props.aspectRatio > 0 ? props.aspectRatio : 1;
 
     return (
         <View
@@ -66,7 +68,7 @@ export function StoryDeckMediaFrame(props: StoryDeckMediaFrameProps) {
             ]}
             testID={props.testID}
         >
-            <View style={[styles.frame, { width: size, height: size }]}>
+            <View style={[styles.frame, { width: size, height: size / aspectRatio }]}>
                 {props.children}
             </View>
         </View>

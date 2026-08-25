@@ -7,6 +7,7 @@ import { formatSecretKeyForBackup } from '@/auth/recovery/secretKeyBackup';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
+import { SettingsCatalogPageChildren } from '@/components/settings/SettingsCatalogOverviewGroup';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { layout } from '@/components/ui/layout/layout';
@@ -84,6 +85,12 @@ import { Icon } from '@/components/ui/icons/Icon';
 import {
     presentFirstKeyCredentialLifecycle,
 } from '@/components/account/presentFirstKeyCredentialLifecycle';
+import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
+import {
+    acknowledgeNewSessionDraftEncryptionMigration,
+    listNewSessionDraftEncryptionMigrationCandidates,
+} from '@/sync/ops/sessionDrafts/sessionDraftRepository';
+import { runAccountEncryptionModeMigration } from '@/sync/ops/account/runAccountEncryptionModeMigration';
 
 
 export default React.memo(() => {
@@ -101,6 +108,7 @@ export default React.memo(() => {
     const friendsEnabled = useFriendsEnabled();
     const applyProfile = storage((state) => state.applyProfile);
     const encryptionAccountOptOutEnabled = useFeatureEnabled('encryption.accountOptOut');
+    const sessionDraftSyncEnabled = useFeatureEnabled('sessions.drafts');
 
     const [accountEncryptionMode, setAccountEncryptionMode] = useState<'e2ee' | 'plain' | null>(null);
     const [accountEncryptionModeLoading, setAccountEncryptionModeLoading] = useState(false);
@@ -294,6 +302,12 @@ export default React.memo(() => {
                         copy={!!sync.serverID}
                     />
                 </ItemGroup>
+
+                <SettingsCatalogPageChildren
+                    parentPageId="account"
+                    router={router}
+                    theme={theme}
+                />
 
                 {/* Account access / linking */}
                 {showAccountAccessGroup ? (
@@ -642,6 +656,14 @@ export default React.memo(() => {
                                                             ?.credentials
                                                         ?? null,
                                                 });
+                                            const sessionDraftScope = sessionDraftSyncEnabled
+                                                ? getActiveServerAccountScope()
+                                                : null;
+                                            const sessionDrafts = sessionDraftScope
+                                                ? listNewSessionDraftEncryptionMigrationCandidates(
+                                                    sessionDraftScope,
+                                                )
+                                                : [];
                                             const request = nextMode === 'plain'
                                                 ? await buildAccountEncryptionMigrateToPlainRequest({
                                                     credentials,
@@ -660,6 +682,7 @@ export default React.memo(() => {
                                                     qualifiedConnectedAccounts:
                                                         profile.connectedAccountsV4,
                                                     automations,
+                                                    sessionDrafts,
                                                     fetchConnectedServiceCredentialSealed: async ({ serviceId, profileId }) =>
                                                         await getConnectedServiceCredentialSealed(credentials, { serviceId, profileId }),
                                                     fetchQualifiedConnectedAccountCredential: async (ref) =>
@@ -689,6 +712,7 @@ export default React.memo(() => {
                                                     qualifiedConnectedAccounts:
                                                         profile.connectedAccountsV4,
                                                     automations,
+                                                    sessionDrafts,
                                                     keyProof:
                                                         preparedE2eeKey!
                                                             .keyProof,
@@ -755,10 +779,33 @@ export default React.memo(() => {
                                                         });
                                                         return resumed.migration;
                                                     })()
-                                                    : await migrateAccountEncryptionMode(
-                                                        auth.credentials,
+                                                    : await runAccountEncryptionModeMigration({
                                                         request,
-                                                    );
+                                                        migrate: async (migrationRequest) =>
+                                                            await migrateAccountEncryptionMode(
+                                                                credentials,
+                                                                migrationRequest,
+                                                            ),
+                                                        activateTargetMode: () => {
+                                                            sync.reconfigureSessionDraftRepositoryForAccountMode(
+                                                                nextMode === 'e2ee'
+                                                                    ? preparedE2eeKey!.credentials
+                                                                    : credentials,
+                                                                nextMode,
+                                                            );
+                                                        },
+                                                        acknowledgeSessionDrafts: async (records) => {
+                                                            if (!sessionDraftScope) {
+                                                                throw new Error(
+                                                                    'Session draft repository scope is unavailable',
+                                                                );
+                                                            }
+                                                            await acknowledgeNewSessionDraftEncryptionMigration(
+                                                                sessionDraftScope,
+                                                                records,
+                                                            );
+                                                        },
+                                                    });
                                             if (!result) return;
                                             if (
                                                 nextMode === 'plain'

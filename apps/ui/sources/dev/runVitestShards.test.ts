@@ -5,6 +5,8 @@ import {
     partitionVitestFilesIntoShards,
     createVitestShardRunPlan,
     resolveVitestShardConcurrency,
+    resolveVitestShardRange,
+    resolveVitestShardTimeoutMs,
     runVitestShardRunPlan,
     resolveVitestConfigPath,
     resolveVitestShardCount,
@@ -25,6 +27,25 @@ describe('apps/ui runVitestShards', () => {
     it('ignores invalid shard overrides', () => {
         expect(resolveVitestShardCount({ HAPPIER_UI_VITEST_SHARDS: '0' })).toBe(24);
         expect(resolveVitestShardCount({ HAPPIER_UI_VITEST_SHARDS: 'nope' })).toBe(24);
+    });
+
+    it('partitions the configured shard count into balanced CI parts', () => {
+        expect(resolveVitestShardRange({ HAPPIER_UI_VITEST_PART: '1', HAPPIER_UI_VITEST_PARTS: '4' }, 24))
+            .toEqual({ start: 1, end: 6, part: 1, parts: 4 });
+        expect(resolveVitestShardRange({ HAPPIER_UI_VITEST_PART: '4', HAPPIER_UI_VITEST_PARTS: '4' }, 24))
+            .toEqual({ start: 19, end: 24, part: 4, parts: 4 });
+        expect(resolveVitestShardRange({}, 24)).toEqual({ start: 1, end: 24, part: 1, parts: 1 });
+    });
+
+    it('bounds each shard independently', () => {
+        expect(resolveVitestShardTimeoutMs({})).toBe(900_000);
+        expect(resolveVitestShardTimeoutMs({ HAPPIER_UI_VITEST_SHARD_TIMEOUT_MS: '120000' })).toBe(120_000);
+        expect(classifyVitestShardTermination({ code: null, signal: 'SIGTERM', timedOut: true })).toEqual({
+            outcome: 'failed',
+            exitCode: 124,
+            signal: 'SIGTERM',
+            timedOut: true,
+        });
     });
 
     it('defaults shard concurrency to 1', () => {
@@ -109,6 +130,12 @@ describe('apps/ui runVitestShards', () => {
         const plan = createVitestShardRunPlan({ shardFiles, shardCount: 4 });
         expect(plan.map((entry) => entry.shardSpec)).toEqual(['1/4', '2/4', '3/4', '4/4']);
         expect(plan.map((entry) => entry.files)).toEqual(shardFiles);
+    });
+
+    it('creates a plan only for the assigned absolute shard range', () => {
+        const shardFiles = partitionVitestFilesIntoShards(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'], 8);
+        const plan = createVitestShardRunPlan({ shardFiles, shardCount: 8, startShard: 5, endShard: 8 });
+        expect(plan.map((entry) => entry.shardSpec)).toEqual(['5/8', '6/8', '7/8', '8/8']);
     });
 
     // REPLACED 2026-08-09. The predecessor asserted `expect(cancels).toEqual(['3/3'])` — it

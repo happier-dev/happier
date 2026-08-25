@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
-import { listAutomationDefinitionRunsV3, listAutomationRuns } from './apiAutomationRuns';
+import { listAutomationDefinitionRuns, listAutomationRuns } from './apiAutomationRuns';
 
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
     getActiveServerSnapshot: () => ({
@@ -14,7 +14,7 @@ vi.mock('@/sync/domains/server/serverRuntime', () => ({
 
 const credentials: AuthCredentials = { token: 'token-1', secret: 'secret-1' };
 
-const v3EventRun = {
+const eventRun = {
     id: 'run-event-1',
     automationId: 'automation-event-1',
     state: 'queued' as const,
@@ -80,22 +80,22 @@ describe('apiAutomationRuns', () => {
 	        expect(headers.get('Authorization')).toBe('Bearer token-1');
 	});
 
-    it('reads Event run summaries only through the V3 owner', async () => {
+    it('reads Event run summaries only through the current owner', async () => {
         const fetchSpy = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async () => ({
             ok: true,
             status: 200,
-            json: async () => ({ runs: [v3EventRun], nextCursor: null }),
+            json: async () => ({ runs: [eventRun], nextCursor: null }),
         }) as Response);
         vi.stubGlobal('fetch', fetchSpy as unknown as typeof fetch);
 
-        const result = await listAutomationDefinitionRunsV3({
+        const result = await listAutomationDefinitionRuns({
             credentials,
             automationId: 'automation-event-1',
             limit: 25,
             cursor: 'cursor-event-1',
         });
 
-        expect(result).toEqual({ runs: [v3EventRun], nextCursor: null });
+        expect(result).toEqual({ runs: [eventRun], nextCursor: null });
         expect(fetchSpy.mock.calls).toHaveLength(1);
         expect(String(fetchSpy.mock.calls[0]?.[0])).toContain(
             '/v3/automations/automation-event-1/runs?limit=25&cursor=cursor-event-1',

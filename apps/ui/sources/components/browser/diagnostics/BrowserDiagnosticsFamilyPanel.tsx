@@ -56,24 +56,27 @@ export const browserDiagnosticsPanelStyles = StyleSheet.create((theme) => ({
         gap: 10,
     },
     title: {
-        color: theme.colors.text.primary,
-        fontSize: 13,
+        ...Typography.rowMeta(),
         ...Typography.default('semiBold'),
+        color: theme.colors.text.primary,
     },
     subtitle: {
+        ...Typography.rowMeta(),
         color: theme.colors.text.secondary,
-        fontSize: 12,
-        ...Typography.default(),
     },
     status: {
-        color: theme.colors.text.secondary,
-        fontSize: 12,
+        ...Typography.rowMeta(),
         ...Typography.default('semiBold'),
+        color: theme.colors.text.secondary,
     },
     warning: {
-        color: theme.colors.state.warning.foreground,
-        fontSize: 12,
+        ...Typography.rowMeta(),
         ...Typography.default('semiBold'),
+        // Q2 measured the theme's semantic FOREGROUNDS as text at 2.20–3.55:1 in light theme —
+        // they are fill colours, not text colours. The words carry their own meaning here, so
+        // they take `text.primary`; the hue stays on the border/glyph beside them, where it is a
+        // redundant cue rather than the only one.
+        color: theme.colors.text.primary,
     },
     content: {
         gap: 8,
@@ -91,14 +94,13 @@ export const browserDiagnosticsPanelStyles = StyleSheet.create((theme) => ({
         paddingVertical: 8,
     },
     flowTitle: {
-        color: theme.colors.text.primary,
-        fontSize: 12,
+        ...Typography.rowMeta(),
         ...Typography.default('semiBold'),
+        color: theme.colors.text.primary,
     },
     flowMeta: {
+        ...Typography.rowMeta(),
         color: theme.colors.text.secondary,
-        fontSize: 12,
-        ...Typography.default(),
     },
     familyList: {
         flexDirection: 'row',
@@ -114,9 +116,8 @@ export const browserDiagnosticsPanelStyles = StyleSheet.create((theme) => ({
         paddingVertical: 3,
     },
     familyText: {
+        ...Typography.rowMeta(),
         color: theme.colors.text.secondary,
-        fontSize: 11,
-        ...Typography.default(),
     },
     detail: {
         gap: 2,
@@ -128,26 +129,23 @@ export const browserDiagnosticsPanelStyles = StyleSheet.create((theme) => ({
         gap: 8,
     },
     detailKey: {
+        ...Typography.keyHint(),
         color: theme.colors.text.secondary,
-        fontSize: 11,
         minWidth: 96,
-        ...Typography.mono(),
     },
     detailValue: {
+        ...Typography.keyHint(),
         color: theme.colors.text.primary,
-        fontSize: 11,
         flexShrink: 1,
-        ...Typography.mono(),
     },
     detailListLabel: {
-        color: theme.colors.text.secondary,
-        fontSize: 11,
+        ...Typography.rowMeta(),
         ...Typography.default('semiBold'),
+        color: theme.colors.text.secondary,
     },
     detailListItem: {
+        ...Typography.keyHint(),
         color: theme.colors.text.primary,
-        fontSize: 11,
-        ...Typography.mono(),
     },
     panelGroup: {
         gap: 6,
@@ -159,9 +157,9 @@ export const browserDiagnosticsPanelStyles = StyleSheet.create((theme) => ({
         paddingVertical: 8,
     },
     panelGroupTitle: {
-        color: theme.colors.text.primary,
-        fontSize: 12,
+        ...Typography.rowMeta(),
         ...Typography.default('semiBold'),
+        color: theme.colors.text.primary,
     },
     panelRow: {
         flexDirection: 'row',
@@ -180,19 +178,16 @@ export const browserDiagnosticsPanelStyles = StyleSheet.create((theme) => ({
         gap: 2,
     },
     panelLabel: {
+        ...Typography.pillLabel(),
         color: theme.colors.text.secondary,
-        fontSize: 10,
-        ...Typography.default('semiBold'),
     },
     panelValue: {
+        ...Typography.keyHint(),
         color: theme.colors.text.primary,
-        fontSize: 11,
-        ...Typography.mono(),
     },
     consoleMessage: {
+        ...Typography.keyHint(),
         color: theme.colors.text.primary,
-        fontSize: 12,
-        ...Typography.mono(),
     },
     metricGrid: {
         flexDirection: 'row',

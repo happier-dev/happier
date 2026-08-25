@@ -3,7 +3,7 @@ import * as React from 'react';
 import { SecretRequirementModal, type SecretRequirementModalResult } from '@/components/secrets/requirements';
 import { useSavedSecretsMutable } from '@/components/secrets/useSavedSecretsMutable';
 import { Modal } from '@/modal';
-import { useCurrentSecretBindingsByProfileIdMutable } from '@/sync/domains/state/storage';
+import { useSetting } from '@/sync/domains/state/storage';
 import { type AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 import { type SavedSecret } from '@/sync/domains/settings/savedSecretTypes';
 import { t } from '@/text';
@@ -19,7 +19,10 @@ export function useLegacyProfileSecretRequirements(params: Readonly<{
 }>) {
     const { profile, profileName, environmentVariables } = params;
     const [secrets, setSecrets] = useSavedSecretsMutable();
-    const [bindingsByProfileId, setBindingsByProfileId] = useCurrentSecretBindingsByProfileIdMutable();
+    const bindingsByProfileId = useSetting('currentSecretBindingsByProfileId');
+    const [profileSecretBindings, setProfileSecretBindings] = React.useState<Record<string, string>>(() => ({
+        ...(bindingsByProfileId[profile.id] ?? {}),
+    }));
     const [sourceRequirementsByName, setSourceRequirementsByName] = React.useState<Record<string, RequirementState>>(() => {
         const requirements: Record<string, RequirementState> = {};
         for (const requirement of profile.envVarRequirements ?? []) {
@@ -39,13 +42,6 @@ export function useLegacyProfileSecretRequirements(params: Readonly<{
         return name ? [name] : [];
     })), [environmentVariables]);
 
-    const replaceProfileBindings = React.useCallback((nextBindings: Record<string, string>) => {
-        const next = { ...bindingsByProfileId };
-        if (Object.keys(nextBindings).length === 0) delete next[profile.id];
-        else next[profile.id] = nextBindings;
-        setBindingsByProfileId(next);
-    }, [bindingsByProfileId, profile.id, setBindingsByProfileId]);
-
     React.useEffect(() => {
         setSourceRequirementsByName((previous) => {
             const next = Object.fromEntries(Object.entries(previous).filter(([name]) => usedRequirementVarNames.has(name)));
@@ -54,15 +50,15 @@ export function useLegacyProfileSecretRequirements(params: Readonly<{
     }, [usedRequirementVarNames]);
 
     React.useEffect(() => {
-        const existing = bindingsByProfileId[profile.id];
-        if (!existing) return;
-        const next = Object.fromEntries(Object.entries(existing).filter(([name, secretId]) => (
-            typeof secretId === 'string'
-            && usedRequirementVarNames.has(name)
-            && sourceRequirementsByName[name]?.useSecretVault === true
-        )));
-        if (Object.keys(next).length !== Object.keys(existing).length) replaceProfileBindings(next);
-    }, [bindingsByProfileId, profile.id, replaceProfileBindings, sourceRequirementsByName, usedRequirementVarNames]);
+        setProfileSecretBindings((existing) => {
+            const next = Object.fromEntries(Object.entries(existing).filter(([name, secretId]) => (
+                typeof secretId === 'string'
+                && usedRequirementVarNames.has(name)
+                && sourceRequirementsByName[name]?.useSecretVault === true
+            )));
+            return Object.keys(next).length === Object.keys(existing).length ? existing : next;
+        });
+    }, [sourceRequirementsByName, usedRequirementVarNames]);
 
     const derivedEnvVarRequirements = React.useMemo<NonNullable<AIBackendProfile['envVarRequirements']>>(() => (
         Object.entries(sourceRequirementsByName)
@@ -76,19 +72,21 @@ export function useLegacyProfileSecretRequirements(params: Readonly<{
     ), [sourceRequirementsByName, usedRequirementVarNames]);
 
     const getDefaultSecretNameForSourceVar = React.useCallback((sourceVarName: string): string | null => {
-        const secretId = bindingsByProfileId[profile.id]?.[sourceVarName] ?? null;
+        const secretId = profileSecretBindings[sourceVarName] ?? null;
         return secretId ? secrets.find((secret: SavedSecret) => secret.id === secretId)?.name ?? null : null;
-    }, [bindingsByProfileId, profile.id, secrets]);
+    }, [profileSecretBindings, secrets]);
 
     const openDefaultSecretModalForSourceVar = React.useCallback((sourceVarName: string) => {
         const normalized = sourceVarName.trim().toUpperCase();
         if (!normalized) return;
-        const defaultSecretId = bindingsByProfileId[profile.id]?.[normalized] ?? null;
+        const defaultSecretId = profileSecretBindings[normalized] ?? null;
         const setDefaultSecretId = (secretId: string | null) => {
-            const next = { ...bindingsByProfileId[profile.id] };
-            if (secretId) next[normalized] = secretId;
-            else delete next[normalized];
-            replaceProfileBindings(next);
+            setProfileSecretBindings((existing) => {
+                const next = { ...existing };
+                if (secretId) next[normalized] = secretId;
+                else delete next[normalized];
+                return next;
+            });
         };
         const handleResolve = (result: SecretRequirementModalResult) => {
             if (result.action === 'selectSaved') setDefaultSecretId(result.secretId);
@@ -112,7 +110,7 @@ export function useLegacyProfileSecretRequirements(params: Readonly<{
             onRequestClose: () => handleResolve({ action: 'cancel' }),
             closeOnBackdrop: true,
         });
-    }, [bindingsByProfileId, derivedEnvVarRequirements, profile, profileName, replaceProfileBindings, secrets, setSecrets]);
+    }, [derivedEnvVarRequirements, profile, profileName, profileSecretBindings, secrets, setSecrets]);
 
     const updateSourceRequirement = React.useCallback((sourceVarName: string, next: RequirementState | null) => {
         const normalized = sourceVarName.trim().toUpperCase();
@@ -123,17 +121,20 @@ export function useLegacyProfileSecretRequirements(params: Readonly<{
             else delete updated[normalized];
             return updated;
         });
-        if (!next?.useSecretVault && normalized in (bindingsByProfileId[profile.id] ?? {})) {
-            const updated = { ...bindingsByProfileId[profile.id] };
-            delete updated[normalized];
-            replaceProfileBindings(updated);
+        if (!next?.useSecretVault) {
+            setProfileSecretBindings((existing) => {
+                if (!(normalized in existing)) return existing;
+                const updated = { ...existing };
+                delete updated[normalized];
+                return updated;
+            });
         }
-    }, [bindingsByProfileId, profile.id, replaceProfileBindings]);
+    }, []);
 
     return {
         sourceRequirementsByName,
         derivedEnvVarRequirements,
-        profileSecretBindings: bindingsByProfileId[profile.id] ?? null,
+        profileSecretBindings,
         getDefaultSecretNameForSourceVar,
         openDefaultSecretModalForSourceVar,
         updateSourceRequirement,

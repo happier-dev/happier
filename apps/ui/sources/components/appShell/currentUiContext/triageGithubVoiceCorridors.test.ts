@@ -21,6 +21,7 @@ import { defineUiSurface, usePluginHostApi } from '@happier-dev/plugin-ui';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import type { PluginUiContextEnrichmentV1 } from '@happier-dev/plugin-sdk/ui';
 import {
+  formatQualifiedPluginActionId,
   PluginProjectedActionV2Schema,
   type DaemonPluginStructuredMessageActionExecuteRequest,
   type PluginMachineExecutionOriginV1,
@@ -89,6 +90,10 @@ const MACHINE_ID = 'machine-triage-proof';
 const SERVER_ID = 'server-triage-proof';
 const TRIAGE_PLUGIN_ID = 'happier.triage';
 const TRIAGE_ACTION_ID = `${TRIAGE_PLUGIN_ID}/${TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1}`;
+const TRIAGE_DISCOVERY_ACTION_ID = formatQualifiedPluginActionId({
+  pluginId: TRIAGE_PLUGIN_ID,
+  localId: TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1,
+});
 const SOURCE = Object.freeze({
   pluginId: GITHUB_PLUGIN_ID,
   localId: GITHUB_TRIAGE_CONTRIBUTION_LOCAL_ID_V1,
@@ -395,7 +400,7 @@ describe('Triage/GitHub projection and Voice Action source corridors', () => {
       });
 
       expect(port.listCurrentContributedActionDefinitions?.().map((action) => action.id))
-        .toContain(TRIAGE_ACTION_ID);
+        .toContain(TRIAGE_DISCOVERY_ACTION_ID);
       const outcome = await port.invokeAction?.({
         action: {
           pluginId: TRIAGE_PLUGIN_ID,

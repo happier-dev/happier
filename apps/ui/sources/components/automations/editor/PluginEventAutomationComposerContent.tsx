@@ -4,10 +4,16 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { InstalledPluginBrandMark } from '@/components/plugins/shared/InstalledPluginBrandMark';
 import { useInstalledPluginBrandPresentation } from '@/components/plugins/shared/installedPluginBrandPresentation';
+import { arePluginMachineMaterializationRefsEqual } from '@/components/automations/pluginEventAutomationCurrentness';
 import { isPluginMachineExecutionOriginCandidateSelectable } from '@/sync/domains/machines/administration/pluginExecutionOrigin';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { Icon } from '@/components/ui/icons/Icon';
 import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
+import {
+    SelectionList,
+    type SelectionListOption,
+    type SelectionListStep,
+} from '@/components/ui/selectionList';
 import { Typography } from '@/constants/Typography';
 import { ESCAPE_LAYER_PRIORITIES, useEscapeLayer } from '@/keyboard/escape';
 import { restoreFocusToBestTarget, type FocusReturnTarget } from '@/keyboard/focusReturn';
@@ -21,6 +27,8 @@ import type {
 type Props = Readonly<{
     model: PluginEventAutomationComposerModel;
 }>;
+
+type ExistingSessionOption = PluginEventAutomationComposerModel['existingSessionOptions'][number];
 
 const minimumInteractiveTargetSize = resolveMinimumInteractiveTargetSize(Platform.OS);
 
@@ -119,6 +127,10 @@ function watcherDisplayLabel(params: Readonly<{
     return `${params.machineId} / ${params.materializationId}`;
 }
 
+function existingSessionOptionKey(option: ExistingSessionOption): string {
+    return `${option.serverId ?? ''}\u0000${option.sessionId}`;
+}
+
 function EventPluginBrand(props: Readonly<{
     presentation: PluginEventAutomationPluginPresentation;
     testID: string;
@@ -202,9 +214,7 @@ export function PluginEventAutomationComposerContent(props: Props) {
         : props.model.watcherCandidates.some((candidate) => (
             isPluginMachineExecutionOriginCandidateSelectable(candidate)
             && candidate.materialization.serverIdentityId === selectedWatcher.serverIdentityId
-            && candidate.materialization.machineId === selectedWatcher.materializationRef.machineId
-            && candidate.materialization.materializationId === selectedWatcher.materializationRef.materializationId
-            && candidate.materialization.pluginId === selectedWatcher.materializationRef.pluginId
+            && arePluginMachineMaterializationRefsEqual(candidate.materialization, selectedWatcher.materializationRef)
         ));
     // Preserve the selected draft so the user can recover by choosing a
     // replacement source or watcher, but never make an out-of-date binding
@@ -238,6 +248,37 @@ export function PluginEventAutomationComposerContent(props: Props) {
     const selectedExistingSession = props.model.existingSessionOptions.find((option) => (
         option.sessionId === props.model.selectedExistingSessionId
     )) ?? null;
+    // The session-list index is the existing owner of eligible sessions. This
+    // map only adapts its current options to the shared list's opaque row ids;
+    // it neither caches nor decides eligibility itself.
+    const existingSessionOptionByKey = React.useMemo(
+        () => new Map(props.model.existingSessionOptions.map((option) => [existingSessionOptionKey(option), option])),
+        [props.model.existingSessionOptions],
+    );
+    const existingSessionSelectionOptions = React.useMemo<ReadonlyArray<SelectionListOption>>(
+        () => props.model.existingSessionOptions.map((option) => ({
+            id: existingSessionOptionKey(option),
+            label: option.label,
+            testID: `automation-event-existing-session-option-${option.sessionId}`,
+        })),
+        [props.model.existingSessionOptions],
+    );
+    const existingSessionSelectionStep = React.useMemo<SelectionListStep>(() => ({
+        id: 'existing-session',
+        inputPlaceholder: t('sessionsList.searchSessionsPlaceholder'),
+        sections: [{
+            kind: 'static',
+            id: 'existing-sessions',
+            options: existingSessionSelectionOptions,
+            // This picker can expose the full retained session index. Keep one
+            // scroll owner from the first row rather than mounting an eager
+            // mapped list until it crosses the primitive's threshold.
+            virtualization: 'force',
+        }],
+    }), [existingSessionSelectionOptions]);
+    const selectedExistingSessionOptionKey = selectedExistingSession
+        ? existingSessionOptionKey(selectedExistingSession)
+        : null;
     // The one-time secret is disclosed by the ensure that configured this
     // source. Keeping it tied to `configured` means a reconfiguration cannot
     // leave a stale credential on screen next to a new endpoint, and requiring
@@ -352,29 +393,28 @@ export function PluginEventAutomationComposerContent(props: Props) {
                             </Pressable>
                             {existingSessionPickerOpen ? (
                                 <View testID="automation-event-existing-session-picker-options" style={styles.optionList}>
-                                    {props.model.existingSessionOptions.map((option) => {
-                                        const selected = option.sessionId === props.model.selectedExistingSessionId;
-                                        return (
-                                            <Pressable
-                                                key={`${option.serverId ?? ''}:${option.sessionId}`}
-                                                testID={`automation-event-existing-session-option-${option.sessionId}`}
-                                                accessibilityRole="button"
-                                                accessibilityState={{ selected }}
-                                                onPress={() => {
-                                                    props.model.selectExistingSession(option);
-                                                    notePickerCollapsed('existingSession');
-                                                    setExistingSessionPickerOpen(false);
-                                                }}
-                                                style={({ pressed }) => [
-                                                    styles.optionRow,
-                                                    selected ? styles.optionRowSelected : null,
-                                                    pressed ? styles.pressed : null,
-                                                ]}
-                                            >
-                                                <Text numberOfLines={1} style={styles.optionTitle}>{option.label}</Text>
-                                            </Pressable>
-                                        );
-                                    })}
+                                    <SelectionList
+                                        rootStep={existingSessionSelectionStep}
+                                        listAccessibilityLabel={t('automations.form.trigger.targetExistingSession')}
+                                        selectedOptionId={selectedExistingSessionOptionKey}
+                                        onSelect={(optionKey) => {
+                                            const option = existingSessionOptionByKey.get(optionKey);
+                                            if (!option) return;
+                                            props.model.selectExistingSession(option);
+                                            notePickerCollapsed('existingSession');
+                                            setExistingSessionPickerOpen(false);
+                                        }}
+                                        onRequestClose={() => {
+                                            notePickerCollapsed('existingSession');
+                                            setExistingSessionPickerOpen(false);
+                                        }}
+                                        keyboardHintsEnabled={false}
+                                        autoFocusInputOnWeb
+                                        disableTransitions
+                                        maxHeight={300}
+                                        testID="automation-event-existing-session-list"
+                                        inputTestID="automation-event-existing-session-search"
+                                    />
                                 </View>
                             ) : null}
                             {props.model.existingSessionOptions.length === 0 ? (
@@ -667,24 +707,69 @@ export function PluginEventAutomationComposerContent(props: Props) {
                                             >
                                                 {webhookEndpoint.publicUrl}
                                             </Text>
-                                            <Text style={styles.fieldLabel}>
-                                                {t('automations.form.trigger.webhookEndpointSecret')}
-                                            </Text>
-                                            {webhookEndpoint.oneTimeGeneratedSecret ? (
-                                                <Text
-                                                    testID="automation-event-webhook-endpoint-secret"
-                                                    selectable
-                                                    style={styles.webhookEndpointValue}
-                                                >
-                                                    {webhookEndpoint.oneTimeGeneratedSecret}
-                                                </Text>
-                                            ) : (
-                                                <Text
-                                                    testID="automation-event-webhook-endpoint-secret-lost"
-                                                    style={styles.unavailableText}
-                                                >
-                                                    {t('automations.form.trigger.webhookEndpointSecretLost')}
-                                                </Text>
+                                            {!webhookEndpoint.oneTimeGeneratedSecret
+                                                && webhookEndpoint.readiness === 'ready' ? null : (
+                                                    <>
+                                                        <Text style={styles.fieldLabel}>
+                                                            {t('automations.form.trigger.webhookEndpointSecret')}
+                                                        </Text>
+                                                        {webhookEndpoint.oneTimeGeneratedSecret ? (
+                                                            <Text
+                                                                testID="automation-event-webhook-endpoint-secret"
+                                                                selectable
+                                                                style={styles.webhookEndpointValue}
+                                                            >
+                                                                {webhookEndpoint.oneTimeGeneratedSecret}
+                                                            </Text>
+                                                        ) : (
+                                                            <Text
+                                                                testID="automation-event-webhook-endpoint-secret-lost"
+                                                                style={styles.unavailableText}
+                                                            >
+                                                                {t('automations.form.trigger.webhookEndpointSecretLost')}
+                                                            </Text>
+                                                        )}
+                                                    </>
+                                                )}
+                                            {webhookEndpoint.readiness === 'ready' ? null : (
+                                                <>
+                                                    <Text
+                                                        testID="automation-event-webhook-endpoint-readiness"
+                                                        accessibilityRole="alert"
+                                                        accessibilityLiveRegion="polite"
+                                                        style={styles.unavailableText}
+                                                    >
+                                                        {t('automations.form.trigger.webhookEndpointAwaitingConfirmation')}
+                                                    </Text>
+                                                    {props.model.refreshWebhookEndpoint ? (
+                                                        <Pressable
+                                                            testID="automation-event-webhook-endpoint-recheck"
+                                                            accessibilityRole="button"
+                                                            accessibilityState={{
+                                                                busy: props.model.webhookEndpointRefreshing,
+                                                                disabled: props.model.webhookEndpointRefreshing,
+                                                            }}
+                                                            disabled={props.model.webhookEndpointRefreshing}
+                                                            onPress={props.model.refreshWebhookEndpoint}
+                                                            style={({ pressed }) => [
+                                                                styles.selectTrigger,
+                                                                props.model.webhookEndpointRefreshing ? styles.disabled : null,
+                                                                pressed ? styles.pressed : null,
+                                                            ]}
+                                                        >
+                                                            <Text style={styles.selectTriggerText}>
+                                                                {props.model.webhookEndpointRefreshing
+                                                                    ? t('common.loading')
+                                                                    : t('automations.form.trigger.webhookEndpointRecheck')}
+                                                            </Text>
+                                                            <Icon
+                                                                name="arrows-clockwise"
+                                                                size={14}
+                                                                color={theme.colors.text.secondary}
+                                                            />
+                                                        </Pressable>
+                                                    ) : null}
+                                                </>
                                             )}
                                         </View>
                                     ) : null}

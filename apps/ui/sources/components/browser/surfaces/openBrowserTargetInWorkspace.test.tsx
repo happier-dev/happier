@@ -6,6 +6,11 @@ import type {
 } from '@happier-dev/protocol';
 import { describe, expect, it, vi } from 'vitest';
 
+// The OS-tab handoff is a genuine platform boundary (`window.open` / `Linking.openURL`); the
+// selection and fulfilment logic beneath it stays real.
+const openExternalUrlMock = vi.hoisted(() => vi.fn(async () => true));
+vi.mock('@/utils/url/openExternalUrl', () => ({ openExternalUrl: openExternalUrlMock }));
+
 import type { DetailsTab } from '@/components/appShell/panes/details/workspace/detailsWorkspaceTypes';
 import { resolveBrowserViewIdForTarget } from '@/sync/domains/browser/store';
 
@@ -78,6 +83,18 @@ const availableDesktopWebView = {
         automation: false,
     },
     disabledReasons: [],
+} as const;
+
+/** A RESOLVED desktop probe that says this host cannot embed a third-party site (Windows/X11). */
+const unembeddableDesktopWebView = {
+    ...availableDesktopWebView,
+    available: false,
+    platform: 'windows',
+    primitive: 'windowsHwndWebView2',
+    renderEngine: 'unavailable',
+    producer: 'none',
+    supports: { ...availableDesktopWebView.supports, navigation: false },
+    disabledReasons: ['desktop_webview_child_view_unverified'],
 } as const;
 
 const serviceTargetWithBrowserTarget = {
@@ -311,5 +328,58 @@ describe('openBrowserTargetInWorkspace', () => {
         expect(record).toBeDefined();
         expect(record?.currentUrl).toBe('https://example.com/');
         expect(record?.engineKind).toBe('desktopWebView');
+    });
+
+    // R-3 (G9), second half. The selector already resolves an allowed site a desktop host cannot
+    // embed to the fulfilled `openExternalTab` outcome, and `BrowserSurfaceHost` performs it for the
+    // in-place seam. This NEW-TAB opener is the other production caller — reached by every ordinary
+    // launchpad external row, the Services "open in browser" seam and the session-header button —
+    // and it did not. The launchpad enables those rows (the selection is `ok`), so on Windows/Linux
+    // clicking one opened a workspace tab whose `openView` is rejected as `adapter_unavailable`,
+    // leaving an empty tab: the same dead end the fix was supposed to remove, one seam over.
+    it('R-3: hands an allowed external URL to the system browser instead of opening a dead tab where the desktop host cannot embed it', () => {
+        openExternalUrlMock.mockClear();
+        const openDetailsTab = vi.fn();
+        const remembered: BrowserViewTargetV1[] = [];
+        const openBrowserViewTarget = createOpenBrowserTargetInWorkspace({
+            openDetailsTab,
+            scope: 'sessionDetails',
+            platform: 'desktop',
+            browserFeatureDecision: enabledBrowserDecision,
+            browserProfile: sessionBrowserProfile,
+            allowExternalUrlBrowsing: true,
+            desktopWebViewAvailability: unembeddableDesktopWebView,
+            onRememberRecentTarget: (target) => {
+                remembered.push(target);
+            },
+        });
+
+        openBrowserViewTarget(externalTarget);
+
+        expect(openExternalUrlMock).toHaveBeenCalledWith('https://example.com/');
+        expect(openDetailsTab).not.toHaveBeenCalled();
+        // An OS tab is not a workspace tab; it must not enter the recents rail as one.
+        expect(remembered).toEqual([]);
+    });
+
+    // The neighbouring case: a host that CAN embed still opens the in-app tab. Discriminates
+    // against "always hand external URLs to the OS".
+    it('still opens a workspace tab for an allowed external URL the desktop host can embed', () => {
+        openExternalUrlMock.mockClear();
+        const openDetailsTab = vi.fn();
+        const openBrowserViewTarget = createOpenBrowserTargetInWorkspace({
+            openDetailsTab,
+            scope: 'sessionDetails',
+            platform: 'desktop',
+            browserFeatureDecision: enabledBrowserDecision,
+            browserProfile: sessionBrowserProfile,
+            allowExternalUrlBrowsing: true,
+            desktopWebViewAvailability: availableDesktopWebView,
+        });
+
+        openBrowserViewTarget(externalTarget);
+
+        expect(openExternalUrlMock).not.toHaveBeenCalled();
+        expect(openDetailsTab).toHaveBeenCalledTimes(1);
     });
 });

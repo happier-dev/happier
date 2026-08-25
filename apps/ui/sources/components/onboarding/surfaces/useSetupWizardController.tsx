@@ -7,6 +7,7 @@ import { type SshCredentialsDraft } from '@/components/ssh/SshCredentialsFields'
 import { RelayDriftActionCard } from '@/components/settings/server/RelayDriftActionCard';
 import { useRelayDriftBanner } from '@/components/settings/server/useRelayDriftBanner';
 import { Text } from '@/components/ui/text/Text';
+import { ActiveRelaySummary } from '@/components/onboarding/ui/ActiveRelaySummary';
 import {
     resolveStepTransitionDirection,
     type StepTransitionDirection,
@@ -17,8 +18,10 @@ import { normalizeServerUrl, upsertActivateAndSwitchServer } from '@/sync/domain
 import { upsertServerProfileOnly } from '@/sync/domains/server/serverRuntime';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { useAllSessions, useMachine } from '@/sync/store/hooks';
+import { isUserFacingSession } from '@/sync/domains/session/listing/isUserFacingSession';
 import { t, tLoose } from '@/text';
 import { buildNewSessionLaunchRouteParams } from '@/components/sessions/new/navigation/newSessionRouteParams';
+import { resolveNewSessionDraftRouteIdentity } from '@/components/sessions/new/navigation/newSessionDraftRouteIdentity';
 import { resolveSetupSurfacePolicy } from '@/sync/domains/server/setup/setupSurfacePolicy';
 import { toServerUrlDisplay } from '@/sync/domains/server/url/serverUrlDisplay';
 import { readServerReachabilityProbeTimeoutMs } from '@/sync/runtime/connectivity/serverReachabilityTuning';
@@ -134,7 +137,7 @@ export type SetupWizardController = Readonly<{
     skipLabel: React.ReactNode;
     skipDisabled: boolean | undefined;
     showSkip: boolean;
-    footerHint: string | null;
+    footerHint: React.ReactNode | null;
     goToStep: (stepId: WizardStepId) => void;
 }>;
 
@@ -156,7 +159,7 @@ export function useSetupWizardController(props: SetupWizardSurfaceProps): SetupW
     const relayDriftBanner = useRelayDriftBanner();
     const activeRelayUrlRaw = activeServerSnapshot.serverUrl ? String(activeServerSnapshot.serverUrl).trim() : '';
     const footerHint = activeRelayUrlRaw
-        ? t('setupOnboarding.currentRelayDescription', { relayUrl: toServerUrlDisplay(activeRelayUrlRaw) })
+        ? <ActiveRelaySummary relayUrl={activeRelayUrlRaw} status="active" idPrefix={`${testIDPrefix}-relay-hint`} />
         : null;
     const pendingSetupIntent = usePendingSetupIntent();
     const initialPendingSetupIntentRef = React.useRef(pendingSetupIntent);
@@ -313,7 +316,7 @@ export function useSetupWizardController(props: SetupWizardSurfaceProps): SetupW
         if (typeof host === 'string' && host.trim().length > 0) return host.trim();
         return connectedMachineId;
     }, [connectedMachine, connectedMachineId]);
-    const existingSessionCount = useAllSessions().length;
+    const existingSessionCount = useAllSessions().filter(isUserFacingSession).length;
     const providerReadiness = useProviderReadiness({
         machineId: stepId === 'providers_optional' ? providerMachineId : null,
         providerIds: providerSelectionProviderIds,
@@ -725,9 +728,11 @@ export function useSetupWizardController(props: SetupWizardSurfaceProps): SetupW
         && localRelayRuntimeStatus?.healthy === true;
 
     const handleStartFirstSession = React.useCallback(() => {
+        const draftId = resolveNewSessionDraftRouteIdentity({ routeDraftId: undefined }).draftId;
         router.push({
             pathname: '/new',
             params: buildNewSessionLaunchRouteParams({
+                draftId,
                 machineId: connectedMachineId,
                 targetServerId: activeServerSnapshot.serverId ? String(activeServerSnapshot.serverId) : null,
             }),

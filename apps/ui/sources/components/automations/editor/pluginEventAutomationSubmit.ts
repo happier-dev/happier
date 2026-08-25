@@ -23,6 +23,7 @@ import {
     type PluginEventAutomationEditTarget,
 } from './pluginEventAutomationDraft';
 import { isPluginEventAutomationExecutionRunCapabilityCurrent } from './pluginEventAutomationExecutionCapability';
+import type { PluginEventAutomationSubmissionSummary } from './pluginEventAutomationSubmissionConfirmation';
 import type {
     PluginEventAutomationResolvedTarget,
     PluginEventAutomationTargetKind,
@@ -37,6 +38,8 @@ type PluginEventAutomationMetadata = Readonly<{
 export type PluginEventAutomationSubmitResult =
     | Readonly<{ kind: 'created' }>
     | Readonly<{ kind: 'updated'; automationId: string }>
+    /** The author declined the final confirmation; nothing was written. */
+    | Readonly<{ kind: 'cancelled' }>
     | Readonly<{
         kind: 'unavailable';
         reason:
@@ -168,6 +171,13 @@ export async function submitPluginEventAutomation(params: Readonly<{
             request: ExecutionRunDetachedStartRequestV1 | null;
         }> | null;
     }>) => PluginEventAutomationResolvedTarget | null;
+    /**
+     * The one final comprehension checkpoint. It is required rather than
+     * optional so no authoring caller can write an Event Automation definition
+     * without showing the resolved trigger, watcher, executor, target and
+     * permission effects it is about to persist.
+     */
+    confirmSubmission: (summary: PluginEventAutomationSubmissionSummary) => Promise<boolean>;
     isCurrent: () => boolean;
 }>): Promise<PluginEventAutomationSubmitResult> {
     const editId = typeof params.automationEditId === 'string' ? params.automationEditId.trim() : '';
@@ -295,6 +305,28 @@ export async function submitPluginEventAutomation(params: Readonly<{
         executionRecipe,
         assignments,
     };
+
+    // Confirm after every fact is resolved and before the first durable write,
+    // so the summary describes exactly what lands. The currentness checks below
+    // still run afterwards, so a confirmation the author sat on cannot write a
+    // stale definition.
+    const confirmed = await params.confirmSubmission({
+        mode: params.editTarget ? 'edit' : 'create',
+        automationName: metadata.name,
+        enabled: metadata.enabled,
+        trigger: {
+            pluginId: params.draft.draft.eventRef.pluginId,
+            eventLocalId: params.draft.draft.eventRef.localId,
+        },
+        observation: params.draft.draft.observation.kind,
+        watcherMachineId: freshWatcherOrigin.machineTarget.target.machineId,
+        executorMachineIds: assignments.map((assignment) => assignment.machineId),
+        target: target.target.kind === 'executionRun'
+            ? { kind: 'executionRun', permissionMode: target.target.request.permissionMode }
+            : { kind: target.target.kind },
+    });
+    if (!confirmed) return { kind: 'cancelled' };
+    if (!isCurrent()) return unavailable('definition');
 
     if (params.editTarget) {
         const patch = buildPluginEventAutomationDefinitionPatchRequest({

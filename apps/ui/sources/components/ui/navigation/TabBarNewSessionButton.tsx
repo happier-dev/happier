@@ -8,6 +8,10 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { resolveTabBarMetrics } from '@/components/ui/navigation/tabBarMetrics';
 import { useSetting } from '@/sync/domains/state/storage';
 import { t } from '@/text';
+import {
+    shouldForceFreshNewSessionEntryFromPressEvent,
+    useResolveNewSessionOrdinaryEntryRoute,
+} from '@/components/sessions/new/navigation/newSessionOrdinaryEntryRoute';
 
 /**
  * The "+" capsule that sits beside the floating tab bar on the sessions surface — a second,
@@ -45,12 +49,16 @@ const styles = StyleSheet.create({
 
 export const TabBarNewSessionButton = React.memo(function TabBarNewSessionButton() {
     const router = useRouter();
+    const resolveNewSessionOrdinaryEntryRoute = useResolveNewSessionOrdinaryEntryRoute();
     const { theme } = useUnistyles();
     const metrics = resolveTabBarMetrics(useSetting('tabBarSize'), useSetting('tabBarShowLabels'));
 
-    const handlePress = React.useCallback(() => {
-        router.push('/new');
-    }, [router]);
+    const handlePress = React.useCallback((event?: unknown) => {
+        const { draftId, draftOrigin } = resolveNewSessionOrdinaryEntryRoute({
+            forceFresh: shouldForceFreshNewSessionEntryFromPressEvent(event),
+        });
+        router.push({ pathname: '/new', params: { draftId, draftOrigin } });
+    }, [resolveNewSessionOrdinaryEntryRoute, router]);
 
     return (
         <GlassPanel radius={CAPSULE_RADIUS} style={styles.capsule}>

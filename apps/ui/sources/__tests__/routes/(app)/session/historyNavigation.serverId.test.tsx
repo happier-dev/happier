@@ -149,6 +149,45 @@ describe('session history navigation', () => {
         expect(navigateToSessionSpy).toHaveBeenCalledWith('session-history-1', { serverId: 'server-history' });
     });
 
+    it('keeps hidden system sessions out of recent rows and their navigation order', async () => {
+        allSessions = [
+            {
+                id: 'session-ordinary-recent',
+                serverId: 'server-normal',
+                updatedAt: 100,
+                active: true,
+                metadata: { name: 'Ordinary recent session' },
+            },
+            {
+                id: 'voice-history-hidden-recent',
+                serverId: 'server-voice',
+                updatedAt: 200,
+                active: false,
+                metadataLayoutVersion: 1,
+                metadataUnavailable: false,
+                metadata: {
+                    name: 'Voice History carrier',
+                    systemSessionV1: { v: 1, key: 'voice_transcript_history', hidden: true },
+                },
+            },
+        ];
+
+        const RecentSessionsScreen = (await import('@/app/(app)/session/recent')).default;
+        const screen = await renderScreen(React.createElement(RecentSessionsScreen));
+
+        expect(screen.getTextContent()).toContain('Ordinary recent session');
+        expect(screen.getTextContent()).not.toContain('Voice History carrier');
+
+        const row = screen.tree.findAllByType(Pressable)[0];
+        expect(row).toBeTruthy();
+        await pressTestInstanceAsync(row!, 'ordinary recent session row');
+
+        expect(navigateToSessionSpy).toHaveBeenCalledWith(
+            'session-ordinary-recent',
+            { serverId: 'server-normal' },
+        );
+    });
+
     it('passes the row server id when navigating from archived sessions', async () => {
         const ArchivedSessionsScreen = (await import('@/app/(app)/session/archived')).default;
         const screen = await renderScreen(React.createElement(ArchivedSessionsScreen));

@@ -27,6 +27,7 @@ import {
 import { machineCreateDirectory } from '@/sync/ops/machines';
 import { machineRipgrep } from '@/sync/ops/machineRipgrep';
 import { t } from '@/text';
+import { RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpc';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import type { ItemAction } from '@/components/ui/lists/itemActions';
 import { FilesystemBrowserToolbarChrome, type FilesystemBrowserToolbarAction } from '@/components/ui/filesystemBrowser/FilesystemBrowserToolbarChrome';
@@ -1170,7 +1171,7 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
                 <FilesystemBrowser
                     nodes={nodes}
                     rootLoading={deepSearchEnabled ? deepSearchLoading : rootLoading}
-                    rootError={deepSearchEnabled ? deepSearchError : rootError}
+                    rootError={toPathBrowserUserFacingError(deepSearchEnabled ? deepSearchError : rootError)}
                     retryRoot={browserRetryRoot}
                     loadingLabel={t('common.loading')}
                     loadingLabelCentered={t('common.loading')}
@@ -1230,6 +1231,18 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
             ) : null}
         </View>
     );
+}
+
+/**
+ * `FilesystemBrowser` renders `rootError` verbatim and takes all of its copy from props, so this
+ * modal owns the picker's wording. The machine RPC adapter reports an unreachable machine with the
+ * canonical protocol constant rather than an exception message (`F-UI-2`); turn that constant into
+ * the same localized unavailability line the source-control surfaces resolve for it, instead of
+ * showing the user transport vocabulary.
+ */
+function toPathBrowserUserFacingError(rootError: string | null): string | null {
+    if (rootError === RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE) return t('errors.daemonUnavailableBody');
+    return rootError;
 }
 
 export function MachinePathBrowserModal(props: MachinePathBrowserModalProps): React.ReactElement {

@@ -4,8 +4,8 @@ import type {
     AutomationDefinitionRun,
 } from '@/sync/domains/automations/automationTypes';
 import { createAutomationDefinitionSummary } from '@/sync/domains/automations/automationDefinitionProjection';
-import { listAutomationDefinitionsV3 } from '@/sync/api/automations/apiAutomations';
-import { listAutomationDefinitionRunsV3 } from '@/sync/api/automations/apiAutomationRuns';
+import { listAutomationDefinitions } from '@/sync/api/automations/apiAutomations';
+import { listAutomationDefinitionRuns } from '@/sync/api/automations/apiAutomationRuns';
 import { isRuntimeFeatureEnabled } from '@/sync/domains/features/featureDecisionInputs';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { runTasksWithLimit } from '@/sync/runtime/orchestration/runTasksWithLimit';
@@ -45,7 +45,7 @@ export async function fetchAndApplyAutomations(params: {
     }
     if (!shouldContinue()) return;
 
-    const rows = await listAutomationDefinitionsV3(params.credentials);
+    const rows = await listAutomationDefinitions(params.credentials);
     if (!shouldContinue()) return;
     const automations = rows.map(createAutomationDefinitionSummary);
     if (!shouldContinue()) return;
@@ -76,7 +76,7 @@ export async function fetchAndApplyAutomations(params: {
     await runTasksWithLimit(
         idsToRefresh.map((automationId) => async () => {
             if (!shouldContinue()) return;
-            const result = await listAutomationDefinitionRunsV3({
+            const result = await listAutomationDefinitionRuns({
                 credentials: params.credentials!,
                 automationId,
                 limit,
@@ -119,7 +119,7 @@ export async function fetchAndApplyAutomationRuns(params: {
     }
     if (!shouldContinue()) return { nextCursor: null };
 
-    const result = await listAutomationDefinitionRunsV3({
+    const result = await listAutomationDefinitionRuns({
         credentials: params.credentials,
         automationId: params.automationId,
         limit: params.limit,

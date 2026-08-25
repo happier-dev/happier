@@ -6,7 +6,7 @@ import { SlimProfileEditForm } from './SlimProfileEditForm';
 
 export type LaunchProfileEditFormProps = Omit<ProfileEditFormProps, 'profile' | 'onSave'> & Readonly<{
     profile: AiLaunchProfile;
-    onSave: (profile: AiLaunchProfile) => boolean;
+    onSave: (profile: AiLaunchProfile, secretBindings?: Readonly<Record<string, string>>) => boolean;
     /** Optional exact server context for V2 machine-scoped previews. */
     serverId?: string | null;
 }>;

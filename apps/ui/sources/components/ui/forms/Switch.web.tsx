@@ -3,6 +3,8 @@ import type { SwitchProps } from 'react-native';
 import { Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
+import { useItemRowAccessibleName } from '@/components/ui/lists/ItemRowAccessibleName';
+
 const TRACK_WIDTH = 40;
 const TRACK_HEIGHT = 22;
 const THUMB_SIZE = 18;
@@ -53,6 +55,8 @@ export type AppSwitchProps = SwitchProps & {
 export const Switch = ({ value, disabled, onValueChange, style, compact, ...rest }: AppSwitchProps) => {
     const { theme } = useUnistyles();
     const styles = stylesheet;
+    const rowAccessibleName = useItemRowAccessibleName();
+    const accessibleName = rest['aria-label'] ?? rest.accessibilityLabel ?? rowAccessibleName;
 
     const trackW = compact ? COMPACT_TRACK_WIDTH : TRACK_WIDTH;
     const thumbS = compact ? COMPACT_THUMB_SIZE : THUMB_SIZE;
@@ -70,6 +74,8 @@ export const Switch = ({ value, disabled, onValueChange, style, compact, ...rest
         <Pressable
             {...rest}
             accessibilityRole="switch"
+            accessibilityLabel={accessibleName}
+            aria-label={accessibleName}
             accessibilityState={{ checked: !!value, disabled: !!disabled }}
             aria-checked={!!value}
             aria-disabled={disabled ? true : undefined}

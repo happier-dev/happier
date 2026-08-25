@@ -13,6 +13,8 @@ import type {
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 
+import { BROWSER_CHROME_WIDTH } from '../browserChromeDensity';
+
 const stylesheet = StyleSheet.create((theme) => ({
     root: {
         flexDirection: 'row',
@@ -21,7 +23,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         gap: 6,
         minHeight: 34,
         minWidth: 0,
-        maxWidth: 360,
+        maxWidth: BROWSER_CHROME_WIDTH.panel,
         borderRadius: 6,
         borderWidth: 1,
         borderColor: theme.colors.border.default,

@@ -130,24 +130,42 @@ type CorridorPairing = Readonly<{
 const CORRIDOR_PAIRINGS: readonly CorridorPairing[] = [
     // Body and label text (1.4.3 — 4.5:1).
     { foreground: 'text.primary', background: 'surface.base', minRatio: 4.5, renderedBy: 'browser/diagnostics/BrowserDiagnosticsDrawer.tsx' },
-    { foreground: 'text.primary', background: 'surface.inset', minRatio: 4.5, renderedBy: 'browser/BrowserAddressField.tsx' },
+    { foreground: 'text.primary', background: 'surface.inset', minRatio: 4.5, renderedBy: 'browser/BrowserUrlField.tsx:63,81 address input' },
     { foreground: 'text.primary', background: 'surface.elevated', minRatio: 4.5, renderedBy: 'browser/frame/engines/DesktopWebViewEngine.tsx' },
-    { foreground: 'text.primary', background: 'surface.pressed', minRatio: 4.5, renderedBy: 'sessions/localServices/ServicesScopeToggle.tsx' },
+    { foreground: 'text.primary', background: 'surface.pressed', minRatio: 4.5, renderedBy: 'sessions/localServices/ServiceRowView.tsx:75,81 pressed address control' },
     { foreground: 'text.primary', background: 'background.canvas', minRatio: 4.5, renderedBy: 'the pane ancestor of both surfaces' },
     { foreground: 'text.secondary', background: 'surface.base', minRatio: 4.5, renderedBy: 'browser/frame/styles.ts statusText' },
     { foreground: 'text.secondary', background: 'surface.inset', minRatio: 4.5, renderedBy: 'browser/BrowserStatusBar.tsx' },
-    { foreground: 'text.secondary', background: 'background.canvas', minRatio: 4.5, renderedBy: 'sessions/localServices/LocalServiceFactList.tsx' },
-    { foreground: 'input.text', background: 'input.background', minRatio: 4.5, renderedBy: 'browser/launchpad/BrowserLaunchpadUrlEntry.tsx' },
 
     // The canonical filled-button pair. `RoundButton` and `SurfaceStateCard.action`
     // paint this, and it is the pairing the corridor's two hand-rolled indigo CTAs
     // must move onto: 21.00:1 light, 7.06:1 dark, against 2.07:1 for the accent fill.
     { foreground: 'button.primary.tint', background: 'button.primary.background', minRatio: 4.5, renderedBy: 'components/ui/buttons/RoundButton.tsx' },
 
+    // The scope control both corridors now use. `ServicesScopeToggle` painted its SELECTED
+    // segment with `surface.pressed` — the press token — and F0 replaced it with the canonical
+    // `SegmentedTabBar`, whose selected segment is a distinct `segmentedControl` surface. The
+    // selected label is the one a user reads while choosing a scope, so it is asserted here
+    // rather than inherited from the pairing the deleted component used to render.
+    { foreground: 'text.primary', background: 'segmentedControl.activeBackground', minRatio: 4.5, renderedBy: 'components/ui/navigation/SegmentedTabBar.tsx:199,242 selected segment' },
+    { foreground: 'text.secondary', background: 'segmentedControl.trackBackground', minRatio: 4.5, renderedBy: 'components/ui/navigation/SegmentedTabBar.tsx:125,236 unselected segment' },
+
     // Non-text UI and meaningful graphics (1.4.11 — 3:1).
     { foreground: 'accent.blue', background: 'surface.base', minRatio: 3, renderedBy: 'browser/BrowserLoadProgressBar.tsx' },
-    { foreground: 'status.error', background: 'surface.inset', minRatio: 3, renderedBy: 'browser/launchpad/BrowserLaunchpadUrlEntry.tsx invalid field border' },
+    { foreground: 'status.error', background: 'surface.inset', minRatio: 3, renderedBy: 'browser/BrowserUrlField.tsx:71 invalid field border' },
     { foreground: 'state.neutral.foreground', background: 'surface.base', minRatio: 3, renderedBy: 'sessions/localServices/ServiceStatusDot.tsx idle dot' },
+
+    // The stale-snapshot banner's outline. It shares `surface.inset` with the sub-tab header it
+    // sits under, so the 1px edge is the ONLY thing that separates the two boxes — a boundary that
+    // carries meaning, at 1.4.11's 3:1. It shipped as `border.default` (1.13:1 in both themes) and
+    // `border.strong`, the obvious heavier weight, reaches only 1.37:1 light / 1.28:1 dark: no
+    // border-weight token in this palette can carry it, which is the same gap that produced the
+    // unseeable focus ring above. The card's own status role can — and this IS the colour of the
+    // glyph inside the card. `state.danger.foreground` rather than `state.danger.border` because
+    // several built-in profiles define the border variant as a low-alpha tint that measures as
+    // little as 1.28:1 against their own `surface.inset`, while the foreground variant holds
+    // >= 3.34:1 in every profile mode (measured, GH1 lane report §5).
+    { foreground: 'state.danger.foreground', background: 'surface.inset', minRatio: 3, renderedBy: 'workspaces/scm/states/SourceControlStaleSnapshotNotice.tsx:31 banner outline' },
 ];
 
 /**

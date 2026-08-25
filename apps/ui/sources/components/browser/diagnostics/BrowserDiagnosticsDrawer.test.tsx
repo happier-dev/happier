@@ -24,6 +24,14 @@ vi.mock('@/hooks/ui/useReducedMotionPreference', () => ({
     useReducedMotionPreference: () => reducedMotionRef.value,
 }));
 
+// `SegmentedTabBar` (the canonical tab list this drawer now renders) reads the app's motion
+// preferences, which live in the settings store. The canonical testkit stub is the boundary owner —
+// without it the store initialisation never settles and every case times out.
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({});
+});
+
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
     return createTextModuleMock({ translate: (key) => key });
@@ -104,18 +112,20 @@ describe('BrowserDiagnosticsDrawer', () => {
             />,
         );
 
-        // Default open: expanded; body and section tabs visible.
-        expect(screen.findByTestId('browser-diagnostics-drawer-container-expanded')).toBeTruthy();
-        expect(screen.findByTestId('browser-diagnostics-drawer-body')).toBeTruthy();
-
-        // Collapse to the peek-height state.
-        await screen.pressByTestIdAsync('browser-diagnostics-drawer-collapse');
+        // U-12: the drawer OPENS COLLAPSED. A devtools panel that claims 45% of the surface the
+        // instant a page loads is one the user closes before reading anything; the peek says
+        // "there is something here" without deciding for them.
         expect(screen.findByTestId('browser-diagnostics-drawer-container-collapsed')).toBeTruthy();
         expect(screen.findByTestId('browser-diagnostics-drawer-body')).toBeTruthy();
 
-        // Expand again back to full.
+        // Expand to full.
         await screen.pressByTestIdAsync('browser-diagnostics-drawer-expand');
         expect(screen.findByTestId('browser-diagnostics-drawer-container-expanded')).toBeTruthy();
+
+        // Collapse back to the peek-height state.
+        await screen.pressByTestIdAsync('browser-diagnostics-drawer-collapse');
+        expect(screen.findByTestId('browser-diagnostics-drawer-container-collapsed')).toBeTruthy();
+        expect(screen.findByTestId('browser-diagnostics-drawer-body')).toBeTruthy();
 
         // Close hides the body, keeping only the handle/peek + reopen affordance.
         await screen.pressByTestIdAsync('browser-diagnostics-drawer-close');
@@ -137,10 +147,10 @@ describe('BrowserDiagnosticsDrawer', () => {
         );
 
         // A tab per present family.
-        expect(screen.findByTestId('browser-diagnostics-drawer-tab-console')).toBeTruthy();
-        expect(screen.findByTestId('browser-diagnostics-drawer-tab-elements')).toBeTruthy();
+        expect(screen.findByTestId('browser-diagnostics-drawer-tab:console')).toBeTruthy();
+        expect(screen.findByTestId('browser-diagnostics-drawer-tab:elements')).toBeTruthy();
         // No tab for absent families.
-        expect(screen.findByTestId('browser-diagnostics-drawer-tab-network')).toBeNull();
+        expect(screen.findByTestId('browser-diagnostics-drawer-tab:network')).toBeNull();
 
         // Default section is the first family (console). Only console panel renders.
         expect(screen.findByTestId('browser-diagnostics-drawer-body-console-panel')).toBeTruthy();
@@ -149,7 +159,7 @@ describe('BrowserDiagnosticsDrawer', () => {
         expect(screen.findByTestId('browser-diagnostics-drawer-body-fidelity-injectedPage')).toBeTruthy();
 
         // Switching to elements shows the elements panel and hides console.
-        await screen.pressByTestIdAsync('browser-diagnostics-drawer-tab-elements');
+        await screen.pressByTestIdAsync('browser-diagnostics-drawer-tab:elements');
         expect(screen.findByTestId('browser-diagnostics-drawer-body-elements-panel')).toBeTruthy();
         expect(screen.findByTestId('browser-diagnostics-drawer-body-console-panel')).toBeNull();
         expect(screen.findByTestId('browser-diagnostics-drawer-body-fidelity-injectedPage')).toBeTruthy();
@@ -200,7 +210,7 @@ describe('BrowserDiagnosticsDrawer', () => {
             />,
         );
 
-        await screen.pressByTestIdAsync('browser-diagnostics-drawer-tab-pageError');
+        await screen.pressByTestIdAsync('browser-diagnostics-drawer-tab:pageError');
         expect(screen.findByTestId('browser-diagnostics-drawer-body-pageError-panel')).toBeTruthy();
         expect(screen.findByTestId('browser-diagnostics-drawer-body-console-panel')).toBeNull();
         expect(screen.getTextContent()).not.toContain('pageError - page.error');
@@ -257,7 +267,7 @@ describe('BrowserDiagnosticsDrawer', () => {
         expect(screen.findByTestId('browser-diagnostics-drawer-body-picker-start')).toBeNull();
 
         // Switch to Elements: the start-picker affordance becomes reachable.
-        await screen.pressByTestIdAsync('browser-diagnostics-drawer-tab-elements');
+        await screen.pressByTestIdAsync('browser-diagnostics-drawer-tab:elements');
         expect(screen.findByTestId('browser-diagnostics-drawer-body-picker-start')).toBeTruthy();
         screen.pressByTestId('browser-diagnostics-drawer-body-picker-start');
         expect(startCount).toBe(1);
@@ -298,7 +308,7 @@ describe('BrowserDiagnosticsDrawer', () => {
         expect(screen.findByTestId('browser-diagnostics-drawer-body-picker-start')).toBeNull();
 
         // Elements section: picker is reachable, but the console REPL is not duplicated here.
-        await screen.pressByTestIdAsync('browser-diagnostics-drawer-tab-elements');
+        await screen.pressByTestIdAsync('browser-diagnostics-drawer-tab:elements');
         expect(screen.findByTestId('browser-diagnostics-drawer-body-picker-start')).toBeTruthy();
         expect(screen.findByTestId('browser-diagnostics-drawer-body-eval-console')).toBeNull();
         screen.pressByTestId('browser-diagnostics-drawer-body-picker-start');
@@ -326,7 +336,7 @@ describe('BrowserDiagnosticsDrawer', () => {
             />,
         );
 
-        await screen.pressByTestIdAsync('browser-diagnostics-drawer-tab-elements');
+        await screen.pressByTestIdAsync('browser-diagnostics-drawer-tab:elements');
         // No start-picker affordance while interaction is disabled.
         expect(screen.findByTestId('browser-diagnostics-drawer-body-picker-start')).toBeNull();
         // The enable-interaction affordance is the only control surfaced.
@@ -427,12 +437,15 @@ describe('BrowserDiagnosticsDrawer', () => {
             />,
         );
 
-        expect(screen.findByTestId('browser-diagnostics-drawer-tab-performance')).toBeTruthy();
-        await screen.pressByTestIdAsync('browser-diagnostics-drawer-tab-performance');
+        expect(screen.findByTestId('browser-diagnostics-drawer-tab:performance')).toBeTruthy();
+        await screen.pressByTestIdAsync('browser-diagnostics-drawer-tab:performance');
         expect(screen.findByTestId('browser-diagnostics-drawer-body-performance-panel')).toBeTruthy();
 
-        await screen.pressByTestIdAsync('browser-diagnostics-drawer-collapse');
-        expect(screen.findByTestId('browser-diagnostics-drawer-container-collapsed')).toBeTruthy();
+        // Move the drawer OFF its default state before refreshing. `collapsed` is what the drawer
+        // opens at, so asserting `collapsed` survives a refresh cannot tell persistence apart from
+        // a reset to the default; `expanded` can.
+        await screen.pressByTestIdAsync('browser-diagnostics-drawer-expand');
+        expect(screen.findByTestId('browser-diagnostics-drawer-container-expanded')).toBeTruthy();
 
         await screen.update(
             <mod.BrowserDiagnosticsDrawer
@@ -458,7 +471,7 @@ describe('BrowserDiagnosticsDrawer', () => {
             />,
         );
 
-        expect(screen.findByTestId('browser-diagnostics-drawer-container-collapsed')).toBeTruthy();
+        expect(screen.findByTestId('browser-diagnostics-drawer-container-expanded')).toBeTruthy();
         expect(screen.findByTestId('browser-diagnostics-drawer-body-performance-panel')).toBeTruthy();
         expect(screen.findByTestId('browser-diagnostics-drawer-body-console-panel')).toBeNull();
         expect(screen.findByTestId('browser-diagnostics-drawer-body-performance-metric-evt_perf_2-lcpMs')).toBeTruthy();

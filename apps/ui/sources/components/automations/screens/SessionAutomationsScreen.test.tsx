@@ -88,7 +88,9 @@ const hydrateReadyState = vi.hoisted(() => ({
 
 const syncSpies = vi.hoisted(() => ({
     refreshAutomations: vi.fn(async () => {}),
-    refreshAutomationDefinitionDetail: vi.fn(async () => {}),
+    refreshAutomationDefinitionDetail: vi.fn<(automationId: string) => Promise<void>>(
+        async (_automationId) => {},
+    ),
     runAutomationNow: vi.fn(async (_id: string) => {}),
     pauseAutomation: vi.fn(async (_id: string) => {}),
     resumeAutomation: vi.fn(async (_id: string) => {}),
@@ -410,10 +412,63 @@ describe('SessionAutomationsScreen', () => {
         expect(peakInFlight).toBeGreaterThan(0);
         expect(syncSpies.refreshAutomationDefinitionDetail.mock.calls.length).toBeLessThanOrEqual(limit);
 
+        // The positive twin. Bounding the fan-out must not silently drop work:
+        // without this, a "fix" that simply truncated the queue to `limit`
+        // would satisfy every assertion above.
+        syncSpies.refreshAutomationDefinitionDetail.mockImplementation(async () => {});
         await act(async () => {
-            for (const release of [...gates]) release();
-            await Promise.resolve();
+            for (const release of gates.splice(0, gates.length)) release();
+            await new Promise<void>((resolve) => { setTimeout(resolve, 0); });
         });
+        expect(syncSpies.refreshAutomationDefinitionDetail.mock.calls.length).toBe(undisclosedCount);
+    });
+
+    it('keeps a failed private detail read retryable instead of retiring the whole batch', async () => {
+        syncSpies.refreshAutomationDefinitionDetail.mockImplementation(async (automationId: string) => {
+            if (automationId === 'a1') throw new Error('offline');
+        });
+        automationsState.list = [
+            createScheduleDefinition({
+                id: 'a1',
+                name: 'First undisclosed',
+                targetType: 'existingSession',
+                detail: 'unloaded',
+            }),
+            createScheduleDefinition({
+                id: 'a2',
+                name: 'Second undisclosed',
+                targetType: 'existingSession',
+                detail: 'unloaded',
+            }),
+        ];
+        const { SessionAutomationsScreen } = await import('./SessionAutomationsScreen');
+
+        const screen = await renderScreen(React.createElement(SessionAutomationsScreen, { sessionId: 's1' }));
+        await act(async () => {
+            await new Promise<void>((resolve) => { setTimeout(resolve, 0); });
+        });
+
+        // The whole batch is still attempted: one rejection must not starve its peers.
+        expect(syncSpies.refreshAutomationDefinitionDetail.mock.calls.map((call) => call[0]).sort())
+            .toEqual(['a1', 'a2']);
+        expect(screen.findByTestId('session-automations-stale-refresh-retry')).not.toBeNull();
+
+        syncSpies.refreshAutomationDefinitionDetail.mockImplementation(async () => {});
+        await screen.pressByTestIdAsync('session-automations-stale-refresh-retry');
+        await act(async () => {
+            await new Promise<void>((resolve) => { setTimeout(resolve, 0); });
+        });
+
+        // Only the failed key is re-admitted; the succeeded one stays retired.
+        expect(syncSpies.refreshAutomationDefinitionDetail.mock.calls.slice(2).map((call) => call[0]))
+            .toEqual(['a1']);
+        expect(screen.findByTestId('session-automations-stale-refresh-retry')).toBeNull();
+
+        // The positive twin: a resolved read must not re-arm the effect forever.
+        await act(async () => {
+            await new Promise<void>((resolve) => { setTimeout(resolve, 0); });
+        });
+        expect(syncSpies.refreshAutomationDefinitionDetail.mock.calls.length).toBe(3);
     });
 
     it('answers the session association without an account-wide private detail fan-out', async () => {

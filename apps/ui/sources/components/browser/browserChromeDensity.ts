@@ -79,39 +79,39 @@ export type BrowserChromeDensityHandle = Readonly<{
     density: BrowserChromeDensity;
     /** Width the chrome last measured, or `null` before the first layout pass. */
     containerWidthPx: number | null;
+    /** Height the chrome last measured, or `null` before the first layout pass. */
+    containerHeightPx: number | null;
     /** Attach to the chrome's outermost view. */
     onLayout: (event: LayoutChangeEvent) => void;
     /** Convenience: `phone` or `pane`. */
     collapsed: boolean;
-    /** Fractional drawer ceiling in px for the current surface height. */
-    resolveDrawerMaxHeightPx: (surfaceHeightPx: number) => number;
 }>;
 
 export function useBrowserChromeDensity(): BrowserChromeDensityHandle {
     const window = useWindowDimensions();
-    const [containerWidthPx, setContainerWidthPx] = React.useState<number | null>(null);
+    const [size, setSize] = React.useState<Readonly<{ width: number; height: number }> | null>(null);
 
     const onLayout = React.useCallback((event: LayoutChangeEvent) => {
-        const next = Math.round(event.nativeEvent.layout.width);
-        setContainerWidthPx((current) => (current === next ? current : next));
+        const width = Math.round(event.nativeEvent.layout.width);
+        const height = Math.round(event.nativeEvent.layout.height);
+        setSize((current) => (
+            current && current.width === width && current.height === height
+                ? current
+                : { width, height }
+        ));
     }, []);
 
     const density = resolveBrowserChromeDensity({
-        containerWidthPx: containerWidthPx ?? 0,
+        containerWidthPx: size?.width ?? 0,
         windowWidthPx: window.width,
         windowHeightPx: window.height,
     });
 
-    const resolveDrawerMaxHeightPx = React.useCallback((surfaceHeightPx: number) => {
-        const surface = Number.isFinite(surfaceHeightPx) && surfaceHeightPx > 0 ? surfaceHeightPx : window.height;
-        return Math.round(surface * BROWSER_DRAWER_MAX_HEIGHT_FRACTION);
-    }, [window.height]);
-
     return React.useMemo(() => ({
         density,
-        containerWidthPx,
+        containerWidthPx: size?.width ?? null,
+        containerHeightPx: size?.height ?? null,
         onLayout,
         collapsed: density !== 'wide',
-        resolveDrawerMaxHeightPx,
-    }), [containerWidthPx, density, onLayout, resolveDrawerMaxHeightPx]);
+    }), [density, onLayout, size]);
 }

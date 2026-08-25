@@ -56,7 +56,7 @@ export async function createStorageModuleMock(options: CreateStorageModuleMockOp
         }
         : module;
     const storageOverride = (options.overrides as { storage?: unknown }).storage;
-    if (isStorageStoreLike(storageOverride) && typeof storageOverride !== 'function') {
+    if (isStorageStoreLike(storageOverride)) {
         const storage = adaptStorageStoreLike(storageOverride);
         return {
             ...moduleWithCurrentSecretBindings,

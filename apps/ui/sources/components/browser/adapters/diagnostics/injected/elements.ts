@@ -419,6 +419,11 @@ export const INJECTED_ELEMENTS_RUNTIME = `
     return queryAutomationElements(payload)[0];
   }
 
+  // Returns whether the event actually reached the page. The construction/dispatch failure used to
+  // be swallowed here while the calling verb still posted 'ok: true, matched: true' — an agent told
+  // a click succeeded when nothing was dispatched. The page's own reaction stays untrusted (a
+  // handler that throws is the page's business), but whether WE dispatched is a fact the caller
+  // needs, so this reports it the same way 'dispatchAutomationKeyEvent' already does.
   function dispatchAutomationEvent(node, type) {
     try {
       var event;
@@ -430,11 +435,11 @@ export const INJECTED_ELEMENTS_RUNTIME = `
         event = document.createEvent('Event');
         event.initEvent(type, true, true);
       }
-      if (event && node && typeof node.dispatchEvent === 'function') {
-        node.dispatchEvent(event);
-      }
+      if (!event || !node || typeof node.dispatchEvent !== 'function') return false;
+      node.dispatchEvent(event);
+      return true;
     } catch (_error) {
-      // Synthetic page events are best-effort and intentionally untrusted.
+      return false;
     }
   }
 
@@ -447,9 +452,11 @@ export const INJECTED_ELEMENTS_RUNTIME = `
       } else {
         node.textContent = append ? String(node.textContent || '') + nextText : nextText;
       }
-      dispatchAutomationEvent(node, 'input');
-      dispatchAutomationEvent(node, 'change');
-      return true;
+      // The assignment alone is not a successful 'type': a framework-controlled field only learns
+      // about it from these two events, so a refused dispatch is a failed verb, not a partial one.
+      var notified = dispatchAutomationEvent(node, 'input');
+      notified = dispatchAutomationEvent(node, 'change') && notified;
+      return notified;
     } catch (_error) {
       return false;
     }
@@ -483,9 +490,13 @@ export const INJECTED_ELEMENTS_RUNTIME = `
     }
     try {
       if (typeof node.focus === 'function') node.focus();
-      dispatchAutomationEvent(node, 'mousedown');
-      dispatchAutomationEvent(node, 'mouseup');
-      dispatchAutomationEvent(node, 'click');
+      var dispatched = dispatchAutomationEvent(node, 'mousedown');
+      dispatched = dispatchAutomationEvent(node, 'mouseup') && dispatched;
+      dispatched = dispatchAutomationEvent(node, 'click') && dispatched;
+      if (!dispatched) {
+        postAutomationResult(command, startedAt, false, {}, 'runtime_unavailable');
+        return;
+      }
       postAutomationResult(command, startedAt, true, {
         matched: true,
         element: summarizeAutomationElement(node)
@@ -576,8 +587,12 @@ export const INJECTED_ELEMENTS_RUNTIME = `
         return;
       }
       node.files = transfer.files;
-      dispatchAutomationEvent(node, 'input');
-      dispatchAutomationEvent(node, 'change');
+      var notified = dispatchAutomationEvent(node, 'input');
+      notified = dispatchAutomationEvent(node, 'change') && notified;
+      if (!notified) {
+        postAutomationResult(command, startedAt, false, {}, 'runtime_unavailable');
+        return;
+      }
       postAutomationResult(command, startedAt, true, {
         matched: true,
         fileCount: attached,
@@ -588,6 +603,7 @@ export const INJECTED_ELEMENTS_RUNTIME = `
     }
   }
 
+  // Same contract as 'dispatchAutomationEvent': the return value is whether we dispatched.
   function dispatchAutomationDragEvent(node, type, transfer) {
     try {
       var event;
@@ -597,11 +613,11 @@ export const INJECTED_ELEMENTS_RUNTIME = `
         event = new MouseEvent(type, { bubbles: true, cancelable: true, view: window });
         try { event.dataTransfer = transfer; } catch (_assignError) { /* read-only in old engines */ }
       }
-      if (event && node && typeof node.dispatchEvent === 'function') {
-        node.dispatchEvent(event);
-      }
+      if (!event || !node || typeof node.dispatchEvent !== 'function') return false;
+      node.dispatchEvent(event);
+      return true;
     } catch (_error) {
-      // Synthetic drag events are best-effort and intentionally untrusted.
+      return false;
     }
   }
 
@@ -619,11 +635,15 @@ export const INJECTED_ELEMENTS_RUNTIME = `
     }
     try {
       var transfer = new DataTransfer();
-      dispatchAutomationDragEvent(source, 'dragstart', transfer);
-      dispatchAutomationDragEvent(target, 'dragenter', transfer);
-      dispatchAutomationDragEvent(target, 'dragover', transfer);
-      dispatchAutomationDragEvent(target, 'drop', transfer);
-      dispatchAutomationDragEvent(source, 'dragend', transfer);
+      var dragged = dispatchAutomationDragEvent(source, 'dragstart', transfer);
+      dragged = dispatchAutomationDragEvent(target, 'dragenter', transfer) && dragged;
+      dragged = dispatchAutomationDragEvent(target, 'dragover', transfer) && dragged;
+      dragged = dispatchAutomationDragEvent(target, 'drop', transfer) && dragged;
+      dragged = dispatchAutomationDragEvent(source, 'dragend', transfer) && dragged;
+      if (!dragged) {
+        postAutomationResult(command, startedAt, false, {}, 'runtime_unavailable');
+        return;
+      }
       postAutomationResult(command, startedAt, true, {
         matched: true,
         source: summarizeAutomationElement(source),
@@ -632,6 +652,109 @@ export const INJECTED_ELEMENTS_RUNTIME = `
     } catch (_error) {
       postAutomationResult(command, startedAt, false, {}, 'runtime_unavailable');
     }
+  }
+
+  // 'hover', 'press' and 'focus' were advertised as available by the capability matrix while the
+  // command router had no case for them, so each one round-tripped to 'unsupported_action' at the
+  // engine. Found by the UB-1 matrix pass; these are the missing halves of that promise.
+  function handleAutomationHover(command, startedAt) {
+    var node = firstAutomationElement(command.payload || {});
+    if (!node) {
+      postAutomationResult(command, startedAt, false, {}, 'selector_not_found');
+      return;
+    }
+    try {
+      var hovered = dispatchAutomationEvent(node, 'mouseover');
+      hovered = dispatchAutomationEvent(node, 'mousemove') && hovered;
+      if (!hovered) {
+        postAutomationResult(command, startedAt, false, {}, 'runtime_unavailable');
+        return;
+      }
+      postAutomationResult(command, startedAt, true, {
+        matched: true,
+        element: summarizeAutomationElement(node)
+      });
+    } catch (_error) {
+      postAutomationResult(command, startedAt, false, {}, 'runtime_unavailable');
+    }
+  }
+
+  function handleAutomationFocus(command, startedAt) {
+    var node = firstAutomationElement(command.payload || {});
+    if (!node) {
+      postAutomationResult(command, startedAt, false, {}, 'selector_not_found');
+      return;
+    }
+    try {
+      if (typeof node.focus !== 'function') {
+        postAutomationResult(command, startedAt, false, {}, 'unsupported_action');
+        return;
+      }
+      node.focus();
+      // Deliberately NOT fail-closed on this one, unlike click/hover/drag/type/upload above:
+      // 'node.focus()' is the whole effect and the engine fires its own focus event as a result,
+      // so the synthetic one is a belt-and-braces duplicate. Failing the verb because a redundant
+      // event was refused would report a false negative for a focus that did happen.
+      dispatchAutomationEvent(node, 'focus');
+      postAutomationResult(command, startedAt, true, {
+        matched: true,
+        element: summarizeAutomationElement(node)
+      });
+    } catch (_error) {
+      postAutomationResult(command, startedAt, false, {}, 'runtime_unavailable');
+    }
+  }
+
+  function dispatchAutomationKeyEvent(node, type, payload) {
+    try {
+      if (typeof KeyboardEvent !== 'function') return false;
+      var event = new KeyboardEvent(type, {
+        bubbles: true,
+        cancelable: true,
+        key: String(payload.key || ''),
+        code: String(payload.code || payload.key || ''),
+        altKey: payload.altKey === true,
+        ctrlKey: payload.ctrlKey === true,
+        metaKey: payload.metaKey === true,
+        shiftKey: payload.shiftKey === true
+      });
+      var target = node || document.activeElement || document.body;
+      if (!target || typeof target.dispatchEvent !== 'function') return false;
+      target.dispatchEvent(event);
+      return true;
+    } catch (_error) {
+      return false;
+    }
+  }
+
+  function handleAutomationPress(command, startedAt) {
+    var payload = command.payload || {};
+    var key = String(payload.key || '');
+    if (!key) {
+      postAutomationResult(command, startedAt, false, {}, 'unsupported_action');
+      return;
+    }
+    // A locator is optional: with none, the key goes to whatever currently holds focus, which is
+    // how a caller follows 'type' with Enter.
+    var node = payload.locator || payload.selector ? firstAutomationElement(payload) : null;
+    if ((payload.locator || payload.selector) && !node) {
+      postAutomationResult(command, startedAt, false, {}, 'selector_not_found');
+      return;
+    }
+    if (node && typeof node.focus === 'function') {
+      try { node.focus(); } catch (_error) { /* page may refuse focus */ }
+    }
+    var down = dispatchAutomationKeyEvent(node, 'keydown', payload);
+    dispatchAutomationKeyEvent(node, 'keyup', payload);
+    if (!down) {
+      postAutomationResult(command, startedAt, false, {}, 'runtime_unavailable');
+      return;
+    }
+    postAutomationResult(command, startedAt, true, {
+      matched: true,
+      keyLength: key.length,
+      target: node ? 'element' : 'activeElement'
+    });
   }
 
   function handleAutomationScroll(command, startedAt) {
@@ -724,6 +847,15 @@ export const INJECTED_ELEMENTS_RUNTIME = `
       case 'type':
       case 'setValue':
         handleAutomationType(message, startedAt);
+        break;
+      case 'hover':
+        handleAutomationHover(message, startedAt);
+        break;
+      case 'focus':
+        handleAutomationFocus(message, startedAt);
+        break;
+      case 'press':
+        handleAutomationPress(message, startedAt);
         break;
       case 'upload':
         handleAutomationUpload(message, startedAt);

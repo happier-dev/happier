@@ -5,6 +5,9 @@ import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
 
 const routerPush = vi.hoisted(() => vi.fn());
+const storageFixtures = vi.hoisted(() => ({
+    sessionMetadata: null as Record<string, unknown> | null,
+}));
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -23,6 +26,7 @@ vi.mock('@/sync/domains/state/storage', async () => {
     return createStorageModuleStub({
         useMachine: () => null,
         useSession: () => null,
+        useSessionListPreferredMetadata: () => storageFixtures.sessionMetadata,
     });
 });
 vi.mock('expo-router', async () => {
@@ -32,9 +36,41 @@ vi.mock('expo-router', async () => {
 
 afterEach(() => {
     routerPush.mockReset();
+    storageFixtures.sessionMetadata = null;
 });
 
 describe('ActionOperationDetailModal', () => {
+    it('shows the preferred source session title when the full session is not loaded', async () => {
+        storageFixtures.sessionMetadata = {
+            path: '/workspace/dev',
+            summary: { text: 'Stabilize CI and Nightly Releases', updatedAt: 123 },
+        };
+        actionOperationStore.mergeSnapshots([{
+            version: 1,
+            operationId: 'fork-operation',
+            revision: 2,
+            actionId: 'session.fork',
+            state: 'succeeded',
+            scope: { accountId: 'account-1', machineId: 'machine-1', sessionId: 'session-1' },
+            title: 'Fork session',
+            createdAt: 1_000,
+            settledAt: 2_000,
+            cancellation: 'unsupported',
+        }]);
+
+        const { ActionOperationDetailModal } = await import('./ActionOperationDetailModal');
+        const screen = await renderScreen(
+            <ActionOperationDetailModal
+                operationId="fork-operation"
+                onClose={vi.fn()}
+                setChrome={vi.fn()}
+            />,
+        );
+
+        expect(screen.getTextContent()).toContain('Stabilize CI and Nightly Releases');
+        expect(screen.getTextContent()).not.toContain('session-1');
+    });
+
     it('renders the successful handoff cleanup warning and semantic phase', async () => {
         actionOperationStore.mergeSnapshots([{
             version: 1,

@@ -16,7 +16,9 @@ const stylesheet = StyleSheet.create((theme) => ({
         flexDirection: 'row',
         alignItems: 'center',
         gap: 6,
-        height: 34,
+        // `minHeight`, not `height`. Q2 measured that the app's `uiFontScale` GROWS the line box —
+        // a fixed-height container is what actually clips scaled text, not a missing `lineHeight`.
+        minHeight: 34,
         maxWidth: BROWSER_CHROME_WIDTH.chip,
         borderRadius: 8,
         paddingHorizontal: 8,
@@ -111,8 +113,9 @@ function originKindGlyph(view: BrowserControlViewState | null): IconName {
  * It used to be two chips and a title — a security indicator, an origin-kind chip and a page-title
  * chip, three bordered grey pills in a row saying overlapping things while the workspace tab strip
  * already owned the title. This is their single owner. Secure origins get a closed lock, loopback
- * dev servers a home glyph, and plaintext origins an OPEN lock in the warning tone — a different
- * glyph, so the warning survives a user who cannot separate the two hues.
+ * dev servers a home glyph, and plaintext origins an OPEN lock inside a warning-tinted fill. The
+ * distinction is carried by the GLYPH and the FILL, never by the ink: the theme's amber measures
+ * 2.2:1 as text, and a hue-only difference fails WCAG 1.4.1 anyway.
  *
  * Pure presentation over the canonical `selectBrowserSecurityOriginModel` selector; no scheme/host
  * parsing lives here.

@@ -21,6 +21,7 @@ import {
     isPluginEventAutomationDefinition,
     type AutomationDefinition,
 } from '@/sync/domains/automations/automationTypes';
+import { arePluginMachineMaterializationRefsEqual } from '@/components/automations/pluginEventAutomationCurrentness';
 
 import {
     readAutomationHistoryGapRecoveryEligibleEvent,
@@ -40,9 +41,7 @@ function resolveHistoryGapRecoveryExecutionOrigin(params: Readonly<{
     if (admission.kind !== 'available') return null;
     const matches = admission.materializations.filter((materialization) => (
         materialization.pluginId === automation.trigger.eventRef.pluginId
-        && materialization.pluginId === status.reporterMaterializationRef.pluginId
-        && materialization.machineId === status.reporterMaterializationRef.machineId
-        && materialization.materializationId === status.reporterMaterializationRef.materializationId
+        && arePluginMachineMaterializationRefsEqual(materialization, status.reporterMaterializationRef)
     ));
     if (matches.length !== 1) return null;
     return resolveFreshPluginMachineExecutionOrigin({

@@ -47,15 +47,41 @@ export type PluginEventAutomationWebhookEndpoint = Readonly<{
 
 /**
  * `available` states only that the Account endpoint and its route exist and
- * are enabled. It is deliberately not called `ready`: the endpoint owner has
- * no provider-confirmation fact, so `endpoint.readiness` remains the single
- * authority on whether the provider still has to be configured with the
- * disclosed URL and secret. Every consumer reads that field rather than
- * treating a returned endpoint as a working delivery path.
+ * are enabled. It is deliberately not called `ready`: `endpoint.readiness`
+ * remains the single authority on whether the provider still has to be
+ * configured with the disclosed URL and secret. The server owns that decision
+ * in `projectPluginWebhookEndpointReadinessV1`, which reports `ready` only
+ * after its durable `providerConfirmedAt` fact — written when the binding
+ * first admits a signature-verified provider delivery — exists. Every consumer
+ * reads that field rather than treating a returned endpoint as a working
+ * delivery path.
  */
 export type PluginEventAutomationWebhookEndpointResult =
     | Readonly<{ kind: 'available'; endpoint: PluginEventAutomationWebhookEndpoint }>
     | Readonly<{ kind: 'unavailable' }>;
+
+/**
+ * Folds a reread of the same endpoint into the value the composer is already
+ * showing.
+ *
+ * A read deliberately never re-discloses the one-time generated secret, so the
+ * refreshed record carries `null` there. Replacing the shown endpoint with it
+ * would destroy the only copy of a credential the server will not repeat,
+ * which is why this owner — the one that defines the value — merges only the
+ * facts a reread can actually re-establish. A reread of a different endpoint
+ * belongs to a setup this value no longer represents and is ignored.
+ */
+export function applyRefreshedPluginEventAutomationWebhookEndpoint(
+    current: PluginEventAutomationWebhookEndpoint | null,
+    refreshed: PluginEventAutomationWebhookEndpoint,
+): PluginEventAutomationWebhookEndpoint | null {
+    if (!current || current.webhookEndpointId !== refreshed.webhookEndpointId) return current;
+    return Object.freeze({
+        ...current,
+        publicUrl: refreshed.publicUrl,
+        readiness: refreshed.readiness,
+    });
+}
 
 /**
  * The persisted endpoint facts an Event editor needs to rebuild a durable-push

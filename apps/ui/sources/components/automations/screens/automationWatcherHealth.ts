@@ -73,3 +73,20 @@ export function formatAutomationWatcherImpediment(
             return t('automations.detail.event.watcherMachineOffline');
     }
 }
+
+/**
+ * Whether the provider-authored source summaries may be presented as they were
+ * reported.
+ *
+ * A source/catalog summary describes the last report a watcher made, never
+ * whether that watcher is still running. When host-derived availability says
+ * the watcher cannot observe, its retained `observing`/`current` rows describe
+ * a reporter that is not observing, so presenting them verbatim would claim a
+ * stopped source is healthy. The impediment is already the truthful reason, so
+ * this owner answers only the presentation question and invents no state.
+ */
+export function canPresentAutomationSourceSummary(
+    health: AutomationWatcherHealthV1,
+): boolean {
+    return health.kind === 'observing';
+}

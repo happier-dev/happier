@@ -494,7 +494,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     headingBlock: {
         // No vertical gap between the two title lines — matches the brand
-        // tagline's `Start anywhere. / Continue everywhere.` rhythm, where
+        // tagline's `Start coding anywhere. / Continue everywhere.` rhythm, where
         // line-height == font-size and the lines sit flush against each other.
     },
     title: {

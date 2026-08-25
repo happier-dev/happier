@@ -82,6 +82,28 @@ describe('UI testkit mock factories', () => {
         expect(typeof appState.addEventListener).toBe('function');
     });
 
+    it('renders Pressable render-prop children with the default unpressed state', async () => {
+        const { createReactNativeWebMock } = await import('./reactNative');
+        const moduleMock = await createReactNativeWebMock();
+        const renderChild = vi.fn((state: { pressed: boolean }) => (
+            React.createElement('Text', { testID: 'pressable-child' }, state.pressed ? 'pressed' : 'idle')
+        ));
+
+        let screen!: ReturnType<typeof renderer.create>;
+        await act(async () => {
+            screen = renderer.create(
+                React.createElement(moduleMock.Pressable, { testID: 'pressable' }, renderChild),
+            );
+        });
+
+        expect(renderChild).toHaveBeenCalledExactlyOnceWith({ pressed: false });
+        expect(screen.root.findByProps({ testID: 'pressable-child' }).children).toEqual(['idle']);
+
+        await act(async () => {
+            screen.unmount();
+        });
+    });
+
     it('creates a removable React Native AppState change emitter', async () => {
         const { createReactNativeAppStateEmitter } = await import('./reactNative');
         const boundary = createReactNativeAppStateEmitter();
@@ -201,10 +223,10 @@ describe('UI testkit mock factories', () => {
         const moduleMock = createTextModuleMock();
 
         expect(moduleMock.t('settings.title')).toBe('settings.title');
-        expect(moduleMock.t('settings.title', { serverId: 's1' })).toEqual({
-            key: 'settings.title',
-            params: { serverId: 's1' },
-        });
+        // The real `t` always returns a string; a parameterized mock that returned
+        // `{ key, params }` produced a shape production can never emit and crashed
+        // any component rendering it as a React child.
+        expect(moduleMock.t('settings.title', { serverId: 's1' })).toBe('settings.title(serverId=s1)');
         expect(moduleMock.tLoose('settings.title')).toBe('settings.title');
         expect(moduleMock.getPreferredLanguage()).toBe('en');
     });
@@ -537,6 +559,63 @@ describe('UI testkit mock factories', () => {
 
         expect(mock.useSetting('agentInputEnterToSend')).toBe(false);
         expect(mock.useAllMachines()).toEqual(['machine-a']);
+    });
+
+    it('completes a callable storage store fixture with the store surface production readers subscribe to', async () => {
+        const { createStorageModuleMock } = await import('./storage');
+        const state = { marker: 'callable-fixture' };
+        // The real `storage` export is a zustand bound store: callable AND carrying
+        // getState/subscribe/... Fixtures routinely supply only the callable + getState,
+        // which used to leave `storage.subscribe` undefined and crash every
+        // `useSyncExternalStore(storage.subscribe, …)` reader at passive-effect mount.
+        const fixture = Object.assign(
+            (selector?: (value: typeof state) => unknown) => (
+                typeof selector === 'function' ? selector(state) : state
+            ),
+            { getState: () => state },
+        );
+
+        const mock = await createStorageModuleMock({
+            importOriginal: async () =>
+                ({ storage: { getState: () => ({ marker: 'actual-storage' }) } }) as any,
+            overrides: { storage: fixture as any },
+        });
+
+        // The caller's own selector still reads the fixture state.
+        expect((mock.storage as any)((value: typeof state) => value.marker)).toBe('callable-fixture');
+        expect(mock.storage.getState()).toBe(state as any);
+        expect(mock.getStorage().getState()).toBe(state as any);
+        expect(mock.storage.subscribe).toBeTypeOf('function');
+        expect(mock.storage.subscribe(() => {})).toBeTypeOf('function');
+        expect(mock.storage.getInitialState()).toBe(state as any);
+    });
+
+    it('keeps a callable storage fixture own subscribe instead of substituting an inert one', async () => {
+        const { createStorageModuleMock } = await import('./storage');
+        const state = { marker: 'reactive-fixture' };
+        const listeners = new Set<() => void>();
+        const subscribe = (listener: () => void) => {
+            listeners.add(listener);
+            return () => { listeners.delete(listener); };
+        };
+        const fixture = Object.assign(
+            (selector?: (value: typeof state) => unknown) => (
+                typeof selector === 'function' ? selector(state) : state
+            ),
+            { getState: () => state, subscribe },
+        );
+
+        const mock = await createStorageModuleMock({
+            importOriginal: async () =>
+                ({ storage: { getState: () => ({ marker: 'actual-storage' }) } }) as any,
+            overrides: { storage: fixture as any },
+        });
+
+        expect(mock.storage.subscribe).toBe(subscribe as any);
+        const unsubscribe = mock.storage.subscribe(() => {});
+        expect(listeners.size).toBe(1);
+        unsubscribe();
+        expect(listeners.size).toBe(0);
     });
 
     it('preserves explicit getStorage overrides in storage module mocks', async () => {

@@ -392,10 +392,6 @@ const BROWSER_CLIENT_ACTION_ORIGIN_PROJECTION = Object.freeze({
     executionOrigin: BROWSER_CLIENT_ACTION_ORIGIN,
 });
 const BROWSER_CLIENT_ACTION_AUTHORIZATION = Object.freeze({
-    packageTrust: Object.freeze({
-        packageIdentity: `${BROWSER_CLIENT_ACTION_PLUGIN_ID}/actions/${BROWSER_CLIENT_ACTION_ID}`,
-        reviewedPackageIdentity: `${BROWSER_CLIENT_ACTION_PLUGIN_ID}/actions/${BROWSER_CLIENT_ACTION_ID}`,
-    }),
     generation: Object.freeze({
         targetGeneration: String(BROWSER_CLIENT_ACTION_GENERATION),
         desiredGeneration: String(BROWSER_CLIENT_ACTION_GENERATION),

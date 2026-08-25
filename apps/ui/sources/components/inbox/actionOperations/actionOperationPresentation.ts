@@ -57,6 +57,13 @@ export function readActionOperationDestinationSessionId(snapshot: ActionOperatio
     return null;
 }
 
+export function readActionOperationDestinationServerId(snapshot: ActionOperationSnapshot): string | null {
+    if (snapshot.state !== 'succeeded' || snapshot.actionId !== 'session.spawn_new') return null;
+    if (!snapshot.result || typeof snapshot.result !== 'object' || Array.isArray(snapshot.result)) return null;
+    const executionTarget = (snapshot.result as Record<string, unknown>).executionTarget;
+    return readStringField(executionTarget, 'serverId');
+}
+
 export function readActionOperationPluginIdentity(actionId: string): string | null {
     if (actionId.startsWith('session.')) return null;
     const separator = actionId.indexOf('/');

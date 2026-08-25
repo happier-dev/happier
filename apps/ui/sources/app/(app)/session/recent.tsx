@@ -17,6 +17,7 @@ import { useIsFocused } from '@react-navigation/native';
 import { useSessionListPaneSourceScopeKey } from '@/components/sessions/shell/sessionListPaneRetention';
 import { useSessionNavigationCursorPublisher } from '@/sync/domains/session/navigation/useSessionNavigationCursorPublisher';
 import type { SessionListLikeItem } from '@/sync/domains/session/navigation/sessionNavigationOrder';
+import { isUserFacingSession } from '@/sync/domains/session/listing/isUserFacingSession';
 
 interface SessionHistoryItem {
     type: 'session' | 'date-header';
@@ -180,7 +181,7 @@ export default function SessionHistory() {
     const sessionNavigationSourceScopeKey = useSessionListPaneSourceScopeKey();
 
     const groupedItems = React.useMemo(() => {
-        return groupSessionsByDate(allSessions);
+        return groupSessionsByDate(allSessions.filter(isUserFacingSession));
     }, [allSessions]);
 
     // These rows carry the session record rather than a list row, so the owning server is

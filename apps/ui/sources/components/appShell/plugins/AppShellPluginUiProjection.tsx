@@ -83,6 +83,11 @@ import {
 import { resolveVoiceExecutionMachineIdFromState } from '@/voice/settings/executionMachine';
 
 import { PluginAppPageLaunchInputScope } from './pluginAppPageNavigation';
+import {
+    createPluginLocalizedTextResolver,
+    type PluginLocalizedTextResolver,
+} from '@/sync/domains/plugins/ui/i18n';
+import { getPreferredLanguage } from '@/text/i18n';
 
 const APP_SHELL_PLUGIN_PROJECTION_TIMEOUT_MS = 5_000;
 const CONNECTED_ACCOUNT_PROJECTION_REFRESH_INTERVAL_MS = 30_000;
@@ -704,10 +709,12 @@ export function AppShellPluginUiProjectionProvider(props: Readonly<{
  */
 function AppShellPluginSurfaceNavigationOwners(): null {
     const projection = useAppShellPluginUiProjection();
+    const localize = useProjectedPluginLocalizedTextResolver();
     const binding = usePluginSurfaceDestinationNavigationBinding();
     const pages = React.useMemo(() => resolvePluginAppPages({
         placements: selectPluginAppPagePlacements(projection.pluginUiProjection),
-    }), [projection.pluginUiProjection]);
+        localize,
+    }), [localize, projection.pluginUiProjection]);
     const openPage = usePluginAppPageDestinationHandler({ pages });
     const openSettingsPage = usePluginSettingsPageDestinationHandler({
         projection: projection.pluginUiProjection,
@@ -833,6 +840,16 @@ export function useAppShellPluginUiProjection(): AppShellPluginUiProjectionValue
 export function useProjectedConnectedServicesRegistry(): ConnectedServiceRegistrySnapshot {
     useAppShellPluginUiProjection().connectedAccountProjectionRevision;
     return getConnectedServiceRegistrySnapshot();
+}
+
+/** Binds plugin-authored text to the exact current app-scope projection and locale. */
+export function useProjectedPluginLocalizedTextResolver(): PluginLocalizedTextResolver {
+    const projection = useAppShellPluginUiProjection().pluginUiProjection;
+    const locale = getPreferredLanguage();
+    return React.useMemo(
+        () => createPluginLocalizedTextResolver({ projection, locale }),
+        [locale, projection],
+    );
 }
 
 /**

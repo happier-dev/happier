@@ -34,6 +34,7 @@ import { resolveExistingSessionAutomationAvailability } from '@/sync/domains/aut
 import { isAutomationSettingsDraftValid } from '@/sync/domains/automations/isAutomationSettingsDraftValid';
 import { readMachineControlTargetForSession } from '@/sync/ops/sessionMachineTarget';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { readProviderSettingsFromAccountSettingsV1 } from '@happier-dev/protocol';
 import { readUiAiLaunchProfiles } from '@/sync/domains/profiles/aiLaunchProfileCollection';
 import { isAutomationTemplateEncryptionMaterialUnavailableError } from '@/sync/domains/automations/automationTemplateAvailability';
@@ -89,8 +90,16 @@ export default React.memo(function AutomationEditScreen() {
         () => readPluginEventAutomationEditSeed(definition),
         [definition],
     );
-    const isLoadingAutomationDefinition = !definition || definition.detail.kind === 'unloaded';
     const [detailLoadError, setDetailLoadError] = React.useState(false);
+    // A failed direct read is a terminal state of its own: keeping it inside
+    // "loading" is what left this route spinning forever, because the effect
+    // that issues the read is keyed on the very condition the failure cannot
+    // clear.
+    const isAutomationDefinitionDetailMissing = !definition || definition.detail.kind === 'unloaded';
+    const isLoadingAutomationDefinition = isAutomationDefinitionDetailMissing && !detailLoadError;
+    const retryAutomationDefinitionDetail = React.useCallback(() => {
+        setDetailLoadError(false);
+    }, []);
     const settings = useSettings();
     const launchProfileContext = React.useMemo(() => ({
         profiles: readUiAiLaunchProfiles(settings.profiles),
@@ -353,10 +362,23 @@ export default React.memo(function AutomationEditScreen() {
                                 <ActivitySpinner size="small" color={theme.colors.text.secondary} />
                             </View>
                         ) : null}
-                        {!isLoadingAutomationDefinition && !automation ? (
+                        {detailLoadError && !automation ? (
+                            <SurfaceStateCard
+                                testID="automation-edit-detail-error"
+                                kind="error"
+                                title={t('common.error')}
+                                reason={t('automations.edit.loadTemplateFailed')}
+                                action={{
+                                    label: t('common.retry'),
+                                    onPress: retryAutomationDefinitionDetail,
+                                }}
+                                accessibilitySemantics="alert"
+                            />
+                        ) : null}
+                        {!isLoadingAutomationDefinition && !detailLoadError && !automation ? (
                             <View style={stylesMessage.loadingContainer}>
                                 <Text style={stylesMessage.unavailable}>
-                                    {detailLoadError ? t('automations.edit.loadTemplateFailed') : t('common.unavailable')}
+                                    {t('common.unavailable')}
                                 </Text>
                             </View>
                         ) : null}

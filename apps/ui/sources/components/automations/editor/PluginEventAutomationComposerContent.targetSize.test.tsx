@@ -31,7 +31,10 @@ vi.mock('@/components/plugins/shared/InstalledPluginBrandMark', () => ({
 vi.mock('@/components/plugins/shared/installedPluginBrandPresentation', () => ({
     useInstalledPluginBrandPresentation: () => null,
 }));
-vi.mock('@/components/ui/icons/Icon', () => ({ Icon: () => null }));
+vi.mock('@/components/ui/icons/Icon', () => ({
+    Icon: () => null,
+    ICON_SIZE: { xs: 14, sm: 16, md: 20, lg: 24, xl: 29 },
+}));
 vi.mock('@/components/ui/text/Text', () => createPassThroughModule(['Text', 'TextInput']));
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: () => null,
@@ -158,6 +161,8 @@ describe('PluginEventAutomationComposerContent interactive targets', () => {
             observationTransport: 'checkpointedPull',
             setObservationTransport: vi.fn(),
             webhookEndpoint: null,
+            refreshWebhookEndpoint: null,
+            webhookEndpointRefreshing: false,
             configureSource: vi.fn(),
             watcherCandidates,
             selectedWatcherOrigin: {

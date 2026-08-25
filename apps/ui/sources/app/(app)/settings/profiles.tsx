@@ -53,6 +53,7 @@ import {
     removeAiLaunchProfile,
     replaceAiLaunchProfile,
 } from '@/sync/domains/profiles/aiLaunchProfileCollection';
+import { useApplyProfileSave } from '@/sync/store/settingsWriters';
 
 interface ProfileManagerProps {
     onProfileSelect?: (profile: AIBackendProfile | null) => void;
@@ -88,6 +89,7 @@ const ProfileManager = React.memo(function ProfileManager({ onProfileSelect, sel
     const saveRef = React.useRef<(() => boolean) | null>(null);
     const [secrets, setSecrets] = useSavedSecretsMutable();
     const [secretBindingsByProfileId, setSecretBindingsByProfileId] = useCurrentSecretBindingsByProfileIdMutable();
+    const applyProfileSave = useApplyProfileSave();
     const administrationTargetSelection = useMachineAdministrationTargetSelection(
         MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.agents,
     );
@@ -297,7 +299,7 @@ const ProfileManager = React.memo(function ProfileManager({ onProfileSelect, sel
         return parts.length > 0 ? parts.join(' · ') : null;
     }, [launchProfiles, profileEnabledById, providerSettingsV1]);
 
-    function handleSaveProfile(profile: AiLaunchProfile): boolean {
+    function handleSaveProfile(profile: AiLaunchProfile, secretBindings?: Readonly<Record<string, string>>): boolean {
         // Profile validation - ensure name is not empty
         if (!profile.name || profile.name.trim() === '') {
             Modal.alert(t('common.error'), t('profiles.nameRequired'));
@@ -313,21 +315,24 @@ const ProfileManager = React.memo(function ProfileManager({ onProfileSelect, sel
             })
             .filter((name): name is string => Boolean(name));
 
+        let profileToSave = profile;
+        let nextRawProfiles: readonly unknown[];
+
         // For built-in profiles, create a new custom profile instead of modifying the built-in
         if (isBuiltIn) {
-            const newProfile = convertBuiltInProfileToCustom(profile as AIBackendProfile);
-            const hasBuiltInNameConflict = builtInNames.includes(newProfile.name.trim());
+            profileToSave = convertBuiltInProfileToCustom(profile as AIBackendProfile);
+            const hasBuiltInNameConflict = builtInNames.includes(profileToSave.name.trim());
 
             // Check for duplicate names (excluding the new profile)
             const isDuplicate = profiles.some((p: AIBackendProfile) =>
-                p.name.trim() === newProfile.name.trim()
+                p.name.trim() === profileToSave.name.trim()
             );
             if (isDuplicate || hasBuiltInNameConflict) {
                 Modal.alert(t('common.error'), t('profiles.duplicateName'));
                 return false;
             }
 
-            writeRawProfiles(appendAiLaunchProfile(rawProfiles, newProfile));
+            nextRawProfiles = appendAiLaunchProfile(rawProfiles, profileToSave);
         } else {
             // Handle custom profile updates
             // Check for duplicate names (excluding current profile if editing)
@@ -342,10 +347,17 @@ const ProfileManager = React.memo(function ProfileManager({ onProfileSelect, sel
 
             const existing = launchProfiles.some((entry) => entry.id === profile.id);
             const updated = { ...profile, updatedAt: Date.now() } as AiLaunchProfile;
-            writeRawProfiles(existing
+            profileToSave = updated;
+            nextRawProfiles = existing
                 ? replaceAiLaunchProfile(rawProfiles, profile.id, updated)
-                : appendAiLaunchProfile(rawProfiles, updated));
+                : appendAiLaunchProfile(rawProfiles, updated);
         }
+
+        applyProfileSave({
+            profiles: nextRawProfiles as typeof rawProfiles,
+            profileId: profileToSave.id,
+            ...(!isLaunchProfileV2(profileToSave) && secretBindings !== undefined ? { secretBindings } : {}),
+        });
 
         closeEditor();
         return true;

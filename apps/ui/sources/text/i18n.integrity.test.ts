@@ -13,6 +13,9 @@ import { zhHans } from './translations/zh-Hans';
 import { zhHant } from './translations/zh-Hant';
 import { ja } from './translations/ja';
 
+import { SUPPORTED_LANGUAGE_CODES } from './_all';
+import { BUNDLED_PLUGIN_TRANSLATIONS } from './bundledPluginTranslations.generated';
+
 import { auditTranslations, findMissingKeys, flattenTranslationLeaves } from '../../tools/i18n/translationAudit';
 
 const IGNORED_UNTRANSLATED_KEYS = new Set([
@@ -137,7 +140,6 @@ const IGNORED_UNTRANSLATED_KEYS_BY_LOCALE: Readonly<Record<string, ReadonlySet<s
         'deps.installable.gh.title',
         'devVoiceQa.actionsTitle',
         'devVoiceQa.configurationTitle',
-        'devVoiceQa.promptLabel',
         'diagnosis.sections.actions',
         'directSessions.browseAgents',
         'directSessions.browseMachines',
@@ -328,26 +330,9 @@ const IGNORED_UNTRANSLATED_KEYS_BY_LOCALE: Readonly<Record<string, ReadonlySet<s
         'settingsSession.transcript.motionPickerTitle',
         'settingsSession.transcript.title',
         'settingsSession.usageLimitRecovery.resumePromptStandardTitle',
-        'settingsVoice.byo.realtime.modelPicker.detailAuto',
-        'settingsVoice.byo.realtime.modelPicker.options.autoTitle',
-        'settingsVoice.history.roleAssistant',
-        'settingsVoice.local.conversation.streaming.title',
-        'settingsVoice.local.daemonInference.execution.options.auto',
-        'settingsVoice.local.daemonInference.execution.options.daemon',
-        'settingsVoice.local.googleCloudTts.format.title',
-        'settingsVoice.local.googleCloudTts.provider.detail',
-        'settingsVoice.local.googleCloudTts.provider.title',
-        'settingsVoice.local.googleGeminiStt.language.autoTitle',
         'settingsVoice.local.googleGeminiStt.provider.detail',
         'settingsVoice.local.googleGeminiStt.provider.title',
         'settingsVoice.local.localNeuralStt.provider.detail',
-        'settingsVoice.local.mediatorBackendDaemon',
-        'settingsVoice.local.openaiCompatStt.provider.detail',
-        'settingsVoice.local.openaiCompatTts.provider.detail',
-        'settingsVoice.ui.scopeSession',
-        'settingsVoice.ui.surfaceLocation.autoTitle',
-        'settingsVoice.ui.surfaceLocation.sessionTitle',
-        'settingsVoice.ui.updates.otherSessionsSnippetsMode.autoTitle',
         'setupOnboarding.handoffPlatformLinuxLabel',
         'setupOnboarding.handoffPlatformMacosLabel',
         'setupOnboarding.handoffPlatformPosixLabel',
@@ -391,8 +376,6 @@ const IGNORED_UNTRANSLATED_KEYS_BY_LOCALE: Readonly<Record<string, ReadonlySet<s
         'usage.summary.export.session',
         'usage.tokens',
         'voiceActivity.format.action',
-        'voiceActivity.format.assistant',
-        'voiceActivity.format.assistantStreaming',
         'welcome.welcomeFooterDocsAction',
         'windowsRemoteSessionLaunchMode.console',
         'windowsRemoteSessionLaunchMode.shortConsole',
@@ -965,12 +948,18 @@ describe('i18n integrity', () => {
             { code: 'zh-Hant', root: zhHant },
             { code: 'ja', root: ja },
         ];
+        // The whole Voice namespace, not just its settings screen. This assertion used to
+        // read only `settingsVoice.*` while claiming Voice was complete, so 216 absent
+        // leaves on the LIVE surface — `voiceAssistant` status and every Dictation error,
+        // `voiceSurface.reconnect`, `voiceActivity` badges — stayed invisible to it and
+        // rendered in English during a spoken conversation in ten of eleven locales.
+        const voiceNamespaces = ['settingsVoice', 'voiceAssistant', 'voiceSurface', 'voiceActivity', 'devVoiceQa'];
         const missing = locales.flatMap((locale) => findMissingKeys(en, locale))
-            .filter(({ key }) => key === 'settingsVoice' || key.startsWith('settingsVoice.'));
+            .filter(({ key }) => voiceNamespaces.some((ns) => key === ns || key.startsWith(`${ns}.`)));
 
         // Voice used to carry a separately tracked backlog of 2,060 English-only leaves.
-        // It is closed: every settingsVoice leaf now exists in all ten locales, and a
-        // missing key here would silently render that Voice screen in English again.
+        // It is closed: every Voice leaf now exists in all eleven locales, and a missing
+        // key here would silently render that Voice surface in English again.
         expect(missing).toEqual([]);
     });
 
@@ -1103,10 +1092,14 @@ describe('i18n integrity', () => {
 
         const failures = locales.flatMap(({ code, root, idToken, negativeToken }) => {
             const realtimeProviders = root.settingsVoice?.realtimeProviders;
+            // Only host-owned conversation providers belong here. Google's speech
+            // disclosures moved to the Google plugin contribution when they were split
+            // into role-specific STT and TTS copy, and the plugin bundle — not the host
+            // tree — is their single owner. They are asserted in the plugin-owned test
+            // below; naming them here would demand a second host copy of the same fact.
             const disclosures = [
                 realtimeProviders?.openai?.privacyDisclosure,
                 realtimeProviders?.xai?.privacyDisclosure,
-                realtimeProviders?.google?.privacyDisclosure,
                 realtimeProviders?.codex?.privacyDisclosure,
             ];
             const resumption = realtimeProviders?.resumption;
@@ -1150,6 +1143,75 @@ describe('i18n integrity', () => {
         });
 
         expect(failures).toEqual([]);
+    });
+
+    /**
+     * Provider processing disclosures for plugin-contributed Voice providers are owned by the
+     * plugin contribution, not by a host locale file. `resolveRawTranslationValue` consults the
+     * host tree (active locale, then English) before the plugin bundle, so a host copy of one of
+     * these keys would shadow every plugin translation and pin the disclosure to English. The
+     * assertions below therefore read the shipped bundle a user actually resolves and also refuse
+     * a competing host copy.
+     *
+     * Role accuracy is the point of the split: an STT-only selection sends microphone audio and
+     * no reply text, a TTS-only selection sends reply text and no microphone audio. One combined
+     * "audio and text" string told the user the wrong thing in both directions, and the shape that
+     * made it possible was a single provider-level key shared by both roles. Requiring the two
+     * values to differ in every locale is what a re-merged disclosure cannot satisfy.
+     */
+    it('keeps plugin-owned voice processing disclosures complete and role-distinct in every locale', () => {
+        const rolePairs = [
+            {
+                stt: 'settingsVoice.realtimeProviders.google.sttPrivacyDisclosure',
+                tts: 'settingsVoice.realtimeProviders.google.ttsPrivacyDisclosure',
+            },
+            {
+                stt: 'settingsVoice.realtimeProviders.speechProcessing.openAiCompatStt',
+                tts: 'settingsVoice.realtimeProviders.speechProcessing.openAiCompatTts',
+            },
+        ];
+
+        const failures = rolePairs.flatMap(({ stt, tts }) => [
+            ...([stt, tts].flatMap((key) => (
+                readTranslationLeaf(en, key) === undefined
+                    ? []
+                    : [`host tree keeps a competing copy of ${key}`]
+            ))),
+            ...SUPPORTED_LANGUAGE_CODES.flatMap((code) => {
+                const bundle = BUNDLED_PLUGIN_TRANSLATIONS[code] as Readonly<Record<string, string>> | undefined;
+                const sttValue = bundle?.[stt];
+                const ttsValue = bundle?.[tts];
+                if (typeof sttValue !== 'string' || sttValue.trim().length === 0) {
+                    return [`${code}: ${stt} is missing from the shipped plugin bundle`];
+                }
+                if (typeof ttsValue !== 'string' || ttsValue.trim().length === 0) {
+                    return [`${code}: ${tts} is missing from the shipped plugin bundle`];
+                }
+                return sttValue === ttsValue
+                    ? [`${code}: ${stt} and ${tts} share one combined disclosure`]
+                    : [];
+            }),
+        ]);
+
+        expect(failures).toEqual([]);
+
+        // English is the one locale whose wording can be asserted directly, and it is where a
+        // re-merge would show first: transcription copy must not promise speech synthesis, and
+        // speech copy must not promise that microphone audio is transmitted.
+        const englishBundle = BUNDLED_PLUGIN_TRANSLATIONS.en as Readonly<Record<string, string>>;
+        const googleStt = englishBundle['settingsVoice.realtimeProviders.google.sttPrivacyDisclosure'] ?? '';
+        const googleTts = englishBundle['settingsVoice.realtimeProviders.google.ttsPrivacyDisclosure'] ?? '';
+        expect(googleStt).toMatch(/transcription/iu);
+        expect(googleStt).not.toMatch(/text-to-speech/iu);
+        expect(googleTts).toMatch(/text-to-speech/iu);
+        expect(googleTts).not.toMatch(/audio/iu);
+
+        const compatStt = englishBundle['settingsVoice.realtimeProviders.speechProcessing.openAiCompatStt'] ?? '';
+        const compatTts = englishBundle['settingsVoice.realtimeProviders.speechProcessing.openAiCompatTts'] ?? '';
+        expect(compatStt).toMatch(/audio for transcription/iu);
+        expect(compatStt).not.toMatch(/speech synthesis/iu);
+        expect(compatTts).toMatch(/speech synthesis/iu);
+        expect(compatTts).not.toMatch(/audio for transcription/iu);
     });
 
     it('keeps the provider settings namespace complete in every supported locale', () => {

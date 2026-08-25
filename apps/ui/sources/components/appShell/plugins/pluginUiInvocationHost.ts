@@ -19,6 +19,7 @@ import {
 } from '@/components/plugins/surfaces/pluginSurfaceFeedback';
 import type { PluginSurfaceDestinationNavigationBinding } from '@/components/plugins/surfaces/pluginSurfaceDestinationNavigation';
 import type { machinePluginStructuredMessageActionExecute } from '@/sync/ops/machineContributionRegistryProjection';
+import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
 
 export type AppShellPluginUiActionExecute = (
     machineId: string,
@@ -89,6 +90,8 @@ export function createAppShellPluginUiInvocationHost(input: Readonly<{
     timeoutMs?: number;
     isCurrent(): boolean;
     execute?: AppShellPluginUiActionExecute;
+    /** Admitted UI projection; resolves declared confirmation wording. */
+    pluginUiProjection?: PluginUiProjectionModel | null;
 }>): PluginUiHostApi {
     const identity = Object.freeze({
         pluginId: input.pluginId,
@@ -109,6 +112,7 @@ export function createAppShellPluginUiInvocationHost(input: Readonly<{
         },
         signal: input.signal,
         isCurrent: input.isCurrent,
+        pluginUiProjection: input.pluginUiProjection,
     });
     const clientActionOpenSurface: PluginSurfaceDestinationNavigationBinding['openSurface'] | undefined = input.readNavigationBinding
         ? (request) => {
@@ -130,14 +134,14 @@ export function createAppShellPluginUiInvocationHost(input: Readonly<{
     };
     const executeAction = async (
         action: PluginReference,
-        actionInput: JsonValue,
+        actionInput?: JsonValue,
         options?: PluginCancellationOptions,
     ): Promise<JsonValue> => {
         const operation = composeAppShellInvocationSignal(input.signal, options?.signal);
         try {
             const actionRequest = PluginUiExecuteActionRequestV1Schema.safeParse({
                 action,
-                input: actionInput,
+                ...(actionInput === undefined ? {} : { input: actionInput }),
             });
             if (!actionRequest.success) {
                 throw invocationError('plugin_surface_action_reference_invalid', identity);
@@ -149,7 +153,7 @@ export function createAppShellPluginUiInvocationHost(input: Readonly<{
                 // the truthful `voice` execution surface.
                 callerPluginId: input.pluginId,
                 action: actionRequest.data.action,
-                input: actionRequest.data.input ?? null,
+                ...(actionRequest.data.input === undefined ? {} : { input: actionRequest.data.input }),
                 ...(input.resolveContributedAction
                     ? { resolveContributedAction: input.resolveContributedAction }
                     : {}),

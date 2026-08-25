@@ -51,6 +51,7 @@ import type {
 } from '@/sync/domains/plugins/ui/projection';
 import type { PluginUiProjectionPhase } from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
 import { selectPluginSurfacePlacementsByDestination } from '@/sync/domains/plugins/ui/surfacePlacementSelectors';
+import { createPluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 import {
     captureActiveServerAccountScopeLifetime,
     type ActiveServerAccountScopeLifetime,
@@ -660,6 +661,7 @@ export function createPluginDetailsDestinationNavigationOwners(input: Readonly<{
     store: PluginDetailsDestinationLaunchStore;
     accountLifetime: ActiveServerAccountScopeLifetime | null;
 }> & PluginDetailsDestinationOpenSurfaceAdapterInput): PluginDetailsDestinationNavigationOwners {
+    const localizePluginText = createPluginLocalizedTextResolver({ projection: input.projection });
     const scopedLaunchFacts = createPluginDetailsDestinationLaunchScopeFacts({
         projection: input.projection,
         mount: input.mount,
@@ -682,7 +684,7 @@ export function createPluginDetailsDestinationNavigationOwners(input: Readonly<{
             input.openTab(createPluginDetailsDestinationTab({
                 destination: receipt.resource.destination,
                 ...(receipt.resource.instanceKey === undefined ? {} : { instanceKey: receipt.resource.instanceKey }),
-                title: resolvePluginSurfaceDestinationLabel(resolution.placement),
+                title: resolvePluginSurfaceDestinationLabel(resolution.placement, localizePluginText),
             }));
         } catch {
             // The stage/open pair is atomic from the caller's point of view:

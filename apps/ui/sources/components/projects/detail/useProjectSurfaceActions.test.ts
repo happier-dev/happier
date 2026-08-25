@@ -67,6 +67,7 @@ describe('useProjectSurfaceActions', () => {
         expect(routerMock.spies.push).toHaveBeenCalledWith({
             pathname: '/new',
             params: {
+                draftId: expect.any(String),
                 machineId: 'machine-1',
                 directory: '/repo/.worktrees/feature-auth',
                 worktree: 'new',

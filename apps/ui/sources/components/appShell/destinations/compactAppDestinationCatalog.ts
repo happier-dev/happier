@@ -1,7 +1,10 @@
 import * as React from 'react';
 import type { PluginUiDestinationReferenceV1 } from '@happier-dev/protocol/plugins/ui';
 
-import { useAppShellPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import {
+    useAppShellPluginUiProjection,
+    useProjectedPluginLocalizedTextResolver,
+} from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import {
     resolvePluginAppPages,
     selectPluginAppPagePlacements,
@@ -255,14 +258,16 @@ export function useCompactAppDestinations(input: Readonly<{
     browseExistingSessionsEnabled: boolean;
 }>): readonly CompactAppDestination[] {
     const projection = useAppShellPluginUiProjection();
+    const localizePluginText = useProjectedPluginLocalizedTextResolver();
     const preferences = useLocalSetting('compactAppDestinationPreferencesV1');
     const pages = React.useMemo(() => (
         projection.pluginUiProjection
             ? resolvePluginAppPages({
                 placements: selectPluginAppPagePlacements(projection.pluginUiProjection),
+                localize: localizePluginText,
             })
             : []
-    ), [projection.pluginUiProjection]);
+    ), [localizePluginText, projection.pluginUiProjection]);
     const rightSidebarTabs = React.useMemo(() => (
         projection.pluginUiProjection
             ? resolveRightSidebarTabs({
@@ -272,9 +277,10 @@ export function useCompactAppDestinations(input: Readonly<{
                     'app',
                 ),
                 projectionGeneration: projection.pluginUiProjection.generation,
+                localize: localizePluginText,
             }).filter((tab): tab is RightSidebarPluginTabDefinition => tab.owner === 'plugin')
             : []
-    ), [projection.pluginUiProjection]);
+    ), [localizePluginText, projection.pluginUiProjection]);
     return React.useMemo(() => resolveCompactAppDestinations({
         browseExistingSessionsEnabled: input.browseExistingSessionsEnabled,
         pages,

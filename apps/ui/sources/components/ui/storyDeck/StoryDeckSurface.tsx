@@ -29,6 +29,8 @@ export type StoryDeckSurfaceProps = Readonly<{
     cards: ReadonlyArray<StoryDeckCard>;
     onComplete: () => void;
     onDismiss?: () => void;
+    onSkip?: () => void;
+    skipLabel?: string;
     onSecondaryAction?: () => void;
     secondaryActionLabel?: string;
     slideAnimation?: StoryDeckSlideAnimation;
@@ -202,6 +204,8 @@ export function StoryDeckSurface(props: StoryDeckSurfaceProps) {
                         onPrimary={handlePrimary}
                         onSecondary={props.onSecondaryAction}
                         secondaryLabel={props.secondaryActionLabel}
+                        onSkip={props.onSkip}
+                        skipLabel={props.skipLabel}
                         testID={`${props.testID ?? 'story-deck'}-footer`}
                     />
                 )}
@@ -242,6 +246,7 @@ export function StoryDeckSurface(props: StoryDeckSurfaceProps) {
                         {...softSlidePanResponder.panHandlers}
                     >
                         <SoftSlideTransitionFrame
+                            contentStyle={styles.pager}
                             direction={transitionDirection}
                             reducedMotion={reducedMotion}
                             style={styles.pager}

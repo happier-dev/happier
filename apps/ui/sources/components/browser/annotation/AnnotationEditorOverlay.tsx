@@ -122,19 +122,22 @@ const stylesheet = StyleSheet.create((theme) => ({
         justifyContent: 'space-between',
     },
     title: {
-        color: theme.colors.text.primary,
-        fontSize: 12,
+        ...Typography.rowMeta(),
         ...Typography.default('semiBold'),
+        color: theme.colors.text.primary,
     },
     meta: {
+        ...Typography.rowMeta(),
         color: theme.colors.text.secondary,
-        fontSize: 12,
-        ...Typography.default(),
     },
     warning: {
-        color: theme.colors.state.warning.foreground,
-        fontSize: 12,
+        ...Typography.rowMeta(),
         ...Typography.default('semiBold'),
+        // Q2 measured the theme's semantic FOREGROUNDS as text at 2.20–3.55:1 in light theme —
+        // they are fill colours, not text colours. The words carry their own meaning here, so
+        // they take `text.primary`; the hue stays on the border/glyph beside them, where it is a
+        // redundant cue rather than the only one.
+        color: theme.colors.text.primary,
     },
     toolRow: {
         flexDirection: 'row',
@@ -154,14 +157,15 @@ const stylesheet = StyleSheet.create((theme) => ({
         backgroundColor: theme.colors.surface.base,
     },
     toolText: {
-        color: theme.colors.text.primary,
-        fontSize: 12,
+        ...Typography.rowMeta(),
         ...Typography.default('semiBold'),
+        color: theme.colors.text.primary,
     },
     toolDisabled: {
         opacity: 0.5,
     },
     comment: {
+        ...Typography.rowMeta(),
         borderRadius: 6,
         borderWidth: 1,
         borderColor: theme.colors.border.default,
@@ -169,8 +173,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingHorizontal: 10,
         paddingVertical: 6,
         color: theme.colors.text.primary,
-        fontSize: 13,
-        ...Typography.default(),
     },
     actionRow: {
         flexDirection: 'row',
@@ -194,9 +196,8 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingVertical: 3,
     },
     markChipText: {
+        ...Typography.rowMeta(),
         color: theme.colors.text.secondary,
-        fontSize: 11,
-        ...Typography.default(),
     },
     attach: {
         borderRadius: 6,
@@ -208,9 +209,9 @@ const stylesheet = StyleSheet.create((theme) => ({
         opacity: 0.5,
     },
     attachText: {
-        color: theme.colors.button.primary.tint,
-        fontSize: 12,
+        ...Typography.rowMeta(),
         ...Typography.default('semiBold'),
+        color: theme.colors.button.primary.tint,
     },
     cancel: {
         borderRadius: 6,
@@ -220,9 +221,9 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingVertical: 6,
     },
     cancelText: {
-        color: theme.colors.text.primary,
-        fontSize: 12,
+        ...Typography.rowMeta(),
         ...Typography.default('semiBold'),
+        color: theme.colors.text.primary,
     },
 }));
 

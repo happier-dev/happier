@@ -18,6 +18,7 @@ vi.mock('react-native-unistyles', async () => {
                 accent: { blue: '#007aff' },
                 border: { default: '#dddddd', strong: '#111111' },
                 surface: {
+                    base: '#ffffff',
                     pressedOverlay: 'rgba(17,17,17,0.05)',
                     selected: '#ddeeff',
                 },
@@ -77,6 +78,8 @@ describe('WizardChoiceRow', () => {
         expect(screen.getTextContent()).toContain('Cloud');
         expect(screen.getTextContent()).toContain('Hosted relay');
         expect(screen.getTextContent()).toContain('Recommended');
+        const rowStyle = screen.findByTestId('wizard-choice')?.props.style?.({ pressed: false });
+        expect(JSON.stringify(rowStyle)).toContain('"backgroundColor":"#ffffff"');
 
         await act(async () => {
             await screen.pressByTestIdAsync('wizard-choice');
@@ -169,6 +172,25 @@ describe('WizardChoiceRow', () => {
 
         expect(iconColors).toContain('#111111');
         expect(iconColors).not.toContain('#007aff');
+    });
+
+    it('places a bare feature icon beside the title while letting the subtitle use the full content width', async () => {
+        const { WizardChoiceRow } = await import('./WizardChoiceRow');
+
+        const screen = await renderScreen(React.createElement(WizardChoiceRow, {
+            testID: 'wizard-choice',
+            title: 'Cloud',
+            subtitle: 'Hosted relay',
+            icon: 'cloud',
+            selected: false,
+            onPress: vi.fn(),
+        }));
+
+        expect(screen.findByTestId('wizard-choice-title-icon')).toBeTruthy();
+        expect(screen.tree.root.findAllByType('WizardIconBox' as any)).toHaveLength(0);
+        const rowStyle = screen.findByTestId('wizard-choice')?.props.style?.({ pressed: false });
+        expect(JSON.stringify(rowStyle)).toContain('"marginHorizontal":0');
+        expect(JSON.stringify(rowStyle)).toContain('"paddingHorizontal":16');
     });
 
     it('keeps radio semantics while moving interactive trailing controls outside the row activation', async () => {

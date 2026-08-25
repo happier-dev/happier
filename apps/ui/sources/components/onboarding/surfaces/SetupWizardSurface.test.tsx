@@ -2293,6 +2293,7 @@ describe('SetupWizardSurface', () => {
         expect(routerMock.spies.push).toHaveBeenCalledWith({
             pathname: '/new',
             params: {
+                draftId: expect.any(String),
                 machineId: 'mach-remote',
                 spawnServerId: 'relay-profile',
             },
@@ -2303,7 +2304,19 @@ describe('SetupWizardSurface', () => {
         vi.resetModules();
         vi.doMock('react-native', installReactNativeWebMock({ Platform: { OS: 'web' } }));
         const previousStorageState = storage.getState();
-        syncStoreHooksMockState.sessions = [{ id: 'session-existing' }];
+        syncStoreHooksMockState.sessions = [
+            {
+                id: 'voice-history',
+                metadata: {
+                    systemSessionV1: {
+                        v: 1,
+                        key: 'voice_transcript_history',
+                        hidden: true,
+                    },
+                },
+            },
+            { id: 'session-existing' },
+        ];
 
         try {
             storage.setState((state) => ({
@@ -2344,6 +2357,7 @@ describe('SetupWizardSurface', () => {
             expect(screen.getTextContent()).toContain('setupOnboarding.doneConnectedMachineSummary');
             expect(screen.getTextContent()).toContain('web-finale.test');
             expect(screen.findByTestId('setupWizard-done-existing-sessions')).toBeTruthy();
+            expect(screen.getTextContent()).toContain('setupOnboarding.doneExistingSessionsLine 1');
 
             await act(async () => {
                 const startButton = screen.findByTestId('setupWizard.surface-primary');
@@ -2354,6 +2368,7 @@ describe('SetupWizardSurface', () => {
             expect(routerMock.spies.push).toHaveBeenCalledWith({
                 pathname: '/new',
                 params: {
+                    draftId: expect.any(String),
                     machineId: 'mach-web-finale',
                     spawnServerId: 'relay-profile',
                 },

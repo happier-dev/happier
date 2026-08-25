@@ -27,7 +27,7 @@ import {
 
 export type XtermTerminalHandle = Readonly<{
     write: (data: string) => boolean;
-    writeBytes: (input: XtermWriteBytesInput) => boolean;
+    writeBytes: (input: XtermWriteBytesInput) => boolean | Readonly<{ status: 'queued' }>;
     clear: () => void;
     focus: () => void;
     hasSelection: () => boolean;
@@ -227,7 +227,7 @@ export const XtermTerminalView = React.forwardRef<XtermTerminalHandle, XtermTerm
             return false;
         }
         appendOutputPreview(bytes);
-        return true;
+        return { status: 'queued' } as const;
     }, [appendOutputPreview, ensureWriteQueue]);
 
     const reportSize = React.useCallback((cols: number, rows: number, _kind: 'ready' | 'resize') => {
@@ -317,6 +317,15 @@ export const XtermTerminalView = React.forwardRef<XtermTerminalHandle, XtermTerm
         tryLoadXtermWebglAddon(term);
 
         term.open(container);
+
+        const handlePaste = (event: ClipboardEvent) => {
+            const text = event.clipboardData?.getData('text/plain') ?? '';
+            if (!text) return;
+            event.preventDefault();
+            event.stopPropagation();
+            void onPasteRef.current?.(text);
+        };
+        container.addEventListener('paste', handlePaste, true);
 
         term.attachCustomKeyEventHandler((event) => {
             if (event.type !== 'keydown') {
@@ -415,6 +424,7 @@ export const XtermTerminalView = React.forwardRef<XtermTerminalHandle, XtermTerm
 
         return () => {
             dataDisposable.dispose();
+            container.removeEventListener('paste', handlePaste, true);
 
             if (initTimer !== null && typeof window !== 'undefined') {
                 window.clearTimeout(initTimer);

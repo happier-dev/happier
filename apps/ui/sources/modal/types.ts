@@ -2,6 +2,7 @@ import type { ComponentProps } from 'react';
 import { ReactNode, ComponentType } from 'react';
 import type { ModalCardDimensionOptions } from './components/card/useModalCardDimensions';
 import type { ModalPortalTarget } from './portal/ModalPortalTarget';
+import type { FocusReturnRef } from '@/keyboard/focusReturn';
 
 export type ModalType = 'alert' | 'confirm' | 'prompt' | 'custom';
 
@@ -16,6 +17,7 @@ export interface BaseModalConfig {
     type: ModalType;
     accessibilityLabel?: string;
     webPortalTarget?: ModalPortalTarget;
+    focusReturnRef?: FocusReturnRef;
 }
 
 export interface AlertModalConfig extends BaseModalConfig {

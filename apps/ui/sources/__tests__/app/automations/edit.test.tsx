@@ -501,6 +501,54 @@ describe('AutomationEditScreen route', () => {
         expect(storeTempDataSpy).not.toHaveBeenCalled();
     });
 
+    it('stops the edit spinner and offers a retry when the direct definition read fails', async () => {
+        automationState.definitionOverride = {
+            id: 'a1',
+            name: 'Nightly',
+            description: null,
+            enabled: true,
+            trigger: {
+                kind: 'schedule',
+                schedule: {
+                    kind: 'interval',
+                    everyMs: 60_000,
+                    scheduleExpr: null,
+                    timezone: null,
+                },
+            },
+            targetType: 'newSession',
+            existingSessionId: null,
+            templateVersion: 2,
+            nextRunAt: null,
+            lastRunAt: null,
+            createdAt: 1,
+            updatedAt: 1,
+            assignments: [],
+            detail: { kind: 'unloaded', templateVersion: 2 },
+            linkedExistingSessionId: null,
+        };
+        refreshAutomationDefinitionDetailSpy.mockRejectedValueOnce(new Error('offline'));
+        const { ActivitySpinner } = await import('@/components/ui/feedback/ActivitySpinner');
+        const EditRoute = (await import('@/app/(app)/automations/edit')).default;
+
+        const screen = await renderScreen(React.createElement(EditRoute));
+        await settle();
+
+        expect(refreshAutomationDefinitionDetailSpy).toHaveBeenCalledTimes(1);
+        expect(screen.findAllByType(ActivitySpinner)).toHaveLength(0);
+        expect(screen.findByTestId('automation-edit-detail-error')).not.toBeNull();
+
+        await screen.pressByTestIdAsync('automation-edit-detail-error-action');
+        await settle();
+
+        expect(refreshAutomationDefinitionDetailSpy).toHaveBeenCalledTimes(2);
+        // The positive twin: retrying must re-enter the ordinary loading state
+        // rather than leaving the route permanently in its failure state, and
+        // the busy indicator must come back with it.
+        expect(screen.findByTestId('automation-edit-detail-error')).toBeNull();
+        expect(screen.findAllByType(ActivitySpinner)).toHaveLength(1);
+    });
+
     it('redirects new-session automations into the shared new-session composer with hydrated temp data', async () => {
         const transport = await import('@/sync/domains/automations/automationTemplateTransport');
         const codec = await import('@/sync/domains/automations/automationTemplateCodec');
@@ -582,9 +630,15 @@ describe('AutomationEditScreen route', () => {
                     sourceInstanceId: 'repository:42',
                     sourceContractVersion: 3,
                 }),
-                watcherMaterializationRef: expect.objectContaining({
-                    machineId: 'watcher-machine',
-                    materializationId: 'github-materialization',
+                // The seed carries the persisted observation arm, and the
+                // watcher materialization lives inside it — pinned here so a
+                // reshaping that drops the transport discriminator fails.
+                observation: expect.objectContaining({
+                    kind: 'checkpointedPull',
+                    watcherMaterializationRef: expect.objectContaining({
+                        machineId: 'watcher-machine',
+                        materializationId: 'github-materialization',
+                    }),
                 }),
             }),
         }));
@@ -643,8 +697,11 @@ describe('AutomationEditScreen route', () => {
         await renderScreen(React.createElement(EditRoute));
         await settle();
 
+        // `AM-24`: a Claude Session is resume-eligible on its recorded
+        // `claudeSessionId` alone, so this fixture is blocked by the missing
+        // e2ee resume key rather than by eligibility.
         expect(latestUnavailableNoticeProps.value).toEqual(expect.objectContaining({
-            reason: 'session.inactiveNotResumableNoticeTitle',
+            reason: 'automations.create.missingResumeKey',
         }));
         expect(latestAutomationSettingsFormProps.value).toBeNull();
         expect(latestContextSectionProps.value).toBeNull();

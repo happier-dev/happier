@@ -15,6 +15,15 @@ import type { BrowserLaunchpadOpenTargetOptions } from './BrowserLaunchpad';
 
 vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
 
+// The launchpad renders inside `ConstrainedScreenContent`, which resolves the user's content-width
+// preference from the settings store. The canonical testkit stub is the boundary owner — without it
+// the store initialisation never settles and every case times out, which is the same trap
+// `BrowserDiagnosticsDrawer.test.tsx` documents for `SegmentedTabBar`.
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({});
+});
+
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
     return createTextModuleMock({ translate: (key, params) => params ? `${key}:${JSON.stringify(params)}` : key });
@@ -402,8 +411,8 @@ describe('BrowserLaunchpad', () => {
             />,
         );
 
-        screen.changeTextByTestId('browser-launchpad-url-entry-input', 'https://example.test');
-        const input = screen.findByTestId('browser-launchpad-url-entry-input');
+        screen.changeTextByTestId('browser-launchpad-url-entry', 'https://example.test');
+        const input = screen.findByTestId('browser-launchpad-url-entry');
         await act(async () => {
             (input?.props as { onSubmitEditing?: () => void }).onSubmitEditing?.();
         });

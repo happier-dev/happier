@@ -155,6 +155,7 @@ const useHappyActionMock = vi.hoisted(() =>
 );
 const mockResolveAgentIdFromFlavor = vi.fn<(flavor: string | null | undefined) => string | undefined>(() => 'claude');
 const useSessionSpy = vi.fn<(sessionId: string) => any>(() => mockSession);
+let mockPluginUiProjection: any = null;
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
     return value != null && typeof value === 'object' && !Array.isArray(value);
@@ -388,6 +389,21 @@ vi.mock('@/components/ui/media/CodeView', () => ({
         React.createElement('CodeView', { code, language }),
 }));
 vi.mock('@/components/sessions/info/SessionRetentionNotice', () => ({ SessionRetentionNotice: 'SessionRetentionNotice' }));
+vi.mock('@/components/sessions/panes/useSessionPanePluginRuntime', () => ({
+    useSessionPanePluginRuntime: () => ({
+        pluginUiProjection: mockPluginUiProjection,
+        pluginBrowserProjection: null,
+        phase: 'current',
+        interactionEnabled: true,
+        machineId: 'machine-1',
+        serverId: 'server-1',
+        platform: 'web',
+    }),
+}));
+vi.mock('@/components/plugins/surfaces', () => ({ PluginInlineSurfaceHost: 'PluginInlineSurfaceHost' }));
+vi.mock('@/components/plugins/surfaces/PluginSurfaceHost', () => ({
+    PluginInlineSurfaceHost: 'PluginInlineSurfaceHost',
+}));
 vi.mock('@/hooks/ui/useHappyAction', () => ({ useHappyAction: (fn: any) => useHappyActionMock(fn) }));
 vi.mock('@/sync/ops', () => ({
     sessionArchiveWithServerScope: sessionArchiveSpy,
@@ -500,7 +516,9 @@ vi.mock('@happier-dev/agents', async (importOriginal) => {
         },
     };
 });
-vi.mock('@/constants/Typography', () => ({ Typography: { default: () => ({}) } }));
+vi.mock('@/constants/Typography', () => ({
+    Typography: new Proxy({}, { get: () => () => ({}) }),
+}));
 vi.mock('@/utils/sessions/sessionUtils', () => ({
     getSessionName: () => 'name',
     useSessionStatus: () => ({
@@ -532,6 +550,7 @@ describe('/session/[id]/info', () => {
         routeHydrationState = { kind: 'available', sessionId: 'session-1' };
         sessionIsConnected = true;
         localDevModeEnabled = false;
+        mockPluginUiProjection = null;
         routerPushSpy.mockReset();
         routerBackSpy.mockReset();
         safeRouterBackSpy.mockReset();
@@ -674,6 +693,40 @@ describe('/session/[id]/info', () => {
         const screen = await renderInfoScreen();
         expect(screen.getTextContent()).not.toContain('common.loading');
         expect(screen.getTextContent()).toContain('name');
+    });
+
+    it('mounts projected Session-info sections through the shared semantic inline host', async () => {
+        mockSession = {
+            id: 'session-1',
+            active: false,
+            accessLevel: null,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            seq: 1,
+            metadata: {},
+        };
+        const placement = { id: 'session-info-placement' };
+        mockPluginUiProjection = {
+            sessionInfoSectionsById: {
+                'sessionInfoSection:acme.preview:overview': {
+                    id: 'sessionInfoSection:acme.preview:overview',
+                    order: 10,
+                    placement,
+                },
+            },
+        };
+
+        const screen = await renderInfoScreen();
+        const mounts = screen.findAllByType('PluginInlineSurfaceHost' as never);
+        expect(mounts).toHaveLength(1);
+        expect(mounts[0]?.props).toMatchObject({
+            placement,
+            inlineMount: { role: 'sessionInfoSection', presentation: 'content' },
+            sessionId: 'session-1',
+            machineId: 'machine-1',
+            serverId: 'server-1',
+            projectionInteractionEnabled: true,
+        });
     });
 
     it('normalizes the route id before looking up the session', async () => {
@@ -1615,6 +1668,7 @@ describe('/session/[id]/info', () => {
             pathname: '/new',
             params: {
                 dataId: expect.any(String),
+                draftId: expect.any(String),
                 machineId: 'machine-target',
                 directory: '/workspace/repo',
                 spawnServerId: 'server-1',

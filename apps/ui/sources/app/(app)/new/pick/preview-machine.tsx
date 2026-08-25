@@ -12,7 +12,7 @@ import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { buildBackendTargetRouteParams, resolveRouteCloseoutFallbackTarget } from '@/agents/backendCatalog/backendTargetRouteParams';
 import { resolvePreferredBackendTargetFromProjection } from '@/agents/backendCatalog/resolvePreferredBackendTargetFromProjection';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
-import { pickNewSessionRouteParams, setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
+import { buildNewSessionPickerFallbackHref, pickNewSessionRouteParams, setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { resolveSpawnServerRouteParam } from '@/components/sessions/new/navigation/spawnServerRouteParam';
 import { useNewSessionPickerRoutePresentation } from '@/components/sessions/new/navigation/newSessionContainedModalScreen';
@@ -41,6 +41,7 @@ export default React.memo(function PreviewMachinePickerScreen() {
     const currentRouteParams = React.useMemo(() => {
         return pickNewSessionRouteParams(params);
     }, [params]);
+    const pickerFallbackHref = React.useMemo(() => buildNewSessionPickerFallbackHref(params), [params]);
     const spawnServerId = resolveSpawnServerRouteParam(params.spawnServerId) ?? activeServerId;
     const machineIdParam = typeof params.machineId === 'string' ? params.machineId : null;
     const daemonMergedProjection = useDaemonMergedProjectionInputs({
@@ -67,7 +68,7 @@ export default React.memo(function PreviewMachinePickerScreen() {
 
     const headerLeft = React.useCallback(() => (
         <Pressable
-            onPress={() => safeRouterBack({ router, navigation, fallbackHref: '/new' })}
+            onPress={() => safeRouterBack({ router, navigation, fallbackHref: pickerFallbackHref })}
             hitSlop={10}
             style={({ pressed }) => ({ padding: 2, opacity: pressed ? 0.7 : 1 })}
             accessibilityRole="button"
@@ -164,7 +165,7 @@ export default React.memo(function PreviewMachinePickerScreen() {
                     onSelect={(machine) => {
                         const returnMode = setPreviewMachineIdOnPreviousRoute(machine.id);
                         if (returnMode === 'dispatch') {
-                            safeRouterBack({ router, navigation, fallbackHref: '/new' });
+                            safeRouterBack({ router, navigation, fallbackHref: pickerFallbackHref });
                         }
                     }}
                     onToggleFavorite={(machine) => toggleFavorite(machine.id)}

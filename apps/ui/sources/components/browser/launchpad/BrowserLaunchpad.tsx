@@ -5,6 +5,7 @@ import { StyleSheet } from 'react-native-unistyles';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
+import { ConstrainedScreenContent } from '@/components/ui/layout/ConstrainedScreenContent';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import type { BrowserLaunchpadRow, BrowserLaunchpadSection } from '@/sync/domains/browser/targets';
 import type { DesktopWebViewNativeAvailability } from '@/sync/domains/browser/adapters/desktopWebView';
@@ -182,12 +183,6 @@ export function BrowserLaunchpad(props: Readonly<{
      * sibling tab. `onOpenTarget` (new tab) stays reserved for external-surface opens.
      */
     onNavigateInPlace?: (target: BrowserViewTargetV1, options?: BrowserLaunchpadOpenTargetOptions) => void;
-    /**
-     * Fires the instant a row is committed, with the row's horizontal centre in shell coordinates.
-     * The shell uses it to hand the launchpad off to the load-progress sweep so the page does not
-     * simply cut in. Purely presentational; navigation still goes through the seams above.
-     */
-    onRowHandoff?: (input: Readonly<{ rowId: string; originX: number | null }>) => void;
     testID?: string;
 }>): React.ReactElement {
     const testID = props.testID ?? 'browser-launchpad';
@@ -210,16 +205,13 @@ export function BrowserLaunchpad(props: Readonly<{
         ],
     );
     const grouped = React.useMemo(() => rowsBySection(resolvedRows), [resolvedRows]);
-    const handleOpenTarget = React.useCallback((row: ResolvedBrowserLaunchpadRow, originX: number | null) => {
+    const handleOpenTarget = React.useCallback((row: ResolvedBrowserLaunchpadRow) => {
         if (!row.target || row.disabledReason) {
             return;
         }
         const open = row.launchMode === 'currentView'
             ? props.onNavigateInPlace
             : props.onOpenTarget;
-        if (row.launchMode === 'currentView') {
-            props.onRowHandoff?.({ rowId: row.id, originX });
-        }
         open?.(row.target, {
             platform: props.platform,
             ...(row.currentUrl ? { currentUrl: row.currentUrl } : {}),
@@ -227,7 +219,7 @@ export function BrowserLaunchpad(props: Readonly<{
             ...(row.targetPolicyDecision ? { targetPolicyDecision: row.targetPolicyDecision } : {}),
             ...(row.desktopWebViewAvailability ? { desktopWebViewAvailability: row.desktopWebViewAvailability } : {}),
         });
-    }, [props.onNavigateInPlace, props.onOpenTarget, props.onRowHandoff, props.platform]);
+    }, [props.onNavigateInPlace, props.onOpenTarget, props.platform]);
 
     // The URL entry submits a normalized http(s) URL; turning it into a target is the launchpad's
     // job because the seam it delegates to is target-shaped. One normalizer, one target builder.
@@ -247,91 +239,101 @@ export function BrowserLaunchpad(props: Readonly<{
             containerStyle={stylesheet.listContent}
             keyboardShouldPersistTaps="handled"
         >
-            <View style={stylesheet.urlEntry}>
-                <BrowserUrlField
-                    testID={`${testID}-url-entry`}
-                    density="panel"
-                    trailingAction="go"
-                    clearOnSubmit
-                    value=""
-                    disabled={!props.onNavigateInPlace}
-                    label={t('browserLaunchpad.urlEntry.label')}
-                    placeholder={t('browserLaunchpad.urlEntry.placeholder')}
-                    accessibilityLabel={t('browserLaunchpad.urlEntry.label')}
-                    onSubmitUrl={handleSubmitUrl}
-                />
-            </View>
-
-            {!hasRows ? (
-                <View style={stylesheet.terminalState}>
-                    {props.refreshStatus === 'refreshing' ? (
-                        <SurfaceStateCard
-                            testID={`${testID}-refreshing`}
-                            kind="loading"
-                            title={t('browserLaunchpad.refreshing')}
-                            accessibilitySemantics="status"
-                        />
-                    ) : props.refreshStatus === 'error' ? (
-                        <SurfaceStateCard
-                            testID={`${testID}-error`}
-                            kind="error"
-                            title={t('browserLaunchpad.error.title')}
-                            {...(props.refreshError
-                                ? { reason: t('browserLaunchpad.error.subtitle', { reason: props.refreshError }) }
-                                : {})}
-                            accessibilitySemantics="alert"
-                        />
-                    ) : (
-                        <SurfaceStateCard
-                            testID={`${testID}-guidance`}
-                            kind="empty"
-                            iconName="globe"
-                            title={t('browserLaunchpad.guidance.title')}
-                            reason={t('browserLaunchpad.guidance.body')}
-                        />
-                    )}
+            {/*
+              * The launchpad is a READING surface — a list of names and ports — not a rendered page,
+              * so it takes the app's content width instead of the pane's. At 2560px the rows and the
+              * URL entry used to stretch edge to edge, which is the widest-viewport defect the
+              * capture brief's C1/C4 target. `ConstrainedScreenContent` is the canonical owner and it
+              * reads the user's own `uiContentWidthMode`, so this is a preference, not a magic number.
+              * The page frame is deliberately NOT constrained: a webview must fill its pane.
+              */}
+            <ConstrainedScreenContent>
+                <View style={stylesheet.urlEntry}>
+                    <BrowserUrlField
+                        testID={`${testID}-url-entry`}
+                        density="panel"
+                        trailingAction="go"
+                        clearOnSubmit
+                        value=""
+                        disabled={!props.onNavigateInPlace}
+                        label={t('browserLaunchpad.urlEntry.label')}
+                        placeholder={t('browserLaunchpad.urlEntry.placeholder')}
+                        accessibilityLabel={t('browserLaunchpad.urlEntry.label')}
+                        onSubmitUrl={handleSubmitUrl}
+                    />
                 </View>
-            ) : (
-                <>
-                    {props.refreshStatus !== 'idle' ? (
-                        <View style={stylesheet.banner}>
-                            <ItemGroup>
-                                <BrowserLaunchpadRefreshBanner
-                                    testID={testID}
-                                    status={props.refreshStatus}
-                                    refreshError={props.refreshError ?? null}
-                                />
-                            </ItemGroup>
-                        </View>
-                    ) : null}
-                    {SECTION_ORDER.map((section) => {
-                        const rows = grouped.get(section) ?? [];
-                        if (rows.length === 0) {
-                            return null;
-                        }
-                        return (
-                            <ItemGroup
-                                key={section}
-                                title={titleForSection(section)}
-                                selectableItemCountOverride={rows.length}
-                            >
-                                {rows.map((row, index) => (
-                                    <BrowserTargetCard
-                                        key={row.id}
-                                        row={row}
-                                        entranceIndex={index}
-                                        testID={`${testID}-card:${row.id}`}
-                                        onOpenTarget={handleOpenTarget}
-                                        openDisabled={row.launchMode === 'currentView'
-                                            ? !props.onNavigateInPlace
-                                            : !props.onOpenTarget}
+
+                {!hasRows ? (
+                    <View style={stylesheet.terminalState}>
+                        {props.refreshStatus === 'refreshing' ? (
+                            <SurfaceStateCard
+                                testID={`${testID}-refreshing`}
+                                kind="loading"
+                                title={t('browserLaunchpad.refreshing')}
+                                accessibilitySemantics="status"
+                            />
+                        ) : props.refreshStatus === 'error' ? (
+                            <SurfaceStateCard
+                                testID={`${testID}-error`}
+                                kind="error"
+                                title={t('browserLaunchpad.error.title')}
+                                {...(props.refreshError
+                                    ? { reason: t('browserLaunchpad.error.subtitle', { reason: props.refreshError }) }
+                                    : {})}
+                                accessibilitySemantics="alert"
+                            />
+                        ) : (
+                            <SurfaceStateCard
+                                testID={`${testID}-guidance`}
+                                kind="empty"
+                                iconName="globe"
+                                title={t('browserLaunchpad.guidance.title')}
+                                reason={t('browserLaunchpad.guidance.body')}
+                            />
+                        )}
+                    </View>
+                ) : (
+                    <>
+                        {props.refreshStatus !== 'idle' ? (
+                            <View style={stylesheet.banner}>
+                                <ItemGroup>
+                                    <BrowserLaunchpadRefreshBanner
+                                        testID={testID}
+                                        status={props.refreshStatus}
+                                        refreshError={props.refreshError ?? null}
                                     />
-                                ))}
-                            </ItemGroup>
-                        );
-                    })}
-                </>
-            )}
+                                </ItemGroup>
+                            </View>
+                        ) : null}
+                        {SECTION_ORDER.map((section) => {
+                            const rows = grouped.get(section) ?? [];
+                            if (rows.length === 0) {
+                                return null;
+                            }
+                            return (
+                                <ItemGroup
+                                    key={section}
+                                    title={titleForSection(section)}
+                                    selectableItemCountOverride={rows.length}
+                                >
+                                    {rows.map((row, index) => (
+                                        <BrowserTargetCard
+                                            key={row.id}
+                                            row={row}
+                                            entranceIndex={index}
+                                            testID={`${testID}-card:${row.id}`}
+                                            onOpenTarget={handleOpenTarget}
+                                            openDisabled={row.launchMode === 'currentView'
+                                                ? !props.onNavigateInPlace
+                                                : !props.onOpenTarget}
+                                        />
+                                    ))}
+                                </ItemGroup>
+                            );
+                        })}
+                    </>
+                )}
+            </ConstrainedScreenContent>
         </ItemList>
     );
 }

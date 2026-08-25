@@ -22,6 +22,26 @@ function flattenStyle(style: unknown): Record<string, unknown> {
 }
 
 describe('SoftSlideTransitionFrame', () => {
+    it('lets a bounded consumer make the current slide fill the available viewport', async () => {
+        const { SoftSlideTransitionFrame } = await import('./SoftSlideTransitionFrame');
+        const screen = await renderScreen(
+            <SoftSlideTransitionFrame
+                contentStyle={{ flex: 1, minHeight: 0 }}
+                direction="replace"
+                reducedMotion={false}
+                testID="soft"
+                transitionKey="one"
+            >
+                <View testID="slide-one" />
+            </SoftSlideTransitionFrame>,
+        );
+
+        expect(flattenStyle(screen.findByTestId('soft-current-layer')?.props.style)).toMatchObject({
+            flex: 1,
+            minHeight: 0,
+        });
+    });
+
     it('renders the first web slide without an initial blur transition', async () => {
         const { SoftSlideTransitionFrame } = await import('./SoftSlideTransitionFrame');
         const screen = await renderScreen(

@@ -1,4 +1,3 @@
-import { isBundledAgentId } from '@/agents/catalog/catalog';
 import { readBackendTargetRefV2, type BackendTargetRefV2Input } from '@happier-dev/protocol';
 
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
@@ -19,7 +18,7 @@ function normalizeBackendNewSessionOptionStateKey(rawKey: string): string {
     try {
         return resolveBackendTargetKeyV2(readBackendTargetRefV2(trimmedKey as BackendTargetRefV2Input));
     } catch {
-        const backendId = isBundledAgentId(trimmedKey) ? trimmedKey : trimmedKey;
+        const backendId = trimmedKey;
         try {
             return resolveBackendTargetKeyV2({ kind: 'backend', backendId } satisfies BackendTargetRefV2Input);
         } catch {

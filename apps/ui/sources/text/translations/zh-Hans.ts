@@ -14,9 +14,11 @@ import { pluginWebhookAdministrationTranslations } from './pluginWebhookAdminist
 import { pluginAccountDataEraseTranslations } from './pluginAccountDataEraseTranslations';
 import { apiTokenSettingsTranslations } from './apiTokenSettingsTranslations';
 import { pluginAccountReleaseSelectionTranslations } from './pluginAccountReleaseSelectionTranslations';
+import { pluginMachineMatrixTranslations } from './pluginMachineMatrixTranslations';
 import { pluginInvocationLogTranslations } from './pluginInvocationLogTranslations';
 import { eventAutomationComposerTranslations } from './eventAutomationComposerTranslations';
 import { actionOperationInboxTranslations } from './actionOperationInboxTranslations';
+import { sessionDraftTranslations } from './sessionDraftTranslations';
 
 /**
  * Chinese (Simplified) translations for the Happier app
@@ -607,6 +609,7 @@ function plural({
 }
 
 export const zhHans = {
+    ...sessionDraftTranslations,
     transferRecovery: {
         title: '完成暂存上传',
         message: '上传已到达设备，但最终保存需要处理。仅重试最终保存，或丢弃暂存上传。',
@@ -674,6 +677,10 @@ export const zhHans = {
             composerSendImmediate: '立即发送',
             composerSendPending: '发送到待处理队列',
             commandPaletteOpen: '打开命令面板',
+            browserAddressFocus: '聚焦浏览器地址栏',
+            browserBack: '浏览器后退',
+            browserForward: '浏览器前进',
+            browserReload: '重新加载浏览器页面',
             modeCycle: '切换模式',
             shortcutsHelpOpen: '打开快捷键帮助',
             sessionNew: '创建新会话',
@@ -812,7 +819,7 @@ export const zhHans = {
 
 
   inbox: {
-    ...actionOperationInboxTranslations,
+        ...actionOperationInboxTranslations,
     openSession: ({ session }: { session: string }) => `打开会话：${session}`,
     // Inbox screen
     emptyTitle: "已全部处理完",
@@ -1163,6 +1170,18 @@ export const zhHans = {
       emptyBody: "可在“新建会话”流程中创建，以在机器上运行计划会话。",
       createAutomationA11y: "创建自动化",
     },
+    settings: {
+      title: "自动化设置",
+      openSubtitle: "配置容量和运行历史保留策略。",
+      failedToLoad: "无法加载自动化设置。",
+      updateFailed: "无法更新自动化设置。",
+      maxActiveRunsPerMachine: "每台机器的最大活跃运行数",
+      maxActiveRunsPerMachineSubtitle: "限制每台机器可同时主动认领的运行数量。",
+      maxActiveRunsPerMachinePrompt: "请输入 1 到 2,147,483,647 之间的整数。",
+      maxActiveRunsPerMachineInvalid: "请输入 1 到 2,147,483,647 之间的整数。",
+      runRetention: "永久保留运行历史",
+      runRetentionSubtitle: "关闭后，符合条件的已完成运行将保留 30 天。",
+    },
     detail: {
       invalidId: "无效的自动化 ID。",
       notFound: "未找到自动化。",
@@ -1185,6 +1204,7 @@ export const zhHans = {
         endpointTitle: "Webhook 端点",
         endpointObservingSince: ({ time }: { time: string }) => `自 ${time} 起接收投递`,
         sourceStatusUnreported: "等待首次上报",
+        sourceStatusUnavailable: "来源状态不可用",
         sourceCatalogStatusUnavailable: "来源时效性不可用",
         watcherMachineUnknown: "该机器已不在你的账户中，因此此观察器无法观察事件。",
         watcherMachineRevoked: "该机器已被吊销，因此此观察器无法观察事件。",
@@ -1204,6 +1224,12 @@ export const zhHans = {
       deleteConfirmTitle: "删除自动化",
       deleteConfirmMessage: "此自动化及其计划将被移除。",
       deleteConfirmButton: "删除",
+      clearHistory: "清除运行历史",
+      clearHistorySubtitle: "删除可清除的已完成运行。活跃运行仍可使用。",
+      clearHistoryConfirmTitle: "要清除运行历史吗？",
+      clearHistoryConfirmMessage: "符合条件的已完成运行将被永久删除。活跃运行仍可使用。",
+      clearHistoryConfirmButton: "清除历史",
+      clearHistoryFailed: "无法清除运行历史。",
       machineAssignmentsTitle: "机器分配",
       machineAssignmentsFooter: "至少启用一台机器，自动化才能运行。",
       refreshFailed: "刷新自动化失败。",
@@ -1240,6 +1266,7 @@ export const zhHans = {
         sourceTitle: "观察来源",
         scheduled: ({ time }: { time: string }) => `计划：${time}`,
         updated: ({ time }: { time: string }) => `更新：${time}`,
+        contentRemoved: '运行内容已删除',
         error: ({ message }: { message: string }) => `错误：${message}`,
         attemptTitle: "尝试",
         attempt: ({ attempt }: { attempt: number }) => `第 ${attempt} 次尝试`,
@@ -2947,6 +2974,8 @@ export const zhHans = {
       fallbackDisabled: '此服务器已停用账号回退。',
       duplicateMember: '此账号已在该组中。',
       groupAlreadyExists: '已存在使用此 id 的账号组。',
+      groupCapacityExhausted: '此账号的账号组数量已达上限。请删除不再需要的账号组后重试。',
+      connectedAccountCapacityExhausted: '此账号的已连接账号数量已达上限。请断开不再需要的账号后重试。',
       invalidGroup: '此账号组无效。请检查设置后重试。',
       requestFailedWithStatus: ({ status }: { status: number }) => `The connected-service request failed (${status}). Refresh and try again.`,
       generic: '连接服务操作失败。请刷新后重试。',
@@ -6313,6 +6342,12 @@ export const zhHans = {
 
   voiceAssistant: {
     connecting: "连接中...",
+    reconnecting: "正在重新连接…",
+    listening: "正在聆听",
+    thinking: "正在思考…",
+    speaking: "正在说话",
+    microphonePermissionRequired: "需要麦克风权限",
+    interrupted: "已打断",
     active: "语音助手已启用",
     connectionError: "连接错误",
     label: "语音助手",
@@ -6323,6 +6358,19 @@ export const zhHans = {
     endVoice: "结束语音",
     transcribing: "正在转写…",
     endDictation: "结束听写",
+    dictationNoSpeech: "未检测到语音",
+    dictationErrors: {
+      captureFailed: "麦克风录音失败，听写已停止。请检查麦克风权限后重试。",
+      providerUnavailable: "所选听写提供商不可用。请检查其设置后重试。",
+      captureStartDeadlineExceeded: "听写未能在 60 秒内启动。请检查麦克风权限后重试。",
+      captureDurationExceeded: "听写已达到 60 秒的聆听上限。请重新开始以继续。",
+      transcriptionDeadlineExceeded: "转写用时超过 30 秒。请改用更短的听写重试。",
+      transcriptLimitExceeded: "听写的文本对输入框来说过长。请尝试更短的听写。",
+      recordedAudioSizeUnavailable: "Happier 无法确认录音大小。请重新录制。",
+      recordedAudioLimitExceeded: "录音超过 8 MB 上限。请尝试更短的听写。",
+      microphoneOwnedByVoice: "请先结束 Voice，再开始听写。",
+      microphoneOwnedByDictation: "听写已在使用麦克风。请先结束当前听写，再开始新的听写。",
+    },
   },
 
   voiceSurface: {
@@ -6330,6 +6378,7 @@ export const zhHans = {
     connectAgent: '连接',
     installAgentRuntime: '安装',
     updateAgentRuntime: '更新',
+    reconnect: '重新连接',
     start: "开始",
     stop: "停止",
     selectSessionToStart: "请选择一个会话以开始语音",
@@ -6366,6 +6415,8 @@ export const zhHans = {
   voiceActivity: {
     title: "语音活动",
     empty: "暂无语音活动。",
+    partial: "实时",
+    corrected: "已更新",
     clear: "清除",
     format: {
       voiceAgent: "语音代理",
@@ -7640,6 +7691,10 @@ export const zhHans = {
       "当前未检测到最近一轮的变更。",
     notRepo: "不是版本控制仓库",
     notUnderSourceControl: "此目录不在版本控制下",
+    sourceControlStale: {
+        title: '版本控制需要处理',
+        body: '正在显示上次成功的更新。最近一次刷新未完成。',
+    },
     repositoryInit: {
       initialize: "初始化仓库",
       initializing: "正在初始化…",
@@ -7986,7 +8041,7 @@ export const zhHans = {
           pushCurrentBranch: "推送当前分支",
           publish: "发布仓库",
           publishing: "正在发布…",
-          noTargets: "连接 GitHub 或使用 gh CLI 登录以发布此仓库。",
+          targetsUnavailable: "无法确认此仓库可以发布到哪里。",
           errors: {
             targetRequired: "请选择 GitHub 帐户或组织。",
             nameRequired: "请输入仓库名称。",
@@ -8268,7 +8323,6 @@ export const zhHans = {
       disabledLimitSubtitle: '已达到公开预览数量上限。请先撤销现有链接再创建新链接。',
       disabledNoPreviewSubtitle: '请先打开本地预览，再创建公开链接。',
       disabledReason: {
-        auditRequirementDisabled: '公开预览审计日志为必需项，但服务器已将其关闭。',
         auditUnavailable: '公开预览审计日志不可用。',
         dnsTlsUnavailable: '公开预览正在等待 DNS/TLS 就绪。',
         expired: '此公开预览链接已过期。',
@@ -8288,6 +8342,7 @@ export const zhHans = {
         sessionNotAuthorized: '你无权为此会话创建公开链接。',
         tunnelPortsUnconfigured: '服务器未允许任何隧道端口。',
         tunnelRelayDisabled: '服务器的机器隧道中继已关闭。',
+        tunnelSigningUnconfigured: '服务器没有机器隧道的签名密钥。',
       },
       createActionA11y: '创建公开预览链接',
       revokeActionA11y: '撤销公开预览链接',
@@ -8298,6 +8353,15 @@ export const zhHans = {
             revokeConfirmTitle: '撤销公开链接？',
             revokeConfirmMessage: ({ url }: { url: string }) => `撤销公开预览链接 ${url}？正在使用它的所有人都将失去访问权限。`,
             revokeConfirmCta: '撤销链接',
+            consequenceReach: '任何拿到链接的人都能打开此服务，无需登录。',
+            consequenceExpiry: '下方的有效期用完后，链接会自动失效。',
+            consequenceRevoke: '你随时可以在此面板撤销它。',
+            lifetimeLabel: '有效期',
+            linkTypeLabel: '链接类型',
+            revealUrlA11y: '显示完整链接',
+            hideUrlA11y: '隐藏链接',
+            expiresInClock: ({ clock }: { clock: string }) => `${clock} 后过期`,
+            groupFooter: '公开链接会记录在此机器的审计日志中。',
     },
     actions: {
       terminateDetectedA11y: '终止检测到的本地服务',
@@ -8310,6 +8374,25 @@ export const zhHans = {
             stopConfirmTitle: '停止服务？',
             stopConfirmMessage: ({ service }: { service: string }) => `停止 ${service}？服务在重新启动前将无法访问。`,
             stopConfirmCta: '停止',
+            startA11y: '启动服务',
+            failure: {
+                title: '操作未完成',
+                refused: '机器拒绝了此操作。请检查此机器的本地服务权限后重试。',
+                unavailable: '此操作不适用于此机器上的该服务。',
+                incomplete: '操作没有完成，你可以再试一次。',
+            },
+            failureTitle: {
+                start: ({ service }: { service: string }) => `无法启动 ${service}`,
+                open: ({ service }: { service: string }) => `无法打开 ${service}`,
+                terminate: ({ service }: { service: string }) => `无法终止 ${service}`,
+                forget: ({ service }: { service: string }) => `无法隐藏 ${service}`,
+                stop: ({ service }: { service: string }) => `无法停止 ${service}`,
+                restart: ({ service }: { service: string }) => `无法重启 ${service}`,
+                copyAddress: '无法复制地址',
+                expose: '无法创建公开链接',
+                revokeExposure: '无法撤销公开链接',
+                copyExposure: '无法复制公开链接',
+            },
     },
   },
 
@@ -9089,6 +9172,14 @@ export const zhHans = {
     },
 
 settingsSession: {
+    newSessionDraftEntry: {
+        title: '新会话草稿',
+        footer: '选择“新会话”是继续此设备上的草稿，还是打开新草稿。',
+        resumeTitle: '继续上一个草稿',
+        resumeSubtitle: '继续此设备上通过“新会话”开始的草稿。',
+        freshTitle: '始终重新开始',
+        freshSubtitle: '每次选择“新会话”时都打开新草稿。',
+    },
 	    sessionList: {
 	        title: '会话列表',
 	        footer: '自定义会话列表每行显示的内容。',
@@ -9829,7 +9920,7 @@ settingsSession: {
     },
     setupCheck: {
       title: '提供商就绪状态',
-      footer: '检查只读取已保存设置和当前本地就绪信息。它不会打开麦克风、启动语音、发送音频或联系提供商。',
+      footer: '检查只读取已保存设置和当前本地就绪信息。它不会打开麦克风、启动语音、发送音频或联系提供商。启动语音时会重新检查会话绑定的能力。',
       check: '检查设置',
       checkSubtitle: '被动检查所选语音提供商配置。',
       result: '设置状态',
@@ -10674,6 +10765,13 @@ settingsSession: {
         },
       },
       models: {
+          nativeOptions: {
+              kokoroEnvironmentDefaultTitle: "默认（来自环境）",
+              kokoroDefaultSubtitle: "默认本地神经语音模型。",
+              kokoroHigherQualitySubtitle: "更高质量的本地 Kokoro 语音模型。",
+              kokoroEnvironmentDefaultSubtitle: "使用环境中配置的 Kokoro 模型包默认设置。",
+              sherpaStreamingRecommendedSubtitle: "流式处理、低延迟（推荐）。",
+          },
           title: "本地语音模型",
           statusTitle: "模型服务",
           footer: "在语音主机守护进程上安装本地语音模型包，并为每种类型选择默认模型。",
@@ -10867,6 +10965,7 @@ settingsSession: {
     },
     defaultTitle: "新功能",
     onboardingShowcase: {
+        details: PRODUCT_STORY_DETAILS_ENGLISH,
                 "title": "欢迎使用 Happier",
                 "subtitle": "你的 AI 代理，覆盖每一个工作场景。",
                 "cards": {
@@ -11470,7 +11569,7 @@ settingsSession: {
           webDesktopHandoffCliOption: '使用终端（CLI）',
           webDesktopHandoffCliSubtitle: '运行几条命令托管中继，然后把输出的中继 URL 粘贴到这里。',
           webDesktopOnlyRelayInstallTitle: '在这台电脑上托管 Relay',
-	          webDesktopOnlyRelayInstallSubtitle: '这将安装并启动 Relay 主机。然后把输出的 Relay URL 粘贴到这里。',
+	          webDesktopOnlyRelayInstallSubtitle: '这将安装并启动 Relay 主机。',
 	          webDesktopOnlyRelayStatusTitle: '获取 Relay URL',
 	          webDesktopOnlyRelayStatusSubtitle: '运行此命令查看 Relay URL，然后粘贴到这里。',
 	          webDesktopOnlyOptionalNextTitle: '可选：安全访问与提供商',
@@ -11497,6 +11596,7 @@ settingsSession: {
     setupThisComputerTitle: '设置这台电脑',
     controlPanelTitle: '准备情况摘要',
     activeRelaySummaryTitle: '当前中继',
+    selectedRelaySummaryTitle: '已选中继',
     thisComputerSummaryTitle: '这台电脑',
     nextActionSummaryTitle: '下一步',
     thisComputerReady: '已为此中继准备就绪',
@@ -11777,6 +11877,10 @@ settingsSession: {
     discarded: "已丢弃",
     recoveredHistory: "已恢复的历史记录",
     pluginAttribution: ({ pluginId }: { pluginId: string }) => `来自插件 ${pluginId}`,
+    pluginAttributionExternal: ({ sender, pluginId }: { sender: string; pluginId: string }) => `来自 ${sender}，经由插件 ${pluginId}`,
+    pluginAttributionExternalForwarded: ({ sender, pluginId }: { sender: string; pluginId: string }) => `由 ${sender} 转发，经由插件 ${pluginId}`,
+    pluginAttributionExternalSender: '外部发送者',
+    pluginAttributionExternalBot: '外部机器人',
     unknownEvent: "未知事件",
     runtimeConfigOutcomeAppliesBeforeNextMessage: '将在你的下一条消息前生效',
     runtimeConfigOutcomeQueuedUntilReady: '已排队，待就绪后应用',
@@ -12182,6 +12286,24 @@ settingsSession: {
     },},
 
   profiles: {
+      launchPlacement: {
+          title: '会话在哪里运行',
+          footer: '这是一项偏好，在会话启动时解析，绝不会把某台机器存为答案。',
+          none: '无偏好',
+          automatic: '自动解析',
+          ask: '总是询问',
+          fixed: '总是这台机器',
+          directory: '目录',
+          directoryPlaceholder: '留空则使用解析出的项目根目录',
+      },
+      launchCheckout: {
+          title: '工作副本',
+          footer: '会话在项目中运行时如何获得工作副本。',
+          none: '无偏好',
+          reuseWorkspace: '复用项目的检出',
+          createWorktree: '创建 worktree',
+          ask: '总是询问',
+      },
     title: "配置文件",
     subtitle: "管理您的配置文件",
     sessionUses: ({ profile }: { profile: string }) => `此会话使用：${profile}`,
@@ -12590,6 +12712,7 @@ settingsSession: {
       ...pluginWebhookAdministrationTranslations['zh-Hans'],
       ...pluginAccountDataEraseTranslations['zh-Hans'],
       ...pluginAccountReleaseSelectionTranslations['zh-Hans'],
+      ...pluginMachineMatrixTranslations['zh-Hans'],
       ...pluginInvocationLogTranslations['zh-Hans'],
       ...eventAutomationComposerTranslations['zh-Hans'],
     title: "插件目录",
@@ -12616,7 +12739,7 @@ settingsSession: {
     developmentSourceInstallSucceeded: "开发源已批准并投影。",
     developmentSourceInstallFailed: ({ outcome }: { outcome: string }) => `未能安装开发源（${outcome}）。`,
     developmentTrustSourceRootTitle: "信任此插件文件夹？",
-    developmentTrustSourceRootBody: ({ path }: { path: string }) => `Happier 将在以下位置安装依赖、构建并运行代码：\n\n${path}\n\n只有在你信任该文件夹中的全部内容以及它可能拉取的全部内容时才继续。下一步你将审阅插件本身。`,
+    developmentTrustSourceRootBody: ({ path, machine, server }: { path: string; machine: string; server: string }) => `Happier 将在以下位置安装依赖、构建并运行代码：\n\n${path}（${machine} / ${server}）\n\n只有在你信任该文件夹中的全部内容以及它可能拉取的全部内容时才继续。下一步你将审阅插件本身。`,
     developmentTrustSourceRootConfirm: "信任文件夹",
     pendingChangesTitle: "等待你的决定",
     pendingChangesFooter: "在这台机器上准备好的插件变更。代理可以准备变更，但只有你能批准。",
@@ -12693,7 +12816,8 @@ settingsSession: {
     marketplaceInstallReviewBody: ({ identity, verification, executableRealms, contributions, uiArtifacts, requiredAccess, optionalAccess, compatibility }: { identity: string; verification: string; executableRealms: string; contributions: string; uiArtifacts: string; requiredAccess: string; optionalAccess: string; compatibility: string }) => `身份：\n${identity}\n\n验证信号：\n${verification}\n\n可执行代码：${executableRealms}\n贡献：${contributions}\n界面构件：${uiArtifacts}\n\n受信任的守护程序和 React Native 代码会以应用或进程的权限运行，并可直接使用文件、网络、环境和进程。下面列出的主机访问权限描述由 Happier 中介的服务；它不是可执行插件代码的沙箱。\n\n必需的披露和协作服务：\n${requiredAccess}\n\n可选的主机资源（默认关闭）：\n${optionalAccess}\n\n兼容性和更新：\n${compatibility}`,
     marketplaceInstallDecisionFailed: ({ outcome }: { outcome: string }) => `插件未安装（${outcome}）。`,
     marketplaceChangeDecisionFailed: ({ action, outcome }: { action: string; outcome: string }) => `${action}失败（${outcome}）。`,
-    pluginChangeConfirmBody: ({ action, name }: { action: string; name: string }) => `确认对 ${name} 执行“${action}”。`,
+    pluginChangeConfirmBody: ({ action, name, machine, server }: { action: string; name: string; machine: string; server: string }) => `确认在 ${server} 的 ${machine} 上对 ${name} 执行“${action}”。`,
+    pluginChangeConfirmTarget: ({ machine, server }: { machine: string; server: string }) => `此操作作用于 ${server} 的 ${machine}。`,
     forgetTrust: "忘记信任",
     rollback: "回滚",
     uninstall: "卸载",
@@ -12877,3 +13001,4 @@ settingsSession: {
             skipToContent: "跳转到内容",
         },
   },} as const;
+import { PRODUCT_STORY_DETAILS_ENGLISH } from '@happier-dev/brand/product-story';

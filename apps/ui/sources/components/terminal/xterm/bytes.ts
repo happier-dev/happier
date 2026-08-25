@@ -2,6 +2,7 @@ export type XtermWriteBytesInput = Readonly<{
     terminalId: string;
     seq: number;
     byteOffset: number;
+    writeGeneration: number;
     bytes: Uint8Array;
 }>;
 
@@ -11,6 +12,7 @@ export type XtermWriteCompleteEvent = Readonly<{
     byteOffset: number;
     byteLength: number;
     ackedByteOffset: number;
+    writeGeneration: number;
 }>;
 
 const utf8Decoder = new TextDecoder('utf-8', { fatal: false });
@@ -38,5 +40,6 @@ export function buildXtermWriteCompleteEvent(input: XtermWriteBytesInput): Xterm
         byteOffset: input.byteOffset,
         byteLength,
         ackedByteOffset: input.byteOffset + byteLength,
+        writeGeneration: input.writeGeneration,
     };
 }

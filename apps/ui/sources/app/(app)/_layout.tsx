@@ -210,6 +210,11 @@ const RootLayoutShell = React.memo(function RootLayoutShell(): React.ReactElemen
                 headerTitle: t('navigation.newAutomation'),
                 headerBackTitle: back,
             },
+            automationsSettings: {
+                headerShown: true,
+                headerTitle: t('automations.settings.title'),
+                headerBackTitle: back,
+            },
             visibleBlankBack,
             sessionRuns: {
                 headerShown: true,
@@ -432,6 +437,10 @@ const RootLayoutShell = React.memo(function RootLayoutShell(): React.ReactElemen
                 <Stack.Screen
                     name="automations/new"
                     options={rootStackRouteOptions.automationsNew}
+                />
+                <Stack.Screen
+                    name="automations/settings"
+                    options={rootStackRouteOptions.automationsSettings}
                 />
                 <Stack.Screen
                     name="session/[id]/info"

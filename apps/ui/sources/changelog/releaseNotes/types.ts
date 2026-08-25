@@ -29,6 +29,12 @@ export type StoryDeckImageMediaOverride = Readonly<{
     primaryUrl?: string;
     fallbackUrl?: string;
     url?: string;
+    aspectRatio?: number;
+    contentFit?: 'cover' | 'contain';
+    backdrop?: Readonly<{
+        lightLocalAssetKey: string;
+        darkLocalAssetKey: string;
+    }>;
 }>;
 
 export type StoryDeckImageMedia = StoryDeckImageMediaOverride & Readonly<{
@@ -42,6 +48,7 @@ export type StoryDeckImageCard = Readonly<{
     titleKey: TranslationKey;
     wideTitleKey?: TranslationKey;
     bodyKey: TranslationKey;
+    paragraphKeys?: ReadonlyArray<TranslationKey>;
     media: StoryDeckImageMedia;
 }>;
 

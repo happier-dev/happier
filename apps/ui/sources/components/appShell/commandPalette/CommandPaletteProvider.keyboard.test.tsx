@@ -149,6 +149,12 @@ describe('CommandPaletteProvider keyboard shortcuts', () => {
         testState.keyboardHandlers?.['session.new']?.();
 
         expect(testState.routerPush).toHaveBeenCalledWith('/settings');
-        expect(testState.routerPush).toHaveBeenCalledWith('/new');
+        expect(testState.routerPush).toHaveBeenCalledWith({
+            pathname: '/new',
+            params: {
+                draftId: expect.any(String),
+                draftOrigin: 'ordinary',
+            },
+        });
     });
 });

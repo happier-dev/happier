@@ -48,6 +48,8 @@ import { resolveLocalServicePreviewPlatform } from '@/sync/domains/local/service
 import { useScopedPluginUiProjection } from '@/components/plugins/projection/useScopedPluginUiProjection';
 import { createWorkspaceDetailsSurfaceRenderers } from './details/surfaces/workspaceDetailsSurfaceRegistry';
 import { Icon } from '@/components/ui/icons/Icon';
+import { resolveNewSessionDraftRouteIdentity } from '@/components/sessions/new/navigation/newSessionDraftRouteIdentity';
+import { buildNewSessionLaunchRouteParams } from '@/components/sessions/new/navigation/newSessionRouteParams';
 
 export type WorkspaceDetailsPanelHeaderActionRenderParams = Readonly<{
     iconButtonStyle: Readonly<Record<string, unknown>>;
@@ -147,6 +149,7 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
         launcherState: localServiceLauncherState,
         localServicePreviewState,
         pluginBrowserProjection,
+        pluginUiProjection,
         nowMs: props.nowMs,
     }).feed;
     // Resolve through the canonical preview-platform owner so the desktop host resolves to `desktop`
@@ -356,13 +359,15 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
 
     const renderHeaderActions = React.useCallback(() => {
         const openNewSessionWithReviewComments = () => {
+            const draftId = resolveNewSessionDraftRouteIdentity({ routeDraftId: undefined }).draftId;
             router.push({
                 pathname: '/new',
-                params: {
+                params: buildNewSessionLaunchRouteParams({
+                    draftId,
                     machineId: props.workspaceRef.machineId,
                     directory: effectiveRootPath,
-                    spawnServerId: props.workspaceRef.serverId,
-                },
+                    targetServerId: props.workspaceRef.serverId,
+                }),
             });
         };
         return (

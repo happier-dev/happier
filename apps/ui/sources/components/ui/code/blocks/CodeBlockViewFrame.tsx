@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Platform, Pressable, View } from 'react-native';
+import { Platform, Pressable, View, type StyleProp, type ViewStyle } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -20,6 +20,7 @@ export type CodeBlockViewFrameProps = Readonly<{
     headerLeft?: React.ReactNode;
     headerRight?: React.ReactNode;
     scrollTestID?: string;
+    containerStyle?: StyleProp<ViewStyle>;
     children: React.ReactNode;
 }>;
 
@@ -33,6 +34,7 @@ export const CodeBlockViewFrame = React.memo<CodeBlockViewFrameProps>(({
     headerLeft,
     headerRight,
     scrollTestID,
+    containerStyle,
     children,
 }) => {
     const { theme } = useUnistyles();
@@ -100,6 +102,7 @@ export const CodeBlockViewFrame = React.memo<CodeBlockViewFrameProps>(({
             style={[
                 styles.container,
                 { backgroundColor: theme.colors.surface.inset, borderColor: theme.colors.border.default },
+                containerStyle,
             ]}
         >
             {header}

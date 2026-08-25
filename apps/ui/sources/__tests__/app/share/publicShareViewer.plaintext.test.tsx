@@ -118,6 +118,12 @@ describe('PublicShareViewerScreen (plaintext)', () => {
         transcriptListSpy.mockClear();
     });
 
+    it('resolves the concrete web path token when Expo exposes its static route placeholder', async () => {
+        const { resolvePublicShareTokenParam } = await import('@/app/(app)/share/[token]');
+
+        expect(resolvePublicShareTokenParam(':token', '/share/web-token-1')).toBe('web-token-1');
+    });
+
     it('renders a plaintext layout-v1 shared-only response without owner Agent fields', async () => {
         serverFetchSpy
             .mockResolvedValueOnce({
@@ -177,7 +183,7 @@ describe('PublicShareViewerScreen (plaintext)', () => {
         expect(serverFetchSpy).toHaveBeenCalledWith(
             '/v1/public-share/tok-1',
             expect.anything(),
-            expect.objectContaining({ includeAuth: false }),
+            expect.objectContaining({ includeAuth: false, retry: 'none' }),
         );
         expect(serverFetchSpy).toHaveBeenCalledWith(
             '/v1/public-share/tok-1/messages',
@@ -188,7 +194,7 @@ describe('PublicShareViewerScreen (plaintext)', () => {
                     'x-public-share-messages-access-token': 'messages-token-1',
                 }),
             }),
-            expect.objectContaining({ includeAuth: false }),
+            expect.objectContaining({ includeAuth: false, retry: 'none' }),
         );
         expect(transcriptListSpy).toHaveBeenCalled();
         const last = transcriptListSpy.mock.calls[transcriptListSpy.mock.calls.length - 1]?.[0];
@@ -724,7 +730,7 @@ describe('PublicShareViewerScreen (plaintext)', () => {
                     'x-public-share-messages-access-token': 'messages-token-paged',
                 }),
             }),
-            expect.objectContaining({ includeAuth: false }),
+            expect.objectContaining({ includeAuth: false, retry: 'none' }),
         );
 
         const afterOlder = transcriptListSpy.mock.calls[transcriptListSpy.mock.calls.length - 1]?.[0];

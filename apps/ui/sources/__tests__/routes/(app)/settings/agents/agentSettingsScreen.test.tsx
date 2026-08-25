@@ -6,6 +6,10 @@ import type { CliAuthStatusData } from '@/sync/api/capabilities/capabilitiesProt
 import type { ActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { clearDaemonMergedProjectionCacheForTests } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
+import {
+    clearProjectedAgentUiBehaviorDescriptors,
+    publishProjectedAgentUiBehaviorDescriptors,
+} from '@/agents/registry/agentUiBehaviorProjection';
 import { PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE } from '@/dev/testkit/fixtures/pluginProviderDaemonProjection';
 import { createPassThroughModule } from '@/dev/testkit/mocks/components';
 import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
@@ -225,6 +229,43 @@ function buildBuiltInAgentSettingsProjection(): PluginProjectionV2 {
                 target: {
                     kind: 'agent',
                     agent: { pluginId: 'happier.agent.codex', localId: 'codex' },
+                },
+                fields: [],
+            },
+        },
+    };
+}
+
+/**
+ * An installed Agent with no bundled runtime carrier and no CLI auth plugin that
+ * still contributes editable Agent-targeted settings. This is the shape the
+ * Agent settings route resolves to its fallback presentation, so it is the exact
+ * case that proves the contributed settings are still reachable there.
+ */
+function buildHeadlessAgentSettingsProjection(): PluginProjectionV2 {
+    return {
+        ...PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE,
+        installedPackagesById: {
+            ...PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE.installedPackagesById,
+            'acme.headless': {
+                id: 'acme.headless',
+                displayName: 'Acme Headless',
+                version: '1.0.0',
+                enabled: true,
+                source: { kind: 'path', locator: '/plugins/acme-headless' },
+            },
+        },
+        settingsById: {
+            'acme.headless.agent-settings': {
+                id: 'agent-settings',
+                pluginId: 'acme.headless',
+                version: 1,
+                title: 'Acme Headless settings',
+                scope: { kind: 'account' },
+                presentation: { sections: [], subagentSections: [] },
+                target: {
+                    kind: 'agent',
+                    agent: { pluginId: 'acme.headless', localId: 'acme.headless.provider' },
                 },
                 fields: [],
             },
@@ -877,6 +918,7 @@ function buildLegacyBuiltInTargetKey(agentId: 'antigravity' | 'claude' | 'codex'
 
 describe('PluginAgentSettingsScreen', () => {
     afterEach(() => {
+        clearProjectedAgentUiBehaviorDescriptors();
         standardCleanup();
     });
 
@@ -1049,8 +1091,54 @@ describe('PluginAgentSettingsScreen', () => {
         expect(settingsSection.props).toMatchObject({
             accountServerIdentityId: 'account-identity-a',
             daemonServerIdentityId: 'admin-identity-b',
+            perActiveServerIdentityId: 'admin-identity-b',
             machineId: 'm2',
             serverId: 'admin-identity-b',
+        });
+        const daemonTarget = {
+            kind: 'daemon' as const,
+            serverIdentityId: 'admin-identity-b',
+            machineId: 'm2',
+            serverId: 'admin-identity-b',
+        };
+        expect(settingsSection.props.isDaemonTargetCurrent(daemonTarget)).toBe(true);
+        administrationTargetState.executionTarget = {
+            ...administrationTargetState.executionTarget!,
+            machine: {
+                ...administrationTargetState.executionTarget!.machine,
+                daemonStateVersion: 1,
+            },
+        };
+        expect(settingsSection.props.isDaemonTargetCurrent(daemonTarget)).toBe(false);
+
+        const { AgentContributedSettingsSection } = await import('@/app/(app)/settings/agents/[agentId]');
+        const offlineScreen = await renderScreen(
+            <AgentContributedSettingsSection
+                pluginSettingsProjection={settingsSection.props.projection}
+                targetSelection={{
+                    candidates: [],
+                    pickerRows: [],
+                    state: {
+                        kind: 'missing',
+                        target: { serverIdentityId: 'admin-identity-b', machineId: 'm2' },
+                        snapshot: null,
+                    },
+                    selectedTarget: { serverIdentityId: 'admin-identity-b', machineId: 'm2' },
+                    canExecute: false,
+                    selectTarget: () => {},
+                    clearTarget: () => {},
+                    resolveExecutionTarget: () => null,
+                }}
+                executionTarget={null}
+                daemonOperationsAvailable={false}
+            />,
+        );
+        expect(offlineScreen.findByType(PluginDetailGenericSettingsSection).props).toMatchObject({
+            accountServerIdentityId: 'account-identity-a',
+            daemonServerIdentityId: null,
+            perActiveServerIdentityId: 'admin-identity-b',
+            machineId: null,
+            serverId: null,
         });
     });
 
@@ -1199,6 +1287,77 @@ describe('PluginAgentSettingsScreen', () => {
             'settings-external-sessions-manage-all',
         )).toBeTruthy();
         expect(machinePluginSessionHooksRpcMock).not.toHaveBeenCalled();
+    });
+
+    /**
+     * The screen is scoped to ONE execution target and compares against that
+     * machine's daemon projection, so the Agent declaration it compares with
+     * has to come from the same machine. An installed Agent held at different
+     * versions on two machines otherwise turns the silence of a machine that
+     * legitimately contributes no External Sessions Agent into an error banner
+     * borrowed from whichever machine sorts first.
+     */
+    it('reads the External Sessions expectation from the selected machine declaration', async () => {
+        mockProviderId = 'acme.review.provider';
+        machineContributionRegistryProjectionDescribeMock.mockResolvedValue({
+            supported: true,
+            projection: PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE,
+        });
+        publishProjectedAgentUiBehaviorDescriptors({
+            machineId: 'm1',
+            descriptorsByAgentId: {
+                'acme.review.provider': {
+                    kind: 'plugin.ui.v1',
+                    pluginId: 'acme.review',
+                    agentId: 'acme.review.provider',
+                    version: 1,
+                    behavior: { externalSessions: { browse: { order: 10 } } },
+                },
+            },
+        });
+        publishProjectedAgentUiBehaviorDescriptors({ machineId: 'm2', descriptorsByAgentId: {} });
+        mockAgentCatalogProjection.mockImplementation((agentId: string) => ({
+            agentId,
+            catalogAgentId: null,
+            iconAgentId: null,
+            title: 'Acme Review Provider',
+            subtitle: agentId,
+            iconName: 'layers-outline',
+            isBuiltIn: false,
+            backendTargetKey: buildCanonicalBackendTargetKey(agentId),
+            enabled: true,
+            authPlugin: {
+                agentId,
+                support: 'login_terminal',
+                docsUrl: 'https://example.com/acme',
+                buildLoginLaunch: () => ({ initialCommand: 'acme login' }),
+            },
+            backendEntry: null,
+        }));
+
+        setAdministrationExecutionTarget('m1', 'server1');
+        const screen = await renderPluginAgentSettingsScreen();
+        await act(async () => {});
+        await flushHookEffects();
+
+        // Positive twin: on the machine that DOES declare External Sessions, a
+        // daemon projecting no Agent for it is a genuine error.
+        expect(screen.findByTestId(
+            'settings-external-sessions-inventory-status',
+        )?.props.title).toBe('externalSessions.settingsIntegrationInventoryErrorTitle');
+
+        const targetSelector = screen.findByType('MachineAdministrationTargetSelector' as any);
+        await act(async () => {
+            targetSelector.props.selection.selectTarget({
+                serverIdentityId: 'server1',
+                machineId: 'm2',
+            });
+        });
+        await flushHookEffects();
+
+        expect(screen.findByTestId(
+            'settings-external-sessions-inventory-status',
+        )?.props.title).not.toBe('externalSessions.settingsIntegrationInventoryErrorTitle');
     });
 
     it('shows only persisted enabled auto-link policies for the selected machine and Agent and removes them offline', async () => {
@@ -1539,6 +1698,38 @@ describe('PluginAgentSettingsScreen', () => {
         expect(items.some((node: any) => node.props?.title === 'settingsAgents.notAvailable')).toBe(false);
         const projectedIdentityRow = items.find((node: any) => node.props?.title === 'Acme Headless Provider');
         expect(projectedIdentityRow?.props?.icon?.props?.name).toBe('sparkles-outline');
+    });
+
+    it('renders the installed Agent plugin settings on the no-CLI Agent screen', async () => {
+        mockProviderId = 'acme.headless.provider';
+        mockAgentCatalogProjection.mockReturnValue({
+            agentId: 'acme.headless.provider',
+            catalogAgentId: null,
+            iconAgentId: 'claude',
+            title: 'Acme Headless Provider',
+            subtitle: 'Plugin provider',
+            iconName: 'stack-simple',
+            isBuiltIn: false,
+            backendTargetKey: null,
+            enabled: null,
+            authPlugin: null,
+            backendEntry: null,
+        });
+        machineContributionRegistryProjectionDescribeMock.mockResolvedValue({
+            supported: true,
+            projection: buildHeadlessAgentSettingsProjection(),
+        });
+
+        const screen = await renderPluginAgentSettingsScreen();
+        await act(async () => {});
+        await flushHookEffects();
+
+        const { PluginDetailGenericSettingsSection } = await import(
+            '@/components/settings/plugins/detail/PluginDetailGenericSettingsSection'
+        );
+        const settingsSection = screen.findByType(PluginDetailGenericSettingsSection);
+        expect(settingsSection.props).toMatchObject({ pluginId: 'acme.headless' });
+        expect(settingsSection.props.projection.editableSettingsGroups).toHaveLength(1);
     });
 
     it('does not synthesize a built-in target key for plugin-backed provider controls when projection truth is missing', async () => {
@@ -2181,6 +2372,66 @@ describe('PluginAgentSettingsScreen', () => {
         expect(items.some((node: any) => node.props?.title === 'settingsAgents.notFoundTitle')).toBe(false);
         const fallbackIdentityRow = items.find((node: any) => node.props?.title === 'Acme Review Backend');
         expect(fallbackIdentityRow?.props?.icon?.props?.name).toBe('sparkles-outline');
+    });
+
+    /**
+     * Protocol admits an AUXILIARY-ONLY Agent: it declares the
+     * `externalSessions` surface and neither a runtime nor CLI/auth. Such an
+     * Agent lands on the fallback detail screen, so External Sessions has to be
+     * composed there too — its reachability is a property of the Agent, not of
+     * whether the same Agent happens to carry a bundled runtime or a login UI.
+     */
+    it('renders External Sessions on the detail screen of an auxiliary-only Agent', async () => {
+        mockProviderId = 'acme.transcripts';
+        // The fallback branch is exactly "no runtime carrier and no auth UI",
+        // and it must not require pane context.
+        shouldThrowOnAppPaneScope = true;
+        machineContributionRegistryProjectionDescribeMock.mockResolvedValue({
+            supported: true,
+            projection: PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE,
+        });
+        publishProjectedAgentUiBehaviorDescriptors({
+            machineId: 'm1',
+            descriptorsByAgentId: {
+                'acme.transcripts': {
+                    kind: 'plugin.ui.v1',
+                    pluginId: 'acme.transcripts',
+                    agentId: 'acme.transcripts',
+                    version: 1,
+                    behavior: { externalSessions: { browse: { order: 10 } } },
+                },
+            },
+        });
+        mockAgentCatalogProjection.mockImplementation((agentId: string) => ({
+            agentId,
+            catalogAgentId: null,
+            iconAgentId: null,
+            title: 'Acme Transcripts',
+            subtitle: agentId,
+            iconName: 'layers-outline',
+            isBuiltIn: false,
+            backendTargetKey: null,
+            enabled: null,
+            authPlugin: null,
+            backendEntry: null,
+        }));
+
+        setAdministrationExecutionTarget('m1', 'server1');
+        const screen = await renderPluginAgentSettingsScreen();
+        await act(async () => {});
+        await flushHookEffects();
+
+        // The fallback screen really is the one rendering (identity row), and
+        // the canonical External Sessions section is composed alongside it.
+        const items = screen.findAllByType('Item' as any);
+        expect(items.some((node: any) => node.props?.title === 'Acme Transcripts')).toBe(true);
+        expect(screen.findByTestId('settings-external-sessions-manage-all')).toBeTruthy();
+        // The machine declares External Sessions while its daemon projects no
+        // Agent for it, so the honest state is the same error the primary
+        // screen shows — not silence.
+        expect(screen.findByTestId(
+            'settings-external-sessions-inventory-status',
+        )?.props.title).toBe('externalSessions.settingsIntegrationInventoryErrorTitle');
     });
 
     it('uses projected native auth metadata to detect an external agent CLI', async () => {

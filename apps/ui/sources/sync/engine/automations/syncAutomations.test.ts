@@ -4,17 +4,17 @@ import { loadSyncTuning } from '@/sync/runtime/syncTuning';
 
 import { fetchAndApplyAutomationRuns, fetchAndApplyAutomations } from './syncAutomations';
 
-const listAutomationDefinitionsV3Mock = vi.hoisted(() => vi.fn());
-const listAutomationDefinitionRunsV3Mock = vi.hoisted(() => vi.fn());
+const listAutomationDefinitionsMock = vi.hoisted(() => vi.fn());
+const listAutomationDefinitionRunsMock = vi.hoisted(() => vi.fn());
 const isRuntimeFeatureEnabledMock = vi.hoisted(() => vi.fn());
 const getActiveServerSnapshotMock = vi.hoisted(() => vi.fn(() => ({ serverId: 'server-1' })));
 
 vi.mock('@/sync/api/automations/apiAutomations', () => ({
-    listAutomationDefinitionsV3: listAutomationDefinitionsV3Mock,
+    listAutomationDefinitions: listAutomationDefinitionsMock,
 }));
 
 vi.mock('@/sync/api/automations/apiAutomationRuns', () => ({
-    listAutomationDefinitionRunsV3: listAutomationDefinitionRunsV3Mock,
+    listAutomationDefinitionRuns: listAutomationDefinitionRunsMock,
 }));
 
 vi.mock('@/sync/domains/features/featureDecisionInputs', () => ({
@@ -84,20 +84,20 @@ const eventRun = {
 
 describe('fetchAndApplyAutomations', () => {
     beforeEach(() => {
-        listAutomationDefinitionsV3Mock.mockReset();
-        listAutomationDefinitionRunsV3Mock.mockReset();
+        listAutomationDefinitionsMock.mockReset();
+        listAutomationDefinitionRunsMock.mockReset();
         isRuntimeFeatureEnabledMock.mockReset();
         getActiveServerSnapshotMock.mockClear();
 
         isRuntimeFeatureEnabledMock.mockResolvedValue(true);
-        listAutomationDefinitionsV3Mock.mockResolvedValue([eventSummary]);
-        listAutomationDefinitionRunsV3Mock.mockResolvedValue({
+        listAutomationDefinitionsMock.mockResolvedValue([eventSummary]);
+        listAutomationDefinitionRunsMock.mockResolvedValue({
             runs: [eventRun],
             nextCursor: null,
         });
     });
 
-    it('applies content-free V3 summaries and refreshes already-loaded Event runs through V3', async () => {
+    it('applies content-free summaries and refreshes already-loaded Event runs through the current API', async () => {
         const applyAutomations = vi.fn();
         const refreshAutomationRunsWindow = vi.fn();
 
@@ -120,7 +120,7 @@ describe('fetchAndApplyAutomations', () => {
         expect(appliedSummary).not.toHaveProperty('triggerDefinitionEnvelope');
         expect(appliedSummary).not.toHaveProperty('templateCiphertext');
         expect(appliedSummary).not.toHaveProperty('executionRecipe');
-        expect(listAutomationDefinitionRunsV3Mock).toHaveBeenCalledWith({
+        expect(listAutomationDefinitionRunsMock).toHaveBeenCalledWith({
             credentials: { accessToken: 'token' },
             automationId: 'event-1',
             limit: 20,
@@ -136,7 +136,7 @@ describe('fetchAndApplyAutomations', () => {
             applyAutomations,
         });
 
-        expect(listAutomationDefinitionsV3Mock).toHaveBeenCalledTimes(1);
+        expect(listAutomationDefinitionsMock).toHaveBeenCalledTimes(1);
         expect(applyAutomations.mock.calls[0]?.[0]?.[0]).toMatchObject({
             detail: { kind: 'unloaded', templateVersion: 3 },
         });
@@ -146,13 +146,13 @@ describe('fetchAndApplyAutomations', () => {
         const applyAutomations = vi.fn();
         const refreshAutomationRunsWindow = vi.fn();
         const loadedAutomationRunIds = Array.from({ length: 20 }, (_unused, index) => `event-${index + 1}`);
-        listAutomationDefinitionsV3Mock.mockResolvedValue(loadedAutomationRunIds.map((id) => ({
+        listAutomationDefinitionsMock.mockResolvedValue(loadedAutomationRunIds.map((id) => ({
             ...eventSummary,
             id,
         })));
         let inFlight = 0;
         let peakInFlight = 0;
-        listAutomationDefinitionRunsV3Mock.mockImplementation(async () => {
+        listAutomationDefinitionRunsMock.mockImplementation(async () => {
             inFlight += 1;
             peakInFlight = Math.max(peakInFlight, inFlight);
             await Promise.resolve();
@@ -169,7 +169,7 @@ describe('fetchAndApplyAutomations', () => {
 
         // The Account ceiling allows thousands of definitions, so one socket
         // invalidation must never open one request per cached run list at once.
-        expect(listAutomationDefinitionRunsV3Mock).toHaveBeenCalledTimes(20);
+        expect(listAutomationDefinitionRunsMock).toHaveBeenCalledTimes(20);
         expect(peakInFlight).toBeLessThanOrEqual(
             loadSyncTuning().automationDefinitionDetailHydrationConcurrencyLimit,
         );
@@ -188,14 +188,14 @@ describe('fetchAndApplyAutomations', () => {
         });
 
         expect(applyAutomations).not.toHaveBeenCalled();
-        expect(listAutomationDefinitionRunsV3Mock).not.toHaveBeenCalled();
+        expect(listAutomationDefinitionRunsMock).not.toHaveBeenCalled();
         expect(refreshAutomationRunsWindow).not.toHaveBeenCalled();
     });
 });
 
 describe('fetchAndApplyAutomationRuns', () => {
-    it('passes an opaque continuation cursor to the V3 API and applies the result only through the continuation owner', async () => {
-        listAutomationDefinitionRunsV3Mock.mockResolvedValue({
+    it('passes an opaque continuation cursor to the current API and applies the result only through the continuation owner', async () => {
+        listAutomationDefinitionRunsMock.mockResolvedValue({
             runs: [eventRun],
             nextCursor: null,
         });
@@ -212,7 +212,7 @@ describe('fetchAndApplyAutomationRuns', () => {
             appendAutomationRuns,
         });
 
-        expect(listAutomationDefinitionRunsV3Mock).toHaveBeenCalledWith({
+        expect(listAutomationDefinitionRunsMock).toHaveBeenCalledWith({
             credentials: { accessToken: 'token' },
             automationId: 'event-1',
             limit: 20,

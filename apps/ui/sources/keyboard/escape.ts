@@ -5,6 +5,12 @@ import { restoreFocusToBestTarget, useFocusReturnFallbackRef, type FocusReturnRe
 const ESCAPE_EVENT_HANDLED_KEY = '__happierEscapeEventHandled';
 
 export const ESCAPE_LAYER_PRIORITIES = {
+    /**
+     * Stop an in-flight page load in the in-app browser. Deliberately the LOWEST layer: every
+     * overlay, popover, pane and selection state must consume Escape first, and stopping a load is
+     * only what Escape means when nothing else is claiming it.
+     */
+    browserStopLoading: 5,
     focusSessionSurface: 10,
     sessionListSelection: 15,
     draftClear: 20,

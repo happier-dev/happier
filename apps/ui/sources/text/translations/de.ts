@@ -10,9 +10,11 @@ import { pluginWebhookAdministrationTranslations } from './pluginWebhookAdminist
 import { pluginAccountDataEraseTranslations } from './pluginAccountDataEraseTranslations';
 import { apiTokenSettingsTranslations } from './apiTokenSettingsTranslations';
 import { pluginAccountReleaseSelectionTranslations } from './pluginAccountReleaseSelectionTranslations';
+import { pluginMachineMatrixTranslations } from './pluginMachineMatrixTranslations';
 import { pluginInvocationLogTranslations } from './pluginInvocationLogTranslations';
 import { eventAutomationComposerTranslations } from './eventAutomationComposerTranslations';
 import { actionOperationInboxTranslations } from './actionOperationInboxTranslations';
+import { sessionDraftTranslations } from './sessionDraftTranslations';
 
 const mcpServersUxTranslationExtension = {
   mcpServersConfiguredEmptySubtitle: 'Erstelle einen Server, importiere Host-JSON oder installiere ein empfohlenes Preset.',
@@ -478,6 +480,7 @@ function plural({ count, singular, plural }: { count: number; singular: string; 
  * - New translation keys must be added to ALL language files
  */
 export const de: TranslationStructure = {
+    ...sessionDraftTranslations,
     transferRecovery: {
         title: 'Vorgemerkten Upload abschließen',
         message: 'Der Upload hat den Rechner erreicht, aber das endgültige Speichern braucht Aufmerksamkeit. Wiederhol nur den letzten Speicherschritt oder verwirf den vorgemerkten Upload.',
@@ -557,6 +560,10 @@ export const de: TranslationStructure = {
             composerSendImmediate: 'Sofort senden',
             composerSendPending: 'An die Warteschlange senden',
             commandPaletteOpen: 'Befehlspalette öffnen',
+            browserAddressFocus: 'Browser-Adressleiste fokussieren',
+            browserBack: 'Im Browser zurück',
+            browserForward: 'Im Browser vorwärts',
+            browserReload: 'Browserseite neu laden',
             modeCycle: 'Modus wechseln',
             shortcutsHelpOpen: 'Kürzel-Hilfe öffnen',
             sessionNew: 'Neue Session erstellen',
@@ -1066,6 +1073,24 @@ export const de: TranslationStructure = {
                 cronSubtitle: 'Erweiterter Zeitplan-Ausdruck.',
                 cronHelpText: 'Standard-Cron mit 5 Feldern: Minute Stunde Tag-des-Monats Monat Wochentag.',
             },
+            confirm: {
+                createTitle: ({ name }: { name: string }) => `„${name}“ erstellen?`,
+                editTitle: ({ name }: { name: string }) => `Änderungen an „${name}“ speichern?`,
+                createConfirm: 'Automation erstellen',
+                editConfirm: 'Automation speichern',
+                trigger: ({ pluginId, eventLocalId }: { pluginId: string; eventLocalId: string }) =>
+                    `Trigger: ${eventLocalId} von ${pluginId}`,
+                observationCheckpointedPull: 'Ereignisse werden durch regelmäßiges Abfragen der Quelle empfangen.',
+                observationDurablePush: 'Ereignisse werden über einen von Happier gehosteten Webhook empfangen. Der Happier-Server empfängt und verifiziert jede Zustellung des Anbieters.',
+                watcher: ({ machineId }: { machineId: string }) => `Überwacht von Rechner ${machineId}`,
+                executors: ({ machineIds }: { machineIds: string }) => `Läuft auf Rechner ${machineIds}`,
+                targetNewSession: 'Jedes passende Ereignis erstellt unbeaufsichtigt eine neue Session.',
+                targetExistingSession: 'Jedes passende Ereignis sendet unbeaufsichtigt Arbeit in die ausgewählte bestehende Session.',
+                targetExecutionRun: ({ permissionMode }: { permissionMode: string }) =>
+                    `Jedes passende Ereignis startet einen unbeaufsichtigten Execution Run mit Berechtigungsmodus „${permissionMode}“.`,
+                enabled: 'Sie ist aktiviert und läuft, sobald ein passendes Ereignis eintrifft.',
+                disabled: 'Sie wird deaktiviert gespeichert und läuft erst, wenn du sie aktivierst.',
+            },
             trigger: {
                 schedule: 'Zeitplan',
                 event: 'Ereignis',
@@ -1097,6 +1122,8 @@ export const de: TranslationStructure = {
                 webhookEndpointUrl: 'PAYLOAD-URL',
                 webhookEndpointSecret: 'SECRET (EINMALIG SICHTBAR)',
                 webhookEndpointSecretLost: 'Dieser Endpunkt existiert bereits und sein Secret wurde einmalig angezeigt. Rotiere die Zugangsdaten in den Webhook-Einstellungen, um ein neues zu erhalten.',
+                webhookEndpointAwaitingConfirmation: 'Happier hat von diesem Webhook noch keine verifizierte Zustellung erhalten, er ist also noch kein funktionierender Zustellweg. Speichere den Webhook beim Anbieter und prüfe dann erneut. Der Trigger lässt sich in jedem Fall speichern, läuft aber erst, wenn eine signierte Zustellung eintrifft.',
+                webhookEndpointRecheck: 'Webhook erneut prüfen',
                 eventFilter: 'EREIGNISFILTER (OPTIONAL)',
                 eventFilterPlaceholder: '{"v":1,"all":[…]}',
                 eventFilterInvalid: 'Gib einen gültigen Ereignisfilter ein.',
@@ -1169,6 +1196,18 @@ export const de: TranslationStructure = {
             emptyBody: 'Erstelle eine im Ablauf „Neue Session“, um geplante Sessions auf deinen Rechnern laufen zu lassen.',
             createAutomationA11y: 'Automation erstellen',
         },
+        settings: {
+            title: 'Automatisierungseinstellungen',
+            openSubtitle: 'Kapazität und Aufbewahrung des Ausführungsverlaufs konfigurieren.',
+            failedToLoad: 'Automatisierungseinstellungen konnten nicht geladen werden.',
+            updateFailed: 'Automatisierungseinstellungen konnten nicht aktualisiert werden.',
+            maxActiveRunsPerMachine: 'Maximale aktive Ausführungen pro Rechner',
+            maxActiveRunsPerMachineSubtitle: 'Begrenzt, wie viele Ausführungen jeder Rechner gleichzeitig aktiv übernehmen kann.',
+            maxActiveRunsPerMachinePrompt: 'Gib eine ganze Zahl von 1 bis 2.147.483.647 ein.',
+            maxActiveRunsPerMachineInvalid: 'Gib eine ganze Zahl von 1 bis 2.147.483.647 ein.',
+            runRetention: 'Ausführungsverlauf dauerhaft behalten',
+            runRetentionSubtitle: 'Wenn deaktiviert, werden berechtigte abgeschlossene Ausführungen 30 Tage lang aufbewahrt.',
+        },
         detail: {
             invalidId: 'Ungültige Automations-ID.',
             notFound: 'Automation nicht gefunden.',
@@ -1191,6 +1230,7 @@ export const de: TranslationStructure = {
                 endpointTitle: 'Webhook-Endpunkt',
                 endpointObservingSince: ({ time }: { time: string }) => `Empfängt Zustellungen seit ${time}`,
                 sourceStatusUnreported: 'Wartet auf die erste Meldung',
+                sourceStatusUnavailable: 'Quellenstatus nicht verfügbar',
                 sourceCatalogStatusUnavailable: 'Quellenaktualität nicht verfügbar',
                 watcherMachineUnknown: 'Diese Maschine gehört nicht mehr zu deinem Konto, daher kann dieser Watcher keine Ereignisse beobachten.',
                 watcherMachineRevoked: 'Diese Maschine wurde widerrufen, daher kann dieser Watcher keine Ereignisse beobachten.',
@@ -1210,6 +1250,12 @@ export const de: TranslationStructure = {
             deleteConfirmTitle: 'Automation löschen',
             deleteConfirmMessage: 'Diese Automation und ihr Zeitplan werden entfernt.',
             deleteConfirmButton: 'Löschen',
+            clearHistory: 'Ausführungsverlauf löschen',
+            clearHistorySubtitle: 'Entfernt abgeschlossene Ausführungen, die gelöscht werden dürfen. Aktive Ausführungen bleiben verfügbar.',
+            clearHistoryConfirmTitle: 'Ausführungsverlauf löschen?',
+            clearHistoryConfirmMessage: 'Berechtigte abgeschlossene Ausführungen werden dauerhaft gelöscht. Aktive Ausführungen bleiben verfügbar.',
+            clearHistoryConfirmButton: 'Verlauf löschen',
+            clearHistoryFailed: 'Ausführungsverlauf konnte nicht gelöscht werden.',
             machineAssignmentsTitle: 'Rechnerzuweisungen',
             machineAssignmentsFooter: 'Aktiviere mindestens einen Rechner, damit diese Automation läuft.',
             refreshFailed: 'Automation konnte nicht aktualisiert werden.',
@@ -1246,6 +1292,7 @@ export const de: TranslationStructure = {
                 sourceTitle: 'Beobachtungsquelle',
                 scheduled: ({ time }: { time: string }) => `Geplant: ${time}`,
                 updated: ({ time }: { time: string }) => `Aktualisiert: ${time}`,
+                contentRemoved: 'Inhalt der Ausführung entfernt',
                 error: ({ message }: { message: string }) => `Fehler: ${message}`,
                 attemptTitle: 'Versuch',
                 attempt: ({ attempt }: { attempt: number }) => `Versuch ${attempt}`,
@@ -2946,6 +2993,8 @@ export const de: TranslationStructure = {
             fallbackDisabled: 'Der Konto-Fallback ist auf diesem Server deaktiviert.',
             duplicateMember: 'Dieses Konto ist schon in der Gruppe.',
             groupAlreadyExists: 'Eine Kontogruppe mit dieser ID gibt es schon.',
+            groupCapacityExhausted: 'Dieses Konto hat bereits die maximale Anzahl an Kontogruppen. Lösche eine, die du nicht mehr brauchst, und versuche es erneut.',
+            connectedAccountCapacityExhausted: 'Dieses Konto hat bereits die maximale Anzahl verbundener Konten. Trenne eines, das du nicht mehr brauchst, und versuche es erneut.',
             invalidGroup: 'Diese Kontogruppe ist ungültig. Prüf ihre Einstellungen und versuch es noch einmal.',
             requestFailedWithStatus: ({ status }: { status: number }) => `Die Anfrage zum verbundenen Dienst ist fehlgeschlagen (${status}). Aktualisiere und versuch es noch einmal.`,
             generic: 'Die Aktion zum verbundenen Dienst ist fehlgeschlagen. Aktualisiere und versuch es noch einmal.',
@@ -4556,6 +4605,10 @@ export const de: TranslationStructure = {
             disabledDescription: 'Aktiviere diesen Provider, bevor du seine Modelle nutzt.',
             unreachableTitle: 'Der Provider ist nicht erreichbar',
             unreachableDescription: 'Prüf, ob der Dienst läuft und der Endpunkt stimmt, und versuch es dann noch einmal.',
+            machineUnavailableTitle: 'Der ausgewählte Rechner ist nicht verfügbar',
+            machineUnavailableDescription: 'Verbinde den ausgewählten Rechner erneut und versuch es dann noch einmal.',
+            managedRequiresDaemonTitle: 'Dieser Provider benötigt den Happier-Daemon',
+            managedRequiresDaemonDescription: 'Starte diese Session über Happier, damit der Daemon den Provider verwalten kann, und versuch es dann noch einmal.',
             rpcResponseInvalidTitle: 'Die Antwort des Providers ließ sich nicht lesen',
             rpcResponseInvalidDescription: 'Happier hat vom gewählten Rechner eine unerwartete Antwort bekommen. Versuch es noch einmal.',
             mutationOutcomeUnknownTitle: 'Die Provider-Änderung muss geprüft werden',
@@ -6614,6 +6667,12 @@ export const de: TranslationStructure = {
 
             olderLoadFailedBody: 'Der Rest dieser Unterhaltung ist noch da. Versuch, die älteren Nachrichten noch einmal zu laden.',
 
+            olderLoadContinueTitle: 'Ältere Nachrichten laden',
+
+            olderLoadContinueBody: 'Weitere Nachrichten sind verfügbar. Lade die nächste Seite, um weiterzulesen.',
+
+            olderLoadContinueAction: 'Ältere Nachrichten laden',
+
         },
 
 
@@ -8049,6 +8108,10 @@ export const de: TranslationStructure = {
           noLatestTurnChanges: 'Derzeit sind keine Änderungen des letzten Turns erkennbar.',
           notRepo: 'Kein Repository der Versionsverwaltung',
           notUnderSourceControl: 'Dieses Verzeichnis steht nicht unter Versionsverwaltung',
+          sourceControlStale: {
+              title: 'Quellcodeverwaltung erfordert Aufmerksamkeit',
+              body: 'Es wird die letzte erfolgreiche Aktualisierung angezeigt. Die neueste Aktualisierung wurde nicht abgeschlossen.',
+          },
           repositoryInit: {
               initialize: 'Repository initialisieren',
               initializing: 'Wird initialisiert…',
@@ -8366,7 +8429,7 @@ export const de: TranslationStructure = {
                     pushCurrentBranch: 'Aktuellen Branch pushen',
                     publish: 'Repository veröffentlichen',
                     publishing: 'Wird veröffentlicht…',
-                    noTargets: 'Verbinde GitHub oder melde dich mit der gh CLI an, um dieses Repository zu veröffentlichen.',
+                    targetsUnavailable: 'Es konnte nicht geprüft werden, wo dieses Repository veröffentlicht werden kann.',
                     errors: {
                         targetRequired: 'Wähl ein GitHub-Konto oder eine Organisation.',
                         nameRequired: 'Gib einen Namen für das Repository ein.',
@@ -8645,7 +8708,6 @@ export const de: TranslationStructure = {
             disabledLimitSubtitle: 'Das Limit für öffentliche Vorschauen ist erreicht. Widerruf einen bestehenden Link, bevor du einen neuen erstellst.',
             disabledNoPreviewSubtitle: 'Öffne eine lokale Vorschau, bevor du einen öffentlichen Link erstellst.',
             disabledReason: {
-                auditRequirementDisabled: 'Die Audit-Protokollierung öffentlicher Vorschauen ist erforderlich, aber auf dem Server deaktiviert.',
                 auditUnavailable: 'Das Audit-Logging für öffentliche Vorschauen ist nicht verfügbar.',
                 dnsTlsUnavailable: 'Öffentliche Vorschauen warten darauf, dass DNS/TLS bereit sind.',
                 expired: 'Dieser öffentliche Vorschaulink ist abgelaufen.',
@@ -8665,6 +8727,7 @@ export const de: TranslationStructure = {
                 sessionNotAuthorized: 'Du darfst für diese Session keinen öffentlichen Link erstellen.',
                 tunnelPortsUnconfigured: 'Der Server erlaubt keine Tunnel-Ports.',
                 tunnelRelayDisabled: 'Das Server-Relay für Maschinen-Tunnel ist deaktiviert.',
+                tunnelSigningUnconfigured: 'Der Server hat keinen Signaturschlüssel für Maschinen-Tunnel.',
             },
             createActionA11y: 'Öffentlichen Vorschaulink erstellen',
             revokeActionA11y: 'Öffentlichen Vorschaulink widerrufen',
@@ -8675,6 +8738,15 @@ export const de: TranslationStructure = {
             revokeConfirmTitle: 'Öffentlichen Link widerrufen?',
             revokeConfirmMessage: ({ url }: { url: string }) => `Den öffentlichen Vorschaulink widerrufen: ${url}? Alle, die ihn nutzen, verlieren den Zugriff.`,
             revokeConfirmCta: 'Link widerrufen',
+            consequenceReach: 'Alle, die den Link haben, können diesen Dienst öffnen. Eine Anmeldung ist nicht nötig.',
+            consequenceExpiry: 'Der Link wird von selbst ungültig, sobald die unten angegebene Gültigkeitsdauer abgelaufen ist.',
+            consequenceRevoke: 'Du kannst ihn jederzeit hier in diesem Bereich widerrufen.',
+            lifetimeLabel: 'Gültigkeitsdauer',
+            linkTypeLabel: 'Linktyp',
+            revealUrlA11y: 'Vollständigen Link anzeigen',
+            hideUrlA11y: 'Link ausblenden',
+            expiresInClock: ({ clock }: { clock: string }) => `Läuft in ${clock} ab`,
+            groupFooter: 'Öffentliche Links werden im Audit-Log dieses Rechners protokolliert.',
         },
         actions: {
             terminateDetectedA11y: 'Erkannten lokalen Dienst beenden',
@@ -8687,6 +8759,25 @@ export const de: TranslationStructure = {
             stopConfirmTitle: 'Dienst stoppen?',
             stopConfirmMessage: ({ service }: { service: string }) => `Stoppen: ${service}? Der Dienst ist dann nicht mehr erreichbar, bis er wieder startet.`,
             stopConfirmCta: 'Stopp',
+            startA11y: 'Dienst starten',
+            failure: {
+                title: 'Aktion nicht abgeschlossen',
+                refused: 'Der Rechner hat diese Aktion abgelehnt. Prüf die Berechtigungen für lokale Dienste auf diesem Rechner und versuch es noch mal.',
+                unavailable: 'Diese Aktion ist für diesen Dienst auf diesem Rechner nicht verfügbar.',
+                incomplete: 'Die Aktion wurde nicht zu Ende geführt. Du kannst es noch mal versuchen.',
+            },
+            failureTitle: {
+                start: ({ service }: { service: string }) => `${service} konnte nicht gestartet werden`,
+                open: ({ service }: { service: string }) => `${service} konnte nicht geöffnet werden`,
+                terminate: ({ service }: { service: string }) => `${service} konnte nicht beendet werden`,
+                forget: ({ service }: { service: string }) => `${service} konnte nicht ausgeblendet werden`,
+                stop: ({ service }: { service: string }) => `${service} konnte nicht gestoppt werden`,
+                restart: ({ service }: { service: string }) => `${service} konnte nicht neu gestartet werden`,
+                copyAddress: 'Die Adresse konnte nicht kopiert werden',
+                expose: 'Der öffentliche Link konnte nicht erstellt werden',
+                revokeExposure: 'Der öffentliche Link konnte nicht widerrufen werden',
+                copyExposure: 'Der öffentliche Link konnte nicht kopiert werden',
+            },
         },
     },
 
@@ -9526,6 +9617,14 @@ export const de: TranslationStructure = {
     },
 
 settingsSession: {
+    newSessionDraftEntry: {
+        title: 'Entwürfe für neue Sitzungen',
+        footer: 'Lege fest, ob „Neue Sitzung“ den Entwurf auf diesem Gerät fortsetzt oder einen neuen öffnet.',
+        resumeTitle: 'Vorherigen Entwurf fortsetzen',
+        resumeSubtitle: 'Setze den über „Neue Sitzung“ begonnenen Entwurf auf diesem Gerät fort.',
+        freshTitle: 'Immer neu beginnen',
+        freshSubtitle: 'Öffne bei jeder Auswahl von „Neue Sitzung“ einen neuen Entwurf.',
+    },
 	          sessionList: {
 	              title: 'Session-Liste',
 	              footer: 'Aussehen und Verhalten der Session-Liste in der Seitenleiste.',
@@ -10295,7 +10394,7 @@ settingsSession: {
         },
         setupCheck: {
             title: 'Bereitschaft des Providers',
-            footer: '„Einrichtung prüfen“ liest nur gespeicherte Einstellungen und aktuelle lokale Bereitschaftsdaten. Es öffnet weder das Mikrofon, startet Voice, sendet Audio noch kontaktiert den Provider.',
+            footer: '„Einrichtung prüfen“ liest nur gespeicherte Einstellungen und aktuelle lokale Bereitschaftsdaten. Es öffnet weder das Mikrofon, startet Voice, sendet Audio noch kontaktiert den Provider. Beim Start von Voice wird die an die Sitzung gebundene Fähigkeit erneut geprüft.',
             check: 'Einrichtung prüfen',
             checkSubtitle: 'Die gewählte Voice-Provider-Konfiguration passiv prüfen.',
             result: 'Status der Einrichtung',
@@ -10439,7 +10538,7 @@ settingsSession: {
             },
             fields: {
                 model: { title: 'Modell', subtitle: 'Wähl das Realtime-Sprachmodell.' },
-                voice: { title: 'Voice', subtitle: 'Wähl die Stimme für Antworten.' },
+                voice: { title: 'Stimme', subtitle: 'Wähl die Stimme für Antworten.' },
                 instructions: {
                     title: 'Anweisungen für die Stimme', subtitle: 'Optionale Anweisungen zu Verhalten und Persönlichkeit.',
                     promptTitle: 'Anweisungen für die Stimme', promptBody: 'Gib optionale Anweisungen für diese Voice-Session ein.',
@@ -10569,7 +10668,7 @@ settingsSession: {
                 'Füg ihn hier ein (wird verschlüsselt gespeichert).',
             apiKeyPlaceholder: 'xi-api-key',
             voiceSearchPlaceholder: 'Stimmen suchen',
-            voiceGroupTitle: 'Voice',
+            voiceGroupTitle: 'Stimme',
             voiceGroupFooter: 'Lege fest, wie dein ElevenLabs-Agent spricht. Änderungen greifen, wenn du den Agent aktualisierst.',
             provisioningGroupTitle: 'Agent-Einrichtung',
             provisioningGroupFooter: 'Wenn du Stimme oder Feineinstellungen änderst, tipp auf „Agent aktualisieren“, damit es in ElevenLabs greift.',
@@ -10592,7 +10691,7 @@ settingsSession: {
                     },
                 },
                 voicePicker: {
-                    title: 'Voice',
+                    title: 'Stimme',
                     subtitle: 'Wähl die ElevenLabs-Stimme für Antworten.',
                     missingApiKeyTitle: 'Füg einen API-Key hinzu, um Stimmen zu laden',
                     loadingTitle: 'Stimmen werden geladen…',
@@ -10788,7 +10887,7 @@ settingsSession: {
                     promptBody: 'Setz die Tonhöhe (-20–20). Leer lassen, um den Standard zu nutzen.',
                 },
                 voice: {
-                    title: 'Voice',
+                    title: 'Stimme',
                     subtitle: 'Wähl eine Google-Cloud-Stimme.',
                     searchPlaceholder: 'Stimmen suchen',
                     selectPrompt: 'Wählen…',
@@ -10905,7 +11004,7 @@ settingsSession: {
                     updateFailedBody: ({ message }: { message: string }) => `Dieses Modellpaket ließ sich nicht aktualisieren.\n\n${message}`,
                 },
                 voice: {
-                    title: 'Voice',
+                    title: 'Stimme',
                     subtitleNative: 'Wähl die Kokoro-Stimme.',
                     searchPlaceholder: 'Stimmen suchen',
                     titleWeb: 'Kokoro-Stimme',
@@ -11321,6 +11420,13 @@ settingsSession: {
                 },
             },
             models: {
+                nativeOptions: {
+                    kokoroEnvironmentDefaultTitle: 'Standard (aus der Umgebung)',
+                    kokoroDefaultSubtitle: 'Standardmäßiges lokales neuronales Sprachmodell.',
+                    kokoroHigherQualitySubtitle: 'Hochwertigeres lokales Kokoro-Sprachmodell.',
+                    kokoroEnvironmentDefaultSubtitle: 'Verwendet die in der Umgebung konfigurierten Standardwerte für Kokoro-Modellpakete.',
+                    sherpaStreamingRecommendedSubtitle: 'Streaming mit niedriger Latenz (empfohlen).',
+                },
                 title: 'Lokale Voice-Modelle',
                 statusTitle: 'Modelldienst',
                 footer: 'Installier lokale Voice-Modellpakete auf deinem Voice-Home-Daemon und wähl den Standard für jede Art.',
@@ -11573,6 +11679,7 @@ settingsSession: {
         },
         defaultTitle: "Neuigkeiten",
         onboardingShowcase: {
+            details: PRODUCT_STORY_DETAILS_ENGLISH,
                 "title": "Willkommen bei Happier",
                 "subtitle": "Deine KI-Agents, überall wo du arbeitest.",
                 "cards": {
@@ -12264,7 +12371,7 @@ settingsSession: {
         webDesktopHandoffCliOption: 'Mit dem Terminal (CLI)',
         webDesktopHandoffCliSubtitle: 'Führ ein paar Befehle aus, um einen Server zu betreiben, und füg dann die ausgegebene Server-URL hier ein.',
         webDesktopOnlyRelayInstallTitle: 'Einen Server über die CLI installieren',
-        webDesktopOnlyRelayInstallSubtitle: 'Führ das auf dem Computer aus, der deinen Server betreiben soll.\n\nFüg dann die ausgegebene Server-URL hier ein.',
+        webDesktopOnlyRelayInstallSubtitle: 'Führ das auf dem Computer aus, der deinen Server betreiben soll.',
         webDesktopOnlyRelayStatusTitle: 'Deine Server-URL holen',
         webDesktopOnlyRelayStatusSubtitle: 'Führ das aus, um die Server-URL anzuzeigen, und füg sie dann hier ein.',
         webRelayHostInvalidUrl: 'Gib eine gültige Relay-URL mit http:// oder https:// ein, bevor du weitermachst.',
@@ -12301,6 +12408,7 @@ settingsSession: {
         setupThisComputerConnectHonesty: 'Die Einrichtung ist erst fertig, wenn sich ein Rechner mit diesem Relay verbindet.',
         controlPanelTitle: 'Bereitschaft im Überblick',
         activeRelaySummaryTitle: 'Aktives Relay',
+        selectedRelaySummaryTitle: 'Ausgewähltes Relay',
         thisComputerSummaryTitle: 'Dieser Computer',
         nextActionSummaryTitle: 'Nächster Schritt',
         thisComputerReady: 'Bereit für dieses Relay',
@@ -12581,6 +12689,10 @@ settingsSession: {
         discarded: 'Verworfen',
         recoveredHistory: 'Wiederhergestellter Verlauf',
         pluginAttribution: ({ pluginId }: { pluginId: string }) => `Aus Plugin ${pluginId}`,
+        pluginAttributionExternal: ({ sender, pluginId }: { sender: string; pluginId: string }) => `Von ${sender} über Plugin ${pluginId}`,
+        pluginAttributionExternalForwarded: ({ sender, pluginId }: { sender: string; pluginId: string }) => `Weitergeleitet von ${sender} über Plugin ${pluginId}`,
+        pluginAttributionExternalSender: 'einem externen Absender',
+        pluginAttributionExternalBot: 'einem externen Bot',
         unknownEvent: 'Unbekanntes Ereignis',
         runtimeConfigOutcomeAppliesBeforeNextMessage: 'Gilt ab deiner nächsten Nachricht',
         runtimeConfigOutcomeQueuedUntilReady: 'Eingereiht, bis bereit',
@@ -13056,6 +13168,24 @@ settingsSession: {
     },
 
     profiles: {
+        launchPlacement: {
+            title: 'Wo Sessions laufen',
+            footer: 'Eine Präferenz, die beim Start der Session aufgelöst wird. Sie speichert nie eine Maschine als Antwort.',
+            none: 'Keine Präferenz',
+            automatic: 'Automatisch auflösen',
+            ask: 'Immer fragen',
+            fixed: 'Immer diese Maschine',
+            directory: 'Verzeichnis',
+            directoryPlaceholder: 'Leer lassen für das Wurzelverzeichnis des aufgelösten Projekts',
+        },
+        launchCheckout: {
+            title: 'Arbeitskopie',
+            footer: 'Wie eine Session ihre Arbeitskopie erhält, wenn sie in einem Projekt läuft.',
+            none: 'Keine Präferenz',
+            reuseWorkspace: 'Projektkopie wiederverwenden',
+            createWorktree: 'Worktree erstellen',
+            ask: 'Immer fragen',
+        },
         // Profile management feature
         title: 'Profile',
         subtitle: 'Profile für Umgebungsvariablen in Sessions verwalten',
@@ -13390,9 +13520,10 @@ settingsSession: {
     },
    ...apiTokenSettingsTranslations.de,
    settingsPlugins: {
-      ...pluginWebhookAdministrationTranslations['en'],
+      ...pluginWebhookAdministrationTranslations['de'],
       ...pluginAccountDataEraseTranslations.de,
       ...pluginAccountReleaseSelectionTranslations.de,
+      ...pluginMachineMatrixTranslations.de,
       ...pluginInvocationLogTranslations.de,
       ...eventAutomationComposerTranslations.de,
       title: "Plugin-Marktplatz",
@@ -13419,7 +13550,7 @@ settingsSession: {
       developmentSourceInstallSucceeded: "Entwicklungsquelle freigegeben und übernommen.",
       developmentSourceInstallFailed: ({ outcome }: { outcome: string }) => `Die Entwicklungsquelle wurde nicht installiert (${outcome}).`,
       developmentTrustSourceRootTitle: "Diesem Plugin-Ordner vertrauen?",
-      developmentTrustSourceRootBody: ({ path }: { path: string }) => `Happier installiert Abhängigkeiten in diesem Ordner, baut und führt Code aus von:\n\n${path}\n\nFahr nur fort, wenn du allem in diesem Ordner vertraust und allem, was er nachladen kann. Das Plugin selbst prüfst du im nächsten Schritt.`,
+      developmentTrustSourceRootBody: ({ path, machine, server }: { path: string; machine: string; server: string }) => `Happier installiert Abhängigkeiten in diesem Ordner, baut und führt Code aus von:\n\n${path} auf ${machine} (${server})\n\nFahr nur fort, wenn du allem in diesem Ordner vertraust und allem, was er nachladen kann. Das Plugin selbst prüfst du im nächsten Schritt.`,
       developmentTrustSourceRootConfirm: "Ordner vertrauen",
       pendingChangesTitle: "Wartet auf deine Entscheidung",
       pendingChangesFooter: "Plugin-Änderungen sind auf diesem Rechner vorbereitet. Ein Agent kann sie vorbereiten, freigeben kannst nur du.",
@@ -13468,7 +13599,8 @@ settingsSession: {
       marketplaceInstallReviewBody: ({ identity, verification, executableRealms, contributions, uiArtifacts, requiredAccess, optionalAccess, compatibility }: { identity: string; verification: string; executableRealms: string; contributions: string; uiArtifacts: string; requiredAccess: string; optionalAccess: string; compatibility: string }) => `Identität:\n${identity}\n\nVerifizierungssignale:\n${verification}\n\nAusführbarer Code: ${executableRealms}\nBeiträge: ${contributions}\nUI-Artefakte: ${uiArtifacts}\n\nVertrauenswürdiger Daemon- und React-Native-Code läuft mit den Rechten der App bzw. des Prozesses und kann direkt auf Dateien, Netzwerk, Umgebung und Prozesse zugreifen. Der unten aufgeführte Host-Zugriff beschreibt von Happier vermittelte Dienste; er ist keine Sandbox für ausführbaren Plugin-Code.\n\nErforderliche Angaben und kooperative Dienste:\n${requiredAccess}\n\nOptionale Ressourcen des Hosts (standardmäßig aus):\n${optionalAccess}\n\nKompatibilität und Updates:\n${compatibility}`,
       marketplaceInstallDecisionFailed: ({ outcome }: { outcome: string }) => `Das Plugin wurde nicht installiert (${outcome}).`,
       marketplaceChangeDecisionFailed: ({ action, outcome }: { action: string; outcome: string }) => `${action} fehlgeschlagen (${outcome}).`,
-      pluginChangeConfirmBody: ({ action, name }: { action: string; name: string }) => `Bestätigen: ${action} für ${name}.`,
+      pluginChangeConfirmBody: ({ action, name, machine, server }: { action: string; name: string; machine: string; server: string }) => `Bestätigen: ${action} für ${name} auf ${machine} (${server}).`,
+      pluginChangeConfirmTarget: ({ machine, server }: { machine: string; server: string }) => `Diese Aktion gilt für ${machine} (${server}).`,
       forgetTrust: "Vertrauen entziehen",
       rollback: "Zurückrollen",
       uninstall: "Deinstallieren",
@@ -13682,3 +13814,4 @@ settingsSession: {
     },};
 
 export type TranslationsDe = typeof de;
+import { PRODUCT_STORY_DETAILS_ENGLISH } from '@happier-dev/brand/product-story';

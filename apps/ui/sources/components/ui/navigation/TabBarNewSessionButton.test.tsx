@@ -45,13 +45,19 @@ describe('TabBarNewSessionButton', () => {
         expoRouterMock.spies.push.mockReset();
     });
 
-    it('opens the new-session flow when pressed', async () => {
+    it('opens an explicit ordinary-entry draft route when pressed', async () => {
         const { TabBarNewSessionButton } = await import('./TabBarNewSessionButton');
 
         const screen = await renderScreen(<TabBarNewSessionButton />);
         screen.pressByTestId('tabbar-start-new-session');
 
-        expect(expoRouterMock.spies.push).toHaveBeenCalledWith('/new');
+        expect(expoRouterMock.spies.push).toHaveBeenCalledWith({
+            pathname: '/new',
+            params: {
+                draftId: expect.any(String),
+                draftOrigin: 'ordinary',
+            },
+        });
     });
 
     it('exposes the new-session action to assistive technology', async () => {

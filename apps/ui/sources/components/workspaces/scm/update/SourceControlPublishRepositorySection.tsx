@@ -136,6 +136,15 @@ export function SourceControlPublishRepositorySection(props: Readonly<{
     }, [canRender, props.onDescribePublishTargets, props.publishTargets, repoScopeKey, resolvedTargets, resolvedTargetsScopeKey]);
 
     const successTargets = activeResolvedTargets?.success === true ? activeResolvedTargets as PublishTargetsSuccess : null;
+    const targetDiscoveryFailed = activeResolvedTargets?.success === false;
+    /**
+     * Re-arms the one loader above rather than adding a second fetch path: it runs whenever the
+     * scope has no resolved targets. Without this the unknown state is terminal until the whole
+     * screen remounts — switching sub-tabs deliberately does not refetch.
+     */
+    const retryDescribePublishTargets = React.useCallback(() => {
+        setResolvedTargets(null);
+    }, []);
     const targets = successTargets?.targets ?? [];
     const selectedTarget = targets.find((target) => target.owner === selectedOwner) ?? targets.find((target) => target.isDefault) ?? targets[0] ?? null;
 
@@ -341,12 +350,39 @@ export function SourceControlPublishRepositorySection(props: Readonly<{
                         onPress={submit}
                     />
                 </View>
+            ) : targetDiscoveryFailed ? (
+                // `F-SCM-4`. Discovery FAILING is not the same fact as discovery reporting that
+                // this host is not signed in, and this branch used to render the latter for both:
+                // a daemon whose gh probe was cut short, or whose provider never resolved, told an
+                // authenticated user to "sign in with gh CLI". A genuine negative arrives as
+                // `success: true` with `auth.state: 'authentication_required'` and renders the
+                // controls above with their own remediation, so everything here is the unknown
+                // state — and it is recoverable, because the loader only reruns when the resolved
+                // targets are cleared.
+                <View style={{ gap: 8 }}>
+                    <Text
+                        testID="scm-publish-repository-unavailable"
+                        style={{ fontSize: 12, color: props.theme.colors.text.secondary, ...Typography.default() }}
+                    >
+                        {t('files.sourceControlOperations.update.publishRepository.targetsUnavailable')}
+                    </Text>
+                    <SourceControlUpdateButton
+                        theme={props.theme}
+                        testID="scm-publish-repository-retry"
+                        label={t('common.retry')}
+                        disabled={remediationDisabled}
+                        onPress={retryDescribePublishTargets}
+                    />
+                    <PublishRemediationAction
+                        theme={props.theme}
+                        action={remediationAction}
+                        onRun={runRemediationAction}
+                    />
+                </View>
             ) : (
                 <View style={{ gap: 8 }}>
                     <Text style={{ fontSize: 12, color: props.theme.colors.text.secondary, ...Typography.default() }}>
-                        {activeResolvedTargets?.success === false
-                            ? t('files.sourceControlOperations.update.publishRepository.noTargets')
-                            : t('common.loading')}
+                        {t('common.loading')}
                     </Text>
                     <PublishRemediationAction
                         theme={props.theme}

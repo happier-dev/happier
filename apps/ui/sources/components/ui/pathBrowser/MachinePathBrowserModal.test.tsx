@@ -266,6 +266,44 @@ describe('MachinePathBrowserModal', () => {
         expect(onClose).toHaveBeenCalled();
     });
 
+    it('shows the machine-unreachable copy instead of transport vocabulary when the directory RPC fails', async () => {
+        // `F-UI-2`: this slot rendered whatever string the ops adapter produced, and the adapter
+        // passed `error.message` through — so an internal `TypeError` was displayed here verbatim.
+        // The adapter now reports an unreachable machine with the canonical protocol constant; the
+        // picker owns turning that into copy, exactly as the source-control surfaces do.
+        // The shared mocks are only `mockClear()`ed between tests, so restore the defaults rather
+        // than leaking this failure into every later case.
+        const defaultEntries = listMachineFileBrowserDirectoryEntriesMock.getMockImplementation();
+        const defaultRoots = listMachineFileBrowserRootsMock.getMockImplementation();
+        try {
+            listMachineFileBrowserDirectoryEntriesMock.mockResolvedValue({
+                ok: false,
+                error: 'RPC method not available',
+            } as never);
+            listMachineFileBrowserRootsMock.mockResolvedValue({
+                ok: false,
+                error: 'RPC method not available',
+            } as never);
+            const { MachinePathBrowserModal } = await import('./MachinePathBrowserModal');
+
+            const screen = await renderScreen(<MachinePathBrowserModal
+                        machineId="machine-1"
+                        onResolve={vi.fn()}
+                        onClose={vi.fn()}
+                    />);
+            await flushHookEffects();
+            const text = screen.getTextContent();
+
+            expect(text).toContain('errors.daemonUnavailableBody');
+            expect(text).not.toContain('RPC method not available');
+        } finally {
+            listMachineFileBrowserDirectoryEntriesMock.mockReset();
+            listMachineFileBrowserRootsMock.mockReset();
+            if (defaultEntries) listMachineFileBrowserDirectoryEntriesMock.mockImplementation(defaultEntries);
+            if (defaultRoots) listMachineFileBrowserRootsMock.mockImplementation(defaultRoots);
+        }
+    });
+
     it('supports a scoped popover view rooted at a specific directory without listing machine roots', async () => {
         const onPickPath = vi.fn();
         const onRequestClose = vi.fn();

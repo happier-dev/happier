@@ -173,7 +173,7 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
                     <BrandWordmark height={MOBILE_WORDMARK_HEIGHT_PX} />
                 </View>
             ) : null}
-            {props.onBack ? (
+            {props.onBack && isFullBleed ? (
                 <View
                     style={[
                         styles.backChevronContainer,
@@ -181,6 +181,25 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
                             top: 12 + safeAreaInsets.top,
                             left: 12 + safeAreaInsets.left,
                         } : null,
+                    ]}
+                >
+                    <BackChevron
+                        onPress={props.onBack}
+                        accessibilityLabel={t('common.back')}
+                    />
+                </View>
+            ) : null}
+            {props.onBack && !isFullBleed ? (
+                <View
+                    testID="unauth-shell-back-row"
+                    style={[
+                        styles.backRowFloating,
+                        isMobile
+                            ? {
+                                top: -4 + safeAreaInsets.top,
+                                left: WORKFLOW_MOBILE_HORIZONTAL_PADDING + safeAreaInsets.left - 17,
+                            }
+                            : styles.backRowDesktop,
                     ]}
                 >
                     <BackChevron
@@ -310,6 +329,14 @@ const stylesheet = StyleSheet.create(() => ({
         top: 20,
         left: 20,
         zIndex: 1,
+    },
+    backRowFloating: {
+        position: 'absolute',
+        zIndex: 1,
+    },
+    backRowDesktop: {
+        top: 12,
+        left: WORKFLOW_DESKTOP_HORIZONTAL_GUTTER - 17,
     },
     mobileWordmark: {
         position: 'absolute',

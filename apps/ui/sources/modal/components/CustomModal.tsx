@@ -212,6 +212,7 @@ export function CustomModal({ config, onClose, showBackdrop = true, visible, zIn
             visible={visible}
             onClose={handleSharedDismiss}
             accessibilityLabel={accessibilityLabel}
+            focusReturnRef={config.focusReturnRef}
             closeOnBackdrop={config.closeOnBackdrop ?? true}
             showBackdrop={showBackdrop}
             zIndexBase={zIndexBase}

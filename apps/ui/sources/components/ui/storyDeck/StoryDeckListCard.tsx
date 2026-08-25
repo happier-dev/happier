@@ -1,6 +1,5 @@
 import * as React from 'react';
-import { View } from 'react-native';
-import { ScrollView } from 'react-native-gesture-handler';
+import { ScrollView, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { STORY_DECK_LIST_CARD_SCROLL_ROW_THRESHOLD } from '@/changelog/releaseNotes/storyDeckCardLimits';
@@ -139,6 +138,8 @@ export function StoryDeckListCard(props: StoryDeckListCardProps) {
                         style={styles.rowsScroll}
                         contentContainerStyle={styles.rowsScrollContent}
                         showsVerticalScrollIndicator={false}
+                        nestedScrollEnabled
+                        directionalLockEnabled
                         scrollEventThrottle={16}
                         onLayout={scrollFades.onViewportLayout}
                         onContentSizeChange={scrollFades.onContentSizeChange}

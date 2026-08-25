@@ -14,7 +14,7 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { canBrowseExternalSessions, resolveExternalSessionBrowseLockedSource } from '@/components/sessions/external/browse/resolveExternalSessionBrowseLockedSourceOption';
 import { NewSessionScreenPortalScope, useNewSessionContainedModalScreenOptions } from '@/components/sessions/new/navigation/newSessionContainedModalScreen';
 import { resolveResumePickerBackendTarget } from '@/components/sessions/new/navigation/resolveResumePickerBackendTarget';
-import { pickNewSessionRouteParams, setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
+import { buildNewSessionPickerFallbackHref, pickNewSessionRouteParams, setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
 import { normalizeOptionalParam } from '@/profileRouteParams';
 import { readBackendNewSessionOptionStateByTargetKey } from '@/utils/sessions/backendNewSessionOptionState';
 import { peekTempData, type NewSessionData } from '@/utils/sessions/tempDataStore';
@@ -146,6 +146,7 @@ function ResumeBrowsePickerScreenContent(props: Readonly<{
     const currentRouteParams = React.useMemo(() => {
         return pickNewSessionRouteParams(params);
     }, [params]);
+    const pickerFallbackHref = React.useMemo(() => buildNewSessionPickerFallbackHref(params), [params]);
     /**
      * A loading projection is a retained loading state, never a dismissal trigger.
      *
@@ -165,9 +166,11 @@ function ResumeBrowsePickerScreenContent(props: Readonly<{
         if (!canBrowseExternalSessions({
             agentId: operationalAgentId,
             projection: daemonMergedProjectionInputs?.pluginProjectionV2,
+            machineId: effectiveMachineId,
         })) return null;
         const source = resolveExternalSessionBrowseLockedSource({
             providerId: operationalAgentId,
+            machineId: effectiveMachineId,
             agentOptionState,
             profile: accountProfile,
             settings,
@@ -184,8 +187,8 @@ function ResumeBrowsePickerScreenContent(props: Readonly<{
 
     React.useEffect(() => {
         if (lockScope || awaitingProjection) return;
-        safeRouterBack({ router, navigation, fallbackHref: '/new' });
-    }, [awaitingProjection, lockScope, navigation, router]);
+        safeRouterBack({ router, navigation, fallbackHref: pickerFallbackHref });
+    }, [awaitingProjection, lockScope, navigation, pickerFallbackHref, router]);
 
     const headerTitle = t('externalSessions.browseTitle');
     const headerBackTitle = t('common.cancel');
@@ -220,7 +223,7 @@ function ResumeBrowsePickerScreenContent(props: Readonly<{
                                 },
                             });
                             if (returnMode === 'dispatch') {
-                                safeRouterBack({ router, navigation, fallbackHref: '/new' });
+                                safeRouterBack({ router, navigation, fallbackHref: pickerFallbackHref });
                             }
                         }}
                     />
@@ -233,7 +236,7 @@ function ResumeBrowsePickerScreenContent(props: Readonly<{
                         reason={t('externalSessions.settingsIntegrationInventoryLoadingSubtitle')}
                         secondaryAction={{
                             label: t('common.close'),
-                            onPress: () => safeRouterBack({ router, navigation, fallbackHref: '/new' }),
+                            onPress: () => safeRouterBack({ router, navigation, fallbackHref: pickerFallbackHref }),
                         }}
                     />
                 ) : null}

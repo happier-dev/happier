@@ -10,7 +10,6 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 
-import { WizardIconBox } from './WizardIconBox';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 
 type WizardChoiceRowProps = Readonly<{
@@ -63,6 +62,17 @@ const stylesheet = StyleSheet.create((theme) => ({
     menuTrigger: {
         paddingHorizontal: 6,
         paddingVertical: 6,
+    },
+    row: {
+        marginHorizontal: 0,
+        paddingHorizontal: 16,
+        paddingVertical: 16,
+    },
+    rowSelected: {
+        backgroundColor: theme.colors.surface.base,
+    },
+    titleIcon: {
+        transform: [{ translateY: 1.5 }],
     },
 }));
 
@@ -131,9 +141,17 @@ export const WizardChoiceRow = React.memo(function WizardChoiceRow(props: Wizard
                 : undefined}
             onKeyDown={onKeyDown}
             onPress={onPress}
-            containerStyle={props.dimmed ? ({ opacity: 0.55 } as const) : null}
-            left={<WizardIconBox icon={props.icon} selected={props.selected} boxSize={32} iconSize={18} />}
+            containerStyle={[
+                styles.row,
+                props.selected ? styles.rowSelected : null,
+                props.dimmed ? ({ opacity: 0.55 } as const) : null,
+            ]}
             title={props.title}
+            titleLeading={(
+                <View testID={`${props.testID}-title-icon`} style={styles.titleIcon}>
+                    <Icon name={props.icon} size={18} color={iconColor} />
+                </View>
+            )}
             titleAccessory={badgeNode}
             titleStyle={badgeNode ? ({ flexGrow: 0, flexShrink: 1 } as const) : null}
             subtitle={props.subtitle}

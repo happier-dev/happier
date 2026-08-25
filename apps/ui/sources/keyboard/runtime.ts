@@ -1,5 +1,7 @@
 import { Platform } from 'react-native';
 
+import { resolveHappierPointerPlatform } from '@happier-dev/plugin-ui/presentation';
+
 import { defaultKeyboardCommands } from './commands';
 import { formatKeybindingLabel, matchKeybindingRule, parseKeybindingRule } from './bindings';
 import type {
@@ -286,15 +288,14 @@ export function normalizeKeyboardEvent(event: KeyboardEvent): NormalizedKeyboard
     };
 }
 
-function isAppleWebPlatform(): boolean {
-    if (typeof navigator === 'undefined') return false;
-    return /Mac|iPhone|iPad|iPod/i.test(navigator.platform);
-}
-
 export function resolveKeyboardPlatform(): KeyboardPlatform {
     if (Platform.OS === 'ios') return 'ios';
     if (Platform.OS === 'android') return 'android';
-    if (Platform.OS === 'web') return isAppleWebPlatform() ? 'macos' : 'windows';
+    // `Platform.OS` collapses every desktop browser to `web`, and the shared
+    // collection owner already asks the browser which hardware it is on. Asking
+    // again here is how a reader ends up with Command for shortcuts and Control
+    // for list selection in one window, so this reads that single answer.
+    if (Platform.OS === 'web') return resolveHappierPointerPlatform('web');
     return 'linux';
 }
 

@@ -35,6 +35,8 @@ export function ProjectRightPanelBrowserView(props: Readonly<{
         workspaceRefId: props.workspaceRefId,
         machineId: workspaceRef?.machineId ?? null,
         serverId: workspaceRef?.serverId ?? null,
+        pluginUiProjection: pluginProjection.pluginUiProjection,
+        pluginBrowserProjection: pluginProjection.pluginBrowserProjection,
     });
 
     return (

@@ -17,9 +17,8 @@ export const browserFrameStyles = StyleSheet.create((theme) => ({
         backgroundColor: theme.colors.surface.base,
     },
     statusText: {
+        ...Typography.rowMeta(),
         color: theme.colors.text.secondary,
-        fontSize: 13,
         textAlign: 'center',
-        ...Typography.default(),
     },
 }));

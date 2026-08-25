@@ -1,7 +1,10 @@
 import * as React from 'react';
 import { AppState } from 'react-native';
 
-import { isDesktopMainWindowVisible } from '@/desktop/window/desktopMainWindowPresence';
+import {
+    isDesktopMainWindowFocused,
+    isDesktopMainWindowVisible,
+} from '@/desktop/window/desktopMainWindowPresence';
 import { isDesktopHost } from '@/utils/platform/desktopHost';
 
 import { isRuntimeActive } from './isRuntimeActive';
@@ -25,11 +28,12 @@ type ViewLike = Readonly<{
  * The desktop branch therefore composes the canonical window-presence fact
  * instead of restating it.
  *
- * Visibility is the gate, not focus. A visible unfocused window is still being
- * looked at — that is the hands-free posture, and the web build already keeps
- * both context and motion for a visible unfocused tab. `isDesktopMainWindowFocused`
- * exists for the narrower "attention already landed here" question that
- * notification suppression asks; it is not this one.
+ * Visibility remains the ordinary gate, not focus. A visible unfocused window
+ * still supplies current UI context — that is the hands-free posture, and the
+ * web build already keeps both context and motion for a visible unfocused tab.
+ * `useHostActivelyFocused` below exposes the narrower projection for the few
+ * desktop loops (Voice energy) that must pause until attention returns; it
+ * shares this owner rather than installing a second window watch.
  *
  * The host is watched once for the app's lifetime rather than once per consumer,
  * like `useReducedMotionPreference`: visibility cannot differ between consumers,
@@ -43,6 +47,7 @@ type ViewLike = Readonly<{
  * between "is anyone looking?" and "may background work run?".
  */
 let hostActivelyViewed = true;
+let hostActivelyFocused = true;
 let watchStarted = false;
 const listeners = new Set<() => void>();
 
@@ -50,10 +55,16 @@ function readHostActivelyViewedNow(): boolean {
     return isDesktopHost() ? isDesktopMainWindowVisible() : isRuntimeActive();
 }
 
+function readHostActivelyFocusedNow(): boolean {
+    return isDesktopHost() ? isDesktopMainWindowFocused() : isRuntimeActive();
+}
+
 function publishHostActivelyViewed(): void {
-    const next = readHostActivelyViewedNow();
-    if (hostActivelyViewed === next) return;
-    hostActivelyViewed = next;
+    const nextViewed = readHostActivelyViewedNow();
+    const nextFocused = readHostActivelyFocusedNow();
+    if (hostActivelyViewed === nextViewed && hostActivelyFocused === nextFocused) return;
+    hostActivelyViewed = nextViewed;
+    hostActivelyFocused = nextFocused;
     for (const listener of listeners) {
         listener();
     }
@@ -63,6 +74,7 @@ function startHostActivelyViewedWatch(): void {
     if (watchStarted) return;
     watchStarted = true;
     hostActivelyViewed = readHostActivelyViewedNow();
+    hostActivelyFocused = readHostActivelyFocusedNow();
 
     try {
         // react-native-web returns undefined when `AppState.isAvailable` is false.
@@ -94,4 +106,23 @@ function subscribeToHostActivelyViewed(listener: () => void): () => void {
 
 export function useHostActivelyViewed(): boolean {
     return React.useSyncExternalStore(subscribeToHostActivelyViewed, readHostActivelyViewed, () => true);
+}
+
+/**
+ * Whether host motion may run right now.
+ *
+ * Desktop energy is narrower than ordinary visibility: a visible Happier window
+ * behind the editor still supplies current UI context, but it does not need a
+ * frame callback until focus returns. Native hosts have no separate desktop
+ * focus fact, so their existing active-runtime fact remains the projection.
+ * This shares the one host watch above; consumers must not install their own
+ * window observers for the same decision.
+ */
+export function readHostActivelyFocused(): boolean {
+    startHostActivelyViewedWatch();
+    return hostActivelyFocused;
+}
+
+export function useHostActivelyFocused(): boolean {
+    return React.useSyncExternalStore(subscribeToHostActivelyViewed, readHostActivelyFocused, () => true);
 }

@@ -4,7 +4,10 @@ import { Platform } from 'react-native';
 
 import { useVisibleModalKind } from '@/modal';
 import { useAppPaneContext } from '@/components/appShell/panes/AppPaneProvider';
-import { useAppShellPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import {
+    useAppShellPluginUiProjection,
+    useProjectedPluginLocalizedTextResolver,
+} from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import {
     readPluginAppPageRouteIdentity,
 } from '@/components/appShell/plugins/pluginAppPageRoute';
@@ -218,6 +221,7 @@ export function CurrentUiContextProvider(props: Readonly<{ children: React.React
     const pluginSettingsPage = settingsPage?.pluginSettingsPage !== undefined;
 
     const pluginProjection = useAppShellPluginUiProjection();
+    const localizePluginText = useProjectedPluginLocalizedTextResolver();
     const pluginRouteParams = useGlobalSearchParams();
     const pluginRouteIdentity = React.useMemo(
         () => readPluginAppPageRouteIdentity(pluginRouteParams),
@@ -225,8 +229,8 @@ export function CurrentUiContextProvider(props: Readonly<{ children: React.React
     );
     const pluginPages = React.useMemo(() => {
         const placements = selectPluginAppPagePlacements(pluginProjection.pluginUiProjection);
-        return resolvePluginAppPages({ placements });
-    }, [pluginProjection.pluginUiProjection]);
+        return resolvePluginAppPages({ placements, localize: localizePluginText });
+    }, [localizePluginText, pluginProjection.pluginUiProjection]);
     const pluginPageLabel = React.useMemo(() => {
         if (route.segments[0] !== 'plugins') return null;
         return resolvePluginAppPageForRoute({

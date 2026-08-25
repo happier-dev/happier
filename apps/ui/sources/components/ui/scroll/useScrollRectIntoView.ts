@@ -58,15 +58,19 @@ export function resolveScrollOffsetForVisibleRect(params: Readonly<{
     const visibleBottom = currentOffset + viewportHeight - padding;
     const maxOffset = Math.max(0, contentHeight - viewportHeight);
 
-    const centeredOffset = Math.max(
-        0,
-        Math.min(maxOffset, rectTop + ((rectBottom - rectTop) / 2) - (viewportHeight / 2)),
-    );
+    const topAlignedOffset = Math.max(0, Math.min(maxOffset, rectTop - padding));
+    // A target taller than the viewport cannot be centred: doing so puts its
+    // own start — the thing the caller asked to reveal — above the top edge.
+    // Show the start instead. Targets that fit are centred exactly as before.
+    const centeredOffset = rectBottom - rectTop > viewportHeight
+        ? topAlignedOffset
+        : Math.max(
+            0,
+            Math.min(maxOffset, rectTop + ((rectBottom - rectTop) / 2) - (viewportHeight / 2)),
+        );
 
     if (rectTop < visibleTop) {
-        return alignment === 'center'
-            ? centeredOffset
-            : Math.max(0, Math.min(maxOffset, rectTop - padding));
+        return alignment === 'center' ? centeredOffset : topAlignedOffset;
     }
     if (rectBottom > visibleBottom) {
         return alignment === 'center'

@@ -109,15 +109,29 @@ export function createStableStorageReader<TArgs extends readonly unknown[], TVal
 
 export function isStorageStoreLike(value: unknown): value is StorageStoreLike {
     return value != null
-        && typeof value === 'object'
+        && (typeof value === 'object' || typeof value === 'function')
         && typeof (value as { getState?: unknown }).getState === 'function';
 }
 
+/**
+ * Completes a store-like fixture into the real `storage` export's shape.
+ *
+ * The production export is a zustand bound store: callable as a selector AND
+ * carrying `getState`/`subscribe`/`setState`/`getInitialState`/`destroy`.
+ * Readers use both halves — `useSyncExternalStore(storage.subscribe, …)` is a
+ * live production pattern — so a fixture that supplies only some of them must
+ * be completed here rather than crashing the reader at passive-effect mount.
+ * A callable fixture keeps its own selector: some fixtures subscribe from
+ * inside it to stay reactive, and replacing it with a snapshot read would
+ * silently make those tests static.
+ */
 export function adaptStorageStoreLike(storeLike: StorageStoreLike): StorageStore {
-    const select = (selector?: (value: StorageState) => unknown) => {
-        const snapshot = storeLike.getState();
-        return typeof selector === 'function' ? selector(snapshot) : snapshot;
-    };
+    const select = typeof storeLike === 'function'
+        ? storeLike as unknown as StorageStore
+        : (selector?: (value: StorageState) => unknown) => {
+            const snapshot = storeLike.getState();
+            return typeof selector === 'function' ? selector(snapshot) : snapshot;
+        };
     return Object.assign(select as StorageStore, {
         getState: storeLike.getState,
         getInitialState: storeLike.getInitialState ?? storeLike.getState,
@@ -292,7 +306,7 @@ export function createStorageModuleStub<TOverrides extends object>(
                 createUseCurrentSecretBindingsByProfileIdMutableMock(module.useSetting, options),
         };
     const storageOverride = (overrides as { storage?: unknown }).storage;
-    const finalStorage = isStorageStoreLike(storageOverride) && typeof storageOverride !== 'function'
+    const finalStorage = isStorageStoreLike(storageOverride)
         ? adaptStorageStoreLike(storageOverride)
         : moduleWithCurrentSecretBindings.storage;
     if (finalStorage !== moduleWithCurrentSecretBindings.storage) {

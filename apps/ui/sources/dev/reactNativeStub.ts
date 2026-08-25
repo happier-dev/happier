@@ -12,7 +12,17 @@ export const ScrollView = 'ScrollView' as any;
 export const KeyboardAvoidingView = 'KeyboardAvoidingView' as any;
 export const FlatList = 'FlatList' as any;
 export const SectionList = 'SectionList' as any;
-export const Pressable = 'Pressable' as any;
+type PressableProps = Record<string, unknown> & {
+    children?: React.ReactNode | ((state: { pressed: boolean }) => React.ReactNode);
+};
+
+export const Pressable = React.forwardRef<unknown, PressableProps>(({ children, ...props }, ref) => (
+    React.createElement(
+        'Pressable',
+        { ...props, ref },
+        typeof children === 'function' ? children({ pressed: false }) : children,
+    )
+));
 export const TouchableOpacity = 'TouchableOpacity' as any;
 export const TouchableWithoutFeedback = 'TouchableWithoutFeedback' as any;
 export const RefreshControl = 'RefreshControl' as any;

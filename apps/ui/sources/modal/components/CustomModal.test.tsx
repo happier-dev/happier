@@ -114,6 +114,7 @@ describe('CustomModal', () => {
     it('wraps chrome-backed modals in ModalCardFrame and closes through the shared handler', async () => {
         const onClose = vi.fn();
         const onRequestClose = vi.fn();
+        const focusReturnRef = { current: { focus: vi.fn() } };
         const chromeLeading = React.createElement('ChromeLeading');
         const chromeActions = React.createElement('ChromeActions');
         const chromeFooter = React.createElement('ChromeFooter');
@@ -125,6 +126,7 @@ describe('CustomModal', () => {
                 label: 'browse',
             },
             onRequestClose,
+            focusReturnRef,
             chrome: {
                 kind: 'card',
                 leading: chromeLeading,
@@ -153,6 +155,7 @@ describe('CustomModal', () => {
         expect(modalCardFrame.props.bodyScroll).toBe('auto');
         expect(screen.findByType(ChromeModal).props.label).toBe('browse');
         expect(screen.findByType('BaseModal' as any).props.accessibilityLabel).toBe('Browse provider sessions');
+        expect(screen.findByType('BaseModal' as any).props.focusReturnRef).toBe(focusReturnRef);
 
         act(() => {
             modalCardFrame.props.onClose();

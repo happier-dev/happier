@@ -4,6 +4,7 @@ import { buildCliInstallAndRunCommandForCurrentApp, buildCliInstallAndRunPowersh
 import { buildWebDesktopRelayHostHandoffSteps } from '../../commands/webDesktopHandoffSteps';
 import {
     WizardGuidedHandoff,
+    WizardGuidedHandoffDivider,
     WizardGuidedHandoffDownloadCta,
     WizardGuidedHandoffTerminal,
 } from '../../ui/WizardGuidedHandoff';
@@ -25,6 +26,7 @@ export function WebDesktopRelayHostHandoffContent(props: WebDesktopRelayHostHand
                     installAndSetupRelayWindowsCommand,
                 })}
             />
+            <WizardGuidedHandoffDivider testID={`${props.testID}-divider`} />
             <WizardGuidedHandoffDownloadCta testIDPrefix={props.testID} />
         </WizardGuidedHandoff>
     );

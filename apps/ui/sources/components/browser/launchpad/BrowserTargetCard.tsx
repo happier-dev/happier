@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View, type LayoutChangeEvent } from 'react-native';
+import { View } from 'react-native';
 import Animated, { useAnimatedStyle, useSharedValue, withDelay, withSpring, withTiming } from 'react-native-reanimated';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -98,7 +98,7 @@ function BrowserTargetStatusDot(props: Readonly<{ live: boolean; testID: string 
 // does not re-render the card on every preview poll — the launchpad stops flickering.
 export const BrowserTargetCard = React.memo(function BrowserTargetCard(props: Readonly<{
     row: BrowserLaunchpadRow;
-    onOpenTarget?: (row: BrowserLaunchpadRow, originX: number | null) => void;
+    onOpenTarget?: (row: BrowserLaunchpadRow) => void;
     openDisabled?: boolean;
     /** Position within its section; drives the staggered entrance. */
     entranceIndex?: number;
@@ -129,16 +129,8 @@ export const BrowserTargetCard = React.memo(function BrowserTargetCard(props: Re
         transform: [{ translateY: (1 - entrance.value) * ENTRANCE_TRAVEL_PX }],
     }));
 
-    // The row's horizontal centre, handed to the shell so the load sweep can start where the user
-    // actually pressed instead of at the left edge of the frame.
-    const originXRef = React.useRef<number | null>(null);
-    const handleLayout = React.useCallback((event: LayoutChangeEvent) => {
-        const { x, width } = event.nativeEvent.layout;
-        originXRef.current = x + (width / 2);
-    }, []);
-
     return (
-        <Animated.View style={entranceStyle} onLayout={handleLayout}>
+        <Animated.View style={entranceStyle}>
             <Item
                 testID={props.testID}
                 title={props.row.title}
@@ -153,7 +145,7 @@ export const BrowserTargetCard = React.memo(function BrowserTargetCard(props: Re
                 showDivider={props.showDivider}
                 onPress={() => {
                     if (!disabled) {
-                        props.onOpenTarget?.(props.row, originXRef.current);
+                        props.onOpenTarget?.(props.row);
                     }
                 }}
             />

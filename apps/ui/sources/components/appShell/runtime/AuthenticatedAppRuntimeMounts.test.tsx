@@ -17,6 +17,7 @@ const runtimeRenderCounts = vi.hoisted(() => ({
     desktopTray: 0,
     desktopTrayDaemon: 0,
     petCompanion: 0,
+    onboardingShowcase: 0,
     releaseNotes: 0,
 }));
 const reverseCaptureMockState = vi.hoisted(() => {
@@ -106,10 +107,22 @@ vi.mock('@/components/pets/runtime/PetAppShellCompanionMount', () => ({
     },
 }));
 
+vi.mock('@/components/markdown/streaming/StreamingTextReveal', () => ({
+    StreamingTextReveal: (props: React.PropsWithChildren<Record<string, unknown>>) =>
+        React.createElement('StreamingTextReveal', props, props.children),
+}));
+
 vi.mock('@/changelog/releaseNotes', () => ({
     ReleaseNotesAutoShowMount: () => {
         runtimeRenderCounts.releaseNotes += 1;
         return React.createElement('ReleaseNotesAutoShowMount');
+    },
+}));
+
+vi.mock('@/onboarding/showcase', () => ({
+    OnboardingShowcaseAutoShowMount: () => {
+        runtimeRenderCounts.onboardingShowcase += 1;
+        return React.createElement('OnboardingShowcaseAutoShowMount');
     },
 }));
 
@@ -165,6 +178,17 @@ function setPlatformOS(value: 'android' | 'ios' | 'node' | 'web'): void {
 }
 
 describe('AuthenticatedAppRuntimeMounts', () => {
+    it('mounts first-open onboarding before auth while keeping release notes authenticated-only', async () => {
+        const { AuthenticatedAppRuntimeMounts } = await import('./AuthenticatedAppRuntimeMounts');
+
+        await renderScreen(
+            <AuthenticatedAppRuntimeMounts isAuthenticated={false} isDesktopShell={false} />,
+        );
+
+        expect(runtimeRenderCounts.onboardingShowcase).toBe(1);
+        expect(runtimeRenderCounts.releaseNotes).toBe(0);
+    });
+
     it('keeps runtime mount components stable across equivalent parent updates', async () => {
         const { AuthenticatedAppRuntimeMounts } = await import('./AuthenticatedAppRuntimeMounts');
 

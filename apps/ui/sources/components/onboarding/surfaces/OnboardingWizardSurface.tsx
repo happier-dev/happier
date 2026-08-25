@@ -103,12 +103,12 @@ const bareStylesheet = StyleSheet.create((theme) => ({
         width: '100%',
         maxWidth: 560,
         alignSelf: 'center',
-        justifyContent: 'center',
+        justifyContent: 'flex-start',
         gap: 24,
     },
     content: {
         width: '100%',
-        gap: 24,
+        gap: 10,
     },
     header: {
         width: '100%',

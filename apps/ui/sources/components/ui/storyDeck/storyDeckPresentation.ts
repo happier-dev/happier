@@ -11,7 +11,7 @@ export type StoryDeckPresentation = Readonly<{
 
 const WIDE_LAYOUT_MIN_WIDTH = 720;
 const WIDE_FRAME_MAX_WIDTH = 860;
-const WIDE_FRAME_MAX_HEIGHT = 530;
+const WIDE_FRAME_MAX_HEIGHT = 620;
 
 export function resolveStoryDeckPresentation(viewportWidth: number): StoryDeckPresentation {
     if (viewportWidth >= WIDE_LAYOUT_MIN_WIDTH) {

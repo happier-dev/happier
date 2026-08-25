@@ -1,5 +1,4 @@
 import {
-    arePluginMachineExecutionOriginsEqual,
     type AutomationEventFilterV1,
     type DaemonContributionRegistryProjectionAutomationEligibleEventV1,
 } from '@happier-dev/protocol';
@@ -23,6 +22,10 @@ import {
     createPluginUiProjectedActionResolver,
     normalizePluginUiProjection,
 } from '@/sync/domains/plugins/ui/projection';
+import {
+    areFreshPluginMachineExecutionOriginsCurrent,
+    arePluginContributionIdentitiesEqual,
+} from '@/components/automations/pluginEventAutomationCurrentness';
 
 import {
     createPluginEventAutomationAuthoringDraft,
@@ -52,31 +55,14 @@ type SetupOutcome =
 export type PluginEventAutomationWebhookEndpointEnsurer =
     typeof ensurePluginEventAutomationWebhookEndpoint;
 
-function sameContributionIdentity(
-    left: Readonly<{ pluginId: string; localId: string }>,
-    right: Readonly<{ pluginId: string; localId: string }>,
-): boolean {
-    return left.pluginId === right.pluginId && left.localId === right.localId;
-}
-
 function sameEligibleEvent(
     left: DaemonContributionRegistryProjectionAutomationEligibleEventV1,
     right: DaemonContributionRegistryProjectionAutomationEligibleEventV1,
 ): boolean {
-    return sameContributionIdentity(left.event.identity, right.event.identity)
+    return arePluginContributionIdentitiesEqual(left.event.identity, right.event.identity)
         && left.event.immutableGenerationId === right.event.immutableGenerationId
-        && sameContributionIdentity(left.setupAction.identity, right.setupAction.identity)
+        && arePluginContributionIdentitiesEqual(left.setupAction.identity, right.setupAction.identity)
         && left.setupAction.immutableGenerationId === right.setupAction.immutableGenerationId;
-}
-
-function sameFreshExecutionOrigin(
-    left: FreshPluginMachineExecutionOriginV1,
-    right: FreshPluginMachineExecutionOriginV1,
-): boolean {
-    return arePluginMachineExecutionOriginsEqual(left.origin, right.origin)
-        && left.machineTarget.serverId === right.machineTarget.serverId
-        && left.machineTarget.target.serverIdentityId === right.machineTarget.target.serverIdentityId
-        && left.machineTarget.target.machineId === right.machineTarget.target.machineId;
 }
 
 type CurrentSetupSnapshot = Readonly<{
@@ -102,7 +88,7 @@ function resolveCurrentSetupSnapshot(params: Readonly<{
         return { kind: 'unavailable' };
     }
     const event = inputs.automationEligibleEvents?.find((candidate) => (
-        sameContributionIdentity(candidate.event.identity, params.desiredEvent.event.identity)
+        arePluginContributionIdentitiesEqual(candidate.event.identity, params.desiredEvent.event.identity)
     )) ?? null;
     if (!event || !sameEligibleEvent(event, params.desiredEvent)) {
         return { kind: 'stale', reason: 'event_retired' };
@@ -142,7 +128,7 @@ function resolveCurrentSetupSnapshot(params: Readonly<{
                     && !params.signal.aborted
                     && params.accountLifetime.isCurrent()
                     && currentOrigin !== null
-                    && sameFreshExecutionOrigin(currentOrigin, origin);
+                    && areFreshPluginMachineExecutionOriginsCurrent(currentOrigin, origin);
             },
         },
     };
@@ -208,7 +194,7 @@ export async function configurePluginEventAutomationSetup(params: Readonly<{
         });
         const currentOrigin = params.resolveExecutionOrigin();
         if (!currentOrigin) return { kind: 'unavailable' } as const;
-        if (!sameFreshExecutionOrigin(origin, currentOrigin)) {
+        if (!areFreshPluginMachineExecutionOriginsCurrent(origin, currentOrigin)) {
             return { kind: 'stale', reason: 'event_retired' } as const;
         }
         return resolveCurrentSetupSnapshot({
@@ -260,7 +246,7 @@ export async function configurePluginEventAutomationSetup(params: Readonly<{
         actionSnapshotRef.current = current.actionSnapshot;
         if (
             !sameEligibleEvent(current.event, initial.event)
-            || !sameFreshExecutionOrigin(current.origin, initial.origin)
+            || !areFreshPluginMachineExecutionOriginsCurrent(current.origin, initial.origin)
         ) {
             return { kind: 'stale', reason: 'event_retired' };
         }

@@ -15,6 +15,7 @@ import { resolveSessionActionDefaultBackend } from '@/sync/domains/session/resol
 import { t } from '@/text';
 import { readSessionDisplayTitleField } from '@/sync/state/selectors';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+import { isUserFacingSession } from '@/sync/domains/session/listing/isUserFacingSession';
 import { resolveReasonCopy } from '@/sync/domains/surfaces/copy';
 import { openPluginContributedAction } from '@/components/plugins/actions/openPluginContributedAction';
 import {
@@ -27,7 +28,7 @@ function normalizeId(value: unknown): string {
 }
 
 function extractRecentSessionIds(sessionsById: Record<string, any>): string[] {
-  const sessions = Object.values(sessionsById ?? {});
+  const sessions = Object.values(sessionsById ?? {}).filter(isUserFacingSession);
   sessions.sort((a: any, b: any) => Number(b?.updatedAt ?? 0) - Number(a?.updatedAt ?? 0));
   return sessions
     .map((s: any) => normalizeId(s?.id))
@@ -78,6 +79,7 @@ type BuildCommandPaletteCommandsBaseParams = Readonly<{
   petControls?: PetCommandControls;
   nav: Readonly<{
     push: (path: string) => void;
+    openNewSession: () => void;
     navigateToSession: (sessionId: string) => void;
   }>;
   auth: Readonly<{ logout: () => Promise<void> }>;
@@ -156,7 +158,7 @@ export function buildCommandPaletteCommands(
       icon: 'plus-circle',
       category: t('commandPalette.commands.sessionsCategory'),
       shortcut: params.shortcutLabels?.['session.new'],
-      action: () => nav.push('/new'),
+      action: nav.openNewSession,
     },
     {
       id: 'sessions',

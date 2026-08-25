@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { Pressable, View } from 'react-native';
+import { Typography } from '@/constants/Typography';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { ContextMenu, type ContextMenuItem } from '@/components/ui/forms/dropdown/ContextMenu';
@@ -10,6 +11,10 @@ import {
     resolvePluginBrowserPolicyDecision,
 } from '@/sync/domains/plugins/browser/policy';
 import type { PluginUiPolicyEvaluationContext } from '@/sync/domains/plugins/ui/policy';
+import {
+    resolvePluginLocalizedText,
+    type PluginLocalizedTextResolver,
+} from '@/sync/domains/plugins/ui/i18n';
 import { t } from '@/text';
 import { Icon } from '@/components/ui/icons/Icon';
 
@@ -46,8 +51,8 @@ const stylesheet = StyleSheet.create((theme) => ({
         opacity: 0.45,
     },
     actionText: {
+        ...Typography.rowMeta(),
         color: theme.colors.text.primary,
-        fontSize: 14,
     },
     contextTriggerSlot: {
         position: 'absolute',
@@ -70,14 +75,27 @@ const stylesheet = StyleSheet.create((theme) => ({
 function decisionFor(
     action: PluginBrowserActionProjection,
     policyContext: PluginUiPolicyEvaluationContext,
+    localize?: PluginLocalizedTextResolver,
 ) {
-    return resolvePluginBrowserPolicyDecision(action, policyContext);
+    return resolvePluginBrowserPolicyDecision(action, policyContext, localize);
+}
+
+function actionTitle(
+    action: PluginBrowserActionProjection,
+    localize?: PluginLocalizedTextResolver,
+): string {
+    return localize?.(action.pluginId, action.display.title) ?? resolvePluginLocalizedText({
+        projection: null,
+        pluginId: action.pluginId,
+        value: action.display.title,
+    });
 }
 
 export function BrowserPluginActionPlacements(props: Readonly<{
     detailsPanelActions: readonly PluginBrowserActionProjection[];
     contextMenuActions: readonly PluginBrowserActionProjection[];
     policyContext: PluginUiPolicyEvaluationContext;
+    localizePluginText?: PluginLocalizedTextResolver;
     onAction: (action: PluginBrowserActionProjection) => void;
     testID: string;
 }>): React.ReactElement | null {
@@ -86,13 +104,14 @@ export function BrowserPluginActionPlacements(props: Readonly<{
     const [contextMenuOpen, setContextMenuOpen] = React.useState(false);
     const contextMenuItems = React.useMemo<readonly ContextMenuItem[]>(
         () => props.contextMenuActions.map((action) => {
-            const decision = decisionFor(action, props.policyContext);
+            const title = actionTitle(action, props.localizePluginText);
+            const decision = decisionFor(action, props.policyContext, props.localizePluginText);
             return {
                 id: action.id,
                 testID: `${props.testID}-contextMenu-${action.id}`,
-                title: action.display.title,
+                title,
                 subtitle: decision.enabled ? undefined : decision.unavailableReason ?? undefined,
-                accessibilityLabel: action.display.title,
+                accessibilityLabel: title,
                 icon: (
                     <Icon
                         name={resolvePluginUiIconName(action.display.iconToken)}
@@ -103,7 +122,7 @@ export function BrowserPluginActionPlacements(props: Readonly<{
                 disabled: !decision.enabled,
             };
         }),
-        [props.contextMenuActions, props.policyContext, props.testID, theme.colors.text.secondary],
+        [props.contextMenuActions, props.localizePluginText, props.policyContext, props.testID, theme.colors.text.secondary],
     );
 
     if (props.detailsPanelActions.length === 0 && props.contextMenuActions.length === 0) {
@@ -115,13 +134,14 @@ export function BrowserPluginActionPlacements(props: Readonly<{
             {props.detailsPanelActions.length > 0 ? (
                 <View testID={`${props.testID}-detailsPanel`} style={stylesheet.detailsPanel}>
                     {props.detailsPanelActions.map((action) => {
-                        const decision = decisionFor(action, props.policyContext);
+                        const title = actionTitle(action, props.localizePluginText);
+                        const decision = decisionFor(action, props.policyContext, props.localizePluginText);
                         return (
                             <Pressable
                                 key={action.id}
                                 testID={`${props.testID}-detailsPanel-${action.id}`}
                                 accessibilityRole="button"
-                                accessibilityLabel={action.display.title}
+                                accessibilityLabel={title}
                                 accessibilityHint={!decision.enabled && decision.unavailableReason
                                     ? decision.unavailableReason
                                     : undefined}
@@ -139,7 +159,7 @@ export function BrowserPluginActionPlacements(props: Readonly<{
                                     size={16}
                                     color={theme.colors.text.secondary}
                                 />
-                                <Text style={stylesheet.actionText}>{action.display.title}</Text>
+                                <Text style={stylesheet.actionText}>{title}</Text>
                             </Pressable>
                         );
                     })}
@@ -169,7 +189,7 @@ export function BrowserPluginActionPlacements(props: Readonly<{
                         items={contextMenuItems}
                         onSelect={(actionId) => {
                             const action = props.contextMenuActions.find((candidate) => candidate.id === actionId);
-                            if (action && decisionFor(action, props.policyContext).enabled) {
+                            if (action && decisionFor(action, props.policyContext, props.localizePluginText).enabled) {
                                 props.onAction(action);
                             }
                         }}

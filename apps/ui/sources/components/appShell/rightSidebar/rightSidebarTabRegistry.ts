@@ -10,6 +10,7 @@ import {
     type RightSidebarTabDefinitionFor,
 } from './rightSidebarBuiltinTabs';
 import type { PluginUiSurfacePlacementProjection } from '@/sync/domains/plugins/ui/projection';
+import type { PluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 import type { PluginUiProjectionPhase } from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
 import { readPluginUiContributionOrigin } from '@/sync/domains/plugins/ui/projectionUnion';
 import type { SelectedPaneDestinationV1 } from '@/components/appShell/panes/model/selectedPaneDestination';
@@ -36,6 +37,7 @@ export type ResolveRightSidebarTabsInput = Readonly<{
     pluginPlacements?: readonly PluginUiSurfacePlacementProjection[];
     projectionGeneration?: number | null;
     runtimeAdmission?: RightSidebarPluginTabRuntimeAdmission;
+    localize?: PluginLocalizedTextResolver;
 }>;
 
 export type SessionRightSidebarTabId =
@@ -81,6 +83,7 @@ export function resolveRightSidebarTabs(
         scope: input.scope,
         placements: input.pluginPlacements,
         projectionGeneration: input.projectionGeneration,
+        ...(input.localize ? { localize: input.localize } : {}),
         ...(input.runtimeAdmission === undefined ? {} : { runtimeAdmission: input.runtimeAdmission }),
     });
     return Object.freeze([...builtInTabs, ...pluginTabs]

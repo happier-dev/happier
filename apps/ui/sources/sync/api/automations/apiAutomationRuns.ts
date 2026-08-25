@@ -29,8 +29,8 @@ export async function listAutomationRuns(params: {
     return ApiAutomationRunsResponseSchema.parse(raw);
 }
 
-/** Current bounded Run summaries for every V3 Automation trigger kind. */
-export async function listAutomationDefinitionRunsV3(params: {
+/** Current bounded Run summaries for every Automation trigger kind. */
+export async function listAutomationDefinitionRuns(params: {
     credentials: AuthCredentials;
     automationId: string;
     limit?: number;

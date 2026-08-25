@@ -98,6 +98,7 @@ import {
 } from '@/components/machines/MachineReplacementPickerModal';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { Icon } from '@/components/ui/icons/Icon';
+import { filterUserFacingMachineDetailSessions } from './machineDetailSessionQueries';
 
 
 const styles = StyleSheet.create((theme) => ({
@@ -611,15 +612,13 @@ export default function MachineDetailScreen() {
     const machineSessions = useMemo(() => {
         if (!sessions || !machineId) return [];
 
-        return sessions.filter(item => {
-            if (typeof item === 'string') return false;
-            const session = item as Session;
+        return filterUserFacingMachineDetailSessions(sessions).filter(session => {
             const ownerMetadata = readSessionOwnerMetadataView(session);
             return readDisplayMachineIdForSession({
                 sessionId: session.id,
                 metadata: ownerMetadata,
             }) === machineId;
-        }) as Session[];
+        });
     }, [sessions, machineId]);
 
     const previousSessions = useMemo(() => {

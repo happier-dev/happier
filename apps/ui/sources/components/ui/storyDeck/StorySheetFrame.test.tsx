@@ -134,6 +134,24 @@ describe('StorySheetFrame', () => {
         expect(gestureState.enabledCalls).toContain(false);
     });
 
+    it('renders an optional quiet action in the sheet top-right corner', async () => {
+        runtime.platform = 'web';
+        runtime.width = 900;
+        const { StorySheetFrame } = await import('./StorySheetFrame');
+
+        const screen = await renderScreen(
+            <StorySheetFrame
+                testID="story-sheet"
+                topRightAction={<React.Fragment><span>Skip</span></React.Fragment>}
+            >
+                <></>
+            </StorySheetFrame>,
+        );
+
+        expect(screen.findByTestId('story-sheet-top-right-action')).toBeTruthy();
+        expect(screen.getTextContent()).toContain('Skip');
+    });
+
     it('does not duplicate centered modal motion owned by BaseModal', async () => {
         runtime.platform = 'web';
         runtime.width = 900;

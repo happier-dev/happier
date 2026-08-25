@@ -119,6 +119,7 @@ export const NativeTerminalSurface = React.forwardRef<EmbeddedTerminalRendererHa
                     byteOffset: input.byteOffset,
                     byteLength: input.bytes.byteLength,
                     ackedByteOffset: input.byteOffset + input.bytes.byteLength,
+                    writeGeneration: input.writeGeneration,
                 };
                 pendingWritesRef.current.push(completion);
 
@@ -167,6 +168,10 @@ export const NativeTerminalSurface = React.forwardRef<EmbeddedTerminalRendererHa
             },
             focus: () => {
                 void nativeModule?.focusSurface?.(props.surfaceId);
+            },
+            copySelection: () => {
+                if (unavailableReason) return;
+                void nativeModule?.copySelection?.(props.surfaceId);
             },
         }),
         [nativeModule, props.surfaceId, unavailableReason],

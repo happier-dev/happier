@@ -8,6 +8,8 @@ import { PluginSurfacePlacementHost } from '@/components/plugins/surfaces';
 import { PluginSurfaceFallback } from '@/components/sessions/panes/PluginSurfaceFallback';
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { useNativeBackLayerBackHandler } from '@/components/ui/overlays/NativeBackLayerBoundary';
+import { RouteRemovalStepConsumer } from '@/utils/navigation/RouteRemovalStepConsumer';
+import { ESCAPE_LAYER_PRIORITIES, useEscapeLayer } from '@/keyboard/escape';
 import { PaneLoadingFallback } from '@/components/ui/panels/PaneLoadingFallback';
 import type { BoundPluginSurfaceBinding } from '@/components/plugins/surfaces/boundPluginSurfaceController';
 import { usePluginSurfaceDestinationNavigationBinding } from '@/components/plugins/surfaces/pluginSurfaceDestinationNavigation';
@@ -16,7 +18,10 @@ import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/ac
 import { t } from '@/text';
 import { buildPluginDetailRoute } from '@/components/settings/plugins/model/pluginDetailRoute';
 
-import { useAppShellPluginUiProjection } from './AppShellPluginUiProjection';
+import {
+    useAppShellPluginUiProjection,
+    useProjectedPluginLocalizedTextResolver,
+} from './AppShellPluginUiProjection';
 import {
     buildPluginAppPageRoutePath,
     resolvePluginAppPageForRoute,
@@ -56,13 +61,14 @@ export function PluginAppPageScreen(props: Readonly<{
     const { theme } = useUnistyles();
     const router = useRouter();
     const projection = useAppShellPluginUiProjection();
+    const localize = useProjectedPluginLocalizedTextResolver();
     const placements = React.useMemo(
         () => selectPluginAppPagePlacements(projection.pluginUiProjection),
         [projection.pluginUiProjection],
     );
     const pages = React.useMemo(
-        () => resolvePluginAppPages({ placements }),
-        [placements],
+        () => resolvePluginAppPages({ placements, localize }),
+        [localize, placements],
     );
     const page = React.useMemo(() => resolvePluginAppPageForRoute({
         pages,
@@ -158,6 +164,18 @@ export function PluginAppPageScreen(props: Readonly<{
         Platform.OS === 'android' && isFocused && pageIsLive,
         consumePageBack,
     );
+    // Escape is the desktop and web keyboard's Back, and it is NOT navigation:
+    // it has to be ordered against the overlays, popovers, palettes and modals
+    // that must consume it first. That ordering is the app's Escape layer stack,
+    // so the page joins it at pane priority rather than installing a key
+    // listener of its own. Yielding (`false`) when the page has no step is what
+    // lets a lower layer — a session surface, a draft — answer the same press.
+    const consumePageEscape = React.useCallback(() => consumePageBack(), [consumePageBack]);
+    useEscapeLayer({
+        priority: ESCAPE_LAYER_PRIORITIES.pane,
+        enabled: isFocused && pageIsLive,
+        onEscape: consumePageEscape,
+    });
 
     const binding = React.useMemo<BoundPluginSurfaceBinding>(() => ({
         ...(openSurface ? { openSurface } : {}),
@@ -251,6 +269,17 @@ export function PluginAppPageScreen(props: Readonly<{
     return (
         <>
             <Stack.Screen options={headerOptions} />
+            {/*
+                The other three ways back, in one participant.
+                `useNativeBackLayerBackHandler` above answers Android's hardware
+                Back; a browser's Back button, an iOS header Back and an iOS
+                edge-swipe are all one fact instead — the route is being REMOVED
+                — and the shared consumer spends the page's declared step before
+                that happens. Without it a page-internal Back existed on exactly
+                one of the four platforms Happier ships, and every other client
+                left the page while its own detail stayed open behind it.
+            */}
+            <RouteRemovalStepConsumer active={isFocused && pageIsLive} consume={consumePageBack} />
             <PluginSurfaceFocusEligibilityProvider
                 active={isFocused}
                 currentUiContextActive={isFocused}

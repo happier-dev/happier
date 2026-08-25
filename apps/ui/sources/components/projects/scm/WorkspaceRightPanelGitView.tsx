@@ -17,7 +17,7 @@ import { evaluateScmOperationPreflight } from '@/scm/core/operationPolicy';
 import { getScmUserFacingError } from '@/scm/operations/userFacingErrors';
 import { reportWorkspaceScmOperation, trackBlockedScmOperation } from '@/scm/operations/reporting';
 import { withWorkspaceScmOperationLock } from '@/scm/operations/withOperationLock';
-import { NotSourceControlRepositoryState, SourceControlUnavailableState } from '@/components/workspaces/scm/states';
+import { NotSourceControlRepositoryState, SourceControlStaleSnapshotNotice, SourceControlUnavailableState } from '@/components/workspaces/scm/states';
 import { WorkspaceScmSubTabsBar, type GitSubTabId } from '@/components/workspaces/scm/WorkspaceScmSubTabsBar';
 import { WorkspaceScmHistoryTab } from '@/components/workspaces/scm/WorkspaceScmHistoryTab';
 import { WorkspaceScmUpdateTab } from '@/components/workspaces/scm/WorkspaceScmUpdateTab';
@@ -414,6 +414,7 @@ export const WorkspaceRightPanelGitView = React.memo((props: WorkspaceRightPanel
     if (error && !snapshot) {
         return (
             <SourceControlUnavailableState
+                testID="workspace-rightpanel-git-unavailable"
                 details={error.message}
                 errorCode={error.errorCode}
                 onRetry={() => {
@@ -432,14 +433,32 @@ export const WorkspaceRightPanelGitView = React.memo((props: WorkspaceRightPanel
             </View>
         );
     }
+    // `F-SCM-2`: the branch above is the only place this view reported a snapshot error, and
+    // `useWorkspaceScmSnapshotController`'s catch stores the error WITHOUT clearing the stored
+    // snapshot — so once anything had been cached, every later refresh failure was invisible and
+    // stale content read as current. From here on the content is real but possibly stale, so the
+    // failure travels WITH it. Same owner and same treatment as the session twin.
+    const staleSnapshotNotice = (
+        <SourceControlStaleSnapshotNotice
+            testID="workspace-rightpanel-git-stale"
+            error={error}
+            onRetry={() => {
+                void refresh();
+            }}
+        />
+    );
+
     if (snapshot && snapshot.repo.isRepo === false) {
         return (
-            <NotSourceControlRepositoryState
-                canInitializeRepository={scmWriteEnabled && snapshot.capabilities?.writeRepositoryInit === true}
-                initializeRepositoryBusy={scmOperationBusy}
-                onInitializeRepository={initializeRepository}
-                onRefresh={refresh}
-            />
+            <View style={{ flex: 1, minHeight: 0 }}>
+                {staleSnapshotNotice}
+                <NotSourceControlRepositoryState
+                    canInitializeRepository={scmWriteEnabled && snapshot.capabilities?.writeRepositoryInit === true}
+                    initializeRepositoryBusy={scmOperationBusy}
+                    onInitializeRepository={initializeRepository}
+                    onRefresh={refresh}
+                />
+            </View>
         );
     }
 
@@ -451,6 +470,7 @@ export const WorkspaceRightPanelGitView = React.memo((props: WorkspaceRightPanel
                 onSelectSubTab={setActiveSubTab}
                 testIDPrefix="project-rightpanel-git-subtab:"
             />
+            {staleSnapshotNotice}
             {activeSubTab === 'history' ? (
                 <WorkspaceScmHistoryTab
                     theme={theme}

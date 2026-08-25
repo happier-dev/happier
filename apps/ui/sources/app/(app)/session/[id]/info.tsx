@@ -53,6 +53,8 @@ import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestrati
 import { resolveServerIdForSessionIdFromLocalCache } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache';
 import { resolveSessionListPreferredServerIdFromState } from '@/sync/domains/session/listing/sessionListLookupState';
 import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
+import { resolveNewSessionDraftRouteIdentity } from '@/components/sessions/new/navigation/newSessionDraftRouteIdentity';
+import { buildNewSessionLaunchRouteParams } from '@/components/sessions/new/navigation/newSessionRouteParams';
 import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { readCurrentProjectedAgentCapabilities } from '@/agents/backendCatalog/currentAgentCapabilities';
@@ -109,6 +111,8 @@ import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSession
 import { readSessionPresentationAgentId } from '@/sync/domains/session/presentation/readSessionPresentationAgentId';
 import { readUiAiLaunchProfilesForLegacyUi } from '@/sync/domains/profiles/aiLaunchProfileCollection';
 import { Icon } from '@/components/ui/icons/Icon';
+import { useSessionPanePluginRuntime } from '@/components/sessions/panes/useSessionPanePluginRuntime';
+import { PluginInlineSurfaceHost } from '@/components/plugins/surfaces';
 
 type RawJsonSectionId = 'agentState' | 'metadata' | 'sessionStatus' | 'session';
 type RawJsonSnapshot = Readonly<{
@@ -214,6 +218,11 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
     const { theme } = useUnistyles();
     const router = useRouter();
     const profile = useProfile();
+    const pluginRuntime = useSessionPanePluginRuntime({ sessionId: session.id });
+    const sessionInfoSections = React.useMemo(() => (
+        Object.values(pluginRuntime.pluginUiProjection?.sessionInfoSectionsById ?? {})
+            .sort((left, right) => (left.order ?? 0) - (right.order ?? 0) || left.id.localeCompare(right.id))
+    ), [pluginRuntime.pluginUiProjection?.sessionInfoSectionsById]);
     const localDevModeEnabled = useLocalSetting('devModeEnabled');
     const devModeEnabled = isSessionDebugInformationEnabled(localDevModeEnabled);
     const sessionName = getSessionName(session);
@@ -444,6 +453,7 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
     }, [metadata]);
 
     const handleNewSessionSameSetup = useCallback(() => {
+        const draftId = resolveNewSessionDraftRouteIdentity({ routeDraftId: undefined }).draftId;
         const dataId = storeTempData(buildNewSessionTempDataFromSessionConfiguration({
             session,
             machineId: newSessionSeedMachineId,
@@ -452,10 +462,13 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
         router.push({
             pathname: '/new',
             params: {
+                ...buildNewSessionLaunchRouteParams({
+                    draftId,
+                    machineId: newSessionSeedMachineId,
+                    directory: newSessionSeedDirectory,
+                    targetServerId: sessionServerId,
+                }),
                 dataId,
-                ...(newSessionSeedMachineId ? { machineId: newSessionSeedMachineId } : {}),
-                ...(newSessionSeedDirectory ? { directory: newSessionSeedDirectory } : {}),
-                ...(sessionServerId ? { spawnServerId: sessionServerId } : {}),
             },
         } as any);
     }, [newSessionSeedDirectory, newSessionSeedMachineId, router, session, sessionServerId]);
@@ -898,6 +911,25 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
                 )}
 
                 <SessionRetentionNotice sessionId={session.id} />
+
+                {sessionInfoSections.map((section) => (
+                    <View
+                        key={section.id}
+                        style={{ maxWidth: layout.maxWidth, alignSelf: 'center', width: '100%', paddingHorizontal: 16, marginBottom: 8 }}
+                    >
+                        <PluginInlineSurfaceHost
+                            placement={section.placement}
+                            inlineMount={{ role: 'sessionInfoSection', presentation: 'content' }}
+                            sessionId={session.id}
+                            machineId={pluginRuntime.machineId}
+                            serverId={pluginRuntime.serverId}
+                            pluginUiProjection={pluginRuntime.pluginUiProjection}
+                            platform={pluginRuntime.platform}
+                            projectionInteractionEnabled={pluginRuntime.phase === 'current'
+                                && pluginRuntime.interactionEnabled === true}
+                        />
+                    </View>
+                ))}
 
                 {/* Session Details */}
                 <ItemGroup>

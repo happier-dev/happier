@@ -17,7 +17,6 @@ import {
     type AttachedSessionTerminalUnavailableReason,
 } from '@/components/sessions/terminal/openAttachedSessionTerminal';
 import { isClaudeUnifiedTerminalDialogChoiceAgentStateRequest } from '@happier-dev/protocol';
-import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { Icon } from '@/components/ui/icons/Icon';
 import {
     resolveScopedPluginSettingsTarget,
@@ -73,56 +72,51 @@ type ClaudeDialogSettingMutation =
         value: 'resume_from_summary' | 'resume_full_session';
     }>;
 
-const DAEMON_PLUGIN_SETTINGS_SCOPE = Object.freeze({ kind: 'daemon' as const });
+const ACCOUNT_PLUGIN_SETTINGS_SCOPE = Object.freeze({ kind: 'account' as const });
 
 /**
- * A recognized terminal dialog may ask to persist a declared daemon setting,
- * but it has no independent Settings transport. Reuse the scoped adapter so
- * its read/CAS/write and unavailable semantics remain one canonical path.
+ * A recognized terminal dialog may ask to remember a declared Claude setting,
+ * but it has no independent Settings transport. Both remembered choices live in
+ * Claude's single `scope: 'account'` Agent Settings contribution and are read
+ * back by its runtime through `forScope({ kind: 'account' })`, so this reuses
+ * the scoped adapter at that exact scope: read/CAS/write, currentness and
+ * unavailable semantics stay one canonical path, and the declaration keeps one
+ * owner. Addressing a machine here produced an operation the daemon's
+ * exact-declaration filter must refuse.
  */
 async function persistClaudeDialogSetting(input: Readonly<{
     sessionId: string;
     session: Readonly<{ serverId?: unknown }>;
-    ownerMetadata: Readonly<{ machineId?: unknown }> | null;
     mutation: ClaudeDialogSettingMutation;
 }>): Promise<void> {
     const preferenceName = input.mutation.settingId === 'claudeUnifiedTerminalWorkspaceTrust'
         ? 'workspace trust'
         : 'resume choice';
-    const machineId = typeof input.ownerMetadata?.machineId === 'string'
-        ? input.ownerMetadata.machineId.trim()
-        : '';
-    if (!machineId) {
-        throw new Error(`Unable to persist Claude ${preferenceName} without a session machine.`);
-    }
     const serverId = typeof input.session.serverId === 'string' ? input.session.serverId.trim() : '';
     const target = resolveScopedPluginSettingsTarget({
-        scope: DAEMON_PLUGIN_SETTINGS_SCOPE,
-        machineId,
-        serverId,
+        scope: ACCOUNT_PLUGIN_SETTINGS_SCOPE,
         serverIdentityId: resolveScopedPluginSettingsServerIdentity(serverId),
     });
-    if (!target || target.kind !== 'daemon') {
-        throw new Error(`Unable to persist Claude ${preferenceName} without an exact server target.`);
+    if (!target || target.kind !== 'account') {
+        throw new Error(`Unable to persist Claude ${preferenceName} without an exact Account target.`);
     }
     const accountLifetime = captureActiveServerAccountScopeLifetime();
     if (!accountLifetime) {
         throw new Error(`Unable to persist Claude ${preferenceName} outside the active Account lifetime.`);
     }
+    // An Account record is addressed by the session's server identity alone.
+    // The machine that happens to run the session is not part of that target,
+    // so it is not part of this write's currentness either.
     const isTargetCurrent = (): boolean => {
         const currentSession = storage.getState().sessions[input.sessionId];
-        const currentOwnerMetadata = currentSession ? readSessionOwnerMetadataView(currentSession) : null;
-        const currentMachineId = typeof currentOwnerMetadata?.machineId === 'string'
-            ? currentOwnerMetadata.machineId.trim()
-            : '';
         const currentServerId = typeof currentSession?.serverId === 'string'
             ? currentSession.serverId.trim()
             : '';
-        return currentMachineId === machineId && currentServerId === serverId;
+        return currentServerId === serverId;
     };
     const result = await commitScopedPluginSettingsField({
         pluginId: 'claude',
-        scope: DAEMON_PLUGIN_SETTINGS_SCOPE,
+        scope: ACCOUNT_PLUGIN_SETTINGS_SCOPE,
         target,
         accountLifetime,
         fields: [{ key: input.mutation.settingId, redacted: false } satisfies ScopedPluginSettingsField],
@@ -689,9 +683,6 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId,
             }
 
             const latestSession = storage.getState().sessions[sessionId];
-            const latestOwnerMetadata = latestSession
-                ? readSessionOwnerMetadataView(latestSession)
-                : null;
             const latestRequest = (latestSession as any)?.agentState?.requests?.[toolCallId];
             const hasLiveMatchingRequest =
                 latestRequest?.tool === 'AskUserQuestion' &&
@@ -703,55 +694,66 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId,
             setIsSubmitting(true);
 
             await sessionAllowWithAnswers(sessionId, toolCallId, answers);
+            // The requester has accepted this answer, so the interaction is
+            // terminal here. Remembering the choice is a SEPARATE outcome: a
+            // failed preference write must be reported as such and must never
+            // re-offer submit for a request that has already been answered.
+            setIsSubmitted(true);
             const dialog = input.happierDialog;
             if (dialog && typeof dialog === 'object' && !Array.isArray(dialog)) {
                 const metadata = dialog as Record<string, unknown>;
                 if (isClaudeUnifiedTerminalDialogChoiceAgentStateRequest(latestRequest) && metadata.kind === 'recognized') {
-                    for (const [questionIndex, selectedIndexes] of selections) {
-                        for (const optionIndex of selectedIndexes) {
-                            const mutation = questions[questionIndex]?.options?.[optionIndex]?.settingMutation;
-                            if (!mutation || typeof mutation !== 'object' || Array.isArray(mutation)) continue;
-                            const candidate = mutation as Record<string, unknown>;
-                            if (
-                                metadata.dialogId === 'trust_folder'
-                                && candidate.settingId === 'claudeUnifiedTerminalWorkspaceTrust'
-                                && (
-                                    candidate.value === 'always_trust_happier_workspaces'
-                                    || candidate.value === 'always_reject_happier_workspaces'
-                                )
-                            ) {
-                                await persistClaudeDialogSetting({
-                                    sessionId,
-                                    session: latestSession,
-                                    ownerMetadata: latestOwnerMetadata,
-                                    mutation: {
-                                        settingId: candidate.settingId,
-                                        value: candidate.value,
-                                    },
-                                });
-                            } else if (
-                                metadata.dialogId === 'resume_choice'
-                                && candidate.settingId === 'claudeUnifiedTerminalResumeChoice'
-                                && (
-                                    candidate.value === 'resume_from_summary'
-                                    || candidate.value === 'resume_full_session'
-                                )
-                            ) {
-                                await persistClaudeDialogSetting({
-                                    sessionId,
-                                    session: latestSession,
-                                    ownerMetadata: latestOwnerMetadata,
-                                    mutation: {
-                                        settingId: candidate.settingId,
-                                        value: candidate.value,
-                                    },
-                                });
+                    try {
+                        for (const [questionIndex, selectedIndexes] of selections) {
+                            for (const optionIndex of selectedIndexes) {
+                                const mutation = questions[questionIndex]?.options?.[optionIndex]?.settingMutation;
+                                if (!mutation || typeof mutation !== 'object' || Array.isArray(mutation)) continue;
+                                const candidate = mutation as Record<string, unknown>;
+                                if (
+                                    metadata.dialogId === 'trust_folder'
+                                    && candidate.settingId === 'claudeUnifiedTerminalWorkspaceTrust'
+                                    && (
+                                        candidate.value === 'always_trust_happier_workspaces'
+                                        || candidate.value === 'always_reject_happier_workspaces'
+                                    )
+                                ) {
+                                    await persistClaudeDialogSetting({
+                                        sessionId,
+                                        session: latestSession,
+                                        mutation: {
+                                            settingId: candidate.settingId,
+                                            value: candidate.value,
+                                        },
+                                    });
+                                } else if (
+                                    metadata.dialogId === 'resume_choice'
+                                    && candidate.settingId === 'claudeUnifiedTerminalResumeChoice'
+                                    && (
+                                        candidate.value === 'resume_from_summary'
+                                        || candidate.value === 'resume_full_session'
+                                    )
+                                ) {
+                                    await persistClaudeDialogSetting({
+                                        sessionId,
+                                        session: latestSession,
+                                        mutation: {
+                                            settingId: candidate.settingId,
+                                            value: candidate.value,
+                                        },
+                                    });
+                                }
                             }
                         }
+                    } catch (preferenceError) {
+                        Modal.alert(
+                            t('common.error'),
+                            preferenceError instanceof Error
+                                ? preferenceError.message
+                                : t('errors.failedToSendMessage'),
+                        );
                     }
                 }
             }
-            setIsSubmitted(true);
         } catch (error) {
             setIsSubmitted(false);
             Modal.alert(t('common.error'), error instanceof Error ? error.message : t('errors.failedToSendMessage'));

@@ -14,9 +14,11 @@ import { pluginWebhookAdministrationTranslations } from './pluginWebhookAdminist
 import { pluginAccountDataEraseTranslations } from './pluginAccountDataEraseTranslations';
 import { apiTokenSettingsTranslations } from './apiTokenSettingsTranslations';
 import { pluginAccountReleaseSelectionTranslations } from './pluginAccountReleaseSelectionTranslations';
+import { pluginMachineMatrixTranslations } from './pluginMachineMatrixTranslations';
 import { pluginInvocationLogTranslations } from './pluginInvocationLogTranslations';
 import { eventAutomationComposerTranslations } from './eventAutomationComposerTranslations';
 import { actionOperationInboxTranslations } from './actionOperationInboxTranslations';
+import { sessionDraftTranslations } from './sessionDraftTranslations';
 
 const mcpServersUxTranslationExtension = {
   mcpServersConfiguredEmptySubtitle: 'Utwórz serwer, zaimportuj JSON hosta albo zainstaluj zalecany preset.',
@@ -620,6 +622,7 @@ function plural({
  * Must match the exact structure of the English translations
  */
 export const pl = {
+    ...sessionDraftTranslations,
     transferRecovery: {
         title: 'Dokończ przygotowane przesyłanie',
         message: 'Plik dotarł do maszyny, ale końcowy zapis wymaga uwagi. Ponów tylko finalizację albo odrzuć przygotowane przesyłanie.',
@@ -687,6 +690,10 @@ export const pl = {
             composerSendImmediate: 'Wyślij natychmiast',
             composerSendPending: 'Wyślij do kolejki oczekujących',
             commandPaletteOpen: 'Otwórz paletę poleceń',
+            browserAddressFocus: 'Ustaw fokus na pasku adresu przeglądarki',
+            browserBack: 'Wstecz w przeglądarce',
+            browserForward: 'Dalej w przeglądarce',
+            browserReload: 'Odśwież stronę w przeglądarce',
             modeCycle: 'Przełącz tryb',
             shortcutsHelpOpen: 'Otwórz pomoc skrótów',
             sessionNew: 'Utwórz nową sesję',
@@ -825,7 +832,7 @@ export const pl = {
 
 
   inbox: {
-    ...actionOperationInboxTranslations,
+        ...actionOperationInboxTranslations,
     openSession: ({ session }: { session: string }) => `Otwórz sesję: ${session}`,
     // Inbox screen
     emptyTitle: "Wszystko jest na bieżąco",
@@ -1196,6 +1203,18 @@ export const pl = {
         "Utwórz ją z poziomu nowej sesji, aby uruchamiać zaplanowane sesje na swoich maszynach.",
       createAutomationA11y: "Utwórz automatyzację",
     },
+    settings: {
+      title: "Ustawienia automatyzacji",
+      openSubtitle: "Skonfiguruj pojemność i przechowywanie historii uruchomień.",
+      failedToLoad: "Nie udało się wczytać ustawień automatyzacji.",
+      updateFailed: "Nie udało się zaktualizować ustawień automatyzacji.",
+      maxActiveRunsPerMachine: "Maksymalna liczba aktywnych uruchomień na maszynę",
+      maxActiveRunsPerMachineSubtitle: "Ogranicza liczbę uruchomień, które każda maszyna może aktywnie przejąć jednocześnie.",
+      maxActiveRunsPerMachinePrompt: "Wpisz liczbę całkowitą od 1 do 2 147 483 647.",
+      maxActiveRunsPerMachineInvalid: "Wpisz liczbę całkowitą od 1 do 2 147 483 647.",
+      runRetention: "Zachowuj historię uruchomień bezterminowo",
+      runRetentionSubtitle: "Gdy ta opcja jest wyłączona, kwalifikujące się zakończone uruchomienia są przechowywane przez 30 dni.",
+    },
     detail: {
       invalidId: "Nieprawidłowy identyfikator automatyzacji.",
       notFound: "Nie znaleziono automatyzacji.",
@@ -1218,6 +1237,7 @@ export const pl = {
         endpointTitle: "Punkt końcowy webhooka",
         endpointObservingSince: ({ time }: { time: string }) => `Odbiera dostawy od ${time}`,
         sourceStatusUnreported: "Oczekiwanie na pierwszy raport",
+        sourceStatusUnavailable: "Stan źródła niedostępny",
         sourceCatalogStatusUnavailable: "Aktualność źródła niedostępna",
         watcherMachineUnknown: "Tej maszyny nie ma już na Twoim koncie, więc ten obserwator nie może obserwować zdarzeń.",
         watcherMachineRevoked: "Ta maszyna została unieważniona, więc ten obserwator nie może obserwować zdarzeń.",
@@ -1238,6 +1258,12 @@ export const pl = {
       deleteConfirmTitle: "Usuń automatyzację",
       deleteConfirmMessage: "Ta automatyzacja i jej harmonogram zostaną usunięte.",
       deleteConfirmButton: "Usuń",
+      clearHistory: "Wyczyść historię uruchomień",
+      clearHistorySubtitle: "Usuwa zakończone uruchomienia, które można usunąć. Aktywne uruchomienia pozostają dostępne.",
+      clearHistoryConfirmTitle: "Wyczyścić historię uruchomień?",
+      clearHistoryConfirmMessage: "Kwalifikujące się zakończone uruchomienia zostaną trwale usunięte. Aktywne uruchomienia pozostaną dostępne.",
+      clearHistoryConfirmButton: "Wyczyść historię",
+      clearHistoryFailed: "Nie udało się wyczyścić historii uruchomień.",
       machineAssignmentsTitle: "Przypisania maszyn",
       machineAssignmentsFooter:
         "Włącz co najmniej jedną maszynę, aby automatyzacja mogła się uruchamiać.",
@@ -1273,9 +1299,10 @@ export const pl = {
         admitted: ({ time }: { time: string }) => `Przyjęto: ${time}`,
         occurrenceTitle: "Wystąpienie",
         sourceTitle: "Źródło obserwacji",
-        scheduled: ({ time }: { time: string }) => `Zaplanowano: ${time}`,
-        updated: ({ time }: { time: string }) => `Zaktualizowano: ${time}`,
-        error: ({ message }: { message: string }) => `Błąd: ${message}`,
+                scheduled: ({ time }: { time: string }) => `Zaplanowano: ${time}`,
+                updated: ({ time }: { time: string }) => `Zaktualizowano: ${time}`,
+                contentRemoved: 'Usunięto zawartość uruchomienia',
+                error: ({ message }: { message: string }) => `Błąd: ${message}`,
         attemptTitle: "Próba",
         attempt: ({ attempt }: { attempt: number }) => `Próba ${attempt}`,
         claimedByTitle: "Przejęte przez",
@@ -3044,6 +3071,8 @@ export const pl = {
       fallbackDisabled: 'Fallback kont jest wyłączony na tym serwerze.',
       duplicateMember: 'To konto jest już w grupie.',
       groupAlreadyExists: 'Grupa kont o tym id już istnieje.',
+      groupCapacityExhausted: 'To konto ma już maksymalną liczbę grup kont. Usuń niepotrzebną grupę i spróbuj ponownie.',
+      connectedAccountCapacityExhausted: 'To konto ma już maksymalną liczbę połączonych kont. Odłącz niepotrzebne konto i spróbuj ponownie.',
       invalidGroup: 'Ta grupa kont jest nieprawidłowa. Sprawdź ustawienia i spróbuj ponownie.',
       requestFailedWithStatus: ({ status }: { status: number }) => `The connected-service request failed (${status}). Refresh and try again.`,
       generic: 'Akcja połączonej usługi nie powiodła się. Odśwież i spróbuj ponownie.',
@@ -6529,6 +6558,12 @@ export const pl = {
 
   voiceAssistant: {
     connecting: "Łączenie...",
+    reconnecting: "Ponowne łączenie…",
+    listening: "Słucha",
+    thinking: "Myśli…",
+    speaking: "Mówi",
+    microphonePermissionRequired: "Wymagany dostęp do mikrofonu",
+    interrupted: "Przerwano",
     active: "Asystent głosowy aktywny",
     connectionError: "Błąd połączenia",
     label: "Asystent głosowy",
@@ -6539,6 +6574,19 @@ export const pl = {
     endVoice: "Zakończ głos",
     transcribing: "Transkrypcja…",
     endDictation: "Zakończ dyktowanie",
+    dictationNoSpeech: "Nie wykryto mowy",
+    dictationErrors: {
+      captureFailed: "Dyktowanie zostało zatrzymane, bo nagrywanie z mikrofonu się nie powiodło. Sprawdź dostęp do mikrofonu i spróbuj ponownie.",
+      providerUnavailable: "Wybrany dostawca dyktowania jest niedostępny. Sprawdź jego konfigurację i spróbuj ponownie.",
+      captureStartDeadlineExceeded: "Dyktowanie nie zdążyło się rozpocząć w ciągu 60 sekund. Sprawdź dostęp do mikrofonu i spróbuj ponownie.",
+      captureDurationExceeded: "Dyktowanie osiągnęło limit 60 sekund słuchania. Zacznij od nowa, aby kontynuować.",
+      transcriptionDeadlineExceeded: "Transkrypcja trwała dłużej niż 30 sekund. Spróbuj krótszego dyktowania.",
+      transcriptLimitExceeded: "Podyktowany tekst jest za długi dla pola wiadomości. Spróbuj krótszego dyktowania.",
+      recordedAudioSizeUnavailable: "Happier nie mógł sprawdzić rozmiaru nagrania. Nagraj jeszcze raz.",
+      recordedAudioLimitExceeded: "Nagranie przekracza limit 8 MB. Spróbuj krótszego dyktowania.",
+      microphoneOwnedByVoice: "Zakończ Voice, zanim zaczniesz dyktowanie.",
+      microphoneOwnedByDictation: "Dyktowanie już używa mikrofonu. Zakończ bieżące dyktowanie, zanim zaczniesz nowe.",
+    },
   },
 
   voiceSurface: {
@@ -6546,6 +6594,7 @@ export const pl = {
     connectAgent: 'Połącz',
     installAgentRuntime: 'Zainstaluj',
     updateAgentRuntime: 'Uaktualnij',
+    reconnect: 'Połącz ponownie',
     start: "Uruchom",
     stop: "Zatrzymaj",
     selectSessionToStart: "Wybierz sesje, aby uruchomic glos",
@@ -6582,6 +6631,8 @@ export const pl = {
   voiceActivity: {
     title: "Aktywnosc glosowa",
     empty: "Brak aktywnosci glosowej.",
+    partial: "Na żywo",
+    corrected: "Zaktualizowano",
     clear: "Wyczysc",
     format: {
       voiceAgent: "Agent głosowy",
@@ -7879,6 +7930,10 @@ export const pl = {
       "Obecnie nie wykryto zmian ostatniej tury.",
     notRepo: "To nie jest repozytorium kontroli wersji",
     notUnderSourceControl: "Ten katalog nie jest pod kontrolą wersji",
+    sourceControlStale: {
+        title: 'Kontrola wersji wymaga uwagi',
+        body: 'Wyświetlana jest ostatnia udana aktualizacja. Najnowsza aktualizacja nie została ukończona.',
+    },
     repositoryInit: {
       initialize: "Zainicjuj repozytorium",
       initializing: "Inicjowanie…",
@@ -8231,7 +8286,7 @@ export const pl = {
           pushCurrentBranch: "Wypchnij bieżącą gałąź",
           publish: "Opublikuj repozytorium",
           publishing: "Publikowanie…",
-          noTargets: "Połącz GitHub albo zaloguj się przez gh CLI, aby opublikować to repozytorium.",
+          targetsUnavailable: "Nie udało się sprawdzić, gdzie można opublikować to repozytorium.",
           errors: {
             targetRequired: "Wybierz konto lub organizację GitHub.",
             nameRequired: "Wpisz nazwę repozytorium.",
@@ -8513,7 +8568,6 @@ export const pl = {
       disabledLimitSubtitle: 'Osiągnięto limit publicznych podglądów. Unieważnij istniejący link przed utworzeniem kolejnego.',
       disabledNoPreviewSubtitle: 'Otwórz podgląd lokalny przed utworzeniem linku publicznego.',
       disabledReason: {
-        auditRequirementDisabled: 'Rejestrowanie audytu publicznych podglądów jest wymagane, ale wyłączone na serwerze.',
         auditUnavailable: 'Rejestrowanie audytu publicznego podglądu jest niedostępne.',
         dnsTlsUnavailable: 'Publiczne podglądy czekają, aż DNS/TLS będzie gotowe.',
         expired: 'Ten link publicznego podglądu wygasł.',
@@ -8533,6 +8587,7 @@ export const pl = {
         sessionNotAuthorized: 'Nie masz dostępu do utworzenia linku publicznego dla tej sesji.',
         tunnelPortsUnconfigured: 'Serwer nie zezwala na żadne porty tunelu.',
         tunnelRelayDisabled: 'Przekaźnik serwera dla tuneli maszyn jest wyłączony.',
+        tunnelSigningUnconfigured: 'Serwer nie ma klucza podpisującego dla tuneli maszyn.',
       },
       createActionA11y: 'Utwórz publiczny link podglądu',
       revokeActionA11y: 'Unieważnij publiczny link podglądu',
@@ -8543,6 +8598,15 @@ export const pl = {
             revokeConfirmTitle: 'Cofnąć link publiczny?',
             revokeConfirmMessage: ({ url }: { url: string }) => `Cofnąć publiczny link podglądu ${url}? Każdy, kto go używa, utraci dostęp.`,
             revokeConfirmCta: 'Cofnij link',
+            consequenceReach: 'Każdy, kto ma ten link, może otworzyć tę usługę. Logowanie nie jest wymagane.',
+            consequenceExpiry: 'Link przestaje działać sam, gdy minie czas życia podany poniżej.',
+            consequenceRevoke: 'Możesz go cofnąć w każdej chwili, z tego panelu.',
+            lifetimeLabel: 'Czas życia',
+            linkTypeLabel: 'Typ linku',
+            revealUrlA11y: 'Pokaż pełny link',
+            hideUrlA11y: 'Ukryj link',
+            expiresInClock: ({ clock }: { clock: string }) => `Wygasa za ${clock}`,
+            groupFooter: 'Linki publiczne są zapisywane w dzienniku audytu tej maszyny.',
     },
     actions: {
       terminateDetectedA11y: 'Zakończ wykrytą usługę lokalną',
@@ -8555,6 +8619,25 @@ export const pl = {
             stopConfirmTitle: 'Zatrzymać usługę?',
             stopConfirmMessage: ({ service }: { service: string }) => `Zatrzymać ${service}? Usługa nie będzie osiągalna, dopóki nie uruchomi się ponownie.`,
             stopConfirmCta: 'Zatrzymaj',
+            startA11y: 'Uruchom usługę',
+            failure: {
+                title: 'Akcja nie została wykonana',
+                refused: 'Maszyna odrzuciła tę akcję. Sprawdź uprawnienia usług lokalnych na tej maszynie i spróbuj ponownie.',
+                unavailable: 'Ta akcja jest niedostępna dla tej usługi na tej maszynie.',
+                incomplete: 'Akcja nie dobiegła końca. Możesz spróbować ponownie.',
+            },
+            failureTitle: {
+                start: ({ service }: { service: string }) => `Nie udało się uruchomić ${service}`,
+                open: ({ service }: { service: string }) => `Nie udało się otworzyć ${service}`,
+                terminate: ({ service }: { service: string }) => `Nie udało się zakończyć ${service}`,
+                forget: ({ service }: { service: string }) => `Nie udało się ukryć ${service}`,
+                stop: ({ service }: { service: string }) => `Nie udało się zatrzymać ${service}`,
+                restart: ({ service }: { service: string }) => `Nie udało się ponownie uruchomić ${service}`,
+                copyAddress: 'Nie udało się skopiować adresu',
+                expose: 'Nie udało się utworzyć linku publicznego',
+                revokeExposure: 'Nie udało się cofnąć linku publicznego',
+                copyExposure: 'Nie udało się skopiować linku publicznego',
+            },
     },
   },
 
@@ -9337,6 +9420,14 @@ export const pl = {
     },
 
 settingsSession: {
+    newSessionDraftEntry: {
+        title: 'Wersje robocze nowych sesji',
+        footer: 'Wybierz, czy Nowa sesja ma kontynuować wersję roboczą z tego urządzenia, czy otwierać nową.',
+        resumeTitle: 'Wznów poprzednią wersję roboczą',
+        resumeSubtitle: 'Kontynuuj wersję roboczą rozpoczętą przez Nową sesję na tym urządzeniu.',
+        freshTitle: 'Zawsze zaczynaj od nowa',
+        freshSubtitle: 'Otwieraj nową wersję roboczą za każdym razem, gdy wybierzesz Nową sesję.',
+    },
 	      sessionList: {
 	          title: 'Lista sesji',
 	          footer: 'Dostosuj, co jest widoczne w wierszu sesji.',
@@ -10119,7 +10210,7 @@ settingsSession: {
     },
     setupCheck: {
       title: 'Gotowość dostawcy',
-      footer: 'Kontrola odczytuje tylko zapisane ustawienia i bieżące lokalne dane gotowości. Nie otwiera mikrofonu, nie uruchamia Głosu, nie wysyła dźwięku ani nie kontaktuje się z dostawcą.',
+      footer: 'Kontrola odczytuje tylko zapisane ustawienia i bieżące lokalne dane gotowości. Nie otwiera mikrofonu, nie uruchamia Głosu, nie wysyła dźwięku ani nie kontaktuje się z dostawcą. Uruchomienie Głosu ponownie sprawdza możliwości powiązane z sesją.',
       check: 'Sprawdź konfigurację',
       checkSubtitle: 'Pasywnie sprawdź konfigurację wybranego dostawcy Głosu.',
       result: 'Stan konfiguracji',
@@ -11039,6 +11130,13 @@ settingsSession: {
         },
       },
       models: {
+          nativeOptions: {
+              kokoroEnvironmentDefaultTitle: "Domyślne (ze środowiska)",
+              kokoroDefaultSubtitle: "Domyślny lokalny neuronowy model głosowy.",
+              kokoroHigherQualitySubtitle: "Wyższej jakości lokalny model głosowy Kokoro.",
+              kokoroEnvironmentDefaultSubtitle: "Używa domyślnych ustawień pakietu modelu Kokoro skonfigurowanych w środowisku.",
+              sherpaStreamingRecommendedSubtitle: "Przetwarzanie strumieniowe, niskie opóźnienie (zalecane).",
+          },
           title: "Lokalne modele głosu",
           statusTitle: "Usługa modeli",
           footer: "Zainstaluj pakiety lokalnych modeli głosu na demonie głosowym i wybierz domyślny dla każdego typu.",
@@ -11242,6 +11340,7 @@ settingsSession: {
     },
     defaultTitle: "Co nowego",
     onboardingShowcase: {
+        details: PRODUCT_STORY_DETAILS_ENGLISH,
                 "title": "Witamy w Happier",
                 "subtitle": "Twoi agenci AI wszędzie tam, gdzie pracujesz.",
                 "cards": {
@@ -11850,7 +11949,7 @@ settingsSession: {
           webDesktopHandoffCliOption: 'Korzystaj z terminala (CLI)',
           webDesktopHandoffCliSubtitle: 'Uruchom kilka poleceń, aby hostować Relay, a następnie wklej tutaj wypisany URL Relay.',
           webDesktopOnlyRelayInstallTitle: 'Hostuj Relay na tym komputerze',
-	          webDesktopOnlyRelayInstallSubtitle: 'To instaluje i uruchamia host Relay. Następnie wklej tutaj wyświetlony URL Relay.',
+	          webDesktopOnlyRelayInstallSubtitle: 'To instaluje i uruchamia host Relay.',
 	          webDesktopOnlyRelayStatusTitle: 'Pobierz URL Relay',
 	          webDesktopOnlyRelayStatusSubtitle: 'Uruchom to, aby wyświetlić URL Relay, a następnie wklej go tutaj.',
 	          webDesktopOnlyOptionalNextTitle: 'Opcjonalnie: bezpieczny dostęp i dostawcy',
@@ -11877,6 +11976,7 @@ settingsSession: {
     setupThisComputerTitle: 'Skonfiguruj ten komputer',
     controlPanelTitle: 'Podsumowanie gotowości',
     activeRelaySummaryTitle: 'Aktywny Relay',
+    selectedRelaySummaryTitle: 'Wybrany Relay',
     thisComputerSummaryTitle: 'Ten komputer',
     nextActionSummaryTitle: 'Następna akcja',
     thisComputerReady: 'Gotowe dla tego Relay',
@@ -12170,6 +12270,10 @@ settingsSession: {
     discarded: "Odrzucono",
     recoveredHistory: "Odzyskana historia",
     pluginAttribution: ({ pluginId }: { pluginId: string }) => `Z wtyczki ${pluginId}`,
+    pluginAttributionExternal: ({ sender, pluginId }: { sender: string; pluginId: string }) => `Od ${sender} przez wtyczkę ${pluginId}`,
+    pluginAttributionExternalForwarded: ({ sender, pluginId }: { sender: string; pluginId: string }) => `Przekazane przez ${sender} przez wtyczkę ${pluginId}`,
+    pluginAttributionExternalSender: 'zewnętrzny nadawca',
+    pluginAttributionExternalBot: 'zewnętrzny bot',
     unknownEvent: "Nieznane zdarzenie",
     runtimeConfigOutcomeAppliesBeforeNextMessage: 'Zostanie zastosowane przed następną wiadomością',
     runtimeConfigOutcomeQueuedUntilReady: 'W kolejce do czasu gotowości',
@@ -12653,6 +12757,24 @@ settingsSession: {
   },
 
   profiles: {
+      launchPlacement: {
+          title: 'Gdzie działają sesje',
+          footer: 'To preferencja rozstrzygana przy starcie sesji. Nie zapisuje maszyny jako odpowiedzi.',
+          none: 'Bez preferencji',
+          automatic: 'Ustal automatycznie',
+          ask: 'Zawsze pytaj',
+          fixed: 'Zawsze ta maszyna',
+          directory: 'Katalog',
+          directoryPlaceholder: 'Zostaw puste, aby użyć katalogu głównego projektu',
+      },
+      launchCheckout: {
+          title: 'Kopia robocza',
+          footer: 'Jak sesja uzyskuje kopię roboczą, gdy działa w projekcie.',
+          none: 'Bez preferencji',
+          reuseWorkspace: 'Użyj kopii projektu',
+          createWorktree: 'Utwórz worktree',
+          ask: 'Zawsze pytaj',
+      },
     // Profile management feature
     title: "Profile",
     subtitle: "Zarządzaj profilami zmiennych środowiskowych dla sesji",
@@ -13029,6 +13151,7 @@ settingsSession: {
       ...pluginWebhookAdministrationTranslations['pl'],
       ...pluginAccountDataEraseTranslations.pl,
       ...pluginAccountReleaseSelectionTranslations.pl,
+      ...pluginMachineMatrixTranslations.pl,
       ...pluginInvocationLogTranslations.pl,
       ...eventAutomationComposerTranslations.pl,
           title: "Katalog wtyczek",
@@ -13055,7 +13178,7 @@ settingsSession: {
           developmentSourceInstallSucceeded: "Źródło deweloperskie zatwierdzone i rzutowane.",
           developmentSourceInstallFailed: ({ outcome }: { outcome: string }) => `Nie zainstalowano źródła deweloperskiego (${outcome}).`,
           developmentTrustSourceRootTitle: "Zaufać temu folderowi wtyczki?",
-          developmentTrustSourceRootBody: ({ path }: { path: string }) => `Happier zainstaluje zależności, zbuduje i uruchomi kod z:\n\n${path}\n\nKontynuuj tylko wtedy, gdy ufasz wszystkiemu w tym folderze i wszystkiemu, co może zostać pobrane. Samą wtyczkę sprawdzisz w następnym kroku.`,
+          developmentTrustSourceRootBody: ({ path, machine, server }: { path: string; machine: string; server: string }) => `Happier zainstaluje zależności, zbuduje i uruchomi kod z:\n\n${path} na ${machine} (${server})\n\nKontynuuj tylko wtedy, gdy ufasz wszystkiemu w tym folderze i wszystkiemu, co może zostać pobrane. Samą wtyczkę sprawdzisz w następnym kroku.`,
           developmentTrustSourceRootConfirm: "Zaufaj folderowi",
           pendingChangesTitle: "Czeka na Twoją decyzję",
           pendingChangesFooter: "Zmiany wtyczek przygotowane na tej maszynie. Agent może przygotować zmianę, ale zatwierdzić ją możesz tylko Ty.",
@@ -13132,7 +13255,8 @@ settingsSession: {
           marketplaceInstallReviewBody: ({ identity, verification, executableRealms, contributions, uiArtifacts, requiredAccess, optionalAccess, compatibility }: { identity: string; verification: string; executableRealms: string; contributions: string; uiArtifacts: string; requiredAccess: string; optionalAccess: string; compatibility: string }) => `Tożsamość:\n${identity}\n\nSygnały weryfikacji:\n${verification}\n\nKod wykonywalny: ${executableRealms}\nWkłady: ${contributions}\nArtefakty interfejsu: ${uiArtifacts}\n\nZaufany kod demona i React Native działa z uprawnieniami aplikacji lub procesu i może bezpośrednio używać plików, sieci, środowiska i procesów. Wymieniony poniżej dostęp do hosta opisuje usługi pośredniczone przez Happier; nie jest to piaskownica dla wykonywalnego kodu wtyczki.\n\nWymagane ujawnienia i usługi współpracujące:\n${requiredAccess}\n\nOpcjonalne zasoby hosta (domyślnie wyłączone):\n${optionalAccess}\n\nZgodność i aktualizacje:\n${compatibility}`,
           marketplaceInstallDecisionFailed: ({ outcome }: { outcome: string }) => `Wtyczka nie została zainstalowana (${outcome}).`,
           marketplaceChangeDecisionFailed: ({ action, outcome }: { action: string; outcome: string }) => `${action} nie powiodło się (${outcome}).`,
-          pluginChangeConfirmBody: ({ action, name }: { action: string; name: string }) => `Potwierdź „${action}” dla ${name}.`,
+          pluginChangeConfirmBody: ({ action, name, machine, server }: { action: string; name: string; machine: string; server: string }) => `Potwierdź „${action}” dla ${name} na ${machine} (${server}).`,
+          pluginChangeConfirmTarget: ({ machine, server }: { machine: string; server: string }) => `Dotyczy ${machine} (${server}).`,
           forgetTrust: "Usuń zaufanie",
           rollback: "Wycofaj",
           uninstall: "Odinstaluj",
@@ -13322,3 +13446,4 @@ settingsSession: {
   },} as const;
 
 export type TranslationsPl = typeof pl;
+import { PRODUCT_STORY_DETAILS_ENGLISH } from '@happier-dev/brand/product-story';
