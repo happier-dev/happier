@@ -137,7 +137,10 @@ export type ContributionProtocolManifest = Readonly<{
     }>>>;
 }>;
 
-/** Host-only input for decoding one target's live contribution-point semantics. */
+/**
+ * Host-only input for decoding one target's live contribution-point semantics.
+ * @realm daemon
+ */
 export type TargetedContributionPointSemanticInput = Readonly<{
     protocol: Readonly<{
         id: string;
@@ -153,7 +156,10 @@ export type TargetedContributionPointSemanticInput = Readonly<{
     }>[];
 }>;
 
-/** One executable operation schema retained only by the target's live point ref. */
+/**
+ * One executable operation schema retained only by the target's live point ref.
+ * @realm daemon
+ */
 export type TargetedContributionPointSemanticOperation = Readonly<{
     role: string;
     input: Readonly<{
@@ -169,14 +175,20 @@ type TargetedContributionDescriptorFor<TContribution> = [TContribution] extends 
     descriptor?: infer TDescriptor;
 }>] ? TDescriptor : JsonValue;
 
-/** The validated executable semantics projected for one target-owned point. */
+/**
+ * The validated executable semantics projected for one target-owned point.
+ * @realm daemon
+ */
 export type TargetedContributionPointSemanticProjection<TContribution = unknown> = Readonly<{
     descriptor?: TargetedContributionDescriptorFor<TContribution>;
     operations: readonly TargetedContributionPointSemanticOperation[];
     surfaces: readonly TargetedContributionPointSemanticSurface[];
 }>;
 
-/** One live target-owned embedded-surface role. */
+/**
+ * One live target-owned embedded-surface role.
+ * @realm daemon
+ */
 export type TargetedContributionPointSemanticSurface = Readonly<{
     role: string;
     presentation: ContributionSurfacePresentation;

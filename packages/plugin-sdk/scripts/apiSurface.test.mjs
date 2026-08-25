@@ -150,6 +150,7 @@ const HOST_TARGETED_CONTRIBUTIONS_TYPE_SYMBOLS = Object.freeze([
   exportName,
   kind: 'type',
   sourceExport: exportName,
+  realm: 'any',
 })));
 
 const HOST_SYMBOLS = Object.freeze([

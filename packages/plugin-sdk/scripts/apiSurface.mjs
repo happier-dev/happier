@@ -333,7 +333,11 @@ export function validateApiSurfaceInventory(input) {
       } else if (symbol.kind !== expectedKind) {
         diagnostics.push(`${location} host export ${symbolKey(symbol)} must have ${expectedKind} kind`);
       }
-      if (expectedRealm && symbol.realm !== expectedRealm) {
+      if (
+        expectedRealm
+        && symbol.realm !== expectedRealm
+        && !(symbol.kind === 'type' && symbol.realm === 'any')
+      ) {
         diagnostics.push(`${location} host export ${symbolKey(symbol)} must have ${expectedRealm} realm`);
       }
     }
