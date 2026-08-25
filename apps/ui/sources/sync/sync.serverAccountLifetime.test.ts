@@ -1,14 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import {
-    AutomationV3DefinitionDetailSchema,
-    AutomationV3PluginEventDefinitionCreateRequestSchema,
-    AutomationV3PluginEventDefinitionPatchRequestSchema,
+    AutomationDefinitionDetailSchema,
+    AutomationPluginEventDefinitionCreateRequestSchema,
+    AutomationPluginEventDefinitionPatchRequestSchema,
     AutomationV3RunListItemSchema,
     AutomationV3RunDetailSchema,
-    type AutomationV3DefinitionDetail,
-    type AutomationV3PluginEventDefinitionCreateRequest,
-    type AutomationV3PluginEventDefinitionPatchRequest,
+    type AutomationDefinitionDetail,
+    type AutomationPluginEventDefinitionCreateRequest,
+    type AutomationPluginEventDefinitionPatchRequest,
     type AutomationV3Settings,
 } from '@happier-dev/protocol';
 
@@ -134,17 +134,17 @@ type SyncResetOwnerTestSeam = {
     serverScopeGeneration: number;
     resetServerScopedRuntimeState(): void;
     projectAndUpsertAutomationDefinition(
-        detail: AutomationV3DefinitionDetail,
+        detail: AutomationDefinitionDetail,
         shouldContinue: () => boolean,
     ): Promise<unknown>;
 } & {
     credentials: AuthCredentials | undefined;
     createPluginEventAutomationDefinition(
-        input: AutomationV3PluginEventDefinitionCreateRequest,
+        input: AutomationPluginEventDefinitionCreateRequest,
     ): Promise<unknown>;
     updatePluginEventAutomationDefinition(
         automationId: string,
-        input: AutomationV3PluginEventDefinitionPatchRequest,
+        input: AutomationPluginEventDefinitionPatchRequest,
     ): Promise<unknown>;
     getAutomationRunDetailInspection(automationId: string, runId: string): Promise<unknown>;
     cancelAutomationRun(runId: string): Promise<unknown>;
@@ -156,7 +156,7 @@ type SyncResetOwnerTestSeam = {
     fetchAutomationRuns(automationId: string, limit?: number, cursor?: string): Promise<unknown>;
 };
 
-const eventCreateRequest = AutomationV3PluginEventDefinitionCreateRequestSchema.parse({
+const eventCreateRequest = AutomationPluginEventDefinitionCreateRequestSchema.parse({
     name: 'Repository updates',
     description: 'Review incoming repository activity',
     enabled: true,
@@ -202,8 +202,8 @@ const eventCreateRequest = AutomationV3PluginEventDefinitionCreateRequestSchema.
     assignments: [{ machineId: 'machine-1' }],
 });
 
-function eventDetail(templateVersion: number): AutomationV3DefinitionDetail {
-    return AutomationV3DefinitionDetailSchema.parse({
+function eventDetail(templateVersion: number): AutomationDefinitionDetail {
+    return AutomationDefinitionDetailSchema.parse({
         id: 'automation-event-owner',
         name: 'Repository updates',
         description: 'Review incoming repository activity',
@@ -401,7 +401,7 @@ describe('Sync Server/Account lifetime reset boundary', () => {
             assignments: [],
             triggerDefinitionEnvelope: null,
             templateCiphertext: '{"t":"plain","v":{"directory":"/repo"}}',
-        } satisfies AutomationV3DefinitionDetail;
+        } satisfies AutomationDefinitionDetail;
 
         const operation = owner.projectAndUpsertAutomationDefinition(detail, () => scopeCurrent);
         scopeCurrent = false;
@@ -415,7 +415,7 @@ describe('Sync Server/Account lifetime reset boundary', () => {
         const previousCredentials = owner.credentials;
         const createdDetail = eventDetail(3);
         const updatedDetail = eventDetail(4);
-        const patchRequest = AutomationV3PluginEventDefinitionPatchRequestSchema.parse({
+        const patchRequest = AutomationPluginEventDefinitionPatchRequestSchema.parse({
             ...eventCreateRequest,
             expectedTemplateVersion: 3,
             executionRecipe: {

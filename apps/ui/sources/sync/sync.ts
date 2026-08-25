@@ -507,8 +507,8 @@ import {
     type ExternalSessionTranscriptRawMessageV1,
     type SessionMetadataInactiveModelIntentExpectationV1,
     type AutomationV3ClearRunHistoryResponse,
-    type AutomationV3PluginEventDefinitionCreateRequest,
-    type AutomationV3PluginEventDefinitionPatchRequest,
+    type AutomationPluginEventDefinitionCreateRequest,
+    type AutomationPluginEventDefinitionPatchRequest,
     type AutomationV3Settings,
 } from '@happier-dev/protocol';
 import { serverFetch } from './http/client';
@@ -5695,7 +5695,7 @@ class Sync {
      * than creating an Event-specific cache or writer.
      */
     public async createPluginEventAutomationDefinition(
-        input: AutomationV3PluginEventDefinitionCreateRequest,
+        input: AutomationPluginEventDefinitionCreateRequest,
     ): Promise<AutomationDefinition> {
         if (!this.credentials) {
             throw new Error('Not authenticated');
@@ -5708,7 +5708,7 @@ class Sync {
     /** Strict Event edits use the full, version-guarded request only. */
     public async updatePluginEventAutomationDefinition(
         automationId: string,
-        input: AutomationV3PluginEventDefinitionPatchRequest,
+        input: AutomationPluginEventDefinitionPatchRequest,
     ): Promise<AutomationDefinition> {
         if (!this.credentials) {
             throw new Error('Not authenticated');
@@ -5720,7 +5720,7 @@ class Sync {
 
     public async replaceAutomationAssignments(
         automationId: string,
-        assignments: ReadonlyArray<import('@happier-dev/protocol').AutomationV3AssignmentInput>,
+        assignments: ReadonlyArray<import('@happier-dev/protocol').AutomationAssignmentInput>,
     ): Promise<AutomationDefinition> {
         if (!this.credentials) {
             throw new Error('Not authenticated');
@@ -5783,7 +5783,7 @@ class Sync {
     }
 
     private async projectAndUpsertAutomationDefinition(
-        detail: import('@happier-dev/protocol').AutomationV3DefinitionDetail,
+        detail: import('@happier-dev/protocol').AutomationDefinitionDetail,
         shouldContinue: () => boolean,
         options: Readonly<{ replaceEqualRevision?: boolean }> = {},
     ): Promise<AutomationDefinition> {

@@ -15,9 +15,9 @@ import {
     MENTION_KIND_V1,
     PluginMachineMaterializationV1Schema,
     SessionModelSelectionV1Schema,
-    type AutomationV3DefinitionDetail,
-    type AutomationV3PluginEventDefinitionCreateRequest,
-    type AutomationV3PluginEventDefinitionPatchRequest,
+    type AutomationDefinitionDetail,
+    type AutomationPluginEventDefinitionCreateRequest,
+    type AutomationPluginEventDefinitionPatchRequest,
     type PluginMachineExecutionOriginV1,
     type SessionMcpSelectionV1,
     type SessionServerStartSpawnDraftV1,
@@ -85,10 +85,10 @@ type AutomationCreateCapture = {
     assignments?: Array<{ machineId: string; enabled?: boolean; priority?: number }>;
 } | null;
 
-type PluginEventAutomationCreateCapture = AutomationV3PluginEventDefinitionCreateRequest | null;
+type PluginEventAutomationCreateCapture = AutomationPluginEventDefinitionCreateRequest | null;
 type PluginEventAutomationPatchCapture = Readonly<{
     automationId: string;
-    input: AutomationV3PluginEventDefinitionPatchRequest;
+    input: AutomationPluginEventDefinitionPatchRequest;
 }> | null;
 
 function resolveNewSessionEventTarget(input: Readonly<{
@@ -135,14 +135,14 @@ function createRetainedScheduleAutomationDefinition(id: string) {
         assignments: [],
         triggerDefinitionEnvelope: null,
         templateCiphertext: '{"kind":"happier_automation_template_plain_v1","payload":{"directory":"/tmp"}}',
-    } satisfies AutomationV3DefinitionDetail);
+    } satisfies AutomationDefinitionDetail);
 }
 
 function createStrictPluginEventAutomationDefinition(
     id: string,
     templateVersion = 1,
     enabled = true,
-    assignments: AutomationV3DefinitionDetail['assignments'] = [],
+    assignments: AutomationDefinitionDetail['assignments'] = [],
 ) {
     return createAutomationDefinitionFromDetail({
         id,
@@ -204,7 +204,7 @@ function createStrictPluginEventAutomationDefinition(
                 },
             },
         },
-    } satisfies AutomationV3DefinitionDetail);
+    } satisfies AutomationDefinitionDetail);
 }
 
 function createPluginEventEligibleEvent(immutableGenerationId = 'github-generation-a') {
@@ -498,7 +498,7 @@ async function setupUseCreateNewSessionHarness() {
                 automationCaptured.value = input;
                 return { id: 'auto_1', ...input };
             }),
-            createPluginEventAutomationDefinition: vi.fn(async (input: AutomationV3PluginEventDefinitionCreateRequest) => {
+            createPluginEventAutomationDefinition: vi.fn(async (input: AutomationPluginEventDefinitionCreateRequest) => {
                 pluginEventAutomationCaptured.value = input;
                 if (pluginEventAutomationCreateError.value !== null) {
                     throw pluginEventAutomationCreateError.value;
@@ -507,7 +507,7 @@ async function setupUseCreateNewSessionHarness() {
             }),
             updatePluginEventAutomationDefinition: vi.fn(async (
                 automationId: string,
-                input: AutomationV3PluginEventDefinitionPatchRequest,
+                input: AutomationPluginEventDefinitionPatchRequest,
             ) => {
                 pluginEventAutomationPatchCaptured.value = { automationId, input };
                 if (pluginEventAutomationPatchError.value !== null) {
