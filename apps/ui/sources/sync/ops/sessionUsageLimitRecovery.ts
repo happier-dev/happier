@@ -114,17 +114,17 @@ async function resolveUsageLimitRecoveryMachineControlTarget(
     opts?: UsageLimitRecoveryOperationOptions,
 ): Promise<SessionMachineControlTarget | null> {
     const target = readMachineControlTargetForSession(sessionId);
-    if (target || !opts?.refreshMachineTargets) {
+    if (target?.confidence === 'reachable' || !opts?.refreshMachineTargets) {
         return target;
     }
 
     try {
         await opts.refreshMachineTargets();
     } catch {
-        return null;
+        return target;
     }
 
-    return readMachineControlTargetForSession(sessionId);
+    return readMachineControlTargetForSession(sessionId) ?? target;
 }
 
 async function runUsageLimitRecoveryMachineRpc(
