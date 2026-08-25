@@ -101,6 +101,48 @@ test('npm release workflow delegates release-ring validation and metadata emissi
   assert.doesNotMatch(String(metadata?.run ?? ''), /write_version_output|node --input-type=module|versions_json=/);
 });
 
+test('npm publication is reusable-only and requires the caller-admitted candidate SHA', async () => {
+  const workflow = await loadWorkflow();
+  const reusable = workflow.on?.workflow_call;
+  const candidate = workflow.jobs?.release;
+  const inputs = reusable?.inputs;
+
+  assert.equal(workflow.on?.workflow_dispatch, undefined, 'release-npm must not be directly dispatchable');
+  assert.equal(inputs?.authorized_sha?.required, true, 'the reusable workflow requires a candidate SHA');
+  assert.equal(inputs?.authorized_sha?.default, undefined, 'the candidate SHA must not fall back to a branch');
+
+  const inputResolution = candidate?.steps?.find((step) => step.name === 'Resolve release inputs');
+  assert.equal(inputResolution?.env?.INPUT_AUTHORIZED_SHA, '${{ inputs.authorized_sha }}');
+  assert.match(String(inputResolution?.run ?? ''), /--authorized-sha "\$INPUT_AUTHORIZED_SHA"/);
+
+  const sourceCheckout = candidate?.steps?.find((step) => step.name === 'Checkout source ref');
+  assert.equal(sourceCheckout?.with?.ref, '${{ steps.release_inputs.outputs.authorized_sha }}');
+  assert.equal(
+    candidate?.steps?.find((step) => step.name === 'Enforce caller-authorized source SHA'),
+    undefined,
+    'workflows must not duplicate source admission logic',
+  );
+  const pack = candidate?.steps?.find((step) => step.name === 'npm pack (pipeline)');
+  assert.equal(pack?.env?.AUTHORIZED_SHA, '${{ steps.release_inputs.outputs.authorized_sha }}');
+  assert.match(String(pack?.run ?? ''), /--authorized-sha "\$\{AUTHORIZED_SHA\}"/);
+});
+
+test('every npm publisher receives the immutable admitted candidate identity', async () => {
+  const workflow = await loadWorkflow();
+  for (const [jobName, stepName] of [
+    ['publish-cli', 'npm publish (cli tarball) (pipeline)'],
+    ['publish-stack', 'npm publish (stack tarball) (pipeline)'],
+    ['publish-server-runner', 'npm publish (server runner tarball) (pipeline)'],
+    ['publish-plugin-sdk-pair', 'npm publish (plugin SDK lockstep pair) (pipeline)'],
+    ['publish-sdk', 'npm publish (SDK tarball) (pipeline)'],
+    ['publish-channels-protocol', 'npm publish (Channels protocol tarball) (pipeline)'],
+  ]) {
+    const step = workflow.jobs?.[jobName]?.steps?.find((candidate) => candidate.name === stepName);
+    assert.equal(step?.env?.AUTHORIZED_SHA, '${{ needs.release.outputs.sha }}', jobName);
+    assert.match(String(step?.run ?? ''), /--authorized-sha "\$\{AUTHORIZED_SHA\}"/, jobName);
+  }
+});
+
 test('public SDK releases use one lockstep pair publisher and return per-package identities to the reusable caller', async () => {
   const workflow = await loadWorkflow();
   const candidate = workflow.jobs?.release;
@@ -143,4 +185,48 @@ test('public SDK releases use one lockstep pair publisher and return per-package
   assert.match(String(reusable?.outputs?.plugin_sdk_integrity?.value ?? ''), /publish-plugin-sdk-pair\.outputs\.plugin_sdk_integrity/);
   assert.match(String(reusable?.outputs?.plugin_ui_integrity?.value ?? ''), /publish-plugin-sdk-pair\.outputs\.plugin_ui_integrity/);
   assert.match(String(reusable?.outputs?.sdk_integrity?.value ?? ''), /publish-sdk\.outputs\.sdk_integrity/);
+});
+
+test('the public Channels protocol is packed and published by the generic npm release owner', async () => {
+  const workflow = await loadWorkflow();
+  const candidate = workflow.jobs?.release;
+  const reusable = workflow.on?.workflow_call;
+
+  assert.equal(reusable?.inputs?.publish_channels_protocol?.type, 'boolean');
+  assert.match(
+    String(candidate?.outputs?.channels_protocol_version ?? ''),
+    /steps\.meta\.outputs\.channels_protocol_version/,
+  );
+
+  const pack = candidate?.steps?.find((step) => step.name === 'npm pack (pipeline)');
+  assert.match(String(pack?.if ?? ''), /inputs\.publish_channels_protocol/);
+  assert.equal(pack?.env?.PUBLISH_CHANNELS_PROTOCOL, '${{ inputs.publish_channels_protocol }}');
+  assert.match(String(pack?.run ?? ''), /--publish-channels-protocol "\$\{PUBLISH_CHANNELS_PROTOCOL\}"/);
+
+  const artifact = candidate?.steps?.find((step) => step.name === 'Upload npm pack artifact (Channels protocol)');
+  assert.equal(
+    artifact?.with?.name,
+    'npm-pack-channels-protocol-${{ steps.meta.outputs.sha }}-${{ steps.meta.outputs.channels_protocol_version }}',
+  );
+  assert.equal(artifact?.with?.path, 'dist/release-assets/channels-protocol');
+
+  const job = workflow.jobs?.['publish-channels-protocol'];
+  assert.ok(job, 'publish-channels-protocol');
+  assert.equal(job.environment, 'release-shared');
+  assert.equal(job.permissions?.['id-token'], 'write');
+  assertTrustedControlCheckout(job, 'publish-channels-protocol');
+  assert.match(JSON.stringify(job), /scripts\/pipeline\/npm\/publish-tarball\.mjs/);
+  assert.doesNotMatch(
+    JSON.stringify(job),
+    /publish-plugin-sdk-pair/,
+    'the Channels protocol has its own consumers and cadence; it never joins the lockstep pair publisher',
+  );
+  assert.equal(
+    job.steps.find((step) => step.uses === 'actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093')?.with?.path,
+    'dist/release-assets/channels-protocol',
+  );
+  assert.match(
+    String(reusable?.outputs?.channels_protocol_integrity?.value ?? ''),
+    /publish-channels-protocol\.outputs\.channels_protocol_integrity/,
+  );
 });

@@ -47,7 +47,7 @@ function assertInstallerVerboseMode(script, name) {
   );
 }
 
-test('installer extraction never restores archive-supplied uid or gid under root', async () => {
+test('installer extraction uses platform-specific ownership-safe tar arguments', async () => {
   const installSh = await readFile(installShPath, 'utf8');
   const functionStart = installSh.indexOf('tar_extract_gz() {');
   const functionEnd = installSh.indexOf('\n}\n', functionStart);
@@ -58,12 +58,22 @@ test('installer extraction never restores archive-supplied uid or gid under root
   assert.equal(
     safeExtractions.length,
     2,
-    'both verbose and filtered extraction paths must force process-owned files instead of archive ownership',
+    'both GNU tar extraction paths must force process-owned files instead of archive ownership',
+  );
+  assert.match(
+    extractionFunction,
+    /if tar --version 2>\/dev\/null \| grep -qi 'gnu tar'; then[\s\S]*tar --no-same-owner -xzf [\s\S]*tar --no-same-owner -xzf /,
+    'GNU tar must use --no-same-owner in both verbose and filtered paths',
+  );
+  assert.match(
+    extractionFunction,
+    /# The warning filter is only needed for GNU tar\.[\s\S]*\n  tar -xzf /,
+    'BSD tar must use its native extraction behavior without GNU-only flags',
   );
   assert.doesNotMatch(
     extractionFunction,
-    /(?:^|\s)tar -xzf /m,
-    'plain extraction would preserve archive uid/gid when the installer runs as root',
+    /(?:^|\s)tar\s+(?:-[^\s]*p[^\s]*|-p)(?:\s|$)/m,
+    'BSD tar must not opt into restoring archive ownership with -p',
   );
 });
 

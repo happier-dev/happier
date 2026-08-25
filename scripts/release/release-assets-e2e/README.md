@@ -27,8 +27,19 @@ node ./scripts/pipeline/run.mjs checks --profile release-assets
 
 Defaults:
 - `HAPPIER_RELEASE_ASSETS_E2E_MODE=local`
-- `HAPPIER_RELEASE_ASSETS_E2E_MONOREPO=local` (when mode is `local`)
+- `HAPPIER_RELEASE_ASSETS_E2E_MONOREPO=local`
 - `HAPPIER_RELEASE_ASSETS_E2E_WITH_RELAY_UPGRADE=true` (upgrade existing server DB from Docker Hub image -> local build)
+
+The checks profile delegates planning to the canonical `release-validate` source contract. It supports these
+coherent configurations:
+
+- `HAPPIER_RELEASE_ASSETS_E2E_MODE=local`, `HAPPIER_RELEASE_ASSETS_E2E_MONOREPO=local`, and
+  `HAPPIER_RELEASE_ASSETS_E2E_WITH_RELAY_UPGRADE=true` (the default local-build validation)
+- `HAPPIER_RELEASE_ASSETS_E2E_MODE=npm`, `HAPPIER_RELEASE_ASSETS_E2E_MONOREPO=github`, and
+  `HAPPIER_RELEASE_ASSETS_E2E_WITH_RELAY_UPGRADE=false` (the published `preview`/npm `next` validation)
+
+Other mode/monorepo/relay combinations are rejected because the canonical validator owns those derived
+harness choices.
 
 ## Local tarballs (pre-publish)
 

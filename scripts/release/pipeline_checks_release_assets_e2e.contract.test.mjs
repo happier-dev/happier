@@ -14,39 +14,60 @@ test('pipeline checks release-assets profile dry-run includes release-assets-e2e
   const res = spawnSync(process.execPath, [runChecks, '--profile', 'release-assets', '--dry-run'], {
     cwd: repoRoot,
     encoding: 'utf8',
-    env: { ...process.env, HAPPIER_RELEASE_ASSETS_E2E_MODE: '', HAPPIER_RELEASE_ASSETS_E2E_MONOREPO: '' },
+    env: {
+      ...process.env,
+      HAPPIER_RELEASE_ASSETS_E2E_MODE: '',
+      HAPPIER_RELEASE_ASSETS_E2E_MONOREPO: '',
+      HAPPIER_RELEASE_ASSETS_E2E_WITH_RELAY_UPGRADE: '',
+    },
   });
   assert.equal(res.status, 0, res.stderr || res.stdout);
   assert.match(res.stdout ?? '', /- runReleaseAssetsE2e: true/);
   assert.match(
     res.stdout ?? '',
-    /\[dry-run\] [^\n]*node scripts\/pipeline\/run\.mjs release-validate --suite docker-release-assets --platform linux --source local-build --ref \. --mode local --monorepo local --with-relay-upgrade/,
+    /\[dry-run\] [^\n]*node scripts\/pipeline\/run\.mjs release-validate --suite docker-release-assets --platform linux --source local-build --ref \.$/m,
   );
+  assert.match(res.stdout ?? '', /"--mode=local"/);
+  assert.match(res.stdout ?? '', /"--monorepo=local"/);
+  assert.match(res.stdout ?? '', /"--with-relay-upgrade"/);
 });
 
-test('pipeline checks release-assets-e2e mode/monorepo are configurable via env', () => {
+test('pipeline checks release-assets-e2e selects the canonical published-preview plan via env', () => {
   const res = spawnSync(process.execPath, [runChecks, '--profile', 'release-assets', '--dry-run'], {
     cwd: repoRoot,
     encoding: 'utf8',
-    env: { ...process.env, HAPPIER_RELEASE_ASSETS_E2E_MODE: 'npm', HAPPIER_RELEASE_ASSETS_E2E_MONOREPO: 'github' },
+    env: {
+      ...process.env,
+      HAPPIER_RELEASE_ASSETS_E2E_MODE: 'npm',
+      HAPPIER_RELEASE_ASSETS_E2E_MONOREPO: 'github',
+      HAPPIER_RELEASE_ASSETS_E2E_WITH_RELAY_UPGRADE: 'false',
+    },
   });
   assert.equal(res.status, 0, res.stderr || res.stdout);
   assert.match(
     res.stdout ?? '',
-    /\[dry-run\] [^\n]*node scripts\/pipeline\/run\.mjs release-validate --suite docker-release-assets --platform linux --source local-build --ref \. --mode npm --monorepo github --with-relay-upgrade/,
+    /\[dry-run\] [^\n]*node scripts\/pipeline\/run\.mjs release-validate --suite docker-release-assets --platform linux --source published-channel --ref preview$/m,
   );
+  assert.match(res.stdout ?? '', /"--mode=npm"/);
+  assert.match(res.stdout ?? '', /"--monorepo=github"/);
+  assert.match(res.stdout ?? '', /"--no-relay-upgrade"/);
 });
 
-test('pipeline checks release-assets-e2e relay upgrade can be disabled via env', () => {
+test('pipeline checks release-assets-e2e rejects relay overrides outside the canonical source plan', () => {
   const res = spawnSync(process.execPath, [runChecks, '--profile', 'release-assets', '--dry-run'], {
     cwd: repoRoot,
     encoding: 'utf8',
-    env: { ...process.env, HAPPIER_RELEASE_ASSETS_E2E_WITH_RELAY_UPGRADE: 'false' },
+    env: {
+      ...process.env,
+      HAPPIER_RELEASE_ASSETS_E2E_MODE: 'local',
+      HAPPIER_RELEASE_ASSETS_E2E_MONOREPO: 'local',
+      HAPPIER_RELEASE_ASSETS_E2E_WITH_RELAY_UPGRADE: 'false',
+    },
   });
-  assert.equal(res.status, 0, res.stderr || res.stdout);
+  assert.equal(res.status, 1, res.stderr || res.stdout);
   assert.match(
-    res.stdout ?? '',
-    /\[dry-run\] [^\n]*node scripts\/pipeline\/run\.mjs release-validate --suite docker-release-assets --platform linux --source local-build --ref \. --mode local --monorepo local --no-relay-upgrade/,
+    res.stderr ?? '',
+    /docker-release-assets derives relay upgrade=true from mode=local/,
   );
 });
 

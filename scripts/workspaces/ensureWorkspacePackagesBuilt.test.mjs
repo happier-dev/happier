@@ -23,7 +23,13 @@ import {
 import {
   ensureWorkspacePackagesBuiltByName as ensureStackWorkspacePackagesBuiltByName,
 } from '../../apps/stack/scripts/utils/proc/pm.mjs';
+import { withCliDistBuildLock } from '../../apps/stack/scripts/utils/proc/cliDistBuildLock.mjs';
 import { ensureWorkspacePackagesBuiltByName } from './ensureWorkspacePackagesBuilt.mjs';
+import {
+  resolveWorkspaceBundleLockPath,
+  withWorkspaceBundleLock,
+} from './workspaceBundleLock.mjs';
+import { resolveWorkspacePackageBuildLockPath } from './workspacePackageBuildLock.mjs';
 
 test('CLI shared dependency publication reuses an exact current runtime closure before taking the build lock', async (t) => {
   const repoRoot = mkdtempSync(join(tmpdir(), 'happier-cli-shared-deps-current-closure-'));
@@ -271,6 +277,86 @@ test('workspace build admission rebuilds a consumer after a dependency output ch
   assert.deepEqual(builds, [dependencyDir, consumerDir]);
 });
 
+test('workspace build admission overlaps independent packages within a bounded scheduler', async (t) => {
+  const repoRoot = mkdtempSync(join(tmpdir(), 'happier-workspace-build-parallel-siblings-'));
+  t.after(() => {
+    rmSync(repoRoot, { recursive: true, force: true });
+  });
+
+  writeFileSync(
+    join(repoRoot, 'package.json'),
+    JSON.stringify({ private: true, workspaces: ['packages/*'] }),
+    'utf8',
+  );
+  writeFileSync(join(repoRoot, 'yarn.lock'), '# fixture\n', 'utf8');
+  for (const appName of ['ui', 'cli', 'server']) {
+    const appDir = join(repoRoot, 'apps', appName);
+    mkdirSync(appDir, { recursive: true });
+    writeFileSync(
+      join(appDir, 'package.json'),
+      JSON.stringify({ name: `@fixture/${appName}`, private: true }),
+      'utf8',
+    );
+  }
+
+  const packageNames = ['@happier-dev/parallel-a', '@happier-dev/parallel-b'];
+  for (const packageName of packageNames) {
+    const packageDir = join(repoRoot, 'packages', packageName.split('/').at(-1));
+    mkdirSync(join(packageDir, 'src'), { recursive: true });
+    writeFileSync(join(packageDir, 'src', 'index.ts'), 'export const value = true;\n', 'utf8');
+    writeFileSync(
+      join(packageDir, 'package.json'),
+      JSON.stringify({
+        name: packageName,
+        main: './dist/index.js',
+        scripts: { build: 'fixture-build' },
+      }),
+      'utf8',
+    );
+  }
+
+  let releaseBuilds;
+  const release = new Promise((resolveRelease) => {
+    releaseBuilds = resolveRelease;
+  });
+  let notifyBothStarted;
+  const bothStarted = new Promise((resolveStarted) => {
+    notifyBothStarted = resolveStarted;
+  });
+  const active = new Set();
+  let maximumActive = 0;
+  const build = ensureWorkspacePackagesBuiltByName(repoRoot, packageNames, {
+    force: true,
+    maxConcurrentBuilds: 2,
+    workspaceBuildBoundary: {
+      async prepareEnv(_packageDir, env) {
+        return { ...env };
+      },
+      async runPackageBuild(packageDir, { env }) {
+        active.add(packageDir);
+        maximumActive = Math.max(maximumActive, active.size);
+        if (active.size === 2) notifyBothStarted();
+        await release;
+        active.delete(packageDir);
+        await writeFile(
+          join(env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR, 'index.js'),
+          'export const value = true;\n',
+        );
+      },
+    },
+  });
+
+  const overlapped = await Promise.race([
+    bothStarted.then(() => true),
+    new Promise((resolveTimeout) => setTimeout(() => resolveTimeout(false), 2_000)),
+  ]);
+  releaseBuilds();
+  await build;
+
+  assert.equal(overlapped, true);
+  assert.equal(maximumActive, 2);
+});
+
 test('unchanged workspace package admission preserves the published dist directory', async (t) => {
   const repoRoot = mkdtempSync(join(tmpdir(), 'happier-workspace-build-unchanged-admission-'));
   t.after(() => {
@@ -502,6 +588,10 @@ test('workspace build refreshes a consumer bundled dependency after the dependen
     '@happier-dev',
     'dependency',
   );
+  const workspaceBundleLockPath = resolveWorkspaceBundleLockPath(repoRoot);
+  const packageBuildLockPath = resolveWorkspacePackageBuildLockPath(consumerDir, {
+    name: '@happier-dev/consumer',
+  });
   for (const [packageDir, packageJson] of [
     [dependencyDir, {
       name: '@happier-dev/dependency',
@@ -554,6 +644,20 @@ test('workspace build refreshes a consumer bundled dependency after the dependen
       },
       async runPackageBuild(packageDir, { env }) {
         if (packageDir === consumerDir) {
+          assert.equal(existsSync(workspaceBundleLockPath), true);
+          assert.equal(existsSync(packageBuildLockPath), true);
+          assert.equal(env.HAPPIER_WORKSPACE_PACKAGE_PREREQUISITES_READY, '1');
+          assert.notEqual(env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR, join(consumerDir, 'dist'));
+          await withWorkspaceBundleLock(
+            ({ inherited, heldLockValue }) => {
+              assert.equal(inherited, true);
+              assert.equal(heldLockValue, env.HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD);
+            },
+            {
+              lockPath: workspaceBundleLockPath,
+              heldLockValue: env.HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD,
+            },
+          );
           assert.equal(
             readFileSync(join(bundledDependencyDir, 'dist', 'index.js'), 'utf8'),
             'export const value = "current-dependency";\n',
@@ -564,6 +668,69 @@ test('workspace build refreshes a consumer bundled dependency after the dependen
           packageDir === dependencyDir
             ? 'export const value = "current-dependency";\n'
             : 'export const value = "current-consumer";\n',
+        );
+      },
+    },
+  });
+});
+
+test('workspace build leaves non-bundled packages under only their package build lock', async (t) => {
+  const repoRoot = mkdtempSync(join(tmpdir(), 'happier-workspace-build-unbundled-lock-'));
+  t.after(() => {
+    rmSync(repoRoot, { recursive: true, force: true });
+  });
+
+  writeFileSync(
+    join(repoRoot, 'package.json'),
+    JSON.stringify({ private: true, workspaces: ['packages/*'] }),
+    'utf8',
+  );
+  writeFileSync(join(repoRoot, 'yarn.lock'), '# fixture\n', 'utf8');
+  for (const appName of ['ui', 'cli', 'server']) {
+    const appDir = join(repoRoot, 'apps', appName);
+    mkdirSync(appDir, { recursive: true });
+    writeFileSync(
+      join(appDir, 'package.json'),
+      JSON.stringify({ name: `@fixture/${appName}`, private: true }),
+      'utf8',
+    );
+  }
+
+  const packageDir = join(repoRoot, 'packages', 'unbundled');
+  const packageJson = {
+    name: '@happier-dev/unbundled',
+    main: './dist/index.js',
+    scripts: { build: 'fixture-build' },
+  };
+  const workspaceBundleLockPath = resolveWorkspaceBundleLockPath(repoRoot);
+  const packageBuildLockPath = resolveWorkspacePackageBuildLockPath(packageDir, packageJson);
+  mkdirSync(join(packageDir, 'src'), { recursive: true });
+  writeFileSync(join(packageDir, 'src', 'index.ts'), 'export const value = true;\n', 'utf8');
+  writeFileSync(join(packageDir, 'package.json'), JSON.stringify(packageJson), 'utf8');
+
+  await ensureWorkspacePackagesBuiltByName(repoRoot, [packageJson.name], {
+    force: true,
+    quiet: true,
+    workspaceBuildBoundary: {
+      async prepareEnv(_packageDir, env) {
+        return { ...env };
+      },
+      async runPackageBuild(_packageDir, { env }) {
+        assert.equal(existsSync(workspaceBundleLockPath), false);
+        assert.equal(existsSync(packageBuildLockPath), true);
+        await withCliDistBuildLock(
+          ({ inherited, heldLockValue }) => {
+            assert.equal(inherited, true);
+            assert.equal(heldLockValue, env.HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD);
+          },
+          {
+            lockPath: packageBuildLockPath,
+            env,
+          },
+        );
+        await writeFile(
+          join(env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR, 'index.js'),
+          'export const value = true;\n',
         );
       },
     },

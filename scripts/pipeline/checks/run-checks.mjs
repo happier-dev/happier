@@ -215,12 +215,29 @@ function main() {
     if (!monorepo) {
       fail(`HAPPIER_RELEASE_ASSETS_E2E_MONOREPO must be 'github' or 'local' (got: ${monorepoRaw || '<empty>'})`);
     }
+    if (monorepo !== monorepoDefault) {
+      fail(
+        `docker-release-assets derives monorepo=${monorepoDefault} from mode=${mode}; `
+        + `HAPPIER_RELEASE_ASSETS_E2E_MONOREPO=${monorepo} is not supported`,
+      );
+    }
 
     const withRelayUpgrade = resolveBoolEnv(
       process.env.HAPPIER_RELEASE_ASSETS_E2E_WITH_RELAY_UPGRADE,
       'HAPPIER_RELEASE_ASSETS_E2E_WITH_RELAY_UPGRADE',
-      true,
+      mode === 'local',
     );
+    const expectedRelayUpgrade = mode === 'local';
+    if (withRelayUpgrade !== expectedRelayUpgrade) {
+      fail(
+        `docker-release-assets derives relay upgrade=${expectedRelayUpgrade} from mode=${mode}; `
+        + `HAPPIER_RELEASE_ASSETS_E2E_WITH_RELAY_UPGRADE=${withRelayUpgrade} is not supported`,
+      );
+    }
+
+    const sourceArgs = mode === 'local'
+      ? ['--source', 'local-build', '--ref', '.']
+      : ['--source', 'published-channel', '--ref', 'preview'];
 
     runReleaseValidate(
       { dryRun },
@@ -229,15 +246,7 @@ function main() {
         'docker-release-assets',
         '--platform',
         'linux',
-        '--source',
-        'local-build',
-        '--ref',
-        '.',
-        '--mode',
-        mode,
-        '--monorepo',
-        monorepo,
-        withRelayUpgrade ? '--with-relay-upgrade' : '--no-relay-upgrade',
+        ...sourceArgs,
       ],
       {},
     );

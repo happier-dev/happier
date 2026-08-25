@@ -89,10 +89,9 @@ test('release workflow keeps provider checks outside the compact manual release 
   assert.equal(parsed?.jobs?.providers, undefined, 'release.yml should not embed a separate providers job; provider contracts run from their dedicated workflow');
 });
 
-test('manual secret-bearing workflows enforce trusted refs', async () => {
+test('manually dispatched secret-bearing workflows enforce trusted refs', async () => {
   const files = [
     'release.yml',
-    'release-npm.yml',
     'promote-ui.yml',
     'promote-server.yml',
     'promote-website.yml',
@@ -108,7 +107,7 @@ test('manual secret-bearing workflows enforce trusted refs', async () => {
     assert.match(
       raw,
       /Untrusted .*workflow control ref|Untrusted release workflow ref|Untrusted workflow_dispatch ref|trusted refs for manual dispatch|Refusing workflow_dispatch from untrusted ref/,
-      `${file} should contain an explicit trusted-ref guard for workflow_dispatch`
+      `${file} should contain an explicit trusted-ref guard for manual dispatch`
     );
   }
 });

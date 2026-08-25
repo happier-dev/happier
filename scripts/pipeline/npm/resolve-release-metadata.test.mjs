@@ -27,6 +27,33 @@ test('resolveNpmReleaseMetadata returns only requested package versions and sour
   );
 });
 
+test('resolveNpmReleaseMetadata emits the requested Channels protocol version', () => {
+  assert.deepEqual(
+    resolveNpmReleaseMetadata({
+      channel: 'preview',
+      sourceRef: 'preview',
+      sha: 'b'.repeat(40),
+      npmTag: 'next',
+      versions: { cli: '1.2.3-preview.7', channelsProtocol: '0.1.0-preview.7' },
+      requested: {
+        cli: false,
+        stack: false,
+        server: false,
+        pluginSdk: false,
+        sdk: false,
+        channelsProtocol: true,
+      },
+    }),
+    {
+      sha: 'b'.repeat(40),
+      sourceRef: 'preview',
+      channel: 'preview',
+      npmTag: 'next',
+      versions: { channelsProtocol: '0.1.0-preview.7' },
+    },
+  );
+});
+
 test('resolveNpmReleaseMetadata rejects a version that could forge a GitHub output', () => {
   assert.throws(
     () =>

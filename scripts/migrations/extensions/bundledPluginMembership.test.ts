@@ -41,8 +41,8 @@ test('ships every Channels provider package through the canonical CLI and UI pro
   const bundledDependencies = Array.isArray(cliPackageJson.bundledDependencies)
     ? cliPackageJson.bundledDependencies.map(String)
     : [];
-  const generatedPluginSources = readFileSync(
-    resolve(repoRoot, 'apps/cli/src/plugins/projection/registry/sources/generatedBundledPlugins.ts'),
+  const generatedPluginManifests = readFileSync(
+    resolve(repoRoot, 'apps/cli/src/plugins/projection/registry/sources/generatedBundledPluginManifests.ts'),
     'utf8',
   );
   const generatedUiPluginEntries = readFileSync(
@@ -61,7 +61,7 @@ test('ships every Channels provider package through the canonical CLI and UI pro
       `${packageName} is missing from apps/cli dependencies`,
     );
     assert.ok(
-      generatedPluginSources.includes(packageName),
+      generatedPluginManifests.includes(packageName),
       `${packageName} is missing from the generated CLI bundled-plugin projection`,
     );
     assert.ok(

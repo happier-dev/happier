@@ -29,6 +29,7 @@ function parseBoolean(value, name) {
  *   publishServer: boolean;
  *   publishPluginSdk: boolean;
  *   publishSdk: boolean;
+ *   publishChannelsProtocol: boolean;
  * }} input
  */
 export function resolveNpmReleaseInputs(input) {
@@ -43,6 +44,7 @@ export function resolveNpmReleaseInputs(input) {
     input.publishServer,
     input.publishPluginSdk,
     input.publishSdk,
+    input.publishChannelsProtocol,
   ];
   if (!requested.some(Boolean)) {
     throw new Error('At least one npm publication target must be true.');
@@ -82,6 +84,7 @@ function main() {
       'publish-server': { type: 'string', default: 'false' },
       'publish-plugin-sdk': { type: 'string', default: 'false' },
       'publish-sdk': { type: 'string', default: 'false' },
+      'publish-channels-protocol': { type: 'string', default: 'false' },
       'github-output': { type: 'string', default: '' },
     },
     allowPositionals: false,
@@ -97,6 +100,7 @@ function main() {
     publishServer: parseBoolean(values['publish-server'], '--publish-server'),
     publishPluginSdk: parseBoolean(values['publish-plugin-sdk'], '--publish-plugin-sdk'),
     publishSdk: parseBoolean(values['publish-sdk'], '--publish-sdk'),
+    publishChannelsProtocol: parseBoolean(values['publish-channels-protocol'], '--publish-channels-protocol'),
   });
 
   const githubOutput = String(values['github-output'] ?? '').trim();

@@ -24,6 +24,7 @@ import {
   readBundledPluginPackageNames,
 } from './bundledPluginMembership.ts';
 import { requiresBundledImmutableArtifact } from '../../../apps/cli/scripts/build-owned/bundledImmutableArtifactEligibility.ts';
+import { inspectTypescriptModule } from '../../../apps/cli/scripts/build-owned/bundledPlugins/typescriptModuleInspection.ts';
 import * as canonicalBundledPluginPublisher from '../../../apps/cli/scripts/build-owned/generateBundledPluginEntries.ts';
 import * as historicalBundledPluginPublisher from './generateBundledPluginEntries.ts';
 import { main as generateBundledPluginEntries } from './generateBundledPluginEntries.ts';
@@ -1043,19 +1044,32 @@ test('emits only bundled locators and structured trusted bindings into the CLI r
 
   await generateBundledPluginEntries(['--root', repoRoot, '--mode', 'write']);
 
-  const outputPath = resolve(
+  const executableOutputPath = resolve(
     repoRoot,
     'apps/cli/src/plugins/projection/registry/sources/generatedBundledPlugins.ts',
   );
-  const output = readFileSync(outputPath, 'utf8');
-  assert.match(output, /BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS/);
-  assert.doesNotMatch(output, /\\\\n/);
-  assert.match(output, /BUNDLED_FIRST_PARTY_IMPLEMENTATION_BINDINGS/);
-  assert.match(output, /pluginId:\s*"happier\.fixture\.descriptor"/);
-  assert.match(output, /manifest:\s*DESCRIPTOR_PLUGIN_MANIFEST/);
-  assert.match(output, /daemonEntryPath:\s*null/);
-  assert.doesNotMatch(output, /activationEvents/);
-  assert.doesNotMatch(output, /BUNDLED_FIRST_PARTY_(?:AGENT|PROVIDER|SCM|MCP|CONNECTED|INSTALLABLE|EXECUTION_RUN).*CONTRIBUTIONS/);
+  const manifestOutputPath = resolve(
+    repoRoot,
+    'apps/cli/src/plugins/projection/registry/sources/generatedBundledPluginManifests.ts',
+  );
+  const executableOutput = readFileSync(executableOutputPath, 'utf8');
+  const manifestOutput = readFileSync(manifestOutputPath, 'utf8');
+  assert.match(manifestOutput, /BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS/);
+  assert.doesNotMatch(manifestOutput, /\\\\n/);
+  assert.match(executableOutput, /BUNDLED_FIRST_PARTY_IMPLEMENTATION_BINDINGS/);
+  assert.match(manifestOutput, /pluginId:\s*"happier\.fixture\.descriptor"/);
+  // Locators carry the generator-normalized manifest data through the same
+  // strict ingress as an installed plugin. Importing a package's authored
+  // manifest module here would eagerly retain its executable module graph at
+  // daemon cold start.
+  assert.doesNotMatch(manifestOutput, /from ['"]@happier-dev\/plugins-[^'"]+\/manifest['"]/u);
+  // A locator must contain one compact canonical JSON literal. Multiline
+  // pretty-printing scales this cold-start projection with every nested
+  // manifest field while preserving no additional behavior.
+  assert.match(manifestOutput, /manifest:\s*\{"contributes":\{\}/u);
+  assert.match(manifestOutput, /daemonEntryPath:\s*null/);
+  assert.doesNotMatch(manifestOutput, /activationEvents/);
+  assert.doesNotMatch(manifestOutput, /BUNDLED_FIRST_PARTY_(?:AGENT|PROVIDER|SCM|MCP|CONNECTED|INSTALLABLE|EXECUTION_RUN).*CONTRIBUTIONS/);
 
   const stableMtime = new Date('2026-01-01T00:00:00.000Z');
   utimesSync(outputPath, stableMtime, stableMtime);
@@ -2845,6 +2859,35 @@ function writeGeneratorOutputScaffold(repoRoot: string, uiSource?: string): void
   mkdirSync(resolve(repoRoot, 'packages/agents/src/definitions'), { recursive: true });
 
   writeFileSync(
+    resolve(repoRoot, 'apps/cli/src/plugins/projection/registry/sources/generatedBundledPluginManifests.ts'),
+    [
+      'export const BUNDLED_FIRST_PARTY_PLUGIN_PACKAGE_NAMES = Object.freeze([]);',
+      'export const BUNDLED_FIRST_PARTY_PLUGIN_METADATA = Object.freeze([]);',
+      'export const BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS = Object.freeze([]);',
+      'export type BundledFirstPartyPluginMetadata = Readonly<Record<string, unknown>>;',
+      'export type BundledFirstPartyPluginLocator = Readonly<Record<string, unknown>>;',
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+  writeFileSync(
+    resolve(repoRoot, 'apps/cli/src/plugins/projection/registry/sources/generatedBundledPlugins.ts'),
+    [
+      "import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';",
+      "export { BUNDLED_FIRST_PARTY_PLUGIN_PACKAGE_NAMES, BUNDLED_FIRST_PARTY_PLUGIN_METADATA, BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS } from './generatedBundledPluginManifests';",
+      "export type { BundledFirstPartyPluginMetadata, BundledFirstPartyPluginLocator } from './generatedBundledPluginManifests';",
+      'export type BundledFirstPartyImplementationBinding = Readonly<{',
+      '  identity: PluginContributionIdentityV1;',
+      '  implementationOwnerId: string;',
+      '  registrationFamily: string;',
+      '  implementation: unknown;',
+      '}>;',
+      'export const BUNDLED_FIRST_PARTY_IMPLEMENTATION_BINDINGS: readonly BundledFirstPartyImplementationBinding[] = Object.freeze([]);',
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+  writeFileSync(
     resolve(repoRoot, 'apps/ui/sources/agents/registry/generatedBundledPluginEntries.ts'),
     uiSource ?? 'export const BUNDLED_FIRST_PARTY_PLUGIN_PACKAGE_NAMES: readonly string[] = Object.freeze([]);\n',
     'utf8',
@@ -4240,8 +4283,12 @@ test('generateBundledPluginEntries writes deterministic bundled plugin contribut
     resolve(repoRoot, 'apps/cli/src/plugins/projection/registry/sources/generatedBundledPlugins.ts'),
     'utf8',
   );
-  assert.match(cliOut, /BUNDLED_FIRST_PARTY_PLUGIN_PACKAGE_NAMES/);
-  assert.match(cliOut, /BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS/);
+  const cliManifestOut = readFileSync(
+    resolve(repoRoot, 'apps/cli/src/plugins/projection/registry/sources/generatedBundledPluginManifests.ts'),
+    'utf8',
+  );
+  assert.match(cliManifestOut, /BUNDLED_FIRST_PARTY_PLUGIN_PACKAGE_NAMES/);
+  assert.match(cliManifestOut, /BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS/);
   assert.match(cliOut, /BUNDLED_FIRST_PARTY_IMPLEMENTATION_BINDINGS/);
   assert.match(cliOut, /createPluginContributionIdentity/);
   assert.doesNotMatch(cliOut, /BUNDLED_FIRST_PARTY_AGENT_CONTRIBUTIONS/);
@@ -4264,7 +4311,7 @@ test('generateBundledPluginEntries writes deterministic bundled plugin contribut
   );
   assert.doesNotMatch(cliOut, /systemTools:/);
   assert.match(
-    cliOut,
+    cliManifestOut,
     /sourceSpec:\s*Object\.freeze\(\{[\s\S]*kind:\s*'bundled'/,
   );
   assert.doesNotMatch(cliOut, /BUNDLED_FIRST_PARTY_SCM_HOSTING_PROVIDER_CONTRIBUTIONS/);
@@ -5503,11 +5550,16 @@ test('generateBundledPluginEntries keeps OpenCode UI projections on exported/pac
     resolve(repoRoot, 'apps/cli/src/plugins/projection/registry/sources/generatedBundledPlugins.ts'),
     'utf8',
   );
+  const cliManifestOut = readFileSync(
+    resolve(repoRoot, 'apps/cli/src/plugins/projection/registry/sources/generatedBundledPluginManifests.ts'),
+    'utf8',
+  );
   assert.match(cliOut, /import \{ OPENCODE_AGENT_RUNTIME_CONTRIBUTION \} from '@happier-dev\/plugins-opencode\/agent\/contributions\/runtime';/);
-  assert.match(cliOut, /import \{ PLUGIN_MANIFEST as OPENCODE_PLUGIN_MANIFEST \} from '@happier-dev\/plugins-opencode';/);
+  assert.doesNotMatch(cliManifestOut, /@happier-dev\/plugins-opencode\/manifest/);
+  assert.match(cliManifestOut, /manifest:\s*\{\s*"contributes":/u);
   assert.match(cliOut, /BUNDLED_FIRST_PARTY_IMPLEMENTATION_BINDINGS/);
   assert.match(cliOut, /contribution:\s*OPENCODE_AGENT_RUNTIME_CONTRIBUTION/);
-  assert.doesNotMatch(cliOut, /rootHelpLabel:|rootHelpDescription:|allowTmux:/);
+  assert.doesNotMatch(cliManifestOut, /rootHelpLabel:|rootHelpDescription:|allowTmux:/);
   assert.doesNotMatch(cliOut, /\.\/bundled\/opencode/);
 
   const uiBehaviorOverridesOut = readFileSync(
@@ -5693,16 +5745,16 @@ test('generateBundledPluginEntries projects non-agent plugin packages without ag
 
   await generateBundledPluginEntries(['--root', repoRoot, '--mode', 'write']);
 
-  const cliOut = readFileSync(
-    resolve(repoRoot, 'apps/cli/src/plugins/projection/registry/sources/generatedBundledPlugins.ts'),
+  const cliManifestOut = readFileSync(
+    resolve(repoRoot, 'apps/cli/src/plugins/projection/registry/sources/generatedBundledPluginManifests.ts'),
     'utf8',
   );
-  assert.match(cliOut, /@happier-dev\/plugins-scm-github/);
-  assert.match(cliOut, /"pluginId":\s*"happier\.scm\.hosting\.github"/);
-  assert.match(cliOut, /BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS/);
-  assert.doesNotMatch(cliOut, /BUNDLED_FIRST_PARTY_SCM_HOSTING_PROVIDER_CONTRIBUTIONS/);
-  assert.doesNotMatch(cliOut, /definition:\s*Object\.freeze\(\{/);
-  assert.doesNotMatch(cliOut, /"agentId":\s*"scm-github"/);
+  assert.match(cliManifestOut, /@happier-dev\/plugins-scm-github/);
+  assert.match(cliManifestOut, /"pluginId":\s*"happier\.scm\.hosting\.github"/);
+  assert.match(cliManifestOut, /BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS/);
+  assert.doesNotMatch(cliManifestOut, /BUNDLED_FIRST_PARTY_SCM_HOSTING_PROVIDER_CONTRIBUTIONS/);
+  assert.doesNotMatch(cliManifestOut, /definition:\s*Object\.freeze\(\{/);
+  assert.doesNotMatch(cliManifestOut, /"agentId":\s*"scm-github"/);
 
   const agentsOut = readFileSync(
     resolve(repoRoot, 'packages/agents/src/generated/bundledAgentDefinitions.ts'),
@@ -5816,13 +5868,13 @@ test('generateBundledPluginEntries write mode syncs both CLI plugin shipping dec
   ]);
   assert.equal(cliPackageJson.dependencies?.['@happier-dev/plugins-scm-github'], '0.0.0');
 
-  const cliOut = readFileSync(
-    resolve(repoRoot, 'apps/cli/src/plugins/projection/registry/sources/generatedBundledPlugins.ts'),
+  const cliManifestOut = readFileSync(
+    resolve(repoRoot, 'apps/cli/src/plugins/projection/registry/sources/generatedBundledPluginManifests.ts'),
     'utf8',
   );
-  assert.match(cliOut, /@happier-dev\/plugins-scm-github/);
-  assert.match(cliOut, /BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS/);
-  assert.doesNotMatch(cliOut, /BUNDLED_FIRST_PARTY_SCM_HOSTING_PROVIDER_CONTRIBUTIONS/);
+  assert.match(cliManifestOut, /@happier-dev\/plugins-scm-github/);
+  assert.match(cliManifestOut, /BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS/);
+  assert.doesNotMatch(cliManifestOut, /BUNDLED_FIRST_PARTY_SCM_HOSTING_PROVIDER_CONTRIBUTIONS/);
 });
 
 test('generateBundledPluginEntries projects review-only agent runtime contributions from agent definitions', async () => {
@@ -5920,9 +5972,13 @@ test('generateBundledPluginEntries projects review-only agent runtime contributi
     resolve(repoRoot, 'apps/cli/src/plugins/projection/registry/sources/generatedBundledPlugins.ts'),
     'utf8',
   );
+  const cliManifestOut = readFileSync(
+    resolve(repoRoot, 'apps/cli/src/plugins/projection/registry/sources/generatedBundledPluginManifests.ts'),
+    'utf8',
+  );
   assert.match(cliOut, /@happier-dev\/plugins-review-coderabbit/);
-  assert.match(cliOut, /BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS/);
-  assert.match(cliOut, /pluginId:\s*"happier\.review\.coderabbit"/);
+  assert.match(cliManifestOut, /BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS/);
+  assert.match(cliManifestOut, /pluginId:\s*"happier\.review\.coderabbit"/);
   assert.doesNotMatch(cliOut, /BUNDLED_FIRST_PARTY_PLUGIN_AGENT_RUNTIME_CONTRIBUTIONS/);
   assert.doesNotMatch(cliOut, /directCommentWrite|BUNDLED_FIRST_PARTY_EXECUTION_RUN_PROFILE_CONTRIBUTIONS|coderabbit\.review/);
   assert.doesNotMatch(cliOut, /"agentId":\s*"review-coderabbit"/);
@@ -5969,22 +6025,16 @@ test('generateBundledPluginEntries projects native Agent ownership and compatibi
     /"enablementCompatibilityBackendIds":\s*\[\s*"antigravity-localharness",\s*"antigravity-terminal"\s*\]/,
   );
 
-  const cliOut = readFileSync(
-    resolve(repoRoot, 'apps/cli/src/plugins/projection/registry/sources/generatedBundledPlugins.ts'),
+  const cliManifestOut = readFileSync(
+    resolve(repoRoot, 'apps/cli/src/plugins/projection/registry/sources/generatedBundledPluginManifests.ts'),
     'utf8',
   );
-  assert.match(cliOut, /BUNDLED_FIRST_PARTY_PLUGIN_METADATA/);
-  assert.match(cliOut, /"agentId":\s*"antigravity"/);
-  assert.match(cliOut, /BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS/);
-  assert.match(
-    cliOut,
-    /import \{ PLUGIN_MANIFEST as ANTIGRAVITY_PLUGIN_MANIFEST \} from ['"]@happier-dev\/plugins-antigravity\/manifest['"];/,
-  );
-  assert.doesNotMatch(
-    cliOut,
-    /import \{ PLUGIN_MANIFEST as ANTIGRAVITY_PLUGIN_MANIFEST \} from ['"]@happier-dev\/plugins-antigravity['"];/,
-  );
-  assert.doesNotMatch(cliOut, /"binaryName":\s*"agy"|BUNDLED_FIRST_PARTY_AGENT_CONTRIBUTIONS|ownedBackendIds|enablementCompatibilityBackendIds|terminalRuntime\.launch/);
+  assert.match(cliManifestOut, /BUNDLED_FIRST_PARTY_PLUGIN_METADATA/);
+  assert.match(cliManifestOut, /"agentId":\s*"antigravity"/);
+  assert.match(cliManifestOut, /BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS/);
+  assert.doesNotMatch(cliManifestOut, /@happier-dev\/plugins-antigravity\/manifest/);
+  assert.match(cliManifestOut, /manifest:\s*\{\s*"contributes":/u);
+  assert.doesNotMatch(cliManifestOut, /"binaryName":\s*"agy"|BUNDLED_FIRST_PARTY_AGENT_CONTRIBUTIONS|ownedBackendIds|enablementCompatibilityBackendIds|terminalRuntime\.launch/);
 });
 
 test('generateBundledPluginEntries keeps executable Agent facts in implementation bindings', async () => {
@@ -6066,7 +6116,10 @@ test('generateBundledPluginEntries keeps executable Agent facts in implementatio
   assert.match(cliOut, /BUNDLED_FIRST_PARTY_IMPLEMENTATION_BINDINGS/);
   assert.match(cliOut, /implementationOwnerId:\s*"claude"/);
   assert.match(cliOut, /contribution:\s*CLAUDE_AGENT_RUNTIME_CONTRIBUTION/);
-  assert.match(cliOut, /systemTools:\s*CLAUDE_PLUGIN_MANIFEST\.contributes\.systemTools/);
+  assert.match(
+    cliOut,
+    /systemTools:\s*\[\s*\{\s*"executableNames":\s*\[\s*"security"\s*\],\s*"id":\s*"macos-security"/u,
+  );
   assert.doesNotMatch(cliOut, /BUNDLED_FIRST_PARTY_AGENT_CONTRIBUTIONS/);
   assert.doesNotMatch(cliOut, /"ownedBackendIds"|"providerSupport"|"providerRequirements"/);
 
@@ -6150,12 +6203,12 @@ test('generateBundledPluginEntries scopes managed-dependency local ids to their 
 
   await generateBundledPluginEntries(['--root', repoRoot, '--mode', 'write']);
 
-  const cliOut = readFileSync(
-    resolve(repoRoot, 'apps/cli/src/plugins/projection/registry/sources/generatedBundledPlugins.ts'),
+  const cliManifestOut = readFileSync(
+    resolve(repoRoot, 'apps/cli/src/plugins/projection/registry/sources/generatedBundledPluginManifests.ts'),
     'utf8',
   );
-  assert.match(cliOut, /pluginId:\s*"happier\.installables\.left-installable"/);
-  assert.match(cliOut, /pluginId:\s*"happier\.installables\.right-installable"/);
+  assert.match(cliManifestOut, /pluginId:\s*"happier\.installables\.left-installable"/);
+  assert.match(cliManifestOut, /pluginId:\s*"happier\.installables\.right-installable"/);
 });
 
 test('generateBundledPluginEntries projects bundled SCM backend and installable contributions', async () => {
@@ -6209,14 +6262,14 @@ test('generateBundledPluginEntries projects bundled SCM backend and installable 
 
   await generateBundledPluginEntries(['--root', repoRoot, '--mode', 'write']);
 
-  const cliOut = readFileSync(
-    resolve(repoRoot, 'apps/cli/src/plugins/projection/registry/sources/generatedBundledPlugins.ts'),
+  const cliManifestOut = readFileSync(
+    resolve(repoRoot, 'apps/cli/src/plugins/projection/registry/sources/generatedBundledPluginManifests.ts'),
     'utf8',
   );
-  assert.match(cliOut, /BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS/);
-  assert.doesNotMatch(cliOut, /BUNDLED_FIRST_PARTY_SCM_BACKEND_CONTRIBUTIONS|BUNDLED_FIRST_PARTY_INSTALLABLE_CONTRIBUTIONS/);
-  assert.match(cliOut, /pluginId:\s*"happier\.scm\.backend\.sapling"/);
-  assert.doesNotMatch(cliOut, /"dep\.sapling"/);
+  assert.match(cliManifestOut, /BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS/);
+  assert.doesNotMatch(cliManifestOut, /BUNDLED_FIRST_PARTY_SCM_BACKEND_CONTRIBUTIONS|BUNDLED_FIRST_PARTY_INSTALLABLE_CONTRIBUTIONS/);
+  assert.match(cliManifestOut, /pluginId:\s*"happier\.scm\.backend\.sapling"/);
+  assert.doesNotMatch(cliManifestOut, /"dep\.sapling"/);
 });
 
 test('generateBundledPluginEntries rejects malformed bundled SCM provider contributions', async () => {
@@ -6839,31 +6892,16 @@ test('generateBundledPluginEntries isolates first-party voice manifest module ex
   );
 });
 
-test('bundled first-party voice source manifests load through the canonical isolated module reader', () => {
+test('bundled first-party voice source manifests load through the canonical isolated module reader', async () => {
   const repoRoot = fileURLToPath(new URL('../../../', import.meta.url));
-  const loaderPath = fileURLToPath(new URL('./readTypescriptModule.mjs', import.meta.url));
-  const outputMarker = '__HAPPIER_GENERATOR_MODULE_JSON__';
 
   for (const packageId of ['elevenlabs', 'google', 'openai', 'openai-compat', 'xai'] as const) {
     const manifestPath = resolve(repoRoot, `packages/plugins/${packageId}/src/manifest.ts`);
-    const result = spawnSync(process.execPath, [loaderPath, manifestPath], {
-      encoding: 'utf8',
-      maxBuffer: 4 * 1024 * 1024,
-    });
-    assert.equal(
-      result.status,
-      0,
-      `${packageId} must load through the canonical bundled-plugin manifest reader: ${result.stderr}`,
-    );
-    const markerIndex = result.stdout.lastIndexOf(outputMarker);
-    assert.notEqual(markerIndex, -1, `${packageId} must emit an isolated module result`);
-    const payload = JSON.parse(result.stdout.slice(markerIndex + outputMarker.length)) as Readonly<{
-      values: Readonly<Record<string, Readonly<{
-        id?: string;
-        contributes?: Readonly<{ voiceProviders?: readonly unknown[] }>;
-      }>>>;
-    }>;
-    const manifest = payload.values.PLUGIN_MANIFEST;
+    const module = await inspectTypescriptModule(manifestPath) as Readonly<Record<string, Readonly<{
+      id?: string;
+      contributes?: Readonly<{ voiceProviders?: readonly unknown[] }>;
+    }>>>;
+    const manifest = module.PLUGIN_MANIFEST;
     assert.equal(manifest?.id, `happier.voice.${packageId}`);
     assert.equal(
       (manifest?.contributes?.voiceProviders ?? []).length > 0,
@@ -7204,7 +7242,7 @@ test('aggregate plugin UI publication reads final artifacts without source evalu
     await generateBundledPluginEntries([
       '--root', repoRoot,
       '--mode', 'write',
-      '--workspace', 'plugins-inspector',
+      '--aggregate',
     ]);
     const firstOutputs = Object.fromEntries(
       (['web', 'ios', 'android'] as const).map((platform) => [
@@ -7222,7 +7260,7 @@ test('aggregate plugin UI publication reads final artifacts without source evalu
     await generateBundledPluginEntries([
       '--root', repoRoot,
       '--mode', 'write',
-      '--workspace', 'plugins-inspector',
+      '--aggregate',
     ]);
     for (const platform of ['web', 'ios', 'android'] as const) {
       const output = readFileSync(outputs(platform), 'utf8');
@@ -7241,7 +7279,7 @@ test('aggregate plugin UI publication reads final artifacts without source evalu
     await generateBundledPluginEntries([
       '--root', repoRoot,
       '--mode', 'write',
-      '--workspace', 'plugins-inspector',
+      '--aggregate',
     ]);
     for (const platform of ['web', 'ios', 'android'] as const) {
       assert.equal(statSync(outputs(platform)).ino, secondOutputIdentity[platform]);
@@ -7611,6 +7649,12 @@ test('scoped workspace publication validates only the requested plugin runtime',
   const repoRoot = mkdtempSync(resolve(tmpdir(), 'happy-bundled-plugin-scoped-runtime-'));
   const writeExecutablePlugin = (packageId: string): void => {
     writeAgentPluginFixture(repoRoot, packageId, packageId, { daemon: true });
+    mkdirSync(resolve(repoRoot, `packages/plugins/${packageId}/dist`), { recursive: true });
+    writeFileSync(
+      resolve(repoRoot, `packages/plugins/${packageId}/dist/index.js`),
+      'export const compiledFixture = true;\n',
+      'utf8',
+    );
     mkdirSync(resolve(repoRoot, `packages/plugins/${packageId}/src/agent/runtime`), { recursive: true });
     writeFileSync(
       resolve(repoRoot, `packages/plugins/${packageId}/src/agent/runtime/factory.ts`),
@@ -7668,7 +7712,7 @@ test('scoped workspace publication validates only the requested plugin runtime',
         '--mode', 'check',
         '--workspace', 'plugins-selected',
       ]),
-      /Bundled plugin runtime artifact differs/u,
+      /generated output differs/u,
     );
     writeFileSync(selectedRuntimePath, selectedRuntimeBytes);
   } finally {

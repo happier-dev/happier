@@ -177,3 +177,86 @@ test('retains the malformed cli-common package failure before admission', async 
     fixture.cleanup();
   }
 });
+
+/**
+ * The loader stages a content-addressed snapshot of the graph's inputs. Any input that read as
+ * absent used to be skipped silently, so a transient absence during install churn produced a
+ * snapshot that was *wrong but complete-looking*: self-consistent, cached under its own hash, and
+ * failing later as `Cannot find module .../.project/tmp/cli-common-workspaces-loader.<id>/<hash>/...`
+ * — a temp path nobody traces back to the skip. Observed live by Q1 with `bundledPluginResources.mjs`.
+ *
+ * The honest failure is available at the point of the skip, so it must be raised there.
+ */
+test('fails at staging, naming the helper, when the graph entry imports one it could not read', async () => {
+  const fixture = createCliCommonFixture('happier-cli-common-workspaces-loader-unreadable-');
+  const entryPath = resolve(fixture.packageDir, 'dist', 'workspaces', 'index.js');
+  writeFileSync(
+    entryPath,
+    [
+      "export { generation } from '../../workspaceRuntimeDependencies.mjs';",
+      "export { resources } from '../../bundledPluginResources.mjs';",
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+  writeFileSync(
+    resolve(fixture.packageDir, 'workspaceRuntimeDependencies.mjs'),
+    'export const generation = 3;\n',
+    'utf8',
+  );
+  // `bundledPluginResources.mjs` is deliberately absent: this is the transient read Q1 hit.
+
+  try {
+    await assert.rejects(
+      loadCliCommonWorkspacesModule(fixture.repoRoot, {}, async () => {}),
+      (error) => {
+        const message = String(error?.message ?? '');
+        assert.match(message, /bundledPluginResources\.mjs/);
+        // Discriminating: today's deferred failure ALSO contains that filename, because it is
+        // part of the staged temp path. The contract is that the loader refuses before staging.
+        assert.doesNotMatch(message, /cli-common-workspaces-loader\./);
+        assert.notEqual(error?.code, 'ERR_MODULE_NOT_FOUND');
+        assert.match(message, /cli-common workspaces loader/i);
+        return true;
+      },
+    );
+    // Nothing may be left staged behind a refusal.
+    const snapshotParent = resolve(fixture.repoRoot, '.project', 'tmp');
+    assert.equal(
+      existsSync(snapshotParent)
+        && readdirSync(snapshotParent)
+          .some((name) => name.startsWith('cli-common-workspaces-loader.')),
+      false,
+    );
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+/**
+ * The loader used to name its root-level helpers in two hard-coded constants. Keeping that list in
+ * sync by hand is the same maintenance hazard that produced this defect family twice in one day
+ * (cli-common's own `exports`, and this loader's input list). Requiredness is derivable from the
+ * bytes actually being staged, so a helper the loader was never told about must still be staged.
+ */
+test('stages every root-level helper the graph entry imports, including ones it was never told about', async () => {
+  const fixture = createCliCommonFixture('happier-cli-common-workspaces-loader-derived-');
+  const entryPath = resolve(fixture.packageDir, 'dist', 'workspaces', 'index.js');
+  writeFileSync(
+    entryPath,
+    "export { generation } from '../../futureRootHelper.mjs';\n",
+    'utf8',
+  );
+  writeFileSync(
+    resolve(fixture.packageDir, 'futureRootHelper.mjs'),
+    'export const generation = 11;\n',
+    'utf8',
+  );
+
+  try {
+    const graph = await loadCliCommonWorkspacesModule(fixture.repoRoot, {}, async () => {});
+    assert.equal(graph.generation, 11);
+  } finally {
+    fixture.cleanup();
+  }
+});

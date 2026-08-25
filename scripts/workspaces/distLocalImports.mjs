@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { access, readFile } from 'node:fs/promises';
 import { dirname, resolve, sep } from 'node:path';
 
@@ -14,6 +15,44 @@ async function pathExists(path) {
 
 export function extractLocalImportSpecifiersFromJs(text) {
   return cliDistBuildManifest.extractRelativeModuleSpecifiers(text);
+}
+
+export function hasMissingLocalImportsSync({ distDir, entryPaths }) {
+  const root = resolve(distDir);
+  const visited = new Set();
+  const queue = [...entryPaths].map((entryPath) => resolve(entryPath));
+
+  while (queue.length) {
+    const current = queue.shift();
+    if (!current || visited.has(current)) continue;
+    visited.add(current);
+
+    let contents = '';
+    try {
+      contents = readFileSync(current, 'utf-8');
+    } catch {
+      return true;
+    }
+
+    for (const spec of extractLocalImportSpecifiersFromJs(contents)) {
+      const resolvedImport = resolve(dirname(current), spec);
+      try {
+        readFileSync(resolvedImport);
+      } catch {
+        return true;
+      }
+      if (
+        (resolvedImport === root || resolvedImport.startsWith(root + sep))
+        && !visited.has(resolvedImport)
+      ) {
+        queue.push(resolvedImport);
+      }
+    }
+
+    if (visited.size > 5_000) return true;
+  }
+
+  return false;
 }
 
 export async function assertNoMissingLocalImports({ distDir, entryPath, label = 'dist build' }) {

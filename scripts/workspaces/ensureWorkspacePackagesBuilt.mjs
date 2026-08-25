@@ -16,6 +16,10 @@ import {
   resolvePackageBuildOutputTargetMatches,
   resolvePackageBuildOutputTargetPath,
 } from './packageBuildOutputTargets.mjs';
+import {
+  resolveWorkspaceBundleLockPath,
+  withWorkspaceBundleLock,
+} from './workspaceBundleLock.mjs';
 import { resolveWorkspacePackageBuildLockPath } from './workspacePackageBuildLock.mjs';
 import { WORKSPACE_PACKAGE_PREREQUISITES_READY_ENV_VAR } from './workspaceChildBuildEnv.mjs';
 import { resolveWorkspaceBundlePublicationMode } from './workspaceBundlePublication.mjs';
@@ -23,6 +27,33 @@ import { syncBundledWorkspacePackages } from './syncBundledWorkspacePackages.mjs
 
 const GENERATED_PLUGIN_UI_ARTIFACTS_MANIFEST_RELATIVE_PATH =
   'dist/happier-plugin-ui/ui-artifacts.json';
+const DEFAULT_MAX_CONCURRENT_WORKSPACE_BUILDS = 2;
+
+function createAsyncConcurrencyLimiter(maxConcurrent) {
+  const limit = Number.isInteger(maxConcurrent) && maxConcurrent > 0
+    ? maxConcurrent
+    : DEFAULT_MAX_CONCURRENT_WORKSPACE_BUILDS;
+  let active = 0;
+  const waiters = [];
+
+  const release = () => {
+    active -= 1;
+    const next = waiters.shift();
+    if (next) next();
+  };
+
+  return async (operation) => {
+    if (active >= limit) {
+      await new Promise((resolveWaiter) => waiters.push(resolveWaiter));
+    }
+    active += 1;
+    try {
+      return await operation();
+    } finally {
+      release();
+    }
+  };
+}
 
 async function readJson(path) {
   return JSON.parse(await readFile(path, 'utf-8'));
@@ -68,6 +99,17 @@ function collectInternalWorkspaceDependencyNames(
     }
   }
   return names;
+}
+
+function hasBundledWorkspaceDependencies(packageJson) {
+  const bundledDependencies = Array.isArray(packageJson?.bundledDependencies)
+    ? packageJson.bundledDependencies
+    : Array.isArray(packageJson?.bundleDependencies)
+      ? packageJson.bundleDependencies
+      : [];
+  return bundledDependencies.some((packageName) => (
+    typeof packageName === 'string' && packageName.trim().startsWith('@happier-dev/')
+  ));
 }
 
 function collectExpectedPackageOutputTargets(packageJson) {
@@ -641,6 +683,9 @@ async function ensureWorkspacePackageBuilt(packageDir, {
 
   const env = await workspaceBuildBoundary.prepareEnv(packageDir, envIn);
   const lockPath = resolveWorkspacePackageBuildLockPath(packageDir, packageJson);
+  const workspaceBundleLockPath = hasBundledWorkspaceDependencies(packageJson)
+    ? resolveWorkspaceBundleLockPath(monorepoRoot)
+    : null;
   const reportLockWait = createWorkspaceBuildWaitNotifier({
     env,
     label: initial.label,
@@ -661,23 +706,38 @@ async function ensureWorkspacePackageBuilt(packageDir, {
         }
         : { resolved: false };
     };
-  return await withCliDistBuildLock(
-    ({ waited, heldLockValue }) => ensureWorkspacePackageBuiltUnderLock({
-      monorepoRoot,
-      packageDir,
-      packageJsonPath,
-      quiet,
+  const buildUnderPackageLock = async (workspaceBundleLockValue = null) => (
+    await withCliDistBuildLock(
+      ({ waited, heldLockValue }) => ensureWorkspacePackageBuiltUnderLock({
+        monorepoRoot,
+        packageDir,
+        packageJsonPath,
+        quiet,
+        env,
+        force,
+        timeoutMs,
+        onPackageBuildStart,
+        onPackageBuildDone,
+        waited,
+        // Bundled packages run their lifecycle beneath the global publication
+        // lease so nested bundle publication can reenter B without waiting on
+        // its own package lock. Ordinary packages preserve the P lease.
+        heldLockValue: workspaceBundleLockValue ?? heldLockValue,
+        workspaceBuildBoundary,
+        publicationMode,
+      }),
+      { lockPath, env, onWait: reportLockWait, tryResolveWaiter },
+    )
+  );
+  if (!workspaceBundleLockPath) return await buildUnderPackageLock();
+
+  return await withWorkspaceBundleLock(
+    async ({ heldLockValue }) => await buildUnderPackageLock(heldLockValue),
+    {
+      lockPath: workspaceBundleLockPath,
       env,
-      force,
-      timeoutMs,
-      onPackageBuildStart,
-      onPackageBuildDone,
-      waited,
-      heldLockValue,
-      workspaceBuildBoundary,
-      publicationMode,
-    }),
-    { lockPath, env, onWait: reportLockWait, tryResolveWaiter },
+      onWait: reportLockWait,
+    },
   );
 }
 
@@ -694,6 +754,7 @@ async function ensureWorkspacePackageNamesBuilt(monorepoRoot, packageNames, {
   workspaceBuildBoundary,
   admitPriorOutputsImmediately,
   publicationMode,
+  maxConcurrentBuilds,
 }) {
   const built = [];
   const visited = new Set(visitedNames);
@@ -703,6 +764,7 @@ async function ensureWorkspacePackageNamesBuilt(monorepoRoot, packageNames, {
   const packageDirsByName = packageDirsByNameIn
     ?? await collectWorkspacePackageDirsByName(monorepoRoot);
   const workspacePackageNames = new Set(packageDirsByName.keys());
+  const schedulePackageBuild = createAsyncConcurrencyLimiter(maxConcurrentBuilds);
 
   const buildWorkspaceClosure = (packageDir, ancestors = new Set()) => {
     const resolvedPackageDir = resolve(packageDir);
@@ -722,30 +784,32 @@ async function ensureWorkspacePackageNamesBuilt(monorepoRoot, packageNames, {
       if (packageName && visited.has(packageName)) return changedClosures.has(packageName);
       if (packageName) visited.add(packageName);
 
-      let dependencyChanged = false;
-      for (const dependencyName of collectInternalWorkspaceDependencyNames(
+      const dependencyResults = await Promise.all(collectInternalWorkspaceDependencyNames(
         packageJson,
         packageName,
         { includeDevDependencies, workspacePackageNames },
-      )) {
+      ).map(async (dependencyName) => {
         const dependencyDir = packageDirsByName.get(dependencyName);
-        if (dependencyDir && await buildWorkspaceClosure(dependencyDir, nextAncestors)) {
-          dependencyChanged = true;
-        }
-      }
+        return dependencyDir
+          ? await buildWorkspaceClosure(dependencyDir, nextAncestors)
+          : false;
+      }));
+      const dependencyChanged = dependencyResults.some(Boolean);
 
-      const result = await ensureWorkspacePackageBuilt(resolvedPackageDir, {
-        monorepoRoot,
-        quiet,
-        env,
-        force: forced.has(packageName) || dependencyChanged,
-        timeoutMs,
-        onPackageBuildStart,
-        onPackageBuildDone,
-        workspaceBuildBoundary,
-        admitPriorOutputsImmediately,
-        publicationMode,
-      });
+      const result = await schedulePackageBuild(async () => (
+        await ensureWorkspacePackageBuilt(resolvedPackageDir, {
+          monorepoRoot,
+          quiet,
+          env,
+          force: forced.has(packageName) || dependencyChanged,
+          timeoutMs,
+          onPackageBuildStart,
+          onPackageBuildDone,
+          workspaceBuildBoundary,
+          admitPriorOutputsImmediately,
+          publicationMode,
+        })
+      ));
       if (result.built && packageName) built.push(packageName);
       if ((dependencyChanged || result.built) && packageName) changedClosures.add(packageName);
       return dependencyChanged || result.built;
@@ -754,12 +818,12 @@ async function ensureWorkspacePackageNamesBuilt(monorepoRoot, packageNames, {
     return buildPromise;
   };
 
-  for (const packageName of packageNames ?? []) {
+  await Promise.all((packageNames ?? []).map(async (packageName) => {
     const packageDir = packageDirsByName.get(packageName);
     if (packageDir) await buildWorkspaceClosure(packageDir);
-  }
+  }));
 
-  return built;
+  return built.sort((left, right) => left.localeCompare(right));
 }
 
 export async function ensureWorkspacePackagesBuiltByName(monorepoPath, packageNames, {
@@ -773,6 +837,7 @@ export async function ensureWorkspacePackagesBuiltByName(monorepoPath, packageNa
   workspaceBuildBoundary = defaultWorkspaceBuildBoundary,
   admitPriorOutputsImmediately = false,
   publicationMode = 'live',
+  maxConcurrentBuilds = DEFAULT_MAX_CONCURRENT_WORKSPACE_BUILDS,
 } = {}) {
   const monorepoRoot = coerceHappyMonorepoRootFromPath(monorepoPath);
   if (!monorepoRoot) return { ok: true, built: [], skipped: ['not-monorepo'] };
@@ -794,6 +859,7 @@ export async function ensureWorkspacePackagesBuiltByName(monorepoPath, packageNa
     workspaceBuildBoundary,
     admitPriorOutputsImmediately,
     publicationMode: resolvedPublicationMode,
+    maxConcurrentBuilds,
   });
   return { ok: true, built, skipped: [] };
 }
@@ -804,6 +870,7 @@ export async function ensureWorkspacePackagesBuiltForComponent(componentDir, {
   workspaceBuildBoundary = defaultWorkspaceBuildBoundary,
   admitPriorOutputsImmediately = false,
   publicationMode = 'live',
+  maxConcurrentBuilds = DEFAULT_MAX_CONCURRENT_WORKSPACE_BUILDS,
 } = {}) {
   const monorepoRoot = coerceHappyMonorepoRootFromPath(componentDir);
   if (!monorepoRoot) return { ok: true, built: [], skipped: ['not-monorepo'] };
@@ -831,6 +898,7 @@ export async function ensureWorkspacePackagesBuiltForComponent(componentDir, {
     workspaceBuildBoundary,
     admitPriorOutputsImmediately,
     publicationMode: resolvedPublicationMode,
+    maxConcurrentBuilds,
   });
   return { ok: true, built, skipped: [] };
 }

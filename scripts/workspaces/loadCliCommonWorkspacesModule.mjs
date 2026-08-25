@@ -15,12 +15,46 @@ import {
 } from './ensureWorkspacePackagesBuilt.mjs';
 
 const loaderRunId = `${process.pid}-${randomUUID()}`;
-const WORKSPACES_GRAPH_HELPER_RELATIVE_PATH = 'workspaceRuntimeDependencies.mjs';
 const WORKSPACES_GRAPH_ENTRY_RELATIVE_PATH = 'dist/workspaces/index.js';
 const WORKSPACES_GRAPH_SOURCE_MAP_RELATIVE_PATH = 'dist/workspaces/index.js.map';
+// `dist/workspaces/index.js` reaches its root-level siblings as `../../<name>.mjs`. tsc emits the
+// specifier verbatim, so the entry's own bytes are the authority on which helpers the snapshot must
+// carry. Deriving them beats naming them here: a hand-maintained list silently omits the next helper
+// someone adds, which is exactly how this defect family recurs.
+const ROOT_HELPER_SPECIFIER_PATTERN =
+  /(?:from|import)\s*\(?\s*['"]\.\.\/\.\.\/([A-Za-z0-9._-]+\.[cm]js)['"]/gu;
 
 function readFileIfPresent(path) {
   return existsSync(path) ? readFileSync(path) : null;
+}
+
+function findGraphEntryRootHelperRelativePaths(entryContents) {
+  const specifiers = new Set();
+  for (const match of String(entryContents).matchAll(ROOT_HELPER_SPECIFIER_PATTERN)) {
+    specifiers.add(match[1]);
+  }
+  // Sorted by code unit: the staged order feeds a cross-machine content address.
+  return [...specifiers].sort((left, right) => (left === right ? 0 : (left < right ? -1 : 1)));
+}
+
+/**
+ * A helper the entry imports is a required input; only the source map is optional. Skipping one that
+ * read as absent — a workspace install can briefly unlink it — stages a snapshot that is wrong but
+ * complete-looking, then defers the honest failure into `Cannot find module <temp snapshot path>`,
+ * which nobody traces back here. Refuse now, naming the input, before anything is written or
+ * content-addressed.
+ */
+function assertGraphEntryRootHelpersReadable(packageDir, rootHelperFiles) {
+  const unreadable = rootHelperFiles
+    .filter(([, contents]) => contents === null)
+    .map(([relativePath]) => relativePath);
+  if (unreadable.length === 0) return;
+  throw new Error(
+    'cli-common workspaces loader cannot stage its graph: '
+    + `${unreadable.length === 1 ? 'a required input' : 'required inputs'} imported by `
+    + `${WORKSPACES_GRAPH_ENTRY_RELATIVE_PATH} could not be read from ${packageDir}: `
+    + `${unreadable.join(', ')}. Re-run once the workspace install has settled.`,
+  );
 }
 
 function createWorkspacesGraphFingerprint(files) {
@@ -43,16 +77,19 @@ function createWorkspacesGraphFingerprint(files) {
 async function importCliCommonWorkspacesGraph(
   repoRoot,
   packageDir,
-  packageJsonPath,
+  packageJsonContents,
   modulePath,
 ) {
+  const entryContents = readFileSync(modulePath);
+  const rootHelperFiles = findGraphEntryRootHelperRelativePaths(entryContents).map(
+    (relativePath) => [relativePath, readFileIfPresent(resolve(packageDir, relativePath))],
+  );
+  assertGraphEntryRootHelpersReadable(packageDir, rootHelperFiles);
+
   const graphFiles = [
-    ['package.json', readFileIfPresent(packageJsonPath)],
-    [
-      WORKSPACES_GRAPH_HELPER_RELATIVE_PATH,
-      readFileIfPresent(resolve(packageDir, WORKSPACES_GRAPH_HELPER_RELATIVE_PATH)),
-    ],
-    [WORKSPACES_GRAPH_ENTRY_RELATIVE_PATH, readFileSync(modulePath)],
+    ['package.json', packageJsonContents],
+    ...rootHelperFiles,
+    [WORKSPACES_GRAPH_ENTRY_RELATIVE_PATH, entryContents],
     [
       WORKSPACES_GRAPH_SOURCE_MAP_RELATIVE_PATH,
       readFileIfPresent(`${modulePath}.map`),
@@ -95,8 +132,11 @@ export async function loadCliCommonWorkspacesModule(
   { force = false, includeDevDependencies = false, publicationMode = '', quiet = false } = {},
 ) {
   const packageJsonPath = resolve(repoRoot, 'packages', 'cli-common', 'package.json');
-  if (existsSync(packageJsonPath)) {
-    JSON.parse(String(readFileSync(packageJsonPath, 'utf8')));
+  // Read once and stage those exact bytes. A second read at staging time could disagree with the
+  // one that was validated here, which is the same transient-read hazard guarded below.
+  const packageJsonContents = readFileIfPresent(packageJsonPath);
+  if (packageJsonContents !== null) {
+    JSON.parse(String(packageJsonContents));
   }
 
   const modulePath = resolve(repoRoot, 'packages', 'cli-common', 'dist', 'workspaces', 'index.js');
@@ -115,7 +155,7 @@ export async function loadCliCommonWorkspacesModule(
   return await importCliCommonWorkspacesGraph(
     repoRoot,
     resolve(repoRoot, 'packages', 'cli-common'),
-    packageJsonPath,
+    packageJsonContents,
     modulePath,
   );
 }

@@ -2,9 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 import { buildTypeScriptPackageDist } from './buildTypeScriptPackageDist.mjs';
 
@@ -82,6 +82,19 @@ async function hashFixtureDist(distDir) {
   return hash.digest('hex');
 }
 
+function isPathInside(parentPath, candidatePath) {
+  const relation = relative(parentPath, candidatePath);
+  return relation === '' || (
+    relation !== '..'
+    && !relation.startsWith(`..${sep}`)
+    && !isAbsolute(relation)
+  );
+}
+
+function resolveMapSourcePath(mapPath, sourceRoot, source) {
+  return resolve(dirname(mapPath), typeof sourceRoot === 'string' ? sourceRoot : '', source);
+}
+
 test('buildTypeScriptPackageDist preserves previous dist when TypeScript compilation fails', async (t) => {
   const packageDir = await createPackageFixture(t, 'build-ts-package-fail');
   await writeFile(join(packageDir, 'src', 'index.ts'), 'export const built: string = 1;\n', 'utf-8');
@@ -99,6 +112,204 @@ test('buildTypeScriptPackageDist preserves previous dist when TypeScript compila
   );
 
   assert.equal(await readFile(join(packageDir, 'dist', 'index.js'), 'utf-8'), 'export const stable = true;\n');
+});
+
+test('buildTypeScriptPackageDist promotes portable source maps for packed consumers', async (t) => {
+  const packageDir = await createPackageFixture(t, 'build-ts-package-source-maps');
+  const tsconfigPath = join(packageDir, 'tsconfig.json');
+  const tsconfig = JSON.parse(await readFile(tsconfigPath, 'utf-8'));
+  await writeJson(tsconfigPath, {
+    ...tsconfig,
+    compilerOptions: {
+      ...tsconfig.compilerOptions,
+      sourceMap: true,
+      declarationMap: true,
+    },
+  });
+  await writeFile(join(packageDir, 'src', 'index.ts'), [
+    "export { greeting } from './nested/greeting.js';",
+    "export type { Greeting } from './nested/greeting.js';",
+    '',
+  ].join('\n'), 'utf-8');
+  await mkdir(join(packageDir, 'src', 'nested'), { recursive: true });
+  await writeFile(join(packageDir, 'src', 'nested', 'greeting.ts'), [
+    "export const greeting = 'hello';",
+    'export type Greeting = typeof greeting;',
+    '',
+  ].join('\n'), 'utf-8');
+
+  await buildTypeScriptPackageDist({
+    packageDir,
+    args: ['-p', 'tsconfig.json'],
+    stdio: 'ignore',
+  });
+  const initialDistStat = statSync(join(packageDir, 'dist'));
+  await buildTypeScriptPackageDist({
+    packageDir,
+    args: ['-p', 'tsconfig.json'],
+    stdio: 'ignore',
+  });
+  assert.equal(
+    statSync(join(packageDir, 'dist')).ino,
+    initialDistStat.ino,
+    'identical normalized maps must not replace the last-green dist tree',
+  );
+
+  const packedPackageDir = await mkdtemp(join(tmpdir(), 'happier-packed-source-maps-'));
+  t.after(async () => {
+    await rm(packedPackageDir, { recursive: true, force: true });
+  });
+  await cp(join(packageDir, 'dist'), join(packedPackageDir, 'dist'), { recursive: true });
+
+  for (const relativeMapPath of [
+    'index.js.map',
+    'index.d.ts.map',
+    'nested/greeting.js.map',
+    'nested/greeting.d.ts.map',
+  ]) {
+    const promotedMapPath = join(packageDir, 'dist', relativeMapPath);
+    const packedMapPath = join(packedPackageDir, 'dist', relativeMapPath);
+    const sourceMap = JSON.parse(await readFile(promotedMapPath, 'utf-8'));
+    const packedSourceMap = JSON.parse(await readFile(packedMapPath, 'utf-8'));
+    assert.ok(Array.isArray(sourceMap.sources) && sourceMap.sources.length > 0, relativeMapPath);
+    assert.deepEqual(packedSourceMap, sourceMap, 'promotion must produce portable map bytes');
+
+    for (const [index, source] of sourceMap.sources.entries()) {
+      const promotedSourcePath = resolveMapSourcePath(promotedMapPath, sourceMap.sourceRoot, source);
+      assert.equal(
+        isPathInside(packageDir, promotedSourcePath) && existsSync(promotedSourcePath),
+        true,
+        `${relativeMapPath} source must be relative to the final package, not compiler staging`,
+      );
+      assert.equal(
+        source,
+        relative(dirname(promotedMapPath), promotedSourcePath).replaceAll('\\', '/'),
+        `${relativeMapPath} source must not retain transient path segments`,
+      );
+
+      const packedSourcePath = resolveMapSourcePath(packedMapPath, sourceMap.sourceRoot, source);
+      const expectedSourceContents = await readFile(promotedSourcePath, 'utf-8');
+      const sourcesContent = Array.isArray(sourceMap.sourcesContent)
+        ? sourceMap.sourcesContent[index]
+        : undefined;
+      const packedSourceResolves = isPathInside(packedPackageDir, packedSourcePath)
+        && existsSync(packedSourcePath);
+      assert.equal(
+        packedSourceResolves || sourcesContent === expectedSourceContents,
+        true,
+        `${relativeMapPath} source ${source} must resolve in a packed package or retain its source text`,
+      );
+    }
+  }
+});
+
+test('buildTypeScriptPackageDist rejects escaping source maps without replacing last-green dist', async (t) => {
+  const packageDir = await createPackageFixture(t, 'build-ts-package-source-map-boundary');
+  const sourcePath = join(packageDir, 'src', 'index.ts');
+  await writeFile(sourcePath, 'export const built = true;\n', 'utf-8');
+
+  const outsideDir = await mkdtemp(join(tmpdir(), 'happier-source-map-outside-'));
+  t.after(async () => {
+    await rm(outsideDir, { recursive: true, force: true });
+  });
+  const outsideSourcePath = join(outsideDir, 'outside.ts');
+  await writeFile(outsideSourcePath, 'export const outside = true;\n', 'utf-8');
+  const linkedOutsideDir = join(packageDir, 'src', 'linked-outside');
+  await symlink(
+    outsideDir,
+    linkedOutsideDir,
+    process.platform === 'win32' ? 'junction' : 'dir',
+  );
+
+  let sourceMapSource = (compilerOutputDir) => relative(compilerOutputDir, sourcePath);
+  const runFakeCompiler = (_command, args) => {
+    const compilerOutputDir = args[args.indexOf('--outDir') + 1];
+    mkdirSync(compilerOutputDir, { recursive: true });
+    writeFileSync(
+      join(compilerOutputDir, 'index.js'),
+      'export const built = true;\n//# sourceMappingURL=index.js.map\n',
+      'utf-8',
+    );
+    writeFileSync(
+      join(compilerOutputDir, 'index.d.ts'),
+      'export declare const built: boolean;\n//# sourceMappingURL=index.d.ts.map\n',
+      'utf-8',
+    );
+    writeFileSync(
+      join(compilerOutputDir, 'index.js.map'),
+      JSON.stringify({ version: 3, file: 'index.js', sources: [sourceMapSource(compilerOutputDir)], names: [], mappings: '' }),
+      'utf-8',
+    );
+    writeFileSync(
+      join(compilerOutputDir, 'index.d.ts.map'),
+      JSON.stringify({ version: 3, file: 'index.d.ts', sources: [sourceMapSource(compilerOutputDir)], names: [], mappings: '' }),
+      'utf-8',
+    );
+    return { status: 0 };
+  };
+
+  await buildTypeScriptPackageDist({
+    packageDir,
+    args: ['-p', 'tsconfig.json'],
+    stdio: 'ignore',
+    resolveTypeScriptCliInvocationImpl: () => ({ command: 'tsc', argsPrefix: [] }),
+    runCommandImpl: runFakeCompiler,
+  });
+
+  const promotedJs = await readFile(join(packageDir, 'dist', 'index.js'), 'utf-8');
+  const promotedDts = await readFile(join(packageDir, 'dist', 'index.d.ts'), 'utf-8');
+  const promotedJsMap = await readFile(join(packageDir, 'dist', 'index.js.map'), 'utf-8');
+  const promotedDtsMap = await readFile(join(packageDir, 'dist', 'index.d.ts.map'), 'utf-8');
+  assert.match(promotedJs, /sourceMappingURL=index\.js\.map/);
+  assert.match(promotedDts, /sourceMappingURL=index\.d\.ts\.map/);
+  assert.equal(JSON.parse(promotedJsMap).file, 'index.js');
+  assert.equal(JSON.parse(promotedDtsMap).file, 'index.d.ts');
+  assert.deepEqual(JSON.parse(promotedJsMap).sources, ['../src/index.ts']);
+  assert.deepEqual(JSON.parse(promotedDtsMap).sources, ['../src/index.ts']);
+
+  const lastGreenDist = {
+    js: promotedJs,
+    dts: promotedDts,
+    jsMap: promotedJsMap,
+    dtsMap: promotedDtsMap,
+  };
+  const escapingSources = [
+    {
+      label: 'lexical',
+      source: (compilerOutputDir) => relative(compilerOutputDir, outsideSourcePath),
+    },
+    {
+      label: 'absolute',
+      source: () => outsideSourcePath,
+    },
+    {
+      label: 'in-package symlink',
+      source: (compilerOutputDir) => relative(
+        compilerOutputDir,
+        join(linkedOutsideDir, 'outside.ts'),
+      ),
+    },
+  ];
+
+  for (const escapingSource of escapingSources) {
+    sourceMapSource = escapingSource.source;
+    await assert.rejects(
+      () => buildTypeScriptPackageDist({
+        packageDir,
+        args: ['-p', 'tsconfig.json'],
+        stdio: 'ignore',
+        resolveTypeScriptCliInvocationImpl: () => ({ command: 'tsc', argsPrefix: [] }),
+        runCommandImpl: runFakeCompiler,
+      }),
+      /TypeScript emitted a source map that escapes its package/,
+      escapingSource.label,
+    );
+
+    assert.equal(await readFile(join(packageDir, 'dist', 'index.js'), 'utf-8'), lastGreenDist.js);
+    assert.equal(await readFile(join(packageDir, 'dist', 'index.d.ts'), 'utf-8'), lastGreenDist.dts);
+    assert.equal(await readFile(join(packageDir, 'dist', 'index.js.map'), 'utf-8'), lastGreenDist.jsMap);
+    assert.equal(await readFile(join(packageDir, 'dist', 'index.d.ts.map'), 'utf-8'), lastGreenDist.dtsMap);
+  }
 });
 
 test('buildTypeScriptPackageDist composes an explicit staged UI producer before validating wildcard exports', async (t) => {

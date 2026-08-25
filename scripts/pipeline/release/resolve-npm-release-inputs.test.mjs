@@ -25,6 +25,32 @@ test('resolveNpmReleaseInputs gives preview releases their sole permitted source
   );
 });
 
+test('resolveNpmReleaseInputs admits a Channels-protocol-only publication request', () => {
+    // The Channels protocol is a publication target in its own right: an
+    // operator can select it without also publishing the CLI or an SDK, and
+    // the at-least-one-target contract must count it.
+    assert.deepEqual(
+        resolveNpmReleaseInputs({
+            channel: 'preview',
+            npmTag: 'next',
+            sourceRef: 'auto',
+            authorizedSha: 'd'.repeat(40),
+            publishCli: false,
+            publishStack: false,
+            publishServer: false,
+            publishPluginSdk: false,
+            publishSdk: false,
+            publishChannelsProtocol: true,
+        }),
+        {
+            channel: 'preview',
+            npmTag: 'next',
+            sourceRef: 'preview',
+            authorizedSha: 'd'.repeat(40),
+        },
+    );
+});
+
 test('resolveNpmReleaseInputs rejects a mismatched tag, source, or empty publication request', () => {
   const valid = {
     channel: 'production',

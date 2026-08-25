@@ -272,7 +272,7 @@ function readCheckedOutSourceSha(repoRoot) {
 }
 
 /**
- * @param {'cli' | 'stack' | 'server' | 'plugin_sdk' | 'sdk'} packageKey
+ * @param {'cli' | 'stack' | 'server' | 'plugin_sdk' | 'sdk' | 'channels_protocol'} packageKey
  */
 function rollingProductIdForPackage(packageKey) {
   if (packageKey === 'stack') return 'hstack';
@@ -330,6 +330,25 @@ function publicSdkPublicationConfig(packageRelDir, version, peers) {
       // workspace dependency links into the physical bundled artifact tree.
       // Other public packages retain their prepare-only candidate lifecycle.
       apiGovernance: { profileId: 'sdk', candidatePreparation: 'prepack' },
+    };
+  }
+  if (packageRelDir === 'packages/channels-protocol') {
+    // The Channels protocol publishes hand-authored schemas, not a generated
+    // API surface, so it has no api-governance profile. The required files are
+    // its three declared public entrypoints, which is what an external Channels
+    // provider actually resolves.
+    return {
+      expectedPackageName: '@happier-dev/channels-protocol',
+      requiredFiles: [
+        'README.md',
+        'dist/index.js',
+        'dist/index.d.ts',
+        'dist/v1/index.js',
+        'dist/v1/index.d.ts',
+        'dist/testing/v1/index.js',
+        'dist/testing/v1/index.d.ts',
+      ],
+      expectedPeerDependencies: peers,
     };
   }
   fail(`Unknown public SDK package directory: ${packageRelDir}`);
@@ -404,6 +423,7 @@ async function main() {
       'publish-server': { type: 'string', default: 'false' },
       'publish-plugin-sdk': { type: 'string', default: 'false' },
       'publish-sdk': { type: 'string', default: 'false' },
+      'publish-channels-protocol': { type: 'string', default: 'false' },
       'server-runner-dir': { type: 'string', default: 'packages/relay-server' },
       'run-tests': { type: 'string', default: 'auto' },
       mode: { type: 'string', default: 'pack+publish' },
@@ -412,6 +432,7 @@ async function main() {
       'server-version': { type: 'string', default: '' },
       'plugin-sdk-version': { type: 'string', default: '' },
       'sdk-version': { type: 'string', default: '' },
+      'channels-protocol-version': { type: 'string', default: '' },
       'authorized-sha': { type: 'string', default: '' },
       'dry-run': { type: 'boolean', default: false },
     },
@@ -433,6 +454,7 @@ async function main() {
   const publishServer = parseBool(values['publish-server'], '--publish-server');
   const publishPluginSdk = parseBool(values['publish-plugin-sdk'], '--publish-plugin-sdk');
   const publishSdk = parseBool(values['publish-sdk'], '--publish-sdk');
+  const publishChannelsProtocol = parseBool(values['publish-channels-protocol'], '--publish-channels-protocol');
   const runnerDir = String(values['server-runner-dir'] ?? '').trim() || 'packages/relay-server';
   const runTests = resolveAutoBool(values['run-tests'], '--run-tests', process.env.GITHUB_ACTIONS === 'true');
   const mode = String(values.mode ?? '').trim() || 'pack+publish';
@@ -443,6 +465,7 @@ async function main() {
     server: String(values['server-version'] ?? '').trim(),
     plugin_sdk: String(values['plugin-sdk-version'] ?? '').trim(),
     sdk: String(values['sdk-version'] ?? '').trim(),
+    channels_protocol: String(values['channels-protocol-version'] ?? '').trim(),
   };
   const authorizedSha = String(values['authorized-sha'] ?? '').trim();
 
@@ -454,6 +477,7 @@ async function main() {
   const publicSdkPackageNames = resolvePublicNpmPackageNames({
     pluginSdk: publishPluginSdk,
     sdk: publishSdk,
+    channelsProtocol: publishChannelsProtocol,
   });
   if (authorizedSha || (mode === 'pack+publish' && !dryRun)) {
     admitNpmPublication({
@@ -513,6 +537,7 @@ async function main() {
     });
   }
 
+  /** @type {Array<{ key: 'plugin_sdk' | 'plugin_ui' | 'sdk' | 'channels_protocol'; packageRelDir: string; outDir: string; version: string; publication: Record<string, unknown> }>} */
   const publicSdkPackages = [];
   if (publishPluginSdk) {
     const sourceVersion = readPluginSdkPairVersion(repoRoot);
@@ -570,6 +595,31 @@ async function main() {
     });
   }
 
+  if (publishChannelsProtocol) {
+    const packageRelDir = 'packages/channels-protocol';
+    const sourceVersion = readPackageVersion(repoRoot, packageRelDir);
+    const version = channelId === 'stable'
+      ? sourceVersion
+      : (
+          await resolveRollingPublishVersion({
+            repoRoot,
+            productId: rollingProductIdForPackage('channels_protocol'),
+            channel: channelId,
+            baseVersion: normalizePublicSdkPreviewBase(sourceVersion),
+            explicitVersion: explicitVersions.channels_protocol,
+            publishSurface: 'npm',
+            dryRun,
+            env: process.env,
+          })
+        ).version;
+    publicSdkPackages.push({
+      key: 'channels_protocol',
+      packageRelDir,
+      outDir: 'dist/release-assets/channels-protocol',
+      version,
+      publication: publicSdkPublicationConfig(packageRelDir, version, readExpectedPeerDependencies(repoRoot, packageRelDir)),
+    });
+  }
 
   if (packages.length === 0 && publicSdkPackages.length === 0) {
     fail('At least one npm publication target must be true');
@@ -679,7 +729,14 @@ async function main() {
         authorizedSha,
       }, opts);
     }
-
+    if (mode === 'pack+publish' && publishChannelsProtocol) {
+      // The Channels protocol has its own consumers and cadence: it publishes
+      // through the one generic tarball publisher, never the lockstep pair.
+      publishTarball(repoRoot, publishTarget.channel, publicTarballs.channels_protocol, {
+        tag: publishTarget.tag,
+        authorizedSha,
+      }, opts);
+    }
   } finally {
     for (const restoreManifest of restorePackageManifests.reverse()) {
       restoreManifest();

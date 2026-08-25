@@ -30,6 +30,15 @@ on:
       sdk_integrity:
         description: "Published @happier-dev/sdk integrity"
         value: ${{ jobs.publish-sdk.outputs.sdk_integrity }}
+      channels_protocol_result:
+        description: "Verified publish result for @happier-dev/channels-protocol"
+        value: ${{ jobs.publish-channels-protocol.outputs.channels_protocol_result }}
+      channels_protocol_version:
+        description: "Published @happier-dev/channels-protocol version"
+        value: ${{ jobs.publish-channels-protocol.outputs.channels_protocol_version }}
+      channels_protocol_integrity:
+        description: "Published @happier-dev/channels-protocol integrity"
+        value: ${{ jobs.publish-channels-protocol.outputs.channels_protocol_integrity }}
     inputs:
       channel:
         description: "Target — Release channel"
@@ -76,6 +85,11 @@ on:
         type: boolean
       publish_sdk:
         description: "Publish (SDK) — Publish @happier-dev/sdk to npm"
+        required: false
+        default: false
+        type: boolean
+      publish_channels_protocol:
+        description: "Publish (Channels protocol) — Publish @happier-dev/channels-protocol to npm"
         required: false
         default: false
         type: boolean
@@ -154,6 +168,7 @@ jobs:
       server_version: ${{ steps.meta.outputs.server_version }}
       plugin_sdk_version: ${{ steps.meta.outputs.plugin_sdk_version }}
       sdk_version: ${{ steps.meta.outputs.sdk_version }}
+      channels_protocol_version: ${{ steps.meta.outputs.channels_protocol_version }}
     steps:
       - name: Resolve release inputs
         id: release_inputs
@@ -167,6 +182,7 @@ jobs:
           INPUT_PUBLISH_SERVER: ${{ inputs.publish_server }}
           INPUT_PUBLISH_PLUGIN_SDK: ${{ inputs.publish_plugin_sdk }}
           INPUT_PUBLISH_SDK: ${{ inputs.publish_sdk }}
+          INPUT_PUBLISH_CHANNELS_PROTOCOL: ${{ inputs.publish_channels_protocol }}
         run: |
           set -euo pipefail
           node scripts/pipeline/release/resolve-npm-release-inputs.mjs \
@@ -179,6 +195,7 @@ jobs:
             --publish-server "$INPUT_PUBLISH_SERVER" \
             --publish-plugin-sdk "$INPUT_PUBLISH_PLUGIN_SDK" \
             --publish-sdk "$INPUT_PUBLISH_SDK" \
+            --publish-channels-protocol "$INPUT_PUBLISH_CHANNELS_PROTOCOL" \
             --github-output "$GITHUB_OUTPUT"
 
       - name: Checkout source ref
@@ -218,6 +235,14 @@ jobs:
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: 1.3.5
+
+      - name: Setup pinned Go toolchain and module cache
+        if: inputs.publish_cli
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: packages/plugins/cliproxyapi/managed-runtime/go.mod
+          cache: true
+          cache-dependency-path: packages/plugins/cliproxyapi/managed-runtime/go.sum
 
       - name: Install dependencies
         env:
@@ -278,6 +303,10 @@ jobs:
         if: inputs.publish_sdk && inputs.run_tests
         run: yarn --cwd packages/sdk test
 
+      - name: Run public Channels protocol package tests
+        if: inputs.publish_channels_protocol && inputs.run_tests
+        run: yarn --cwd packages/channels-protocol test
+
       - name: Resolve release metadata
         id: meta
         env:
@@ -288,6 +317,7 @@ jobs:
           INPUT_PUBLISH_SERVER: ${{ inputs.publish_server }}
           INPUT_PUBLISH_PLUGIN_SDK: ${{ inputs.publish_plugin_sdk }}
           INPUT_PUBLISH_SDK: ${{ inputs.publish_sdk }}
+          INPUT_PUBLISH_CHANNELS_PROTOCOL: ${{ inputs.publish_channels_protocol }}
           RESOLVED_SOURCE_REF: ${{ steps.release_inputs.outputs.source_ref }}
           SERVER_RUNNER_DIR: ${{ steps.server_runner.outputs.dir }}
         run: |
@@ -301,11 +331,21 @@ jobs:
             --publish-server "$INPUT_PUBLISH_SERVER" \
             --publish-plugin-sdk "$INPUT_PUBLISH_PLUGIN_SDK" \
             --publish-sdk "$INPUT_PUBLISH_SDK" \
+            --publish-channels-protocol "$INPUT_PUBLISH_CHANNELS_PROTOCOL" \
             --server-runner-dir "$SERVER_RUNNER_DIR" \
             --github-output "$GITHUB_OUTPUT"
 
+      # The npm CLI tarball bundles the CLIProxyAPI plugin, whose managed Provider
+      # launches a packaged runtime binary from `tools/unpacked`. Stage that
+      # wrapper for every supported npm platform through the one existing
+      # component-artifact build owner before packing; `packTarball` fails closed
+      # if any platform archive is missing.
+      - name: Stage managed CLIProxyAPI runtime archives (cli)
+        if: inputs.publish_cli
+        run: node apps/cli/scripts/stageManagedRuntimeArchives.mjs
+
       - name: npm pack (pipeline)
-        if: inputs.publish_cli || inputs.publish_stack || inputs.publish_server || inputs.publish_plugin_sdk || inputs.publish_sdk
+        if: inputs.publish_cli || inputs.publish_stack || inputs.publish_server || inputs.publish_plugin_sdk || inputs.publish_sdk || inputs.publish_channels_protocol
         env:
           RELEASE_CHANNEL: ${{ inputs.channel }}
           PUBLISH_CLI: ${{ inputs.publish_cli }}
@@ -313,11 +353,13 @@ jobs:
           PUBLISH_SERVER: ${{ inputs.publish_server }}
           PUBLISH_PLUGIN_SDK: ${{ inputs.publish_plugin_sdk }}
           PUBLISH_SDK: ${{ inputs.publish_sdk }}
+          PUBLISH_CHANNELS_PROTOCOL: ${{ inputs.publish_channels_protocol }}
           CLI_VERSION: ${{ steps.meta.outputs.cli_version }}
           STACK_VERSION: ${{ steps.meta.outputs.stack_version }}
           SERVER_VERSION: ${{ steps.meta.outputs.server_version }}
           PLUGIN_SDK_VERSION: ${{ steps.meta.outputs.plugin_sdk_version }}
           SDK_VERSION: ${{ steps.meta.outputs.sdk_version }}
+          CHANNELS_PROTOCOL_VERSION: ${{ steps.meta.outputs.channels_protocol_version }}
           RUN_TESTS: ${{ inputs.run_tests }}
           SERVER_RUNNER_DIR: ${{ steps.server_runner.outputs.dir }}
           AUTHORIZED_SHA: ${{ steps.release_inputs.outputs.authorized_sha }}
@@ -330,12 +372,14 @@ jobs:
             --publish-server "${PUBLISH_SERVER}" \
             --publish-plugin-sdk "${PUBLISH_PLUGIN_SDK}" \
             --publish-sdk "${PUBLISH_SDK}" \
+            --publish-channels-protocol "${PUBLISH_CHANNELS_PROTOCOL}" \
             --server-runner-dir "${SERVER_RUNNER_DIR}" \
             --cli-version "${CLI_VERSION}" \
             --stack-version "${STACK_VERSION}" \
             --server-version "${SERVER_VERSION}" \
             --plugin-sdk-version "${PLUGIN_SDK_VERSION}" \
             --sdk-version "${SDK_VERSION}" \
+            --channels-protocol-version "${CHANNELS_PROTOCOL_VERSION}" \
             --run-tests "${RUN_TESTS}" \
             --authorized-sha "${AUTHORIZED_SHA}" \
             --mode pack
@@ -380,6 +424,14 @@ jobs:
           path: dist/release-assets/sdk
           if-no-files-found: error
 
+      - name: Upload npm pack artifact (Channels protocol)
+        if: inputs.publish_channels_protocol
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: npm-pack-channels-protocol-${{ steps.meta.outputs.sha }}-${{ steps.meta.outputs.channels_protocol_version }}
+          path: dist/release-assets/channels-protocol
+          if-no-files-found: error
+
       - name: Step summary
         if: always()
         env:
@@ -389,12 +441,14 @@ jobs:
           INPUT_PUBLISH_SERVER: ${{ inputs.publish_server }}
           INPUT_PUBLISH_PLUGIN_SDK: ${{ inputs.publish_plugin_sdk }}
           INPUT_PUBLISH_SDK: ${{ inputs.publish_sdk }}
+          INPUT_PUBLISH_CHANNELS_PROTOCOL: ${{ inputs.publish_channels_protocol }}
           NPM_TAG: ${{ steps.meta.outputs.npm_tag }}
           CLI_VERSION: ${{ steps.meta.outputs.cli_version }}
           STACK_VERSION: ${{ steps.meta.outputs.stack_version }}
           SERVER_VERSION: ${{ steps.meta.outputs.server_version }}
           PLUGIN_SDK_VERSION: ${{ steps.meta.outputs.plugin_sdk_version }}
           SDK_VERSION: ${{ steps.meta.outputs.sdk_version }}
+          CHANNELS_PROTOCOL_VERSION: ${{ steps.meta.outputs.channels_protocol_version }}
           SOURCE_REF: ${{ steps.meta.outputs.source_ref }}
         run: |
           npm_tag="${NPM_TAG}"
@@ -403,12 +457,14 @@ jobs:
           server_version="${SERVER_VERSION}"
           plugin_sdk_version="${PLUGIN_SDK_VERSION}"
           sdk_version="${SDK_VERSION}"
+          channels_protocol_version="${CHANNELS_PROTOCOL_VERSION}"
           [ -n "${npm_tag}" ] || npm_tag="(unavailable)"
           [ -n "${cli_version}" ] || cli_version="(unavailable)"
           [ -n "${stack_version}" ] || stack_version="(unavailable)"
           [ -n "${server_version}" ] || server_version="(unavailable)"
           [ -n "${plugin_sdk_version}" ] || plugin_sdk_version="(unavailable)"
           [ -n "${sdk_version}" ] || sdk_version="(unavailable)"
+          [ -n "${channels_protocol_version}" ] || channels_protocol_version="(unavailable)"
 
           {
             echo "### npm publish"
@@ -430,6 +486,9 @@ jobs:
             fi
             if [ "${INPUT_PUBLISH_SDK}" = "true" ]; then
               echo "- SDK: \`${sdk_version}\`"
+            fi
+            if [ "${INPUT_PUBLISH_CHANNELS_PROTOCOL}" = "true" ]; then
+              echo "- Channels protocol: \`${channels_protocol_version}\`"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -666,5 +725,53 @@ jobs:
           node scripts/pipeline/npm/publish-tarball.mjs \
             --channel "${RELEASE_CHANNEL}" \
             --tarball-dir "dist/release-assets/sdk" \
+            --authorized-sha "${AUTHORIZED_SHA}" \
+            --github-output "$GITHUB_OUTPUT"
+
+  publish-channels-protocol:
+    name: npm publish (Channels protocol)
+    if: ${{ inputs.publish_channels_protocol == true && needs.release.result == 'success' }}
+    needs: [release_actor_guard, release]
+    runs-on: ubuntu-22.04
+    environment: release-shared
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      channels_protocol_result: ${{ steps.publish.outcome == 'success' && 'success' || 'failed' }}
+      channels_protocol_version: ${{ steps.publish.outputs.version }}
+      channels_protocol_integrity: ${{ steps.publish.outputs.integrity }}
+    steps:
+      - name: Checkout trusted workflow control bytes
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Download npm pack artifact (Channels protocol)
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: npm-pack-channels-protocol-${{ needs.release.outputs.sha }}-${{ needs.release.outputs.channels_protocol_version }}
+          path: dist/release-assets/channels-protocol
+
+      - name: Setup Node (npm publish)
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.x
+          registry-url: https://registry.npmjs.org
+
+      - name: npm publish (Channels protocol tarball) (pipeline)
+        id: publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          RELEASE_CHANNEL: ${{ inputs.channel }}
+          AUTHORIZED_SHA: ${{ needs.release.outputs.sha }}
+        run: |
+          set -euo pipefail
+          node scripts/pipeline/npm/publish-tarball.mjs \
+            --channel "${RELEASE_CHANNEL}" \
+            --tarball-dir "dist/release-assets/channels-protocol" \
             --authorized-sha "${AUTHORIZED_SHA}" \
             --github-output "$GITHUB_OUTPUT"

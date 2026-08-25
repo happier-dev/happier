@@ -115,6 +115,101 @@ exit 0
   }
 });
 
+test('local release keeps its script-owned release-control corridor clean even when unrelated edits are allowed', () => {
+  const root = mkdtempSync(join(tmpdir(), 'hosted-release-control-dirty-'));
+  const bin = join(root, 'bin');
+  const log = join(root, 'commands.log');
+  mkdirSync(bin);
+  writeFileSync(log, '');
+  executable(join(bin, 'git'), `#!/bin/sh
+set -eu
+echo "git $*" >> ${JSON.stringify(log)}
+if [ "$1" = rev-parse ] && [ "$2" = --is-inside-work-tree ]; then printf 'true\\n'; exit 0; fi
+if [ "$1" = status ] && [ "$2" = --porcelain=v1 ]; then printf '%s\\n' "\${HAPPIER_TEST_GIT_STATUS:-}"; exit 0; fi
+if [ "$1" = ls-remote ] && [ "$3" = refs/heads/dev ]; then printf '${DEV_SOURCE_SHA}\\trefs/heads/dev\\n'; exit 0; fi
+if [ "$1" = fetch ]; then exit 0; fi
+if [ "$1" = cat-file ]; then exit 0; fi
+if [ "$1" = rev-parse ] && [ "$2" = FETCH_HEAD ]; then printf '${DEV_SOURCE_SHA}\\n'; exit 0; fi
+echo "unexpected git call: $*" >&2; exit 2
+`);
+
+  const releaseArgs = [
+    'scripts/pipeline/run.mjs',
+    'release',
+    '--confirm', 'release dev to preview',
+    '--repository', 'happier-dev/happier',
+    '--deploy-environment', 'preview',
+    '--deploy-targets', 'server',
+    '--source-sha', DEV_SOURCE_SHA,
+    '--operation-id', 'rel_dirty_control_01',
+    '--release-notes-id', '2026-08-09.1',
+    '--allow-dirty', 'true',
+    '--dry-run',
+    '--json',
+  ];
+  const defaultDryRunArgs = releaseArgs.filter((value, index, values) => (
+    value !== '--allow-dirty' && values[index - 1] !== '--allow-dirty'
+  ));
+
+  try {
+    const defaultControlDirty = spawnSync(process.execPath, defaultDryRunArgs, {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        PATH: `${bin}:${process.env.PATH ?? ''}`,
+        HAPPIER_TEST_GIT_STATUS: ' M scripts/pipeline/run.mjs',
+      },
+      encoding: 'utf8',
+    });
+    assert.equal(defaultControlDirty.status, 1);
+    assert.match(defaultControlDirty.stderr, /RELEASE_CONTROL_WORKTREE_DIRTY/);
+    assert.doesNotMatch(readFileSync(log, 'utf8'), /git (ls-remote|fetch) /, 'default dry-run planning must reject dirty control bytes before release-source resolution');
+
+    writeFileSync(log, '');
+    const controlDirty = spawnSync(process.execPath, releaseArgs, {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        PATH: `${bin}:${process.env.PATH ?? ''}`,
+        HAPPIER_TEST_GIT_STATUS: ' M scripts/pipeline/run.mjs',
+      },
+      encoding: 'utf8',
+    });
+    assert.equal(controlDirty.status, 1);
+    assert.match(controlDirty.stderr, /RELEASE_CONTROL_WORKTREE_DIRTY/);
+    assert.match(controlDirty.stderr, /scripts\/pipeline\/run\.mjs/);
+    assert.doesNotMatch(readFileSync(log, 'utf8'), /git (ls-remote|fetch) /, 'dirty control bytes must fail before release-source resolution');
+
+    writeFileSync(log, '');
+    const unrelatedDirty = spawnSync(process.execPath, releaseArgs, {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        PATH: `${bin}:${process.env.PATH ?? ''}`,
+        HAPPIER_TEST_GIT_STATUS: ' M packages/sdk/src/connect.ts',
+      },
+      encoding: 'utf8',
+    });
+    assert.equal(unrelatedDirty.status, 0, unrelatedDirty.stderr);
+    assert.equal(JSON.parse(unrelatedDirty.stdout).authorizedPromotionSourceSha, DEV_SOURCE_SHA);
+
+    writeFileSync(log, '');
+    const defaultUnrelatedDirty = spawnSync(process.execPath, defaultDryRunArgs, {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        PATH: `${bin}:${process.env.PATH ?? ''}`,
+        HAPPIER_TEST_GIT_STATUS: ' M packages/sdk/src/connect.ts',
+      },
+      encoding: 'utf8',
+    });
+    assert.equal(defaultUnrelatedDirty.status, 0, defaultUnrelatedDirty.stderr);
+    assert.equal(JSON.parse(defaultUnrelatedDirty.stdout).authorizedPromotionSourceSha, DEV_SOURCE_SHA);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('the local release command rejects malformed resume run identities before external access', () => {
   const root = mkdtempSync(join(tmpdir(), 'hosted-release-resume-id-'));
   const bin = join(root, 'bin');

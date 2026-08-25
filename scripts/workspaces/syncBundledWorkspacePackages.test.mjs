@@ -933,6 +933,31 @@ test('syncBundledWorkspacePackages publishes cli-common package-root helpers con
     );
     assert.equal(typeof bundledHelper.createWorkspaceChildBuildEnv, 'function');
 
+    const bundledPluginResourcesPath = resolve(bundledPackageDir, 'bundledPluginResources.mjs');
+    assert.equal(
+      existsSync(bundledPluginResourcesPath),
+      true,
+      'canonical publication must include the package-root helper imported by the pinned runner snapshot',
+    );
+    const bundledPluginResources = await import(
+      `${pathToFileURL(bundledPluginResourcesPath).href}?bundled-cli-common-plugin-resources=${Date.now()}`
+    );
+    assert.equal(
+      typeof bundledPluginResources.findUnservableBundledPluginPackageResources,
+      'function',
+    );
+
+    const bundledPinnedRunnerSnapshot = await import(
+      `${pathToFileURL(resolve(
+        bundledPackageDir,
+        'pinnedRunnerSnapshot.mjs',
+      )).href}?bundled-cli-common-pinned-runner=${Date.now()}`
+    );
+    assert.equal(
+      typeof bundledPinnedRunnerSnapshot.resolveNewestReadyPinnedRunnerSnapshot,
+      'function',
+    );
+
     const bundledComponentArtifacts = await import(
       `${pathToFileURL(resolve(
         bundledPackageDir,

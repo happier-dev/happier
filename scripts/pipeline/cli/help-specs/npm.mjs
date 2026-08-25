@@ -15,7 +15,7 @@ export const COMMAND_HELP_NPM = {
   'npm-release': {
     summary: 'Pack and publish npm packages (CLI / stack / relay-server / public SDKs).',
     usage:
-      'node scripts/pipeline/run.mjs npm-release --channel <dev|preview|production> --publish-cli <true|false> --publish-stack <true|false> --publish-server <true|false> --publish-plugin-sdk <true|false> --publish-sdk <true|false> [--authorized-sha <40-hex>] [--mode pack|pack+publish]',
+      'node scripts/pipeline/run.mjs npm-release --channel <dev|preview|production> --publish-cli <true|false> --publish-stack <true|false> --publish-server <true|false> --publish-plugin-sdk <true|false> --publish-sdk <true|false> --publish-channels-protocol <true|false> [--mode pack|pack+publish]',
     options: [
       '--channel <dev|preview|production> Required.',
       '--publish-cli <bool>              Publish apps/cli (default: false).',
@@ -23,12 +23,14 @@ export const COMMAND_HELP_NPM = {
       '--publish-server <bool>           Publish packages/relay-server (default: false).',
       '--publish-plugin-sdk <bool>       Publish the lockstep plugin-sdk/plugin-ui pair (default: false).',
       '--publish-sdk <bool>              Publish packages/sdk (default: false).',
+      '--publish-channels-protocol <bool> Publish packages/channels-protocol (default: false).',
       '--server-runner-dir <dir>         (default: packages/relay-server).',
       '--run-tests <auto|true|false>     (default: auto).',
       '--mode <pack|pack+publish>        (default: pack+publish).',
       '--authorized-sha <40-hex>         Required for a real pack+publish; use the exact SHA emitted by release admission.',
       '--plugin-sdk-version <version>    Optional exact lockstep pair version.',
       '--sdk-version <version>           Optional exact SDK version.',
+      '--channels-protocol-version <version> Optional exact Channels protocol version.',
       '--allow-dirty <bool>              true|false (default: false).',
       '--dry-run',
       '--secrets-source <auto|env|keychain>',
@@ -38,6 +40,7 @@ export const COMMAND_HELP_NPM = {
     bullets: [
       'Dev/preview publishes temporary versions (no commit) using the rolling release-ring suffix (for example X.Y.Z-dev.<sequence>).',
       'Public SDK releases use sandbox-only manifests; plugin-sdk and plugin-ui remain a single lockstep pair.',
+      'The public Channels protocol has its own consumers and cadence: it packs through the same sandbox and publishes through the generic tarball publisher, never the lockstep pair.',
       'Pack-only and dry-run work without an admission identity. Real public-SDK publication is blocked until the PEP/auth readiness owner is machine-readable.',
       'Local auth: uses NPM_TOKEN if set, otherwise falls back to your local npm login state.',
     ],
@@ -46,6 +49,7 @@ export const COMMAND_HELP_NPM = {
       'node scripts/pipeline/run.mjs npm-release --channel preview --publish-cli true --publish-stack true --authorized-sha <release-admitted-sha> --mode pack+publish',
       'node scripts/pipeline/run.mjs npm-release --channel preview --publish-server true --authorized-sha <release-admitted-sha> --mode pack+publish',
       'node scripts/pipeline/run.mjs npm-release --channel preview --publish-plugin-sdk true --publish-sdk false --mode pack',
+      'node scripts/pipeline/run.mjs npm-release --channel preview --publish-channels-protocol true --mode pack',
     ],
   },
 
@@ -83,6 +87,7 @@ export const COMMAND_HELP_NPM = {
       '--publish-server <bool>          (default: false).',
       '--publish-plugin-sdk <bool>      Compute/write the lockstep plugin-sdk/plugin-ui version (default: false).',
       '--publish-sdk <bool>             Compute/write the public SDK version (default: false).',
+      '--publish-channels-protocol <bool> Compute/write the public Channels protocol version (default: false).',
       '--server-runner-dir <dir>        (default: packages/relay-server).',
       '--write <bool>                   true|false (default: true).',
     ],

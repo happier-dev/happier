@@ -27,8 +27,16 @@ test('bootstrapExtensionPackage boots the canonical definePlugin authoring templ
   await bootstrapExtensionPackage(['codex', '--root', repoRoot]);
 
   const outputRoot = resolve(repoRoot, 'packages/plugins/codex');
-  const pkgJson = JSON.parse(readFileSync(resolve(outputRoot, 'package.json'), 'utf8')) as { name: string };
+  const pkgJson = JSON.parse(readFileSync(resolve(outputRoot, 'package.json'), 'utf8')) as {
+    name: string;
+    scripts: Record<string, string>;
+  };
   assert.equal(pkgJson.name, '@happier-dev/plugins-codex');
+  assert.equal(pkgJson.scripts['build:finite'], 'yarn -s build');
+  assert.equal(
+    pkgJson.scripts['project:finite'],
+    'node --experimental-strip-types ../../../apps/cli/scripts/build-owned/checkBundledPluginWorkspace.mjs',
+  );
 
   const source = readFileSync(resolve(outputRoot, 'src/index.ts'), 'utf8');
   assert.ok(!source.includes('__pluginId__'));

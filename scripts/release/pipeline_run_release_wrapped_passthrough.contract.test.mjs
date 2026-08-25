@@ -1,13 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
+
+function executable(path, source) {
+  writeFileSync(path, source, { encoding: 'utf8', mode: 0o755 });
+  chmodSync(path, 0o755);
+}
 
 test('run.mjs forwards unknown flags to wrapped release scripts (dry-run)', async () => {
   const out = execFileSync(
@@ -91,38 +96,106 @@ test('argument-less release-validate dry-run describes the wrapper without execu
   assert.doesNotMatch(out, /loaded secrets|Keychain|env sources/i);
 });
 
-test('release-analyze inspects source changes without loading release secrets', () => {
-  const out = execFileSync(
-    process.execPath,
-    [
-      resolve(repoRoot, 'scripts', 'pipeline', 'run.mjs'),
-      'release-analyze',
-      '--base',
-      'HEAD',
-      '--head',
-      'HEAD',
-      '--channel',
-      'preview',
-      '--profile',
-      'integrated',
-      '--has-cli-candidate',
-      'false',
-      '--has-server-candidate',
-      'false',
-      '--has-published-relay-predecessor',
-      'false',
-    ],
-    {
-      cwd: repoRoot,
-      env: { ...process.env },
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-      timeout: 30_000,
-    },
-  );
+test('release-analyze permits unrelated product dirt and inspects source changes without loading release secrets', () => {
+  const root = mkdtempSync(join(tmpdir(), 'happier-release-analyze-clean-control-'));
+  const bin = join(root, 'bin');
+  mkdirSync(bin);
+  const realGit = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+  executable(join(bin, 'git'), `#!/bin/sh
+set -eu
+if [ "$1" = status ] && [ "$2" = --porcelain=v1 ]; then printf ' M packages/sdk/src/connect.ts\\n'; exit 0; fi
+exec "$HAPPIER_TEST_REAL_GIT" "$@"
+`);
 
-  assert.equal(JSON.parse(out).kind, 'happier.release-change-analysis.v1');
-  assert.doesNotMatch(out, /loaded secrets|Keychain|env sources/i);
+  try {
+    const out = execFileSync(
+      process.execPath,
+      [
+        resolve(repoRoot, 'scripts', 'pipeline', 'run.mjs'),
+        'release-analyze',
+        '--base',
+        'HEAD',
+        '--head',
+        'HEAD',
+        '--channel',
+        'preview',
+        '--profile',
+        'integrated',
+        '--has-cli-candidate',
+        'false',
+        '--has-server-candidate',
+        'false',
+        '--has-published-relay-predecessor',
+        'false',
+      ],
+      {
+        cwd: repoRoot,
+        env: {
+          ...process.env,
+          PATH: `${bin}:${process.env.PATH ?? ''}`,
+          HAPPIER_TEST_REAL_GIT: realGit,
+        },
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+        timeout: 30_000,
+      },
+    );
+
+    assert.equal(JSON.parse(out).kind, 'happier.release-change-analysis.v1');
+    assert.doesNotMatch(out, /loaded secrets|Keychain|env sources/i);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('release-analyze rejects dirty release-control before inspecting source changes', () => {
+  const root = mkdtempSync(join(tmpdir(), 'happier-release-analyze-control-dirty-'));
+  const bin = join(root, 'bin');
+  const log = join(root, 'commands.log');
+  mkdirSync(bin);
+  writeFileSync(log, '');
+  executable(join(bin, 'git'), `#!/bin/sh
+set -eu
+if [ "$1" = rev-parse ] && [ "$2" = --is-inside-work-tree ]; then printf 'true\\n'; exit 0; fi
+if [ "$1" = status ] && [ "$2" = --porcelain=v1 ]; then printf ' M scripts/pipeline/release/analyze-release-change.mjs\\n'; exit 0; fi
+echo "unexpected git call: $*" >> ${JSON.stringify(log)}
+exit 2
+`);
+
+  try {
+    const result = spawnSync(
+      process.execPath,
+      [
+        resolve(repoRoot, 'scripts', 'pipeline', 'run.mjs'),
+        'release-analyze',
+        '--base',
+        'HEAD',
+        '--head',
+        'HEAD',
+        '--channel',
+        'preview',
+        '--profile',
+        'integrated',
+        '--has-cli-candidate',
+        'false',
+        '--has-server-candidate',
+        'false',
+        '--has-published-relay-predecessor',
+        'false',
+      ],
+      {
+        cwd: repoRoot,
+        env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ''}` },
+        encoding: 'utf8',
+      },
+    );
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /RELEASE_CONTROL_WORKTREE_DIRTY/);
+    assert.equal(readFileSync(log, 'utf8'), '', 'dirty release control must reject before source analysis invokes git');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('run.mjs forwards the prepared CLI matrix version handoff', () => {

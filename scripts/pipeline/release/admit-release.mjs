@@ -17,6 +17,7 @@ const FULL_COMMIT_SHA = /^[0-9a-f]{40}$/u;
 const PUBLIC_NPM_RELEASE_SELECTIONS = Object.freeze({
   pluginSdk: Object.freeze(['@happier-dev/plugin-sdk', '@happier-dev/plugin-ui']),
   sdk: Object.freeze(['@happier-dev/sdk']),
+  channelsProtocol: Object.freeze(['@happier-dev/channels-protocol']),
 });
 const PUBLIC_SDK_PACKAGES = new Set(Object.values(PUBLIC_NPM_RELEASE_SELECTIONS).flat());
 

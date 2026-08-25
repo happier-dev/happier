@@ -7,9 +7,16 @@ import path from 'node:path';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
+import { createRequire } from 'node:module';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
+const require = createRequire(import.meta.url);
+const {
+  getCliRuntimeAssetArchiveManifest,
+  RUNTIME_ASSET_CHECKSUM_MANIFEST_NAME,
+} = require('../../apps/cli/scripts/unpack-tools.cjs');
+const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 
 function createTarball(tmpDir, packageName = '@happier/npm-contract-fixture') {
   const packageDir = path.join(tmpDir, 'package');
@@ -24,6 +31,73 @@ function createTarball(tmpDir, packageName = '@happier/npm-contract-fixture') {
   execFileSync('tar', ['-czf', tarballPath, '-C', tmpDir, 'package']);
   const integrity = `sha512-${crypto.createHash('sha512').update(fs.readFileSync(tarballPath)).digest('base64')}`;
   return { tarballPath, integrity };
+}
+
+function createNpmPackedCliTarball(tmpDir, {
+  files,
+  omitRuntimeArchive = '',
+  includeUnpackedRuntime = false,
+} = {}) {
+  const packageDir = path.join(tmpDir, 'cli-package');
+  const tarballDir = path.join(tmpDir, 'cli-tarballs');
+  const archivesDir = path.join(packageDir, 'tools', 'archives');
+  fs.mkdirSync(archivesDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(packageDir, 'package.json'),
+    `${JSON.stringify({
+      name: '@happier-dev/cli',
+      version: '1.2.3',
+      files: files ?? ['tools/archives'],
+    })}\n`,
+    'utf8',
+  );
+  fs.writeFileSync(path.join(packageDir, 'index.js'), 'export {};\n', 'utf8');
+
+  const checksumLines = [];
+  for (const entry of getCliRuntimeAssetArchiveManifest()) {
+    if (entry.archiveName === omitRuntimeArchive) continue;
+    const bytes = `runtime-archive:${entry.archiveName}`;
+    fs.writeFileSync(path.join(archivesDir, entry.archiveName), bytes, 'utf8');
+    checksumLines.push(
+      `${crypto.createHash('sha256').update(bytes).digest('hex')}  ${entry.archiveName}`,
+    );
+  }
+  fs.writeFileSync(
+    path.join(archivesDir, RUNTIME_ASSET_CHECKSUM_MANIFEST_NAME),
+    `${checksumLines.join('\n')}\n`,
+    'utf8',
+  );
+  if (includeUnpackedRuntime) {
+    const unpackedDir = path.join(packageDir, 'tools', 'unpacked');
+    fs.mkdirSync(unpackedDir, { recursive: true });
+    fs.writeFileSync(path.join(unpackedDir, 'should-not-publish'), 'runtime', 'utf8');
+  }
+
+  fs.mkdirSync(tarballDir, { recursive: true });
+  const packed = JSON.parse(execFileSync(
+    npmCommand,
+    ['pack', '--json', '--ignore-scripts', '--pack-destination', tarballDir],
+    {
+      cwd: packageDir,
+      env: { ...process.env, NPM_CONFIG_CACHE: path.join(tmpDir, 'npm-cache') },
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 30_000,
+    },
+  ));
+  const filename = String(packed?.[0]?.filename ?? '').trim();
+  assert.ok(filename, 'npm pack must report the generated tarball filename');
+  const tarballPath = path.join(tarballDir, filename);
+  const entries = String(execFileSync('tar', ['-tzf', tarballPath], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    timeout: 30_000,
+  }))
+    .split(/\r?\n/u)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  const integrity = `sha512-${crypto.createHash('sha512').update(fs.readFileSync(tarballPath)).digest('base64')}`;
+  return { tarballPath, integrity, entries };
 }
 
 function writeNpmStub(tmpDir) {
@@ -103,8 +177,9 @@ function runNpmPublication(tmpDir, mode, initialState, {
   githubOutput = false,
   packageName = '@happier/npm-contract-fixture',
   authorizedSha = 'a'.repeat(40),
+  tarball = null,
 } = {}) {
-  const { tarballPath, integrity } = createTarball(tmpDir, packageName);
+  const { tarballPath, integrity } = tarball ?? createTarball(tmpDir, packageName);
   const statePath = path.join(tmpDir, 'state.json');
   const callsPath = path.join(tmpDir, 'npm-calls.jsonl');
   const githubOutputPath = path.join(tmpDir, 'github-output');
@@ -235,6 +310,84 @@ test('pipeline npm publish uses isolated npmrc when NPM_TOKEN is provided', asyn
 
   assert.match(out, /\[pipeline\] npm auth: using isolated npmrc/);
   assert.doesNotMatch(out, /npm-token-for-test/, 'script output must never include the npm token');
+});
+
+test('pipeline npm publication verifies all CLI managed runtime archives in npm’s effective packlist', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'happier-npm-publish-cli-packlist-'));
+  const tarball = createNpmPackedCliTarball(tmpDir, { files: ['tools/archives'] });
+  const packedEntries = new Set(tarball.entries);
+  for (const entry of getCliRuntimeAssetArchiveManifest()) {
+    assert.ok(
+      packedEntries.has(`package/tools/archives/${entry.archiveName}`),
+      `npm pack must include ${entry.archiveName}`,
+    );
+  }
+  assert.ok(
+    !tarball.entries.some((entry) => entry === 'package/tools/unpacked' || entry.startsWith('package/tools/unpacked/')),
+    'the valid CLI tarball must not contain unpacked runtime content',
+  );
+
+  const result = runNpmPublication(tmpDir, 'exact', {
+    remoteIntegrity: tarball.integrity,
+    distTags: { next: '1.2.3' },
+    integrityQueries: 0,
+  }, {
+    packageName: '@happier-dev/cli',
+    tarball,
+  });
+  assert.equal(result.error, undefined);
+  assert.equal(result.state.publishCalls ?? 0, 0, 'matching CLI integrity must not republish');
+});
+
+test('pipeline npm publication rejects a CLI tarball missing a declared platform runtime archive', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'happier-npm-publish-cli-missing-runtime-'));
+  const missing = getCliRuntimeAssetArchiveManifest()[0].archiveName;
+  const tarball = createNpmPackedCliTarball(tmpDir, {
+    files: ['tools/archives'],
+    omitRuntimeArchive: missing,
+  });
+  const result = runNpmPublication(tmpDir, 'exact', {
+    remoteIntegrity: tarball.integrity,
+    distTags: { next: '1.2.3' },
+    integrityQueries: 0,
+  }, {
+    packageName: '@happier-dev/cli',
+    tarball,
+  });
+
+  assert.notEqual(result.error, undefined);
+  assert.match(
+    `${String(result.error?.message ?? '')}\n${String(result.error?.stderr ?? '')}`,
+    new RegExp(missing.replace(/\./gu, '\\.'), 'u'),
+  );
+  assert.equal(result.state.calls ?? 0, 0, 'tarball admission must reject before npm is contacted');
+});
+
+test('pipeline npm publication rejects unpacked CLI runtime content included through a parent files pattern', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'happier-npm-publish-cli-unpacked-runtime-'));
+  const tarball = createNpmPackedCliTarball(tmpDir, {
+    files: ['tools'],
+    includeUnpackedRuntime: true,
+  });
+  assert.ok(
+    tarball.entries.includes('package/tools/unpacked/should-not-publish'),
+    'the dangerous parent files pattern must reach the npm tarball fixture',
+  );
+  const result = runNpmPublication(tmpDir, 'exact', {
+    remoteIntegrity: tarball.integrity,
+    distTags: { next: '1.2.3' },
+    integrityQueries: 0,
+  }, {
+    packageName: '@happier-dev/cli',
+    tarball,
+  });
+
+  assert.notEqual(result.error, undefined);
+  assert.match(
+    `${String(result.error?.message ?? '')}\n${String(result.error?.stderr ?? '')}`,
+    /tools\/unpacked/u,
+  );
+  assert.equal(result.state.calls ?? 0, 0, 'tarball admission must reject before npm is contacted');
 });
 
 test('pipeline npm publish skips an exact version, repairs its dist-tag, and verifies the repair', () => {

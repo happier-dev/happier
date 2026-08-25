@@ -60,25 +60,28 @@ test('release workflow resolves the public profile internally before CI and plan
   assert.equal(resolver.outputs.profile, '${{ steps.resolve.outputs.profile }}');
   assert.equal(resolver.outputs.checks_profile, '${{ steps.resolve.outputs.checks_profile }}');
   assert.equal(resolverStep?.env?.VALIDATION_PROFILE, '${{ inputs.validation_profile }}');
-  assert.match(resolverStep?.run ?? '', /profile\?\.normalRelease/);
-  assert.match(resolverStep?.run ?? '', /profile\?\.checksProfile/);
+  assert.match(
+    resolverStep?.run ?? '',
+    /node scripts\/pipeline\/release-validation\/resolve-profile\.mjs "\$VALIDATION_PROFILE"/,
+  );
   assert.doesNotMatch(resolverStep?.run ?? '', /CHECKS_PROFILE/);
 
   assert.deepEqual(parsed.jobs.ci.needs, ['resolve_validation_profile']);
   assert.equal(parsed.jobs.ci.if, "${{ needs.resolve_validation_profile.result == 'success' }}");
-  assert.equal(parsed.jobs.ci.with.run_e2e_core, "${{ needs.resolve_validation_profile.outputs.checks_profile == 'full' }}");
-  assert.equal(parsed.jobs.ci.with.run_e2e_core_slow, false);
   assert.ok(parsed.jobs.plan.needs.includes('resolve_validation_profile'));
   assert.equal(parsed.jobs.plan.outputs.validation_profile, '${{ needs.resolve_validation_profile.outputs.profile }}');
   assert.equal(parsed.jobs.plan.outputs.checks_profile, '${{ needs.resolve_validation_profile.outputs.checks_profile }}');
   assert.doesNotMatch(raw, /inputs\.checks_profile/, 'no workflow path may retain a caller-selected checks profile');
 });
 
-test('release workflow derives promote mode from confirm and uses compact defaults for advanced options', async () => {
-  const { raw } = await loadWorkflow();
+test('release workflow derives promotion inputs from confirm and uses compact defaults for advanced options', async () => {
+  const { raw, parsed } = await loadWorkflow();
+  const promoteMain = parsed.jobs.promote_main;
 
   assert.match(raw, /CONFIRM:\s*\$\{\{ inputs\.confirm \}\}/, 'confirm should cross the workflow boundary as environment data');
-  assert.match(raw, /confirm="\$CONFIRM"/, 'confirm should be read as the only promotion selector');
+  assert.match(promoteMain.with.source, /inputs\.confirm/, 'confirm should select the production source branch');
+  assert.match(promoteMain.with.mode, /inputs\.confirm/, 'confirm should select the production promotion mode');
+  assert.match(promoteMain.with.confirm, /inputs\.confirm/, 'confirm should select the promotion confirmation text');
   assert.doesNotMatch(raw, /confirm="\$\{\{ inputs\.confirm \}\}"/, 'workflow input must not be interpolated into shell source');
   assert.doesNotMatch(raw, /inputs\.promote_mode/, 'workflow should not read promote_mode input anymore');
 

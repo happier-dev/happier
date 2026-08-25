@@ -1298,6 +1298,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
         'publish-support': { type: 'string', default: 'false' },
         'publish-plugin-sdk': { type: 'string', default: 'false' },
         'publish-sdk': { type: 'string', default: 'false' },
+        'publish-channels-protocol': { type: 'string', default: 'false' },
         'server-runner-dir': { type: 'string', default: 'packages/relay-server' },
         'cli-version': { type: 'string', default: '' },
         'stack-version': { type: 'string', default: '' },
@@ -1305,6 +1306,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
         'support-version': { type: 'string', default: '' },
         'plugin-sdk-version': { type: 'string', default: '' },
         'sdk-version': { type: 'string', default: '' },
+        'channels-protocol-version': { type: 'string', default: '' },
         write: { type: 'string', default: 'true' },
       },
       allowPositionals: false,
@@ -1317,6 +1319,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
     const publishSupport = String(values['publish-support'] ?? '').trim() || 'false';
     const publishPluginSdk = String(values['publish-plugin-sdk'] ?? '').trim() || 'false';
     const publishSdk = String(values['publish-sdk'] ?? '').trim() || 'false';
+    const publishChannelsProtocol = String(values['publish-channels-protocol'] ?? '').trim() || 'false';
     const serverRunnerDir = String(values['server-runner-dir'] ?? '').trim() || 'packages/relay-server';
     const cliVersion = String(values['cli-version'] ?? '').trim();
     const stackVersion = String(values['stack-version'] ?? '').trim();
@@ -1324,6 +1327,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
     const supportVersion = String(values['support-version'] ?? '').trim();
     const pluginSdkVersion = String(values['plugin-sdk-version'] ?? '').trim();
     const sdkVersion = String(values['sdk-version'] ?? '').trim();
+    const channelsProtocolVersion = String(values['channels-protocol-version'] ?? '').trim();
     const write = String(values.write ?? '').trim() || 'true';
 
     runNpmSetPreviewVersions({
@@ -1344,6 +1348,8 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
         publishPluginSdk,
         '--publish-sdk',
         publishSdk,
+        '--publish-channels-protocol',
+        publishChannelsProtocol,
         '--server-runner-dir',
         serverRunnerDir,
         ...(cliVersion ? ['--cli-version', cliVersion] : []),
@@ -1352,6 +1358,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
         ...(supportVersion ? ['--support-version', supportVersion] : []),
         ...(pluginSdkVersion ? ['--plugin-sdk-version', pluginSdkVersion] : []),
         ...(sdkVersion ? ['--sdk-version', sdkVersion] : []),
+        ...(channelsProtocolVersion ? ['--channels-protocol-version', channelsProtocolVersion] : []),
         '--write',
         write,
       ],
@@ -1452,6 +1459,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
           'publish-server': { type: 'string', default: 'false' },
           'publish-plugin-sdk': { type: 'string', default: 'false' },
           'publish-sdk': { type: 'string', default: 'false' },
+          'publish-channels-protocol': { type: 'string', default: 'false' },
           'server-runner-dir': { type: 'string', default: 'packages/relay-server' },
           'run-tests': { type: 'string', default: 'auto' },
           mode: { type: 'string', default: 'pack+publish' },
@@ -1460,6 +1468,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
           'server-version': { type: 'string', default: '' },
           'plugin-sdk-version': { type: 'string', default: '' },
           'sdk-version': { type: 'string', default: '' },
+          'channels-protocol-version': { type: 'string', default: '' },
           'authorized-sha': { type: 'string', default: '' },
           'allow-dirty': { type: 'string', default: 'false' },
           'dry-run': { type: 'boolean', default: false },
@@ -1480,11 +1489,13 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
     const publishServer = String(values['publish-server'] ?? '').trim();
     const publishPluginSdk = String(values['publish-plugin-sdk'] ?? '').trim();
     const publishSdk = String(values['publish-sdk'] ?? '').trim();
+    const publishChannelsProtocol = String(values['publish-channels-protocol'] ?? '').trim();
     const cliVersion = String(values['cli-version'] ?? '').trim();
     const stackVersion = String(values['stack-version'] ?? '').trim();
     const serverVersion = String(values['server-version'] ?? '').trim();
     const pluginSdkVersion = String(values['plugin-sdk-version'] ?? '').trim();
     const sdkVersion = String(values['sdk-version'] ?? '').trim();
+    const channelsProtocolVersion = String(values['channels-protocol-version'] ?? '').trim();
     const authorizedSha = String(values['authorized-sha'] ?? '').trim();
     const runnerDir = String(values['server-runner-dir'] ?? '').trim();
     const runTests = String(values['run-tests'] ?? '').trim();
@@ -1509,11 +1520,13 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
       ...(publishServer ? ['--publish-server', publishServer] : []),
       ...(publishPluginSdk ? ['--publish-plugin-sdk', publishPluginSdk] : []),
       ...(publishSdk ? ['--publish-sdk', publishSdk] : []),
+      ...(publishChannelsProtocol ? ['--publish-channels-protocol', publishChannelsProtocol] : []),
       ...(cliVersion ? ['--cli-version', cliVersion] : []),
       ...(stackVersion ? ['--stack-version', stackVersion] : []),
       ...(serverVersion ? ['--server-version', serverVersion] : []),
       ...(pluginSdkVersion ? ['--plugin-sdk-version', pluginSdkVersion] : []),
       ...(sdkVersion ? ['--sdk-version', sdkVersion] : []),
+      ...(channelsProtocolVersion ? ['--channels-protocol-version', channelsProtocolVersion] : []),
       ...(authorizedSha ? ['--authorized-sha', authorizedSha] : []),
       ...(runnerDir ? ['--server-runner-dir', runnerDir] : []),
       ...(runTests ? ['--run-tests', runTests] : []),
@@ -1546,6 +1559,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
       const publicSdkPackageNames = resolvePublicNpmPackageNames({
         pluginSdk: publishPluginSdk.trim().toLowerCase() === 'true',
         sdk: publishSdk.trim().toLowerCase() === 'true',
+        channelsProtocol: publishChannelsProtocol.trim().toLowerCase() === 'true',
       });
       const checkedOutSha = authorizedSha
         ? String(execFileSync('git', ['rev-parse', 'HEAD'], {
@@ -2190,6 +2204,10 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
 
         const scriptArgs =
           subcommand === 'release-compute-deploy-plan' ? ['--deploy-environment', deployEnvironment, ...passthrough] : passthrough;
+
+        if (subcommand === 'release-analyze') {
+          assertReleaseControlWorktreeClean({ cwd: repoRoot });
+        }
 
         if (subcommand === 'release-analyze' || (subcommand === 'release-local-candidates' && dryRun)) {
           runReleaseWrappedScript({

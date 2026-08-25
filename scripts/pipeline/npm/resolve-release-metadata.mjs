@@ -19,6 +19,7 @@ const RELEASE_PACKAGE_FIELDS = Object.freeze({
   server: 'server',
   pluginSdk: 'plugin_sdk',
   sdk: 'sdk',
+  channelsProtocol: 'channels_protocol',
 });
 
 /** @param {unknown} value @param {string} name */
@@ -47,8 +48,8 @@ function validateVersion(version, productId, channel) {
  *   sourceRef: string;
  *   sha: string;
  *   npmTag: string;
- *   versions: Partial<Record<'cli' | 'stack' | 'server' | 'pluginSdk' | 'sdk', string>>;
- *   requested: Record<'cli' | 'stack' | 'server' | 'pluginSdk' | 'sdk', boolean>;
+ *   versions: Partial<Record<'cli' | 'stack' | 'server' | 'pluginSdk' | 'sdk' | 'channelsProtocol', string>>;
+ *   requested: Record<'cli' | 'stack' | 'server' | 'pluginSdk' | 'sdk' | 'channelsProtocol', boolean>;
  * }} input
  */
 export function resolveNpmReleaseMetadata(input) {
@@ -106,6 +107,9 @@ function readProductionVersions(repoRoot, requested, serverRunnerDir) {
     versions.pluginSdk = sdkVersion;
   }
   if (requested.sdk) versions.sdk = readPackageVersion(repoRoot, 'packages/sdk/package.json');
+  if (requested.channelsProtocol) {
+    versions.channelsProtocol = readPackageVersion(repoRoot, 'packages/channels-protocol/package.json');
+  }
   return versions;
 }
 
@@ -124,6 +128,8 @@ function readPreviewVersions(repoRoot, requested, serverRunnerDir) {
     String(requested.pluginSdk),
     '--publish-sdk',
     String(requested.sdk),
+    '--publish-channels-protocol',
+    String(requested.channelsProtocol),
     '--server-runner-dir',
     serverRunnerDir,
     '--write',
@@ -153,6 +159,7 @@ function main() {
       'publish-server': { type: 'string', default: 'false' },
       'publish-plugin-sdk': { type: 'string', default: 'false' },
       'publish-sdk': { type: 'string', default: 'false' },
+      'publish-channels-protocol': { type: 'string', default: 'false' },
       'server-runner-dir': { type: 'string', default: 'packages/relay-server' },
       'github-output': { type: 'string', default: '' },
     },
@@ -169,6 +176,7 @@ function main() {
     server: parseBoolean(values['publish-server'], '--publish-server'),
     pluginSdk: parseBoolean(values['publish-plugin-sdk'], '--publish-plugin-sdk'),
     sdk: parseBoolean(values['publish-sdk'], '--publish-sdk'),
+    channelsProtocol: parseBoolean(values['publish-channels-protocol'], '--publish-channels-protocol'),
   };
   const repoRoot = process.cwd();
   const serverRunnerDir = String(values['server-runner-dir'] ?? '').trim() || 'packages/relay-server';

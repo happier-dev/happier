@@ -221,4 +221,27 @@ test('UI fingerprint config defines ignorePaths for EAS-managed prebuild output 
     ignorePaths.some((p) => p.includes('react-native-unistyles') && p.includes('nitrogen/generated')),
     'Expected ignorePaths to ignore react-native-unistyles generated native code',
   );
+
+  const terminalGeneratedDestinations = [
+    'node_modules/@happier-dev/terminal-native/ios/Vendor/GhosttyKit.xcframework',
+    'node_modules/@happier-dev/terminal-native/ios/Vendor/GhosttyKit.xcframework/**/*',
+    'node_modules/@happier-dev/terminal-native/ios/Vendor/GhosttyKit.xcframework.zip',
+    'node_modules/@happier-dev/terminal-native/android/termux/vendor',
+    'node_modules/@happier-dev/terminal-native/android/termux/vendor/**/*',
+  ];
+  for (const destination of terminalGeneratedDestinations) {
+    assert.ok(ignorePaths.includes(destination), `Expected fingerprint to ignore generated terminal input destination ${destination}`);
+  }
+  assert.equal(
+    ignorePaths.some((p) => p === 'node_modules/@happier-dev/terminal-native' || p === '**/node_modules/@happier-dev/terminal-native'),
+    false,
+    'Terminal native policy, materializer, and Expo plugin source must remain fingerprinted.',
+  );
+  for (const sourcePath of [
+    'node_modules/@happier-dev/terminal-native/native-renderers.json',
+    'node_modules/@happier-dev/terminal-native/scripts/materializeNativeBuildInputs.mjs',
+    'plugins/withTerminalNativeBuildInputs.js',
+  ]) {
+    assert.equal(ignorePaths.includes(sourcePath), false, `Expected ${sourcePath} to remain fingerprinted.`);
+  }
 });

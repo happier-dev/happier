@@ -38,6 +38,10 @@ const PRODUCT_SOURCES = Object.freeze({
     githubTagPrefix: 'sdk-v',
     npmPackage: '@happier-dev/sdk',
   }),
+  channels_protocol: Object.freeze({
+    githubTagPrefix: 'channels-protocol-v',
+    npmPackage: '@happier-dev/channels-protocol',
+  }),
 });
 
 /** @param {{ npmPackage?: string; npmPackages?: string[] }} product */

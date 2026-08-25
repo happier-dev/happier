@@ -69,11 +69,12 @@ function readPackageVersion(repoRoot, pkgPath) {
 }
 
 /**
- * @param {'cli' | 'stack' | 'server' | 'support'} packageKey
+ * @param {'cli' | 'stack' | 'server' | 'support' | 'pluginSdk' | 'sdk' | 'channelsProtocol'} packageKey
  */
 function rollingProductIdForPackage(packageKey) {
   if (packageKey === 'stack') return 'hstack';
   if (packageKey === 'pluginSdk') return 'plugin_sdk';
+  if (packageKey === 'channelsProtocol') return 'channels_protocol';
   return packageKey;
 }
 
@@ -87,6 +88,7 @@ async function main() {
       'publish-support': { type: 'string', default: 'false' },
       'publish-plugin-sdk': { type: 'string', default: 'false' },
       'publish-sdk': { type: 'string', default: 'false' },
+      'publish-channels-protocol': { type: 'string', default: 'false' },
       'server-runner-dir': { type: 'string', default: 'packages/relay-server' },
       'cli-version': { type: 'string', default: '' },
       'stack-version': { type: 'string', default: '' },
@@ -94,6 +96,7 @@ async function main() {
       'support-version': { type: 'string', default: '' },
       'plugin-sdk-version': { type: 'string', default: '' },
       'sdk-version': { type: 'string', default: '' },
+      'channels-protocol-version': { type: 'string', default: '' },
       write: { type: 'string', default: 'true' },
     },
     allowPositionals: false,
@@ -106,6 +109,7 @@ async function main() {
   const publishSupport = parseBoolString(values['publish-support'], '--publish-support');
   const publishPluginSdk = parseBoolString(values['publish-plugin-sdk'], '--publish-plugin-sdk');
   const publishSdk = parseBoolString(values['publish-sdk'], '--publish-sdk');
+  const publishChannelsProtocol = parseBoolString(values['publish-channels-protocol'], '--publish-channels-protocol');
   const serverRunnerDir = String(values['server-runner-dir'] ?? '').trim() || 'packages/relay-server';
   const shouldWrite = parseBoolString(values.write, '--write');
   const explicitVersions = {
@@ -115,6 +119,7 @@ async function main() {
     support: String(values['support-version'] ?? '').trim(),
     pluginSdk: String(values['plugin-sdk-version'] ?? '').trim(),
     sdk: String(values['sdk-version'] ?? '').trim(),
+    channelsProtocol: String(values['channels-protocol-version'] ?? '').trim(),
   };
 
   /** @type {Record<string, string>} */
@@ -235,6 +240,25 @@ async function main() {
     ).version;
     if (shouldWrite) {
       writePackageVersion(repoRoot, packagePath, versions.sdk);
+    }
+  }
+
+  if (publishChannelsProtocol) {
+    const packagePath = path.join('packages', 'channels-protocol', 'package.json');
+    const base = normalizePublicSdkPreviewBase(readPackageVersion(repoRoot, packagePath));
+    versions.channelsProtocol = (
+      await resolveRollingPublishVersion({
+        repoRoot,
+        productId: rollingProductIdForPackage('channelsProtocol'),
+        channel: 'preview',
+        baseVersion: base,
+        explicitVersion: explicitVersions.channelsProtocol,
+        publishSurface: 'npm',
+        env: process.env,
+      })
+    ).version;
+    if (shouldWrite) {
+      writePackageVersion(repoRoot, packagePath, versions.channelsProtocol);
     }
   }
 

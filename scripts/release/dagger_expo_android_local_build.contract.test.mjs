@@ -37,6 +37,21 @@ test('Dagger module exposes expo-android-local-build function', () => {
     'expected expoAndroidLocalBuild to use the shared apt-install-with-retry helper for transient mirror failures',
   );
   assert.ok(!src.includes('withMountedCache("/repo/node_modules"'), 'expected to avoid caching /repo/node_modules (too large)');
+  assert.match(
+    src,
+    /const terminalNativeBuildInputCacheRoot = "\/root\/.cache\/happier-terminal-native-build-inputs"/,
+    'expected the Android local build to provide the canonical terminal-native build-input cache root',
+  );
+  assert.match(
+    src,
+    /\.withMountedCache\(terminalNativeBuildInputCacheRoot, dag\.cacheVolume\("happier-terminal-native-build-inputs"\)\)/,
+    'expected the package-owned terminal-native materializer cache to persist across Dagger builds',
+  );
+  assert.match(
+    src,
+    /\.withEnvVariable\("HAPPIER_TERMINAL_NATIVE_BUILD_INPUT_CACHE_DIR", terminalNativeBuildInputCacheRoot\)/,
+    'expected the package-owned materializer to receive the Dagger cache path',
+  );
   assert.doesNotMatch(
     src,
     /node-v\$\{nodeVersion\}-linux-x64\.tar\.xz/,

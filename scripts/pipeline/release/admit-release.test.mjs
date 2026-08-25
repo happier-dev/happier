@@ -70,8 +70,12 @@ test('npm publication consumes an exact admitted candidate and fails closed for 
 test('the public npm package names one release selection publishes have a single owner', () => {
   assert.deepEqual(resolvePublicNpmPackageNames({}), []);
   assert.deepEqual(
-    resolvePublicNpmPackageNames({ pluginSdk: true, sdk: true }),
-    ['@happier-dev/plugin-sdk', '@happier-dev/plugin-ui', '@happier-dev/sdk'],
+    resolvePublicNpmPackageNames({ pluginSdk: true, sdk: true, channelsProtocol: true }),
+    ['@happier-dev/plugin-sdk', '@happier-dev/plugin-ui', '@happier-dev/sdk', '@happier-dev/channels-protocol'],
+  );
+  assert.deepEqual(
+    resolvePublicNpmPackageNames({ channelsProtocol: true }),
+    ['@happier-dev/channels-protocol'],
   );
 
   const candidateSha = 'c'.repeat(40);
@@ -82,7 +86,13 @@ test('the public npm package names one release selection publishes have a single
     checkedOutSha: candidateSha,
   };
 
-
+  // The Channels protocol is a public Developer Preview package whose consumers
+  // resolve the public SDK alongside it, so it fails closed at the same
+  // readiness owner as the rest of the public surface.
+  assert.throws(() => admitRelease({
+    ...base,
+    npmPublication: { ...npmPublication, packageNames: resolvePublicNpmPackageNames({ channelsProtocol: true }) },
+  }), /PUBLIC_SDK_READINESS_OWNER_UNAVAILABLE/);
 
   // Non-public packages stay publishable: the readiness owner must be able to
   // stay silent, or it proves nothing when it fires.

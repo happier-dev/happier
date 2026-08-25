@@ -36,6 +36,27 @@ function assertPayloadAdmissionStep(step, expectedChannelExpression) {
   assert.match(source, /--baseline-ref "\$baseline_ref"/);
 }
 
+function assertPayloadAdmissionInvocation(step, expectedChannelExpression, {
+  candidateRef,
+  candidateSha,
+}) {
+  assert.ok(step, 'expected Qualified V4 payload publication admission step');
+  assert.equal(step.env?.RELEASE_CHANNEL, expectedChannelExpression);
+  const source = String(step.run ?? '');
+  assert.match(
+    source,
+    /node scripts\/pipeline\/release\/admit-qualified-v4-npm-cli-payload\.mjs/,
+  );
+  assert.match(source, new RegExp(`--candidate-ref ${candidateRef}`));
+  if (candidateSha) {
+    assert.equal(step.env?.CANDIDATE_SHA, candidateSha);
+    assert.match(source, /--candidate-sha "\$CANDIDATE_SHA"/);
+  } else {
+    assert.doesNotMatch(source, /--candidate-sha/);
+  }
+  assert.doesNotMatch(source, /\b(?:case|git|baseline_ref|deploy_environment)\b/);
+}
+
 test('CLI binary publication uses secret-free source admission and immutable retry admission', async () => {
   const workflow = YAML.parse(await readFile(binaryWorkflowPath, 'utf8'));
   const admissionJob = workflow.jobs?.admit_publication;
@@ -98,7 +119,10 @@ test('npm CLI publication uses the matching deployed server baseline before pack
     release,
     'Admit Qualified V4 npm CLI payload publication',
   );
-  assertPayloadAdmissionStep(admission, '${{ inputs.channel }}');
+  assertPayloadAdmissionInvocation(admission, '${{ inputs.channel }}', {
+    candidateRef: 'HEAD',
+    candidateSha: '${{ steps.release_inputs.outputs.authorized_sha }}',
+  });
   assert.equal(admission.if, 'inputs.publish_cli');
   assert.ok(
     release.steps.indexOf(admission)
@@ -113,16 +137,11 @@ test('npm CLI publication uses the matching deployed server baseline before pack
     publishCli,
     'Re-admit Qualified V4 npm CLI payload publication',
   );
-  assertPayloadAdmissionStep(finalAdmission, '${{ inputs.channel }}');
+  assertPayloadAdmissionInvocation(finalAdmission, '${{ inputs.channel }}', {
+    candidateRef: 'refs/qualified-v4-payload-candidate',
+    candidateSha: '${{ needs.release.outputs.sha }}',
+  });
   const finalSource = String(finalAdmission.run ?? '');
-  assert.match(
-    finalSource,
-    /git fetch --no-tags --depth=1 origin "\$CANDIDATE_SHA"[\s\S]*git update-ref refs\/qualified-v4-payload-candidate FETCH_HEAD/,
-  );
-  assert.match(
-    finalSource,
-    /--candidate-ref refs\/qualified-v4-payload-candidate/,
-  );
   assert.ok(
     publishCli.steps.indexOf(finalAdmission)
       < publishCli.steps.findIndex((step) => step.name === 'npm publish (cli tarball) (pipeline)'),

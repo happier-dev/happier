@@ -10,9 +10,11 @@ import {
   readFile,
   readdir,
   readlink,
+  realpath,
   rename,
   rm,
   stat,
+  writeFile,
 } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -338,6 +340,110 @@ async function copyDirectoryContents(sourceDir, destinationDir) {
   }
 }
 
+async function rewritePromotedTypeScriptSourceMap({
+  compilerMapPath,
+  promotedMapPath,
+  finalMapPath,
+  packageDir,
+  packageRealPath,
+}) {
+  let sourceMap;
+  try {
+    sourceMap = JSON.parse(await readFile(promotedMapPath, 'utf8'));
+  } catch (error) {
+    throw new Error(
+      `TypeScript emitted an invalid source map at ${relative(packageDir, compilerMapPath)}: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error },
+    );
+  }
+  if (!sourceMap || typeof sourceMap !== 'object' || Array.isArray(sourceMap)) {
+    throw new Error(
+      `TypeScript emitted a non-object source map at ${relative(packageDir, compilerMapPath)}`,
+    );
+  }
+  if (!Array.isArray(sourceMap.sources)) return;
+
+  const sourceRoot = typeof sourceMap.sourceRoot === 'string' ? sourceMap.sourceRoot : '';
+  const sources = [];
+  const sourcesContent = [];
+  for (const source of sourceMap.sources) {
+    if (typeof source !== 'string') {
+      throw new Error(
+        `TypeScript emitted a non-string source-map source at ${relative(packageDir, compilerMapPath)}`,
+      );
+    }
+    const sourcePath = resolve(dirname(compilerMapPath), sourceRoot, source);
+    let sourceRealPath;
+    try {
+      sourceRealPath = await realpath(sourcePath);
+    } catch (error) {
+      throw new Error(
+        `TypeScript source map references an unreadable source at ${relative(packageDir, compilerMapPath)}: ${source}`,
+        { cause: error },
+      );
+    }
+    if (!isDescendantPath(packageRealPath, sourceRealPath)) {
+      throw new Error(
+        `TypeScript emitted a source map that escapes its package at ${relative(packageDir, compilerMapPath)}: ${source}`,
+      );
+    }
+
+    let sourceContents;
+    try {
+      sourceContents = await readFile(sourceRealPath, 'utf8');
+    } catch (error) {
+      throw new Error(
+        `TypeScript source map references an unreadable source at ${relative(packageDir, compilerMapPath)}: ${source}`,
+        { cause: error },
+      );
+    }
+    const packageRelativeSourcePath = relative(packageRealPath, sourceRealPath);
+    const logicalSourcePath = join(packageDir, packageRelativeSourcePath);
+    sources.push(relative(dirname(finalMapPath), logicalSourcePath).replaceAll('\\', '/'));
+    sourcesContent.push(sourceContents);
+  }
+
+  sourceMap.sources = sources;
+  sourceMap.sourcesContent = sourcesContent;
+  delete sourceMap.sourceRoot;
+  await writeFile(promotedMapPath, JSON.stringify(sourceMap), 'utf8');
+}
+
+async function rewritePromotedTypeScriptSourceMaps({
+  compilerOutputDir,
+  promotedOutputDir,
+  finalOutputDir,
+  packageDir,
+  packageRealPath = null,
+  relativeDir = '',
+}) {
+  const resolvedPackageRealPath = packageRealPath ?? await realpath(packageDir);
+  const compilerDir = join(compilerOutputDir, relativeDir);
+  for (const entry of await readdir(compilerDir, { withFileTypes: true })) {
+    const relativePath = join(relativeDir, entry.name);
+    if (entry.isDirectory()) {
+      await rewritePromotedTypeScriptSourceMaps({
+        compilerOutputDir,
+        promotedOutputDir,
+        finalOutputDir,
+        packageDir,
+        packageRealPath: resolvedPackageRealPath,
+        relativeDir: relativePath,
+      });
+      continue;
+    }
+    if (!entry.isFile() || !entry.name.endsWith('.map')) continue;
+
+    await rewritePromotedTypeScriptSourceMap({
+      compilerMapPath: join(compilerOutputDir, relativePath),
+      promotedMapPath: join(promotedOutputDir, relativePath),
+      finalMapPath: join(finalOutputDir, relativePath),
+      packageDir,
+      packageRealPath: resolvedPackageRealPath,
+    });
+  }
+}
+
 async function directoryTreesMatch(leftDir, rightDir) {
   let leftEntries;
   let rightEntries;
@@ -460,6 +566,17 @@ export async function buildTypeScriptPackageDist({
       }
 
       await copyDirectoryContents(compilerWorkTree.outputDir, stagedDistDir);
+      // HAPPIER_WORKSPACE_DIST_OUTPUT_DIR is an outer publisher's temporary
+      // destination. Its tree is renamed into `dist`, so source-map paths must
+      // describe that final package location rather than this transient stage.
+      // Published packages intentionally ship dist without authored sources;
+      // retain the exact source text so packed consumers can still debug maps.
+      await rewritePromotedTypeScriptSourceMaps({
+        compilerOutputDir: compilerWorkTree.outputDir,
+        promotedOutputDir: stagedDistDir,
+        finalOutputDir: distDir,
+        packageDir: resolvedPackageDir,
+      });
 
       runStagedOutputScripts({
         packageDir: resolvedPackageDir,
