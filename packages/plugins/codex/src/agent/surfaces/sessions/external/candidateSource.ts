@@ -679,7 +679,7 @@ function selectBoundedCodexMergedCandidatePage(params: Readonly<{
   let nativeContinuationUnknown = false;
   for (const [state, page] of [
     [params.cursor.active, params.activePage],
-    [params.cursor.archived, params.archived],
+    [params.cursor.archived, params.archivedPage],
   ] as const) {
     if (state.done) continue;
     if (!page) {
