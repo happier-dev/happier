@@ -22,6 +22,8 @@ import type {
   ProviderContributionRegistryView,
   ProviderEndpointDnsEvidence,
 } from '@/providers/registry';
+import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
+import type { ProviderOperationLifetime } from '@/providers/operationLifetime';
 import type { ResolveManagedProviderPurposeBindingIntent } from '@/providers/managed/resolvePurposeBindingSnapshot';
 
 type DescribeSuccess = Extract<DaemonProviderConnectionsDescribeResponseV1, { status: 'success' }>;
@@ -77,7 +79,19 @@ export type ProviderConnectionServiceSnapshot = Readonly<{
   accountSettings: AccountSettings;
   /** Retained source bytes for Provider legacy/malformed-subtree recovery. */
   rawAccountSettings: Readonly<Record<string, unknown>>;
+  /**
+   * Immutable Provider projection captured from one authoritative runtime
+   * generation. A mutation may reload Account Settings, but must not replace
+   * this registry decision before it completes.
+   */
   registry: ProviderContributionRegistryView;
+  registryGeneration?: string;
+}>;
+
+export type ProviderConnectionRegistryProjection = Readonly<{
+  registry: ProviderContributionRegistryView;
+  /** Present for production lease projections; fixture seams may omit it. */
+  generation?: string;
 }>;
 
 /**
@@ -91,12 +105,16 @@ export type ProviderConnectionRuntimeSummaryInput = Readonly<{
   registry: ProviderConnectionServiceSnapshot['registry'];
   dnsEvidence: ProviderEndpointDnsEvidence;
   resolution: Extract<ProviderConnectionResolution, { status: 'resolved' }>;
+  /** The public description/mutation budget that admitted this runtime read. */
+  lifetime: ProviderOperationLifetime;
 }>;
 
 export type ProviderConnectionServiceDeps = Readonly<{
   machineId: string;
   featureGate: Readonly<{ isEnabled(featureId: 'providers' | 'providers.localDiscovery'): boolean }>;
-  loadSnapshot(): Promise<ProviderConnectionServiceSnapshot>;
+  loadSnapshot(
+    registryProjection?: ProviderConnectionRegistryProjection,
+  ): Promise<ProviderConnectionServiceSnapshot>;
   updateAccountSettings(
     mutate: (
       raw: Readonly<Record<string, unknown>>,
@@ -107,6 +125,8 @@ export type ProviderConnectionServiceDeps = Readonly<{
     connectionId: string;
     machineId: string;
     registry: ProviderContributionRegistryView;
+    /** The public mutation/description budget that admitted this DNS work. */
+    lifetime: ProviderOperationLifetime;
   }>): Promise<ProviderEndpointDnsEvidence>;
   resolveConnection(input: Readonly<{
     accountSettings: Readonly<Record<string, unknown>>;
@@ -130,6 +150,11 @@ export type ProviderConnectionServiceDeps = Readonly<{
     registry: ProviderContributionRegistryView;
     candidates: readonly ProviderDiscoveryCandidateV1[];
   }>): Promise<readonly ProviderLocalInstallationSummaryV1[]>;
+  /**
+   * The one authoritative lease for an executable explicit-start operation.
+   * Production composes this from the plugin runtime; fixtures may omit it.
+   */
+  acquireManagedProviderRuntimeRegistryLease?(): Promise<PluginRuntimeRegistryLease>;
   startManagedProviderRuntime?(input: Readonly<{
     contributionKey: string;
     identity: PluginContributionIdentityV1;
@@ -137,6 +162,8 @@ export type ProviderConnectionServiceDeps = Readonly<{
     purposeBindings: QualifiedConnectedAccountPurposeBindingsV1;
     isAuthorizationCurrent(): boolean;
     revalidateAuthorization(): Promise<boolean>;
+    /** Borrowed from the enclosing start operation; the caller releases it. */
+    runtimeRegistryLease?: PluginRuntimeRegistryLease;
   }>): Promise<Readonly<{ status: 'detecting' | 'running' }>>;
   resolveManagedPurposeBindingIntent?: ResolveManagedProviderPurposeBindingIntent;
   refreshOnEnable?(input: Readonly<{

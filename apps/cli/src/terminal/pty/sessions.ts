@@ -156,6 +156,7 @@ export type TerminalPtySessionManager = Readonly<{
   input: (input: Readonly<{ terminalId: string; data: string }>) => SimpleOk | ErrorResult;
   resize: (input: Readonly<{ terminalId: string; cols: number; rows: number }>) => SimpleOk | ErrorResult;
   close: (input: Readonly<{ terminalId: string }>) => SimpleOk | ErrorResult;
+  dispose: () => void;
   restart: (input: Readonly<{ terminalKey: string; cwd: string; cols?: number; rows?: number; initialCommand?: string; launchProcess?: TerminalLaunchProcess; sessionId?: string }>) => EnsureOk | ErrorResult;
   metrics: () => ReturnType<TerminalPtyMetrics['snapshot']>;
 }>;
@@ -351,6 +352,7 @@ export function createTerminalPtySessionManager(params: Readonly<{
   const env = params.env ?? process.env;
   const platform = params.platform ?? process.platform;
   const config = params.config;
+  const idleTimeoutMs = Math.max(0, Math.trunc(config.idleTimeoutMs));
   const terminalRegistry = params.terminalRegistry ?? null;
   const metrics = createTerminalPtyMetrics();
 
@@ -383,14 +385,18 @@ export function createTerminalPtySessionManager(params: Readonly<{
 
   const reapIdle = () => {
     const current = now();
-    const timeoutMs = Math.max(0, Math.trunc(config.idleTimeoutMs));
-    if (!timeoutMs) return;
+    if (!idleTimeoutMs) return;
 
     for (const session of sessionsById.values()) {
-      if (current - session.lastActivityAtMs < timeoutMs) continue;
+      if (current - session.lastActivityAtMs < idleTimeoutMs) continue;
       removeSession(session);
     }
   };
+
+  const idleReapTimer = idleTimeoutMs > 0
+    ? setInterval(reapIdle, idleTimeoutMs)
+    : null;
+  idleReapTimer?.unref?.();
 
   const closeById = (terminalId: string): SimpleOk | ErrorResult => {
     reapIdle();
@@ -551,6 +557,7 @@ export function createTerminalPtySessionManager(params: Readonly<{
     session.disposables.push(
       pty.onExit((e) => {
         session.lastActivityAtMs = now();
+        pushDecodedText(session, session.decoder.flush(), config);
         session.ended = true;
         session.exit = { exitCode: e.exitCode ?? null, signal: typeof e.signal === 'number' ? e.signal : null };
         metrics.recordExit();
@@ -917,6 +924,13 @@ export function createTerminalPtySessionManager(params: Readonly<{
 
   const close = (input: Readonly<{ terminalId: string }>): SimpleOk | ErrorResult => closeById(input.terminalId);
 
+  const dispose = (): void => {
+    if (idleReapTimer) clearInterval(idleReapTimer);
+    for (const session of [...sessionsById.values()]) {
+      removeSession(session);
+    }
+  };
+
   return {
     ensure,
     restart,
@@ -928,6 +942,7 @@ export function createTerminalPtySessionManager(params: Readonly<{
     input: inputData,
     resize,
     close,
+    dispose,
     metrics: () => metrics.snapshot(),
   };
 }

@@ -30,7 +30,9 @@ function resolveAcpRuntimeDescriptorEligibility(metadata: Record<string, unknown
 function isCatalogDeclaredAcpOnlyAgent(agentId: string): boolean {
   const agent = (AGENTS_CORE as Readonly<Record<string, { sessionStorage?: { direct?: boolean }; tools?: { delivery?: string } }>>)[agentId];
   if (agent?.tools?.delivery === 'shell_bridge') return true;
-  if (agent?.tools?.delivery === 'native_mcp') return agent.sessionStorage?.direct === false;
+  if (agent?.tools?.delivery === 'native_mcp' || agent?.tools?.delivery === 'native_extension') {
+    return agent.sessionStorage?.direct === false;
+  }
   return false;
 }
 

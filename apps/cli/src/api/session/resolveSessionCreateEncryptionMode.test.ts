@@ -45,6 +45,27 @@ describe('resolveSessionCreateEncryptionMode', () => {
   });
 
   it.each([
+    { reason: 'network' as const },
+    { reason: 'timeout' as const },
+    { reason: 'response_status' as const },
+  ])('fails closed but retryably when the server feature snapshot has a transient $reason error', async ({ reason }) => {
+    fetchServerFeaturesSnapshot.mockResolvedValue({ status: 'error', reason });
+
+    await expect(resolveSessionCreateEncryptionMode({
+      token: 'token-1',
+      serverBaseUrl: 'https://server.example',
+    })).rejects.toMatchObject({
+      code: 'account_stored_content_compatibility_unavailable',
+      retryable: true,
+      reason,
+    });
+    expect(fetchServerFeaturesSnapshot).toHaveBeenCalledWith({
+      serverUrl: 'https://server.example',
+    });
+    expect(fetchAccountEncryptionCurrentness).not.toHaveBeenCalled();
+  });
+
+  it.each([
     {
       name: 'missing requirements',
       requirements: undefined,

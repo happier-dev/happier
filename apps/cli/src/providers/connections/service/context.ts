@@ -5,13 +5,22 @@ import {
 
 import type { ProviderConnectionResolution } from '@/providers/registry';
 import { describeProviderConnections } from './describe';
-import type { ProviderConnectionServiceDeps } from './types';
+import type {
+  ProviderConnectionRegistryProjection,
+  ProviderConnectionServiceDeps,
+} from './types';
+import type { ProviderOperationLifetime } from '@/providers/operationLifetime';
 
 export type ProviderConnectionServiceContext = Readonly<{
   deps: ProviderConnectionServiceDeps;
   featureError(connectionId?: string): ProviderErrorV1;
   assertMachine(machineId: string, connectionId?: string): ProviderErrorV1 | null;
-  describe: (input: Readonly<{ machineId: string; connectionId?: string }>) =>
+  describe: (input: Readonly<{
+    machineId: string;
+    connectionId?: string;
+    registryProjection?: ProviderConnectionRegistryProjection;
+    lifetime?: ProviderOperationLifetime;
+  }>) =>
     ReturnType<typeof describeProviderConnections>;
 }>;
 

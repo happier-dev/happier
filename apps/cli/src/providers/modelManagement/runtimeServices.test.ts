@@ -95,6 +95,23 @@ describe('runtime provider model-management composition', () => {
       definition,
     };
     const registry = { providersByContributionKey: new Map([['acme.gateway/main', contribution]]) };
+    const preparedDefinition = ProviderContributionV1Schema.parse({
+      ...definition,
+      catalog: {
+        ...definition.catalog,
+        staticModels: [{
+          id: 'same-id',
+          name: 'Prepared generation',
+          capabilities: { toolRoundTrips: 'supported' },
+        }],
+      },
+    });
+    const preparedRegistry = {
+      providersByContributionKey: new Map([['acme.gateway/main', {
+        ...contribution,
+        definition: preparedDefinition,
+      } satisfies ResolvedProviderContribution]]),
+    };
     const base = ProviderSettingsV1Schema.parse({
       ...DEFAULT_PROVIDER_SETTINGS_V1,
       connections: [{
@@ -143,12 +160,25 @@ describe('runtime provider model-management composition', () => {
           materialize: vi.fn(),
         },
         isCurrent: () => true,
+        retirementSignal: new AbortController().signal,
         createRuntime: vi.fn(),
       }]]),
     } as unknown as ResolvedExecutablePluginRuntimeRegistry;
     const lease: PluginRuntimeRegistryLease = {
       registry: executable, source: 'active', release: vi.fn(async () => undefined),
     };
+    const preparedLease: PluginRuntimeRegistryLease = {
+      registry: {
+        ...executable,
+        contributes: {
+          ...executable.contributes,
+          providersByContributionKey: preparedRegistry.providersByContributionKey,
+        },
+      } as unknown as ResolvedExecutablePluginRuntimeRegistry,
+      source: 'active',
+      release: vi.fn(async () => undefined),
+    };
+    let currentLease = lease;
     const observationAuthorizationFingerprint = createProviderObservationAuthorizationFingerprintV1({
       selectedSecretBindingId: null,
       selectedSecretRecordFingerprint: null,
@@ -226,7 +256,8 @@ describe('runtime provider model-management composition', () => {
     const modelSettingsMutation = vi.fn(successfulModelSettingsMutation);
     const services = createRuntimeProviderModelManagementServices({
       machineId: 'machine-a', registry, runtimeStore,
-      resolveAddresses: async () => ['1.1.1.1'], acquireRuntimeLease: async () => lease,
+      resolveRegistry: async () => preparedRegistry,
+      resolveAddresses: async () => ['1.1.1.1'], acquireRuntimeLease: async () => currentLease,
       client: createProviderProbeHttpClient({ resolveAddresses: async () => ['1.1.1.1'], transport }),
       getAccountSettingsSnapshot: () => ({
         source: 'cache', settings: accountSettings,
@@ -251,11 +282,24 @@ describe('runtime provider model-management composition', () => {
         modelLoadPreflightPolicy: null,
         rows: [{
           ref: { agentTargetKey: 'backend:codex', providerConnectionId: connectionId, modelId: 'same-id' },
+          descriptor: { name: 'Provider Same' },
           compatibility: { result: { status: 'verified' }, confirmed: true },
           endpointHealth: 'unreachable',
         }],
       }],
     });
+    // A prepared projection exists concurrently, but the held lease is the
+    // operation's authority. The next operation observes that prepared lease.
+    currentLease = preparedLease;
+    const nextResult = await services.projectModels({
+      machineId: 'machine-a',
+      agentTargetKey: 'backend:codex',
+    });
+    expect(nextResult).toMatchObject({
+      status: 'success',
+      groups: [{ rows: [{ descriptor: { name: 'Prepared generation' } }] }],
+    });
+    currentLease = lease;
     expect(JSON.stringify(result)).not.toContain('models.example');
     expect(JSON.stringify(result)).not.toContain('publicHeaders');
     if (result.status !== 'success') throw new Error('Expected model projection');
@@ -564,6 +608,7 @@ describe('runtime provider model-management composition', () => {
           materialize: vi.fn(),
         },
         isCurrent: () => true,
+        retirementSignal: new AbortController().signal,
         createRuntime: vi.fn(),
       }]]),
     } as unknown as ResolvedExecutablePluginRuntimeRegistry;
@@ -613,6 +658,47 @@ describe('runtime provider model-management composition', () => {
     expect(projection.status).toBe('success');
     if (projection.status !== 'success') throw new Error('Expected model projection');
     expect(projection.groups.flatMap((group) => group.rows).map((row) => row.ref.modelId))
+      .toEqual(['cold-model']);
+
+    // The complement, and the reason the awaited read is safe at all: a connection
+    // that already produced an observation is warm, so its refresh stays advisory.
+    // Marking the retained snapshot stale makes the next read genuinely re-demand,
+    // and the transport never answers — a projection that awaited warm connections
+    // could not resolve, so a single dead endpoint would block every picker open.
+    state = {
+      ...state,
+      catalogs: state.catalogs.map((record) => (record.state.snapshot
+        ? {
+            ...record,
+            state: {
+              ...record.state,
+              snapshot: {
+                ...record.state.snapshot,
+                stale: true,
+                staleAt: record.state.snapshot.observedAt,
+              },
+            },
+          }
+        : record)),
+    };
+    let releaseBlockedTransport!: () => void;
+    const blockedTransport = new Promise<void>((resolve) => { releaseBlockedTransport = resolve; });
+    transport.mockImplementation(async () => {
+      await blockedTransport;
+      return {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+        body: Buffer.from(JSON.stringify({ data: [{ id: 'cold-model' }] }), 'utf8'),
+      };
+    });
+    const warm = await services.projectModels({
+      machineId: 'machine-a',
+      agentTargetKey: 'backend:codex',
+    });
+    releaseBlockedTransport();
+    expect(warm.status).toBe('success');
+    if (warm.status !== 'success') throw new Error('Expected model projection');
+    expect(warm.groups.flatMap((group) => group.rows).map((row) => row.ref.modelId))
       .toEqual(['cold-model']);
   });
 
@@ -730,6 +816,7 @@ describe('runtime provider model-management composition', () => {
           materialize: vi.fn(),
         },
         isCurrent: () => true,
+        retirementSignal: new AbortController().signal,
         createRuntime: vi.fn(),
       }]]),
     } as unknown as ResolvedExecutablePluginRuntimeRegistry;

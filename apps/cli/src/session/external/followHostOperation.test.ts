@@ -387,6 +387,80 @@ describe('createExternalSessionFollowHostOperation', () => {
         if (result.status === 'following') await result.subscription.dispose();
     });
 
+    it('replays a deeply nested canonical item instead of overflowing the replay byte accounting', async () => {
+        // The canonical transcript schema deliberately carries no generic depth
+        // quota, so the replay byte budget must be measured iteratively.
+        let output: unknown = 'leaf';
+        for (let depth = 0; depth < 7_000; depth += 1) output = { nested: output };
+        const pageTranscript = vi.fn(async (request: Readonly<{
+            direction: 'older' | 'newer';
+            cursor?: string;
+        }>) => {
+            if (request.direction === 'older' && request.cursor === undefined) {
+                return {
+                    items: [{
+                        id: 'deep',
+                        localId: 'fact-deep',
+                        createdAtMs: 1,
+                        raw: {
+                            role: 'agent',
+                            content: {
+                                type: 'codex',
+                                data: { type: 'tool-call-result', callId: 'call-1', output },
+                            },
+                        },
+                    }],
+                    nextCursor: null,
+                    tailCursor: 'captured-tail',
+                    hasMore: false,
+                    truncated: false,
+                };
+            }
+            throw new Error('unexpected page request');
+        });
+        mocks.resolveGenerationBoundExternalSessionFollowSurface.mockResolvedValue({
+            immutablePluginGenerationId: resource.pluginGeneration,
+            providerOps: {
+                pageTranscript,
+                readAfterTranscript: vi.fn(async () => ({ outcome: 'already_current' as const })),
+            },
+            resource,
+        });
+        const operation = createExternalSessionFollowHostOperation({
+            machineId: 'machine-1',
+            followLeaseManager: createExternalSessionFollowLeaseManager(),
+            observationProjection: {
+                reconcileTranscriptDemand: async ({ demanded }: Readonly<{ demanded: boolean }>) => ({
+                    state: demanded ? 'observing' : 'idle',
+                }),
+            } as never,
+        });
+        const listener = vi.fn(async (_event: HostExternalTranscriptFollowEvent) => undefined);
+
+        const result = await operation.execute({
+            pluginId: 'synthetic.non-bundled',
+            contributionId: 'codex',
+            generationId: resource.pluginGeneration,
+            sessionId: 'linked-session-1',
+            machineId: 'machine-1',
+            ref,
+            source,
+            options: { initialReplay: true, admissionDeadlineAtMs: Date.now() + 30_000 },
+            listener,
+            isCurrent: () => true,
+        } as Parameters<typeof operation.execute>[0]);
+
+        expect(result).toMatchObject({ status: 'following', startingCursor: 'captured-tail' });
+        expect(listener.mock.calls.map((call) => call[0])).toEqual([
+            expect.objectContaining({
+                kind: 'data',
+                phase: 'initial_replay',
+                items: [expect.objectContaining({ id: 'deep', localId: 'fact-deep' })],
+            }),
+        ]);
+        if (result.status === 'following') await result.subscription.dispose();
+    });
+
     it('fails initial replay before page 101 without admitting a live follow or jumping to a tail', async () => {
         let page = 0;
         const pageTranscript = vi.fn(async () => {

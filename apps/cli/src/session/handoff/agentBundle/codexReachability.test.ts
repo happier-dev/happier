@@ -44,6 +44,14 @@ describe('Codex session handoff production reachability', () => {
   it('imports through the generated SessionHostBridge execution surface', async () => {
     const codexHome = await mkdtemp(join(tmpdir(), 'happier-codex-handoff-reachability-'));
     const relativePath = 'sessions/2026/07/23/rollout-thread-reachable.jsonl';
+    const content = Buffer.from([
+      JSON.stringify({
+        type: 'session_meta',
+        payload: { id: 'thread-reachable' },
+      }),
+      JSON.stringify({ event: 'reachable' }),
+      '',
+    ].join('\n'), 'utf8');
     vi.stubEnv('CODEX_HOME', codexHome);
 
     try {
@@ -57,7 +65,7 @@ describe('Codex session handoff production reachability', () => {
           },
           files: [{
             relativePath,
-            contentBase64: Buffer.from('{"event":"reachable"}\n', 'utf8').toString('base64'),
+            contentBase64: content.toString('base64'),
           }],
         },
       })).resolves.toMatchObject({
@@ -78,8 +86,8 @@ describe('Codex session handoff production reachability', () => {
         },
       });
 
-      await expect(readFile(join(codexHome, relativePath), 'utf8'))
-        .resolves.toBe('{"event":"reachable"}\n');
+      await expect(readFile(join(codexHome, relativePath)))
+        .resolves.toEqual(content);
     } finally {
       await rm(codexHome, { recursive: true, force: true });
     }

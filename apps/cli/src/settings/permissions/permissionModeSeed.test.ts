@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildBackendTargetKey } from '@happier-dev/protocol';
+import { accountSettingsParse, buildBackendTargetKey } from '@happier-dev/protocol';
 
 import { resolvePermissionModeSeedForAgentStart } from './permissionModeSeed';
 
@@ -26,29 +26,46 @@ describe('resolvePermissionModeSeedForAgentStart', () => {
     expect(res).toEqual({ mode: 'yolo', source: 'inferred' });
   });
 
-  it('uses account defaults when explicit and inferred are missing', () => {
+  it('uses account defaults from the canonical parsed projection for a built-in agent', () => {
     const targetKey = buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'opencode' });
+    // Same hazard as the configured-ACP case below: the session runtime passes
+    // the PARSED Account Settings, so a fixture keyed by this legacy builder
+    // could not fail when the two key vocabularies diverged.
+    const accountSettings = accountSettingsParse({
+      sessionDefaultPermissionModeByTargetKey: { [targetKey]: 'safe-yolo' },
+    });
+    expect(Object.keys(accountSettings.sessionDefaultPermissionModeByTargetKey))
+      .not.toContain(targetKey);
+
     const res = resolvePermissionModeSeedForAgentStart({
       agentId: 'opencode',
       explicitPermissionMode: undefined,
       inferredPermissionMode: undefined,
-      accountSettings: { sessionDefaultPermissionModeByTargetKey: { [targetKey]: 'safe-yolo' } },
+      accountSettings,
     });
     expect(res).toEqual({ mode: 'safe-yolo', source: 'account_default' });
   });
 
-  it('uses configured ACP backend target defaults when backendTarget is provided', () => {
+  it('uses configured ACP backend target defaults from the canonical parsed projection', () => {
     const presetTargetKey = buildBackendTargetKey({ kind: 'configuredAcpBackend', backendId: 'review-bot' });
+    // The session runtime passes the PARSED Account Settings, whose catalog
+    // rewrites this legacy key to its canonical V2 spelling. Keying the fixture
+    // with the same builder this module used to call could not fail when the
+    // two vocabularies diverged, so the Account default was silently ignored.
+    const accountSettings = accountSettingsParse({
+      sessionDefaultPermissionModeByTargetKey: {
+        [presetTargetKey]: 'safe-yolo',
+      },
+    });
+    expect(Object.keys(accountSettings.sessionDefaultPermissionModeByTargetKey))
+      .not.toContain(presetTargetKey);
+
     const res = resolvePermissionModeSeedForAgentStart({
       agentId: 'customAcp',
       backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
       explicitPermissionMode: undefined,
       inferredPermissionMode: undefined,
-      accountSettings: {
-        sessionDefaultPermissionModeByTargetKey: {
-          [presetTargetKey]: 'safe-yolo',
-        },
-      },
+      accountSettings,
     });
     expect(res).toEqual({ mode: 'safe-yolo', source: 'account_default' });
   });

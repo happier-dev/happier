@@ -1,15 +1,16 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { executeAutomationConversationAction } = vi.hoisted(() => ({
+const { executeAutomationConversationAction, createAutomationConversationActionExecutor } = vi.hoisted(() => ({
   executeAutomationConversationAction: vi.fn(async () => ({
     kind: 'admitted' as const,
     runId: 'run-1',
     checkpointSafe: true as const,
   })),
+  createAutomationConversationActionExecutor: vi.fn(),
 }));
 
 vi.mock('@/plugins/runtime/automations/automationConversationActionExecutor', () => ({
-  createAutomationConversationActionExecutor: vi.fn(() => executeAutomationConversationAction),
+  createAutomationConversationActionExecutor,
 }));
 
 import { createCliActionDeps } from './createCliActionDeps';
@@ -45,6 +46,36 @@ const request = {
 } satisfies Parameters<AutomationConversationAction>[0];
 
 describe('createCliActionDeps Automation conversation bindings', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    createAutomationConversationActionExecutor.mockReturnValue(executeAutomationConversationAction);
+  });
+
+  it('threads exact materialization and immutable-generation currentness to the Conversation executor', () => {
+    const credentials = {
+      token: 'token',
+      encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) },
+    };
+    const revalidatePluginActionCallerMaterialization = vi.fn(async () => true);
+    const revalidatePluginActionCallerImmutableGeneration = vi.fn(async () => true);
+
+    createCliActionDeps({
+      token: credentials.token,
+      credentials,
+      sessionId: 'plugin-global',
+      mode: 'plain',
+      ctx: null,
+      revalidatePluginActionCallerMaterialization,
+      revalidatePluginActionCallerImmutableGeneration,
+    });
+
+    expect(createAutomationConversationActionExecutor).toHaveBeenCalledWith({
+      credentials,
+      revalidateCallerMaterialization: revalidatePluginActionCallerMaterialization,
+      revalidateCallerImmutableGeneration: revalidatePluginActionCallerImmutableGeneration,
+    });
+  });
+
   it('routes the canonical Conversation admission Action through the authenticated CLI executor', async () => {
     const credentials = {
       token: 'token',

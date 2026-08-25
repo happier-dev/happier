@@ -1,10 +1,12 @@
 import {
   createActionExecutor,
+  isActionEnabledByActionsSettings,
+  isApprovalRequiredByActionsSettings,
   createUnavailableRuntimeActionExecutor,
   type ActionExecutorDeps,
 } from '@happier-dev/protocol';
 
-import { isActionApprovalRequiredByEnv, isActionEnabledByEnv } from '@/settings/actionsSettings';
+import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 
 import { createCliActionDeps } from './createCliActionDeps';
 import { createActionExecutionHookDeps } from './createActionExecutionHookDeps';
@@ -34,13 +36,22 @@ export function createCliActionExecutorHarness(
 }> {
   const coordinator = getSharedBlockingApprovalCoordinator();
   const baseDeps = createCliActionDeps(params);
-  const envIsActionEnabled: NonNullable<ActionExecutorDeps['isActionEnabled']> = (id, ctx) => isActionEnabledByEnv(id, {
-    surface: ctx.surface ?? 'cli',
-    placement: ctx.placement ?? null,
-  });
-  const envIsActionApprovalRequired: NonNullable<ActionExecutorDeps['isActionApprovalRequired']> = (id, ctx) => isActionApprovalRequiredByEnv(id, {
-    surface: ctx.surface ?? null,
-  });
+  const actionSettingsProvider = createActionSettingsProvider();
+  const isActionEnabled: NonNullable<ActionExecutorDeps['isActionEnabled']> = (id, ctx) =>
+    isActionEnabledByActionsSettings(
+      id,
+      ctx.actionsSettings ?? actionSettingsProvider.getActionsSettings(),
+      {
+        surface: ctx.surface ?? 'cli',
+        placement: ctx.placement ?? null,
+      },
+    );
+  const isActionApprovalRequired: NonNullable<ActionExecutorDeps['isActionApprovalRequired']> = (id, ctx) =>
+    isApprovalRequiredByActionsSettings(
+      id,
+      ctx.actionsSettings ?? actionSettingsProvider.getActionsSettings(),
+      { surface: ctx.surface ?? null },
+    );
   const rawDeps: MutableActionExecutorDeps = {
     ...baseDeps,
     approvalsWaitForDecision: async (args: ApprovalWaitForDecisionArgs) => {
@@ -63,8 +74,8 @@ export function createCliActionExecutorHarness(
         request: args.request,
         decision: args.decision,
       }),
-    isActionEnabled: envIsActionEnabled,
-    isActionApprovalRequired: envIsActionApprovalRequired,
+    isActionEnabled,
+    isActionApprovalRequired,
     runtimeActionExecute: createUnavailableRuntimeActionExecutor(),
     ...createActionExecutionHookDeps(),
     ...(overrides ?? {}),

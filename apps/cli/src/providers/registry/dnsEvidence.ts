@@ -8,6 +8,12 @@ import {
 
 import { resolveUrlConnectionIdentity } from '@/network/urlConnectionIdentity';
 
+import {
+  awaitWithinProviderOperation,
+  ProviderOperationAbandonedError,
+  type ProviderOperationLifetime,
+} from '../operationLifetime';
+
 import type {
   ProviderContributionRegistryView,
   ProviderEndpointDnsEvidence,
@@ -20,6 +26,11 @@ export async function collectProviderConnectionDnsEvidence(input: Readonly<{
   providerSettings: ProviderSettingsV1;
   registry: ProviderContributionRegistryView;
   resolveAddresses?: (hostname: string) => Promise<readonly string[]>;
+  /**
+   * The already-started Provider operation budget. A public owner starts this
+   * before registry/DNS work; this resolver only spends that same budget.
+   */
+  lifetime: ProviderOperationLifetime;
 }>): Promise<ProviderEndpointDnsEvidence> {
   const connection = input.providerSettings.connections.find((candidate) => candidate.id === input.connectionId);
   if (!connection) return new Map();
@@ -43,12 +54,16 @@ export async function collectProviderConnectionDnsEvidence(input: Readonly<{
   await Promise.all([...urls].map(async (rawUrl) => {
     try {
       const normalizedUrl = normalizeProviderEndpointUrlSyntax(rawUrl).normalizedUrl;
-      const addresses = await resolveAddresses(
+      const lookup = resolveAddresses(
         resolveUrlConnectionIdentity(new URL(normalizedUrl).hostname).hostname,
       );
+      const addresses = await awaitWithinProviderOperation(lookup, input.lifetime);
       evidence.set(normalizedUrl, Object.freeze([...addresses]));
-    } catch {
-      // The authoritative resolver turns absent DNS evidence into a stable endpoint refusal.
+    } catch (error) {
+      // Abandonment is the operation's own decision and must reach the caller;
+      // an ordinary resolver failure stays absent evidence, which the
+      // authoritative resolver turns into a stable endpoint refusal.
+      if (error instanceof ProviderOperationAbandonedError) throw error;
     }
   }));
   return evidence;

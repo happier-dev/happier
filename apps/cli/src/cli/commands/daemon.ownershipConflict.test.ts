@@ -159,7 +159,10 @@ describe('handleDaemonCliCommand ownership conflicts', () => {
 
             exitSpy.mockRestore();
         });
-    });
+        // Three full `handleDaemonCliCommand` invocations with module resets and real
+        // temp-directory state. Measured 11.6s-28.5s across runs on idle machines and
+        // once exceeded the 30s default outright, so the default budget has no margin.
+    }, 60_000);
 
     it('allows daemon start takeover to spawn a replacement relay when the current owner is manual', async () => {
         await withTempDir('happier-daemon-start-takeover-', async (homeDir) => {

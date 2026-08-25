@@ -369,24 +369,6 @@ describe('ApiClient sessionSyncClient runtime-action routes', () => {
 
     const runtimeActionExecute = api.createBrowserRuntimeActionExecutor();
     await expect(runtimeActionExecute({
-      actionId: 'browser.session.create',
-      input: {},
-      context: {},
-    })).resolves.toEqual({
-      ok: false,
-      errorCode: 'runtime_action_disabled',
-      error: 'runtime_action_disabled:browser:browser_action_unbacked',
-    });
-    await expect(runtimeActionExecute({
-      actionId: 'browser.session.close',
-      input: {},
-      context: {},
-    })).resolves.toEqual({
-      ok: false,
-      errorCode: 'runtime_action_disabled',
-      error: 'runtime_action_disabled:browser:browser_action_unbacked',
-    });
-    await expect(runtimeActionExecute({
       actionId: 'devices.simulator.input.orientation',
       input: {
         type: 'simulator.control.send',

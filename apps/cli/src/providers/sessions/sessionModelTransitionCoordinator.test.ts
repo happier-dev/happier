@@ -142,12 +142,13 @@ function managedRuntimeBindingBasis(
             localId: 'account',
           },
           required: true,
+          materializationKinds: ['httpHeaders'],
         })),
         requestAuthUses: purposes.map((purpose) => ({
           purpose,
           materialization: {
             kind: 'httpHeaders' as const,
-            origin: `https://${purpose}.example.test`,
+            origin: 'https://api.example.test',
             headerNames: ['authorization'],
           },
         })),
@@ -374,6 +375,55 @@ describe('createSessionModelTransitionCoordinator', () => {
         status: 'applied',
       }),
     ).toEqual({ status: 'applied' });
+  });
+
+  it('projects a plugin-authored transition reason through the canonical failure redactor', () => {
+    // `RuntimeConfigUpdateOutcomeV1.reason` is an open public string. It leaves
+    // the daemon through the Session transition result, Action details, and
+    // `--json` stdout, so an ordinary runtime that wraps an upstream failure
+    // must not carry a credential or a local path with it.
+    const result = mapRuntimeConfigUpdateOutcomeToSessionModelTransitionApplyResult({
+      status: 'failed',
+      reason: 'upstream rejected token sk-live-0123456789abcdefghij for /Users/alice/private-project',
+    });
+
+    if (result.status === 'applied') throw new Error('Expected a failed transition apply result');
+    expect(result.status).toBe('failed');
+    expect(result.reason).toBeTruthy();
+    expect(result.reason).not.toContain('sk-live-0123456789abcdefghij');
+    expect(result.reason).not.toContain('/Users/alice/private-project');
+    expect(Buffer.byteLength(result.reason ?? '', 'utf8')).toBeLessThanOrEqual(512);
+  });
+
+  it('keeps a host-owned closed transition reason code exactly', () => {
+    expect(
+      mapRuntimeConfigUpdateOutcomeToSessionModelTransitionApplyResult({
+        status: 'unsupported',
+        reason: 'provider_source_change_requires_restart',
+      }),
+    ).toEqual({
+      status: 'unsupported',
+      reason: 'provider_source_change_requires_restart',
+    });
+    expect(
+      mapRuntimeConfigUpdateOutcomeToSessionModelTransitionApplyResult({
+        status: 'failed',
+      }),
+    ).toEqual({
+      status: 'failed',
+      reason: 'runtime_model_transition_not_applied',
+    });
+  });
+
+  it('bounds an overlong plugin reason instead of failing the Protocol result', () => {
+    const result = mapRuntimeConfigUpdateOutcomeToSessionModelTransitionApplyResult({
+      status: 'failed',
+      reason: 'x'.repeat(4_000),
+    });
+
+    if (result.status === 'applied') throw new Error('Expected a failed transition apply result');
+    expect(result.status).toBe('failed');
+    expect(Buffer.byteLength(result.reason ?? '', 'utf8')).toBeLessThanOrEqual(512);
   });
 
   it('publishes an admitted same-selection replacement target before making it active', async () => {

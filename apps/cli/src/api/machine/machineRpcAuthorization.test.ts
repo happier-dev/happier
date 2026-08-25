@@ -90,6 +90,27 @@ describe('authorizeMachineRpcRequest', () => {
     })).resolves.toEqual({ ok: true });
   });
 
+  it('requires matching Session authorization for remote grant inventory and revocation', async () => {
+    for (const method of [
+      'session.permission.remote.grants.list',
+      'session.permission.remote.grants.revoke',
+    ]) {
+      await expect(authorizeMachineRpcRequest({
+        method: `sess_1:${method}`,
+        params: { sessionId: 'sess_1' },
+        authorization: undefined,
+      })).resolves.toMatchObject({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN });
+      await expect(authorizeMachineRpcRequest({
+        method: `sess_1:${method}`,
+        params: { sessionId: 'sess_1' },
+        authorization: {
+          kind: SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS.SESSION_WRITE,
+          sessionId: 'sess_1',
+        },
+      })).resolves.toEqual({ ok: true });
+    }
+  });
+
   it('rejects a Session Agent transition with no server-provided edit proof', async () => {
     await expect(authorizeMachineRpcRequest({
       method: `machine-1:${RPC_METHODS.SESSION_AGENT_TRANSITION}`,

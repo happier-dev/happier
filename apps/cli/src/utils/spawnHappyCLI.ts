@@ -86,6 +86,7 @@ import {
   type LiveRunnerSnapshotFingerprints,
 } from './pinnedRunnerSnapshotPrune';
 import {
+  explainPinnedRunnerSnapshotUnreadiness,
   isPinnedRunnerSnapshotReady,
   listReadyPinnedRunnerSnapshots,
   PINNED_RUNNER_LAYOUT_VERSION,
@@ -383,7 +384,7 @@ function readNonEmptyEnv(name: string, env: NodeJS.ProcessEnv = process.env): st
   return value ? value : null;
 }
 
-function isRuntimeBackedSubprocess(env: NodeJS.ProcessEnv = process.env): boolean {
+export function isRuntimeBackedHappyCliSubprocess(env: NodeJS.ProcessEnv = process.env): boolean {
   return parseOptionalBooleanEnv(env[RUNTIME_BACKED_SUBPROCESS_ENV]) === true;
 }
 
@@ -394,6 +395,15 @@ export class HappyCliImmutableRuntimeClosureError extends Error {
     super(message);
     this.name = 'HappyCliImmutableRuntimeClosureError';
   }
+}
+
+/**
+ * Roughly eight distinct conditions refuse an admitted closure and all raise this one error.
+ * Append the condition the decision actually observed so an operator does not have to
+ * re-derive it.
+ */
+function describeImmutableClosureRefusal(summary: string, refusal: string | null): string {
+  return refusal ? `${summary}\nThe admitted closure was refused because ${refusal}` : summary;
 }
 
 function resolveStackRuntimeStatePath(env: NodeJS.ProcessEnv = process.env): string | null {
@@ -529,7 +539,7 @@ function resolvePinnedRunnerSnapshotsDir(
   env: NodeJS.ProcessEnv,
 ): string | null {
   const distRoot = dirname(entrypoint);
-  if (!isRuntimeBackedSubprocess(env)) {
+  if (!isRuntimeBackedHappyCliSubprocess(env)) {
     return join(dirname(distRoot), PINNED_RUNNER_DIST_DIR);
   }
 
@@ -673,14 +683,25 @@ export function pruneHappyCliRunnerSnapshots(
   prunePinnedRunnerSnapshots(location.snapshotsDir, location.snapshotIdentity, live);
 }
 
+/**
+ * Every refusal below reaches the operator as one typed immutable-closure error. Carry the
+ * reason out with the decision so a precisely knowable condition — such as an artifact whose
+ * plugin manifests declare resource files the payload does not contain — is named rather than
+ * having to be re-derived by replicating this function offline.
+ */
+type PinnedSnapshotPreparation = Readonly<{
+  entrypoint: string | null;
+  refusal: string | null;
+}>;
+
 function copyCliDistToPinnedSnapshot(
   entrypoint: string,
   fingerprint: string,
   live: LiveRunnerSnapshotFingerprints | null | undefined,
   env: NodeJS.ProcessEnv,
-): string | null {
+): PinnedSnapshotPreparation {
   const distRoot = dirname(entrypoint);
-  const sourceRepoRoot = !isRuntimeBackedSubprocess(env)
+  const sourceRepoRoot = !isRuntimeBackedHappyCliSubprocess(env)
     ? readNonEmptyEnv('HAPPIER_STACK_REPO_DIR', env)
     : '';
   let sourceWorkspaceRuntime = null;
@@ -698,7 +719,9 @@ function copyCliDistToPinnedSnapshot(
     env,
     sourceWorkspaceRuntime?.fingerprint,
   );
-  if (!location) return null;
+  if (!location) {
+    return { entrypoint: null, refusal: 'no pinned runner snapshot location could be resolved' };
+  }
   const runtimeRoot = dirname(distRoot);
   const {
     snapshotsDir,
@@ -708,7 +731,7 @@ function copyCliDistToPinnedSnapshot(
   } = location;
   if (isPinnedRunnerSnapshotReady(location)) {
     prunePinnedRunnerSnapshots(snapshotsDir, snapshotIdentity, live);
-    return snapshotEntrypoint;
+    return { entrypoint: snapshotEntrypoint, refusal: null };
   }
 
   const tmpRoot = join(snapshotsDir, `.${snapshotIdentity}.${process.pid}.${Date.now()}.tmp`);
@@ -727,7 +750,7 @@ function copyCliDistToPinnedSnapshot(
     let expectedWorkspaceRuntimeIdentity = String(
       distManifest.manifest?.workspaceRuntimeIdentity ?? '',
     ).trim().toLowerCase();
-    if (isRuntimeBackedSubprocess(env)) {
+    if (isRuntimeBackedHappyCliSubprocess(env)) {
       if (expectedWorkspaceRuntimeIdentity) {
         const workspaceRuntimePackages = distManifest.manifest?.workspaceRuntimePackages;
         if (!Array.isArray(workspaceRuntimePackages)) {
@@ -775,20 +798,50 @@ function copyCliDistToPinnedSnapshot(
       }
       rmSync(tmpRoot, { recursive: true, force: true });
     }
-    const ready = isPinnedRunnerSnapshotReady(location);
-    if (ready) {
+    // Read the reason before the unready snapshot is removed: afterwards nothing on disk can
+    // still explain why it was refused.
+    const refusal = explainPinnedRunnerSnapshotUnreadiness(location);
+    if (!refusal) {
       prunePinnedRunnerSnapshots(snapshotsDir, snapshotIdentity, live);
-      return snapshotEntrypoint;
+      return { entrypoint: snapshotEntrypoint, refusal: null };
     }
+    logger.warn(
+      `[SPAWN HAPPIER CLI] Refused the prepared pinned dist runner closure ${snapshotIdentity}: `
+      + refusal,
+    );
     if (publishedSnapshot) {
       rmSync(snapshotRoot, { recursive: true, force: true });
     }
-    return null;
+    return { entrypoint: null, refusal };
   } catch (error) {
     rmSync(tmpRoot, { recursive: true, force: true });
+    const refusal = `preparing it failed: ${String(error)}`;
     logger.debug(`[SPAWN HAPPIER CLI] Could not prepare pinned dist runner closure: ${String(error)}`);
-    return null;
+    return { entrypoint: null, refusal };
   }
+}
+
+/**
+ * `refusal` explains why no admitted closure could be used, for the typed error the caller
+ * raises. It is diagnostic only and never changes which invocation is selected.
+ */
+type StackDistInvocationOutcome = Readonly<{
+  invocation: HappyCliSubprocessInvocation | null;
+  refusal: string | null;
+}>;
+
+const NO_STACK_DIST_INVOCATION: StackDistInvocationOutcome = { invocation: null, refusal: null };
+
+function runtimeBackedSnapshotProvenance(
+  snapshotEntrypoint: string,
+  fingerprint: string,
+  runtimeBacked: boolean,
+): Readonly<Record<string, string>> | undefined {
+  if (!runtimeBacked) return undefined;
+  return {
+    [STACK_DIST_ENTRYPOINT_ENV]: snapshotEntrypoint,
+    [DAEMON_DIST_CLOSURE_FINGERPRINT_ENV]: fingerprint,
+  };
 }
 
 function buildCurrentStackDistSubprocessInvocation(
@@ -797,11 +850,11 @@ function buildCurrentStackDistSubprocessInvocation(
   live: LiveRunnerSnapshotFingerprints | null | undefined,
   allowAdmittedDaemonStartupClosure: boolean,
   env: NodeJS.ProcessEnv = process.env,
-): HappyCliSubprocessInvocation | null {
-  if (!hasStackSubprocessContext(env)) return null;
-  const runtimeBacked = isRuntimeBackedSubprocess(env);
+): StackDistInvocationOutcome {
+  if (!hasStackSubprocessContext(env)) return NO_STACK_DIST_INVOCATION;
+  const runtimeBacked = isRuntimeBackedHappyCliSubprocess(env);
   const daemonFingerprint = readNonEmptyEnv(DAEMON_DIST_CLOSURE_FINGERPRINT_ENV, env);
-  if (!daemonFingerprint) return null;
+  if (!daemonFingerprint) return NO_STACK_DIST_INVOCATION;
   const isInitialDaemonStartup = (
     allowAdmittedDaemonStartupClosure
     && args[0] === 'daemon'
@@ -814,7 +867,7 @@ function buildCurrentStackDistSubprocessInvocation(
       (!runtimeFingerprint || runtimeFingerprint !== daemonFingerprint)
       && !isInitialDaemonStartup
     ) {
-      return null;
+      return NO_STACK_DIST_INVOCATION;
     }
   }
 
@@ -832,35 +885,52 @@ function buildCurrentStackDistSubprocessInvocation(
       admittedSnapshot.snapshotIdentity,
       live,
     );
+    const admittedSnapshotProvenance = runtimeBackedSnapshotProvenance(
+      admittedSnapshot.snapshotEntrypoint,
+      daemonFingerprint,
+      runtimeBacked,
+    );
     return {
-      runtime: 'node',
-      argv: [
-        ...readInheritedNodeLaunchFlags(),
-        '--no-warnings',
-        '--no-deprecation',
-        admittedSnapshot.snapshotEntrypoint,
-        ...args,
-      ],
+      invocation: {
+        runtime: 'node',
+        argv: [
+          ...readInheritedNodeLaunchFlags(),
+          '--no-warnings',
+          '--no-deprecation',
+          admittedSnapshot.snapshotEntrypoint,
+          ...args,
+        ],
+        ...(admittedSnapshotProvenance ? { env: admittedSnapshotProvenance } : {}),
+      },
+      refusal: null,
     };
   }
 
   const distManifest = cliDistBuildManifest.readCliDistBuildManifest(distEntrypoint);
   if (!distManifest.ok || !distManifest.fingerprint || distManifest.fingerprint !== daemonFingerprint) {
-    return null;
+    return {
+      invocation: null,
+      refusal: `the dist build manifest at ${distEntrypoint} does not record admitted `
+        + `fingerprint ${daemonFingerprint}`,
+    };
   }
-  const pinnedEntrypoint = copyCliDistToPinnedSnapshot(
+  const pinnedSnapshot = copyCliDistToPinnedSnapshot(
     distEntrypoint,
     distManifest.fingerprint,
     live,
     env,
   );
+  const pinnedEntrypoint = pinnedSnapshot.entrypoint;
   if (!pinnedEntrypoint) {
+    const refusal = pinnedSnapshot.refusal;
     // Stack holds the canonical publication lease while launching an exact admitted closure.
     // Under that lease, selecting another ready snapshot would silently replace the admitted
     // workspace/runtime identity. Let the caller fail with its typed immutable-closure error.
-    if (!isInitialDaemonStartup || inheritedExactPublicationLease) return null;
+    if (!isInitialDaemonStartup || inheritedExactPublicationLease) {
+      return { invocation: null, refusal };
+    }
     const lastGreenSnapshot = resolveNewestReadyPinnedSnapshotLocation(distEntrypoint, env);
-    if (!lastGreenSnapshot) return null;
+    if (!lastGreenSnapshot) return { invocation: null, refusal };
     logger.warn(
       '[SPAWN HAPPIER CLI] The admitted daemon closure is unavailable; '
       + `starting from the last ready immutable closure ${lastGreenSnapshot.fingerprint}.`,
@@ -871,29 +941,45 @@ function buildCurrentStackDistSubprocessInvocation(
       live,
     );
     return {
+      invocation: {
+        runtime: 'node',
+        argv: [
+          ...readInheritedNodeLaunchFlags(),
+          '--no-warnings',
+          '--no-deprecation',
+          lastGreenSnapshot.snapshotEntrypoint,
+          ...args,
+        ],
+        env: runtimeBackedSnapshotProvenance(
+          lastGreenSnapshot.snapshotEntrypoint,
+          lastGreenSnapshot.fingerprint,
+          runtimeBacked,
+        ) ?? {
+          [DAEMON_DIST_CLOSURE_FINGERPRINT_ENV]: lastGreenSnapshot.fingerprint,
+        },
+      },
+      refusal: null,
+    };
+  }
+
+  const pinnedSnapshotProvenance = runtimeBackedSnapshotProvenance(
+    pinnedEntrypoint,
+    daemonFingerprint,
+    runtimeBacked,
+  );
+  return {
+    invocation: {
       runtime: 'node',
       argv: [
         ...readInheritedNodeLaunchFlags(),
         '--no-warnings',
         '--no-deprecation',
-        lastGreenSnapshot.snapshotEntrypoint,
+        pinnedEntrypoint,
         ...args,
       ],
-      env: {
-        [DAEMON_DIST_CLOSURE_FINGERPRINT_ENV]: lastGreenSnapshot.fingerprint,
-      },
-    };
-  }
-
-  return {
-    runtime: 'node',
-    argv: [
-      ...readInheritedNodeLaunchFlags(),
-      '--no-warnings',
-      '--no-deprecation',
-      pinnedEntrypoint,
-      ...args,
-    ],
+      ...(pinnedSnapshotProvenance ? { env: pinnedSnapshotProvenance } : {}),
+    },
+    refusal: null,
   };
 }
 
@@ -997,45 +1083,50 @@ export function buildHappyCliSubprocessInvocation(
 
   const environment = options?.environment ?? process.env;
   const runtime = getSubprocessRuntime(environment);
-  if (runtime === 'node' && !isRuntimeBackedSubprocess(environment)) {
+  const runtimeBacked = isRuntimeBackedHappyCliSubprocess(environment);
+  if (runtime === 'node' && !runtimeBacked) {
     const currentProcessSourceInvocation = buildCurrentProcessSourceInvocation(args);
     if (currentProcessSourceInvocation) return currentProcessSourceInvocation;
   }
 
   const entrypoint = resolveSubprocessEntrypoint(environment);
 
-  if (runtime === 'node' && shouldPreferDevTsxSubprocess(environment)) {
+  if (runtimeBacked || (runtime === 'node' && shouldPreferDevTsxSubprocess(environment))) {
     const explicitTsxPreference = parseOptionalBooleanEnv(environment.HAPPIER_CLI_SUBPROCESS_PREFER_TSX);
+    let stackDistRefusal: string | null = null;
     if (explicitTsxPreference !== true) {
-      const currentStackDistInvocation = buildCurrentStackDistSubprocessInvocation(
+      const currentStackDist = buildCurrentStackDistSubprocessInvocation(
         args,
         entrypoint,
         options?.liveRunnerSnapshotFingerprints,
         options?.allowAdmittedDaemonStartupClosure === true,
         environment,
       );
-      if (currentStackDistInvocation) return currentStackDistInvocation;
+      if (currentStackDist.invocation) return currentStackDist.invocation;
+      stackDistRefusal = currentStackDist.refusal;
       if (
         options?.allowAdmittedDaemonStartupClosure === true
         && args[0] === 'daemon'
         && args[1] === 'start-sync'
         && readNonEmptyEnv(DAEMON_DIST_CLOSURE_FINGERPRINT_ENV, environment)
       ) {
-        throw new HappyCliImmutableRuntimeClosureError(
+        throw new HappyCliImmutableRuntimeClosureError(describeImmutableClosureRefusal(
           'Stack daemon startup could not prepare its admitted immutable dist closure.',
-        );
+          stackDistRefusal,
+        ));
       }
     }
-    if (isRuntimeBackedSubprocess(environment)) {
-      throw new HappyCliImmutableRuntimeClosureError(
+    if (runtimeBacked) {
+      throw new HappyCliImmutableRuntimeClosureError(describeImmutableClosureRefusal(
         'Runtime-backed Happier CLI runner requires its admitted immutable dist closure; mutable source fallback is disabled.',
-      );
+        stackDistRefusal,
+      ));
     }
     const tsxInvocation = buildDevTsxSubprocessInvocation(args, entrypoint);
     if (tsxInvocation) return tsxInvocation;
   }
 
-  if (isRuntimeBackedSubprocess(environment)) {
+  if (runtimeBacked) {
     throw new HappyCliImmutableRuntimeClosureError(
       'Runtime-backed Happier CLI runner could not resolve its admitted immutable dist closure.',
     );
@@ -1094,7 +1185,8 @@ export function buildHappyCliSubprocessInvocation(
 export function resolveHappyCliSubprocessRuntimeDecision(
   options?: Omit<HappyCliSubprocessLaunchOptions, 'runtimeDecision'>,
 ): HappyCliSubprocessRuntimeDecision | null {
-  if (!isRuntimeBackedSubprocess()) return null;
+  const environment = options?.environment ?? process.env;
+  if (!isRuntimeBackedHappyCliSubprocess(environment)) return null;
   const invocation = buildHappyCliSubprocessInvocation([], options);
   if (invocation.runtime !== 'node') {
     throw new HappyCliImmutableRuntimeClosureError(

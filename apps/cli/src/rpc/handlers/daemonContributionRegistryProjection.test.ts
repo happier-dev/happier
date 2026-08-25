@@ -1,4 +1,4 @@
-import { access, mkdtemp, mkdir, symlink, writeFile } from 'node:fs/promises';
+import { access, mkdtemp, mkdir, readFile, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -1247,144 +1247,19 @@ describe('daemon contribution registry projection rpc handler', () => {
         })).resolves.toMatchObject({ ok: false, code: 'composer_reference_unavailable', reason: 'unavailable' });
     });
 
-    it('prepares one current Composer attachment through the leased runtime owner without a terminal Message identity', async () => {
-        const registry = createResolvedContributionRegistry({ agents: Object.freeze([]) });
-        let projectionGeneration = 7;
-        let advanceProjectionAfterPrepare = false;
-        function admit(input: Readonly<{
-            phase: 'draft';
-            attachments: readonly ComposerAttachmentDraftV1[];
-        }>): readonly ComposerAttachmentDraftV1[];
-        function admit(input: Readonly<{
-            phase: 'prepared';
-            attachments: readonly ComposerAttachmentInputV1[];
-        }>): readonly ComposerAttachmentInputV1[];
-        function admit(input:
-            | Readonly<{ phase: 'draft'; attachments: readonly ComposerAttachmentDraftV1[] }>
-            | Readonly<{ phase: 'prepared'; attachments: readonly ComposerAttachmentInputV1[] }>,
-        ): readonly ComposerAttachmentDraftV1[] | readonly ComposerAttachmentInputV1[] {
-            return input.attachments;
-        }
-        const prepareForSend = vi.fn(async (input: Readonly<{
-            attachment: Readonly<{ pluginId: string; localId: string }>;
-            request: Readonly<{
-                sessionId: string;
-                localId: string;
-                attachments: readonly Readonly<{
-                    instanceId: string;
-                    key: string;
-                    value: unknown;
-                }>[];
-            }>;
-            signal: AbortSignal;
-        }>) => {
-            if (advanceProjectionAfterPrepare) projectionGeneration = 8;
-            return {
-                attachments: input.request.attachments.map((attachment) => ({
-                    instanceId: attachment.instanceId,
-                    status: 'ready' as const,
-                    value: { ...(attachment.value as Record<string, unknown>), prepared: true },
-                })),
-            };
-        });
-        let runtimeGeneration = 7;
-        let composerAttachments: ResolvedExecutablePluginRuntimeRegistry['composerAttachments'] = {
-            list: () => [{ pluginId: 'acme.issues', localId: 'issue-context' }],
-            isDeclared: () => true,
-            requires: () => true,
-            supports: async () => true,
-            admit,
-            prepareForSend,
-            resolveForDispatch: vi.fn(),
-            afterMessageAccepted: vi.fn(),
-        };
-        const runtimeRegistry = {
-            ...createRuntimeRegistry(registry),
-            get generation() {
-                return runtimeGeneration;
-            },
-            get composerAttachments() {
-                return composerAttachments;
-            },
-        };
+    it('does not register the retired daemon-owned Composer attachment prepare RPC', async () => {
         const { handlers, registrar } = createRegistrar();
         const projectionModule = await import('./daemonContributionRegistryProjection');
         projectionModule.registerDaemonContributionRegistryProjectionHandler(registrar as never, {
-            resolveRuntimeRegistry: async () => runtimeRegistry,
-            resolveGeneration: async () => projectionGeneration,
+            resolveRuntimeRegistry: async () => createRuntimeRegistry(
+                createResolvedContributionRegistry({ agents: Object.freeze([]) }),
+            ),
+            resolveGeneration: async () => 1,
             resolveInstalledPackages: async () => [],
         });
 
-        const handler = handlers.get(RPC_METHODS.DAEMON_PLUGIN_COMPOSER_ATTACHMENT_PREPARE);
-        expect(handler).toEqual(expect.any(Function));
-
-        const signal = new AbortController().signal;
-        const request = {
-            sessionId: 'session-1',
-            localId: 'local-1',
-            attachments: [{ instanceId: 'attachment-1', key: 'issue-42', value: { issueId: '42' } }],
-        };
-        await expect(handler?.({
-            machineId: 'machine-1',
-            expectedGeneration: '7',
-            attachment: { pluginId: 'acme.issues', localId: 'issue-context' },
-            request,
-        }, { signal })).resolves.toEqual({
-            ok: true,
-            attachment: { pluginId: 'acme.issues', localId: 'issue-context' },
-            result: {
-                attachments: [{
-                    instanceId: 'attachment-1',
-                    status: 'ready',
-                    value: { issueId: '42', prepared: true },
-                }],
-            },
-        });
-        expect(prepareForSend).toHaveBeenCalledWith({
-            attachment: { pluginId: 'acme.issues', localId: 'issue-context' },
-            request,
-            signal,
-        });
-
-        await expect(handler?.({
-            machineId: 'machine-1',
-            expectedGeneration: '7',
-            attachment: { pluginId: 'acme.issues', localId: 'issue-context' },
-            request: { ...request, messageLocalId: 'local-1' },
-        })).resolves.toMatchObject({ ok: false, reason: 'invalid_payload' });
-        expect(prepareForSend).toHaveBeenCalledTimes(1);
-
-        runtimeGeneration = 8;
-        await expect(handler?.({
-            machineId: 'machine-1',
-            expectedGeneration: '7',
-            attachment: { pluginId: 'acme.issues', localId: 'issue-context' },
-            request,
-        })).resolves.toMatchObject({ ok: true });
-        expect(prepareForSend).toHaveBeenCalledTimes(2);
-
-        advanceProjectionAfterPrepare = true;
-        await expect(handler?.({
-            machineId: 'machine-1',
-            expectedGeneration: '7',
-            attachment: { pluginId: 'acme.issues', localId: 'issue-context' },
-            request,
-        })).resolves.toMatchObject({ ok: false, reason: 'stale_generation' });
-        expect(prepareForSend).toHaveBeenCalledTimes(3);
-
-        projectionGeneration = 7;
-        runtimeGeneration = 7;
-        composerAttachments = undefined;
-        await expect(handler?.({
-            machineId: 'machine-1',
-            expectedGeneration: '7',
-            attachment: { pluginId: 'acme.issues', localId: 'issue-context' },
-            request,
-        })).resolves.toMatchObject({
-            ok: false,
-            code: 'composer_attachment_unavailable',
-            reason: 'unavailable',
-        });
+        expect(Reflect.has(RPC_METHODS, 'DAEMON_PLUGIN_COMPOSER_ATTACHMENT_PREPARE')).toBe(false);
+        expect([...handlers.keys()]).not.toContain('daemon.plugins.composerAttachments.prepare');
     });
 
     it('carries a live resource invalidation over the watch triple and keeps its failures in one taxonomy', async () => {
@@ -2632,10 +2507,6 @@ describe('daemon contribution registry projection rpc handler', () => {
                 handler: targetHandler,
             }],
             resolveAuthorizationFacts: (action) => ({
-                packageTrust: {
-                    packageIdentity: action.qualifiedId,
-                    reviewedPackageIdentity: action.qualifiedId,
-                },
                 generation: {
                     targetGeneration: action.generation,
                     desiredGeneration: action.generation,
@@ -2672,7 +2543,7 @@ describe('daemon contribution registry projection rpc handler', () => {
             ...createRuntimeRegistry(registry),
             generation: 7,
             targetActionInvocations,
-            retirePluginConsumers: () => {},
+            retirePluginConsumers: async () => undefined,
             resolveCurrentPluginMaterializationRef: (pluginId: string) => (
                 pluginId === 'acme.mounted'
                     ? {
@@ -2733,6 +2604,16 @@ describe('daemon contribution registry projection rpc handler', () => {
             });
             return targetResult.status === 'executed'
                 ? { matched: true, result: { ok: true, result: targetResult.value } }
+                : targetResult.status === 'deferred'
+                    // API-only deferred approvals cannot execute through a mounted UI projection.
+                    ? {
+                        matched: true,
+                        result: {
+                            ok: false,
+                            errorCode: 'plugin_action_current_intent_unavailable',
+                            error: 'plugin_action_current_intent_unavailable',
+                        },
+                    }
                 : {
                     matched: true,
                     result: {
@@ -4958,7 +4839,10 @@ describe('daemon contribution registry projection rpc handler', () => {
                     exportName: 'collectionMigrations',
                 },
                 hostUiApiVersion: '1.0.0',
-                compat: { react: '19.2.0', reactNative: '0.83.4' },
+                compat: {
+                    react: PUBLIC_TOOLCHAIN_COMPATIBILITY_V1.framework.react,
+                    reactNative: PUBLIC_TOOLCHAIN_COMPATIBILITY_V1.framework.reactNative,
+                },
             };
             const registry = createResolvedContributionRegistry({
                 agents: [],
@@ -5002,8 +4886,8 @@ describe('daemon contribution registry projection rpc handler', () => {
                 reactNativeHostRuntime: {
                     platform: 'ios',
                     channel: 'internal',
-                    reactVersion: '19.2.0',
-                    reactNativeVersion: '0.83.4',
+                    reactVersion: PUBLIC_TOOLCHAIN_COMPATIBILITY_V1.framework.react,
+                    reactNativeVersion: PUBLIC_TOOLCHAIN_COMPATIBILITY_V1.framework.reactNative,
                 },
             });
             const projectionHandler = handlers.get(RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE);
@@ -5252,7 +5136,10 @@ describe('daemon contribution registry projection rpc handler', () => {
                     exportName: 'renderSurface',
                 },
                 hostUiApiVersion: '1.0.0',
-                compat: { react: '19.2.0', reactNative: '0.83.4' },
+                compat: {
+                    react: PUBLIC_TOOLCHAIN_COMPATIBILITY_V1.framework.react,
+                    reactNative: PUBLIC_TOOLCHAIN_COMPATIBILITY_V1.framework.reactNative,
+                },
             };
             const registry = createResolvedContributionRegistry({
                 agents: [],
@@ -6058,10 +5945,25 @@ describe('daemon contribution registry projection rpc handler', () => {
             }],
         });
 
+        let currentRuntimeRegistry = createRuntimeRegistry(registry);
+        let currentGeneration = 59;
+        let delayedReadStarted: (() => void) | null = null;
+        let releaseDelayedRead = () => {};
+        let delayNextRead = false;
         const { handlers, registrar } = createRegistrar();
         registerDaemonContributionRegistryProjectionHandler(registrar as never, {
-            resolveGeneration: async () => 59,
-            resolveRuntimeRegistry: async () => createRuntimeRegistry(registry),
+            resolveGeneration: async () => currentGeneration,
+            resolveRuntimeRegistry: async () => currentRuntimeRegistry,
+            readArtifactFile: async (path) => {
+                if (delayNextRead) {
+                    delayNextRead = false;
+                    delayedReadStarted?.();
+                    await new Promise<void>((resolve) => {
+                        releaseDelayedRead = resolve;
+                    });
+                }
+                return await readFile(path);
+            },
             resolveHostedWebFeatureDecision: async () => createEnabledHostedWebFeatureDecision(),
         });
 
@@ -6138,6 +6040,66 @@ describe('daemon contribution registry projection rpc handler', () => {
             code: 'artifact_integrity_failed',
             diagnostics: ['hosted_web_artifact_file_integrity_failed'],
         });
+
+        await writeFile(join(installedRoot, scriptPath), scriptBytes);
+        const predecessorReadStarted = new Promise<void>((resolve) => {
+            delayedReadStarted = resolve;
+        });
+        delayNextRead = true;
+        const predecessorRead = artifactBytesHandler!({
+            artifactFamily: 'hostedWeb',
+            machineId: 'm1',
+            cacheIdentity: runtime?.artifactReadIdentity,
+        });
+        await Promise.race([
+            predecessorReadStarted,
+            new Promise<never>((_resolve, reject) => {
+                setTimeout(() => reject(new Error('artifact_read_boundary_not_reached')), 1_000);
+            }),
+        ]);
+        currentRuntimeRegistry = createRuntimeRegistry(createResolvedContributionRegistry({ agents: [] }));
+        currentGeneration = 60;
+        releaseDelayedRead();
+        await expect(predecessorRead).resolves.toEqual({
+            ok: false,
+            code: 'artifact_unavailable',
+            diagnostics: ['artifact_projection_pair_stale'],
+        });
+
+        const predecessorRuntimeRegistry = createRuntimeRegistry(registry);
+        currentRuntimeRegistry = predecessorRuntimeRegistry;
+        currentGeneration = 60;
+        let capturedPredecessor = false;
+        const resolveRuntimeRegistry = async () => {
+            if (!capturedPredecessor) {
+                capturedPredecessor = true;
+                return predecessorRuntimeRegistry;
+            }
+            return currentRuntimeRegistry;
+        };
+        const { handlers: mixedPairHandlers, registrar: mixedPairRegistrar } = createRegistrar();
+        registerDaemonContributionRegistryProjectionHandler(mixedPairRegistrar as never, {
+            resolveGeneration: async () => {
+                currentRuntimeRegistry = createRuntimeRegistry(createResolvedContributionRegistry({ agents: [] }));
+                return currentGeneration;
+            },
+            resolveRuntimeRegistry,
+            readArtifactFile: readFile,
+            resolveHostedWebFeatureDecision: async () => createEnabledHostedWebFeatureDecision(),
+        });
+        const mixedPairRead = mixedPairHandlers.get(RPC_METHODS.DAEMON_PLUGIN_UI_ARTIFACT_BYTES_READ);
+        await expect(mixedPairRead!({
+            artifactFamily: 'hostedWeb',
+            machineId: 'm1',
+            cacheIdentity: {
+                ...runtime?.artifactReadIdentity as Record<string, unknown>,
+                projectionGeneration: 60,
+            },
+        })).resolves.toEqual({
+            ok: false,
+            code: 'artifact_unavailable',
+            diagnostics: ['artifact_projection_pair_stale'],
+        });
     });
 
     it('rejects disabled or mismatched renderer tokens before reading the generated artifact graph', async () => {
@@ -6174,7 +6136,10 @@ describe('daemon contribution registry projection rpc handler', () => {
                     exportName: 'renderSurface',
                 },
                 hostUiApiVersion: '1.0.0',
-                compat: { react: '19.2.0', reactNative: '0.83.4' },
+                compat: {
+                    react: PUBLIC_TOOLCHAIN_COMPATIBILITY_V1.framework.react,
+                    reactNative: PUBLIC_TOOLCHAIN_COMPATIBILITY_V1.framework.reactNative,
+                },
             };
             const registry = createResolvedContributionRegistry({
                 agents: [],
@@ -6347,7 +6312,10 @@ describe('daemon contribution registry projection rpc handler', () => {
                     exportName: 'activate',
                 },
                 hostUiApiVersion: '1.0.0',
-                compat: { react: '19.2.0', reactNative: '0.83.4' },
+                compat: {
+                    react: PUBLIC_TOOLCHAIN_COMPATIBILITY_V1.framework.react,
+                    reactNative: PUBLIC_TOOLCHAIN_COMPATIBILITY_V1.framework.reactNative,
+                },
             };
             const registry = createResolvedContributionRegistry({
                 agents: [],
@@ -6401,8 +6369,8 @@ describe('daemon contribution registry projection rpc handler', () => {
                     artifactDigest,
                     hostAppVersion: testConfiguration.currentCliVersion,
                     hostUiApiVersion: '1.0.0',
-                    reactVersion: '19.2.0',
-                    reactNativeVersion: '0.83.4',
+                    reactVersion: PUBLIC_TOOLCHAIN_COMPATIBILITY_V1.framework.react,
+                    reactNativeVersion: PUBLIC_TOOLCHAIN_COMPATIBILITY_V1.framework.reactNative,
                     platform: 'ios',
                     channel: 'internal',
                     nativeCapabilitiesDigest: deriveReactNativeNativeCapabilitiesDigest([]),
@@ -6459,7 +6427,10 @@ describe('daemon contribution registry projection rpc handler', () => {
                 exportName: 'activate',
             },
             hostUiApiVersion: '1.0.0',
-            compat: { react: '19.2.0', reactNative: '0.83.4' },
+            compat: {
+                react: PUBLIC_TOOLCHAIN_COMPATIBILITY_V1.framework.react,
+                reactNative: PUBLIC_TOOLCHAIN_COMPATIBILITY_V1.framework.reactNative,
+            },
         };
         const registry = createResolvedContributionRegistry({
             agents: [],
@@ -6657,10 +6628,6 @@ describe('daemon contribution registry projection rpc handler', () => {
         const pluginId = 'runtime.client-action-policy';
         const actionId = 'open-preview';
         const authorization = {
-            packageTrust: {
-                packageIdentity: 'package:runtime.client-action-policy:generation-7',
-                reviewedPackageIdentity: 'package:runtime.client-action-policy:generation-7',
-            },
             generation: {
                 targetGeneration: 'generation-7',
                 desiredGeneration: 'generation-7',
@@ -7392,7 +7359,6 @@ describe('daemon contribution registry projection rpc handler', () => {
                     identity: createPluginContributionIdentity({ pluginId: targetA, localId: targetAPoint.id }),
                     manifestPath: '/plugins/target-a/.happier-plugin/plugin.json',
                     definition: targetAPoint,
-                    semanticPointRefs: targetADefinition.contributionPoints.providers.protocols,
                 },
                 {
                     provenance: 'external',
@@ -7651,5 +7617,130 @@ describe('daemon contribution registry projection rpc handler', () => {
                 }),
             }),
         }));
+    });
+
+    // Translation bundles are the largest part of this response and now depend on the
+    // caller's locale, so the TTL cache must not answer one client with another client's
+    // language. This is the failure the narrowing could plausibly introduce.
+    it('answers each locale with its own translation bundles rather than a cached other-locale body', async () => {
+        const projectionModule = await import('./daemonContributionRegistryProjection');
+        projectionModule.invalidateDaemonContributionRegistryProjectionCache?.();
+
+        const registry = createResolvedContributionRegistry({
+            agents: [],
+            uiTranslationsV2: (['en', 'fr', 'ja'] as const).map((locale) => ({
+                pluginId: 'plugin.fixture',
+                localeIdentity: { pluginId: 'plugin.fixture', locale },
+                manifestPath: `/plugins/fixture/${locale}.plugin.json`,
+                definition: { locale, messages: { title: `title-${locale}` } },
+            })),
+        } as unknown as ResolvedContributionInputs);
+
+        const { handlers, registrar } = createRegistrar();
+        projectionModule.registerDaemonContributionRegistryProjectionHandler(registrar as never, {
+            resolveRuntimeRegistry: async () => createRuntimeRegistry(registry),
+            resolveGeneration: async () => 3,
+            resolveInstalledPackages: async () => [],
+        });
+        const handler = handlers.get(RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE);
+
+        const readBundles = (response: unknown) => (
+            (response as {
+                projection: {
+                    familiesById: {
+                        pluginUi?: { entriesById: Record<string, { bundles?: Record<string, unknown> }> };
+                    };
+                };
+            }).projection.familiesById.pluginUi?.entriesById['translations:plugin.fixture']?.bundles
+        );
+
+        const french = await handler!({ machineId: 'm-locale', locale: 'fr' });
+        const japanese = await handler!({ machineId: 'm-locale', locale: 'ja' });
+
+        expect(Object.keys(readBundles(french) ?? {})).toEqual(['en', 'fr']);
+        expect(Object.keys(readBundles(japanese) ?? {})).toEqual(['en', 'ja']);
+    });
+
+    // A TTL cache only helps callers that arrive after a computation finished. The regime that
+    // needs help is the opposite one: callers arriving *while* a projection is being computed,
+    // which is what turned this RPC into 137,870 ms of concurrent work at 100 % CPU. Hold the
+    // registry boundary open so every caller is inside the cold window, then assert that the
+    // expensive work ran once.
+    it('runs one projection for concurrent describe callers inside a single cold window', async () => {
+        const projectionModule = await import('./daemonContributionRegistryProjection');
+        projectionModule.invalidateDaemonContributionRegistryProjectionCache?.();
+
+        const registry = createResolvedContributionRegistry({
+            agents: [],
+            actions: [],
+            resources: [],
+            activationTargets: [],
+        });
+        let releaseRuntimeRegistry: () => void = () => {};
+        const runtimeRegistryGate = new Promise<void>((resolve) => {
+            releaseRuntimeRegistry = resolve;
+        });
+        let runtimeRegistryResolutions = 0;
+
+        const { handlers, registrar } = createRegistrar();
+        projectionModule.registerDaemonContributionRegistryProjectionHandler(registrar as never, {
+            resolveRuntimeRegistry: async () => {
+                runtimeRegistryResolutions += 1;
+                await runtimeRegistryGate;
+                return createRuntimeRegistry(registry);
+            },
+            resolveGeneration: async () => 11,
+            resolveInstalledPackages: async () => [],
+        });
+
+        const handler = handlers.get(RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE);
+        const concurrent = [
+            handler!({ machineId: 'machine-coalescing' }),
+            handler!({ machineId: 'machine-coalescing' }),
+            handler!({ machineId: 'machine-coalescing' }),
+            handler!({ machineId: 'machine-coalescing' }),
+        ];
+        // Drain microtasks so every caller is past dispatch and inside the projection before
+        // any of them is allowed to finish it.
+        await new Promise((resolve) => setImmediate(resolve));
+        releaseRuntimeRegistry();
+        const responses = await Promise.all(concurrent);
+
+        expect(runtimeRegistryResolutions).toBe(1);
+        for (const response of responses) {
+            expect(response).toBe(responses[0]);
+        }
+    });
+
+    it('starts a fresh projection for a caller that arrives after the coalesced window settled', async () => {
+        const projectionModule = await import('./daemonContributionRegistryProjection');
+        projectionModule.invalidateDaemonContributionRegistryProjectionCache?.();
+
+        const registry = createResolvedContributionRegistry({
+            agents: [],
+            actions: [],
+            resources: [],
+            activationTargets: [],
+        });
+        let runtimeRegistryResolutions = 0;
+
+        const { handlers, registrar } = createRegistrar();
+        projectionModule.registerDaemonContributionRegistryProjectionHandler(registrar as never, {
+            resolveRuntimeRegistry: async () => {
+                runtimeRegistryResolutions += 1;
+                return createRuntimeRegistry(registry);
+            },
+            resolveGeneration: async () => 12,
+            resolveInstalledPackages: async () => [],
+        });
+
+        const handler = handlers.get(RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE);
+        await handler!({ machineId: 'machine-coalescing-sequential' });
+        // Coalescing must not become a second, unbounded cache: once the shared computation
+        // settles, the in-flight entry is gone and only the existing TTL cache may answer.
+        projectionModule.invalidateDaemonContributionRegistryProjectionCache?.();
+        await handler!({ machineId: 'machine-coalescing-sequential' });
+
+        expect(runtimeRegistryResolutions).toBe(2);
     });
 });

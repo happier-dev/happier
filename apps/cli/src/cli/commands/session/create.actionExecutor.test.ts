@@ -7,7 +7,8 @@ import { SESSION_HELP_LINES } from './shared/sessionCommandUsage';
 import { handleSessionCommand } from './handleSessionCommand';
 
 const execute = vi.fn();
-const createCliActionExecutorFromCredentials = vi.fn(() => ({ execute }));
+const resolveMachineTarget = vi.fn();
+const createCliActionExecutorFromCredentials = vi.fn(() => ({ execute, resolveMachineTarget }));
 const { readStoredCredentials, readSettings, readAgentCatalogSnapshot } = vi.hoisted(() => ({
   readStoredCredentials: vi.fn(),
   readSettings: vi.fn(),
@@ -48,6 +49,7 @@ beforeEach(() => {
   previousExitCode = process.exitCode;
   process.exitCode = undefined;
   execute.mockReset();
+  resolveMachineTarget.mockReset();
   createCliActionExecutorFromCredentials.mockClear();
   readStoredCredentials.mockReset();
   readStoredCredentials.mockResolvedValue({
@@ -164,6 +166,33 @@ describe('happier session create (action executor)', () => {
           session: { id: 'sess-1' },
         }),
       }));
+    } finally {
+      output.restore();
+    }
+  });
+
+  it('uses the shared machine selector for a PAT spawn without a daemon-local target', async () => {
+    resolveMachineTarget.mockResolvedValueOnce({ ok: true, machineId: 'machine-remote' });
+    execute.mockResolvedValueOnce(sessionSpawnSuccess('sess-pat-machine'));
+
+    const output = captureConsoleJsonOutput();
+    try {
+      await handleSessionCommand(['create', '--path', '/tmp', '--json'], {
+        readCredentialsFn: async () => ({
+          token: 'hap_v1_token_test',
+          encryption: null,
+          credentialProvenance: 'api_token',
+        }),
+      });
+
+      expect(resolveMachineTarget).toHaveBeenCalledTimes(1);
+      expect(execute).toHaveBeenCalledWith(
+        'session.spawn_new',
+        expect.objectContaining({
+          executionTarget: { serverId: 'server-1', machineId: 'machine-remote' },
+        }),
+        expect.objectContaining({ surface: 'cli' }),
+      );
     } finally {
       output.restore();
     }

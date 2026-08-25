@@ -13,18 +13,31 @@ const policy = {
 describe('assertSessionCommandArguments', () => {
   it('rejects undeclared options and extra positional arguments before command execution', () => {
     expect(() => assertSessionCommandArguments(['example', 'sess-1', '--unknown'], policy))
-      .toThrow(policy.usage);
+      .toThrow('Unknown option: --unknown');
     expect(() => assertSessionCommandArguments(['example', 'sess-1', '-x'], policy))
-      .toThrow(policy.usage);
+      .toThrow('Unknown option: -x');
     expect(() => assertSessionCommandArguments(['example', 'sess-1', 'ignored'], policy))
-      .toThrow(policy.usage);
+      .toThrow('Unexpected argument: ignored');
   });
 
   it('requires declared value options to have a value and keeps boolean options valueless', () => {
     expect(() => assertSessionCommandArguments(['example', 'sess-1', '--timeout'], policy))
-      .toThrow(policy.usage);
+      .toThrow('Option --timeout requires a value.');
+    expect(() => assertSessionCommandArguments(['example', 'sess-1', '--timeout', '-x'], policy))
+      .toThrow('Option --timeout requires a value.');
+    expect(() => assertSessionCommandArguments(['example', 'sess-1', '--timeout='], policy))
+      .toThrow('Option --timeout requires a value.');
+    expect(() => assertSessionCommandArguments(
+      ['example', 'sess-1', '--timeout=30'],
+      { ...policy, inlineValueFlags: [] },
+    )).toThrow('Option --timeout does not accept an inline value.');
     expect(() => assertSessionCommandArguments(['example', 'sess-1', '--json=true'], policy))
-      .toThrow(policy.usage);
+      .toThrow('Option --json does not accept a value.');
+  });
+
+  it('keeps canonical usage after the specific rejection reason', () => {
+    expect(() => assertSessionCommandArguments(['example', 'sess-1', '--unknown'], policy))
+      .toThrow(`Unknown option: --unknown\n${policy.usage}`);
   });
 
   it('leaves designated missing values to the command-owned parser', () => {

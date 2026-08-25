@@ -365,6 +365,11 @@ describe('happier daemon start output', () => {
         HAPPIER_DAEMON_STARTUP_SOURCE: 'background-service',
       });
 
+      // `captureConsoleText` also spies `process.stdout.write`, so it has to be
+      // installed BEFORE the stdout JSON capture: the last spy installed owns the
+      // stream. Installed the other way round it swallowed the JSON envelope this
+      // test reads, and `output.json()` saw an empty stdout.
+      const consoleOutput = captureConsoleText();
       const output = captureStdoutJsonOutput<{
         ok: boolean;
         error: string;
@@ -373,7 +378,6 @@ describe('happier daemon start output', () => {
         relayId: string;
         latestDaemonLogPath?: string;
       }>();
-      const consoleOutput = captureConsoleText();
       const exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
         throw new Error(`exit:${code ?? ''}`);
       }) as any);
@@ -396,8 +400,8 @@ describe('happier daemon start output', () => {
         expect(consoleOutput.text()).toBe('');
       } finally {
         exitSpy.mockRestore();
-        consoleOutput.restore();
         output.restore();
+        consoleOutput.restore();
       }
     } finally {
       envScope.restore();

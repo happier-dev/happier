@@ -267,11 +267,6 @@ export const INTERNAL_ONLY_RPC_METHODS = Object.freeze([
         ownerPacket: 'SDK-EU-19',
     },
     {
-        method: RPC_METHODS.DAEMON_PLUGIN_COMPOSER_ATTACHMENT_PREPARE,
-        rationale: 'CEX-EU3 bounded pre-admission preparation through the canonical current-generation Composer attachment registry; it transports no durable admission, queue, or terminal Message identity.',
-        ownerPacket: 'CEX-EU3',
-    },
-    {
         method: RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ,
         rationale: 'EU-4a generation-leased packaged plugin resource snapshot read for mounted plugin UI surfaces; remains internal transport over the canonical per-plugin resource service, not a public action surface.',
         ownerPacket: 'EU-4a',
@@ -359,11 +354,6 @@ export const INTERNAL_ONLY_RPC_METHODS = Object.freeze([
         method: RPC_METHODS.DAEMON_LOCAL_SERVICES_PREVIEW_REVOKE,
         rationale: 'PRV-2/F2-preview daemon-owned private-preview revoke lifecycle bridge; unregisters a machine-scoped preview and returns the refreshed snapshot.',
         ownerPacket: 'LSV-3',
-    },
-    {
-        method: RPC_METHODS.DAEMON_LOCAL_SERVICES_MANAGED_SNAPSHOT,
-        rationale: 'LSV-7 daemon-owned managed local-services runtime snapshot read projection; remains internal transport, not a public action surface.',
-        ownerPacket: 'LSV-7',
     },
     {
         method: RPC_METHODS.DAEMON_LOCAL_SERVICES_PUBLIC_PREVIEW_STATUS,

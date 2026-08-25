@@ -1,41 +1,44 @@
 import { AGENT_IDS } from '@happier-dev/agents';
 import {
-  getRequiredConfigEnvVarNames,
-  getRequiredSecretEnvVarNames,
-  isLaunchProfileV2,
-  isProfileCompatibleWithAgent,
-  type AIBackendProfile,
-  type LaunchProfileV2,
+  mapAiLaunchProfileToListItemV1,
+  projectLaunchProfileListV1,
+  type AiLaunchProfile,
+  type LaunchProfileListItemV1,
+  type LaunchProfileListProjectionV1,
 } from '@happier-dev/protocol';
 
-export type ProfilesListItem = Readonly<{
-  id: string;
-  name: string;
-  isBuiltIn: boolean;
-  description?: string;
-  supportedAgentIds: string[];
-  requiredSecretEnvVarNames: string[];
-  requiredConfigEnvVarNames: string[];
-  authMode?: AIBackendProfile['authMode'];
-  requiresMachineLoginTargetKey?: string;
-  requiresMachineLogin?: string;
-}>;
+/**
+ * The CLI's binding of the one Protocol-owned profile inventory projection.
+ *
+ * The projection itself moved to `packages/protocol/src/profiles/listProjection.ts`
+ * because the app answers the same Action from its own Account settings; only
+ * the agent catalog is supplied here, because that catalog is a host package.
+ */
+export type ProfilesListItem = LaunchProfileListItemV1;
 
-export function mapProfileToListItem(profile: AIBackendProfile | LaunchProfileV2): ProfilesListItem {
-  const slim = isLaunchProfileV2(profile);
-  return {
-    id: profile.id,
-    name: profile.name,
-    isBuiltIn: slim ? false : profile.isBuiltIn === true,
-    ...(profile.description ? { description: profile.description } : {}),
-    supportedAgentIds: AGENT_IDS.filter((agentId) => slim
-      ? profile.compatibilityByTargetKey[`agent:${agentId}`] !== false
-        && (Object.keys(profile.compatibilityByTargetKey).length === 0 || profile.compatibilityByTargetKey[`agent:${agentId}`] === true)
-      : isProfileCompatibleWithAgent(profile, agentId)),
-    requiredSecretEnvVarNames: slim ? [] : getRequiredSecretEnvVarNames(profile),
-    requiredConfigEnvVarNames: slim ? [] : getRequiredConfigEnvVarNames(profile),
-    ...(!slim && profile.authMode ? { authMode: profile.authMode } : {}),
-    ...(!slim && profile.requiresMachineLoginTargetKey ? { requiresMachineLoginTargetKey: profile.requiresMachineLoginTargetKey } : {}),
-    ...(!slim && profile.requiresMachineLogin ? { requiresMachineLogin: profile.requiresMachineLogin } : {}),
-  };
+export function mapProfileToListItem(profile: AiLaunchProfile): ProfilesListItem {
+  return mapAiLaunchProfileToListItemV1(profile, { agentIds: AGENT_IDS });
+}
+
+/**
+ * The CLI's binding of the whole-list projection, filter, order and
+ * completeness included, so the app and the CLI cannot answer
+ * `sessions.spawn.profiles.list` differently.
+ */
+export function projectProfilesListForActions(
+  profiles: readonly AiLaunchProfile[],
+  params: Readonly<{
+    agentId?: unknown;
+    limit?: unknown;
+    unreadableCount?: number;
+    available?: boolean;
+  }>,
+): LaunchProfileListProjectionV1 {
+  return projectLaunchProfileListV1(profiles, {
+    agentIds: AGENT_IDS,
+    ...(typeof params.agentId === 'string' ? { agentId: params.agentId } : {}),
+    ...(params.limit === undefined ? {} : { limit: params.limit }),
+    ...(params.unreadableCount === undefined ? {} : { unreadableCount: params.unreadableCount }),
+    ...(params.available === undefined ? {} : { available: params.available }),
+  });
 }

@@ -14,17 +14,17 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   acknowledgeExternalSessionOperationProgressProjection,
   assertExternalSessionOperationRecordAdmission,
-  compactExternalSessionOperationRecordToCompletionReceipt,
-  deleteExpiredExternalSessionOperationCompletionReceipt,
+  compactExternalSessionOperationRecordToTerminalReceipt,
+  deleteExpiredExternalSessionOperationTerminalReceipt,
   listExternalSessionOperationRecords,
   mutateExternalSessionOperationRecordAtRevision,
   projectExternalSessionTakeoverIdempotencyIntent,
-  pruneExpiredExternalSessionOperationCompletionReceipts,
+  pruneExpiredExternalSessionOperationTerminalReceipts,
   readExternalSessionOperationRecord,
   readExternalSessionOperationStoredEntry,
   resolveExternalSessionPluginOperationPreflightAdmission,
   resolveExternalSessionOperationStartAdmission,
-  type ExternalSessionOperationCompletionReceiptV1,
+  type ExternalSessionOperationTerminalReceiptV1,
   writeExternalSessionOperationRecord,
 } from './operationRecordStore';
 
@@ -43,6 +43,9 @@ const readFileBoundary = vi.hoisted(() => ({
   observeRecordReads: false,
   recordReads: 0,
   recordBytes: 0,
+  observeReadConcurrency: false,
+  inFlightRecordReads: 0,
+  peakInFlightRecordReads: 0,
 }));
 
 vi.mock('node:fs/promises', async (importOriginal) => {
@@ -116,21 +119,40 @@ vi.mock('node:fs/promises', async (importOriginal) => {
         error.code = 'EACCES';
         throw error;
       }
-      const pathParts = String(args[0]).replaceAll('\\', '/').split('/');
-      const synthetic = readFileBoundary.syntheticInventory?.get(
-        pathParts[pathParts.length - 1] ?? '',
-      );
-      const result = synthetic ?? await actual.readFile(...args);
-      if (
-        readFileBoundary.observeRecordReads
-        && String(args[0]).endsWith('.json')
-      ) {
-        readFileBoundary.recordReads += 1;
-        readFileBoundary.recordBytes += typeof result === 'string'
-          ? Buffer.byteLength(result, 'utf8')
-          : result.byteLength;
+      const observesConcurrency = readFileBoundary.observeReadConcurrency
+        && String(args[0]).endsWith('.json');
+      if (observesConcurrency) {
+        readFileBoundary.inFlightRecordReads += 1;
+        readFileBoundary.peakInFlightRecordReads = Math.max(
+          readFileBoundary.peakInFlightRecordReads,
+          readFileBoundary.inFlightRecordReads,
+        );
+        // A genuine asynchronous settle at the filesystem boundary, so an
+        // overlapping read is observable: a reader that awaits each row in
+        // turn can never raise the in-flight count above one.
+        await new Promise((resolve) => setTimeout(resolve, 1));
       }
-      return result;
+      try {
+        const pathParts = String(args[0]).replaceAll('\\', '/').split('/');
+        const synthetic = readFileBoundary.syntheticInventory?.get(
+          pathParts[pathParts.length - 1] ?? '',
+        );
+        const result = synthetic ?? await actual.readFile(...args);
+        if (
+          readFileBoundary.observeRecordReads
+          && String(args[0]).endsWith('.json')
+        ) {
+          readFileBoundary.recordReads += 1;
+          readFileBoundary.recordBytes += typeof result === 'string'
+            ? Buffer.byteLength(result, 'utf8')
+            : result.byteLength;
+        }
+        return result;
+      } finally {
+        if (observesConcurrency) {
+          readFileBoundary.inFlightRecordReads -= 1;
+        }
+      }
     },
   };
 });
@@ -232,7 +254,7 @@ function completedExternalLinkedOperationRecord(): ExternalSessionOperationRecor
     ...request,
     targetStorageMode: 'external-linked' as const,
   };
-  const completedAtMs = 25_000;
+  const terminalAtMs = 25_000;
   return ExternalSessionOperationRecordV1Schema.parse({
     ...operationRecord(),
     operationId:
@@ -242,7 +264,7 @@ function completedExternalLinkedOperationRecord(): ExternalSessionOperationRecor
     status: 'completed',
     phase: 'finalizing',
     timeline: resolveExternalSessionOperationTimelineV1(externalLinkedRequest),
-    updatedAtMs: completedAtMs,
+    updatedAtMs: terminalAtMs,
     progressProjection: { acknowledgedRevision: 6 },
     retryTargetPhase: undefined,
     terminalResult: { kind: 'completed' },
@@ -289,6 +311,34 @@ function cancelledInitialPartialMaterializeRecord(): ExternalSessionOperationRec
     },
     progressProjection: { acknowledgedRevision: 3 },
     fence: { kind: 'initial_server_partial', acceptedThroughServerSeq: 3 },
+    cancellation: {
+      requestedAtMs: 3,
+      requestedAtRevision: 2,
+    },
+    retryTargetPhase: undefined,
+    terminalResult: { kind: 'cancelled' },
+  });
+}
+
+function cancelledLocalPrivateCaptureMaterializeRecord(): ExternalSessionOperationRecordV1 {
+  const { targetDirectory: _targetDirectory, ...materializeRequestBase } = request;
+  const materializeRequest = {
+    ...materializeRequestBase,
+    idempotencyKey: 'record-store-cancelled-local-private-capture',
+    plan: 'materialize' as const,
+    targetStorageMode: 'external-linked' as const,
+    targetRuntimeMode: null,
+  } satisfies ExternalSessionOperationSemanticRequestV1;
+  return ExternalSessionOperationRecordV1Schema.parse({
+    ...operationRecord(),
+    operationId: 'external-materialize:cancelled-local-private-capture-fixture',
+    revision: 3,
+    request: materializeRequest,
+    status: 'cancelled',
+    phase: 'staging',
+    timeline: resolveExternalSessionOperationTimelineV1(materializeRequest),
+    updatedAtMs: 4,
+    progressProjection: { acknowledgedRevision: 3 },
     cancellation: {
       requestedAtMs: 3,
       requestedAtRevision: 2,
@@ -445,6 +495,9 @@ afterEach(async () => {
   readFileBoundary.observeRecordReads = false;
   readFileBoundary.recordReads = 0;
   readFileBoundary.recordBytes = 0;
+  readFileBoundary.observeReadConcurrency = false;
+  readFileBoundary.inFlightRecordReads = 0;
+  readFileBoundary.peakInFlightRecordReads = 0;
   vi.restoreAllMocks();
   await Promise.all(roots.splice(0).map(async (root) => {
     await fsPromises.rm(root, { recursive: true, force: true });
@@ -452,6 +505,45 @@ afterEach(async () => {
 });
 
 describe('external session operation record store integrity', () => {
+  it('treats an absent operation-storage root as an empty inventory before Account scope is available', async () => {
+    const activeServerDir = await createRoot();
+    const priorVitest = process.env.VITEST;
+    delete process.env.VITEST;
+    try {
+      await expect(listExternalSessionOperationRecords(activeServerDir))
+        .resolves.toEqual([]);
+    } finally {
+      if (priorVitest === undefined) {
+        delete process.env.VITEST;
+      } else {
+        process.env.VITEST = priorVitest;
+      }
+    }
+  });
+
+  it('keeps an existing operation-storage root closed when Account scope is unavailable', async () => {
+    const activeServerDir = await createRoot();
+    await fsPromises.mkdir(join(
+      activeServerDir,
+      'external-session-operations',
+    ));
+    const priorVitest = process.env.VITEST;
+    delete process.env.VITEST;
+    try {
+      await expect(listExternalSessionOperationRecords(activeServerDir))
+        .rejects.toMatchObject({
+          name: 'ExternalSessionOperationRecordReadError',
+          reason: 'account_scope_unavailable',
+        });
+    } finally {
+      if (priorVitest === undefined) {
+        delete process.env.VITEST;
+      } else {
+        process.env.VITEST = priorVitest;
+      }
+    }
+  });
+
   it('scopes receipt and conflict admission to the current Account subject, including a refreshed token', async () => {
     const activeServerDir = await createRoot();
     const completed = ExternalSessionOperationRecordV1Schema.parse({
@@ -469,7 +561,7 @@ describe('external session operation record store integrity', () => {
       operationId: completed.operationId,
       projectedRevision: completed.revision,
     });
-    const compacted = await compactExternalSessionOperationRecordToCompletionReceipt({
+    const compacted = await compactExternalSessionOperationRecordToTerminalReceipt({
       activeServerDir,
       operationId: completed.operationId,
       expectedRevision: completed.revision,
@@ -485,7 +577,7 @@ describe('external session operation record store integrity', () => {
       authorIntent: completed.authorIntent,
       nowMs: completed.updatedAtMs,
     })).resolves.toMatchObject({
-      kind: 'completion_receipt',
+      kind: 'terminal_receipt',
       receipt: { reference: { operationId: completed.operationId } },
     });
 
@@ -496,7 +588,7 @@ describe('external session operation record store integrity', () => {
       durableIdempotencyKey: completed.request.idempotencyKey,
       authorIntent: completed.authorIntent,
       nowMs: completed.updatedAtMs,
-    })).resolves.toMatchObject({ kind: 'completion_receipt' });
+    })).resolves.toMatchObject({ kind: 'terminal_receipt' });
 
     // A second Account sharing this server may reuse the opaque key without
     // learning the first Account's receipt or conflict outcome.
@@ -604,8 +696,8 @@ describe('external session operation record store integrity', () => {
     })).resolves.toEqual({ kind: 'legacy_unavailable' });
   });
 
-  it.each(['cancelled', 'discarded'] as const)(
-    'compacts an acknowledged settled %s operation to its minimal receipt',
+  it.each(['completed', 'cancelled', 'discarded'] as const)(
+    'compacts an acknowledged settled %s operation after its terminal work is clean',
     async (status) => {
       const activeServerDir = await createRoot();
       const terminal = ExternalSessionOperationRecordV1Schema.parse({
@@ -628,35 +720,35 @@ describe('external session operation record store integrity', () => {
         JSON.stringify(terminal),
       );
 
-      const compacted = await compactExternalSessionOperationRecordToCompletionReceipt({
+      const compacted = await compactExternalSessionOperationRecordToTerminalReceipt({
         activeServerDir,
         operationId: terminal.operationId,
         expectedRevision: terminal.revision,
         stagingDisposition: 'not_applicable',
       });
 
-      if (compacted.status === 'not_eligible') {
-        throw new Error(
-          `Expected a settled ${status} operation to compact, got ${compacted.reason}.`,
-        );
+      expect(compacted).toEqual(expect.objectContaining({
+        status: 'compacted',
+        receipt: expect.objectContaining({
+          recordKind: 'terminal_receipt',
+          presentation: expect.objectContaining({ status }),
+          terminalAtMs: terminal.updatedAtMs,
+        }),
+      }));
+      if (compacted.status !== 'compacted') {
+        throw new Error(`Expected ${status} operation to compact.`);
       }
-      expect(compacted.receipt.presentation.status).toBe(status);
-      expect(compacted.receipt.reference).toEqual({
-        sessionId: terminal.request.sessionId,
-        operationId: terminal.operationId,
-        revision: terminal.revision,
-      });
       await expect(readExternalSessionOperationStoredEntry(
         activeServerDir,
         terminal.operationId,
       )).resolves.toEqual({
-        kind: 'completion_receipt',
+        kind: 'terminal_receipt',
         receipt: compacted.receipt,
       });
     },
   );
 
-  it('atomically compacts only an acknowledged completed operation to the strict minimal receipt', async () => {
+  it('atomically compacts an acknowledged completed operation to the strict minimal terminal receipt', async () => {
     const activeServerDir = await createRoot();
     const completed = completedExternalLinkedOperationRecord();
     await writeRawRecord(
@@ -665,7 +757,7 @@ describe('external session operation record store integrity', () => {
       JSON.stringify(completed),
     );
 
-    const compacted = await compactExternalSessionOperationRecordToCompletionReceipt({
+    const compacted = await compactExternalSessionOperationRecordToTerminalReceipt({
       activeServerDir,
       operationId: completed.operationId,
       expectedRevision: completed.revision,
@@ -676,7 +768,7 @@ describe('external session operation record store integrity', () => {
       status: 'compacted',
       receipt: {
         v: 1,
-        recordKind: 'completed_receipt',
+        recordKind: 'terminal_receipt',
         reference: {
           sessionId: completed.request.sessionId,
           operationId: completed.operationId,
@@ -691,7 +783,7 @@ describe('external session operation record store integrity', () => {
           phase: 'finalizing',
         },
         durableIdempotencyKey: completed.request.idempotencyKey,
-        completedAtMs: completed.updatedAtMs,
+        terminalAtMs: completed.updatedAtMs,
         expiresAtMs: completed.updatedAtMs + 86_400_000,
       },
     });
@@ -707,7 +799,7 @@ describe('external session operation record store integrity', () => {
       activeServerDir,
       completed.operationId,
     )).resolves.toEqual({
-      kind: 'completion_receipt',
+      kind: 'terminal_receipt',
       receipt: compacted.receipt,
     });
 
@@ -756,13 +848,13 @@ describe('external session operation record store integrity', () => {
       activeServerDir,
       completed.operationId,
     )).resolves.toEqual({
-      kind: 'completion_receipt',
+      kind: 'terminal_receipt',
       receipt: compacted.receipt,
     });
 
   });
 
-  it('fails closed on an unsettled row mislabeled as a completion receipt', async () => {
+  it('rejects the never-deployed completed-only receipt spelling instead of treating it as terminal evidence', async () => {
     const activeServerDir = await createRoot();
     const completed = completedExternalLinkedOperationRecord();
     await writeRawRecord(
@@ -770,7 +862,7 @@ describe('external session operation record store integrity', () => {
       completed.operationId,
       JSON.stringify(completed),
     );
-    const compacted = await compactExternalSessionOperationRecordToCompletionReceipt({
+    const compacted = await compactExternalSessionOperationRecordToTerminalReceipt({
       activeServerDir,
       operationId: completed.operationId,
       expectedRevision: completed.revision,
@@ -784,10 +876,7 @@ describe('external session operation record store integrity', () => {
       completed.operationId,
       JSON.stringify({
         ...compacted.receipt,
-        presentation: {
-          ...compacted.receipt.presentation,
-          status: 'running',
-        },
+        recordKind: 'completed_receipt',
       }),
     );
 
@@ -800,7 +889,48 @@ describe('external session operation record store integrity', () => {
     });
   });
 
-  it('retains exact private plugin author intent in completion receipts', async () => {
+  it.each(['running', 'failed', 'reconciliation_required'] as const)(
+    'fails closed on a %s row mislabeled as a terminal receipt',
+    async (status) => {
+      const activeServerDir = await createRoot();
+      const completed = completedExternalLinkedOperationRecord();
+      await writeRawRecord(
+        activeServerDir,
+        completed.operationId,
+        JSON.stringify(completed),
+      );
+      const compacted = await compactExternalSessionOperationRecordToTerminalReceipt({
+        activeServerDir,
+        operationId: completed.operationId,
+        expectedRevision: completed.revision,
+        stagingDisposition: 'not_applicable',
+      });
+      if (compacted.status === 'not_eligible') {
+        throw new Error('Expected completed operation to compact.');
+      }
+      await writeRawRecord(
+        activeServerDir,
+        completed.operationId,
+        JSON.stringify({
+          ...compacted.receipt,
+          presentation: {
+            ...compacted.receipt.presentation,
+            status,
+          },
+        }),
+      );
+
+      await expect(readExternalSessionOperationStoredEntry(
+        activeServerDir,
+        completed.operationId,
+      )).rejects.toMatchObject({
+        name: 'ExternalSessionOperationRecordReadError',
+        reason: 'invalid_record',
+      });
+    },
+  );
+
+  it('retains exact private plugin author intent in terminal receipts', async () => {
     const activeServerDir = await createRoot();
     const nativeCompleted = completedExternalLinkedOperationRecord();
     const authorIntent = pluginTakeoverAuthorIntent(
@@ -817,7 +947,7 @@ describe('external session operation record store integrity', () => {
       JSON.stringify(completed),
     );
 
-    const compacted = await compactExternalSessionOperationRecordToCompletionReceipt({
+    const compacted = await compactExternalSessionOperationRecordToTerminalReceipt({
       activeServerDir,
       operationId: completed.operationId,
       expectedRevision: completed.revision,
@@ -835,7 +965,7 @@ describe('external session operation record store integrity', () => {
       authorIntent,
       nowMs: completed.updatedAtMs,
     })).resolves.toEqual({
-      kind: 'completion_receipt',
+      kind: 'terminal_receipt',
       receipt: compacted.receipt,
     });
     await expect(resolveExternalSessionOperationStartAdmission({
@@ -925,6 +1055,8 @@ describe('external session operation record store integrity', () => {
       });
     };
     const cancelledInitialPartial = cancelledInitialPartialMaterializeRecord();
+    const cancelledLocalPrivateCapture =
+      cancelledLocalPrivateCaptureMaterializeRecord();
     const cases = [
       {
         name: 'nonterminal',
@@ -933,19 +1065,19 @@ describe('external session operation record store integrity', () => {
           operationId: 'external-takeover:compaction-nonterminal-fixture',
         }),
         stagingDisposition: 'not_applicable',
-        reason: 'operation_not_settled',
+        reason: 'operation_not_terminal',
       },
       {
         name: 'failed',
         record: failedRecord(false),
         stagingDisposition: 'not_applicable',
-        reason: 'operation_not_settled',
+        reason: 'operation_not_terminal',
       },
       {
         name: 'retryable failure',
         record: failedRecord(true),
         stagingDisposition: 'not_applicable',
-        reason: 'operation_not_settled',
+        reason: 'operation_not_terminal',
       },
       {
         name: 'unacknowledged completion',
@@ -957,7 +1089,13 @@ describe('external session operation record store integrity', () => {
         name: 'cancelled initial partial awaiting server discard',
         record: cancelledInitialPartial,
         stagingDisposition: 'cleaned',
-        reason: 'partial_discard_recovery_retained',
+        reason: 'recovery_action_required',
+      },
+      {
+        name: 'cancelled local private capture awaiting explicit discard',
+        record: cancelledLocalPrivateCapture,
+        stagingDisposition: 'cleaned',
+        reason: 'recovery_action_required',
       },
       ...(['not_applicable', 'not_ready', 'not_terminal'] as const).map(
         (stagingDisposition) => ({
@@ -977,8 +1115,8 @@ describe('external session operation record store integrity', () => {
         | 'not_ready'
         | 'not_terminal';
       reason:
-        | 'operation_not_settled'
-        | 'partial_discard_recovery_retained'
+        | 'operation_not_terminal'
+        | 'recovery_action_required'
         | 'projection_unacknowledged'
         | 'staging_not_clean';
     }>[];
@@ -991,7 +1129,7 @@ describe('external session operation record store integrity', () => {
         originalBytes,
       );
 
-      const result = await compactExternalSessionOperationRecordToCompletionReceipt({
+      const result = await compactExternalSessionOperationRecordToTerminalReceipt({
         activeServerDir,
         operationId: testCase.record.operationId,
         expectedRevision: testCase.record.revision,
@@ -1040,7 +1178,7 @@ describe('external session operation record store integrity', () => {
       record: completed,
     });
 
-    const compacted = await compactExternalSessionOperationRecordToCompletionReceipt({
+    const compacted = await compactExternalSessionOperationRecordToTerminalReceipt({
       activeServerDir,
       operationId: completed.operationId,
       expectedRevision: completed.revision,
@@ -1065,7 +1203,7 @@ describe('external session operation record store integrity', () => {
       intent: publicRetryIntent,
       nowMs: compacted.receipt.expiresAtMs - 1,
     })).resolves.toEqual({
-      kind: 'completion_receipt',
+      kind: 'terminal_receipt',
       receipt: compacted.receipt,
     });
     await expect(resolveExternalSessionOperationStartAdmission({
@@ -1097,7 +1235,7 @@ describe('external session operation record store integrity', () => {
       activeServerDir,
       completed.operationId,
     )).resolves.toEqual({
-      kind: 'completion_receipt',
+      kind: 'terminal_receipt',
       receipt: compacted.receipt,
     });
 
@@ -1134,18 +1272,18 @@ describe('external session operation record store integrity', () => {
       activeServerDir,
       completed.operationId,
     )).resolves.toEqual({
-      kind: 'completion_receipt',
+      kind: 'terminal_receipt',
       receipt: compacted.receipt,
     });
 
-    await expect(deleteExpiredExternalSessionOperationCompletionReceipt({
+    await expect(deleteExpiredExternalSessionOperationTerminalReceipt({
       activeServerDir,
       sessionId: completed.request.sessionId,
       operationId: completed.operationId,
       expectedPresentation: compacted.receipt.presentation,
       nowMs: compacted.receipt.expiresAtMs - 1,
     })).resolves.toBe('retained');
-    await expect(deleteExpiredExternalSessionOperationCompletionReceipt({
+    await expect(deleteExpiredExternalSessionOperationTerminalReceipt({
       activeServerDir,
       sessionId: completed.request.sessionId,
       operationId: completed.operationId,
@@ -1163,7 +1301,7 @@ describe('external session operation record store integrity', () => {
     const completed = completedExternalLinkedOperationRecord();
     const poisonedReceipt = {
       v: 1,
-      recordKind: 'completed_receipt',
+      recordKind: 'terminal_receipt',
       reference: {
         sessionId: completed.request.sessionId,
         operationId: completed.operationId,
@@ -1179,7 +1317,7 @@ describe('external session operation record store integrity', () => {
       },
       durableIdempotencyKey: completed.request.idempotencyKey,
       idempotencyIntentDigest: 'a'.repeat(64),
-      completedAtMs: completed.updatedAtMs,
+      terminalAtMs: completed.updatedAtMs,
       expiresAtMs: completed.updatedAtMs + 86_400_000,
       bindings: { operationClaimId: 'must-not-survive-compaction' },
     };
@@ -1263,7 +1401,7 @@ describe('external session operation record store integrity', () => {
       completed.operationId,
       JSON.stringify(completed),
     );
-    const compacted = await compactExternalSessionOperationRecordToCompletionReceipt({
+    const compacted = await compactExternalSessionOperationRecordToTerminalReceipt({
       activeServerDir,
       operationId: completed.operationId,
       expectedRevision: completed.revision,
@@ -1302,7 +1440,7 @@ describe('external session operation record store integrity', () => {
       completed.operationId,
       JSON.stringify(completed),
     );
-    const compacted = await compactExternalSessionOperationRecordToCompletionReceipt({
+    const compacted = await compactExternalSessionOperationRecordToTerminalReceipt({
       activeServerDir,
       operationId: completed.operationId,
       expectedRevision: completed.revision,
@@ -1368,7 +1506,7 @@ describe('external session operation record store integrity', () => {
     await expect(readExternalSessionOperationStoredEntry(
       activeServerDir,
       receipts[8].reference.operationId,
-    )).resolves.toMatchObject({ kind: 'completion_receipt' });
+    )).resolves.toMatchObject({ kind: 'terminal_receipt' });
   });
 
   it('fails receipt pruning closed and exact-rechecks the immutable receipt before deletion', async () => {
@@ -1379,7 +1517,7 @@ describe('external session operation record store integrity', () => {
       completed.operationId,
       JSON.stringify(completed),
     );
-    const compacted = await compactExternalSessionOperationRecordToCompletionReceipt({
+    const compacted = await compactExternalSessionOperationRecordToTerminalReceipt({
       activeServerDir,
       operationId: completed.operationId,
       expectedRevision: completed.revision,
@@ -1394,18 +1532,18 @@ describe('external session operation record store integrity', () => {
       sessionIds: [completed.request.sessionId],
     };
 
-    await expect(pruneExpiredExternalSessionOperationCompletionReceipts({
+    await expect(pruneExpiredExternalSessionOperationTerminalReceipts({
       ...input,
       readSelectedPresentation: async () => ({
         kind: 'valid',
         presentation: compacted.receipt.presentation,
       }),
     })).resolves.toEqual({ deleted: 0, retained: 1 });
-    await expect(pruneExpiredExternalSessionOperationCompletionReceipts({
+    await expect(pruneExpiredExternalSessionOperationTerminalReceipts({
       ...input,
       readSelectedPresentation: async () => ({ kind: 'malformed' }),
     })).resolves.toEqual({ deleted: 0, retained: 1 });
-    await expect(pruneExpiredExternalSessionOperationCompletionReceipts({
+    await expect(pruneExpiredExternalSessionOperationTerminalReceipts({
       ...input,
       readSelectedPresentation: async () => {
         throw new Error('selection unavailable');
@@ -1416,7 +1554,7 @@ describe('external session operation record store integrity', () => {
       ...compacted.receipt,
       durableIdempotencyKey: 'receipt-replaced-after-selection-read',
     };
-    await expect(pruneExpiredExternalSessionOperationCompletionReceipts({
+    await expect(pruneExpiredExternalSessionOperationTerminalReceipts({
       ...input,
       readSelectedPresentation: async () => {
         await writeRawRecord(
@@ -1431,11 +1569,11 @@ describe('external session operation record store integrity', () => {
       activeServerDir,
       completed.operationId,
     )).resolves.toEqual({
-      kind: 'completion_receipt',
+      kind: 'terminal_receipt',
       receipt: changedReceipt,
     });
 
-    await expect(pruneExpiredExternalSessionOperationCompletionReceipts({
+    await expect(pruneExpiredExternalSessionOperationTerminalReceipts({
       ...input,
       readSelectedPresentation: async () => ({ kind: 'gone' }),
     })).resolves.toEqual({ deleted: 1, retained: 0 });
@@ -1453,7 +1591,7 @@ describe('external session operation record store integrity', () => {
       completed.operationId,
       JSON.stringify(completed),
     );
-    const compacted = await compactExternalSessionOperationRecordToCompletionReceipt({
+    const compacted = await compactExternalSessionOperationRecordToTerminalReceipt({
       activeServerDir,
       operationId: completed.operationId,
       expectedRevision: completed.revision,
@@ -2000,7 +2138,7 @@ describe('external session operation record store integrity', () => {
       nativeCompleted.operationId,
       JSON.stringify(nativeCompleted),
     );
-    const compacted = await compactExternalSessionOperationRecordToCompletionReceipt({
+    const compacted = await compactExternalSessionOperationRecordToTerminalReceipt({
       activeServerDir,
       operationId: nativeCompleted.operationId,
       expectedRevision: nativeCompleted.revision,
@@ -2383,6 +2521,57 @@ describe('external session operation record store integrity', () => {
     )).resolves.toBeNull();
   });
 
+  it('loads the lock-held admission inventory with overlapping bounded reads in directory order', async () => {
+    const activeServerDir = await createRoot();
+    const base = terminalOperationRecord();
+    const syntheticInventory = new Map<string, string>();
+    const expectedOperationIds: string[] = [];
+    for (let index = 0; index < 128; index += 1) {
+      const operationId =
+        `external-takeover:concurrency-${String(index).padStart(5, '0')}`;
+      expectedOperationIds.push(operationId);
+      syntheticInventory.set(
+        basename(pathForRecord(activeServerDir, operationId)),
+        JSON.stringify({
+          ...base,
+          operationId,
+          request: {
+            ...base.request,
+            sessionId: `concurrency-session-${index}`,
+            idempotencyKey: `concurrency-key-${index}`,
+          },
+        } satisfies ExternalSessionOperationRecordV1),
+      );
+    }
+    readFileBoundary.syntheticInventory = syntheticInventory;
+    readFileBoundary.observeRecordReads = true;
+    readFileBoundary.observeReadConcurrency = true;
+
+    const admission = await resolveExternalSessionOperationStartAdmission({
+      activeServerDir,
+      durableIdempotencyKey: 'concurrency-incoming-key',
+      intent: {
+        ...request,
+        sessionId: 'concurrency-incoming-session',
+        idempotencyKey: 'concurrency-incoming-key',
+      },
+      nowMs: 10_000,
+    });
+
+    expect(admission.kind).toBe('new_operation');
+    expect(readFileBoundary.recordReads).toBe(128);
+    // Serial admission peaks at one in-flight read; an unbounded fan-out peaks
+    // at the whole inventory. The owner keeps the filesystem threadpool busy
+    // without letting one Account's inventory dictate the descriptor count.
+    expect(readFileBoundary.peakInFlightRecordReads).toBe(16);
+    expect(readFileBoundary.inFlightRecordReads).toBe(0);
+    // Overlapping reads must not reorder the inventory a serial read produced.
+    await expect(listExternalSessionOperationRecords(activeServerDir))
+      .resolves.toMatchObject(
+        expectedOperationIds.map((operationId) => ({ operationId })),
+      );
+  });
+
   it('refuses a new 10,001st record while the full inventory remains readable and existing operations remain writable', async () => {
     const activeServerDir = await createRoot();
     const base = terminalOperationRecord();
@@ -2471,7 +2660,7 @@ describe('external session operation record store integrity', () => {
       completed.operationId,
       JSON.stringify(completed),
     );
-    const compacted = await compactExternalSessionOperationRecordToCompletionReceipt({
+    const compacted = await compactExternalSessionOperationRecordToTerminalReceipt({
       activeServerDir,
       operationId: completed.operationId,
       expectedRevision: completed.revision,
@@ -2570,9 +2759,16 @@ describe('external session operation record store integrity', () => {
     )).resolves.toBeNull();
     expect(readFileBoundary.recordReads).toBeGreaterThanOrEqual(20_000);
 
-    const malformedOperationId = selectedReceipts[1].reference.operationId;
+    // Replacing an existing key keeps its insertion position, so the malformed
+    // row stays the 101st entry the inventory walk reaches.
+    const malformedRowIndex = 100;
     syntheticInventory.set(
-      basename(pathForRecord(activeServerDir, malformedOperationId)),
+      basename(pathForRecord(
+        activeServerDir,
+        `external-takeover:logical-capacity-${
+          String(malformedRowIndex).padStart(5, '0')
+        }`,
+      )),
       '{"v":',
     );
     readFileBoundary.recordReads = 0;
@@ -2586,7 +2782,13 @@ describe('external session operation record store integrity', () => {
       name: 'ExternalSessionOperationRecordAdmissionError',
       reason: 'inventory_unreadable',
     });
-    expect(readFileBoundary.recordReads).toBe(9_992);
+    // The malformed row must actually be reached, and the reader must abandon
+    // the remaining ~9,900 rows within one bounded read window rather than
+    // draining the whole inventory it has already decided to reject.
+    expect(readFileBoundary.recordReads)
+      .toBeGreaterThanOrEqual(malformedRowIndex + 1);
+    expect(readFileBoundary.recordReads)
+      .toBeLessThanOrEqual(malformedRowIndex + 16);
   });
 
   it('fails a 10,001-row physical inventory before expired-receipt cleanup can repair it', async () => {
@@ -2598,7 +2800,7 @@ describe('external session operation record store integrity', () => {
       completed.operationId,
       JSON.stringify(completed),
     );
-    const compacted = await compactExternalSessionOperationRecordToCompletionReceipt({
+    const compacted = await compactExternalSessionOperationRecordToTerminalReceipt({
       activeServerDir,
       operationId: completed.operationId,
       expectedRevision: completed.revision,
@@ -2676,7 +2878,7 @@ describe('external session operation record store integrity', () => {
     await expect(readExternalSessionOperationStoredEntry(
       activeServerDir,
       receipts[0].reference.operationId,
-    )).resolves.toMatchObject({ kind: 'completion_receipt' });
+    )).resolves.toMatchObject({ kind: 'terminal_receipt' });
   });
 
   it('stops capacity cleanup when another Start already removed a first-batch receipt', async () => {
@@ -2688,7 +2890,7 @@ describe('external session operation record store integrity', () => {
       completed.operationId,
       JSON.stringify(completed),
     );
-    const compacted = await compactExternalSessionOperationRecordToCompletionReceipt({
+    const compacted = await compactExternalSessionOperationRecordToTerminalReceipt({
       activeServerDir,
       operationId: completed.operationId,
       expectedRevision: completed.revision,
@@ -2787,7 +2989,7 @@ describe('external session operation record store integrity', () => {
     await expect(readExternalSessionOperationStoredEntry(
       activeServerDir,
       laterSentinel.reference.operationId,
-    )).resolves.toMatchObject({ kind: 'completion_receipt' });
+    )).resolves.toMatchObject({ kind: 'terminal_receipt' });
   });
 
   it('serializes different-session admission at the global inventory ceiling', async () => {
@@ -2940,7 +3142,7 @@ describe('external session operation record store integrity', () => {
     )).resolves.toBeNull();
   });
 
-  it('bounds the physical inventory across ordinary cancel and discard cycles', async () => {
+  it('reclaims cleaned cancelled and discarded inventory while retaining the selected receipt', async () => {
     const activeServerDir = await createRoot();
     useAccount('vitest');
     const settledAtMs = 5_000;
@@ -2951,13 +3153,16 @@ describe('external session operation record store integrity', () => {
       const settledStatus = cycle % 2 === 0
         ? 'cancelled' as const
         : 'discarded' as const;
+      const settledRequest = {
+        ...request,
+        idempotencyKey: `record-store-capacity-cycle-${cycle}`,
+        targetStorageMode: 'external-linked' as const,
+      } satisfies ExternalSessionOperationSemanticRequestV1;
       return ExternalSessionOperationRecordV1Schema.parse({
         ...operationRecord(),
         operationId: `external-takeover:capacity-cycle-${cycle}`,
-        request: {
-          ...request,
-          idempotencyKey: `record-store-capacity-cycle-${cycle}`,
-        },
+        request: settledRequest,
+        timeline: resolveExternalSessionOperationTimelineV1(settledRequest),
         revision: 1,
         status: settledStatus,
         updatedAtMs: settledAtMs,
@@ -2988,6 +3193,7 @@ describe('external session operation record store integrity', () => {
       return entries.filter((name) => name.endsWith('.json')).length;
     };
 
+    const receipts: ExternalSessionOperationTerminalReceiptV1[] = [];
     for (let cycle = 0; cycle < cycles; cycle += 1) {
       const settled = settledCycleRecord(cycle);
       await writeRawRecord(
@@ -2996,35 +3202,48 @@ describe('external session operation record store integrity', () => {
         `${JSON.stringify(settled, null, 2)}\n`,
       );
       const compacted =
-        await compactExternalSessionOperationRecordToCompletionReceipt({
+        await compactExternalSessionOperationRecordToTerminalReceipt({
           activeServerDir,
           operationId: settled.operationId,
           expectedRevision: settled.revision,
-          stagingDisposition: 'cleaned',
+          // These are external-linked takeover rows: private staging is
+          // structurally absent, so the canonical compactor requires the
+          // corresponding disposition rather than a fabricated cleanup fact.
+          stagingDisposition: 'not_applicable',
         });
-      expect({ cycle, status: compacted.status }).toEqual({
-        cycle,
-        status: 'compacted',
-      });
+      if (compacted.status !== 'compacted') {
+        throw new Error(`Expected cycle ${cycle} to compact, got ${compacted.status}`);
+      }
+      receipts.push(compacted.receipt);
     }
 
-    // Every settled cycle is now a minimal replay receipt, so no cancelled or
-    // discarded full record is left holding an inventory slot.
-    await expect(
-      listExternalSessionOperationRecords(activeServerDir),
-    ).resolves.toEqual([]);
     expect(await physicalInventorySize()).toBe(cycles);
-
-    // The existing receipt lifecycle then releases every settled slot.
-    const pruned = await pruneExpiredExternalSessionOperationCompletionReceipts(
+    const selected = receipts[0];
+    if (!selected) throw new Error('Expected a selected receipt.');
+    const protectedPrune = await pruneExpiredExternalSessionOperationTerminalReceipts(
       {
         activeServerDir,
-        nowMs: settledAtMs + 24 * 60 * 60 * 1_000,
+        nowMs: selected.expiresAtMs,
         sessionIds: [request.sessionId],
-        readSelectedPresentation: async () => ({ kind: 'absent' as const }),
+        readSelectedPresentation: async () => ({
+          kind: 'valid' as const,
+          presentation: selected.presentation,
+        }),
       },
     );
-    expect(pruned).toEqual({ deleted: cycles, retained: 0 });
+    expect(protectedPrune).toEqual({ deleted: cycles - 1, retained: 1 });
+    expect(await physicalInventorySize()).toBe(1);
+    await expect(readExternalSessionOperationStoredEntry(
+      activeServerDir,
+      selected.reference.operationId,
+    )).resolves.toEqual({ kind: 'terminal_receipt', receipt: selected });
+
+    await expect(pruneExpiredExternalSessionOperationTerminalReceipts({
+      activeServerDir,
+      nowMs: selected.expiresAtMs,
+      sessionIds: [request.sessionId],
+      readSelectedPresentation: async () => ({ kind: 'absent' as const }),
+    })).resolves.toEqual({ deleted: 1, retained: 0 });
     expect(await physicalInventorySize()).toBe(0);
   });
 });
@@ -3102,7 +3321,7 @@ describe.runIf(process.env.HAPPIER_RUN_EXTERNAL_SESSION_BENCHMARK === '1')(
       expiry: 'unexpired' | 'expired',
       nowMs: number,
     ): Readonly<{
-      receipt: ExternalSessionOperationCompletionReceiptV1;
+      receipt: ExternalSessionOperationTerminalReceiptV1;
       request: ExternalSessionOperationSemanticRequestV1;
     }> {
       const suffix = String(index).padStart(5, '0');
@@ -3113,7 +3332,7 @@ describe.runIf(process.env.HAPPIER_RUN_EXTERNAL_SESSION_BENCHMARK === '1')(
         sessionId: `benchmark-${expiry}-session-${suffix}`,
         idempotencyKey: `benchmark-${expiry}-key-${suffix}`,
       } satisfies ExternalSessionOperationSemanticRequestV1;
-      const completedAtMs = expiry === 'expired'
+      const terminalAtMs = expiry === 'expired'
         ? nowMs - 86_400_000
         : nowMs - 3_600_000;
       const idempotencyIntentDigest = createHash('sha256')
@@ -3125,7 +3344,7 @@ describe.runIf(process.env.HAPPIER_RUN_EXTERNAL_SESSION_BENCHMARK === '1')(
         request: benchmarkRequest,
         receipt: {
           v: 1,
-          recordKind: 'completed_receipt',
+          recordKind: 'terminal_receipt',
           reference: {
             sessionId: benchmarkRequest.sessionId,
             operationId,
@@ -3141,8 +3360,8 @@ describe.runIf(process.env.HAPPIER_RUN_EXTERNAL_SESSION_BENCHMARK === '1')(
           },
           durableIdempotencyKey: benchmarkRequest.idempotencyKey,
           idempotencyIntentDigest,
-          completedAtMs,
-          expiresAtMs: completedAtMs + 86_400_000,
+          terminalAtMs,
+          expiresAtMs: terminalAtMs + 86_400_000,
         },
       };
     }
@@ -3270,7 +3489,7 @@ describe.runIf(process.env.HAPPIER_RUN_EXTERNAL_SESSION_BENCHMARK === '1')(
           nowMs: benchmarkNowMs,
         });
         expect(result).toMatchObject({
-          kind: 'completion_receipt',
+          kind: 'terminal_receipt',
           receipt: {
             reference: replayEntry.receipt.reference,
           },

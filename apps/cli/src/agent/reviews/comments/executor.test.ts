@@ -314,6 +314,46 @@ describe('createCliReviewCommentActionExecutorFromCredentials', () => {
         });
     });
 
+    it('dispatches publication claims without attempting an event-envelope mutation', async () => {
+        axiosPostMock.mockResolvedValueOnce({
+            status: 200,
+            data: {
+                disposition: 'dispatch',
+                publicationCorrelationId: 'a'.repeat(43),
+            },
+        });
+        const resolveAccountEncryptionMode = vi.fn(async () => 'plain' as const);
+        const executor = createCliReviewCommentActionExecutorFromCredentials({
+            credentials: { token: 'token-1', encryption: null },
+            resolveAccountEncryptionMode,
+        });
+        const target = {
+            providerId: 'github',
+            configuredAccountId: 'github-account-1',
+            entryRef: {
+                sourceId: 'github',
+                kindId: 'pull-request',
+                collisionScope: 'github:repository-1',
+                entryId: '42',
+            },
+        };
+
+        await expect(executor('reviews.comments.claimPublicationDispatch', {
+            commentId: 'comment-1',
+            target,
+        })).resolves.toEqual({
+            disposition: 'dispatch',
+            publicationCorrelationId: 'a'.repeat(43),
+        });
+
+        expect(resolveAccountEncryptionMode).not.toHaveBeenCalled();
+        expect(axiosPostMock).toHaveBeenCalledWith(
+            expect.stringMatching(/\/v1\/reviews\/comments\/comment-1\/publication\/claim$/),
+            { target },
+            expect.any(Object),
+        );
+    });
+
     it('fails token-only E2EE before the mutation POST', async () => {
         const executor = createCliReviewCommentActionExecutorFromCredentials({
             credentials: { token: 'token-1', encryption: null },

@@ -8,7 +8,7 @@ import {
 
 import { configuration } from '@/configuration';
 import { readStoredCredentials } from '@/persistence';
-import { resolveMergedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 import {
   resolveProviderContributionRegistryView,
 } from '@/providers/registry';
@@ -97,18 +97,22 @@ export async function resolveProviderCliDependencies(): Promise<ProviderCliDepen
     ...(providersFeature.serverSnapshot ? { serverSnapshot: providersFeature.serverSnapshot } : {}),
   });
   const loadProviderCliSnapshot = async () => {
-    const [accountContext, machine, mergedRegistry] = await Promise.all([
+    const [accountContext, machine, registryLease] = await Promise.all([
       bootstrapAccountSettingsContext({ credentials, mode: 'blocking', refresh: 'force', honorAccountSettingsModeEnv: false }),
       ensureMachineIdForCredentials(credentials),
-      resolveMergedContributionRegistry({ happyHomeDir: configuration.happyHomeDir }),
+      acquireAuthoritativePluginRuntimeRegistryLease({ happyHomeDir: configuration.happyHomeDir }),
     ]);
-    const activeSnapshot = readProviderCliActiveSnapshot(accountContext);
-    return {
-      accountSettings: accountContext.settings as Readonly<Record<string, unknown>>,
-      machineId: machine.machineId,
-      registry: resolveProviderContributionRegistryView(mergedRegistry),
-      activeSnapshot,
-    };
+    try {
+      const activeSnapshot = readProviderCliActiveSnapshot(accountContext);
+      return {
+        accountSettings: accountContext.settings as Readonly<Record<string, unknown>>,
+        machineId: machine.machineId,
+        registry: resolveProviderContributionRegistryView(registryLease.registry.contributes),
+        activeSnapshot,
+      };
+    } finally {
+      await registryLease.release();
+    }
   };
   const loadSnapshot: ProviderCliDependencies['loadSnapshot'] = async () => {
     const { activeSnapshot: _activeSnapshot, ...snapshot } = await loadProviderCliSnapshot();
@@ -122,7 +126,6 @@ export async function resolveProviderCliDependencies(): Promise<ProviderCliDepen
       machineId: snapshot.machineId,
       initialSnapshot: snapshot.activeSnapshot,
       happyHomeDir: configuration.happyHomeDir,
-      registry: snapshot.registry,
       featureGate: {
         isEnabled: (featureId) => (featureId === 'providers'
           ? providersFeature.decision
@@ -139,7 +142,6 @@ export async function resolveProviderCliDependencies(): Promise<ProviderCliDepen
       machineId: snapshot.machineId,
       credentials,
       happyHomeDir: configuration.happyHomeDir,
-      resolveRegistry: async () => snapshot.registry,
       featureGate: { isEnabled: () => providersFeature.decision.state === 'enabled' },
       runtimeSummary: async (input) => (await resolveRuntimeServices()).summary(input),
       refreshOnEnable: async (input) => (await resolveRuntimeServices()).probe(input),

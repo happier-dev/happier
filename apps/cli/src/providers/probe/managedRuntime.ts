@@ -1,4 +1,5 @@
 import {
+  createProviderManagedProbeRequestFingerprintV1,
   createProviderErrorV1,
   type ProviderErrorV1,
 } from '@happier-dev/protocol';
@@ -27,14 +28,6 @@ import type { ProviderProbeManagedServiceRequest } from './client';
 
 type AcquireProviderCatalogRegistryLease = () => Promise<PluginRuntimeRegistryLease>;
 
-function sameJson(left: unknown, right: unknown): boolean {
-  try {
-    return JSON.stringify(left) === JSON.stringify(right);
-  } catch {
-    return false;
-  }
-}
-
 function managedCatalogLaunchError(input: Readonly<{
   ticket: ProviderManagedProbeHostAuthorizationTicket;
   code: PublicManagedProviderRuntimeStartFailureCode;
@@ -59,7 +52,7 @@ function managedCatalogLaunchError(input: Readonly<{
   }
 }
 
-function isExactManagedCatalogLaunch(input: Readonly<{
+export function isExactManagedCatalogLaunch(input: Readonly<{
   source: Parameters<ProviderManagedCatalogRuntimePort<ProviderProbeHostAuthorizationTicket>['launch']>[0]['source'];
   request: Parameters<ProviderManagedCatalogRuntimePort<ProviderProbeHostAuthorizationTicket>['launch']>[0]['request'];
   ticket: ProviderProbeHostAuthorizationTicket;
@@ -73,29 +66,52 @@ function isExactManagedCatalogLaunch(input: Readonly<{
   ) return false;
   const ticket = input.ticket;
   const request = input.request;
+  let expectedProbeRequestFingerprint: typeof request.probeRequestFingerprint;
+  let ticketProbeRequestFingerprint: typeof request.probeRequestFingerprint;
+  let requestProbeRequestFingerprint: typeof request.probeRequestFingerprint;
+  try {
+    expectedProbeRequestFingerprint = createProviderManagedProbeRequestFingerprintV1({
+      implementationIdentity: input.source.implementationIdentity,
+      managedRuntime: input.source.managedRuntime,
+      purposeBindings: input.source.purposeBindings,
+      endpointTemplateId: input.source.endpointTemplateId,
+      protocol: input.source.protocol,
+      method: 'GET',
+      path: request.path,
+      parser: request.parser,
+      publicHeaders: input.source.publicHeaders,
+    });
+    ticketProbeRequestFingerprint = createProviderManagedProbeRequestFingerprintV1({
+      implementationIdentity: ticket.implementationIdentity,
+      managedRuntime: ticket.managedRuntime,
+      purposeBindings: ticket.purposeBindings,
+      endpointTemplateId: ticket.endpointTemplateId,
+      protocol: ticket.protocol,
+      method: 'GET',
+      path: ticket.path,
+      parser: ticket.parser,
+      publicHeaders: input.source.publicHeaders,
+    });
+    requestProbeRequestFingerprint = createProviderManagedProbeRequestFingerprintV1({
+      implementationIdentity: request.implementationIdentity,
+      managedRuntime: request.managedRuntime,
+      purposeBindings: request.purposeBindings,
+      endpointTemplateId: request.endpointTemplateId,
+      protocol: request.protocol,
+      method: 'GET',
+      path: request.path,
+      parser: request.parser,
+      publicHeaders: input.source.publicHeaders,
+    });
+  } catch {
+    return false;
+  }
   return ticket.connectionId === request.connectionId
     && ticket.machineId === request.machineId
-    && ticket.implementationIdentity.pluginId
-      === input.source.implementationIdentity.pluginId
-    && ticket.implementationIdentity.localId
-      === input.source.implementationIdentity.localId
-    && request.implementationIdentity.pluginId
-      === input.source.implementationIdentity.pluginId
-    && request.implementationIdentity.localId
-      === input.source.implementationIdentity.localId
-    && ticket.endpointTemplateId === input.source.endpointTemplateId
-    && request.endpointTemplateId === input.source.endpointTemplateId
-    && ticket.protocol === input.source.protocol
-    && request.protocol === input.source.protocol
-    && ticket.path === request.path
-    && ticket.parser === request.parser
-    && sameJson(ticket.managedRuntime, input.source.managedRuntime)
-    && sameJson(request.managedRuntime, input.source.managedRuntime)
-    && sameJson(ticket.purposeBindings, input.source.purposeBindings)
-    && sameJson(request.purposeBindings, input.source.purposeBindings)
-    && input.source.managedRuntime.endpointTemplateIds.includes(
-      input.source.endpointTemplateId,
-    );
+    && ticketProbeRequestFingerprint === expectedProbeRequestFingerprint
+    && requestProbeRequestFingerprint === expectedProbeRequestFingerprint
+    && ticket.probeRequestFingerprint === expectedProbeRequestFingerprint
+    && request.probeRequestFingerprint === expectedProbeRequestFingerprint;
 }
 
 /**

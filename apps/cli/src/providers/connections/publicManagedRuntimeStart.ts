@@ -4,7 +4,10 @@ import {
   parseProviderContributionIdentityV1,
 } from '@happier-dev/protocol';
 
-import type { PluginReloadController } from '@/plugins/runtime/reload/controller';
+import type {
+  PluginReloadController,
+  PluginRuntimeRegistryLease,
+} from '@/plugins/runtime/reload/controller';
 import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 import {
   startPublicManagedProviderRuntime,
@@ -63,16 +66,17 @@ export function createPublicManagedProviderRuntimeStartOperation(input: Readonly
       }
     };
 
-    let lease: Awaited<ReturnType<
-      typeof acquireAuthoritativePluginRuntimeRegistryLease
-    >> | null = null;
+    let lease: PluginRuntimeRegistryLease | null = request.runtimeRegistryLease ?? null;
+    const ownsLease = lease === null;
     let result: Readonly<{ status: 'running' }> | null = null;
     let failure: unknown = null;
     try {
-      lease = await acquireAuthoritativePluginRuntimeRegistryLease({
-        happyHomeDir: input.happyHomeDir,
-        ...(input.controller ? { controller: input.controller } : {}),
-      });
+      if (!lease) {
+        lease = await acquireAuthoritativePluginRuntimeRegistryLease({
+          happyHomeDir: input.happyHomeDir,
+          ...(input.controller ? { controller: input.controller } : {}),
+        });
+      }
       const registry = lease.registry;
       const runManagedProviderExplicitStart =
         registry.runManagedProviderExplicitStart;
@@ -183,7 +187,7 @@ export function createPublicManagedProviderRuntimeStartOperation(input: Readonly
       failure = error;
     }
 
-    if (lease) {
+    if (lease && ownsLease) {
       try {
         await lease.release();
       } catch (error) {

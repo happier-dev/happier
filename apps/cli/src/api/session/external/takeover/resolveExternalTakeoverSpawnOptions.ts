@@ -41,7 +41,10 @@ export type ResolvedExternalTakeoverSpawn = Readonly<{
 export type ExternalTakeoverSpawnResolution =
   | Readonly<{
       ok: true;
-      value: ResolvedExternalTakeoverSpawn;
+      /** Canonical linked identity retained apart from a native spawn reference. */
+      value: ResolvedExternalTakeoverSpawn & Readonly<{
+        remoteSessionId: string;
+      }>;
     }>
   | Readonly<{
       ok: false;
@@ -171,6 +174,9 @@ export async function resolveExternalTakeoverSpawnOptionsFromRuntimeRegistry(
 
     const options = mapExternalTakeoverLaunchPlanToSpawnOptions({
       plan: launch.value,
+      ...(launch.nativeResumeReference
+        ? { nativeResumeReference: launch.nativeResumeReference }
+        : {}),
       targetDirectory: params.targetDirectory,
       resolvedIdentity: resolvedIdentity.value,
       linkedSessionId: params.sessionId,
@@ -183,6 +189,7 @@ export async function resolveExternalTakeoverSpawnOptionsFromRuntimeRegistry(
       ok: true,
       value: {
         options,
+        remoteSessionId: resolvedIdentity.value.remoteSessionId,
         origin: {
           agentId: runtimeLease.agentId,
           pluginId: runtimeLease.pluginId,
@@ -237,8 +244,7 @@ export async function resolveExternalTakeoverSpawnOptions(params: Readonly<{
     readConnectedServiceRuntimeSnapshot(params.linked.metadata),
     await resolveConnectedServiceRuntimeSnapshotForExternalSession({
       agentId: params.linked.agentId,
-      remoteSessionId: resolved.value.options.resume
-        ?? params.linked.remoteSessionId,
+      remoteSessionId: resolved.value.remoteSessionId,
     }),
   );
   return hasConnectedServiceBindings(snapshot)

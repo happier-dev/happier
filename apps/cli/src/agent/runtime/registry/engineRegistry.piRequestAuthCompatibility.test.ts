@@ -12,7 +12,7 @@ import { createResolvedContributionRegistry } from '../../../plugins/projection/
 import { projectLoadedPluginContributes } from '../../../plugins/projection/registry/resolvePluginContributions';
 import {
   BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS,
-} from '../../../plugins/projection/registry/sources/generatedBundledPlugins';
+} from '../../../plugins/projection/registry/sources/generatedBundledPluginManifests';
 import { createPluginInvocationPresentation } from '../../../plugins/runtime/invocation/services/interactions';
 import { resolveExecutablePluginRuntimeRegistry } from '../../../plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 

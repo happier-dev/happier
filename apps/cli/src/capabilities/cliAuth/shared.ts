@@ -1,16 +1,12 @@
-import { execFile } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { promisify } from 'node:util';
 
 import {
   agentCliPathRequiresJavaScriptRuntime,
   resolveAgentCliJavaScriptRuntimeCommand,
 } from '@happier-dev/cli-common/agents/resolution';
-import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
-
-const execFileAsync = promisify(execFile);
+import { execFileWithDeadline, resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
 
 export function resolveCliAuthHomeDir(): string {
   const envHome =
@@ -21,6 +17,11 @@ export function resolveCliAuthHomeDir(): string {
   return trimmed.length > 0 ? trimmed : homedir();
 }
 
+/**
+ * Runs an agent CLI's auth probe. The command's OUTPUT is the answer, so the budget goes through
+ * `execFileWithDeadline`: a `child_process` `timeout` reports a completed probe as `ok: true` with
+ * empty stdout on a stalled loop, and every caller reads a silent CLI as "not signed in".
+ */
 export async function runCliCommandBestEffort(params: Readonly<{
   resolvedPath: string;
   args: string[];
@@ -49,7 +50,7 @@ export async function runCliCommandBestEffort(params: Readonly<{
     }
 
     if (runtimeExecutable) {
-      const { stdout, stderr } = await execFileAsync(runtimeExecutable, [params.resolvedPath, ...params.args], {
+      const { stdout, stderr } = await execFileWithDeadline(runtimeExecutable, [params.resolvedPath, ...params.args], {
         timeout: timeoutMs,
         env: execEnv,
         windowsHide: true,
@@ -63,7 +64,7 @@ export async function runCliCommandBestEffort(params: Readonly<{
         args: params.args,
         resolveCommandOnPath: false,
       });
-      const { stdout, stderr } = await execFileAsync(invocation.command, invocation.args, {
+      const { stdout, stderr } = await execFileWithDeadline(invocation.command, invocation.args, {
         timeout: timeoutMs,
         env: execEnv,
         windowsHide: true,
@@ -72,7 +73,7 @@ export async function runCliCommandBestEffort(params: Readonly<{
       return { ok: true, stdout: asString(stdout), stderr: asString(stderr), exitCode: 0 };
     }
 
-    const { stdout, stderr } = await execFileAsync(params.resolvedPath, params.args, {
+    const { stdout, stderr } = await execFileWithDeadline(params.resolvedPath, params.args, {
       timeout: timeoutMs,
       env: execEnv,
       windowsHide: true,

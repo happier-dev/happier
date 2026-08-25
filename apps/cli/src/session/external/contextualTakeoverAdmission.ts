@@ -5,8 +5,10 @@ import {
   type ExternalSessionOperationAuthorIntentV1,
   type ExternalSessionOperationReferenceV1,
   type ExternalSessionTakeoverStartInputV1,
+  type ExternalSessionsAgentId,
   type ExternalSessionsSource,
   type PluginAgentExternalLinkedTakeoverWriterSafetyV1,
+  type PluginContributionIdentityV1,
 } from '@happier-dev/protocol';
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
 
@@ -63,6 +65,17 @@ export type ContextualExternalSessionTakeoverDependencies = Readonly<{
     source: ExternalSessionsSource;
     signal?: AbortSignal;
   }>): Promise<Readonly<{ sessionId: string }>>;
+  /**
+   * Projects one durable `{pluginId, localId}` Agent identity onto the host
+   * routing id public refs carry. The derived private request names the Agent
+   * by its durable identity while `ref.agentId` is the routing id, and only
+   * the plugin registry relates them: an installed Agent is routed by its
+   * qualified key while a bundled one keeps its unqualified released id.
+   * Comparing the two directly silently only ever matched bundled Agents.
+   */
+  resolveAgentRoutingId(
+    agent: PluginContributionIdentityV1,
+  ): Promise<ExternalSessionsAgentId | null>;
   deriveTakeoverStartRequest(input: Readonly<{
     ref: HostExternalSessionRef;
     source: ExternalSessionsSource;
@@ -180,13 +193,24 @@ export function createContextualExternalSessionTakeoverAdapter(
       const parsedStart = ExternalSessionTakeoverStartInputV1Schema.safeParse({
         request: derived,
       });
+      // The derived request names the Agent by its durable identity, so the
+      // ref's routing id is compared against the routing id that identity
+      // currently resolves to. An identity the catalog no longer contributes
+      // resolves to null and is refused.
+      const derivedAgentRoutingId = parsedStart.success
+        ? await runWhileAdmissionCurrent(
+            options,
+            async () => await dependencies.resolveAgentRoutingId(
+              parsedStart.data.request.source.qualifiedIdentity.agent,
+            ),
+          )
+        : null;
       if (
         !parsedStart.success
         || parsedStart.data.request.plan !== 'takeover'
         || parsedStart.data.request.sessionId !== sessionId
         || parsedStart.data.request.idempotencyKey !== durableIdempotencyKey
-        || parsedStart.data.request.source.qualifiedIdentity.agent.localId
-          !== ref.agentId
+        || derivedAgentRoutingId !== ref.agentId
         || parsedStart.data.request.source.remoteSessionId
           !== ref.remoteSessionId
         || parsedStart.data.request.targetStorageMode
@@ -375,7 +399,7 @@ function readStrictInputRecord(
 function referenceFromPreflight(
   preflight: ExternalSessionPluginOperationPreflightAdmission,
 ): ExternalSessionOperationReferenceV1 | null {
-  if (preflight.kind === 'completion_receipt') {
+  if (preflight.kind === 'terminal_receipt') {
     return preflight.receipt.reference;
   }
   if (preflight.kind === 'existing_record') {

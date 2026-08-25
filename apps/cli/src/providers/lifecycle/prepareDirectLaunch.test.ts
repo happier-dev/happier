@@ -65,7 +65,10 @@ describe('direct Provider launch lifecycle', () => {
 
     expect(result).toEqual({
       ok: false,
-      kind: 'managed_provider_requires_daemon',
+      error: createProviderErrorV1('provider_managed_requires_daemon', {
+        connectionId,
+        machineId: 'machine-a',
+      }),
     });
     expect(resolvePrerequisites).not.toHaveBeenCalled();
     expect(materializeManagedEndpoint).not.toHaveBeenCalled();

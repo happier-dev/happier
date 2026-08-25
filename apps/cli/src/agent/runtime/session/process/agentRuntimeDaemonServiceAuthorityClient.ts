@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import {
   AGENT_RUNTIME_DAEMON_SERVICES_PATH,
   AgentRuntimeDaemonServiceRequestV1Schema,
@@ -475,6 +477,110 @@ export async function claimCurrentRunnerManagedServiceEndpointRead(
   throw createNativeAgentSessionEffectBoundaryError(
     'authority_unavailable_before_effect',
   );
+}
+
+type ManagedServiceDeclaredSecretOperation = Extract<
+  AgentRuntimeDaemonServiceRequestV1['operation'],
+  { kind: 'managed_server.secret.read' }
+>;
+
+async function dispatchCurrentRunnerManagedServiceDeclaredSecret(
+  input: Readonly<{
+    authority: AgentRuntimeDaemonServiceAuthorityExpectedInput;
+    operation: Omit<ManagedServiceDeclaredSecretOperation, 'requestId'>;
+    signal?: AbortSignal;
+  }>,
+): Promise<AgentRuntimeDaemonServiceResponseV1> {
+  const requestId = randomUUID();
+  const dispatch = () =>
+    dispatchCurrentAgentRuntimeDaemonServiceRequest({
+      authority: input.authority,
+      createRequest: (capability) => ({
+        v: 1,
+        context: {
+          token: capability,
+          sessionId: input.authority.sessionId,
+        },
+        operation: { ...input.operation, requestId },
+      }),
+      ...(input.signal ? { signal: input.signal } : {}),
+    });
+  const response = await dispatchReadAcrossOneProvenAuthorityTransition(
+    dispatch,
+  );
+  return response.ok
+    && response.result.kind === 'managed_server.secret'
+    && response.result.requestId === requestId
+    ? response
+    : unavailableResponse();
+}
+
+/**
+ * Reads one declared managed-service secret from the CURRENT daemon.
+ *
+ * `null` means the daemon authority is unavailable, rotated away, or refuses
+ * the declaration; the caller must fail before any credential-bearing effect.
+ * A resolved `value` of `null` is the ordinary unconfigured/empty credential.
+ */
+export async function readCurrentRunnerManagedServiceDeclaredSecret(
+  input: Readonly<{
+    authority: AgentRuntimeDaemonServiceAuthorityExpectedInput;
+    secretId: string;
+    canonicalOrigin: string;
+    signal?: AbortSignal;
+  }>,
+): Promise<Readonly<{ value: string | null; revision: string }> | null> {
+  const response = await dispatchCurrentRunnerManagedServiceDeclaredSecret({
+    authority: input.authority,
+    operation: {
+      kind: 'managed_server.secret.read',
+      phase: 'read',
+      secretId: input.secretId,
+      canonicalOrigin: input.canonicalOrigin,
+    },
+    ...(input.signal ? { signal: input.signal } : {}),
+  });
+  if (
+    !response.ok
+    || response.result.kind !== 'managed_server.secret'
+    || response.result.status !== 'resolved'
+  ) {
+    return null;
+  }
+  return Object.freeze({
+    value: response.result.value,
+    revision: response.result.revision,
+  });
+}
+
+/**
+ * Rechecks the same declaration against the CURRENT daemon immediately before
+ * the runner dispatches a credential-bearing request. Anything other than an
+ * exact `current` answer is refused.
+ */
+export async function revalidateCurrentRunnerManagedServiceDeclaredSecret(
+  input: Readonly<{
+    authority: AgentRuntimeDaemonServiceAuthorityExpectedInput;
+    secretId: string;
+    canonicalOrigin: string;
+    expectedRevision: string;
+    signal?: AbortSignal;
+  }>,
+): Promise<boolean> {
+  const response = await dispatchCurrentRunnerManagedServiceDeclaredSecret({
+    authority: input.authority,
+    operation: {
+      kind: 'managed_server.secret.read',
+      phase: 'revalidate',
+      secretId: input.secretId,
+      canonicalOrigin: input.canonicalOrigin,
+      expectedRevision: input.expectedRevision,
+    },
+    ...(input.signal ? { signal: input.signal } : {}),
+  });
+  return response.ok
+    && response.result.kind === 'managed_server.secret'
+    && response.result.status === 'current';
 }
 
 export async function validateCurrentRunnerManagedServiceEndpointRead(

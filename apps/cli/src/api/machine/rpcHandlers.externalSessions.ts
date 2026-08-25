@@ -20,7 +20,7 @@ import {
   bindExternalSessionStatusDemand,
   type ExternalSessionStatusDemandChannel,
 } from '@/daemon/machine/externalSessionStatusDemandBinding';
-import { dispatchActionFromRpc, type RpcActionExecutor } from '@/rpc/handlers/_actionDispatchAdapter';
+import type { RpcActionExecutor } from '@/rpc/handlers/_actionDispatchAdapter';
 import { EXTERNAL_SESSION_REQUIRED_GENERIC_RPC_SCOPES } from '@/rpc/handlers/actionSpecRpcRegistration';
 import { registerActionSpecRpcHandlers } from '@/rpc/handlers/registerActionSpecRpcHandlers';
 import {
@@ -41,7 +41,6 @@ import {
 } from '@/session/actions/externalSessions';
 
 import {
-  registerLegacyDirectSessionFollowPolicyWireAlias,
   registerLegacyDirectSessionLinkEnsureWireAlias,
   registerLegacyDirectSessionTakeoverWireAliases,
 } from './legacyDirectSessionWireAliases';
@@ -53,7 +52,7 @@ import {
   spawnResolvedExternalTakeoverSession,
 } from '@/api/session/external/takeover/resolveExternalTakeoverSpawnOptions';
 import {
-  resolveExternalLinkedTakeoverWriterSafety,
+  resolveExternalLinkedTakeoverWriterSafetyForAgentIdentity,
 } from '@/api/session/external/takeover/resolveExternalLinkedTakeoverWriterSafety';
 import { configuration } from '@/configuration';
 import {
@@ -655,6 +654,16 @@ export function registerMachineExternalSessionsRpcHandlers(params: Readonly<{
         try {
           await host.hydrate();
         } catch (error) {
+          // Listener startup gates active monitoring hydration, not the host's
+          // durable passive-status and exact-custody cleanup operations. Keep
+          // this same host available when its listener is conclusively absent;
+          // Install and Enable already return listener_unavailable at the host
+          // boundary, while Uninstall can revoke durable credentials directly.
+          const listenerUnavailable = await listener.then(
+            () => false,
+            () => true,
+          );
+          if (listenerUnavailable) return host;
           if (
             sessionHookHost === host
             && sessionHookListener === listener
@@ -937,7 +946,8 @@ export function registerMachineExternalSessionsRpcHandlers(params: Readonly<{
     ? createExternalSessionExternalLinkedTakeoverPhaseRunner({
       activeServerDir: configuration.activeServerDir,
       operationExclusion,
-      resolveWriterSafety: resolveExternalLinkedTakeoverWriterSafety,
+      resolveWriterSafety:
+        resolveExternalLinkedTakeoverWriterSafetyForAgentIdentity,
       loadCurrent:
         loadCurrentExternalSessionExternalLinkedTakeoverSource,
       followLeaseManager,
@@ -1103,16 +1113,6 @@ export function registerMachineExternalSessionsRpcHandlers(params: Readonly<{
 
   registerLegacyDirectSessionLinkEnsureWireAlias({
     rpcHandlerManager,
-  });
-
-  registerLegacyDirectSessionFollowPolicyWireAlias({
-    rpcHandlerManager,
-    dispatchExternalSessionFollowPolicyAction: async (input) =>
-      await dispatchActionFromRpc({
-        actionId: 'sessions.external.backgroundFollow.set',
-        input,
-        executor: publicationFenceAwareActionExecutor,
-      }),
   });
 
   registerLegacyDirectSessionTakeoverWireAliases({

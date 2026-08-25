@@ -347,8 +347,7 @@ export class ApiMachineClient {
     private sessionSpawnV1OutcomeRequired = false;
     private agentCatalogObservation: AgentProviderCatalogObservationService | null = null;
     private activeTransportGeneration = 0;
-    private operationProtocolCapabilitiesWithdrawnGeneration: number | null = null;
-    private operationProtocolCapabilitiesWithdrawalSettledGeneration: number | null = null;
+    private advertisedOperationProtocolCapabilitiesGeneration: number | null = null;
     private machineControlRunningGeneration: number | null = null;
     private machineControlReadinessPublication: Readonly<{
         generation: number;
@@ -436,7 +435,6 @@ export class ApiMachineClient {
             || this.socket !== socket
             || this.activeTransportGeneration !== transportGeneration
             || socket.connected !== true
-            || this.operationProtocolCapabilitiesWithdrawalSettledGeneration !== transportGeneration
         ) {
             return { ready: false, readiness };
         }
@@ -451,12 +449,15 @@ export class ApiMachineClient {
         const promise = (async () => {
             const capabilities = this.currentMachineOperationProtocolCapabilities();
             if (
-                this.operationProtocolCapabilitiesWithdrawnGeneration === transportGeneration
-                && capabilities
+                capabilities !== null
+                && this.advertisedOperationProtocolCapabilitiesGeneration !== transportGeneration
             ) {
-                await this.publishOperationProtocolCapabilitiesOnSocket(socket, capabilities).catch(() => {
-                    logger.warn('[API MACHINE] Failed to publish operation protocol capabilities after daemon readiness');
-                });
+                // A rejected publication leaves the server's projection unknown, so it is
+                // deliberately not recorded as advertised and is allowed to reject this
+                // whole publication: without the running mark, the next registration
+                // acknowledgement re-enters here and publishes the capabilities again.
+                await this.publishOperationProtocolCapabilitiesOnSocket(socket, capabilities);
+                this.advertisedOperationProtocolCapabilitiesGeneration = transportGeneration;
             }
             if (
                 this.socket !== socket
@@ -478,10 +479,15 @@ export class ApiMachineClient {
                 && socket.connected === true
             ) {
                 this.machineControlRunningGeneration = transportGeneration;
+                // Pairs with the unready warning below: an operator reading the daemon log
+                // can tell a connection that recovered from one that never did.
+                logger.info('[API MACHINE] Core machine-control RPC registration ready', {
+                    advertisesOperationProtocolCapabilities: capabilities !== null,
+                });
             }
             return true;
         })().catch((error) => {
-            logger.warn('[API MACHINE] Failed to update daemon state after machine-control readiness', {
+            logger.warn('[API MACHINE] Failed to publish machine-control readiness; session spawn stays unadvertised until the next registration acknowledgement or reconnect', {
                 message: error instanceof Error ? error.message : String(error),
             });
             return false;
@@ -1140,6 +1146,20 @@ export class ApiMachineClient {
         };
     }
 
+    /**
+     * Whether this daemon can currently serve the machine-control RPCs the server dispatches
+     * to it: an active transport whose registration reached the readiness publication.
+     *
+     * This is the only fact that separated a working daemon from the 56-minute pid-26058
+     * outage — the process, its heartbeat, its control-server ping and its socket were all
+     * healthy while every machine RPC was unreachable. It is read by the heartbeat so
+     * `happier daemon status` and `happier doctor` can report it instead of a PID probe.
+     */
+    isMachineControlRegistrationReady(): boolean {
+        return this.socket !== null
+            && this.machineControlRunningGeneration === this.activeTransportGeneration;
+    }
+
     sendMachineTransferEnvelope(payload: MachineTransferSendEnvelope): void {
         if (!this.socket) return;
         this.socket.emit(SOCKET_RPC_EVENTS.MACHINE_TRANSFER_ENVELOPE, payload);
@@ -1690,29 +1710,29 @@ export class ApiMachineClient {
                     const socket = this.socket;
                     const transportGeneration =
                         this.activeTransportGeneration;
+                    const missingCoreHandlers = REQUIRED_MACHINE_CONTROL_RPC_METHODS.filter(
+                        (method) => !this.rpcHandlerManager.hasHandler(method),
+                    );
                     if (socket) {
                         this.rpcHandlerManager.onSocketConnect(socket);
-                        try {
-                            await this.publishOperationProtocolCapabilitiesOnSocket(socket, {});
-                            if (
-                                this.socket === socket
-                                && this.activeTransportGeneration === transportGeneration
-                                && socket.connected === true
-                            ) {
-                                this.operationProtocolCapabilitiesWithdrawnGeneration =
-                                    transportGeneration;
-                            }
-                        } catch {
-                            logger.warn('[API MACHINE] Failed to publish operation protocol capabilities on connect');
-                        } finally {
-                            if (
-                                this.socket === socket
-                                && this.activeTransportGeneration === transportGeneration
-                                && socket.connected === true
-                            ) {
-                                this.operationProtocolCapabilitiesWithdrawalSettledGeneration =
-                                    transportGeneration;
-                            }
+                        // A persisted projection replaces rather than merges, so publishing an
+                        // empty one withdraws sessionSpawn until something republishes it.
+                        // Publish it only when it is true of this daemon — the exact-target
+                        // handlers are absent, or the creation-outcome attestation is missing —
+                        // which is the server's fail-closed input. Otherwise leave the server's
+                        // projection alone and let the readiness publication below assert the
+                        // real capabilities: a daemon that holds the capability must never
+                        // advertise itself as capability-less, because every path that would
+                        // undo that can fail.
+                        if (
+                            missingCoreHandlers.length > 0
+                            || this.currentMachineOperationProtocolCapabilities() === null
+                        ) {
+                            await this
+                                .publishOperationProtocolCapabilitiesOnSocket(socket, {})
+                                .catch(() => {
+                                    logger.warn('[API MACHINE] Failed to publish the fail-closed operation protocol capability projection on connect');
+                                });
                         }
                         const contractResult =
                             await this
@@ -1734,25 +1754,56 @@ export class ApiMachineClient {
                         }
                     }
 
-                    const missingCoreHandlers = REQUIRED_MACHINE_CONTROL_RPC_METHODS.filter(
-                        (method) => !this.rpcHandlerManager.hasHandler(method),
-                    );
                     if (missingCoreHandlers.length > 0) {
                         logger.warn('[API MACHINE] Core machine-control RPC handlers are not installed', {
                             missingMethods: missingCoreHandlers,
                         });
                     } else if (socket) {
-                        const registrationResult = await this.publishMachineControlReadinessWhenReady({
-                            socket,
-                            transportGeneration,
-                            timeoutMs: MACHINE_CONTROL_RPC_REGISTRATION_TIMEOUT_MS,
-                        });
-                        if (registrationResult.readiness.status === 'timeout') {
-                            logger.warn('[API MACHINE] Core machine-control RPC registration did not become ready', {
-                                status: registrationResult.readiness.status,
-                                missingMethods: registrationResult.readiness.missingMethods,
+                        // Deliberately not awaited. The deadline below bounds how long this
+                        // attempt watches for the server's registration acknowledgements before
+                        // reporting them as outstanding; it is not a functional cutoff, because
+                        // every later acknowledgement re-enters the same publication. Awaiting
+                        // it here would only delay keep-alive and changes sync by the deadline.
+                        void (async () => {
+                            let registrationResult =
+                                await this.publishMachineControlReadinessWhenReady({
+                                    socket,
+                                    transportGeneration,
+                                    timeoutMs: MACHINE_CONTROL_RPC_REGISTRATION_TIMEOUT_MS,
+                                });
+                            const isCurrentTransport = () => (
+                                this.socket === socket
+                                && this.activeTransportGeneration === transportGeneration
+                                && socket.connected === true
+                            );
+                            if (
+                                registrationResult.readiness.status === 'timeout'
+                                && isCurrentTransport()
+                            ) {
+                                this.rpcHandlerManager.replayUnacknowledgedHandlerRegistrations(
+                                    REQUIRED_MACHINE_CONTROL_RPC_METHODS,
+                                );
+                                registrationResult =
+                                    await this.publishMachineControlReadinessWhenReady({
+                                        socket,
+                                        transportGeneration,
+                                        timeoutMs: MACHINE_CONTROL_RPC_REGISTRATION_TIMEOUT_MS,
+                                    });
+                            }
+                            if (
+                                registrationResult.readiness.status === 'timeout'
+                                && isCurrentTransport()
+                            ) {
+                                logger.warn('[API MACHINE] Core machine-control RPC registration did not become ready', {
+                                    status: registrationResult.readiness.status,
+                                    missingMethods: registrationResult.readiness.missingMethods,
+                                });
+                            }
+                        })().catch((error) => {
+                            logger.warn('[API MACHINE] Machine-control readiness publication failed', {
+                                message: error instanceof Error ? error.message : String(error),
                             });
-                        }
+                        });
                     }
 
                     this.startChangesSyncWithRetry({ reason: isReconnect ? 'reconnect' : 'connect' });

@@ -53,6 +53,9 @@ export function registerMachineSessionRpcHandlers(params: Readonly<{
     : undefined;
   registerSessionSpawnNewRpcHandlers({
     rpcHandlerManager: params.rpcHandlerManager,
+    ...(sessionSpawnDirectTargetTransport
+      ? { sessionSpawnDirectTargetTransport }
+      : {}),
     ...(params.deps?.actionOperations
       ? { observeExecution: params.deps.actionOperations.observeExecution }
       : {}),

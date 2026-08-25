@@ -47,7 +47,12 @@ import {
 import { routeSessionUsageLimitRecoverySwitchAccountNow } from '@/session/usageLimitRecoveryControls/sessionUsageLimitRecoverySwitchAccountNow';
 import type { DaemonUsageLimitRecoveryFieldMutation } from '@/api/session/client/transport/mutations/sessionClientDurableMutationTypes';
 import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
-import { getConnectedServiceAuthGroup } from '@/api/client/connectedServiceAuthGroupApi';
+import {
+  readQualifiedConnectedAccountGroupV4,
+} from '@/api/client/qualifiedConnectedAccountApi';
+import {
+  resolveFirstPartyQualifiedConnectedAccountServiceForLegacyServiceId,
+} from '@/plugins/projection/registry/connectedAccountPurposeCompatibility';
 import {
   tryDecryptSessionMetadata,
   type SessionStoredContentCryptoContext,
@@ -353,10 +358,17 @@ async function executeUsageLimitControl(params: Readonly<{
       accountSettings: getActiveAccountSettingsSnapshot()?.settings ?? null,
       loadGroupPolicy: async (selectedAuth: SessionUsageLimitRecoveryV1['selectedAuth'] | null) => {
         if (selectedAuth?.kind !== 'group') return null;
-        return (await getConnectedServiceAuthGroup({
+        const service =
+          resolveFirstPartyQualifiedConnectedAccountServiceForLegacyServiceId(
+            selectedAuth.serviceId,
+          );
+        if (!service) return null;
+        return (await readQualifiedConnectedAccountGroupV4({
           token: resolved.credentials.token,
-          serviceId: selectedAuth.serviceId,
-          groupId: selectedAuth.groupId,
+          group: {
+            service,
+            groupId: selectedAuth.groupId,
+          },
         }))?.policy ?? null;
       },
     },

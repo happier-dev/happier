@@ -9,11 +9,15 @@ import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
 import { fetchAccountProfile } from '@/api/accountProfile';
 import { ensureExternalSessionLink } from '@/api/session/external/linking/ensureExternalSessionLink';
 import { loadLinkedExternalSession } from '@/api/session/external/takeover/loadLinkedExternalSession';
+import {
+  indexAgentRoutingIdsByContributionIdentity,
+  readAgentRoutingIdForContributionIdentity,
+} from '@/plugins/projection/registry/agentRoutingIdentity';
 import type { StoredCredentials } from '@/persistence';
 import { createExternalSessionSourceKeyOwnerFromAgentProjection } from '@/plugins/projection/registry/externalSessionSources';
 import {
   getActiveAccountSettingsSnapshot,
-  resolveActiveAccountSettingsSnapshotRevision,
+  resolveActiveAccountConfiguredExternalSessionSourceRevision,
   subscribeActiveAccountSettingsSnapshot,
 } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import type { ExternalSessionPluginTakeoverStart } from '@/session/actions/externalSessions/pluginExternalSessionAdmissionOwner';
@@ -40,8 +44,10 @@ import { EXTERNAL_SESSIONS_INVOCATION_POLICY } from './agentExternalSessionsInvo
 
 export {
   createCurrentGlobalExternalSessionsRouter,
+  type CurrentGlobalExternalSessionsPublicAccess,
   type CurrentGlobalExternalSessionsRouter,
 } from './currentGlobalRouting';
+import type { CurrentGlobalExternalSessionsPublicAccess } from './currentGlobalRouting';
 
 type CurrentAgentRuntime = Readonly<{
   generationId: string;
@@ -66,6 +72,9 @@ export type CurrentGlobalExternalSessionsAuthorServiceParams = Readonly<{
   readCredentials(): Promise<StoredCredentials | null>;
   resolveMachineId(): string | null;
   resolveAgentRuntime(agentId: string): CurrentAgentRuntime | null;
+  onSourceRefusalsChanged?(
+    refusals: LiveConfiguredPluginExternalSessionsAdapter['sourceRefusals'],
+  ): void;
   externalSessionHostOperationOwner?: ExternalSessionHostOperationOwner;
   isCurrent(): boolean;
 }>;
@@ -77,7 +86,10 @@ export type CurrentGlobalExternalSessionsAuthorServiceParams = Readonly<{
  */
 export type CurrentGlobalExternalSessionsTakeoverSourceOps = Pick<
   ContextualExternalSessionTakeoverDependencies,
-  'resolveCurrentSource' | 'ensureLink' | 'deriveTakeoverStartRequest'
+  | 'resolveCurrentSource'
+  | 'ensureLink'
+  | 'resolveAgentRoutingId'
+  | 'deriveTakeoverStartRequest'
 >;
 
 export type CurrentGlobalExternalSessionsAuthorService =
@@ -116,6 +128,8 @@ export function createCurrentGlobalExternalSessionsTakeoverAdapter(params: Reado
     resolveCurrentSource: async (ref, options) =>
       await requireSourceOps().resolveCurrentSource(ref, options),
     ensureLink: async (input) => await requireSourceOps().ensureLink(input),
+    resolveAgentRoutingId: async (agent) =>
+      await requireSourceOps().resolveAgentRoutingId(agent),
     deriveTakeoverStartRequest: async (input) =>
       await requireSourceOps().deriveTakeoverStartRequest(input),
     startDurableTakeover: params.startDurableTakeover,
@@ -130,6 +144,11 @@ export function createCurrentGlobalExternalSessionsAuthorBinding(params: Readonl
   takeoverStart?: ExternalSessionPluginTakeoverStart;
   resolveCurrent(): CurrentGlobalExternalSessionsAuthorService | null;
   activateConfiguredSources(agentId?: string): Promise<void>;
+  /**
+   * The daemon-lifetime router re-evaluates current-public HostAccess on every
+   * call. Omitted only by owner-local tests that do not model that router.
+   */
+  readCurrentPublicAccess?(): CurrentGlobalExternalSessionsPublicAccess;
 }>): HostExternalSessionsAuthorService {
   const contextualTakeover = params.activeServerDir && params.takeoverStart
     ? createCurrentGlobalExternalSessionsTakeoverAdapter({
@@ -188,14 +207,30 @@ export function createCurrentGlobalExternalSessionsAuthorBinding(params: Readonl
     const code = readInvocationFailureCode(operationSignal, deadlineSignal);
     if (code) throw failure(code);
   };
+  const assertCurrentPublicAccess = (): void => {
+    const access = params.readCurrentPublicAccess?.() ?? 'available';
+    if (access === 'available') return;
+    throw failure(
+      access === 'denied'
+        ? 'plugin_service_unavailable'
+        : 'plugin_services_current_global_unavailable',
+    );
+  };
+  const assertCurrentPublicInvocation = (
+    operationSignal: AbortSignal | undefined,
+    deadlineSignal: AbortSignal,
+  ): void => {
+    assertInvocationCurrent(operationSignal, deadlineSignal);
+    assertCurrentPublicAccess();
+  };
   const resolveCurrentForInvocation = async (
     agentId: string | undefined,
     operationSignal: AbortSignal | undefined,
     deadlineSignal: AbortSignal,
   ): Promise<HostExternalSessionsAuthorService | null> => {
-    assertInvocationCurrent(operationSignal, deadlineSignal);
+    assertCurrentPublicInvocation(operationSignal, deadlineSignal);
     await params.activateConfiguredSources(agentId);
-    assertInvocationCurrent(operationSignal, deadlineSignal);
+    assertCurrentPublicInvocation(operationSignal, deadlineSignal);
     return readCurrent();
   };
   const unavailable = (code: string) => Object.freeze({
@@ -227,7 +262,7 @@ export function createCurrentGlobalExternalSessionsAuthorBinding(params: Readonl
       ...(input.operationSignal ? [input.operationSignal] : []),
     ]);
     try {
-      assertInvocationCurrent(input.operationSignal, deadline.signal);
+      assertCurrentPublicInvocation(input.operationSignal, deadline.signal);
       return await new Promise<T>((resolve, reject) => {
         const onAbort = () => {
           const code = readInvocationFailureCode(
@@ -253,7 +288,7 @@ export function createCurrentGlobalExternalSessionsAuthorBinding(params: Readonl
           const result = service
             ? await input.operation(service, invocationSignal)
             : await input.withoutCurrentSourceOwner!(invocationSignal);
-          assertInvocationCurrent(input.operationSignal, deadline.signal);
+          assertCurrentPublicInvocation(input.operationSignal, deadline.signal);
           return result;
         })().then(resolve, reject).finally(() => {
           invocationSignal.removeEventListener('abort', onAbort);
@@ -279,6 +314,8 @@ export function createCurrentGlobalExternalSessionsAuthorBinding(params: Readonl
           isPluginError(error)
           && (
             error.code === 'plugin_external_sources_unavailable'
+            || error.code === 'plugin_service_unavailable'
+            || error.code === 'plugin_services_current_global_unavailable'
             || error.code === 'plugin_generation_retired'
             || error.code === 'plugin_operation_aborted'
             || error.code === 'plugin_operation_deadline_exceeded'
@@ -333,6 +370,8 @@ export function createCurrentGlobalExternalSessionsAuthorBinding(params: Readonl
           isPluginError(error)
           && (
             error.code === 'plugin_external_sources_unavailable'
+            || error.code === 'plugin_service_unavailable'
+            || error.code === 'plugin_services_current_global_unavailable'
             || error.code === 'plugin_generation_retired'
             || error.code === 'plugin_operation_aborted'
             || error.code === 'plugin_operation_deadline_exceeded'
@@ -486,8 +525,21 @@ export async function createCurrentGlobalExternalSessionsAuthorService(
     return Object.freeze({ sessionId: linked.sessionId });
   };
 
+  /**
+   * This service's own Agent projection already carries the routing ids the
+   * registry assigned, so the durable identity in a derived takeover request is
+   * mapped here rather than through a second, independently advancing current
+   * registry read.
+   */
+  const agentRoutingIdsByContributionIdentity =
+    indexAgentRoutingIdsByContributionIdentity(params.agents);
   const takeoverSourceOps: CurrentGlobalExternalSessionsTakeoverSourceOps =
     Object.freeze({
+      resolveAgentRoutingId: async (agent) =>
+        readAgentRoutingIdForContributionIdentity(
+          agentRoutingIdsByContributionIdentity,
+          agent,
+        ),
       resolveCurrentSource: async (ref, options) => {
       const current = lifecycle;
       if (!current) throw failure('plugin_external_sources_unavailable');
@@ -572,11 +624,11 @@ export async function createCurrentGlobalExternalSessionsAuthorService(
       : Object.freeze({ connectedServicesV2: [] }),
     readAgentSettings: () => getActiveAccountSettingsSnapshot()?.settings,
     ...(params.activeServerId ? { activeServerId: params.activeServerId } : {}),
-    readAccountRevision: () => resolveActiveAccountSettingsSnapshotRevision(
+    readAccountRevision: () => resolveActiveAccountConfiguredExternalSessionSourceRevision(
       getActiveAccountSettingsSnapshot(),
     ),
     subscribeAccountRevision: (listener) => subscribeActiveAccountSettingsSnapshot(
-      (_previous, next) => listener(resolveActiveAccountSettingsSnapshotRevision(next)),
+      (_previous, next) => listener(resolveActiveAccountConfiguredExternalSessionSourceRevision(next)),
     ),
     isCurrent: params.isCurrent,
     resolveProviderOps: async (agentId) =>
@@ -611,7 +663,7 @@ export async function createCurrentGlobalExternalSessionsAuthorService(
               sessionId: linked.sessionId,
               machineId: requireMachineId(params),
               readAccountRevision: () =>
-                resolveActiveAccountSettingsSnapshotRevision(
+                resolveActiveAccountConfiguredExternalSessionSourceRevision(
                   getActiveAccountSettingsSnapshot(),
                 ),
               generationRetirementSignal: runtime.retirementSignal,
@@ -628,16 +680,40 @@ export async function createCurrentGlobalExternalSessionsAuthorService(
               await port.retire();
               return result;
             }
+            let cleanup: Promise<void> | null = null;
             return Object.freeze({
               ...result,
               subscription: Object.freeze({
                 async dispose() {
-                  await Promise.allSettled([
-                    result.subscription.dispose(),
-                  ]);
-                  await Promise.allSettled([
-                    port.retire(),
-                  ]);
+                  if (cleanup) return await cleanup;
+                  const attempt = (async () => {
+                    const physicalOutcomes = await Promise.allSettled([
+                      result.subscription.dispose(),
+                    ]);
+                    const retirementOutcomes = await Promise.allSettled([
+                      port.retire(),
+                    ]);
+                    const failures = [
+                      ...physicalOutcomes,
+                      ...retirementOutcomes,
+                    ].flatMap((outcome) =>
+                      outcome.status === 'rejected' ? [outcome.reason] : []
+                    );
+                    if (failures.length === 1) throw failures[0];
+                    if (failures.length > 1) {
+                      throw new AggregateError(
+                        failures,
+                        'External Sessions follow cleanup failed',
+                      );
+                    }
+                  })();
+                  cleanup = attempt;
+                  try {
+                    await attempt;
+                  } catch (error) {
+                    if (cleanup === attempt) cleanup = null;
+                    throw error;
+                  }
                 },
               }),
             });
@@ -648,6 +724,9 @@ export async function createCurrentGlobalExternalSessionsAuthorService(
           canFollowNow: () =>
             params.externalSessionHostOperationOwner!.canFollowNow(),
         }
+      : {}),
+    ...(params.onSourceRefusalsChanged
+      ? { onSourceRefusalsChanged: params.onSourceRefusalsChanged }
       : {}),
   });
   const owner = lifecycle;

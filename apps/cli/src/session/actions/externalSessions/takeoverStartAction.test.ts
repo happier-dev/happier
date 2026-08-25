@@ -25,7 +25,7 @@ import {
 } from './operationProgressPublisher';
 import {
   acknowledgeExternalSessionOperationProgressProjection,
-  compactExternalSessionOperationRecordToCompletionReceipt,
+  compactExternalSessionOperationRecordToTerminalReceipt,
   listExternalSessionOperationRecords,
   readExternalSessionOperationRecord,
   readExternalSessionOperationStoredEntry,
@@ -184,7 +184,7 @@ function takeoverRecordFor(
 
 async function compactCompletedExternalLinkedTakeover(input: Readonly<{
   activeServerDir: string;
-  completedAtMs: number;
+  terminalAtMs: number;
 }>): Promise<ExternalSessionOperationRecordV1> {
   const {
     retryTargetPhase: _retryTargetPhase,
@@ -198,7 +198,7 @@ async function compactCompletedExternalLinkedTakeover(input: Readonly<{
     revision: 6,
     status: 'completed',
     phase: 'finalizing',
-    updatedAtMs: input.completedAtMs,
+    updatedAtMs: input.terminalAtMs,
     progressProjection: { acknowledgedRevision: null },
     terminalResult: { kind: 'completed' },
   } satisfies ExternalSessionOperationRecordV1;
@@ -208,7 +208,7 @@ async function compactCompletedExternalLinkedTakeover(input: Readonly<{
     operationId: completed.operationId,
     projectedRevision: completed.revision,
   });
-  await expect(compactExternalSessionOperationRecordToCompletionReceipt({
+  await expect(compactExternalSessionOperationRecordToTerminalReceipt({
     activeServerDir: input.activeServerDir,
     operationId: completed.operationId,
     expectedRevision: completed.revision,
@@ -240,7 +240,7 @@ describe('external-session durable takeover start', () => {
       tmpdir(),
       'happier-takeover-start-receipt-conflict-',
     ));
-    const completedAtMs = 25_000;
+    const terminalAtMs = 25_000;
     const describeSession = vi.fn();
     const acquire = vi.fn();
     const sendHistoricalCommand = vi.fn();
@@ -249,7 +249,7 @@ describe('external-session durable takeover start', () => {
     try {
       await compactCompletedExternalLinkedTakeover({
         activeServerDir,
-        completedAtMs,
+        terminalAtMs,
       });
       const executor = createExternalSessionTakeoverStartActionExecutor({
         activeServerDir,
@@ -258,7 +258,7 @@ describe('external-session durable takeover start', () => {
         sendHistoricalCommand,
         validateProgressSelection,
         publishProgress,
-        nowMs: () => completedAtMs + 86_400_000 - 1,
+        nowMs: () => terminalAtMs + 86_400_000 - 1,
       });
 
       await expect(executor.start({
@@ -283,8 +283,8 @@ describe('external-session durable takeover start', () => {
       tmpdir(),
       'happier-takeover-start-expired-receipt-',
     ));
-    const completedAtMs = 25_000;
-    const nowMs = completedAtMs + 86_400_000;
+    const terminalAtMs = 25_000;
+    const nowMs = terminalAtMs + 86_400_000;
     const firstExclusion = createExternalSessionOperationExclusion({
       activeServerDir,
       ownerId: 'expired-receipt-successor-first-start',
@@ -335,7 +335,7 @@ describe('external-session durable takeover start', () => {
     try {
       const expired = await compactCompletedExternalLinkedTakeover({
         activeServerDir,
-        completedAtMs,
+        terminalAtMs,
       });
       const predecessorPresentation =
         projectExternalSessionOperationSharedPresentationV1(
@@ -372,7 +372,7 @@ describe('external-session durable takeover start', () => {
         await expect(readExternalSessionOperationStoredEntry(
           activeServerDir,
           expired.operationId,
-        )).resolves.toMatchObject({ kind: 'completion_receipt' });
+        )).resolves.toMatchObject({ kind: 'terminal_receipt' });
         await expect(readExternalSessionOperationRecord(
           activeServerDir,
           input.progress.operationId,
@@ -450,7 +450,7 @@ describe('external-session durable takeover start', () => {
         activeServerDir,
         expired.operationId,
       )).resolves.toMatchObject({
-        kind: 'completion_receipt',
+        kind: 'terminal_receipt',
         receipt: { presentation: predecessorPresentation },
       });
       releaseAuthority();
@@ -1271,12 +1271,12 @@ describe('external-session durable takeover start', () => {
     }
   });
 
-  it('returns invalid_state when a completion receipt appears while waiting for a converged owner', async () => {
+  it('returns invalid_state when a terminal receipt appears while waiting for a converged owner', async () => {
     const activeServerDir = await mkdtemp(join(
       tmpdir(),
       'happier-takeover-start-wait-receipt-',
     ));
-    const completedAtMs = 25_000;
+    const terminalAtMs = 25_000;
     const describeSession = vi.fn(async () => ({
       ...describedSession(),
       request: externalLinkedSemanticRequest,
@@ -1299,7 +1299,7 @@ describe('external-session durable takeover start', () => {
       waitForRelease: async () => {
         await compactCompletedExternalLinkedTakeover({
           activeServerDir,
-          completedAtMs,
+          terminalAtMs,
         });
         return { status: 'ready' as const };
       },
@@ -1313,7 +1313,7 @@ describe('external-session durable takeover start', () => {
         validateProgressSelection,
         publishProgress,
         convergeProgress,
-        nowMs: () => completedAtMs,
+        nowMs: () => terminalAtMs,
       });
 
       await expect(executor.start({ request: externalLinkedRequest }))

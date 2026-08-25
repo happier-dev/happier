@@ -65,6 +65,7 @@ import {
   type DirectTransferImportSessionManager,
 } from './directTransferImportSession';
 import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
+import { asHostProtocolZod } from '@/plugins/runtime/protocolComposableZodAdapter';
 import type { ComposerMediaStageUploadTargetDeps } from '@/transfers/targets/resolveComposerMediaStageUploadTarget';
 import type { WorkspaceFinalizeFileOperationsFactory } from '@/transfers/targets/resolveWorkspaceFileUploadTarget';
 import { TRANSFER_FINALIZE_RECOVERY_REQUIRED_ERROR_CODE } from '@/transfers/targets/uploadTransferTarget';
@@ -550,7 +551,7 @@ const ComposerMediaStageUploadOpenRequestSchema = z
   .object({
     t: z.literal('composer_media_stage_upload_v1'),
     executionTarget: SessionExecutionTargetV1Schema,
-    owner: PluginContributionIdentityV1Schema,
+    owner: asHostProtocolZod(PluginContributionIdentityV1Schema),
     mediaKind: ComposerContentMediaKindV1Schema,
     mimeType: ComposerContentMimeTypeV1Schema,
     name: ComposerContentDisplayNameV1Schema,

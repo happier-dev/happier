@@ -24,6 +24,10 @@ import {
     QualifiedConnectedAccountRefreshLeaseV4Schema,
     QualifiedConnectedAccountServiceRefSchema,
     QualifiedConnectedAccountSuccessV4Schema,
+    QualifiedConnectedServiceUsageSourceResolveV4Schema,
+    QualifiedConnectedServiceUsageSourceResolutionV4Schema,
+    QualifiedProviderAccountUsageRecordQueryV4Schema,
+    QualifiedProviderAccountUsageRecordResponseV4Schema,
     QualifiedProviderAccountUsageWriteSuccessV4Schema,
     QualifiedProviderAccountUsageWriteV4Schema,
     encodeQualifiedConnectedAccountV4StructuredQueryValue,
@@ -34,6 +38,8 @@ import {
     type QualifiedConnectedAccountGroupRef,
     type QualifiedConnectedAccountRef,
     type QualifiedConnectedAccountServiceRef,
+    type QualifiedConnectedServiceUsageSourceV4,
+    type ProviderAccountUsageRecordId,
 } from "@happier-dev/protocol";
 
 import { HttpStatusError } from "@/api/client/httpStatusError";
@@ -73,9 +79,9 @@ export class QualifiedConnectedAccountCompatibilityError extends Error {
  * The exact cause the server named for a refused credential mutation.
  *
  * `/v4/connect/qualified/credential` answers 409 with a CLOSED discriminated
- * union, and each member means something different to the caller: capacity
- * exhaustion is terminal, an identity or authentication-mode mismatch needs a
- * different reconnect, and only the superseded member is an ordinary CAS race.
+ * union, and each member means something different to the caller: an identity
+ * or authentication-mode mismatch needs a different reconnect, and only the
+ * superseded member is an ordinary CAS race.
  * Reading only the status code collapses all of them into "conflict", so the
  * discriminator is parsed here, at the boundary that still has the body.
  */
@@ -1033,4 +1039,97 @@ export async function writeQualifiedProviderAccountUsageV4(
     return QualifiedProviderAccountUsageWriteSuccessV4Schema.parse(
         response.data,
     );
+}
+
+export async function resolveQualifiedProviderAccountUsageSourceV4(
+    params: Readonly<{
+        token: string;
+        source: QualifiedConnectedServiceUsageSourceV4;
+        signal?: AbortSignal;
+    }>,
+) {
+    const source = QualifiedConnectedServiceUsageSourceResolveV4Schema.parse(
+        params.source,
+    );
+    const query = new URLSearchParams({
+        source: encodeQualifiedConnectedAccountV4StructuredQueryValue(
+            QualifiedConnectedServiceUsageSourceResolveV4Schema,
+            source,
+        ),
+    });
+    const response = await axios.get(
+        `${resolveServerHttpBaseUrl()}/v4/connect/qualified/provider-account-usage/sources/resolve?${query.toString()}`,
+        {
+            headers: requestHeaders(params.token),
+            timeout: resolveConnectedServicesServerApiTimeoutMs(),
+            validateStatus: (status) => status === 200 || status === 404,
+            ...(params.signal ? { signal: params.signal } : {}),
+        },
+    );
+    if (response.status === 404) return null;
+    if (response.status !== 200) {
+        throw new Error(
+            `Qualified provider-account usage source resolution returned ${response.status}`,
+        );
+    }
+    return QualifiedConnectedServiceUsageSourceResolutionV4Schema.parse(
+        response.data,
+    );
+}
+
+export async function readQualifiedProviderAccountUsageRecordV4(
+    params: Readonly<{
+        token: string;
+        recordId: ProviderAccountUsageRecordId;
+        signal?: AbortSignal;
+    }>,
+) {
+    const query = QualifiedProviderAccountUsageRecordQueryV4Schema.parse({
+        recordId: params.recordId,
+    });
+    const response = await axios.get(
+        `${resolveServerHttpBaseUrl()}/v4/connect/qualified/provider-account-usage/record?${new URLSearchParams(query).toString()}`,
+        {
+            headers: requestHeaders(params.token),
+            timeout: resolveConnectedServicesServerApiTimeoutMs(),
+            validateStatus: (status) => status === 200 || status === 404,
+            ...(params.signal ? { signal: params.signal } : {}),
+        },
+    );
+    if (response.status === 404) return null;
+    if (response.status !== 200) {
+        throw new Error(
+            `Qualified provider-account usage record read returned ${response.status}`,
+        );
+    }
+    return QualifiedProviderAccountUsageRecordResponseV4Schema.parse(
+        response.data,
+    );
+}
+
+export async function requestQualifiedProviderAccountUsageRefreshV4(
+    params: Readonly<{
+        token: string;
+        recordId: ProviderAccountUsageRecordId;
+    }>,
+) {
+    const body = QualifiedProviderAccountUsageRecordQueryV4Schema.parse({
+        recordId: params.recordId,
+    });
+    const response = await axios.post(
+        `${resolveServerHttpBaseUrl()}/v4/connect/qualified/provider-account-usage/record/refresh`,
+        body,
+        {
+            headers: requestHeaders(params.token),
+            timeout: resolveConnectedServicesServerApiTimeoutMs(),
+            validateStatus: (status) => status === 200 || status === 404,
+        },
+    );
+    if (response.status === 404) return null;
+    if (response.status !== 200) {
+        throw new Error(
+            `Qualified provider-account usage refresh returned ${response.status}`,
+        );
+    }
+    return QualifiedConnectedAccountSuccessV4Schema.parse(response.data);
 }

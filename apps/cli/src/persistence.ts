@@ -21,6 +21,7 @@ import {
 import { isServerIdFilesystemSafe, sanitizeServerIdForFilesystem } from './server/serverId';
 import { isLocalishServerUrl } from './server/serverUrlClassification';
 import type { PublicReleaseRingLabel } from '@happier-dev/release-runtime/releaseRings';
+import { isPidPresent } from '@happier-dev/cli-common/process';
 import { createServerUrlComparableKey } from '@happier-dev/protocol';
 import * as z from 'zod';
 import { decodeBase64, encodeBase64 } from './api/encryption';
@@ -319,12 +320,30 @@ export interface DaemonLocallyPersistedState {
   startedAt: number;
   startedWithCliVersion: string;
   startedWithPublicReleaseChannel?: PublicReleaseRingLabel;
+  /**
+   * The CLI bundle this daemon is executing, and when that bundle was built. The version
+   * string above cannot distinguish a current build from one a package build left behind,
+   * so these are what tell an operator which bytes are actually running.
+   */
+  startedWithRuntimeEntrypoint?: string;
+  startedWithRuntimeBuiltAt?: string;
   runtimeId?: string;
   daemonExecutionGenerationV1?: string;
   startupSource?: DaemonStartupSource;
   serviceLabel?: string;
   machineId?: string;
   lastHeartbeatAt?: number;
+  /**
+   * Whether this daemon had completed its machine-control RPC registration as of
+   * `lastHeartbeatAt`. Written by the heartbeat, which is the only writer of this record
+   * after startup, so the two fields always share one observation instant.
+   *
+   * A PID probe cannot tell a working daemon from one whose registration never completed —
+   * the exact state that read as healthy for 56 minutes on pid 26058 — and this is the fact
+   * the daemon already had and was not reporting. Absent means the daemon published no such
+   * fact (older daemon, or no heartbeat yet): unknown, never unhealthy.
+   */
+  machineControlReady?: boolean;
   daemonLogPath?: string;
   controlToken?: string;
 }
@@ -335,12 +354,15 @@ const DaemonLocallyPersistedStateSchemaV2 = z.object({
   startedAt: z.number().int().nonnegative(),
   startedWithCliVersion: z.string(),
   startedWithPublicReleaseChannel: DaemonPublicReleaseChannelLabelSchema.optional(),
+  startedWithRuntimeEntrypoint: z.string().min(1).optional(),
+  startedWithRuntimeBuiltAt: z.string().min(1).optional(),
   runtimeId: z.string().min(1).optional(),
   daemonExecutionGenerationV1: z.string().min(1).optional(),
   startupSource: DaemonStartupSourceSchema.optional(),
   serviceLabel: z.string().min(1).optional(),
   machineId: z.string().min(1).optional(),
   lastHeartbeatAt: z.number().int().nonnegative().optional(),
+  machineControlReady: z.boolean().optional(),
   daemonLogPath: z.string().optional(),
   controlToken: z.string().optional(),
 });
@@ -539,16 +561,6 @@ export async function updateSettings(
     return parsed;
   };
 
-  const isSettingsLockOwnerAlive = (pid: number): boolean => {
-    try {
-      process.kill(pid, 0);
-      return true;
-    } catch (error) {
-      const nodeError = error as NodeJS.ErrnoException;
-      return nodeError?.code === 'EPERM';
-    }
-  };
-
   // Acquire exclusive lock with retries
   while (attempts < MAX_LOCK_ATTEMPTS) {
     try {
@@ -571,7 +583,7 @@ export async function updateSettings(
           const lockContents = await readFile(lockFile, 'utf8');
           const ownerPid = parseSettingsLockOwnerPid(lockContents);
           if (ownerPid !== null) {
-            if (!isSettingsLockOwnerAlive(ownerPid)) {
+            if (!isPidPresent(ownerPid)) {
               await unlink(lockFile).catch(() => { });
               continue;
             }
@@ -947,14 +959,7 @@ async function readDaemonStateFallbackFromServersDir(): Promise<DaemonLocallyPer
 
     if (candidates.length === 0) return null;
 
-    const alive = candidates.filter((state) => {
-      try {
-        process.kill(state.pid, 0);
-        return true;
-      } catch {
-        return false;
-      }
-    });
+    const alive = candidates.filter((state) => isPidPresent(state.pid));
 
     if (candidates.length === 1) return alive[0] ?? null;
 

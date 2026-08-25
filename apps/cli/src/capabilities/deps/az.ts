@@ -139,8 +139,16 @@ export async function getAzDepStatus(
     deps.runAzCommand({ binPath, args: ['--version'] }),
     deps.runAzCommand({ binPath, args: ['account', 'show', '--output', 'json'] }),
   ]);
-  const authenticated = accountResult.ok === true;
-  const account = authenticated ? parseAccountMetadata(accountResult.stdout) : { accountName: null, tenantId: null };
+  // `az account show` answers only when it exits. A probe the deadline killed — or one that never
+  // launched — comes back `ok: false` with `exitCode: null`, and reading that as "signed out"
+  // prints an `az login` instruction to a user who may well be signed in.
+  const authStatus: AzDepData['authStatus'] = accountResult.ok
+    ? 'authenticated'
+    : typeof accountResult.exitCode === 'number' ? 'missing_auth' : 'unknown';
+  const authenticated = authStatus === 'unknown' ? null : authStatus === 'authenticated';
+  const account = authenticated === true
+    ? parseAccountMetadata(accountResult.stdout)
+    : { accountName: null, tenantId: null };
 
   return {
     installed: true,
@@ -152,8 +160,8 @@ export async function getAzDepStatus(
     sourceKind: 'manual_only',
     resolvedSource: 'system',
     authenticated,
-    authStatus: authenticated ? 'authenticated' : 'missing_auth',
-    remediationReason: authenticated ? null : 'auth_required',
+    authStatus,
+    remediationReason: authStatus === 'missing_auth' ? 'auth_required' : null,
     setupUrl: AZ_CLI_SETUP_URL,
     loginCommand: ['az', 'login'],
     accountName: account.accountName,

@@ -216,55 +216,7 @@ describe('resolvePreflightSessionControlsProbeEnvironment', () => {
 
   it('does not inspect or switch a selected Connected Account group for a cold probe', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-preflight-group-owner-'));
-    const updateConnectedServiceAuthGroupActiveProfile = vi.fn(async () => {
-      throw new Error('raw CAS must remain unreachable');
-    });
-    const api = {
-      getConnectedServiceAuthGroup: vi.fn(async () => ({
-        v: 1 as const,
-        serviceId: 'openai-codex' as const,
-        groupId: 'codex-main',
-        displayName: 'Codex main',
-        policy: { v: 1 as const, strategy: 'least_limited' as const, autoSwitch: true },
-        activeProfileId: 'primary',
-        generation: 5,
-        state: {},
-        createdAt: 1,
-        updatedAt: 2,
-        members: [
-          {
-            v: 1 as const,
-            serviceId: 'openai-codex' as const,
-            groupId: 'codex-main',
-            profileId: 'primary',
-            priority: 1,
-            enabled: true,
-            state: { quotaExhaustedUntilMs: 5_000 },
-            createdAt: 1,
-            updatedAt: 2,
-          },
-          {
-            v: 1 as const,
-            serviceId: 'openai-codex' as const,
-            groupId: 'codex-main',
-            profileId: 'backup',
-            priority: 2,
-            enabled: true,
-            state: {},
-            createdAt: 1,
-            updatedAt: 2,
-          },
-        ],
-      })),
-      listConnectedServiceProfiles: vi.fn(async () => ({
-        serviceId: 'openai-codex' as const,
-        profiles: [
-          { profileId: 'primary', status: 'needs_reauth' as const },
-          { profileId: 'backup', status: 'connected' as const },
-        ],
-      })),
-      updateConnectedServiceAuthGroupActiveProfile,
-    } as unknown as ApiClient;
+    const api = {} as ApiClient;
 
     await expect(resolveColdProbeEnvironmentFromUntrustedInput({
       agentId: 'codex',
@@ -292,8 +244,5 @@ describe('resolvePreflightSessionControlsProbeEnvironment', () => {
     })).resolves.toEqual({
       env: { HOME: join(root, 'home') },
     });
-    expect(api.getConnectedServiceAuthGroup).not.toHaveBeenCalled();
-    expect(api.listConnectedServiceProfiles).not.toHaveBeenCalled();
-    expect(updateConnectedServiceAuthGroupActiveProfile).not.toHaveBeenCalled();
   });
 });

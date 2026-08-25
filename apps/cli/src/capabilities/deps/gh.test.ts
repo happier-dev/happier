@@ -31,6 +31,7 @@ describe('getGhDepStatus', () => {
       resolvedSource: 'system',
       authenticated: true,
       authStatus: 'authenticated',
+      remediationReason: null,
       installedVersion: '2.75.0',
       managedBinPath: '/managed/gh/current/bin/gh',
       lastBackgroundUpdateCheckAtMs: 123,
@@ -117,6 +118,27 @@ describe('getGhDepStatus', () => {
       authenticated: true,
       authStatus: 'authenticated',
       installedVersion: '2.73.0',
+    }));
+  });
+
+  it('does not report an installed gh as signed out when the auth probe never completed', async () => {
+    await expect(
+      getGhDepStatus({}, {
+        resolveSystemGhBinPath: async () => '/usr/local/bin/gh',
+        resolveManagedGhBinPath: async () => null,
+        runGhCommand: async ({ args }) => (
+          args[0] === '--version'
+            ? { ok: true, stdout: 'gh version 2.75.0\n', stderr: '', exitCode: 0 }
+            : { ok: false, stdout: '', stderr: '', exitCode: null }
+        ),
+        readState: async () => ({ installedVersion: null, lastInstallLogPath: null }),
+        readLastBackgroundUpdateCheckAtMs: async () => null,
+      }),
+    ).resolves.toEqual(expect.objectContaining({
+      installed: true,
+      authenticated: null,
+      authStatus: 'unknown',
+      remediationReason: null,
     }));
   });
 

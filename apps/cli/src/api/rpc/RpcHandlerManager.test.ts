@@ -321,6 +321,8 @@ describe('RpcHandlerManager.handleRequest (encrypted)', () => {
       start: {
         automationId: 'automation-1',
         runId: 'run-1',
+        attempt: 3,
+        claimedByMachineId: 'machine-source',
         origin: 'event',
         accountCurrentness: { mode: 'plain', version: 7, contentKeyFingerprint: null },
         requestEnvelope: { t: 'plain', v: { opaque: true } },

@@ -194,7 +194,7 @@ export async function resolveProviderRuntimeCatalogSelectionObservation(
       purposeBindings,
       endpointTemplateId: endpointTemplate.id,
       protocol: endpointTemplate.protocol,
-      publicHeaders: {},
+      publicHeaders: endpointTemplate.publicHeaders ?? {},
     } as const;
     const requestFingerprint =
       createProviderManagedProbeRequestFingerprintV1({

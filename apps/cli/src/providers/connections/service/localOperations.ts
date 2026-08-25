@@ -1,4 +1,5 @@
 import {
+  PROVIDER_ENDPOINT_SAFETY_LIMITS,
   ProviderConnectionV1Schema,
   ProviderSettingsV1Schema,
   type QualifiedConnectedAccountPurposeBindingsV1,
@@ -9,11 +10,14 @@ import {
 } from '@happier-dev/protocol';
 
 import { buildProviderDiscoveryEndpointOverrides } from '@/providers/discovery/bridge';
+import { resolveProviderContributionRegistryView } from '@/providers/registry';
+import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
 import {
   normalizeProviderContributionRegistryKey,
   resolveProviderContributionRegistryEntry,
 } from '@/providers/registry/lookup';
 import { resolveManagedProviderPurposeBindingSnapshot } from '@/providers/managed/resolvePurposeBindingSnapshot';
+import { createProviderOperationLifetime } from '@/providers/operationLifetime';
 import { addProviderContributionConnection } from './authoring';
 import { errorForProviderResolution, type ProviderConnectionServiceContext } from './context';
 import { bindProviderConnectionSecret, setProviderConnectionGrant } from './grants';
@@ -38,7 +42,20 @@ export function createProviderLocalOperations(context: ProviderConnectionService
     const machineError = assertMachine(input.machineId, input.connectionId);
     if (machineError) return { status: 'error', error: machineError };
 
-    const described = await describe({ machineId: input.machineId });
+    const lifetime = createProviderOperationLifetime({
+      wallTimeMs: PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs,
+    });
+    const initialSnapshot = await deps.loadSnapshot();
+    const registryProjection = {
+      registry: initialSnapshot.registry,
+      ...(initialSnapshot.registryGeneration ? { generation: initialSnapshot.registryGeneration } : {}),
+    };
+
+    const described = await describe({
+      machineId: input.machineId,
+      registryProjection,
+      lifetime,
+    });
     if (described.status === 'error') return described;
     const candidate = described.discoveryCandidates.find((entry) => entry.candidateId === input.candidateId);
     if (!candidate
@@ -49,7 +66,7 @@ export function createProviderLocalOperations(context: ProviderConnectionService
       }) };
     }
 
-    const snapshot = await deps.loadSnapshot();
+    const snapshot = await deps.loadSnapshot(registryProjection);
     const resolved = resolveProviderContributionRegistryEntry(snapshot.registry, candidate.contributionKey);
     const contribution = resolved?.contribution;
     if (!resolved || !contribution?.definition.discovery) {
@@ -147,6 +164,7 @@ export function createProviderLocalOperations(context: ProviderConnectionService
       connectionId: preview.connection.id,
       machineId: input.machineId,
       registry: snapshot.registry,
+      lifetime,
     });
     const previewResolution = deps.resolveConnection({
       accountSettings: previewRaw,
@@ -193,7 +211,12 @@ export function createProviderLocalOperations(context: ProviderConnectionService
         'enable',
       ).catch(() => undefined);
     }
-    const finalDescription = await describe({ machineId: input.machineId, connectionId: preview.connection.id });
+    const finalDescription = await describe({
+      machineId: input.machineId,
+      connectionId: preview.connection.id,
+      registryProjection,
+      lifetime,
+    });
     if (finalDescription.status === 'error') return finalDescription;
     const view = finalDescription.connections[0];
     return view
@@ -214,163 +237,185 @@ export function createProviderLocalOperations(context: ProviderConnectionService
     }
     const machineError = assertMachine(input.machineId, input.connectionId);
     if (machineError) return { status: 'error', error: machineError };
-    const snapshot = await deps.loadSnapshot();
-    const resolved = resolveProviderContributionRegistryEntry(snapshot.registry, input.contributionKey);
-    const contribution = resolved?.contribution;
-    const managedRuntime = contribution?.definition.managedRuntime;
-    if (!resolved || !contribution || managedRuntime?.kind !== 'managed') {
-      return { status: 'error', error: createProviderErrorV1('provider_connection_invalid', {
-        ...(input.connectionId ? { connectionId: input.connectionId } : {}),
-        machineId: input.machineId,
-      }) };
-    }
+    let runtimeRegistryLease: PluginRuntimeRegistryLease | null = null;
+    try {
+      runtimeRegistryLease = deps.acquireManagedProviderRuntimeRegistryLease
+        ? await deps.acquireManagedProviderRuntimeRegistryLease()
+        : null;
+      const registryGeneration = runtimeRegistryLease?.registry.generation;
+      if (runtimeRegistryLease && typeof registryGeneration !== 'number') {
+        throw new Error('Authoritative Provider registry is missing its immutable generation tag');
+      }
+      const registryProjection = runtimeRegistryLease && typeof registryGeneration === 'number'
+        ? Object.freeze({
+            registry: resolveProviderContributionRegistryView(runtimeRegistryLease.registry.contributes),
+            generation: String(registryGeneration),
+          })
+        : undefined;
+      const snapshot = await deps.loadSnapshot(registryProjection);
+      const resolved = resolveProviderContributionRegistryEntry(snapshot.registry, input.contributionKey);
+      const contribution = resolved?.contribution;
+      const managedRuntime = contribution?.definition.managedRuntime;
+      if (!resolved || !contribution || managedRuntime?.kind !== 'managed') {
+        return { status: 'error', error: createProviderErrorV1('provider_connection_invalid', {
+          ...(input.connectionId ? { connectionId: input.connectionId } : {}),
+          machineId: input.machineId,
+        }) };
+      }
 
-    const resolvePurposeBindings = async (
-      candidateSnapshot: typeof snapshot,
-      candidateResolved: NonNullable<typeof resolved>,
-      candidateContribution: typeof contribution,
-      candidateRuntime: typeof managedRuntime,
-    ) => {
-      const connectedAccounts = candidateRuntime.connectedAccounts ?? [];
-      if (connectedAccounts.length === 0) {
-        const purposeBindings = emptyManagedPurposeBindings();
-        return {
-          status: 'unconfigured' as const,
-          purposeBindings,
-          basis: createProviderManagedRuntimeBindingEqualityKeyV1({
-            implementationIdentity: candidateContribution.identity,
-            managedRuntime: candidateRuntime,
+      const resolvePurposeBindings = async (
+        candidateSnapshot: typeof snapshot,
+        candidateResolved: NonNullable<typeof resolved>,
+        candidateContribution: typeof contribution,
+        candidateRuntime: typeof managedRuntime,
+      ) => {
+        const connectedAccounts = candidateRuntime.connectedAccounts ?? [];
+        if (connectedAccounts.length === 0) {
+          const purposeBindings = emptyManagedPurposeBindings();
+          return {
+            status: 'unconfigured' as const,
             purposeBindings,
-          }),
-        };
-      }
-      const selectedConnection = readSettings(candidateSnapshot.accountSettings)
-        .connections.find((connection) => (
-          connection.role === 'default'
-          && connection.source.kind === 'contribution'
-          && normalizeProviderContributionRegistryKey(connection.source.contributionKey)
-            === candidateResolved.contributionKey
-        ));
-      if (!selectedConnection) return { status: 'missing_default' as const };
+            basis: createProviderManagedRuntimeBindingEqualityKeyV1({
+              implementationIdentity: candidateContribution.identity,
+              managedRuntime: candidateRuntime,
+              purposeBindings,
+            }),
+          };
+        }
+        const selectedConnection = readSettings(candidateSnapshot.accountSettings)
+          .connections.find((connection) => (
+            connection.role === 'default'
+            && connection.source.kind === 'contribution'
+            && normalizeProviderContributionRegistryKey(connection.source.contributionKey)
+              === candidateResolved.contributionKey
+          ));
+        if (!selectedConnection) return { status: 'missing_default' as const };
 
-      const connectionResolution = deps.resolveConnection({
-        accountSettings: candidateSnapshot.accountSettings,
-        connectionId: selectedConnection.id,
-        machineId: input.machineId,
-        registry: candidateSnapshot.registry,
-        // Managed Local deployments have no network endpoint to resolve. The
-        // canonical connection resolver still validates the selected record,
-        // source, deployment, and purpose-binding intent.
-        dnsEvidence: new Map(),
-      });
-      if (
-        connectionResolution.status !== 'resolved'
-        || connectionResolution.record.deployment.kind !== 'managedLocal'
-        || connectionResolution.record.source.kind !== 'contribution'
-        || normalizeProviderContributionRegistryKey(
-          connectionResolution.record.source.contributionKey,
-        ) !== candidateResolved.contributionKey
-        || connectionResolution.record.deployment.implementationIdentity.pluginId
-          !== candidateContribution.identity.pluginId
-        || connectionResolution.record.deployment.implementationIdentity.localId
-          !== candidateContribution.identity.localId
-        || !deps.resolveManagedPurposeBindingIntent
-      ) {
-        return { status: 'invalid' as const };
-      }
-
-      try {
-        const purposeBindings = await resolveManagedProviderPurposeBindingSnapshot({
-          implementationIdentity:
-            connectionResolution.record.deployment.implementationIdentity,
-          connectedAccounts:
-            connectionResolution.record.deployment.managedRuntime.connectedAccounts ?? [],
-          purposeBindingIntents:
-            connectionResolution.record.deployment.purposeBindingIntents,
-          resolveBindingIntent: deps.resolveManagedPurposeBindingIntent,
+        const connectionResolution = deps.resolveConnection({
+          accountSettings: candidateSnapshot.accountSettings,
+          connectionId: selectedConnection.id,
+          machineId: input.machineId,
+          registry: candidateSnapshot.registry,
+          // Managed Local deployments have no network endpoint to resolve. The
+          // canonical connection resolver still validates the selected record,
+          // source, deployment, and purpose-binding intent.
+          dnsEvidence: new Map(),
         });
-        return {
-          status: 'configured' as const,
-          purposeBindings,
-          basis: createProviderManagedRuntimeBindingEqualityKeyV1({
-            implementationIdentity: candidateContribution.identity,
-            managedRuntime: candidateRuntime,
+        if (
+          connectionResolution.status !== 'resolved'
+          || connectionResolution.record.deployment.kind !== 'managedLocal'
+          || connectionResolution.record.source.kind !== 'contribution'
+          || normalizeProviderContributionRegistryKey(
+            connectionResolution.record.source.contributionKey,
+          ) !== candidateResolved.contributionKey
+          || connectionResolution.record.deployment.implementationIdentity.pluginId
+            !== candidateContribution.identity.pluginId
+          || connectionResolution.record.deployment.implementationIdentity.localId
+            !== candidateContribution.identity.localId
+          || !deps.resolveManagedPurposeBindingIntent
+        ) {
+          return { status: 'invalid' as const };
+        }
+
+        try {
+          const purposeBindings = await resolveManagedProviderPurposeBindingSnapshot({
+            implementationIdentity:
+              connectionResolution.record.deployment.implementationIdentity,
+            connectedAccounts:
+              connectionResolution.record.deployment.managedRuntime.connectedAccounts ?? [],
+            purposeBindingIntents:
+              connectionResolution.record.deployment.purposeBindingIntents,
+            resolveBindingIntent: deps.resolveManagedPurposeBindingIntent,
+          });
+          return {
+            status: 'configured' as const,
             purposeBindings,
-          }),
-        };
-      } catch {
-        return { status: 'invalid' as const };
-      }
-    };
+            basis: createProviderManagedRuntimeBindingEqualityKeyV1({
+              implementationIdentity: candidateContribution.identity,
+              managedRuntime: candidateRuntime,
+              purposeBindings,
+            }),
+          };
+        } catch {
+          return { status: 'invalid' as const };
+        }
+      };
 
-    const purposeBindingResolution = await resolvePurposeBindings(
-      snapshot,
-      resolved,
-      contribution,
-      managedRuntime,
-    );
-    if (purposeBindingResolution.status === 'missing_default') {
-      return { status: 'error', error: createProviderErrorV1('provider_connection_not_found', {
-        ...(input.connectionId ? { connectionId: input.connectionId } : {}),
-        machineId: input.machineId,
-      }) };
-    }
-    if (purposeBindingResolution.status === 'invalid') {
-      return { status: 'error', error: createProviderErrorV1('provider_authorization_changed', {
-        ...(input.connectionId ? { connectionId: input.connectionId } : {}),
-        machineId: input.machineId,
-      }) };
-    }
-
-    let authorizationCurrent = true;
-    const isAuthorizationCurrent = () => authorizationCurrent
-      && deps.featureGate.isEnabled('providers');
-    const revalidateAuthorization = async (): Promise<boolean> => {
-      if (!isAuthorizationCurrent()) return false;
-      const current = await deps.loadSnapshot();
-      const currentResolved = resolveProviderContributionRegistryEntry(
-        current.registry,
-        resolved.contributionKey,
+      const purposeBindingResolution = await resolvePurposeBindings(
+        snapshot,
+        resolved,
+        contribution,
+        managedRuntime,
       );
-      const currentRuntime = currentResolved?.contribution.definition.managedRuntime;
-      if (
-        !currentResolved
-        || currentResolved.contribution.identity.pluginId !== contribution.identity.pluginId
-        || currentResolved.contribution.identity.localId !== contribution.identity.localId
-        || currentRuntime?.kind !== 'managed'
-      ) {
-        authorizationCurrent = false;
-        return false;
+      if (purposeBindingResolution.status === 'missing_default') {
+        return { status: 'error', error: createProviderErrorV1('provider_connection_not_found', {
+          ...(input.connectionId ? { connectionId: input.connectionId } : {}),
+          machineId: input.machineId,
+        }) };
       }
-      let currentPurposeBindingResolution: Awaited<ReturnType<typeof resolvePurposeBindings>>;
-      try {
-        currentPurposeBindingResolution = await resolvePurposeBindings(
-          current,
-          currentResolved,
-          currentResolved.contribution,
-          currentRuntime,
+      if (purposeBindingResolution.status === 'invalid') {
+        return { status: 'error', error: createProviderErrorV1('provider_authorization_changed', {
+          ...(input.connectionId ? { connectionId: input.connectionId } : {}),
+          machineId: input.machineId,
+        }) };
+      }
+
+      let authorizationCurrent = true;
+      const isAuthorizationCurrent = () => authorizationCurrent
+        && deps.featureGate.isEnabled('providers');
+      const revalidateAuthorization = async (): Promise<boolean> => {
+        if (!isAuthorizationCurrent()) return false;
+        const current = await deps.loadSnapshot(registryProjection);
+        const currentResolved = resolveProviderContributionRegistryEntry(
+          current.registry,
+          resolved.contributionKey,
         );
-      } catch {
-        authorizationCurrent = false;
-        return false;
-      }
-      authorizationCurrent = currentPurposeBindingResolution.status
-        === purposeBindingResolution.status
-        && currentPurposeBindingResolution.basis === purposeBindingResolution.basis;
-      return isAuthorizationCurrent();
-    };
-    const started = await deps.startManagedProviderRuntime({
-      contributionKey: resolved.contributionKey,
-      identity: contribution.identity,
-      request: {
-        reason: 'explicitStartLocal',
-        endpointTemplateIds: [...managedRuntime.endpointTemplateIds],
-      },
-      purposeBindings: purposeBindingResolution.purposeBindings,
-      isAuthorizationCurrent,
-      revalidateAuthorization,
-    });
-    return { status: 'success', contributionKey: resolved.contributionKey, phase: started.status };
+        const currentRuntime = currentResolved?.contribution.definition.managedRuntime;
+        if (
+          !currentResolved
+          || currentResolved.contribution.identity.pluginId !== contribution.identity.pluginId
+          || currentResolved.contribution.identity.localId !== contribution.identity.localId
+          || currentRuntime?.kind !== 'managed'
+        ) {
+          authorizationCurrent = false;
+          return false;
+        }
+        let currentPurposeBindingResolution: Awaited<ReturnType<typeof resolvePurposeBindings>>;
+        try {
+          currentPurposeBindingResolution = await resolvePurposeBindings(
+            current,
+            currentResolved,
+            currentResolved.contribution,
+            currentRuntime,
+          );
+        } catch {
+          authorizationCurrent = false;
+          return false;
+        }
+        authorizationCurrent = currentPurposeBindingResolution.status
+          === purposeBindingResolution.status
+          && currentPurposeBindingResolution.basis === purposeBindingResolution.basis;
+        return isAuthorizationCurrent();
+      };
+      const started = await deps.startManagedProviderRuntime({
+        contributionKey: resolved.contributionKey,
+        identity: contribution.identity,
+        request: {
+          reason: 'explicitStartLocal',
+          endpointTemplateIds: [...managedRuntime.endpointTemplateIds],
+        },
+        purposeBindings: purposeBindingResolution.purposeBindings,
+        isAuthorizationCurrent,
+        revalidateAuthorization,
+        ...(runtimeRegistryLease ? { runtimeRegistryLease } : {}),
+      });
+      return { status: 'success', contributionKey: resolved.contributionKey, phase: started.status };
+    } finally {
+      // A settled live start has already transferred its cleanup to the exact
+      // registry generation. A late lease-release acknowledgement must not
+      // turn that success into a retryable caller failure.
+      await runtimeRegistryLease?.release().catch(() => undefined);
+    }
   }
 
   return Object.freeze({ enableDetected, startLocal });

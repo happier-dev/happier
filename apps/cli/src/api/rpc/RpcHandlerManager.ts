@@ -433,6 +433,33 @@ export class RpcHandlerManager {
     }
 
     /**
+     * Replay only registrations whose receipt has not reached the active socket.
+     *
+     * Socket.IO can deliver a client's initial registration burst before a
+     * server finishes post-connect admission and installs its listener. The
+     * caller owns when a replay is justified; this manager preserves the
+     * receipt/current-socket boundary and never replays acknowledged handlers.
+     */
+    replayUnacknowledgedHandlerRegistrations(methods: readonly string[]): readonly string[] {
+        const socket = this.socket;
+        if (!socket) return [];
+
+        const replayedMethods: string[] = [];
+        for (const method of new Set(methods.map((candidate) => candidate.trim()).filter(Boolean))) {
+            const prefixedMethod = this.getPrefixedMethod(method);
+            if (
+                !this.handlers.has(prefixedMethod)
+                || this.acknowledgedRegistrationMethods.has(prefixedMethod)
+            ) {
+                continue;
+            }
+            socket.emit(SOCKET_RPC_EVENTS.REGISTER, { method: prefixedMethod });
+            replayedMethods.push(method);
+        }
+        return replayedMethods;
+    }
+
+    /**
      * Get the number of registered handlers
      */
     getHandlerCount(): number {

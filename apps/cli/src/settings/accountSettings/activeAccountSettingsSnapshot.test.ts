@@ -1,11 +1,13 @@
 import { accountSettingsParse } from '@happier-dev/protocol';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import * as activeAccountSettingsSnapshot from './activeAccountSettingsSnapshot';
 
 import {
     clearActiveAccountSettingsSnapshot,
     commitActiveAccountSettingsSnapshot,
     getActiveAccountSettingsSnapshot,
     getActiveAccountSettingsSnapshotLifetimeToken,
+    resolveActiveAccountSettingsSnapshotRevision,
   resetActiveAccountSettingsSnapshotForTests,
     setActiveAccountSettingsSnapshot,
     subscribeActiveAccountSettingsSnapshot,
@@ -25,6 +27,13 @@ function snapshot(params: Readonly<{
     scopeKey: params.scopeKey,
   };
 }
+
+const configuredExternalSessionSourceRevisions = activeAccountSettingsSnapshot as typeof activeAccountSettingsSnapshot & Readonly<{
+  notifyActiveAccountConnectedServicesProjection(scopeKey: string): void;
+  resolveActiveAccountConfiguredExternalSessionSourceRevision(
+    snapshot: activeAccountSettingsSnapshot.ActiveAccountSettingsSnapshot | null,
+  ): string;
+}>;
 
 describe('active account settings snapshot publication', () => {
   beforeEach(() => {
@@ -130,4 +139,31 @@ describe('active account settings snapshot publication', () => {
         expect(clearedAgain).toBe(cleared);
         expect(accountAReentered).toBeGreaterThan(cleared);
     });
+
+  it('publishes a Connected Services-only projection through the active source revision without changing Settings revision', () => {
+    const active = snapshot({ scopeKey: 'scope-a', version: 4, timing: 'after_runtime_idle' });
+    setActiveAccountSettingsSnapshot(active);
+    const sourceRevisionBefore =
+      configuredExternalSessionSourceRevisions
+        .resolveActiveAccountConfiguredExternalSessionSourceRevision(active);
+    const settingsRevisionBefore = resolveActiveAccountSettingsSnapshotRevision(active);
+    const listener = vi.fn();
+    const unsubscribe = subscribeActiveAccountSettingsSnapshot(listener);
+
+    configuredExternalSessionSourceRevisions
+      .notifyActiveAccountConnectedServicesProjection('scope-a');
+
+    expect(getActiveAccountSettingsSnapshot()).toBe(active);
+    expect(resolveActiveAccountSettingsSnapshotRevision(active)).toBe(settingsRevisionBefore);
+    expect(
+      configuredExternalSessionSourceRevisions
+        .resolveActiveAccountConfiguredExternalSessionSourceRevision(active),
+    ).not.toBe(sourceRevisionBefore);
+    expect(listener).toHaveBeenCalledWith(active, active);
+
+    configuredExternalSessionSourceRevisions
+      .notifyActiveAccountConnectedServicesProjection('scope-b');
+    expect(listener).toHaveBeenCalledTimes(1);
+    unsubscribe();
+  });
 });

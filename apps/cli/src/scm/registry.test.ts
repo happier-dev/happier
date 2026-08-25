@@ -299,7 +299,7 @@ describe('scm backend registry selection', () => {
         });
     });
 
-    it('does not misreport a working path as a non-repository when a detector fails', async () => {
+    it('does not misreport a working path as a non-repository when no detector could answer', async () => {
         const failing = backend({
             id: 'acme.broken/detector',
             detected: { isRepo: false, mode: null, rootPath: null },
@@ -309,6 +309,39 @@ describe('scm backend registry selection', () => {
                 ...failing,
                 detectRepo: async () => {
                     throw new Error('packed detector failed');
+                },
+            },
+            {
+                ...backend({
+                    id: 'happier.scm.backend.git/git',
+                    localId: 'git',
+                    detected: { isRepo: false, mode: null, rootPath: null },
+                }),
+                detectRepo: async () => {
+                    throw new Error('git is not usable on this machine');
+                },
+            },
+        ]);
+
+        await expect(registry.selectBackend({
+            cwd: '/repo',
+            workingDirectory: '/repo',
+        })).rejects.toThrow('packed detector failed');
+    });
+
+    // F-SCM-1: a detector that could not run must not override one that did. A machine without
+    // Sapling installed is the common case, and its non-answer used to be indistinguishable from a
+    // real "not a repository" — collapsing both into the same confident negative.
+    it('keeps a detector failure from overriding a backend that answered authoritatively', async () => {
+        const registry = createScmBackendRegistry([
+            {
+                ...backend({
+                    id: 'happier.scm.backend.sapling/sapling',
+                    localId: 'sapling',
+                    detected: { isRepo: false, mode: null, rootPath: null },
+                }),
+                detectRepo: async () => {
+                    throw new Error('SCM executable not found for sapling-cli (sl)');
                 },
             },
             backend({
@@ -321,7 +354,7 @@ describe('scm backend registry selection', () => {
         await expect(registry.selectBackend({
             cwd: '/repo',
             workingDirectory: '/repo',
-        })).rejects.toThrow('packed detector failed');
+        })).resolves.toBeNull();
     });
 
     it('resolves live availability without mutating static declared support', async () => {

@@ -258,6 +258,7 @@ describe('createCliActionDeps hook dispatch', () => {
     updateAccountSettingsV2WithRetry.mockReset();
     writePromptAsset.mockReset();
     fetchSessionByIdCompat.mockReset();
+    resolveReplaySeedDraft.mockReset();
     readSettings.mockResolvedValue({ machineId: 'local-machine' });
     getPreferredHostName.mockResolvedValue('local-machine.local');
     hostSubagentStore.list.mockReset();
@@ -832,7 +833,7 @@ describe('createCliActionDeps hook dispatch', () => {
     }));
   });
 
-  it('uses the host-private direct target transport without returning preparation through Socket RPC', async () => {
+  it('uses the host-private exact target transport for a portable Account server identity', async () => {
     const controller = new AbortController();
     const prepare = vi.fn(async () => ({
       ok: true as const,
@@ -876,7 +877,7 @@ describe('createCliActionDeps hook dispatch', () => {
         creationKey: 'automation-run:run-1',
       }),
       executionTarget: {
-        serverId: configuration.activeServerId,
+        serverId: 'srv_account_current',
         machineId: 'machine-exact',
       },
       directory: '/repo/direct',
@@ -911,6 +912,65 @@ describe('createCliActionDeps hook dispatch', () => {
       machineId: 'machine-exact',
     }));
     expect(readMachineOperationProtocolCapabilitiesV1).not.toHaveBeenCalled();
+    expect(callMachineRpc).not.toHaveBeenCalled();
+  });
+
+  it('preserves a portable Account server identity in target-owned directory approval on the exact daemon', async () => {
+    const prepare = vi.fn(async () => ({
+      ok: true as const,
+      directory: '/repo/new-directory',
+      directoryCreationRequired: true,
+      checkout: null,
+    }));
+    const input = {
+      creationKey: SessionCreationKeyV1Schema.parse('portable-directory-approval'),
+      executionTarget: {
+        serverId: 'srv_account_current',
+        machineId: 'machine-exact',
+      },
+      directory: '/repo/new-directory',
+      agentTarget: {
+        kind: 'agent' as const,
+        identity: {
+          pluginId: 'happier.agent.codex',
+          localId: 'codex',
+        },
+      },
+    };
+    const deps = createCliActionDeps({
+      token: 'token',
+      credentials: {
+        token: 'token',
+        encryption: {
+          type: 'legacy' as const,
+          secret: new Uint8Array([1, 2, 3, 4]),
+        },
+      },
+      sessionId: 'cli-global',
+      mode: 'plain',
+      ctx: null,
+      sessionSpawnDirectTargetTransport: {
+        machineId: 'machine-exact',
+        prepare,
+        spawnedSession: {
+          spawn: vi.fn(),
+          resolveSpawnSessionByNonce: vi.fn(),
+        },
+      },
+    });
+
+    await expect(deps.sessionSpawnNewDirectoryApprovalPreflight?.({ input })).resolves.toEqual({
+      type: 'approval_required',
+      approval: {
+        v: 1,
+        executionTarget: input.executionTarget,
+        directory: '/repo/new-directory',
+      },
+    });
+    expect(prepare).toHaveBeenCalledWith(
+      { directory: '/repo/new-directory' },
+      undefined,
+    );
     expect(callMachineRpc).not.toHaveBeenCalled();
   });
 
@@ -2825,6 +2885,86 @@ describe('createCliActionDeps hook dispatch', () => {
     expect(callSessionRpc).not.toHaveBeenCalled();
   });
 
+  it('carries the pending-projection keyset continuation to and from the Session permission owner', async () => {
+    // The bounded projection is only reachable page by page. If this boundary
+    // drops the continuation, the owner silently re-answers the first page
+    // forever and a mediator holding custody for a later request can never
+    // reach it — the starvation the keyset exists to remove, with no other
+    // observable symptom.
+    const abort = new AbortController();
+    const list = vi.fn((params: Readonly<{ cursor?: string | null }>) => (
+      params.cursor === 'page-1-end'
+        ? {
+          requests: [{ requestId: 'remote-32', turnId: 'turn-32', createdAtMs: 33, allowedScopes: ['request'] as const }],
+          truncated: false,
+          nextCursor: null,
+        }
+        : {
+          requests: [{ requestId: 'remote-00', turnId: 'turn-00', createdAtMs: 1, allowedScopes: ['request'] as const }],
+          truncated: false,
+          nextCursor: 'page-1-end',
+        }
+    ));
+    const dispose = registerCurrentSessionUiBinding({
+      sessionId: 'sess-keyset',
+      service: {} as never,
+      signal: abort.signal,
+      isCurrent: () => true,
+      capabilities: {
+        permissionHandler: {
+          handleToolCall: vi.fn(),
+          listMediatedPendingRequests: list,
+        } as never,
+        readPermissionMode: () => 'default',
+      },
+    });
+    const remoteAction = createCliActionDeps({
+      token: 'token',
+      sessionId: 'sess-unrelated',
+      mode: 'plain',
+      ctx: null,
+    }).sessionPermissionRemoteAction;
+    expect(remoteAction).toBeTypeOf('function');
+
+    try {
+      await expect(remoteAction!({
+        actionId: 'session.permission.remote.pending.list',
+        input: {
+          sessionId: 'sess-keyset',
+          sourceRef: 'binding:ops',
+          sourceRevisionOrEpoch: '42',
+        },
+        caller: { kind: 'plugin', pluginId: 'happier.channels', contributionLocalId: 'discord' },
+      })).resolves.toEqual({
+        requests: [{ requestId: 'remote-00', turnId: 'turn-00', createdAtMs: 1, allowedScopes: ['request'] }],
+        truncated: false,
+        nextCursor: 'page-1-end',
+      });
+
+      await expect(remoteAction!({
+        actionId: 'session.permission.remote.pending.list',
+        input: {
+          sessionId: 'sess-keyset',
+          sourceRef: 'binding:ops',
+          sourceRevisionOrEpoch: '42',
+          cursor: 'page-1-end',
+        },
+        caller: { kind: 'plugin', pluginId: 'happier.channels', contributionLocalId: 'discord' },
+      })).resolves.toEqual({
+        requests: [{ requestId: 'remote-32', turnId: 'turn-32', createdAtMs: 33, allowedScopes: ['request'] }],
+        truncated: false,
+        nextCursor: null,
+      });
+      expect(list.mock.calls.map(([params]) => params)).toEqual([
+        { mediatorPluginId: 'happier.channels', sourceRef: 'binding:ops', sourceRevisionOrEpoch: '42' },
+        { mediatorPluginId: 'happier.channels', sourceRef: 'binding:ops', sourceRevisionOrEpoch: '42', cursor: 'page-1-end' },
+      ]);
+    } finally {
+      dispose();
+      abort.abort();
+    }
+  });
+
   it('routes every remote mediation operation through only the exact current Session permission owner', async () => {
     const firstAbort = new AbortController();
     const secondAbort = new AbortController();
@@ -2844,6 +2984,10 @@ describe('createCliActionDeps hook dispatch', () => {
       requestId: 'first-request',
       decision: 'allow' as const,
       effect: { kind: 'allowOnce' as const },
+    }));
+    const firstUserActionAnswer = vi.fn(async () => ({
+      status: 'applied' as const,
+      requestId: 'question-request',
     }));
     const firstGrants = vi.fn(async () => ({
       grants: [],
@@ -2876,6 +3020,7 @@ describe('createCliActionDeps hook dispatch', () => {
     const disposeFirst = register(firstAbort.signal, () => firstCurrent, {
       listMediatedPendingRequests: firstList,
       respondToMediatedPendingPermission: firstRespond,
+      respondToMediatedPendingUserAction: firstUserActionAnswer,
       listMediatedPermissionGrants: firstGrants,
       revokeMediatedPermissionGrant: firstRevoke,
     });
@@ -2943,6 +3088,31 @@ describe('createCliActionDeps hook dispatch', () => {
         actor: { namespace: 'discord', principalId: 'person-1' },
         decision: 'allow',
         scope: 'request',
+        mediator: { pluginId: 'happier.channels', contributionLocalId: 'discord' },
+      });
+
+      await expect(remoteAction!({
+        actionId: 'session.user_action.remote.answer',
+        input: {
+          sessionId: 'sess-mediated',
+          turnId: 'turn-question',
+          requestId: 'question-request',
+          sourceRef: 'binding:ops',
+          sourceRevisionOrEpoch: '42',
+          answers: [{ questionIndex: 0, values: ['fast'] }],
+        },
+        caller: listInput.caller,
+      })).resolves.toEqual({
+        status: 'applied',
+        requestId: 'question-request',
+      });
+      expect(firstUserActionAnswer).toHaveBeenCalledWith({
+        sessionId: 'sess-mediated',
+        turnId: 'turn-question',
+        requestId: 'question-request',
+        sourceRef: 'binding:ops',
+        sourceRevisionOrEpoch: '42',
+        answers: [{ questionIndex: 0, values: ['fast'] }],
         mediator: { pluginId: 'happier.channels', contributionLocalId: 'discord' },
       });
 
@@ -3895,7 +4065,18 @@ describe('createCliActionDeps hook dispatch', () => {
       pluginId: 'happier.agent.acme',
       contributionLocalId: 'acme.sample',
     };
-    const ownerContext = { surface: 'plugin' as const, actionCaller: owner };
+    // Raw subagent mutations declare `surfaces: { rpc: true }` only, so the
+    // Plugin Action surface is refused by the spec owner before any dep runs
+    // (`actionExecutor.subagents.test.ts`). What this test owns is the CLI's
+    // actor derivation, which reads only the STAMPED caller and never the
+    // surface. No production path stamps a plugin `actionCaller` on `rpc`
+    // today — `plugins/runtime/invocation/services/actions.ts` is the only
+    // producer of a plugin caller and always pairs it with `surface:
+    // 'plugin'` — so this case pins `deriveHostSubagentActor`'s contract, not
+    // a reachable flow. The reachable production plugin write is
+    // `session/subagents/pluginSubagentsService.ts`, which builds its own
+    // plugin actor and never passes through this dep.
+    const ownerContext = { surface: 'rpc' as const, actionCaller: owner };
     const input = {
       id: 'subagent-1',
       parentSessionId: 'sess-1',
@@ -3947,7 +4128,7 @@ describe('createCliActionDeps hook dispatch', () => {
       parentSessionId: 'sess-1',
       status: 'running',
     }, {
-      surface: 'plugin',
+      surface: 'rpc',
       actionCaller: {
         kind: 'plugin',
         pluginId: 'happier.agent.peer',
@@ -3991,6 +4172,22 @@ describe('createCliActionDeps session lifecycle bindings', () => {
     callMachineRpc.mockReset();
     readSettings.mockReset();
     readSettings.mockResolvedValue({ machineId: 'machine-current' });
+    // Resuming an inactive Session resolves its persisted Agent against the
+    // one catalog projection, so this describe owns its own catalog state
+    // instead of inheriting whatever another describe left on the mock.
+    readAgentCatalogSnapshot.mockReset();
+    readAgentCatalogSnapshot.mockReturnValue({
+      agentDefinitionsById: new Map([['claude', {
+        id: 'claude',
+        identity: { pluginId: 'happier.agent.claude', localId: 'claude' },
+        provenance: 'first_party',
+        source: { kind: 'bundled' },
+        definition: {},
+      }]]),
+      catalogEntriesById: {
+        claude: { id: 'claude' },
+      },
+    });
   });
 
   function resolveSession(active = false, metadata: Record<string, unknown> = {}) {

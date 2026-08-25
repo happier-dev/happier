@@ -8,8 +8,11 @@ type SessionCommandArgumentPolicy = Readonly<{
   maxPositionals?: number;
 }>;
 
-function invalidSessionCommandArguments(usage: string): Error & { code: 'invalid_arguments' } {
-  const error = new Error(usage) as Error & { code: 'invalid_arguments' };
+function invalidSessionCommandArguments(
+  usage: string,
+  reason: string,
+): Error & { code: 'invalid_arguments' } {
+  const error = new Error(`${reason}\n${usage}`) as Error & { code: 'invalid_arguments' };
   error.code = 'invalid_arguments';
   return error;
 }
@@ -34,6 +37,9 @@ export function assertSessionCommandArguments(
     const argument = argv[index] ?? '';
     if (positionalOnly) {
       positionalCount += 1;
+      if (policy.maxPositionals !== undefined && positionalCount > policy.maxPositionals) {
+        throw invalidSessionCommandArguments(policy.usage, `Unexpected argument: ${argument}`);
+      }
       continue;
     }
     if (argument === '--') {
@@ -42,34 +48,42 @@ export function assertSessionCommandArguments(
     }
     if (!argument.startsWith('-')) {
       positionalCount += 1;
+      if (policy.maxPositionals !== undefined && positionalCount > policy.maxPositionals) {
+        throw invalidSessionCommandArguments(policy.usage, `Unexpected argument: ${argument}`);
+      }
       continue;
     }
-    if (!argument.startsWith('--')) throw invalidSessionCommandArguments(policy.usage);
+    if (!argument.startsWith('--')) {
+      throw invalidSessionCommandArguments(policy.usage, `Unknown option: ${argument}`);
+    }
 
     const equalsIndex = argument.indexOf('=');
     const flag = equalsIndex >= 0 ? argument.slice(0, equalsIndex) : argument;
     if (booleanFlags.has(flag)) {
-      if (equalsIndex >= 0) throw invalidSessionCommandArguments(policy.usage);
+      if (equalsIndex >= 0) {
+        throw invalidSessionCommandArguments(policy.usage, `Option ${flag} does not accept a value.`);
+      }
       continue;
     }
-    if (!valueFlags.has(flag)) throw invalidSessionCommandArguments(policy.usage);
+    if (!valueFlags.has(flag)) {
+      throw invalidSessionCommandArguments(policy.usage, `Unknown option: ${argument}`);
+    }
 
     if (equalsIndex >= 0) {
-      if (!inlineValueFlags.has(flag) || argument.slice(equalsIndex + 1).trim().length === 0) {
-        throw invalidSessionCommandArguments(policy.usage);
+      if (!inlineValueFlags.has(flag)) {
+        throw invalidSessionCommandArguments(policy.usage, `Option ${flag} does not accept an inline value.`);
+      }
+      if (argument.slice(equalsIndex + 1).trim().length === 0) {
+        throw invalidSessionCommandArguments(policy.usage, `Option ${flag} requires a value.`);
       }
       continue;
     }
 
     const value = argv[index + 1];
-    if (!value || value.startsWith('--')) {
+    if (!value || value.startsWith('-')) {
       if (allowMissingValueFlags.has(flag)) continue;
-      throw invalidSessionCommandArguments(policy.usage);
+      throw invalidSessionCommandArguments(policy.usage, `Option ${flag} requires a value.`);
     }
     index += 1;
-  }
-
-  if (policy.maxPositionals !== undefined && positionalCount > policy.maxPositionals) {
-    throw invalidSessionCommandArguments(policy.usage);
   }
 }

@@ -18,6 +18,9 @@ import { SESSION_HELP_LINES } from './shared/sessionCommandUsage';
 
 const SESSION_HISTORY_FOLLOW_POLL_MS = 250;
 const SESSION_HISTORY_USAGE = `Usage: ${SESSION_HELP_LINES.history}`;
+const MAX_COMPACT_HISTORY_MESSAGE_CHARS = 2_000;
+const MAX_COMPACT_HISTORY_MESSAGE_LINES = 24;
+const COMPACT_HISTORY_TRUNCATION_SUFFIX = '… [truncated; use --json for full text]';
 
 type SessionHistoryDependencies = Readonly<{
   readCredentialsFn: () => Promise<StoredCredentials | null>;
@@ -40,6 +43,21 @@ function readRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
+function truncateCompactHistoryText(text: string): string {
+  let end = Math.min(text.length, MAX_COMPACT_HISTORY_MESSAGE_CHARS);
+  let lines = 1;
+  for (let index = 0; index < end; index += 1) {
+    if (text[index] !== '\n') continue;
+    lines += 1;
+    if (lines > MAX_COMPACT_HISTORY_MESSAGE_LINES) {
+      end = index;
+      break;
+    }
+  }
+  if (end === text.length) return text;
+  return `${text.slice(0, end).trimEnd()}\n${COMPACT_HISTORY_TRUNCATION_SUFFIX}`;
+}
+
 function formatCompactHistoryMessage(value: unknown): string {
   const message = readRecord(value);
   const role = typeof message?.role === 'string' && message.role.trim().length > 0
@@ -47,7 +65,7 @@ function formatCompactHistoryMessage(value: unknown): string {
     : 'unknown';
   const text = typeof message?.text === 'string' ? message.text : '';
   if (text.length > 0) {
-    return `${role}: ${text}`;
+    return `${role}: ${truncateCompactHistoryText(text)}`;
   }
   const kind = typeof message?.kind === 'string' && message.kind.trim().length > 0
     ? message.kind
@@ -171,14 +189,14 @@ export async function cmdSessionHistory(
     usage: SESSION_HISTORY_USAGE,
     startIndex: 1,
     booleanFlags: ['--raw', '--include-meta', '--include-structured-payload', '--json', '--follow', '--jsonl'],
-    valueFlags: ['--tail', '--limit', '--format'],
+    valueFlags: ['--tail', '--limit', '--format', '--machine-id'],
     maxPositionals: 1,
   });
   const json = wantsJson(argv);
   const follow = hasFlag(argv, '--follow');
   const jsonl = hasFlag(argv, '--jsonl');
 
-  const [idOrPrefix = ''] = readCommandPositionals(argv, { startIndex: 1, valueFlags: ['--tail', '--limit', '--format'] });
+  const [idOrPrefix = ''] = readCommandPositionals(argv, { startIndex: 1, valueFlags: ['--tail', '--limit', '--format', '--machine-id'] });
   if (!idOrPrefix) {
     throw new Error(SESSION_HISTORY_USAGE);
   }
@@ -203,6 +221,7 @@ export async function cmdSessionHistory(
   const format = hasFlag(argv, '--raw') ? 'raw' : formatFlag;
   const includeMeta = hasFlag(argv, '--include-meta');
   const includeStructuredPayload = hasFlag(argv, '--include-structured-payload');
+  const machineId = readFlagValue(argv, '--machine-id');
 
   if (follow && json) {
     await printJsonEnvelope({
@@ -226,7 +245,10 @@ export async function cmdSessionHistory(
     process.exit(1);
   }
 
-  const actionExecutor = createCliActionExecutorFromCredentials({ credentials });
+  const actionExecutor = createCliActionExecutorFromCredentials({
+    credentials,
+    ...(machineId !== null ? { machineId } : {}),
+  });
   const executor = deps.signal ? actionExecutor.bindInvocation(deps.signal) : actionExecutor;
   if (follow) {
     await followSessionHistory({

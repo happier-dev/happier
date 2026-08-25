@@ -121,7 +121,7 @@ function runtimeRegistry(input: Readonly<{
     resolvePromptAssetBlocks: async () => [],
     addRuntimeDisposable: input.addRuntimeDisposable,
     createAgentInvocationServices: async () => createUnavailablePluginServices(),
-    retirePluginConsumers: () => {},
+    retirePluginConsumers: async () => undefined,
     settleRetiredBackgroundServices: input.settleRetiredBackgroundServices,
     retireConsumers: () => {},
     dispose: input.disposeRegistry,
@@ -538,6 +538,109 @@ describe('public managed Provider explicit-start production operation', () => {
     expect(serviceDispose).toHaveBeenCalledOnce();
     expect(invocationCleanup).toHaveBeenCalledOnce();
     await baseController.shutdown({ timeoutMs: 0 });
+  });
+
+  it('uses the admitted registry lease instead of reacquiring a replacement generation', async () => {
+    const pluginId = 'acme.provider.generation-atomic';
+    const localId = 'managed';
+    const createGeneration = (generation: string) => {
+      const serviceDispose = vi.fn(async () => undefined);
+      const service = managedServiceHandle(serviceDispose);
+      const start = vi.fn<ManagedProviderRuntime['start']>(async () => Object.freeze({
+        service,
+        endpoints: Object.freeze([Object.freeze({
+          endpointTemplateId: 'chat',
+          endpoint: Object.freeze({ kind: 'servicePath' as const, path: '/v1' }),
+        })]),
+      }));
+      const runtime = Object.freeze({ start });
+      const acquiredRuntime = Object.freeze({
+        runtime,
+        activationGeneration: generation,
+        immutableGenerationId: `immutable-${generation}`,
+        isCurrent: () => true,
+      });
+      const acquireRuntime = vi.fn(async () => acquiredRuntime);
+      const invocationCleanup = vi.fn(async () => undefined);
+      const projectionCleanup = vi.fn(async () => undefined);
+      const projectEndpointAccess = vi.fn(async () => Object.freeze({
+        access: Object.freeze({ endpointUrl: () => 'http://127.0.0.1:45123/v1' }),
+        isCurrent: () => true,
+        cleanup: projectionCleanup,
+      }));
+      const createInvocationServices = vi.fn(async () => Object.freeze({
+        connectedAccounts: connectedAccounts(),
+        managedServices: managedServices(),
+        projectEndpointAccess,
+        cleanup: invocationCleanup,
+      }));
+      const disposables: Array<Readonly<{ dispose(): void | Promise<void> }>> = [];
+      const addRuntimeDisposable = vi.fn((_registeredPluginId, disposable) => {
+        disposables.push(disposable);
+        return disposable;
+      });
+      const registry = runtimeRegistry({
+        pluginId,
+        localId,
+        runtime,
+        invocationCleanup,
+        projectEndpointAccess,
+        acquireRuntime,
+        createInvocationServices,
+        runManagedProviderExplicitStart: establishManagedProviderExplicitStart,
+        addRuntimeDisposable,
+        settleRetiredBackgroundServices: vi.fn(async () => undefined),
+        disposeRegistry: vi.fn(async () => {
+          for (const disposable of disposables.splice(0).reverse()) {
+            await disposable.dispose();
+          }
+        }),
+      });
+      return { registry, start };
+    };
+
+    const admitted = createGeneration('G');
+    const replacement = createGeneration('H');
+    const controller = createPluginReloadController();
+    await controller.adoptPreparedRuntimeRegistry({
+      registry: admitted.registry,
+      changedPluginIds: Object.freeze([pluginId]),
+      durableRevision: 1,
+      runningSessionDisposition: 'retainRunningSessions',
+    });
+    const admittedLease = controller.tryAcquireRuntimeRegistry?.();
+    if (!admittedLease) throw new Error('Expected the admitted registry lease');
+
+    await controller.adoptPreparedRuntimeRegistry({
+      registry: replacement.registry,
+      changedPluginIds: Object.freeze([pluginId]),
+      durableRevision: 2,
+      runningSessionDisposition: 'retainRunningSessions',
+    });
+    const startExplicit = createPublicManagedProviderRuntimeStartOperation({
+      machineId: 'machine-a',
+      happyHomeDir: '/tmp/happier-managed-provider-test',
+      controller,
+    });
+
+    await expect(startExplicit({
+      contributionKey: `${pluginId}/${localId}`,
+      identity: Object.freeze({ pluginId, localId }),
+      request: Object.freeze({
+        reason: 'explicitStartLocal',
+        endpointTemplateIds: Object.freeze(['chat']),
+      }),
+      purposeBindings: { v: 1, bindings: [] },
+      isAuthorizationCurrent: () => true,
+      revalidateAuthorization: async () => true,
+      runtimeRegistryLease: admittedLease,
+    })).resolves.toEqual({ status: 'running' });
+
+    expect(admitted.start).toHaveBeenCalledOnce();
+    expect(replacement.start).not.toHaveBeenCalled();
+
+    await admittedLease.release();
+    await controller.shutdown({ timeoutMs: 0 });
   });
 
   it('never orphans a transferred live effect when authority changes at the transfer boundary', async () => {

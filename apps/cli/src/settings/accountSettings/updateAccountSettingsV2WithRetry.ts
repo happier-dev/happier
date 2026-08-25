@@ -59,6 +59,28 @@ function resolveDefaultRandomBytes(): (n: number) => Uint8Array {
   return (n) => new Uint8Array(nodeRandomBytes(n));
 }
 
+/**
+ * The property a refused Account Settings HTTP response records its own error
+ * code under. Deliberately not `code`: that carries transport errnos such as
+ * `ECONNRESET`, and reporting one of those as the server's stated reason would
+ * be a fabrication.
+ */
+const BOUNDARY_REFUSAL_CODE_PROPERTY = 'accountSettingsBoundaryRefusalCode';
+
+/**
+ * A refusal body carries a machine code (`{ error: "account_settings_storage_unavailable" }`),
+ * never prose. Accepting only a short code-shaped token keeps an HTML error page,
+ * a stack trace, or any other unexpected payload out of logs that a caller may
+ * surface to an operator.
+ */
+function readBoundaryRefusalCode(body: unknown): string | null {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return null;
+  const candidate = (body as Record<string, unknown>).error;
+  if (typeof candidate !== 'string') return null;
+  const code = candidate.trim();
+  return /^[A-Za-z0-9_.:-]{1,80}$/.test(code) ? code : null;
+}
+
 class AccountSettingsContentUnreadableError extends Error {
   constructor() {
     super('Failed to decrypt account settings ciphertext');
@@ -339,9 +361,13 @@ function resolveAccountSettingsV2UpdateDeps(params: Readonly<{
       throw Object.assign(new Error('settings_v2_not_supported'), { code: 'settings_v2_not_supported' });
     }
     if (response.status < 200 || response.status >= 300) {
+      const refusalCode = readBoundaryRefusalCode(response.data);
       throw Object.assign(
         new Error(`Failed to fetch /v2/account/settings (${response.status})`),
-        { status: response.status },
+        {
+          status: response.status,
+          ...(refusalCode ? { [BOUNDARY_REFUSAL_CODE_PROPERTY]: refusalCode } : {}),
+        },
       );
     }
     const parsed = AccountSettingsV2GetResponseSchema.safeParse(response.data);
@@ -554,11 +580,23 @@ function lockedResultForPreSubmissionError(error: unknown): AccountSettingsMutat
   return null;
 }
 
+function readRecordedBoundaryRefusalCode(error: unknown, depth = 0): string | null {
+  if (!error || typeof error !== 'object') return null;
+  const recorded = (error as Record<string, unknown>)[BOUNDARY_REFUSAL_CODE_PROPERTY];
+  if (typeof recorded === 'string' && recorded) return recorded;
+  return depth >= 4
+    ? null
+    : readRecordedBoundaryRefusalCode((error as Record<string, unknown>).cause, depth + 1);
+}
+
 function unavailableResultForBoundaryError(error: unknown): AccountSettingsMutationResult {
   const retryable = error instanceof AccountSettingsBoundaryUnavailableError
     ? error.retryable
     : classifyServerEndpointError(error, { featureAbsentStatusCodes: [404] }).retryable;
-  return Object.freeze({ status: 'unavailable', retryable });
+  // The single collapse point for every unavailable outcome, so naming the
+  // boundary's own refusal code here reaches every caller at once.
+  const reason = readRecordedBoundaryRefusalCode(error);
+  return Object.freeze({ status: 'unavailable', retryable, ...(reason ? { reason } : {}) });
 }
 
 function matchesPreparedMutation(params: Readonly<{

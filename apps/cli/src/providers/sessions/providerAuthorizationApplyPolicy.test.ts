@@ -11,6 +11,7 @@ import {
   resolveProviderAuthorizationApplyPolicy,
   resolveProviderAuthorizationApplyPolicyForActiveBinding,
   sameProviderAuthorizationRuntimeBindingDimensions,
+  sameProviderRuntimeBindingBasis,
 } from './providerAuthorizationApplyPolicy';
 
 type ExternalAuthorization = Extract<
@@ -328,6 +329,34 @@ function withReversedManagedRequestAuthUses(
           requestAuthUses: [
             ...input.deployment.implementation.managedRuntime.requestAuthUses,
           ].reverse(),
+        },
+      },
+    },
+  };
+}
+
+function withManagedRequestAuthHeaderNames(
+  input: ManagedAuthorization,
+  headerNames: readonly string[],
+): ManagedAuthorization {
+  const [first, ...rest] =
+    input.deployment.implementation.managedRuntime.requestAuthUses;
+  if (!first) throw new TypeError('Expected a managed request-auth use');
+  return {
+    ...input,
+    deployment: {
+      ...input.deployment,
+      implementation: {
+        ...input.deployment.implementation,
+        managedRuntime: {
+          ...input.deployment.implementation.managedRuntime,
+          requestAuthUses: [{
+            ...first,
+            materialization: {
+              ...first.materialization,
+              headerNames: [...headerNames],
+            },
+          }, ...rest],
         },
       },
     },
@@ -792,5 +821,54 @@ describe('resolveProviderAuthorizationApplyPolicy', () => {
       current,
       next: withChangedManagedRequestAuthOrigin(reordered),
     })).toBe('restart_session');
+  });
+
+  it('uses Protocol canonical order for managed request-auth header names', () => {
+    const canonical = projectProviderRuntimeBindingBasis(
+      withManagedRequestAuthHeaderNames(
+        managedAuthorization('old', 'account-a'),
+        ['authorization', 'x-trace-id'],
+      ),
+    );
+    if (canonical.deployment.kind !== 'managedLocal') {
+      throw new TypeError('Expected a managed runtime binding');
+    }
+    const reordered: ProviderRuntimeBindingBasisV1 = {
+      ...canonical,
+      deployment: {
+        ...canonical.deployment,
+        managedRuntime: {
+          ...canonical.deployment.managedRuntime,
+          requestAuthUses:
+            canonical.deployment.managedRuntime.requestAuthUses.map((use) => ({
+              ...use,
+              materialization: {
+                ...use.materialization,
+                headerNames: [...use.materialization.headerNames].reverse(),
+              },
+            })),
+        },
+      },
+    };
+    const changed: ProviderRuntimeBindingBasisV1 = {
+      ...canonical,
+      deployment: {
+        ...canonical.deployment,
+        managedRuntime: {
+          ...canonical.deployment.managedRuntime,
+          requestAuthUses:
+            canonical.deployment.managedRuntime.requestAuthUses.map((use) => ({
+              ...use,
+              materialization: {
+                ...use.materialization,
+                headerNames: ['authorization', 'x-request-id'],
+              },
+            })),
+        },
+      },
+    };
+
+    expect(sameProviderRuntimeBindingBasis(canonical, reordered)).toBe(true);
+    expect(sameProviderRuntimeBindingBasis(canonical, changed)).toBe(false);
   });
 });

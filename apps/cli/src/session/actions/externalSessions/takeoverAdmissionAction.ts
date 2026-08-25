@@ -214,31 +214,30 @@ export function createExternalSessionTakeoverAdmissionActionExecutor(
     // `revision + 1` before it sends the Server command, so `record.revision`
     // is already stale by the time a definitive pre-commit rejection lands
     // here. The shared recovery owner rereads the exact attempt and CASes
-    // whatever revision the admission owner left behind.
-    let recovered: ExternalSessionOperationRecordV1 | null =
-      await recoverExternalSessionTakeoverPrecommitAdmission({
-        activeServerDir: dependencies.activeServerDir,
-        targetStorageMode: 'persisted',
-        sessionId: record.request.sessionId,
-        operationId: record.operationId,
-        attemptId: record.bindings.targetRuntimeAttemptId,
-        message: 'Persisted takeover admission did not complete.',
-        nowMs: nowMs(),
-      });
-    if (!recovered) {
-      recovered = await readExternalSessionOperationRecord(
-        dependencies.activeServerDir,
-        record.operationId,
-      ).catch(() => null);
+    // whatever revision the admission owner left behind. This action cancels
+    // the waiter and releases the claim on the way out, so only its proof that
+    // the exact attempt left `running`/`admitting` may be reported as an
+    // outcome; anything else leaves the operation stranded.
+    const recovery = await recoverExternalSessionTakeoverPrecommitAdmission({
+      activeServerDir: dependencies.activeServerDir,
+      targetStorageMode: 'persisted',
+      sessionId: record.request.sessionId,
+      operationId: record.operationId,
+      attemptId: record.bindings.targetRuntimeAttemptId,
+      operationClaimId: record.bindings.operationClaimId,
+      message: 'Persisted takeover admission did not complete.',
+      nowMs: nowMs(),
+    });
+    if (
+      recovery.status === 'recovered'
+      || recovery.status === 'already_settled'
+    ) {
+      return success(await publishBestEffort(recovery.record));
     }
-    if (!recovered) {
-      return failure(
-        'internal_error',
-        'Persisted takeover admission recovery could not be recorded.',
-      );
-    }
-    recovered = await publishBestEffort(recovered);
-    return success(recovered);
+    return failure(
+      'internal_error',
+      'Persisted takeover admission recovery could not be recorded.',
+    );
   };
 
   const execute = async (
@@ -370,9 +369,13 @@ export function createExternalSessionTakeoverAdmissionActionExecutor(
           );
         }
 
-        const attemptId = intent === 'retry'
-          ? createAttemptId()
-          : revalidated.bindings.targetRuntimeAttemptId ?? createAttemptId();
+        // Every admission episode acquires a fresh exclusion claim above and
+        // launches its own child below, while the private handshake the child
+        // reports back carries only `{ mode, operationId, attemptId }`. Reusing
+        // a retained attempt would therefore let a detached child from the
+        // released claim satisfy this episode's waiter, so each new child gets
+        // its own attempt identity.
+        const attemptId = createAttemptId();
         const admitted = await maintenance.race(
           () => mutateExternalSessionOperationRecordAtRevision(
             dependencies.activeServerDir,

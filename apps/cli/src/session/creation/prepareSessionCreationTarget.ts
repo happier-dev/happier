@@ -29,6 +29,7 @@ async function createSessionCheckoutWithScm(input: Parameters<CreateSessionCheck
         kind: 'git_worktree',
         displayName: input.displayName,
         baseRef: input.baseRef,
+        branchMode: input.branchMode,
       },
     });
     return realized

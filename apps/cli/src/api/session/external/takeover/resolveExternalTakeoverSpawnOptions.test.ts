@@ -7,6 +7,9 @@ import type {
   AgentExternalSessionsContribution,
 } from '@happier-dev/plugin-sdk/sessions/external';
 import type {
+  AgentExternalSessionTakeoverLaunchPlan,
+  AgentExternalSessionTakeoverResolveLaunchRequest,
+  AgentExternalSessionTakeoverResolveLaunchResult,
   AgentExternalSessionTakeoverContribution,
 } from '@happier-dev/plugin-sdk/sessions/external';
 
@@ -38,6 +41,19 @@ const PLUGIN_ID = 'happier.agent.fixture';
 const AGENT_ID = 'fixture-agent';
 const GENERATION = 'generation-7';
 const TARGET_DIRECTORY = '/local/selected/workspace';
+
+type HostPrivateTakeoverResolveLaunchResult =
+  | AgentExternalSessionTakeoverResolveLaunchResult
+  | Readonly<{
+      ok: true;
+      value: AgentExternalSessionTakeoverLaunchPlan;
+      nativeResumeReference: string;
+    }>;
+
+type HostPrivateTakeoverResolveLaunch = (
+  request: AgentExternalSessionTakeoverResolveLaunchRequest,
+) => HostPrivateTakeoverResolveLaunchResult
+  | Promise<HostPrivateTakeoverResolveLaunchResult>;
 
 function target(): ActivationTarget {
   return {
@@ -165,7 +181,7 @@ function replaceRuntimeLease(
 }
 
 function contributions(params: Readonly<{
-  resolveLaunch?: AgentExternalSessionTakeoverContribution['resolveLaunch'];
+  resolveLaunch?: HostPrivateTakeoverResolveLaunch;
 }> = {}): Readonly<{
   externalSessions: AgentExternalSessionsContribution;
   takeover: AgentExternalSessionTakeoverContribution;
@@ -257,6 +273,7 @@ describe('External Session takeover launch consumption', () => {
             FIXTURE_HOME: '/fresh/runtime',
           },
         },
+        remoteSessionId: 'fresh-remote',
         origin: {
           agentId: AGENT_ID,
           pluginId: PLUGIN_ID,
@@ -293,6 +310,43 @@ describe('External Session takeover launch consumption', () => {
     );
     expect(fixture.resolveLinkedIdentity.mock.invocationCallOrder[0])
       .toBeLessThan(fixture.resolveLaunch.mock.invocationCallOrder[0] ?? 0);
+  });
+
+  it('uses an exact private native reference for the selected Pi file instead of an id-matched sibling', async () => {
+    const selectedSessionFile = '/home/lee/.pi/agent/sessions/workspace-a/pi-shared.jsonl';
+    const siblingSessionFile = '/home/lee/.pi/agent/sessions/workspace-b/pi-shared.jsonl';
+    const fixture = contributions({
+      resolveLaunch: async () => ({
+        ok: true,
+        value: {
+          directory: '/fresh/workspace',
+          environmentVariables: {
+            FIXTURE_HOME: '/fresh/runtime',
+          },
+        },
+        nativeResumeReference: selectedSessionFile,
+      }),
+    });
+
+    const result = await resolveExternalTakeoverSpawnOptionsFromRuntimeRegistry({
+      registry: runtimeRegistry(fixture),
+      linked: linked(),
+      sessionId: 'linked-session-1',
+      targetDirectory: TARGET_DIRECTORY,
+      signal: new AbortController().signal,
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        options: {
+          resume: selectedSessionFile,
+          nativeResumeReference: selectedSessionFile,
+        },
+      },
+    });
+    if (!result.ok) return;
+    expect(result.value.options.resume).not.toBe(siblingSessionFile);
   });
 
   it('keeps the resolved takeover plan private when it enters generic spawn preparation', async () => {

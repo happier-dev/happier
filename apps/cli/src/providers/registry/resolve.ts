@@ -20,6 +20,7 @@ import {
   type ProviderContributionV1,
   type ProviderCredentialTransportV1,
   type ProviderEndpointTemplateV1,
+  type ProviderManagedSecurityEndpointV1,
   type ProviderModelLoadDescriptorV1,
   type ProviderSettingsV1,
 } from '@happier-dev/protocol';
@@ -390,6 +391,27 @@ function resolveProviderConnectionFromSettings(
       ...managedDeployment,
       purposeBindingIntents,
     };
+    // A managed connection has no durable URL, but the declared protocol and
+    // immutable public headers of its selected endpoint templates still decide
+    // what the host sends. They belong to the same machine grant.
+    const managedLogicalEndpoints: ProviderManagedSecurityEndpointV1[] = [];
+    for (const endpointTemplateId of resolvedManagedDeployment.managedRuntime.endpointTemplateIds) {
+      const template = facts.endpointTemplates.find(
+        (candidate) => candidate.id === endpointTemplateId,
+      );
+      if (!template) {
+        return invalidResolution(
+          connectionId,
+          diagnostics,
+          'managed_deployment_unavailable',
+        );
+      }
+      managedLogicalEndpoints.push({
+        endpointTemplateId: template.id,
+        protocol: template.protocol,
+        ...(template.publicHeaders ? { publicHeaders: template.publicHeaders } : {}),
+      });
+    }
     const connectionSecurityFingerprint = createProviderConnectionSecurityFingerprintV1({
       securityContractVersion: PROVIDER_CONNECTION_SECURITY_CONTRACT_VERSION_V1,
       endpoints: [],
@@ -401,6 +423,7 @@ function resolveProviderConnectionFromSettings(
       managedDeployment: {
         implementationIdentity: resolvedManagedDeployment.implementationIdentity,
         managedRuntime: resolvedManagedDeployment.managedRuntime,
+        logicalEndpoints: managedLogicalEndpoints,
       },
     });
     const endpointSetFingerprint = createProviderEndpointSetFingerprintV1({

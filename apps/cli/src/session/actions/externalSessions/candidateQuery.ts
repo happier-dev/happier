@@ -3,6 +3,8 @@ import {
     chmod,
     mkdir,
     open,
+    readdir,
+    rm,
     stat,
     unlink,
     type FileHandle,
@@ -284,6 +286,11 @@ type CandidateIndexKeys = Readonly<{
     runtimeGeneration: string | null;
 }>;
 
+type CandidateIndexIdentity = Readonly<{
+    agentIdentity: PluginContributionIdentityV1;
+    source: unknown;
+}>;
+
 function resolveKeys(
     agentIdentity: PluginContributionIdentityV1,
     source: unknown,
@@ -298,15 +305,21 @@ function resolveKeys(
     });
 }
 
+function candidateIndexRoot(activeServerDir: string): string {
+    return join(
+        activeServerDir,
+        'external-sessions',
+        'candidate-indexes',
+        'v1',
+    );
+}
+
 function resolvePaths(
     activeServerDir: string,
     keys: CandidateIndexKeys,
 ): Readonly<{ directory: string; indexPath: string; lockPath: string }> {
     const directory = join(
-        activeServerDir,
-        'external-sessions',
-        'candidate-indexes',
-        'v1',
+        candidateIndexRoot(activeServerDir),
         keys.agentKey,
         keys.sourceKey,
     );
@@ -315,6 +328,98 @@ function resolvePaths(
         indexPath: join(directory, 'index.json'),
         lockPath: join(directory, 'index.lock'),
     });
+}
+
+async function retireExternalSessionCandidateIndexAtPaths(
+    paths: Readonly<{ directory: string; indexPath: string; lockPath: string }>,
+    signal?: AbortSignal,
+): Promise<void> {
+    if (signal?.aborted) return;
+    await withCandidateIndexLock(paths.lockPath, signal, async () => {
+        if (signal?.aborted) return;
+        await rm(paths.indexPath, { force: true });
+    });
+    if (signal?.aborted) return;
+    await rm(paths.directory, { recursive: true, force: true });
+}
+
+/**
+ * Retires only the persisted candidate index owned by one exact Agent/source
+ * identity. The shared index lock serializes retirement behind any write that
+ * is already in flight; the caller retires its cancellation signal first so no
+ * later write can reacquire the lock and recreate the directory. The payload is
+ * removed while holding the lock; the now-empty directory is removed only after
+ * lock release so the lock owner can verify and release its own custody file.
+ */
+export async function retireExternalSessionCandidateIndex(params: Readonly<{
+    activeServerDir: string;
+    agentIdentity: PluginContributionIdentityV1;
+    source: unknown;
+}>): Promise<void> {
+    const paths = resolvePaths(
+        params.activeServerDir,
+        resolveKeys(params.agentIdentity, params.source, null),
+    );
+    await retireExternalSessionCandidateIndexAtPaths(paths);
+}
+
+function isCandidateIndexStorageKey(value: string): boolean {
+    return /^[a-f0-9]{64}$/u.test(value);
+}
+
+async function readCandidateIndexDirectoryNames(path: string): Promise<readonly string[]> {
+    try {
+        const entries = await readdir(path, { withFileTypes: true });
+        return Object.freeze(entries
+            .filter((entry) => entry.isDirectory() && isCandidateIndexStorageKey(entry.name))
+            .map((entry) => entry.name));
+    } catch (error: unknown) {
+        if (
+            typeof error === 'object'
+            && error !== null
+            && 'code' in error
+            && error.code === 'ENOENT'
+        ) {
+            return Object.freeze([]);
+        }
+        throw error;
+    }
+}
+
+/**
+ * At successful configured-source admission, removes stale private candidate
+ * indexes from the existing versioned layout. This is intentionally a rebuild
+ * boundary reconciliation, not a background cleaner: the admitted source set
+ * is the sole authority for which Agent/source identities may retain an index.
+ */
+export async function reconcileExternalSessionCandidateIndexes(params: Readonly<{
+    activeServerDir: string;
+    admitted: readonly CandidateIndexIdentity[];
+    signal?: AbortSignal;
+}>): Promise<void> {
+    if (params.signal?.aborted) return;
+    const retainedSourceKeysByAgentKey = new Map<string, Set<string>>();
+    for (const identity of params.admitted) {
+        const keys = resolveKeys(identity.agentIdentity, identity.source, null);
+        const retainedSourceKeys = retainedSourceKeysByAgentKey.get(keys.agentKey) ?? new Set<string>();
+        retainedSourceKeys.add(keys.sourceKey);
+        retainedSourceKeysByAgentKey.set(keys.agentKey, retainedSourceKeys);
+    }
+    const root = candidateIndexRoot(params.activeServerDir);
+    for (const agentKey of await readCandidateIndexDirectoryNames(root)) {
+        if (params.signal?.aborted) return;
+        const retainedSourceKeys = retainedSourceKeysByAgentKey.get(agentKey);
+        const agentDirectory = join(root, agentKey);
+        for (const sourceKey of await readCandidateIndexDirectoryNames(agentDirectory)) {
+            if (params.signal?.aborted) return;
+            if (retainedSourceKeys?.has(sourceKey)) continue;
+            await retireExternalSessionCandidateIndexAtPaths(resolvePaths(params.activeServerDir, {
+                agentKey,
+                sourceKey,
+                runtimeGeneration: null,
+            }), params.signal);
+        }
+    }
 }
 
 async function ensurePrivateDirectory(path: string): Promise<void> {
@@ -356,7 +461,7 @@ function readStrictJson(value: unknown): StrictJson | null {
     }
     if (!value || typeof value !== 'object') return null;
     const record = value as Readonly<Record<string, unknown>>;
-    const parsed: Record<string, StrictJson> = {};
+    const parsed = Object.create(null) as Record<string, StrictJson>;
     for (const [key, item] of Object.entries(record)) {
         const next = readStrictJson(item);
         if (next === null && item !== null) return null;

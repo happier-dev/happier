@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto';
 
 import {
     AgentExternalSessionTranscriptRawRecordSchema,
+    ExternalSessionTranscriptItemIdV1Schema,
+    ExternalSessionTranscriptSourceTimestampV1Schema,
     ExternalSessionUserProjectionSchema,
     ExternalSessionsSourceSchema,
     MAX_EXTERNAL_SESSIONS_SOURCE_KIND_CODE_UNITS,
@@ -12,7 +14,6 @@ import {
     SidechainIdSchema,
     type AgentExternalSessionTranscriptRawRecord,
     type PluginAgentExternalSessionLinkData,
-    type PluginAgentExternalSessionLinkDataValue,
     type SessionMessageRole,
 } from '@happier-dev/protocol';
 import type {
@@ -35,6 +36,9 @@ import type {
     AgentExternalSessionsTranscriptPage,
 } from '@happier-dev/plugin-sdk/sessions/external';
 
+import { measureSerializedValidatedStrictPluginJsonUtf8Bytes } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
+import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
+
 import {
     serializeManagedServiceEndpointReadRequestHeaders,
 } from '@/agent/runtime/session/process/managedServiceEndpointReadHeaders';
@@ -56,16 +60,6 @@ const MAX_NATIVE_CURSOR_CODE_UNITS = 2_000;
 const MAX_QUALIFIED_CURSOR_CODE_UNITS = 4_096;
 const MAX_TRANSCRIPT_MEDIA_READ_ROOTS = 16;
 const MAX_TRANSCRIPT_MEDIA_READ_ROOT_CODE_UNITS = 4_096;
-/**
- * Transcript content is not link metadata: a legitimate agent record nests
- * provider-native tool payloads well past the link-data shape bounds, and the
- * settled per-result byte budget is the size authority. These bounds only keep
- * the structural walk finite and match the transcript bounds the downstream
- * public-service projection already applies.
- */
-const MAX_TRANSCRIPT_RAW_DEPTH = 24;
-const MAX_TRANSCRIPT_RAW_NODES = 8_192;
-
 export const EXTERNAL_SESSIONS_INVOCATION_POLICY = Object.freeze({
     deadlineMs: 15_000,
     resolveSource: Object.freeze({ maxSerializedBytes: 262_144 }),
@@ -295,8 +289,6 @@ type QualifiedCursorV1 = Readonly<{
 
 type StrictRecord = Readonly<Record<string, unknown>>;
 
-const textEncoder = new TextEncoder();
-
 const invalidRequest = (): AgentExternalSessionsResult<never> => Object.freeze({
     ok: false,
     code: 'invalid_request',
@@ -329,26 +321,23 @@ function readStrictRecord(
     optional: readonly string[] = [],
 ): StrictRecord | null {
     if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
-    const prototype = Object.getPrototypeOf(value);
-    if (prototype !== Object.prototype && prototype !== null) return null;
     const allowed = new Set([...required, ...optional]);
     const keys = Reflect.ownKeys(value);
-    if (
-        keys.some((key) => typeof key !== 'string' || !allowed.has(key))
-        || required.some((key) => !keys.includes(key))
-    ) {
+    if (keys.some((key) => typeof key !== 'string' || !allowed.has(key))) {
         return null;
     }
-    const snapshot: Record<string, unknown> = {};
-    for (const key of keys as string[]) {
-        const descriptor = Object.getOwnPropertyDescriptor(value, key);
-        if (!descriptor || !descriptor.enumerable || !('value' in descriptor)) return null;
-        Object.defineProperty(snapshot, key, {
-            configurable: false,
-            enumerable: true,
-            writable: false,
-            value: descriptor.value,
-        });
+    const snapshot = Object.create(null) as Record<string, unknown>;
+    try {
+        for (const key of allowed) {
+            Object.defineProperty(snapshot, key, {
+                configurable: false,
+                enumerable: true,
+                writable: false,
+                value: Reflect.get(value, key),
+            });
+        }
+    } catch {
+        return null;
     }
     return Object.freeze(snapshot);
 }
@@ -370,90 +359,18 @@ function parseLinkData(value: unknown): PluginAgentExternalSessionLinkData | nul
     return parsed.success ? parsed.data : null;
 }
 
-const INVALID_TRANSCRIPT_RAW = Symbol('invalid-transcript-raw');
-
-/**
- * Deep-copies a contribution-supplied transcript record into host-owned plain
- * JSON. The copy rejects accessors, exotic prototypes, symbol keys, cycles and
- * non-finite numbers, and stays mutable so the canonical record schema's
- * normalizing preprocess can run against host bytes rather than plugin bytes.
- */
-function snapshotTranscriptRawJson(
-    value: unknown,
-    depth: number,
-    state: { nodes: number; ancestors: Set<object> },
-): unknown {
-    state.nodes += 1;
-    if (state.nodes > MAX_TRANSCRIPT_RAW_NODES || depth > MAX_TRANSCRIPT_RAW_DEPTH) {
-        return INVALID_TRANSCRIPT_RAW;
-    }
-    if (value === null || typeof value === 'boolean' || typeof value === 'string') return value;
-    if (typeof value === 'number') return Number.isFinite(value) ? value : INVALID_TRANSCRIPT_RAW;
-    if (typeof value !== 'object') return INVALID_TRANSCRIPT_RAW;
-    if (state.ancestors.has(value)) return INVALID_TRANSCRIPT_RAW;
-    state.ancestors.add(value);
-    try {
-        if (Array.isArray(value)) {
-            const expectedKeys = new Set<PropertyKey>([
-                'length',
-                ...Array.from({ length: value.length }, (_, index) => String(index)),
-            ]);
-            const keys = Reflect.ownKeys(value);
-            if (keys.length !== expectedKeys.size || keys.some((key) => !expectedKeys.has(key))) {
-                return INVALID_TRANSCRIPT_RAW;
-            }
-            const snapshot: unknown[] = [];
-            for (let index = 0; index < value.length; index += 1) {
-                const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
-                if (!descriptor || !descriptor.enumerable || !('value' in descriptor)) {
-                    return INVALID_TRANSCRIPT_RAW;
-                }
-                const item = snapshotTranscriptRawJson(descriptor.value, depth + 1, state);
-                if (item === INVALID_TRANSCRIPT_RAW) return INVALID_TRANSCRIPT_RAW;
-                snapshot.push(item);
-            }
-            return snapshot;
-        }
-        const prototype = Object.getPrototypeOf(value);
-        if (prototype !== Object.prototype && prototype !== null) return INVALID_TRANSCRIPT_RAW;
-        const keys = Reflect.ownKeys(value);
-        if (keys.some((key) => typeof key !== 'string')) return INVALID_TRANSCRIPT_RAW;
-        const snapshot: Record<string, unknown> = {};
-        for (const key of keys as string[]) {
-            const descriptor = Object.getOwnPropertyDescriptor(value, key);
-            if (!descriptor || !descriptor.enumerable || !('value' in descriptor)) {
-                return INVALID_TRANSCRIPT_RAW;
-            }
-            const item = snapshotTranscriptRawJson(descriptor.value, depth + 1, state);
-            if (item === INVALID_TRANSCRIPT_RAW) return INVALID_TRANSCRIPT_RAW;
-            snapshot[key] = item;
-        }
-        return snapshot;
-    } finally {
-        state.ancestors.delete(value);
-    }
-}
-
-function freezeTranscriptRawJson(value: unknown): void {
-    if (value === null || typeof value !== 'object' || Object.isFrozen(value)) return;
-    Object.freeze(value);
-    for (const nested of Object.values(value as Record<string, unknown>)) {
-        freezeTranscriptRawJson(nested);
-    }
-}
-
 /**
  * Single admission point for current Agent-contribution transcript output.
  * Persisted Session history keeps its separate provenance-pinned compatibility
  * reader; current producers must emit this exact envelope.
  */
 function parseTranscriptRawRecord(value: unknown): AgentExternalSessionTranscriptRawRecord | null {
-    const snapshot = snapshotTranscriptRawJson(value, 0, { nodes: 0, ancestors: new Set() });
-    if (snapshot === INVALID_TRANSCRIPT_RAW) return null;
-    const parsed = AgentExternalSessionTranscriptRawRecordSchema.safeParse(snapshot);
-    if (!parsed.success) return null;
-    freezeTranscriptRawJson(parsed.data);
-    return parsed.data;
+    try {
+        const parsed = AgentExternalSessionTranscriptRawRecordSchema.safeParse(value);
+        return parsed.success ? parsed.data : null;
+    } catch {
+        return null;
+    }
 }
 
 function parseBoundedString(value: unknown, maximum: number, allowEmpty = false): string | null {
@@ -543,6 +460,12 @@ function parseCandidate(value: unknown): AgentExternalSessionCandidate | null {
     });
 }
 
+/** Transcript item identity is owned by Protocol so it cannot differ by execution placement. */
+function parseTranscriptItemId(value: unknown): string | null {
+    const parsed = ExternalSessionTranscriptItemIdV1Schema.safeParse(value);
+    return parsed.success ? parsed.data : null;
+}
+
 function parseTranscriptItem(value: unknown): AgentExternalSessionTranscriptItem | null {
     const record = readStrictRecord(
         value,
@@ -550,11 +473,13 @@ function parseTranscriptItem(value: unknown): AgentExternalSessionTranscriptItem
         ['localId', 'sidechainId', 'messageRole', 'userProjection'],
     );
     if (!record) return null;
-    const id = parseBoundedString(record.id, MAX_ID_CODE_UNITS);
-    const createdAtMs = parseTimestamp(record.createdAtMs);
+    const id = parseTranscriptItemId(record.id);
+    const parsedCreatedAtMs = ExternalSessionTranscriptSourceTimestampV1Schema
+        .safeParse(record.createdAtMs);
+    const createdAtMs = parsedCreatedAtMs.success ? parsedCreatedAtMs.data : null;
     const localId = record.localId === undefined || record.localId === null
         ? record.localId
-        : parseBoundedString(record.localId, MAX_ID_CODE_UNITS);
+        : parseTranscriptItemId(record.localId);
     const sidechainId = parseOptionalSidechainId(record.sidechainId);
     const role = record.messageRole === undefined || record.messageRole === null
         ? record.messageRole
@@ -601,18 +526,8 @@ function parseTranscriptItem(value: unknown): AgentExternalSessionTranscriptItem
     });
 }
 
-function canonicalJson(value: PluginAgentExternalSessionLinkDataValue): string {
-    if (value === null || typeof value !== 'object') return JSON.stringify(value);
-    if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
-    const record = value as Readonly<Record<string, PluginAgentExternalSessionLinkDataValue>>;
-    return `{${Object.keys(record)
-        .sort()
-        .map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key] ?? null)}`)
-        .join(',')}}`;
-}
-
 function sourceDigest(source: AgentExternalSessionSource): string {
-    return createHash('sha256').update(canonicalJson(source)).digest('base64url');
+    return createHash('sha256').update(createCanonicalJsonSigningInput(source), 'utf8').digest('base64url');
 }
 
 function encodeQualifiedCursor(
@@ -908,6 +823,19 @@ function parseReadAfterTranscriptValue(
     }
 }
 
+/**
+ * Sizes an already admitted result through the canonical iterative Protocol byte
+ * owner. Recursive serialization would reject valid deep values the strict-JSON
+ * contract deliberately admits, so the byte ceiling stays the only bound.
+ */
+function serializedResultBytes(value: unknown, maxSerializedBytes: number): number {
+    return measureSerializedValidatedStrictPluginJsonUtf8Bytes(
+        value,
+        'Agent External Sessions result',
+        maxSerializedBytes,
+    );
+}
+
 function parseAndBoundResult<T>(
     value: unknown,
     parseValue: (candidate: unknown) => T | null,
@@ -915,7 +843,7 @@ function parseAndBoundResult<T>(
 ): AgentExternalSessionsResult<T> {
     const failure = parseFailure(value);
     if (failure) {
-        return textEncoder.encode(JSON.stringify(failure)).byteLength <= maxSerializedBytes
+        return serializedResultBytes(failure, maxSerializedBytes) <= maxSerializedBytes
             ? failure
             : agentError();
     }
@@ -924,7 +852,7 @@ function parseAndBoundResult<T>(
     const parsedValue = parseValue(record.value);
     if (parsedValue === null) return agentError();
     const result = Object.freeze({ ok: true as const, value: parsedValue });
-    return textEncoder.encode(JSON.stringify(result)).byteLength <= maxSerializedBytes ? result : agentError();
+    return serializedResultBytes(result, maxSerializedBytes) <= maxSerializedBytes ? result : agentError();
 }
 
 function readMaxSerializedBytes(value: unknown, ceiling: number): number | null {

@@ -11,6 +11,7 @@ import {
   type ProviderCatalogRuntimeStateRecordV1,
   type ProviderMergedCatalogRowV1,
   type ProviderModelLoadRuntimeStateRecordV1,
+  type ProviderRuntimeStateFileV1,
 } from '@happier-dev/protocol';
 
 import type {

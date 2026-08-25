@@ -332,7 +332,7 @@ async function readConvergedTakeoverOperation(
   authorIntent?: ExternalSessionOperationAuthorIntentV1,
 ): Promise<
   | Readonly<{ status: 'record'; record: ExternalSessionOperationRecordV1 }>
-  | Readonly<{ status: 'completion_receipt' }>
+  | Readonly<{ status: 'terminal_receipt' }>
   | Readonly<{ status: 'conflict' }>
   | Readonly<{ status: 'retry_acquire' }>
   | Readonly<{ status: 'failed' }>
@@ -352,8 +352,8 @@ async function readConvergedTakeoverOperation(
   if (published.kind === 'existing_record') {
     return { status: 'record', record: published.record };
   }
-  if (published.kind === 'completion_receipt') {
-    return { status: 'completion_receipt' };
+  if (published.kind === 'terminal_receipt') {
+    return { status: 'terminal_receipt' };
   }
   if (published.kind === 'conflict') return { status: 'conflict' };
   if (published.kind === 'legacy_unavailable') return { status: 'failed' };
@@ -369,8 +369,8 @@ async function readConvergedTakeoverOperation(
   if (afterWait.kind === 'existing_record') {
     return { status: 'record', record: afterWait.record };
   }
-  if (afterWait.kind === 'completion_receipt') {
-    return { status: 'completion_receipt' };
+  if (afterWait.kind === 'terminal_receipt') {
+    return { status: 'terminal_receipt' };
   }
   if (afterWait.kind === 'conflict') return { status: 'conflict' };
   if (afterWait.kind === 'legacy_unavailable') return { status: 'failed' };
@@ -429,7 +429,7 @@ export function createExternalSessionTakeoverStartActionExecutor(
           'A legacy takeover operation cannot be safely resumed.',
         );
       }
-      if (admission.kind === 'completion_receipt') {
+      if (admission.kind === 'terminal_receipt') {
         return failure(
           'invalid_state',
           'The settled takeover no longer has private recovery state.',
@@ -527,7 +527,7 @@ export function createExternalSessionTakeoverStartActionExecutor(
             'Takeover operation convergence could not be observed.',
           );
         }
-        if (converged.status === 'completion_receipt') {
+        if (converged.status === 'terminal_receipt') {
           return failure(
             'invalid_state',
             'The settled takeover no longer has private recovery state.',
@@ -750,7 +750,7 @@ export function createExternalSessionTakeoverStartActionExecutor(
             },
           };
         }
-        if (admitted.kind === 'completion_receipt') {
+        if (admitted.kind === 'terminal_receipt') {
           return {
             ok: true,
             operation: admitted.receipt.reference,

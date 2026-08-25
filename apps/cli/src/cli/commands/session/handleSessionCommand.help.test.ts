@@ -11,14 +11,14 @@ describe('handleSessionCommand help output', () => {
     try {
       await handleSessionCommand(['--help']);
 
-      expect(output.text()).toContain('happier session list [--active] [--archived] [--limit N] [--cursor C] [--include-system] [--resumable] [--plain] [--json]');
+      expect(output.text()).toContain(SESSION_HELP_LINES.list);
       expect(output.text()).toContain('happier resume [<session-id-or-prefix>]');
       expect(output.text()).toContain('happier session status <session-id-or-prefix-or-tag> [--live] [--json]');
       expect(output.text()).toContain(SESSION_HELP_LINES.create);
       expect(output.text()).toContain('happier session create [options]\n\nOptions:\n  [--path <path>]');
       expect(output.text()).toContain(SESSION_HELP_LINES.send);
-      expect(output.text()).toContain('happier session wait <session-id-or-prefix-or-tag> [--timeout <seconds>] [--json]');
-      expect(output.text()).toContain('happier session stop <session-id-or-prefix-or-tag> [--json]');
+      expect(output.text()).toContain(SESSION_HELP_LINES.wait);
+      expect(output.text()).toContain(SESSION_HELP_LINES.stop);
       expect(output.text()).toContain('happier session set-title <session-id-or-prefix-or-tag> <title> [--json]');
       expect(output.text()).toContain('happier session set-permission-mode <session-id-or-prefix-or-tag> <mode> [--json]');
       expect(output.text()).toContain(SESSION_HELP_LINES.setModel);
@@ -66,12 +66,12 @@ describe('handleSessionCommand help output', () => {
   });
 
   it.each([
-    ['list', 'happier session list [--active] [--archived] [--limit N] [--cursor C] [--include-system] [--resumable] [--plain] [--json]'],
+    ['list', SESSION_HELP_LINES.list],
     ['status', 'happier session status <session-id-or-prefix-or-tag> [--live] [--json]'],
     ['create', SESSION_HELP_LINES.create],
     ['send', SESSION_HELP_LINES.send],
-    ['wait', 'happier session wait <session-id-or-prefix-or-tag> [--timeout <seconds>] [--json]'],
-    ['stop', 'happier session stop <session-id-or-prefix-or-tag> [--json]'],
+    ['wait', SESSION_HELP_LINES.wait],
+    ['stop', SESSION_HELP_LINES.stop],
     ['archive', 'happier session archive <session-id-or-prefix-or-tag> [--json]'],
     ['unarchive', 'happier session unarchive <session-id-or-prefix-or-tag> [--json]'],
     ['history', SESSION_HELP_LINES.history],

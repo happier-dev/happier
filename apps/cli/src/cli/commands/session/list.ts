@@ -5,29 +5,32 @@ import { renderSessionListTable } from '@/ui/renderSessionListTable';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { normalizeActionExecuteResult } from '@/cli/commands/session/shared/normalizeActionExecuteResult';
 import { tryHandleApprovalRequestCreated } from '@/cli/commands/session/shared/tryHandleApprovalRequestCreated';
+import { assertSessionCommandArguments } from '@/cli/commands/session/shared/assertSessionCommandArguments';
+import { SESSION_HELP_LINES } from '@/cli/commands/session/shared/sessionCommandUsage';
+import { configuration } from '@/configuration';
 import { cmd, errorFrame, gray, yellow } from '@happier-dev/cli-common/output';
 
-const SESSION_LIST_USAGE = 'Usage: happier session list [--active] [--archived] [--limit N] [--cursor C] [--include-system] [--resumable] [--plain] [--json]';
-const SESSION_LIST_BOOLEAN_FLAGS = new Set(['--active', '--archived', '--include-system', '--resumable', '--plain', '--json']);
-const SESSION_LIST_VALUE_FLAGS = new Set(['--limit', '--cursor']);
+const SESSION_LIST_USAGE = `Usage: ${SESSION_HELP_LINES.list}`;
+const SESSION_LIST_BOOLEAN_FLAGS = ['--active', '--archived', '--include-system', '--resumable', '--plain', '--json'] as const;
+const SESSION_LIST_VALUE_FLAGS = ['--limit', '--cursor', '--machine-id'] as const;
 
 function assertValidSessionListArguments(argv: readonly string[]): void {
-  for (let index = 1; index < argv.length; index += 1) {
-    const argument = argv[index];
-    if (SESSION_LIST_BOOLEAN_FLAGS.has(argument)) continue;
-    if (SESSION_LIST_VALUE_FLAGS.has(argument)) {
-      const value = argv[index + 1];
-      if (!value || value.startsWith('-')) throw new Error(SESSION_LIST_USAGE);
-      index += 1;
-      continue;
-    }
-    throw new Error(SESSION_LIST_USAGE);
-  }
+  assertSessionCommandArguments(argv, {
+    usage: SESSION_LIST_USAGE,
+    startIndex: 1,
+    booleanFlags: SESSION_LIST_BOOLEAN_FLAGS,
+    valueFlags: SESSION_LIST_VALUE_FLAGS,
+    inlineValueFlags: [],
+    maxPositionals: 0,
+  });
 }
 
 export async function cmdSessionList(
   argv: string[],
-  deps: Readonly<{ readCredentialsFn: () => Promise<StoredCredentials | null> }>,
+  deps: Readonly<{
+    readCredentialsFn: () => Promise<StoredCredentials | null>;
+    signal?: AbortSignal;
+  }>,
 ): Promise<void> {
   assertValidSessionListArguments(argv);
 
@@ -40,6 +43,7 @@ export async function cmdSessionList(
   const limitRaw = readIntFlagValue(argv, '--limit', { min: 1 });
   const limit = limitRaw !== null ? Math.min(limitRaw, 200) : undefined;
   const cursor = (readFlagValue(argv, '--cursor') ?? '').trim();
+  const machineId = readFlagValue(argv, '--machine-id');
 
   if (hasFlag(argv, '--cursor') && !cursor) {
     throw new Error(SESSION_LIST_USAGE);
@@ -59,7 +63,17 @@ export async function cmdSessionList(
     process.exit(1);
   }
 
-  const executor = createCliActionExecutorFromCredentials({ credentials });
+  const executor = createCliActionExecutorFromCredentials({
+    credentials,
+    ...(machineId !== null ? { machineId } : {}),
+  });
+  // The public PAT Action relay deliberately permits caller-owned lifetimes
+  // for long-running Actions. Session listing is finite, so retain the same
+  // bounded HTTP lifetime as the stored-credential list path instead of
+  // leaving a disconnected daemon relay pending indefinitely.
+  const requestSignal = deps.signal
+    ? AbortSignal.any([deps.signal, AbortSignal.timeout(configuration.sessionControlHttpTimeoutMs)])
+    : AbortSignal.timeout(configuration.sessionControlHttpTimeoutMs);
   const actionRes = await executor.execute(
     'session.list',
     {
@@ -71,7 +85,7 @@ export async function cmdSessionList(
       ...(cursor ? { cursor } : {}),
       ...(!json ? { includeRows: true } : {}),
     },
-    { surface: 'cli', defaultSessionId: null },
+    { surface: 'cli', defaultSessionId: null, signal: requestSignal },
   );
   const result = normalizeActionExecuteResult(actionRes);
   if (!result.ok) {

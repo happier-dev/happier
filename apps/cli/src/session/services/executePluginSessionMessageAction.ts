@@ -64,13 +64,20 @@ export async function executePluginSessionMessageAction(params: Readonly<{
   try {
     result = await params.execute(
       'session.message.send',
-      {
-        sessionId: params.sessionId,
-        message: request.data.text,
-        idempotencyKey: request.data.idempotencyKey,
-        ...(request.data.source ? { source: request.data.source } : {}),
-        ...(request.data.attachments ? { attachments: request.data.attachments } : {}),
-      },
+      request.data.kind === 'sessionSubagentLaunch'
+        ? {
+            sessionId: params.sessionId,
+            kind: request.data.kind,
+            launch: request.data.launch,
+            idempotencyKey: request.data.idempotencyKey,
+          }
+        : {
+            sessionId: params.sessionId,
+            message: request.data.text,
+            idempotencyKey: request.data.idempotencyKey,
+            ...(request.data.source ? { source: request.data.source } : {}),
+            ...(request.data.attachments ? { attachments: request.data.attachments } : {}),
+          },
       {
         surface: 'plugin',
         actionCaller,

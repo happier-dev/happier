@@ -57,6 +57,7 @@ function lease(externalAgentProtocol?: ProviderWireProtocol): PluginRuntimeRegis
     generation: 'fixture-generation',
     providerBinding: adapter,
     isCurrent: () => true,
+    retirementSignal: new AbortController().signal,
     createRuntime: vi.fn(async () => ({})),
   }]));
   const registry = {

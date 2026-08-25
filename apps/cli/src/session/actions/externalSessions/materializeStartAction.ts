@@ -219,7 +219,7 @@ export function createExternalSessionMaterializeStartActionExecutor(
           'A legacy materialization operation cannot be safely resumed.',
         );
       }
-      if (admission.kind === 'completion_receipt') {
+      if (admission.kind === 'terminal_receipt') {
         return failure(
           'invalid_state',
           'The settled materialization no longer has private recovery state.',

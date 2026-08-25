@@ -164,6 +164,7 @@ vi.mock('node:crypto', async () => {
 import {
     executeExternalSessionCandidateQuery,
     ExternalSessionCandidateIndexCursorResetError,
+    retireExternalSessionCandidateIndex,
 } from './candidateQuery';
 import { withJsonOwnerFileLock } from '@/utils/fs/jsonOwnerFileLock';
 import { writeBytesAtomic } from '@/utils/fs/writeJsonAtomic';
@@ -212,6 +213,12 @@ function resetIndexReadMetrics(): void {
 }
 
 async function findCandidateIndexPath(activeServerDir: string): Promise<string> {
+    const indexPaths = await findCandidateIndexPaths(activeServerDir);
+    expect(indexPaths).toHaveLength(1);
+    return indexPaths[0]!;
+}
+
+async function findCandidateIndexPaths(activeServerDir: string): Promise<string[]> {
     const indexRoot = join(activeServerDir, 'external-sessions', 'candidate-indexes', 'v1');
     const indexPaths: string[] = [];
     const walk = async (directory: string): Promise<void> => {
@@ -223,11 +230,55 @@ async function findCandidateIndexPath(activeServerDir: string): Promise<string> 
         }
     };
     await walk(indexRoot);
-    expect(indexPaths).toHaveLength(1);
-    return indexPaths[0]!;
+    return indexPaths.sort();
 }
 
 describe('External Sessions persisted candidate-index page locality', () => {
+    it('retires only the exact source index and preserves an active sibling source', async () => {
+        const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-candidate-exact-retirement-'));
+        roots.push(activeServerDir);
+        const agentIdentity = { pluginId: 'happier.codex', localId: 'codex' };
+        const retiredSource = { kind: 'codexHome', home: 'connectedService', connectedServiceProfileId: 'retired' };
+        const activeSource = { kind: 'codexHome', home: 'connectedService', connectedServiceProfileId: 'active' };
+        let retiredIndexPath: string | null = null;
+        for (const [source, remoteSessionId] of [
+            [retiredSource, 'retired-session'],
+            [activeSource, 'active-session'],
+        ] as const) {
+            for (let attempt = 0; attempt < 4; attempt += 1) {
+                const page = await executeExternalSessionCandidateQuery({
+                    activeServerDir,
+                    agentIdentity,
+                    source,
+                    limit: 1,
+                    listCandidates: async () => ({
+                        candidates: [{ remoteSessionId, updatedAtMs: 1 }],
+                        nextCursor: null,
+                        preparation: { kind: 'building_candidate_index', scanned: 1, total: 1 },
+                    }),
+                });
+                if (!page.preparation) break;
+                if (attempt === 3) throw new Error('candidate index did not complete');
+            }
+            if (source === retiredSource) {
+                [retiredIndexPath] = await findCandidateIndexPaths(activeServerDir);
+            }
+        }
+        const indexesBeforeRetirement = await findCandidateIndexPaths(activeServerDir);
+        expect(indexesBeforeRetirement).toHaveLength(2);
+        const activeIndexPath = indexesBeforeRetirement.find((path) => path !== retiredIndexPath);
+        expect(activeIndexPath).toBeDefined();
+
+        await retireExternalSessionCandidateIndex({
+            activeServerDir,
+            agentIdentity,
+            source: retiredSource,
+        });
+
+        const remainingIndexes = await findCandidateIndexPaths(activeServerDir);
+        expect(remainingIndexes).toEqual([activeIndexPath]);
+    });
+
     afterEach(async () => {
         indexReadMetrics.enabled = false;
         indexReadMetrics.readObserver = null;

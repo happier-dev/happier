@@ -318,7 +318,7 @@ describe('spawnHappyCLI fallback invocation', () => {
       const pinnedEntrypoint = inv.argv.find((arg) => arg.endsWith('index.mjs'));
 
       expect(pinnedEntrypoint).toMatch(
-        /[\\/]\.runner-snapshots[\\/][a-f0-9]{16}-[a-f0-9]{64}-[a-f0-9]{64}-package-dist-v4[\\/]package-dist[\\/]index\.mjs$/,
+        /[\\/]\.runner-snapshots[\\/][a-f0-9]{16}-[a-f0-9]{64}-[a-f0-9]{64}-package-dist-v5[\\/]package-dist[\\/]index\.mjs$/,
       );
       const snapshotRoot = dirname(dirname(pinnedEntrypoint!));
       expect(readdirSync(join(snapshotRoot, 'scripts')).sort()).toEqual(
@@ -523,7 +523,7 @@ describe('spawnHappyCLI fallback invocation', () => {
           '--no-warnings',
           '--no-deprecation',
           expect.stringMatching(
-            /[\\/]\.runner-snapshots[\\/][a-f0-9]{16}-[a-f0-9]{64}-[a-f0-9]{64}-package-dist-v4[\\/]package-dist[\\/]index\.mjs$/,
+            /[\\/]\.runner-snapshots[\\/][a-f0-9]{16}-[a-f0-9]{64}-[a-f0-9]{64}-package-dist-v5[\\/]package-dist[\\/]index\.mjs$/,
           ),
           'claude',
           '--started-by',
@@ -570,7 +570,7 @@ describe('spawnHappyCLI fallback invocation', () => {
       expect(startup.runtime).toBe('node');
       expect(startup.argv).toEqual(expect.arrayContaining([
         expect.stringMatching(
-          /[\\/]\.runner-snapshots[\\/][a-f0-9]{16}-[a-f0-9]{64}-[a-f0-9]{64}-package-dist-v4[\\/]package-dist[\\/]index\.mjs$/,
+          /[\\/]\.runner-snapshots[\\/][a-f0-9]{16}-[a-f0-9]{64}-[a-f0-9]{64}-package-dist-v5[\\/]package-dist[\\/]index\.mjs$/,
         ),
         'daemon',
         'start-sync',
@@ -609,7 +609,7 @@ describe('spawnHappyCLI fallback invocation', () => {
       expect(startup.runtime).toBe('node');
       expect(startup.argv).toEqual(expect.arrayContaining([
         expect.stringMatching(
-          /[\\/]\.runner-snapshots[\\/][a-f0-9]{16}-[a-f0-9]{64}-[a-f0-9]{64}-package-dist-v4[\\/]package-dist[\\/]index\.mjs$/,
+          /[\\/]\.runner-snapshots[\\/][a-f0-9]{16}-[a-f0-9]{64}-[a-f0-9]{64}-package-dist-v5[\\/]package-dist[\\/]index\.mjs$/,
         ),
         'daemon',
         'start-sync',
@@ -1041,13 +1041,42 @@ describe('spawnHappyCLI fallback invocation', () => {
       expect(inv.runtime).toBe('node');
       expect(inv.argv).toEqual(expect.arrayContaining([
         expect.stringMatching(
-          /[\\/]\.runner-snapshots[\\/][a-f0-9]{16}-[a-f0-9]{64}-[a-f0-9]{64}-package-dist-v4[\\/]package-dist[\\/]index\.mjs$/,
+          /[\\/]\.runner-snapshots[\\/][a-f0-9]{16}-[a-f0-9]{64}-[a-f0-9]{64}-package-dist-v5[\\/]package-dist[\\/]index\.mjs$/,
         ),
         'claude',
         '--started-by',
         'daemon',
       ]));
       expect(inv.argv).not.toContain('--import');
+    });
+  });
+
+  it('uses an admitted Node snapshot for a runtime-backed Bun daemon and passes that snapshot provenance to its child', async () => {
+    await withTempDir('happier-runtime-backed-bun-runner-', async (root) => {
+      const entrypoint = writeTinyDist(root);
+      writeTinyRuntimeAssets(root, { includeDevCommandWrapper: false });
+      const fingerprint = writeDistBuildManifest(entrypoint);
+      const runtimeStatePath = join(root, 'stack.runtime.json');
+      writeStackRuntimeFingerprint(runtimeStatePath, fingerprint);
+      patchFreshDistEnv(entrypoint, runtimeStatePath, fingerprint);
+      envScope.patch({
+        HAPPIER_CLI_SUBPROCESS_RUNTIME_BACKED: '1',
+        HAPPIER_CLI_SUBPROCESS_RUNTIME: 'bun',
+      });
+
+      const mod = (await import('@/utils/spawnHappyCLI')) as typeof import('@/utils/spawnHappyCLI');
+      const runtimeDecision = mod.resolveHappyCliSubprocessRuntimeDecision();
+
+      expect(runtimeDecision).not.toBeNull();
+      expect(runtimeDecision?.runtime).toBe('node');
+      const pinnedEntrypoint = runtimeDecision?.argvPrefix.find((arg) => arg.endsWith('index.mjs'));
+      expect(pinnedEntrypoint).toMatch(
+        /[\\/]\.runner-snapshots[\\/][a-f0-9]{16}-[a-f0-9]{64}-[a-f0-9]{64}-package-dist-v5[\\/]package-dist[\\/]index\.mjs$/,
+      );
+      expect(runtimeDecision?.env).toEqual({
+        HAPPIER_CLI_SUBPROCESS_DIST_ENTRYPOINT: pinnedEntrypoint,
+        HAPPIER_CLI_SUBPROCESS_DAEMON_DIST_CLOSURE_FINGERPRINT: fingerprint,
+      });
     });
   });
 
@@ -1168,7 +1197,7 @@ describe('spawnHappyCLI fallback invocation', () => {
 
         const pinnedEntrypoint = inv.argv.find((arg) => arg.endsWith('index.mjs'));
         expect(pinnedEntrypoint).toMatch(
-          /[\\/]\.runner-snapshots[\\/][a-f0-9]{16}-[a-f0-9]{64}-[a-f0-9]{64}-package-dist-v4[\\/]package-dist[\\/]index\.mjs$/,
+          /[\\/]\.runner-snapshots[\\/][a-f0-9]{16}-[a-f0-9]{64}-[a-f0-9]{64}-package-dist-v5[\\/]package-dist[\\/]index\.mjs$/,
         );
         expect(pinnedEntrypoint).not.toContain(`${join('dist', '.runner-snapshots')}`);
         expect(inv.argv).toEqual([
@@ -1209,7 +1238,7 @@ describe('spawnHappyCLI fallback invocation', () => {
       const pinnedEntrypoint = invocation.argv.find((arg) => arg.endsWith('index.mjs'));
       expect(pinnedEntrypoint).toBeDefined();
       const snapshotIdentity = basename(dirname(dirname(pinnedEntrypoint!)));
-      const liveIdentity = `1111111111111111-${'1'.repeat(64)}-${'2'.repeat(64)}-package-dist-v4`;
+      const liveIdentity = `1111111111111111-${'1'.repeat(64)}-${'2'.repeat(64)}-package-dist-v5`;
       const snapshotsDir = join(root, '.runner-snapshots');
       for (const [index, name] of [
         snapshotIdentity,
@@ -1331,4 +1360,102 @@ describe('spawnHappyCLI fallback invocation', () => {
       process.execArgv = originalExecArgv;
     }
   });
+});
+
+/**
+ * F-STACK-2b: every daemon artifact built on 2026-08-23 shipped five plugin manifests declaring
+ * seven resource files the payload did not contain. `isPinnedRunnerSnapshotReady` refused —
+ * correctly — but the operator saw only `HappyCliImmutableRuntimeClosureError`, identical to the
+ * ~8 other causes that return null here, with nothing naming a file. Root-causing it needed the
+ * whole decision replicated offline. The refusal must name what is missing.
+ */
+describe('immutable runner closure refusal diagnosability', () => {
+  it('names the plugin resources missing from the artifact when it refuses the admitted closure', async () => {
+    await withTempDir('happier-runner-closure-refusal-reason-', async (repoRoot) => {
+      const workspacePackageName = '@happier-dev/plugins-example';
+      const workspacePackageJson = `${JSON.stringify({
+        name: workspacePackageName,
+        private: true,
+        type: 'module',
+        exports: { '.': './dist/index.js' },
+      })}\n`;
+      const pluginManifest = `${JSON.stringify({
+        id: 'happier.example',
+        contributes: {
+          resources: [
+            { id: 'brand', path: 'assets/brand.png' },
+            { id: 'prompt', path: './resources/review-prompt.md' },
+          ],
+        },
+      })}\n`;
+
+      // The exact artifact shape: the manifest ships, the bytes it declares do not.
+      const writeBundledPluginTree = (packageRoot: string): void => {
+        mkdirSync(join(packageRoot, 'dist'), { recursive: true });
+        writeFileSync(join(packageRoot, 'package.json'), workspacePackageJson, 'utf8');
+        writeFileSync(join(packageRoot, 'dist', 'index.js'), 'export const generation = "admitted";\n', 'utf8');
+        mkdirSync(join(packageRoot, '.happier-plugin'), { recursive: true });
+        writeFileSync(join(packageRoot, '.happier-plugin', 'plugin.json'), pluginManifest, 'utf8');
+        mkdirSync(join(packageRoot, 'resources'), { recursive: true });
+        writeFileSync(join(packageRoot, 'resources', 'review-prompt.md'), '# Prompt\n', 'utf8');
+      };
+
+      mkdirSync(join(repoRoot, 'packages', 'plugins', 'example', 'dist'), { recursive: true });
+      writeFileSync(
+        join(repoRoot, 'packages', 'plugins', 'example', 'package.json'),
+        workspacePackageJson,
+        'utf8',
+      );
+      writeFileSync(
+        join(repoRoot, 'packages', 'plugins', 'example', 'dist', 'index.js'),
+        'export const generation = "source";\n',
+        'utf8',
+      );
+
+      const buildHostRoot = join(repoRoot, 'artifact-build-host');
+      mkdirSync(buildHostRoot, { recursive: true });
+      writeFileSync(join(buildHostRoot, 'package.json'), JSON.stringify({
+        name: '@happier-dev/cli',
+        dependencies: { [workspacePackageName]: 'workspace:*' },
+        bundledDependencies: [workspacePackageName],
+      }), 'utf8');
+      writeBundledPluginTree(join(buildHostRoot, 'node_modules', '@happier-dev', 'plugins-example'));
+      const workspaceRuntimeIdentity = readCliNodeWorkspaceRuntimeIdentity({
+        repoRoot,
+        hostPackageDir: buildHostRoot,
+      }).fingerprint;
+
+      const runtimeRoot = join(repoRoot, 'runtime-artifact');
+      writeBundledPluginTree(join(runtimeRoot, 'node_modules', '@happier-dev', 'plugins-example'));
+      const entrypoint = writeTinyDist(runtimeRoot);
+      writeTinyRuntimeAssets(runtimeRoot);
+      const fingerprint = writeDistBuildManifest(entrypoint, {
+        workspaceRuntimeIdentity,
+        workspaceRuntimePackages: [workspacePackageName],
+      });
+
+      const runtimeStatePath = join(repoRoot, 'stack.runtime.json');
+      writeStackRuntimeFingerprint(runtimeStatePath, fingerprint);
+      patchFreshDistEnv(entrypoint, runtimeStatePath, fingerprint);
+      envScope.patch({ HAPPIER_CLI_SUBPROCESS_RUNTIME_BACKED: '1' });
+
+      const mod = (await import('@/utils/spawnHappyCLI')) as typeof import('@/utils/spawnHappyCLI');
+      let thrown: unknown;
+      try {
+        mod.buildHappyCliSubprocessInvocation(
+          ['daemon', 'start-sync'],
+          { allowAdmittedDaemonStartupClosure: true },
+        );
+      } catch (error) {
+        thrown = error;
+      }
+
+      expect(thrown).toMatchObject({ name: 'HappyCliImmutableRuntimeClosureError' });
+      const message = String((thrown as { message?: unknown })?.message ?? '');
+      expect(message).toContain('assets/brand.png');
+      expect(message).toContain('@happier-dev/plugins-example');
+      // The resource the artifact *can* serve must not be reported as a cause.
+      expect(message).not.toContain('review-prompt.md');
+    });
+  }, 60_000);
 });

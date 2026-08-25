@@ -1,5 +1,6 @@
 import {
   EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1,
+  parseExternalActionDaemonDispatchResultV1,
   type ExternalActionDaemonDispatchRequestV1,
 } from '@happier-dev/protocol';
 import {
@@ -26,6 +27,14 @@ function registerHandlerForTest() {
     },
   };
   return { handlers, registrar };
+}
+
+function expectPreparedRelayResponse(raw: unknown, response: unknown): void {
+  const parsed = parseExternalActionDaemonDispatchResultV1(raw);
+  expect(parsed?.kind).toBe('response');
+  if (!parsed || parsed.kind !== 'response') throw new Error('expected a prepared relay response');
+  expect(parsed.prepared.response).toEqual(response);
+  expect(parsed.prepared.body).toBe(JSON.stringify(response));
 }
 
 describe('registerExternalActionRpcHandler', () => {
@@ -69,17 +78,14 @@ describe('registerExternalActionRpcHandler', () => {
         target: { kind: 'machine', machineId: 'machine-1' },
       },
     };
-    await expect(handler?.(request, {
+    expectPreparedRelayResponse(await handler?.(request, {
       authorization: ACTION_API_SERVER_ORIGIN,
       signal,
-    })).resolves.toEqual({
-      kind: 'response',
-      response: {
-        v: 1,
-        actionId: 'session.spawn_new',
-        requestId: 'request-1',
-        execution: { ok: true, result: { sessionId: 'session-1' } },
-      },
+    }), {
+      v: 1,
+      actionId: 'session.spawn_new',
+      requestId: 'request-1',
+      execution: { ok: true, result: { sessionId: 'session-1' } },
     });
     expect(resolveTarget).toHaveBeenCalledWith(expect.objectContaining({
       actionId: 'session.spawn_new',
@@ -130,16 +136,13 @@ describe('registerExternalActionRpcHandler', () => {
       },
     };
 
-    await expect(handlers.get(EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1)?.(request, {
+    expectPreparedRelayResponse(await handlers.get(EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1)?.(request, {
       authorization: ACTION_API_SERVER_ORIGIN,
       signal,
-    })).resolves.toEqual({
-      kind: 'response',
-      response: {
-        v: 1,
-        actionId: 'action.invoke',
-        execution: { ok: true, result: { invoked: true } },
-      },
+    }), {
+      v: 1,
+      actionId: 'action.invoke',
+      execution: { ok: true, result: { invoked: true } },
     });
 
     expect(resolveTarget).toHaveBeenCalledWith({

@@ -345,9 +345,24 @@ describe('resolveForkInheritedOverridesFromMetadata', () => {
         },
       },
       summary: {
-        text: 'Parent session title',
+        text: 'Parent session title (fork 1)',
         updatedAt: 464,
       },
+    });
+  });
+
+  it('increments the display-title suffix across successive forks', () => {
+    expect(resolveForkInheritedOverridesFromMetadata({
+      summary: { text: 'Parent session title (fork 3)', updatedAt: 464 },
+    }, codexTarget).metadata.summary).toEqual({
+      text: 'Parent session title (fork 4)',
+      updatedAt: 464,
+    });
+
+    expect(resolveForkInheritedOverridesFromMetadata({
+      name: 'Legacy fork title',
+    }, codexTarget).metadata.summary).toMatchObject({
+      text: 'Legacy fork title (fork 1)',
     });
   });
 
@@ -576,6 +591,7 @@ describe('resolveForkInheritedOverridesFromMetadata', () => {
 
   it('resolves session-agent spawn inheritance with spawn-only metadata fields', () => {
     const result = resolveSessionAgentSpawnInheritedOverridesFromMetadata({
+      summary: { text: 'Parent session title', updatedAt: 460 },
       permissionMode: 'safe-yolo',
       permissionModeUpdatedAt: 123,
       modelOverrideV1: { v: 1, updatedAt: 456, modelId: 'gpt-test' },
@@ -634,6 +650,10 @@ describe('resolveForkInheritedOverridesFromMetadata', () => {
         forceIncludeServerIds: ['local-search'],
         forceExcludeServerIds: ['prod-browser'],
       },
+    });
+    expect(result.metadata.summary).toEqual({
+      text: 'Parent session title',
+      updatedAt: 460,
     });
   });
 });

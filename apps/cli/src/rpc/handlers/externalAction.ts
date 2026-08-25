@@ -1,6 +1,8 @@
 import {
+  createExternalActionDaemonDispatchResponseV1,
   ExternalActionDaemonDispatchRequestV1Schema,
   EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1,
+  prepareExternalActionResponseEnvelopeV1,
   type ActionExecuteResult,
   type ExternalActionDaemonDispatchRequestV1,
   type ExternalActionDaemonDispatchResultV1,
@@ -48,15 +50,14 @@ function response(
   request: ExternalActionDaemonDispatchRequestV1,
   execution: ActionExecuteResult,
 ): ExternalActionDaemonRelayResponse {
-  return {
-    kind: 'response',
-    response: {
+  return createExternalActionDaemonDispatchResponseV1(
+    prepareExternalActionResponseEnvelopeV1({
       v: 1,
       actionId: request.actionId,
       ...(request.envelope.requestId === undefined ? {} : { requestId: request.envelope.requestId }),
       execution,
-    },
-  };
+    }),
+  );
 }
 
 function targetNotLocal(request: ExternalActionDaemonDispatchRequestV1): ExternalActionDaemonRelayResponse {
@@ -110,9 +111,6 @@ export function registerExternalActionRpcHandler(
       ...(signal ? { signal } : {}),
     });
     if (result.kind === 'invalid_request') return result;
-    return {
-      kind: 'response',
-      response: result.response,
-    };
+    return createExternalActionDaemonDispatchResponseV1(result.prepared);
   });
 }

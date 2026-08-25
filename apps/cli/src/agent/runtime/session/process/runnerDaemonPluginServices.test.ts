@@ -15,6 +15,9 @@ import {
     EXTERNAL_SESSION_FOLLOW_CLOSE_TRANSPORT_TIMEOUT_MS,
 } from '@/session/external/hostOperationOwner';
 import {
+    EXTERNAL_SESSION_FOLLOW_LISTENER_TIMEOUT_MS,
+} from '@/session/external/followListenerSettlement';
+import {
     prepareRunnerDaemonPluginServices,
 } from './runnerDaemonPluginServices';
 
@@ -446,6 +449,283 @@ describe('runner daemon PluginServices proxy', () => {
             reason: 'disposed',
             cursor: 'cursor-1',
         });
+    });
+
+    it('rejects an author follow listener that settles after its five-second deadline instead of wedging acquisition', async () => {
+        const unavailable = createUnavailablePluginServices();
+        const acknowledgements: Array<string | undefined> = [];
+        let closeCount = 0;
+        let nextCount = 0;
+        let resolveCloseRequested!: () => void;
+        const closeRequested = new Promise<void>((resolve) => {
+            resolveCloseRequested = resolve;
+        });
+        const services = await prepareRunnerDaemonPluginServices({
+            invocationId: 'invocation-external-listener-deadline',
+            signal: new AbortController().signal,
+            dispatch: async (operation): Promise<unknown> => {
+                if (operation.kind === 'plugin_services.prepare_v1') {
+                    return preparedSnapshot();
+                }
+                if (
+                    operation.kind
+                    === 'plugin_sessions.external.follow_transcript.open_v1'
+                ) {
+                    return { status: 'opening' };
+                }
+                if (
+                    operation.kind
+                    === 'plugin_services.subscription.next_v1'
+                ) {
+                    nextCount += 1;
+                    acknowledgements.push(
+                        Reflect.get(operation, 'acknowledgement') as
+                            | string
+                            | undefined,
+                    );
+                    if (nextCount === 1) {
+                        // A replay event before the acquisition result: the
+                        // listener is awaited while `followTranscript()` is
+                        // still unsettled.
+                        return {
+                            kind:
+                                'plugin_sessions.external.follow_transcript.event_v1',
+                            invocationId:
+                                'invocation-external-listener-deadline',
+                            subscriptionId: operation.subscriptionId,
+                            event:
+                                encodeRunnerDaemonPluginServiceWireValueV1({
+                                    kind: 'data',
+                                    items: [],
+                                    fromCursor: null,
+                                    nextCursor: 'cursor-1',
+                                }),
+                        };
+                    }
+                    if (nextCount === 2) return null;
+                    if (nextCount === 3) {
+                        return {
+                            kind:
+                                'plugin_sessions.external.follow_transcript.opened_v1',
+                            invocationId:
+                                'invocation-external-listener-deadline',
+                            subscriptionId: operation.subscriptionId,
+                            result: {
+                                status: 'following',
+                                startingCursor: 'cursor-1',
+                            },
+                        };
+                    }
+                    if (nextCount === 4) return null;
+                    await closeRequested;
+                    throw new PluginError({
+                        code: 'plugin_service_subscription_closed',
+                        message: 'Subscription closed',
+                    });
+                }
+                if (
+                    operation.kind
+                    === 'plugin_services.subscription.close_v1'
+                ) {
+                    closeCount += 1;
+                    resolveCloseRequested();
+                    return null;
+                }
+                throw new Error(`Unexpected ${operation.kind}`);
+            },
+            local: {
+                availability: unavailable.availability,
+                logger: unavailable.logger,
+                sessions: unavailable.sessions,
+                managedServices: unavailable.managedServices,
+                exec: unavailable.exec,
+                composerContent: unavailable.composerContent,
+                interactions: unavailable.interactions,
+                targetedContributions: unavailable.targetedContributions,
+            },
+        });
+        const listener = vi.fn(async () => await new Promise<void>((resolve) => {
+            setTimeout(
+                resolve,
+                EXTERNAL_SESSION_FOLLOW_LISTENER_TIMEOUT_MS + 1,
+            );
+        }));
+
+        vi.useFakeTimers();
+        try {
+            const followed = services.sessions.external.followTranscript({
+                agentId: 'fixture.agent',
+                sourceId: 'source-1',
+                remoteSessionId: 'remote-1',
+            }, {}, listener);
+            const observed = followed.then(
+                (value) => ({ value }),
+                (error: unknown) => ({ error }),
+            );
+            let settled = false;
+            void observed.finally(() => { settled = true; });
+
+            await vi.advanceTimersByTimeAsync(
+                EXTERNAL_SESSION_FOLLOW_LISTENER_TIMEOUT_MS - 1,
+            );
+            expect(settled).toBe(false);
+            expect(acknowledgements).toEqual([undefined]);
+
+            await vi.advanceTimersByTimeAsync(1);
+            await expect(followed).rejects.toMatchObject({
+                code: 'plugin_external_follow_listener_failed',
+            });
+            // The deadline is the delivery answer, so the pump acknowledges
+            // `rejected` instead of silently never acknowledging at all.
+            expect(acknowledgements[1]).toBe('rejected');
+            expect(closeCount).toBe(1);
+            expect(listener).toHaveBeenCalledOnce();
+
+            // A listener that settles after its author deadline cannot advance
+            // delivery or reopen the follow.
+            await vi.advanceTimersByTimeAsync(1);
+            expect(closeCount).toBe(1);
+            expect(listener).toHaveBeenCalledOnce();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('abandons a pending follow listener when the caller cancels and ignores its late rejection', async () => {
+        const unavailable = createUnavailablePluginServices();
+        const acknowledgements: Array<string | undefined> = [];
+        let closeCount = 0;
+        let nextCount = 0;
+        let resolveCloseRequested!: () => void;
+        const closeRequested = new Promise<void>((resolve) => {
+            resolveCloseRequested = resolve;
+        });
+        const services = await prepareRunnerDaemonPluginServices({
+            invocationId: 'invocation-external-listener-abort',
+            signal: new AbortController().signal,
+            dispatch: async (operation): Promise<unknown> => {
+                if (operation.kind === 'plugin_services.prepare_v1') {
+                    return preparedSnapshot();
+                }
+                if (
+                    operation.kind
+                    === 'plugin_sessions.external.follow_transcript.open_v1'
+                ) {
+                    return { status: 'opening' };
+                }
+                if (
+                    operation.kind
+                    === 'plugin_services.subscription.next_v1'
+                ) {
+                    nextCount += 1;
+                    acknowledgements.push(
+                        Reflect.get(operation, 'acknowledgement') as
+                            | string
+                            | undefined,
+                    );
+                    if (nextCount === 1) {
+                        return {
+                            kind:
+                                'plugin_sessions.external.follow_transcript.event_v1',
+                            invocationId: 'invocation-external-listener-abort',
+                            subscriptionId: operation.subscriptionId,
+                            event:
+                                encodeRunnerDaemonPluginServiceWireValueV1({
+                                    kind: 'data',
+                                    items: [],
+                                    fromCursor: null,
+                                    nextCursor: 'cursor-1',
+                                }),
+                        };
+                    }
+                    if (nextCount === 2) return null;
+                    if (nextCount === 3) {
+                        return {
+                            kind:
+                                'plugin_sessions.external.follow_transcript.opened_v1',
+                            invocationId: 'invocation-external-listener-abort',
+                            subscriptionId: operation.subscriptionId,
+                            result: {
+                                status: 'following',
+                                startingCursor: 'cursor-1',
+                            },
+                        };
+                    }
+                    if (nextCount === 4) return null;
+                    await closeRequested;
+                    throw new PluginError({
+                        code: 'plugin_service_subscription_closed',
+                        message: 'Subscription closed',
+                    });
+                }
+                if (
+                    operation.kind
+                    === 'plugin_services.subscription.close_v1'
+                ) {
+                    closeCount += 1;
+                    resolveCloseRequested();
+                    return null;
+                }
+                throw new Error(`Unexpected ${operation.kind}`);
+            },
+            local: {
+                availability: unavailable.availability,
+                logger: unavailable.logger,
+                sessions: unavailable.sessions,
+                managedServices: unavailable.managedServices,
+                exec: unavailable.exec,
+                composerContent: unavailable.composerContent,
+                interactions: unavailable.interactions,
+                targetedContributions: unavailable.targetedContributions,
+            },
+        });
+        const caller = new AbortController();
+        let rejectListener!: (error: unknown) => void;
+        const listener = vi.fn(async () => await new Promise<void>((_, reject) => {
+            rejectListener = reject;
+        }));
+
+        vi.useFakeTimers();
+        try {
+            const followed = services.sessions.external.followTranscript({
+                agentId: 'fixture.agent',
+                sourceId: 'source-1',
+                remoteSessionId: 'remote-1',
+            }, { signal: caller.signal }, listener);
+            const observed = followed.then(
+                (value) => ({ value }),
+                (error: unknown) => ({ error }),
+            );
+            let settled = false;
+            void observed.finally(() => { settled = true; });
+            await vi.advanceTimersByTimeAsync(0);
+            expect(listener).toHaveBeenCalledOnce();
+
+            caller.abort();
+            // Cancellation is what settles this follow. The clock deliberately
+            // never reaches the listener ceiling, so a version that only bounds
+            // the callback by its deadline leaves this unsettled.
+            await vi.advanceTimersByTimeAsync(
+                EXTERNAL_SESSION_FOLLOW_LISTENER_TIMEOUT_MS - 1,
+            );
+            expect(settled).toBe(true);
+            expect(await observed).toEqual({
+                value: {
+                    status: 'unavailable',
+                    code: 'plugin_operation_aborted',
+                },
+            });
+            expect(acknowledgements[1]).toBe('rejected');
+            expect(closeCount).toBe(1);
+
+            // An abandoned listener that rejects later must not surface as an
+            // unhandled rejection in the runner process.
+            rejectListener(new Error('late listener rejection'));
+            await vi.advanceTimersByTimeAsync(0);
+            expect(listener).toHaveBeenCalledOnce();
+        } finally {
+            vi.useRealTimers();
+        }
     });
 
     it('acknowledges unavailable External Sessions acquisition before closing once', async () => {
@@ -2224,6 +2504,86 @@ describe('runner daemon PluginServices proxy', () => {
         );
     });
 
+    it('forwards each service call\'s own cancellation signal through the runner dispatch', async () => {
+        const unavailable = createUnavailablePluginServices();
+        const forwarded: Array<Readonly<{
+            kind: RunnerDaemonPluginServiceOperationV1['kind'];
+            signal: AbortSignal | undefined;
+        }>> = [];
+        const dispatch = vi.fn(async (
+            operation: RunnerDaemonPluginServiceOperationV1,
+            options?: Readonly<{ signal?: AbortSignal }>,
+        ): Promise<unknown> => {
+            if (operation.kind === 'plugin_services.prepare_v1') {
+                return {
+                    ...preparedSnapshot(),
+                    availability: {
+                        ...preparedSnapshot().availability,
+                        secrets: { status: 'available' },
+                    },
+                    resourceDescriptors: {
+                        prompt: {
+                            id: 'prompt',
+                            kind: 'prompt',
+                            contentType: 'text/plain',
+                            digest: 'resource-1',
+                            size: 2,
+                        },
+                    },
+                };
+            }
+            forwarded.push({ kind: operation.kind, signal: options?.signal });
+            return undefined;
+        });
+        const services = await prepareRunnerDaemonPluginServices({
+            invocationId: 'invocation-per-call-cancellation',
+            signal: new AbortController().signal,
+            dispatch,
+            local: {
+                availability: unavailable.availability,
+                logger: unavailable.logger,
+                sessions: unavailable.sessions,
+                managedServices: unavailable.managedServices,
+                exec: unavailable.exec,
+                composerContent: unavailable.composerContent,
+                interactions: unavailable.interactions,
+                targetedContributions: unavailable.targetedContributions,
+            },
+        });
+        const path = { root: 'workspace' as const, relativePath: 'fixture.txt' };
+        const calls = [
+            ['plugin_secrets.get_v1', (signal: AbortSignal) => services.secrets.get('secret', { signal })],
+            ['plugin_secrets.set_v1', (signal: AbortSignal) => services.secrets.set('secret', 'value', { signal })],
+            ['plugin_secrets.delete_v1', (signal: AbortSignal) => services.secrets.delete('secret', { signal })],
+            ['plugin_events.emit_v1', (signal: AbortSignal) => services.events.plugin.emit('changed', { value: true }, { signal })],
+            ['plugin_fetch.request_v1', (signal: AbortSignal) => services.http.request({
+                url: 'https://example.test/resource',
+                redirect: 'manual',
+            }, { signal })],
+            ['plugin_fs.read_file_v1', (signal: AbortSignal) => services.fs.readFile(path, { signal })],
+            ['plugin_fs.write_file_v1', (signal: AbortSignal) => services.fs.writeFile(path, new Uint8Array([1]), { signal })],
+            ['plugin_fs.stat_v1', (signal: AbortSignal) => services.fs.stat(path, { signal })],
+            ['plugin_fs.list_v1', (signal: AbortSignal) => services.fs.list(path, { signal })],
+            ['plugin_fs.remove_v1', (signal: AbortSignal) => services.fs.remove(path, { signal })],
+            ['plugin_resources.read_v1', (signal: AbortSignal) => services.resources.read('prompt', { signal })],
+            ['plugin_notifications.send_v1', (signal: AbortSignal) => services.notifications.send({
+                clientRequestId: 'notification-1',
+                categoryId: 'updates',
+                title: 'Update',
+            }, { signal })],
+            ['plugin_notifications.list_channels_v1', (signal: AbortSignal) => services.notifications.listChannels({ signal })],
+            ['plugin_notifications.list_categories_v1', (signal: AbortSignal) => services.notifications.listCategories({ signal })],
+            ['plugin_notifications.preferences_v1', (signal: AbortSignal) => services.notifications.preferences('updates', { signal })],
+        ] as const;
+
+        for (const [index, [kind, invoke]] of calls.entries()) {
+            const controller = new AbortController();
+            await invoke(controller.signal);
+            expect(forwarded[index]).toEqual({ kind, signal: controller.signal });
+        }
+        expect(forwarded).toHaveLength(calls.length);
+    });
+
     it('rejects a legacy caller-selected account before Connected Accounts dispatch', async () => {
         const unavailable = createUnavailablePluginServices();
         const dispatch = vi.fn(async (
@@ -3170,6 +3530,101 @@ describe('runner daemon PluginServices proxy', () => {
         expect(opens.filter((entry) =>
             !entry.subscriptionId.endsWith(':delivered')
         ).map((entry) => entry.authority)).toEqual(['A', 'B']);
+    });
+
+    // Event deliveries stay in the daemon broker's custody until this pump reports its listener
+    // ran, so each later request carries the previous delivery's outcome. Other subscriptions keep
+    // their fire-and-forget transport semantics and must not start acknowledging.
+    it('acknowledges each Plugin Event delivery and reports a failed listener as rejected', async () => {
+        const unavailable = createUnavailablePluginServices();
+        const acknowledgements: (string | undefined)[] = [];
+        const resourceAcknowledgements: (string | undefined)[] = [];
+        const eventSubscriptionIds = new Set<string>();
+        let pendingSequence = 0;
+        let resolveObserved!: () => void;
+        const observed = new Promise<void>((resolve) => {
+            resolveObserved = resolve;
+        });
+        const services = await prepareRunnerDaemonPluginServices({
+            invocationId: 'invocation-event-settlement',
+            signal: new AbortController().signal,
+            dispatch: async (operation) => {
+                if (operation.kind === 'plugin_services.prepare_v1') {
+                    return preparedSnapshot();
+                }
+                if (operation.kind === 'plugin_events.subscribe.open_v1') {
+                    eventSubscriptionIds.add(operation.subscriptionId);
+                    return null;
+                }
+                if (operation.kind === 'plugin_resources.watch.open_v1') {
+                    return null;
+                }
+                if (
+                    operation.kind
+                    !== 'plugin_services.subscription.next_v1'
+                ) {
+                    throw new Error(`Unexpected ${operation.kind}`);
+                }
+                if (!eventSubscriptionIds.has(operation.subscriptionId)) {
+                    resourceAcknowledgements.push(operation.acknowledgement);
+                    return await new Promise(() => {});
+                }
+                acknowledgements.push(operation.acknowledgement);
+                // The host answers a rejection acknowledgement without an event.
+                if (operation.acknowledgement === 'rejected') return null;
+                pendingSequence += 1;
+                if (pendingSequence > 2) {
+                    resolveObserved();
+                    return await new Promise(() => {});
+                }
+                return {
+                    kind: 'plugin_events.subscribe.event_v1',
+                    invocationId: 'invocation-event-settlement',
+                    subscriptionId: operation.subscriptionId,
+                    event: {
+                        ref: {
+                            pluginId: 'fixture.plugin',
+                            localId: 'changed',
+                        },
+                        payload:
+                            encodeRunnerDaemonPluginServiceWireValueV1(
+                                pendingSequence,
+                            ),
+                        sequence: pendingSequence,
+                    },
+                };
+            },
+            local: {
+                availability: unavailable.availability,
+                logger: unavailable.logger,
+                sessions: unavailable.sessions,
+                managedServices: unavailable.managedServices,
+                exec: unavailable.exec,
+                composerContent: unavailable.composerContent,
+                interactions: unavailable.interactions,
+                targetedContributions: unavailable.targetedContributions,
+            },
+        });
+        const listener = vi.fn((event: { sequence: number }) => {
+            if (event.sequence === 1) throw new Error('listener failed');
+        });
+        const watch = services.events.plugin.subscribe({
+            pluginId: 'fixture.plugin',
+            localId: 'changed',
+        }, listener);
+        const resourceWatch = services.resources.watch('prompt', vi.fn());
+
+        await observed;
+        watch.dispose();
+        resourceWatch.dispose();
+
+        expect(acknowledgements).toEqual([
+            undefined,
+            'rejected',
+            undefined,
+            'settled',
+        ]);
+        expect(resourceAcknowledgements).toEqual([undefined]);
     });
 
     it('does not reconstruct a declared-event FIFO after successor handle loss', async () => {

@@ -12,6 +12,9 @@ const routeMocks = vi.hoisted(() => ({
   routeSessionUsageLimitRecoveryCheckNow: vi.fn(),
   routeSessionUsageLimitRecoverySwitchAccountNow: vi.fn(),
 }));
+const qualifiedGroupApiMocks = vi.hoisted(() => ({
+  read: vi.fn(),
+}));
 
 vi.mock('@/session/usageLimitRecoveryControls/sessionUsageLimitRecoveryControlRouter', () => ({
   routeSessionUsageLimitRecoveryWaitResumeEnable: routeMocks.routeSessionUsageLimitRecoveryWaitResumeEnable,
@@ -20,6 +23,9 @@ vi.mock('@/session/usageLimitRecoveryControls/sessionUsageLimitRecoveryControlRo
 }));
 vi.mock('@/session/usageLimitRecoveryControls/sessionUsageLimitRecoverySwitchAccountNow', () => ({
   routeSessionUsageLimitRecoverySwitchAccountNow: routeMocks.routeSessionUsageLimitRecoverySwitchAccountNow,
+}));
+vi.mock('@/api/client/qualifiedConnectedAccountApi', () => ({
+  readQualifiedConnectedAccountGroupV4: qualifiedGroupApiMocks.read,
 }));
 
 import { registerMachineSessionGoalRpcHandlers } from './rpcHandlers.sessionGoals';
@@ -66,6 +72,7 @@ describe('rpcHandlers.sessionGoals', () => {
     routeMocks.routeSessionUsageLimitRecoveryWaitResumeCancel.mockReset();
     routeMocks.routeSessionUsageLimitRecoveryCheckNow.mockReset();
     routeMocks.routeSessionUsageLimitRecoverySwitchAccountNow.mockReset();
+    qualifiedGroupApiMocks.read.mockReset();
     routeMocks.routeSessionUsageLimitRecoveryWaitResumeEnable.mockResolvedValue({ ok: true, status: 'waiting' });
     routeMocks.routeSessionUsageLimitRecoveryWaitResumeCancel.mockResolvedValue({ ok: true, status: 'cancelled' });
     routeMocks.routeSessionUsageLimitRecoveryCheckNow.mockResolvedValue({ ok: true, status: 'waiting' });
@@ -305,6 +312,36 @@ describe('rpcHandlers.sessionGoals', () => {
       fieldId: 'runtime.usageLimitRecovery',
       source: 'daemon',
     }));
+  });
+
+  it('reads a scalar recovery group policy from the qualified V4 owner', async () => {
+    qualifiedGroupApiMocks.read.mockResolvedValueOnce({
+      policy: { resumePromptMode: 'off' },
+    });
+    registerWithTransport();
+
+    await handlers.get(RPC_METHODS.DAEMON_SESSION_USAGE_LIMIT_WAIT_RESUME_ENABLE)?.({
+      sessionId: 'session-prefix',
+    });
+    const loadGroupPolicy = routeMocks.routeSessionUsageLimitRecoveryWaitResumeEnable
+      .mock.calls[0]?.[0]?.resumePromptTierSources?.loadGroupPolicy;
+
+    await expect(loadGroupPolicy?.({
+      kind: 'group',
+      serviceId: 'openai-codex',
+      groupId: 'codex-main',
+      profileId: null,
+    })).resolves.toEqual({ resumePromptMode: 'off' });
+    expect(qualifiedGroupApiMocks.read).toHaveBeenCalledWith({
+      token: 'token-1',
+      group: {
+        service: {
+          pluginId: 'happier.agent.codex',
+          localId: 'openai-codex',
+        },
+        groupId: 'codex-main',
+      },
+    });
   });
 
   it('routes plain inactive usage-limit control with token-only credentials and no crypto context', async () => {

@@ -11,9 +11,34 @@ export type ExternalSessionTakeoverPrecommitAdmissionRecoveryInput = Readonly<{
   sessionId: string;
   operationId: string;
   attemptId: string | undefined;
+  operationClaimId: string | undefined;
   message: string;
   nowMs: number;
 }>;
+
+/**
+ * The outcome of one pre-commit takeover admission recovery.
+ *
+ * The distinction is load-bearing: leaving an operation at `running`/`admitting`
+ * after its waiter is cancelled and its claim released strands it permanently,
+ * so only proof that the exact attempt left that state may be reported as an
+ * outcome. `unresolved` means this call could neither read the record nor
+ * commit the transition, and the operation may still be stranded.
+ */
+export type ExternalSessionTakeoverPrecommitAdmissionRecovery =
+  | Readonly<{
+      status: 'recovered';
+      record: ExternalSessionOperationRecordV1;
+    }>
+  | Readonly<{
+      status: 'already_settled';
+      record: ExternalSessionOperationRecordV1;
+    }>
+  | Readonly<{ status: 'unresolved' }>;
+
+const UNRESOLVED_RECOVERY = Object.freeze({
+  status: 'unresolved' as const,
+});
 
 /**
  * Marks a definitively rejected pre-commit takeover admission failed.
@@ -25,21 +50,26 @@ export type ExternalSessionTakeoverPrecommitAdmissionRecoveryInput = Readonly<{
  * with no live waiter and no child able to complete it — permanently stuck.
  *
  * This helper is the single owner of that transition for both takeover storage
- * modes: it rereads the exact `{ sessionId, operationId, attemptId }` record and
- * CASes whatever revision the admission owner left behind. It deliberately
+ * modes: it rereads the exact
+ * `{ sessionId, operationId, attemptId, operationClaimId }` record and CASes
+ * whatever revision the admission owner left behind. It deliberately
  * refuses anything that is not still a pre-commit admitting attempt — a
  * post-commit `spawning` row, a completed row, or another attempt — because
- * those outcomes have their own owners and must not be overwritten as failed.
+ * those outcomes have their own owners and must not be overwritten as failed;
+ * that observation is `already_settled` and carries the record it verified.
  */
 export async function recoverExternalSessionTakeoverPrecommitAdmission(
   input: ExternalSessionTakeoverPrecommitAdmissionRecoveryInput,
-): Promise<ExternalSessionOperationRecordV1 | null> {
-  if (!input.attemptId) return null;
+): Promise<ExternalSessionTakeoverPrecommitAdmissionRecovery> {
+  if (!input.attemptId || !input.operationClaimId) return UNRESOLVED_RECOVERY;
   const latest = await readExternalSessionOperationRecord(
     input.activeServerDir,
     input.operationId,
   ).catch(() => null);
-  if (!isPrecommitAdmissionAttempt(latest, input)) return null;
+  if (!latest) return UNRESOLVED_RECOVERY;
+  if (!isPrecommitAdmissionAttempt(latest, input)) {
+    return { status: 'already_settled', record: latest };
+  }
   const failed = await mutateExternalSessionOperationRecordAtRevision(
     input.activeServerDir,
     latest.operationId,
@@ -78,7 +108,9 @@ export async function recoverExternalSessionTakeoverPrecommitAdmission(
       };
     },
   ).catch(() => null);
-  return failed?.ok ? failed.record : null;
+  return failed?.ok
+    ? { status: 'recovered', record: failed.record }
+    : UNRESOLVED_RECOVERY;
 }
 
 function isPrecommitAdmissionAttempt(
@@ -91,6 +123,7 @@ function isPrecommitAdmissionAttempt(
     && record.request.sessionId === input.sessionId
     && record.operationId === input.operationId
     && record.bindings.targetRuntimeAttemptId === input.attemptId
+    && record.bindings.operationClaimId === input.operationClaimId
     && record.status === 'running'
     && record.phase === 'admitting';
 }

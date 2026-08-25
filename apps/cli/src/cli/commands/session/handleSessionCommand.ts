@@ -9,7 +9,7 @@ import {
   SESSION_TOP_LEVEL_HELP_LINES,
 } from './shared/sessionCommandUsage';
 
-function inferSessionKind(argv: readonly string[]): string {
+export function inferSessionKind(argv: readonly string[]): string {
   const sub = String(argv[0] ?? '').trim();
   if (!sub) return 'session_unknown';
   if (sub === 'list') return 'session_list';
@@ -52,10 +52,25 @@ function inferSessionKind(argv: readonly string[]): string {
   return `session_${sub}`;
 }
 
-function printSessionHelpLines(lines: readonly string[]): void {
-  for (const line of lines) {
-    console.log(line);
+/**
+ * Emits usage for one invocation.
+ *
+ * `--json` is a machine-output contract: stdout carries the versioned envelope
+ * and nothing else. Help is a RESULT of the invocation, so in JSON mode it
+ * travels inside that envelope rather than being printed beside it — otherwise
+ * the first thing a script probes with is the one shape its parser rejects.
+ */
+export async function emitSessionHelp(input: Readonly<{
+  help: readonly string[] | string;
+  json: boolean;
+  kind: string;
+}>): Promise<void> {
+  const help = typeof input.help === 'string' ? input.help : input.help.join('\n');
+  if (input.json) {
+    await printJsonEnvelope({ ok: true, kind: input.kind, data: { help } });
+    return;
   }
+  console.log(help);
 }
 
 function normalizeHelpSubcommand(value: string): string {
@@ -66,23 +81,18 @@ function isHelpToken(value: string): boolean {
   return value === 'help' || value === '--help' || value === '-h';
 }
 
-function printSessionSubcommandHelp(argv: readonly string[]): boolean {
+/** The usage this argv asks for, or `null` when no subcommand owns one. */
+function readSessionSubcommandHelp(argv: readonly string[]): readonly string[] | string | null {
   const subcommand = normalizeHelpSubcommand(String(argv[0] ?? '').trim());
-  if (!subcommand) return false;
+  if (!subcommand) return null;
 
   const nestedSubcommand = normalizeHelpSubcommand(String(argv[1] ?? '').trim());
   if (nestedSubcommand && !isHelpToken(nestedSubcommand)) {
     const nestedHelp = SESSION_NESTED_SUBCOMMAND_HELP_LINES[`${subcommand} ${nestedSubcommand}`];
-    if (nestedHelp) {
-      console.log(nestedHelp);
-      return true;
-    }
+    if (nestedHelp) return nestedHelp;
   }
 
-  const lines = SESSION_SUBCOMMAND_HELP_LINES[subcommand];
-  if (!lines) return false;
-  printSessionHelpLines(lines);
-  return true;
+  return SESSION_SUBCOMMAND_HELP_LINES[subcommand] ?? null;
 }
 
 export async function handleSessionCommand(
@@ -100,12 +110,16 @@ export async function handleSessionCommand(
 
   try {
     if (!subcommand || subcommand === 'help' || subcommand === '--help' || subcommand === '-h') {
-      printSessionHelpLines(SESSION_TOP_LEVEL_HELP_LINES);
+      await emitSessionHelp({ help: SESSION_TOP_LEVEL_HELP_LINES, json, kind: 'session_help' });
       return;
     }
 
-    if (hasHelpFlag && printSessionSubcommandHelp(argv)) {
-      return;
+    if (hasHelpFlag) {
+      const subcommandHelp = readSessionSubcommandHelp(argv);
+      if (subcommandHelp !== null) {
+        await emitSessionHelp({ help: subcommandHelp, json, kind });
+        return;
+      }
     }
 
     const readCredentialsFn = deps?.readCredentialsFn ?? (async () => await readStoredCredentials());
@@ -113,7 +127,7 @@ export async function handleSessionCommand(
     switch (subcommand) {
       case 'list': {
         const { cmdSessionList } = await import('./list');
-        await cmdSessionList(argv, { readCredentialsFn });
+        await cmdSessionList(argv, { readCredentialsFn, ...(deps?.signal ? { signal: deps.signal } : {}) });
         return;
       }
       case 'status': {

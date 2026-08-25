@@ -40,6 +40,8 @@ export const AGENT_RUNTIME_DAEMON_SERVICES_PATH =
 
 const OpaqueIdSchema = z.string().trim().min(1).max(512);
 const ProjectionTokenSchema = z.string().regex(/^[a-f0-9]{64}$/u);
+const CanonicalOriginSchema = z.string().trim().min(1).max(2_048);
+const DeclaredSecretValueSchema = z.string().max(65_536);
 const EnvironmentKeySchema = z.string().trim().min(1).max(256);
 const EnvironmentKeysSchema = z.array(EnvironmentKeySchema)
   .max(256)
@@ -169,6 +171,22 @@ export const AgentRuntimeDaemonServiceRequestV1Schema = z.object({
       requestId: OpaqueIdSchema,
       projectionToken: ProjectionTokenSchema,
     }).strict(),
+    /**
+     * Host-private, operation-scoped read of one declared managed-service
+     * secret. The runner never holds device-local secret key material: the
+     * current daemon owns the retained-generation declaration, the canonical
+     * custody router, and the revision this operation reports. `revalidate`
+     * rechecks the same declaration against `expectedRevision` immediately
+     * before the runner dispatches a credential-bearing request.
+     */
+    z.object({
+      kind: z.literal('managed_server.secret.read'),
+      requestId: OpaqueIdSchema,
+      phase: z.enum(['read', 'revalidate']).default('read'),
+      secretId: OpaqueIdSchema,
+      canonicalOrigin: CanonicalOriginSchema,
+      expectedRevision: OpaqueIdSchema.optional(),
+    }).strict(),
   ]),
 }).strict();
 
@@ -244,6 +262,19 @@ export const AgentRuntimeDaemonServiceResponseV1Schema =
         z.object({
           kind: z.literal('managed_server.endpoint.read'),
           status: z.literal('unavailable'),
+          requestId: OpaqueIdSchema,
+        }).strict(),
+        z.object({
+          kind: z.literal('managed_server.secret'),
+          status: z.literal('resolved'),
+          requestId: OpaqueIdSchema,
+          /** `null` is the configured-but-missing/empty credential state. */
+          value: DeclaredSecretValueSchema.nullable(),
+          revision: OpaqueIdSchema,
+        }).strict(),
+        z.object({
+          kind: z.literal('managed_server.secret'),
+          status: z.enum(['current', 'stale', 'unavailable']),
           requestId: OpaqueIdSchema,
         }).strict(),
         RunnerAgentDaemonFacetResultV1Schema,

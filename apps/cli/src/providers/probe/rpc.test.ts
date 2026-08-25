@@ -46,6 +46,42 @@ describe('provider probe RPC boundary', () => {
     expect(refresh).toHaveBeenCalledTimes(1);
   });
 
+  it('opens one wall budget before resolution and spends it through refresh', async () => {
+    let currentMs = 1_000;
+    const seen: Array<{ resolveDeadline: number; refreshDeadline: number | undefined }> = [];
+    const handler = createProviderProbeRpcHandler({
+      resolveSaved: async (identity, lifetime) => {
+        // Resolution — registry and DNS — is inside the budget, not before it.
+        currentMs += 5_000;
+        seen.push({ resolveDeadline: lifetime.wallDeadlineAtMs, refreshDeadline: undefined });
+        return {
+          connectionId: identity.connectionId,
+          machineId: identity.machineId,
+          endpoints: [],
+          probes: [],
+          observationAuthorizationFingerprints: [],
+          authorizationGrant,
+        };
+      },
+      refresh: async (_request, lifetime) => {
+        seen.push({ resolveDeadline: 0, refreshDeadline: lifetime?.wallDeadlineAtMs });
+        return { status: 'not_supported' as const };
+      },
+      schedule: async (_key, _trigger, operation) => operation(),
+    });
+
+    await expect(handler(
+      { kind: 'saved', connectionId: 'connection-a', machineId: 'machine-a', trigger: 'manual_refresh' },
+      {},
+      () => currentMs,
+    )).resolves.toEqual({ status: 'not_supported' });
+
+    // 30_000 is the declared Provider wall budget; the deadline is anchored at
+    // the operation's start, so the 5s spent resolving is not refunded.
+    expect(seen[0]?.resolveDeadline).toBe(31_000);
+    expect(seen[1]?.refreshDeadline).toBe(31_000);
+  });
+
   it('admits exactly the reachable demand and explicit refresh triggers', async () => {
     const triggers: string[] = [];
     const handler = createProviderProbeRpcHandler({

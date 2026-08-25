@@ -452,6 +452,98 @@ describe('happier session history (action executor)', () => {
     }
   });
 
+  it('bounds each human compact row without truncating the JSON transcript', async () => {
+    const runtimeContext = Array.from(
+      { length: 80 },
+      (_, index) => `RUNTIME_CONTEXT_LINE_${index + 1}`,
+    ).join('\n');
+    const singleLineContext = `${'SINGLE_LINE_CONTEXT_'.repeat(200)}RUNTIME_CONTEXT_TAIL`;
+    const result = {
+      ok: true,
+      sessionId: 'sess-1',
+      items: [
+        {
+          id: 'runtime-context',
+          seq: 1,
+          createdAt: 123,
+          role: 'assistant',
+          kind: 'assistant_message',
+          raw: { role: 'agent', content: { type: 'text', text: runtimeContext } },
+        },
+        {
+          id: 'single-line-context',
+          seq: 2,
+          createdAt: 124,
+          role: 'assistant',
+          kind: 'assistant_message',
+          raw: { role: 'agent', content: { type: 'text', text: singleLineContext } },
+        },
+        {
+          id: 'user-turn',
+          seq: 3,
+          createdAt: 125,
+          role: 'user',
+          kind: 'user_message',
+          raw: { role: 'user', content: { type: 'text', text: 'actual user turn' } },
+        },
+        {
+          id: 'assistant-turn',
+          seq: 4,
+          createdAt: 126,
+          role: 'assistant',
+          kind: 'assistant_message',
+          raw: { role: 'agent', content: { type: 'text', text: 'actual assistant turn' } },
+        },
+      ],
+      nextCursor: null,
+      hasMore: false,
+      diagnostics: { rawRowsScanned: 4, pagesFetched: 1, scanLimitReached: false, payloadTruncations: 0 },
+    };
+    execute.mockResolvedValue({ ok: true, result });
+
+    const textOutput = captureConsoleText();
+    try {
+      await cmdSessionHistory(['history', 'sess-1'], {
+        readCredentialsFn: async () => ({
+          token: 'token_test',
+          encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+        }),
+      });
+
+      expect(textOutput.text()).toContain('… [truncated; use --json for full text]');
+      expect(textOutput.text()).not.toContain('RUNTIME_CONTEXT_LINE_25');
+      expect(textOutput.text()).not.toContain('RUNTIME_CONTEXT_TAIL');
+      expect(textOutput.text()).toContain('user: actual user turn');
+      expect(textOutput.text()).toContain('agent: actual assistant turn');
+      expect(textOutput.text().split('\n')).toHaveLength(30);
+    } finally {
+      textOutput.restore();
+    }
+
+    const jsonOutput = captureConsoleJsonOutput();
+    try {
+      await cmdSessionHistory(['history', 'sess-1', '--json'], {
+        readCredentialsFn: async () => ({
+          token: 'token_test',
+          encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+        }),
+      });
+
+      expect(jsonOutput.json()).toMatchObject({
+        ok: true,
+        kind: 'session_history',
+        data: expect.objectContaining({
+          messages: expect.arrayContaining([
+            expect.objectContaining({ text: runtimeContext }),
+            expect.objectContaining({ text: singleLineContext }),
+          ]),
+        }),
+      });
+    } finally {
+      jsonOutput.restore();
+    }
+  });
+
   it('keeps provider payloads visible in human --raw output', async () => {
     execute.mockResolvedValueOnce({
       ok: true,

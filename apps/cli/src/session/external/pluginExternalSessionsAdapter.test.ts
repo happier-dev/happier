@@ -94,6 +94,7 @@ describe('createPluginExternalSessionsAdapter', () => {
       .toEqualTypeOf<{
         agentId: ExternalSessionAgentId;
         remoteSessionId: ExternalSessionRef['remoteSessionId'];
+        boundSource?: ExternalSessionsSource;
         admissionDeadlineAtMs?: number;
         signal?: AbortSignal;
       }>();
@@ -176,7 +177,7 @@ describe('createPluginExternalSessionsAdapter', () => {
     }));
   });
 
-  it('derives transcript role from the canonical raw envelope and rejects contradictory compatibility roles', () => {
+  it('projects the canonically admitted raw envelope and rejects contradictory compatibility roles', () => {
     const raw = { role: 'user' as const, content: { type: 'text' as const, text: 'hello' } };
     const absentCompatibilityRole = mapPluginExternalTranscriptItem({
       id: 'antigravity-user-1',
@@ -232,6 +233,117 @@ describe('createPluginExternalSessionsAdapter', () => {
         raw: { role: 'agent', content },
       })).toThrow('plugin_external_transcript_invalid');
     }
+  });
+
+  it('applies the one bounded transcript identity owner to localId as well as id', () => {
+    // Two parse sites for one DTO are only safe while they share one identity
+    // policy: an over-long `localId` must refuse here exactly as it refuses at
+    // `agentExternalSessionsInvocation`. Unknown keys are deliberately NOT the
+    // same concept — this projector strips host-private carrier fields.
+    const raw = { role: 'user' as const, content: { type: 'text' as const, text: 'hello' } };
+    expect(() => mapPluginExternalTranscriptItem({
+      id: 'over-long-local-id',
+      createdAtMs: 1,
+      localId: 'x'.repeat(2_001),
+      raw,
+    })).toThrow('plugin_external_transcript_invalid');
+    expect(mapPluginExternalTranscriptItem({
+      id: 'exact-local-id',
+      createdAtMs: 1,
+      localId: 'x'.repeat(2_000),
+      raw,
+    })).toMatchObject({ id: 'exact-local-id', localId: 'x'.repeat(2_000), kind: 'user' });
+  });
+
+  it('omits a transcript timestamp the retained-runner DTO would reject instead of forwarding it', () => {
+    // A negative or fractional millisecond value is admitted in-process today and
+    // then rejects the whole retained-runner result. One canonical numeric owner
+    // makes both placements agree.
+    const raw = { role: 'user', content: { type: 'text', text: 'hi' } };
+    expect(mapPluginExternalTranscriptItem({ id: 'item-1', createdAtMs: 0, raw }).timestampMs).toBe(0);
+    expect(mapPluginExternalTranscriptItem({ id: 'item-1', createdAtMs: 1_700_000_000_000, raw }).timestampMs)
+      .toBe(1_700_000_000_000);
+    for (const createdAtMs of [-5, 1.5, Number.MAX_SAFE_INTEGER + 2]) {
+      expect(mapPluginExternalTranscriptItem({ id: 'item-1', createdAtMs, raw }).timestampMs).toBeUndefined();
+    }
+  });
+
+  it('admits the exact transcript item id bound and rejects first-over or non-trim-equal ids', () => {
+    // One identity contract for every execution placement: 2,000 code units,
+    // punctuation preserved, noncanonical whitespace rejected not normalized.
+    const raw = { role: 'user', content: { type: 'text', text: 'hi' } };
+    const exact = 'x'.repeat(2_000);
+    expect(mapPluginExternalTranscriptItem({ id: exact, createdAtMs: 1, raw }).id).toBe(exact);
+    const punctuated = "external::/%?=+#[]@!$&'()*+,;\u{1F642}";
+    expect(mapPluginExternalTranscriptItem({ id: punctuated, createdAtMs: 1, raw }).id).toBe(punctuated);
+    for (const id of ['x'.repeat(2_001), ' padded ', '\tleading', '']) {
+      expect(() => mapPluginExternalTranscriptItem({ id, createdAtMs: 1, raw }))
+        .toThrow('plugin_external_transcript_invalid');
+    }
+  });
+
+  it('admits Protocol-valid transcript nesting and still refuses non-JSON item data', () => {
+    let payload: unknown = 'leaf';
+    for (let index = 0; index < 40; index += 1) payload = { nested: payload };
+    const mapped = mapPluginExternalTranscriptItem({
+      id: 'deep-agent-1',
+      createdAtMs: 7,
+      raw: {
+        role: 'agent',
+        content: { type: 'acp', agentId: 'codex', data: { type: 'tool-result', payload } },
+      },
+    });
+    expect(mapped.kind).toBe('event');
+    let readback: unknown = mapped.data;
+    for (const key of ['content', 'data', 'payload']) {
+      readback = (readback as Readonly<Record<string, unknown>>)[key];
+    }
+    for (let index = 0; index < 40; index += 1) {
+      readback = (readback as Readonly<Record<string, unknown>>).nested;
+    }
+    expect(readback).toBe('leaf');
+
+    const cyclic: Record<string, unknown> = {
+      id: 'cyclic-item',
+      createdAtMs: 8,
+      raw: { role: 'user', content: { type: 'text', text: 'hello' } },
+    };
+    cyclic.self = cyclic;
+    expect(() => mapPluginExternalTranscriptItem(cyclic))
+      .toThrow('plugin_external_transcript_invalid');
+  });
+
+  it('sizes a deeply nested transcript page through the iterative byte owner instead of rejecting it', async () => {
+    // The canonical strict-JSON contract admits arbitrary nesting under its byte
+    // ceiling; response sizing must not reintroduce a recursion-depth bound.
+    let payload: unknown = 'leaf';
+    for (let index = 0; index < 7_000; index += 1) payload = { nested: payload };
+    const adapter = createPluginExternalSessionsAdapter({
+      isCurrent: () => true,
+      sources: [{ agentId: 'codex', sourceId: 'source-1', source: { kind: 'codexHome', home: 'user' } }],
+      resolveProviderOps: async () => ({
+        validateSource: async ({ source }: Readonly<{ source: ExternalSessionsSource }>) => ({ ok: true as const, source }),
+        listCandidates: async () => ({ candidates: [], nextCursor: null }),
+        pageTranscript: async () => ({
+          items: [{
+            id: 'deep-1',
+            createdAtMs: 2,
+            raw: {
+              role: 'agent',
+              content: { type: 'acp', agentId: 'codex', data: { type: 'tool-result', payload } },
+            },
+          }],
+          nextCursor: null,
+          tailCursor: null,
+          hasMore: false,
+          truncated: false,
+        }),
+      }),
+    });
+
+    await expect(adapter.authorService.readTranscript(ref)).resolves.toMatchObject({
+      items: [{ id: 'deep-1', kind: 'event' }],
+    });
   });
 
   it('delegates list, attach, and transcript through explicit canonical owners', async () => {
@@ -1424,8 +1536,10 @@ describe('createPluginExternalSessionsAdapter', () => {
     });
   });
 
-  it('withholds every selected source while any candidate index is still preparing', async () => {
-    let indexedSourceReady = false;
+  it('keeps candidate-index preparation cursor-bounded without misordering buffered source heads', async () => {
+    const indexedCursors: Array<string | undefined> = [];
+    const nativeCursors: Array<string | undefined> = [];
+    let indexedAttempts = 0;
     const directListCandidates = vi.fn(async () => ({
       candidates: [{ remoteSessionId: 'bypass', updatedAtMs: 99 }],
       nextCursor: null,
@@ -1441,56 +1555,129 @@ describe('createPluginExternalSessionsAdapter', () => {
         listCandidates: directListCandidates,
         pageTranscript: async () => ({ items: [], nextCursor: null, tailCursor: null, hasMore: false, truncated: false }),
       }),
-      queryCandidates: async ({ entry }) => {
-        if (entry.sourceId === 'indexed' && !indexedSourceReady) {
-          indexedSourceReady = true;
+      queryCandidates: async ({ cursor, entry }) => {
+        if (entry.sourceId === 'indexed') {
+          indexedAttempts += 1;
+          indexedCursors.push(cursor);
+          if (indexedAttempts === 1) {
+            return {
+              candidates: [],
+              nextCursor: 'indexed-preparing-next',
+              preparation: { kind: 'building_candidate_index', scanned: 50 },
+            };
+          }
+          if (cursor !== 'indexed-preparing-next') {
+            throw new Error('Expected the preparation continuation to be retained');
+          }
           return {
-            candidates: [],
+            candidates: [{ remoteSessionId: 'indexed-newer', updatedAtMs: 2 }],
             nextCursor: null,
-            preparation: { kind: 'building_candidate_index', scanned: 50 },
           };
         }
+        nativeCursors.push(cursor);
         return {
-          candidates: [{
-            remoteSessionId: entry.sourceId,
-            updatedAtMs: entry.sourceId === 'indexed' ? 2 : 1,
-          }],
+          candidates: [{ remoteSessionId: 'native-older', updatedAtMs: 1 }],
           nextCursor: null,
         };
       },
     });
 
-    await expect(adapter.authorService.list()).resolves.toEqual({ items: [] });
-    await expect(adapter.authorService.list()).resolves.toMatchObject({
-      items: [
-        { ref: { remoteSessionId: 'indexed' } },
-        { ref: { remoteSessionId: 'native' } },
-      ],
-    });
+    const first = await adapter.authorService.list({ limit: 1 });
+    expect(first.items).toEqual([]);
+    expect(indexedCursors).toEqual([undefined]);
+    expect(nativeCursors).toEqual([undefined]);
+
+    const second = await adapter.authorService.list({ cursor: requireListCursor(first), limit: 1 });
+    expect(second.items.map((item) => item.ref.remoteSessionId)).toEqual(['indexed-newer']);
+    expect(indexedCursors).toEqual([undefined, 'indexed-preparing-next']);
+    expect(nativeCursors).toEqual([undefined]);
+
+    const third = await adapter.authorService.list({ cursor: requireListCursor(second), limit: 1 });
+    expect(third.items.map((item) => item.ref.remoteSessionId)).toEqual(['native-older']);
+    expect(third.nextCursor).toBeUndefined();
     expect(directListCandidates).not.toHaveBeenCalled();
   });
 
-  it('reserves one initial provider read per source before refilling an empty source page', async () => {
+  it('publishes ready sources and one source-local diagnostic when an index cannot finish preparing', async () => {
+    vi.useFakeTimers();
+    let preparationRequests = 0;
+    const adapter = createPluginExternalSessionsAdapter({
+      isCurrent: () => true,
+      sources: [
+        { agentId: 'codex', sourceId: 'indexed', source: { kind: 'codexHome', home: 'user' } },
+        { agentId: 'codex', sourceId: 'native', source: { kind: 'codexHome', home: 'connectedService' } },
+      ],
+      resolveProviderOps: async () => ({
+        validateSource: async ({ source }: Readonly<{ source: ExternalSessionsSource }>) => ({ ok: true as const, source }),
+        listCandidates: async () => ({ candidates: [], nextCursor: null }),
+        pageTranscript: async () => ({ items: [], nextCursor: null, tailCursor: null, hasMore: false, truncated: false }),
+      }),
+      queryCandidates: async ({ entry, signal }) => {
+        if (entry.sourceId !== 'indexed') {
+          return { candidates: [{ remoteSessionId: 'native', updatedAtMs: 1 }], nextCursor: null };
+        }
+        preparationRequests += 1;
+        await new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(resolve, 500);
+          signal?.addEventListener('abort', () => {
+            clearTimeout(timer);
+            reject(new DOMException('source acquisition aborted', 'AbortError'));
+          }, { once: true });
+        });
+        return {
+          candidates: [],
+          nextCursor: null,
+          preparation: { kind: 'building_candidate_index', scanned: preparationRequests * 50 },
+        };
+      },
+    });
+
+    try {
+      const pending = adapter.authorService.list();
+      let settled = false;
+      void pending.then(() => { settled = true; }, () => { settled = true; });
+      await vi.advanceTimersByTimeAsync(2_999);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(pending).resolves.toEqual({
+        items: [expect.objectContaining({ ref: expect.objectContaining({ remoteSessionId: 'native' }) })],
+        diagnostics: [expect.objectContaining({
+          code: 'plugin_external_source_timeout',
+          details: { agentId: 'codex', sourceId: 'indexed' },
+        })],
+      });
+      expect(preparationRequests).toBeGreaterThan(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps empty source continuations live across public cursors without misordering ready heads', async () => {
+    const emptyContinuationPages = 10;
     const calls: string[] = [];
     const adapter = createPluginExternalSessionsAdapter({
       isCurrent: () => true,
       sources: [
-        { agentId: 'codex', sourceId: 'source-1', source: { kind: 'codexHome', home: 'user' } },
-        { agentId: 'codex', sourceId: 'source-2', source: { kind: 'codexHome', home: 'connectedService' } },
+        { agentId: 'codex', sourceId: 'deferred', source: { kind: 'codexHome', home: 'user' } },
+        { agentId: 'codex', sourceId: 'ready', source: { kind: 'codexHome', home: 'connectedService' } },
       ],
       resolveProviderOps: async () => ({
         validateSource: async ({ source }: Readonly<{ source: ExternalSessionsSource }>) => ({ ok: true as const, source }),
         listCandidates: async ({ cursor, source }) => {
-          const sourceId = source.home === 'user' ? 'source-1' : 'source-2';
+          const sourceId = source.home === 'user' ? 'deferred' : 'ready';
           calls.push(`${sourceId}:${cursor ?? 'first'}`);
-          if (sourceId === 'source-1' && !cursor) {
-            return { candidates: [], nextCursor: 'source-1-next' };
+          if (sourceId === 'ready') {
+            return {
+              candidates: [{ remoteSessionId: 'ready-older', updatedAtMs: 1 }],
+              nextCursor: null,
+            };
+          }
+          const emptyPage = cursor === undefined ? 0 : Number(cursor.slice('empty-'.length));
+          if (emptyPage < emptyContinuationPages) {
+            return { candidates: [], nextCursor: `empty-${String(emptyPage + 1)}` };
           }
           return {
-            candidates: [{
-              remoteSessionId: `${sourceId}-candidate`,
-              updatedAtMs: sourceId === 'source-1' ? 2 : 1,
-            }],
+            candidates: [{ remoteSessionId: 'deferred-newer', updatedAtMs: 2 }],
             nextCursor: null,
           };
         },
@@ -1498,11 +1685,21 @@ describe('createPluginExternalSessionsAdapter', () => {
       }),
     });
 
-    const page = await adapter.authorService.list({ limit: 1 });
+    let page = await adapter.authorService.list({ limit: 1 });
+    for (let pageIndex = 0; pageIndex < emptyContinuationPages; pageIndex += 1) {
+      expect(page.items).toEqual([]);
+      expect(page.nextCursor).toMatch(/^plugin_external_sessions_v1_/);
+      expect(calls.filter((call) => call.startsWith('deferred:'))).toHaveLength(pageIndex + 1);
+      expect(calls.filter((call) => call.startsWith('ready:'))).toHaveLength(1);
+      page = await adapter.authorService.list({ cursor: requireListCursor(page), limit: 1 });
+    }
 
-    expect(calls.slice(0, 2)).toEqual(['source-1:first', 'source-2:first']);
-    expect(calls).toEqual(['source-1:first', 'source-2:first', 'source-1:source-1-next']);
-    expect(page.items[0]?.ref.remoteSessionId).toBe('source-1-candidate');
+    expect(page.items.map((item) => item.ref.remoteSessionId)).toEqual(['deferred-newer']);
+    expect(calls.filter((call) => call.startsWith('deferred:'))).toHaveLength(emptyContinuationPages + 1);
+    const finalPage = await adapter.authorService.list({ cursor: requireListCursor(page), limit: 1 });
+    expect(finalPage.items.map((item) => item.ref.remoteSessionId)).toEqual(['ready-older']);
+    expect(finalPage.nextCursor).toBeUndefined();
+    expect(calls.filter((call) => call.startsWith('ready:'))).toHaveLength(1);
   });
 
   it('admits eight empty continuation pages and rejects the ninth', async () => {
@@ -2951,7 +3148,7 @@ describe('createPluginExternalSessionsAdapter', () => {
     });
   });
 
-  it('strictly projects read-after diagnostics and transcript items without host-private carrier fields', async () => {
+  it('keeps trusted semantic tool bodies while dropping host-private item carriers', async () => {
     const adapter = createPluginExternalSessionsAdapter({
       isCurrent: () => true,
       sources: [{ agentId: 'codex', sourceId: 'source-1', source: { kind: 'codexHome', home: 'user' } }],
@@ -2972,7 +3169,25 @@ describe('createPluginExternalSessionsAdapter', () => {
             createdAtMs: 1,
             raw: {
               role: 'agent',
-              content: { type: 'acp', agentId: 'codex', data: { type: 'message', message: 'hello' } },
+              content: {
+                type: 'acp',
+                agentId: 'codex',
+                data: {
+                  type: 'tool-result',
+                  toolCallId: 'tool-call-1',
+                  arguments: {
+                    path: '/workspace/src/index.ts',
+                    query: 'current global external sessions',
+                    source: 'semantic-tool-input',
+                    machineId: 'semantic-tool-input-machine',
+                  },
+                  result: {
+                    path: '/workspace/src/index.ts',
+                    text: 'tool output',
+                    generation: 'semantic-tool-output-generation',
+                  },
+                },
+              },
             },
             path: '/private/transcript.jsonl',
             linkMetadata: { private: true },
@@ -3013,8 +3228,25 @@ describe('createPluginExternalSessionsAdapter', () => {
       items: [{
         id: 'message-1',
         timestampMs: 1,
-        kind: 'agent',
-        data: { role: 'agent', text: 'hello' },
+        kind: 'event',
+        data: {
+          role: 'event',
+          content: {
+            type: 'tool-result',
+            toolCallId: 'tool-call-1',
+            arguments: {
+              path: '/workspace/src/index.ts',
+              query: 'current global external sessions',
+              source: 'semantic-tool-input',
+              machineId: 'semantic-tool-input-machine',
+            },
+            result: {
+              path: '/workspace/src/index.ts',
+              text: 'tool output',
+              generation: 'semantic-tool-output-generation',
+            },
+          },
+        },
       }],
       nextCursor: 'cursor-2',
       boundary: 'message-1',

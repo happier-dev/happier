@@ -5,6 +5,7 @@ import type { CommandContext } from '@/cli/commandRegistry';
 export { handleSessionCommand } from './handleSessionCommand';
 
 import { handleSessionCommand } from './handleSessionCommand';
+import { formatSessionCommandError } from './sessionCommandErrorPresentation';
 
 export async function handleSessionCliCommand(context: CommandContext): Promise<void> {
   const isHistoryFollow = (
@@ -22,7 +23,7 @@ export async function handleSessionCliCommand(context: CommandContext): Promise<
       ...(context.signal ? { signal: context.signal } : controller ? { signal: controller.signal } : {}),
     });
   } catch (error) {
-    console.error(chalk.red('Error:'), error instanceof Error ? error.message : 'Unknown error');
+    console.error(chalk.red('Error:'), formatSessionCommandError(error));
     if (process.env.DEBUG) {
       console.error(error);
     }

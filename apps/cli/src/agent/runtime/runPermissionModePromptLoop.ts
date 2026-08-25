@@ -1292,8 +1292,7 @@ export async function runPermissionModePromptLoop(opts: {
         // Resolving at admission would freeze a snapshot for however long the message sits
         // in the permission-mode queue.
         const composerAttachmentDispatch =
-          !providerNativeCommand
-          && typeof opts.resolveComposerAttachmentForDispatch === 'function'
+          typeof opts.resolveComposerAttachmentForDispatch === 'function'
           && localIds.length === 1
           && localId !== null
             ? {
@@ -1316,7 +1315,12 @@ export async function runPermissionModePromptLoop(opts: {
                 signal: dispatchAbortSignal,
               }
             : undefined;
-        const resolvedDispatchContext = providerNativeCommand ? null : await resolveStructuredInputProviderDispatchContext({
+        // A provider-native command changes how the TEXT is composed, never whether
+        // the message's structured input reaches the Agent. Skipping this resolver
+        // durably accepted and cleared a message whose attachments, media and
+        // resolved evidence were then discarded, and skipped its fail-closed
+        // rejection of input that cannot be resolved.
+        const resolvedDispatchContext = await resolveStructuredInputProviderDispatchContext({
           structuredInput: message.message.structuredInput,
           sessionMedia: message.message.sessionMedia,
           catalogs: {
@@ -1345,11 +1349,14 @@ export async function runPermissionModePromptLoop(opts: {
             );
           },
         });
+        // The provider parses its own command grammar from the first characters of
+        // this text, so a native command is dispatched verbatim; its structured
+        // input travels through the Agent input contract in `promptDeliveryMeta`.
         const dispatchPrompt = providerNativeCommand
           ? message.message.text
           : renderSessionInputContextPromptV1({
               provenanceBlock: message.message.inputContextBlock ?? '',
-              ...resolvedDispatchContext!.promptContext,
+              ...resolvedDispatchContext.promptContext,
               transformedUserText: transformedDispatchPrompt,
             });
 
@@ -1364,7 +1371,7 @@ export async function runPermissionModePromptLoop(opts: {
             selection: opts.readActiveModelSelection(),
           });
         }
-        const resolvedStructuredInput = resolvedDispatchContext?.structuredInput;
+        const resolvedStructuredInput = resolvedDispatchContext.structuredInput;
         const promptDeliveryMeta = {
           ...(localId === null ? {} : { localId }),
           ...(localIds.length === 0 ? {} : { localIds }),

@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  accountSettingsParse,
+  buildBackendTargetKey,
   createPlainSessionOwnerMetadataEnvelopeV1,
   SessionOwnerMetadataV1Schema,
 } from '@happier-dev/protocol';
@@ -492,6 +494,87 @@ describe('buildCliSessionRowModel', () => {
     }).vendorResume).toEqual({
       eligible: true,
       vendorResumeId: 'plugin-session-1',
+    });
+  });
+  it('honors a configured ACP backend disabled in the canonical parsed Account Settings projection', () => {
+    const ownerCredentials = {
+      token: 'owner-token',
+      encryption: {
+        type: 'legacy',
+        secret: new Uint8Array(32).fill(17),
+      },
+    } satisfies Credentials;
+    const ownerMetadata = SessionOwnerMetadataV1Schema.parse({
+      v: 1,
+      workspace: {
+        path: '/private/acp-disabled-worktree',
+        host: 'private-host',
+        flavor: 'pluginProvider',
+      },
+      nativeSession: {
+        runtimeDescriptorV1: {
+          v: 1,
+          agentId: 'pluginProvider',
+          providerSessionId: 'private-plugin-session',
+        },
+      },
+      runtime: {
+        acpConfiguredBackendV1: {
+          v: 1,
+          updatedAt: 2,
+          backendId: 'review-bot',
+          title: 'Review bot',
+        },
+      },
+    });
+    const rawSession = {
+      id: 'sess_acp_disabled',
+      createdAt: 1,
+      updatedAt: 2,
+      active: false,
+      activeAt: 0,
+      archivedAt: null,
+      encryptionMode: 'plain',
+      metadataLayoutVersion: 1,
+      metadata: JSON.stringify({
+        v: 1,
+        summary: { text: 'Configured backend session', updatedAt: 2 },
+      }),
+      ownerMetadata: createPlainSessionOwnerMetadataEnvelopeV1(ownerMetadata),
+    } as any;
+
+    // `listSessions` passes `accountSettingsContext.settings`, i.e. the PARSED
+    // Account Settings, whose catalog rewrites this legacy key to its canonical
+    // V2 spelling. A fixture keyed by the builder this module used to call could
+    // not fail when the two vocabularies diverged.
+    const legacyTargetKey = buildBackendTargetKey({ kind: 'configuredAcpBackend', backendId: 'review-bot' });
+    const disabledSettings = accountSettingsParse({
+      backendEnabledByTargetKey: { [legacyTargetKey]: false },
+    });
+    expect(Object.keys(disabledSettings.backendEnabledByTargetKey)).not.toContain(legacyTargetKey);
+
+    expect(buildCliSessionRowModel({
+      credentials: ownerCredentials,
+      rawSession,
+      contributionRegistry: createContributionRegistry(),
+      accountSettings: disabledSettings,
+    }).vendorResume).toEqual({
+      eligible: false,
+      reasonCode: 'backend_disabled_by_account_settings',
+    });
+
+    // Positive twin: the same row stays resumable when the user has not
+    // disabled the backend, so the check cannot pass by refusing everything.
+    expect(buildCliSessionRowModel({
+      credentials: ownerCredentials,
+      rawSession,
+      contributionRegistry: createContributionRegistry(),
+      accountSettings: accountSettingsParse({
+        backendEnabledByTargetKey: { [legacyTargetKey]: true },
+      }),
+    }).vendorResume).toEqual({
+      eligible: true,
+      vendorResumeId: 'private-plugin-session',
     });
   });
 });

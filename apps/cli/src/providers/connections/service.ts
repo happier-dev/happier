@@ -24,6 +24,7 @@ import type {
 export type {
   ProviderConnectionCreateInput,
   ProviderConnectionRuntimeProjection,
+  ProviderConnectionRegistryProjection,
   ProviderConnectionRuntimeSummary,
   ProviderConnectionRuntimeSummaryInput,
   ProviderConnectionServiceResult,

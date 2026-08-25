@@ -6,6 +6,7 @@ import {
   mergeSpawnConfigOptionAliases,
   readBackendTargetRefV2,
   parseAgentPermissionIntentV1Alias,
+  resolveSessionModelSelectionInputRefV1,
   type SessionSpawnNewInputV2,
 } from '@happier-dev/protocol';
 
@@ -186,9 +187,6 @@ export async function normalizeSessionCreateSpawnRequest(
   if (providerConnectionId && !modelId) {
     invalidSessionCreateArgument('--provider-connection requires --model.');
   }
-  if (providerConnectionId && modelId === 'default') {
-    invalidSessionCreateArgument('--provider-connection cannot be used with --model default.');
-  }
   const configuration = resolveConfiguration(request, updatedAtMs);
   const title = nonEmptyString(request.title);
   const initialMessage = nonEmptyString(request.initialMessage);
@@ -201,20 +199,31 @@ export async function normalizeSessionCreateSpawnRequest(
   }
   const agentModeId = nonEmptyString(request.agentModeId);
   const profileId = nonEmptyString(request.profileId);
+  // The `default` reset sentinel is native-only: a Provider connection may serve
+  // a model literally named `default`, so the canonical resolver — not this
+  // adapter — decides whether a flat argv pair is a real structured selection.
+  const modelSelectionRef = (() => {
+    if (!modelId) return null;
+    try {
+      return resolveSessionModelSelectionInputRefV1({
+        agentTargetKey: resolvedAgent.backendTargetKey,
+        providerConnectionId,
+        modelId,
+      });
+    } catch {
+      return invalidSessionCreateArgument('the requested model selection is invalid.');
+    }
+  })();
   const candidate = {
     executionTarget,
     directory,
     agentTarget: resolvedAgent.agentTarget,
-    ...(modelId && modelId !== 'default'
+    ...(modelSelectionRef
       ? {
           modelSelection: {
             v: 1 as const,
             updatedAt: updatedAtMs,
-            ref: {
-              agentTargetKey: resolvedAgent.backendTargetKey,
-              providerConnectionId: providerConnectionId ?? null,
-              modelId,
-            },
+            ref: modelSelectionRef,
           },
         }
       : {}),

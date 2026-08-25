@@ -48,10 +48,7 @@ import {
 } from './resolveExternalSessionObservationLinkInput';
 
 const PASSIVE_OBSERVATION_PAGE_SIZE = 200;
-const PASSIVE_OBSERVATION_MAX_PAGES = 25;
 const PASSIVE_OBSERVATION_RESOLVE_CONCURRENCY = 8;
-const PASSIVE_OBSERVATION_MAX_POLICIES = 100;
-const PASSIVE_OBSERVATION_MAX_JITTER_MS = 250;
 
 type Credentials = NonNullable<Awaited<ReturnType<typeof readStoredCredentials>>>;
 type FetchPage = (params: Readonly<{
@@ -114,9 +111,7 @@ export async function listCurrentExternalSessionPassivePolicies(params: Readonly
     }>> = [];
     const seenCursors = new Set<string>();
     let cursor: string | undefined;
-    let boundedInventory = false;
-
-    for (let pageIndex = 0; pageIndex < PASSIVE_OBSERVATION_MAX_PAGES; pageIndex += 1) {
+    while (true) {
         if (params.signal.aborted) return [];
         const page = await fetchPage({
             token: credentials.token,
@@ -154,16 +149,7 @@ export async function listCurrentExternalSessionPassivePolicies(params: Readonly
                     source: persisted.source,
                 },
             });
-            if (linked.length >= PASSIVE_OBSERVATION_MAX_POLICIES) {
-                // Restore the owner's bounded set instead of refusing the whole
-                // inventory. The only consumer of this inventory swallows a
-                // rejection, so throwing here turned one policy over the bound
-                // into zero restored background follows for every session.
-                boundedInventory = true;
-                break;
-            }
         }
-        if (boundedInventory) break;
         if (!page.hasNext) break;
         const nextCursor = page.nextCursor?.trim();
         if (!nextCursor || seenCursors.has(nextCursor)) {
@@ -171,19 +157,6 @@ export async function listCurrentExternalSessionPassivePolicies(params: Readonly
         }
         seenCursors.add(nextCursor);
         cursor = nextCursor;
-        if (pageIndex === PASSIVE_OBSERVATION_MAX_PAGES - 1) {
-            throw new Error('External Session passive observation inventory exceeded its page bound');
-        }
-    }
-
-    if (boundedInventory) {
-        // Incompleteness is a fact the operator can see, not a silent trim.
-        logExternalSessionsInternalError(
-            'external_session.passive_observation_inventory_bounded',
-            new Error(
-                `External Session passive observation restored its ${PASSIVE_OBSERVATION_MAX_POLICIES}-policy bound and left later persisted policies unrestored`,
-            ),
-        );
     }
 
     const resolved: ExternalSessionPassivePolicy[] = [];
@@ -214,18 +187,6 @@ const PASSIVE_EVENT_DEMAND: ExternalSessionObservationDemand = Object.freeze({
     persistedPolicy: true,
     fallbackDemand: false,
 });
-
-async function waitForPassiveRestoreJitter(signal: AbortSignal): Promise<void> {
-    const delayMs = Math.floor(Math.random() * (PASSIVE_OBSERVATION_MAX_JITTER_MS + 1));
-    if (delayMs === 0 || signal.aborted) return;
-    await new Promise<void>((resolve) => {
-        const timer = setTimeout(resolve, delayMs);
-        signal.addEventListener('abort', () => {
-            clearTimeout(timer);
-            resolve();
-        }, { once: true });
-    });
-}
 
 function isPassiveRestoreEnabledFromAccountSettings(): boolean {
     const settings = getActiveAccountSettingsSnapshot()?.settings;
@@ -269,7 +230,6 @@ export function startExternalSessionPassiveObservation(params: Readonly<{
     releaseFollowSession?: (sessionId: string) => Promise<void>;
     followLeaseManager?: ReturnType<typeof createExternalSessionFollowLeaseManager>;
     startPaused?: boolean;
-    jitterDelay?: (signal: AbortSignal) => Promise<void>;
     isRestoreEnabled?: () => boolean;
     subscribeRestoreEnabled?: (listener: () => void) => () => void;
     subscribeRuntimeReload?: (listener: () => void) => () => void;
@@ -582,7 +542,6 @@ export function startExternalSessionPassiveObservation(params: Readonly<{
         const sessionReconcileRevisionBaseline =
             new Map(sessionReconcileRevisionBySessionId);
         try {
-            await (params.jitterDelay ?? waitForPassiveRestoreJitter)(signal);
             if (
                 disposed
                 || !online

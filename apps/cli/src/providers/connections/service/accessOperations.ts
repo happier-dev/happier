@@ -1,4 +1,5 @@
 import {
+  PROVIDER_ENDPOINT_SAFETY_LIMITS,
   ProviderSettingsLimitError,
   createProviderErrorV1,
 } from '@happier-dev/protocol';
@@ -9,6 +10,7 @@ import type {
   ProviderEndpointDnsEvidence,
 } from '@/providers/registry';
 import { getProviderContribution } from '@/providers/registry/lookup';
+import { createProviderOperationLifetime } from '@/providers/operationLifetime';
 import { errorForProviderResolution, type ProviderConnectionServiceContext } from './context';
 import { bindProviderConnectionSecret, setProviderConnectionGrant } from './grants';
 import {
@@ -40,7 +42,14 @@ export function createProviderAccessOperations(context: ProviderConnectionServic
         connectionId: input.connectionId, machineId: input.machineId,
       }) };
     }
+    const lifetime = createProviderOperationLifetime({
+      wallTimeMs: PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs,
+    });
     const snapshot = await deps.loadSnapshot();
+    const registryProjection = {
+      registry: snapshot.registry,
+      ...(snapshot.registryGeneration ? { generation: snapshot.registryGeneration } : {}),
+    };
     const connection = readSettings(snapshot.rawAccountSettings).connections.find((entry) => entry.id === input.connectionId);
     if (!connection) return { status: 'error', error: createProviderErrorV1('provider_connection_not_found', { connectionId: input.connectionId, machineId: input.machineId }) };
     let scope = input.scope ?? null;
@@ -50,6 +59,7 @@ export function createProviderAccessOperations(context: ProviderConnectionServic
       dnsEvidence = await deps.collectDnsEvidence({
         accountSettings: snapshot.rawAccountSettings, connectionId: input.connectionId,
         machineId: input.machineId, registry: snapshot.registry,
+        lifetime,
       });
       const resolution = deps.resolveConnection({
         accountSettings: snapshot.rawAccountSettings, connectionId: input.connectionId,
@@ -93,7 +103,12 @@ export function createProviderAccessOperations(context: ProviderConnectionServic
         'enable',
       ).catch(() => undefined);
     }
-    const described = await describe({ machineId: input.machineId, connectionId: input.connectionId });
+    const described = await describe({
+      machineId: input.machineId,
+      connectionId: input.connectionId,
+      registryProjection,
+      lifetime,
+    });
     if (described.status === 'error') return described;
     const view = described.connections[0];
     return view
@@ -109,7 +124,14 @@ export function createProviderAccessOperations(context: ProviderConnectionServic
     if (!deps.featureGate.isEnabled('providers')) return { status: 'error', error: featureError(input.connectionId) };
     const machineError = assertMachine(input.machineId, input.connectionId);
     if (machineError) return { status: 'error', error: machineError };
+    const lifetime = createProviderOperationLifetime({
+      wallTimeMs: PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs,
+    });
     const snapshot = await deps.loadSnapshot();
+    const registryProjection = {
+      registry: snapshot.registry,
+      ...(snapshot.registryGeneration ? { generation: snapshot.registryGeneration } : {}),
+    };
     try {
       if (input.preparedSavedSecret && input.savedSecretId !== input.preparedSavedSecret.id) {
         throw new ProviderConnectionValidationError('The prepared SavedSecret must be the exact bound secret');
@@ -171,7 +193,12 @@ export function createProviderAccessOperations(context: ProviderConnectionServic
       }
       throw error;
     }
-    const described = await describe({ machineId: input.machineId, connectionId: input.connectionId });
+    const described = await describe({
+      machineId: input.machineId,
+      connectionId: input.connectionId,
+      registryProjection,
+      lifetime,
+    });
     if (described.status === 'error') return described;
     const view = described.connections[0];
     return view

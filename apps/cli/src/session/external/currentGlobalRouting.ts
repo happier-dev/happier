@@ -1,6 +1,28 @@
 import type { CurrentGlobalExternalSessionsAuthorService } from './currentGlobalAuthorService';
 
 /**
+ * Current-public authorization is deliberately distinct from exact retained
+ * generation custody. A retained runner can still be current enough to finish
+ * private work while its public SDK call must obey the newly published
+ * contribution's HostAccess policy.
+ */
+export type CurrentGlobalExternalSessionsPublicAccess =
+  | 'available'
+  | 'denied'
+  | 'unavailable';
+
+export type CurrentGlobalExternalSessionsPublicCaller = Readonly<{
+  pluginId: string;
+  contribution: Readonly<{
+    id: string;
+    qualifiedId: string;
+  }>;
+  /** The caller's real invocation surface is part of current HostAccess policy. */
+  surface: string;
+  sessionId?: string;
+}>;
+
+/**
  * The public current-global External Sessions authority, as one indirection a
  * caller keeps for its whole lifetime.
  *
@@ -20,6 +42,9 @@ import type { CurrentGlobalExternalSessionsAuthorService } from './currentGlobal
 export type CurrentGlobalExternalSessionsRouter = Readonly<{
   resolveCurrent(): CurrentGlobalExternalSessionsAuthorService | null;
   activateConfiguredSources(agentId?: string): Promise<void>;
+  readPublicCallerAccess?(
+    caller: CurrentGlobalExternalSessionsPublicCaller,
+  ): CurrentGlobalExternalSessionsPublicAccess;
 }>;
 
 /**
@@ -35,5 +60,8 @@ export function createCurrentGlobalExternalSessionsRouter(
     activateConfiguredSources: async (agentId) => {
       await resolvePublished()?.activateConfiguredSources(agentId);
     },
+    readPublicCallerAccess: (caller) => (
+      resolvePublished()?.readPublicCallerAccess?.(caller) ?? 'unavailable'
+    ),
   });
 }

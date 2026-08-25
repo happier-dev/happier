@@ -3,6 +3,11 @@ import { z } from 'zod';
 import {
     ConnectedAccountMaterializationRequestSchema,
     ConnectedAccountRequestAuthUsesV1Schema,
+    AgentRuntimeJsonValueV1Schema,
+    ExternalSessionOperationReferenceV1Schema,
+    ExternalSessionRefSchema,
+    ExternalSessionTranscriptItemIdV1Schema,
+    ExternalSessionTranscriptSourceTimestampV1Schema,
     HostEventIdV1Schema,
     HostEventTargetV1Schema,
     ManagedExecutableRefSchema,
@@ -31,6 +36,10 @@ const HostQualifiedConnectedAccountRefSchema = asHostProtocolZod(
     QualifiedConnectedAccountRefSchema,
 );
 const HostSessionIdSchema = asHostProtocolZod(SessionIdSchema);
+const HostExternalSessionRefSchema = asHostProtocolZod(ExternalSessionRefSchema);
+const HostExternalSessionOperationReferenceV1Schema = asHostProtocolZod(
+    ExternalSessionOperationReferenceV1Schema,
+);
 const BoundedTextSchema = z.string().max(65_536);
 const Base64Schema = z.string().regex(
     /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u,
@@ -62,6 +71,126 @@ const RunnerDaemonHostEventDeliveryScopeV1Schema = z.union([
         sessionId: HostSessionIdSchema,
     }).strict(),
     z.object({ kind: z.literal('account') }).strict(),
+]);
+
+const RunnerDaemonExternalSessionRemediationV1Schema = z.discriminatedUnion('kind', [
+    z.object({ kind: z.literal('retry') }).strict(),
+    z.object({ kind: z.literal('openSettings'), path: BoundedTextSchema }).strict(),
+    z.object({
+        kind: z.literal('selectAccount'),
+        service: z.object({ pluginId: BoundedIdSchema, localId: BoundedIdSchema }).strict(),
+    }).strict(),
+    z.object({ kind: z.literal('installDependency'), dependencyId: BoundedIdSchema }).strict(),
+    z.object({ kind: z.literal('openUrl'), url: z.string().url().max(8_192) }).strict(),
+]);
+const RunnerDaemonExternalSessionAvailabilityV1Schema = z.discriminatedUnion('status', [
+    z.object({ status: z.literal('available') }).strict(),
+    z.object({
+        status: z.literal('unavailable'),
+        code: BoundedIdSchema,
+        remediation: RunnerDaemonExternalSessionRemediationV1Schema.optional(),
+    }).strict(),
+    z.object({
+        status: z.literal('denied'),
+        code: BoundedIdSchema,
+        remediation: RunnerDaemonExternalSessionRemediationV1Schema.optional(),
+    }).strict(),
+]);
+const RunnerDaemonExternalSessionTakeoverCapabilityV1Schema = z.discriminatedUnion('status', [
+    z.object({ status: z.literal('unavailable'), code: BoundedIdSchema }).strict(),
+    z.object({
+        status: z.literal('available'),
+        storageModes: z.array(z.enum(['external-linked', 'persisted'])).max(2),
+    }).strict(),
+]);
+const RunnerDaemonExternalSessionDiagnosticV1Schema = z.object({
+    code: BoundedIdSchema,
+    severity: z.enum(['info', 'warning', 'error']),
+    message: BoundedTextSchema.optional(),
+    details: AgentRuntimeJsonValueV1Schema.optional(),
+    remediation: RunnerDaemonExternalSessionRemediationV1Schema.optional(),
+}).strict();
+const RunnerDaemonExternalSessionTranscriptItemV1Schema = z.object({
+    id: ExternalSessionTranscriptItemIdV1Schema,
+    timestampMs: ExternalSessionTranscriptSourceTimestampV1Schema.optional(),
+    kind: z.enum(['user', 'agent', 'system', 'event']),
+    data: AgentRuntimeJsonValueV1Schema,
+}).strict();
+
+export const RunnerDaemonExternalSessionsCapabilitiesResultV1Schema = z.object({
+    list: RunnerDaemonExternalSessionAvailabilityV1Schema,
+    attach: RunnerDaemonExternalSessionAvailabilityV1Schema,
+    takeover: RunnerDaemonExternalSessionTakeoverCapabilityV1Schema,
+    transcript: RunnerDaemonExternalSessionAvailabilityV1Schema,
+    follow: RunnerDaemonExternalSessionAvailabilityV1Schema,
+}).strict();
+export const RunnerDaemonExternalSessionsListResultV1Schema = z.object({
+    items: z.array(z.object({
+        ref: HostExternalSessionRefSchema,
+        title: BoundedTextSchema.optional(),
+        updatedAtMs: SafeNonNegativeIntegerSchema.optional(),
+        capabilities: z.array(z.enum(['attach', 'transcript', 'follow'])).max(3),
+        takeover: RunnerDaemonExternalSessionTakeoverCapabilityV1Schema,
+    }).strict()).max(1_000),
+    nextCursor: CursorSchema.nullable(),
+    diagnostics: z.array(RunnerDaemonExternalSessionDiagnosticV1Schema).max(1_000).optional(),
+}).strict();
+export const RunnerDaemonExternalSessionsAttachResultV1Schema = z.object({
+    sessionId: BoundedIdSchema,
+}).strict();
+const RunnerDaemonExternalSessionsReadAfterDiagnosticV1Schema = z.object({
+    code: BoundedIdSchema,
+    count: z.number().int().positive().safe(),
+    positions: z.array(SafeNonNegativeIntegerSchema).max(200),
+}).strict();
+export const RunnerDaemonExternalSessionsTranscriptResultV1Schema = z.union([
+    z.object({
+        mode: z.literal('page'),
+        items: z.array(RunnerDaemonExternalSessionTranscriptItemV1Schema).max(1_000),
+        nextCursor: CursorSchema.nullable(),
+        tailCursor: CursorSchema.nullable().optional(),
+        hasMore: z.boolean().optional(),
+        truncated: z.boolean().optional(),
+    }).strict(),
+    z.object({ mode: z.literal('readAfter'), outcome: z.literal('already_current') }).strict(),
+    z.object({
+        mode: z.literal('readAfter'),
+        outcome: z.literal('advanced'),
+        items: z.array(RunnerDaemonExternalSessionTranscriptItemV1Schema).max(1_000),
+        nextCursor: CursorSchema,
+        boundary: BoundedTextSchema,
+        diagnostics: z.array(RunnerDaemonExternalSessionsReadAfterDiagnosticV1Schema).max(32).optional(),
+    }).strict(),
+    z.object({
+        mode: z.literal('readAfter'),
+        outcome: z.enum([
+            'gap_or_cursor_expired',
+            'source_replaced',
+            'source_unavailable',
+            'read_failed',
+        ]),
+    }).strict(),
+]);
+export const RunnerDaemonExternalSessionsTakeoverResultV1Schema =
+    HostExternalSessionOperationReferenceV1Schema;
+export const RunnerDaemonExternalSessionsFollowEventV1Schema = z.discriminatedUnion('kind', [
+    z.object({
+        kind: z.literal('data'),
+        items: z.array(RunnerDaemonExternalSessionTranscriptItemV1Schema).max(1_000),
+        fromCursor: CursorSchema.nullable(),
+        nextCursor: CursorSchema,
+    }).strict(),
+    z.object({
+        kind: z.literal('resyncRequired'),
+        reason: z.literal('cursorDiscontinuity'),
+        cursor: CursorSchema.nullable(),
+    }).strict(),
+    z.object({
+        kind: z.literal('terminated'),
+        reason: z.enum(['disposed', 'aborted', 'retired', 'providerFailure', 'resyncRequired']),
+        cursor: CursorSchema.nullable(),
+        code: BoundedIdSchema.optional(),
+    }).strict(),
 ]);
 
 export type RunnerDaemonManagedProviderCustodyScopeV1 = Readonly<{

@@ -8,6 +8,7 @@ import {
 
 import type { Credentials, TokenOnlyCredentials } from '@/persistence';
 import {
+  updateAccountSettingsV2Once,
   updateAccountSettingsV2WithRetry,
   type UpdateAccountSettingsV2WithRetryParams,
 } from './updateAccountSettingsV2WithRetry';
@@ -241,7 +242,12 @@ describe('updateAccountSettingsV2WithRetry canonical mutation contract', () => {
           content: {
             t: 'plain',
             v: {
-              providerSettingsV1: overdeep,
+              // A known root whose shape the Account document itself owns.
+              // `providerSettingsV1` is deliberately NOT usable here: its
+              // catalog definition declares `structuralBoundsOwner:
+              // 'domainOwned'`, so the Provider domain — not the Account
+              // node policy — bounds its nesting and cardinality.
+              profiles: overdeep,
               sessionPendingQueueDeliveryTiming: 'after_foreground_ready',
             },
           },
@@ -322,5 +328,120 @@ describe('updateAccountSettingsV2WithRetry canonical mutation contract', () => {
         v: { futureSettingOwnedElsewhere: { preserve: true } },
       },
     });
+  });
+
+  // A byte-identical Account write still bumps the version and records two
+  // history snapshots at the server, and for an E2EE Account the server cannot
+  // even recognise the reseal as a no-op. The client owner is therefore the
+  // only place that can keep a no-op out of history: it must settle before the
+  // transport, not after it.
+  it('settles an exact no-op without a transport write on plain and E2EE Accounts', async () => {
+    const noOpCacheDeps = {
+      resolveCachePath: () => '/dev/null/account-settings-cache.json',
+      writeCache: vi.fn(async () => {}),
+    };
+    // The transport mock is deliberately capable of succeeding: the guard must
+    // be proven by the absent call, not by a crashing stub.
+    const plainUpdate = vi.fn(async (): Promise<AccountSettingsV2UpdateResponse> => ({
+      success: true,
+      version: 5,
+    }));
+    await expect(updateAccountSettingsV2WithRetry({
+      credentials: createCredentials(),
+      mutation: {
+        operations: [{
+          op: 'set',
+          key: 'sessionPendingQueueDeliveryTiming',
+          value: 'after_foreground_ready',
+        }],
+      },
+      deps: {
+        ...noOpCacheDeps,
+        fetchSettings: async () => ({
+          content: { t: 'plain', v: { sessionPendingQueueDeliveryTiming: 'after_foreground_ready' } },
+          version: 4,
+        }),
+        resolveAccountEncryptionMode: async () => 'plain',
+        updateSettings: plainUpdate,
+      },
+    })).resolves.toMatchObject({ status: 'unchanged', version: 4 });
+    expect(plainUpdate).not.toHaveBeenCalled();
+
+    const ciphertext = sealAccountScopedBlobCiphertext({
+      kind: 'account_settings',
+      material: { type: 'legacy', secret: new Uint8Array(32).fill(7) },
+      payload: { sessionPendingQueueDeliveryTiming: 'after_foreground_ready' },
+      randomBytes: () => new Uint8Array(24).fill(2),
+    });
+    const encryptedUpdate = vi.fn(async (): Promise<AccountSettingsV2UpdateResponse> => ({
+      success: true,
+      version: 10,
+    }));
+    await expect(updateAccountSettingsV2WithRetry({
+      credentials: createCredentials(),
+      mutation: {
+        operations: [{
+          op: 'set',
+          key: 'sessionPendingQueueDeliveryTiming',
+          value: 'after_foreground_ready',
+        }],
+      },
+      deps: {
+        ...noOpCacheDeps,
+        fetchSettings: async () => ({ content: { t: 'encrypted', c: ciphertext }, version: 9 }),
+        resolveAccountEncryptionMode: async () => 'e2ee',
+        // A fresh nonce would reseal to different bytes, so a post-seal
+        // comparison could not recognise this no-op.
+        randomBytes: () => new Uint8Array(24).fill(3),
+        updateSettings: encryptedUpdate,
+      },
+    })).resolves.toMatchObject({ status: 'unchanged', version: 9 });
+    expect(encryptedUpdate).not.toHaveBeenCalled();
+
+    const onceUpdate = vi.fn(async (): Promise<AccountSettingsV2UpdateResponse> => ({
+      success: true,
+      version: 5,
+    }));
+    await expect(updateAccountSettingsV2Once({
+      credentials: createCredentials(),
+      expectedVersion: 4,
+      mutate: (settings) => settings,
+      deps: {
+        ...noOpCacheDeps,
+        fetchSettings: async () => ({
+          content: { t: 'plain', v: { sessionPendingQueueDeliveryTiming: 'after_foreground_ready' } },
+          version: 4,
+        }),
+        resolveAccountEncryptionMode: async () => 'plain',
+        updateSettings: onceUpdate,
+      },
+    })).resolves.toMatchObject({ status: 'unchanged', version: 4 });
+    expect(onceUpdate).not.toHaveBeenCalled();
+
+    // Positive twin: a real change still reaches the transport exactly once.
+    const changingUpdate = vi.fn(async (): Promise<AccountSettingsV2UpdateResponse> => ({
+      success: true,
+      version: 5,
+    }));
+    await expect(updateAccountSettingsV2WithRetry({
+      credentials: createCredentials(),
+      mutation: {
+        operations: [{
+          op: 'set',
+          key: 'sessionPendingQueueDeliveryTiming',
+          value: 'after_runtime_idle',
+        }],
+      },
+      deps: {
+        ...noOpCacheDeps,
+        fetchSettings: async () => ({
+          content: { t: 'plain', v: { sessionPendingQueueDeliveryTiming: 'after_foreground_ready' } },
+          version: 4,
+        }),
+        resolveAccountEncryptionMode: async () => 'plain',
+        updateSettings: changingUpdate,
+      },
+    })).resolves.toMatchObject({ status: 'applied', version: 5 });
+    expect(changingUpdate).toHaveBeenCalledTimes(1);
   });
 });

@@ -18,6 +18,7 @@ import { resolveWorkspaceFileUploadTarget } from '@/transfers/targets/resolveWor
 
 import type { SessionMediaIngestionSource, SessionMediaItemV1, SessionMediaOrigin } from './_types';
 import { checkSessionMediaBudgets } from './budget';
+import { readSessionMediaImageDimensions } from './imageInspection';
 import {
   extensionForSessionMediaMimeType,
   isSessionMediaImageMimeType,
@@ -54,11 +55,6 @@ export type PersistSessionMediaInput = Readonly<{
 export type PersistSessionMediaResult =
   | Readonly<{ success: true; item: SessionMediaItemV1; created: boolean }>
   | Readonly<{ success: false; code: string; error: string }>;
-
-type ImageDimensions = Readonly<{
-  width: number;
-  height: number;
-}>;
 
 function failure(code: string, error: string): Extract<PersistSessionMediaResult, { success: false }> {
   return { success: false, code, error };
@@ -97,25 +93,6 @@ async function fileExistsWithHash(path: string, sha256: string): Promise<boolean
   if (!existingStat?.isFile()) return false;
   const existingSha256 = await hashFile(path).catch(() => null);
   return existingSha256 === sha256;
-}
-
-function readPositiveImageDimension(value: number | undefined): number | null {
-  if (typeof value !== 'number' || !Number.isFinite(value)) return null;
-  const normalized = Math.trunc(value);
-  return normalized > 0 ? normalized : null;
-}
-
-async function readPreparedImageDimensions(source: PreparedMediaSource): Promise<ImageDimensions | null> {
-  try {
-    const sharp = (await import('sharp')).default;
-    const image = sharp(source.bytes, { failOn: 'none' });
-    const metadata = await image.metadata();
-    const width = readPositiveImageDimension(metadata.width);
-    const height = readPositiveImageDimension(metadata.height);
-    return width && height ? { width, height } : null;
-  } catch {
-    return null;
-  }
 }
 
 type WritePreparedSourceAtomicResult = 'written' | 'exists-same-hash' | 'exists-different-hash';
@@ -299,7 +276,7 @@ export async function persistSessionMedia(params: Readonly<{
   }
 
   const dimensions = isSessionMediaImageMimeType(prepared.mimeType)
-    ? await readPreparedImageDimensions(prepared)
+    ? await readSessionMediaImageDimensions(prepared.bytes)
     : null;
 
   try {

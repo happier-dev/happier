@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { VoiceProviderContribution } from '@happier-dev/protocol';
 
 import type {
-  RunnerAgentCurrentExternalSessionProviderOps,
+  RunnerAgentExternalSessionProviderOps,
 } from '@/agent/runtime/registry/engineRegistry/types';
 import {
   resolveRetainedAgentSessionRealtimeVoiceAuthority,
@@ -125,160 +125,6 @@ function voiceDeclaration(): ConversationVoiceProviderContribution {
 }
 
 describe('runner Agent daemon facet adapters', () => {
-  it('projects all six current-global External Session operations without widening the private follow port', async () => {
-    const operations: unknown[] = [];
-    const requests: unknown[] = [];
-    const dispatch = vi.fn(async (input): Promise<
-      AgentRuntimeDaemonServiceResponseV1
-    > => {
-      const request = input.createRequest('A'.repeat(43));
-      requests.push(request);
-      operations.push(request.operation);
-      switch (request.operation.kind) {
-        case 'voice.authority.snapshot':
-          return {
-            ok: true,
-            result: {
-              kind: 'voice.authority.snapshot',
-              agentGeneration: runnerFixture.binding.immutableGenerationId,
-              providers: [],
-            },
-          };
-        case 'external_session.current.resolve_source':
-          return {
-            ok: true,
-            result: {
-              kind: request.operation.kind,
-              result: { ok: true, source: request.operation.source },
-            },
-          };
-        case 'external_session.current.list_candidates':
-          return {
-            ok: true,
-            result: {
-              kind: request.operation.kind,
-              result: { candidates: [], nextCursor: null },
-            },
-          };
-        case 'external_session.current.resolve_link_identity':
-        case 'external_session.current.resolve_linked_identity':
-          return {
-            ok: true,
-            result: {
-              kind: request.operation.kind,
-              result: {
-                source: request.operation.source,
-                remoteSessionId: request.operation.remoteSessionId,
-              },
-            },
-          };
-        case 'external_session.current.page_transcript':
-          return {
-            ok: true,
-            result: {
-              kind: request.operation.kind,
-              result: {
-                items: [],
-                nextCursor: null,
-                tailCursor: null,
-                hasMore: false,
-                truncated: false,
-              },
-            },
-          };
-        case 'external_session.current.read_after_transcript':
-          return {
-            ok: true,
-            result: {
-              kind: request.operation.kind,
-              result: { outcome: 'already_current' },
-            },
-          };
-        default:
-          throw new Error(`unexpected ${request.operation.kind}`);
-      }
-    });
-    const facets = await createRunnerAgentDaemonFacets({
-      authority,
-      dispatch,
-      readActiveTurnAdmissionWitness: () => witness,
-    });
-    const current = facets.currentExternalSessionProviderOps;
-    const source = { kind: 'syntheticSource', value: 'test' } as const;
-    const cancellation = new AbortController();
-    const signal = cancellation.signal;
-
-    await expect(current.validateSource({ source, signal }))
-      .resolves.toEqual({ ok: true, source });
-    await expect(current.listCandidates({ source, limit: 20 }))
-      .resolves.toEqual({ candidates: [], nextCursor: null });
-    await expect(current.resolveLinkIdentity({
-      source,
-      remoteSessionId: 'remote-session-1',
-    })).resolves.toEqual({
-      source,
-      remoteSessionId: 'remote-session-1',
-    });
-    await expect(current.canonicalizeLinkedSession({
-      source,
-      remoteSessionId: 'remote-session-1',
-      metadata: {},
-    })).resolves.toEqual({
-      source,
-      remoteSessionId: 'remote-session-1',
-    });
-    await expect(current.pageTranscript({
-      source,
-      remoteSessionId: 'remote-session-1',
-      direction: 'older',
-      maxBytes: 65_536,
-      maxItems: 100,
-    })).resolves.toMatchObject({ hasMore: false });
-    await expect(current.readAfterTranscript({
-      source,
-      remoteSessionId: 'remote-session-1',
-      cursor: 'cursor-1',
-      maxBytes: 65_536,
-      maxItems: 100,
-    })).resolves.toEqual({ outcome: 'already_current' });
-
-    expect(operations.filter((operation) => (
-      typeof operation === 'object'
-      && operation !== null
-      && String(Reflect.get(operation, 'kind')).startsWith(
-        'external_session.current.',
-      )
-    ))).toHaveLength(6);
-    expect(operations).toContainEqual(expect.objectContaining({
-      kind: 'external_session.current.resolve_source',
-      agentId: runnerFixture.binding.agentId,
-      witness: daemonWitness,
-    }));
-    expect(requests.every((request) => (
-      AgentRuntimeDaemonServiceRequestV1Schema.safeParse(request).success
-    ))).toBe(true);
-    expect(dispatch.mock.calls.some(([call]) => (
-      call.signal instanceof AbortSignal
-      && call.signal.aborted === false
-    ))).toBe(true);
-    const forwardedSignal = dispatch.mock.calls[1]?.[0].signal;
-    cancellation.abort();
-    expect(forwardedSignal?.aborted).toBe(true);
-
-    dispatch.mockResolvedValueOnce({
-      ok: true,
-      result: {
-        kind: 'external_session.current.list_candidates',
-        result: { candidates: [], nextCursor: null },
-      },
-    });
-    await expect(current.validateSource({ source })).rejects.toMatchObject({
-      code: 'plugin_external_session_current_response_invalid',
-    });
-
-    await facets.dispose();
-  });
-
   it('preserves acknowledged same-daemon follow delivery', async () => {
     const calls: unknown[] = [];
     let nextCount = 0;
@@ -1077,7 +923,7 @@ describe('runner Agent daemon facet adapters', () => {
   it('executes only the retained runner companion when the daemon follow owner requests transcript work', async () => {
     let providerSignal: AbortSignal | undefined;
     const pageTranscript = vi.fn<
-      RunnerAgentCurrentExternalSessionProviderOps['pageTranscript']
+      RunnerAgentExternalSessionProviderOps['pageTranscript']
     >(async (request) => {
       providerSignal = request.signal;
       return {
@@ -1092,13 +938,13 @@ describe('runner Agent daemon facet adapters', () => {
       outcome: 'already_current' as const,
     }));
     const validateSource = vi.fn<
-      RunnerAgentCurrentExternalSessionProviderOps['validateSource']
+      RunnerAgentExternalSessionProviderOps['validateSource']
     >(async ({ source }) => ({
       ok: true as const,
       source,
     }));
     const resolveLinkIdentity = vi.fn<
-      RunnerAgentCurrentExternalSessionProviderOps['resolveLinkIdentity']
+      RunnerAgentExternalSessionProviderOps['resolveLinkIdentity']
     >(async (request) => ({
       source: request.source,
       remoteSessionId: request.remoteSessionId,
@@ -1226,7 +1072,7 @@ describe('runner Agent daemon facet adapters', () => {
   it('closes the provisional daemon follow when the caller aborts during retained companion work', async () => {
     let providerSignal: AbortSignal | undefined;
     const pageTranscript = vi.fn<
-      RunnerAgentCurrentExternalSessionProviderOps['pageTranscript']
+      RunnerAgentExternalSessionProviderOps['pageTranscript']
     >(async (request) => {
       providerSignal = request.signal;
       return await new Promise<never>((_resolve, reject) => {
@@ -1341,7 +1187,7 @@ describe('runner Agent daemon facet adapters', () => {
     let providerContinuationCount = 0;
     let provisionalCloseAttempts = 0;
     const pageTranscript = vi.fn<
-      RunnerAgentCurrentExternalSessionProviderOps['pageTranscript']
+      RunnerAgentExternalSessionProviderOps['pageTranscript']
     >(async () => ({
       items: [],
       nextCursor: null,
@@ -1462,7 +1308,7 @@ describe('runner Agent daemon facet adapters', () => {
     const closedFollowIds: string[] = [];
     const untrustedResponseFollowId = 'untrusted-daemon-follow-id';
     const pageTranscript = vi.fn<
-      RunnerAgentCurrentExternalSessionProviderOps['pageTranscript']
+      RunnerAgentExternalSessionProviderOps['pageTranscript']
     >();
     let nextCount = 0;
     const dispatch = vi.fn(async (input): Promise<

@@ -142,6 +142,13 @@ export interface SpawnSessionOptions {
   sessionId?: string;
   /** Resume an existing provider session by its provider-owned id. */
   resume?: string;
+  /**
+   * Host-private exact native resume reference admitted from External Session
+   * takeover. It authorizes the initial spawn to outrank linked session ids,
+   * is retained only in daemon-owned tracked spawn options for restarts, and
+   * is never accepted from RPC.
+   */
+  nativeResumeReference?: string;
   /** Secret-free source consumed once by the child native Agent session opener. */
   nativeForkSource?: NativeForkSource;
   /**

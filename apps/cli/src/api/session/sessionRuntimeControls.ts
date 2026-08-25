@@ -17,6 +17,8 @@ const runtimeControlKeys = [
   'clearTerminalComposer',
   'interruptPendingInputAndRun',
   'handleUserMessage',
+  'preparePendingMessageComposerAdmission',
+  'acceptPendingMessageComposerAdmission',
 ] as const satisfies readonly (keyof SessionRuntimeControls)[];
 
 export function applySessionRuntimeControls(

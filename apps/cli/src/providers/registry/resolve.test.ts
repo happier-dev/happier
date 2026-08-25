@@ -345,6 +345,81 @@ describe('machine-aware provider connection resolver', () => {
     );
   });
 
+  it('stales a managed machine grant when the declared endpoint public headers change', () => {
+    const configured = connection('pc_managed_headers', {
+      deployment: { kind: 'managedLocal' },
+      purposeBindingDefaults: {
+        upstream: {
+          kind: 'account',
+          account: {
+            service: {
+              pluginId: 'happier.connected-account.example',
+              localId: 'example',
+            },
+            accountId: 'account-a',
+          },
+        },
+      },
+    });
+    const withHeaders = (headers: Readonly<Record<string, string>>): ResolvedProviderContribution => {
+      const base = managedContribution();
+      return {
+        ...base,
+        definition: ProviderContributionV1Schema.parse({
+          ...base.definition,
+          endpointTemplates: base.definition.endpointTemplates.map((template) => ({
+            ...template,
+            publicHeaders: headers,
+          })),
+        }),
+      };
+    };
+    const first = resolveProviderConnectionForMachine({
+      connectionId: configured.id,
+      machineId: 'machine-a',
+      accountSettings: { providerSettingsV1: settingsWith([configured]) },
+      registry: registry(withHeaders({ 'X-Route': 'one' })),
+      dnsEvidenceByEndpointUrl: new Map(),
+    });
+    if (first.status !== 'resolved') throw new Error('Expected managed connection to resolve');
+    const grantedSettings = settingsWith([configured], {
+      machineGrants: [{
+        v: 1,
+        machineId: 'machine-a',
+        connectionId: configured.id,
+        connectionSecurityFingerprint: first.record.connectionSecurityFingerprint,
+        endpointSetFingerprint: first.record.endpointSetFingerprint,
+        confirmedAt: 2,
+      }],
+    });
+    expect(resolveProviderConnectionForMachine({
+      connectionId: configured.id,
+      machineId: 'machine-a',
+      accountSettings: { providerSettingsV1: grantedSettings },
+      registry: registry(withHeaders({ 'X-Route': 'one' })),
+      dnsEvidenceByEndpointUrl: new Map(),
+    })).toMatchObject({
+      status: 'resolved',
+      record: { authorization: { authorized: true, grantKind: 'machine' } },
+    });
+
+    const changed = resolveProviderConnectionForMachine({
+      connectionId: configured.id,
+      machineId: 'machine-a',
+      accountSettings: { providerSettingsV1: grantedSettings },
+      registry: registry(withHeaders({ 'X-Route': 'two' })),
+      dnsEvidenceByEndpointUrl: new Map(),
+    });
+    if (changed.status !== 'resolved') throw new Error('Expected changed managed connection to resolve');
+    expect(changed.record.connectionSecurityFingerprint).not.toBe(
+      first.record.connectionSecurityFingerprint,
+    );
+    expect(changed.record.authorization).toMatchObject({
+      authorized: false,
+      errorCode: 'provider_machine_grant_stale',
+    });
+  });
+
   it('resolves one public managed declaration across bundled, development, and installed provenance', () => {
     const configured = connection('pc_managed_invalid', {
       deployment: { kind: 'managedLocal' },

@@ -23,6 +23,11 @@ import {
   ProviderProbeCredentialResolutionError,
   ProviderProbeDestinationAuthorizationError,
 } from '../probe/authorization';
+import {
+  createProviderOperationLifetime,
+  type ProviderOperationLifetime,
+} from '../operationLifetime';
+import type { ProviderContributionRegistryView } from '../registry';
 
 export const PROVIDER_MODEL_LOAD_WALL_TIME_MS = PROVIDER_MODEL_LOAD_HTTP_LIMITS.wallTimeMs;
 export const PROVIDER_MODEL_LOAD_MAX_DECODED_BODY_BYTES = PROVIDER_MODEL_LOAD_HTTP_LIMITS.maxDecodedBodyBytes;
@@ -41,6 +46,12 @@ export type ProviderModelLoadRequest = Readonly<{
   signal?: AbortSignal;
 }>;
 
+/** Exact authority and one wall deadline shared by a model-load operation. */
+export type ProviderModelLoadOperationScope = Readonly<{
+  registry?: ProviderContributionRegistryView;
+  lifetime: ProviderOperationLifetime;
+}>;
+
 export type ProviderModelLoadAuthorization<TTicket, TCredentialRef> = Readonly<{
   ticket: TTicket;
   /** Minted only by the canonical provider authorization owner. */
@@ -54,10 +65,19 @@ export type ProviderModelLoadAuthorization<TTicket, TCredentialRef> = Readonly<{
   }>;
   /** Already selected for credential transport use `management`. */
   credentialRef: TCredentialRef | null;
+  /**
+   * Host-private registry generation selected while authorizing this load.
+   * The service carries it through every later revalidation and refresh so one
+   * operation cannot combine facts from two plugin generations.
+   */
+  operationScope?: Pick<ProviderModelLoadOperationScope, 'registry'>;
 }>;
 
 export type ProviderModelLoadAuthorizationPort<TTicket, TCredentialRef> = Readonly<{
-  authorize(request: Omit<ProviderModelLoadRequest, 'signal'>): Promise<
+  authorize(
+    request: Omit<ProviderModelLoadRequest, 'signal'>,
+    scope?: ProviderModelLoadOperationScope,
+  ): Promise<
     | Readonly<{ status: 'authorized'; authorization: ProviderModelLoadAuthorization<TTicket, TCredentialRef> }>
     | Readonly<{ status: 'unavailable' }>
     | Readonly<{ status: 'error'; error: ProviderErrorV1 }>
@@ -65,11 +85,13 @@ export type ProviderModelLoadAuthorizationPort<TTicket, TCredentialRef> = Readon
   revalidate(
     ticket: TTicket,
     request: Omit<ProviderModelLoadRequest, 'signal'>,
+    scope?: ProviderModelLoadOperationScope,
   ): Promise<Readonly<{ ok: true }> | Readonly<{ ok: false; error: ProviderErrorV1 }>>;
   authorizeDestination(
     ticket: TTicket,
     request: Omit<ProviderModelLoadRequest, 'signal'>,
     destination: AssessedProviderEndpoint,
+    scope?: ProviderModelLoadOperationScope,
   ): Promise<Readonly<{ ok: true }> | Readonly<{ ok: false; error: ProviderErrorV1 }>>;
   resolveCredential(reference: TCredentialRef): Promise<
     | Readonly<{
@@ -99,6 +121,7 @@ export type ProviderModelLoadCatalogPort<TTicket> = Readonly<{
     machineId: string;
     modelId: string;
     ticket: TTicket;
+    scope: ProviderModelLoadOperationScope;
   }>): Promise<ProviderCurrentModelObservation>;
   /** Forces a network-backed refresh; it must not satisfy from a TTL cache. */
   refresh(input: Readonly<{
@@ -108,6 +131,7 @@ export type ProviderModelLoadCatalogPort<TTicket> = Readonly<{
     refreshFrontier: string;
     ticket: TTicket;
     signal: AbortSignal;
+    scope: ProviderModelLoadOperationScope;
   }>): Promise<
     | Readonly<{ status: 'success' }>
     | Readonly<{ status: 'not_supported' }>
@@ -128,6 +152,7 @@ export type ProviderModelLoadHttpPort = Readonly<{
     authorizeDestination(destination: AssessedProviderEndpoint): Promise<void>;
     redirectPolicy: 'reject';
     wallTimeMs: typeof PROVIDER_MODEL_LOAD_WALL_TIME_MS;
+    wallDeadlineAtMs?: number;
     maxDecodedBodyBytes: typeof PROVIDER_MODEL_LOAD_MAX_DECODED_BODY_BYTES;
     signal: AbortSignal;
   }>): Promise<
@@ -154,6 +179,9 @@ export function createProviderModelLoadHttpPort(
       try {
         const result = await client.postModelLoad({
           endpointUrl: input.endpointUrl,
+          ...(input.wallDeadlineAtMs !== undefined
+            ? { wallDeadlineAtMs: input.wallDeadlineAtMs }
+            : {}),
           path: input.path,
           publicHeaders: input.publicHeaders,
           modelId: input.body.model,
@@ -367,16 +395,18 @@ export function createProviderModelLoadService<TTicket, TCredentialRef>(
   type AuthorizedLoad = Readonly<{
     ok: true;
     authorization: ProviderModelLoadAuthorization<TTicket, TCredentialRef>;
+    scope: ProviderModelLoadOperationScope;
   }> | Readonly<{ ok: false; result: ProviderModelLoadResult }>;
 
   async function authorizeLoad(input: Readonly<{
     request: Omit<ProviderModelLoadRequest, 'signal'>;
     signal: AbortSignal;
+    scope: ProviderModelLoadOperationScope;
   }>): Promise<AuthorizedLoad> {
-    const { request, signal } = input;
+    const { request, signal, scope } = input;
     if (signal.aborted) return { ok: false, result: cancelledResult() };
     const resolved = await awaitAuthorizationOrCancellation(
-      dependencies.authorization.authorize(request),
+      dependencies.authorization.authorize(request, scope),
       signal,
     );
     if (resolved === authorizationCancelled || signal.aborted) {
@@ -396,30 +426,40 @@ export function createProviderModelLoadService<TTicket, TCredentialRef>(
     if (parsedDescriptor.endpointTemplateId !== authorization.endpoint.endpointTemplateId) {
       return { ok: false, result: { status: 'not_supported', reason: 'descriptor_absent' } };
     }
-    return { ok: true, authorization: { ...authorization, descriptor: parsedDescriptor } };
+    return {
+      ok: true,
+      authorization: { ...authorization, descriptor: parsedDescriptor },
+      scope: {
+        ...(authorization.operationScope?.registry
+          ? { registry: authorization.operationScope.registry }
+          : scope.registry ? { registry: scope.registry } : {}),
+        lifetime: scope.lifetime,
+      },
+    };
   }
 
   async function runLoad(input: Readonly<{
     request: Omit<ProviderModelLoadRequest, 'signal'>;
     authorization: ProviderModelLoadAuthorization<TTicket, TCredentialRef>;
     signal: AbortSignal;
+    scope: ProviderModelLoadOperationScope;
   }>): Promise<ProviderModelLoadResult> {
-    const { request, authorization, signal } = input;
+    const { request, authorization, signal, scope } = input;
     try {
       if (signal.aborted) return cancelledResult();
-      const beforeCatalogRead = await dependencies.authorization.revalidate(authorization.ticket, request);
+      const beforeCatalogRead = await dependencies.authorization.revalidate(authorization.ticket, request, scope);
       if (signal.aborted) return cancelledResult();
       if (!beforeCatalogRead.ok) return { status: 'error', error: beforeCatalogRead.error };
-      const before = await dependencies.catalog.readCurrentModel({ ...request, ticket: authorization.ticket });
+      const before = await dependencies.catalog.readCurrentModel({ ...request, ticket: authorization.ticket, scope });
       if (signal.aborted) return cancelledResult();
-      const afterCatalogRead = await dependencies.authorization.revalidate(authorization.ticket, request);
+      const afterCatalogRead = await dependencies.authorization.revalidate(authorization.ticket, request, scope);
       if (signal.aborted) return cancelledResult();
       if (!afterCatalogRead.ok) return { status: 'error', error: afterCatalogRead.error };
       if (before.status === 'error') return { status: 'error', error: before.error };
       if (before.status === 'not_found') return modelNotFound(request);
       if (before.loadState === 'loaded') return { status: 'loaded', source: 'already_loaded' };
 
-      const beforeDispatch = await dependencies.authorization.revalidate(authorization.ticket, request);
+      const beforeDispatch = await dependencies.authorization.revalidate(authorization.ticket, request, scope);
       if (signal.aborted) return cancelledResult();
       if (!beforeDispatch.ok) return { status: 'error', error: beforeDispatch.error };
 
@@ -444,16 +484,18 @@ export function createProviderModelLoadService<TTicket, TCredentialRef>(
             authorization.ticket,
             request,
             destination,
+            scope,
           );
           if (!result.ok) throw new ProviderProbeDestinationAuthorizationError(result.error);
         },
         redirectPolicy: 'reject',
         wallTimeMs: PROVIDER_MODEL_LOAD_WALL_TIME_MS,
+        wallDeadlineAtMs: scope.lifetime.wallDeadlineAtMs,
         maxDecodedBodyBytes: PROVIDER_MODEL_LOAD_MAX_DECODED_BODY_BYTES,
         signal,
       });
       if (signal.aborted) return cancelledResult();
-      const afterResponse = await dependencies.authorization.revalidate(authorization.ticket, request);
+      const afterResponse = await dependencies.authorization.revalidate(authorization.ticket, request, scope);
       if (signal.aborted) return cancelledResult();
       if (!afterResponse.ok) return { status: 'error', error: afterResponse.error };
       if (!response.ok) return { status: 'error', error: response.error };
@@ -471,17 +513,18 @@ export function createProviderModelLoadService<TTicket, TCredentialRef>(
         refreshFrontier: String(++nextRefreshFrontier),
         ticket: authorization.ticket,
         signal,
+        scope,
       });
       if (signal.aborted) return cancelledResult();
-      const afterRefresh = await dependencies.authorization.revalidate(authorization.ticket, request);
+      const afterRefresh = await dependencies.authorization.revalidate(authorization.ticket, request, scope);
       if (signal.aborted) return cancelledResult();
       if (!afterRefresh.ok) return { status: 'error', error: afterRefresh.error };
       if (refreshed.status === 'error') return { status: 'error', error: refreshed.error };
       if (refreshed.status === 'not_supported') return modelStillUnloaded(request);
 
-      const confirmed = await dependencies.catalog.readCurrentModel({ ...request, ticket: authorization.ticket });
+      const confirmed = await dependencies.catalog.readCurrentModel({ ...request, ticket: authorization.ticket, scope });
       if (signal.aborted) return cancelledResult();
-      const afterRead = await dependencies.authorization.revalidate(authorization.ticket, request);
+      const afterRead = await dependencies.authorization.revalidate(authorization.ticket, request, scope);
       if (signal.aborted) return cancelledResult();
       if (!afterRead.ok) return { status: 'error', error: afterRead.error };
       if (confirmed.status === 'error') return { status: 'error', error: confirmed.error };
@@ -494,7 +537,7 @@ export function createProviderModelLoadService<TTicket, TCredentialRef>(
     } catch (error) {
       if (signal.aborted || error instanceof ProviderModelLoadCancelledError) return cancelledResult();
       try {
-        const current = await dependencies.authorization.revalidate(authorization.ticket, request);
+        const current = await dependencies.authorization.revalidate(authorization.ticket, request, scope);
         if (!current.ok) return { status: 'error', error: current.error };
       } catch {
         // Fall through to the redacted error below. Revalidation itself is
@@ -549,6 +592,12 @@ export function createProviderModelLoadService<TTicket, TCredentialRef>(
       if (!dependencies.isFeatureEnabled()) return { status: 'not_supported', reason: 'feature_disabled' };
       if (input.signal?.aborted) return cancelledResult();
       const request = normalizeRequest(input);
+      const authorizationScope: ProviderModelLoadOperationScope = {
+        lifetime: createProviderOperationLifetime({
+          ...(input.signal ? { signal: input.signal } : {}),
+          wallTimeMs: PROVIDER_MODEL_LOAD_WALL_TIME_MS,
+        }),
+      };
       const logicalKey = logicalOperationKey(request);
       const authorizationController = new AbortController();
       const abortAuthorization = () => authorizationController.abort();
@@ -556,7 +605,11 @@ export function createProviderModelLoadService<TTicket, TCredentialRef>(
       input.signal?.addEventListener('abort', abortAuthorization, { once: true });
       let authorized: AuthorizedLoad;
       try {
-        authorized = await authorizeLoad({ request, signal: authorizationController.signal });
+        authorized = await authorizeLoad({
+          request,
+          signal: authorizationController.signal,
+          scope: authorizationScope,
+        });
       } finally {
         unregisterAuthorization();
         input.signal?.removeEventListener('abort', abortAuthorization);
@@ -578,6 +631,13 @@ export function createProviderModelLoadService<TTicket, TCredentialRef>(
           request,
           authorization: authorized.authorization,
           signal: controller.signal,
+          scope: {
+            // The single-flight belongs to all callers; carry only the shared
+            // deadline once admission has detached individual cancellation, but
+            // retain the exact registry generation that authorized it.
+            ...(authorized.scope.registry ? { registry: authorized.scope.registry } : {}),
+            lifetime: { wallDeadlineAtMs: authorizationScope.lifetime.wallDeadlineAtMs },
+          },
         });
         const createdEntry = { logicalKey, controller, promise, state };
         inFlight.set(key, createdEntry);

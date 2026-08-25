@@ -183,6 +183,7 @@ describe('resolveSessionIdOrPrefix', () => {
       id: 'session-indexed-layout-tag',
       encryptionMode: 'plain',
       metadataLayoutVersion: 1,
+      share: null,
       metadata: JSON.stringify({ v: 1 }),
       ownerMetadata: createPlainSessionOwnerMetadataEnvelopeV1(
         SessionOwnerMetadataV1Schema.parse({
@@ -252,6 +253,7 @@ describe('resolveSessionIdOrPrefix', () => {
       id: 'session-from-layout-v1-owner',
       encryptionMode: 'plain',
       metadataLayoutVersion: 1,
+      share: null,
       metadata: JSON.stringify({ v: 1 }),
       ownerMetadata: createPlainSessionOwnerMetadataEnvelopeV1(
         SessionOwnerMetadataV1Schema.parse({

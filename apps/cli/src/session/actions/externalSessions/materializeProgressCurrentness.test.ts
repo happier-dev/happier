@@ -480,7 +480,7 @@ describe('materialize semantic currentness after operation progress publication'
       activeServerDir,
       completed.operationId,
     )).resolves.toMatchObject({
-      kind: 'completion_receipt',
+      kind: 'terminal_receipt',
       receipt: {
         reference: {
           sessionId: completed.request.sessionId,

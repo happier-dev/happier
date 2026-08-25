@@ -729,6 +729,73 @@ describe('CodexLikePermissionHandler', () => {
     );
   });
 
+  it('admits a title call the session profile re-enabled over a disabled account default', async () => {
+    // Threading proof: the prompt composer resolves account -> profile, so this
+    // pair is instructed to call change_title. Reading the Account value alone
+    // here would deny an instruction the prompt just gave.
+    const session = new FakeSession();
+    session.setMetadataSnapshot({ profileId: 'focused' });
+    const handler = new CodexLikePermissionHandler({
+      session: session as any,
+      logPrefix: '[Test]',
+      getAccountSettings: () => ({
+        codingPromptBehaviorV1: {
+          v: 1,
+          sessionTitleUpdates: 'disabled',
+          responseOptions: 'agent',
+        },
+        profiles: [{
+          v: 2,
+          id: 'focused',
+          name: 'Focused',
+          extraEnvironmentVariables: [],
+          defaultPermissionModeByTargetKey: {},
+          defaultPersistenceModeByTargetKey: {},
+          compatibilityByTargetKey: {},
+          codingPromptBehaviorOverrides: { sessionTitleUpdates: 'ongoing' },
+          createdAt: 1,
+          updatedAt: 1,
+        }],
+      } as any),
+    });
+
+    const result = await handler.handleToolCall('tool-1', 'mcp__happier__session_title_set', { title: 'Renamed' });
+
+    expect(result.decision).toBe('approved');
+  });
+
+  it('denies a title call the session profile disabled over an enabled account default', async () => {
+    const session = new FakeSession();
+    session.setMetadataSnapshot({ profileId: 'focused' });
+    const handler = new CodexLikePermissionHandler({
+      session: session as any,
+      logPrefix: '[Test]',
+      getAccountSettings: () => ({
+        codingPromptBehaviorV1: {
+          v: 1,
+          sessionTitleUpdates: 'ongoing',
+          responseOptions: 'agent',
+        },
+        profiles: [{
+          v: 2,
+          id: 'focused',
+          name: 'Focused',
+          extraEnvironmentVariables: [],
+          defaultPermissionModeByTargetKey: {},
+          defaultPersistenceModeByTargetKey: {},
+          compatibilityByTargetKey: {},
+          codingPromptBehaviorOverrides: { sessionTitleUpdates: 'disabled' },
+          createdAt: 1,
+          updatedAt: 1,
+        }],
+      } as any),
+    });
+
+    const result = await handler.handleToolCall('tool-1', 'mcp__happier__session_title_set', { title: 'Renamed' });
+
+    expect(result.decision).toBe('denied');
+  });
+
   it('treats setPermissionMode without updatedAt as provisional when newer metadata exists', async () => {
     const session = new FakeSession();
     session.setMetadataSnapshot({ permissionMode: 'yolo', permissionModeUpdatedAt: 10 });

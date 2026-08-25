@@ -118,11 +118,13 @@ describe('operation-private External Sessions staging', () => {
         const activeServerDir = await createPrivateRoot('happier-external-staging-atomic-');
         let failCommittedManifestOnce = true;
         const crashingWriter = async (path: string, value: unknown) => {
-            const manifest = value as { groups?: Array<{ state?: string }> };
+            // The page payload is durable and its reservation row still says
+            // `reserved`: the exact instant the commit is lost.
+            const reservation = value as { state?: string };
             if (
                 failCommittedManifestOnce
-                && path.endsWith('manifest.json')
-                && manifest.groups?.some((group) => group.state === 'committed')
+                && /group-\d+\.json$/.test(path.replaceAll('\\', '/'))
+                && reservation.state === 'committed'
             ) {
                 failCommittedManifestOnce = false;
                 throw new Error('simulated crash before committed manifest publication');
@@ -207,6 +209,486 @@ describe('operation-private External Sessions staging', () => {
         ]);
     });
 
+    it('completes a resumed capture whose committed page row outlived the header write that folded it', async () => {
+        // A page row is published before the header that folds it. Losing the
+        // header write leaves the row committed while the header still lists
+        // the page pending, and the resumed capture re-appends that exact page
+        // and is answered `already_stored`. Without republishing the lost fold
+        // the pending entry is permanent and the import can never complete.
+        const activeServerDir = await createPrivateRoot('happier-external-staging-lost-fold-');
+        let failFoldOnce = true;
+        let committedRowPublished = false;
+        const crashingWriter = async (path: string, value: unknown) => {
+            const normalized = path.replaceAll('\\', '/');
+            if (
+                /group-\d+\.json$/.test(normalized)
+                && (value as { state?: string }).state === 'committed'
+            ) {
+                await writeJsonAtomic(path, value);
+                committedRowPublished = true;
+                return;
+            }
+            if (failFoldOnce && committedRowPublished && normalized.endsWith('manifest.json')) {
+                failFoldOnce = false;
+                throw new Error('simulated crash before the committed fold is published');
+            }
+            await writeJsonAtomic(path, value);
+        };
+        const limits = {
+            perOperation: { maxItems: 20, maxBytes: 50_000 },
+            aggregate: { maxItems: 40, maxBytes: 100_000 },
+        } as const;
+        const crashingStore = createExternalSessionOperationPrivateStagingStore({
+            activeServerDir,
+            limits,
+            persistence: { writeJsonAtomic: crashingWriter },
+        });
+        expect(await crashingStore.beginOperation({
+            operationId: 'operation-lost-fold',
+            representation: 'content',
+            capturedSource,
+        })).toEqual(expect.objectContaining({ status: 'ready' }));
+        await expect(crashingStore.appendPageGroup({
+            operationId: 'operation-lost-fold',
+            captureIndex: 0,
+            groupId: 'newest-page',
+            items: [{ id: 'n-1' }],
+            sourceRead: sameSourceRead,
+        })).rejects.toThrow('simulated crash');
+
+        // The resumed capture reads its source from the newest page again.
+        const restarted = createExternalSessionOperationPrivateStagingStore({
+            activeServerDir,
+            limits,
+        });
+        expect(await restarted.appendPageGroup({
+            operationId: 'operation-lost-fold',
+            captureIndex: 0,
+            groupId: 'newest-page',
+            items: [{ id: 'n-1' }],
+            sourceRead: sameSourceRead,
+        })).toEqual(expect.objectContaining({ status: 'already_stored' }));
+        expect(await restarted.appendPageGroup({
+            operationId: 'operation-lost-fold',
+            captureIndex: 1,
+            groupId: 'oldest-page',
+            items: [{ id: 'o-1' }],
+            sourceRead: { ...sameSourceRead, eof: true },
+        })).toEqual(expect.objectContaining({ status: 'stored' }));
+        await restarted.completeCapture({ operationId: 'operation-lost-fold' });
+        expect(await restarted.readReplayState('operation-lost-fold')).toEqual({
+            status: 'ready',
+            lifecycle: 'active',
+            acceptedThroughServerSeq: null,
+            acknowledgedItemCount: 0,
+        });
+        expect(await readReplayGroups(restarted, 'operation-lost-fold')).toEqual([
+            expect.objectContaining({ groupId: 'oldest-page', items: [{ id: 'o-1' }] }),
+            expect.objectContaining({ groupId: 'newest-page', items: [{ id: 'n-1' }] }),
+        ]);
+    });
+
+    it('repairs an acknowledged row fact after the header fold is lost during replay recovery', async () => {
+        const activeServerDir = await createPrivateRoot('happier-external-staging-lost-ack-fold-');
+        const limits = {
+            perOperation: { maxItems: 20, maxBytes: 50_000 },
+            aggregate: { maxItems: 40, maxBytes: 100_000 },
+        } as const;
+        const operationId = 'operation-lost-ack-fold';
+        const groupId = 'only-page';
+        const store = createExternalSessionOperationPrivateStagingStore({ activeServerDir, limits });
+        await store.beginOperation({ operationId, representation: 'content', capturedSource });
+        await store.appendPageGroup({
+            operationId,
+            captureIndex: 0,
+            groupId,
+            items: [{ id: 'only-1' }, { id: 'only-2' }],
+            sourceRead: { ...sameSourceRead, eof: true },
+        });
+        await store.completeCapture({ operationId });
+
+        let acknowledgedRowWritten = false;
+        let failHeaderFoldOnce = true;
+        const crashingStore = createExternalSessionOperationPrivateStagingStore({
+            activeServerDir,
+            limits,
+            persistence: {
+                writeJsonAtomic: async (path, value) => {
+                    const normalized = path.replaceAll('\\', '/');
+                    if (
+                        /group-\d+\.json$/.test(normalized)
+                        && (value as { state?: string }).state === 'acknowledged'
+                    ) {
+                        await writeJsonAtomic(path, value);
+                        acknowledgedRowWritten = true;
+                        return;
+                    }
+                    if (
+                        failHeaderFoldOnce
+                        && acknowledgedRowWritten
+                        && normalized.endsWith('manifest.json')
+                    ) {
+                        failHeaderFoldOnce = false;
+                        throw new Error('simulated crash before acknowledged header fold');
+                    }
+                    await writeJsonAtomic(path, value);
+                },
+            },
+        });
+
+        await expect(crashingStore.acknowledgeReplayGroup({
+            operationId,
+            captureIndex: 0,
+            groupId,
+            acceptedThroughServerSeq: 2,
+        })).rejects.toThrow('simulated crash before acknowledged header fold');
+
+        const restarted = createExternalSessionOperationPrivateStagingStore({ activeServerDir, limits });
+        await expect(restarted.readReplayState(operationId)).resolves.toEqual({
+            status: 'ready',
+            lifecycle: 'active',
+            acceptedThroughServerSeq: 2,
+            acknowledgedItemCount: 2,
+        });
+        await expect(readReplayGroups(restarted, operationId)).resolves.toEqual([]);
+        await expect(restarted.cleanupTerminalOperation({ operationId }))
+            .resolves.toEqual({ status: 'completed' });
+    });
+
+    it('repairs an acknowledged row fact during an idempotent acknowledgement', async () => {
+        const activeServerDir = await createPrivateRoot('happier-external-staging-idempotent-ack-fold-');
+        const limits = {
+            perOperation: { maxItems: 20, maxBytes: 50_000 },
+            aggregate: { maxItems: 40, maxBytes: 100_000 },
+        } as const;
+        const operationId = 'operation-idempotent-ack-fold';
+        const groupId = 'only-page';
+        const store = createExternalSessionOperationPrivateStagingStore({ activeServerDir, limits });
+        await store.beginOperation({ operationId, representation: 'content', capturedSource });
+        await store.appendPageGroup({
+            operationId,
+            captureIndex: 0,
+            groupId,
+            items: [{ id: 'only-1' }],
+            sourceRead: { ...sameSourceRead, eof: true },
+        });
+        await store.completeCapture({ operationId });
+
+        let acknowledgedRowWritten = false;
+        let failHeaderFoldOnce = true;
+        const crashingStore = createExternalSessionOperationPrivateStagingStore({
+            activeServerDir,
+            limits,
+            persistence: {
+                writeJsonAtomic: async (path, value) => {
+                    const normalized = path.replaceAll('\\', '/');
+                    if (
+                        /group-\d+\.json$/.test(normalized)
+                        && (value as { state?: string }).state === 'acknowledged'
+                    ) {
+                        await writeJsonAtomic(path, value);
+                        acknowledgedRowWritten = true;
+                        return;
+                    }
+                    if (
+                        failHeaderFoldOnce
+                        && acknowledgedRowWritten
+                        && normalized.endsWith('manifest.json')
+                    ) {
+                        failHeaderFoldOnce = false;
+                        throw new Error('simulated crash before acknowledged header fold');
+                    }
+                    await writeJsonAtomic(path, value);
+                },
+            },
+        });
+
+        await expect(crashingStore.acknowledgeReplayGroup({
+            operationId,
+            captureIndex: 0,
+            groupId,
+            acceptedThroughServerSeq: 1,
+        })).rejects.toThrow('simulated crash before acknowledged header fold');
+
+        const restarted = createExternalSessionOperationPrivateStagingStore({ activeServerDir, limits });
+        await expect(restarted.acknowledgeReplayGroup({
+            operationId,
+            captureIndex: 0,
+            groupId,
+            acceptedThroughServerSeq: 1,
+        })).resolves.toBeUndefined();
+        const operationDirectory = join(
+            stagingRootFor(activeServerDir),
+            (await readdir(stagingRootFor(activeServerDir), { withFileTypes: true }))
+                .find((entry) => entry.isDirectory())!.name,
+        );
+        expect(JSON.parse(await readFile(join(operationDirectory, 'manifest.json'), 'utf8')))
+            .toMatchObject({
+                summary: {
+                    groupCount: 1,
+                    acknowledgedGroupCount: 1,
+                    acknowledgedItemCount: 1,
+                    acceptedThroughServerSeq: 1,
+                },
+            });
+        await expect(restarted.cleanupTerminalOperation({ operationId }))
+            .resolves.toEqual({ status: 'completed' });
+    });
+
+    it('repairs an acknowledged row fact before terminal cleanup decides readiness', async () => {
+        const activeServerDir = await createPrivateRoot('happier-external-staging-cleanup-ack-fold-');
+        const limits = {
+            perOperation: { maxItems: 20, maxBytes: 50_000 },
+            aggregate: { maxItems: 40, maxBytes: 100_000 },
+        } as const;
+        const operationId = 'operation-cleanup-ack-fold';
+        const groupId = 'only-page';
+        const store = createExternalSessionOperationPrivateStagingStore({ activeServerDir, limits });
+        await store.beginOperation({ operationId, representation: 'content', capturedSource });
+        await store.appendPageGroup({
+            operationId,
+            captureIndex: 0,
+            groupId,
+            items: [{ id: 'only-1' }],
+            sourceRead: { ...sameSourceRead, eof: true },
+        });
+        await store.completeCapture({ operationId });
+
+        let acknowledgedRowWritten = false;
+        let failHeaderFoldOnce = true;
+        const crashingStore = createExternalSessionOperationPrivateStagingStore({
+            activeServerDir,
+            limits,
+            persistence: {
+                writeJsonAtomic: async (path, value) => {
+                    const normalized = path.replaceAll('\\', '/');
+                    if (
+                        /group-\d+\.json$/.test(normalized)
+                        && (value as { state?: string }).state === 'acknowledged'
+                    ) {
+                        await writeJsonAtomic(path, value);
+                        acknowledgedRowWritten = true;
+                        return;
+                    }
+                    if (
+                        failHeaderFoldOnce
+                        && acknowledgedRowWritten
+                        && normalized.endsWith('manifest.json')
+                    ) {
+                        failHeaderFoldOnce = false;
+                        throw new Error('simulated crash before acknowledged header fold');
+                    }
+                    await writeJsonAtomic(path, value);
+                },
+            },
+        });
+
+        await expect(crashingStore.acknowledgeReplayGroup({
+            operationId,
+            captureIndex: 0,
+            groupId,
+            acceptedThroughServerSeq: 1,
+        })).rejects.toThrow('simulated crash before acknowledged header fold');
+
+        const restarted = createExternalSessionOperationPrivateStagingStore({ activeServerDir, limits });
+        // Without the header fold repair, stale acknowledgedGroupCount is zero
+        // and terminal cleanup incorrectly reports not_ready despite the row.
+        await expect(restarted.cleanupTerminalOperation({ operationId }))
+            .resolves.toEqual({ status: 'completed' });
+    });
+
+    it('preserves the row-count fold across insert, state transitions, extension rollback, and restart', async () => {
+        const activeServerDir = await createPrivateRoot('happier-external-staging-row-count-fold-');
+        const limits = {
+            perOperation: { maxItems: 20, maxBytes: 50_000 },
+            aggregate: { maxItems: 40, maxBytes: 100_000 },
+        } as const;
+        const operationId = 'operation-row-count-fold';
+        const store = createExternalSessionOperationPrivateStagingStore({ activeServerDir, limits });
+        await store.beginOperation({ operationId, representation: 'content', capturedSource });
+        await store.appendPageGroup({
+            operationId,
+            captureIndex: 0,
+            groupId: 'acknowledged-prefix',
+            items: [{ id: 'prefix' }],
+            sourceRead: { ...sameSourceRead, eof: true },
+        });
+        await store.completeCapture({ operationId });
+        await store.acknowledgeReplayGroup({
+            operationId,
+            captureIndex: 0,
+            groupId: 'acknowledged-prefix',
+            acceptedThroughServerSeq: 1,
+        });
+        const extension = await store.reopenAcknowledgedCapture({ operationId });
+        await store.appendPageGroup({
+            operationId,
+            captureIndex: extension.nextCaptureIndex,
+            groupId: 'discarded-extension',
+            items: [{ id: 'extension' }],
+            sourceRead: {
+                ...sameSourceRead,
+                revision: 'revision-2',
+                relationshipToCapture: 'appended',
+                eof: true,
+            },
+        });
+        await store.rollbackUnacknowledgedCaptureExtension({ operationId });
+
+        const restarted = createExternalSessionOperationPrivateStagingStore({ activeServerDir, limits });
+        await expect(restarted.readCaptureCheckpoint({ operationId })).resolves.toEqual({
+            status: 'ready',
+            captureState: 'complete',
+            sourcePagesRead: 1,
+            stagedItemCount: 1,
+            capturedThroughSourceRevision: 'revision-1',
+        });
+        await expect(restarted.readReplayState(operationId)).resolves.toEqual({
+            status: 'ready',
+            lifecycle: 'active',
+            acceptedThroughServerSeq: 1,
+            acknowledgedItemCount: 1,
+        });
+    });
+
+    it.each([
+        ['after removing tail payloads and before publishing the contracted header', false],
+        ['after publishing the contracted header and before metadata cleanup', true],
+    ] as const)(
+        'keeps private extension payloads charged or removed when rollback crashes %s',
+        async (_crashWindow, persistContractedHeaderBeforeFailure) => {
+            const activeServerDir = await createPrivateRoot('happier-external-staging-rollback-order-');
+            const limits = {
+                perOperation: { maxItems: 20, maxBytes: 50_000 },
+                aggregate: { maxItems: 40, maxBytes: 100_000 },
+            } as const;
+            const operationId = `operation-rollback-${String(persistContractedHeaderBeforeFailure)}`;
+            const store = createExternalSessionOperationPrivateStagingStore({
+                activeServerDir,
+                limits,
+            });
+            await store.beginOperation({ operationId, representation: 'content', capturedSource });
+            await store.appendPageGroup({
+                operationId,
+                captureIndex: 0,
+                groupId: 'acknowledged-prefix',
+                items: [{ id: 'prefix' }],
+                sourceRead: sameSourceRead,
+            });
+            await store.appendPageGroup({
+                operationId,
+                captureIndex: 1,
+                groupId: 'discarded-extension',
+                items: [{ id: 'extension', content: 'large private page payload' }],
+                sourceRead: {
+                    ...sameSourceRead,
+                    revision: 'revision-2',
+                    relationshipToCapture: 'appended',
+                    eof: true,
+                },
+            });
+            await store.completeCapture({ operationId });
+            await store.persistPreparedReplayGroup({
+                operationId,
+                captureIndex: 1,
+                groupId: 'discarded-extension',
+                items: [{ id: 'prepared-extension', content: 'large private prepared payload' }],
+            });
+            await store.acknowledgeReplayGroup({
+                operationId,
+                captureIndex: 0,
+                groupId: 'acknowledged-prefix',
+                acceptedThroughServerSeq: 1,
+            });
+
+            const stagingRoot = stagingRootFor(activeServerDir);
+            const operationDirectory = join(
+                stagingRoot,
+                (await readdir(stagingRoot, { withFileTypes: true }))
+                    .find((entry) => entry.isDirectory())!.name,
+            );
+            // Prepared receipts are admitted after capture completion. Model the
+            // durable recovery input the rollback owner accepts by reopening
+            // only its header while keeping the real tail row and receipt bytes.
+            const persistedHeader = JSON.parse(
+                await readFile(join(operationDirectory, 'manifest.json'), 'utf8'),
+            ) as Record<string, unknown>;
+            await writeJsonAtomic(join(operationDirectory, 'manifest.json'), {
+                ...persistedHeader,
+                captureState: 'capturing',
+            });
+
+            let armRollbackFailure = false;
+            const crashingStore = createExternalSessionOperationPrivateStagingStore({
+                activeServerDir,
+                limits,
+                persistence: {
+                    writeJsonAtomic: async (path, value) => {
+                        const header = value as Readonly<{
+                            captureState?: unknown;
+                            summary?: Readonly<{ groupCount?: unknown }>;
+                        }>;
+                        const isContractedRollbackHeader = armRollbackFailure
+                            && path.replaceAll('\\', '/').endsWith('manifest.json')
+                            && header.captureState === 'complete'
+                            && header.summary?.groupCount === 1;
+                        if (isContractedRollbackHeader && !persistContractedHeaderBeforeFailure) {
+                            throw new Error('simulated crash before contracted rollback header publication');
+                        }
+                        await writeJsonAtomic(path, value);
+                        if (isContractedRollbackHeader && persistContractedHeaderBeforeFailure) {
+                            throw new Error('simulated crash after contracted rollback header publication');
+                        }
+                    },
+                },
+            });
+            armRollbackFailure = true;
+            await expect(crashingStore.rollbackUnacknowledgedCaptureExtension({ operationId }))
+                .rejects.toThrow('simulated crash');
+
+            expect(JSON.parse(await readFile(join(operationDirectory, 'manifest.json'), 'utf8')))
+                .toMatchObject(
+                    persistContractedHeaderBeforeFailure
+                        ? { captureState: 'complete', summary: { groupCount: 1 } }
+                        : { captureState: 'capturing', summary: { groupCount: 2 } },
+                );
+            // If the contracted header made it durable, neither private payload
+            // may remain outside its capacity fold. Before it is durable, the
+            // old header still retains both charges until a retry finishes.
+            await expect(stat(join(operationDirectory, 'page-000000000001.json')))
+                .rejects.toMatchObject({ code: 'ENOENT' });
+            await expect(stat(join(operationDirectory, 'prepared-000000000001.json')))
+                .rejects.toMatchObject({ code: 'ENOENT' });
+
+            const restarted = createExternalSessionOperationPrivateStagingStore({
+                activeServerDir,
+                limits,
+            });
+            await restarted.rollbackUnacknowledgedCaptureExtension({ operationId });
+            // A restart after the contracted header must finish the low-cost row
+            // cleanup rather than returning early and retaining an unadmitted row.
+            await expect(stat(join(operationDirectory, 'group-000000000001.json')))
+                .rejects.toMatchObject({ code: 'ENOENT' });
+            await expect(restarted.readCaptureCheckpoint({ operationId })).resolves.toEqual({
+                status: 'ready',
+                captureState: 'complete',
+                sourcePagesRead: 1,
+                stagedItemCount: 1,
+                capturedThroughSourceRevision: 'revision-1',
+            });
+            await expect(restarted.readReplayState(operationId)).resolves.toEqual({
+                status: 'ready',
+                lifecycle: 'active',
+                acceptedThroughServerSeq: 1,
+                acknowledgedItemCount: 1,
+            });
+            await expect(restarted.reopenAcknowledgedCapture({ operationId })).resolves.toEqual({
+                nextCaptureIndex: 1,
+                nextReplayOrder: -1,
+            });
+        },
+    );
+
     it('retains an exact prepared replay receipt through restart without creating another staging owner', async () => {
         const activeServerDir = await createPrivateRoot('happier-external-staging-prepared-replay-');
         const limits = {
@@ -235,6 +717,7 @@ describe('operation-private External Sessions staging', () => {
 
         await expect(store.persistPreparedReplayGroup({
             operationId,
+            captureIndex: 0,
             groupId,
             items: prepared,
         })).resolves.toEqual({ status: 'stored' });
@@ -249,16 +732,18 @@ describe('operation-private External Sessions staging', () => {
         ]);
         await expect(restarted.persistPreparedReplayGroup({
             operationId,
+            captureIndex: 0,
             groupId,
             items: prepared,
         })).resolves.toEqual({ status: 'already_stored' });
         await expect(restarted.persistPreparedReplayGroup({
             operationId,
+            captureIndex: 0,
             groupId,
             items: [{ ...prepared[0], content: { t: 'encrypted', c: 'different' } }],
         })).rejects.toThrow('conflicts with its existing receipt');
 
-        await restarted.clearPreparedReplayGroup({ operationId, groupId });
+        await restarted.clearPreparedReplayGroup({ operationId, captureIndex: 0, groupId });
         await expect(readReplayGroups(restarted, operationId)).resolves.toEqual([
             expect.objectContaining({ groupId, items: staged }),
         ]);
@@ -293,6 +778,7 @@ describe('operation-private External Sessions staging', () => {
 
         await expect(store.persistPreparedReplayGroup({
             operationId,
+            captureIndex: 0,
             groupId,
             items: [{
                 localId: 'history:raw-item',
@@ -338,6 +824,7 @@ describe('operation-private External Sessions staging', () => {
             await store.completeCapture({ operationId });
             await store.persistPreparedReplayGroup({
                 operationId,
+                captureIndex: 0,
                 groupId,
                 items: [{
                     localId: 'history:raw-item',
@@ -843,6 +1330,7 @@ describe('operation-private External Sessions staging', () => {
         await store.completeCapture({ operationId: 'operation-discard-cleanup' });
         await store.acknowledgeReplayGroup({
             operationId: 'operation-discard-cleanup',
+            captureIndex: 1,
             groupId: 'oldest-acknowledged',
             acceptedThroughServerSeq: 1,
         });
@@ -1286,4 +1774,235 @@ describe('operation-private External Sessions staging', () => {
             }
         }
     });
+    it('keeps the metadata one captured page writes independent of how many pages precede it', async () => {
+        // The accepted import ceiling is thousands of pages. If capturing a page
+        // republishes every earlier page's metadata, the newest page of a long
+        // capture costs proportionally more than the newest page of a short one
+        // and the whole import becomes quadratic under the Account capacity lock.
+        const measureFinalPageMetadataBytes = async (pageCount: number) => {
+            const activeServerDir = await createPrivateRoot(
+                `happier-external-staging-page-cost-${pageCount}-`,
+            );
+            let finalPageMetadataBytes = 0;
+            let measuring = false;
+            const measuringWriter = async (path: string, value: unknown) => {
+                const normalized = path.replaceAll('\\', '/');
+                if (
+                    measuring
+                    && (
+                        normalized.endsWith('manifest.json')
+                        || /group-\d+\.json$/.test(normalized)
+                    )
+                ) {
+                    finalPageMetadataBytes += Buffer.byteLength(
+                        JSON.stringify(value, null, 2),
+                        'utf8',
+                    );
+                }
+                await writeJsonAtomic(path, value);
+            };
+            const store = createExternalSessionOperationPrivateStagingStore({
+                activeServerDir,
+                limits: {
+                    perOperation: { maxItems: 1_000, maxBytes: 4_000_000 },
+                    aggregate: { maxItems: 2_000, maxBytes: 8_000_000 },
+                },
+                persistence: { writeJsonAtomic: measuringWriter },
+            });
+            await store.beginOperation({
+                operationId: 'operation-page-cost',
+                representation: 'content',
+                capturedSource,
+            });
+            for (let captureIndex = 0; captureIndex < pageCount; captureIndex += 1) {
+                measuring = captureIndex === pageCount - 1;
+                expect((await store.appendPageGroup({
+                    operationId: 'operation-page-cost',
+                    captureIndex,
+                    groupId: `cost-page-${captureIndex}`,
+                    items: [{ id: `cost-${captureIndex}` }],
+                    sourceRead: { ...sameSourceRead, eof: captureIndex === pageCount - 1 },
+                })).status).toBe('stored');
+            }
+            return finalPageMetadataBytes;
+        };
+
+        const shortCapture = await measureFinalPageMetadataBytes(8);
+        const longCapture = await measureFinalPageMetadataBytes(64);
+        expect(shortCapture).toBeGreaterThan(0);
+        // Eight times as many preceding pages. A page that republishes them all
+        // costs about eight times as much; a page that publishes only itself
+        // costs the same plus the few characters its larger indexes and running
+        // totals occupy, so it cannot reach even twice the short capture.
+        expect(longCapture).toBeLessThan(shortCapture * 2);
+    });
+
+    it('serializes concurrent same-Account page appends behind the one staging capacity lock', async () => {
+        const activeServerDir = await createPrivateRoot('happier-external-staging-concurrent-lock-');
+        const limits = {
+            perOperation: { maxItems: 200, maxBytes: 2_000_000 },
+            aggregate: { maxItems: 400, maxBytes: 4_000_000 },
+        } as const;
+        // Every staged mutation runs under one Account-partition `.capacity.lock`.
+        // Observing the manifest writes is how a lost or per-operation lock becomes
+        // visible: two operations' manifest writes would then interleave.
+        const inFlightOperationDirectories = new Set<string>();
+        let observedOverlap = false;
+        let observedManifestWrites = 0;
+        const observingWriter = async (path: string, value: unknown) => {
+            if (!path.endsWith('manifest.json')) {
+                await writeJsonAtomic(path, value);
+                return;
+            }
+            const operationDirectory = join(path, '..');
+            inFlightOperationDirectories.add(operationDirectory);
+            observedManifestWrites += 1;
+            if (inFlightOperationDirectories.size > 1) observedOverlap = true;
+            try {
+                // A genuine asynchronous settle, so an unserialized peer would be
+                // in flight here rather than merely queued behind this microtask.
+                await new Promise((resolve) => setTimeout(resolve, 1));
+                await writeJsonAtomic(path, value);
+            } finally {
+                inFlightOperationDirectories.delete(operationDirectory);
+            }
+        };
+        const store = createExternalSessionOperationPrivateStagingStore({
+            activeServerDir,
+            limits,
+            persistence: { writeJsonAtomic: observingWriter },
+        });
+
+        const operationIds = ['operation-lock-a', 'operation-lock-b'] as const;
+        for (const operationId of operationIds) {
+            expect(await store.beginOperation({
+                operationId,
+                representation: 'content',
+                capturedSource,
+            })).toEqual(expect.objectContaining({ status: 'ready' }));
+        }
+
+        const appendPages = async (operationId: string) => {
+            const outcomes: string[] = [];
+            for (let captureIndex = 0; captureIndex < 8; captureIndex += 1) {
+                const result = await store.appendPageGroup({
+                    operationId,
+                    captureIndex,
+                    groupId: `${operationId}-page-${captureIndex}`,
+                    items: [{ id: `${operationId}-${captureIndex}-1` }],
+                    sourceRead: { ...sameSourceRead, eof: captureIndex === 7 },
+                });
+                outcomes.push(result.status);
+            }
+            return outcomes;
+        };
+
+        const [firstOutcomes, secondOutcomes] = await Promise.all(
+            operationIds.map((operationId) => appendPages(operationId)),
+        );
+
+        // No waiter may be refused: a capacity-lock timeout surfaces as a throw.
+        expect(firstOutcomes).toEqual(Array.from({ length: 8 }, () => 'stored'));
+        expect(secondOutcomes).toEqual(Array.from({ length: 8 }, () => 'stored'));
+        expect(observedManifestWrites).toBeGreaterThan(0);
+        expect(observedOverlap).toBe(false);
+        for (const operationId of operationIds) {
+            await store.completeCapture({ operationId });
+            const groups = await readReplayGroups(store, operationId);
+            expect(groups.map((group) => group.groupId)).toEqual(
+                Array.from({ length: 8 }, (_unused, index) => `${operationId}-page-${index}`)
+                    .reverse(),
+            );
+        }
+    });
 });
+
+describe.runIf(process.env.HAPPIER_RUN_EXTERNAL_SESSION_BENCHMARK === '1')(
+    'External Sessions private-staging page metadata growth benchmark',
+    () => {
+        // Every page mutation runs under the Account-partition capacity lock and
+        // republishes the operation's page metadata. This measures every
+        // metadata byte one accepted import serializes as its page count grows
+        // — the operation header AND the per-page reservation rows, so moving a
+        // row out of the header cannot make the measurement look bounded on its
+        // own. It records the shape and sets no threshold.
+        it('measures page metadata serialization as accepted page count grows', async () => {
+            const measurePageCount = async (pageCount: number) => {
+                const activeServerDir = await createPrivateRoot(
+                    `happier-external-staging-growth-${pageCount}-`,
+                );
+                let pageMetadataWrites = 0;
+                let pageMetadataBytes = 0;
+                let lastPageMetadataBytes = 0;
+                const normalizedPath = (path: string) => path.replaceAll('\\', '/');
+                const isPageMetadataWrite = (path: string) => (
+                    normalizedPath(path).endsWith('manifest.json')
+                    || /group-\d+\.json$/.test(normalizedPath(path))
+                );
+                const measuringWriter = async (path: string, value: unknown) => {
+                    if (isPageMetadataWrite(path)) {
+                        const bytes = Buffer.byteLength(
+                            JSON.stringify(value, null, 2),
+                            'utf8',
+                        );
+                        pageMetadataWrites += 1;
+                        pageMetadataBytes += bytes;
+                        lastPageMetadataBytes += bytes;
+                    }
+                    await writeJsonAtomic(path, value);
+                };
+                const store = createExternalSessionOperationPrivateStagingStore({
+                    activeServerDir,
+                    limits: {
+                        perOperation: { maxItems: 100_000, maxBytes: 512 * 1024 * 1024 },
+                        aggregate: { maxItems: 500_000, maxBytes: 2 * 1024 * 1024 * 1024 },
+                    },
+                    persistence: { writeJsonAtomic: measuringWriter },
+                });
+                await store.beginOperation({
+                    operationId: 'operation-growth',
+                    representation: 'content',
+                    capturedSource,
+                });
+                const startedAt = performance.now();
+                for (let captureIndex = 0; captureIndex < pageCount; captureIndex += 1) {
+                    if (captureIndex === pageCount - 1) lastPageMetadataBytes = 0;
+                    const result = await store.appendPageGroup({
+                        operationId: 'operation-growth',
+                        captureIndex,
+                        groupId: `growth-page-${captureIndex}`,
+                        items: [{ id: `growth-${captureIndex}-1` }],
+                        sourceRead: {
+                            ...sameSourceRead,
+                            eof: captureIndex === pageCount - 1,
+                        },
+                    });
+                    expect(result.status).toBe('stored');
+                }
+                const elapsedMs = performance.now() - startedAt;
+                return {
+                    pageCount,
+                    pageMetadataWrites,
+                    pageMetadataBytes,
+                    lastPageMetadataBytes,
+                    elapsedMs: Math.round(elapsedMs),
+                };
+            };
+
+            const small = await measurePageCount(200);
+            const large = await measurePageCount(400);
+            const bytesGrowthRatio = large.pageMetadataBytes / small.pageMetadataBytes;
+            process.stdout.write(`EXTERNAL_SESSION_STAGING_PAGE_METADATA_GROWTH ${JSON.stringify({
+                small,
+                large,
+                bytesGrowthRatio: Math.round(bytesGrowthRatio * 100) / 100,
+                perPageMetadataBytesAtLargeTail: large.lastPageMetadataBytes,
+                note: 'Doubling the page count doubles page metadata bytes when'
+                    + ' the per-page cost is bounded, and roughly quadruples them'
+                    + ' when every page rewrites all prior page rows.',
+            })}\n`);
+            expect(small.pageMetadataWrites).toBeGreaterThan(0);
+            expect(large.pageMetadataWrites).toBeGreaterThan(small.pageMetadataWrites);
+        }, 600_000);
+    },
+);

@@ -8,7 +8,7 @@ import {
 } from '@/agent/runtime/session/realtime/resolveAgentSessionRealtimeVoiceAuthority';
 import type {
   ExternalSessionHostOperationPortFactory,
-  RunnerAgentCurrentExternalSessionProviderOps,
+  RunnerAgentExternalSessionProviderOps,
 } from '@/agent/runtime/registry/engineRegistry/types';
 import type {
   AgentRuntimeDaemonServiceAuthorityExpectedInput,
@@ -24,7 +24,6 @@ import {
   isCurrentRunnerAgentRuntimeDaemonServiceAuthorityTransition,
 } from './agentRuntimeDaemonServiceAuthorityClient';
 import {
-  RunnerAgentDaemonFacetOperationV1Schema,
   RunnerAgentDaemonExternalSessionFollowProviderResponseV1Schema,
   type RunnerAgentDaemonExternalSessionFollowProviderResponseV1,
   type RunnerAgentDaemonFacetOperationV1,
@@ -38,50 +37,6 @@ import {
 
 type DispatchDaemonService =
   typeof dispatchCurrentAgentRuntimeDaemonServiceRequest;
-
-type CurrentExternalSessionOperation = Extract<
-  RunnerAgentDaemonFacetOperationV1,
-  Readonly<{ kind: `external_session.current.${string}` }>
->;
-
-type CurrentExternalSessionResult = Extract<
-  RunnerAgentDaemonFacetResultV1,
-  Readonly<{ kind: `external_session.current.${string}` }>
->;
-
-function isCurrentExternalSessionOperation(
-  operation: RunnerAgentDaemonFacetOperationV1,
-): operation is CurrentExternalSessionOperation {
-  return operation.kind
-    === 'external_session.current.resolve_source'
-    || operation.kind
-      === 'external_session.current.list_candidates'
-    || operation.kind
-      === 'external_session.current.resolve_link_identity'
-    || operation.kind
-      === 'external_session.current.resolve_linked_identity'
-    || operation.kind
-      === 'external_session.current.page_transcript'
-    || operation.kind
-      === 'external_session.current.read_after_transcript';
-}
-
-function isCurrentExternalSessionResult(
-  result: Readonly<{ kind: string }>,
-): result is CurrentExternalSessionResult {
-  return result.kind
-    === 'external_session.current.resolve_source'
-    || result.kind
-      === 'external_session.current.list_candidates'
-    || result.kind
-      === 'external_session.current.resolve_link_identity'
-    || result.kind
-      === 'external_session.current.resolve_linked_identity'
-    || result.kind
-      === 'external_session.current.page_transcript'
-    || result.kind
-      === 'external_session.current.read_after_transcript';
-}
 
 type ActiveFollow = Readonly<{
   close(acknowledgeEventId?: string): Promise<void>;
@@ -116,8 +71,6 @@ function followFailureError(error: unknown): Error {
 export type RunnerAgentDaemonFacets = Readonly<{
   externalSessionHostOperations:
     ExternalSessionHostOperationPortFactory;
-  currentExternalSessionProviderOps:
-    RunnerAgentCurrentExternalSessionProviderOps;
   agentSessionRealtimeVoiceAuthority:
     AgentSessionRealtimeVoiceAuthority | null;
   dispose(): Promise<void>;
@@ -130,7 +83,7 @@ export async function createRunnerAgentDaemonFacets(input: Readonly<{
     AgentRuntimeDaemonServiceTurnWitnessInputV1 | null;
   resolveRetainedExternalSessionProviderOps?(): Promise<
     Pick<
-      RunnerAgentCurrentExternalSessionProviderOps,
+      RunnerAgentExternalSessionProviderOps,
       | 'validateSource'
       | 'resolveLinkIdentity'
       | 'pageTranscript'
@@ -146,7 +99,7 @@ export async function createRunnerAgentDaemonFacets(input: Readonly<{
   const activeFollows = new Set<ActiveFollow>();
   let retainedExternalSessionProviderOpsPromise: Promise<
     Pick<
-      RunnerAgentCurrentExternalSessionProviderOps,
+      RunnerAgentExternalSessionProviderOps,
       | 'validateSource'
       | 'resolveLinkIdentity'
       | 'pageTranscript'
@@ -910,212 +863,6 @@ export async function createRunnerAgentDaemonFacets(input: Readonly<{
       },
     });
 
-  const dispatchCurrentExternalSessionOperation = async (
-    operation: CurrentExternalSessionOperation,
-    signal?: AbortSignal,
-  ): Promise<CurrentExternalSessionResult> => {
-    const response = await dispatchOperation(
-      operation,
-      signal
-        ? AbortSignal.any([signal, lifetime.signal])
-        : lifetime.signal,
-    );
-    if (!response.ok) {
-      throw responseError(
-        response.error.code,
-        response.error.message,
-      );
-    }
-    if (!isCurrentExternalSessionResult(response.result)) {
-      throw responseError(
-        'plugin_external_session_current_response_invalid',
-        'Daemon returned an invalid current External Session result',
-      );
-    }
-    return response.result;
-  };
-
-  const parseCurrentExternalSessionOperation = (
-    value: unknown,
-  ): CurrentExternalSessionOperation => {
-    const operation =
-      RunnerAgentDaemonFacetOperationV1Schema.parse(value);
-    if (!isCurrentExternalSessionOperation(operation)) {
-      throw responseError(
-        'plugin_external_session_current_request_invalid',
-        'Runner created an invalid current External Session request',
-      );
-    }
-    return operation;
-  };
-
-  const currentExternalSessionProviderOps:
-    RunnerAgentCurrentExternalSessionProviderOps = Object.freeze({
-      async validateSource(request) {
-        const witness = readWitness();
-        const operation = parseCurrentExternalSessionOperation({
-          kind: 'external_session.current.resolve_source',
-          requestId: randomUUID(),
-          agentId: binding.agentId,
-          source: request.source,
-          ...(witness ? { witness } : {}),
-        });
-        const result = await dispatchCurrentExternalSessionOperation(
-          operation,
-          request.signal,
-        );
-        if (
-          result.kind
-            !== 'external_session.current.resolve_source'
-        ) {
-          throw responseError(
-            'plugin_external_session_current_response_invalid',
-            'Daemon returned an invalid current External Session source result',
-          );
-        }
-        return result.result;
-      },
-      async listCandidates(request) {
-        const witness = readWitness();
-        const operation = parseCurrentExternalSessionOperation({
-          kind: 'external_session.current.list_candidates',
-          requestId: randomUUID(),
-          agentId: binding.agentId,
-          source: request.source,
-          cursor: request.cursor,
-          limit: request.limit,
-          searchTerm: request.searchTerm,
-          searchMode: request.searchMode,
-          maxBytes: request.maxBytes,
-          ...(witness ? { witness } : {}),
-        });
-        const result = await dispatchCurrentExternalSessionOperation(
-          operation,
-          request.signal,
-        );
-        if (
-          result.kind
-            !== 'external_session.current.list_candidates'
-        ) {
-          throw responseError(
-            'plugin_external_session_current_response_invalid',
-            'Daemon returned an invalid current External Session candidate result',
-          );
-        }
-        return result.result;
-      },
-      async resolveLinkIdentity(request) {
-        const witness = readWitness();
-        const operation = parseCurrentExternalSessionOperation({
-          kind: 'external_session.current.resolve_link_identity',
-          requestId: randomUUID(),
-          agentId: binding.agentId,
-          source: request.source,
-          remoteSessionId: request.remoteSessionId,
-          runtimeDescriptor: request.runtimeDescriptor,
-          metadata: request.metadata,
-          ...(witness ? { witness } : {}),
-        });
-        const result = await dispatchCurrentExternalSessionOperation(
-          operation,
-          request.signal,
-        );
-        if (
-          result.kind
-            !== 'external_session.current.resolve_link_identity'
-        ) {
-          throw responseError(
-            'plugin_external_session_current_response_invalid',
-            'Daemon returned an invalid current External Session link result',
-          );
-        }
-        return result.result;
-      },
-      async canonicalizeLinkedSession(request) {
-        const witness = readWitness();
-        const operation = parseCurrentExternalSessionOperation({
-          kind: 'external_session.current.resolve_linked_identity',
-          requestId: randomUUID(),
-          agentId: binding.agentId,
-          source: request.source,
-          remoteSessionId: request.remoteSessionId,
-          metadata: request.metadata,
-          ...(witness ? { witness } : {}),
-        });
-        const result = await dispatchCurrentExternalSessionOperation(
-          operation,
-          request.signal,
-        );
-        if (
-          result.kind
-            !== 'external_session.current.resolve_linked_identity'
-        ) {
-          throw responseError(
-            'plugin_external_session_current_response_invalid',
-            'Daemon returned an invalid current External Session linked result',
-          );
-        }
-        return result.result;
-      },
-      async pageTranscript(request) {
-        const witness = readWitness();
-        const operation = parseCurrentExternalSessionOperation({
-          kind: 'external_session.current.page_transcript',
-          requestId: randomUUID(),
-          agentId: binding.agentId,
-          source: request.source,
-          remoteSessionId: request.remoteSessionId,
-          direction: request.direction,
-          cursor: request.cursor,
-          maxBytes: request.maxBytes,
-          maxItems: request.maxItems,
-          ...(witness ? { witness } : {}),
-        });
-        const result = await dispatchCurrentExternalSessionOperation(
-          operation,
-          request.signal,
-        );
-        if (
-          result.kind
-            !== 'external_session.current.page_transcript'
-        ) {
-          throw responseError(
-            'plugin_external_session_current_response_invalid',
-            'Daemon returned an invalid current External Session transcript page',
-          );
-        }
-        return result.result;
-      },
-      async readAfterTranscript(request) {
-        const witness = readWitness();
-        const operation = parseCurrentExternalSessionOperation({
-          kind: 'external_session.current.read_after_transcript',
-          requestId: randomUUID(),
-          agentId: binding.agentId,
-          source: request.source,
-          remoteSessionId: request.remoteSessionId,
-          cursor: request.cursor,
-          maxBytes: request.maxBytes,
-          maxItems: request.maxItems,
-          ...(witness ? { witness } : {}),
-        });
-        const result = await dispatchCurrentExternalSessionOperation(
-          operation,
-          request.signal,
-        );
-        if (
-          result.kind
-            !== 'external_session.current.read_after_transcript'
-        ) {
-          throw responseError(
-            'plugin_external_session_current_response_invalid',
-            'Daemon returned an invalid current External Session transcript continuation',
-          );
-        }
-        return result.result;
-      },
-    });
-
   const voiceRetirementControllers = new Set<AbortController>();
   let voiceAuthority:
     AgentSessionRealtimeVoiceAuthority | null = null;
@@ -1224,7 +971,6 @@ export async function createRunnerAgentDaemonFacets(input: Readonly<{
 
   return Object.freeze({
     externalSessionHostOperations,
-    currentExternalSessionProviderOps,
     agentSessionRealtimeVoiceAuthority: voiceAuthority,
     async dispose() {
       if (lifetime.signal.aborted) return;

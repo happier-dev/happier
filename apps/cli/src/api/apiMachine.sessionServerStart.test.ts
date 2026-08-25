@@ -76,6 +76,8 @@ describe('ApiMachineClient Session server-start ingress', () => {
       start: {
         automationId: 'automation-1',
         runId: request.runId,
+        attempt: request.attempt,
+        claimedByMachineId: 'machine-source',
         origin: 'schedule',
         accountCurrentness: { mode: 'plain', version: 1, contentKeyFingerprint: null },
         requestEnvelope: request.requestEnvelope,

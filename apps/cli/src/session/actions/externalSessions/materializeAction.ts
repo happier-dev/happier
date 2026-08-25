@@ -43,11 +43,11 @@ import { garbageCollectUncommittedSessionMedia } from '@/session/media/garbageCo
 import {
   ExternalSessionOperationRecordAdmissionError,
   ExternalSessionOperationRecordReadError,
-  compactExternalSessionOperationRecordToCompletionReceipt,
+  compactExternalSessionOperationRecordToTerminalReceipt,
+  isExternalSessionOperationSettledForTerminalCleanup,
   mutateExternalSessionOperationRecordAtRevision,
   readExternalSessionOperationRecord,
   readExternalSessionOperationStoredEntry,
-  resolveExternalSessionOperationCompletionCompactionEligibility,
   resolveExternalSessionOperationStartAdmission,
   type ExternalSessionOperationPriorTerminalReceiptEvidence,
   type ExternalSessionOperationSelectedPresentationReader,
@@ -315,7 +315,7 @@ async function readExactActionRecord(
   operationId: string,
 ): Promise<
   | Readonly<{ kind: 'record'; record: ExternalSessionOperationRecordV1 }>
-  | Readonly<{ kind: 'completion_receipt' }>
+  | Readonly<{ kind: 'terminal_receipt' }>
   | Readonly<{ kind: 'unavailable' }>
   | Readonly<{ kind: 'missing' }>
 > {
@@ -332,9 +332,9 @@ async function readExactActionRecord(
     throw error;
   }
   if (!stored) return { kind: 'missing' };
-  if (stored.kind === 'completion_receipt') {
+  if (stored.kind === 'terminal_receipt') {
     return stored.receipt.reference.sessionId === sessionId
-      ? { kind: 'completion_receipt' }
+      ? { kind: 'terminal_receipt' }
       : { kind: 'missing' };
   }
   return stored.record.request.sessionId === sessionId
@@ -507,9 +507,11 @@ export function createExternalSessionMaterializeActionExecutor(
   ): Promise<'cleaned' | 'missing' | 'not_ready' | 'not_terminal'> => {
     const current = await readRecord(dependencies.activeServerDir, operationId);
     if (!current) return 'missing';
+    // Staging and workspace media are released for every settled operation.
+    // Once that cleanup is durable, the record store may retain its existing
+    // bounded receipt instead of the no-longer-actionable full record.
     if (
-      resolveExternalSessionOperationCompletionCompactionEligibility(current)
-        !== 'eligible'
+      !isExternalSessionOperationSettledForTerminalCleanup(current)
       || !isImportBearingRequest(current.request)
     ) {
       return 'not_terminal';
@@ -548,7 +550,7 @@ export function createExternalSessionMaterializeActionExecutor(
       stagingDisposition === 'cleaned'
       || stagingDisposition === 'missing'
     ) {
-      await compactExternalSessionOperationRecordToCompletionReceipt({
+      await compactExternalSessionOperationRecordToTerminalReceipt({
         activeServerDir: dependencies.activeServerDir,
         operationId,
         expectedRevision: current.revision,
@@ -1166,6 +1168,22 @@ export function createExternalSessionMaterializeActionExecutor(
         'Materialization prior storage authority changed before historical import.',
       );
     }
+    if (ready.acceptedThroughServerSeq !== undefined) {
+      const recoveredReplay = await claimMaintenance.race(
+        () => dependencies.staging.readReplayState(operationId),
+      );
+      // A row ACK is durable local fact. The server may legitimately be ahead
+      // after a crash before a later local ACK, because replay can resend that
+      // content-addressed batch. It may never be behind a recovered local ACK.
+      if (
+        recoveredReplay.status !== 'missing'
+        && recoveredReplay.acceptedThroughServerSeq !== null
+        && ready.acceptedThroughServerSeq
+          < recoveredReplay.acceptedThroughServerSeq
+      ) {
+        throw new Error('external_session_historical_server_checkpoint_regressed');
+      }
+    }
     claimMaintenance.throwIfLost();
     throwIfCancellationRequested(operationId);
     record = await claimMaintenance.race(() => commitRecord({
@@ -1778,7 +1796,7 @@ export function createExternalSessionMaterializeActionExecutor(
         'Materialization operation identity is unavailable.',
       );
     }
-    if (stored.kind === 'completion_receipt') {
+    if (stored.kind === 'terminal_receipt') {
       return failure(
         'invalid_state',
         'The settled operation no longer has private recovery state.',
@@ -2259,7 +2277,7 @@ export function createExternalSessionMaterializeActionExecutor(
           'Materialization operation identity is unavailable.',
         );
       }
-      if (stored.kind === 'completion_receipt') {
+      if (stored.kind === 'terminal_receipt') {
         return failure(
           'invalid_state',
           'The settled operation no longer has private recovery state.',
@@ -2289,7 +2307,7 @@ export function createExternalSessionMaterializeActionExecutor(
           'Materialization operation identity is unavailable.',
         );
       }
-      if (stored.kind === 'completion_receipt') {
+      if (stored.kind === 'terminal_receipt') {
         return failure(
           'invalid_state',
           'The settled operation no longer has private recovery state.',
@@ -2418,7 +2436,7 @@ export function createExternalSessionMaterializeActionExecutor(
           'Materialization operation identity is unavailable.',
         );
       }
-      if (stored.kind === 'completion_receipt') {
+      if (stored.kind === 'terminal_receipt') {
         return failure(
           'invalid_state',
           'The settled operation no longer has private recovery state.',
@@ -2643,7 +2661,7 @@ export function createExternalSessionMaterializeActionExecutor(
           'A legacy materialization operation cannot be safely resumed.',
         );
       }
-      if (admission.kind === 'completion_receipt') {
+      if (admission.kind === 'terminal_receipt') {
         return failure(
           'invalid_state',
           'The settled materialization no longer has private recovery state.',
@@ -2748,7 +2766,7 @@ export function createExternalSessionMaterializeActionExecutor(
               );
             }
             return success(converged);
-          } else if (durableAdmission.kind === 'completion_receipt') {
+          } else if (durableAdmission.kind === 'terminal_receipt') {
             return failure(
               'invalid_state',
               'The settled materialization no longer has private recovery state.',

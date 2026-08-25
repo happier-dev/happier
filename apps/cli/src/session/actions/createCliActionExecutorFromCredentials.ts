@@ -7,7 +7,9 @@ import {
 } from '@/api/session/transcriptQueries';
 import type { SessionTranscriptActionItem } from '@/api/session/sessionTranscriptActionInput';
 import { createAccountServerActionDeps } from '@/api/accountServerActionDeps';
+import { resolveCurrentAccountMachineTarget } from '@/api/machine/resolveCurrentAccountMachineTarget';
 import { configuration } from '@/configuration';
+import { resolveLiveDaemonExternalActionEndpoint } from '@/daemon/multiDaemon';
 import { readSettings, type StoredCredentials } from '@/persistence';
 import {
   isFullSessionId,
@@ -50,19 +52,21 @@ import type {
   MachineActionDirectTargetTransport,
   SessionSpawnDirectTargetTransport,
 } from './createCliActionDeps';
-
 import { createCliActionExecutor } from './createCliActionExecutor';
 import { ensureCliActionPolicySettings } from './ensureCliActionPolicySettings';
 
 type CliActionExecutor = ReturnType<typeof createCliActionExecutor>;
 
 type PatActionTransportPlan =
-  | Readonly<{ kind: 'ready'; input: unknown; target: ActionTarget }>
+  | Readonly<{ kind: 'ready'; input: unknown; target?: ActionTarget }>
   | Readonly<{ kind: 'settled'; result: ActionExecuteResult }>;
 type PatReadyActionTransportPlan = Extract<PatActionTransportPlan, Readonly<{ kind: 'ready' }>>;
 
 type CliActionSessionTarget =
   | Readonly<{ ok: true; sessionId: string }>
+  | Readonly<{ ok: false; code: string; candidates?: readonly string[] }>;
+type CliActionMachineTarget =
+  | Readonly<{ ok: true; machineId: string }>
   | Readonly<{ ok: false; code: string; candidates?: readonly string[] }>;
 
 function readNonEmptyString(value: unknown): string | null {
@@ -90,7 +94,7 @@ function readPatSessionListPage(value: unknown): SessionSelectorListPage {
   };
 }
 
-function sessionResolutionFailure(params: Readonly<{
+function actionResolutionFailure(params: Readonly<{
   code: string;
   candidates?: readonly string[];
 }>): ActionExecuteResult {
@@ -125,18 +129,64 @@ async function resolveConfiguredMachineTarget(): Promise<ActionTarget | null> {
   return machineId ? { kind: 'machine', machineId } : null;
 }
 
+async function resolveDaemonLocalActionMachineId(): Promise<string | null> {
+  const endpoint = await resolveLiveDaemonExternalActionEndpoint(configuration.apiServerUrl);
+  return endpoint?.machineId ?? null;
+}
+
+async function resolvePatMachineTarget(params: Readonly<{
+  credentials: StoredCredentials;
+  requestedMachineId?: string;
+  signal?: AbortSignal;
+}>): Promise<CliActionMachineTarget> {
+  const daemonLocalMachineId = await resolveDaemonLocalActionMachineId();
+  if (daemonLocalMachineId) {
+    if (params.requestedMachineId !== undefined && params.requestedMachineId !== daemonLocalMachineId) {
+      return { ok: false, code: 'target_unavailable' };
+    }
+    return { ok: true, machineId: daemonLocalMachineId };
+  }
+
+  if (params.requestedMachineId === undefined) {
+    const configuredTarget = await resolveConfiguredMachineTarget();
+    if (configuredTarget?.kind === 'machine') {
+      return { ok: true, machineId: configuredTarget.machineId };
+    }
+  }
+
+  const resolved = await resolveCurrentAccountMachineTarget({
+    token: params.credentials.token,
+    ...(params.requestedMachineId !== undefined ? { requestedMachineId: params.requestedMachineId } : {}),
+    ...(params.signal ? { signal: params.signal } : {}),
+  });
+  if (resolved.kind === 'selected') return { ok: true, machineId: resolved.target.machineId };
+  if (resolved.kind === 'selection_required') {
+    return { ok: false, code: 'machine_selection_required', candidates: resolved.candidates.map(({ machineId }) => machineId) };
+  }
+  return { ok: false, code: resolved.code };
+}
+
 async function resolvePatSessionTarget(params: Readonly<{
   credentials: StoredCredentials;
   idOrPrefix: string;
+  machineId?: string;
   signal?: AbortSignal;
 }>): Promise<CliActionSessionTarget> {
   if (isFullSessionId(params.idOrPrefix)) {
     return { ok: true, sessionId: params.idOrPrefix };
   }
-  const machineTarget = await resolveConfiguredMachineTarget();
-  if (!machineTarget) {
-    return { ok: false, code: 'unsupported' };
+  const daemonLocalMachineId = await resolveDaemonLocalActionMachineId();
+  if (daemonLocalMachineId && params.machineId !== undefined && params.machineId !== daemonLocalMachineId) {
+    return { ok: false, code: 'target_unavailable' };
   }
+  const machineTarget = daemonLocalMachineId
+    ? null
+    : await resolvePatMachineTarget({
+        credentials: params.credentials,
+        ...(params.machineId !== undefined ? { requestedMachineId: params.machineId } : {}),
+        ...(params.signal ? { signal: params.signal } : {}),
+      });
+  if (machineTarget && !machineTarget.ok) return machineTarget;
   return await resolveSessionIdOrPrefixFromSessionList({
     idOrPrefix: params.idOrPrefix,
     ...(params.signal ? { signal: params.signal } : {}),
@@ -154,7 +204,7 @@ async function resolvePatSessionTarget(params: Readonly<{
             ...(cursor ? { cursor } : {}),
           },
           {
-            target: machineTarget,
+            ...(machineTarget ? { target: { kind: 'machine', machineId: machineTarget.machineId } } : {}),
             ...(params.signal ? { signal: params.signal } : {}),
           },
         );
@@ -180,6 +230,7 @@ async function resolvePatActionTransportPlan(params: Readonly<{
   credentials: StoredCredentials;
   input: unknown;
   context: ActionExecutorContext | undefined;
+  machineId?: string;
   invocationSignal?: AbortSignal;
 }>): Promise<PatActionTransportPlan> {
   const publicActionId = PublicActionIdSchema.safeParse(params.actionId);
@@ -188,6 +239,10 @@ async function resolvePatActionTransportPlan(params: Readonly<{
   }
 
   const spec = getActionSpec(publicActionId.data);
+  const daemonLocalMachineId = await resolveDaemonLocalActionMachineId();
+  if (daemonLocalMachineId && params.machineId !== undefined && params.machineId !== daemonLocalMachineId) {
+    return { kind: 'settled', result: actionFailure('target_unavailable') };
+  }
   if (publicActionId.data === 'session.spawn_new') {
     // The public API owns a distinct spawn-input projection: placement is
     // envelope metadata and daemon-local server identity must never cross this
@@ -197,7 +252,7 @@ async function resolvePatActionTransportPlan(params: Readonly<{
       return {
         kind: 'ready',
         input: projection.input,
-        target: projection.target,
+        ...(daemonLocalMachineId ? {} : { target: projection.target }),
       };
     } catch {
       return { kind: 'settled', result: actionFailure('invalid_parameters') };
@@ -215,12 +270,13 @@ async function resolvePatActionTransportPlan(params: Readonly<{
     const resolved = await resolvePatSessionTarget({
       credentials: params.credentials,
       idOrPrefix: requestedSessionId,
+      ...(params.machineId !== undefined ? { machineId: params.machineId } : {}),
       ...(signal ? { signal } : {}),
     });
     if (!resolved.ok) {
       return {
         kind: 'settled',
-        result: sessionResolutionFailure({
+        result: actionResolutionFailure({
           code: resolved.code,
           ...(resolved.candidates ? { candidates: resolved.candidates } : {}),
         }),
@@ -240,10 +296,18 @@ async function resolvePatActionTransportPlan(params: Readonly<{
     return { kind: 'settled', result: actionFailure('placement_unavailable') };
   }
 
-  const target = await resolveConfiguredMachineTarget();
-  return target
-    ? { kind: 'ready', target, input: params.input }
-    : { kind: 'settled', result: actionFailure('target_required') };
+  if (daemonLocalMachineId) {
+    return { kind: 'ready', input: params.input };
+  }
+
+  const target = await resolvePatMachineTarget({
+    credentials: params.credentials,
+    ...(params.machineId !== undefined ? { requestedMachineId: params.machineId } : {}),
+    ...(signal ? { signal } : {}),
+  });
+  return target.ok
+    ? { kind: 'ready', target: { kind: 'machine', machineId: target.machineId }, input: params.input }
+    : { kind: 'settled', result: actionResolutionFailure(target) };
 }
 
 function createOneShotPatInvocation(runOnce: () => Promise<ActionExecuteResult>) {
@@ -273,7 +337,7 @@ async function executePatPublicActionPlan(params: Readonly<{
       publicActionId,
       params.plan.input as PublicActionInputById[typeof publicActionId],
       {
-        target: params.plan.target,
+        ...(params.plan.target ? { target: params.plan.target } : {}),
         ...(params.context?.actionRequestId
           ? { requestId: params.context.actionRequestId }
           : {}),
@@ -301,6 +365,7 @@ async function executePatPublicAction(params: Readonly<{
   credentials: StoredCredentials;
   input: unknown;
   context: ActionExecutorContext | undefined;
+  machineId?: string;
   invocationSignal?: AbortSignal;
 }>): Promise<ActionExecuteResult> {
   const plan = await resolvePatActionTransportPlan(params);
@@ -324,6 +389,8 @@ function shouldUsePatPublicActionTransport(
 
 export function createCliActionExecutorFromCredentials(params: Readonly<{
   credentials: StoredCredentials;
+  /** Explicit CLI machine selector for public Action transport. */
+  machineId?: string;
   readCredentials?: () => Promise<StoredCredentials | null>;
   readRegisteredPromptAssetAdapters?: () => ReadonlyMap<string, PromptAssetAdapter>;
   resolveAutomationEventAdoptedDefinitionSet?: ResolveAutomationEventAdoptedDefinitionSetV1;
@@ -335,6 +402,8 @@ export function createCliActionExecutorFromCredentials(params: Readonly<{
   externalSessionPluginAdmissionOwner?: ExternalSessionPluginAdmissionOwner;
   /** The committed plugin-runtime owner for the built-in `action.invoke` Action. */
   invokeContributedAction?: ActionExecutorDeps['invokeContributedAction'];
+  /** Exact daemon replay for API target-action approvals. */
+  targetActionApprovalReplay?: ActionExecutorDeps['targetActionApprovalReplay'];
   /** The exact daemon external-session RPC owner for host-stamped API requests. */
   hostExternalSessionAction?: ActionExecutorDeps['hostExternalSessionAction'];
   /** Exact daemon-owned Session spawn transport; never a generic peer forwarder. */
@@ -359,6 +428,7 @@ export function createCliActionExecutorFromCredentials(params: Readonly<{
 }>): ReturnType<typeof createCliActionExecutor> & Readonly<{
   bindInvocation(signal: AbortSignal): ReturnType<typeof createCliActionExecutor>;
   resolveSessionTarget(idOrPrefix: string): Promise<CliActionSessionTarget>;
+  resolveMachineTarget(): Promise<CliActionMachineTarget>;
 }> {
   const createFollowLeaseRegistry = (): SessionTranscriptFollowLeaseRegistry => (
     params.transcriptFollowLeaseRegistry
@@ -399,6 +469,9 @@ export function createCliActionExecutorFromCredentials(params: Readonly<{
         : {}),
       ...(params.invokeContributedAction
         ? { invokeContributedAction: params.invokeContributedAction }
+        : {}),
+      ...(params.targetActionApprovalReplay
+        ? { targetActionApprovalReplay: params.targetActionApprovalReplay }
         : {}),
       ...(params.listContributedActionDefinitions
         ? { listContributedActionDefinitions: params.listContributedActionDefinitions }
@@ -480,6 +553,7 @@ export function createCliActionExecutorFromCredentials(params: Readonly<{
             input,
             context,
             credentials,
+            ...(params.machineId !== undefined ? { machineId: params.machineId } : {}),
             ...(invocationSignal ? { invocationSignal } : {}),
           });
           if (plan.kind === 'settled') {
@@ -512,6 +586,7 @@ export function createCliActionExecutorFromCredentials(params: Readonly<{
             input,
             context,
             credentials,
+            ...(params.machineId !== undefined ? { machineId: params.machineId } : {}),
             ...(invocationSignal ? { invocationSignal } : {}),
           });
         }
@@ -531,7 +606,11 @@ export function createCliActionExecutorFromCredentials(params: Readonly<{
       return { ok: false, code: 'not_authenticated' };
     }
     if (shouldUsePatPublicActionTransport(credentials, { surface: 'cli' })) {
-      return await resolvePatSessionTarget({ credentials, idOrPrefix });
+      return await resolvePatSessionTarget({
+        credentials,
+        idOrPrefix,
+        ...(params.machineId !== undefined ? { machineId: params.machineId } : {}),
+      });
     }
     const resolved = await resolveSessionTransportContext({ credentials, idOrPrefix });
     return resolved.ok
@@ -545,6 +624,16 @@ export function createCliActionExecutorFromCredentials(params: Readonly<{
   return Object.freeze({
     ...executor,
     resolveSessionTarget,
+    async resolveMachineTarget() {
+      const credentials = params.readCredentials
+        ? await params.readCredentials().catch(() => null)
+        : params.credentials;
+      if (!credentials) return { ok: false as const, code: 'not_authenticated' };
+      return await resolvePatMachineTarget({
+        credentials,
+        ...(params.machineId !== undefined ? { requestedMachineId: params.machineId } : {}),
+      });
+    },
     bindInvocation(signal: AbortSignal) {
       if (params.transcriptFollowLeaseRegistry) {
         return createCredentialRefreshingExecutor(params.transcriptFollowLeaseRegistry, signal);

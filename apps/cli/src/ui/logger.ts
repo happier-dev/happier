@@ -6,6 +6,7 @@
  */
 
 import chalk from 'chalk'
+import { isPidPresent } from '@happier-dev/cli-common/process'
 import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports'
 import { configuration } from '../configuration'
 import { closeSync, existsSync, openSync, readFileSync, readSync, readdirSync, statSync } from 'node:fs'
@@ -293,20 +294,6 @@ function resolveCrashedSessionLogKeepPaths(logsDir: string): string[] {
   }
 }
 
-function isProcessAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0)
-    return true
-  } catch (error) {
-    return Boolean(
-      error
-      && typeof error === 'object'
-      && 'code' in error
-      && error.code === 'EPERM',
-    )
-  }
-}
-
 function resolveLiveSessionLogKeepPaths(logsDir: string, keepCount: number): string[] {
   try {
     const livenessByPid = new Map<number, boolean>()
@@ -321,7 +308,7 @@ function resolveLiveSessionLogKeepPaths(logsDir: string, keepCount: number): str
         if (!Number.isSafeInteger(pid) || pid <= 0) return false
         const cached = livenessByPid.get(pid)
         if (cached !== undefined) return cached
-        const alive = isProcessAlive(pid)
+        const alive = isPidPresent(pid)
         livenessByPid.set(pid, alive)
         return alive
       })

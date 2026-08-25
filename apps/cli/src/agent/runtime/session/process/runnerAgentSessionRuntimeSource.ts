@@ -15,7 +15,7 @@ import type {
 } from '@/plugins/runtime/lifecycle/activation/runtimeAuthority';
 import type {
     ExternalSessionHostOperationPortFactory,
-    RunnerAgentCurrentExternalSessionProviderOps,
+    RunnerAgentExternalSessionProviderOps,
     RunnerAgentSessionRuntimeSource,
 } from '@/agent/runtime/registry/engineRegistry/types';
 import type {
@@ -101,6 +101,10 @@ import {
 import {
     createAgentExternalSessionsExecutionSurface,
 } from '@/agent/runtime/registry/agentExternalSessionsExecutionSurface';
+import {
+    ExternalSessionProviderFailureError,
+    type ExternalSessionExecutionSurface,
+} from '@/session/external/providerOps';
 
 const RunnerBootstrapHandoffSchema = z.object({
     v: z.literal(1),
@@ -183,6 +187,9 @@ export async function createRunnerAgentSessionRuntimeBootstrap(input: Readonly<{
             source: descriptor.agentDeclaration.source,
             pluginId: descriptor.pluginId,
         });
+    const bootstrapAgentLocalId =
+        bootstrapAgentContribution.identity?.localId;
+    if (!bootstrapAgentLocalId) return null;
 
     let claimed: RunnerAgentSessionRuntimeSource | null = null;
     let claimSessionId: string | null = null;
@@ -344,43 +351,48 @@ export async function createRunnerAgentSessionRuntimeBootstrap(input: Readonly<{
                     });
                 },
             });
-    const requireCurrentExternalSessionProviderOps = () => {
+    const requireRetainedExternalSessionProviderOps = () => {
         const providerOps =
             requireClaimed()
-                .currentExternalSessionProviderOps;
+                .retainedExternalSessionProviderOps;
         if (!providerOps) {
             throw createRunnerSourceUnavailableError(
-                'Runner current External Session authority is unavailable',
+                'Runner retained External Session authority is unavailable',
             );
         }
         return providerOps;
     };
-    const currentExternalSessionProviderOps:
-        RunnerAgentCurrentExternalSessionProviderOps =
+    const retainedExternalSessionProviderOps:
+        ExternalSessionExecutionSurface =
             Object.freeze({
+                externalLinkedTakeoverWriterSafety:
+                    bootstrapAgentContribution.richDefinition?.definition
+                        .surfaces?.externalSession
+                        .externalLinkedTakeover?.writerSafety
+                    ?? 'unsupported',
                 async validateSource(params) {
-                    return await requireCurrentExternalSessionProviderOps()
-                        .validateSource(params);
+                    return await requireRetainedExternalSessionProviderOps()
+                        .validateSource!(params);
                 },
                 async listCandidates(params) {
-                    return await requireCurrentExternalSessionProviderOps()
-                        .listCandidates(params);
+                    return await requireRetainedExternalSessionProviderOps()
+                        .listCandidates!(params);
                 },
                 async resolveLinkIdentity(params) {
-                    return await requireCurrentExternalSessionProviderOps()
-                        .resolveLinkIdentity(params);
+                    return await requireRetainedExternalSessionProviderOps()
+                        .resolveLinkIdentity!(params);
                 },
                 async canonicalizeLinkedSession(params) {
-                    return await requireCurrentExternalSessionProviderOps()
-                        .canonicalizeLinkedSession(params);
+                    return await requireRetainedExternalSessionProviderOps()
+                        .canonicalizeLinkedSession!(params);
                 },
                 async pageTranscript(params) {
-                    return await requireCurrentExternalSessionProviderOps()
-                        .pageTranscript(params);
+                    return await requireRetainedExternalSessionProviderOps()
+                        .pageTranscript!(params);
                 },
                 async readAfterTranscript(params) {
-                    return await requireCurrentExternalSessionProviderOps()
-                        .readAfterTranscript(params);
+                    return await requireRetainedExternalSessionProviderOps()
+                        .readAfterTranscript!(params);
                 },
             });
     const managedServiceEndpointReadPort:
@@ -427,7 +439,7 @@ export async function createRunnerAgentSessionRuntimeBootstrap(input: Readonly<{
     });
     const policyAgentRef = Object.freeze({
         pluginId: descriptor.pluginId,
-        localId: descriptor.agentId,
+        localId: bootstrapAgentLocalId,
     });
     const bootstrapVoiceAuthorityGeneration =
         descriptor.immutableGenerationId
@@ -611,7 +623,7 @@ export async function createRunnerAgentSessionRuntimeBootstrap(input: Readonly<{
         daemonTurnContributionsBridge,
         daemonModelTransitionAuthorizer,
         externalSessionHostOperations,
-        currentExternalSessionProviderOps,
+        retainedExternalSessionProviderOps,
         managedServiceEndpointReadPort,
         managedServicesCustodyPort,
         agentSessionRealtimeVoiceAuthority,
@@ -747,44 +759,120 @@ export async function createRunnerAgentSessionRuntimeSource(input: Readonly<{
             });
         await runtimeLeafPromise;
     };
+    // One retained External Sessions authority for this Session: the exact
+    // immutable generation that admitted it. Both the runner's own private
+    // composition and the daemon-forwarded provider requests of an already
+    // admitted private follow read this single surface, so no second
+    // decision-maker can answer for the same Session.
+    const retainedExternalLinkedTakeoverWriterSafety =
+        verifiedAgentContribution.richDefinition?.definition
+            .surfaces?.externalSession.externalLinkedTakeover?.writerSafety
+        ?? 'unsupported';
+    let retainedExternalSessionSurfacePromise:
+        Promise<ExternalSessionExecutionSurface | null> | null = null;
+    const resolveRetainedExternalSessionSurface = async () => {
+        retainedExternalSessionSurfacePromise ??= (async () => {
+            await prepareRuntimeLeaf();
+            const companion = (await runtimeLeafPromise!)
+                .externalSessions;
+            if (!companion || lifetime.signal.aborted) return null;
+            return createAgentExternalSessionsExecutionSurface(
+                createBoundedAgentExternalSessionsContribution({
+                    contribution: companion,
+                    identity: {
+                        pluginId: binding.pluginId,
+                        agentId: binding.localAgentId,
+                        generation: binding.immutableGenerationId,
+                        contributionQualifiedId:
+                            `${binding.pluginId}/agents/${binding.localAgentId}`,
+                        immutableGenerationId:
+                            binding.immutableGenerationId,
+                    },
+                    isCurrent: () => !lifetime.signal.aborted,
+                    retirementSignal: lifetime.signal,
+                    createInvocationExec: async () => (
+                        createUnavailablePluginServices().exec
+                    ),
+                    managedEndpointRead: async ({
+                        identity,
+                        signal,
+                    }) => runnerManagedServiceOwner
+                        .bindAgentExternalSessionsManagedEndpoint({
+                            identity,
+                            signal,
+                        }),
+                }),
+                retainedExternalLinkedTakeoverWriterSafety,
+            );
+        })();
+        return await retainedExternalSessionSurfacePromise;
+    };
+    const requireRetainedExternalSessionSurface = async (
+        operation: keyof RunnerAgentExternalSessionProviderOps,
+    ): Promise<RunnerAgentExternalSessionProviderOps> => {
+        const surface = await resolveRetainedExternalSessionSurface();
+        if (
+            !surface?.validateSource
+            || !surface.listCandidates
+            || !surface.resolveLinkIdentity
+            || !surface.canonicalizeLinkedSession
+            || !surface.pageTranscript
+            || !surface.readAfterTranscript
+        ) {
+            throw new ExternalSessionProviderFailureError({
+                code: 'plugin_external_sessions_companion_unavailable',
+                message:
+                    'The retained Agent generation has no authenticated External Sessions companion',
+                operation,
+                retryable: false,
+            });
+        }
+        return surface as RunnerAgentExternalSessionProviderOps;
+    };
+    const retainedExternalSessionProviderOps:
+        ExternalSessionExecutionSurface = Object.freeze({
+            externalLinkedTakeoverWriterSafety:
+                retainedExternalLinkedTakeoverWriterSafety,
+            async validateSource(request) {
+                return await (
+                    await requireRetainedExternalSessionSurface('validateSource')
+                ).validateSource(request);
+            },
+            async listCandidates(request) {
+                return await (
+                    await requireRetainedExternalSessionSurface('listCandidates')
+                ).listCandidates(request);
+            },
+            async resolveLinkIdentity(request) {
+                return await (
+                    await requireRetainedExternalSessionSurface('resolveLinkIdentity')
+                ).resolveLinkIdentity(request);
+            },
+            async canonicalizeLinkedSession(request) {
+                return await (
+                    await requireRetainedExternalSessionSurface('canonicalizeLinkedSession')
+                ).canonicalizeLinkedSession(request);
+            },
+            async pageTranscript(request) {
+                return await (
+                    await requireRetainedExternalSessionSurface('pageTranscript')
+                ).pageTranscript(request);
+            },
+            async readAfterTranscript(request) {
+                return await (
+                    await requireRetainedExternalSessionSurface('readAfterTranscript')
+                ).readAfterTranscript(request);
+            },
+        });
     const daemonFacets =
         await createRunnerAgentDaemonFacets({
             authority: expectedAuthority,
             readActiveTurnAdmissionWitness: () =>
                 readActiveTurnAdmissionWitness?.() ?? null,
             resolveRetainedExternalSessionProviderOps: async () => {
-                await prepareRuntimeLeaf();
-                const companion = (await runtimeLeafPromise!)
-                    .externalSessions;
-                if (!companion || lifetime.signal.aborted) return null;
-                const surface = createAgentExternalSessionsExecutionSurface(
-                    createBoundedAgentExternalSessionsContribution({
-                        contribution: companion,
-                        identity: {
-                            pluginId: binding.pluginId,
-                            agentId: binding.localAgentId,
-                            generation: binding.immutableGenerationId,
-                            contributionQualifiedId:
-                                `${binding.pluginId}/agents/${binding.localAgentId}`,
-                            immutableGenerationId:
-                                binding.immutableGenerationId,
-                        },
-                        isCurrent: () => !lifetime.signal.aborted,
-                        retirementSignal: lifetime.signal,
-                        createInvocationExec: async () => (
-                            createUnavailablePluginServices().exec
-                        ),
-                        managedEndpointRead: async ({
-                            identity,
-                            signal,
-                        }) => runnerManagedServiceOwner
-                            .bindAgentExternalSessionsManagedEndpoint({
-                                identity,
-                                signal,
-                            }),
-                    }),
-                    'unsupported',
-                );
+                const surface =
+                    await resolveRetainedExternalSessionSurface();
+                if (!surface) return null;
                 const {
                     validateSource,
                     resolveLinkIdentity,
@@ -1100,7 +1188,7 @@ export async function createRunnerAgentSessionRuntimeSource(input: Readonly<{
         identity: Object.freeze({
             pluginId: binding.pluginId,
             pluginVersion: binding.pluginVersion,
-            agentId: binding.localAgentId,
+            agentId: binding.agentId,
             backendId: binding.agentId,
             generation: binding.immutableGenerationId,
             immutableGenerationId: binding.immutableGenerationId,
@@ -1336,9 +1424,9 @@ export async function createRunnerAgentSessionRuntimeSource(input: Readonly<{
                     version: params.pluginVersion,
                 }),
                 contribution: Object.freeze({
-                    id: params.agentId,
+                    id: binding.localAgentId,
                     qualifiedId:
-                        `${params.pluginId}/agents/${params.agentId}`,
+                        `${binding.pluginId}/agents/${binding.localAgentId}`,
                 }),
                 generation: params.generation,
                 correlationId: params.correlationId,
@@ -1480,8 +1568,7 @@ export async function createRunnerAgentSessionRuntimeSource(input: Readonly<{
         daemonModelTransitionAuthorizer,
         externalSessionHostOperations:
             daemonFacets.externalSessionHostOperations,
-        currentExternalSessionProviderOps:
-            daemonFacets.currentExternalSessionProviderOps,
+        retainedExternalSessionProviderOps,
         managedServiceEndpointReadPort:
             runnerManagedServiceOwner.endpointReadPort,
         managedServicesCustodyPort:

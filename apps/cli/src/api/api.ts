@@ -28,6 +28,7 @@ import {
 import type { BrowserDaemonControlRoutes } from '@/daemon/browser/control/routes';
 import type { BrowserContextRoutes } from '@/daemon/browser/context/routes';
 import type { BrowserAutomationRoutes } from '@/daemon/browser/automation/routes';
+import type { ProvisionBrowserAutomationRuntime } from '@/daemon/browser/actions/runtimeActionExecutor';
 import type { BrowserDiagnosticsActionRoutes } from '@/daemon/browser/diagnostics/actionRoutes';
 import type { BrowserRecordingRoutes } from '@/daemon/browser/recording/routes';
 import { createDaemonRuntimeActionExecutor } from '@/daemon/runtimeActionExecutor';
@@ -64,8 +65,6 @@ import {
   requireCurrentAccountStoredContentServerCompatibility,
 } from './clientCompatibility/accountStoredContentActivation';
 import { resolveConnectedServicesServerApiTimeoutMs } from './client/connectedServicesServerApiTimeout';
-import { getConnectedServiceAuthGroup as getConnectedServiceAuthGroupFromServer } from './client/connectedServiceAuthGroupApi';
-import { readAxiosResponseErrorCode } from './client/readAxiosResponseErrorCode';
 import { SessionCreationPlacementError } from './session/sessionCreationPlacementError';
 import {
   SessionCreationCorrespondenceConflictError,
@@ -110,23 +109,13 @@ export {
   isMachineRevokedError,
 } from './machine/machineRegistrationErrors';
 import {
-  buildProviderAccountUsageRecordId,
-  ConnectedServiceAuthGroupListResponseV1Schema,
-  ConnectedServiceAuthGroupResponseV1Schema,
   ConnectedServiceCredentialHealthV1Schema,
   ConnectedServiceCredentialCompatibleMutationResponseV1Schema,
   ConnectedServiceCredentialMutationResponseV1Schema,
   ConnectedServiceCredentialRevisionV1Schema,
-  ConnectedServiceUsageSourceV1Schema,
-  ProviderAccountUsageRecordIdSchema,
-  ProviderAccountUsageRecordKeyV1Schema,
-  ProviderAccountUsageSnapshotV1Schema,
   parseBuiltInLegacyConnectedServiceQuotaSnapshotV1,
-  parseBuiltInLegacyProviderAccountUsageSnapshotV1,
   projectBuiltInLegacyConnectedServiceCredentialRecordV1,
-  projectBuiltInLegacyProviderAccountUsageSnapshotV1,
   SealedConnectedServiceQuotaSnapshotV1Schema,
-  SealedProviderAccountUsageSnapshotV1Schema,
   StoredJsonContentEnvelopeSchema,
   MACHINE_PLAIN_DATA_KEY_MARKER,
   decodePlainMachineStoredContent,
@@ -139,8 +128,6 @@ import {
   projectSessionOwnerCompatibilityViewV1,
 } from '@happier-dev/protocol';
 import type {
-  ConnectedServiceAuthGroupV1,
-  ConnectedServiceAuthGroupRuntimeStatePatchRequestV1,
   ConnectedServiceCredentialHealthV1,
   ConnectedServiceCredentialCompatibleMutationResponseV1,
   ConnectedServiceCredentialMutationResponseV1,
@@ -148,9 +135,6 @@ import type {
   ConnectedServiceCredentialRevisionV1,
   ConnectedServiceId,
   ConnectedServiceQuotaSnapshotV1,
-  ConnectedServiceUsageSourceV1,
-  ProviderAccountUsageRecordId,
-  ProviderAccountUsageRecordKeyV1,
   ProviderAccountUsageSnapshotV1,
   SealedConnectedServiceCredentialV1,
   SealedConnectedServiceQuotaSnapshotV1,
@@ -180,86 +164,6 @@ function assertSessionCreationCorrespondenceMatches(
     return;
   }
   throw new SessionCreationCorrespondenceConflictError();
-}
-
-const ExactProviderAccountUsageSourceResolutionSchema = z.object({
-  source: ConnectedServiceUsageSourceV1Schema,
-  recordId: ProviderAccountUsageRecordIdSchema,
-  providerAccountId: z.string().trim().min(1).max(512),
-  fetchedAt: z.number().int().nonnegative().nullable(),
-  staleAfterMs: z.number().int().nonnegative().nullable(),
-}).strict();
-
-function isExactConnectedServiceUsageSource(
-  actual: ConnectedServiceUsageSourceV1,
-  expected: ConnectedServiceUsageSourceV1,
-): boolean {
-  if (
-    actual.serviceId !== expected.serviceId
-    || actual.profileId !== expected.profileId
-    || actual.bindingKind !== expected.bindingKind
-  ) return false;
-  if (actual.bindingKind === 'profile' || expected.bindingKind === 'profile') {
-    return actual.bindingKind === 'profile' && expected.bindingKind === 'profile';
-  }
-  return actual.groupId === expected.groupId
-    && (actual.groupGeneration ?? null) === (expected.groupGeneration ?? null);
-}
-
-export class ConnectedServiceAuthGroupGenerationConflictError extends Error {
-  readonly generation: number;
-
-  constructor(generation: number) {
-    super('connected_service_auth_group_generation_conflict');
-    this.name = 'ConnectedServiceAuthGroupGenerationConflictError';
-    this.generation = generation;
-  }
-}
-
-export class ConnectedServiceAuthGroupRuntimeStateRevisionConflictError extends Error {
-  readonly runtimeStateRevision: number;
-
-  constructor(runtimeStateRevision: number) {
-    super('connected_service_auth_group_runtime_state_revision_conflict');
-    this.name = 'ConnectedServiceAuthGroupRuntimeStateRevisionConflictError';
-    this.runtimeStateRevision = runtimeStateRevision;
-  }
-}
-
-function readConnectedServiceAuthGroupGenerationConflict(error: unknown): number | null {
-  if (!axios.isAxiosError(error) || error.response?.status !== 409) return null;
-  const data: unknown = error.response.data;
-  if (!data || typeof data !== 'object' || Array.isArray(data)) return null;
-  const record = data as Record<string, unknown>;
-  if (record.error !== 'connect_group_generation_conflict') return null;
-  const generation = record.generation;
-  if (typeof generation !== 'number' || !Number.isInteger(generation) || generation < 0) return null;
-  return generation;
-}
-
-function throwConnectedServiceAuthGroupGenerationConflictIfPresent(error: unknown): void {
-  const generation = readConnectedServiceAuthGroupGenerationConflict(error);
-  if (generation !== null) {
-    throw new ConnectedServiceAuthGroupGenerationConflictError(generation);
-  }
-}
-
-function readConnectedServiceAuthGroupRuntimeStateRevisionConflict(error: unknown): number | null {
-  if (!axios.isAxiosError(error) || error.response?.status !== 409) return null;
-  const data: unknown = error.response.data;
-  if (!data || typeof data !== 'object' || Array.isArray(data)) return null;
-  const record = data as Record<string, unknown>;
-  if (record.error !== 'connect_group_runtime_state_revision_conflict') return null;
-  const revision = record.runtimeStateRevision;
-  if (typeof revision !== 'number' || !Number.isInteger(revision) || revision < 0) return null;
-  return revision;
-}
-
-function throwConnectedServiceAuthGroupRuntimeStateRevisionConflictIfPresent(error: unknown): void {
-  const revision = readConnectedServiceAuthGroupRuntimeStateRevisionConflict(error);
-  if (revision !== null) {
-    throw new ConnectedServiceAuthGroupRuntimeStateRevisionConflictError(revision);
-  }
 }
 
 function didServerAcknowledgeMachineReplacement(
@@ -319,6 +223,7 @@ export class ApiClient {
   private getBrowserDaemonControlRoutes: (() => BrowserDaemonControlRoutes | null) | null = null;
   private getBrowserDaemonContextRoutes: (() => BrowserContextRoutes | null) | null = null;
   private getBrowserDaemonAutomationRoutes: (() => BrowserAutomationRoutes | null) | null = null;
+  private getProvisionBrowserAutomationRuntime: (() => ProvisionBrowserAutomationRuntime | null) | null = null;
   private getBrowserDiagnosticsActionRoutes: (() => BrowserDiagnosticsActionRoutes | null) | null = null;
   private getBrowserRecordingRoutes: (() => BrowserRecordingRoutes | null) | null = null;
   private attachBrowserRecordingToComposer: ((
@@ -354,6 +259,16 @@ export class ApiClient {
 
   setBrowserDaemonAutomationRoutesProvider(provider: (() => BrowserAutomationRoutes | null) | null): void {
     this.getBrowserDaemonAutomationRoutes = provider;
+  }
+
+  // Install-on-first-automation-attempt (user ruling, 2026-08-23). The daemon startup owner
+  // publishes its provisioner here so a `browser.automation.*` dispatch that finds no route can
+  // start the managed-Chromium fetch. Kept beside the route providers because it is resolved on
+  // the same per-dispatch path and must never be captured at construction time.
+  setBrowserAutomationRuntimeProvisionerProvider(
+    provider: (() => ProvisionBrowserAutomationRuntime | null) | null,
+  ): void {
+    this.getProvisionBrowserAutomationRuntime = provider;
   }
 
   setBrowserDiagnosticsActionRoutesProvider(provider: (() => BrowserDiagnosticsActionRoutes | null) | null): void {
@@ -401,6 +316,7 @@ export class ApiClient {
         browserControl: this.getBrowserDaemonControlRoutes?.() ?? null,
         browserContext: this.getBrowserDaemonContextRoutes?.() ?? null,
         browserAutomation: this.getBrowserDaemonAutomationRoutes?.() ?? null,
+        provisionBrowserAutomationRuntime: this.getProvisionBrowserAutomationRuntime?.() ?? null,
         browserDiagnostics: this.getBrowserDiagnosticsActionRoutes?.() ?? null,
         browserRecording: this.getBrowserRecordingRoutes?.() ?? null,
         attachBrowserRecordingToComposer: this.attachBrowserRecordingToComposer,
@@ -422,47 +338,6 @@ export class ApiClient {
       });
     }
     return this.getCachedServerFeaturesSnapshot?.();
-  }
-
-  async getProviderAccountUsageWriteRouteAvailability(params: {
-    recordId: ProviderAccountUsageRecordId;
-  }): Promise<'available' | 'absent' | 'indeterminate'> {
-    const recordId = encodeURIComponent(
-      ProviderAccountUsageRecordIdSchema.parse(params.recordId),
-    );
-    try {
-      const response = await axios.get(
-        `${resolveServerHttpBaseUrl()}/v2/connect/provider-account-usage/${recordId}`,
-        {
-          headers: {
-            ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
-            'Authorization': `Bearer ${this.credential.token}`,
-            'Content-Type': 'application/json',
-          },
-          timeout: resolveConnectedServicesServerApiTimeoutMs(),
-        },
-      );
-      return response.status === 200 ? 'available' : 'indeterminate';
-    } catch (error) {
-      if (!axios.isAxiosError(error) || error.response?.status !== 404) {
-        return 'indeterminate';
-      }
-      const data = error.response.data;
-      if (data && typeof data === 'object' && !Array.isArray(data)) {
-        const record = data as Record<string, unknown>;
-        if (record.error === 'provider_account_usage_not_found') {
-          return 'available';
-        }
-        if (
-          record.statusCode === 404
-          && typeof record.message === 'string'
-          && record.message.includes('/v2/connect/provider-account-usage/')
-        ) {
-          return 'absent';
-        }
-      }
-      return 'indeterminate';
-    }
   }
 
   setLocalMachineId(machineId: string | null | undefined): void {
@@ -490,7 +365,6 @@ export class ApiClient {
     } = await resolveSessionCreateEncryptionMode({
       token: this.credential.token,
       serverBaseUrl,
-      featuresTimeoutMs: 800,
       accountTimeoutMs: 10_000,
     });
     const encryptionContext = desiredSessionEncryptionMode === 'e2ee'
@@ -1232,157 +1106,6 @@ export class ApiClient {
     return await this.connectedServiceCredentialApi.listConnectedServiceProfiles(params);
   }
 
-  async listConnectedServiceAuthGroups(params: {
-    serviceId: ConnectedServiceId;
-  }): Promise<readonly ConnectedServiceAuthGroupV1[]> {
-    const serverUrl = resolveServerHttpBaseUrl();
-    const serviceId = encodeURIComponent(params.serviceId);
-    try {
-      const response = await axios.get(
-        `${serverUrl}/v3/connect/${serviceId}/groups`,
-        {
-          headers: {
-            ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
-            'Authorization': `Bearer ${this.credential.token}`,
-            'Content-Type': 'application/json',
-          },
-          timeout: resolveConnectedServicesServerApiTimeoutMs(),
-        },
-      );
-      if (response.status !== 200) {
-        throw new Error(`Server returned status ${response.status}`);
-      }
-      const parsed = ConnectedServiceAuthGroupListResponseV1Schema.safeParse(response.data);
-      if (!parsed.success) {
-        throw new Error('Invalid connected service auth group list response');
-      }
-      return parsed.data.groups;
-    } catch (error: unknown) {
-      const status = axios.isAxiosError(error) ? error.response?.status : undefined;
-      logServerEndpointFailure({
-        logger,
-        operation: 'Failed to list connected service auth groups',
-        error,
-      });
-      if (typeof status === 'number' && Number.isFinite(status)) {
-        throw createHttpStatusError(status, `Failed to list connected service auth groups (${status})`);
-      }
-      throw new Error(
-        `Failed to list connected service auth groups: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        { cause: error },
-      );
-    }
-  }
-
-  async getConnectedServiceAuthGroup(params: {
-    serviceId: ConnectedServiceId;
-    groupId: string;
-    signal?: AbortSignal;
-  }): Promise<ConnectedServiceAuthGroupV1 | null> {
-    return await getConnectedServiceAuthGroupFromServer({
-      token: this.credential.token,
-      ...params,
-    });
-  }
-
-  async updateConnectedServiceAuthGroupActiveProfile(params: {
-    serviceId: ConnectedServiceId;
-    groupId: string;
-    activeProfileId: string;
-    expectedGeneration?: number;
-    overrideRuntimeCooldown?: boolean;
-  }): Promise<ConnectedServiceAuthGroupV1> {
-    const serverUrl = resolveServerHttpBaseUrl();
-    const serviceId = encodeURIComponent(params.serviceId);
-    const groupId = encodeURIComponent(params.groupId);
-
-    try {
-      const response = await axios.post(
-        `${serverUrl}/v3/connect/${serviceId}/groups/${groupId}/active-profile`,
-        {
-          profileId: params.activeProfileId,
-          ...(params.expectedGeneration === undefined ? {} : { expectedGeneration: params.expectedGeneration }),
-          ...(params.overrideRuntimeCooldown === true ? { overrideRuntimeCooldown: true } : {}),
-        },
-        {
-          headers: {
-            ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
-            'Authorization': `Bearer ${this.credential.token}`,
-            'Content-Type': 'application/json',
-          },
-          timeout: resolveConnectedServicesServerApiTimeoutMs(),
-        },
-      );
-      if (response.status !== 200) {
-        throw new Error(`Server returned status ${response.status}`);
-      }
-      const parsed = ConnectedServiceAuthGroupResponseV1Schema.safeParse(response.data);
-      if (!parsed.success) {
-        throw new Error('Invalid connected service auth group response');
-      }
-      return parsed.data.group;
-    } catch (error: unknown) {
-      throwConnectedServiceAuthGroupGenerationConflictIfPresent(error);
-      logServerEndpointFailure({
-        logger,
-        operation: 'Failed to update connected service auth group active profile',
-        error,
-      });
-      throw new Error(
-        `Failed to update connected service auth group active profile: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        { cause: error },
-      );
-    }
-  }
-
-  async updateConnectedServiceAuthGroupRuntimeState(params: {
-    serviceId: ConnectedServiceId;
-    groupId: string;
-  } & ConnectedServiceAuthGroupRuntimeStatePatchRequestV1): Promise<ConnectedServiceAuthGroupV1> {
-    const serverUrl = resolveServerHttpBaseUrl();
-    const serviceId = encodeURIComponent(params.serviceId);
-    const groupId = encodeURIComponent(params.groupId);
-
-    try {
-      const response = await axios.patch(
-        `${serverUrl}/v3/connect/${serviceId}/groups/${groupId}/runtime-state`,
-        {
-          ...(params.expectedGeneration === undefined ? {} : { expectedGeneration: params.expectedGeneration }),
-          ...(params.expectedRuntimeStateRevision === undefined
-            ? {}
-            : { expectedRuntimeStateRevision: params.expectedRuntimeStateRevision }),
-          ...(params.state === undefined ? {} : { state: params.state }),
-          memberStates: params.memberStates ?? [],
-        },
-        {
-          headers: {
-            ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
-            'Authorization': `Bearer ${this.credential.token}`,
-            'Content-Type': 'application/json',
-          },
-          timeout: resolveConnectedServicesServerApiTimeoutMs(),
-        },
-      );
-      if (response.status !== 200) {
-        throw new Error(`Server returned status ${response.status}`);
-      }
-      const parsed = ConnectedServiceAuthGroupResponseV1Schema.safeParse(response.data);
-      if (!parsed.success) {
-        throw new Error('Invalid connected service auth group response');
-      }
-      return parsed.data.group;
-    } catch (error: unknown) {
-      throwConnectedServiceAuthGroupRuntimeStateRevisionConflictIfPresent(error);
-      throwConnectedServiceAuthGroupGenerationConflictIfPresent(error);
-      logServerEndpointFailure({
-        logger,
-        operation: 'Failed to update connected service auth group runtime state',
-        error,
-      });
-      throw new Error(`Failed to update connected service auth group runtime state: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    }
-  }
-
   async getAccountEncryptionMode(options?: Readonly<{ refresh?: boolean; signal?: AbortSignal }>): Promise<ConnectedServiceAccountEncryptionMode> {
     const mode = await this.connectedServiceCredentialApi.getAccountEncryptionMode(options);
     if (mode === 'plain') {
@@ -1672,332 +1395,6 @@ export class ApiClient {
       });
       throw createConnectedServiceQuotaApiError({
         message: 'Failed to get connected service quota snapshot',
-        cause: error,
-      });
-    }
-  }
-
-  async registerProviderAccountUsageSnapshotSealed(params: {
-    recordId: ProviderAccountUsageRecordId;
-    recordKey: ProviderAccountUsageRecordKeyV1;
-    source?: ConnectedServiceUsageSourceV1;
-    sealed: SealedProviderAccountUsageSnapshotV1;
-    legacyQuotaCompatibility?: SealedConnectedServiceQuotaSnapshotV1;
-    metadata: {
-      fetchedAt: number;
-      staleAfterMs: number;
-      status: 'ok' | 'unavailable' | 'estimated' | 'error';
-      materialFingerprint?: string;
-    };
-  }): Promise<void> {
-    const serverUrl = resolveServerHttpBaseUrl();
-    const parsedRecordId = ProviderAccountUsageRecordIdSchema.parse(params.recordId);
-    const recordKey = ProviderAccountUsageRecordKeyV1Schema.parse(params.recordKey);
-    if (buildProviderAccountUsageRecordId(recordKey) !== parsedRecordId) {
-      throw createConnectedServiceQuotaProtocolError('Provider account usage record key does not match record id');
-    }
-    const recordId = encodeURIComponent(parsedRecordId);
-    const sealed = SealedProviderAccountUsageSnapshotV1Schema.parse(params.sealed);
-    const legacyQuotaCompatibility = params.legacyQuotaCompatibility
-      ? SealedConnectedServiceQuotaSnapshotV1Schema.parse(
-          params.legacyQuotaCompatibility,
-        )
-      : undefined;
-    const source = params.source ? ConnectedServiceUsageSourceV1Schema.parse(params.source) : undefined;
-
-    try {
-      const response = await axios.post(
-        `${serverUrl}/v2/connect/provider-account-usage/${recordId}`,
-        {
-          recordKey,
-          ...(source ? { source } : {}),
-          sealed,
-          ...(legacyQuotaCompatibility
-            ? { legacyQuotaCompatibility }
-            : {}),
-          metadata: params.metadata,
-        },
-        {
-          headers: {
-            ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
-            'Authorization': `Bearer ${this.credential.token}`,
-            'Content-Type': 'application/json',
-          },
-          timeout: resolveConnectedServicesServerApiTimeoutMs(),
-        },
-      );
-
-      if (response.status !== 200 && response.status !== 201) {
-        throw createConnectedServiceQuotaHttpStatusError({
-          status: response.status,
-          message: `Server returned status ${response.status}`,
-        });
-      }
-    } catch (error) {
-      logServerEndpointFailure({
-        logger,
-        operation: 'Failed to register provider account usage snapshot',
-        error,
-      });
-      throw createConnectedServiceQuotaApiError({
-        message: 'Failed to register provider account usage snapshot',
-        cause: error,
-      });
-    }
-  }
-
-  async getProviderAccountUsageSnapshotSealed(params: {
-    recordId: ProviderAccountUsageRecordId;
-  }): Promise<{
-    sealed: SealedProviderAccountUsageSnapshotV1;
-    metadata: {
-      fetchedAt: number;
-      staleAfterMs: number;
-      status: 'ok' | 'unavailable' | 'estimated' | 'error';
-      refreshRequestedAt?: number;
-      materialFingerprint?: string;
-    };
-    sources: readonly ConnectedServiceUsageSourceV1[];
-  } | null> {
-    const serverUrl = resolveServerHttpBaseUrl();
-    const recordId = encodeURIComponent(params.recordId);
-
-    try {
-      const response = await axios.get(
-        `${serverUrl}/v2/connect/provider-account-usage/${recordId}`,
-        {
-          headers: {
-            ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
-            'Authorization': `Bearer ${this.credential.token}`,
-            'Content-Type': 'application/json',
-          },
-          timeout: resolveConnectedServicesServerApiTimeoutMs(),
-        },
-      );
-      if (response.status !== 200) {
-        throw new Error(`Server returned status ${response.status}`);
-      }
-      const raw = response.data;
-      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
-        throw new Error('Invalid provider account usage snapshot response');
-      }
-
-      const sealedParsed = SealedProviderAccountUsageSnapshotV1Schema.safeParse((raw as any).sealed);
-      if (!sealedParsed.success) {
-        throw new Error('Invalid provider account usage snapshot response');
-      }
-
-      const metadataParsed = z.object({
-        fetchedAt: z.number(),
-        staleAfterMs: z.number(),
-        status: z.enum(['ok', 'unavailable', 'estimated', 'error']),
-        refreshRequestedAt: z.number().optional(),
-        materialFingerprint: z.string().optional(),
-      }).safeParse((raw as any).metadata);
-      if (!metadataParsed.success) {
-        throw createConnectedServiceQuotaProtocolError('Invalid provider account usage snapshot response');
-      }
-      const sourcesParsed = z.array(ConnectedServiceUsageSourceV1Schema).safeParse((raw as any).sources ?? []);
-      if (!sourcesParsed.success) {
-        throw createConnectedServiceQuotaProtocolError('Invalid provider account usage snapshot response');
-      }
-
-      return { sealed: sealedParsed.data, metadata: metadataParsed.data, sources: sourcesParsed.data };
-    } catch (error: unknown) {
-      const status = axios.isAxiosError(error) ? error.response?.status : undefined;
-      if (status === 404) return null;
-
-      logServerEndpointFailure({
-        logger,
-        operation: 'Failed to get provider account usage snapshot',
-        error,
-      });
-      throw createConnectedServiceQuotaApiError({
-        message: 'Failed to get provider account usage snapshot',
-        cause: error,
-      });
-    }
-  }
-
-  async registerProviderAccountUsageSnapshotPlain(params: {
-    recordId: ProviderAccountUsageRecordId;
-    source?: ConnectedServiceUsageSourceV1;
-    content: { t: 'plain'; v: ProviderAccountUsageSnapshotV1 };
-    metadata: {
-      fetchedAt: number;
-      staleAfterMs: number;
-      status: 'ok' | 'unavailable' | 'estimated' | 'error';
-      materialFingerprint?: string;
-    };
-  }): Promise<void> {
-    const serverUrl = resolveServerHttpBaseUrl();
-    const recordId = ProviderAccountUsageRecordIdSchema.parse(params.recordId);
-    const snapshot =
-      projectBuiltInLegacyProviderAccountUsageSnapshotV1(
-        ProviderAccountUsageSnapshotV1Schema.parse(params.content.v),
-      );
-    const source = params.source ? ConnectedServiceUsageSourceV1Schema.parse(params.source) : undefined;
-
-    try {
-      const response = await axios.post(
-        `${serverUrl}/v3/connect/provider-account-usage/${encodeURIComponent(recordId)}`,
-        {
-          content: { t: 'plain', v: snapshot },
-          metadata: params.metadata,
-          ...(source ? { source } : {}),
-        },
-        {
-          headers: {
-            ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
-            'Authorization': `Bearer ${this.credential.token}`,
-            'Content-Type': 'application/json',
-          },
-          timeout: resolveConnectedServicesServerApiTimeoutMs(),
-        },
-      );
-
-      if (response.status !== 200 && response.status !== 201) {
-        throw createConnectedServiceQuotaHttpStatusError({
-          status: response.status,
-          message: `Server returned status ${response.status}`,
-        });
-      }
-    } catch (error) {
-      logServerEndpointFailure({
-        logger,
-        operation: 'Failed to register provider account usage snapshot (v3)',
-        error,
-      });
-      throw createConnectedServiceQuotaApiError({
-        message: 'Failed to register provider account usage snapshot',
-        cause: error,
-      });
-    }
-  }
-
-  async resolveProviderAccountUsageSource(params: {
-    source: ConnectedServiceUsageSourceV1;
-  }): Promise<z.infer<typeof ExactProviderAccountUsageSourceResolutionSchema> | null> {
-    const serverUrl = resolveServerHttpBaseUrl();
-    const source = ConnectedServiceUsageSourceV1Schema.parse(params.source);
-    try {
-      const response = await axios.get(
-        `${serverUrl}/v3/connect/provider-account-usage/sources/resolve`,
-        {
-          params: source,
-          headers: {
-            ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
-            'Authorization': `Bearer ${this.credential.token}`,
-            'Content-Type': 'application/json',
-          },
-          timeout: resolveConnectedServicesServerApiTimeoutMs(),
-        },
-      );
-      if (response.status !== 200) {
-        throw createConnectedServiceQuotaHttpStatusError({
-          status: response.status,
-          message: `Provider account usage source resolution failed with status ${response.status}`,
-        });
-      }
-      const parsed = ExactProviderAccountUsageSourceResolutionSchema.safeParse(response.data);
-      if (!parsed.success || !isExactConnectedServiceUsageSource(parsed.data.source, source)) {
-        throw createConnectedServiceQuotaProtocolError(
-          'Invalid provider account usage source resolution response',
-          parsed.success ? undefined : parsed.error,
-        );
-      }
-      return parsed.data;
-    } catch (error: unknown) {
-      if (
-        axios.isAxiosError(error)
-        && error.response?.status === 404
-        && readAxiosResponseErrorCode(error) === 'provider_account_usage_source_not_found'
-      ) return null;
-      logServerEndpointFailure({ logger, operation: 'Failed to resolve provider account usage source', error });
-      throw createConnectedServiceQuotaApiError({
-        message: 'Failed to resolve provider account usage source',
-        cause: error,
-      });
-    }
-  }
-
-  async getProviderAccountUsageSnapshotPlain(params: {
-    recordId: ProviderAccountUsageRecordId;
-  }): Promise<{
-    content: { t: 'plain'; v: ProviderAccountUsageSnapshotV1 };
-    metadata: {
-      fetchedAt: number;
-      staleAfterMs: number;
-      status: 'ok' | 'unavailable' | 'estimated' | 'error';
-      refreshRequestedAt?: number;
-    };
-    sources: readonly ConnectedServiceUsageSourceV1[];
-  } | null> {
-    const serverUrl = resolveServerHttpBaseUrl();
-    const recordId = encodeURIComponent(params.recordId);
-
-    try {
-      const response = await axios.get(
-        `${serverUrl}/v3/connect/provider-account-usage/${recordId}`,
-        {
-          headers: {
-            ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
-            'Authorization': `Bearer ${this.credential.token}`,
-            'Content-Type': 'application/json',
-          },
-          timeout: resolveConnectedServicesServerApiTimeoutMs(),
-        },
-      );
-      if (response.status !== 200) {
-        throw new Error(`Server returned status ${response.status}`);
-      }
-      const raw = response.data;
-      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
-        throw new Error('Invalid provider account usage snapshot response');
-      }
-
-      const contentParsed = StoredJsonContentEnvelopeSchema.safeParse((raw as any).content);
-      if (!contentParsed.success || contentParsed.data.t !== 'plain') {
-        throw new Error('Invalid provider account usage snapshot response');
-      }
-
-      let snapshot: ProviderAccountUsageSnapshotV1;
-      try {
-        snapshot =
-          parseBuiltInLegacyProviderAccountUsageSnapshotV1(
-            contentParsed.data.v,
-          );
-      } catch {
-        throw new Error('Invalid provider account usage snapshot response');
-      }
-
-      const metadataParsed = z.object({
-        fetchedAt: z.number(),
-        staleAfterMs: z.number(),
-        status: z.enum(['ok', 'unavailable', 'estimated', 'error']),
-        refreshRequestedAt: z.number().optional(),
-        materialFingerprint: z.string().optional(),
-      }).safeParse((raw as any).metadata);
-      if (!metadataParsed.success) {
-        throw createConnectedServiceQuotaProtocolError('Invalid provider account usage snapshot response');
-      }
-      const sourcesParsed = z.array(ConnectedServiceUsageSourceV1Schema).safeParse((raw as any).sources ?? []);
-      if (!sourcesParsed.success) {
-        throw createConnectedServiceQuotaProtocolError('Invalid provider account usage snapshot response');
-      }
-
-      return { content: { t: 'plain', v: snapshot }, metadata: metadataParsed.data, sources: sourcesParsed.data };
-    } catch (error: unknown) {
-      const status = axios.isAxiosError(error) ? error.response?.status : undefined;
-      if (status === 404) return null;
-
-      logServerEndpointFailure({
-        logger,
-        operation: 'Failed to get provider account usage snapshot (v3)',
-        error,
-      });
-      throw createConnectedServiceQuotaApiError({
-        message: 'Failed to get provider account usage snapshot',
         cause: error,
       });
     }

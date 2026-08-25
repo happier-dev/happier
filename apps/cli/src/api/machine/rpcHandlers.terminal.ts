@@ -12,10 +12,7 @@ import {
   TerminalStreamInputResponseSchema,
   TerminalStreamReadRequestSchema,
   TerminalStreamReadResponseSchema,
-  terminalInputEventToPtyAction,
   type DaemonTerminalErrorCode,
-  type DaemonTerminalInputResponse,
-  type DaemonTerminalResizeResponse,
   type TerminalStreamAckRequest,
   type TerminalStreamAckResponse,
   type TerminalStreamInputRequest,
@@ -53,6 +50,10 @@ type TerminalByteStreamBridge = Readonly<{
 
 type TerminalBridgeSessionManager = TerminalPtySessionManager & TerminalByteStreamBridge;
 
+export type MachineTerminalRpcRegistration = Readonly<{
+  dispose: () => void;
+}>;
+
 function terminalStreamUnavailable(): { ok: false; code: 'terminal_byte_stream_unavailable'; message: string } {
   return {
     ok: false,
@@ -77,19 +78,6 @@ function terminalStreamDisabled(): { ok: false; code: 'terminal_disabled'; messa
   };
 }
 
-type LegacyTerminalMutationResponse = DaemonTerminalInputResponse | DaemonTerminalResizeResponse;
-
-function toStreamInputResponse(response: LegacyTerminalMutationResponse): TerminalStreamInputResponse {
-  if (response.ok) {
-    return { ok: true };
-  }
-  return {
-    ok: false,
-    code: response.errorCode,
-    message: response.error,
-  };
-}
-
 export function registerMachineTerminalRpcHandlers(params: Readonly<{
   rpcHandlerManager: RpcHandlerManager;
   deps?: Readonly<{
@@ -101,7 +89,7 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
     terminalRegistry?: TerminalProcessRegistry;
     resolveLaunch?: (launch: import('@happier-dev/protocol').DaemonTerminalLaunchIntent) => TerminalLaunchProcess;
   }>;
-}>): void {
+}>): MachineTerminalRpcRegistration {
   const { rpcHandlerManager } = params;
   const env = params.deps?.env ?? process.env;
 
@@ -206,38 +194,11 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
     if (!parsed.success) return terminalStreamInvalidRequest();
 
     const manager = getSessionManager();
-    if (typeof manager.inputEvent === 'function') {
-      const response = await manager.inputEvent(parsed.data);
-      return TerminalStreamInputResponseSchema.parse(response);
+    if (typeof manager.inputEvent !== 'function') {
+      return terminalStreamUnavailable();
     }
-
-    const { terminalId, event } = parsed.data;
-    const action = terminalInputEventToPtyAction(event);
-    if (action.kind === 'unsupported') {
-      return TerminalStreamInputResponseSchema.parse({
-        ok: false,
-        code: action.code,
-        message: action.message,
-      });
-    }
-    if (action.kind === 'noop') {
-      return TerminalStreamInputResponseSchema.parse({ ok: true });
-    }
-    if (action.kind === 'write') {
-      return TerminalStreamInputResponseSchema.parse(
-        toStreamInputResponse(await manager.input({ terminalId, data: action.data })),
-      );
-    }
-    if (action.kind === 'resize') {
-      return TerminalStreamInputResponseSchema.parse(
-        toStreamInputResponse(await manager.resize({ terminalId, cols: action.cols, rows: action.rows })),
-      );
-    }
-    return TerminalStreamInputResponseSchema.parse({
-      ok: false,
-      code: 'terminal_input_unsupported',
-      message: 'terminal_input_unsupported',
-    });
+    const response = await manager.inputEvent(parsed.data);
+    return TerminalStreamInputResponseSchema.parse(response);
   });
 
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_TERMINAL_INPUT, async (raw: unknown) => {
@@ -278,4 +239,11 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
       ...(parsed.data.launch ? { launchProcess: resolveLaunch(parsed.data.launch) } : {}),
     });
   });
+
+  return {
+    dispose: () => {
+      sessionManager?.dispose();
+      sessionManager = null;
+    },
+  };
 }

@@ -45,7 +45,7 @@ describe('plugins create UI mode', () => {
         output.restore();
       }
 
-      await expect(lstat(join(targetDir, 'pluginUiBuild.mjs'))).resolves.toMatchObject({});
+      await expect(lstat(join(targetDir, 'pluginUiBuild.ts'))).resolves.toMatchObject({});
       const packageJson = JSON.parse(await readFile(join(targetDir, 'package.json'), 'utf8')) as {
         dependencies?: Record<string, string>;
       };

@@ -7,11 +7,11 @@ export type PinnedHttpStreamRequest = Readonly<{
   url: string;
   validatedAddresses: readonly string[];
   headers: Readonly<Record<string, string>>;
-  method?: 'GET' | 'POST';
+  method?: string;
   body?: Uint8Array;
   signal: AbortSignal;
-  wallTimeMs: number;
-  idleTimeMs: number;
+  wallTimeMs?: number;
+  idleTimeMs?: number;
 }>;
 
 export type PinnedHttpStreamResponse = Readonly<{
@@ -30,6 +30,16 @@ export type PinnedHttpStreamDependencies = Readonly<{
   httpRequest?: typeof httpRequest;
   httpsRequest?: typeof httpsRequest;
 }>;
+
+function pinnedRequestHeaders(
+  url: URL,
+  headers: Readonly<Record<string, string>>,
+): Readonly<Record<string, string>> {
+  return Object.freeze({
+    ...Object.fromEntries(Object.entries(headers).filter(([name]) => name.toLowerCase() !== 'host')),
+    host: url.host,
+  });
+}
 
 /**
  * Low-level connection owner shared by callers that already validated DNS.
@@ -59,7 +69,10 @@ export function openPinnedHttpStream(
       port: url.port || undefined,
       path: `${url.pathname}${url.search}`,
       method: input.method ?? 'GET',
-      headers: input.headers,
+      headers: pinnedRequestHeaders(url, input.headers),
+      // A pooled socket was admitted for the address set of an earlier request.
+      // Reusing it would bypass this request's fresh DNS admission entirely.
+      agent: false,
       ...(url.protocol === 'https:' && connectionIdentity.servername !== undefined
         ? { servername: connectionIdentity.servername }
         : {}),
@@ -83,6 +96,7 @@ export function openPinnedHttpStream(
       let idleTimer: ReturnType<typeof setTimeout> | null = null;
       let terminalError: Error | null = null;
       const resetIdle = () => {
+        if (input.idleTimeMs === undefined) return;
         if (idleTimer) clearTimeout(idleTimer);
         idleTimer = setTimeout(() => {
           terminalError = new Error('pinned_http_idle_timeout');
@@ -119,9 +133,13 @@ export function openPinnedHttpStream(
       });
     });
 
-    const wallTimer = setTimeout(() => request.destroy(new Error('pinned_http_wall_timeout')), input.wallTimeMs);
-    wallTimer.unref?.();
-    request.once('close', () => clearTimeout(wallTimer));
+    const wallTimer = input.wallTimeMs === undefined
+      ? null
+      : setTimeout(() => request.destroy(new Error('pinned_http_wall_timeout')), input.wallTimeMs);
+    wallTimer?.unref?.();
+    request.once('close', () => {
+      if (wallTimer) clearTimeout(wallTimer);
+    });
     request.once('error', (error) => {
       if (!settled) reject(error);
     });

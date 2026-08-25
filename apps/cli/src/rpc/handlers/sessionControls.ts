@@ -1,5 +1,9 @@
 import {
   ReviewStartInputSchema,
+  HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1,
+  SessionPendingMessageComposerAdmissionPrepareRequestV1Schema,
+  SessionPendingMessageComposerAdmissionPrepareResponseV1Schema,
+  SessionPendingMessageComposerAdmissionAcceptedRequestV1Schema,
   SessionConnectedServiceAuthApplyGenerationRequestV1Schema,
   SessionConnectedServiceAuthApplyGenerationResponseV1Schema,
   SessionConnectedServiceAuthInvalidateTransportsRequestV1Schema,
@@ -28,7 +32,10 @@ import {
   readDisplayableSessionWorkStateV1,
   type SessionConnectedServiceAuthApplyGenerationRequestV1,
   type SessionConnectedServiceAuthReadRuntimeIdentityRequestV1,
+  type ComposerContentHandleV1,
+  type SessionPendingMessageComposerAdmissionAcceptedRequestV1,
 } from '@happier-dev/protocol';
+import { readAdmittedHappierStructuredInputV1FromMeta } from '@happier-dev/protocol/runtime';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import type { Metadata } from '@/api/types';
@@ -105,6 +112,18 @@ export type SessionRuntimeControls = {
   ) => Promise<Readonly<{ handled: false }> | Readonly<{ handled: true; result: unknown }>>
     | Readonly<{ handled: false }>
     | Readonly<{ handled: true; result: unknown }>;
+  preparePendingMessageComposerAdmission?: (request: Readonly<{
+    localId: string;
+    text: string;
+    meta: Record<string, unknown>;
+  }>) => Promise<Readonly<{
+    text: string;
+    meta: Record<string, unknown>;
+    stagedMediaHandles?: readonly ComposerContentHandleV1[];
+  }>>;
+  acceptPendingMessageComposerAdmission?: (
+    request: SessionPendingMessageComposerAdmissionAcceptedRequestV1,
+  ) => Promise<void> | void;
 };
 
 function unsupported(method: string): Readonly<{ ok: false; errorCode: string; error: string }> {
@@ -219,6 +238,48 @@ export function registerSessionControlHandlers(
     }
     return await resolveUsageLimitRecoveryEnabled();
   };
+
+  rpc.registerHandler(
+    SESSION_RPC_METHODS.SESSION_PENDING_MESSAGE_COMPOSER_ADMISSION_PREPARE_V1,
+    async (raw: unknown) => {
+      const parsed = SessionPendingMessageComposerAdmissionPrepareRequestV1Schema.safeParse(raw);
+      if (!parsed.success) return invalidInput();
+      const prepare = opts.sessionRuntimeControls?.preparePendingMessageComposerAdmission;
+      if (!prepare) return unsupported(SESSION_RPC_METHODS.SESSION_PENDING_MESSAGE_COMPOSER_ADMISSION_PREPARE_V1);
+      try {
+        const prepared = await prepare({
+          localId: parsed.data.localId,
+          text: parsed.data.text,
+          meta: { [HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1]: parsed.data.structuredInput },
+        });
+        const admitted = readAdmittedHappierStructuredInputV1FromMeta(prepared.meta);
+        if (admitted.status !== 'admitted') {
+          return { ok: false, error: 'composer_attachment_admission_invalid', errorCode: 'composer_attachment_admission_invalid' };
+        }
+        return SessionPendingMessageComposerAdmissionPrepareResponseV1Schema.parse({
+          ok: true,
+          text: prepared.text,
+          structuredInput: admitted.structuredInput,
+          stagedMediaHandles: prepared.stagedMediaHandles ?? [],
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'composer_attachment_admission_failed';
+        return { ok: false, error: message, errorCode: 'composer_attachment_admission_failed' };
+      }
+    },
+  );
+
+  rpc.registerHandler(
+    SESSION_RPC_METHODS.SESSION_PENDING_MESSAGE_COMPOSER_ADMISSION_ACCEPTED_V1,
+    async (raw: unknown) => {
+      const parsed = SessionPendingMessageComposerAdmissionAcceptedRequestV1Schema.safeParse(raw);
+      if (!parsed.success) return invalidInput();
+      const accept = opts.sessionRuntimeControls?.acceptPendingMessageComposerAdmission;
+      if (!accept) return unsupported(SESSION_RPC_METHODS.SESSION_PENDING_MESSAGE_COMPOSER_ADMISSION_ACCEPTED_V1);
+      await accept(parsed.data);
+      return { ok: true };
+    },
+  );
 
   rpc.registerHandler(SESSION_RPC_METHODS.SESSION_WORK_STATE_GET, async (raw: unknown) => {
     const parsed = SessionWorkStateGetRequestV1Schema.safeParse(raw);

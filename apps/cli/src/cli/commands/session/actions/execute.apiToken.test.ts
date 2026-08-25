@@ -8,9 +8,11 @@ const {
   ensureCliActionPolicySettings,
   execute,
   resolveSessionIdOrPrefix,
+  resolveSessionTarget,
   resolveSessionTransportContext,
 } = vi.hoisted(() => {
   const execute = vi.fn();
+  const resolveSessionTarget = vi.fn();
   return {
     createCliActionExecutor: vi.fn(() => ({
       execute: vi.fn(async () => ({
@@ -19,10 +21,11 @@ const {
         error: 'local_executor_used',
       })),
     })),
-    createCliActionExecutorFromCredentials: vi.fn(() => ({ execute })),
+    createCliActionExecutorFromCredentials: vi.fn(() => ({ execute, resolveSessionTarget })),
     ensureCliActionPolicySettings: vi.fn(async () => undefined),
     execute,
     resolveSessionIdOrPrefix: vi.fn(),
+    resolveSessionTarget,
     resolveSessionTransportContext: vi.fn(async () => ({
       ok: false,
       code: 'local_session_transport_used',
@@ -59,16 +62,21 @@ describe('session actions execute with an API token', () => {
     ensureCliActionPolicySettings.mockClear();
     execute.mockReset();
     resolveSessionIdOrPrefix.mockReset();
+    resolveSessionTarget.mockReset();
     resolveSessionTransportContext.mockClear();
   });
 
-  it('resolves an E2EE-capable selector to an exact Session and delegates through the PAT Action adapter', async () => {
+  it('resolves an E2EE-capable selector through the PAT Action adapter before legacy Session lookup', async () => {
     const credentials = {
       token: 'hap_v1_pat_secret',
       encryption: null,
       credentialProvenance: 'api_token' as const,
     };
     resolveSessionIdOrPrefix.mockResolvedValueOnce({
+      ok: true,
+      sessionId: 'session_exact_123',
+    });
+    resolveSessionTarget.mockResolvedValueOnce({
       ok: true,
       sessionId: 'session_exact_123',
     });
@@ -84,11 +92,9 @@ describe('session actions execute with an API token', () => {
         { readCredentialsFn: async () => credentials },
       );
 
-      expect(resolveSessionIdOrPrefix).toHaveBeenCalledWith({
-        credentials,
-        idOrPrefix: 'e2ee-active-tag',
-      });
       expect(createCliActionExecutorFromCredentials).toHaveBeenCalledWith({ credentials });
+      expect(resolveSessionTarget).toHaveBeenCalledWith('e2ee-active-tag');
+      expect(resolveSessionIdOrPrefix).not.toHaveBeenCalled();
       expect(ensureCliActionPolicySettings).not.toHaveBeenCalled();
       expect(resolveSessionTransportContext).not.toHaveBeenCalled();
       expect(createCliActionExecutor).not.toHaveBeenCalled();

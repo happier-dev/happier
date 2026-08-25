@@ -710,6 +710,7 @@ describe('ApiMachineClient /v2/changes reconnect', () => {
         const restartRequestedPids = new Set<number>();
         const runtime = await startDaemonSessionControlRuntime({
             machineId: machine.id,
+            serverBaseUrl: 'https://account.example.test',
             credentials: {
                 token: 'token',
                 encryption: { type: 'legacy', secret: machine.encryptionKey },

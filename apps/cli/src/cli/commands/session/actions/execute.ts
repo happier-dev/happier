@@ -4,7 +4,6 @@ import { randomUUID } from 'node:crypto';
 import type { StoredCredentials } from '@/persistence';
 import { createCliActionExecutor } from '@/session/actions/createCliActionExecutor';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
-import { resolveSessionIdOrPrefix } from '@/session/query/resolveSessionId';
 import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
 import { wantsJson, printJsonEnvelope, writeJsonStdout } from '@/cli/output/jsonEnvelope';
 import { hasFlag, readCommandPositionals, readFlagValue } from '@/cli/commands/shared/argvFlags';
@@ -90,9 +89,10 @@ export async function cmdSessionActionsExecute(
   let executor: CliActionExecutorLike;
   if (usesApiToken) {
     // A PAT intentionally carries no Account E2EE material. Resolve only the
-    // selector here, then let the daemon that owns the Session execute the
-    // public Action through the credentials-backed external adapter.
-    const sessionTarget = await resolveSessionIdOrPrefix({ credentials, idOrPrefix });
+    // selector through the public Action transport, then let the daemon that
+    // owns the Session execute the requested Action through that same adapter.
+    const patExecutor = createCliActionExecutorFromCredentials({ credentials });
+    const sessionTarget = await patExecutor.resolveSessionTarget(idOrPrefix);
     if (!sessionTarget.ok) {
       if (json) {
         await printJsonEnvelope({
@@ -105,7 +105,7 @@ export async function cmdSessionActionsExecute(
       throw new Error(sessionTarget.code);
     }
     sessionId = sessionTarget.sessionId;
-    executor = createCliActionExecutorFromCredentials({ credentials });
+    executor = patExecutor;
   } else {
     await ensureCliActionPolicySettings(credentials);
 

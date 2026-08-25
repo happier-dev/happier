@@ -23,6 +23,10 @@ import { resolveBackendTargetFromSessionMetadata } from '@/session/backendTarget
 import { updateSessionMetadataWithRetry } from '@/session/metadata/updateSessionMetadataWithRetry';
 import { callSessionRpc } from '@/session/transport/rpc/sessionRpc';
 import { tryDecryptSessionOwnerMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
+import {
+  projectPluginFailureMessage,
+  projectPluginFailureText,
+} from '@/plugins/runtime/lifecycle/utils';
 
 import {
   resolveSessionTransportContext,
@@ -130,7 +134,10 @@ async function invokeActiveModelTransition(params: Readonly<{
         request: { v: 1, selection: params.selection },
       }),
     );
-    return { ...result, sessionId: params.sessionTarget.sessionId };
+    const safeResult = !result.ok && result.reason
+      ? { ...result, reason: projectPluginFailureMessage(result.reason) }
+      : result;
+    return { ...safeResult, sessionId: params.sessionTarget.sessionId };
   } catch (error) {
     return {
       ok: false,
@@ -138,10 +145,7 @@ async function invokeActiveModelTransition(params: Readonly<{
       sessionId: params.sessionTarget.sessionId,
       activeSelection: null,
       requestedSelection: params.selection,
-      reason: error instanceof Error
-        ? error.message.slice(0, 512)
-          || 'session_model_transition_owner_unavailable'
-        : 'session_model_transition_owner_unavailable',
+      reason: projectPluginFailureText(error),
     };
   }
 }

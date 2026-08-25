@@ -18,7 +18,13 @@ describe('readProfilesFromAccountSettings', () => {
       profiles: [slim, opaque],
       secretBindingsByProfileId: { future: { TOKEN: 'secret-id' } },
     });
-    expect(result.profiles).toEqual([slim]);
+    // The catalog rewrites a legacy `agent:<id>` compatibility key to its
+    // canonical V2 spelling on parse, so the projected profile is not
+    // byte-identical to the stored row.
+    expect(result.profiles).toEqual([{
+      ...slim,
+      compatibilityByTargetKey: { 'backend:claude': true },
+    }]);
     expect(result.opaqueProfiles).toEqual([opaque]);
     expect(result.secretBindingsByProfileId).toEqual({ future: { TOKEN: 'secret-id' } });
     expect(result.diagnostics).toHaveLength(1);

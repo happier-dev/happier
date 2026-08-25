@@ -73,6 +73,7 @@ import { formatPluginDiagnosticSourceLocation } from '@/plugins/validation/diagn
 import { runPluginDevelopmentCycle } from '@/plugins/authoring/developmentCycle';
 import {
   runPackedPluginTest as runPackedPluginTestOwner,
+  type PackedPluginTestDiagnostic,
   type PackedPluginTestResult,
 } from '@/plugins/authoring/packedTest';
 import {
@@ -188,9 +189,9 @@ function usage(): string {
       { label: 'happier plugins uninstall <pluginId> [--delete-data --yes] [--json]', description: 'Remove a local installed plugin; preserve its data unless --delete-data --yes is supplied' },
       { label: 'happier plugins create <name> [--id <plugin.id>] [--name <display name>] [--ui hostedWeb|reactNative] [--json]', description: 'Create a minimal TypeScript plugin, optionally with a wired UI surface, ready for the normal development loop' },
       { label: 'happier plugins dev [path] [--sdk-registry <origin>] [--json]', description: 'Watch a source plugin and submit captured edit batches to the daemon-owned development cycle' },
-      { label: 'happier plugins test [path] [--packed] [--with-plugin <root-or-archive>]… [--sdk-registry <origin>] [--json]', description: 'Run unit tests or pack, install, and exercise the plugin through a disposable daemon' },
       { label: 'happier plugins dev install <path> [--sdk-registry <origin>] [--json]', description: 'Repair or refresh a stale or wiped author root; the watch loop already materializes it' },
       { label: 'happier plugins dev typecheck|build|test <path> [--json]', description: 'Run one managed focused development check' },
+      { label: 'happier plugins test [path] [--packed] [--with-plugin <root-or-archive>]… [--sdk-registry <origin>] [--json]', description: 'Run unit tests or pack, install, and exercise the plugin through a disposable daemon' },
       { label: 'happier plugins pack <path> [--out <archive.tgz>] [--sdk-registry <origin>] [--json]', description: 'Validate and package a local plugin into an installable archive' },
       { label: 'happier plugins doctor [path] [--json]', description: 'Evaluate and diagnose a code-defined plugin author module' },
       { label: 'happier plugins doctor --installed [<pluginId>] [--json]', description: 'Inspect installed immutable plugin generations for missing, escaped, non-regular, drifted, or unloadable files' },
@@ -2025,6 +2026,7 @@ async function runPluginsDevToolchainCommand(
     ...(operation === 'install' ? { sdkRegistryOrigin: readFlagValue(args, '--sdk-registry') } : {}),
   });
 }
+
 async function runPluginToolchainCommand(params: Readonly<{
   args: readonly string[];
   deps: PluginsCommandDeps;
@@ -2177,7 +2179,7 @@ async function runPluginsTestCommand(
       return;
     }
     if (!result.ok) {
-      console.error(errorFrame('Error:', result.diagnostics.map((diagnostic) => diagnostic.message)));
+      console.error(errorFrame('Error:', result.diagnostics.map(describePackedPluginTestDiagnostic)));
       process.exitCode = 1;
       return;
     }
@@ -2215,6 +2217,20 @@ function printHumanPackedPluginTestContributor(
   for (const admission of contributor.targetedAdmissions) {
     out.line(`  ${dim('Targeted admission:')} ${admission.target.pluginId}@${admission.target.immutableGenerationId}; point ${admission.target.pointId}; protocol ${admission.protocol.id}@${admission.protocol.version}; contributor ${admission.contributor.contributionId}@${admission.contributor.immutableGenerationId}`);
   }
+}
+
+/**
+ * A packed run packs and installs every `--with-plugin` companion before the
+ * target, so an unattributed failure leaves the author bisecting their own
+ * command line. The subject names the exact requested input; `index` is
+ * rendered one-based to match how the flags were typed.
+ */
+function describePackedPluginTestDiagnostic(diagnostic: PackedPluginTestDiagnostic): string {
+  const subject = diagnostic.subject;
+  if (subject === undefined) return diagnostic.message;
+  return subject.role === 'target'
+    ? `target ${subject.locator}: ${diagnostic.message}`
+    : `--with-plugin #${subject.index + 1} ${subject.locator}: ${diagnostic.message}`;
 }
 
 function printHumanPackedPluginTestResult(

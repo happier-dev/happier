@@ -55,13 +55,13 @@ export async function cmdSessionSend(
     usage: SESSION_SEND_USAGE,
     startIndex: 1,
     booleanFlags: ['--wait', '--json'],
-    valueFlags: ['--message', '--prompt', '--permission-mode', '--model', '--provider-connection', '--local-id', '--timeout'],
+    valueFlags: ['--message', '--prompt', '--permission-mode', '--model', '--provider-connection', '--local-id', '--timeout', '--machine-id'],
     maxPositionals: 2,
   });
   const json = wantsJson(argv);
   const [idOrPrefix = '', positionalMessage = ''] = readCommandPositionals(argv, {
     startIndex: 1,
-    valueFlags: ['--message', '--prompt', '--permission-mode', '--model', '--provider-connection', '--local-id', '--timeout'],
+    valueFlags: ['--message', '--prompt', '--permission-mode', '--model', '--provider-connection', '--local-id', '--timeout', '--machine-id'],
   });
   const hasMessageFlag = hasFlag(argv, '--message');
   const hasPromptFlag = hasFlag(argv, '--prompt');
@@ -85,6 +85,7 @@ export async function cmdSessionSend(
   const hasModelFlag = modelFlagRaw !== null;
   const modelFlag = typeof modelFlagRaw === 'string' ? modelFlagRaw.trim() : '';
   const providerConnectionId = readProviderConnectionFlag(argv);
+  const machineId = readFlagValue(argv, '--machine-id');
   // The durable input identity for this send. The pending queue is keyed by it,
   // so resubmitting rejoins the existing input instead of queueing a second
   // message. The CLI retains one even when the caller did not supply it, the
@@ -140,7 +141,10 @@ export async function cmdSessionSend(
     throw err;
   }
 
-  const executor = createCliActionExecutorFromCredentials({ credentials });
+  const executor = createCliActionExecutorFromCredentials({
+    credentials,
+    ...(machineId !== null ? { machineId } : {}),
+  });
   const actionRes = await executor.execute(
     'session.message.send',
     {

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { TargetActionApprovalRequestV1 } from '@happier-dev/protocol';
 import { createTargetActionCurrentIntentAdapter } from './targetActionCurrentIntent';
 import { getSharedBlockingApprovalCoordinator } from './blockingApprovalCoordinator';
@@ -99,6 +99,44 @@ describe('target action current-intent adapter', () => {
       summary: 'Action approval required',
     });
     expect(stored).not.toHaveProperty('detail');
+  });
+
+  it('returns the created artifact immediately for an API Action-settings approval', async () => {
+    let stored: TargetActionApprovalRequestV1 | undefined;
+    const read = vi.fn(async () => stored ?? null);
+    const adapter = createTargetActionCurrentIntentAdapter({
+      now: () => 1,
+      create: async (request) => {
+        stored = request;
+        return { artifactId: 'approval-api-required-1' };
+      },
+      read,
+    });
+
+    await expect(adapter({
+      action: {
+        qualifiedId: 'acme.alpha/actions/run', pluginId: 'acme.alpha', localId: 'run', generation: '7',
+        dangerLevel: 'safe', scopes: ['global'], surfaces: ['cli'], hostAccess: [], input: { x: 1 },
+        policyFingerprint: 'b'.repeat(64), approvalRequiredByActionSettings: true,
+      },
+      fingerprint: 'a'.repeat(64), surface: 'cli', invocationSurface: 'api',
+      replayPlacement: {
+        serverId: 'server-1',
+        machineId: 'machine-1',
+        defaultSessionId: 'session-1',
+      },
+    })).resolves.toEqual({
+      status: 'deferred',
+      artifactId: 'approval-api-required-1',
+    });
+    expect(read).not.toHaveBeenCalled();
+    expect(stored).toMatchObject({
+      replayPlacement: {
+        serverId: 'server-1',
+        machineId: 'machine-1',
+        defaultSessionId: 'session-1',
+      },
+    });
   });
 
   it('rejects a durable decision whose subject fields changed under the same fingerprint', async () => {

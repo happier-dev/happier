@@ -3,6 +3,7 @@ import type { RpcHandlerContext } from '@/api/rpc/types';
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 import { readStoredCredentials } from '@/persistence';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
+import type { SessionSpawnDirectTargetTransport } from '@/session/actions/createCliActionDeps';
 import {
     type ActionSpecRpcRegistrationScope,
     SESSION_HANDOFF_LIFECYCLE_RPC_SCOPES,
@@ -97,7 +98,9 @@ export function registerSessionLifecycleRpcHandlers(params: Readonly<{
     });
 }
 
-async function resolveProductionSessionSpawnNewActionExecutor(): Promise<RpcActionExecutor> {
+async function resolveProductionSessionSpawnNewActionExecutor(params: Readonly<{
+    sessionSpawnDirectTargetTransport?: SessionSpawnDirectTargetTransport;
+}> = {}): Promise<RpcActionExecutor> {
     const credentials = await readStoredCredentials().catch(() => null);
     if (!credentials) {
         return {
@@ -108,7 +111,12 @@ async function resolveProductionSessionSpawnNewActionExecutor(): Promise<RpcActi
             }),
         };
     }
-    return createCliActionExecutorFromCredentials({ credentials });
+    return createCliActionExecutorFromCredentials({
+        credentials,
+        ...(params.sessionSpawnDirectTargetTransport
+            ? { sessionSpawnDirectTargetTransport: params.sessionSpawnDirectTargetTransport }
+            : {}),
+    });
 }
 
 /**
@@ -118,12 +126,18 @@ async function resolveProductionSessionSpawnNewActionExecutor(): Promise<RpcActi
 export function registerSessionSpawnNewRpcHandlers(params: Readonly<{
     rpcHandlerManager: RpcRegistrar;
     actionExecutor?: RpcActionExecutor;
+    /** Exact daemon receiver transport retained after server-scoped machine routing. */
+    sessionSpawnDirectTargetTransport?: SessionSpawnDirectTargetTransport;
     observeExecution?: RegisterActionSpecRpcHandlersParams['observeExecution'];
 }>): void {
     registerActionSpecRpcHandlers({
         rpcHandlerManager: params.rpcHandlerManager,
         actionExecutor: params.actionExecutor,
-        resolveActionExecutor: resolveProductionSessionSpawnNewActionExecutor,
+        resolveActionExecutor: async () => await resolveProductionSessionSpawnNewActionExecutor({
+            ...(params.sessionSpawnDirectTargetTransport
+                ? { sessionSpawnDirectTargetTransport: params.sessionSpawnDirectTargetTransport }
+                : {}),
+        }),
         scopes: SESSION_SPAWN_NEW_RPC_SCOPES,
         ...(params.observeExecution ? { observeExecution: params.observeExecution } : {}),
     });

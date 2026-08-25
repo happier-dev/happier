@@ -18,7 +18,7 @@ import type { StoredCredentials } from '@/persistence';
 import { callMachineRpc } from '@/session/transport/rpc/machineRpc';
 import { configuration } from '@/configuration';
 import {
-  isExternalSessionOperationCompletionReceiptExpired,
+  isExternalSessionOperationTerminalReceiptExpired,
   readExternalSessionOperationStoredEntry,
   resolveExternalSessionOperationAccountScope,
   resolveExternalSessionPluginOperationPreflightAdmission,
@@ -177,7 +177,7 @@ export async function executePluginExternalSessionAction(args: Readonly<
         },
       };
     }
-    if (preflight.kind === 'completion_receipt') {
+    if (preflight.kind === 'terminal_receipt') {
       return {
         ok: true,
         result: {
@@ -258,11 +258,11 @@ export async function executePluginExternalSessionAction(args: Readonly<
         'External session operation was not found.',
       );
     }
-    if (stored.kind === 'completion_receipt') {
+    if (stored.kind === 'terminal_receipt') {
       const { receipt } = stored;
       let expired: boolean;
       try {
-        expired = isExternalSessionOperationCompletionReceiptExpired(
+        expired = isExternalSessionOperationTerminalReceiptExpired(
           receipt,
           (options.nowMs ?? Date.now)(),
         );

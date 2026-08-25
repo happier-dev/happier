@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import type { Credentials } from '@/persistence';
 import {
   applyReviewedLegacyProfileMigrationConflictV1,
+  PROVIDER_ENDPOINT_SAFETY_LIMITS,
   type AccountSettings,
   type LegacyProfileMigrationConflictResolutionV1,
   type LegacyProfileReviewedMappingV1,
@@ -10,6 +11,7 @@ import {
 import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 import type { ResolvedProviderContribution } from '@/plugins/projection/registry/types';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
+import { createProviderOperationLifetime } from '@/providers/operationLifetime';
 
 import {
   allocateLegacyProfileMigrationConnectionIds,
@@ -72,6 +74,9 @@ export async function confirmLegacyProfileMigrationConflict(input: Readonly<{
   resolution: LegacyProfileMigrationConflictResolutionV1;
   migratedAt: number;
 }>) {
+  const lifetime = createProviderOperationLifetime({
+    wallTimeMs: PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs,
+  });
   const lease = await acquireAuthoritativePluginRuntimeRegistryLease();
   try {
     const contributionMap = readLegacyProfileMigrationContributionMap(lease.registry);
@@ -99,6 +104,7 @@ export async function confirmLegacyProfileMigrationConflict(input: Readonly<{
           context: baseContext,
           providersByContributionKey,
           machineId: input.machineId,
+          lifetime,
         });
         const resolved = applyReviewedLegacyProfileMigrationConflictV1(
           latestRawSettings,
@@ -112,6 +118,7 @@ export async function confirmLegacyProfileMigrationConflict(input: Readonly<{
           context: resolved.context,
           providersByContributionKey,
           machineId: input.machineId,
+          lifetime,
         });
         return {
           ...reauthorized,

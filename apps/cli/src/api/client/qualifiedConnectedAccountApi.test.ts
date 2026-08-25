@@ -15,6 +15,9 @@ import {
     readQualifiedConnectedAccountCredentialV4,
     readQualifiedConnectedAccountGroupV4,
     readQualifiedConnectedAccountQuotaV4,
+    readQualifiedProviderAccountUsageRecordV4,
+    requestQualifiedProviderAccountUsageRefreshV4,
+    resolveQualifiedProviderAccountUsageSourceV4,
     requestQualifiedConnectedAccountQuotaRefreshV4,
     QualifiedConnectedAccountCredentialConflictError,
     QualifiedConnectedAccountGroupConflictError,
@@ -44,6 +47,32 @@ const service = {
     pluginId: "example.connected-accounts",
     localId: "service/with/path",
 } as const;
+
+/**
+ * Answers like the real Axios boundary: a status the caller's `validateStatus`
+ * does not accept is raised as an error instead of returned. Without this the
+ * endpoint could stop accepting 409 and every assertion below would still pass
+ * while production went back to discarding the conflict body.
+ */
+function mockAxiosPostOnce(response: Readonly<{ status: number; data: unknown }>): void {
+    vi.mocked(axios.post).mockImplementationOnce(async (
+        _url: unknown,
+        _body: unknown,
+        config?: { validateStatus?: ((status: number) => boolean) | null },
+    ) => {
+        if (config?.validateStatus && !config.validateStatus(response.status)) {
+            const error = new Error(`Request failed with status code ${response.status}`) as Error & {
+                response: typeof response;
+                status: number;
+            };
+            error.name = "AxiosError";
+            error.response = response;
+            error.status = response.status;
+            throw error;
+        }
+        return response;
+    });
+}
 
 describe("qualified Connected Account V4 API", () => {
     beforeEach(() => {
@@ -110,6 +139,104 @@ describe("qualified Connected Account V4 API", () => {
         expect(readUrl.searchParams.get("group")).toContain(
             "primary-group",
         );
+    });
+
+    it("resolves, reads, and refreshes provider-account usage through the V4 record owner", async () => {
+        const ref = {
+            service,
+            accountId: "provider/account",
+        } as const;
+        const recordKey = {
+            providerId: "codex",
+            accountSubjectId: "acct_123",
+            subjectKind: "account",
+            quotaScope: "account",
+        } as const;
+        const recordId = buildProviderAccountUsageRecordId(recordKey);
+        const source = { ref, bindingKind: "account" } as const;
+        vi.mocked(axios.get)
+            .mockResolvedValueOnce({
+                status: 200,
+                data: {
+                    source,
+                    recordId,
+                    providerAccountId: recordKey.accountSubjectId,
+                    fetchedAt: 100,
+                    staleAfterMs: 1_000,
+                },
+            })
+            .mockResolvedValueOnce({
+                status: 200,
+                data: {
+                    content: {
+                        t: "plain",
+                        v: {
+                            v: 1,
+                            recordId,
+                            recordKey,
+                            providerId: recordKey.providerId,
+                            accountSubject: {
+                                kind: "providerSubject",
+                                id: recordKey.accountSubjectId,
+                            },
+                            observedAtMs: 100,
+                            fetchedAtMs: 100,
+                            staleAfterMs: 1_000,
+                            source: "runtimeSignal",
+                            confidence: "confirmed",
+                            state: "loaded_data",
+                            planLabel: null,
+                            accountLabel: null,
+                            meters: [],
+                        },
+                    },
+                    metadata: {
+                        fetchedAt: 100,
+                        staleAfterMs: 1_000,
+                        status: "ok",
+                    },
+                    sources: [source],
+                },
+            });
+        vi.mocked(axios.post).mockResolvedValueOnce({
+            status: 200,
+            data: { success: true },
+        });
+
+        await expect(resolveQualifiedProviderAccountUsageSourceV4({
+            token: "token",
+            source,
+        })).resolves.toMatchObject({ source, recordId });
+        await expect(readQualifiedProviderAccountUsageRecordV4({
+            token: "token",
+            recordId,
+        })).resolves.toMatchObject({
+            content: { t: "plain" },
+            sources: [source],
+        });
+        await expect(requestQualifiedProviderAccountUsageRefreshV4({
+            token: "token",
+            recordId,
+        })).resolves.toEqual({ success: true });
+
+        const sourceUrl = new URL(String(
+            vi.mocked(axios.get).mock.calls[0]?.[0],
+        ));
+        const readUrl = new URL(String(
+            vi.mocked(axios.get).mock.calls[1]?.[0],
+        ));
+        expect(sourceUrl.pathname).toBe(
+            "/v4/connect/qualified/provider-account-usage/sources/resolve",
+        );
+        expect(sourceUrl.searchParams.getAll("source")).toHaveLength(1);
+        expect(readUrl.pathname).toBe(
+            "/v4/connect/qualified/provider-account-usage/record",
+        );
+        expect(readUrl.searchParams.get("recordId")).toBe(recordId);
+        expect(String(vi.mocked(axios.post).mock.calls[0]?.[0])).toContain(
+            "/v4/connect/qualified/provider-account-usage/record/refresh",
+        );
+        expect(vi.mocked(axios.post).mock.calls[0]?.[1]).toEqual({ recordId });
     });
 
     it("sets the active qualified group account with runtime-state CAS", async () => {
@@ -239,9 +366,9 @@ describe("qualified Connected Account V4 API", () => {
     });
 
     it("preserves the server's closed credential-conflict discriminator at the HTTP boundary", async () => {
-        // Every 409 the credential endpoint can return names a DIFFERENT cause.
-        // Collapsing them into one settlement conflict hides capacity exhaustion
-        // and identity/authentication-mode mismatch from the caller.
+        // Every 409 the credential endpoint can return names a different cause.
+        // Collapsing identity/authentication-mode mismatch into one settlement
+        // conflict hides the action the caller needs to take.
         const mutation = {
             ref: { service, accountId: "provider/account" },
             authenticationModeId: "token",
@@ -250,11 +377,10 @@ describe("qualified Connected Account V4 API", () => {
             metadata: { scopes: [] },
         };
         for (const error of [
-            "connect_connected_account_capacity_exhausted",
             "connect_reconnect_provider_identity_mismatch",
             "connect_authentication_mode_mismatch",
-        ]) {
-            vi.mocked(axios.post).mockResolvedValueOnce({ status: 409, data: { error } });
+        ] as const) {
+            mockAxiosPostOnce({ status: 409, data: { error } });
             await expect(mutateQualifiedConnectedAccountCredentialV4({
                 token: "token",
                 mutation,
@@ -269,7 +395,7 @@ describe("qualified Connected Account V4 API", () => {
             } satisfies Partial<QualifiedConnectedAccountCredentialConflictError>);
         }
 
-        vi.mocked(axios.post).mockResolvedValueOnce({ status: 409, data: { error: "not-a-known-code" } });
+        mockAxiosPostOnce({ status: 409, data: { error: "not-a-known-code" } });
         await expect(mutateQualifiedConnectedAccountCredentialV4({
             token: "token",
             mutation,

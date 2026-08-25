@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { captureConsoleJsonOutput } from '@/testkit/logger/captureOutput';
 
+const { handleSessionCommand } = await import('./handleSessionCommand');
+
 describe('handleSessionCommand required positionals', () => {
   afterEach(() => {
     process.exitCode = undefined;
@@ -16,7 +18,6 @@ describe('handleSessionCommand required positionals', () => {
     ['unarchive', ['unarchive', '--json']],
     ['run list', ['run', 'list', '--json']],
   ] as const)('rejects missing %s ids before reading credentials', async (_label, argv) => {
-    const { handleSessionCommand } = await import('./handleSessionCommand');
     const readCredentialsFn = vi.fn(async () => {
       throw new Error('credentials must not be read without a session id');
     });
@@ -36,10 +37,9 @@ describe('handleSessionCommand required positionals', () => {
   });
 
   it.each([
-    ['unknown list options', ['list', '--definitely-invalid', '--json']],
-    ['invalid list limits', ['list', '--limit', '0', '--json']],
-  ] as const)('rejects %s with a truthful JSON error and exit code', async (_label, argv) => {
-    const { handleSessionCommand } = await import('./handleSessionCommand');
+    ['unknown list options', ['list', '--definitely-invalid', '--json'], 'Usage: happier session list'],
+    ['invalid list limits', ['list', '--limit', '0', '--json'], 'Invalid --limit'],
+  ] as const)('rejects %s with a truthful JSON error and exit code', async (_label, argv, expectedMessage) => {
     const readCredentialsFn = vi.fn(async () => {
       throw new Error('credentials must not be read for invalid arguments');
     });
@@ -53,7 +53,7 @@ describe('handleSessionCommand required positionals', () => {
         kind: 'session_list',
         error: {
           code: 'invalid_arguments',
-          message: expect.stringContaining('Usage: happier session list'),
+          message: expect.stringContaining(expectedMessage),
         },
       });
       expect(process.exitCode).toBe(1);
@@ -62,4 +62,5 @@ describe('handleSessionCommand required positionals', () => {
       output.restore();
     }
   });
+
 });

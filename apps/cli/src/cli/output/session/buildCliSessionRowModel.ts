@@ -6,7 +6,7 @@ import {
   type VendorResumeEligibility,
 } from '@happier-dev/agents';
 import {
-  buildBackendTargetKey,
+  isBackendTargetDisabledByAccountSettings,
   readAcpConfiguredBackendV1FromMetadata,
   readRuntimeDescriptorV1FromMetadata,
   readSystemSessionMetadataFromMetadata,
@@ -95,9 +95,14 @@ function isConfiguredBackendDisabledByAccountSettings(params: Readonly<{
   accountSettings: Record<string, unknown> | null;
 }>): boolean {
   if (!params.configuredBackendId) return false;
-  const backendEnabledByTargetKey = asRecord(params.accountSettings?.backendEnabledByTargetKey);
-  if (!backendEnabledByTargetKey) return false;
-  return backendEnabledByTargetKey[buildBackendTargetKey({ kind: 'configuredAcpBackend', backendId: params.configuredBackendId })] === false;
+  // The Account Settings catalog owns this map's key vocabulary: the parsed
+  // projection this row model receives stores the canonical V2 target key, so
+  // indexing it with a locally built legacy key would silently list a backend
+  // the user disabled as resumable.
+  return isBackendTargetDisabledByAccountSettings(
+    params.accountSettings,
+    { kind: 'configuredAcpBackend', backendId: params.configuredBackendId },
+  );
 }
 
 function evaluatePluginVendorResumeEligibility(params: Readonly<{

@@ -87,6 +87,32 @@ export function resolveCatalogAgentConnectedServiceIds(
   return readDeclaredCatalogConnectedServiceIds(findCatalogEntry(agentId));
 }
 
+/**
+ * The single eligibility fact for the host-private legacy service-keyed
+ * request-auth certificate.
+ *
+ * The fact is "this catalog entry declares legacy service-keyed Connected
+ * Service ids". Only a bundled first-party Agent can carry them: the manifest
+ * projection emits legacy ids for first-party provenance alone, and the
+ * declared `connectedServices.serviceIds` runtime contribution that also
+ * supplies them is reachable only from the generated bundled first-party
+ * implementation bindings. An installed external Agent therefore never
+ * qualifies, whatever built-in service its manifest names.
+ *
+ * Several bundled Agents currently qualify, not one — narrowing the marker to a
+ * single retained adapter would change which bundled Agents keep the
+ * service-keyed credential path and is a product decision, not a rename.
+ *
+ * Every session, foreground, execution-run and reattach issuer asks this one
+ * question; "is installed in the catalog" and "names a built-in service" are
+ * not provenance and must not be used in its place.
+ */
+export function isLegacyServiceKeyedCompatibilityCatalogAgent(
+  entry: Pick<AgentCatalogEntry, 'connectedServiceIds'> | null | undefined,
+): boolean {
+  return readDeclaredCatalogConnectedServiceIds(entry).length > 0;
+}
+
 export function requireCatalogEntry(agentId: CatalogAgentLookupId): AgentCatalogEntry {
   const entry = findCatalogEntry(agentId);
   if (!entry) throw new CatalogAgentNotInstalledError(agentId);

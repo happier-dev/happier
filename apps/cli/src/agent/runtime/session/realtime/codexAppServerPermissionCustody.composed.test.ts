@@ -13,8 +13,6 @@ type AppServerRequestHandler = (
 
 type AppServerBoundaryClient = Readonly<{
     launchFeatures: Readonly<{
-        codexCliVersion: string | null;
-        realtimeConversationVersionSupported: boolean;
         realtimeConversationAdvertised: boolean;
     }>;
     request(method: string, params?: unknown): Promise<unknown>;
@@ -101,8 +99,6 @@ function createAppServerBoundary(options?: Readonly<{
     const notify = vi.fn(async () => {});
     const client: AppServerBoundaryClient = {
         launchFeatures: {
-            codexCliVersion: '0.145.0',
-            realtimeConversationVersionSupported: true,
             realtimeConversationAdvertised: true,
         },
         request,

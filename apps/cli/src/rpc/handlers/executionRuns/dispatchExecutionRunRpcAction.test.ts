@@ -1264,7 +1264,6 @@ describe('createExecutionRunRpcActionExecutor', () => {
         actionKind: 'click',
         requestedBy: 'agent',
         requesterRef: { kind: 'agent', id: 'agent_1' },
-        leaseId: 'lease_1',
         payload: { selector: '#submit' },
         timeoutMs: 5_000,
       },

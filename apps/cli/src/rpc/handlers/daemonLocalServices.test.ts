@@ -4,7 +4,6 @@ import type {
     DaemonLocalServiceLauncherStartResponseV1,
     LocalServiceActionResultV1,
     LocalServiceLauncherSnapshotV1,
-    LocalServiceManagedRuntimeSnapshotV1,
     LocalServicePublicExposureV1,
     LocalServicePublicPreviewSnapshotV1,
 } from '@happier-dev/protocol';
@@ -41,26 +40,6 @@ const launcherSnapshot: LocalServiceLauncherSnapshotV1 = {
     targets: [],
 };
 
-const managedSnapshot: LocalServiceManagedRuntimeSnapshotV1 = {
-    v: 1,
-    machineId: 'machine_1',
-    generatedAt: 2_500,
-    refreshState: 'idle',
-    rows: [{
-        v: 1,
-        id: 'managed:web',
-        owner: { kind: 'plugin', pluginId: 'plugin_1' },
-        phase: 'running',
-        launchMode: 'detectAfterLaunch',
-        process: { pid: 123, startedAt: 2_000 },
-        routeName: 'plugin-web',
-        port: 5173,
-        supportedActions: ['restart_managed'],
-        diagnostics: [],
-    }],
-    diagnostics: [],
-};
-
 const actionResult: LocalServiceActionResultV1 = {
     v: 1,
     requestId: 'request_1',
@@ -80,7 +59,7 @@ const actionResult: LocalServiceActionResultV1 = {
 const launcherStartResponse: DaemonLocalServiceLauncherStartResponseV1 = {
     protocolVersion: 1,
     machineId: 'machine_1',
-    targetId: 'managed:web',
+    targetId: 'preview:web',
     status: 'denied',
     reasonCode: 'launcher_start_unsupported',
     snapshot: launcherSnapshot,
@@ -135,9 +114,6 @@ describe('daemon local services machine rpc handlers', () => {
             getSnapshot: vi.fn(async () => launcherSnapshot),
             startTarget: vi.fn(async () => launcherStartResponse),
         };
-        const managedRoutes = {
-            getSnapshot: vi.fn(async () => managedSnapshot),
-        };
         const actionRoutes = {
             execute: vi.fn(async () => actionResult),
         };
@@ -146,7 +122,6 @@ describe('daemon local services machine rpc handlers', () => {
         module.registerDaemonLocalServicesMachineRpcHandlers(registrar, {
             localServicesInventory: inventoryRoutes,
             localServicesLauncher: launcherRoutes,
-            localServicesManaged: managedRoutes,
             localServicesActions: actionRoutes,
         });
 
@@ -156,7 +131,6 @@ describe('daemon local services machine rpc handlers', () => {
             RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_SNAPSHOT,
             RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_SNAPSHOT,
             RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_START,
-            RPC_METHODS.DAEMON_LOCAL_SERVICES_MANAGED_SNAPSHOT,
         ].sort());
         await expect(handlers.get(RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_SNAPSHOT)?.({
             machineId: 'machine_1',
@@ -192,21 +166,13 @@ describe('daemon local services machine rpc handlers', () => {
 
         const startRequest = {
             machineId: 'machine_1',
-            targetId: 'managed:web',
+            targetId: 'preview:web',
             sessionId: 'session_1',
         };
         await expect(handlers.get(RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_START)?.(startRequest)).resolves.toEqual(
             launcherStartResponse,
         );
         expect(launcherRoutes.startTarget).toHaveBeenCalledWith(startRequest);
-
-        await expect(handlers.get(RPC_METHODS.DAEMON_LOCAL_SERVICES_MANAGED_SNAPSHOT)?.({
-            machineId: 'machine_1',
-        })).resolves.toEqual({
-            protocolVersion: 1,
-            snapshot: managedSnapshot,
-        });
-        expect(managedRoutes.getSnapshot).toHaveBeenCalledOnce();
 
         const request = {
             requestId: 'request_1',
@@ -230,7 +196,7 @@ describe('daemon local services machine rpc handlers', () => {
         const openPreviewResponse = {
             protocolVersion: 1 as const,
             status: 'opened' as const,
-            targetId: 'managed:web',
+            targetId: 'preview:web',
         };
         const registerPreviewResponse = {
             protocolVersion: 1 as const,
@@ -263,7 +229,7 @@ describe('daemon local services machine rpc handlers', () => {
         expect(handlers.has(RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_REGISTER_PREVIEW)).toBe(true);
         expect(handlers.has(RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_HISTORY_CLEAR)).toBe(true);
 
-        const openPreviewRequest = { machineId: 'machine_1', targetId: 'managed:web', sessionId: 'session_1' };
+        const openPreviewRequest = { machineId: 'machine_1', targetId: 'preview:web', sessionId: 'session_1' };
         await expect(
             handlers.get(RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_OPEN_PREVIEW)?.(openPreviewRequest),
         ).resolves.toEqual(openPreviewResponse);

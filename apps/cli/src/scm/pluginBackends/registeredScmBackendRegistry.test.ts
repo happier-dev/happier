@@ -14,6 +14,7 @@ import type {
     BackendRuntimeRegistration as ScmBackendRuntimeRegistration,
 } from '@happier-dev/plugin-sdk/scm/backend';
 import { readCurrentBackendRuntimeServices as readCurrentScmBackendRuntimeServices } from '@happier-dev/plugin-sdk/scm/backend';
+import { readCurrentHostingProviderRuntimeServices as readCurrentScmHostingProviderRuntimeServices } from '@happier-dev/plugin-sdk/scm/hosting';
 
 import { createRegisteredScmBackendRegistry } from './registeredScmBackendRegistry';
 import type { ScmBackend } from '../types';
@@ -190,6 +191,42 @@ describe('registered SCM backend registry', () => {
             'acme.scm.one/acme-vcs',
             'acme.scm.two/acme-vcs',
         ]);
+    });
+
+    it('does not hand a backend an empty hosting-services capability when the host supplied none', async () => {
+        let observedHostingServices: unknown = 'not-invoked';
+        const registration: ScmBackendRuntimeRegistration = {
+            id: 'acme-vcs',
+            handlers: {
+                detection: {
+                    detectRepo: async () => {
+                        observedHostingServices = readCurrentScmHostingProviderRuntimeServices();
+                        return { isRepo: true, rootPath: '/repo', mode: '.git' };
+                    },
+                },
+                read: {
+                    statusSnapshot: async () => ({ success: true }),
+                    diffFile: async () => ({ success: true, diff: '' }),
+                },
+            },
+        };
+        const resolved = createRegisteredScmBackendRegistry({
+            definitions: [{
+                pluginId: 'acme.scm.one',
+                contributionId: 'acme-vcs',
+                definition: createDefinition(),
+            }],
+            registrations: [{ pluginId: 'acme.scm.one', registration }],
+        });
+
+        expect(resolved.diagnostics).toEqual([]);
+        await resolved.backends[0]!.detectRepo({ cwd: '/repo' });
+
+        // `{}` is a valid `HostingProviderRuntimeServices`, so a fabricated one is indistinguishable
+        // from a real host that offers nothing — and every hosting plugin reads an absent
+        // `executeCommand` as "the CLI is not installed". A host that wired no services must be
+        // visibly absent instead.
+        expect(observedHostingServices).toBeNull();
     });
 
     it('projects the selected qualified backend identity through describe and status responses', async () => {
@@ -616,13 +653,19 @@ describe('registered SCM backend registry', () => {
                     realizeWorkspaceCheckout: async ({ workspaceCheckoutRealization }) => ({
                         kind: workspaceCheckoutRealization.kind,
                         targetPath: workspaceCheckoutRealization.targetPath ?? '/repo/.dev/worktree/feature',
+                        branchName: 'feature',
+                        created: true,
                     }),
                     materializeWorkspaceCheckout: async ({ workspaceCheckoutMaterialization }) => ({
                         targetPath: workspaceCheckoutMaterialization.targetPath,
+                        branchName: 'feature',
+                        created: true,
                     }),
                     createWorkspaceCheckout: async ({ workspaceCheckoutCreation }) => ({
                         kind: workspaceCheckoutCreation.kind,
                         targetPath: '/repo/.dev/worktree/feature',
+                        branchName: 'feature',
+                        created: true,
                     }),
                     resolveWorkspaceTransferEntries: async () => [{
                         relativePath: '.git/HEAD',
@@ -672,11 +715,14 @@ describe('registered SCM backend registry', () => {
                 sourcePath: '/repo',
                 displayName: 'feature',
                 baseRef: 'main',
+                branchMode: 'new',
                 targetPath: null,
             },
         })).resolves.toEqual({
             kind: 'git_worktree',
             targetPath: '/repo/.dev/worktree/feature',
+            branchName: 'feature',
+            created: true,
         });
         await expect(backend.workspaceIntegration?.classifyPortableWorkspacePath?.({
             relativePath: '.git/HEAD',

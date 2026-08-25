@@ -33,8 +33,6 @@ import {
     DaemonPluginStructuredMessageActionExecuteResponseSchema,
     DaemonPluginActionFormConnectedAccountOptionsResolveRequestSchema,
     DaemonPluginActionFormConnectedAccountOptionsResolveResponseSchema,
-    DaemonPluginComposerAttachmentPrepareRequestSchema,
-    DaemonPluginComposerAttachmentPrepareResponseSchema,
     DaemonPluginComposerReferenceSearchRequestSchema,
     DaemonPluginComposerReferenceSearchResponseSchema,
     type DaemonPluginSettingsSnapshot,
@@ -186,6 +184,8 @@ export type DaemonContributionRegistryProjectionRegistrationOptions = Readonly<{
     resolveRuntimeRegistry?: () => Promise<ResolvedExecutablePluginRuntimeRegistry>;
     resolveInstalledPackages?: () => Promise<readonly PluginCatalogEntry[]>;
     resolveGeneration?: () => Promise<number>;
+    /** Genuine filesystem boundary used by focused Artifact-read race tests. */
+    readArtifactFile?: (path: string) => Promise<Uint8Array>;
     resolveHostedWebFeatureDecision?: () => Promise<FeatureDecision> | FeatureDecision;
     resolveReactNativeBundlesFeatureDecision?: () => Promise<FeatureDecision> | FeatureDecision;
     resolveReactNativeDevHotReloadFeatureDecision?: () => Promise<FeatureDecision> | FeatureDecision;
@@ -249,10 +249,57 @@ let cachedAtMs = 0;
 let cachedProjectionKey: string | null = null;
 const CACHE_TTL_MS = 10_000;
 
+/**
+ * Projections in flight right now, keyed by the describe request they answer.
+ *
+ * The TTL cache above can only serve a caller that arrives *after* a projection finished, so it
+ * is silent in the one regime that matters: several callers arriving while a projection is still
+ * running. Each of those used to run its own full projection — the amplification measured as
+ * 137,870 ms of concurrent work, 22 s event-loop stalls and 100 % CPU on a single daemon. An
+ * entry lives only for the duration of one computation and is removed when it settles, so this
+ * shares work without becoming a second cache with its own freshness rules.
+ */
+const inFlightProjectionsByRequestKey =
+    new Map<string, Promise<DaemonContributionRegistryProjectionDescribeResponse>>();
+
 export function invalidateDaemonContributionRegistryProjectionCache(): void {
     cachedProjection = null;
     cachedAtMs = 0;
     cachedProjectionKey = null;
+}
+
+/**
+ * Identifies the answer a describe request asks for. The request is the parsed schema output, so
+ * declared fields serialize in schema order and identical requests produce identical keys. The
+ * schema is `.passthrough()`, so two callers could in principle order unknown forward-compatible
+ * fields differently; that only costs a missed share, never a shared answer to different
+ * questions, which is the direction this must fail in.
+ */
+function createProjectionRequestKey(
+    request: DaemonContributionRegistryProjectionDescribeRequest | undefined,
+): string {
+    return request === undefined ? '' : JSON.stringify(request);
+}
+
+async function resolveProjectionCoalescingConcurrentRequests(
+    opts: DaemonContributionRegistryProjectionRegistrationOptions | undefined,
+    request?: DaemonContributionRegistryProjectionDescribeRequest,
+): Promise<DaemonContributionRegistryProjectionDescribeResponse> {
+    const requestKey = createProjectionRequestKey(request);
+    const alreadyRunning = inFlightProjectionsByRequestKey.get(requestKey);
+    if (alreadyRunning) {
+        return await alreadyRunning;
+    }
+
+    // A rejected projection is removed like any other, so a failure is never latched onto the
+    // callers that arrive after it: the next request starts a fresh computation.
+    const tracked = resolveProjection(opts, request).finally(() => {
+        if (inFlightProjectionsByRequestKey.get(requestKey) === tracked) {
+            inFlightProjectionsByRequestKey.delete(requestKey);
+        }
+    });
+    inFlightProjectionsByRequestKey.set(requestKey, tracked);
+    return await tracked;
 }
 
 async function defaultResolveRegistry(): Promise<ResolvedContributionRegistry> {
@@ -336,6 +383,11 @@ function createProjectionCacheKey(input: Readonly<{
     pluginExecutionOriginsByPluginId: Readonly<Record<string, PluginMachineExecutionOriginV1>>;
     pluginFinalPolicyCurrentGenerationsById?: ReadonlyMap<string, PluginFinalPolicyCurrentGeneration>;
     mountedTarget?: Readonly<{ pluginId: string; immutableGenerationId: string }>;
+    /**
+     * The projected translation bundles depend on it, so two clients with
+     * different display locales must not share one cached body.
+     */
+    requestedLocale?: string;
 }>): string {
     return JSON.stringify({
         generation: input.generation,
@@ -347,6 +399,7 @@ function createProjectionCacheKey(input: Readonly<{
             ? [...input.pluginFinalPolicyCurrentGenerationsById.entries()].sort(([left], [right]) => left.localeCompare(right))
             : [],
         mountedTarget: input.mountedTarget ?? null,
+        requestedLocale: input.requestedLocale ?? null,
     });
 }
 
@@ -1181,6 +1234,25 @@ async function acquireProjectionRuntimeRegistryLease(
     });
 }
 
+async function isArtifactProjectionPairCurrent(input: Readonly<{
+    opts: DaemonContributionRegistryProjectionRegistrationOptions | undefined;
+    registry: ResolvedExecutablePluginRuntimeRegistry;
+    generation: number;
+}>): Promise<boolean> {
+    const currentLease = await acquireProjectionRuntimeRegistryLease(input.opts);
+    try {
+        const currentGeneration = await (
+            input.opts?.resolveGeneration ?? defaultResolveGeneration
+        )();
+        // Artifact lookup reads the immutable contribution registry snapshot;
+        // runtime wrappers may be re-created around that same exact snapshot.
+        return currentLease.registry.contributes === input.registry.contributes
+            && currentGeneration === input.generation;
+    } finally {
+        await currentLease.release();
+    }
+}
+
 function sameConnectedAccountServiceRefs(
     left: readonly Readonly<{ pluginId: string; localId: string }>[],
     right: readonly Readonly<{ pluginId: string; localId: string }>[],
@@ -1718,6 +1790,7 @@ async function resolveProjection(
                 ? { pluginFinalPolicyCurrentGenerationsById }
                 : {}),
             ...(request?.mountedTarget ? { mountedTarget: request.mountedTarget } : {}),
+            ...(request?.locale ? { requestedLocale: request.locale } : {}),
         });
         if (cachedProjection && cachedProjectionKey === cacheKey && now - cachedAtMs < CACHE_TTL_MS) {
             return cachedProjection;
@@ -1763,6 +1836,7 @@ async function resolveProjection(
                 : {}),
             scmRuntimeAvailability,
             ...(introspectionRuntimeSnapshot ? { introspectionRuntimeSnapshot } : {}),
+            ...(request?.locale ? { requestedLocale: request.locale } : {}),
         });
         const composerSurfaceCatalog = lease.runtimeRegistry
             ? projectDaemonComposerSurfaceCatalog({
@@ -2044,6 +2118,7 @@ async function readVerifiedGeneratedPluginUiArtifactGraph(params: Readonly<{
         readFailed: string;
         entryMissing: string;
     }>;
+    readArtifactFile?: (path: string) => Promise<Uint8Array>;
 }>): Promise<
     | Readonly<{
         ok: true;
@@ -2081,7 +2156,7 @@ async function readVerifiedGeneratedPluginUiArtifactGraph(params: Readonly<{
             });
         }
         try {
-            const bytes = await readFile(resolved.absolutePath);
+            const bytes = await (params.readArtifactFile ?? readFile)(resolved.absolutePath);
             if (bytes.byteLength !== file.byteSize || computePluginUiArtifactSha256DigestV1(bytes) !== file.digest) {
                 return Object.freeze({
                     ok: false,
@@ -2184,6 +2259,7 @@ type GeneratedReactNativeArtifactReadParams = Readonly<{
     identity: DaemonPluginReactNativeBundleCacheIdentityV1;
     generation: number;
     pluginUiHostRuntime: ReturnType<typeof resolvePluginUiProjectionHostRuntime>;
+    readArtifactFile?: (path: string) => Promise<Uint8Array>;
 }> & (
     | Readonly<{
         artifactOwnerKind: 'renderer';
@@ -2296,6 +2372,7 @@ async function readGeneratedReactNativeArtifactBytesByCacheIdentity(
             readFailed: 'react_native_artifact_read_failed',
             entryMissing: 'generated_react_native_entry_missing',
         },
+        ...(params.readArtifactFile ? { readArtifactFile: params.readArtifactFile } : {}),
     });
     if (!loaded.ok) return loaded.response;
     // The success contract pins `format: 'plainJs'`, so this authority verifies
@@ -2349,6 +2426,7 @@ async function readGeneratedHostedWebArtifactBytesByCacheIdentity(params: Readon
     identity: DaemonPluginHostedWebArtifactCacheIdentityV1;
     generation: number;
     pluginUiHostRuntime: ReturnType<typeof resolvePluginUiProjectionHostRuntime>;
+    readArtifactFile?: (path: string) => Promise<Uint8Array>;
 }>): Promise<DaemonPluginUiArtifactBytesReadResponse> {
     const projected = readProjectedHostedWebArtifactIdentity(params);
     if (!projected || !hostedWebIdentityMatches(projected, params.identity)) {
@@ -2372,6 +2450,7 @@ async function readGeneratedHostedWebArtifactBytesByCacheIdentity(params: Readon
             readFailed: 'hosted_web_artifact_read_failed',
             entryMissing: 'generated_hosted_web_entry_missing',
         },
+        ...(params.readArtifactFile ? { readArtifactFile: params.readArtifactFile } : {}),
     });
     if (!loaded.ok) return loaded.response;
 
@@ -2401,6 +2480,7 @@ async function readHostedWebArtifactBytesByCacheIdentity(params: Readonly<{
     identity: DaemonPluginHostedWebArtifactCacheIdentityV1;
     generation: number;
     pluginUiHostRuntime: ReturnType<typeof resolvePluginUiProjectionHostRuntime>;
+    readArtifactFile?: (path: string) => Promise<Uint8Array>;
 }>): Promise<DaemonPluginUiArtifactBytesReadResponse> {
     if (params.pluginUiHostRuntime.hostedWeb?.featureEnabled !== true) {
         return artifactBytesError('artifact_unavailable', ['feature_disabled']);
@@ -2572,7 +2652,7 @@ export function registerDaemonContributionRegistryProjectionHandler(
     rpc.registerHandler(RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE, async (raw: unknown) => {
         // Parse input for forward compatibility and to avoid accepting accidental session-scoped payloads.
         const request = DaemonContributionRegistryProjectionDescribeRequestSchema.parse(raw);
-        return await resolveProjection(opts, request);
+        return await resolveProjectionCoalescingConcurrentRequests(opts, request);
     });
     rpc.registerHandler(RPC_METHODS.DAEMON_PLUGIN_SETTINGS_GET, async (
         raw: unknown,
@@ -2955,63 +3035,6 @@ export function registerDaemonContributionRegistryProjectionHandler(
                     ? 'not_current'
                     : 'unavailable';
             return DaemonPluginComposerReferenceSearchResponseSchema.parse({ ok: false, code, reason });
-        } finally {
-            await lease.release();
-        }
-    });
-    rpc.registerHandler(RPC_METHODS.DAEMON_PLUGIN_COMPOSER_ATTACHMENT_PREPARE, async (raw: unknown, context) => {
-        const request = DaemonPluginComposerAttachmentPrepareRequestSchema.safeParse(raw);
-        if (!request.success) {
-            return DaemonPluginComposerAttachmentPrepareResponseSchema.parse({
-                ok: false,
-                code: 'composer_attachment_request_invalid',
-                reason: 'invalid_payload',
-            });
-        }
-        const lease = await acquireProjectionRuntimeRegistryLease(opts);
-        try {
-            if (!(await isExpectedProjectionGenerationCurrent(opts, request.data.expectedGeneration))) {
-                return DaemonPluginComposerAttachmentPrepareResponseSchema.parse({
-                    ok: false,
-                    code: 'plugin_generation_stale',
-                    reason: 'stale_generation',
-                });
-            }
-            const attachments = lease.registry.composerAttachments;
-            if (!attachments) {
-                return DaemonPluginComposerAttachmentPrepareResponseSchema.parse({
-                    ok: false,
-                    code: 'composer_attachment_unavailable',
-                    reason: 'unavailable',
-                });
-            }
-            const result = await attachments.prepareForSend({
-                attachment: request.data.attachment,
-                request: request.data.request,
-                signal: context?.signal ?? new AbortController().signal,
-            });
-            if (!(await isExpectedProjectionGenerationCurrent(opts, request.data.expectedGeneration))) {
-                return DaemonPluginComposerAttachmentPrepareResponseSchema.parse({
-                    ok: false,
-                    code: 'plugin_generation_stale',
-                    reason: 'stale_generation',
-                });
-            }
-            return DaemonPluginComposerAttachmentPrepareResponseSchema.parse({
-                ok: true,
-                attachment: request.data.attachment,
-                result,
-            });
-        } catch (error) {
-            const code = isPluginError(error) ? error.code : 'composer_attachment_unavailable';
-            const reason = code === 'plugin_generation_stale'
-                ? 'stale_generation'
-                : code === 'composer_attachment_not_current'
-                    ? 'not_current'
-                    : code === 'composer_attachment_request_invalid'
-                        ? 'invalid_payload'
-                        : 'unavailable';
-            return DaemonPluginComposerAttachmentPrepareResponseSchema.parse({ ok: false, code, reason });
         } finally {
             await lease.release();
         }
@@ -3601,6 +3624,7 @@ export function registerDaemonContributionRegistryProjectionHandler(
                     identity: request.data.cacheIdentity,
                     generation,
                     pluginUiHostRuntime,
+                    ...(opts?.readArtifactFile ? { readArtifactFile: opts.readArtifactFile } : {}),
                 };
                 const response = request.data.artifactOwnerKind === 'renderer'
                     ? await readGeneratedReactNativeArtifactBytesByCacheIdentity({
@@ -3678,16 +3702,33 @@ export function registerDaemonContributionRegistryProjectionHandler(
                         );
                     }
                 }
+                if (!await isArtifactProjectionPairCurrent({ opts, registry: lease.registry, generation })) {
+                    return artifactBytesError(
+                        'artifact_unavailable',
+                        ['artifact_projection_pair_stale'],
+                    );
+                }
                 return response;
             }
 
             const pluginUiHostRuntime = await resolveProjectionHostRuntime(opts);
-            return await readHostedWebArtifactBytesByCacheIdentity({
-                    registry: lease.registry.contributes,
-                    identity: request.data.cacheIdentity,
-                    generation,
-                    pluginUiHostRuntime,
-                });
+            const response = await readHostedWebArtifactBytesByCacheIdentity({
+                registry: lease.registry.contributes,
+                identity: request.data.cacheIdentity,
+                generation,
+                pluginUiHostRuntime,
+                ...(opts?.readArtifactFile ? { readArtifactFile: opts.readArtifactFile } : {}),
+            });
+            if (
+                response.ok
+                && !await isArtifactProjectionPairCurrent({ opts, registry: lease.registry, generation })
+            ) {
+                return artifactBytesError(
+                    'artifact_unavailable',
+                    ['artifact_projection_pair_stale'],
+                );
+            }
+            return response;
         } finally {
             await lease.release();
         }

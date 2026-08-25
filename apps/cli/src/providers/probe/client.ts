@@ -21,6 +21,11 @@ import {
 import { resolveUrlConnectionIdentity } from '@/network/urlConnectionIdentity';
 
 import {
+  awaitWithinProviderOperation,
+  ProviderOperationAbandonedError,
+} from '../operationLifetime';
+
+import {
   ProviderCatalogFormatUnavailableError,
   parseProviderCatalogResponse,
   type ParsedProviderCatalogResponse,
@@ -83,6 +88,12 @@ export type ProviderProbeManagedServiceRequest = (
 
 export type ProviderCatalogGetRequest = Readonly<{
   endpointUrl: string;
+  /**
+   * Absolute end of the caller's already-started Provider operation budget.
+   * Absent starts the budget here, which is correct only when this request is
+   * the whole operation.
+   */
+  wallDeadlineAtMs?: number;
   path: string;
   parser: ProviderCatalogParserV1;
   /**
@@ -115,6 +126,8 @@ export const PROVIDER_MODEL_LOAD_HTTP_LIMITS = Object.freeze({
 
 export type ProviderModelLoadPostRequest = Readonly<{
   endpointUrl: string;
+  /** Absolute end of the explicit model-load operation's wall budget. */
+  wallDeadlineAtMs?: number;
   path: string;
   publicHeaders: Readonly<Record<string, string>>;
   modelId: string;
@@ -396,6 +409,7 @@ export function createProviderProbeHttpClient(dependencies: Readonly<{
     method: 'GET' | 'POST';
     body?: Uint8Array;
     wallTimeMs: number;
+    wallDeadlineAtMs?: number;
     maxResponseBodyBytes: number;
     signal?: AbortSignal;
     authorizeDestination(destination: AssessedProviderEndpoint): Promise<void>;
@@ -405,9 +419,21 @@ export function createProviderProbeHttpClient(dependencies: Readonly<{
     credential: ProviderProbeCredential | undefined;
   }>> {
     let assessed: AssessedProviderEndpoint;
+    // Destination re-resolution is inside this hop's remaining budget: an
+    // unresponsive resolver must not extend or outlive the advertised wall
+    // time, and `node:dns` cannot be aborted directly. Establishment and body
+    // then spend what resolution left rather than restarting the clock.
+    const hopDeadlineAtMs = input.wallDeadlineAtMs ?? now() + input.wallTimeMs;
     try {
       const parsed = new URL(input.currentUrl);
-      const addresses = await resolveAddresses(resolveUrlConnectionIdentity(parsed.hostname).hostname);
+      const addresses = await awaitWithinProviderOperation(
+        resolveAddresses(resolveUrlConnectionIdentity(parsed.hostname).hostname),
+        {
+          ...(input.signal ? { signal: input.signal } : {}),
+          wallDeadlineAtMs: hopDeadlineAtMs,
+        },
+        now,
+      );
       throwIfCancelled(input.signal);
       assessed = assessProviderEndpoint(input.currentUrl, {
         resolvedAddresses: addresses,
@@ -415,6 +441,9 @@ export function createProviderProbeHttpClient(dependencies: Readonly<{
       });
     } catch (error) {
       if (error instanceof ProviderProbeCancelledError) throw error;
+      if (error instanceof ProviderOperationAbandonedError && error.reason === 'cancelled') {
+        throw new ProviderProbeCancelledError();
+      }
       throw new ProviderProbeClientError('provider_endpoint_unreachable');
     }
     await input.authorizeDestination(assessed);
@@ -424,6 +453,8 @@ export function createProviderProbeHttpClient(dependencies: Readonly<{
       credentialLease = input.resolveCredential ? await input.resolveCredential() : undefined;
       throwIfCancelled(input.signal);
       const credential = credentialLease?.credential;
+      const remainingWallTimeMs = hopDeadlineAtMs - now();
+      if (remainingWallTimeMs <= 0) throw new ProviderProbeClientError('provider_endpoint_unreachable');
       const headers: Record<string, string> = { ...input.publicHeaders };
       let requestUrl = assessed.normalizedUrl;
       if (credential?.kind === 'httpHeader') {
@@ -446,7 +477,7 @@ export function createProviderProbeHttpClient(dependencies: Readonly<{
               headers,
               ...(requestBody === undefined ? {} : { body: requestBody }),
               signal,
-              wallTimeMs: input.wallTimeMs,
+              wallTimeMs: remainingWallTimeMs,
               idleTimeMs: PROVIDER_ENDPOINT_SAFETY_LIMITS.maxIdleTimeMs,
               maxResponseBodyBytes: input.maxResponseBodyBytes,
             })
@@ -459,7 +490,7 @@ export function createProviderProbeHttpClient(dependencies: Readonly<{
               method: input.method,
               ...(input.body ? { body: input.body } : {}),
               signal,
-              wallTimeMs: input.wallTimeMs,
+              wallTimeMs: remainingWallTimeMs,
               idleTimeMs: PROVIDER_ENDPOINT_SAFETY_LIMITS.maxIdleTimeMs,
               maxResponseBodyBytes: input.maxResponseBodyBytes,
             });
@@ -490,7 +521,8 @@ export function createProviderProbeHttpClient(dependencies: Readonly<{
       // One wall budget for the catalog read, spent across every redirect hop.
       // A per-hop budget would let the declared redirect chain multiply the
       // advertised ceiling by `maxRedirects + 1`.
-      const wallDeadlineAtMs = now() + PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs;
+      const wallDeadlineAtMs = input.wallDeadlineAtMs
+        ?? now() + PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs;
       while (true) {
         const remainingWallTimeMs = wallDeadlineAtMs - now();
         if (remainingWallTimeMs <= 0) {
@@ -626,6 +658,9 @@ export function createProviderProbeHttpClient(dependencies: Readonly<{
         method: 'POST',
         body,
         wallTimeMs: PROVIDER_MODEL_LOAD_HTTP_LIMITS.wallTimeMs,
+        ...(input.wallDeadlineAtMs !== undefined
+          ? { wallDeadlineAtMs: input.wallDeadlineAtMs }
+          : {}),
         maxResponseBodyBytes: PROVIDER_MODEL_LOAD_HTTP_LIMITS.maxDecodedBodyBytes,
         ...(input.signal ? { signal: input.signal } : {}),
         authorizeDestination: input.authorizeDestination,

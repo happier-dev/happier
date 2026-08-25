@@ -188,16 +188,21 @@ describe('provider model-load catalog port', () => {
       refresh,
     });
     const ticket = { revision: 1 };
+    const scope = { lifetime: { wallDeadlineAtMs: 60_000 } };
     await expect(port.readCurrentModel({
-      connectionId: 'connection-a', machineId: 'machine-a', modelId: 'model-a', ticket,
+      connectionId: 'connection-a', machineId: 'machine-a', modelId: 'model-a', ticket, scope,
     })).resolves.toMatchObject({ status: 'listed', loadState: 'loaded' });
     const controller = new AbortController();
     await expect(port.refresh({
       connectionId: 'connection-a', machineId: 'machine-a', modelId: 'model-a',
-      refreshFrontier: 'dispatch-a', ticket, signal: controller.signal,
+      refreshFrontier: 'dispatch-a', ticket, signal: controller.signal, scope,
     })).resolves.toMatchObject({ status: 'success' });
     expect(refresh).toHaveBeenCalledWith({
-      ...resolved, modelId: 'model-a', refreshFrontier: 'dispatch-a', signal: controller.signal,
+      ...resolved,
+      modelId: 'model-a',
+      refreshFrontier: 'dispatch-a',
+      signal: controller.signal,
+      operationScope: { lifetime: scope.lifetime },
     });
   });
 });

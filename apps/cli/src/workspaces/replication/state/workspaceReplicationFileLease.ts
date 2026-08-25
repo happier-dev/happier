@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-const CLI_DAEMON_LEASE_OWNER_PID_REGEX = /^cli-daemon:(\d+)(?::|$)/u;
+import { isCliDaemonOwnedLeaseStealable } from './leaseOwnerPid';
 
 export type WorkspaceReplicationFileLeaseRecord = Readonly<{
   leaseId?: string;
@@ -12,32 +12,6 @@ export type WorkspaceReplicationFileLeaseRecord = Readonly<{
   renewedAtMs: number;
   expiresAtMs: number;
 }>;
-
-function isPidAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    const nodeError = error as NodeJS.ErrnoException;
-    if (nodeError?.code === 'EPERM') {
-      return true;
-    }
-    return false;
-  }
-}
-
-// Unknown/legacy owner ids fail closed (treated as alive) for acquisition to avoid accidental lease stealing.
-function isLeaseOwnerAliveOrUnknown(ownerId: string): boolean {
-  const match = CLI_DAEMON_LEASE_OWNER_PID_REGEX.exec(ownerId);
-  if (!match) {
-    return true;
-  }
-  const pid = Number.parseInt(match[1] ?? '', 10);
-  if (!Number.isFinite(pid) || pid <= 0) {
-    return false;
-  }
-  return isPidAlive(pid);
-}
 
 export function parseWorkspaceReplicationFileLeaseObject(raw: unknown): Record<string, unknown> | null {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
@@ -121,7 +95,7 @@ export async function tryAcquireWorkspaceReplicationFileLease<T extends Workspac
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const existing = await input.readLease();
-    if (existing && existing.expiresAtMs > input.nowMs && isLeaseOwnerAliveOrUnknown(existing.ownerId)) {
+    if (existing && existing.expiresAtMs > input.nowMs && !isCliDaemonOwnedLeaseStealable(existing.ownerId)) {
       return { acquired: false, lease: existing };
     }
     const previousAttempt = existing?.attempt ?? 0;
@@ -145,7 +119,7 @@ export async function tryAcquireWorkspaceReplicationFileLease<T extends Workspac
     }
 
     const locked = await input.readLease();
-    if (locked && locked.expiresAtMs > input.nowMs && isLeaseOwnerAliveOrUnknown(locked.ownerId)) {
+    if (locked && locked.expiresAtMs > input.nowMs && !isCliDaemonOwnedLeaseStealable(locked.ownerId)) {
       return { acquired: false, lease: locked };
     }
 

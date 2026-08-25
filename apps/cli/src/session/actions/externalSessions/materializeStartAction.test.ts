@@ -24,7 +24,7 @@ import {
 } from './materializeStartAction';
 import {
   acknowledgeExternalSessionOperationProgressProjection,
-  compactExternalSessionOperationRecordToCompletionReceipt,
+  compactExternalSessionOperationRecordToTerminalReceipt,
   writeExternalSessionOperationRecord,
 } from './operationRecordStore';
 
@@ -210,7 +210,7 @@ async function compactCompletedTakeoverReceipt(
     operationId: completed.operationId,
     projectedRevision: completed.revision,
   });
-  await expect(compactExternalSessionOperationRecordToCompletionReceipt({
+  await expect(compactExternalSessionOperationRecordToTerminalReceipt({
     activeServerDir,
     operationId: completed.operationId,
     expectedRevision: completed.revision,

@@ -94,9 +94,17 @@ vi.mock('@/daemon/sessionRegistry', async (importOriginal) => ({
 
 const PLUGIN_ID = 'acme.external-sessions-product-route';
 const REPLACEMENT_PLUGIN_ID = 'acme.external-sessions-product-route-replacement';
-const AGENT_ID = 'external-product-route-agent';
+const AGENT_LOCAL_ID = 'external-product-route-agent';
+/**
+ * Installed (non first-party) Agents are routed by their qualified
+ * `{pluginId, localId}` identity, so every host `agentId` these routes carry
+ * is the qualified routing id, not the manifest-local id.
+ */
+const AGENT_ID = `${PLUGIN_ID}/${AGENT_LOCAL_ID}`;
+const REPLACEMENT_AGENT_ID = `${REPLACEMENT_PLUGIN_ID}/${AGENT_LOCAL_ID}`;
 const AUTHOR_PLUGIN_ID = 'acme.external-sessions-author-only';
-const AUTHOR_AGENT_ID = 'external-author-only-agent';
+const AUTHOR_AGENT_LOCAL_ID = 'external-author-only-agent';
+const AUTHOR_AGENT_ID = `${AUTHOR_PLUGIN_ID}/${AUTHOR_AGENT_LOCAL_ID}`;
 const SOURCE = Object.freeze({ kind: 'syntheticProductRoute', scope: 'scope-a' });
 const SECOND_SOURCE = Object.freeze({ kind: 'syntheticProductRoute', scope: 'scope-b' });
 const CANONICALIZED_SOURCE_ALIAS = Object.freeze({
@@ -120,7 +128,7 @@ function productionTakeoverRecord(input: Readonly<{
       remoteSessionId: 'remote-product-route',
       qualifiedIdentity: {
         v: 1 as const,
-        agent: { pluginId: PLUGIN_ID, localId: AGENT_ID },
+        agent: { pluginId: PLUGIN_ID, localId: AGENT_LOCAL_ID },
         source: { kind: SOURCE.kind, contractVersion: 1 as const },
       },
       linkGeneration: '41',
@@ -193,7 +201,7 @@ async function materializeAuxiliaryOnlyPlugin(
     hostAccess: { required: [], optional: [] },
     contributes: {
       agents: [{
-        id: AGENT_ID,
+        id: AGENT_LOCAL_ID,
         title: 'External Sessions product-route Agent',
         ...(includeDeclarativeAcp
           ? {
@@ -271,7 +279,7 @@ async function materializeAuxiliaryOnlyPlugin(
     });
 
     export function activate(api) {
-      api.agents.registerExternalSessions('${AGENT_ID}', {
+      api.agents.registerExternalSessions('${AGENT_LOCAL_ID}', {
         async resolveSource(request) {
           return { ok: true, value: { source: sourceFor(request) } };
         },
@@ -408,7 +416,7 @@ async function materializeAuxiliaryOnlyPlugin(
         },
       });
       ${includeTakeover ? `
-      api.agents.registerExternalSessionTakeover('${AGENT_ID}', {
+      api.agents.registerExternalSessionTakeover('${AGENT_LOCAL_ID}', {
         async resolveLaunch(request) {
           return {
             ok: true,
@@ -444,7 +452,7 @@ async function materializeAuthorOnlyPlugin(pluginRoot: string): Promise<void> {
     },
     contributes: {
       agents: [{
-        id: AUTHOR_AGENT_ID,
+        id: AUTHOR_AGENT_LOCAL_ID,
         title: 'Author-only Agent',
         runtime: {
           kind: 'acp',
@@ -557,7 +565,7 @@ describe('non-bundled auxiliary-only Agent ordinary External Sessions routes', (
         externalSessionPluginAdmissionOwner: { takeoverStart },
       });
       await runtimeRegistry.activateContributionsOnDemand([{
-        pluginId: AUTHOR_PLUGIN_ID, family: 'agents', localId: AUTHOR_AGENT_ID,
+        pluginId: AUTHOR_PLUGIN_ID, family: 'agents', localId: AUTHOR_AGENT_LOCAL_ID,
       }]);
       let authorCallerGenerationCurrent = true;
       const services = await runtimeRegistry.createAgentInvocationServices({
@@ -743,7 +751,7 @@ describe('non-bundled auxiliary-only Agent ordinary External Sessions routes', (
           source: SOURCE,
           qualifiedIdentity: {
             v: 1,
-            agent: { pluginId: PLUGIN_ID, localId: AGENT_ID },
+            agent: { pluginId: PLUGIN_ID, localId: AGENT_LOCAL_ID },
             source: { kind: SOURCE.kind, contractVersion: 1 },
           },
         },
@@ -1418,6 +1426,10 @@ describe('non-bundled auxiliary-only Agent ordinary External Sessions routes', (
       });
 
       const pageScanCountBeforeLink = fetchSessionsPageMock.mock.calls.length;
+      // Candidate and transcript routes above legitimately resolve link state
+      // through the same tag reader, so this asserts the link-ensure delta
+      // rather than a whole-test total.
+      const tagLookupCountBeforeLink = lookupSessionsByTagsMock.mock.calls.length;
       const linked = await executeExternalSessionLinkEnsureAction({
         machineId: 'machine-product-route',
         agentId: AGENT_ID,
@@ -1429,7 +1441,9 @@ describe('non-bundled auxiliary-only Agent ordinary External Sessions routes', (
         sessionId: 'linked-product-route-session',
         created: true,
       });
-      expect(lookupSessionsByTagsMock).toHaveBeenCalledOnce();
+      expect(
+        lookupSessionsByTagsMock.mock.calls.length - tagLookupCountBeforeLink,
+      ).toBe(1);
       expect(fetchSessionsPageMock.mock.calls.slice(pageScanCountBeforeLink)).toEqual([
         [expect.objectContaining({
           token: 'token',
@@ -1450,7 +1464,7 @@ describe('non-bundled auxiliary-only Agent ordinary External Sessions routes', (
             v: 1,
             agent: {
               pluginId: PLUGIN_ID,
-              localId: AGENT_ID,
+              localId: AGENT_LOCAL_ID,
             },
             source: {
               kind: SOURCE.kind,
@@ -1558,7 +1572,7 @@ describe('non-bundled auxiliary-only Agent ordinary External Sessions routes', (
       });
       const replacementListed = await executeExternalSessionCandidatesListAction({
         machineId: 'machine-product-route',
-        agentId: AGENT_ID,
+        agentId: REPLACEMENT_AGENT_ID,
         source: SOURCE,
         limit: 1,
       });
@@ -1571,7 +1585,7 @@ describe('non-bundled auxiliary-only Agent ordinary External Sessions routes', (
       }
       const retiredCursorList = await executeExternalSessionCandidatesListAction({
         machineId: 'machine-product-route',
-        agentId: AGENT_ID,
+        agentId: REPLACEMENT_AGENT_ID,
         source: SOURCE,
         cursor: listed.nextCursor,
         limit: 1,
@@ -1583,12 +1597,12 @@ describe('non-bundled auxiliary-only Agent ordinary External Sessions routes', (
       });
       expect(retiredCursorList).not.toHaveProperty('autoLinkPolicyScopeV1');
       const replacementIdentity = await resolveCurrentExternalSessionAgentIdentity(
-        ExternalSessionsAgentIdSchema.parse(AGENT_ID),
+        ExternalSessionsAgentIdSchema.parse(REPLACEMENT_AGENT_ID),
       );
       expect(replacementIdentity).toMatchObject({
         identity: {
           pluginId: REPLACEMENT_PLUGIN_ID,
-          localId: AGENT_ID,
+          localId: AGENT_LOCAL_ID,
         },
       });
       if (!replacementIdentity) {
@@ -1601,9 +1615,9 @@ describe('non-bundled auxiliary-only Agent ordinary External Sessions routes', (
         errorCode: 'agent_unavailable',
         error: 'external_session_qualified_agent_unavailable',
       });
-      expect(replacementRegistry.agentRuntimesByAgentId.get(AGENT_ID)).toMatchObject({
+      expect(replacementRegistry.agentRuntimesByAgentId.get(REPLACEMENT_AGENT_ID)).toMatchObject({
         pluginId: REPLACEMENT_PLUGIN_ID,
-        agentId: AGENT_ID,
+        agentId: REPLACEMENT_AGENT_ID,
         hasPrimaryRuntime: false,
       });
 
@@ -1616,11 +1630,11 @@ describe('non-bundled auxiliary-only Agent ordinary External Sessions routes', (
         durableRevision: 5,
         runningSessionDisposition: 'retainRunningSessions',
       });
-      expect(unownedRegistry.contributes.agentDefinitionsById.has(AGENT_ID)).toBe(false);
+      expect(unownedRegistry.contributes.agentDefinitionsById.has(REPLACEMENT_AGENT_ID)).toBe(false);
       unownedRegistry = null;
       const uninstalledList = await executeExternalSessionCandidatesListAction({
         machineId: 'machine-product-route',
-        agentId: AGENT_ID,
+        agentId: REPLACEMENT_AGENT_ID,
         source: SOURCE,
         limit: 1,
       });

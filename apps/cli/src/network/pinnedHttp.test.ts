@@ -92,15 +92,16 @@ describe('pinned HTTP stream transport', () => {
   });
 
   it('connects only through the caller-validated address while preserving the URL hostname', async () => {
+    let receivedHost = '';
     const server = createServer((request, response) => {
-      expect(request.headers.host).toMatch(/^localhost:/);
+      receivedHost = request.headers.host ?? '';
       response.end('ok');
     });
     const port = await listen(server);
     const stream = await openPinnedHttpStream({
       url: `http://localhost:${port}/model.bin`,
       validatedAddresses: ['127.0.0.1'],
-      headers: {},
+      headers: { Host: 'attacker.invalid' },
       signal: new AbortController().signal,
       wallTimeMs: 1_000,
       idleTimeMs: 1_000,
@@ -112,6 +113,38 @@ describe('pinned HTTP stream transport', () => {
       chunks.push(chunk);
     }
     expect(Buffer.concat(chunks.map((chunk) => Buffer.from(chunk))).toString('utf8')).toBe('ok');
+    expect(receivedHost).toMatch(/^localhost:/);
+  });
+
+  it('does not reuse a pooled socket admitted for an older address set', async () => {
+    const receivedAddresses: string[] = [];
+    const server = createServer((request, response) => {
+      receivedAddresses.push(request.socket.localAddress ?? '');
+      response.end('ok');
+    });
+    servers.push(server);
+    await new Promise<void>((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(0, '::', resolve);
+    });
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new TypeError('Expected a TCP test listener');
+
+    for (const validatedAddress of ['127.0.0.1', '::1']) {
+      const stream = await openPinnedHttpStream({
+        url: `http://moving.internal.test:${address.port}/resource`,
+        validatedAddresses: [validatedAddress],
+        headers: {},
+        signal: new AbortController().signal,
+        wallTimeMs: 1_000,
+        idleTimeMs: 1_000,
+      });
+      while (await stream.read() !== null) {
+        // Drain the response so the global agent may pool the socket.
+      }
+    }
+
+    expect(receivedAddresses).toEqual(['::ffff:127.0.0.1', '::1']);
   });
 
   it('rejects a body read after the response stays idle beyond the caller budget', async () => {

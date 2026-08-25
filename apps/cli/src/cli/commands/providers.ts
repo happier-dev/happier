@@ -35,10 +35,20 @@ export async function handleProvidersCliCommand(
 ): Promise<void> {
     const args = context.args.slice(1);
     const json = hasFlag(args, '--json');
+    // `--json` is a machine-output contract: stdout carries the versioned
+    // envelope and nothing else. Help is a RESULT of the invocation, so in JSON
+    // mode it travels inside that envelope instead of being printed beside it.
+    const emitHelp = async (): Promise<void> => {
+        if (json) {
+            await printJsonEnvelope({ ok: true, kind: 'providers_help', data: { help: PROVIDERS_HELP } });
+            return;
+        }
+        console.log(PROVIDERS_HELP);
+    };
     try {
         const subcommand = String(args[0] ?? '').trim();
         if (!subcommand || ['help', '--help', '-h'].includes(subcommand)) {
-            console.log(PROVIDERS_HELP);
+            await emitHelp();
             return;
         }
         if (['install', 'setup', 'status'].includes(subcommand)) {
@@ -57,7 +67,7 @@ export async function handleProvidersCliCommand(
             throw new ProviderCliError(result.error.code, result.error.message, result.error.details);
         }
         if (result.kind === 'providers_help') {
-            console.log(PROVIDERS_HELP);
+            await emitHelp();
             return;
         }
         if (json) {

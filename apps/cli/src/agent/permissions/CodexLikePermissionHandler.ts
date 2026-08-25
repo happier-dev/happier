@@ -189,6 +189,7 @@ export class CodexLikePermissionHandler extends BasePermissionHandler {
 
     if (shouldDenyAgentSessionTitleToolCall({
       settings: this.getAccountSettingsSnapshot(),
+      profileId: this.getSessionProfileId(),
       toolName,
       input,
     })) {

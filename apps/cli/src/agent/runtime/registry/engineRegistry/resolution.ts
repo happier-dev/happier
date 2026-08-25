@@ -30,9 +30,9 @@ import {
 } from './runtimeCore';
 import { resolveLeasedAgentRuntime } from './agentRuntimeLease';
 import { createAgentExternalSessionsExecutionSurface } from '../agentExternalSessionsExecutionSurface';
+import type { ExternalSessionExecutionSurface } from '@/session/external/providerOps';
 import type {
     ResolveEngineRegistryParams,
-    RunnerAgentCurrentExternalSessionProviderOps,
 } from './types';
 
 function resolveDeclaredAgentSurfaceFamilies(
@@ -83,20 +83,26 @@ function resolveRegisteredAgentAuxiliarySurfaces(
         externalSessions?: Parameters<typeof createAgentExternalSessionsExecutionSurface>[0];
     }> | undefined,
     agent: ResolvedAgentContribution,
-    runnerCurrentExternalSession:
-        RunnerAgentCurrentExternalSessionProviderOps | null | undefined,
+    /**
+     * A retained runner composes External Sessions from the exact immutable
+     * generation that admitted its Session, never from the daemon's current
+     * generation. The daemon itself has no runner source and keeps composing
+     * from its own current registry entry below.
+     */
+    runnerRetainedExternalSession:
+        ExternalSessionExecutionSurface | null | undefined,
 ) {
     const surfaces = createEmptyBackendExecutionSurfaces();
     const writerSafety = agent.richDefinition?.definition
         .surfaces?.externalSession.externalLinkedTakeover?.writerSafety
         ?? 'unsupported';
     return (
-        runnerCurrentExternalSession
+        runnerRetainedExternalSession
         && declaresAgentExternalSessionSurface(agent)
     )
         ? {
             ...surfaces,
-            externalSession: runnerCurrentExternalSession,
+            externalSession: runnerRetainedExternalSession,
         }
         : engineEntry?.externalSessions
         ? {
@@ -244,7 +250,7 @@ export async function resolveEngineAdapterResolutionFromRegistry(params: Readonl
             engineEntry,
             agent,
             runnerRuntimeSource
-                ?.currentExternalSessionProviderOps,
+                ?.retainedExternalSessionProviderOps,
         );
         const executionSurfaces = {
             ...engineSurfaces,
@@ -352,7 +358,7 @@ export async function resolveEngineAdapterResolutionFromRegistry(params: Readonl
         engineEntry,
         agent,
         runnerRuntimeSource
-            ?.currentExternalSessionProviderOps,
+            ?.retainedExternalSessionProviderOps,
     );
     const executionSurfaces = {
         ...engineSurfaces,

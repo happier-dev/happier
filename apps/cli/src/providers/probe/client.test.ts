@@ -486,11 +486,72 @@ describe('provider probe HTTP client', () => {
         ...authorizedDestination,
       }).catch((error: unknown) => error);
 
+      // The idle budget, not the wall budget, owns a response that delivered
+      // headers and then went silent. Advance past the idle ceiling only: the
+      // wall budget is still two thirds unspent, so a probe that settles here
+      // can only have been released by the idle deadline.
+      await vi.advanceTimersByTimeAsync(
+        PROVIDER_ENDPOINT_SAFETY_LIMITS.maxIdleTimeMs + 1_000,
+      );
+
+      const error = await settled;
+      expect(error).toBeInstanceOf(ProviderProbeClientError);
+      expect(error).toMatchObject({ code: 'provider_endpoint_unreachable' });
+      expect(bodyCancelled).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('bounds a managed authenticated body that keeps trickling inside the idle budget', async () => {
+    vi.useFakeTimers();
+    try {
+      let bodyCancelled = false;
+      let chunks = 0;
+      // Each chunk lands inside the idle budget, so only the end-to-end wall
+      // budget can stop a body that trickles forever.
+      const trickleGapMs = PROVIDER_ENDPOINT_SAFETY_LIMITS.maxIdleTimeMs - 1_000;
+      const tricklingBody = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          return new Promise<void>((resolve) => {
+            setTimeout(() => {
+              chunks += 1;
+              controller.enqueue(new Uint8Array([0x20]));
+              resolve();
+            }, trickleGapMs);
+          });
+        },
+        cancel() {
+          bodyCancelled = true;
+        },
+      });
+      const client = createProviderProbeHttpClient({
+        resolveAddresses: async () => ['127.0.0.1'],
+        transport: async () => {
+          throw new Error('the managed branch must not reach the pinned transport');
+        },
+      });
+
+      const settled = client.getCatalog({
+        endpointUrl: 'http://127.0.0.1:4096',
+        path: '/models',
+        parser: 'openai-models',
+        publicHeaders: {},
+        credentialPolicy: 'required',
+        managedRequest: async () => ({
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+          body: tricklingBody,
+        }),
+        ...authorizedDestination,
+      }).catch((error: unknown) => error);
+
       await vi.advanceTimersByTimeAsync(
         PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs + 1_000,
       );
 
       const error = await settled;
+      expect(chunks).toBeGreaterThan(1);
       expect(error).toBeInstanceOf(ProviderProbeClientError);
       expect(error).toMatchObject({ code: 'provider_endpoint_unreachable' });
       expect(bodyCancelled).toBe(true);
@@ -577,7 +638,7 @@ describe('provider fixed-shape model-load HTTP client', () => {
     expect(transport).toHaveBeenCalledWith(expect.objectContaining({
       method: 'POST',
       url: 'http://127.0.0.1:1234/api/v1/models/load',
-      wallTimeMs: 600_000,
+      wallTimeMs: expect.any(Number),
       idleTimeMs: 10_000,
       body: Buffer.from('{"model":"model/a:latest"}'),
       headers: expect.objectContaining({
@@ -587,6 +648,11 @@ describe('provider fixed-shape model-load HTTP client', () => {
         'x-client': 'happier',
       }),
     }));
+    const transportRequest = transport.mock.calls[0]?.[0];
+    expect(transportRequest?.wallTimeMs).toBeGreaterThan(0);
+    expect(transportRequest?.wallTimeMs).toBeLessThanOrEqual(
+      PROVIDER_MODEL_LOAD_HTTP_LIMITS.wallTimeMs,
+    );
     expect(PROVIDER_MODEL_LOAD_HTTP_LIMITS).toEqual({ wallTimeMs: 600_000, maxDecodedBodyBytes: 1_048_576 });
   });
 

@@ -137,12 +137,6 @@ export async function prepareExecutionRunProviderLaunch(input: Readonly<{
     });
 
     if (!direct.ok) {
-        if ('kind' in direct && direct.kind === 'managed_provider_requires_daemon') {
-            throw refusal(createProviderErrorV1('provider_agent_runtime_unsupported', {
-                connectionId: input.selection.providerConnectionId,
-                ...(input.machineId ? { machineId: input.machineId } : {}),
-            }));
-        }
         throw refusal(direct.error);
     }
     if (direct.kind !== 'provider') {

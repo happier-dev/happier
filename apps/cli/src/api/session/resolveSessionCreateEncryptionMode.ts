@@ -16,14 +16,12 @@ export type DesiredSessionCreateEncryptionModeResult = Readonly<{
 export async function resolveSessionCreateEncryptionMode(params: Readonly<{
   token: string;
   serverBaseUrl: string;
-  featuresTimeoutMs?: number;
   accountTimeoutMs?: number;
   accountEncryptionCurrentness?: AccountEncryptionCurrentnessResponse;
 }>): Promise<DesiredSessionCreateEncryptionModeResult> {
-  const featuresTimeoutMs = typeof params.featuresTimeoutMs === 'number' && params.featuresTimeoutMs > 0 ? params.featuresTimeoutMs : 800;
   const accountTimeoutMs = typeof params.accountTimeoutMs === 'number' && params.accountTimeoutMs > 0 ? params.accountTimeoutMs : 10_000;
 
-  const featuresSnapshot = await fetchServerFeaturesSnapshot({ serverUrl: params.serverBaseUrl, timeoutMs: featuresTimeoutMs });
+  const featuresSnapshot = await fetchServerFeaturesSnapshot({ serverUrl: params.serverBaseUrl });
   assertCurrentAccountStoredContentServerCompatibility(featuresSnapshot);
   const serverSupportsFeatureSnapshot = featuresSnapshot.status === 'ready';
   const storagePolicy: 'required_e2ee' | 'optional' | 'plaintext_only' =

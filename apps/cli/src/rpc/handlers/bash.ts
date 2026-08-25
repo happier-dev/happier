@@ -1,12 +1,10 @@
 import { logger } from '@/ui/logger';
-import { exec, ExecOptions, spawn, SpawnOptions } from 'child_process';
-import { promisify } from 'util';
+import { spawn, SpawnOptions } from 'child_process';
+import { closeStdioWhenCommandExits, execFileWithDeadline, type ExecFileWithDeadlineOptions } from '@happier-dev/cli-common/process';
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import type { FilesystemAccessPolicy } from './fileSystem/accessPolicy/filesystemAccessPolicy';
 import { authorizeFilesystemPath } from './fileSystem/accessPolicy/filesystemPathAuthorization';
-
-const execAsync = promisify(exec);
 
 interface BashRequest {
     command?: string;
@@ -41,6 +39,13 @@ async function executeArgvRequest(
         let settled = false;
         let timedOut = false;
         const child = spawn(file, args, spawnOptions);
+        // This path answers on 'close', which waits for every stdio stream as well as the process.
+        // A command that leaves a process running — including one we kill, since the signal reaches
+        // only the direct child — keeps the write end of that pipe open, so without this bound the
+        // handler answered when the SURVIVOR exited: measured 5,013 ms with `error: 'Command timed
+        // out'` for a command that exited 0 in ten milliseconds, and never at all for a survivor
+        // that outlived the budget.
+        closeStdioWhenCommandExits(child);
         const timer = options.timeout > 0
             ? setTimeout(() => {
                 timedOut = true;
@@ -139,7 +144,7 @@ export function registerBashHandler(
             // Build options with shell enabled by default
             // Note: ExecOptions doesn't support boolean for shell, but exec() uses the default shell when shell is undefined
             // If cwd is "/", use undefined to let shell use its default (respects user's PATH)
-            const options: ExecOptions = {
+            const options: ExecFileWithDeadlineOptions = {
                 cwd,
                 timeout: data.timeout || 30000, // Default 30 seconds timeout
                 windowsHide: true,
@@ -164,7 +169,17 @@ export function registerBashHandler(
             }
 
             logger.debug('Shell command executing...', { cwd: options.cwd, timeout: options.timeout });
-            const { stdout, stderr } = await execAsync(data.command, options);
+            // `execFileWithDeadline` with `shell: true` is `exec` with the budget owned here
+            // instead of by `child_process`. `exec` shares `execFile`'s timeout kill, which
+            // destroys the command's buffered output from the timers phase and still calls back
+            // with `code 0` — so on a stalled daemon loop a command that ran fine returned
+            // `{ success: true, stdout: '', exitCode: 0 }` to the caller, and the `killed`
+            // branch below (the one that reports "Command timed out") never ran. A command we
+            // actually cut short now rejects and reaches that branch.
+            const { stdout, stderr } = await execFileWithDeadline(data.command, [], {
+                ...options,
+                shell: true,
+            });
             logger.debug('Shell command executed, processing result...');
 
             const result = {

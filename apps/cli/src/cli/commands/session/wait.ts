@@ -4,7 +4,7 @@ import { ok } from '@happier-dev/cli-common/output';
 
 import type { StoredCredentials } from '@/persistence';
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
-import { readCommandPositionals, readIntFlagValue } from '@/cli/commands/shared/argvFlags';
+import { readCommandPositionals, readFlagValue, readIntFlagValue } from '@/cli/commands/shared/argvFlags';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import {
   normalizeActionExecuteResult,
@@ -47,16 +47,17 @@ export async function cmdSessionWait(
     usage: SESSION_WAIT_USAGE,
     startIndex: 1,
     booleanFlags: ['--json'],
-    valueFlags: ['--timeout'],
+    valueFlags: ['--timeout', '--machine-id'],
     maxPositionals: 1,
   });
   const json = wantsJson(argv);
-  const [idOrPrefix = ''] = readCommandPositionals(argv, { startIndex: 1, valueFlags: ['--timeout'] });
+  const [idOrPrefix = ''] = readCommandPositionals(argv, { startIndex: 1, valueFlags: ['--timeout', '--machine-id'] });
   if (!idOrPrefix) {
     throw new Error(SESSION_WAIT_USAGE);
   }
 
   const timeoutSeconds = resolveSessionWaitTimeoutSeconds(argv);
+  const machineId = readFlagValue(argv, '--machine-id');
 
   const credentials = await deps.readCredentialsFn();
   if (!credentials) {
@@ -68,7 +69,10 @@ export async function cmdSessionWait(
     process.exit(1);
   }
 
-  const executor = createCliActionExecutorFromCredentials({ credentials });
+  const executor = createCliActionExecutorFromCredentials({
+    credentials,
+    ...(machineId !== null ? { machineId } : {}),
+  });
   const normalized = await executeSessionWaitAction({
     executor,
     sessionId: idOrPrefix,

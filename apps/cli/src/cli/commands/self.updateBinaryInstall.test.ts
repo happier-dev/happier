@@ -4,6 +4,8 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { captureStdout } from '@/testkit/logger/captureOutput';
+
 const {
   createReleaseBundleMock,
   fetchGitHubReleaseByTagMock,
@@ -281,7 +283,7 @@ describe('happier self update for binary installs', () => {
     const originalArgv = [...process.argv];
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const stdoutWriteSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    const stdout = captureStdout();
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: string | number | null) => {
       throw new Error(`process.exit(${code ?? 0})`);
     }) as typeof process.exit);
@@ -306,7 +308,7 @@ describe('happier self update for binary installs', () => {
     } finally {
       process.argv = originalArgv;
       exitSpy.mockRestore();
-      stdoutWriteSpy.mockRestore();
+      stdout.restore();
       errorSpy.mockRestore();
       logSpy.mockRestore();
     }
@@ -315,7 +317,7 @@ describe('happier self update for binary installs', () => {
   it('prints self update progress steps while resolving and installing a binary payload', async () => {
     const originalArgv = [...process.argv];
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    const stdoutWriteSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    const stdout = captureStdout();
 
     try {
       process.argv[1] = '/opt/happier/bin/happier';
@@ -326,13 +328,13 @@ describe('happier self update for binary installs', () => {
         terminalRuntime: null,
       });
 
-      const output = stdoutWriteSpy.mock.calls.map(([chunk]) => String(chunk)).join('');
+      const output = stdout.text();
       expect(output).toContain('Resolving release metadata');
       expect(output).toContain('Downloading and installing payload');
       expect(output).toContain('Refreshing update cache');
     } finally {
       process.argv = originalArgv;
-      stdoutWriteSpy.mockRestore();
+      stdout.restore();
       logSpy.mockRestore();
     }
   });

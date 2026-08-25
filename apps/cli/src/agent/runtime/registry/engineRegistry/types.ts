@@ -6,7 +6,10 @@ import type {
     AgentSessionOpenRequest,
 } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { ExternalSessionHostOperationPort } from '@/session/external/hostOperationOwner';
-import type { ExternalSessionProviderOps } from '@/session/external/providerOps';
+import type {
+    ExternalSessionExecutionSurface,
+    ExternalSessionProviderOps,
+} from '@/session/external/providerOps';
 import type {
     AgentSessionRealtimeVoiceAuthority,
 } from '@/agent/runtime/session/realtime/registerAgentSessionRealtimeVoiceRpc';
@@ -44,7 +47,7 @@ export type ExternalSessionHostOperationPortFactory = Readonly<{
     bindSession(sessionId: string): ExternalSessionHostOperationPort;
 }>;
 
-export type RunnerAgentCurrentExternalSessionProviderOps = Required<Pick<
+export type RunnerAgentExternalSessionProviderOps = Required<Pick<
     ExternalSessionProviderOps,
     | 'validateSource'
     | 'listCandidates'
@@ -60,6 +63,7 @@ export type RunnerAgentSessionRuntimeSource = Readonly<{
     identity: Readonly<{
         pluginId: string;
         pluginVersion: string;
+        /** Host routing id; qualified for installed Agents. */
         agentId: string;
         backendId: string;
         generation: string;
@@ -118,8 +122,17 @@ export type RunnerAgentSessionRuntimeSource = Readonly<{
     daemonModelTransitionAuthorizer?:
         SessionModelTransitionProviderTargetAuthorizer;
     externalSessionHostOperations?: ExternalSessionHostOperationPortFactory | null;
-    currentExternalSessionProviderOps?:
-        RunnerAgentCurrentExternalSessionProviderOps | null;
+    /**
+     * External Sessions authority of the exact immutable generation that
+     * admitted this Session. The retained Session's private composition —
+     * source validation, link identity, transcript paging and follow-target
+     * resolution — resolves through this generation only. The current-global
+     * author service keeps its own separate current-H owner, so a G→H plugin
+     * replacement can never hand a G Session an H-derived source or link
+     * identity, and never rejects a source G still understands.
+     */
+    retainedExternalSessionProviderOps?:
+        ExternalSessionExecutionSurface | null;
     managedServiceEndpointReadPort?:
         RunnerManagedServiceEndpointReadPort | null;
     managedServicesCustodyPort?:

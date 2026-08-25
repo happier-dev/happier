@@ -12,11 +12,11 @@ import {
   createProviderManagedProbeRequestFingerprintV1,
   createProviderProbeRequestFingerprintV1,
   normalizeProviderEndpointUrlSyntax,
-  providerCredentialFormatKind,
   readOwnRecordValue,
   readProviderSettingsFromAccountSettingsV1,
   resolveProviderCatalogReferenceV1,
   resolveProviderManagedRuntimeDeclarationV1,
+  selectProviderRuntimeCredentialTransportV1,
   type AgentProviderRequirementsV1,
   type ProviderBindingAuthorizationTicketV1,
   type ProviderCredentialTransportV1,
@@ -406,7 +406,7 @@ export function resolveProviderProbeAuthorization(input: Readonly<{
       method: 'GET',
       path: declaredProbe.path,
       parser: declaredProbe.parser,
-      publicHeaders: {},
+      publicHeaders: endpointTemplate.publicHeaders ?? {},
     });
     if (input.request.probeRequestFingerprint !== expectedProbeRequestFingerprint) {
       return {
@@ -857,35 +857,6 @@ export function resolveProviderSpawnDefinitiveRejection(input: Readonly<{
   return { ok: true };
 }
 
-function destinationNameMatches(
-  support: AgentProviderRequirementsV1['credentialSupport']['apiKeyTransports'][number],
-  transport: ProviderCredentialTransportV1,
-): boolean {
-  if (support.destination.kind !== transport.destination.kind) return false;
-  const names = support.destination.names;
-  if (names === 'anyValidated') return true;
-  if (transport.destination.kind === 'httpHeader') {
-    return names.some((name) => name.toLowerCase() === transport.destination.name.toLowerCase());
-  }
-  return names.includes(transport.destination.name);
-}
-
-function selectRuntimeTransport(input: Readonly<{
-  transports: readonly ProviderCredentialTransportV1[];
-  protocol: AgentProviderBindingResolvedFacts['endpoint']['protocol'];
-  support: AgentProviderRequirementsV1;
-}>): ProviderCredentialTransportV1 | null {
-  const matches = input.transports.filter((transport) =>
-    transport.protocols.includes(input.protocol)
-    && transport.uses.includes('runtime')
-    && input.support.credentialSupport.apiKeyTransports.some((support) =>
-      support.protocol === input.protocol
-      && destinationNameMatches(support, transport)
-      && support.destination.formats.includes(providerCredentialFormatKind(transport.destination.format))));
-  if (matches.length > 1) throw new TypeError('Provider runtime credential transport is ambiguous');
-  return matches[0] ?? null;
-}
-
 export function resolveProviderSpawnAuthorization(
   input: ResolveProviderSpawnAuthorizationInput,
 ): ProviderSpawnAuthorizationResult {
@@ -1003,10 +974,10 @@ export function resolveProviderSpawnAuthorization(
         format: 'bearer',
       },
     });
-    if (!selectRuntimeTransport({
+    if (!selectProviderRuntimeCredentialTransportV1({
       transports: [runtimeCredentialTransport],
       protocol: compatibilityResult.selectedProtocol,
-      support: adapter.support,
+      agent: adapter.support,
     })) {
       return {
         ok: false,
@@ -1043,7 +1014,7 @@ export function resolveProviderSpawnAuthorization(
       },
       endpointTemplateId: endpointTemplate.id,
       protocol: compatibilityResult.selectedProtocol,
-      publicHeaders: {},
+      publicHeaders: endpointTemplate.publicHeaders ?? {},
       materialization: prepared.materialization,
       ...(prepared.adapterBindingKey ? { adapterBindingKey: prepared.adapterBindingKey } : {}),
       credentialDestination: runtimeCredentialTransport.destination,
@@ -1058,7 +1029,7 @@ export function resolveProviderSpawnAuthorization(
       endpoint: {
         endpointTemplateId: endpointTemplate.id,
         protocol: compatibilityResult.selectedProtocol,
-        publicHeaders: {},
+        publicHeaders: endpointTemplate.publicHeaders ?? {},
       },
       runtimeCredentialTransport,
       compatibilityFingerprint: compatibility.compatibilityFingerprint,
@@ -1145,10 +1116,10 @@ export function resolveProviderSpawnAuthorization(
     : { ok: true as const, reference: { kind: 'none' as const } };
   if (!credentialReferenceResult.ok) return credentialReferenceResult;
   const runtimeCredentialTransport = credentialReferenceResult.reference.kind === 'apiKey'
-    ? selectRuntimeTransport({
+    ? selectProviderRuntimeCredentialTransportV1({
         transports: facts.credential?.transports ?? [],
         protocol: endpoint.protocol,
-        support: adapter.support,
+        agent: adapter.support,
       })
     : null;
   if (credentialReferenceResult.reference.kind === 'apiKey' && !runtimeCredentialTransport) {

@@ -182,11 +182,14 @@ function accountSnapshot(options: Readonly<{
   contribution: SpeechContribution;
   approvedRecipientContractDigest?: string;
   credentialSource?: 'savedSecret' | 'none';
+  settingsVersion?: number;
+  includeUnrelatedProvider?: boolean;
+  model?: string;
 }>) {
   return {
     source: 'network' as const,
     scopeKey: 'account-scope',
-    settingsVersion: 1,
+    settingsVersion: options.settingsVersion ?? 1,
     loadedAtMs: 1,
     settingsSecretsReadKeys: [],
     settings: {
@@ -200,8 +203,16 @@ function accountSnapshot(options: Readonly<{
         providers: {
           [`${target.pluginId}/${target.localId}`]: {
             schemaVersion: options.contribution.settings.schemaVersion,
-            config: { model: 'external-stt-1' },
+            config: { model: options.model ?? 'external-stt-1' },
           },
+          ...(options.includeUnrelatedProvider
+            ? {
+                'other.plugin/unrelated-speech': {
+                  schemaVersion: 1,
+                  config: { model: 'unrelated-stt' },
+                },
+              }
+            : {}),
         },
         credentialBindings: [{
           contribution: { ...target },
@@ -435,6 +446,89 @@ describe('daemon speech host-mediated Voice Account operations', () => {
       readSnapshot: () => current,
       list: async (_request, context) => {
         current = cleared;
+        try {
+          await context.credentials.mediated!.request({
+            operationId: 'list-models',
+            parameters: {},
+            signal: context.signal,
+          });
+        } catch (error) {
+          observedCode = (error as Readonly<{ code?: unknown }>).code;
+        }
+        return [];
+      },
+    });
+
+    await handlers.get(RPC_METHODS.DAEMON_VOICE_SPEECH_CATALOG)?.({ target, catalog: 'models' });
+
+    expect(observedCode).toBe('plugin_voice_credential_unavailable');
+    expect(transportMocks.request).not.toHaveBeenCalled();
+    await registration.dispose();
+  });
+
+  it('keeps a mediated operation current across an unrelated Account Settings update', async () => {
+    transportMocks.request.mockReset();
+    transportMocks.request.mockResolvedValueOnce(jsonResponse({
+      models: [{ id: 'external-stt-1', name: 'External STT v1' }],
+    }));
+    const manifest = mediatedOnlySpeechManifest();
+    const contribution = manifest.contributes.voiceProviders?.[0];
+    if (!contribution || contribution.kind !== 'speech') throw new Error('fixture');
+    const selected = accountSnapshot({ contribution });
+    const unrelatedUpdate = accountSnapshot({
+      contribution,
+      settingsVersion: 2,
+      includeUnrelatedProvider: true,
+    });
+    let current = selected;
+    const { handlers, registration } = registerCatalog({
+      manifest,
+      readSnapshot: () => current,
+      list: async (_request, context) => {
+        current = unrelatedUpdate;
+        const result = await context.credentials.mediated!.request({
+          operationId: 'list-models',
+          parameters: {},
+          signal: context.signal,
+        });
+        const decoded = JSON.parse(new TextDecoder().decode(result.body)) as Readonly<{
+          models: readonly Readonly<{ id: string; name: string }>[];
+        }>;
+        return decoded.models.map((model) => ({ id: model.id, name: model.name, metadata: {} }));
+      },
+    });
+
+    const response = await handlers.get(RPC_METHODS.DAEMON_VOICE_SPEECH_CATALOG)?.({
+      target,
+      catalog: 'models',
+    });
+
+    expect(response).toMatchObject({
+      ok: true,
+      items: [{ id: 'external-stt-1', name: 'External STT v1' }],
+    });
+    expect(transportMocks.request).toHaveBeenCalledOnce();
+    await registration.dispose();
+  });
+
+  it('refuses a mediated operation after its selected provider settings change mid-invocation', async () => {
+    transportMocks.request.mockReset();
+    let observedCode: unknown = null;
+    const manifest = mediatedOnlySpeechManifest();
+    const contribution = manifest.contributes.voiceProviders?.[0];
+    if (!contribution || contribution.kind !== 'speech') throw new Error('fixture');
+    const selected = accountSnapshot({ contribution });
+    const changedProviderSettings = accountSnapshot({
+      contribution,
+      settingsVersion: 2,
+      model: 'external-stt-2',
+    });
+    let current = selected;
+    const { handlers, registration } = registerCatalog({
+      manifest,
+      readSnapshot: () => current,
+      list: async (_request, context) => {
+        current = changedProviderSettings;
         try {
           await context.credentials.mediated!.request({
             operationId: 'list-models',

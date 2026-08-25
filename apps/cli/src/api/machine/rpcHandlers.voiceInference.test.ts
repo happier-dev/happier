@@ -7,6 +7,7 @@ import { isAbsolute, join, relative } from 'node:path';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import type {
   DaemonVoiceInferenceAudioOutput,
+  DaemonVoiceInferenceModelLicenseAcceptRequest,
   DaemonVoiceInferenceModelStatus,
   DaemonVoiceInferenceNormalizationDecision,
 } from '@happier-dev/protocol';
@@ -28,7 +29,7 @@ type VoiceInferenceWorkerHandleLike = Readonly<{
   listModels: () => Promise<readonly DaemonVoiceInferenceModelStatus[]>;
   getModelsStatus: (packIds?: readonly string[] | null) => Promise<readonly DaemonVoiceInferenceModelStatus[]>;
   installModel: (input: Readonly<{ packId: string; signal?: AbortSignal | null }>) => Promise<DaemonVoiceInferenceModelStatus>;
-  acceptModelPackLicense?: (input: Readonly<Record<string, string>>) => Promise<DaemonVoiceInferenceModelStatus>;
+  acceptModelPackLicense?: (input: DaemonVoiceInferenceModelLicenseAcceptRequest) => Promise<DaemonVoiceInferenceModelStatus>;
   removeModel: (packId: string) => Promise<void>;
   synthesizeTts: (input: Readonly<{
     requestId: string;
@@ -260,11 +261,17 @@ describe('registerMachineVoiceInferenceRpcHandlers', () => {
       licenseId: 'Apache-2.0',
       licenseSourceUrl: 'https://www.apache.org/licenses/LICENSE-2.0',
       licenseTextDigest: `sha256:${'a'.repeat(64)}`,
-      artifactDigest: `sha256:${'b'.repeat(64)}`,
-    };
+      artifactBinding: {
+        kind: 'sourceIntegrity',
+        integrity: `sha256:${'b'.repeat(64)}`,
+      },
+    } satisfies DaemonVoiceInferenceModelLicenseAcceptRequest;
     await expect(modelsLicenseAccept?.(licenseBinding)).resolves.toEqual({ ok: true, model: models[0] });
     expect(acceptModelPackLicense).toHaveBeenCalledWith(licenseBinding);
-    await expect(modelsLicenseAccept?.({ ...licenseBinding, artifactDigest: 'not-a-digest' }))
+    await expect(modelsLicenseAccept?.({
+      ...licenseBinding,
+      artifactBinding: { kind: 'sourceIntegrity', integrity: '' },
+    }))
       .resolves.toMatchObject({ ok: false });
 
     await expect(modelsRemove?.({ packId: 'kokoro-82m-v1.0-onnx-q8-wasm' })).resolves.toEqual({ ok: true });

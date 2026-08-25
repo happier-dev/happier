@@ -2031,6 +2031,7 @@ describe('handlePluginsCommand', () => {
       output.restore();
     }
   });
+
   it('dispatches the normal plugin test front door through the daemon-independent author test owner', async () => {
     const output = captureConsoleJsonOutput();
     const runPluginAuthorToolchain = vi.fn(async () => ({
@@ -2163,6 +2164,44 @@ describe('handlePluginsCommand', () => {
           diagnostics: [{ code: 'fixture_packed_failure' }],
         },
       });
+      expect(process.exitCode).toBe(1);
+    } finally {
+      output.restore();
+      process.exitCode = previousExitCode;
+    }
+  });
+
+  it('names the failing --with-plugin companion in the human packed failure output', async () => {
+    const previousExitCode = process.exitCode;
+    process.exitCode = undefined;
+    const output = captureConsoleText();
+    const runPackedPluginTest = vi.fn(async () => ({
+      ok: false as const,
+      mode: 'packed' as const,
+      projectRoot: '/fixture/plugin',
+      diagnostics: [{
+        code: 'plugin_manifest_invalid',
+        message: 'Plugin manifest is missing',
+        subject: {
+          role: 'prerequisite' as const,
+          index: 1,
+          locator: '/fixture/unrelated',
+        },
+      }],
+    }));
+    try {
+      await handlePluginsCommand([
+        'test',
+        '/fixture/plugin',
+        '--packed',
+        '--with-plugin=/fixture/contributor.tgz',
+        '--with-plugin=/fixture/unrelated',
+      ], { runPackedPluginTest });
+
+      const text = output.text();
+      expect(text).toContain('--with-plugin #2');
+      expect(text).toContain('/fixture/unrelated');
+      expect(text).toContain('Plugin manifest is missing');
       expect(process.exitCode).toBe(1);
     } finally {
       output.restore();
@@ -2311,6 +2350,7 @@ describe('handlePluginsCommand', () => {
       },
       daemon: {
         authenticatedControl: true as const,
+        entrypoint: '/fixture/dist/index.mjs',
         initialPid: 101,
         restartedPid: 102,
         initialIncarnationId: 'incarnation-1',
@@ -2521,6 +2561,7 @@ describe('handlePluginsCommand', () => {
       },
       daemon: {
         authenticatedControl: true as const,
+        entrypoint: '/fixture/dist/index.mjs',
         initialPid: 101,
         restartedPid: 102,
         initialIncarnationId: 'incarnation-1',
@@ -2602,7 +2643,7 @@ describe('handlePluginsCommand', () => {
         await expect(readFile(join(targetDir, configPath), 'utf8'))
           .rejects.toMatchObject({ code: 'ENOENT' });
       }
-      const uiBuildConfig = await readFile(join(targetDir, 'pluginUiBuild.mjs'), 'utf8');
+      const uiBuildConfig = await readFile(join(targetDir, 'pluginUiBuild.ts'), 'utf8');
       expect(uiBuildConfig).toContain('defineBuildConfig');
       expect(uiBuildConfig).not.toContain('createManagedRuntimeBundlerRunner');
       expect(uiBuildConfig).not.toContain('bundlerConfig');
@@ -2661,9 +2702,14 @@ describe('handlePluginsCommand', () => {
         await expect(readFile(join(targetDir, path), 'utf8'))
           .rejects.toMatchObject({ code: 'ENOENT' });
       }
-      const uiBuildConfig = await readFile(join(targetDir, 'pluginUiBuild.mjs'), 'utf8');
+      // The renderer kind is declared once, on the surface; the build config
+      // derives its target from that declaration instead of restating it.
+      const uiSurfaceModule = await readFile(join(targetDir, 'src', 'ui', 'surfaces.ts'), 'utf8');
+      expect(uiSurfaceModule).toContain("kind: 'hostedWeb'");
+      const uiBuildConfig = await readFile(join(targetDir, 'pluginUiBuild.ts'), 'utf8');
       expect(uiBuildConfig).toContain('defineBuildConfig');
-      expect(uiBuildConfig).toContain("kind: 'hostedWeb'");
+      expect(uiBuildConfig).toContain('buildUiSurfaceTargets(mainSurface)');
+      expect(uiBuildConfig).not.toContain("kind: 'hostedWeb'");
       expect(uiBuildConfig).not.toContain('bundlerConfig');
 
       const packageJson = JSON.parse(await readFile(join(targetDir, 'package.json'), 'utf8')) as {

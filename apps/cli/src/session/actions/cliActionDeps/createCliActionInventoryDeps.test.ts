@@ -538,4 +538,30 @@ describe('createCliActionInventoryDeps', () => {
     expect(JSON.stringify(result)).not.toContain('must-not-return');
     expect(JSON.stringify(result)).not.toContain('secret');
   });
+
+  it('reports opaque profile rows instead of calling the visible prefix complete', async () => {
+    resolveAvailableAccountSettings.mockResolvedValue({
+      profiles: [
+        {
+          v: 2, id: 'readable', name: 'Readable', extraEnvironmentVariables: [],
+          defaultPermissionModeByTargetKey: {}, defaultPersistenceModeByTargetKey: {},
+          compatibilityByTargetKey: {}, createdAt: 1, updatedAt: 1,
+        },
+        { v: 99, id: 'future', opaque: { untouched: true } },
+      ],
+    });
+    const deps = createCliActionInventoryDeps({
+      token: 'token',
+      sessionId: 'sess-1',
+      probeDeps: createProbeDeps(),
+      mode: 'plain',
+      ctx: null,
+      rawSession: { host: 'local-machine', path: '/repo', metadata: {} },
+    });
+
+    await expect(deps.spawnProfilesList?.({})).resolves.toMatchObject({
+      coverage: 'unreadable',
+      items: [expect.objectContaining({ id: 'readable' })],
+    });
+  });
 });

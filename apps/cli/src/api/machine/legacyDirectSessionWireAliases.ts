@@ -1,20 +1,14 @@
 import {
-  type ActionExecuteResult,
-  ExternalSessionFollowPolicySetRequestSchema,
   ExternalSessionLinkEnsureRequestSchema as DirectSessionLinkEnsureRequestSchema,
   ExternalSessionTakeoverPersistRequestSchema as DirectSessionTakeoverPersistRequestSchema,
   ExternalSessionTakeoverRequestSchema as DirectSessionTakeoverRequestSchema,
-  type ExternalSessionFollowPolicySetResponse,
   type ExternalSessionLinkEnsureResponse as DirectSessionLinkEnsureResponse,
   type ExternalSessionTakeoverPersistResponse as DirectSessionTakeoverPersistResponse,
   type ExternalSessionTakeoverResponse as DirectSessionTakeoverResponse,
 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
-import {
-  externalSessionsError as directSessionsError,
-  mapActionFailureToExternalSessionsError as mapActionFailureToDirectSessionsError,
-} from '@/session/actions/externalSessions';
+import { externalSessionsError as directSessionsError } from '@/session/actions/externalSessions';
 
 import type { RpcHandlerManager } from '../rpc/RpcHandlerManager';
 import { mapCanonicalExternalSessionResponseToLegacyDirectSession } from './legacyDirectSessionResponseCompatibility';
@@ -47,45 +41,6 @@ export function registerLegacyDirectSessionLinkEnsureWireAlias(params: Readonly<
       'upgrade_required',
     ) satisfies DirectSessionLinkEnsureResponse;
   });
-}
-
-export function registerLegacyDirectSessionFollowPolicyWireAlias(params: Readonly<{
-  rpcHandlerManager: RpcHandlerManager;
-  dispatchExternalSessionFollowPolicyAction: (input: unknown) => Promise<ActionExecuteResult>;
-}>): void {
-  params.rpcHandlerManager.registerHandler(
-    RPC_METHODS.DAEMON_DIRECT_SESSION_FOLLOW_POLICY_SET_LEGACY,
-    async (raw: unknown) => {
-      const parsed = ExternalSessionFollowPolicySetRequestSchema.safeParse(raw);
-      if (!parsed.success) {
-        return mapCanonicalExternalSessionResponseToLegacyDirectSession(
-          directSessionsError('invalid_request') satisfies ExternalSessionFollowPolicySetResponse,
-        );
-      }
-
-      // remote-dev@e67f3751 uses transcript-bearing raw deltas while current
-      // clients consume content-free invalidation followed by authoritative
-      // readAfter. Enabling across that skew would report success without a
-      // consumable update plane. Retain this predecessor RPC only so either
-      // side can clean up an already-enabled policy; remove it when that
-      // predecessor and its persisted policies are unreachable.
-      if (parsed.data.enabled) {
-        return mapCanonicalExternalSessionResponseToLegacyDirectSession({
-          ok: false,
-          errorCode: 'agent_unavailable',
-          error: 'background_follow_not_supported',
-        } satisfies ExternalSessionFollowPolicySetResponse);
-      }
-
-      const dispatched = await params.dispatchExternalSessionFollowPolicyAction(parsed.data);
-      if (!dispatched.ok) {
-        return mapCanonicalExternalSessionResponseToLegacyDirectSession(
-          mapActionFailureToDirectSessionsError(dispatched),
-        );
-      }
-      return mapCanonicalExternalSessionResponseToLegacyDirectSession(dispatched.result);
-    },
-  );
 }
 
 // Stable cli-v0.2.1@b1d15a8a9c241737d1ca9b167459901e6259173a, preview

@@ -26,6 +26,11 @@ const SAFE_RUNTIME_PATH_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]*$/u;
 
 export type ResolveManagedProviderRuntimeLaunchDependencies = Readonly<{
   platform?: NodeJS.Platform;
+  /**
+   * A materialized immutable plugin-generation root selected and integrity-fenced
+   * by the executable plugin runtime registry.
+   */
+  installedPluginGenerationRuntimeRoot?: string;
   retainedRunnerRuntimeIdentity?: string;
   runtimeModuleUrl?: string;
   processEnv?: NodeJS.ProcessEnv;
@@ -157,6 +162,24 @@ function isSafePackagedRuntimeBinaryRef(
     && SAFE_RUNTIME_PATH_SEGMENT.test(executable.executableBaseName);
 }
 
+/**
+ * Produces the portable inventory path for a declared managed-runtime binary.
+ * The executable plugin registry uses this before handing an installed
+ * generation root to the managed-runtime lifecycle.
+ */
+export function resolvePackagedRuntimeBinaryRelativePath(
+  executable: PackagedRuntimeBinaryExecutableRef,
+  platform: NodeJS.Platform = process.platform,
+): string | null {
+  if (!isSafePackagedRuntimeBinaryRef(executable)) return null;
+  const executableName = packagedExecutableName(
+    executable.executableBaseName,
+    platform,
+  );
+  if (!executableName) return null;
+  return [...executable.directorySegments, executableName].join('/');
+}
+
 function runtimeRootFromPackagedExecutablePath(
   executablePath: string,
   directorySegmentCount: number,
@@ -208,19 +231,29 @@ export async function resolveManagedProviderRuntimeExecutable(
   executable: PackagedRuntimeBinaryExecutableRef,
   dependencies: ResolveManagedProviderRuntimeLaunchDependencies = {},
 ): Promise<string | null> {
-  if (!isSafePackagedRuntimeBinaryRef(executable)) return null;
   const platform = dependencies.platform ?? process.platform;
-  const executableName = packagedExecutableName(
-    executable.executableBaseName,
+  const relativePath = resolvePackagedRuntimeBinaryRelativePath(
+    executable,
     platform,
   );
-  if (!executableName) return null;
+  if (!relativePath) return null;
+  const executableName = relativePath.split('/').at(-1)!;
 
   const pathApi = pathApiForPlatform(platform);
   let retainedRuntimeRoot: string | null = null;
   let executablePath: string;
   try {
-    if (dependencies.retainedRunnerRuntimeIdentity) {
+    if (dependencies.installedPluginGenerationRuntimeRoot !== undefined) {
+      retainedRuntimeRoot = dependencies.installedPluginGenerationRuntimeRoot;
+      if (!pathApi.isAbsolute(retainedRuntimeRoot)) return null;
+      const root = await (dependencies.statFile ?? lstat)(retainedRuntimeRoot);
+      if (root.isSymbolicLink() || !root.isDirectory()) return null;
+      executablePath = pathApi.join(
+        retainedRuntimeRoot,
+        ...executable.directorySegments,
+        executableName,
+      );
+    } else if (dependencies.retainedRunnerRuntimeIdentity) {
       retainedRuntimeRoot = await resolveRetainedRunnerRuntimeRoot(
         dependencies,
         platform,
@@ -294,20 +327,19 @@ export async function resolveManagedProviderRuntimeExecutable(
     })) {
       return null;
     }
-    const integrity = cliDistBuildManifest.readCliRuntimeAssetIntegrity({
-      runtimeRoot: verifiedRuntimeRoot,
-      relativePath: [
-        ...executable.directorySegments,
-        executableName,
-      ].join('/'),
-    });
-    if (
-      !integrity.ok
-      || !integrity.assetPath
-      || canonicalPath(integrity.assetPath, platform)
-        !== canonicalPath(verifiedExecutablePath, platform)
-    ) {
-      return null;
+    if (dependencies.installedPluginGenerationRuntimeRoot === undefined) {
+      const integrity = cliDistBuildManifest.readCliRuntimeAssetIntegrity({
+        runtimeRoot: verifiedRuntimeRoot,
+        relativePath,
+      });
+      if (
+        !integrity.ok
+        || !integrity.assetPath
+        || canonicalPath(integrity.assetPath, platform)
+          !== canonicalPath(verifiedExecutablePath, platform)
+      ) {
+        return null;
+      }
     }
     return verifiedExecutablePath;
   } catch {

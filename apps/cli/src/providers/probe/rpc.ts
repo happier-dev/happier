@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import {
   PROVIDER_CATALOG_LIMITS_V1,
+  PROVIDER_ENDPOINT_SAFETY_LIMITS,
   ProviderObservationAuthorizationFingerprintV1Schema,
   ProviderConnectionIdSchema,
   ProviderMachineIdSchema,
@@ -26,6 +27,9 @@ import {
 } from './scheduler';
 import type { ProviderCatalogCommandFallbackV1, ProviderCatalogProbeV1 } from '@happier-dev/protocol';
 
+import type { ProviderOperationLifetime } from '../operationLifetime';
+import type { ProviderProbeOperationScope } from './authorization';
+
 const TriggerSchema = z.enum(PROVIDER_PROBE_REFRESH_TRIGGERS);
 const SavedProbeRequestSchema = z.object({
   kind: z.literal('saved'),
@@ -49,6 +53,8 @@ export type ResolvedProviderProbeRpcRequest = Readonly<{
    * durable fact, its implementation and generation are not.
    */
   contributedCatalogParsers?: ContributedProviderCatalogParserBinding;
+  /** Host-private held authority for this admitted operation. */
+  operationScope?: ProviderProbeOperationScope;
   observationAuthorizationFingerprints: readonly z.infer<typeof ProviderObservationAuthorizationFingerprintV1Schema>[];
   authorizationGrant: Readonly<{
     kind: 'account' | 'machine';
@@ -131,7 +137,10 @@ export function createResolvedProviderProbeObservationIdentity(
 }
 
 export function createResolvedProviderProbeRunner(dependencies: Readonly<{
-  refresh(input: ResolvedProviderProbeRpcRequest): Promise<ProviderCatalogRefreshResult>;
+  refresh(
+    input: ResolvedProviderProbeRpcRequest,
+    lifetime?: ProviderOperationLifetime,
+  ): Promise<ProviderCatalogRefreshResult>;
   schedule(
     key: string,
     trigger: ProviderProbeRefreshTrigger,
@@ -143,13 +152,14 @@ export function createResolvedProviderProbeRunner(dependencies: Readonly<{
     resolved: ResolvedProviderProbeRpcRequest,
     trigger: ProviderProbeRefreshTrigger,
     waiterLifetime: ProviderProbeWaiterLifetime = {},
+    operationLifetime?: ProviderOperationLifetime,
   ): Promise<ProviderCatalogRefreshResult> => {
     const key = createResolvedProviderProbeObservationIdentity(resolved);
     const identity = {
       connectionId: resolved.connectionId,
       machineId: resolved.machineId,
     };
-    return dependencies.schedule(key, trigger, () => dependencies.refresh(resolved), {
+    return dependencies.schedule(key, trigger, () => dependencies.refresh(resolved, operationLifetime), {
       ...waiterLifetime,
       unavailable: () => ({
         status: 'error',
@@ -171,8 +181,14 @@ export function createResolvedProviderProbeRunner(dependencies: Readonly<{
  * accepts plaintext credential material.
  */
 export function createProviderProbeRpcHandler(dependencies: Readonly<{
-  resolveSaved(input: Readonly<{ connectionId: string; machineId: string }>): Promise<ResolvedProviderProbeRpcRequest>;
-  refresh(input: ResolvedProviderProbeRpcRequest): Promise<ProviderCatalogRefreshResult>;
+  resolveSaved(
+    input: Readonly<{ connectionId: string; machineId: string }>,
+    lifetime: ProviderOperationLifetime,
+  ): Promise<ResolvedProviderProbeRpcRequest>;
+  refresh(
+    input: ResolvedProviderProbeRpcRequest,
+    lifetime?: ProviderOperationLifetime,
+  ): Promise<ProviderCatalogRefreshResult>;
   schedule(
     key: string,
     trigger: ProviderProbeRefreshTrigger,
@@ -184,18 +200,34 @@ export function createProviderProbeRpcHandler(dependencies: Readonly<{
   return async (
     rawInput: unknown,
     waiterLifetime: ProviderProbeWaiterLifetime = {},
+    now: () => number = Date.now,
   ): Promise<ProviderCatalogRefreshResult> => {
     const input = ProbeRequestSchema.parse(rawInput);
+    // One budget for the whole operation, started before registry and DNS
+    // resolution. Every later stage — scheduler admission, destination
+    // re-resolution, establishment and body — spends what is left of it.
+    const wallDeadlineAtMs = now() + PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs;
+    // Pre-admission resolution belongs to this caller alone, so its
+    // cancellation interest applies. Admitted work is shared between waiters and
+    // carries the deadline only: one waiter walking away must not cancel a
+    // transport another waiter is still holding.
+    const resolutionLifetime: ProviderOperationLifetime = {
+      ...(waiterLifetime.signal ? { signal: waiterLifetime.signal } : {}),
+      wallDeadlineAtMs,
+    };
     let resolved: ResolvedProviderProbeRpcRequest;
     try {
-      resolved = await dependencies.resolveSaved({ connectionId: input.connectionId, machineId: input.machineId });
+      resolved = await dependencies.resolveSaved(
+        { connectionId: input.connectionId, machineId: input.machineId },
+        resolutionLifetime,
+      );
     } catch (error) {
       if (error instanceof ProviderProbeRpcResolutionError) {
         return { status: 'error', error: error.error };
       }
       throw error;
     }
-    return runResolved(resolved, input.trigger, waiterLifetime);
+    return runResolved(resolved, input.trigger, waiterLifetime, { wallDeadlineAtMs });
   };
 }
 

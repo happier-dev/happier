@@ -11,7 +11,7 @@ import {
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
-import { captureConsoleLogAndMuteStdout } from '@/testkit/logger/captureOutput';
+import { captureConsoleLogAndMuteStdout, captureStdoutJsonOutput } from '@/testkit/logger/captureOutput';
 import { setStdioTtyForTest } from '@/testkit/process/stdio';
 
 type RequestRow = {
@@ -178,27 +178,21 @@ describe('auth pairing commands (request/approve/wait) (json)', () => {
         HAPPIER_VARIANT: 'dev',
       });
       vi.resetModules();
-      const remoteLogs: string[] = [];
       const remoteWarns: string[] = [];
-      const remoteLogSpy = vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
-        remoteLogs.push(args.map((arg) => String(arg)).join(' '));
-      });
       const remoteWarnSpy = vi.spyOn(console, 'warn').mockImplementation((...args: unknown[]) => {
         remoteWarns.push(args.map((arg) => String(arg)).join(' '));
       });
-      const remoteWriteSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+      const remoteOutput = captureStdoutJsonOutput();
 
       const { handleAuthRequest } = await import('./auth/request');
       let requestJson: any;
       try {
         await handleAuthRequest(['--json']);
         expect(remoteWarns).toEqual([]);
-        expect(remoteLogs.length).toBe(1);
-        requestJson = JSON.parse(remoteLogs[0] ?? '');
+        requestJson = remoteOutput.json();
       } finally {
-        remoteLogSpy.mockRestore();
         remoteWarnSpy.mockRestore();
-        remoteWriteSpy.mockRestore();
+        remoteOutput.restore();
       }
       expect(typeof requestJson.publicKey).toBe('string');
       expect(typeof requestJson.claimSecret).toBe('string');

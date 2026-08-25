@@ -328,6 +328,7 @@ function lease(
         materialize: vi.fn(async () => ({ v: 1, kind: 'engineConfig', env: [], engineConfig: {} })),
       },
       isCurrent: () => true,
+      retirementSignal: new AbortController().signal,
       createRuntime: vi.fn(),
     }]]),
     acquireManagedProviderRuntime: vi.fn(async (ref) => {
@@ -638,6 +639,7 @@ describe('provider spawn authorization resolver', () => {
       providerSettings: initialSettings,
       registry: ollamaRegistry,
       resolveAddresses: async () => ['127.0.0.1'],
+      lifetime: { wallDeadlineAtMs: Date.now() + 60_000 },
     });
     const ungranted = resolveProviderConnectionForMachine({
       connectionId: ollamaConnectionId,
@@ -1341,6 +1343,76 @@ describe('provider spawn authorization resolver', () => {
     expect(JSON.stringify(result)).not.toContain('localhost');
   });
 
+  it('carries a managed endpoint template public header into the authorized Agent binding', () => {
+    const headerManagedContribution: ResolvedProviderContribution = {
+      ...managedContribution,
+      definition: ProviderContributionV1Schema.parse({
+        ...managedContribution.definition,
+        endpointTemplates: managedContribution.definition.endpointTemplates.map((template) => ({
+          ...template,
+          publicHeaders: { 'x-route': 'tenant-a' },
+        })),
+      }),
+    };
+    const declaredHeaders = headerManagedContribution.definition.endpointTemplates[0]?.publicHeaders;
+    expect(declaredHeaders).toBeTruthy();
+    const headerManagedRegistry = {
+      providersByContributionKey: new Map([[canonicalContributionKey, headerManagedContribution]]),
+    };
+    const settings = managedGrantedSettings(headerManagedRegistry);
+    const result = resolveProviderSpawnAuthorization({
+      selection: {
+        v: 1,
+        updatedAt: 1,
+        ref: {
+          agentTargetKey: 'backend:codex',
+          providerConnectionId: connectionId,
+          modelId: 'model-a',
+        },
+      },
+      machineId: 'machine-a',
+      agentTargetKey: 'backend:codex',
+      agentId: 'codex',
+      accountSettings: { providerSettingsV1: settings },
+      providerSettings: settings,
+      registry: headerManagedRegistry,
+      dnsEvidenceByEndpointUrl: new Map(),
+      lease: lease(),
+      managedProviderRuntime: exactManagedProviderRuntime(),
+      managedPurposeBindingSnapshot: {
+        v: 1,
+        bindings: [{
+          purpose: {
+            consumer: { pluginId: 'acme.gateway', localId: 'gateway' },
+            purpose: 'upstream',
+          },
+          target: {
+            kind: 'account',
+            account: {
+              service: {
+                pluginId: 'happier.connected-account.example',
+                localId: 'example',
+              },
+              accountId: 'account-a',
+            },
+          },
+        }],
+      },
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      authorization: {
+        binding: {
+          endpoint: {
+            endpointTemplateId: 'responses',
+            publicHeaders: declaredHeaders,
+          },
+        },
+      },
+    });
+  });
+
   it.each([
     ['development', { kind: 'path' } as const],
     ['installed', { kind: 'package' } as const],
@@ -1807,6 +1879,7 @@ describe('provider spawn authorization resolver', () => {
       providerSettings: settings,
       registry,
       resolveAddresses: async () => ['1.1.1.1'],
+      lifetime: { wallDeadlineAtMs: Date.now() + 60_000 },
     })).resolves.toBeInstanceOf(Map);
   });
 
@@ -1833,6 +1906,7 @@ describe('provider spawn authorization resolver', () => {
         resolvedHostnames.push(hostname);
         return hostname === '::1' ? ['::1'] : ['1.1.1.1'];
       },
+      lifetime: { wallDeadlineAtMs: Date.now() + 60_000 },
     });
 
     expect(resolvedHostnames).toContain('::1');
@@ -2224,6 +2298,86 @@ describe('shared provider probe authorization resolver', () => {
       ),
     });
     expect(result).not.toHaveProperty('ticket.endpointUrl');
+  });
+
+  it('binds the declared managed endpoint public header into the expected probe request fingerprint', () => {
+    const headerManagedContribution: ResolvedProviderContribution = {
+      ...managedContribution,
+      definition: ProviderContributionV1Schema.parse({
+        ...managedContribution.definition,
+        endpointTemplates: managedContribution.definition.endpointTemplates.map((template) => ({
+          ...template,
+          publicHeaders: { 'x-route': 'tenant-a' },
+        })),
+      }),
+    };
+    const declaredHeaders = headerManagedContribution.definition.endpointTemplates[0]?.publicHeaders;
+    if (!declaredHeaders) throw new Error('Expected the fixture to declare public headers');
+    const headerManagedRegistry = {
+      providersByContributionKey: new Map([[canonicalContributionKey, headerManagedContribution]]),
+    };
+    const settings = managedGrantedSettings(headerManagedRegistry);
+    const purposeBindings = {
+      v: 1 as const,
+      bindings: [{
+        purpose: {
+          consumer: { pluginId: 'acme.gateway', localId: 'gateway' },
+          purpose: 'upstream',
+        },
+        target: {
+          kind: 'account' as const,
+          account: {
+            service: {
+              pluginId: 'happier.connected-account.example',
+              localId: 'example',
+            },
+            accountId: 'account-a',
+          },
+        },
+      }],
+    };
+    const managedRuntime = resolveProviderManagedRuntimeDeclarationV1({
+      implementationIdentity: headerManagedContribution.identity,
+      managedRuntime: headerManagedContribution.definition.managedRuntime!,
+    });
+    const request = (publicHeaders: Readonly<Record<string, string>>) => ({
+      deployment: 'managedLocal' as const,
+      connectionId,
+      machineId: 'machine-a',
+      implementationIdentity: headerManagedContribution.identity,
+      managedRuntime,
+      purposeBindings,
+      endpointTemplateId: 'responses',
+      protocol: 'openai-responses' as const,
+      path: '/models',
+      parser: 'openai-models' as const,
+      probeRequestFingerprint: createProviderManagedProbeRequestFingerprintV1({
+        implementationIdentity: headerManagedContribution.identity,
+        managedRuntime,
+        purposeBindings,
+        endpointTemplateId: 'responses',
+        protocol: 'openai-responses',
+        method: 'GET',
+        path: '/models',
+        parser: 'openai-models',
+        publicHeaders,
+      }),
+    });
+    const authorize = (publicHeaders: Readonly<Record<string, string>>) =>
+      resolveProviderProbeAuthorization({
+        request: request(publicHeaders),
+        accountSettings: { providerSettingsV1: settings },
+        providerSettings: settings,
+        registry: headerManagedRegistry,
+        dnsEvidenceByEndpointUrl: new Map(),
+        managedPurposeBindingSnapshot: purposeBindings,
+      });
+
+    expect(authorize(declaredHeaders)).toMatchObject({ ok: true });
+    expect(authorize({})).toMatchObject({
+      ok: false,
+      error: { code: 'provider_probe_authorization_invalid' },
+    });
   });
 
   it('uses the same connection grant and SavedSecret identity without requiring an agent', () => {

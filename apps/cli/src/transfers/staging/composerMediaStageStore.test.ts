@@ -7,6 +7,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { ComposerContentHandleV1 } from '@happier-dev/protocol';
 
+import { createOneBitGrayscalePng } from '@/testkit/media/pngFixtures';
+
 import {
   createComposerMediaStageStore,
   runComposerMediaStageStartupMaintenance,
@@ -36,10 +38,7 @@ describe('Composer media stage store', () => {
     const tempDirectory = await mkdtemp(join(tmpdir(), 'happier-composer-media-stage-'));
     tempDirectories.push(tempDirectory);
     const sourcePath = join(tempDirectory, 'incoming.png');
-    const bytes = Buffer.from([
-      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
-      0x00, 0x00, 0x00, 0x0d,
-    ]);
+    const bytes = createOneBitGrayscalePng(4_096, 4_096);
     await writeFile(sourcePath, bytes);
 
     const store = createComposerMediaStageStore({
@@ -123,14 +122,63 @@ describe('Composer media stage store', () => {
     })).resolves.toEqual({ status: 'unavailable', reason: 'notFound' });
   });
 
+  it('completes a stage for a valid image the dimension probe cannot decode', async () => {
+    const tempDirectory = await mkdtemp(join(tmpdir(), 'happier-composer-media-stage-undimensioned-'));
+    tempDirectories.push(tempDirectory);
+    const sourcePath = join(tempDirectory, 'oversized-decoded-image.png');
+    const bytes = createOneBitGrayscalePng(17_000, 17_000);
+    await writeFile(sourcePath, bytes);
+
+    const rootDirectory = join(tempDirectory, 'stages');
+    const store = createComposerMediaStageStore({ rootDirectory, executionTarget });
+    const finalized = await store.finalizeUpload({
+      tempPath: sourcePath,
+      sizeBytes: bytes.byteLength,
+      sha256: sha256(bytes),
+      executionTarget,
+      owner,
+      mediaKind: 'image',
+      mimeType: 'image/png',
+      name: 'oversized-decoded-image.png',
+    });
+
+    expect(bytes.byteLength).toBe(35_201);
+    expect(finalized.success).toBe(true);
+    if (!finalized.success) return;
+    await expect(store.inspectForFinalization({ handle: finalized.handle, executionTarget, owner })).resolves.toMatchObject({
+      status: 'ready',
+      sizeBytes: bytes.byteLength,
+      sha256: sha256(bytes),
+    });
+  });
+
+  it('refuses image bytes whose declared MIME does not match the sniffed content', async () => {
+    const tempDirectory = await mkdtemp(join(tmpdir(), 'happier-composer-media-stage-mismatch-'));
+    tempDirectories.push(tempDirectory);
+    const sourcePath = join(tempDirectory, 'not-really.png');
+    const bytes = Buffer.from('GIF89a not a png at all', 'utf8');
+    await writeFile(sourcePath, bytes);
+
+    const rootDirectory = join(tempDirectory, 'stages');
+    const store = createComposerMediaStageStore({ rootDirectory, executionTarget });
+    await expect(store.finalizeUpload({
+      tempPath: sourcePath,
+      sizeBytes: bytes.byteLength,
+      sha256: sha256(bytes),
+      executionTarget,
+      owner,
+      mediaKind: 'image',
+      mimeType: 'image/png',
+      name: 'not-really.png',
+    })).resolves.toMatchObject({ success: false, code: 'source_corrupt' });
+    await expect(pathExists(join(rootDirectory, 'completed'))).resolves.toBe(false);
+  });
+
   it('expires completed stages from a restarted store without retaining the stage bytes', async () => {
     const tempDirectory = await mkdtemp(join(tmpdir(), 'happier-composer-media-stage-expiry-'));
     tempDirectories.push(tempDirectory);
     const sourcePath = join(tempDirectory, 'incoming.png');
-    const bytes = Buffer.from([
-      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
-      0x00, 0x00, 0x00, 0x0d,
-    ]);
+    const bytes = createOneBitGrayscalePng(1, 1);
     await writeFile(sourcePath, bytes);
     let now = 1_000;
     const rootDirectory = join(tempDirectory, 'stages');

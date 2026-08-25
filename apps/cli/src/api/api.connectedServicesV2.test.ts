@@ -220,60 +220,6 @@ describe('ApiClient connected services v2', () => {
     );
   });
 
-  it('gets connected service auth groups from the v3 endpoint', async () => {
-    mockGet.mockResolvedValue({
-      status: 200,
-      data: {
-        group: {
-          v: 1,
-          serviceId: 'openai-codex',
-          groupId: 'codex-main',
-          displayName: 'Codex main',
-          policy: { v: 1 },
-          activeProfileId: 'work',
-          generation: 3,
-          runtimeStateRevision: 0,
-          state: { status: 'ready', lastSwitchAt: null },
-          createdAt: 1,
-          updatedAt: 2,
-          members: [
-            {
-              v: 1,
-              serviceId: 'openai-codex',
-              groupId: 'codex-main',
-              profileId: 'work',
-              priority: 1,
-              enabled: true,
-              state: { cooldownUntilMs: null },
-              createdAt: 1,
-              updatedAt: 2,
-            },
-          ],
-        },
-      },
-    });
-
-    const api = await ApiClient.create({
-      token: 'happy-token',
-      encryption: { type: 'legacy' as const, secret: new Uint8Array(32) },
-    } as any);
-
-    const group = await api.getConnectedServiceAuthGroup({
-      serviceId: 'openai-codex',
-      groupId: 'codex-main',
-    });
-
-    expect(group?.activeProfileId).toBe('work');
-    expect(axios.get).toHaveBeenCalledWith(
-      expect.stringContaining('/v3/connect/openai-codex/groups/codex-main'),
-      expect.objectContaining({
-        headers: expect.objectContaining({
-          Authorization: 'Bearer happy-token',
-        }),
-      }),
-    );
-  });
-
   it('uses the canonical v3 credential health endpoint', async () => {
     mockPatch.mockResolvedValue({ status: 200, data: { success: true } });
 
@@ -345,66 +291,6 @@ describe('ApiClient connected services v2', () => {
     expect(axios.post).toHaveBeenCalledWith(
       expect.stringContaining('/v3/connect/openai-codex/profiles/work/refresh-lease'),
       { machineId: 'machine-1', ownerId: 'machine-1:daemon-a', leaseMs: 10_000 },
-      expect.objectContaining({
-        headers: expect.objectContaining({
-          Authorization: 'Bearer happy-token',
-        }),
-      }),
-    );
-  });
-
-  it('posts active-profile group updates with expected generation', async () => {
-    mockPost.mockResolvedValue({
-      status: 200,
-      data: {
-        group: {
-          v: 1,
-          serviceId: 'openai-codex',
-          groupId: 'codex-main',
-          displayName: 'Codex main',
-          policy: { v: 1 },
-          activeProfileId: 'backup',
-          generation: 4,
-          runtimeStateRevision: 0,
-          state: { status: 'ready', lastSwitchAt: 10 },
-          createdAt: 1,
-          updatedAt: 2,
-          members: [
-            {
-              v: 1,
-              serviceId: 'openai-codex',
-              groupId: 'codex-main',
-              profileId: 'backup',
-              priority: 2,
-              enabled: true,
-              state: { cooldownUntilMs: null },
-              createdAt: 1,
-              updatedAt: 2,
-            },
-          ],
-        },
-      },
-    });
-
-    const api = await ApiClient.create({
-      token: 'happy-token',
-      encryption: { type: 'legacy' as const, secret: new Uint8Array(32) },
-    } as any);
-
-    const group = await api.updateConnectedServiceAuthGroupActiveProfile({
-      serviceId: 'openai-codex',
-      groupId: 'codex-main',
-      activeProfileId: 'backup',
-      expectedGeneration: 3,
-    });
-
-    expect(group.generation).toBe(4);
-    expect(axios.post).toHaveBeenCalledWith(
-      expect.stringContaining('/v3/connect/openai-codex/groups/codex-main/active-profile'),
-      expect.objectContaining({
-        profileId: 'backup',
-        expectedGeneration: 3,
-      }),
       expect.objectContaining({
         headers: expect.objectContaining({
           Authorization: 'Bearer happy-token',

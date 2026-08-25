@@ -7,24 +7,18 @@ import {
 import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 const boundaries = vi.hoisted(() => ({
-  axiosGet: vi.fn(),
   readStoredCredentials: vi.fn(),
   fetchServerFeaturesSnapshot: vi.fn(),
   callMachineRpc: vi.fn(),
-}));
-
-vi.mock('axios', () => ({
-  default: { get: boundaries.axiosGet },
-}));
-
-vi.mock('@/api/clientCompatibility/cliClientCompatibility', () => ({
-  buildCurrentAccountStoredContentCompatibilityHttpHeaders: () => ({
-    'X-Happier-Account-Content': 'current',
-  }),
+  resolveCurrentAccountMachineTarget: vi.fn(),
 }));
 
 vi.mock('@/api/client/serverHttpBaseUrl', () => ({
   resolveServerHttpBaseUrl: () => 'https://api.example.test',
+}));
+
+vi.mock('@/api/machine/resolveCurrentAccountMachineTarget', () => ({
+  resolveCurrentAccountMachineTarget: boundaries.resolveCurrentAccountMachineTarget,
 }));
 
 vi.mock('@/features/serverFeaturesClient', () => ({
@@ -51,21 +45,11 @@ const target = {
   machineLabel: 'build-host',
 } as const;
 
-function currentMachine(id: string, host: string) {
-  return {
-    id,
-    metadata: JSON.stringify({ host }),
-    active: true,
-    revokedAt: null,
-    replacedByMachineId: null,
-  };
-}
-
 beforeEach(() => {
-  boundaries.axiosGet.mockReset();
   boundaries.readStoredCredentials.mockReset();
   boundaries.fetchServerFeaturesSnapshot.mockReset();
   boundaries.callMachineRpc.mockReset();
+  boundaries.resolveCurrentAccountMachineTarget.mockReset();
   boundaries.readStoredCredentials.mockResolvedValue({ token: 'token-1', encryption: null });
   boundaries.fetchServerFeaturesSnapshot.mockResolvedValue({
     status: 'ready',
@@ -80,37 +64,26 @@ beforeEach(() => {
 
 describe('plugin invocation log exact-machine transport', () => {
   it('selects only the requested current machine from the authenticated inventory', async () => {
-    boundaries.axiosGet.mockResolvedValue({
-      data: [
-        currentMachine('machine-1', 'laptop'),
-        currentMachine('machine-2', 'build-host'),
-      ],
+    boundaries.resolveCurrentAccountMachineTarget.mockResolvedValue({
+      kind: 'selected',
+      target: { machineId: 'machine-2', machineLabel: 'build-host' },
     });
 
     await expect(resolvePluginInvocationLogTarget({ requestedMachineId: 'machine-2' })).resolves.toEqual({
       kind: 'selected',
       target,
     });
-    expect(boundaries.axiosGet).toHaveBeenCalledWith(
-      'https://api.example.test/v1/machines',
-      expect.objectContaining({
-        headers: expect.objectContaining({
-          Authorization: 'Bearer token-1',
-          'X-Happier-Account-Content': 'current',
-        }),
-      }),
-    );
+    expect(boundaries.resolveCurrentAccountMachineTarget).toHaveBeenCalledWith({
+      token: 'token-1',
+      requestedMachineId: 'machine-2',
+    });
   });
 
   it('refuses an explicit revoked machine instead of selecting another inventory entry', async () => {
-    boundaries.axiosGet.mockResolvedValue({
-      data: [
-        currentMachine('machine-current', 'laptop'),
-        {
-          ...currentMachine('machine-stale', 'old-laptop'),
-          revokedAt: 1,
-        },
-      ],
+    boundaries.resolveCurrentAccountMachineTarget.mockResolvedValue({
+      kind: 'unavailable',
+      code: 'machine_not_current',
+      message: 'The selected machine is no longer active.',
     });
 
     await expect(resolvePluginInvocationLogTarget({ requestedMachineId: 'machine-stale' })).resolves.toMatchObject({

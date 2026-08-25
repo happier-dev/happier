@@ -1,5 +1,4 @@
 import type { StoredCredentials } from '@/persistence';
-import { resolveMergedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import {
   resolveProviderContributionRegistryView,
   resolveProviderConnectionForMachine,
@@ -23,11 +22,15 @@ import { createPublicManagedProviderRuntimeStartOperation } from './publicManage
 import {
   createProviderConnectionService,
   type ProviderConnectionRuntimeProjection,
+  type ProviderConnectionRegistryProjection,
   type ProviderConnectionRuntimeSummary,
   type ProviderConnectionRuntimeSummaryInput,
 } from './service';
 import { projectProviderConnectionCompatibility } from './compatibility';
-import { tryAcquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
+import {
+  acquireAuthoritativePluginRuntimeRegistryLease,
+  tryAcquireAuthoritativePluginRuntimeRegistryLease,
+} from '@/plugins/runtime/reload/runtimeLease';
 import type { ProviderDiscoveryCandidateV1, ProviderLocalInstallationSummaryV1 } from '@happier-dev/protocol';
 import type { ProviderConnectionView } from './service';
 
@@ -82,18 +85,41 @@ export function createRuntimeProviderConnectionServices(input: Readonly<{
     trigger: 'enable',
   ) => Promise<unknown>;
 }>): RuntimeProviderConnectionServices {
-  const resolveRegistry = input.resolveRegistry ?? (async () => resolveProviderContributionRegistryView(
-    await resolveMergedContributionRegistry({ happyHomeDir: input.happyHomeDir }),
-  ));
+  const loadRegistryProjection = input.resolveRegistry
+    ? async (): Promise<ProviderConnectionRegistryProjection> => Object.freeze({
+        registry: await input.resolveRegistry!(),
+      })
+    : async (): Promise<ProviderConnectionRegistryProjection> => {
+        const lease = await acquireAuthoritativePluginRuntimeRegistryLease({
+          happyHomeDir: input.happyHomeDir,
+        });
+        try {
+          if (typeof lease.registry.generation !== 'number') {
+            throw new Error('Authoritative Provider registry is missing its immutable generation tag');
+          }
+          return Object.freeze({
+            registry: resolveProviderContributionRegistryView(lease.registry.contributes),
+            generation: String(lease.registry.generation),
+          });
+        } finally {
+          await lease.release();
+        }
+      };
   const startManagedProviderRuntime = input.startManagedProviderRuntime
     ?? createPublicManagedProviderRuntimeStartOperation({
       machineId: input.machineId,
       happyHomeDir: input.happyHomeDir,
     });
+  // The injected registry and start functions are test seams. Production
+  // explicit starts retain the actual canonical lease from admission through
+  // runtime execution rather than combining their projections with a later
+  // registry acquisition.
+  const useAuthoritativeManagedStartLease = !input.resolveRegistry
+    && !input.startManagedProviderRuntime;
   const service = createProviderConnectionService({
     machineId: input.machineId,
     featureGate: input.featureGate,
-    loadSnapshot: async () => {
+    loadSnapshot: async (registryProjection) => {
       const current = getActiveAccountSettingsSnapshot();
       const active = current?.scopeKey === resolveAccountSettingsScopeKey(input.credentials)
         ? current
@@ -102,10 +128,12 @@ export function createRuntimeProviderConnectionServices(input: Readonly<{
           minSettingsVersion: null,
           mode: 'blocking',
         });
+      const projection = registryProjection ?? await loadRegistryProjection();
       return {
         accountSettings: active.settings,
         rawAccountSettings: active.rawSettings ?? active.settings,
-        registry: await resolveRegistry(),
+        registry: projection.registry,
+        ...(projection.generation ? { registryGeneration: projection.generation } : {}),
       };
     },
     updateAccountSettings: async (mutate) => {
@@ -121,11 +149,12 @@ export function createRuntimeProviderConnectionServices(input: Readonly<{
       });
       return refreshed.settings;
     },
-    collectDnsEvidence: ({ accountSettings, connectionId, machineId, registry }) =>
+    collectDnsEvidence: ({ accountSettings, connectionId, machineId, registry, lifetime }) =>
       collectProviderConnectionDnsEvidence({
         providerSettings: readProviderSettingsForCli(accountSettings).settings,
         connectionId, machineId, registry,
         ...(input.resolveAddresses ? { resolveAddresses: input.resolveAddresses } : {}),
+        lifetime,
       }),
     resolveConnection: ({ accountSettings, connectionId, machineId, registry, dnsEvidence }) =>
       resolveProviderConnectionForMachine({
@@ -150,6 +179,12 @@ export function createRuntimeProviderConnectionServices(input: Readonly<{
     },
     discoveryCandidates: input.discoveryCandidates ?? (async () => []),
     localInstallations: input.localInstallations ?? (async () => []),
+    ...(useAuthoritativeManagedStartLease
+      ? {
+          acquireManagedProviderRuntimeRegistryLease: () =>
+            acquireAuthoritativePluginRuntimeRegistryLease({ happyHomeDir: input.happyHomeDir }),
+        }
+      : {}),
     startManagedProviderRuntime,
     ...(input.resolveManagedPurposeBindingIntent
       ? { resolveManagedPurposeBindingIntent: input.resolveManagedPurposeBindingIntent }

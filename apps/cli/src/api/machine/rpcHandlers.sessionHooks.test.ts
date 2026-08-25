@@ -19,10 +19,14 @@ const sessionHookComposition = vi.hoisted(() => {
   return {
     status: vi.fn(async () => ({
       ok: true as const,
-      rows: [],
+      rows: [] as unknown[],
       nextCursor: null,
       diagnostics: [],
     })),
+    install: vi.fn(),
+    disable: vi.fn(),
+    enable: vi.fn(),
+    uninstall: vi.fn(),
     hydrate: vi.fn(async () => undefined),
     disposeHost: vi.fn(async () => undefined),
     stop,
@@ -36,10 +40,10 @@ vi.mock('@/session/actions/externalSessions/pluginSessionHookManagementHost', ()
     listener: Promise<unknown>;
   }>) => ({
     status: sessionHookComposition.status,
-    install: vi.fn(),
-    disable: vi.fn(),
-    enable: vi.fn(),
-    uninstall: vi.fn(),
+    install: sessionHookComposition.install,
+    disable: sessionHookComposition.disable,
+    enable: sessionHookComposition.enable,
+    uninstall: sessionHookComposition.uninstall,
     hydrate: vi.fn(async () => {
       await input.listener;
       await sessionHookComposition.hydrate();
@@ -264,17 +268,51 @@ describe('machine session-hook management RPC composition', () => {
     await registration.dispose();
   });
 
-  it('clears a rejected listener-start pair and retries with a fresh pair', async () => {
+  it('keeps durable status and Uninstall reachable when listener startup keeps rejecting', async () => {
     sessionHookComposition.startListener.mockClear();
     sessionHookComposition.disposeHost.mockClear();
     sessionHookComposition.hydrate.mockReset();
     sessionHookComposition.hydrate.mockResolvedValue(undefined);
-    sessionHookComposition.startListener
-      .mockRejectedValueOnce(new Error('listener start failed'));
+    sessionHookComposition.status.mockReset();
+    sessionHookComposition.install.mockReset();
+    sessionHookComposition.enable.mockReset();
+    sessionHookComposition.uninstall.mockReset();
+    sessionHookComposition.startListener.mockRejectedValue(
+      new Error('listener start failed'),
+    );
+    sessionHookComposition.status.mockResolvedValue({
+      ok: true,
+      rows: [{
+        agent: codexAgent,
+        status: {
+          state: 'needs_attention',
+          installationId: 'installation-1',
+          diagnostic: {
+            code: 'listener_unavailable',
+            severity: 'warning',
+            remediation: { kind: 'retry' },
+          },
+        },
+      }],
+      nextCursor: null,
+      diagnostics: [],
+    });
+    sessionHookComposition.uninstall.mockResolvedValue({
+      ok: true,
+      status: { state: 'not_installed' },
+    });
+    sessionHookComposition.install.mockResolvedValue({
+      ok: false,
+      diagnostic: { code: 'listener_unavailable', retryable: true },
+    });
+    sessionHookComposition.enable.mockResolvedValue({
+      ok: false,
+      diagnostic: { code: 'listener_unavailable', retryable: true },
+    });
     const rpcHandlerManager = createRpcHandlerManager();
     const registration = registerMachineExternalSessionsRpcHandlers({
       rpcHandlerManager: rpcHandlerManager as never,
-      machineId: 'machine-listener-retry',
+      machineId: 'machine-listener-unavailable',
       getServerFeaturesSnapshot: () => ({
         status: 'ready',
         features: FeaturesResponseSchema.parse({
@@ -284,19 +322,60 @@ describe('machine session-hook management RPC composition', () => {
         }),
       }),
     });
-    await vi.waitFor(() => {
-      expect(sessionHookComposition.disposeHost).toHaveBeenCalledOnce();
-    });
 
     await expect(rpcHandlerManager.handlers.get(
       RPC_METHODS.DAEMON_PLUGIN_SESSION_HOOKS_STATUS_GET,
     )?.({
-      machineId: 'machine-listener-retry',
+      machineId: 'machine-listener-unavailable',
       intent: 'passive_inventory',
       agent: codexAgent,
-    })).resolves.toMatchObject({ ok: true });
-    expect(sessionHookComposition.startListener).toHaveBeenCalledTimes(2);
+    })).resolves.toMatchObject({
+      ok: true,
+      rows: [{
+        status: {
+          state: 'needs_attention',
+          diagnostic: { code: 'listener_unavailable' },
+        },
+      }],
+    });
+    expect(sessionHookComposition.startListener).toHaveBeenCalledOnce();
+    expect(sessionHookComposition.disposeHost).not.toHaveBeenCalled();
+    await expect(rpcHandlerManager.handlers.get(
+      RPC_METHODS.DAEMON_PLUGIN_SESSION_HOOKS_INSTALL,
+    )?.({
+      machineId: 'machine-listener-unavailable',
+      agent: codexAgent,
+      expectedPreviewId: `hook-install-preview:v1:${'1'.repeat(64)}`,
+    })).resolves.toMatchObject({
+      ok: false,
+      diagnostic: { code: 'listener_unavailable' },
+    });
+    await expect(rpcHandlerManager.handlers.get(
+      RPC_METHODS.DAEMON_PLUGIN_SESSION_HOOKS_ENABLE,
+    )?.({
+      machineId: 'machine-listener-unavailable',
+      agent: codexAgent,
+      installationId: 'installation-1',
+    })).resolves.toMatchObject({
+      ok: false,
+      diagnostic: { code: 'listener_unavailable' },
+    });
+    await expect(rpcHandlerManager.handlers.get(
+      RPC_METHODS.DAEMON_PLUGIN_SESSION_HOOKS_UNINSTALL,
+    )?.({
+      machineId: 'machine-listener-unavailable',
+      agent: codexAgent,
+      installationId: 'installation-1',
+    })).resolves.toMatchObject({
+      ok: true,
+      status: { state: 'not_installed' },
+    });
+    expect(sessionHookComposition.status).toHaveBeenCalledOnce();
+    expect(sessionHookComposition.uninstall).toHaveBeenCalledOnce();
+    expect(sessionHookComposition.install).toHaveBeenCalledOnce();
+    expect(sessionHookComposition.enable).toHaveBeenCalledOnce();
 
     await registration.dispose();
+    expect(sessionHookComposition.disposeHost).toHaveBeenCalledOnce();
   });
 });

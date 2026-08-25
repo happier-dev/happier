@@ -396,7 +396,6 @@ describe('installed path plugin External Session uninstall lifecycle', () => {
                 await followLeaseManager.releaseSession({ sessionId });
             },
             startPaused: true,
-            jitterDelay: async () => {},
             isRestoreEnabled: () => true,
             subscribeRuntimeReload: (listener) =>
                 pluginReloadController.subscribe(() => listener()),

@@ -22,6 +22,10 @@ const { loggerDebugMock } = vi.hoisted(() => ({
   loggerDebugMock: vi.fn(),
 }));
 
+const { readAgentCatalogSnapshotOverride } = vi.hoisted(() => ({
+  readAgentCatalogSnapshotOverride: vi.fn(),
+}));
+
 vi.mock('@/ui/logger', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/ui/logger')>();
   return {
@@ -33,6 +37,16 @@ vi.mock('@/ui/logger', async (importOriginal) => {
         return typeof value === 'function' ? value.bind(target) : value;
       },
     }),
+  };
+});
+
+vi.mock('@/agent/catalog/snapshot', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/agent/catalog/snapshot')>();
+  return {
+    ...actual,
+    readAgentCatalogSnapshot: () => (
+      readAgentCatalogSnapshotOverride() ?? actual.readAgentCatalogSnapshot()
+    ),
   };
 });
 
@@ -2739,6 +2753,117 @@ describe('runHostSessionRuntime', () => {
       sessionId: 'session-1',
       issueFingerprint: 'usage-limit:codex:turn-1',
     });
+  });
+
+  it('notifies every canonical accepted attachment before a Pending media settlement failure', async () => {
+    const harness = createHarness();
+    const settleComposerStagedMedia = vi.fn(async () => {
+      throw new Error('release failed');
+    });
+    const afterComposerAttachmentMessageAccepted = vi.fn(async ({ attachment }: { attachment: { localId: string } }) => {
+      if (attachment.localId === 'issue') throw new Error('first contributor failed');
+    });
+    harness.deps.sessionLoopLifecycleDeps = {
+      daemonTurnContributionsBridge: {
+        resolvePrompt: vi.fn(async () => ({
+          kind: 'prompt' as const,
+          toolContributions: [],
+          assetContributions: [],
+        })),
+        resolveAgentComposition: vi.fn(async () => ({
+          kind: 'composition' as const,
+          managedPluginIds: [],
+          selectedTools: [],
+          selectedToolBindings: [],
+          promptAssetBlocks: [],
+          toolPromptContributions: [],
+          additionalInstructions: [],
+        })),
+        resolveComposerReference: vi.fn(async () => {
+          throw new Error('not used by Pending acceptance');
+        }),
+        resolveComposerAttachment: vi.fn(async () => {
+          throw new Error('not used by Pending acceptance');
+        }),
+        transformAgentContext: vi.fn(async ({ payload }) => payload),
+        transformSessionInput: vi.fn(async ({ payload }) => payload),
+        settleComposerStagedMedia,
+        afterComposerAttachmentMessageAccepted,
+      },
+    };
+
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+
+    const controls = harness.session.setSessionRuntimeControls.mock.calls[0]?.[0];
+    const handle = {
+      v: 1 as const,
+      id: 'pending-stage-1',
+      executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
+      owner: { pluginId: 'acme.issues', localId: 'issue' },
+      mediaKind: 'image' as const,
+      mimeType: 'image/png' as const,
+      name: 'issue.png',
+      sizeBytes: 42,
+      sha256: 'a'.repeat(64),
+    };
+    await expect(controls.acceptPendingMessageComposerAdmission({
+      sessionId: 'session-1',
+      localId: 'pending-successor-1',
+      structuredInput: {
+        v: 1,
+        composerAttachments: [
+          {
+            v: 1,
+            instanceId: 'issue-42',
+            attachment: handle.owner,
+            key: '42',
+            value: { issueId: 420, prepared: true },
+            presentation: { label: 'Prepared issue #420' },
+            content: { kind: 'sessionMedia', mediaId: 'media-42' },
+          },
+          {
+            v: 1,
+            instanceId: 'review-7',
+            attachment: { pluginId: 'acme.review', localId: 'review' },
+            key: '7',
+            value: { reviewId: 7, prepared: true },
+            presentation: { label: 'Review #7' },
+          },
+        ],
+      },
+      stagedMediaHandles: [handle],
+    })).rejects.toThrow('release failed');
+
+    expect(settleComposerStagedMedia).toHaveBeenCalledWith({
+      sessionId: 'session-1',
+      outcome: 'accepted',
+      settlement: {
+        v: 1,
+        releaseIntents: [{ handle, executionTarget: handle.executionTarget, owner: handle.owner }],
+        createdWorkspaceRelativePaths: [],
+        workingDirectory: 'accepted-pending-message',
+      },
+    });
+    expect(afterComposerAttachmentMessageAccepted).toHaveBeenCalledWith({
+      sessionId: 'session-1',
+      attachment: handle.owner,
+      event: {
+        sessionId: 'session-1',
+        localId: 'pending-successor-1',
+        attachments: [{ instanceId: 'issue-42', key: '42', value: { issueId: 420, prepared: true } }],
+      },
+    });
+    expect(afterComposerAttachmentMessageAccepted).toHaveBeenCalledWith({
+      sessionId: 'session-1',
+      attachment: { pluginId: 'acme.review', localId: 'review' },
+      event: {
+        sessionId: 'session-1',
+        localId: 'pending-successor-1',
+        attachments: [{ instanceId: 'review-7', key: '7', value: { reviewId: 7, prepared: true } }],
+      },
+    });
+    expect(afterComposerAttachmentMessageAccepted.mock.invocationCallOrder[0])
+      .toBeLessThan(settleComposerStagedMedia.mock.invocationCallOrder[0]!);
   });
 
   it('publishes connected-account auth controls from the semantic runtime auth facet', async () => {
@@ -6614,6 +6739,48 @@ describe('runHostSessionRuntime', () => {
     expect(capturedMcpServers).toEqual({ happier: { command: 'built-in' }, extra: { command: 'extra' } });
   });
 
+  it('passes resolved MCP servers to an external Agent that declares native MCP delivery', async () => {
+    const harness = createHarness();
+    const agentId = 'com.acme.review/review';
+    const catalog = getResolvedContributionRegistry();
+    readAgentCatalogSnapshotOverride.mockReturnValue({
+      ...catalog,
+      catalogEntriesById: {
+        ...catalog.catalogEntriesById,
+        [agentId]: {
+          id: agentId,
+          cliSubcommand: 'acme-review',
+          toolDelivery: 'native_mcp',
+        },
+      },
+    });
+    harness.config.policyAgentId = agentId;
+
+    let capturedMcpServers: unknown = null;
+    const createRuntimeOriginal = harness.config.createSessionRuntime;
+    if (!createRuntimeOriginal) throw new Error('Expected session runtime factory in harness');
+    setSessionRuntimeFactory(harness.config, (params) => {
+      capturedMcpServers = params.mcpServers;
+      return createRuntimeOriginal(params);
+    });
+    const resolveRunnerMcpServersFn = vi.fn(async () => ({
+      happierMcpServer: { stop: () => undefined },
+      mcpServers: { happier: { command: 'built-in' } },
+    }));
+
+    try {
+      await runHostSessionRuntime(harness.opts, harness.config, {
+        ...harness.deps,
+        resolveRunnerMcpServersFn,
+      });
+
+      expect(resolveRunnerMcpServersFn).toHaveBeenCalledOnce();
+      expect(capturedMcpServers).toEqual({ happier: { command: 'built-in' } });
+    } finally {
+      readAgentCatalogSnapshotOverride.mockReset();
+    }
+  });
+
   it('releases durable custody when MCP resolution fails before runtime construction', async () => {
     const harness = createHarness();
     const mcpFailure = new Error('MCP resolution failed before provider construction');
@@ -7079,6 +7246,40 @@ describe('runHostSessionRuntime', () => {
 
     expect(resolvedPrompt).toContain("'--session-id' 'session-1'");
     expect(resolvedPrompt).not.toContain('vendor-session-123');
+  });
+
+  it('adds shell-bridge startup guidance for an external Agent that declares that delivery', async () => {
+    const harness = createHarness();
+    const agentId = 'com.acme.review/review';
+    const catalog = getResolvedContributionRegistry();
+    readAgentCatalogSnapshotOverride.mockReturnValue({
+      ...catalog,
+      catalogEntriesById: {
+        ...catalog.catalogEntriesById,
+        [agentId]: {
+          id: agentId,
+          cliSubcommand: 'acme-review',
+          toolDelivery: 'shell_bridge',
+        },
+      },
+    });
+    harness.config.policyAgentId = agentId;
+
+    let resolvedPrompt = '';
+    harness.deps.runPermissionModePromptLoopFn = async (params: Readonly<{
+      resolveFreshSessionSystemPrompt?: (args: { baseOverride?: string | null }) => Promise<string>;
+    }>) => {
+      resolvedPrompt = await params.resolveFreshSessionSystemPrompt?.({ baseOverride: 'BASE' }) ?? '';
+    };
+
+    try {
+      await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+
+      expect(resolvedPrompt).toContain("'tools' 'call'");
+      expect(resolvedPrompt).toContain("'--session-id' 'session-1'");
+    } finally {
+      readAgentCatalogSnapshotOverride.mockReset();
+    }
   });
 
   it('uses the swapped Happier session id for shell-bridge prompt instructions after a session swap', async () => {

@@ -15,7 +15,7 @@ import type {
 } from '@happier-dev/plugin-sdk/scm/backend';
 import type {
     HostingProviderRuntimeServices as ScmHostingProviderRuntimeServices } from '@happier-dev/plugin-sdk/scm/hosting';
-import { runWithHostingProviderRuntimeServices as runWithScmHostingProviderRuntimeServices } from '@happier-dev/plugin-sdk/scm/hosting';
+import { runWithHostingProviderRuntimeServices as runWithHostSuppliedScmHostingProviderRuntimeServices } from '@happier-dev/plugin-sdk/scm/hosting';
 import { runWithBackendRuntimeServices as runWithScmBackendRuntimeServices } from '@happier-dev/plugin-sdk/scm/backend';
 
 import type { ScmBackend } from '../types';
@@ -70,9 +70,26 @@ function unsupportedRunStackedPullRequest(): Promise<ScmPullRequestRunStackedRes
     });
 }
 
+/**
+ * `HostingProviderRuntimeServices` has only optional members, so `{}` is a valid value of the type:
+ * a fabricated empty one is indistinguishable from a host that genuinely offers nothing, and every
+ * hosting plugin reads an absent `executeCommand` as "the CLI is not installed". When the host
+ * supplied no hosting services we therefore never enter the scope, so a plugin's
+ * `readCurrentHostingProviderRuntimeServices()` reports `null` — no capability — instead of an
+ * empty capability that answers "nothing here".
+ */
+function runWithScmHostingProviderRuntimeServices<T>(
+    hostingServices: ScmHostingProviderRuntimeServices | null,
+    callback: () => T,
+    options?: Readonly<{ signal?: AbortSignal }>,
+): T {
+    if (!hostingServices) return callback();
+    return runWithHostSuppliedScmHostingProviderRuntimeServices(hostingServices, callback, options);
+}
+
 function useHandler<TInput extends object, TResult>(
     services: ScmBackendRuntimeServices,
-    hostingServices: ScmHostingProviderRuntimeServices,
+    hostingServices: ScmHostingProviderRuntimeServices | null,
     handler: ((input: TInput & Readonly<{ signal: AbortSignal }>) => Promise<TResult> | TResult) | undefined,
     input: TInput,
 ): Promise<TResult | UnsupportedResult> {
@@ -133,7 +150,7 @@ function normalizePortableWorkspacePathClassification(
 
 function createWorkspaceIntegrationAdapter(
     services: ScmBackendRuntimeServices,
-    hostingServices: ScmHostingProviderRuntimeServices,
+    hostingServices: ScmHostingProviderRuntimeServices | null,
     handlers: ScmBackendRuntimeRegistration['handlers']['workspaceIntegration'],
 ): ScmBackend['workspaceIntegration'] | undefined {
     if (!handlers) return undefined;
@@ -238,7 +255,7 @@ export function createRegisteredScmBackendAdapter(input: Readonly<{
 }>): ScmBackend {
     const preferredMode = input.executableDefinition.repoModes[0] ?? '.git';
     const runtimeServices = createScmBackendRuntimeServices(input.executableDefinition);
-    const hostingProviderRuntimeServices = input.hostingProviderRuntimeServices ?? {};
+    const hostingProviderRuntimeServices = input.hostingProviderRuntimeServices ?? null;
 
     function getCapabilities(inputOptions: Readonly<{
         mode: Parameters<ScmBackend['getCapabilities']>[0]['mode'];

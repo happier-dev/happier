@@ -1,5 +1,6 @@
 import {
   CustomProviderTemplateV1Schema,
+  PROVIDER_ENDPOINT_SAFETY_LIMITS,
   ProviderConnectionV1Schema,
   ProviderSettingsLimitError,
   ProviderSettingsV1Schema,
@@ -22,6 +23,10 @@ import type {
 } from '@happier-dev/protocol/rpc';
 
 import { buildProviderDiscoveryEndpointOverrides } from '@/providers/discovery/bridge';
+import {
+  createProviderOperationLifetime,
+  type ProviderOperationLifetime,
+} from '@/providers/operationLifetime';
 import type { ProviderContributionRegistryView } from '@/providers/registry';
 import {
   getProviderContribution,
@@ -48,6 +53,7 @@ import type {
   ProviderConnectionServiceDeps,
   ProviderConnectionServiceResult,
   ProviderConnectionServiceSnapshot,
+  ProviderConnectionRegistryProjection,
   ProviderConnectionView,
 } from './types';
 
@@ -301,6 +307,7 @@ async function resolvedContributionAuthoringPreview(input: Readonly<{
   snapshot: ProviderConnectionServiceSnapshot;
   request: ProviderContributionAuthoringPreviewInput;
   selection: ProviderAuthoringCandidateSelection;
+  lifetime: ProviderOperationLifetime;
 }>): Promise<PreparedProviderContributionAuthoringPreview> {
   const now = input.deps.now();
   const createInput: ProviderConnectionCreateInput = {
@@ -330,6 +337,7 @@ async function resolvedContributionAuthoringPreview(input: Readonly<{
     connectionId: mutation.connection.id,
     machineId: input.request.machineId,
     registry: input.snapshot.registry,
+    lifetime: input.lifetime,
   });
   const resolution = input.deps.resolveConnection({
     accountSettings: previewRaw,
@@ -400,6 +408,7 @@ async function prepareContributionAuthoringPreview(input: Readonly<{
   snapshot: ProviderConnectionServiceSnapshot;
   request: ProviderContributionAuthoringPreviewInput;
   discoveryCandidates: readonly ProviderDiscoveryCandidateV1[];
+  lifetime: ProviderOperationLifetime;
 }>): Promise<PreparedProviderContributionAuthoringPreview> {
   const selections = candidateSelections({
     request: input.request,
@@ -424,6 +433,7 @@ async function prepareContributionAuthoringPreview(input: Readonly<{
       snapshot: input.snapshot,
       request: input.request,
       selection: selected,
+      lifetime: input.lifetime,
     });
   }
   const preparedCandidates = await Promise.all(selections.map((selection) =>
@@ -432,6 +442,7 @@ async function prepareContributionAuthoringPreview(input: Readonly<{
       snapshot: input.snapshot,
       request: input.request,
       selection,
+      lifetime: input.lifetime,
     })));
   const candidates = preparedCandidates.map((prepared) => {
     if (prepared.preview.status !== 'resolved' || prepared.preview.candidateId === null) {
@@ -512,6 +523,9 @@ export function createProviderAuthoringOperations(context: ProviderConnectionSer
     if (!deps.featureGate.isEnabled('providers')) return { status: 'error', error: featureError(input.connectionId) };
     const machineError = assertMachine(input.machineId, input.connectionId);
     if (machineError) return { status: 'error', error: machineError };
+    const lifetime = createProviderOperationLifetime({
+      wallTimeMs: PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs,
+    });
     const snapshot = await deps.loadSnapshot();
     const discoveryCandidates = await currentAuthoringDiscoveryCandidates({
       deps, snapshot, machineId: input.machineId, connectionId: input.connectionId,
@@ -528,6 +542,7 @@ export function createProviderAuthoringOperations(context: ProviderConnectionSer
         endpointOverrides: input.endpointOverrides ?? [],
       },
       discoveryCandidates,
+      lifetime,
     });
     return {
       status: 'success',
@@ -544,8 +559,15 @@ export function createProviderAuthoringOperations(context: ProviderConnectionSer
     if (!deps.featureGate.isEnabled('providers')) return { status: 'error', error: featureError(input.connectionId) };
     const machineError = assertMachine(input.machineId, input.connectionId);
     if (machineError) return { status: 'error', error: machineError };
+    const lifetime = createProviderOperationLifetime({
+      wallTimeMs: PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs,
+    });
     try {
       const snapshot = await deps.loadSnapshot();
+      const registryProjection = {
+        registry: snapshot.registry,
+        ...(snapshot.registryGeneration ? { generation: snapshot.registryGeneration } : {}),
+      };
       let reviewedEndpointOverrides: readonly ProviderEndpointOverrideV1[] = [];
       let reviewedEndpointOverrideScope: 'account' | 'machine' = 'account';
       let hasAuthoringReview = false;
@@ -565,6 +587,7 @@ export function createProviderAuthoringOperations(context: ProviderConnectionSer
             endpointOverrides: input.authoringReview.endpointOverrides ?? [],
           },
           discoveryCandidates,
+          lifetime,
         });
         if (reviewed.preview.status !== 'resolved'
           || reviewed.preview.fingerprint !== input.authoringReview.fingerprint
@@ -595,7 +618,12 @@ export function createProviderAuthoringOperations(context: ProviderConnectionSer
       const initialMutation = createMutation(readSettings(snapshot.rawAccountSettings), deps.now());
       validateConnectionCredentialTransport(input, initialMutation.connection, snapshot.registry);
       if (!initialMutation.created) {
-        const described = await describe({ machineId: input.machineId, connectionId: initialMutation.connection.id });
+        const described = await describe({
+          machineId: input.machineId,
+          connectionId: initialMutation.connection.id,
+          registryProjection,
+          lifetime,
+        });
         if (described.status === 'error') return described;
         const connection = described.connections[0];
         return connection
@@ -613,6 +641,7 @@ export function createProviderAuthoringOperations(context: ProviderConnectionSer
         ? await deps.collectDnsEvidence({
             accountSettings: previewRaw, connectionId: preview.connection.id,
             machineId: input.machineId, registry: snapshot.registry,
+            lifetime,
           })
         : new Map();
       const previewResolution = input.enable
@@ -675,7 +704,12 @@ export function createProviderAuthoringOperations(context: ProviderConnectionSer
           'enable',
         ).catch(() => undefined);
       }
-      const described = await describe({ machineId: input.machineId, connectionId: persistedConnectionId });
+      const described = await describe({
+        machineId: input.machineId,
+        connectionId: persistedConnectionId,
+        registryProjection,
+        lifetime,
+      });
       if (described.status === 'error') return described;
       const connection = described.connections[0];
       return connection
@@ -713,7 +747,14 @@ export function createProviderAuthoringOperations(context: ProviderConnectionSer
     if (!deps.featureGate.isEnabled('providers')) return { status: 'error', error: featureError(input.connectionId) };
     const machineError = assertMachine(input.machineId, input.connectionId);
     if (machineError) return { status: 'error', error: machineError };
+    const lifetime = createProviderOperationLifetime({
+      wallTimeMs: PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs,
+    });
     const snapshot = await deps.loadSnapshot();
+    const registryProjection = {
+      registry: snapshot.registry,
+      ...(snapshot.registryGeneration ? { generation: snapshot.registryGeneration } : {}),
+    };
     const buildUpdate = (
       settings: ProviderSettingsV1,
       current: ProviderConnectionV1,
@@ -825,6 +866,7 @@ export function createProviderAuthoringOperations(context: ProviderConnectionSer
           connectionId: input.connectionId,
           machineId: input.machineId,
           registry: snapshot.registry,
+          lifetime,
         });
         requireValidDeployment(previewRaw, deploymentDnsEvidence);
       }
@@ -844,7 +886,7 @@ export function createProviderAuthoringOperations(context: ProviderConnectionSer
       return nextRaw;
     });
     if (conflict) return { status: 'error', error: createProviderErrorV1('provider_connection_changed', { connectionId: input.connectionId, machineId: input.machineId }) };
-    return describeOne(context, input.machineId, input.connectionId);
+    return describeOne(context, input.machineId, input.connectionId, { registryProjection, lifetime });
   }
 
   async function setEndpointOverride(input: Readonly<{
@@ -854,7 +896,14 @@ export function createProviderAuthoringOperations(context: ProviderConnectionSer
     if (!deps.featureGate.isEnabled('providers')) return { status: 'error', error: featureError(input.connectionId) };
     const machineError = assertMachine(input.machineId, input.connectionId);
     if (machineError) return { status: 'error', error: machineError };
+    const lifetime = createProviderOperationLifetime({
+      wallTimeMs: PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs,
+    });
     const snapshot = await deps.loadSnapshot();
+    const registryProjection = {
+      registry: snapshot.registry,
+      ...(snapshot.registryGeneration ? { generation: snapshot.registryGeneration } : {}),
+    };
     let conflict = false;
     await deps.updateAccountSettings((raw) => {
       const settings = readSettings(raw);
@@ -902,7 +951,7 @@ export function createProviderAuthoringOperations(context: ProviderConnectionSer
       }));
     });
     if (conflict) return { status: 'error', error: createProviderErrorV1('provider_connection_changed', { connectionId: input.connectionId, machineId: input.machineId }) };
-    return describeOne(context, input.machineId, input.connectionId);
+    return describeOne(context, input.machineId, input.connectionId, { registryProjection, lifetime });
   }
 
   async function duplicate(input: Readonly<{
@@ -912,7 +961,14 @@ export function createProviderAuthoringOperations(context: ProviderConnectionSer
     if (!deps.featureGate.isEnabled('providers')) return { status: 'error', error: featureError(input.connectionId) };
     const machineError = assertMachine(input.machineId, input.connectionId);
     if (machineError) return { status: 'error', error: machineError };
+    const lifetime = createProviderOperationLifetime({
+      wallTimeMs: PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs,
+    });
     const snapshot = await deps.loadSnapshot();
+    const registryProjection = {
+      registry: snapshot.registry,
+      ...(snapshot.registryGeneration ? { generation: snapshot.registryGeneration } : {}),
+    };
     await deps.updateAccountSettings((raw) => {
       const settings = readSettings(raw);
       const sourceConnection = settings.connections.find((entry) => entry.id === input.connectionId);
@@ -993,7 +1049,7 @@ export function createProviderAuthoringOperations(context: ProviderConnectionSer
         } } : {}),
       }));
     });
-    return describeOne(context, input.machineId, input.newConnectionId);
+    return describeOne(context, input.machineId, input.newConnectionId, { registryProjection, lifetime });
   }
 
   return Object.freeze({ previewCreateContribution, create, delete: deleteConnection, update, setEndpointOverride, duplicate });
@@ -1003,8 +1059,12 @@ async function describeOne(
   context: ProviderConnectionServiceContext,
   machineId: string,
   connectionId: string,
+  operation: Readonly<{
+    registryProjection: ProviderConnectionRegistryProjection;
+    lifetime: ProviderOperationLifetime;
+  }>,
 ): Promise<ProviderConnectionServiceResult<ProviderConnectionView>> {
-  const described = await context.describe({ machineId, connectionId });
+  const described = await context.describe({ machineId, connectionId, ...operation });
   if (described.status === 'error') return described;
   const view = described.connections[0];
   return view

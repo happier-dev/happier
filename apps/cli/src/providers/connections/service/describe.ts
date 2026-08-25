@@ -1,4 +1,5 @@
 import {
+  PROVIDER_ENDPOINT_SAFETY_LIMITS,
   PROVIDER_SETTINGS_LIMITS_V1,
   createProviderErrorV1,
   readOwnRecordValue,
@@ -20,6 +21,11 @@ import type {
   ProviderConnectionServiceResult,
   ProviderConnectionView,
 } from './types';
+import {
+  createProviderOperationLifetime,
+  type ProviderOperationLifetime,
+} from '@/providers/operationLifetime';
+import type { ProviderConnectionRegistryProjection } from './types';
 
 const EMPTY_RUNTIME_SUMMARY: ProviderConnectionRuntimeSummary = Object.freeze({
   health: 'not_checked', modelCount: null, checkedAt: null, endpoints: [],
@@ -58,7 +64,12 @@ async function readAdvisoryProjection<T>(read: () => Promise<readonly T[]>): Pro
 
 export async function describeProviderConnections(
   deps: ProviderConnectionServiceDeps,
-  input: Readonly<{ machineId: string; connectionId?: string }>,
+  input: Readonly<{
+    machineId: string;
+    connectionId?: string;
+    registryProjection?: ProviderConnectionRegistryProjection;
+    lifetime?: ProviderOperationLifetime;
+  }>,
 ): Promise<ProviderConnectionServiceResult<ProviderConnectionDescription>> {
   if (!deps.featureGate.isEnabled('providers')) {
     return {
@@ -77,7 +88,13 @@ export async function describeProviderConnections(
     };
   }
 
-  const snapshot = await deps.loadSnapshot();
+  // A standalone description is an admission boundary. Mutations pass their
+  // already-started lifetime and registry projection so their final read never
+  // restarts DNS or switches contribution generations.
+  const lifetime = input.lifetime ?? createProviderOperationLifetime({
+    wallTimeMs: PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs,
+  });
+  const snapshot = await deps.loadSnapshot(input.registryProjection);
   const read = readProviderSettingsFromAccountSettingsV1(snapshot.rawAccountSettings);
   if (read.diagnostics.some((diagnostic) => diagnostic.path === 'providerSettingsV1')) {
     return { status: 'error', error: createProviderErrorV1('provider_settings_invalid', { machineId: input.machineId }) };
@@ -157,6 +174,7 @@ export async function describeProviderConnections(
         connectionId: connection.id,
         machineId: input.machineId,
         registry: snapshot.registry,
+        lifetime,
       });
       const resolution = deps.resolveConnection({
         accountSettings: snapshot.rawAccountSettings,
@@ -233,6 +251,7 @@ export async function describeProviderConnections(
             registry: snapshot.registry,
             dnsEvidence,
             resolution: resolved,
+            lifetime,
           })
         : EMPTY_RUNTIME_PROJECTION;
       const compatibility = resolved && compatibilityProjection

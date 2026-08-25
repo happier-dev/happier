@@ -85,13 +85,36 @@ type StagingPageReservation = Readonly<{
     acceptedThroughServerSeq?: number;
 }>;
 
-type StagingManifest = Readonly<{
+/**
+ * Every fact about the captured pages that a lifecycle or capacity decision
+ * needs without opening one file per page. It is derived state: every field is
+ * a fold of the page reservation rows, maintained by the same locked mutation
+ * that writes the row it describes.
+ */
+type StagingGroupSummary = Readonly<{
+    groupCount: number;
+    itemCount: number;
+    serializedBytes: number;
+    acknowledgedGroupCount: number;
+    acknowledgedItemCount: number;
+    acceptedThroughServerSeq: number | null;
+    pendingGroupIds: readonly string[];
+}>;
+
+/**
+ * The operation-wide staging facts. A capture stores its page reservations one
+ * file per page instead of one growing array here, because an accepted import
+ * may capture thousands of pages: folding every prior page's metadata into the
+ * file each new page rewrites made staging quadratic in the page count, and it
+ * held the Account-wide capacity lock while doing it.
+ */
+type StagingHeader = Readonly<{
     schemaVersion: 1;
     operationId: string;
     capturedSource: ExternalSessionStagingSourceCapture;
     captureState: 'capturing' | 'complete';
     lifecycle: StagingLifecycle;
-    groups: readonly StagingPageReservation[];
+    summary: StagingGroupSummary;
     createdWorkspaceMedia: readonly ExternalSessionOperationOwnedWorkspaceMediaPath[];
 }>;
 
@@ -169,7 +192,7 @@ export type ExternalSessionOperationPrivateStagingStore = Readonly<{
         | Readonly<{ status: 'missing' }>
         | Readonly<{
             status: 'ready';
-            captureState: StagingManifest['captureState'];
+            captureState: StagingHeader['captureState'];
             sourcePagesRead: number;
             stagedItemCount: number;
             capturedThroughSourceRevision: string | null;
@@ -186,6 +209,7 @@ export type ExternalSessionOperationPrivateStagingStore = Readonly<{
      */
     persistPreparedReplayGroup(input: Readonly<{
         operationId: string;
+        captureIndex: number;
         groupId: string;
         items: readonly unknown[];
     }>): Promise<
@@ -198,6 +222,7 @@ export type ExternalSessionOperationPrivateStagingStore = Readonly<{
     /** Remove a definitely-unpublished prepared receipt so the next attempt can prepare afresh. */
     clearPreparedReplayGroup(input: Readonly<{
         operationId: string;
+        captureIndex: number;
         groupId: string;
     }>): Promise<void>;
     recordCreatedWorkspaceMedia(input: Readonly<{
@@ -252,6 +277,7 @@ export type ExternalSessionOperationPrivateStagingStore = Readonly<{
     resumeOperation(input: Readonly<{ operationId: string }>): Promise<void>;
     acknowledgeReplayGroup(input: Readonly<{
         operationId: string;
+        captureIndex: number;
         groupId: string;
         acceptedThroughServerSeq: number;
     }>): Promise<void>;
@@ -308,6 +334,10 @@ function readNonemptyString(value: string, fieldName: string): string {
         );
     }
     return normalized;
+}
+
+function isNonnegativeSafeInteger(value: unknown): value is number {
+    return Number.isSafeInteger(value) && (value as number) >= 0;
 }
 
 function readNonnegativeSafeInteger(value: number, fieldName: string): number {
@@ -553,6 +583,39 @@ function resolvePreparedReplayGroupPath(
     return join(operationDirectory, `prepared-${String(captureIndex).padStart(12, '0')}.json`);
 }
 
+function resolveGroupRowPath(operationDirectory: string, captureIndex: number): string {
+    return join(operationDirectory, `group-${String(captureIndex).padStart(12, '0')}.json`);
+}
+
+const GROUP_ROW_FILE_NAME_PATTERN = /^group-(\d+)\.json$/;
+
+/**
+ * Once a rollback has atomically contracted its header, rows at or above the
+ * admitted group count are only unadmitted metadata. Their page and prepared
+ * payloads are removed before that header publication, so an explicit retry
+ * can finish this low-cost cleanup from the header without another owner or
+ * any background sweep.
+ */
+async function removeUnadmittedGroupRowMetadata(
+    operationDirectory: string,
+    firstUnadmittedCaptureIndex: number,
+): Promise<void> {
+    const entries = await readdir(operationDirectory, { withFileTypes: true });
+    for (const entry of entries) {
+        if (!entry.isFile()) continue;
+        const match = GROUP_ROW_FILE_NAME_PATTERN.exec(entry.name);
+        if (!match) continue;
+        const captureIndex = Number(match[1]);
+        if (
+            !Number.isSafeInteger(captureIndex)
+            || captureIndex < firstUnadmittedCaptureIndex
+        ) {
+            continue;
+        }
+        await rm(join(operationDirectory, entry.name), { force: true });
+    }
+}
+
 async function tightenPrivateDirectory(path: string): Promise<void> {
     await mkdir(path, { recursive: true, mode: 0o700 });
     if (process.platform !== 'win32') {
@@ -685,16 +748,49 @@ function parsePreparedReplayReservation(value: unknown): Readonly<{
     });
 }
 
-function parseManifest(value: unknown): StagingManifest | null {
+function parseGroupSummary(value: unknown): StagingGroupSummary | null {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const record = value as Record<string, unknown>;
+    const pendingGroupIds = record.pendingGroupIds;
+    if (
+        !isNonnegativeSafeInteger(record.groupCount)
+        || !isNonnegativeSafeInteger(record.itemCount)
+        || !isNonnegativeSafeInteger(record.serializedBytes)
+        || !isNonnegativeSafeInteger(record.acknowledgedGroupCount)
+        || !isNonnegativeSafeInteger(record.acknowledgedItemCount)
+        || (
+            record.acceptedThroughServerSeq !== null
+            && !isNonnegativeSafeInteger(record.acceptedThroughServerSeq)
+        )
+        || !Array.isArray(pendingGroupIds)
+        || pendingGroupIds.some(
+            (groupId) => typeof groupId !== 'string' || !groupId.trim(),
+        )
+    ) {
+        return null;
+    }
+    return Object.freeze({
+        groupCount: record.groupCount as number,
+        itemCount: record.itemCount as number,
+        serializedBytes: record.serializedBytes as number,
+        acknowledgedGroupCount: record.acknowledgedGroupCount as number,
+        acknowledgedItemCount: record.acknowledgedItemCount as number,
+        acceptedThroughServerSeq: record.acceptedThroughServerSeq as number | null,
+        pendingGroupIds: Object.freeze([...pendingGroupIds as string[]]),
+    });
+}
+
+function parseHeader(value: unknown): StagingHeader | null {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
     const record = value as Record<string, unknown>;
     const lifecycle = parseLifecycle(record.lifecycle);
+    const summary = parseGroupSummary(record.summary);
     if (
         record.schemaVersion !== 1
         || typeof record.operationId !== 'string'
         || !record.operationId.trim()
         || (record.captureState !== 'capturing' && record.captureState !== 'complete')
-        || !Array.isArray(record.groups)
+        || !summary
         || !lifecycle
     ) {
         return null;
@@ -705,9 +801,6 @@ function parseManifest(value: unknown): StagingManifest | null {
     } catch {
         return null;
     }
-    const groups = record.groups.map(parseReservation);
-    if (groups.some((group) => !group)) return null;
-    const parsedGroups = groups as StagingPageReservation[];
     const createdWorkspaceMediaValue = record.createdWorkspaceMedia ?? [];
     if (!Array.isArray(createdWorkspaceMediaValue)) return null;
     const createdWorkspaceMedia: ExternalSessionOperationOwnedWorkspaceMediaPath[] = [];
@@ -727,19 +820,13 @@ function parseManifest(value: unknown): StagingManifest | null {
             candidateWorkspaceRelativePath: media.candidateWorkspaceRelativePath,
         }));
     }
-    if (
-        new Set(parsedGroups.map((group) => group.groupId)).size !== parsedGroups.length
-        || new Set(parsedGroups.map((group) => group.captureIndex)).size !== parsedGroups.length
-    ) {
-        return null;
-    }
     return Object.freeze({
         schemaVersion: 1,
         operationId: record.operationId,
         capturedSource,
         captureState: record.captureState,
         lifecycle,
-        groups: Object.freeze(parsedGroups),
+        summary,
         createdWorkspaceMedia: Object.freeze(createdWorkspaceMedia),
     });
 }
@@ -777,31 +864,212 @@ function ownedWorkspaceMediaPathKey(
         : JSON.stringify(['canonical', canonicalIdentity]);
 }
 
-async function readManifest(path: string): Promise<StagingManifest | null> {
+async function readJsonFileOrNull(path: string): Promise<unknown | undefined> {
     let raw: string;
     try {
         raw = await readFile(path, 'utf8');
     } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
         throw error;
     }
-    let value: unknown;
     try {
-        value = JSON.parse(raw);
+        return JSON.parse(raw);
     } catch {
         throw new ExternalSessionStagingError(
             'external_session_staging_corrupt',
             'External session staging manifest is malformed',
         );
     }
-    const manifest = parseManifest(value);
-    if (!manifest) {
+}
+
+async function readHeader(path: string): Promise<StagingHeader | null> {
+    const value = await readJsonFileOrNull(path);
+    if (value === undefined) return null;
+    const header = parseHeader(value);
+    if (!header) {
         throw new ExternalSessionStagingError(
             'external_session_staging_corrupt',
             'External session staging manifest is invalid',
         );
     }
-    return manifest;
+    return header;
+}
+
+/**
+ * A page reservation row. It is the durable fact for exactly one captured page
+ * and is rewritten only when that page changes state, so an accepted import
+ * pays one bounded write per page instead of rewriting every prior page.
+ */
+async function readGroupRow(
+    operationDirectory: string,
+    captureIndex: number,
+): Promise<StagingPageReservation | null> {
+    const value = await readJsonFileOrNull(
+        resolveGroupRowPath(operationDirectory, captureIndex),
+    );
+    if (value === undefined) return null;
+    const reservation = parseReservation(value);
+    if (!reservation || reservation.captureIndex !== captureIndex) {
+        throw new ExternalSessionStagingError(
+            'external_session_staging_corrupt',
+            'External session staging page reservation is invalid',
+        );
+    }
+    return reservation;
+}
+
+/**
+ * Capture indexes are dense, so the admitted rows are exactly
+ * `0..summary.groupCount - 1`. A row file above that bound was written by a
+ * reservation whose header update never landed: it was never admitted, and the
+ * next append at that index reconciles or replaces it.
+ */
+async function readAllGroupRows(
+    operationDirectory: string,
+    summary: StagingGroupSummary,
+): Promise<readonly StagingPageReservation[]> {
+    const rows: StagingPageReservation[] = [];
+    for (let captureIndex = 0; captureIndex < summary.groupCount; captureIndex += 1) {
+        const row = await readGroupRow(operationDirectory, captureIndex);
+        if (!row) {
+            throw new ExternalSessionStagingError(
+                'external_session_staging_corrupt',
+                'External session staging page reservation is missing',
+            );
+        }
+        rows.push(row);
+    }
+    if (new Set(rows.map((row) => row.groupId)).size !== rows.length) {
+        throw new ExternalSessionStagingError(
+            'external_session_staging_corrupt',
+            'External session staging page reservations repeat a group id',
+        );
+    }
+    return Object.freeze(rows);
+}
+
+const EMPTY_STAGING_GROUP_SUMMARY: StagingGroupSummary = Object.freeze({
+    groupCount: 0,
+    itemCount: 0,
+    serializedBytes: 0,
+    acknowledgedGroupCount: 0,
+    acknowledgedItemCount: 0,
+    acceptedThroughServerSeq: null,
+    pendingGroupIds: Object.freeze([]),
+});
+
+function reservationSerializedBytes(row: StagingPageReservation): number {
+    return row.serializedBytes + (row.preparedReplay?.serializedBytes ?? 0);
+}
+
+/**
+ * The one place a summary is derived from rows. Incremental maintenance and
+ * whole-capture recomputation both go through it, so the two can never disagree
+ * about what a captured page contributes.
+ */
+function summaryWithRowTransition(
+    summary: StagingGroupSummary,
+    previous: StagingPageReservation | null,
+    next: StagingPageReservation | null,
+): StagingGroupSummary {
+    const pendingGroupIds = summary.pendingGroupIds.filter(
+        (groupId) => groupId !== (next ?? previous)?.groupId,
+    );
+    if (next?.state === 'reserved') pendingGroupIds.push(next.groupId);
+    const acknowledgedCheckpoint = next?.state === 'acknowledged'
+        && next.itemCount > 0
+        && next.acceptedThroughServerSeq !== undefined
+        ? next.acceptedThroughServerSeq
+        : null;
+    return Object.freeze({
+        groupCount: summary.groupCount
+            - (previous ? 1 : 0)
+            + (next ? 1 : 0),
+        itemCount: summary.itemCount
+            - (previous?.itemCount ?? 0)
+            + (next?.itemCount ?? 0),
+        serializedBytes: summary.serializedBytes
+            - (previous ? reservationSerializedBytes(previous) : 0)
+            + (next ? reservationSerializedBytes(next) : 0),
+        acknowledgedGroupCount: summary.acknowledgedGroupCount
+            - (previous?.state === 'acknowledged' ? 1 : 0)
+            + (next?.state === 'acknowledged' ? 1 : 0),
+        acknowledgedItemCount: summary.acknowledgedItemCount
+            - (previous?.state === 'acknowledged' ? previous.itemCount : 0)
+            + (next?.state === 'acknowledged' ? next.itemCount : 0),
+        acceptedThroughServerSeq: acknowledgedCheckpoint !== null
+            && (
+                summary.acceptedThroughServerSeq === null
+                || acknowledgedCheckpoint > summary.acceptedThroughServerSeq
+            )
+            ? acknowledgedCheckpoint
+            : summary.acceptedThroughServerSeq,
+        pendingGroupIds: Object.freeze(pendingGroupIds),
+    });
+}
+
+function summarizeGroupRows(
+    rows: readonly StagingPageReservation[],
+): StagingGroupSummary {
+    return rows.reduce(
+        (summary, row) => summaryWithRowTransition(summary, null, row),
+        EMPTY_STAGING_GROUP_SUMMARY,
+    );
+}
+
+function stagingSummariesMatch(
+    left: StagingGroupSummary,
+    right: StagingGroupSummary,
+): boolean {
+    return left.groupCount === right.groupCount
+        && left.itemCount === right.itemCount
+        && left.serializedBytes === right.serializedBytes
+        && left.acknowledgedGroupCount === right.acknowledgedGroupCount
+        && left.acknowledgedItemCount === right.acknowledgedItemCount
+        && left.acceptedThroughServerSeq === right.acceptedThroughServerSeq
+        && left.pendingGroupIds.length === right.pendingGroupIds.length
+        && left.pendingGroupIds.every((groupId, index) => groupId === right.pendingGroupIds[index]);
+}
+
+/**
+ * Group rows are the durable facts; the header summary is their repairable
+ * fold. This is deliberately called only while the existing operation lock is
+ * held, on recovery and terminal paths rather than on ordinary page reads.
+ */
+async function repairHeaderSummaryFromGroupRows(
+    paths: StagingPaths,
+    header: StagingHeader,
+    atomicWrite: (path: string, value: unknown) => Promise<void>,
+): Promise<StagingHeader> {
+    const summary = summarizeGroupRows(
+        await readAllGroupRows(paths.operationDirectory, header.summary),
+    );
+    if (stagingSummariesMatch(header.summary, summary)) return header;
+    const repaired = Object.freeze({ ...header, summary });
+    await atomicWrite(paths.manifestPath, repaired);
+    return repaired;
+}
+
+/**
+ * Replay addresses a group by its capture index and carries the group id it was
+ * served with. Reading the row that index names and requiring the id to match
+ * keeps the id an exact integrity check rather than a whole-capture search key.
+ */
+async function readAddressedGroupRow(
+    operationDirectory: string,
+    summary: StagingGroupSummary,
+    captureIndex: number,
+    groupId: string,
+): Promise<StagingPageReservation | null> {
+    if (
+        !Number.isSafeInteger(captureIndex)
+        || captureIndex < 0
+        || captureIndex >= summary.groupCount
+    ) {
+        return null;
+    }
+    const row = await readGroupRow(operationDirectory, captureIndex);
+    return row?.groupId === groupId ? row : null;
 }
 
 function parsePageGroup(value: unknown): StagingPageGroup | null {
@@ -892,82 +1160,49 @@ async function readPreparedReplayGroup(path: string): Promise<StagingPreparedRep
     return prepared;
 }
 
-function sumReservations(manifests: readonly StagingManifest[]): Readonly<{
+function sumReservations(headers: readonly StagingHeader[]): Readonly<{
     itemCount: number;
     serializedBytes: number;
 }> {
     let itemCount = 0;
     let serializedBytes = 0;
-    for (const manifest of manifests) {
-        for (const group of manifest.groups) {
-            itemCount += group.itemCount;
-            serializedBytes += group.serializedBytes + (group.preparedReplay?.serializedBytes ?? 0);
-        }
+    for (const header of headers) {
+        itemCount += header.summary.itemCount;
+        serializedBytes += header.summary.serializedBytes;
     }
     return Object.freeze({ itemCount, serializedBytes });
 }
 
-function readAcceptedThroughServerSeq(manifest: StagingManifest): number | null {
-    let acceptedThroughServerSeq: number | null = null;
-    for (const group of manifest.groups) {
-        const groupCheckpoint = group.acceptedThroughServerSeq;
-        if (
-            group.state === 'acknowledged'
-            && group.itemCount > 0
-            && groupCheckpoint !== undefined
-            && (
-                acceptedThroughServerSeq === null
-                || groupCheckpoint > acceptedThroughServerSeq
-            )
-        ) {
-            acceptedThroughServerSeq = groupCheckpoint;
-        }
-    }
-    return acceptedThroughServerSeq;
-}
-
-function readAcknowledgedItemCount(manifest: StagingManifest): number {
-    return manifest.groups.reduce(
-        (total, group) => group.state === 'acknowledged'
-            ? total + group.itemCount
-            : total,
-        0,
-    );
-}
-
 function projectReplayState(
-    manifest: StagingManifest | null,
+    header: StagingHeader | null,
     operationId: string,
 ): ExternalSessionStagingReplayState {
-    if (!manifest || manifest.operationId !== operationId) {
+    if (!header || header.operationId !== operationId) {
         return Object.freeze({ status: 'missing' as const });
     }
-    const acceptedThroughServerSeq = readAcceptedThroughServerSeq(manifest);
-    const acknowledgedItemCount = readAcknowledgedItemCount(manifest);
+    const acceptedThroughServerSeq = header.summary.acceptedThroughServerSeq;
+    const acknowledgedItemCount = header.summary.acknowledgedItemCount;
     if (
-        manifest.captureState !== 'complete'
-        && manifest.lifecycle.state !== 'discard_required'
+        header.captureState !== 'complete'
+        && header.lifecycle.state !== 'discard_required'
     ) {
         return Object.freeze({
             status: 'capture_incomplete' as const,
-            lifecycle: manifest.lifecycle.state,
+            lifecycle: header.lifecycle.state,
             acceptedThroughServerSeq,
             acknowledgedItemCount,
         });
     }
-    const pendingGroupIds = manifest.groups
-        .filter((group) => group.state === 'reserved')
-        .map((group) => group.groupId);
-    if (pendingGroupIds.length > 0) {
+    if (header.summary.pendingGroupIds.length > 0) {
         return Object.freeze({
             status: 'incomplete' as const,
-            lifecycle: manifest.lifecycle.state,
-            pendingGroupIds: Object.freeze(pendingGroupIds),
+            lifecycle: header.lifecycle.state,
+            pendingGroupIds: header.summary.pendingGroupIds,
             acceptedThroughServerSeq,
             acknowledgedItemCount,
         });
     }
-    if (manifest.lifecycle.state === 'discard_required') {
+    if (header.lifecycle.state === 'discard_required') {
         return Object.freeze({
             status: 'discard_required' as const,
             acceptedThroughServerSeq,
@@ -976,13 +1211,18 @@ function projectReplayState(
     }
     return Object.freeze({
         status: 'ready' as const,
-        lifecycle: manifest.lifecycle.state,
+        lifecycle: header.lifecycle.state,
         acceptedThroughServerSeq,
         acknowledgedItemCount,
     });
 }
 
-async function readAllManifests(rootDirectory: string): Promise<readonly StagingManifest[]> {
+/**
+ * Aggregate admission reads one bounded header per operation. It never opens a
+ * page reservation row, so an Account holding many large captures still costs
+ * one small read per operation.
+ */
+async function readAllHeaders(rootDirectory: string): Promise<readonly StagingHeader[]> {
     let entries;
     try {
         entries = await readdir(rootDirectory, { withFileTypes: true });
@@ -990,16 +1230,16 @@ async function readAllManifests(rootDirectory: string): Promise<readonly Staging
         if ((error as NodeJS.ErrnoException).code === 'ENOENT') return Object.freeze([]);
         throw error;
     }
-    const manifests: StagingManifest[] = [];
+    const headers: StagingHeader[] = [];
     for (const entry of entries) {
         if (!entry.isDirectory() || !OPERATION_DIRECTORY_PATTERN.test(entry.name)) continue;
-        const manifest = await readManifest(join(rootDirectory, entry.name, 'manifest.json'));
-        if (manifest) manifests.push(manifest);
+        const header = await readHeader(join(rootDirectory, entry.name, 'manifest.json'));
+        if (header) headers.push(header);
     }
-    return Object.freeze(manifests);
+    return Object.freeze(headers);
 }
 
-function assertOperationLifecycleAcceptsPage(manifest: StagingManifest): void {
+function assertOperationLifecycleAcceptsPage(manifest: StagingHeader): void {
     if (manifest.lifecycle.state !== 'active') {
         throw new ExternalSessionStagingError(
             'external_session_staging_not_active',
@@ -1108,7 +1348,7 @@ export function createExternalSessionOperationPrivateStagingStore(input: Readonl
             }
             const capturedSource = normalizeSourceCapture(beginInput.capturedSource);
             return await withCapacityLock(operationId, async (paths) => {
-                const current = await readManifest(paths.manifestPath);
+                const current = await readHeader(paths.manifestPath);
                 if (current) {
                     if (
                         current.operationId !== operationId
@@ -1125,13 +1365,13 @@ export function createExternalSessionOperationPrivateStagingStore(input: Readonl
                     });
                 }
                 await tightenPrivateDirectory(paths.operationDirectory);
-                const manifest: StagingManifest = Object.freeze({
+                const manifest: StagingHeader = Object.freeze({
                     schemaVersion: 1,
                     operationId,
                     capturedSource,
                     captureState: 'capturing',
                     lifecycle: Object.freeze({ state: 'active' }),
-                    groups: Object.freeze([]),
+                    summary: EMPTY_STAGING_GROUP_SUMMARY,
                     createdWorkspaceMedia: Object.freeze([]),
                 });
                 await atomicWrite(paths.manifestPath, manifest);
@@ -1145,7 +1385,7 @@ export function createExternalSessionOperationPrivateStagingStore(input: Readonl
         async readCapturedSource(readInput) {
             const operationId = readNonemptyString(readInput.operationId, 'operationId');
             const paths = await resolveStagingPaths(operationId);
-            const manifest = await readManifest(paths.manifestPath);
+            const manifest = await readHeader(paths.manifestPath);
             if (!manifest || manifest.operationId !== operationId) {
                 return Object.freeze({ status: 'missing' as const });
             }
@@ -1158,19 +1398,23 @@ export function createExternalSessionOperationPrivateStagingStore(input: Readonl
         async readCaptureCheckpoint(readInput) {
             const operationId = readNonemptyString(readInput.operationId, 'operationId');
             const paths = await resolveStagingPaths(operationId);
-            const manifest = await readManifest(paths.manifestPath);
+            const manifest = await readHeader(paths.manifestPath);
             if (!manifest || manifest.operationId !== operationId) {
                 return Object.freeze({ status: 'missing' as const });
             }
-            const lastCapturedPage = manifest.groups.at(-1);
+            // Only the newest captured page carries the revision the capture
+            // reached, so this reads exactly that row rather than the corpus.
+            const lastCapturedPage = manifest.summary.groupCount === 0
+                ? null
+                : await readGroupRow(
+                    paths.operationDirectory,
+                    manifest.summary.groupCount - 1,
+                );
             return Object.freeze({
                 status: 'ready' as const,
                 captureState: manifest.captureState,
-                sourcePagesRead: manifest.groups.length,
-                stagedItemCount: manifest.groups.reduce(
-                    (total, group) => total + group.itemCount,
-                    0,
-                ),
+                sourcePagesRead: manifest.summary.groupCount,
+                stagedItemCount: manifest.summary.itemCount,
                 capturedThroughSourceRevision:
                     lastCapturedPage?.sourceRevision
                     ?? (
@@ -1196,7 +1440,7 @@ export function createExternalSessionOperationPrivateStagingStore(input: Readonl
                 );
             }
             return await withCapacityLock(operationId, async (paths) => {
-                const manifest = await readManifest(paths.manifestPath);
+                const manifest = await readHeader(paths.manifestPath);
                 if (!manifest || manifest.operationId !== operationId) {
                     throw new ExternalSessionStagingError(
                         'external_session_staging_not_found',
@@ -1228,10 +1472,35 @@ export function createExternalSessionOperationPrivateStagingStore(input: Readonl
                     ? readNonemptyString(appendInput.sourceRead.revision, 'sourceRead.revision')
                     : undefined;
 
-                const existing = manifest.groups.find((group) => (
-                    group.groupId === page.groupId || group.captureIndex === page.captureIndex
-                ));
-                if (existing) {
+                // Capture indexes are dense and only the tail is ever appended,
+                // so the retried page is the row at its own index. Reading that
+                // one row is what replaces scanning every prior reservation.
+                const existing = await readGroupRow(
+                    paths.operationDirectory,
+                    page.captureIndex,
+                );
+                const commitReservedRow = async (
+                    reservation: StagingPageReservation,
+                    summary: StagingGroupSummary,
+                ): Promise<void> => {
+                    await atomicWrite(
+                        resolvePageGroupPath(paths.operationDirectory, page.captureIndex),
+                        page,
+                    );
+                    const committed = Object.freeze({
+                        ...reservation,
+                        state: 'committed' as const,
+                    });
+                    await atomicWrite(
+                        resolveGroupRowPath(paths.operationDirectory, page.captureIndex),
+                        committed,
+                    );
+                    await atomicWrite(paths.manifestPath, Object.freeze({
+                        ...manifest,
+                        summary: summaryWithRowTransition(summary, reservation, committed),
+                    }));
+                };
+                if (existing && page.captureIndex < manifest.summary.groupCount) {
                     assertMatchingReservedGroup(
                         existing,
                         page,
@@ -1242,27 +1511,31 @@ export function createExternalSessionOperationPrivateStagingStore(input: Readonl
                         replayOrder,
                     );
                     if (existing.state === 'committed') {
+                        // The row is published before the header that folds it,
+                        // so losing that header write leaves this page durable
+                        // while the header still lists it pending and refuses
+                        // to complete the capture. The pending entry names the
+                        // fold that was lost, so the resumed capture that lands
+                        // here republishes exactly it.
+                        if (manifest.summary.pendingGroupIds.includes(existing.groupId)) {
+                            await atomicWrite(paths.manifestPath, Object.freeze({
+                                ...manifest,
+                                summary: summaryWithRowTransition(
+                                    manifest.summary,
+                                    Object.freeze({ ...existing, state: 'reserved' as const }),
+                                    existing,
+                                ),
+                            }));
+                        }
                         return Object.freeze({
                             status: 'already_stored' as const,
                             sourceState,
                         });
                     }
-                    await atomicWrite(
-                        resolvePageGroupPath(paths.operationDirectory, page.captureIndex),
-                        page,
-                    );
-                    const committedManifest: StagingManifest = Object.freeze({
-                        ...manifest,
-                        groups: Object.freeze(manifest.groups.map((group) => (
-                            group.groupId === existing.groupId
-                                ? Object.freeze({ ...group, state: 'committed' as const })
-                                : group
-                        ))),
-                    });
-                    await atomicWrite(paths.manifestPath, committedManifest);
+                    await commitReservedRow(existing, manifest.summary);
                     return Object.freeze({ status: 'stored' as const, sourceState });
                 }
-                if (page.captureIndex !== manifest.groups.length) {
+                if (page.captureIndex !== manifest.summary.groupCount) {
                     throw new ExternalSessionStagingError(
                         'external_session_staging_capture_order',
                         'External session staging pages must be captured newest-first without gaps',
@@ -1282,7 +1555,7 @@ export function createExternalSessionOperationPrivateStagingStore(input: Readonl
                         reason: 'per_operation_byte_capacity' as const,
                     });
                 }
-                const aggregateTotals = sumReservations(await readAllManifests(paths.rootDirectory));
+                const aggregateTotals = sumReservations(await readAllHeaders(paths.rootDirectory));
                 if (aggregateTotals.itemCount + page.items.length > limits.aggregate.maxItems) {
                     return Object.freeze({
                         status: 'refused' as const,
@@ -1307,38 +1580,46 @@ export function createExternalSessionOperationPrivateStagingStore(input: Readonl
                     sourceRevision,
                     state: 'reserved',
                 });
-                const reservedManifest: StagingManifest = Object.freeze({
-                    ...manifest,
-                    groups: Object.freeze([...manifest.groups, reservation]),
-                });
-                await atomicWrite(paths.manifestPath, reservedManifest);
+                // The row is the fact and the summary is its fold, so the row is
+                // published first: a crash between the two leaves an unadmitted
+                // row that the retry at this index reconciles against, exactly
+                // as the reserved manifest row used to.
                 await atomicWrite(
-                    resolvePageGroupPath(paths.operationDirectory, page.captureIndex),
-                    page,
+                    resolveGroupRowPath(paths.operationDirectory, page.captureIndex),
+                    reservation,
                 );
-                const committedManifest: StagingManifest = Object.freeze({
-                    ...reservedManifest,
-                    groups: Object.freeze(reservedManifest.groups.map((group) => (
-                        group.groupId === reservation.groupId
-                            ? Object.freeze({ ...group, state: 'committed' as const })
-                            : group
-                    ))),
-                });
-                await atomicWrite(paths.manifestPath, committedManifest);
+                const reservedSummary = summaryWithRowTransition(
+                    manifest.summary,
+                    null,
+                    reservation,
+                );
+                await atomicWrite(paths.manifestPath, Object.freeze({
+                    ...manifest,
+                    summary: reservedSummary,
+                }));
+                await commitReservedRow(reservation, reservedSummary);
                 return Object.freeze({ status: 'stored' as const, sourceState });
             });
         },
 
         async readReplayState(operationIdInput) {
             const operationId = readNonemptyString(operationIdInput, 'operationId');
-            const paths = await resolveStagingPaths(operationId);
-            return projectReplayState(await readManifest(paths.manifestPath), operationId);
+            return await withCapacityLock(operationId, async (paths) => {
+                const header = await readHeader(paths.manifestPath);
+                if (!header || header.operationId !== operationId) {
+                    return projectReplayState(header, operationId);
+                }
+                return projectReplayState(
+                    await repairHeaderSummaryFromGroupRows(paths, header, atomicWrite),
+                    operationId,
+                );
+            });
         },
 
         async *streamReplayGroups(operationIdInput) {
             const operationId = readNonemptyString(operationIdInput, 'operationId');
             const paths = await resolveStagingPaths(operationId);
-            const manifest = await readManifest(paths.manifestPath);
+            const manifest = await readHeader(paths.manifestPath);
             const state = projectReplayState(manifest, operationId);
             if (state.status === 'missing') {
                 throw new ExternalSessionStagingError(
@@ -1352,8 +1633,12 @@ export function createExternalSessionOperationPrivateStagingStore(input: Readonl
                     'External session staging is not ready for replay',
                 );
             }
-            const readyManifest = manifest as StagingManifest;
-            for (const reservation of readyManifest.groups
+            const readyManifest = manifest as StagingHeader;
+            const groups = await readAllGroupRows(
+                paths.operationDirectory,
+                readyManifest.summary,
+            );
+            for (const reservation of groups
                 .filter((group) => group.state === 'committed')
                 .sort((left, right) => right.replayOrder - left.replayOrder)) {
                 const page = await readPageGroup(
@@ -1409,7 +1694,7 @@ export function createExternalSessionOperationPrivateStagingStore(input: Readonl
             const operationId = readNonemptyString(persistInput.operationId, 'operationId');
             const groupId = readNonemptyString(persistInput.groupId, 'groupId');
             return await withCapacityLock(operationId, async (paths) => {
-                const manifest = await readManifest(paths.manifestPath);
+                const manifest = await readHeader(paths.manifestPath);
                 if (!manifest || manifest.operationId !== operationId) {
                     throw new ExternalSessionStagingError(
                         'external_session_staging_not_found',
@@ -1423,7 +1708,12 @@ export function createExternalSessionOperationPrivateStagingStore(input: Readonl
                         'External session staging cannot retain prepared replay before capture completes',
                     );
                 }
-                const reservation = manifest.groups.find((group) => group.groupId === groupId);
+                const reservation = await readAddressedGroupRow(
+                    paths.operationDirectory,
+                    manifest.summary,
+                    persistInput.captureIndex,
+                    groupId,
+                );
                 if (!reservation || reservation.state !== 'committed') {
                     throw new ExternalSessionStagingError(
                         'external_session_staging_group_not_ready',
@@ -1501,7 +1791,7 @@ export function createExternalSessionOperationPrivateStagingStore(input: Readonl
                         reason: 'per_operation_byte_capacity' as const,
                     });
                 }
-                const aggregateTotals = sumReservations(await readAllManifests(paths.rootDirectory));
+                const aggregateTotals = sumReservations(await readAllHeaders(paths.rootDirectory));
                 if (aggregateTotals.serializedBytes + serializedBytes > limits.aggregate.maxBytes) {
                     return Object.freeze({
                         status: 'refused' as const,
@@ -1513,16 +1803,21 @@ export function createExternalSessionOperationPrivateStagingStore(input: Readonl
                     resolvePreparedReplayGroupPath(paths.operationDirectory, reservation.captureIndex),
                     prepared,
                 );
+                const retained = Object.freeze({
+                    ...reservation,
+                    preparedReplay: Object.freeze({ serializedBytes, contentSha256 }),
+                });
+                await atomicWrite(
+                    resolveGroupRowPath(paths.operationDirectory, reservation.captureIndex),
+                    retained,
+                );
                 await atomicWrite(paths.manifestPath, Object.freeze({
                     ...manifest,
-                    groups: Object.freeze(manifest.groups.map((group) => (
-                        group.groupId === groupId
-                            ? Object.freeze({
-                                ...group,
-                                preparedReplay: Object.freeze({ serializedBytes, contentSha256 }),
-                            })
-                            : group
-                    ))),
+                    summary: summaryWithRowTransition(
+                        manifest.summary,
+                        reservation,
+                        retained,
+                    ),
                 }));
                 return Object.freeze({ status: 'stored' as const });
             });
@@ -1532,17 +1827,31 @@ export function createExternalSessionOperationPrivateStagingStore(input: Readonl
             const operationId = readNonemptyString(clearInput.operationId, 'operationId');
             const groupId = readNonemptyString(clearInput.groupId, 'groupId');
             await withCapacityLock(operationId, async (paths) => {
-                const manifest = await readManifest(paths.manifestPath);
+                const manifest = await readHeader(paths.manifestPath);
                 if (!manifest || manifest.operationId !== operationId) return;
-                const reservation = manifest.groups.find((group) => group.groupId === groupId);
+                const reservation = await readAddressedGroupRow(
+                    paths.operationDirectory,
+                    manifest.summary,
+                    clearInput.captureIndex,
+                    groupId,
+                );
                 if (!reservation?.preparedReplay) return;
+                const {
+                    preparedReplay: _preparedReplay,
+                    ...withoutPreparedReplay
+                } = reservation;
+                const cleared = Object.freeze(withoutPreparedReplay);
+                await atomicWrite(
+                    resolveGroupRowPath(paths.operationDirectory, reservation.captureIndex),
+                    cleared,
+                );
                 await atomicWrite(paths.manifestPath, Object.freeze({
                     ...manifest,
-                    groups: Object.freeze(manifest.groups.map((group) => {
-                        if (group.groupId !== groupId) return group;
-                        const { preparedReplay: _preparedReplay, ...withoutPreparedReplay } = group;
-                        return Object.freeze(withoutPreparedReplay);
-                    })),
+                    summary: summaryWithRowTransition(
+                        manifest.summary,
+                        reservation,
+                        cleared,
+                    ),
                 }));
                 await rm(
                     resolvePreparedReplayGroupPath(paths.operationDirectory, reservation.captureIndex),
@@ -1554,7 +1863,7 @@ export function createExternalSessionOperationPrivateStagingStore(input: Readonl
         async *streamAllGroupsForTerminalCleanup(operationIdInput) {
             const operationId = readNonemptyString(operationIdInput, 'operationId');
             const paths = await resolveStagingPaths(operationId);
-            const manifest = await readManifest(paths.manifestPath);
+            const manifest = await readHeader(paths.manifestPath);
             const state = projectReplayState(manifest, operationId);
             if (state.status !== 'discard_required' || !manifest) {
                 throw new ExternalSessionStagingError(
@@ -1562,7 +1871,11 @@ export function createExternalSessionOperationPrivateStagingStore(input: Readonl
                     'External session staging is not ready for terminal cleanup',
                 );
             }
-            for (const reservation of manifest.groups
+            const groups = await readAllGroupRows(
+                paths.operationDirectory,
+                manifest.summary,
+            );
+            for (const reservation of groups
                 .filter((group) => group.state === 'committed' || group.state === 'acknowledged')
                 .sort((left, right) => right.replayOrder - left.replayOrder)) {
                 const page = await readPageGroup(
@@ -1595,7 +1908,7 @@ export function createExternalSessionOperationPrivateStagingStore(input: Readonl
             const media = recordInput.media.map(normalizeOwnedWorkspaceMediaPath);
             if (media.length === 0) return;
             await withCapacityLock(operationId, async (paths) => {
-                const manifest = await readManifest(paths.manifestPath);
+                const manifest = await readHeader(paths.manifestPath);
                 if (!manifest || manifest.operationId !== operationId) {
                     throw new ExternalSessionStagingError(
                         'external_session_staging_not_found',
@@ -1627,7 +1940,7 @@ export function createExternalSessionOperationPrivateStagingStore(input: Readonl
             const media = transferInput.media.map(normalizeOwnedWorkspaceMediaPath);
             if (media.length === 0) return;
             await withCapacityLock(operationId, async (paths) => {
-                const current = await readManifest(paths.manifestPath);
+                const current = await readHeader(paths.manifestPath);
                 if (!current || current.operationId !== operationId) {
                     throw new ExternalSessionStagingError(
                         'external_session_staging_not_found',
@@ -1641,7 +1954,7 @@ export function createExternalSessionOperationPrivateStagingStore(input: Readonl
                     );
                 }
 
-                const manifests = await readAllManifests(paths.rootDirectory);
+                const manifests = await readAllHeaders(paths.rootDirectory);
                 const requestedByKey = new Map(
                     media.map((entry) => [ownedWorkspaceMediaPathKey(entry), entry]),
                 );
@@ -1709,12 +2022,12 @@ export function createExternalSessionOperationPrivateStagingStore(input: Readonl
             const operationId = readNonemptyString(readInput.operationId, 'operationId');
             const requested = readInput.media?.map(normalizeOwnedWorkspaceMediaPath);
             return await withCapacityLock(operationId, async (paths) => {
-                const manifest = await readManifest(paths.manifestPath);
+                const manifest = await readHeader(paths.manifestPath);
                 if (!manifest || manifest.operationId !== operationId) return Object.freeze([]);
                 const requestedKeys = requested
                     ? new Set(requested.map(ownedWorkspaceMediaPathKey))
                     : null;
-                const manifests = await readAllManifests(paths.rootDirectory);
+                const manifests = await readAllHeaders(paths.rootDirectory);
                 const duplicateKeys = new Set<string>();
                 const eligible = manifest.createdWorkspaceMedia.filter((entry) => {
                     const key = ownedWorkspaceMediaPathKey(entry);
@@ -1751,7 +2064,7 @@ export function createExternalSessionOperationPrivateStagingStore(input: Readonl
             );
             if (acknowledgedKeys.size === 0) return;
             await withCapacityLock(operationId, async (paths) => {
-                const manifest = await readManifest(paths.manifestPath);
+                const manifest = await readHeader(paths.manifestPath);
                 if (!manifest || manifest.operationId !== operationId) return;
                 const nextMedia = manifest.createdWorkspaceMedia.filter(
                     (entry) => !acknowledgedKeys.has(ownedWorkspaceMediaPathKey(entry)),
@@ -1767,7 +2080,7 @@ export function createExternalSessionOperationPrivateStagingStore(input: Readonl
         async completeCapture(completeInput) {
             const operationId = readNonemptyString(completeInput.operationId, 'operationId');
             await withCapacityLock(operationId, async (paths) => {
-                const manifest = await readManifest(paths.manifestPath);
+                const manifest = await readHeader(paths.manifestPath);
                 if (!manifest || manifest.operationId !== operationId) {
                     throw new ExternalSessionStagingError(
                         'external_session_staging_not_found',
@@ -1776,13 +2089,18 @@ export function createExternalSessionOperationPrivateStagingStore(input: Readonl
                 }
                 assertOperationLifecycleAcceptsPage(manifest);
                 if (manifest.captureState === 'complete') return;
-                if (manifest.groups.some((group) => group.state === 'reserved')) {
+                if (manifest.summary.pendingGroupIds.length > 0) {
                     throw new ExternalSessionStagingError(
                         'external_session_staging_incomplete',
                         'External session staging has an incomplete page reservation',
                     );
                 }
-                const finalPage = manifest.groups.at(-1);
+                const finalPage = manifest.summary.groupCount === 0
+                    ? null
+                    : await readGroupRow(
+                        paths.operationDirectory,
+                        manifest.summary.groupCount - 1,
+                    );
                 if (
                     !finalPage
                     || finalPage.sourceState.eof !== true
@@ -1806,7 +2124,7 @@ export function createExternalSessionOperationPrivateStagingStore(input: Readonl
         async reopenAcknowledgedCapture(reopenInput) {
             const operationId = readNonemptyString(reopenInput.operationId, 'operationId');
             return await withCapacityLock(operationId, async (paths) => {
-                const manifest = await readManifest(paths.manifestPath);
+                const manifest = await readHeader(paths.manifestPath);
                 if (!manifest || manifest.operationId !== operationId) {
                     throw new ExternalSessionStagingError(
                         'external_session_staging_not_found',
@@ -1816,16 +2134,23 @@ export function createExternalSessionOperationPrivateStagingStore(input: Readonl
                 assertOperationLifecycleAcceptsPage(manifest);
                 if (
                     manifest.captureState !== 'complete'
-                    || manifest.groups.some((group) => group.state !== 'acknowledged')
+                    || manifest.summary.acknowledgedGroupCount
+                        !== manifest.summary.groupCount
                 ) {
                     throw new ExternalSessionStagingError(
                         'external_session_staging_capture_not_extendable',
                         'External session staging can extend only a fully acknowledged capture',
                     );
                 }
-                const nextReplayOrder = manifest.groups.length === 0
+                // Extension is once per catch-up round, not per page, so reading
+                // the rows to find the oldest replay order costs nothing per page.
+                const groups = await readAllGroupRows(
+                    paths.operationDirectory,
+                    manifest.summary,
+                );
+                const nextReplayOrder = groups.length === 0
                     ? 0
-                    : Math.min(...manifest.groups.map((group) => group.replayOrder)) - 1;
+                    : Math.min(...groups.map((group) => group.replayOrder)) - 1;
                 if (!Number.isSafeInteger(nextReplayOrder)) {
                     throw new ExternalSessionStagingError(
                         'external_session_staging_replay_order_exhausted',
@@ -1837,7 +2162,7 @@ export function createExternalSessionOperationPrivateStagingStore(input: Readonl
                     captureState: 'capturing' as const,
                 }));
                 return Object.freeze({
-                    nextCaptureIndex: manifest.groups.length,
+                    nextCaptureIndex: manifest.summary.groupCount,
                     nextReplayOrder,
                 });
             });
@@ -1846,9 +2171,9 @@ export function createExternalSessionOperationPrivateStagingStore(input: Readonl
         async resetUnpublishedCapture(resetInput) {
             const operationId = readNonemptyString(resetInput.operationId, 'operationId');
             await withCapacityLock(operationId, async (paths) => {
-                const manifest = await readManifest(paths.manifestPath);
+                const manifest = await readHeader(paths.manifestPath);
                 if (!manifest || manifest.operationId !== operationId) return;
-                if (manifest.groups.some((group) => group.state === 'acknowledged')) {
+                if (manifest.summary.acknowledgedGroupCount > 0) {
                     throw new ExternalSessionStagingError(
                         'external_session_staging_published_capture_reset_forbidden',
                         'External session staging cannot reset a capture with acknowledged rows',
@@ -1861,21 +2186,34 @@ export function createExternalSessionOperationPrivateStagingStore(input: Readonl
         async rollbackUnacknowledgedCaptureExtension(rollbackInput) {
             const operationId = readNonemptyString(rollbackInput.operationId, 'operationId');
             await withCapacityLock(operationId, async (paths) => {
-                const manifest = await readManifest(paths.manifestPath);
+                const manifest = await readHeader(paths.manifestPath);
                 if (!manifest || manifest.operationId !== operationId) return;
-                if (manifest.captureState === 'complete') return;
-                const firstUnacknowledgedIndex = manifest.groups.findIndex(
+                if (manifest.captureState === 'complete') {
+                    await removeUnadmittedGroupRowMetadata(
+                        paths.operationDirectory,
+                        manifest.summary.groupCount,
+                    );
+                    return;
+                }
+                // Rolling back an extension is a recovery path, not a per-page
+                // one, so it reads the rows and recomputes the retained fold
+                // through the same summary owner an append maintains.
+                const groups = await readAllGroupRows(
+                    paths.operationDirectory,
+                    manifest.summary,
+                );
+                const firstUnacknowledgedIndex = groups.findIndex(
                     (group) => group.state !== 'acknowledged',
                 );
                 const acknowledgedPrefixLength = firstUnacknowledgedIndex < 0
-                    ? manifest.groups.length
+                    ? groups.length
                     : firstUnacknowledgedIndex;
                 if (
                     acknowledgedPrefixLength === 0
-                    || manifest.groups
+                    || groups
                         .slice(0, acknowledgedPrefixLength)
                         .some((group) => group.state !== 'acknowledged')
-                    || manifest.groups
+                    || groups
                         .slice(acknowledgedPrefixLength)
                         .some((group) => group.state === 'acknowledged')
                 ) {
@@ -1884,7 +2222,12 @@ export function createExternalSessionOperationPrivateStagingStore(input: Readonl
                         'External session staging cannot roll back a non-tail capture extension',
                     );
                 }
-                for (const group of manifest.groups.slice(acknowledgedPrefixLength)) {
+                const retained = groups.slice(0, acknowledgedPrefixLength);
+                // Keep the old header charging every tail payload until both
+                // large payload shapes are gone. A crash before the atomic
+                // header write can therefore overcharge briefly, but it can
+                // never leave an uncounted private payload behind.
+                for (const group of groups.slice(acknowledgedPrefixLength)) {
                     await rm(
                         resolvePageGroupPath(paths.operationDirectory, group.captureIndex),
                         { force: true },
@@ -1894,18 +2237,23 @@ export function createExternalSessionOperationPrivateStagingStore(input: Readonl
                         { force: true },
                     );
                 }
+                const retainedSummary = summarizeGroupRows(retained);
                 await atomicWrite(paths.manifestPath, Object.freeze({
                     ...manifest,
                     captureState: 'complete' as const,
-                    groups: Object.freeze(manifest.groups.slice(0, acknowledgedPrefixLength)),
+                    summary: retainedSummary,
                 }));
+                await removeUnadmittedGroupRowMetadata(
+                    paths.operationDirectory,
+                    retainedSummary.groupCount,
+                );
             });
         },
 
         async resumeOperation(resumeInput) {
             const operationId = readNonemptyString(resumeInput.operationId, 'operationId');
             await withCapacityLock(operationId, async (paths) => {
-                const manifest = await readManifest(paths.manifestPath);
+                const manifest = await readHeader(paths.manifestPath);
                 if (!manifest || manifest.operationId !== operationId) {
                     throw new ExternalSessionStagingError(
                         'external_session_staging_not_found',
@@ -1934,20 +2282,30 @@ export function createExternalSessionOperationPrivateStagingStore(input: Readonl
                 'acceptedThroughServerSeq',
             );
             await withCapacityLock(operationId, async (paths) => {
-                const manifest = await readManifest(paths.manifestPath);
-                if (!manifest || manifest.operationId !== operationId) {
+                const storedManifest = await readHeader(paths.manifestPath);
+                if (!storedManifest || storedManifest.operationId !== operationId) {
                     throw new ExternalSessionStagingError(
                         'external_session_staging_not_found',
                         'External session staging operation was not begun',
                     );
                 }
+                const manifest = await repairHeaderSummaryFromGroupRows(
+                    paths,
+                    storedManifest,
+                    atomicWrite,
+                );
                 if (manifest.captureState !== 'complete') {
                     throw new ExternalSessionStagingError(
                         'external_session_staging_capture_incomplete',
                         'External session staging cannot acknowledge replay before capture completes',
                     );
                 }
-                const group = manifest.groups.find((candidate) => candidate.groupId === groupId);
+                const group = await readAddressedGroupRow(
+                    paths.operationDirectory,
+                    manifest.summary,
+                    acknowledgeInput.captureIndex,
+                    groupId,
+                );
                 if (!group || group.state === 'reserved') {
                     throw new ExternalSessionStagingError(
                         'external_session_staging_group_not_ready',
@@ -1963,7 +2321,8 @@ export function createExternalSessionOperationPrivateStagingStore(input: Readonl
                     }
                     return;
                 }
-                const priorAcceptedThroughServerSeq = readAcceptedThroughServerSeq(manifest);
+                const priorAcceptedThroughServerSeq =
+                    manifest.summary.acceptedThroughServerSeq;
                 if (
                     priorAcceptedThroughServerSeq !== null
                     && acceptedThroughServerSeq < priorAcceptedThroughServerSeq
@@ -1973,17 +2332,22 @@ export function createExternalSessionOperationPrivateStagingStore(input: Readonl
                         'External session staging acknowledgment regressed the server checkpoint',
                     );
                 }
+                const acknowledged = Object.freeze({
+                    ...group,
+                    state: 'acknowledged' as const,
+                    acceptedThroughServerSeq,
+                });
+                await atomicWrite(
+                    resolveGroupRowPath(paths.operationDirectory, group.captureIndex),
+                    acknowledged,
+                );
                 await atomicWrite(paths.manifestPath, Object.freeze({
                     ...manifest,
-                    groups: Object.freeze(manifest.groups.map((candidate) => (
-                        candidate.groupId === groupId
-                            ? Object.freeze({
-                                ...candidate,
-                                state: 'acknowledged' as const,
-                                acceptedThroughServerSeq,
-                            })
-                            : candidate
-                    ))),
+                    summary: summaryWithRowTransition(
+                        manifest.summary,
+                        group,
+                        acknowledged,
+                    ),
                 }));
             });
         },
@@ -1991,15 +2355,21 @@ export function createExternalSessionOperationPrivateStagingStore(input: Readonl
         async cleanupTerminalOperation(completeInput) {
             const operationId = readNonemptyString(completeInput.operationId, 'operationId');
             return await withCapacityLock(operationId, async (paths) => {
-                const manifest = await readManifest(paths.manifestPath);
-                if (!manifest || manifest.operationId !== operationId) {
+                const storedManifest = await readHeader(paths.manifestPath);
+                if (!storedManifest || storedManifest.operationId !== operationId) {
                     return Object.freeze({ status: 'missing' as const });
                 }
+                const manifest = await repairHeaderSummaryFromGroupRows(
+                    paths,
+                    storedManifest,
+                    atomicWrite,
+                );
                 if (
                     manifest.lifecycle.state !== 'discard_required'
                     && (
                         manifest.captureState !== 'complete'
-                        || manifest.groups.some((group) => group.state !== 'acknowledged')
+                        || manifest.summary.acknowledgedGroupCount
+                            !== manifest.summary.groupCount
                     )
                 ) {
                     return Object.freeze({ status: 'not_ready' as const });
@@ -2017,7 +2387,7 @@ export function createExternalSessionOperationPrivateStagingStore(input: Readonl
                     const publishedKeys = new Set(
                         manifest.createdWorkspaceMedia.map(ownedWorkspaceMediaPathKey),
                     );
-                    const manifests = await readAllManifests(paths.rootDirectory);
+                    const manifests = await readAllHeaders(paths.rootDirectory);
                     for (const candidate of manifests) {
                         if (candidate.operationId === operationId) continue;
                         const nextMedia = candidate.createdWorkspaceMedia.filter(
@@ -2044,7 +2414,7 @@ export function createExternalSessionOperationPrivateStagingStore(input: Readonl
             const operationId = readNonemptyString(pauseInput.operationId, 'operationId');
             const expiresAtMs = readNonnegativeSafeInteger(pauseInput.expiresAtMs, 'expiresAtMs');
             await withCapacityLock(operationId, async (paths) => {
-                const manifest = await readManifest(paths.manifestPath);
+                const manifest = await readHeader(paths.manifestPath);
                 if (!manifest || manifest.operationId !== operationId) {
                     throw new ExternalSessionStagingError(
                         'external_session_staging_not_found',
@@ -2068,7 +2438,7 @@ export function createExternalSessionOperationPrivateStagingStore(input: Readonl
             const operationId = readNonemptyString(markInput.operationId, 'operationId');
             const nowMs = readNonnegativeSafeInteger(markInput.nowMs, 'nowMs');
             return await withCapacityLock(operationId, async (paths) => {
-                const manifest = await readManifest(paths.manifestPath);
+                const manifest = await readHeader(paths.manifestPath);
                 if (!manifest || manifest.operationId !== operationId) {
                     throw new ExternalSessionStagingError(
                         'external_session_staging_not_found',

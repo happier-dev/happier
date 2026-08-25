@@ -2,6 +2,13 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { PluginAgentContributionV2 } from '@happier-dev/protocol';
 
+import { accountSettingsParse } from '@happier-dev/protocol';
+import * as activeAccountSettingsSnapshot from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import {
+    getActiveAccountSettingsSnapshot,
+    resetActiveAccountSettingsSnapshotForTests,
+    setActiveAccountSettingsSnapshot,
+} from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { createExternalSessionFollowTargetHostOperation } from './followTargetHostOperation';
 import type {
     ExternalSessionFollowProviderOps,
@@ -56,6 +63,13 @@ const agent = Object.freeze({
     }),
 });
 
+const configuredExternalSessionSourceRevisions = activeAccountSettingsSnapshot as typeof activeAccountSettingsSnapshot & Readonly<{
+    notifyActiveAccountConnectedServicesProjection(scopeKey: string): void;
+    resolveActiveAccountConfiguredExternalSessionSourceRevision(
+        snapshot: activeAccountSettingsSnapshot.ActiveAccountSettingsSnapshot | null,
+    ): string;
+}>;
+
 function request(overrides: Readonly<Record<string, unknown>> = {}) {
     return {
         pluginId: 'happier.codex',
@@ -85,6 +99,82 @@ function isAbortedSignal(signal: AbortSignal | null): boolean {
 }
 
 describe('external-session provider-session follow target host operation', () => {
+    it('retires a follow target bound before a Connected Services-only projection revision', async () => {
+        const activeSnapshot = Object.freeze({
+            source: 'network' as const,
+            settings: accountSettingsParse({}),
+            settingsVersion: 1,
+            loadedAtMs: 1,
+            settingsSecretsReadKeys: [],
+            scopeKey: 'follow-target-account',
+        });
+        setActiveAccountSettingsSnapshot(activeSnapshot);
+        const accountRevision = configuredExternalSessionSourceRevisions
+            .resolveActiveAccountConfiguredExternalSessionSourceRevision(
+                getActiveAccountSettingsSnapshot(),
+            );
+        const release = vi.fn(async () => undefined);
+        const readAccount = vi.fn(async () => ({ connectedServicesV2: [] }));
+        const providerOps: ExternalSessionFollowProviderOps = {
+            validateSource: async ({ source }) => ({ ok: true, source }),
+            resolveLinkIdentity: async ({ source, remoteSessionId }) => ({
+                source: {
+                    ...source,
+                    homePath: '/canonical/codex',
+                },
+                remoteSessionId,
+                linkData: {},
+            }),
+            pageTranscript: async () => ({
+                items: [],
+                nextCursor: null,
+                tailCursor: null,
+                hasMore: false,
+                truncated: false,
+            }),
+            readAfterTranscript: async () => ({ outcome: 'already_current' }),
+        };
+        const operation = createExternalSessionFollowTargetHostOperation({
+            machineId: 'machine-1',
+            dependencies: {
+                acquireRuntimeContext: async () => ({
+                    pluginId: 'happier.codex',
+                    agentId: 'codex',
+                    generationId: 'generation-1',
+                    agent,
+                    providerOps,
+                    retirementSignal: new AbortController().signal,
+                    isCurrent: () => true,
+                    release,
+                }),
+                readAccount,
+                readAccountRevision: () => configuredExternalSessionSourceRevisions
+                    .resolveActiveAccountConfiguredExternalSessionSourceRevision(
+                        getActiveAccountSettingsSnapshot(),
+                    ),
+                readAgentSettings: () => getActiveAccountSettingsSnapshot()?.settings,
+                readActiveServerId: () => 'cloud',
+            },
+        });
+
+        try {
+            await expect(operation.execute(request({ accountRevision }))).resolves.toMatchObject({
+                status: 'resolved',
+            });
+
+            configuredExternalSessionSourceRevisions
+                .notifyActiveAccountConnectedServicesProjection('follow-target-account');
+
+            await expect(operation.execute(request({ accountRevision }))).resolves.toEqual({
+                status: 'unavailable',
+                code: 'plugin_generation_retired',
+            });
+            expect(readAccount).toHaveBeenCalledOnce();
+        } finally {
+            resetActiveAccountSettingsSnapshotForTests();
+        }
+    });
+
     it('resolves one exact target from the bound daemon generation without listing candidates', async () => {
         const listCandidates = vi.fn();
         const providerOps: ExternalSessionFollowProviderOps & Pick<

@@ -182,11 +182,14 @@ describe('persisted takeover source continuity', () => {
     } as unknown as Parameters<
       typeof reconstructPersistedTakeoverTargetFromRetiredMetadata
     >[0]['rawSession'];
+    // An installed Agent's retired tombstone persists the qualified routing id
+    // the registry assigned, never the manifest-local id.
+    const expectedAgentRoutingId = 'example.plugin/example';
     const metadata = {
       path: '/tmp/external-session',
       externalHistoryImportV1: {
         v: 1,
-        agentId: 'example',
+        agentId: expectedAgentRoutingId,
         remoteSessionId: 'remote-1',
         importedAtMs: 100,
         source: { kind: 'jsonl' },
@@ -198,17 +201,27 @@ describe('persisted takeover source continuity', () => {
       record,
       rawSession,
       metadata,
+      expectedAgentRoutingId,
     })).toMatchObject({
       rawSession,
       metadata,
       sessionPath: '/tmp/external-session',
-      agentId: 'example',
+      agentId: expectedAgentRoutingId,
       machineId: 'machine-1',
       remoteSessionId: 'remote-1',
       linkGeneration: 'link-1',
       source: { kind: 'jsonl' },
       linkData: { sourceFile: '/tmp/transcript.jsonl' },
     });
+    // The record's bare `localId` never addresses an installed Agent, so a
+    // caller that passed one instead of the registry's routing id must not
+    // reconstruct this target.
+    expect(reconstructPersistedTakeoverTargetFromRetiredMetadata({
+      record,
+      rawSession,
+      metadata,
+      expectedAgentRoutingId: record.request.source.qualifiedIdentity.agent.localId,
+    })).toBeNull();
     expect(reconstructPersistedTakeoverTargetFromRetiredMetadata({
       record,
       rawSession,
@@ -216,6 +229,7 @@ describe('persisted takeover source continuity', () => {
         ...metadata,
         externalSessionV1: {},
       },
+      expectedAgentRoutingId,
     })).toBeNull();
     expect(reconstructPersistedTakeoverTargetFromRetiredMetadata({
       record,
@@ -227,6 +241,7 @@ describe('persisted takeover source continuity', () => {
           remoteSessionId: 'other-remote',
         },
       },
+      expectedAgentRoutingId,
     })).toBeNull();
   });
 

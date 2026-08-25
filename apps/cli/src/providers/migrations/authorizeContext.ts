@@ -9,6 +9,7 @@ import {
   type ProviderAccountSettingsMigrationContextV1,
 } from '@happier-dev/protocol';
 import type { ResolvedProviderContribution } from '@/plugins/projection/registry/types';
+import type { ProviderOperationLifetime } from '@/providers/operationLifetime';
 
 import { resolveProviderConnectionForMachine } from '../registry';
 import { collectProviderConnectionDnsEvidence } from '../registry/dnsEvidence';
@@ -26,6 +27,7 @@ export async function authorizeLegacyProfileMigrationContext(input: Readonly<{
   providersByContributionKey: ReadonlyMap<string, ResolvedProviderContribution>;
   machineId: string;
   resolveAddresses?: (hostname: string) => Promise<readonly string[]>;
+  lifetime: ProviderOperationLifetime;
 }>): Promise<ProviderAccountSettingsMigrationContextV1> {
   const classifiedContext = classifyLegacyProfileMigrationConflictsV1(input.rawSettings, input.context);
   const preview = migrateProviderAccountSettingsV1(input.rawSettings, classifiedContext);
@@ -51,6 +53,7 @@ export async function authorizeLegacyProfileMigrationContext(input: Readonly<{
       providerSettings: settings,
       registry,
       ...(input.resolveAddresses ? { resolveAddresses: input.resolveAddresses } : {}),
+      lifetime: input.lifetime,
     });
     const resolution = resolveProviderConnectionForMachine({
       connectionId,

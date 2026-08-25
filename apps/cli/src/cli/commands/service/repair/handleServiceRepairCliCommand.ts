@@ -277,6 +277,9 @@ export async function handleServiceRepairCliCommand(params: Readonly<{
       'Start a temporary daemon with externally installed plugin activation skipped:',
       `  ${pluginRecoveryCommand}`,
       'Then disable, remove, or inspect the affected plugin and restart the daemon normally.',
+      'If the durable plugin registry record itself cannot be read, recovery renames it to',
+      '<record>.invalid-<timestamp> and starts from an empty registry; the original file is kept',
+      'and installed plugins have to be reinstalled or the record restored after repair.',
     ].join('\n'));
     return;
   }

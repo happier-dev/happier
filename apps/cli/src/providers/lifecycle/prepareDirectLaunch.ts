@@ -56,10 +56,6 @@ export type DirectProviderLaunchResult =
       transferLaunchMaterializationCleanupOwnership: () => void;
       cleanupOnExit: ProviderLaunchCleanup | null;
     }>
-  | Readonly<{
-      ok: false;
-      kind: 'managed_provider_requires_daemon';
-    }>
   | Readonly<{ ok: false; error: ProviderErrorV1 }>;
 
 /**
@@ -125,7 +121,10 @@ export async function prepareDirectProviderLaunch(input: Readonly<{
         await scope.release();
         return {
           ok: false,
-          kind: 'managed_provider_requires_daemon',
+          error: createProviderErrorV1('provider_managed_requires_daemon', {
+            connectionId: input.selection?.ref.providerConnectionId ?? undefined,
+            ...(input.machineId ? { machineId: input.machineId } : {}),
+          }),
         };
       }
     }
@@ -144,7 +143,10 @@ export async function prepareDirectProviderLaunch(input: Readonly<{
       await scope.release();
       return {
         ok: false,
-        kind: 'managed_provider_requires_daemon',
+        error: createProviderErrorV1('provider_managed_requires_daemon', {
+          connectionId: input.selection?.ref.providerConnectionId ?? undefined,
+          ...(input.machineId ? { machineId: input.machineId } : {}),
+        }),
       };
     }
     const materialized = await attempt.materializeAfterHooks();

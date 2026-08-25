@@ -24,6 +24,9 @@ let active: ActiveAccountSettingsSnapshot | null = null;
 // This token is intentionally owner-local: it advances at Account lifetime
 // boundaries, not when the active Account receives a newer settings revision.
 let activeLifetimeToken = 0;
+// Connected Services projections can change the configured External Session
+// source set without changing Account Settings themselves.
+let activeConnectedServicesProjectionRevision = 0;
 const listeners = new Set<ActiveAccountSettingsSnapshotListener>();
 
 function belongsToSameAccount(
@@ -111,10 +114,40 @@ export function resolveActiveAccountSettingsSnapshotRevision(
   ].join(':');
 }
 
+/**
+ * The configured External Session source revision. It extends the Account
+ * Settings revision with the active Account lifetime and Connected Services
+ * projection so source materializers use their existing revision lifecycle
+ * when either input changes.
+ */
+export function resolveActiveAccountConfiguredExternalSessionSourceRevision(
+  snapshot: ActiveAccountSettingsSnapshot | null,
+): string {
+  return [
+    resolveActiveAccountSettingsSnapshotRevision(snapshot),
+    'connected-services',
+    activeLifetimeToken,
+    activeConnectedServicesProjectionRevision,
+  ].join(':');
+}
+
+/**
+ * Publishes a Connected Services projection change through the existing active
+ * Account snapshot cut. A notification for a non-active Account cannot retire
+ * the active Account's configured sources.
+ */
+export function notifyActiveAccountConnectedServicesProjection(scopeKey: string): void {
+  const snapshot = active;
+  if (snapshot?.scopeKey && snapshot.scopeKey !== scopeKey) return;
+  activeConnectedServicesProjectionRevision += 1;
+  emitActiveAccountSettingsSnapshot(snapshot, snapshot);
+}
+
 export function resetActiveAccountSettingsSnapshotForTests(): void {
   const previous = active;
   active = null;
   if (previous) activeLifetimeToken += 1;
+  activeConnectedServicesProjectionRevision = 0;
 }
 
 export function subscribeActiveAccountSettingsSnapshot(listener: ActiveAccountSettingsSnapshotListener): () => void {

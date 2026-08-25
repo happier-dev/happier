@@ -1,6 +1,3 @@
-import axios from 'axios';
-import { z } from 'zod';
-
 import {
   DaemonPluginInvocationLogReadRequestV1Schema,
   DaemonPluginInvocationLogReadResponseV1Schema,
@@ -10,22 +7,12 @@ import {
 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
-import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { resolveCurrentAccountMachineTarget } from '@/api/machine/resolveCurrentAccountMachineTarget';
 import { fetchServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import { readStoredCredentials } from '@/persistence';
 import { callMachineRpc } from '@/session/transport/rpc/machineRpc';
 import type { PluginInvocationLogQuery } from '@/ui/logger';
-
-const MACHINE_INVENTORY_ROW_SCHEMA = z.object({
-  id: z.string().trim().min(1),
-  metadata: z.string(),
-  active: z.boolean(),
-  revokedAt: z.number().nullable(),
-  replacedByMachineId: z.string().nullable(),
-}).passthrough();
-
-const MACHINE_INVENTORY_SCHEMA = z.array(MACHINE_INVENTORY_ROW_SCHEMA);
 
 export type PluginInvocationLogMachineTarget = Readonly<{
   serverIdentityId: string;
@@ -54,33 +41,21 @@ function nonEmptyString(value: unknown): string | null {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
 }
 
-function readMachineLabel(metadata: string, fallback: string): string {
-  try {
-    const value: unknown = JSON.parse(metadata);
-    if (!value || typeof value !== 'object') return fallback;
-    const host = nonEmptyString((value as Readonly<Record<string, unknown>>).host);
-    return host ?? fallback;
-  } catch {
-    return fallback;
-  }
-}
-
 function unavailable(code: string, message: string): PluginInvocationLogTargetResolution {
   return { kind: 'unavailable', code, message };
 }
 
 function projectCurrentMachineTarget(params: Readonly<{
-  row: z.infer<typeof MACHINE_INVENTORY_ROW_SCHEMA>;
+  machineId: string;
+  machineLabel: string;
   serverIdentityId: string;
   serverLabel: string;
-}>): PluginInvocationLogMachineTarget | null {
-  const { row } = params;
-  if (!row.active || row.revokedAt !== null || row.replacedByMachineId !== null) return null;
+}>): PluginInvocationLogMachineTarget {
   return {
     serverIdentityId: params.serverIdentityId,
     serverLabel: params.serverLabel,
-    machineId: row.id,
-    machineLabel: readMachineLabel(row.metadata, row.id),
+    machineId: params.machineId,
+    machineLabel: params.machineLabel,
   };
 }
 
@@ -112,59 +87,35 @@ export async function resolvePluginInvocationLogTarget(params: Readonly<{
     return unavailable('server_identity_unavailable', 'The current server identity is unavailable.');
   }
 
-  let rawInventory: unknown;
-  try {
-    const response = await axios.get<unknown>(`${resolveServerHttpBaseUrl()}/v1/machines`, {
-      headers: {
-        ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
-        Authorization: `Bearer ${credentials.token}`,
-      },
-      timeout: 20_000,
-      ...(params.signal ? { signal: params.signal } : {}),
-    });
-    rawInventory = response.data;
-  } catch (error) {
-    params.signal?.throwIfAborted();
-    return unavailable('machine_inventory_unavailable', 'The current machine inventory is unavailable.');
-  }
-  params.signal?.throwIfAborted();
-
-  const inventory = MACHINE_INVENTORY_SCHEMA.safeParse(rawInventory);
-  if (!inventory.success) {
-    return unavailable('machine_inventory_unavailable', 'The current machine inventory is unavailable.');
-  }
-
   if (snapshot.status !== 'ready') {
     return unavailable('server_identity_unavailable', 'The current server identity is unavailable.');
   }
   const canonicalServerUrl = snapshot.features.capabilities.server?.canonicalServerUrl;
   const serverLabel = nonEmptyString(canonicalServerUrl) ?? resolveServerHttpBaseUrl();
-  const requestedMachineId = nonEmptyString(params.requestedMachineId);
-  if (params.requestedMachineId !== undefined && !requestedMachineId) {
-    return unavailable('machine_not_current', 'The selected machine is no longer active.');
-  }
-
-  if (requestedMachineId) {
-    const selected = inventory.data.find((row) => row.id === requestedMachineId) ?? null;
-    const target = selected
-      ? projectCurrentMachineTarget({ row: selected, serverIdentityId, serverLabel })
-      : null;
-    return target
-      ? { kind: 'selected', target }
-      : unavailable('machine_not_current', 'The selected machine is no longer active.');
-  }
-
-  const candidates = inventory.data.flatMap((row) => {
-    const target = projectCurrentMachineTarget({ row, serverIdentityId, serverLabel });
-    return target ? [target] : [];
+  const resolved = await resolveCurrentAccountMachineTarget({
+    token: credentials.token,
+    ...(params.requestedMachineId !== undefined ? { requestedMachineId: params.requestedMachineId } : {}),
+    ...(params.signal ? { signal: params.signal } : {}),
   });
-  if (candidates.length === 0) {
-    return unavailable('no_current_machine', 'No current machine is available to read plugin logs.');
+  if (resolved.kind === 'unavailable') return resolved;
+  if (resolved.kind === 'selection_required') {
+    return {
+      kind: 'selection_required',
+      candidates: resolved.candidates.map((candidate) => projectCurrentMachineTarget({
+        ...candidate,
+        serverIdentityId,
+        serverLabel,
+      })),
+    };
   }
-  if (candidates.length > 1) {
-    return { kind: 'selection_required', candidates };
-  }
-  return { kind: 'selected', target: candidates[0]! };
+  return {
+    kind: 'selected',
+    target: projectCurrentMachineTarget({
+      ...resolved.target,
+      serverIdentityId,
+      serverLabel,
+    }),
+  };
 }
 
 /**

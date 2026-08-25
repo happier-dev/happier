@@ -22,6 +22,7 @@ function subject(request: TargetActionApprovalRequestV1): unknown {
     generation: request.generation,
     policyFingerprint: request.policyFingerprint,
     subjectFingerprint: request.subjectFingerprint,
+    replayPlacement: request.replayPlacement,
     summary: request.summary,
     detail: request.detail,
   };

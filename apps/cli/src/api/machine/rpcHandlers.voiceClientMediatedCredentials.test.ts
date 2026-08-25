@@ -124,6 +124,14 @@ function manifest() {
   };
 }
 
+function groupTarget(groupId: string) {
+  return Object.freeze({
+    kind: 'group' as const,
+    service,
+    groupId,
+  });
+}
+
 function snapshot(accountId: string): ActiveAccountSettingsSnapshot {
   return {
     source: 'network',
@@ -141,6 +149,28 @@ function snapshot(accountId: string): ActiveAccountSettingsSnapshot {
       connectedAccountPurposeBindingsV1: { v: 1, bindings: [{
         purpose,
         target: { kind: 'account', account: { service, accountId } },
+      }] },
+    }),
+  };
+}
+
+function groupSnapshot(groupId: string): ActiveAccountSettingsSnapshot {
+  return {
+    source: 'network',
+    scopeKey: 'account-scope',
+    settingsVersion: 4,
+    loadedAtMs: 1,
+    settingsSecretsReadKeys: [],
+    settings: accountSettingsParse({
+      voiceSettingsV1: { credentialBindings: [{
+        contribution,
+        credentialSlotId: 'api_key',
+        credentialSource: { kind: 'connectedAccount' },
+        credentialBindings: { account: {} },
+      }] },
+      connectedAccountPurposeBindingsV1: { v: 1, bindings: [{
+        purpose,
+        target: { kind: 'group', service, groupId },
       }] },
     }),
   };
@@ -384,5 +414,55 @@ describe('Voice client mediated Connected Account credential RPC', () => {
         'chatgpt-account-id': 'account-a',
       },
     });
+  });
+  /**
+   * A group selection is the one case the Connected Account owner cannot fence
+   * for this caller: the concrete account is resolved daemon-side, so no
+   * `expectedAccount` can be carried and the carried selection is the only
+   * cross-process authority check there is.
+   */
+  it('produces no headers when the caller captured one account group and this daemon has selected another', async () => {
+    const owner = connectedAccountsOwner({ resolvedAccountId: 'account-b' });
+    const handler = registerHandler({
+      materialize: owner.materialize,
+      currentSnapshot: groupSnapshot('group-b'),
+    });
+
+    await expect(handler({
+      contribution,
+      platform: 'web',
+      phase: 'prepare',
+      operationId: 'client-auth',
+      declarationAuthority: projectedAuthority(DAEMON_REGISTRY_GENERATION),
+      expectedSelection: groupTarget('group-a'),
+    })).resolves.toEqual({
+      ok: false,
+      errorCode: 'plugin_voice_credential_access_unavailable',
+    });
+    expect(owner.materialize).not.toHaveBeenCalled();
+  });
+
+  it('materializes a group selection the caller and this daemon both name', async () => {
+    const owner = connectedAccountsOwner({ resolvedAccountId: 'account-b' });
+    const handler = registerHandler({
+      materialize: owner.materialize,
+      currentSnapshot: groupSnapshot('group-a'),
+    });
+
+    await expect(handler({
+      contribution,
+      platform: 'web',
+      phase: 'prepare',
+      operationId: 'client-auth',
+      declarationAuthority: projectedAuthority(DAEMON_REGISTRY_GENERATION),
+      expectedSelection: groupTarget('group-a'),
+    })).resolves.toEqual({
+      ok: true,
+      headers: {
+        authorization: 'Bearer account-b',
+        'chatgpt-account-id': 'account-b',
+      },
+    });
+    expect(owner.calls).toEqual([{ expectedAccount: undefined }]);
   });
 });

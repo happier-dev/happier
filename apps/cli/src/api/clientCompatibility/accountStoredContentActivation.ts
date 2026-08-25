@@ -36,6 +36,18 @@ export class AccountStoredContentClientUpgradeRequiredError extends Error {
   }
 }
 
+export class AccountStoredContentServerCompatibilityUnavailableError extends Error {
+  readonly code = 'account_stored_content_compatibility_unavailable' as const;
+  readonly retryable = true as const;
+
+  constructor(
+    readonly reason: Extract<CliServerFeaturesSnapshot, { status: 'error' }>['reason'],
+  ) {
+    super('Account stored-content server compatibility is temporarily unavailable.');
+    this.name = 'AccountStoredContentServerCompatibilityUnavailableError';
+  }
+}
+
 export function createAccountStoredContentClientUpgradeRequiredError(
     decision: Exclude<
       AccountStoredContentServerCompatibilityDecision,
@@ -48,6 +60,11 @@ export function createAccountStoredContentClientUpgradeRequiredError(
 export function assertCurrentAccountStoredContentServerCompatibility(
   snapshot: CliServerFeaturesSnapshot | undefined,
 ): void {
+  if (snapshot?.status === 'error') {
+    throw new AccountStoredContentServerCompatibilityUnavailableError(
+      snapshot.reason,
+    );
+  }
   const requirements = snapshot?.status === 'ready'
     ? snapshot.features.capabilities.accountStoredContentCompatibility
     : undefined;

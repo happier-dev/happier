@@ -1,5 +1,4 @@
-import { execFile } from 'node:child_process';
-
+import { execFileWithDeadline, isPidPresent } from '@happier-dev/cli-common/process';
 import psList from 'ps-list';
 
 import { taskkillWindowsProcessTree } from '@/subprocess/supervision/taskkillWindowsProcessTree';
@@ -9,15 +8,6 @@ const DESCENDANT_DISCOVERY_INTERVAL_MS = 25;
 const DIRECT_CHILD_COMMAND_TIMEOUT_MS = 500;
 
 type ProcessTreeRoot = Readonly<{ pid?: number }>;
-
-function isAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 async function readDescendantPids(rootPid: number, timeoutMs: number): Promise<number[] | null> {
   const timedOut = Symbol('descendant-discovery-timeout');
@@ -84,33 +74,34 @@ function bestEffortKillPid(pid: number, signal: NodeJS.Signals): void {
 async function bestEffortSignalDirectChildren(parentPid: number, signal: NodeJS.Signals): Promise<void> {
   if (process.platform === 'win32') return;
   const signalName = signal.replace(/^SIG/, '');
-  await new Promise<void>((resolve) => {
-    execFile(
-      'pkill',
-      [`-${signalName}`, '-P', String(parentPid)],
-      { timeout: DIRECT_CHILD_COMMAND_TIMEOUT_MS },
-      () => resolve(),
-    );
-  });
+  // Signal-only: nothing reads this command's output, and `pkill` exits 1 when nothing matched.
+  await execFileWithDeadline('pkill', [`-${signalName}`, '-P', String(parentPid)], {
+    timeout: DIRECT_CHILD_COMMAND_TIMEOUT_MS,
+  }).catch(() => {});
 }
 
 async function bestEffortReadDirectChildPids(parentPid: number): Promise<number[]> {
   if (process.platform === 'win32') return [];
 
-  return await new Promise<number[]>((resolve) => {
-    execFile(
-      'pgrep',
-      ['-P', String(parentPid)],
-      { encoding: 'utf8', timeout: DIRECT_CHILD_COMMAND_TIMEOUT_MS },
-      (_error, stdout) => {
-        const childPids = String(stdout ?? '')
-          .split(/\s+/)
-          .map((value) => Number.parseInt(value, 10))
-          .filter((pid) => Number.isFinite(pid) && pid > 0 && pid !== parentPid);
-        resolve(Array.from(new Set(childPids)));
-      },
-    );
-  });
+  // The deadline is owned here rather than by `child_process`, whose `timeout` destroys a
+  // finished `pgrep`'s buffered pid list and still reports success. That empty list is read below
+  // as "this process has no direct children", and the kill walks past them — leaving the user's
+  // agent subprocesses running after their session was terminated.
+  //
+  // `pgrep` exits 1 when nothing matched, so both settlements are read the same way: the pid list
+  // it printed, or nothing.
+  const stdout = await execFileWithDeadline('pgrep', ['-P', String(parentPid)], {
+    timeout: DIRECT_CHILD_COMMAND_TIMEOUT_MS,
+  }).then(
+    (result) => String(result.stdout ?? ''),
+    (error: unknown) => String((error as { stdout?: unknown } | null)?.stdout ?? ''),
+  );
+
+  const childPids = stdout
+    .split(/\s+/)
+    .map((value) => Number.parseInt(value, 10))
+    .filter((pid) => Number.isFinite(pid) && pid > 0 && pid !== parentPid);
+  return Array.from(new Set(childPids));
 }
 
 function hasProcessGroupForPid(pid: number): boolean {
@@ -137,7 +128,7 @@ function bestEffortKillProcessGroup(groupLeaderPid: number, signal: NodeJS.Signa
 async function waitForAllGone(pids: number[], timeoutMs: number): Promise<void> {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
-    if (pids.every((pid) => !isAlive(pid))) return;
+    if (pids.every((pid) => !isPidPresent(pid))) return;
     await new Promise((r) => setTimeout(r, 25));
   }
 }
@@ -180,7 +171,7 @@ export async function killProcessTree(
       for (const targetPid of all) bestEffortKillPid(targetPid, 'SIGTERM');
     }
     await waitForAllGone(all, graceMs);
-    const remaining = all.filter((targetPid) => isAlive(targetPid));
+    const remaining = all.filter((targetPid) => isPidPresent(targetPid));
     if (remaining.length === 0) return;
     try {
       await terminateWindowsTree({ pid, force: true });
@@ -197,7 +188,7 @@ export async function killProcessTree(
   for (const targetPid of all) bestEffortKillPid(targetPid, 'SIGTERM');
   await waitForAllGone(all, graceMs);
 
-  const remaining = all.filter((p) => isAlive(p));
+  const remaining = all.filter((p) => isPidPresent(p));
   if (remaining.length === 0 && !shouldSignalProcessGroup) return;
 
   if (shouldSignalProcessGroup) {

@@ -1,9 +1,6 @@
-import { execFile } from 'child_process';
-import type { ExecOptions } from 'child_process';
 import { constants as fsConstants } from 'fs';
 import { access } from 'fs/promises';
 import { join, delimiter as PATH_DELIMITER } from 'path';
-import { promisify } from 'util';
 
 import { AGENTS } from '@/agent/catalog/registry';
 import type { CliDetectSpec } from '@/agent/catalog/types';
@@ -17,10 +14,19 @@ import {
     resolveAgentCliJavaScriptRuntimeCommand,
     resolveAgentCliJavaScriptRuntimeKind,
 } from '@happier-dev/cli-common/agents';
-import { resolveWindowsCommandInvocation, resolveWindowsCommandOnPath } from '@happier-dev/cli-common/process';
+import {
+    execFileWithDeadline,
+    resolveWindowsCommandInvocation,
+    resolveWindowsCommandOnPath,
+    type ExecFileWithDeadlineOptions,
+} from '@happier-dev/cli-common/process';
 
-const execFileAsync = promisify(execFile);
-type ExecFileBestEffortOptions = ExecOptions & Readonly<{ windowsVerbatimArguments?: boolean }>;
+/**
+ * Version probing reads the CLI's OUTPUT, so the budget must not be `child_process`'s own
+ * `timeout`: on a stalled loop that destroys a finished child's banner and still reports success,
+ * leaving a genuinely installed CLI with `version: null`.
+ */
+type ExecFileBestEffortOptions = ExecFileWithDeadlineOptions;
 
 export type DetectCliName = string;
 
@@ -385,7 +391,7 @@ async function detectCliVersion(params: { name: DetectCliName; resolvedPath: str
             options: ExecFileBestEffortOptions,
         ): Promise<{ stdout: string; stderr: string; error: unknown | null }> => {
             try {
-                const { stdout, stderr } = await execFileAsync(file, args, options);
+                const { stdout, stderr } = await execFileWithDeadline(file, args, options);
                 return { stdout: asString(stdout), stderr: asString(stderr), error: null };
             } catch (error) {
                 // For non-zero exit codes, execFile still provides stdout/stderr on the error object.
@@ -484,7 +490,7 @@ async function detectTmuxVersion(params: { resolvedPath: string }): Promise<stri
 
         const execFileBestEffort = async (file: string, args: string[], options: ExecFileBestEffortOptions): Promise<{ stdout: string; stderr: string }> => {
             try {
-                const { stdout, stderr } = await execFileAsync(file, args, options);
+                const { stdout, stderr } = await execFileWithDeadline(file, args, options);
                 return { stdout: asString(stdout), stderr: asString(stderr) };
             } catch (error) {
                 const maybeStdout = asString((error as any)?.stdout);

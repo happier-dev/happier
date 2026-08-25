@@ -135,6 +135,7 @@ async function runOneStructuredInputPrompt(params: Readonly<{
   inputContextBlock?: string;
   localId?: string;
   runtime?: StructuredInputRuntime;
+  sessionMedia?: PermissionModeQueuedPrompt['sessionMedia'];
   resolveComposerAttachmentForDispatch?: Parameters<typeof runPermissionModePromptLoop>[0]['resolveComposerAttachmentForDispatch'];
 }>) {
   const observeProviderInputSettlement = vi.fn(async () => false);
@@ -160,6 +161,7 @@ async function runOneStructuredInputPrompt(params: Readonly<{
     userMessageSeq: 42,
     userMessageSeqs: [42],
     structuredInput: params.structuredInput,
+    ...(params.sessionMedia ? { sessionMedia: params.sessionMedia } : {}),
     ...(params.inputContextBlock ? { inputContextBlock: params.inputContextBlock } : {}),
   }, { permissionMode: 'default' });
 
@@ -295,6 +297,78 @@ describe('runPermissionModePromptLoop Session reference dispatch', () => {
     expect(composerReference).toBeGreaterThan(sessionReference);
     expect(attachment).toBeGreaterThan(composerReference);
     expect(prose).toBeGreaterThan(attachment);
+  });
+
+  it('delivers resolved structured input with a provider-native command without altering its text', async () => {
+    const runtime = {
+      ...createRuntime(),
+      isProviderNativeCommand: vi.fn((prompt: string) => prompt.startsWith('/goal')),
+    } as StructuredInputRuntime;
+    const resolveComposerAttachmentForDispatch = vi.fn(async () => ({
+      attachments: [{
+        instanceId: 'review-comment-1',
+        status: 'ready' as const,
+        context: 'ATTACHMENT_MARKER',
+      }],
+    }));
+
+    const result = await runOneStructuredInputPrompt({
+      text: '/goal fix authentication',
+      localId: 'local-native-with-attachment',
+      runtime,
+      resolveComposerAttachmentForDispatch,
+      structuredInput: {
+        v: 1,
+        composerAttachments: [{
+          v: 1,
+          instanceId: 'review-comment-1',
+          attachment: { pluginId: 'acme.review-comments', localId: 'review-comment' },
+          key: 'comment-1',
+          value: { reviewId: 'review-1' },
+          presentation: { label: 'Review comment', typeLabel: 'Review comment' },
+        }],
+      },
+    });
+
+    // The provider parses this text with its own command grammar, so the host
+    // must not prepend a context block to it...
+    expect(result.runtime.sendTurnPrompt.mock.calls[0]?.[0]).toBe('/goal fix authentication');
+    // ...but the message was durably accepted with an attachment, so the
+    // resolved envelope still has to reach the Agent input contract.
+    const meta = result.runtime.sendTurnPrompt.mock.calls[0]?.[1];
+    expect(meta?.structuredInput?.resolvedComposerAttachments).toEqual([
+      expect.objectContaining({ instanceId: 'review-comment-1' }),
+    ]);
+    expect(resolveComposerAttachmentForDispatch).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects a provider-native command whose attachment cannot be resolved instead of dropping it', async () => {
+    const runtime = {
+      ...createRuntime(),
+      isProviderNativeCommand: vi.fn((prompt: string) => prompt.startsWith('/goal')),
+    } as StructuredInputRuntime;
+    runtime.listSkills = vi.fn(async () => ({ skills: [] }));
+
+    const result = await runOneStructuredInputPrompt({
+      text: '/goal fix authentication',
+      localId: 'local-native-unresolvable',
+      runtime,
+      structuredInput: {
+        v: 1,
+        mentions: [{
+          kind: MENTION_KIND_V1.skill,
+          ref: buildMentionRefForKindV1(MENTION_KIND_V1.skill, 'vendor:codex:missing'),
+          token: '$missing',
+          start: 6,
+          end: 14,
+        }],
+      },
+    });
+
+    expect(result.runtime.sendTurnPrompt).not.toHaveBeenCalled();
+    expect(result.observeProviderInputSettlement).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ kind: 'rejected_before_effect' }),
+    );
   });
 
   it('settles an unresolved mention before provider dispatch as a terminal Pending rejection', async () => {
@@ -618,7 +692,7 @@ describe('runPermissionModePromptLoop Session reference dispatch', () => {
 
       expect(prompt).not.toContain('<happier_session_reference>');
       expect(prompt.length - USER_TEXT.length - 2).toBeLessThanOrEqual(configuration.replaySeedMaxChars);
-      expect(prompt).toContain('omitted to fit the replay budget');
+      expect(prompt).toContain('omitted to fit the context budget');
     });
 
     // Retiring the seed destroys it — the consume updater writes `seedText: ''`.

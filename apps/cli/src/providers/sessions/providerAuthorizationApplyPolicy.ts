@@ -1,11 +1,9 @@
 import {
-  compareProviderCanonicalStringsV1,
-  createProviderManagedPurposeBindingsEqualityKeyV1,
+  createProviderManagedRuntimeBindingEqualityKeyV1,
   sessionProviderBindingMetadataMatchesRuntimeBasisV1,
   type ModelSelectionApplyPolicy,
   type ProviderBoundModelRef,
   type ProviderRuntimeBindingBasisV1,
-  type ResolvedProviderManagedRuntimeDeclarationV1,
   type SessionProviderBindingMetadataV1,
 } from '@happier-dev/protocol';
 
@@ -28,59 +26,31 @@ function canonicalize(value: unknown): unknown {
   );
 }
 
-function canonicalManagedConnectedAccounts(
-  connectedAccounts: ResolvedProviderManagedRuntimeDeclarationV1['connectedAccounts'],
-): ResolvedProviderManagedRuntimeDeclarationV1['connectedAccounts'] {
-  // Purpose ids are unique within one consumer by schema, so purpose is the
-  // complete canonical order key for runtime-relevant declaration facts.
-  return connectedAccounts.map(({ title: _title, ...declaration }) => ({
-    ...declaration,
-    ...(declaration.materializationKinds !== undefined
-      ? {
-          materializationKinds: [...declaration.materializationKinds].sort(
-            compareProviderCanonicalStringsV1,
-          ),
-        }
-      : {}),
-  })).sort((left, right) =>
-    compareProviderCanonicalStringsV1(left.purpose, right.purpose));
-}
-
-function canonicalManagedRequestAuthUses(
-  requestAuthUses: ResolvedProviderManagedRuntimeDeclarationV1['requestAuthUses'],
-): ResolvedProviderManagedRuntimeDeclarationV1['requestAuthUses'] {
-  return [...requestAuthUses].sort((left, right) =>
-    compareProviderCanonicalStringsV1(left.purpose, right.purpose));
-}
-
 function canonicalRuntimeBindingBasis(
   basis: ProviderRuntimeBindingBasisV1,
 ): unknown {
+  if (basis.deployment.kind !== 'managedLocal') {
+    return canonicalize(basis);
+  }
+  const {
+    implementationIdentity,
+    managedRuntime,
+    purposeBindings,
+    ...deployment
+  } = basis.deployment;
   return canonicalize(
-    basis.deployment.kind === 'managedLocal'
-      ? {
-          ...basis,
-          deployment: {
-            ...basis.deployment,
-            managedRuntime: {
-              ...basis.deployment.managedRuntime,
-              dependencies: [
-                ...basis.deployment.managedRuntime.dependencies,
-              ].sort(compareProviderCanonicalStringsV1),
-              connectedAccounts: canonicalManagedConnectedAccounts(
-                basis.deployment.managedRuntime.connectedAccounts,
-              ),
-              requestAuthUses: canonicalManagedRequestAuthUses(
-                basis.deployment.managedRuntime.requestAuthUses,
-              ),
-            },
-            purposeBindings:
-              createProviderManagedPurposeBindingsEqualityKeyV1(
-                basis.deployment.purposeBindings,
-              ),
-          },
-        }
-      : basis,
+    {
+      ...basis,
+      deployment: {
+        ...deployment,
+        managedRuntimeBindingEqualityKey:
+          createProviderManagedRuntimeBindingEqualityKeyV1({
+            implementationIdentity,
+            managedRuntime,
+            purposeBindings,
+          }),
+      },
+    },
   );
 }
 

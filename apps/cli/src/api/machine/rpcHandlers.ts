@@ -479,7 +479,7 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
     machineId: params.deps?.currentMachineId ?? params.deps?.providerRpc?.machineId ?? null,
   });
 
-  registerMachineTerminalRpcHandlers({
+  const terminalRegistration = registerMachineTerminalRpcHandlers({
     rpcHandlerManager,
     deps: {
       workingDirectory: params.deps?.workingDirectory,
@@ -799,6 +799,7 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
         transferRelayV2DownloadResponderCleanupByManager.delete(rpcHandlerManager);
       }
       await Promise.all([
+        Promise.resolve(terminalRegistration.dispose()),
         Promise.resolve(externalSessionsRegistration.dispose()),
         promptAssetTransfers.dispose(),
         promptRegistryTransfers.dispose(),

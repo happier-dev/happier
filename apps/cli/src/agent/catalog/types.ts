@@ -13,6 +13,7 @@ import type {
   ConnectedServicesProviderConfigSharingModeV1,
   ConnectedServicesProviderStateSharingModeV1,
   ExternalSessionsAgentId,
+  PluginAgentToolsDeliveryV2,
 } from '@happier-dev/protocol';
 import type { AnyTerminalRuntimeOps } from '@/agent/terminalRuntime/providers/types';
 import type { CommandDispatchPolicy } from '@/agent/runtime/registry/commandContracts';
@@ -334,6 +335,8 @@ export type ProviderDeferredSessionStartupParams = Readonly<{
 
 export type AgentCatalogEntry = Readonly<{
   id: CatalogAgentLookupId;
+  /** Agent-declared channel for receiving contributed Happier tools. */
+  toolDelivery?: PluginAgentToolsDeliveryV2;
   /** Provider-owned authoritative Runtime Activity characterization. */
   runtimeActivityApplicability?: RuntimeActivityApplicability;
   /** Host-private binding from this Agent CLI to one same-plugin declared system tool. */

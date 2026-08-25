@@ -614,6 +614,34 @@ describe('updateAccountSettingsV2WithRetry', () => {
     expect(writes).toEqual([]);
   });
 
+  it('reports the refused Settings response body code as the unavailable reason', async () => {
+    vi.spyOn(axios, 'get').mockResolvedValueOnce({
+      status: 503,
+      data: { error: 'account_settings_storage_unavailable' },
+    } as any);
+
+    await expect(updateAccountSettingsV2WithRetry({
+      credentials: createLegacyCredentialsStub(),
+      mutation: { operations: [{ op: 'set', key: 'reviewPromptLikedApp', value: true }] },
+    })).resolves.toEqual({
+      status: 'unavailable',
+      retryable: true,
+      reason: 'account_settings_storage_unavailable',
+    });
+  });
+
+  it('does not present an unexpected refusal payload as a Settings reason', async () => {
+    vi.spyOn(axios, 'get').mockResolvedValueOnce({
+      status: 502,
+      data: '<html><body>Bad Gateway</body></html>',
+    } as any);
+
+    await expect(updateAccountSettingsV2WithRetry({
+      credentials: createLegacyCredentialsStub(),
+      mutation: { operations: [{ op: 'set', key: 'reviewPromptLikedApp', value: true }] },
+    })).resolves.toEqual({ status: 'unavailable', retryable: true });
+  });
+
   it('uses apiServerUrl for fetch and update requests when canonical serverUrl differs', async () => {
     Object.assign(mutableConfigurationForTest(), {
       serverUrl: 'https://public.example.test',

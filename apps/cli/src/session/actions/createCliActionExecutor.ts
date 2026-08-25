@@ -8,7 +8,7 @@ import {
   executeCliTranscriptAction,
   type CliTranscriptActionExecutorOptions,
 } from './executeCliTranscriptAction';
-import { readActionsSettingsFromEnv } from '@/settings/actionsSettings';
+import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import { createCliApprovalsArtifactStore } from './approvals/artifactStore';
 import { createTargetActionCurrentIntentAdapter } from './approvals/targetActionCurrentIntent';
 import {
@@ -31,6 +31,8 @@ type CliActionExecutorParams = Parameters<typeof createCliActionExecutorHarness>
     externalSessionPluginAdmissionOwner?: ExternalSessionPluginAdmissionOwner;
     /** The committed plugin-runtime owner for the built-in `action.invoke` Action. */
     invokeContributedAction?: ActionExecutorDeps['invokeContributedAction'];
+    /** Exact daemon replay for API target-action approvals. */
+    targetActionApprovalReplay?: ActionExecutorDeps['targetActionApprovalReplay'];
     /** The exact daemon external-session RPC owner for host-stamped API requests. */
     hostExternalSessionAction?: ActionExecutorDeps['hostExternalSessionAction'];
     /** Thin adapters to the canonical Account-server-owned auth routes. */
@@ -50,6 +52,7 @@ export function createCredentialedTargetActionCurrentIntent(
 export function createCliActionExecutor(
   params: CliActionExecutorParams,
 ): ReturnType<typeof createCliActionExecutorHarness>['executor'] {
+  const actionSettingsProvider = createActionSettingsProvider();
   const transcriptFollowLeaseRegistry = params.transcriptFollowLeaseRegistry
     ?? createSessionTranscriptFollowLeaseRegistry({
       maxLeases: 16,
@@ -63,6 +66,9 @@ export function createCliActionExecutor(
         : {}),
       ...(params.invokeContributedAction
         ? { invokeContributedAction: params.invokeContributedAction }
+        : {}),
+      ...(params.targetActionApprovalReplay
+        ? { targetActionApprovalReplay: params.targetActionApprovalReplay }
         : {}),
       ...(params.listContributedActionDefinitions
         ? { listContributedActionDefinitions: params.listContributedActionDefinitions }
@@ -92,7 +98,7 @@ export function createCliActionExecutor(
     ...(hasStoredSessionCredentialProvenance(params.credentials)
       ? {}
       : { authority: 'account_automation' as const }),
-    actionsSettings: readActionsSettingsFromEnv() as any,
+    actionsSettings: actionSettingsProvider.getActionsSettings(),
   });
   return {
     prepare: async (actionId, input, context) => {

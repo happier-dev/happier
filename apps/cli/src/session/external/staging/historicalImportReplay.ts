@@ -540,6 +540,7 @@ export function createExternalSessionHistoricalImportReplay(input: Readonly<{
                         try {
                             await input.staging.clearPreparedReplayGroup({
                                 operationId,
+                                captureIndex: group.captureIndex,
                                 groupId: group.groupId,
                             });
                             preparedReplayStored = false;
@@ -559,6 +560,7 @@ export function createExternalSessionHistoricalImportReplay(input: Readonly<{
                     await Promise.all(parsed.items.map((entry) => entry.cleanup?.()));
                     await input.staging.acknowledgeReplayGroup({
                         operationId,
+                        captureIndex: group.captureIndex,
                         groupId: group.groupId,
                         acceptedThroughServerSeq: acceptedThroughServerSeq ?? 0,
                     });
@@ -569,6 +571,7 @@ export function createExternalSessionHistoricalImportReplay(input: Readonly<{
                     if (shouldPersistGroupPreparedReplay && batchIndex === 0) {
                         const persisted = await input.staging.persistPreparedReplayGroup({
                             operationId,
+                            captureIndex: group.captureIndex,
                             groupId: group.groupId,
                             items: parsed.items.map((entry) => entry.item),
                         });
@@ -626,6 +629,7 @@ export function createExternalSessionHistoricalImportReplay(input: Readonly<{
                         if (preparedReplayStored && batchIndex === 0) {
                             await input.staging.clearPreparedReplayGroup({
                                 operationId,
+                                captureIndex: group.captureIndex,
                                 groupId: group.groupId,
                             });
                         }
@@ -662,12 +666,14 @@ export function createExternalSessionHistoricalImportReplay(input: Readonly<{
                 }
                 await input.staging.acknowledgeReplayGroup({
                     operationId,
+                    captureIndex: group.captureIndex,
                     groupId: group.groupId,
                     acceptedThroughServerSeq: acceptedThroughServerSeq ?? 0,
                 });
                 if (preparedReplayStored) {
                     await input.staging.clearPreparedReplayGroup({
                         operationId,
+                        captureIndex: group.captureIndex,
                         groupId: group.groupId,
                     });
                 }

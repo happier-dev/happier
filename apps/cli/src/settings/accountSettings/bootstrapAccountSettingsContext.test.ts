@@ -392,8 +392,11 @@ describe('bootstrapAccountSettingsContext', () => {
       source: 'cache',
       backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
       settings: expect.objectContaining({
+        // The canonical Account Settings catalog rewrites the legacy
+        // `acpBackend:<id>` spelling to the V2 target key on parse, so the
+        // published context carries that spelling.
         backendEnabledByTargetKey: {
-          'acpBackend:review-bot': false,
+          'backend:review-bot:configured:review-bot': false,
         },
       }),
     }));

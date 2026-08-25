@@ -11,6 +11,7 @@ import { createTransferPathAllowanceRegistry } from '@/transfers/targets/createT
 import { createPromptAssetAdapterRegistry } from '@/prompts/assets/createPromptAssetAdapterRegistry';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createComposerMediaStageStore } from '@/transfers/staging/composerMediaStageStore';
+import { createOneBitGrayscalePng } from '@/testkit/media/pngFixtures';
 
 let failNextUploadPromotionWithExdev = false;
 let failNextUploadSourceCleanup = false;
@@ -475,12 +476,13 @@ describe('direct transfer import session manager', () => {
     });
     const manager = createDirectTransferImportSessionManager({
       ttlMs: 10_000,
+      chunkSizeBytes: 8,
       composerMediaStage: {
         executionTarget,
         store: stageStore,
       },
     } as Parameters<typeof createDirectTransferImportSessionManager>[0]);
-    const content = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x00]);
+    const content = createOneBitGrayscalePng(1, 1);
     const sha256 = createHash('sha256').update(content).digest('hex');
     const request = {
       workingDirectory,
@@ -522,43 +524,41 @@ describe('direct transfer import session manager', () => {
           recipientPublicKeyBase64: expect.any(String),
         },
       });
-      const outOfOrderChunk = createEncryptedTransferChunkEnvelope({
-        transferId: opened.response.uploadId,
-        sequence: 1,
-        payload: content.subarray(8),
-        recipientPublicKeyBase64: opened.response.recipientPublicKeyBase64,
-      });
-      await expect(manager.writeImportTransferChunk({
-        uploadId: opened.response.uploadId,
-        index: 1,
-        payloadBase64: outOfOrderChunk.payloadBase64,
-        encryptedDataKeyEnvelopeBase64: outOfOrderChunk.encryptedDataKeyEnvelopeBase64,
-      })).resolves.toEqual({ success: false, error: 'Unexpected chunk index' });
+      const chunkSizeBytes = opened.response.chunkSizeBytes;
+      const chunkCount = Math.ceil(content.byteLength / chunkSizeBytes);
+      const chunkAt = (index: number): Buffer => content.subarray(
+        index * chunkSizeBytes,
+        Math.min(content.byteLength, (index + 1) * chunkSizeBytes),
+      );
+      if (chunkCount > 1) {
+        const outOfOrderChunk = createEncryptedTransferChunkEnvelope({
+          transferId: opened.response.uploadId,
+          sequence: 1,
+          payload: chunkAt(1),
+          recipientPublicKeyBase64: opened.response.recipientPublicKeyBase64,
+        });
+        await expect(manager.writeImportTransferChunk({
+          uploadId: opened.response.uploadId,
+          index: 1,
+          payloadBase64: outOfOrderChunk.payloadBase64,
+          encryptedDataKeyEnvelopeBase64: outOfOrderChunk.encryptedDataKeyEnvelopeBase64,
+        })).resolves.toEqual({ success: false, error: 'Unexpected chunk index' });
+      }
 
-      const firstChunk = createEncryptedTransferChunkEnvelope({
-        transferId: opened.response.uploadId,
-        sequence: 0,
-        payload: content.subarray(0, 8),
-        recipientPublicKeyBase64: opened.response.recipientPublicKeyBase64,
-      });
-      const secondChunk = createEncryptedTransferChunkEnvelope({
-        transferId: opened.response.uploadId,
-        sequence: 1,
-        payload: content.subarray(8),
-        recipientPublicKeyBase64: opened.response.recipientPublicKeyBase64,
-      });
-      await expect(manager.writeImportTransferChunk({
-        uploadId: opened.response.uploadId,
-        index: 0,
-        payloadBase64: firstChunk.payloadBase64,
-        encryptedDataKeyEnvelopeBase64: firstChunk.encryptedDataKeyEnvelopeBase64,
-      })).resolves.toEqual({ success: true });
-      await expect(manager.writeImportTransferChunk({
-        uploadId: opened.response.uploadId,
-        index: 1,
-        payloadBase64: secondChunk.payloadBase64,
-        encryptedDataKeyEnvelopeBase64: secondChunk.encryptedDataKeyEnvelopeBase64,
-      })).resolves.toEqual({ success: true });
+      for (let index = 0; index < chunkCount; index += 1) {
+        const chunk = createEncryptedTransferChunkEnvelope({
+          transferId: opened.response.uploadId,
+          sequence: index,
+          payload: chunkAt(index),
+          recipientPublicKeyBase64: opened.response.recipientPublicKeyBase64,
+        });
+        await expect(manager.writeImportTransferChunk({
+          uploadId: opened.response.uploadId,
+          index,
+          payloadBase64: chunk.payloadBase64,
+          encryptedDataKeyEnvelopeBase64: chunk.encryptedDataKeyEnvelopeBase64,
+        })).resolves.toEqual({ success: true });
+      }
 
       const finalized = await manager.finalizeImportTransferSession({ uploadId: opened.response.uploadId });
       expect(finalized).toMatchObject({

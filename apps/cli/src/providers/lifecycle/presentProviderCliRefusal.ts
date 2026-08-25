@@ -35,6 +35,8 @@ const ERROR_SUMMARIES = {
   provider_binding_changed: 'The persisted Provider binding no longer matches.',
   provider_switch_unsupported: 'The running session cannot switch Provider bindings.',
   provider_agent_runtime_unsupported: 'The Agent runtime cannot use this Provider binding.',
+  provider_managed_requires_daemon: 'This managed Provider must be launched through the Happier daemon.',
+  provider_machine_unavailable: 'The selected machine is unavailable.',
   provider_materialization_failed: 'The Provider runtime configuration could not be prepared.',
   provider_probe_authorization_invalid: 'The Provider test authorization expired.',
   provider_settings_limit_exceeded: 'The Provider settings limit was exceeded.',

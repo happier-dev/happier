@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createProviderErrorV1 } from '@happier-dev/protocol';
 
 import type { CommandContext } from '@/cli/commandRegistry';
+import { captureConsoleText } from '@/testkit/logger/captureOutput';
 import { handleProvidersCliCommand } from './providers';
 import { ProviderCliError } from './providers/index';
 
@@ -24,6 +25,29 @@ describe('happier providers command boundary', () => {
     expect(log).toHaveBeenCalledWith(expect.stringContaining('happier providers list'));
     expect(log).toHaveBeenCalledWith(expect.stringContaining('--candidate-id <id>'));
     expect(process.exitCode ?? 0).toBe(0);
+  });
+
+  it('keeps stdout parseable JSON when help is requested in --json mode', async () => {
+    // `--json` is a machine-output contract, not a decoration: a caller piping
+    // stdout into a parser gets a syntax error the moment help is printed as
+    // prose beside (or instead of) the envelope.
+    const load = vi.fn(async () => { throw new Error('must not load'); });
+    // The capture merges `console.log` with `process.stdout.write`, so prose
+    // printed BESIDE the envelope fails this too — a stdout-only spy would
+    // accept help emitted through `console.log` alongside valid JSON.
+    const output = captureConsoleText();
+
+    try {
+      await handleProvidersCliCommand(context(['--help', '--json']), load);
+
+      expect(load).not.toHaveBeenCalled();
+      const parsed = JSON.parse(output.text().trim()) as Record<string, unknown>;
+      expect(parsed).toMatchObject({ v: 1, ok: true, kind: 'providers_help' });
+      expect(String((parsed.data as Record<string, unknown>).help)).toContain('happier providers list');
+      expect(process.exitCode ?? 0).toBe(0);
+    } finally {
+      output.restore();
+    }
   });
 
   it('returns legacy agent-setup guidance without requiring authentication', async () => {
@@ -56,10 +80,23 @@ describe('happier providers command boundary', () => {
 
     process.exitCode = 0;
     error.mockClear();
-    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    // `--json` mode writes the envelope through `process.stdout.write` so the
+    // completion callback can settle the write; a `console.log` spy would never
+    // observe it.
+    const written: string[] = [];
+    vi.spyOn(process.stdout, 'write').mockImplementation(((
+      chunk: unknown,
+      encodingOrCallback?: unknown,
+      callback?: unknown,
+    ) => {
+      written.push(String(chunk));
+      const done = typeof encodingOrCallback === 'function' ? encodingOrCallback : callback;
+      if (typeof done === 'function') done();
+      return true;
+    }) as typeof process.stdout.write);
     await handleProvidersCliCommand(context(['load-model', 'pc_1', '--model', 'model-a', '--json']), load);
     expect(error).not.toHaveBeenCalled();
-    expect(JSON.parse(String(log.mock.calls[0]?.[0]))).toEqual({
+    expect(JSON.parse(String(written[0]))).toEqual({
       v: 1,
       ok: false,
       kind: 'providers_load_model',

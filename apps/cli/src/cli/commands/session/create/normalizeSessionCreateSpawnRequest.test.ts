@@ -48,6 +48,32 @@ describe('normalizeSessionCreateSpawnRequest', () => {
     }, createDeps())).rejects.toThrow(/permission mode/i);
   });
 
+  it('keeps a Provider-bound literal model named default while native default still resets', async () => {
+    const providerBound = await normalizeSessionCreateSpawnRequest({
+      directory: '/repo/project',
+      backendTargetKey: null,
+      modelId: 'default',
+      providerConnectionId: 'provider-1',
+    }, createDeps());
+
+    expect(providerBound.input.modelSelection).toMatchObject({
+      v: 1,
+      ref: {
+        agentTargetKey: 'backend:claude',
+        providerConnectionId: 'provider-1',
+        modelId: 'default',
+      },
+    });
+
+    const nativeDefault = await normalizeSessionCreateSpawnRequest({
+      directory: '/repo/project',
+      backendTargetKey: null,
+      modelId: 'default',
+    }, createDeps());
+
+    expect(nativeDefault.input.modelSelection).toBeUndefined();
+  });
+
   it('emits one strict V2 request with the exact target and configured external Agent identity', async () => {
     const normalized = await normalizeSessionCreateSpawnRequest({
       directory: '/repo/project',

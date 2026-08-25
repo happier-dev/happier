@@ -1,4 +1,5 @@
 import {
+  PROVIDER_ENDPOINT_SAFETY_LIMITS,
   ConnectedServiceBindingsV1Schema,
   assessProviderEndpoint,
   createProviderManagedRuntimeBindingEqualityKeyV1,
@@ -38,6 +39,10 @@ import {
   type ResolveProviderSpawnAuthorizationInput,
 } from './resolve';
 import { collectProviderConnectionDnsEvidence } from '../registry/dnsEvidence';
+import {
+  createProviderOperationLifetime,
+  ProviderOperationAbandonedError,
+} from '../operationLifetime';
 import { resolveProviderConnectionForMachine } from '../registry/resolve';
 import { readProviderSettingsForCli } from '../settings/read';
 import { resolveProviderCredentialPlaintext } from './credentials';
@@ -563,6 +568,9 @@ export async function createRuntimeProviderSpawnAuthorizationAttempt(input: Read
   };
   let managedPurposeBindingSnapshot = input.managedPurposeBindingSnapshot;
   const resolveCurrent = async (): Promise<ProviderSpawnAuthorizationResult> => {
+    const lifetime = createProviderOperationLifetime({
+      wallTimeMs: PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs,
+    });
     const snapshot = getAccountSettingsSnapshot();
     if (!snapshot) {
       return {
@@ -578,13 +586,28 @@ export async function createRuntimeProviderSpawnAuthorizationAttempt(input: Read
     if (connectionId === null) {
       return { ok: false, error: createProviderErrorV1('provider_connection_not_found') };
     }
-    const dnsEvidenceByEndpointUrl = await collectProviderConnectionDnsEvidence({
-      connectionId,
-      machineId: input.machineId,
-      providerSettings,
-      registry,
-      ...(input.resolveAddresses ? { resolveAddresses: input.resolveAddresses } : {}),
-    });
+    let dnsEvidenceByEndpointUrl;
+    try {
+      dnsEvidenceByEndpointUrl = await collectProviderConnectionDnsEvidence({
+        connectionId,
+        machineId: input.machineId,
+        providerSettings,
+        registry,
+        ...(input.resolveAddresses ? { resolveAddresses: input.resolveAddresses } : {}),
+        lifetime,
+      });
+    } catch (error) {
+      if (error instanceof ProviderOperationAbandonedError) {
+        return {
+          ok: false,
+          error: createProviderErrorV1('provider_endpoint_unavailable', {
+            connectionId,
+            machineId: input.machineId,
+          }),
+        };
+      }
+      throw error;
+    }
     const connectionResolution = resolveProviderConnectionForMachine({
       connectionId,
       machineId: input.machineId,

@@ -1,11 +1,14 @@
-import { getAgentToolsCapability, resolveCanonicalAgentIdFromFlavor, type AgentId } from '@happier-dev/agents';
+import type { PluginAgentToolsDeliveryV2 } from '@happier-dev/protocol';
 
-export function resolveAgentToolsDelivery(agentId: AgentId | string): 'native_mcp' | 'native_extension' | 'shell_bridge' | 'unsupported' {
-  try {
-    const resolvedAgentId = resolveCanonicalAgentIdFromFlavor(agentId);
-    if (!resolvedAgentId) return 'unsupported';
-    return getAgentToolsCapability(resolvedAgentId).delivery;
-  } catch {
-    return 'unsupported';
-  }
+import { findCatalogEntry } from '@/agent/catalog/registry';
+
+export type AgentToolsDelivery = PluginAgentToolsDeliveryV2 | 'unsupported';
+
+/**
+ * The resolved Agent catalog is the single current projection for bundled and
+ * installed Agent facts. An absent declaration never inherits delivery from an
+ * Agent id, runtime kind, or tool inventory.
+ */
+export function resolveAgentToolsDelivery(agentId: string): AgentToolsDelivery {
+  return findCatalogEntry(agentId)?.toolDelivery ?? 'unsupported';
 }

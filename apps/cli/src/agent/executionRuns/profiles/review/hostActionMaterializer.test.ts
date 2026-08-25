@@ -66,7 +66,6 @@ describe('createReviewCommentHostActionMaterializer', () => {
       immutableGenerationId: 'generation-1',
       desiredImmutableGenerationId: 'generation-1',
       appliedImmutableGenerationId: 'generation-1',
-      distribution: { kind: 'path', locator: '/plugins/acme.review' },
       applied: true,
       selectedAccess: [],
     } as const;

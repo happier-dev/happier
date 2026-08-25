@@ -72,7 +72,7 @@ type ForkInheritedMetadataOverrides = Pick<
 };
 
 type InheritedSessionMetadataFieldSet = Readonly<{
-  displayTitleMetadata: boolean;
+  displayTitleMetadata: 'fork' | 'inherit' | false;
   permissionIntent: boolean;
   modelIntent: boolean;
   sessionModeCatalogMetadata: boolean;
@@ -90,7 +90,7 @@ type InheritedSessionMetadataFieldSet = Readonly<{
 }>;
 
 const FORK_INHERITED_METADATA_FIELDS: InheritedSessionMetadataFieldSet = {
-  displayTitleMetadata: true,
+  displayTitleMetadata: 'fork',
   permissionIntent: true,
   modelIntent: true,
   sessionModeCatalogMetadata: true,
@@ -109,6 +109,7 @@ const FORK_INHERITED_METADATA_FIELDS: InheritedSessionMetadataFieldSet = {
 
 const SESSION_AGENT_SPAWN_INHERITED_METADATA_FIELDS: InheritedSessionMetadataFieldSet = {
   ...FORK_INHERITED_METADATA_FIELDS,
+  displayTitleMetadata: 'inherit',
   configOptionIntentSpawn: true,
   mcpSelectionSpawn: true,
   profileIdSpawn: true,
@@ -126,18 +127,39 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value));
 }
 
-function readSummaryTitle(metadata: Record<string, unknown> | null | undefined): {
+const FORK_TITLE_SUFFIX_PATTERN = /^(.*) \(fork ([1-9]\d*)\)$/i;
+
+function resolveInheritedDisplayTitle(
+  metadata: Record<string, unknown> | null | undefined,
+  mode: 'fork' | 'inherit',
+): {
   value: string;
   updatedAt?: number;
 } | null {
   const summary = metadata?.summary;
-  if (!summary || typeof summary !== 'object' || Array.isArray(summary)) return null;
-  const record = summary as Record<string, unknown>;
-  const value = typeof record.text === 'string' ? record.text.trim() : '';
+  const record = summary && typeof summary === 'object' && !Array.isArray(summary)
+    ? summary as Record<string, unknown>
+    : null;
+  const summaryValue = typeof record?.text === 'string' ? record.text.trim() : '';
+  // Read compatibility for children created by the earlier name-only fork implementation.
+  const legacyName = mode === 'fork' && typeof metadata?.name === 'string' ? metadata.name.trim() : '';
+  const value = summaryValue || legacyName;
   if (!value) return null;
+  if (mode === 'inherit') {
+    return {
+      value,
+      ...(typeof record?.updatedAt === 'number' && Number.isFinite(record.updatedAt)
+        ? { updatedAt: record.updatedAt }
+        : {}),
+    };
+  }
+  const suffix = value.match(FORK_TITLE_SUFFIX_PATTERN);
+  const previousForkNumber = suffix ? Number(suffix[2]) : 0;
+  const canIncrementSuffix = suffix !== null && Number.isSafeInteger(previousForkNumber);
+  const baseTitle = canIncrementSuffix ? suffix[1].trimEnd() : value;
   return {
-    value,
-    ...(typeof record.updatedAt === 'number' && Number.isFinite(record.updatedAt)
+    value: `${baseTitle} (fork ${canIncrementSuffix ? previousForkNumber + 1 : 1})`,
+    ...(typeof record?.updatedAt === 'number' && Number.isFinite(record.updatedAt)
       ? { updatedAt: record.updatedAt }
       : {}),
   };
@@ -379,7 +401,9 @@ function resolveInheritedOverridesFromMetadata(
   const spawn: SessionAgentSpawnInheritedSpawnOverrides = {};
   const metadataOverrides: ForkInheritedMetadataOverrides = {};
 
-  const displayTitle = fields.displayTitleMetadata ? readSummaryTitle(metadata) : null;
+  const displayTitle = fields.displayTitleMetadata
+    ? resolveInheritedDisplayTitle(metadata, fields.displayTitleMetadata)
+    : null;
   if (fields.displayTitleMetadata && displayTitle?.value) {
     Object.assign(
       metadataOverrides,

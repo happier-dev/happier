@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   AUTOMATION_REPLY_HANDOFF_DAEMON_RPC_METHOD_V1,
+  AutomationOccurrenceKeyV1Schema,
   AutomationReplyHandoffDispatchResultV1Schema,
   convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1,
   createAccountScopedCryptoMaterialSnapshotV1,
@@ -47,6 +48,11 @@ const correspondence = {
   handoffId: 'handoff-1',
 } as const;
 
+const replyContextCorrespondence = {
+  automationId: correspondence.automationId,
+  occurrenceKey: AutomationOccurrenceKeyV1Schema.parse('A'.repeat(43)),
+} as const;
+
 const source = {
   kind: 'automationResult',
   automationRunId: correspondence.runId,
@@ -88,6 +94,7 @@ const request = {
     handoffId: correspondence.handoffId,
     runId: correspondence.runId,
     automationId: correspondence.automationId,
+    occurrenceKey: replyContextCorrespondence.occurrenceKey,
     accountCurrentness: {
       mode: 'plain',
       version: plainCurrentness.version,
@@ -105,8 +112,8 @@ const request = {
       t: 'plain',
       v: {
         v: 1,
-        correspondence,
-        source,
+        correspondence: replyContextCorrespondence,
+        templateVersion: source.templateVersion,
         opaqueContext: { conversationId: 'conversation-1', messageId: 'message-1' },
       },
     },
@@ -162,8 +169,8 @@ function createEncryptedRequest(
       }),
       replyContextEnvelope: sealAutomationConversationReplyContextStoredEnvelopeV1({
         mode: 'e2ee',
-        correspondence,
-        source,
+        correspondence: replyContextCorrespondence,
+        templateVersion: source.templateVersion,
         opaqueContext: { conversationId: 'conversation-1', messageId: 'message-1' },
         material: snapshot.material,
         randomBytes: deterministicRandomBytes,
@@ -545,7 +552,7 @@ describe('registerAutomationReplyHandoffRpcHandler', () => {
         materialSequence: [null],
       },
       {
-        name: 'cross-automation payload',
+        name: 'cross-automation reply context',
         request: {
           ...request,
           handoff: {
@@ -554,7 +561,10 @@ describe('registerAutomationReplyHandoffRpcHandler', () => {
               ...request.handoff.replyContextEnvelope,
               v: {
                 ...request.handoff.replyContextEnvelope.v,
-                correspondence: { ...correspondence, automationId: 'other-automation' },
+                correspondence: {
+                  ...replyContextCorrespondence,
+                  automationId: 'other-automation',
+                },
               },
             },
           },
@@ -563,7 +573,7 @@ describe('registerAutomationReplyHandoffRpcHandler', () => {
         materialSequence: [null],
       },
       {
-        name: 'cross-handoff reply context',
+        name: 'wrong occurrence reply context',
         request: {
           ...request,
           handoff: {
@@ -572,7 +582,10 @@ describe('registerAutomationReplyHandoffRpcHandler', () => {
               ...request.handoff.replyContextEnvelope,
               v: {
                 ...request.handoff.replyContextEnvelope.v,
-                correspondence: { ...correspondence, handoffId: 'other-handoff' },
+                correspondence: {
+                  ...replyContextCorrespondence,
+                  occurrenceKey: 'B'.repeat(43),
+                },
               },
             },
           },
@@ -581,7 +594,7 @@ describe('registerAutomationReplyHandoffRpcHandler', () => {
         materialSequence: [null],
       },
       {
-        name: 'source Run does not match outer handoff',
+        name: 'legacy finalized reply context',
         request: {
           ...request,
           handoff: {
@@ -590,43 +603,8 @@ describe('registerAutomationReplyHandoffRpcHandler', () => {
               ...request.handoff.replyContextEnvelope,
               v: {
                 ...request.handoff.replyContextEnvelope.v,
-                source: { ...source, automationRunId: 'other-run' },
-              },
-            },
-          },
-        },
-        currentnessSequence: [plainCurrentness],
-        materialSequence: [null],
-      },
-      {
-        name: 'source result does not match outer handoff',
-        request: {
-          ...request,
-          handoff: {
-            ...request.handoff,
-            replyContextEnvelope: {
-              ...request.handoff.replyContextEnvelope,
-              v: {
-                ...request.handoff.replyContextEnvelope.v,
-                source: { ...source, resultId: 'other-handoff' },
-              },
-            },
-          },
-        },
-        currentnessSequence: [plainCurrentness],
-        materialSequence: [null],
-      },
-      {
-        name: 'source Automation does not match outer handoff',
-        request: {
-          ...request,
-          handoff: {
-            ...request.handoff,
-            replyContextEnvelope: {
-              ...request.handoff.replyContextEnvelope,
-              v: {
-                ...request.handoff.replyContextEnvelope.v,
-                source: { ...source, automationId: 'other-automation' },
+                correspondence,
+                source,
               },
             },
           },

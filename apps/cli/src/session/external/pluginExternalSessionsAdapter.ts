@@ -1,11 +1,15 @@
 import { isPluginError, PluginError, type JsonValue, type PluginDiagnosticData } from '@happier-dev/plugin-sdk';
 import { type PluginOperationAvailability } from '@happier-dev/plugin-sdk';
-import { resolveExternalSessionCandidateIdentityKey } from '@happier-dev/plugin-sdk/sessions/external';
 import {
   AgentExternalSessionTranscriptRawRecordSchema,
+  resolveExternalSessionCandidateIdentityKey,
+} from '@happier-dev/plugin-sdk/sessions/external';
+import {
   ExternalSessionUserProjectionSchema,
   ExternalSessionAgentIdSchema,
   ExternalSessionRefSchema,
+  ExternalSessionTranscriptItemIdV1Schema,
+  ExternalSessionTranscriptSourceTimestampV1Schema,
   MAX_PLUGIN_TRANSCRIPT_SOURCES_PER_CONTRIBUTION,
   resolveTranscriptBodySemanticEvent,
   type ExternalSessionAgentId,
@@ -13,8 +17,10 @@ import {
   type ExternalSessionsSource,
   type PluginContributionIdentityV1,
 } from '@happier-dev/protocol';
+import { measureSerializedValidatedStrictPluginJsonUtf8Bytes } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import { randomUUID } from 'node:crypto';
 
+import { clonePluginPlainData } from '../../plugins/runtime/plainData';
 import {
   EXTERNAL_SESSIONS_INVOCATION_POLICY,
   invokeBoundedExternalSessionsOperation,
@@ -106,7 +112,6 @@ const MAX_SNAPSHOT_BYTES = 4 * 1024 * 1024;
 // items, source entries, provider/seen cursors, diagnostics, and the host cursor.
 const MAX_CURSOR_SNAPSHOT_TOTAL_BYTES = 4 * MAX_SNAPSHOT_BYTES;
 const DEFAULT_LIST_MAX_BYTES = 512 * 1024;
-const MAX_EXTERNAL_SESSION_ID_CODE_UNITS = 2_000;
 const MAX_LINKED_SESSION_ID_CODE_UNITS = 191;
 const MAX_READ_AFTER_DIAGNOSTICS = 32;
 const MAX_READ_AFTER_DIAGNOSTIC_CODE_UNITS = 128;
@@ -165,18 +170,21 @@ function boundedInteger(value: number | undefined, fallback: number, max: number
 function assertNotAborted(signal: AbortSignal | undefined): void {
   if (signal?.aborted) fail('plugin_operation_aborted');
 }
-function serializedBytes(value: unknown): number {
+/**
+ * Sizes a projected response through the canonical iterative Protocol byte owner.
+ * Recursive serialization would reject valid deep values the strict-JSON contract
+ * deliberately admits, so the declared byte ceiling stays the only bound.
+ */
+function serializedBytes(value: unknown, maxBytes: number): number {
   try {
-    const serialized = JSON.stringify(value);
-    if (serialized === undefined) fail('plugin_external_response_invalid');
-    return new TextEncoder().encode(serialized).byteLength;
+    return measureSerializedValidatedStrictPluginJsonUtf8Bytes(value, 'External Session response', maxBytes);
   } catch (error) {
     if (isPluginError(error)) throw error;
     fail('plugin_external_response_invalid');
   }
 }
 function assertSerializedBytes(value: unknown, maxBytes: number): void {
-  if (serializedBytes(value) > maxBytes) fail('plugin_external_response_capacity_exceeded');
+  if (serializedBytes(value, maxBytes) > maxBytes) fail('plugin_external_response_capacity_exceeded');
 }
 
 function projectExternalSessionAttachResult(value: unknown): Readonly<{ sessionId: string }> {
@@ -312,6 +320,13 @@ function unavailableFollowTarget(code: string): HostExternalSessionFollowTargetR
 export async function resolvePluginExternalSessionFollowTarget(params: Readonly<{
   agentId: string;
   sourceId?: ExternalSessionSourceId;
+  /**
+   * Exact source a retained Session is already bound to, as stored by its own
+   * link authority. It is the provider-normalized source, which may carry
+   * canonical fields the configured instance never declared, so it selects its
+   * configured entry by source identity rather than by configured key.
+   */
+  boundSource?: ExternalSessionsSource;
   remoteSessionId: string;
   admissionDeadlineAtMs?: number;
   sources: readonly PluginExternalSessionSourceEntry[];
@@ -364,6 +379,13 @@ export async function resolvePluginExternalSessionFollowTarget(params: Readonly<
         (entry) => (
           entry.agentId === parsedAgentId.data
           && (params.sourceId === undefined || entry.sourceId === params.sourceId)
+          && (
+            params.boundSource === undefined
+            || preservesExternalSessionSourceIdentity(
+              entry.source,
+              params.boundSource,
+            )
+          )
           && entry.supportsFollow === true
         ),
       );
@@ -468,50 +490,19 @@ export async function resolvePluginExternalSessionFollowTarget(params: Readonly<
   }
   return unavailableFollowTarget('plugin_external_follow_identity_unavailable');
 }
-type PlainJsonSnapshotState = { seen: Set<object>; nodes: number };
 
-function snapshotPlainJson(
-  value: unknown,
-  state: PlainJsonSnapshotState = { seen: new Set<object>(), nodes: 0 },
-  depth = 0,
-): JsonValue {
-  state.nodes += 1;
-  if (state.nodes > 8_192 || depth > 24) fail('plugin_external_transcript_invalid');
-  if (value === null || typeof value === 'string' || typeof value === 'boolean') return value;
-  if (typeof value === 'number') {
-    if (!Number.isFinite(value)) fail('plugin_external_transcript_invalid');
-    return value;
-  }
-  if (typeof value !== 'object') fail('plugin_external_transcript_invalid');
-  if (state.seen.has(value)) fail('plugin_external_transcript_invalid');
-  state.seen.add(value);
-  try {
-    if (Object.getOwnPropertySymbols(value).length > 0) fail('plugin_external_transcript_invalid');
-    if (Array.isArray(value)) {
-      const names = Object.getOwnPropertyNames(value);
-      if (names.some((name) => name !== 'length' && !/^(0|[1-9][0-9]*)$/.test(name))) {
-        fail('plugin_external_transcript_invalid');
-      }
-      const result: JsonValue[] = [];
-      for (let index = 0; index < value.length; index += 1) {
-        const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
-        if (!descriptor || !descriptor.enumerable || !('value' in descriptor)) fail('plugin_external_transcript_invalid');
-        result.push(snapshotPlainJson(descriptor.value, state, depth + 1));
-      }
-      return result;
-    }
-    const prototype = Object.getPrototypeOf(value);
-    if (prototype !== Object.prototype && prototype !== null) fail('plugin_external_transcript_invalid');
-    const result = Object.create(null) as Record<string, JsonValue>;
-    for (const name of Object.getOwnPropertyNames(value).sort()) {
-      const descriptor = Object.getOwnPropertyDescriptor(value, name);
-      if (!descriptor || !descriptor.enumerable || !('value' in descriptor)) fail('plugin_external_transcript_invalid');
-      result[name] = snapshotPlainJson(descriptor.value, state, depth + 1);
-    }
-    return result;
-  } finally {
-    state.seen.delete(value);
-  }
+/**
+ * Immutable strict-JSON copy of a producer-supplied transcript value, taken
+ * through the one Protocol JSON owner so this boundary carries no second
+ * admission policy. Complete-value bounds stay where they are enforced: the
+ * transcript item/byte ceilings this adapter already applies to the response.
+ */
+function snapshotPlainJson(value: unknown): JsonValue {
+  const cloned: unknown = clonePluginPlainData(value, {
+    path: 'External Session transcript value',
+    invalid: () => failure('plugin_external_transcript_invalid'),
+  });
+  return cloned as JsonValue;
 }
 
 export function mapPluginExternalTranscriptItem(
@@ -522,14 +513,11 @@ export function mapPluginExternalTranscriptItem(
     fail('plugin_external_transcript_invalid');
   }
   const record = snapshot as Readonly<Record<string, JsonValue>>;
-  if (
-    typeof record.id !== 'string'
-    || record.id.length === 0
-    || record.id.length > MAX_EXTERNAL_SESSION_ID_CODE_UNITS
-    || !('raw' in record)
-  ) {
+  const parsedId = ExternalSessionTranscriptItemIdV1Schema.safeParse(record.id);
+  if (!parsedId.success || !('raw' in record)) {
     fail('plugin_external_transcript_invalid');
   }
+  const itemId = parsedId.data;
   const parsed = AgentExternalSessionTranscriptRawRecordSchema.safeParse(record.raw);
   if (!parsed.success) fail('plugin_external_transcript_invalid');
   const raw = parsed.data && typeof parsed.data === 'object' && !Array.isArray(parsed.data)
@@ -563,12 +551,17 @@ export function mapPluginExternalTranscriptItem(
       && compatibilityMessageRole !== kind
     )
   ) fail('plugin_external_transcript_invalid');
-  const timestampMs = typeof record.createdAtMs === 'number' && Number.isFinite(record.createdAtMs)
-    ? record.createdAtMs
-    : undefined;
-  const localId = typeof record.localId === 'string' && record.localId.trim().length > 0
-    ? record.localId
-    : undefined;
+  const parsedTimestamp = ExternalSessionTranscriptSourceTimestampV1Schema.safeParse(record.createdAtMs);
+  const timestampMs = parsedTimestamp.success ? parsedTimestamp.data : undefined;
+  // The same bounded identity owner the Agent wrapper applies to `localId`.
+  const parsedLocalId = record.localId === undefined || record.localId === null
+    ? undefined
+    : ExternalSessionTranscriptItemIdV1Schema.safeParse(record.localId);
+  const localId = parsedLocalId === undefined
+    ? undefined
+    : parsedLocalId.success
+      ? parsedLocalId.data
+      : fail('plugin_external_transcript_invalid');
   const parsedUserProjection = record.userProjection === undefined
     ? undefined
     : ExternalSessionUserProjectionSchema.safeParse(record.userProjection);
@@ -579,7 +572,7 @@ export function mapPluginExternalTranscriptItem(
       : fail('plugin_external_transcript_invalid');
   if (userProjection !== undefined && kind !== 'user') fail('plugin_external_transcript_invalid');
   return Object.freeze({
-    id: record.id,
+    id: itemId,
     ...(localId ? { localId } : {}),
     ...(userProjection ? { userProjection } : {}),
     ...(timestampMs !== undefined ? { timestampMs } : {}),
@@ -590,8 +583,11 @@ export function mapPluginExternalTranscriptItem(
 
 /**
  * Removes producer-only identity/origin carriers and projects the canonical
- * raw envelope into the recipient-facing transcript data shape. Private
- * terminal follow continues to consume `mapPluginExternalTranscriptItem`.
+ * raw envelope into the trusted-author transcript shape. Semantic tool bodies
+ * remain intact — including paths, arguments, and results — because this is a
+ * declared SDK transcript-read surface, not the narrower outward-share
+ * projector. Private terminal follow continues to consume
+ * `mapPluginExternalTranscriptItem`.
  */
 export function projectAuthorExternalTranscriptItem(
   item: HostExternalTranscriptItem,
@@ -899,7 +895,6 @@ export function createPluginExternalSessionsAdapter(params: Readonly<{
         }
 
       const diagnosticBySource = new Map<string, PluginDiagnosticData>();
-      let candidateIndexPreparing = false;
       const diagnosticKey = (sourceState: ListSourceSnapshot): string => (
         `${sourceState.entry.agentId}\u0000${sourceState.entry.sourceId}`
       );
@@ -974,7 +969,17 @@ export function createPluginExternalSessionsAdapter(params: Readonly<{
         if (page.preparation && !params.queryCandidates) {
           fail('plugin_external_candidate_index_owner_unavailable');
         }
-        candidateIndexPreparing ||= page.preparation !== undefined;
+        /**
+         * A preparation response is candidate-index build progress, not a page. It
+         * carries no continuation, its rows are a prefix the next build chunk may
+         * still reorder, and it proves neither a head nor exhaustion — so it is not
+         * a provider page read and must not consume this source's pagination budget.
+         * Head acquisition keeps driving the build inside its own source budget until
+         * the index answers with a real page; if the build cannot finish inside that
+         * budget the source resolves as its own local timeout diagnostic, leaving
+         * every ready source publishable.
+         */
+        if (page.preparation) return;
         if (page.candidates.length > limit) {
           throw new MalformedExternalSessionCandidatePageError();
         }
@@ -1175,9 +1180,6 @@ export function createPluginExternalSessionsAdapter(params: Readonly<{
       };
 
       await fillMissingHeads();
-      if (candidateIndexPreparing) {
-        return Object.freeze({ items: Object.freeze([]) });
-      }
       const items: HostExternalSessionCandidate[] = [];
       while (items.length < limit) {
         let selected: ListSourceSnapshot | null = null;
@@ -1196,9 +1198,6 @@ export function createPluginExternalSessionsAdapter(params: Readonly<{
           );
           if (!hasMissingHead) break;
           await fillMissingHeads();
-          if (candidateIndexPreparing) {
-            return Object.freeze({ items: Object.freeze([]) });
-          }
           continue;
         }
         const selectedCandidate = selected.items[selected.offset]!;
@@ -1221,7 +1220,7 @@ export function createPluginExternalSessionsAdapter(params: Readonly<{
           .slice(sourceState.offset)
           .map((candidate) => candidate.candidate)
       ));
-      if (serializedBytes(retained) > MAX_SNAPSHOT_BYTES) fail('plugin_external_inventory_capacity_exceeded');
+      if (serializedBytes(retained, MAX_SNAPSHOT_BYTES) > MAX_SNAPSHOT_BYTES) fail('plugin_external_inventory_capacity_exceeded');
       const hasMore = snapshot.sources.some(
         (sourceState) => sourceState.offset < sourceState.items.length || !sourceState.exhausted,
       );
@@ -1271,6 +1270,9 @@ export function createPluginExternalSessionsAdapter(params: Readonly<{
       return await resolvePluginExternalSessionFollowTarget({
         agentId: input.agentId,
         remoteSessionId: input.remoteSessionId,
+        ...(input.boundSource === undefined
+          ? {}
+          : { boundSource: input.boundSource }),
         ...(input.admissionDeadlineAtMs === undefined
           ? {}
           : { admissionDeadlineAtMs: input.admissionDeadlineAtMs }),

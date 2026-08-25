@@ -159,6 +159,34 @@ describe('managed Provider packaged runtime launch resolution', () => {
     }
   });
 
+  it('resolves a materialized installed plugin-generation runtime without falling back to the CLI payload', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-installed-plugin-runtime-'));
+    const generationRoot = join(root, 'generations', 'provider-p');
+    try {
+      const runtime = await writeRuntimeRoot({
+        runtimeRoot: generationRoot,
+        recordRuntimeAsset: false,
+      });
+      const resolveAssetPath = vi.fn((...segments: string[]) => join(
+        root,
+        'cli-payload-that-must-not-be-read',
+        ...segments,
+      ));
+
+      await expect(resolveManagedProviderRuntimeExecutable(
+        MANAGED_RUNTIME_REF,
+        {
+          platform: 'linux',
+          installedPluginGenerationRuntimeRoot: generationRoot,
+          resolveAssetPath,
+        },
+      )).resolves.toBe(await realpath(runtime.executablePath));
+      expect(resolveAssetPath).not.toHaveBeenCalled();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it.runIf(process.platform !== 'win32')(
     'binds current-root launch to the verified real version across pointer promotion',
     async () => {

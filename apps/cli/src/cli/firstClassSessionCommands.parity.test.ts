@@ -1,6 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { captureStderr, captureStdout } from '@/testkit/logger/captureOutput';
+import {
+  captureConsoleJsonOutput,
+  captureConsoleText,
+  captureStderr,
+  captureStdout,
+} from '@/testkit/logger/captureOutput';
 
 const {
   execute,
@@ -106,6 +111,16 @@ type Invocation = Readonly<{
   factoryCredentials: readonly unknown[];
   readStoredCredentialsCalls: number;
 }>;
+
+function normalizeActionCallsForParity(actionCalls: readonly unknown[][]): unknown[][] {
+  return actionCalls.map((call) => call.map((value, index) => {
+    if (index !== 2 || !value || typeof value !== 'object' || !('signal' in value)) return value;
+    const context = value as Record<string, unknown>;
+    // Each equivalent list invocation owns a fresh deadline signal. Its
+    // identity is deliberately not part of the projected command contract.
+    return { ...context, signal: '<abort-signal>' };
+  }));
+}
 
 function actionResult(actionId: string): unknown {
   switch (actionId) {
@@ -260,7 +275,7 @@ describe('first-class session command parity', () => {
     const nested = await runNested(parityCase);
     const firstClass = await runFirstClass(parityCase);
 
-    expect(nested.actionCalls).toEqual(firstClass.actionCalls);
+    expect(normalizeActionCallsForParity(nested.actionCalls)).toEqual(normalizeActionCallsForParity(firstClass.actionCalls));
     expect(nested.stdout).toBe(firstClass.stdout);
     expect(nested.stderr).toBe(firstClass.stderr);
     expect(nested.exitCode).toBe(firstClass.exitCode);
@@ -271,5 +286,85 @@ describe('first-class session command parity', () => {
     expect(firstClass.factoryCredentials[0]).toBe(credentials);
     expect(nested.readStoredCredentialsCalls).toBe(1);
     expect(firstClass.readStoredCredentialsCalls).toBe(1);
+  });
+
+  it('reports the offending option with canonical usage through nested and first-class commands', async () => {
+    const parityCase: ParityCase = {
+      command: 'list',
+      nestedPath: ['list'],
+      args: ['--definitely-invalid'],
+    };
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    try {
+      const nestedOutput = captureConsoleText();
+      let nestedText: string;
+      try {
+        await handleSessionCliCommand({
+          args: ['session', ...parityCase.nestedPath, ...parityCase.args],
+          rawArgv: ['happier', 'session', ...parityCase.nestedPath, ...parityCase.args],
+          terminalRuntime: null,
+        });
+        nestedText = nestedOutput.text();
+      } finally {
+        nestedOutput.restore();
+      }
+
+      const command = FIRST_CLASS_SESSION_COMMANDS.find((entry) => entry.command === parityCase.command);
+      expect(command).toBeDefined();
+      const firstClassOutput = captureConsoleText();
+      let firstClassText: string;
+      try {
+        await command!.handler({
+          args: [parityCase.command, ...parityCase.args],
+          rawArgv: ['happier', parityCase.command, ...parityCase.args],
+          terminalRuntime: null,
+        });
+        firstClassText = firstClassOutput.text();
+      } finally {
+        firstClassOutput.restore();
+      }
+
+      expect(nestedText).toBe(firstClassText);
+      expect(nestedText).toContain('Unknown option: --definitely-invalid');
+      expect(nestedText).toContain('Usage: happier session list');
+      expect(exitSpy).toHaveBeenCalledTimes(2);
+      expect(exitSpy).toHaveBeenNthCalledWith(1, 1);
+      expect(exitSpy).toHaveBeenNthCalledWith(2, 1);
+      expect(readStoredCredentials).not.toHaveBeenCalled();
+    } finally {
+      exitSpy.mockRestore();
+    }
+  });
+
+  it('keeps invalid_arguments stable while preserving the offending option in JSON', async () => {
+    const command = FIRST_CLASS_SESSION_COMMANDS.find((entry) => entry.command === 'list');
+    expect(command).toBeDefined();
+    const previousExitCode = process.exitCode;
+    process.exitCode = undefined;
+    const output = captureConsoleJsonOutput();
+    try {
+      await command!.handler({
+        args: ['list', '--definitely-invalid', '--json'],
+        rawArgv: ['happier', 'list', '--definitely-invalid', '--json'],
+        terminalRuntime: null,
+      });
+
+      expect(output.json()).toMatchObject({
+        ok: false,
+        kind: 'session_list',
+        error: {
+          code: 'invalid_arguments',
+          message: expect.stringContaining('Unknown option: --definitely-invalid'),
+        },
+      });
+      expect(output.json()).toMatchObject({
+        error: { message: expect.stringContaining('Usage: happier session list') },
+      });
+      expect(process.exitCode).toBe(1);
+      expect(readStoredCredentials).not.toHaveBeenCalled();
+    } finally {
+      output.restore();
+      process.exitCode = previousExitCode;
+    }
   });
 });

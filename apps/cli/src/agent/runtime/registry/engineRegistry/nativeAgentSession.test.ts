@@ -23,10 +23,7 @@ import {
     type AgentProviderRequirementsV1,
     type SessionTurnMutationV1,
 } from '@happier-dev/protocol';
-import {
-    AGENT_SESSION_RUNTIME_LIMITS_CANDIDATE_V1,
-    AgentSessionRuntimeEventSchema,
-} from '@happier-dev/protocol/runtime';
+import { AgentSessionRuntimeEventSchema } from '@happier-dev/protocol/runtime';
 import {
     CURRENT_SESSION_PRESENTATION_AGENT_STATE_KEY,
     CurrentSessionPresentationStateV1Schema,
@@ -9782,15 +9779,6 @@ describe('native Agent session host adapter', () => {
 
     const rejectedStructuredInputCases = [
         ['a non-JSON structured input value', { invalid: undefined }],
-        [
-            'a structured input value beyond the existing JSON aggregate limit',
-            {
-                payload: 'x'.repeat(
-                    AGENT_SESSION_RUNTIME_LIMITS_CANDIDATE_V1
-                        .p0MeasuredCandidates.jsonValueMaxJsonBytes,
-                ),
-            },
-        ],
     ] as const;
 
     it.each(rejectedStructuredInputCases)(
@@ -9871,6 +9859,13 @@ describe('native Agent terminal transcript follow admission (ES-PEP-03/ES-PEP-05
         ) => Promise<unknown>;
         configuredSources?: readonly unknown[];
         externalSessionProviderOps?: BackendExecutionSurfaces['externalSession'];
+        /** Canonical `externalSessionV1` link authority already on the Session. */
+        linkedExternalSession?: Readonly<Record<string, unknown>>;
+        /** Exact-generation physical follow for a resolved configured target. */
+        externalSessionFollow?: (request: Readonly<{
+            ref: Readonly<{ agentId: string; sourceId: string; remoteSessionId: string }>;
+            source: Readonly<Record<string, unknown>>;
+        }>) => Promise<unknown>;
         launch: (request: HostTerminalLaunchRequest) => Promise<unknown>;
     }>): Promise<TerminalFollowHarness> {
         const base = createExternalContributionFixtures(options.agentId);
@@ -9929,10 +9924,13 @@ describe('native Agent terminal transcript follow admission (ES-PEP-03/ES-PEP-05
                 } as typeof base.agent
                 : base.agent;
         const executeProviderSessionFollow = vi.fn(options.providerSessionFollow);
-        const executeFollow = vi.fn(async () => ({
-            status: 'unavailable' as const,
-            code: 'plugin_external_follow_unavailable',
-        }));
+        const executeFollow = vi.fn(
+            options.externalSessionFollow
+            ?? (async () => ({
+                status: 'unavailable' as const,
+                code: 'plugin_external_follow_unavailable',
+            })),
+        );
         const bindSession = vi.fn(() => ({
             executeFollow,
             executeProviderSessionFollow,
@@ -9988,6 +9986,9 @@ describe('native Agent terminal transcript follow admission (ES-PEP-03/ES-PEP-05
         }
         const sessionMetadata: Record<string, unknown> = {
             terminalRuntime: { promptInteractive: true },
+            ...(options.linkedExternalSession
+                ? { externalSessionV1: options.linkedExternalSession }
+                : {}),
         };
         const sessionPort = createNativeSessionClientTestPort(
             `session-${options.agentId}`,
@@ -10128,6 +10129,104 @@ describe('native Agent terminal transcript follow admission (ES-PEP-03/ES-PEP-05
         } finally {
             warn.mockRestore();
         }
+    });
+
+    it('follows a linked Session through its exact bound configured source instead of the configured aggregate', async () => {
+        const agentId = 'acme-bound-source-agent';
+        // Two configured sources of the same Agent both answer for the terminal's
+        // provider session id. Scanning the aggregate makes the Session's own
+        // transcript look like an ambiguous identity; the Session already holds
+        // an exact source binding from its link authority and must use it.
+        const resolveLinkIdentity = vi.fn(async ({ source, remoteSessionId }: Readonly<{
+            source: Readonly<Record<string, unknown>>;
+            remoteSessionId: string;
+        }>) => ({ source, remoteSessionId }));
+        const harness = await createTerminalFollowHarness({
+            agentId,
+            configuredSources: ['terminalAlpha', 'terminalBeta'].map((sourceKind) => ({
+                sourceKind,
+                terminalFollow: { userRowClassification: 'explicitV1' },
+                schema: {
+                    fields: [{ name: 'kind', kind: 'literal', value: sourceKind }],
+                },
+                key: { segments: [{ kind: 'literal', value: sourceKind }] },
+                instances: [{ kind: 'default', constants: {} }],
+            })),
+            linkedExternalSession: {
+                v: 1,
+                agentId,
+                machineId: 'machine-1',
+                remoteSessionId: `provider-${agentId}`,
+                // Provider-normalized: it carries a canonical field the
+                // configured instance never declared, so matching by configured
+                // key would not find its entry.
+                source: {
+                    kind: 'terminalBeta',
+                    workspacePath: '/canonical/beta',
+                },
+                linkedAtMs: 1,
+            },
+            externalSessionProviderOps: {
+                validateSource: vi.fn(async ({ source }) => ({ ok: true as const, source })),
+                listCandidates: vi.fn(async () => ({ candidates: [], nextCursor: null })),
+                resolveLinkIdentity,
+                pageTranscript: vi.fn(async () => ({
+                    items: [],
+                    nextCursor: null,
+                    tailCursor: null,
+                    hasMore: false,
+                    truncated: false,
+                })),
+                readAfterTranscript: vi.fn(async () => ({
+                    outcome: 'already_current' as const,
+                })),
+            } as unknown as BackendExecutionSurfaces['externalSession'],
+            externalSessionFollow: async () => ({
+                status: 'following' as const,
+                startingCursor: 'cursor-bound',
+                subscription: { dispose: async () => undefined },
+            }),
+            providerSessionFollow: async () => ({
+                status: 'unavailable' as const,
+                code: 'plugin_external_follow_unavailable',
+            }),
+            launch: async (request) => {
+                const permitted = await request.runWithCurrentPublisherPermit(
+                    async () => ({
+                        type: 'control_returned' as const,
+                        reason: 'pending_input' as const,
+                    }),
+                );
+                if (permitted.status === 'blocked') {
+                    throw new HostTerminalModelSelectionBlockedError();
+                }
+                return permitted.value;
+            },
+        });
+
+        await expect(
+            harness.modeLoop.runTerminal({ entry: 'initial' }),
+        ).resolves.toEqual({ type: 'switch' });
+        expect(harness.executeFollow).toHaveBeenCalledOnce();
+        expect(harness.executeFollow).toHaveBeenCalledWith(
+            expect.objectContaining({
+                ref: expect.objectContaining({
+                    agentId,
+                    sourceId: 'terminalBeta',
+                    remoteSessionId: `provider-${agentId}`,
+                }),
+                source: expect.objectContaining({ kind: 'terminalBeta' }),
+            }),
+        );
+        // The unbound sibling source is never consulted, so no aggregate scan
+        // can report the Session's own transcript as ambiguous.
+        expect(resolveLinkIdentity).toHaveBeenCalledOnce();
+        expect(resolveLinkIdentity).toHaveBeenCalledWith(
+            expect.objectContaining({
+                source: expect.objectContaining({ kind: 'terminalBeta' }),
+            }),
+        );
+        expect(harness.executeProviderSessionFollow).not.toHaveBeenCalled();
     });
 
     it('launches the terminal for a non-declaring Agent when the follow bind reports typed unavailability', async () => {

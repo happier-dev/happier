@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AccountSettingsSchema } from '@happier-dev/protocol';
+import { AccountSettingsSchema, ProviderConnectionIdSchema } from '@happier-dev/protocol';
 
 import { configuration } from '@/configuration';
 import type { StoredCredentials } from '@/persistence';
@@ -45,6 +45,7 @@ function runtimeRegistry(
 afterEach(() => {
   resetActiveAccountSettingsSnapshotForTests();
   vi.doUnmock('@/plugins/runtime/reload/singleton');
+  vi.doUnmock('@/settings/accountSettings/updateAccountSettingsV2WithRetry');
   vi.resetModules();
   vi.restoreAllMocks();
 });
@@ -110,5 +111,57 @@ describe('runtime Provider connection composition', () => {
     });
     expect(activeRegistry.dispose).toHaveBeenCalledOnce();
     await controller.shutdown({ timeoutMs: 0 });
+  });
+
+  it('raises the canonical outcomeUnknown refusal from the one Account-Settings CAS seam', async () => {
+    // `outcomeUnknown` is the only CAS status that means the machine may have
+    // applied the change. The composition — not just the reader it calls — is
+    // what both the daemon RPC surface and the direct CLI share, so this is
+    // where the typed refusal has to survive: an untyped Error here reaches
+    // the caller as `provider_settings_invalid` and sends them to retry a
+    // possibly-applied mutation.
+    const updateAccountSettingsV2WithRetry = vi.fn(async () => ({
+      status: 'outcomeUnknown' as const,
+      lastKnownVersion: 3,
+    }));
+    vi.doMock('@/settings/accountSettings/updateAccountSettingsV2WithRetry', async () => ({
+      ...(await vi.importActual<
+        typeof import('@/settings/accountSettings/updateAccountSettingsV2WithRetry')
+      >('@/settings/accountSettings/updateAccountSettingsV2WithRetry')),
+      updateAccountSettingsV2WithRetry,
+    }));
+
+    const credentials: StoredCredentials = {
+      token: 'provider-runtime-services-cas-test',
+      encryption: null,
+    };
+    const { createRuntimeProviderConnectionServices } = await import('./runtimeServices');
+    const { service } = createRuntimeProviderConnectionServices({
+      machineId: 'machine-a',
+      credentials,
+      happyHomeDir: configuration.happyHomeDir,
+      featureGate: { isEnabled: (featureId) => featureId === 'providers' },
+      runtimeSummary: async () => ({ status: 'error' }),
+      resolveRegistry: async () => ({ providersByContributionKey: new Map() }),
+    });
+
+    await expect(service.mutateModelSettings({
+      action: 'manualAdd',
+      machineId: 'machine-a',
+      connectionId: ProviderConnectionIdSchema.parse('pc_gateway'),
+      expectedConnectionRevision: 0,
+      expectedManualSource: { kind: 'contribution', contributionKey: 'acme.gateway/gateway' },
+      models: [{ id: 'vendor/model' }],
+    })).resolves.toEqual({
+      status: 'error',
+      error: {
+        v: 1,
+        code: 'provider_rpc_mutation_outcome_unknown',
+        machineId: 'machine-a',
+        retryable: false,
+        action: 'review_current_state',
+      },
+    });
+    expect(updateAccountSettingsV2WithRetry).toHaveBeenCalledOnce();
   });
 });

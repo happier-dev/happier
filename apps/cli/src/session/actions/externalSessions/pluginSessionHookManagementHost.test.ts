@@ -1,4 +1,7 @@
 import { createHash } from 'node:crypto';
+import { mkdir, mkdtemp, realpath, rm, symlink } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
 
@@ -113,9 +116,10 @@ const fixtureHostInstallationId = digest('hook-installation-v1', [
     agent.pluginId,
     agent.localId,
 ]);
+const fixtureTargetPath = '/private/tmp/agent-settings.json';
 const fixturePreviewTargets = [{
     targetId: 'settings',
-    absolutePath: '/tmp/agent-settings.json',
+    absolutePath: fixtureTargetPath,
     changes: [{
         kind: 'append_json_array_entry' as const,
         collectionId: 'hooks',
@@ -131,18 +135,26 @@ const fixturePreviewTargets = [{
         },
     }],
 }];
-const fixtureExpectedPreviewId = digest('hook-install-preview:v1', [
-    JSON.stringify({ targets: fixturePreviewTargets }),
-    'generation-1',
-    digest('agent-installation-v1', [
-        'machine-1',
-        agent.pluginId,
-        agent.localId,
+function expectedPreviewIdForTarget(absolutePath: string): string {
+    return digest('hook-install-preview:v1', [
+        JSON.stringify({
+            targets: fixturePreviewTargets.map((target) => ({
+                ...target,
+                absolutePath,
+            })),
+        }),
+        'generation-1',
+        digest('agent-installation-v1', [
+            'machine-1',
+            agent.pluginId,
+            agent.localId,
+            digest('agent-executable-v1', ['/bin/fixture', '1.0.0']),
+        ]),
         digest('agent-executable-v1', ['/bin/fixture', '1.0.0']),
-    ]),
-    digest('agent-executable-v1', ['/bin/fixture', '1.0.0']),
-    JSON.stringify([['settings', 'input-v1:fixture']]),
-]);
+        JSON.stringify([['settings', 'input-v1:fixture']]),
+    ]);
+}
+const fixtureExpectedPreviewId = expectedPreviewIdForTarget(fixtureTargetPath);
 
 function inventoryRecord(
     installationId: string,
@@ -161,6 +173,7 @@ function inventoryRecord(
 
 function installationRecord(
     state: ExternalSessionHookInstallationRecord['state'] = 'active',
+    absolutePath: string = fixtureTargetPath,
 ): ExternalSessionHookInstallationRecord {
     return {
         schemaVersion: 1,
@@ -178,7 +191,7 @@ function installationRecord(
         variantId: variant.variantId,
         targets: [{
             targetId: 'settings',
-            absolutePath: '/tmp/agent-settings.json',
+            absolutePath,
             collectionId: 'hooks',
             inputIdentity: 'input-v1:fixture',
         }],
@@ -226,10 +239,17 @@ function createFixture(input: Readonly<{
     isFeatureEnabled?: () => boolean;
     installationVariant?: AgentExternalSessionHookInstallationVariant;
     duplicateAgentDefinition?: boolean;
+    /**
+     * The path the Agent leaf declares, and the physical file it resolves to.
+     * They differ only when a target alias is under test.
+     */
+    targetPaths?: Readonly<{ declared: string; physical: string }>;
     dependencyOverrides?: Partial<PluginSessionHookManagementHostDependencies>;
 }> = {}) {
     let current = true;
     const retirement = new AbortController();
+    const declaredTargetPath = input.targetPaths?.declared ?? fixtureTargetPath;
+    const physicalTargetPath = input.targetPaths?.physical ?? fixtureTargetPath;
     const selectedVariant = input.installationVariant ?? variant;
     const resolveInstallation = vi.fn(async (
         _request: AgentExternalSessionHookResolveInstallationRequest,
@@ -240,7 +260,7 @@ function createFixture(input: Readonly<{
             variantId: selectedVariant.variantId,
             targets: [{
                 targetId: 'settings',
-                absolutePath: '/tmp/agent-settings.json',
+                absolutePath: declaredTargetPath,
             }],
             readiness: { kind: 'ready' },
         },
@@ -382,13 +402,15 @@ function createFixture(input: Readonly<{
         records: [] as ExternalSessionHookInstallationInventoryRecord[],
         diagnostics: [],
     }));
-    const readInstallationRecord = vi.fn(async () => installationRecord());
+    const readInstallationRecord = vi.fn(async () => (
+        installationRecord('active', physicalTargetPath)
+    ));
     const readConfigSnapshot = vi.fn(async () => ({
         ok: true as const,
         snapshot: {
             targets: [{
                 targetId: 'settings',
-                absolutePath: '/tmp/agent-settings.json',
+                absolutePath: physicalTargetPath,
                 collectionId: 'hooks',
                 inputIdentity: 'input-v1:fixture',
             }],
@@ -740,7 +762,7 @@ describe('createPluginSessionHookManagementHost', () => {
                         ),
                         targets: [{
                             targetId: 'settings',
-                            absolutePath: '/tmp/agent-settings.json',
+                            absolutePath: '/private/tmp/agent-settings.json',
                             changes: [{
                                 kind: 'append_json_array_entry',
                                 collectionId: 'hooks',
@@ -881,7 +903,7 @@ describe('createPluginSessionHookManagementHost', () => {
                     variantId: variant.variantId,
                     targets: [{
                         targetId: 'settings',
-                        absolutePath: '/tmp/agent-settings.json',
+                        absolutePath: '/private/tmp/agent-settings.json',
                     }],
                     readiness: { kind: 'ready' },
                 },
@@ -1289,6 +1311,310 @@ describe('createPluginSessionHookManagementHost', () => {
         expect(fixture.applyInstallationAction).not.toHaveBeenCalled();
     });
 
+    it('revokes every event and leaves the installation disabled when reload rotation fails partway through', async () => {
+        const twoEventVariant = {
+            ...variant,
+            events: [
+                ...variant.events,
+                {
+                    eventId: 'session-stop',
+                    targetId: 'settings',
+                    nativeEventName: 'Stop',
+                    command: {
+                        kind: 'happier_observation_v1' as const,
+                        shellDialect: 'posix' as const,
+                    },
+                },
+            ],
+        } satisfies AgentExternalSessionHookInstallationVariant;
+        let durableRecord: ExternalSessionHookInstallationRecord = {
+            ...installationRecord(),
+            ownedEntries: [
+                ...installationRecord().ownedEntries,
+                {
+                    ...installationRecord().ownedEntries[0]!,
+                    eventId: 'session-stop',
+                    nativeEventName: 'Stop',
+                    entryIndex: 1,
+                },
+            ],
+        };
+        const durableSecrets = new Map<string, 'old' | 'new'>([
+            ['session-start', 'old'],
+            ['session-stop', 'old'],
+        ]);
+        const activeEventRefs = new Set<string>();
+        const fixture = createFixture({
+            installationVariant: twoEventVariant,
+            dependencyOverrides: {
+                readInventoryPage: vi.fn(async () => ({
+                    ok: true as const,
+                    records: [inventoryRecord(
+                        fixtureHostInstallationId,
+                        durableRecord.state,
+                    )],
+                    diagnostics: [],
+                })),
+                readInstallationRecord: vi.fn(async () => durableRecord),
+                applyInstallationAction: vi.fn(async (request) => {
+                    expect(request.action).toBe('disable');
+                    durableRecord = {
+                        ...durableRecord,
+                        state: 'disabled',
+                        revision: durableRecord.revision + 1,
+                    };
+                    return {
+                        ok: true as const,
+                        state: 'installed_disabled' as const,
+                        changedConfiguration: false,
+                        revision: durableRecord.revision,
+                    };
+                }),
+            },
+        });
+        const credentialFor = (eventId: string) => ({
+            installationPrincipalRef: 'installation-principal',
+            eventPrincipalRef: `event-principal:${eventId}`,
+            eventId,
+            secretFile: `/private/tmp/${eventId}.secret`,
+        });
+        fixture.listener.restoreCredential.mockImplementation(async (input) => {
+            const secret = durableSecrets.get(input.eventId);
+            return secret
+                ? {
+                    state: 'restored' as const,
+                    credential: credentialFor(input.eventId),
+                }
+                : {
+                    state: 'unavailable' as const,
+                    reason: 'missing' as const,
+                };
+        });
+        fixture.listener.rotateCredential.mockImplementation(async (input) => {
+            if (input.eventId === 'session-start') {
+                durableSecrets.set(input.eventId, 'new');
+                return credentialFor(input.eventId);
+            }
+            throw new Error('second event rotation failed');
+        });
+        fixture.listener.enable.mockImplementation((eventPrincipalRef) => {
+            activeEventRefs.add(eventPrincipalRef);
+            return { state: 'active' };
+        });
+        fixture.listener.disable.mockImplementation((eventPrincipalRef) => {
+            activeEventRefs.delete(eventPrincipalRef);
+            return { state: 'disabled' };
+        });
+        fixture.listener.revokeDurableCredential.mockImplementation(async (input) => {
+            durableSecrets.delete(input.eventId);
+        });
+
+        await fixture.host.hydrate({ reason: 'plugin_reload' });
+
+        expect(fixture.listener.rotateCredential).toHaveBeenCalledTimes(2);
+        expect(fixture.listener.revokeDurableCredential).toHaveBeenCalledTimes(2);
+        expect(new Set(fixture.listener.revokeDurableCredential.mock.calls.map(
+            ([input]) => input.eventId,
+        ))).toEqual(new Set(['session-start', 'session-stop']));
+        expect(durableSecrets.size).toBe(0);
+        expect(durableRecord.state).toBe('disabled');
+
+        // A fresh bootstrap must see disabled durable custody and neither
+        // restore nor enable the mixed old/new secrets that existed before
+        // the failed rotation.
+        fixture.listener.restoreCredential.mockClear();
+        fixture.listener.enable.mockClear();
+        await fixture.host.hydrate({ reason: 'bootstrap' });
+
+        expect(fixture.listener.restoreCredential).not.toHaveBeenCalled();
+        expect(fixture.listener.enable).not.toHaveBeenCalled();
+        expect(activeEventRefs).toEqual(new Set());
+    });
+
+    it('holds the installation lock through reload hydration so Uninstall cannot be followed by credential recreation', async () => {
+        const actions: string[] = [];
+        const effects: string[] = [];
+        let releaseRestore!: () => void;
+        const restoreGate = new Promise<void>((resolve) => {
+            releaseRestore = resolve;
+        });
+        const fixture = createFixture({
+            dependencyOverrides: {
+                readInventoryPage: vi.fn(async () => ({
+                    ok: true as const,
+                    records: [inventoryRecord(fixtureHostInstallationId)],
+                    diagnostics: [],
+                })),
+                applyInstallationAction: vi.fn(async (request) => {
+                    actions.push(request.action);
+                    return {
+                        ok: true as const,
+                        state: request.action === 'uninstall'
+                            ? 'not_installed' as const
+                            : 'installed_disabled' as const,
+                        changedConfiguration: request.action === 'uninstall',
+                        revision: 2,
+                    };
+                }),
+            },
+        });
+        fixture.listener.restoreCredential.mockImplementation(async () => {
+            effects.push('restore');
+            await restoreGate;
+            return {
+                state: 'restored' as const,
+                credential: {
+                    installationPrincipalRef: 'installation-principal',
+                    eventPrincipalRef: 'event-principal',
+                    eventId: 'session-start',
+                    secretFile: '/private/tmp/session-start.secret',
+                },
+            };
+        });
+        fixture.listener.rotateCredential.mockImplementation(async () => {
+            effects.push('rotate');
+            return {
+                installationPrincipalRef: 'installation-principal',
+                eventPrincipalRef: 'event-principal',
+                eventId: 'session-start',
+                secretFile: '/private/tmp/session-start.secret',
+            };
+        });
+        fixture.listener.enable.mockImplementation(() => {
+            effects.push('enable');
+            return { state: 'active' as const };
+        });
+        fixture.listener.revokeDurableCredential.mockImplementation(
+            async () => {
+                effects.push('revoke');
+            },
+        );
+
+        const hydrating = fixture.host.hydrate({ reason: 'plugin_reload' });
+        await vi.waitFor(() => {
+            expect(effects).toEqual(['restore']);
+        });
+        const uninstalling = fixture.host.uninstall({
+            machineId: 'machine-1',
+            agent,
+            installationId: fixtureHostInstallationId,
+        });
+        // Drain every already-resolvable continuation: an Uninstall that is
+        // not serialized behind hydration would finish its whole cleanup here.
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        releaseRestore();
+
+        await hydrating;
+        await expect(uninstalling).resolves.toEqual({
+            ok: true,
+            status: { state: 'not_installed' },
+        });
+        expect(effects).toEqual(['restore', 'rotate', 'enable', 'revoke']);
+        expect(actions).toEqual(['disable', 'uninstall']);
+    });
+
+    it('rereads custody under the installation lock so hydration behind Uninstall recreates nothing', async () => {
+        const actions: string[] = [];
+        const effects: string[] = [];
+        let uninstalled = false;
+        let releaseUninstall!: () => void;
+        const uninstallGate = new Promise<void>((resolve) => {
+            releaseUninstall = resolve;
+        });
+        const fixture = createFixture({
+            dependencyOverrides: {
+                readInventoryPage: vi.fn(async () => ({
+                    ok: true as const,
+                    records: [inventoryRecord(fixtureHostInstallationId)],
+                    diagnostics: [],
+                })),
+                readInstallationRecord: vi.fn(async () => (
+                    uninstalled ? null : installationRecord()
+                )),
+                applyInstallationAction: vi.fn(async (request) => {
+                    actions.push(request.action);
+                    if (request.action !== 'uninstall') {
+                        return {
+                            ok: true as const,
+                            state: 'installed_disabled' as const,
+                            changedConfiguration: false,
+                            revision: 2,
+                        };
+                    }
+                    await uninstallGate;
+                    uninstalled = true;
+                    return {
+                        ok: true as const,
+                        state: 'not_installed' as const,
+                        changedConfiguration: true,
+                        revision: 2,
+                    };
+                }),
+            },
+        });
+        fixture.listener.restoreCredential.mockImplementation(async () => {
+            effects.push('restore');
+            return {
+                state: 'restored' as const,
+                credential: {
+                    installationPrincipalRef: 'installation-principal',
+                    eventPrincipalRef: 'event-principal',
+                    eventId: 'session-start',
+                    secretFile: '/private/tmp/session-start.secret',
+                },
+            };
+        });
+        fixture.listener.rotateCredential.mockImplementation(async () => {
+            effects.push('rotate');
+            return {
+                installationPrincipalRef: 'installation-principal',
+                eventPrincipalRef: 'event-principal',
+                eventId: 'session-start',
+                secretFile: '/private/tmp/session-start.secret',
+            };
+        });
+        fixture.listener.enable.mockImplementation(() => {
+            effects.push('enable');
+            return { state: 'active' as const };
+        });
+        fixture.listener.revokeDurableCredential.mockImplementation(
+            async () => {
+                effects.push('revoke');
+            },
+        );
+
+        const uninstalling = fixture.host.uninstall({
+            machineId: 'machine-1',
+            agent,
+            installationId: fixtureHostInstallationId,
+        });
+        await vi.waitFor(() => {
+            expect(actions).toEqual(['disable', 'uninstall']);
+        });
+        // Hydration starts while Uninstall still holds the lock and custody is
+        // still readable as active: a hydration that captured the record
+        // before the lock would revive it after the removal committed.
+        const hydrating = fixture.host.hydrate({ reason: 'plugin_reload' });
+        await vi.waitFor(() => {
+            expect(fixture.readInventoryPage).toHaveBeenCalled();
+        });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        releaseUninstall();
+
+        await expect(uninstalling).resolves.toEqual({
+            ok: true,
+            status: { state: 'not_installed' },
+        });
+        await hydrating;
+        expect(fixture.listener.restoreCredential).not.toHaveBeenCalled();
+        expect(fixture.listener.rotateCredential).not.toHaveBeenCalled();
+        expect(fixture.listener.enable).not.toHaveBeenCalled();
+        expect(effects).toEqual(['revoke']);
+        expect(actions).toEqual(['disable', 'uninstall']);
+    });
+
     it('keeps disabled custody passive across bootstrap and reload', async () => {
         const fixture = createFixture({
             dependencyOverrides: {
@@ -1356,7 +1682,7 @@ describe('createPluginSessionHookManagementHost', () => {
                     variantId: variant.variantId,
                     targets: [{
                         targetId: 'settings',
-                        absolutePath: '/tmp/agent-settings.json',
+                        absolutePath: '/private/tmp/agent-settings.json',
                         entries: [{
                             eventId: 'session-start',
                             nativeEventName: 'SessionStart',
@@ -1380,7 +1706,7 @@ describe('createPluginSessionHookManagementHost', () => {
                 snapshot: {
                     targets: [{
                         targetId: 'settings',
-                        absolutePath: '/tmp/agent-settings.json',
+                        absolutePath: '/private/tmp/agent-settings.json',
                         collectionId: 'hooks',
                         inputIdentity: 'input-v1:changed',
                     }],
@@ -1449,7 +1775,7 @@ describe('createPluginSessionHookManagementHost', () => {
                 snapshot: {
                     targets: [{
                         targetId: 'settings',
-                        absolutePath: '/tmp/agent-settings.json',
+                        absolutePath: '/private/tmp/agent-settings.json',
                         collectionId: 'hooks',
                         inputIdentity: 'input-v1:fixture',
                     }],
@@ -1560,7 +1886,7 @@ describe('createPluginSessionHookManagementHost', () => {
                         targets: [
                             {
                                 targetId: 'settings',
-                                absolutePath: '/tmp/agent-settings.json',
+                                absolutePath: '/private/tmp/agent-settings.json',
                                 collectionId: 'hooks',
                                 inputIdentity: 'input-v1:fixture',
                             },
@@ -1626,7 +1952,7 @@ describe('createPluginSessionHookManagementHost', () => {
                     variantId: variant.variantId,
                     targets: [{
                         targetId: 'settings',
-                        absolutePath: '/tmp/agent-settings.json',
+                        absolutePath: '/private/tmp/agent-settings.json',
                     }],
                     readiness: { kind: 'ready' },
                 },
@@ -1638,7 +1964,7 @@ describe('createPluginSessionHookManagementHost', () => {
                     variantId: variant.variantId,
                     targets: [{
                         targetId: 'settings',
-                        absolutePath: '/tmp/agent-settings.json',
+                        absolutePath: '/private/tmp/agent-settings.json',
                     }],
                     readiness: {
                         kind: 'needs_attention',
@@ -1717,6 +2043,69 @@ describe('createPluginSessionHookManagementHost', () => {
         expect(fixture.listener.enable).toHaveBeenCalledOnce();
     });
 
+    it('installs through an aliased Agent target and keeps custody on its physical file', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-hook-alias-'));
+        const physicalRoot = join(await realpath(root), 'agent-config');
+        const aliasRoot = join(root, 'agent-config-current');
+        await mkdir(physicalRoot, { recursive: true });
+        await symlink(physicalRoot, aliasRoot, 'dir');
+        const declared = join(aliasRoot, 'settings.json');
+        const physical = join(physicalRoot, 'settings.json');
+        let installed = false;
+        const actions: {
+            action: string;
+            targets?: readonly Readonly<{ absolutePath: string }>[];
+        }[] = [];
+        const fixture = createFixture({
+            targetPaths: { declared, physical },
+            dependencyOverrides: {
+                readInstallationRecord: vi.fn(async () => (
+                    installed
+                        ? installationRecord('disabled', physical)
+                        : null
+                )),
+                applyInstallationAction: vi.fn(async (request) => {
+                    actions.push({
+                        action: request.action,
+                        ...(request.targets ? { targets: request.targets } : {}),
+                    });
+                    if (request.action === 'install') installed = true;
+                    return {
+                        ok: true as const,
+                        state: request.action === 'enable'
+                            ? 'installed_enabled' as const
+                            : 'installed_disabled' as const,
+                        changedConfiguration: request.action === 'install',
+                        revision: 2,
+                    };
+                }),
+            },
+        });
+
+        try {
+            await expect(fixture.host.install({
+                machineId: 'machine-1',
+                agent,
+                expectedPreviewId: expectedPreviewIdForTarget(physical),
+            })).resolves.toMatchObject({
+                ok: true,
+                status: {
+                    state: 'installed_enabled',
+                    installationId: fixtureHostInstallationId,
+                },
+            });
+            expect(actions.map((entry) => entry.action))
+                .toEqual(['install', 'enable']);
+            // The configuration owner is handed the declared alias so it can
+            // re-resolve it at its own compare-and-swap fence.
+            expect(actions[0]!.targets)
+                .toEqual([{ targetId: 'settings', absolutePath: declared }]);
+        } finally {
+            await fixture.host.dispose();
+            await rm(root, { recursive: true, force: true });
+        }
+    });
+
     it('explicit Enable keeps disabled custody when readiness still needs attention', async () => {
         const fixture = createFixture({
             dependencyOverrides: {
@@ -1732,7 +2121,7 @@ describe('createPluginSessionHookManagementHost', () => {
                 variantId: variant.variantId,
                 targets: [{
                     targetId: 'settings',
-                    absolutePath: '/tmp/agent-settings.json',
+                    absolutePath: '/private/tmp/agent-settings.json',
                 }],
                 readiness: {
                     kind: 'needs_attention',
@@ -1777,7 +2166,7 @@ describe('createPluginSessionHookManagementHost', () => {
                     snapshot: {
                         targets: [{
                             targetId: 'settings',
-                            absolutePath: '/tmp/agent-settings.json',
+                            absolutePath: '/private/tmp/agent-settings.json',
                             collectionId: 'hooks',
                             inputIdentity: 'input-v1:changed',
                         }],
@@ -1816,7 +2205,7 @@ describe('createPluginSessionHookManagementHost', () => {
                 snapshot: {
                     targets: [{
                         targetId: 'settings',
-                        absolutePath: '/tmp/agent-settings.json',
+                        absolutePath: '/private/tmp/agent-settings.json',
                         collectionId: 'hooks',
                         inputIdentity: 'input-v1:fixture',
                     }],
@@ -1827,7 +2216,7 @@ describe('createPluginSessionHookManagementHost', () => {
                 snapshot: {
                     targets: [{
                         targetId: 'settings',
-                        absolutePath: '/tmp/agent-settings.json',
+                        absolutePath: '/private/tmp/agent-settings.json',
                         collectionId: 'hooks',
                         inputIdentity: 'input-v1:changed',
                     }],
@@ -1909,7 +2298,7 @@ describe('createPluginSessionHookManagementHost', () => {
                             targets: [{
                                 targetId: 'settings',
                                 absolutePath:
-                                    '/tmp/agent-settings.json',
+                                    '/private/tmp/agent-settings.json',
                             }],
                             readiness: { kind: 'ready' },
                         },
@@ -2492,6 +2881,48 @@ describe('createPluginSessionHookManagementHost', () => {
         });
     });
 
+    it.each(['preparing', 'revoked'] as const)(
+        'uninstalls crash-visible %s custody without attempting the refused Disable',
+        async (transitionalState) => {
+        const actions: string[] = [];
+        const fixture = createFixture({
+            dependencyOverrides: {
+                readInstallationRecord: vi.fn(
+                    async () => installationRecord(transitionalState),
+                ),
+                applyInstallationAction: vi.fn(async (request) => {
+                    actions.push(request.action);
+                    if (request.action === 'disable') {
+                        // The configuration owner refuses Disable for
+                        // transitional custody; see its focused suite.
+                        return {
+                            ok: false as const,
+                            code: 'reconciliation_required' as const,
+                        };
+                    }
+                    return {
+                        ok: true as const,
+                        state: 'not_installed' as const,
+                        changedConfiguration: true,
+                        revision: 2,
+                    };
+                }),
+            },
+        });
+
+        await expect(fixture.host.uninstall({
+            machineId: 'machine-1',
+            agent,
+            installationId: fixtureHostInstallationId,
+        })).resolves.toEqual({
+            ok: true,
+            status: { state: 'not_installed' },
+        });
+        expect(actions).toEqual(['uninstall']);
+        expect(fixture.listener.revokeDurableCredential).toHaveBeenCalledOnce();
+    },
+    );
+
     it('keeps disabled custody retryable when durable credential revoke fails', async () => {
         const actions: string[] = [];
         transportMocks.revokeDurableCredential
@@ -2652,7 +3083,7 @@ describe('createPluginSessionHookManagementHost', () => {
                     snapshot: {
                         targets: [{
                             targetId: 'settings',
-                            absolutePath: '/tmp/agent-settings.json',
+                            absolutePath: '/private/tmp/agent-settings.json',
                             collectionId: 'hooks',
                             inputIdentity: configInputIdentity,
                         }],

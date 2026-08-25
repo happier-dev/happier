@@ -18,7 +18,7 @@ vi.mock('@/plugins/runtime/reload/singleton', () => ({
                 outcome: activeRuntimeRegistryState.catalogPolicyOutcome,
                 code: activeRuntimeRegistryState.catalogPolicyOutcome === 'visible'
                   ? 'plugin_action_available'
-                  : 'plugin_action_package_untrusted',
+                  : 'plugin_action_generation_retired',
                 requiresCurrentIntent: false,
               }),
             },

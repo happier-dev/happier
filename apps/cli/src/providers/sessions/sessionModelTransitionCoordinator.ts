@@ -7,6 +7,7 @@ import {
   type SessionProviderBindingMetadataV1,
 } from '@happier-dev/protocol';
 import type { AgentSessionProviderBinding } from '@happier-dev/plugin-sdk/agents/runtime';
+import { projectPluginFailureMessage } from '@/plugins/runtime/lifecycle/utils';
 import {
   isRuntimeConfigUpdateOutcomeApplied,
   type RuntimeConfigUpdateOutcomeV1,
@@ -29,6 +30,29 @@ export type SessionModelTransitionApplyResult =
       readbackAfterCompletion?: boolean;
     }>;
 
+/**
+ * The Protocol transition result caps `reason` at 512 characters, so the
+ * canonical projector is fitted to that ceiling here rather than letting an
+ * overlong plugin string turn a typed refusal into a schema failure.
+ */
+const SESSION_MODEL_TRANSITION_REASON_MAX_UTF8_BYTES = 512;
+
+/**
+ * Plugin- and runtime-authored transition prose crosses the daemon boundary
+ * into the Session transition result, Action details, and `--json` stdout, so
+ * it enters through the canonical plugin-failure projector. Host-owned closed
+ * reason codes are supplied as the fallback and are never rewritten.
+ */
+function projectSessionModelTransitionReason(
+  value: unknown,
+  fallback: string,
+): string {
+  if (typeof value !== 'string' || value.trim().length === 0) return fallback;
+  return projectPluginFailureMessage(value, {
+    maxUtf8Bytes: SESSION_MODEL_TRANSITION_REASON_MAX_UTF8_BYTES,
+  });
+}
+
 export function mapRuntimeConfigUpdateOutcomeToSessionModelTransitionApplyResult(
   outcome: RuntimeConfigUpdateOutcomeV1 | void | null,
 ): SessionModelTransitionApplyResult {
@@ -44,7 +68,10 @@ export function mapRuntimeConfigUpdateOutcomeToSessionModelTransitionApplyResult
   }
   return {
     status: outcome.status === 'unsupported' ? 'unsupported' : 'failed',
-    reason: outcome.reason ?? 'runtime_model_transition_not_applied',
+    reason: projectSessionModelTransitionReason(
+      outcome.reason,
+      'runtime_model_transition_not_applied',
+    ),
   };
 }
 
@@ -341,7 +368,10 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
     } catch (error) {
       return {
         status: 'unproven',
-        reason: error instanceof Error ? error.message : 'runtime_apply_failed',
+        reason: projectSessionModelTransitionReason(
+          error instanceof Error ? error.message : null,
+          'runtime_apply_failed',
+        ),
         readbackAfterCompletion: true,
       };
     }
@@ -471,7 +501,10 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
         'apply_failed',
         activeTarget.selection,
         proposal.selection,
-        error instanceof Error ? error.message : 'prompt_fence_failed',
+        projectSessionModelTransitionReason(
+          error instanceof Error ? error.message : null,
+          'prompt_fence_failed',
+        ),
       ));
       return 'settled';
     }
@@ -769,7 +802,10 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
         'unsupported',
         activeTarget.selection,
         proposal.selection,
-        error instanceof Error ? error.message : 'model_transition_authorization_failed',
+        projectSessionModelTransitionReason(
+          error instanceof Error ? error.message : null,
+          'model_transition_authorization_failed',
+        ),
       ));
       return;
     }
@@ -816,7 +852,10 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
           'apply_failed',
           activeTarget.selection,
           proposal.selection,
-          error instanceof Error ? error.message : 'intent_publication_failed',
+          projectSessionModelTransitionReason(
+            error instanceof Error ? error.message : null,
+            'intent_publication_failed',
+          ),
         ));
         return;
       }
@@ -881,7 +920,10 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
           'apply_failed',
           activeTarget.selection,
           proposal.selection,
-          error instanceof Error ? error.message : 'prompt_fence_failed',
+          projectSessionModelTransitionReason(
+            error instanceof Error ? error.message : null,
+            'prompt_fence_failed',
+          ),
         ));
         return;
       }
@@ -1299,7 +1341,10 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
             'publication_failed_rolled_back',
             previousTarget.selection,
             proposal.selection,
-            error instanceof Error ? error.message : 'active_fact_publication_failed',
+            projectSessionModelTransitionReason(
+              error instanceof Error ? error.message : null,
+              'active_fact_publication_failed',
+            ),
           ));
           return;
         } catch {

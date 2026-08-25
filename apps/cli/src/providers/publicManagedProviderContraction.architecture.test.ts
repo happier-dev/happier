@@ -342,6 +342,90 @@ describe('public managed Provider contraction', () => {
       'apps/cli/src/daemon/local/services/managed/startDeclarations.ts',
     ])).resolves.toEqual([]);
 
+    // RU2 surfaces finalization / DEC-6 (LSV-2): the managed local-service RUNTIME — the
+    // registry whose two start mutators had no production caller, its snapshot projection,
+    // its restart resolver, and the protocol snapshot schemas + machine RPC that carried an
+    // always-empty row list to the UI — is removed. The producer this census already forbids
+    // (`declaration.ts` / `startDeclarations.ts`) is why it could never fill.
+    // `selectManagedOwnedTreeEndpoint` survived the deletion and moved to its only live
+    // consumer, the plugin-runtime managed-process supervisor; its new home is asserted below
+    // so the move cannot silently regress into a re-created daemon module.
+    await expect(findExistingProductionFiles([
+      'apps/cli/src/daemon/local/services/managed/registry.ts',
+      'apps/cli/src/daemon/local/services/managed/routes.ts',
+      'apps/cli/src/daemon/local/services/managed/restart.ts',
+      'apps/cli/src/daemon/local/services/managed/scripts.ts',
+      'packages/protocol/src/local/services/managed/v1.ts',
+      'packages/protocol/src/local/services/managed/index.ts',
+      'apps/ui/sources/sync/domains/local/services/managed/store.ts',
+      'apps/ui/sources/sync/domains/local/services/managed/sharedStore.ts',
+      'apps/ui/sources/sync/domains/local/services/managed/useManagedLocalServicesState.ts',
+      'apps/ui/sources/sync/domains/local/services/managed/machineRpc.ts',
+      'apps/ui/sources/sync/domains/local/services/managed/api.ts',
+      'apps/ui/sources/components/sessions/localServices/ManagedLocalServiceRow.tsx',
+      'apps/ui/sources/components/sessions/localServices/ManagedLocalServiceStatus.tsx',
+      'apps/ui/sources/components/sessions/localServices/LocalServiceFactList.tsx',
+    ])).resolves.toEqual([]);
+
+    // No production module may name the removed runtime again. This is an AST identifier
+    // census over every production file in the daemon local-services corridor plus the two
+    // protocol tables that carried the RPC row, so re-introducing any of it — under any
+    // import spelling — is a RED here, not a silent regression.
+    await expect(findIdentifierOffenders({
+      roots: [join(cliSourceRoot, 'daemon', 'local', 'services')],
+      identifiers: [
+        'ManagedLocalServiceRegistry',
+        'ManagedLocalServiceRuntimeState',
+        'createManagedLocalServiceRegistry',
+        'createLocalServiceManagedRoutes',
+        'LocalServiceManagedRoutes',
+        'resolveManagedLocalServiceRestartRequest',
+        'ManagedLocalServiceRestartPolicy',
+        'managedRegistry',
+        'managedRoutes',
+        'applyInventoryEntries',
+        'startDetectAfterLaunch',
+        'startAssignAndInject',
+        'markProcessOwnershipUnverified',
+        'stopIntentional',
+      ],
+    })).resolves.toEqual([]);
+
+    await expect(findIdentifierOffenders({
+      files: [
+        join(repoRoot, 'apps/cli/src/daemon/controlServer.ts'),
+        join(repoRoot, 'apps/cli/src/rpc/handlers/daemonLocalServices.ts'),
+        join(repoRoot, 'apps/cli/src/rpc/handlers/_internalAllowlist.ts'),
+        join(repoRoot, 'apps/cli/src/daemon/startup/startDaemonSessionControlRuntime.ts'),
+        join(repoRoot, 'packages/protocol/src/rpc/methods.ts'),
+        join(repoRoot, 'packages/protocol/src/machines/peer/mediation/rpc/governanceV1.ts'),
+        join(repoRoot, 'packages/protocol/src/machines/peer/mediation/rpc/routePolicyV1.ts'),
+      ],
+      identifiers: [
+        'DAEMON_LOCAL_SERVICES_MANAGED_SNAPSHOT',
+        'LocalServiceManagedRuntimeSnapshotV1',
+        'LocalServiceManagedRuntimeStateV1',
+        'DaemonLocalServiceManagedSnapshotRequestV1Schema',
+        'DaemonLocalServiceManagedSnapshotResponseV1Schema',
+        'localServicesManaged',
+      ],
+    })).resolves.toEqual([]);
+
+    // Presence side: the one live survivor of the deleted registry kept its behaviour and
+    // gained an owner. A missing file here IS the regression, so this read stays strict.
+    expectIdentifiers(
+      await readIdentifiers(
+        'apps/cli/src/plugins/runtime/invocation/services/managedOwnedTreeEndpoint.ts',
+      ),
+      ['selectManagedOwnedTreeEndpoint', 'ManagedInventoryCandidate'],
+    );
+    expectIdentifiers(
+      await readIdentifiers(
+        'apps/cli/src/plugins/runtime/invocation/services/managedProcessSupervisor.ts',
+      ),
+      ['selectManagedOwnedTreeEndpoint'],
+    );
+
     await expect(findIdentifierOffenders({
       files: [
         join(cliSourceRoot, 'daemon', 'local', 'services', 'runtime.ts'),
@@ -717,10 +801,14 @@ describe('public managed Provider contraction', () => {
       daemonLocalServicesPath,
       daemonLocalServicesSource,
     );
+    // `managedRoutes` was listed here as a scope fence — "the Provider contraction must not
+    // sweep away the generic daemon local-services owners" — never as a product contract for
+    // managed local services. The managed local-service runtime was itself removed as a
+    // producerless spine (RU2 surfaces finalization, DEC-6), so the fence no longer applies
+    // to it; its absence is now asserted by the census below.
     expectIdentifiers(daemonLocalServices, [
       'createLocalServicesDaemonRuntime',
       'launcherRoutes',
-      'managedRoutes',
       'syncHostedWebStaticAssets',
     ]);
     expect(daemonLocalServices.has('transferTrustedManagedLocalService')).toBe(false);

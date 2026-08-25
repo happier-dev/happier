@@ -573,6 +573,9 @@ describe('plugin sessions inventory public service boundary', () => {
       fetchPage: async () => ({ sessions: [], nextCursor: null, hasNext: false }),
       fetchById: async () => rawSession({ id: 'session-current', active: true }),
       executeMessageAction: async ({ sessionId, request }) => {
+        if (request.kind !== 'userText') {
+          throw new Error('Expected the user-text send request exercised by this fixture');
+        }
         sent.push(`${sessionId}:${request.text}`);
         return { status: 'accepted', localId: 'local-1' };
       },

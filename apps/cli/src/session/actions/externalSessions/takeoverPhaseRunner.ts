@@ -9,6 +9,7 @@ import {
   type PluginAgentExternalLinkedTakeoverWriterSafetyV1,
   type ExternalSessionOperationActionResponseV1,
   type ExternalSessionOperationRecordV1,
+  type ExternalSessionsAgentId,
 } from '@happier-dev/protocol';
 import { randomUUID } from 'node:crypto';
 
@@ -16,10 +17,13 @@ import type {
   createExternalSessionFollowLeaseManager,
 } from '@/api/session/external/leases/createExternalSessionFollowLeaseManager';
 import {
+  resolveCurrentExternalSessionAgentRoutingId,
+} from '@/api/session/external/linking/qualifiedLinkIdentityRegistry';
+import {
   inspectExternalSessionDestructiveQuiescence,
 } from '@/api/session/external/takeover/inspectExternalSessionDestructiveQuiescence';
-import {
-  resolveExternalLinkedTakeoverWriterSafety,
+import type {
+  resolveExternalLinkedTakeoverWriterSafetyForAgentIdentity,
 } from '@/api/session/external/takeover/resolveExternalLinkedTakeoverWriterSafety';
 import {
   resolveExternalTakeoverSpawnOptions,
@@ -150,8 +154,16 @@ export type PreparedExternalSessionExternalLinkedTakeoverSource = Readonly<{
 type ExternalLinkedTakeoverPhaseRunnerDependencies = Readonly<{
   activeServerDir: string;
   operationExclusion: ExternalSessionOperationExclusion;
+  /**
+   * Keyed by the record's durable `{pluginId, localId}` Agent identity, not by
+   * a host routing id: the record is the only Agent evidence this runner has,
+   * and only the registry can project that identity onto the routing id the
+   * execution surface is stored under.
+   */
   resolveWriterSafety(
-    agentId: Parameters<typeof resolveExternalLinkedTakeoverWriterSafety>[0],
+    agent: Parameters<
+      typeof resolveExternalLinkedTakeoverWriterSafetyForAgentIdentity
+    >[0],
   ): Promise<PluginAgentExternalLinkedTakeoverWriterSafetyV1>;
   loadCurrent(
     record: ExternalLinkedTakeoverRecord,
@@ -374,19 +386,22 @@ export function createExternalSessionExternalLinkedTakeoverPhaseRunner(
       // `revision + 1` before the Server command, so a definitive pre-commit
       // rejection always leaves this CAS stale. Recover at the canonical owner
       // instead of stranding a live operation at running/admitting.
-      const recovered =
+      const recovery =
         await recoverExternalSessionTakeoverPrecommitAdmission({
           activeServerDir: dependencies.activeServerDir,
           targetStorageMode: 'external-linked',
           sessionId: record.request.sessionId,
           operationId: record.operationId,
           attemptId: record.bindings.targetRuntimeAttemptId,
+          operationClaimId: record.bindings.operationClaimId,
           message,
           nowMs: nowMs(),
         });
-      if (recovered) return operationSuccess(await publishBestEffort(
-        recovered as ExternalLinkedTakeoverRecord,
-      ));
+      if (recovery.status === 'recovered') {
+        return operationSuccess(await publishBestEffort(
+          recovery.record as ExternalLinkedTakeoverRecord,
+        ));
+      }
     }
     return operationFailure(
       'stale_revision',
@@ -596,7 +611,7 @@ export function createExternalSessionExternalLinkedTakeoverPhaseRunner(
     }
 
     const writerSafety = await dependencies.resolveWriterSafety(
-      record.request.source.qualifiedIdentity.agent.localId,
+      record.request.source.qualifiedIdentity.agent,
     ).catch(() => 'unsupported' as const);
     if (writerSafety !== 'native_prevention') {
       return operationFailure(
@@ -1281,11 +1296,21 @@ export async function loadCurrentExternalSessionPersistedTakeoverTarget(
           accountEncryptionMode: accountEncryptionCurrentness.mode,
         })
       : null;
-    const reconstructed = rawSession && metadata
+    // The retired tombstone names the Agent by its host routing id, while the
+    // durable record carries the Agent's `{pluginId, localId}` identity. Only
+    // the registry relates the two, so resolve it here and let the pure
+    // reconstruction compare routing id to routing id.
+    const expectedAgentRoutingId = rawSession && metadata
+      ? await resolveCurrentExternalSessionAgentRoutingId(
+          record.request.source.qualifiedIdentity.agent,
+        ).catch(() => null)
+      : null;
+    const reconstructed = rawSession && metadata && expectedAgentRoutingId
       ? reconstructPersistedTakeoverTargetFromRetiredMetadata({
           record,
           rawSession,
           metadata,
+          expectedAgentRoutingId,
         })
       : null;
     if (!reconstructed) throw liveLinkError;
@@ -1298,6 +1323,12 @@ export function reconstructPersistedTakeoverTargetFromRetiredMetadata(
     record: ExternalSessionPersistedTakeoverImportRecord;
     rawSession: LoadedLinkedExternalSession['rawSession'];
     metadata: Record<string, unknown>;
+    /**
+     * The host routing id the record's durable Agent identity currently
+     * resolves to. The tombstone persists a routing id, so the caller supplies
+     * the registry's answer instead of this pure reader guessing a projection.
+     */
+    expectedAgentRoutingId: ExternalSessionsAgentId;
   }>,
 ): LoadedLinkedExternalSession | null {
   const historyImport = resolveExternalHistoryImportV1FromMetadata(
@@ -1311,7 +1342,7 @@ export function reconstructPersistedTakeoverTargetFromRetiredMetadata(
     input.rawSession.currentStorageState !== 'hosted'
     || linkedSession.ok
     || linkedSession.error !== 'linked_session_not_found'
-    || imported.agentId !== source.qualifiedIdentity.agent.localId
+    || imported.agentId !== input.expectedAgentRoutingId
     || imported.remoteSessionId !== source.remoteSessionId
     || imported.source.kind !== source.qualifiedIdentity.source.kind
   ) {

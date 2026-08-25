@@ -53,6 +53,14 @@ export function createScmBackendRegistry(backends: readonly ScmBackend[]) {
         ));
         if (detectedRepositories.length > 0) return detectedRepositories;
 
+        // Three states, not two (`F-SCM-1`). A fulfilled detection is a backend that looked and
+        // answered; a rejection is a backend that could not look. "Not a repository" is only a fact
+        // when at least one backend actually answered — otherwise every caller downstream would
+        // publish a confident negative about a path nothing inspected. A backend whose tool is
+        // missing rejects too, so it neither answers for the others nor overrides one that did.
+        const answeredAuthoritatively = results.some((result) => result.status === 'fulfilled');
+        if (answeredAuthoritatively) return [];
+
         const detectorFailure = results.find((result) => result.status === 'rejected');
         if (detectorFailure?.status === 'rejected') throw detectorFailure.reason;
         return [];

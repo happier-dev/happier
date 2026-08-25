@@ -1,4 +1,5 @@
 import {
+  PROVIDER_ENDPOINT_SAFETY_LIMITS,
   createProviderErrorV1,
   parseBackendTargetKeyV2,
   type ProviderCatalogDeclarationV1,
@@ -22,7 +23,10 @@ import { getProviderContribution } from '@/providers/registry/lookup';
 import { resolveProviderContributionRegistryView } from '@/providers/registry/contributions';
 import { createProviderProbeHttpClient } from '@/providers/probe/client';
 import { createRuntimeProviderServices } from '@/providers/probe/runtimeServices';
-import type { RuntimeProviderServices } from '@/providers/probe/runtimeServices';
+import type {
+  RuntimeProviderOperationScope,
+  RuntimeProviderServices,
+} from '@/providers/probe/runtimeServices';
 import type { ProviderRuntimeStateStore } from '@/providers/runtimeState';
 import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 
@@ -36,7 +40,10 @@ import { createProviderModelLoadRpcHandler } from './rpc';
 import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
 import { readLeasedAgentProviderBindingAdapter } from '@/plugins/runtime/providerBindings/adapter';
-import { assembleProviderConnectionCatalog, projectProviderCatalogForPicker } from '@/providers/catalog';
+import {
+  assembleProviderConnectionCatalog,
+  projectProviderCatalogForPicker,
+} from '@/providers/catalog';
 import type { ProviderConnectionCatalog } from '@/providers/catalog';
 import { resolveProviderModelCompatibility } from '@/providers/catalog/compatibility';
 import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
@@ -50,6 +57,10 @@ import {
   resolveProviderRuntimeCatalogSelectionObservation,
 } from '@/providers/spawn/runtimeCatalog';
 import { collectProviderConnectionDnsEvidence } from '@/providers/registry/dnsEvidence';
+import {
+  createProviderOperationLifetime,
+  ProviderOperationAbandonedError,
+} from '@/providers/operationLifetime';
 import { selectCurrentProviderEndpointHealthByTemplateId } from '@/providers/connections/runtimeSummary';
 import { activateAgentRuntimeContributionOnDemand } from '@/agent/runtime/registry/activationDemand';
 import {
@@ -262,6 +273,13 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
       const adapter = readLeasedAgentProviderBindingAdapter({ lease, agentId: target.backendId });
       if (!adapter) return { status: 'success', agentTargetKey: request.agentTargetKey, groups: [] };
       const settingsRead = readProviderSettingsForCli(snapshot.settings);
+      const registry = resolveProviderContributionRegistryView(lease.registry.contributes);
+      const operationScope: RuntimeProviderOperationScope = {
+        registry,
+        lifetime: createProviderOperationLifetime({
+          wallTimeMs: PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs,
+        }),
+      };
       const assemble = async (runtimeState: ProviderRuntimeStateFileV1) => {
         const catalogs: ProviderConnectionCatalog[] = [];
         const modelLoadProjectionByConnectionId = new Map<string, Readonly<{
@@ -275,7 +293,7 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
           const context = await sharedRuntime.resolvePresentationCatalogContext({
             connectionId: connection.id,
             machineId: request.machineId,
-          }, runtimeState);
+          }, runtimeState, operationScope);
           if (context.status === 'error') continue;
           const authorizedForDemand = context.connection.authorization.authorized;
           if (authorizedForDemand) {
@@ -334,7 +352,8 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
             connectionId: connection.id,
             expectedEndpoints: context.expectedEndpointObservations,
             allowedObservationAuthorizationFingerprints: context.allowedObservationAuthorizationFingerprints,
-            endpointHealth: runtimeState.endpointHealth,
+            endpointHealth: runtimeState.endpointHealth.filter((record) =>
+              record.key.machineId === request.machineId && record.key.connectionId === connection.id),
           });
           const assembled = assembleProviderConnectionCatalog({
             agentTargetKey: request.agentTargetKey,
@@ -367,7 +386,7 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
         // and its typed capacity refusal; this read simply waits for the cold work it
         // just demanded instead of answering with an empty catalog nobody follows up on.
         await Promise.all(awaitedColdDemand.map((identity) =>
-          sharedRuntime.scheduleDemandRefresh(identity, 'picker_open')));
+          sharedRuntime.scheduleDemandRefresh(identity, 'picker_open', operationScope)));
         assembly = await assemble(await sharedRuntime.runtimeStore.read());
       }
       const { catalogs, modelLoadProjectionByConnectionId, confirmedByRef, pickerDemand } = assembly;
@@ -379,14 +398,19 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
         ...(request.currentSelection ? { currentSelection: request.currentSelection } : {}),
       });
       const groups = projection.groups.map((group) => {
-          const catalog = catalogs.find((candidate) => candidate.connectionId === group.connectionId)!;
+          const catalog = catalogs.find((candidate) => candidate.connectionId === group.connectionId);
+          if (!catalog) throw new TypeError('Projected Provider catalog is absent');
+          const connection = settingsRead.settings.connections.find(
+            (candidate) => candidate.id === group.connectionId,
+          );
+          if (!connection) throw new TypeError('Projected Provider connection is absent');
           return {
             connectionId: group.connectionId,
             providerName: group.providerName,
             connectionName: group.connectionName,
             connectionRole: catalog.connectionRole,
             connectionDisplayNameMode: catalog.connectionDisplayNameMode,
-            connectionRevision: settingsRead.settings.connections.find((candidate) => candidate.id === group.connectionId)!.revision,
+            connectionRevision: connection.revision,
             modelLoadAction:
               modelLoadProjectionByConnectionId.get(group.connectionId)?.action
               ?? 'descriptor_absent',
@@ -422,7 +446,7 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
       const currentSelectionRecovery = resolveCurrentSelectionRecovery({
         currentSelection: request.currentSelection,
         settings: settingsRead.settings,
-        registry: resolveProviderContributionRegistryView(lease.registry.contributes),
+        registry,
         projectedGroups: groups,
         machineId: request.machineId,
       });
@@ -432,7 +456,7 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
       // a second work owner retaining work the canonical scheduler already refused.
       for (const identity of pickerDemand) {
         if (awaitedConnectionIds.has(identity.connectionId)) continue;
-        void sharedRuntime.scheduleDemandRefresh(identity, 'picker_open');
+        void sharedRuntime.scheduleDemandRefresh(identity, 'picker_open', operationScope);
       }
       return DaemonProviderModelProjectionResponseV1Schema.parse({
         status: 'success',
@@ -538,18 +562,30 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
       ? await input.acquireRuntimeLease()
       : await acquireAuthoritativePluginRuntimeRegistryLease({
           happyHomeDir: input.happyHomeDir ?? configuration.happyHomeDir,
-        });
+    });
     try {
       await activateAgentRuntimeContributionOnDemand(lease.registry, target.backendId);
       const registry = resolveProviderContributionRegistryView(lease.registry.contributes);
       const providerSettings = readProviderSettingsForCli(snapshot.settings).settings;
-      const dnsEvidenceByEndpointUrl = await collectProviderConnectionDnsEvidence({
-        connectionId,
-        machineId: request.machineId,
-        providerSettings,
-        registry,
-        ...(input.resolveAddresses ? { resolveAddresses: input.resolveAddresses } : {}),
-      });
+      let dnsEvidenceByEndpointUrl;
+      try {
+        dnsEvidenceByEndpointUrl = await collectProviderConnectionDnsEvidence({
+          connectionId,
+          machineId: request.machineId,
+          providerSettings,
+          registry,
+          ...(input.resolveAddresses ? { resolveAddresses: input.resolveAddresses } : {}),
+          lifetime: createProviderOperationLifetime({
+            wallTimeMs: PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs,
+          }),
+        });
+      } catch (error) {
+        if (error instanceof ProviderOperationAbandonedError) {
+          const unavailable = createProviderErrorV1('provider_endpoint_unavailable', errorContext);
+          return { status: 'incompatible', error: unavailable };
+        }
+        throw error;
+      }
       const connectionResolution = resolveProviderConnectionForMachine({
         connectionId,
         machineId: request.machineId,

@@ -5,6 +5,51 @@ import { executePluginSessionMessageAction } from './executePluginSessionMessage
 import { createCliActionExecutorHarness } from '../actions/createCliActionExecutorHarness';
 
 describe('executePluginSessionMessageAction', () => {
+  it('forwards the semantic subagent launch without accepting private transport fields', async () => {
+    const execute = vi.fn(async () => ({
+      ok: true as const,
+      result: { status: 'accepted' as const, localId: 'plugin-input-v1:launch' },
+    }));
+    const signal = new AbortController().signal;
+
+    await expect(executePluginSessionMessageAction({
+      execute,
+      pluginId: 'acme.agent',
+      contributionLocalId: 'launch-teammate',
+      resolveCallerMaterialization: () => ({
+        pluginId: 'acme.agent',
+        machineId: 'machine-1',
+        materializationId: 'materialization-current',
+      }),
+      sessionId: 'session-1',
+      request: {
+        kind: 'sessionSubagentLaunch',
+        launch: {
+          kind: 'agent_team_create',
+          teamId: 'reviewers',
+          description: 'Review the current change.',
+        },
+        idempotencyKey: 'launch-reviewers',
+      },
+      signal,
+    })).resolves.toEqual({ status: 'accepted', localId: 'plugin-input-v1:launch' });
+
+    expect(execute).toHaveBeenCalledWith(
+      'session.message.send',
+      {
+        sessionId: 'session-1',
+        kind: 'sessionSubagentLaunch',
+        launch: {
+          kind: 'agent_team_create',
+          teamId: 'reviewers',
+          description: 'Review the current change.',
+        },
+        idempotencyKey: 'launch-reviewers',
+      },
+      expect.objectContaining({ surface: 'plugin' }),
+    );
+  });
+
   it('delegates SessionHandle.send through the canonical Action with host-stamped caller identity', async () => {
     const execute = vi.fn(async () => ({
       ok: true as const,

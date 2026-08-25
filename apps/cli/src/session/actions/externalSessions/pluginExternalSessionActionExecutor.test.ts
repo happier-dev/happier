@@ -31,7 +31,7 @@ vi.mock('./operationRecordStore', async (importOriginal) => ({
 import { executePluginExternalSessionAction } from './pluginExternalSessionActionExecutor';
 import {
   acknowledgeExternalSessionOperationProgressProjection,
-  compactExternalSessionOperationRecordToCompletionReceipt,
+  compactExternalSessionOperationRecordToTerminalReceipt,
   writeExternalSessionOperationRecord,
 } from './operationRecordStore';
 
@@ -78,10 +78,11 @@ function materializeInput(idempotencyKey: string) {
   };
 }
 
-function completedOperationRecord(input: Readonly<{
+function terminalOperationRecord(input: Readonly<{
   operationId?: string;
   sessionId?: string;
-  completedAtMs?: number;
+  terminalAtMs?: number;
+  status?: 'completed' | 'cancelled' | 'discarded';
 }>) {
   const request = {
     v: 1 as const,
@@ -104,17 +105,18 @@ function completedOperationRecord(input: Readonly<{
     targetDirectory: '/local/selected/workspace',
     targetRuntimeMode: 'terminal' as const,
   };
-  const completedAtMs = input.completedAtMs ?? 25_000;
+  const terminalAtMs = input.terminalAtMs ?? 25_000;
+  const status = input.status ?? 'completed';
   return ExternalSessionOperationRecordV1Schema.parse({
     v: 1,
     operationId: input.operationId ?? 'operation-1',
     revision: 6,
     request,
-    status: 'completed',
+    status,
     phase: 'finalizing',
     timeline: resolveExternalSessionOperationTimelineV1(request),
     createdAtMs: 1,
-    updatedAtMs: completedAtMs,
+    updatedAtMs: terminalAtMs,
     priorStableStorage: { state: 'machine_only' },
     currentStorageState: 'machine_only',
     checkpoint: {
@@ -134,7 +136,15 @@ function completedOperationRecord(input: Readonly<{
     progressProjection: { acknowledgedRevision: null },
     canonicalOwnerEvidence: { linkedSessionRevision: 1 },
     fence: { kind: 'none' },
-    terminalResult: { kind: 'completed' },
+    ...(status === 'cancelled'
+      ? {
+          cancellation: {
+            requestedAtMs: 2,
+            requestedAtRevision: 6,
+          },
+        }
+      : {}),
+    terminalResult: { kind: status },
   });
 }
 
@@ -144,27 +154,28 @@ async function createOperationRoot(): Promise<string> {
   return root;
 }
 
-async function seedCompletionReceipt(input: Readonly<{
+async function seedTerminalReceipt(input: Readonly<{
   activeServerDir: string;
   operationId?: string;
   sessionId?: string;
-  completedAtMs?: number;
+  terminalAtMs?: number;
+  status?: 'completed' | 'cancelled' | 'discarded';
 }>) {
-  const record = completedOperationRecord(input);
+  const record = terminalOperationRecord(input);
   await writeExternalSessionOperationRecord(input.activeServerDir, record);
   await acknowledgeExternalSessionOperationProgressProjection({
     activeServerDir: input.activeServerDir,
     operationId: record.operationId,
     projectedRevision: record.revision,
   });
-  const compacted = await compactExternalSessionOperationRecordToCompletionReceipt({
+  const compacted = await compactExternalSessionOperationRecordToTerminalReceipt({
     activeServerDir: input.activeServerDir,
     operationId: record.operationId,
     expectedRevision: record.revision,
     stagingDisposition: 'not_applicable',
   });
   if (compacted.status === 'not_eligible') {
-    throw new Error(`Expected completion receipt, got ${compacted.reason}`);
+    throw new Error(`Expected terminal receipt, got ${compacted.reason}`);
   }
   return compacted.receipt;
 }
@@ -219,7 +230,7 @@ describe('plugin External Session action executor', () => {
     const activeServerDir = await createOperationRoot();
     await writeExternalSessionOperationRecord(
       activeServerDir,
-      completedOperationRecord({}),
+      terminalOperationRecord({}),
     );
     mocks.callMachineRpc.mockResolvedValue({
       ok: false,
@@ -242,39 +253,43 @@ describe('plugin External Session action executor', () => {
     });
   });
 
-  it('returns an unexpired compacted receipt through recipient-safe status without machine RPC', async () => {
-    const activeServerDir = await createOperationRoot();
-    const receipt = await seedCompletionReceipt({ activeServerDir });
+  it.each(['completed', 'cancelled', 'discarded'] as const)(
+    'returns an unexpired %s terminal receipt through recipient-safe status without machine RPC',
+    async (status) => {
+      const activeServerDir = await createOperationRoot();
+      const receipt = await seedTerminalReceipt({ activeServerDir, status });
 
-    const result = await executePluginExternalSessionAction({
-      actionId: 'sessions.external.operation.status.get',
-      input: receipt.reference,
-      credentials,
-      pluginId: 'author.example',
-    }, { activeServerDir, nowMs: () => receipt.expiresAtMs - 1 });
+      const result = await executePluginExternalSessionAction({
+        actionId: 'sessions.external.operation.status.get',
+        input: receipt.reference,
+        credentials,
+        pluginId: 'author.example',
+      }, { activeServerDir, nowMs: () => receipt.expiresAtMs - 1 });
 
-    expect(result).toEqual({
-      ok: true,
-      result: {
+      expect(result).toEqual({
         ok: true,
-        operation: receipt.reference,
-        presentation: receipt.presentation,
-      },
-    });
-    expect(Object.keys(receipt.presentation).sort()).toEqual([
-      'kind',
-      'operationId',
-      'phase',
-      'revision',
-      'status',
-      'v',
-    ]);
-    expect(mocks.loadPersistedLinkedExternalSession).toHaveBeenCalledWith({
-      credentials,
-      sessionId: receipt.reference.sessionId,
-    });
-    expect(mocks.callMachineRpc).not.toHaveBeenCalled();
-  });
+        result: {
+          ok: true,
+          operation: receipt.reference,
+          presentation: receipt.presentation,
+        },
+      });
+      expect(Object.keys(receipt.presentation).sort()).toEqual([
+        'kind',
+        'operationId',
+        'phase',
+        'revision',
+        'status',
+        'v',
+      ]);
+      expect(receipt.presentation.status).toBe(status);
+      expect(mocks.loadPersistedLinkedExternalSession).toHaveBeenCalledWith({
+        credentials,
+        sessionId: receipt.reference.sessionId,
+      });
+      expect(mocks.callMachineRpc).not.toHaveBeenCalled();
+    },
+  );
 
   it('preserves linked-Session authorization before reading a local receipt', async () => {
     const activeServerDir = await createOperationRoot();
@@ -324,7 +339,7 @@ describe('plugin External Session action executor', () => {
     expectedCode,
   }) => {
     const activeServerDir = await createOperationRoot();
-    const receipt = await seedCompletionReceipt({ activeServerDir });
+    const receipt = await seedTerminalReceipt({ activeServerDir });
 
     const result = await executePluginExternalSessionAction({
       actionId: 'sessions.external.operation.status.get',
@@ -342,7 +357,7 @@ describe('plugin External Session action executor', () => {
 
   it('treats expired and missing receipt references as unavailable without machine RPC', async () => {
     const activeServerDir = await createOperationRoot();
-    const receipt = await seedCompletionReceipt({ activeServerDir });
+    const receipt = await seedTerminalReceipt({ activeServerDir });
 
     for (const [input, nowMs] of [
       [receipt.reference, receipt.expiresAtMs],
@@ -363,7 +378,7 @@ describe('plugin External Session action executor', () => {
 
   it.each([
     ['malformed', '{'],
-    ['future', JSON.stringify({ v: 2, recordKind: 'completed_receipt' })],
+    ['future', JSON.stringify({ v: 2, recordKind: 'terminal_receipt' })],
   ])('fails closed for a %s stored operation entry', async (_kind, contents) => {
     const activeServerDir = await createOperationRoot();
     const operationId = 'operation-1';
@@ -550,7 +565,7 @@ describe('plugin External Session action executor', () => {
       },
     };
     mocks.resolveExternalSessionPluginOperationPreflightAdmission.mockResolvedValue({
-      kind: 'completion_receipt',
+      kind: 'terminal_receipt',
       receipt: {
         reference: retained.operation,
         presentation: retained.presentation,

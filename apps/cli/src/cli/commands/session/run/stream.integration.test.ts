@@ -202,9 +202,11 @@ describe('happier session run stream-* (integration)', () => {
       });
 
       const parsed = output.json();
-      expect(parsed.ok).toBe(true);
-      expect(parsed.kind).toBe('session_run_stream_start');
-      expect(parsed.data?.streamId).toBe('stream_1');
+      expect(parsed).toMatchObject({
+        ok: true,
+        kind: 'session_run_stream_start',
+        data: { streamId: 'stream_1' },
+      });
     } finally {
       output.restore();
     }
@@ -230,10 +232,11 @@ describe('happier session run stream-* (integration)', () => {
       );
 
       const parsed = output.json();
-      expect(parsed.ok).toBe(true);
-      expect(parsed.kind).toBe('session_run_stream_read');
-      expect(parsed.data?.streamId).toBe('stream_1');
-      expect(parsed.data?.events?.[0]?.t).toBe('delta');
+      expect(parsed).toMatchObject({
+        ok: true,
+        kind: 'session_run_stream_read',
+        data: { streamId: 'stream_1', events: [{ t: 'delta' }] },
+      });
     } finally {
       output.restore();
     }
@@ -256,10 +259,11 @@ describe('happier session run stream-* (integration)', () => {
       });
 
       const parsed = output.json();
-      expect(parsed.ok).toBe(true);
-      expect(parsed.kind).toBe('session_run_stream_cancel');
-      expect(parsed.data?.streamId).toBe('stream_1');
-      expect(parsed.data?.cancelled).toBe(true);
+      expect(parsed).toMatchObject({
+        ok: true,
+        kind: 'session_run_stream_cancel',
+        data: { streamId: 'stream_1', cancelled: true },
+      });
     } finally {
       output.restore();
     }

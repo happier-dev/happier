@@ -38,13 +38,13 @@ const SESSION_CREATE_HELP = [
 
 export const SESSION_HELP_LINES = {
   resume: 'happier resume [<session-id-or-prefix>]',
-  list: 'happier session list [--active] [--archived] [--limit N] [--cursor C] [--include-system] [--resumable] [--plain] [--json]',
+  list: 'happier session list [--active] [--archived] [--limit N] [--cursor C] [--machine-id <machineId>] [--include-system] [--resumable] [--plain] [--json]',
   status: 'happier session status <session-id-or-prefix-or-tag> [--live] [--json]',
   create: SESSION_CREATE_HELP,
-  send: 'happier session send <session-id-or-prefix-or-tag> <message|--message <text>|--prompt <text>> [--permission-mode <mode>] [--model <model-id>] [--provider-connection <id|native>] [--local-id <id>] [--wait] [--timeout <seconds>] [--json]',
-  wait: 'happier session wait <session-id-or-prefix-or-tag> [--timeout <seconds>] [--json]',
-  stop: 'happier session stop <session-id-or-prefix-or-tag> [--json]',
-  history: 'happier session history <session-id-or-prefix-or-tag> ([--tail N|--limit N] [--format compact|raw] [--raw] [--include-meta] [--include-structured-payload] [--json] | --follow [--jsonl])',
+  send: 'happier session send <session-id-or-prefix-or-tag> <message|--message <text>|--prompt <text>> [--machine-id <machineId>] [--permission-mode <mode>] [--model <model-id>] [--provider-connection <id|native>] [--local-id <id>] [--wait] [--timeout <seconds>] [--json]',
+  wait: 'happier session wait <session-id-or-prefix-or-tag> [--machine-id <machineId>] [--timeout <seconds>] [--json]',
+  stop: 'happier session stop <session-id-or-prefix-or-tag> [--machine-id <machineId>] [--json]',
+  history: 'happier session history <session-id-or-prefix-or-tag> ([--machine-id <machineId>] [--tail N|--limit N] [--format compact|raw] [--raw] [--include-meta] [--include-structured-payload] [--json] | --follow [--jsonl])',
   setTitle: 'happier session set-title <session-id-or-prefix-or-tag> <title> [--json]',
   setPermissionMode: 'happier session set-permission-mode <session-id-or-prefix-or-tag> <mode> [--json]',
   setModel: 'happier session set-model <session-id-or-prefix-or-tag> <model-id> [--provider-connection <id|native>] [--json]',
@@ -52,7 +52,7 @@ export const SESSION_HELP_LINES = {
   unarchive: 'happier session unarchive <session-id-or-prefix-or-tag> [--json]',
   reviewStart: 'happier session review start <session-id-or-prefix-or-tag> --engines <id1,id2> --instructions <text> [--json]',
   planStart: 'happier session plan start <session-id-or-prefix-or-tag> --backends <id1,id2> --instructions <text> [--json]',
-  delegateStart: 'happier session delegate start <session-id-or-prefix-or-tag> [<instructions>|--instructions <text>] (--backends <id1,id2>|--agent <agent>) [--json]',
+  delegateStart: 'happier session delegate start <session-id-or-prefix-or-tag> [<instructions>|--instructions <text>] (--backends <id1,id2>|--agent <agent>) [--machine-id <machineId>] [--json]',
   voiceAgentStart: 'happier session voice-agent start <session-id-or-prefix-or-tag> --backends <id1,id2> --instructions <text> [--json]',
   actionsList: 'happier session actions list [--json]',
   actionsDescribe: 'happier session actions describe <action-id> [--json]',
@@ -154,6 +154,32 @@ export const SESSION_NESTED_SUBCOMMAND_HELP_LINES: Record<string, string> = {
   'run stream-cancel': SESSION_HELP_LINES.runStreamCancel,
 };
 
+const FIRST_CLASS_SESSION_COMMAND_GUIDANCE: Readonly<Record<string, Readonly<{
+  description: string;
+  examples: readonly string[];
+}>>> = {
+  create: {
+    description: 'Create a session, optionally targeting a machine and sending an initial prompt.',
+    examples: [
+      'happier spawn "Review this repository" --agent codex --wait',
+      'happier spawn --path . --agent codex --machine-id <machineId>',
+    ],
+  },
+  history: {
+    description: 'Read a session transcript once, or follow it as it updates.',
+    examples: [
+      'happier history <session-id-or-prefix-or-tag> --tail 50 --machine-id <machineId>',
+      'happier history <session-id-or-prefix-or-tag> --follow --jsonl',
+    ],
+  },
+  'delegate start': {
+    description: 'Start a delegated agent task from an existing session.',
+    examples: [
+      'happier delegate <session-id-or-prefix-or-tag> "Review the latest changes" --agent codex --machine-id <machineId>',
+    ],
+  },
+};
+
 /** Projects canonical session usage onto a first-class command without duplicating its contract. */
 export function formatFirstClassSessionCommandHelp(params: Readonly<{
   command: string;
@@ -166,5 +192,18 @@ export function formatFirstClassSessionCommandHelp(params: Readonly<{
   if (!canonicalUsage || !canonicalUsage.startsWith(canonicalPrefix)) {
     throw new Error(`No canonical usage is registered for first-class session command ${sessionPathKey}`);
   }
-  return `happier ${params.command}${canonicalUsage.slice(canonicalPrefix.length)}`;
+  const usage = `happier ${params.command}${canonicalUsage.slice(canonicalPrefix.length)}`;
+  const guidance = FIRST_CLASS_SESSION_COMMAND_GUIDANCE[sessionPathKey];
+  if (!guidance) return usage;
+
+  const [usageLine, ...usageDetail] = usage.split('\n');
+  return [
+    usageLine,
+    '',
+    guidance.description,
+    ...(usageDetail.length > 0 ? ['', ...usageDetail] : []),
+    '',
+    'Examples:',
+    ...guidance.examples.map((example) => `  ${example}`),
+  ].join('\n');
 }

@@ -381,6 +381,7 @@ export const AgentRuntimeDaemonSessionDescriptorV1Schema = z.object({
   v: z.literal(1),
   pluginId: BoundedIdSchema,
   pluginVersion: z.string().trim().min(1).max(256),
+  /** Host routing id; qualified for installed Agents. */
   agentId: BoundedIdSchema,
   backendId: BoundedIdSchema,
   generation: BoundedIdSchema,

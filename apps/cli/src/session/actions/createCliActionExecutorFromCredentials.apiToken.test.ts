@@ -1,10 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import axios from 'axios';
 import fastify from 'fastify';
+import { createRequire } from 'node:module';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { ACCOUNT_API_TOKENS_LIST_HTTP_PATH_V1 } from '@happier-dev/protocol';
 
 import { configuration, reloadConfiguration } from '@/configuration';
 import { registerDaemonExternalActionRoute } from '@/daemon/externalActions/registerDaemonExternalActionRoute';
+
+// The SDK owns this runtime dependency and its source import resolves from the
+// SDK package directory. Use that same module instance to intercept its client.
+const sdkUndici = createRequire(
+  new URL('../../../../../packages/sdk/package.json', import.meta.url),
+)('undici') as typeof import('undici');
 
 const {
   createCliActionExecutor,
@@ -14,6 +24,7 @@ const {
   importHistoricalSessionTranscript,
   lookupSessionsByTags,
   readSettings,
+  resolveCurrentAccountMachineTarget,
 } = vi.hoisted(() => ({
   createCliActionExecutor: vi.fn(),
   ensureCliActionPolicySettings: vi.fn(),
@@ -22,6 +33,7 @@ const {
   importHistoricalSessionTranscript: vi.fn(),
   lookupSessionsByTags: vi.fn(),
   readSettings: vi.fn(),
+  resolveCurrentAccountMachineTarget: vi.fn(),
 }));
 
 vi.mock('./createCliActionExecutor', () => ({
@@ -44,8 +56,56 @@ vi.mock('@/persistence', async (importOriginal) => ({
   readSettings,
 }));
 
+vi.mock('@/api/machine/resolveCurrentAccountMachineTarget', () => ({
+  resolveCurrentAccountMachineTarget,
+}));
+
 const exactSessionId = 'c123456789012345678901234';
-type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
+type MockActionResponse = Readonly<{
+  statusCode: number;
+  body: Readonly<Record<string, unknown>>;
+}>;
+type FetchLike = (input: URL, init?: RequestInit) => MockActionResponse;
+
+let undiciMockAgent: InstanceType<typeof sdkUndici.MockAgent> | null = null;
+let restoreUndiciDispatcher: (() => void) | null = null;
+
+function installPatActionTransportMock(fetch: FetchLike): void {
+  const endpoint = new URL(configuration.apiServerUrl);
+  const mockAgent = new sdkUndici.MockAgent();
+  const previousDispatcher = sdkUndici.getGlobalDispatcher();
+  mockAgent.disableNetConnect();
+  mockAgent
+    .get(endpoint.origin)
+    .intercept({ path: /^\/v1\/actions\/.+$/u, method: 'POST' })
+    .reply((options) => {
+      const headers = options.headers === undefined
+        ? undefined
+        : options.headers instanceof Headers
+          ? Object.fromEntries(options.headers.entries())
+          : options.headers;
+      const response = fetch(new URL(options.path, endpoint.origin), {
+        method: options.method,
+        ...(headers === undefined ? {} : { headers }),
+        ...(options.body === undefined || options.body === null
+          ? {}
+          : { body: typeof options.body === 'string' ? options.body : String(options.body) }),
+      });
+      return {
+        statusCode: response.statusCode,
+        data: response.body,
+        responseOptions: { headers: { 'content-type': 'application/json' } },
+      };
+    })
+    .persist();
+  sdkUndici.setGlobalDispatcher(mockAgent);
+  undiciMockAgent = mockAgent;
+  restoreUndiciDispatcher = () => {
+    sdkUndici.setGlobalDispatcher(previousDispatcher);
+    undiciMockAgent = null;
+    restoreUndiciDispatcher = null;
+  };
+}
 
 function sessionListItem(id: string, tag?: string) {
   return {
@@ -60,31 +120,27 @@ function sessionListItem(id: string, tag?: string) {
   };
 }
 
-function apiSuccess(actionId: string, result: unknown): Response {
-  return new Response(JSON.stringify({
-    v: 1,
-    actionId,
-    execution: { ok: true, result },
-  }), {
-    status: 200,
-    headers: { 'content-type': 'application/json' },
-  });
+function apiSuccess(actionId: string, result: unknown): MockActionResponse {
+  return {
+    statusCode: 200,
+    body: { v: 1, actionId, execution: { ok: true, result } },
+  };
 }
 
-function apiFailure(actionId: string, errorCode: string, details?: unknown): Response {
-  return new Response(JSON.stringify({
-    v: 1,
-    actionId,
-    execution: {
-      ok: false,
-      errorCode,
-      error: errorCode,
-      ...(details === undefined ? {} : { details }),
+function apiFailure(actionId: string, errorCode: string, details?: unknown): MockActionResponse {
+  return {
+    statusCode: 200,
+    body: {
+      v: 1,
+      actionId,
+      execution: {
+        ok: false,
+        errorCode,
+        error: errorCode,
+        ...(details === undefined ? {} : { details }),
+      },
     },
-  }), {
-    status: 200,
-    headers: { 'content-type': 'application/json' },
-  });
+  };
 }
 
 describe('createCliActionExecutorFromCredentials API Token transport', () => {
@@ -100,6 +156,7 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
     importHistoricalSessionTranscript.mockReset();
     lookupSessionsByTags.mockReset();
     readSettings.mockReset();
+    resolveCurrentAccountMachineTarget.mockReset();
     readSettings.mockResolvedValue({ machineId: 'machine-selected' });
     const legacySessionRouteUsed = () => Promise.reject(new Error('legacy_session_route_used'));
     fetchSessionById.mockImplementation(legacySessionRouteUsed);
@@ -107,8 +164,11 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
     lookupSessionsByTags.mockImplementation(legacySessionRouteUsed);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     vi.unstubAllGlobals();
+    const mockAgent = undiciMockAgent;
+    restoreUndiciDispatcher?.();
+    await mockAgent?.close();
   });
 
   it('composes Account-server-owned Actions into the executor used by the daemon ingress', async () => {
@@ -146,10 +206,10 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
   });
 
   it('passes an exact full Session id directly to the PAT Action route without a lookup request', async () => {
-    const fetch = vi.fn<FetchLike>(async () => apiSuccess('session.status.get', {
+    const fetch = vi.fn<FetchLike>(() => apiSuccess('session.status.get', {
       session: { id: exactSessionId, active: true },
     }));
-    vi.stubGlobal('fetch', fetch);
+    installPatActionTransportMock(fetch);
 
     const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
     const executor = createCliActionExecutorFromCredentials({
@@ -189,11 +249,250 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
     });
   });
 
+  it('routes persisted transcript reads for an exact inactive Session through the selected machine', async () => {
+    resolveCurrentAccountMachineTarget.mockResolvedValue({
+      kind: 'selected',
+      target: { machineId: 'machine-remote', machineLabel: 'machine-remote' },
+    });
+    const fetch = vi.fn<FetchLike>(() => apiSuccess('session.transcript.get', {
+      ok: true,
+      sessionId: exactSessionId,
+      items: [],
+      nextCursor: null,
+      hasMore: false,
+      diagnostics: {
+        rawRowsScanned: 0,
+        pagesFetched: 1,
+        scanLimitReached: false,
+        payloadTruncations: 0,
+      },
+    }));
+    installPatActionTransportMock(fetch);
+
+    const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
+    const executor = createCliActionExecutorFromCredentials({
+      credentials: {
+        token: 'hap_v1_token_secret',
+        encryption: null,
+        credentialProvenance: 'api_token',
+      },
+      machineId: 'machine-remote',
+    });
+
+    await expect(executor.execute(
+      'session.transcript.get',
+      { sessionId: exactSessionId, limit: 10 },
+      { surface: 'cli', defaultSessionId: null },
+    )).resolves.toEqual(expect.objectContaining({ ok: true }));
+
+    expect(resolveCurrentAccountMachineTarget).toHaveBeenCalledWith({
+      token: 'hap_v1_token_secret',
+      requestedMachineId: 'machine-remote',
+    });
+    expect(JSON.parse(String(fetch.mock.calls[0]?.[1]?.body))).toEqual({
+      v: 1,
+      target: { kind: 'machine', machineId: 'machine-remote' },
+      input: { sessionId: exactSessionId, limit: 10 },
+    });
+  });
+
+  it('uses the sole current account machine when a PAT has no daemon-local target', async () => {
+    readSettings.mockResolvedValue({});
+    resolveCurrentAccountMachineTarget.mockResolvedValue({
+      kind: 'selected',
+      target: { machineId: 'machine-remote', machineLabel: 'machine-remote' },
+    });
+    const fetch = vi.fn<FetchLike>(() => apiSuccess('session.list', {
+      sessions: [],
+      nextCursor: null,
+      hasNext: false,
+    }));
+    installPatActionTransportMock(fetch);
+
+    const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
+    const executor = createCliActionExecutorFromCredentials({
+      credentials: {
+        token: 'hap_v1_token_secret',
+        encryption: null,
+        credentialProvenance: 'api_token',
+      },
+    });
+
+    await expect(executor.execute('session.list', { limit: 1 }, { surface: 'cli' })).resolves.toEqual({
+      ok: true,
+      result: { sessions: [], nextCursor: null, hasNext: false },
+    });
+    expect(resolveCurrentAccountMachineTarget).toHaveBeenCalledWith({ token: 'hap_v1_token_secret' });
+    expect(JSON.parse(String(fetch.mock.calls[0]?.[1]?.body))).toEqual({
+      v: 1,
+      target: { kind: 'machine', machineId: 'machine-remote' },
+      input: { limit: 1 },
+    });
+  });
+
+  it('omits the target for a direct daemon Action endpoint without Account machine discovery', async () => {
+    readSettings.mockResolvedValue({});
+    resolveCurrentAccountMachineTarget.mockRejectedValue(new Error('account_machine_inventory_unavailable'));
+    const receivedTargets: unknown[] = [];
+    const app = fastify();
+    registerDaemonExternalActionRoute(app, {
+      currentMachineId: 'machine-daemon-local',
+      currentServerId: 'server-daemon-local',
+      verifyPat: async () => ({
+        ok: true as const,
+        accountId: 'account-1',
+        principalId: 'principal-1',
+        credentialId: 'credential-1',
+        expiresAt: null,
+        authority: 'account_automation' as const,
+      }),
+      executor: {
+        execute: async () => ({
+          ok: true as const,
+          result: { sessions: [], nextCursor: null, hasNext: false },
+        }),
+      },
+      resolveTarget: async ({ target, currentMachineId }) => {
+        receivedTargets.push(target);
+        return target ?? { kind: 'machine', machineId: currentMachineId };
+      },
+    });
+    const address = await app.listen({ host: '127.0.0.1', port: 0 });
+    const homeDir = await mkdtemp(join(tmpdir(), 'happier-direct-action-endpoint-'));
+    const originalHomeDir = process.env.HAPPIER_HOME_DIR;
+    const originalServerUrl = process.env.HAPPIER_SERVER_URL;
+    const originalWebappUrl = process.env.HAPPIER_WEBAPP_URL;
+    try {
+      const port = Number(new URL(address).port);
+      await mkdir(join(homeDir, 'servers', 'cloud'), { recursive: true });
+      await writeFile(join(homeDir, 'servers', 'cloud', 'daemon.state.json'), JSON.stringify({
+        pid: process.pid,
+        httpPort: port,
+        startedAt: Date.now(),
+        startedWithCliVersion: 'test',
+        machineId: 'machine-daemon-local',
+      }), 'utf8');
+      process.env.HAPPIER_HOME_DIR = homeDir;
+      process.env.HAPPIER_SERVER_URL = address;
+      process.env.HAPPIER_WEBAPP_URL = address;
+      reloadConfiguration();
+      vi.unstubAllGlobals();
+
+      const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
+      const executor = createCliActionExecutorFromCredentials({
+        credentials: {
+          token: 'hap_v1_token_secret',
+          encryption: null,
+          credentialProvenance: 'api_token',
+        },
+      });
+
+      await expect(executor.execute('session.list', { limit: 1 }, { surface: 'cli' })).resolves.toEqual({
+        ok: true,
+        result: { sessions: [], nextCursor: null, hasNext: false },
+      });
+      expect(resolveCurrentAccountMachineTarget).not.toHaveBeenCalled();
+      expect(receivedTargets).toEqual([undefined]);
+    } finally {
+      await app.close();
+      await rm(homeDir, { recursive: true, force: true });
+      if (originalHomeDir === undefined) delete process.env.HAPPIER_HOME_DIR;
+      else process.env.HAPPIER_HOME_DIR = originalHomeDir;
+      if (originalServerUrl === undefined) delete process.env.HAPPIER_SERVER_URL;
+      else process.env.HAPPIER_SERVER_URL = originalServerUrl;
+      if (originalWebappUrl === undefined) delete process.env.HAPPIER_WEBAPP_URL;
+      else process.env.HAPPIER_WEBAPP_URL = originalWebappUrl;
+      reloadConfiguration();
+    }
+  });
+
+  it('keeps Account machine targeting for an unclaimed loopback Action endpoint', async () => {
+    readSettings.mockResolvedValue({});
+    resolveCurrentAccountMachineTarget.mockResolvedValue({
+      kind: 'selected',
+      target: { machineId: 'machine-account-server', machineLabel: 'machine-account-server' },
+    });
+    const homeDir = await mkdtemp(join(tmpdir(), 'happier-account-action-endpoint-'));
+    const originalHomeDir = process.env.HAPPIER_HOME_DIR;
+    const originalServerUrl = process.env.HAPPIER_SERVER_URL;
+    const originalWebappUrl = process.env.HAPPIER_WEBAPP_URL;
+    try {
+      process.env.HAPPIER_HOME_DIR = homeDir;
+      process.env.HAPPIER_SERVER_URL = 'http://127.0.0.1:45555';
+      process.env.HAPPIER_WEBAPP_URL = 'http://127.0.0.1:45555';
+      reloadConfiguration();
+      const fetch = vi.fn<FetchLike>(() => apiSuccess('session.list', {
+        sessions: [],
+        nextCursor: null,
+        hasNext: false,
+      }));
+      installPatActionTransportMock(fetch);
+
+      const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
+      const executor = createCliActionExecutorFromCredentials({
+        credentials: {
+          token: 'hap_v1_token_secret',
+          encryption: null,
+          credentialProvenance: 'api_token',
+        },
+      });
+
+      await expect(executor.execute('session.list', { limit: 1 }, { surface: 'cli' })).resolves.toEqual({
+        ok: true,
+        result: { sessions: [], nextCursor: null, hasNext: false },
+      });
+      expect(resolveCurrentAccountMachineTarget).toHaveBeenCalledWith({ token: 'hap_v1_token_secret' });
+      expect(JSON.parse(String(fetch.mock.calls[0]?.[1]?.body))).toEqual({
+        v: 1,
+        target: { kind: 'machine', machineId: 'machine-account-server' },
+        input: { limit: 1 },
+      });
+    } finally {
+      await rm(homeDir, { recursive: true, force: true });
+      if (originalHomeDir === undefined) delete process.env.HAPPIER_HOME_DIR;
+      else process.env.HAPPIER_HOME_DIR = originalHomeDir;
+      if (originalServerUrl === undefined) delete process.env.HAPPIER_SERVER_URL;
+      else process.env.HAPPIER_SERVER_URL = originalServerUrl;
+      if (originalWebappUrl === undefined) delete process.env.HAPPIER_WEBAPP_URL;
+      else process.env.HAPPIER_WEBAPP_URL = originalWebappUrl;
+      reloadConfiguration();
+    }
+  });
+
+  it('returns selector candidates before transport when multiple PAT machines are current', async () => {
+    readSettings.mockResolvedValue({});
+    resolveCurrentAccountMachineTarget.mockResolvedValue({
+      kind: 'selection_required',
+      candidates: [
+        { machineId: 'machine-a', machineLabel: 'machine-a' },
+        { machineId: 'machine-b', machineLabel: 'machine-b' },
+      ],
+    });
+    const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
+    const executor = createCliActionExecutorFromCredentials({
+      credentials: {
+        token: 'hap_v1_token_secret',
+        encryption: null,
+        credentialProvenance: 'api_token',
+      },
+    });
+
+    await expect(executor.execute('session.list', { limit: 1 }, { surface: 'cli' })).resolves.toEqual({
+      ok: true,
+      result: {
+        ok: false,
+        errorCode: 'machine_selection_required',
+        error: 'machine_selection_required',
+        candidates: ['machine-a', 'machine-b'],
+      },
+    });
+  });
+
   it.each([
     ['tag', 'active-work'],
     ['prefix', exactSessionId.slice(0, 12)],
   ] as const)('resolves a unique Session %s through the PAT-authorized session.list Action before invoking the target Action', async (_kind, selector) => {
-    const fetch = vi.fn<FetchLike>(async (input) => {
+    const fetch = vi.fn<FetchLike>((input) => {
       const url = String(input);
       if (url.endsWith('/v1/actions/session.list')) {
         return apiSuccess('session.list', {
@@ -206,7 +505,7 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
         session: { id: exactSessionId, active: true },
       });
     });
-    vi.stubGlobal('fetch', fetch);
+    installPatActionTransportMock(fetch);
 
     const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
     const executor = createCliActionExecutorFromCredentials({
@@ -246,13 +545,14 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
     expect(String(fetch.mock.calls[2]?.[0])).toBe(
       new URL('v1/actions/session.status.get', configuration.apiServerUrl).toString(),
     );
+    expect(resolveCurrentAccountMachineTarget).not.toHaveBeenCalled();
     expect(fetchSessionById).not.toHaveBeenCalled();
     expect(fetchSessionsPage).not.toHaveBeenCalled();
     expect(lookupSessionsByTags).not.toHaveBeenCalled();
   });
 
   it('resolves a PAT Session selector and starts a delegate through public Actions without legacy bootstrap', async () => {
-    const fetch = vi.fn<FetchLike>(async (input) => {
+    const fetch = vi.fn<FetchLike>((input) => {
       const pathname = new URL(String(input)).pathname;
       if (pathname.endsWith('/v1/actions/session.list')) {
         return apiSuccess('session.list', {
@@ -276,7 +576,7 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
       }
       throw new Error(`Unexpected public Action path: ${pathname}`);
     });
-    vi.stubGlobal('fetch', fetch);
+    installPatActionTransportMock(fetch);
 
     const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
     const executor = createCliActionExecutorFromCredentials({
@@ -356,12 +656,12 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
   });
 
   it('rejects a PAT session-list result that does not satisfy the canonical Session list schema', async () => {
-    const fetch = vi.fn<FetchLike>(async () => apiSuccess('session.list', {
+    const fetch = vi.fn<FetchLike>(() => apiSuccess('session.list', {
       sessions: [{ id: exactSessionId, tag: 'active-work' }],
       nextCursor: null,
       hasNext: false,
     }));
-    vi.stubGlobal('fetch', fetch);
+    installPatActionTransportMock(fetch);
 
     const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
     const executor = createCliActionExecutorFromCredentials({
@@ -464,12 +764,12 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
     ]],
     ['session_not_found', []],
   ] as const)('preserves the typed %s selector result without invoking the target Action', async (errorCode, sessions) => {
-    const fetch = vi.fn<FetchLike>(async () => apiSuccess('session.list', {
+    const fetch = vi.fn<FetchLike>(() => apiSuccess('session.list', {
       sessions: sessions.map((session) => sessionListItem(session.id, session.tag)),
       nextCursor: null,
       hasNext: false,
     }));
-    vi.stubGlobal('fetch', fetch);
+    installPatActionTransportMock(fetch);
 
     const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
     const executor = createCliActionExecutorFromCredentials({
@@ -501,10 +801,10 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
   });
 
   it('defers PAT Action execution until its prepared invocation runs', async () => {
-    const fetch = vi.fn<FetchLike>(async () => apiSuccess('session.status.get', {
+    const fetch = vi.fn<FetchLike>(() => apiSuccess('session.status.get', {
       session: { id: exactSessionId, active: true },
     }));
-    vi.stubGlobal('fetch', fetch);
+    installPatActionTransportMock(fetch);
 
     const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
     const executor = createCliActionExecutorFromCredentials({
@@ -536,10 +836,10 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
   });
 
   it('projects an API Action failure without falling back to the local executor', async () => {
-    const fetch = vi.fn<FetchLike>(async () => apiFailure('session.status.get', 'target_unavailable', {
+    const fetch = vi.fn<FetchLike>(() => apiFailure('session.status.get', 'target_unavailable', {
       retryAfterMs: 50,
     }));
-    vi.stubGlobal('fetch', fetch);
+    installPatActionTransportMock(fetch);
 
     const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
     const executor = createCliActionExecutorFromCredentials({
@@ -566,7 +866,7 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
 
   it('rejects a non-public PAT Action before any local or HTTP execution', async () => {
     const fetch = vi.fn<FetchLike>();
-    vi.stubGlobal('fetch', fetch);
+    installPatActionTransportMock(fetch);
 
     const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
     const executor = createCliActionExecutorFromCredentials({
@@ -593,7 +893,7 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
   });
 
   it('routes PAT-backed MCP Session Actions through the external adapter without local E2EE access', async () => {
-    const fetch = vi.fn<FetchLike>(async (input) => String(input).endsWith('/v1/actions/session.list')
+    const fetch = vi.fn<FetchLike>((input) => String(input).endsWith('/v1/actions/session.list')
       ? apiSuccess('session.list', {
           sessions: [sessionListItem(exactSessionId, 'active-work')],
           nextCursor: null,
@@ -602,7 +902,7 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
       : apiSuccess('session.status.get', {
           session: { id: exactSessionId, active: false },
         }));
-    vi.stubGlobal('fetch', fetch);
+    installPatActionTransportMock(fetch);
 
     const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
     const executor = createCliActionExecutorFromCredentials({
@@ -632,11 +932,11 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
   });
 
   it('projects PAT Session creation through the canonical public spawn binding', async () => {
-    const fetch = vi.fn<FetchLike>(async () => apiSuccess('session.spawn_new', {
+    const fetch = vi.fn<FetchLike>(() => apiSuccess('session.spawn_new', {
       type: 'success',
       sessionId: exactSessionId,
     }));
-    vi.stubGlobal('fetch', fetch);
+    installPatActionTransportMock(fetch);
 
     const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
     const executor = createCliActionExecutorFromCredentials({
@@ -684,10 +984,10 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
   });
 
   it('surfaces transport failure instead of retrying through a local executor', async () => {
-    const fetch = vi.fn<FetchLike>(async () => {
+    const fetch = vi.fn<FetchLike>(() => {
       throw new Error('network unreachable');
     });
-    vi.stubGlobal('fetch', fetch);
+    installPatActionTransportMock(fetch);
 
     const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
     const executor = createCliActionExecutorFromCredentials({

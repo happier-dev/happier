@@ -169,9 +169,20 @@ describe('createExecutionRunBackend (plugin runtimeCore adapter)', () => {
   it('revalidates and carries exact Provider-bound open inputs before runtime creation, then cleans up', async () => {
     const events: string[] = [];
     const cleanupOnExit = vi.fn(async () => { events.push('cleanup'); });
+    // `upstream` is a required part of the canonical Agent-facing binding: it
+    // is what an Agent runtime reads to decide whether its inherited on-disk
+    // identity would answer for the selected route. The values mirror what
+    // `projectAgentSessionProviderBindingV1` emits for this external
+    // connection — the endpoint protocol/URL it authorized, and `apiKey`
+    // because the binding carries its own runtime credential transport.
     const providerBinding = AgentSessionProviderBindingV1Schema.parse({
       connectionId: 'pc_openai',
       model: { id: 'provider-model', name: 'Provider Model' },
+      upstream: {
+        protocol: 'openai-responses',
+        normalizedUrl: 'https://api.openai.example/v1',
+        credential: 'apiKey',
+      },
       materialization: { v: 1, kind: 'engineConfig', engineConfig: { provider: 'openai' } },
     });
     prepareExecutionRunProviderLaunchMock.mockImplementation(async () => ({

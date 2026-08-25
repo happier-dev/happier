@@ -11,7 +11,6 @@ const mocks = vi.hoisted(() => ({
   fetchSessionOrganizationPlacement: vi.fn(),
   validateStoredAuthTokenAgainstActiveServer: vi.fn(),
   fetchAccountEncryptionCurrentness: vi.fn(),
-  archiveSessionOnceInactive: vi.fn(),
   sendSessionMessage: vi.fn(),
 }));
 
@@ -37,10 +36,6 @@ vi.mock('@/auth/validateStoredAuthTokenAgainstActiveServer', () => ({
 
 vi.mock('@/api/client/connectedServiceCredentialApi', () => ({
   fetchAccountEncryptionCurrentness: (...args: unknown[]) => mocks.fetchAccountEncryptionCurrentness(...args),
-}));
-
-vi.mock('@/session/services/archiveSessionOnceInactive', () => ({
-  archiveSessionOnceInactive: (...args: unknown[]) => mocks.archiveSessionOnceInactive(...args),
 }));
 
 vi.mock('@/session/services/sendSessionMessage', () => ({
@@ -77,7 +72,6 @@ describe('continueSessionWithReplay canonical creation delegation', () => {
     mocks.fetchSessionOrganizationPlacement.mockResolvedValue({ folderId: null, tagIds: [] });
     mocks.validateStoredAuthTokenAgainstActiveServer.mockResolvedValue({ state: 'valid' });
     mocks.fetchAccountEncryptionCurrentness.mockResolvedValue({ mode: 'plain', version: 1 });
-    mocks.archiveSessionOnceInactive.mockResolvedValue({ archivedAt: 1 });
   });
 
   it('uses the same deterministic replay tag and spawn nonce for repeated equivalent requests', async () => {
@@ -197,10 +191,9 @@ describe('continueSessionWithReplay canonical creation delegation', () => {
       type: 'error',
       errorCode: SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT,
     });
-    expect(mocks.archiveSessionOnceInactive).not.toHaveBeenCalled();
   });
 
-  it('settles the orphaned child once, at the canonical creator, on a definite spawn failure', async () => {
+  it('returns a definite spawn failure without duplicating canonical creator cleanup', async () => {
     const spawnSession = vi.fn(async (_options: SpawnSessionOptions) => ({
       type: 'error',
       errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
@@ -221,10 +214,6 @@ describe('continueSessionWithReplay canonical creation delegation', () => {
       errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
       errorMessage: 'Runner refused to start',
     });
-    expect(mocks.archiveSessionOnceInactive).toHaveBeenCalledTimes(1);
-    expect(mocks.archiveSessionOnceInactive).toHaveBeenCalledWith(
-      expect.objectContaining({ sessionId: 'replay-child' }),
-    );
   });
 
   it('reports an unresolvable source without creating any child', async () => {

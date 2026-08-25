@@ -2,12 +2,15 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 
 import {
   DAEMON_VOICE_SPEECH_INPUT_MAX_BYTES as VOICE_SPEECH_INPUT_MAX_BYTES,
   DAEMON_VOICE_SPEECH_OUTPUT_MAX_BYTES as VOICE_SPEECH_OUTPUT_MAX_BYTES,
   DAEMON_VOICE_SPEECH_TRANSFER_CHUNK_MAX_BYTES as VOICE_SPEECH_TRANSFER_CHUNK_MAX_BYTES,
   DaemonVoiceSpeechCatalogRequestSchema,
+  DaemonVoiceSpeechSettingsActionRequestSchema,
+  DaemonVoiceSpeechSettingsActionResponseSchema,
   DaemonVoiceSpeechDownloadAbortRequestSchema,
   DaemonVoiceSpeechDownloadAbortResponseSchema,
   DaemonVoiceSpeechDownloadChunkRequestSchema,
@@ -32,12 +35,12 @@ import {
   resolveAccountSettingsVoiceCredentialSource,
   resolveVoiceSpeechSettingsCorrespondence,
   resolveVoiceSpeechEndpointPolicy,
+  type VoiceCredentialAccessPhase,
   type VoiceProviderContribution,
 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import type { HttpService } from '@happier-dev/plugin-sdk/http';
 import type { VoiceCredentialAccess } from '@happier-dev/plugin-sdk/voice';
-import type { SpeechProviderRuntime } from '@happier-dev/plugin-sdk/voice/speech';
 
 import { configuration } from '@/configuration';
 import { readStoredCredentials, type StoredCredentials } from '@/persistence';
@@ -65,8 +68,13 @@ import {
   type PluginPermissionGrantListReader,
 } from '@/plugins/runtime/credentials/rawCredentialMaterializer';
 import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
-import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import {
+  getActiveAccountSettingsSnapshot,
+  getActiveAccountSettingsSnapshotLifetimeToken,
+} from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { warmActiveAccountSettingsSnapshotBestEffort } from '@/settings/accountSettings/warmActiveAccountSettingsSnapshot';
+import { createPluginInteractionsService } from '@/plugins/runtime/invocation/services/interactions';
+import type { RegisteredSpeechProviderRuntime } from '@/plugins/runtime/lifecycle/contributions/targetVoiceSpeech';
 import type { RpcHandlerContext, RpcHandlerRegistrar } from '../rpc/types';
 
 type VoiceSpeechTargetRef = Readonly<{ pluginId: string; localId: string }>;
@@ -78,11 +86,13 @@ type UploadMetadata = Readonly<{
 }>;
 type FinalizedUpload = Readonly<UploadMetadata & { path: string }>;
 
-const UNAVAILABLE_SPEECH_CREDENTIALS: VoiceCredentialAccess<'speech'> = Object.freeze({
-  phase: 'speech',
-  mediated: null,
-  raw: null,
-});
+type VoiceSpeechCredentialPhase = Extract<VoiceCredentialAccessPhase, 'settings' | 'speech'>;
+type VoiceSpeechCredentialAccess = VoiceCredentialAccess<'settings'> | VoiceCredentialAccess<'speech'>;
+const VOICE_SPEECH_CREDENTIAL_PHASES = Object.freeze<readonly VoiceSpeechCredentialPhase[]>(['settings', 'speech']);
+
+function unavailableSpeechCredentials(phase: VoiceSpeechCredentialPhase): VoiceSpeechCredentialAccess {
+  return Object.freeze({ phase, mediated: null, raw: null });
+}
 
 const invalid = Object.freeze({ ok: false as const, errorCode: 'invalid_parameters' as const });
 const transferInvalid = Object.freeze({ success: false as const, error: 'invalid_parameters' as const, errorCode: 'invalid_parameters' as const });
@@ -93,14 +103,16 @@ function transferFailure(code: 'transfer_not_found' | 'transfer_failed' | 'cance
 export type MachineVoiceSpeechRpcRegistration = Readonly<{ dispose(): Promise<void> }>;
 
 export type VoiceSpeechRuntimeLease = Readonly<{
-  runtime: SpeechProviderRuntime;
+  runtime: RegisteredSpeechProviderRuntime;
   contribution: Extract<VoiceProviderContribution, { kind: 'speech' }>;
   readSettings(): Readonly<{
     settings: unknown;
     resolveCredentials(
       settings: Readonly<Record<string, unknown>>,
       signal: AbortSignal,
-    ): VoiceCredentialAccess<'speech'>;
+      phase?: VoiceSpeechCredentialPhase,
+      bindCredentialAuthorityCurrent?: (isCurrent: () => boolean) => void,
+    ): VoiceSpeechCredentialAccess;
     isCurrent(): boolean;
   }>;
   createHttp(
@@ -126,40 +138,123 @@ function credentialUnavailable(): Error & { code: 'credential_unavailable' } {
   return Object.assign(new Error('credential_unavailable'), { code: 'credential_unavailable' as const });
 }
 
-function resolveSpeechCredentialAccess(input: Readonly<{
+function isSpeechSettingsSnapshotCurrent(input: Readonly<{
+  snapshot: ActiveAccountSettingsSnapshot;
+  snapshotLifetimeToken: number;
+  readSnapshot: () => ActiveAccountSettingsSnapshot | null;
+  providerId: string;
+  schemaVersion: number;
+  config: unknown;
+}>): boolean {
+  const current = input.readSnapshot();
+  if (!current || getActiveAccountSettingsSnapshotLifetimeToken() !== input.snapshotLifetimeToken) {
+    return false;
+  }
+  if (input.snapshot.scopeKey === undefined || current.scopeKey === undefined) {
+    return current === input.snapshot;
+  }
+  if (current.scopeKey !== input.snapshot.scopeKey) return false;
+
+  const root = current.settings.voiceSettingsV1;
+  if (!root || typeof root !== 'object' || Array.isArray(root)) return false;
+  const providers = (root as Readonly<Record<string, unknown>>).providers;
+  if (!providers || typeof providers !== 'object' || Array.isArray(providers)) return false;
+  const envelope = VoiceProviderSettingsEnvelopeV1Schema.safeParse(
+    (providers as Readonly<Record<string, unknown>>)[input.providerId],
+  );
+  return envelope.success
+    && envelope.data.schemaVersion === input.schemaVersion
+    && isDeepStrictEqual(envelope.data.config, input.config);
+}
+
+type SpeechCredentialAuthority = ReturnType<typeof resolveAccountSettingsVoiceCredentialSource>;
+type SpeechCredentialAdmission = Readonly<{
+  hasSelectedSource: boolean;
+  isAuthorityCurrent(): boolean;
+}>;
+
+function resolveSpeechCredentialAuthority(input: Readonly<{
   contribution: Extract<VoiceProviderContribution, { kind: 'speech' }>;
   target: VoiceSpeechTargetRef;
-  providerSettings: Readonly<Record<string, unknown>>;
   accountSettings: Readonly<Record<string, unknown>>;
   machineId: string | null;
-  mediated: VoiceCredentialAccess<'speech'>['mediated'];
-  raw: VoiceCredentialAccess<'speech'>['raw'];
-}>): VoiceCredentialAccess<'speech'> {
+}>): SpeechCredentialAuthority {
   const declaration = input.contribution.credentials;
-  if (!declaration) return UNAVAILABLE_SPEECH_CREDENTIALS;
-  const requirementActive = declaration.requirement.kind === 'always'
-    || (declaration.requirement.kind === 'when_setting_equals'
-      && input.providerSettings[declaration.requirement.settingId] === declaration.requirement.value);
-  let selection: ReturnType<typeof resolveAccountSettingsVoiceCredentialSource>['selection'];
+  if (!declaration) throw credentialUnavailable();
   try {
-    selection = resolveAccountSettingsVoiceCredentialSource(input.accountSettings, {
+    return resolveAccountSettingsVoiceCredentialSource(input.accountSettings, {
       contribution: input.target,
       credentialSlotId: declaration.slot.id,
       purpose: { consumer: input.target, purpose: declaration.slot.purpose },
       machineId: input.machineId,
-    }).selection;
+    });
   } catch {
     throw credentialUnavailable();
   }
-  if (selection.kind === 'none') {
-    if (requirementActive) throw credentialUnavailable();
-    return UNAVAILABLE_SPEECH_CREDENTIALS;
+}
+
+function resolveSpeechCredentialAdmission(input: Readonly<{
+  contribution: Extract<VoiceProviderContribution, { kind: 'speech' }>;
+  target: VoiceSpeechTargetRef;
+  providerSettings: Readonly<Record<string, unknown>>;
+  accountSettings: Readonly<Record<string, unknown>>;
+  readAccountSettingsSnapshot: () => ActiveAccountSettingsSnapshot | null;
+  machineId: string | null;
+}>): SpeechCredentialAdmission {
+  const declaration = input.contribution.credentials;
+  if (!declaration) {
+    return Object.freeze({
+      hasSelectedSource: false,
+      isAuthorityCurrent: () => true,
+    });
   }
+  const requirementActive = declaration.requirement.kind === 'always'
+    || (declaration.requirement.kind === 'when_setting_equals'
+      && input.providerSettings[declaration.requirement.settingId] === declaration.requirement.value);
+  // Account Settings owns this exact non-secret projection: selected source,
+  // effective binding, SavedSecret reference, and recipient approval.
+  const authority = resolveSpeechCredentialAuthority(input);
+  if (authority.selection.kind === 'none') {
+    if (requirementActive) throw credentialUnavailable();
+    return Object.freeze({
+      hasSelectedSource: false,
+      isAuthorityCurrent: () => true,
+    });
+  }
+  return Object.freeze({
+    hasSelectedSource: true,
+    isAuthorityCurrent: () => {
+      const current = input.readAccountSettingsSnapshot();
+      if (!current) return false;
+      try {
+        return isDeepStrictEqual(
+          resolveSpeechCredentialAuthority({
+            contribution: input.contribution,
+            target: input.target,
+            accountSettings: current.settings as unknown as Readonly<Record<string, unknown>>,
+            machineId: input.machineId,
+          }),
+          authority,
+        );
+      } catch {
+        return false;
+      }
+    },
+  });
+}
+
+function resolveSpeechCredentialAccess(input: Readonly<{
+  phase: VoiceSpeechCredentialPhase;
+  admission: SpeechCredentialAdmission;
+  mediated: VoiceSpeechCredentialAccess['mediated'];
+  raw: VoiceSpeechCredentialAccess['raw'];
+}>): VoiceSpeechCredentialAccess {
+  if (!input.admission.hasSelectedSource) return unavailableSpeechCredentials(input.phase);
   // Mediated and raw access are independent declarations. A contribution that
   // declares only host-mediated operations is fully usable without a raw
   // grant, and one that declares only a raw grant is unaffected by mediation.
   if (!input.raw && !input.mediated) throw credentialUnavailable();
-  return Object.freeze({ phase: 'speech', mediated: input.mediated, raw: input.raw });
+  return Object.freeze({ phase: input.phase, mediated: input.mediated, raw: input.raw });
 }
 
 export function registerMachineVoiceSpeechRpcHandlers(params: Readonly<{
@@ -205,7 +300,10 @@ export function registerMachineVoiceSpeechRpcHandlers(params: Readonly<{
       if (!speech?.isCurrent()) {
         throw Object.assign(new Error('provider_unavailable'), { code: 'provider_unavailable' });
       }
-      let rawCredentialMaterializer: PluginRawCredentialMaterializer | null = null;
+      const rawCredentialMaterializers = new Map<
+        VoiceSpeechCredentialPhase,
+        PluginRawCredentialMaterializer
+      >();
       let readAccountSettingsSnapshot = getActiveAccountSettingsSnapshot;
       const manifest = lease.registry.contributes.activationTargets.find((candidate) => (
         candidate.pluginId === target.pluginId
@@ -214,22 +312,31 @@ export function registerMachineVoiceSpeechRpcHandlers(params: Readonly<{
           && contribution.kind === 'speech'
         )) === true
       ))?.manifest ?? null;
-      const hasDeclaredRawSpeechAccess = speech.contribution.credentials?.sources.some((source) => (
-        source.rawGrants?.some((grant) => (
-          grant.realm === 'daemon' && grant.phase === 'speech'
+      const hasDeclaredRawSpeechAccess = (phase: VoiceSpeechCredentialPhase) => (
+        speech.contribution.credentials?.sources.some((source) => (
+          source.rawGrants?.some((grant) => (
+            grant.realm === 'daemon' && grant.phase === phase
+          )) === true
         )) === true
-      )) === true;
+      );
       // Mediated access is declared exactly as the client realm declares it.
       // The Account-operation owner decides which phases a contribution kind
       // may reach, so this seam asks it rather than re-encoding the phase.
-      const hasDeclaredMediatedSpeechAccess =
-        declaresAdmittedMediatedOperations(speech.contribution);
+      const hasDeclaredMediatedSpeechAccess = (phase: VoiceSpeechCredentialPhase) => (
+        declaresAdmittedMediatedOperations(speech.contribution, phase)
+      );
       let createMediatedOperationAccess:
-        | ((signal: AbortSignal, isCurrent: () => boolean) => VoiceCredentialAccess<'speech'>['mediated'])
+        | ((
+            phase: VoiceSpeechCredentialPhase,
+            signal: AbortSignal,
+            isCurrent: () => boolean,
+          ) => VoiceSpeechCredentialAccess['mediated'])
         | null = null;
       if (
         manifest
-        && (hasDeclaredRawSpeechAccess || hasDeclaredMediatedSpeechAccess)
+        && VOICE_SPEECH_CREDENTIAL_PHASES.some((phase) => (
+          hasDeclaredRawSpeechAccess(phase) || hasDeclaredMediatedSpeechAccess(phase)
+        ))
         && (lease.registry.generation === undefined
           || speech.generation === String(lease.registry.generation))
       ) {
@@ -246,50 +353,56 @@ export function registerMachineVoiceSpeechRpcHandlers(params: Readonly<{
           throw Object.assign(new Error('provider_unavailable'), { code: 'provider_unavailable' });
         }
         const connectedAccounts = lease.registry.resolveConnectedAccountPurposeBindingOwner?.() ?? null;
-        if (hasDeclaredMediatedSpeechAccess && lifecycle) {
+        if (lifecycle) {
           const voiceProviders = lease.registry.contributes.voiceProviders ?? [];
           const transport = createGlobalFetchRuntime();
-          createMediatedOperationAccess = (signal, isCurrent) => createVoiceAccountOperationService({
-            voiceProviders,
-            provider: target,
-            kind: 'speech',
-            credentialResolver: createVoiceCredentialResolver({
-              machineId: params.machineId ?? null,
-              getSnapshot: readAccountSettingsSnapshot,
-            }),
-            isCurrent: () => speech.isCurrent() && lifecycle.isCurrent() && isCurrent(),
-            signal,
-            transport,
-          });
-        }
-        if (hasDeclaredRawSpeechAccess && dependencies && lifecycle) {
-          const raw = createDaemonPluginRawCredentialMaterializer({
-            binding: {
-              manifest,
-              contribution: target,
-              realm: 'daemon',
-              phase: 'speech',
-              machineId: params.machineId ?? null,
-              immutableGenerationId: lifecycle.generation,
-              isRuntimeAuthorityCurrent: () => speech.isCurrent() && lifecycle.isCurrent(),
-            },
-            ...(dependencies.credentials ? { credentials: dependencies.credentials } : {}),
-            ...(dependencies.currentInstallReviewPrincipal
-              ? { currentInstallReviewPrincipal: dependencies.currentInstallReviewPrincipal }
-              : {}),
-            ...(dependencies.readCurrentGrantAuthoritySource
-              ? { readCurrentGrantAuthoritySource: dependencies.readCurrentGrantAuthoritySource }
-              : {}),
-            ...(dependencies.grants ? { grants: dependencies.grants } : {}),
-            ...(connectedAccounts ? { connectedAccounts } : {}),
-            ...(dependencies.getAccountSettingsSnapshot
-              ? { getAccountSettingsSnapshot: dependencies.getAccountSettingsSnapshot }
-              : {}),
-            ...(dependencies.ensureAccountSettingsSnapshot
-              ? { ensureAccountSettingsSnapshot: dependencies.ensureAccountSettingsSnapshot }
-              : {}),
-          });
-          rawCredentialMaterializer = raw;
+          createMediatedOperationAccess = (phase, signal, isCurrent) => {
+            if (!hasDeclaredMediatedSpeechAccess(phase)) return null;
+            return createVoiceAccountOperationService({
+              voiceProviders,
+              provider: target,
+              kind: 'speech',
+              phase,
+              credentialResolver: createVoiceCredentialResolver({
+                machineId: params.machineId ?? null,
+                getSnapshot: readAccountSettingsSnapshot,
+              }),
+              isCurrent: () => speech.isCurrent() && lifecycle.isCurrent() && isCurrent(),
+              signal,
+              transport,
+            });
+          };
+          if (dependencies) {
+            for (const phase of VOICE_SPEECH_CREDENTIAL_PHASES) {
+              if (!hasDeclaredRawSpeechAccess(phase)) continue;
+              rawCredentialMaterializers.set(phase, createDaemonPluginRawCredentialMaterializer({
+                binding: {
+                  manifest,
+                  contribution: target,
+                  realm: 'daemon',
+                  phase,
+                  machineId: params.machineId ?? null,
+                  immutableGenerationId: lifecycle.generation,
+                  isRuntimeAuthorityCurrent: () => speech.isCurrent() && lifecycle.isCurrent(),
+                },
+                ...(dependencies.credentials ? { credentials: dependencies.credentials } : {}),
+                ...(dependencies.currentInstallReviewPrincipal
+                  ? { currentInstallReviewPrincipal: dependencies.currentInstallReviewPrincipal }
+                  : {}),
+                ...(dependencies.readCurrentGrantAuthoritySource
+                  ? { readCurrentGrantAuthoritySource: dependencies.readCurrentGrantAuthoritySource }
+                  : {}),
+                ...(dependencies.grants ? { grants: dependencies.grants } : {}),
+                ...(connectedAccounts ? { connectedAccounts } : {}),
+                ...(dependencies.getAccountSettingsSnapshot
+                  ? { getAccountSettingsSnapshot: dependencies.getAccountSettingsSnapshot }
+                  : {}),
+                ...(dependencies.ensureAccountSettingsSnapshot
+                  ? { ensureAccountSettingsSnapshot: dependencies.ensureAccountSettingsSnapshot }
+                  : {}),
+              }));
+            }
+          }
         }
       }
       return Object.freeze({
@@ -312,31 +425,49 @@ export function registerMachineVoiceSpeechRpcHandlers(params: Readonly<{
           if (!envelope.success || envelope.data.schemaVersion !== speech.contribution.settings.schemaVersion) {
             throw Object.assign(new Error('provider_settings_invalid'), { code: 'provider_settings_invalid' });
           }
+          const snapshotLifetimeToken = getActiveAccountSettingsSnapshotLifetimeToken();
           const isCurrent = () => (
             speech.isCurrent()
-            && readAccountSettingsSnapshot() === snapshot
+            && isSpeechSettingsSnapshotCurrent({
+              snapshot,
+              snapshotLifetimeToken,
+              readSnapshot: readAccountSettingsSnapshot,
+              providerId,
+              schemaVersion: speech.contribution.settings.schemaVersion,
+              config: envelope.data.config,
+            })
           );
           return Object.freeze({
             settings: envelope.data.config,
             resolveCredentials(
               providerSettings: Readonly<Record<string, unknown>>,
               signal: AbortSignal,
+              phase: VoiceSpeechCredentialPhase = 'speech',
+              bindCredentialAuthorityCurrent?: (isCurrent: () => boolean) => void,
             ) {
-              return resolveSpeechCredentialAccess({
+              const admission = resolveSpeechCredentialAdmission({
                 contribution: speech.contribution,
                 target,
                 providerSettings,
                 accountSettings: snapshot.settings as unknown as Readonly<Record<string, unknown>>,
+                readAccountSettingsSnapshot,
                 machineId: params.machineId ?? null,
-                mediated: createMediatedOperationAccess?.(signal, isCurrent) ?? null,
-                raw: rawCredentialMaterializer
+              });
+              const isOperationCurrent = () => isCurrent() && admission.isAuthorityCurrent();
+              const credentials = resolveSpeechCredentialAccess({
+                phase,
+                admission,
+                mediated: createMediatedOperationAccess?.(phase, signal, isOperationCurrent) ?? null,
+                raw: rawCredentialMaterializers.get(phase)
                   ? createInvocationVoiceRawCredentialAccess({
-                      materializer: rawCredentialMaterializer,
+                      materializer: rawCredentialMaterializers.get(phase)!,
                       signal,
-                      isCurrent,
+                      isCurrent: isOperationCurrent,
                     })
                   : null,
               });
+              bindCredentialAuthorityCurrent?.(admission.isAuthorityCurrent);
+              return credentials;
             },
             isCurrent,
           });
@@ -455,13 +586,25 @@ export function registerMachineVoiceSpeechRpcHandlers(params: Readonly<{
         settings: correspondence.settings,
         machineId: params.machineId ?? null,
       });
+      let isCredentialAuthorityCurrent = () => true;
+      const credentials = settingsLease.resolveCredentials(
+        correspondence.settings,
+        signal,
+        'speech',
+        (isCurrent) => { isCredentialAuthorityCurrent = isCurrent; },
+      );
+      if (credentials.phase !== 'speech') throw credentialUnavailable();
+      const isCurrent = () => settingsLease.isCurrent() && isCredentialAuthorityCurrent();
+      if (!isCurrent()) {
+        throw Object.assign(new Error('provider_unavailable'), { code: 'provider_unavailable' });
+      }
       return Object.freeze({
         correspondence,
-        isCurrent: settingsLease.isCurrent,
+        isCurrent,
         context: Object.freeze({
-          credentials: settingsLease.resolveCredentials(correspondence.settings, signal),
+          credentials,
           settings: correspondence.settings,
-          http: lease.createHttp(signal, settingsLease.isCurrent, endpointPolicy),
+          http: lease.createHttp(signal, isCurrent, endpointPolicy),
           signal,
         }),
       });
@@ -548,6 +691,72 @@ export function registerMachineVoiceSpeechRpcHandlers(params: Readonly<{
     } catch (error) {
       const failure = classify(error);
       return VoiceProviderCatalogResponseSchema.parse({ ok: false, errorCode: failure.errorCode, error: failure.errorCode, retryable: failure.errorCode === 'request_timeout' });
+    } finally { await lease?.release(); }
+  });
+
+  params.rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_VOICE_SPEECH_SETTINGS_ACTION_EXECUTE, async (
+    raw: unknown,
+    context?: RpcHandlerContext,
+  ) => {
+    const parsed = DaemonVoiceSpeechSettingsActionRequestSchema.safeParse(raw);
+    if (!parsed.success) return DaemonVoiceSpeechSettingsActionResponseSchema.parse(invalid);
+    let lease: VoiceSpeechRuntimeLease | null = null;
+    try {
+      lease = await resolveSpeechRuntime(parsed.data.target);
+      const declared = lease.contribution.settings.actions?.some(
+        (action) => action.id === parsed.data.actionId,
+      ) === true;
+      if (!declared || !lease.runtime.settingsActions) {
+        return DaemonVoiceSpeechSettingsActionResponseSchema.parse(invalid);
+      }
+      const response = await runBounded(async (signal) => {
+        assertOperationMayPublish(lease!, signal);
+        const settingsLease = lease!.readSettings();
+        if (!settingsLease.isCurrent()) {
+          throw Object.assign(new Error('provider_unavailable'), { code: 'provider_unavailable' });
+        }
+        const correspondence = resolveVoiceSpeechSettingsCorrespondence({
+          contribution: lease!.contribution,
+          settings: settingsLease.settings,
+        });
+        let isCredentialAuthorityCurrent = () => true;
+        const credentials = settingsLease.resolveCredentials(
+          correspondence.settings,
+          signal,
+          'settings',
+          (isCurrent) => { isCredentialAuthorityCurrent = isCurrent; },
+        );
+        if (credentials.phase !== 'settings') throw credentialUnavailable();
+        const isCurrent = () => settingsLease.isCurrent() && isCredentialAuthorityCurrent();
+        if (!isCurrent()) {
+          throw Object.assign(new Error('provider_unavailable'), { code: 'provider_unavailable' });
+        }
+        const result = await lease!.runtime.settingsActions!.execute(
+          { actionId: parsed.data.actionId, settings: correspondence.settings },
+          {
+            credentials,
+            interactions: createPluginInteractionsService({
+              currentSession: null,
+              signal,
+              isGenerationCurrent: isCurrent,
+            }),
+            signal,
+            tools: Object.freeze([]),
+          },
+        );
+        assertOperationMayPublish(lease!, signal, isCurrent);
+        const validated = DaemonVoiceSpeechSettingsActionResponseSchema.safeParse({
+          ok: true,
+          patch: result.patch,
+        });
+        if (!validated.success) {
+          throw Object.assign(new Error('provider_response_invalid'), { code: 'provider_response_invalid' });
+        }
+        return validated.data;
+      }, lease, context?.signal);
+      return response;
+    } catch (error) {
+      return DaemonVoiceSpeechSettingsActionResponseSchema.parse(classify(error));
     } finally { await lease?.release(); }
   });
 

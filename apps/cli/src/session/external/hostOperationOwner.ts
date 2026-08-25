@@ -3,8 +3,13 @@ import {
     ExternalSessionsSourceSchema,
     type ExternalSessionsSource,
 } from '@happier-dev/protocol';
+import { measureSerializedValidatedStrictPluginJsonUtf8Bytes } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
 
+import {
+    createExternalSessionFollowCleanupCustody,
+    isExternalSessionFollowCleanupDeadline,
+} from './followCleanupSettlement';
 import type {
     ExternalSessionFollowHostOperation,
     ExternalSessionFollowHostOperationRequest,
@@ -224,21 +229,27 @@ function readCurrentAccountRevision(
     }
 }
 
+/**
+ * Sizes an admitted follow event through the canonical iterative Protocol byte
+ * owner. Recursive serialization would reclassify a valid deep transcript event
+ * as invalid, so the declared byte ceiling stays the only bound.
+ */
 function assertFollowEventBounded(
     event: Parameters<
         ExternalSessionFollowHostOperationRequest['listener']
     >[0],
 ): void {
-    let serialized: string;
+    let serializedBytes: number;
     try {
-        serialized = JSON.stringify(event);
+        serializedBytes = measureSerializedValidatedStrictPluginJsonUtf8Bytes(
+            event,
+            'External Session follow event',
+            MAX_FOLLOW_EVENT_SERIALIZED_BYTES,
+        );
     } catch {
         return fail('plugin_external_follow_event_invalid');
     }
-    if (
-        Buffer.byteLength(serialized, 'utf8')
-        > MAX_FOLLOW_EVENT_SERIALIZED_BYTES
-    ) {
+    if (serializedBytes > MAX_FOLLOW_EVENT_SERIALIZED_BYTES) {
         fail('plugin_external_follow_event_too_large');
     }
 }
@@ -256,29 +267,6 @@ function createOwnerGeneration(
         activeFollows: new Set(),
         retirementPromise: null,
     };
-}
-
-async function disposeFollowSubscriptionBounded(
-    dispose: (() => void | Promise<void>) | undefined,
-): Promise<void> {
-    if (!dispose) return;
-    const disposal = Promise.resolve().then(dispose);
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    try {
-        await Promise.race([
-            disposal,
-            new Promise<void>((resolve) => {
-                timer = setTimeout(
-                    resolve,
-                    EXTERNAL_SESSION_FOLLOW_DISPOSE_TIMEOUT_MS,
-                );
-                timer.unref?.();
-            }),
-        ]);
-    } finally {
-        if (timer !== undefined) clearTimeout(timer);
-    }
-    void disposal.catch(() => undefined);
 }
 
 async function retireOwnerGeneration(generation: OwnerGeneration): Promise<void> {
@@ -429,6 +417,10 @@ export function createExternalSessionHostOperationOwner(): ExternalSessionHostOp
                     }
 
                     let disposal: Promise<void> | null = null;
+                    const cleanupCustody =
+                        createExternalSessionFollowCleanupCustody(
+                            EXTERNAL_SESSION_FOLLOW_DISPOSE_TIMEOUT_MS,
+                        );
                     type FollowSubscription = Extract<
                         HostExternalTranscriptFollowResult,
                         { status: 'following' }
@@ -464,14 +456,37 @@ export function createExternalSessionHostOperationOwner(): ExternalSessionHostOp
                             );
                             const currentSubscription = subscription;
                             try {
-                                await disposeFollowSubscriptionBounded(
-                                    currentSubscription
-                                        ? () => currentSubscription.dispose()
-                                        : undefined,
-                                );
-                                // Recorded after the bounded wait so a
-                                // timeout-detach also surrenders the handle,
-                                // while a pre-ceiling rejection does not.
+                                if (currentSubscription) {
+                                    try {
+                                        await cleanupCustody.settle(
+                                            async () =>
+                                                await currentSubscription
+                                                    .dispose(),
+                                        );
+                                    } catch (error) {
+                                        // An explicit caller disposal owns this
+                                        // outcome: cleanup that failed, or that
+                                        // has not settled by the ceiling, is not
+                                        // disposal, so the handle stays in the
+                                        // owner's active sets below and the
+                                        // exact cleanup is retried. Owner-driven
+                                        // retirement is the final bounded
+                                        // lifecycle fence instead — generation
+                                        // replacement and daemon shutdown must
+                                        // not be blocked by one plugin disposer
+                                        // that never answers — so it surrenders
+                                        // the handle at the ceiling while still
+                                        // reporting a disposer that rejected.
+                                        if (
+                                            admitDisposedAcknowledgement
+                                            || !isExternalSessionFollowCleanupDeadline(
+                                                error,
+                                            )
+                                        ) {
+                                            throw error;
+                                        }
+                                    }
+                                }
                                 disposedSubscription = currentSubscription;
                             } finally {
                                 disposed = true;

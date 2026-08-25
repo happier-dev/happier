@@ -7,6 +7,7 @@ import {
     mkdir,
     open,
     opendir,
+    realpath,
     rm,
     rmdir,
 } from 'node:fs/promises';
@@ -26,6 +27,9 @@ import {
 } from '@happier-dev/plugin-sdk/sessions/external';
 
 import { withJsonOwnerFileLock } from '@/utils/fs/jsonOwnerFileLock';
+import {
+    resolveCanonicalAbsolutePathComparisonIdentity,
+} from '@/utils/path/expandHomeDirPath';
 import { writeBytesAtomic, writeJsonAtomic } from '@/utils/fs/writeJsonAtomic';
 
 type JsonPrimitive = string | number | boolean | null;
@@ -174,8 +178,16 @@ type TargetReadResult =
 
 type ResolvedTarget = Readonly<{
     targetId: string;
+    /** The physical file this target resolves to; the custody identity. */
     absolutePath: string;
     collectionId: string;
+    /**
+     * The path the caller declared, present only when this target came from a
+     * caller declaration rather than from durable custody. It is re-resolved
+     * immediately before the compare-and-swap so a target alias retargeted
+     * mid-operation cannot be written past.
+     */
+    declaredPath?: string;
 }>;
 
 type TargetMutation = Readonly<{
@@ -958,14 +970,53 @@ function recordMatchesInput(
         && record.installationIdentity === input.installationIdentity;
 }
 
-function resolveInstallTargets(
+/**
+ * The one physical identity for an Agent hook configuration target.
+ *
+ * Agents declare configuration paths through aliases — macOS resolves `/var`
+ * to `/private/var`, and users point `~/.claude` at a managed directory — so
+ * the declared path is an input, not an identity. Custody, comparison and the
+ * compare-and-swap fence all use the physical file this resolves to, and the
+ * declared path is only ever re-resolved to prove it still names that file.
+ */
+export async function resolveExternalSessionHookPhysicalTargetPath(
+    absolutePath: string,
+): Promise<string | null> {
+    const unresolvedSegments: string[] = [];
+    let existingPath = absolutePath;
+    while (true) {
+        try {
+            const physicalPath = await realpath(existingPath);
+            return join(physicalPath, ...unresolvedSegments.reverse());
+        } catch (error) {
+            if ((error as NodeJS.ErrnoException | null)?.code !== 'ENOENT') return null;
+            // `realpath` reports both an ordinary absent path and a dangling
+            // final symlink/reparse alias as ENOENT. Only the former is a
+            // creation target: replacing the latter atomically would destroy
+            // the caller's declared indirection instead of writing its target.
+            try {
+                if ((await lstat(existingPath)).isSymbolicLink()) return null;
+            } catch (lstatError) {
+                if ((lstatError as NodeJS.ErrnoException | null)?.code !== 'ENOENT') {
+                    return null;
+                }
+            }
+            const parent = dirname(existingPath);
+            if (parent === existingPath) return null;
+            unresolvedSegments.push(basename(existingPath));
+            existingPath = parent;
+        }
+    }
+}
+
+async function resolveInstallTargets(
     variant: ExternalSessionHookInstallationVariant,
     targets: ApplyExternalSessionHookInstallationActionInput['targets'],
-): readonly ResolvedTarget[] | null {
+): Promise<readonly ResolvedTarget[] | null> {
     if (!targets || targets.length !== variant.targets.length) return null;
     const targetById = new Map(targets.map((target) => [target.targetId, target]));
     if (targetById.size !== targets.length) return null;
-    const seenPaths = new Set<string>();
+    const seenPathIdentities = new Set<string>();
     const resolved: ResolvedTarget[] = [];
     for (const declared of variant.targets) {
         if (declared.format !== 'hook_event_json_arrays_v1') return null;
@@ -976,15 +1027,23 @@ function resolveInstallTargets(
             || target.absolutePath.includes('\0')
             || Buffer.byteLength(target.absolutePath, 'utf8') > MAX_TARGET_PATH_UTF8_BYTES
             || !isAbsolute(target.absolutePath)
-            || seenPaths.has(target.absolutePath)
         ) {
             return null;
         }
-        seenPaths.add(target.absolutePath);
+        const physicalPath =
+            await resolveExternalSessionHookPhysicalTargetPath(target.absolutePath);
+        const physicalPathIdentity = physicalPath === null
+            ? null
+            : resolveCanonicalAbsolutePathComparisonIdentity(physicalPath, {
+                platform: process.platform,
+            });
+        if (!physicalPathIdentity || seenPathIdentities.has(physicalPathIdentity)) return null;
+        seenPathIdentities.add(physicalPathIdentity);
         resolved.push({
             targetId: declared.targetId,
-            absolutePath: target.absolutePath,
+            absolutePath: physicalPath,
             collectionId: declared.collectionId,
+            declaredPath: target.absolutePath,
         });
     }
     return resolved;
@@ -1007,7 +1066,17 @@ function installTargetsMatchRecord(
     return priorById.size === record.targets.length
         && targets.every((target) => {
             const prior = priorById.get(target.targetId);
-            return prior?.absolutePath === target.absolutePath
+            const priorPathIdentity = prior === undefined
+                ? null
+                : resolveCanonicalAbsolutePathComparisonIdentity(prior.absolutePath, {
+                    platform: process.platform,
+                });
+            const targetPathIdentity = resolveCanonicalAbsolutePathComparisonIdentity(
+                target.absolutePath,
+                { platform: process.platform },
+            );
+            return priorPathIdentity !== null
+                && priorPathIdentity === targetPathIdentity
                 && prior.collectionId === target.collectionId;
         });
 }
@@ -1083,7 +1152,7 @@ export async function readExternalSessionHookInstallationConfigSnapshot(
         code: 'invalid_target_path' | 'invalid_config';
     }>
 > {
-    const targets = resolveInstallTargets(
+    const targets = await resolveInstallTargets(
         input.selectedVariant,
         input.targets,
     );
@@ -1442,6 +1511,32 @@ async function applyMutations(input: Readonly<{
     const written: TargetMutation[] = [];
     for (const mutation of input.mutations) {
         await input.actionInput.testHooks?.beforeCompareAndSwap?.(mutation.target.targetId);
+        if (mutation.target.declaredPath !== undefined) {
+            // The declared path was resolved to this physical file when the
+            // mutation was planned. Re-resolve it here so a target alias moved
+            // since then fails instead of writing a file the Agent no longer
+            // reads.
+            const physicalPath =
+                await resolveExternalSessionHookPhysicalTargetPath(
+                    mutation.target.declaredPath,
+                );
+            const physicalPathIdentity = physicalPath === null
+                ? null
+                : resolveCanonicalAbsolutePathComparisonIdentity(physicalPath, {
+                    platform: process.platform,
+                });
+            const targetPathIdentity = resolveCanonicalAbsolutePathComparisonIdentity(
+                mutation.target.absolutePath,
+                { platform: process.platform },
+            );
+            if (physicalPathIdentity === null || physicalPathIdentity !== targetPathIdentity) {
+                const rollback = await rollbackWrittenTargets({ written, persistence });
+                return {
+                    ok: false,
+                    code: rollback === 'newer_edit' ? 'reconciliation_required' : 'concurrent_edit',
+                };
+            }
+        }
         const beforeWrite = await readTarget(mutation.target, persistence);
         const inputStillMatches = mutation.originalIdentity === null
             ? beforeWrite.kind === 'missing'
@@ -1573,7 +1668,7 @@ export async function applyExternalSessionHookInstallationAction(
             if (!input.selectedVariant || !input.materializeOwnedEntry) {
                 return { ok: false, code: 'invalid_target_path' };
             }
-            const resolved = resolveInstallTargets(input.selectedVariant, input.targets);
+            const resolved = await resolveInstallTargets(input.selectedVariant, input.targets);
             if (!resolved) return { ok: false, code: 'invalid_target_path' };
             if (record && !installTargetsMatchRecord(record, resolved)) {
                 return { ok: false, code: 'reconciliation_required' };

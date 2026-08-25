@@ -1,7 +1,15 @@
 import { SESSION_TRANSCRIPT_GET_MAX_LIMIT, getActionSpec } from '@happier-dev/protocol';
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { buildSessionTranscriptRetrievalInvocation } from './buildSessionTranscriptRetrievalInvocation';
+
+const { readAgentCatalogSnapshot } = vi.hoisted(() => ({
+  readAgentCatalogSnapshot: vi.fn(),
+}));
+
+vi.mock('@/agent/catalog/snapshot', () => ({
+  readAgentCatalogSnapshot,
+}));
 
 /**
  * The replay seed tells the target Agent how to read the history it could not
@@ -11,6 +19,22 @@ import { buildSessionTranscriptRetrievalInvocation } from './buildSessionTranscr
  */
 describe('buildSessionTranscriptRetrievalInvocation', () => {
   const base = { sessionId: 'sess_1', directory: '/home/u/project' };
+
+  beforeEach(() => {
+    readAgentCatalogSnapshot.mockReturnValue({
+      agentDefinitionsById: new Map(),
+      catalogEntriesById: {
+        claude: { id: 'claude', cliSubcommand: 'claude', toolDelivery: 'native_mcp' },
+        pi: { id: 'pi', cliSubcommand: 'pi', toolDelivery: 'native_extension' },
+        cursor: { id: 'cursor', cliSubcommand: 'cursor', toolDelivery: 'shell_bridge' },
+        'com.acme.review/review': {
+          id: 'com.acme.review/review',
+          cliSubcommand: 'acme-review',
+          toolDelivery: 'native_mcp',
+        },
+      },
+    });
+  });
 
   it('renders the action_execute form for a native_mcp Agent, paging backwards from the cursor', () => {
     const render = buildSessionTranscriptRetrievalInvocation({ ...base, agentId: 'claude' });
@@ -44,6 +68,15 @@ describe('buildSessionTranscriptRetrievalInvocation', () => {
       actionId: 'session.transcript.get',
       input: { sessionId: 'sess_1', cursor: '4200' },
     });
+  });
+
+  it('renders the public action form for an installed Agent that declares native MCP delivery', () => {
+    const render = buildSessionTranscriptRetrievalInvocation({
+      ...base,
+      agentId: 'com.acme.review/review',
+    });
+
+    expect(render?.(4_200)).toContain('action_execute ');
   });
 
   it('omits the cursor when there is no anchor yet, so the first page is the newest one', () => {

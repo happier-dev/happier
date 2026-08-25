@@ -1,6 +1,14 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, expectTypeOf, it } from 'vitest';
+
+import type { PluginInvocableActionId } from '@happier-dev/plugin-sdk/actions';
 
 import {
+    RunnerDaemonExternalSessionsAttachResultV1Schema,
+    RunnerDaemonExternalSessionsCapabilitiesResultV1Schema,
+    RunnerDaemonExternalSessionsFollowEventV1Schema,
+    RunnerDaemonExternalSessionsListResultV1Schema,
+    RunnerDaemonExternalSessionsTakeoverResultV1Schema,
+    RunnerDaemonExternalSessionsTranscriptResultV1Schema,
     RUNNER_DAEMON_PROVIDER_OPERATION_IDS_V1,
     RUNNER_DAEMON_PLUGIN_SERVICE_OPERATION_V1_SCHEMAS,
     RunnerDaemonManagedProviderCustodyScopeV1Schema,
@@ -23,6 +31,10 @@ type RetainedGenerationDependency =
 type RetainedRunnerOperationKind =
     | RunnerDaemonPluginServiceOperationV1['kind']
     | RunnerAgentDaemonFacetOperationV1['kind'];
+type RunnerPluginActionExecuteOperationV1 = Extract<
+    RunnerDaemonPluginServiceOperationV1,
+    Readonly<{ kind: 'plugin_actions.execute_v1' }>
+>;
 
 const retainedRunnerOperationClassification = [
     // SVC09 custody remains separately domain-owned by the managed-services corridor.
@@ -106,12 +118,6 @@ const retainedRunnerOperationClassification = [
             'plugin_sessions.external.read_transcript_v1',
             'plugin_sessions.external.follow_transcript.open_v1',
             'plugin_sessions.external.takeover_v1',
-            'external_session.current.resolve_source',
-            'external_session.current.list_candidates',
-            'external_session.current.resolve_link_identity',
-            'external_session.current.resolve_linked_identity',
-            'external_session.current.page_transcript',
-            'external_session.current.read_after_transcript',
         ],
     },
     {
@@ -132,6 +138,94 @@ const retainedRunnerOperationClassification = [
 }>[];
 
 describe('runner daemon PluginServices v1 protocol', () => {
+    it('keeps generic Action execution aligned with the public Plugin Action projection', () => {
+        expectTypeOf<RunnerPluginActionExecuteOperationV1['actionId']>()
+            .toEqualTypeOf<PluginInvocableActionId>();
+
+        const operation = {
+            kind: 'plugin_actions.execute_v1',
+            requestId: 'request-action',
+            invocationId: 'invocation-1',
+            actionId: 'session.list',
+            input: { t: 'object', value: {} },
+        } as const;
+        expect(RunnerDaemonPluginServiceOperationV1Schema.safeParse(operation).success).toBe(true);
+        expect(RunnerDaemonPluginServiceOperationV1Schema.safeParse({
+            ...operation,
+            actionId: 'sessions.external.takeover.start',
+        }).success).toBe(false);
+    });
+
+    it('rejects private or broadened fields in every External Sessions result family', () => {
+        const unavailable = { status: 'unavailable', code: 'not_available' } as const;
+        const values = [
+            [RunnerDaemonExternalSessionsCapabilitiesResultV1Schema, {
+                list: unavailable,
+                attach: unavailable,
+                takeover: unavailable,
+                transcript: unavailable,
+                follow: unavailable,
+            }],
+            [RunnerDaemonExternalSessionsListResultV1Schema, {
+                items: [],
+                nextCursor: null,
+            }],
+            [RunnerDaemonExternalSessionsAttachResultV1Schema, { sessionId: 'session-1' }],
+            [RunnerDaemonExternalSessionsTranscriptResultV1Schema, {
+                mode: 'page',
+                items: [],
+                nextCursor: null,
+            }],
+            [RunnerDaemonExternalSessionsTakeoverResultV1Schema, {
+                sessionId: 'session-1',
+                operationId: 'operation-1',
+                revision: 1,
+            }],
+            [RunnerDaemonExternalSessionsFollowEventV1Schema, {
+                kind: 'resyncRequired',
+                reason: 'cursorDiscontinuity',
+                cursor: null,
+            }],
+        ] as const;
+
+        for (const [schema, value] of values) {
+            expect(schema.safeParse(value).success).toBe(true);
+            expect(schema.safeParse({ ...value, privateDaemonField: 'must-not-cross' }).success)
+                .toBe(false);
+        }
+    });
+    it('applies the canonical transcript item identity to runner reads and follow events', () => {
+        // Placement must not change validity or identity: the public contract is
+        // nonempty, trim-equal and at most 2,000 code units, rejected rather than
+        // normalized. A generic 512-code-unit trimming id schema silently did both.
+        const item = (id: string) => ({ id, kind: 'agent', data: { type: 'text', text: 'x' } });
+        const page = (id: string) => ({ mode: 'page', items: [item(id)], nextCursor: null });
+        const follow = (id: string) => ({
+            kind: 'data',
+            items: [item(id)],
+            fromCursor: null,
+            nextCursor: 'cursor-1',
+        });
+
+        for (const build of [page, follow] as const) {
+            const schema = build === page
+                ? RunnerDaemonExternalSessionsTranscriptResultV1Schema
+                : RunnerDaemonExternalSessionsFollowEventV1Schema;
+            const exact = 'x'.repeat(2_000);
+            const parsedExact = schema.safeParse(build(exact));
+            expect(parsedExact.success).toBe(true);
+            expect(schema.safeParse(build('x'.repeat(2_001))).success).toBe(false);
+            expect(schema.safeParse(build(` ${'x'.repeat(600)} `)).success).toBe(false);
+            expect(schema.safeParse(build('')).success).toBe(false);
+            const preserved = 'external::/%?=+#[]@!$&\'()*+,;\u{1F642}';
+            const parsedPreserved = schema.safeParse(build(preserved));
+            expect(parsedPreserved.success).toBe(true);
+            expect(parsedPreserved.success
+                && (parsedPreserved.data as { items: readonly { id: string }[] }).items[0]?.id)
+                .toBe(preserved);
+        }
+    });
+
     it('requires explicit external or bundled authority in exact Provider custody', () => {
         const scope = {
             v: 1,
@@ -332,13 +426,20 @@ describe('runner daemon PluginServices v1 protocol', () => {
             operation: 'connections.rawMachineRequest',
             request: { t: 'object', value: {} },
         }).success).toBe(false);
-        expect(RunnerDaemonPluginServiceOperationV1Schema.safeParse({
-            kind: 'plugin_actions.execute_v1',
-            requestId: 'request-action-not-plugin-visible',
-            invocationId: 'invocation-1',
-            actionId: 'voice_agent.start',
-            input: { t: 'object', value: {} },
-        }).success).toBe(false);
+        // The canonical Plugin surface is owned by the Action registry
+        // (`PLUGIN_SURFACE_EXCLUSION_REASONS` plus each spec's `surfaces.plugin`),
+        // not by this transport schema. These literals restate that owner's
+        // current decision for the two families the runner forwards, so a
+        // silent widening or narrowing of the Plugin surface fails here.
+        for (const actionId of ['voice_agent.start']) {
+            expect(RunnerDaemonPluginServiceOperationV1Schema.safeParse({
+                kind: 'plugin_actions.execute_v1',
+                requestId: `request-action-${actionId}`,
+                invocationId: 'invocation-1',
+                actionId,
+                input: { t: 'object', value: {} },
+            }).success, actionId).toBe(true);
+        }
         for (const actionId of [
             'sessions.subagents.list',
             'sessions.subagents.get',
@@ -346,6 +447,7 @@ describe('runner daemon PluginServices v1 protocol', () => {
             'sessions.subagents.upsert',
             'sessions.subagents.updateStatus',
             'sessions.subagents.complete',
+            'sessions.external.takeover.start',
         ]) {
             expect(RunnerDaemonPluginServiceOperationV1Schema.safeParse({
                 kind: 'plugin_actions.execute_v1',
@@ -353,7 +455,7 @@ describe('runner daemon PluginServices v1 protocol', () => {
                 invocationId: 'invocation-1',
                 actionId,
                 input: { t: 'object', value: {} },
-            }).success).toBe(false);
+            }).success, actionId).toBe(false);
         }
         expect(RunnerDaemonPluginServiceOperationV1Schema.safeParse({
             kind: 'plugin_actions.execute_v1',

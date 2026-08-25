@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
+import { isPidPresent } from '@happier-dev/cli-common/process';
+
 export type SessionHandoffPrepareTargetJobLeaseRecord = Readonly<{
   leaseId?: string;
   attempt?: number;
@@ -107,20 +109,6 @@ function resolveDaemonPidFromOwnerId(ownerId: string): number | null {
   return pid;
 }
 
-function isPidAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    const nodeError = error as NodeJS.ErrnoException;
-    if (nodeError?.code === 'ESRCH') {
-      return false;
-    }
-    // Fail closed: if we cannot determine, assume alive and respect the lease.
-    return true;
-  }
-}
-
 export async function tryAcquireSessionHandoffPrepareTargetJobLease(input: Readonly<{
   activeServerDir: string;
   jobId: string;
@@ -136,7 +124,7 @@ export async function tryAcquireSessionHandoffPrepareTargetJobLease(input: Reado
     const existing = await readLeaseRecord(resolved.leaseFilePath);
     if (existing && existing.expiresAtMs > input.nowMs) {
       const pid = resolveDaemonPidFromOwnerId(existing.ownerId);
-      if (pid !== null && !isPidAlive(pid)) {
+      if (pid !== null && !isPidPresent(pid)) {
         // Daemon process is gone; treat the lease as stale to avoid restart stalls.
         await rm(resolved.leaseDirectory, { recursive: true, force: true }).catch(() => undefined);
       } else {

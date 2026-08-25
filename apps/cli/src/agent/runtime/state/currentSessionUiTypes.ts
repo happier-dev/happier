@@ -70,6 +70,21 @@ export type HostSessionPresentationOwner = Readonly<
     Omit<CurrentSessionPresentationOwnerV1, 'sessionId'>
 >;
 
+/** One host-stamping owner for every Plugin invocation presentation identity. */
+export function createHostSessionPresentationOwner(input: Readonly<{
+    pluginId: string;
+    contributionId: string;
+    generationId: string;
+    invocationId: string;
+}>): HostSessionPresentationOwner {
+    return Object.freeze({
+        pluginId: input.pluginId,
+        contributionId: input.contributionId,
+        generationId: input.generationId,
+        invocationId: input.invocationId,
+    });
+}
+
 export interface HostCurrentSessionPresentationService {
     notify(request: { operationId: string; message: string; severity: 'info' | 'warning' | 'error' }, options?: { signal?: AbortSignal }): Promise<HostSessionPresentationOneShotResult>;
     setStatus(request: { operationId: string; key: string; text: string | null; owner: HostSessionPresentationOwner }, options?: { signal?: AbortSignal }): Promise<HostSessionPresentationStatefulResult>;

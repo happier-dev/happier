@@ -4,6 +4,7 @@ import {
   AUTOMATION_REPLY_HANDOFF_DAEMON_RPC_METHOD_V1,
   AutomationConversationActionHttpPathsV1,
   AutomationConversationActionHttpRequestSchemasV1,
+  AutomationOccurrenceKeyV1Schema,
   AutomationReplyHandoffDispatchRequestV1Schema,
   AutomationReplyHandoffTargetV1Schema,
   AutomationResultDeliveryInputV1Schema,
@@ -52,6 +53,11 @@ const correspondence = {
   automationId: 'automation-1',
   runId: 'run-1',
   handoffId: 'automation-reply-handoff:run-1',
+} as const;
+
+const replyContextCorrespondence = {
+  automationId: correspondence.automationId,
+  occurrenceKey: AutomationOccurrenceKeyV1Schema.parse('A'.repeat(43)),
 } as const;
 
 const opaqueContext = {
@@ -140,6 +146,18 @@ describe('Conversation Automation participation for a non-Channels plugin', () =
         token: 'token_test',
         encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) },
       },
+      // The admitting host resolves the Account mode before it produces a body.
+      resolveAccountId: async () => accountId,
+      resolveAccountEncryptionCurrentness: async () => ({
+        mode: 'plain',
+        version: 7,
+        signingKeyFingerprint: null,
+        contentKeyFingerprint: null,
+        updatedAt: 1_700_000_000_000,
+      }),
+      resolveAccountEncryptionMaterial: async () => null,
+      revalidateCallerMaterialization: async () => true,
+      revalidateCallerImmutableGeneration: async () => true,
     });
 
     // 0. The bridge selects the Account Automation the user bound it to. Any
@@ -151,6 +169,7 @@ describe('Conversation Automation participation for a non-Channels plugin', () =
           automationId: correspondence.automationId,
           templateVersion: 1,
           label: 'Daily digest',
+          execution: { targetType: 'existing_session', enabled: true },
         }],
         nextCursor: null,
       },
@@ -169,6 +188,7 @@ describe('Conversation Automation participation for a non-Channels plugin', () =
         automationId: correspondence.automationId,
         templateVersion: 1,
         label: 'Daily digest',
+        execution: { targetType: 'existing_session', enabled: true },
       }],
       nextCursor: null,
     });
@@ -210,6 +230,8 @@ describe('Conversation Automation participation for a non-Channels plugin', () =
     const admitRequest = AutomationConversationActionHttpRequestSchemasV1[
       'automation.conversation.admit'
     ].parse(body);
+    // A plain Account keeps its semantic Action input on the wire.
+    if (!('input' in admitRequest)) throw new Error('Expected the plain admission arm');
     expect(admitRequest.input.resultDelivery).toEqual(admitInput.resultDelivery);
     expect(isAutomationConversationResultDeliveryOwnedByCallerV1({
       callerPluginId: admitRequest.caller.pluginId,
@@ -243,6 +265,7 @@ describe('Conversation Automation participation for a non-Channels plugin', () =
         handoffId: correspondence.handoffId,
         runId: correspondence.runId,
         automationId: correspondence.automationId,
+        occurrenceKey: replyContextCorrespondence.occurrenceKey,
         accountCurrentness: { mode: 'plain', version: 7, contentKeyFingerprint: null },
         resultEnvelope: sealAutomationRunResultStoredEnvelopeV1({
           mode: 'plain',
@@ -251,8 +274,8 @@ describe('Conversation Automation participation for a non-Channels plugin', () =
         }),
         replyContextEnvelope: sealAutomationConversationReplyContextStoredEnvelopeV1({
           mode: 'plain',
-          correspondence,
-          source,
+          correspondence: replyContextCorrespondence,
+          templateVersion: admitInput.templateVersion,
           opaqueContext,
         }),
       },
@@ -353,6 +376,7 @@ describe('Conversation Automation participation for a non-Channels plugin', () =
         handoffId: correspondence.handoffId,
         runId: correspondence.runId,
         automationId: correspondence.automationId,
+        occurrenceKey: replyContextCorrespondence.occurrenceKey,
         accountCurrentness: { mode: 'plain', version: 7, contentKeyFingerprint: null },
         resultEnvelope: sealAutomationRunResultStoredEnvelopeV1({
           mode: 'plain',
@@ -361,8 +385,8 @@ describe('Conversation Automation participation for a non-Channels plugin', () =
         }),
         replyContextEnvelope: sealAutomationConversationReplyContextStoredEnvelopeV1({
           mode: 'plain',
-          correspondence,
-          source,
+          correspondence: replyContextCorrespondence,
+          templateVersion: admitInput.templateVersion,
           opaqueContext,
         }),
       },

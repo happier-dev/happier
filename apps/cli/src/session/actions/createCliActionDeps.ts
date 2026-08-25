@@ -667,7 +667,15 @@ export function createCliActionDeps(params: Readonly<{
     })
     : null;
   const automationConversationAction = params.credentials
-    ? createAutomationConversationActionExecutor({ credentials: params.credentials })
+    ? createAutomationConversationActionExecutor({
+      credentials: params.credentials,
+      ...(params.revalidatePluginActionCallerMaterialization
+        ? { revalidateCallerMaterialization: params.revalidatePluginActionCallerMaterialization }
+        : {}),
+      ...(params.revalidatePluginActionCallerImmutableGeneration
+        ? { revalidateCallerImmutableGeneration: params.revalidatePluginActionCallerImmutableGeneration }
+        : {}),
+    })
     : null;
   const automationEventAction = params.credentials && params.resolveAutomationEventAdoptedDefinitionSet
     ? createAutomationEventActionExecutor({
@@ -1553,6 +1561,25 @@ export function createCliActionDeps(params: Readonly<{
       }>;
 
   /**
+   * A direct transport is installed only by the authenticated exact-machine
+   * receiver. Once that receiver has selected this daemon, its local profile
+   * id is not an Account-routing identity: retain the portable server id in
+   * the Action input and approval artifact instead of comparing it to that
+   * profile-local value.
+   */
+  const isCurrentSessionSpawnExecutionTarget = (executionTarget: Readonly<{
+    serverId: string;
+    machineId: string;
+  }>): boolean => {
+    const directTargetTransport = params.sessionSpawnDirectTargetTransport;
+    if (directTargetTransport?.machineId === executionTarget.machineId) {
+      return true;
+    }
+    const activeServerId = String(configuration.activeServerId ?? '').trim();
+    return Boolean(activeServerId && executionTarget.serverId === activeServerId);
+  };
+
+  /**
    * One exact-target bridge to the daemon-owned preparation RPC. Both the
    * Action approval probe and the eventual V2 spawn consume this owner; no
    * caller resolves a remote path or synthesizes its directory state.
@@ -2274,8 +2301,7 @@ export function createCliActionDeps(params: Readonly<{
           result: { type: 'error' as const, code: 'cancelled' as const, retryable: true },
         };
       }
-      const activeServerId = String(configuration.activeServerId ?? '').trim();
-      if (!activeServerId || input.executionTarget.serverId !== activeServerId) {
+      if (!isCurrentSessionSpawnExecutionTarget(input.executionTarget)) {
         return {
           type: 'error' as const,
           result: { type: 'error' as const, code: 'target_unavailable' as const, retryable: false },
@@ -2341,8 +2367,7 @@ export function createCliActionDeps(params: Readonly<{
         return { type: 'error', code: 'cancelled', retryable: true };
       }
 
-      const activeServerId = String(configuration.activeServerId ?? '').trim();
-      if (!activeServerId || executionTarget.serverId !== activeServerId) {
+      if (!isCurrentSessionSpawnExecutionTarget(executionTarget)) {
         return { type: 'error', code: 'target_unavailable', retryable: false };
       }
       const normalizedActionRequestId = normalizeStringValue(actionRequestId);
@@ -2698,6 +2723,8 @@ export function createCliActionDeps(params: Readonly<{
     sessionSendMessage: async ({
       sessionId,
       message,
+      displayText,
+      messageMeta,
       requestedAction,
       actionCaller,
       idempotencyKey,
@@ -2854,7 +2881,15 @@ export function createCliActionDeps(params: Readonly<{
           timeoutMs: normalizedTimeoutSeconds * 1000,
           localId: pluginLocalId,
           inputAdmission: pluginInputAdmission,
-          ...(admittedAttachmentMeta ? { messageMeta: admittedAttachmentMeta } : {}),
+          ...((admittedAttachmentMeta || messageMeta || displayText)
+            ? {
+                messageMeta: {
+                  ...(messageMeta ?? {}),
+                  ...(admittedAttachmentMeta ?? {}),
+                  ...(displayText ? { displayText } : {}),
+                },
+              }
+            : {}),
           ...(params.machineAdmissionTransport
             ? { machineAdmissionTransport: params.machineAdmissionTransport }
             : {}),
@@ -3328,6 +3363,9 @@ export function createCliActionDeps(params: Readonly<{
           mediatorPluginId: args.caller.pluginId,
           sourceRef: args.input.sourceRef,
           sourceRevisionOrEpoch: args.input.sourceRevisionOrEpoch,
+          ...('cursor' in args.input && args.input.cursor !== undefined
+            ? { cursor: args.input.cursor }
+            : {}),
         });
         if (args.signal?.aborted) {
           return rejectUnavailable('canceled');
@@ -3359,6 +3397,39 @@ export function createCliActionDeps(params: Readonly<{
           actor: args.input.actor,
           decision: args.input.decision,
           scope: args.input.scope,
+          mediator: {
+            pluginId: args.caller.pluginId,
+            contributionLocalId,
+          },
+          ...(args.signal ? { signal: args.signal } : {}),
+        });
+        if (args.signal?.aborted) {
+          return rejectUnavailable('canceled');
+        }
+        return bindingIsStillCurrent()
+          ? result
+          : rejectUnavailable('ownerMachineUnavailable');
+      }
+
+      if (args.actionId === 'session.user_action.remote.answer') {
+        if (args.caller.kind !== 'plugin') {
+          return rejectUnavailable('mediationStateUnavailable');
+        }
+        const contributionLocalId = args.caller.contributionLocalId;
+        if (!contributionLocalId?.trim()) {
+          return rejectUnavailable('mediationStateUnavailable');
+        }
+        const answer = permissionHandler.respondToMediatedPendingUserAction;
+        if (typeof answer !== 'function') {
+          return rejectUnavailable('mediationStateUnavailable');
+        }
+        const result = await answer.call(permissionHandler, {
+          sessionId: args.input.sessionId,
+          turnId: args.input.turnId,
+          requestId: args.input.requestId,
+          sourceRef: args.input.sourceRef,
+          sourceRevisionOrEpoch: args.input.sourceRevisionOrEpoch,
+          answers: args.input.answers,
           mediator: {
             pluginId: args.caller.pluginId,
             contributionLocalId,

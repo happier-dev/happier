@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import {
   DEFAULT_PROVIDER_SETTINGS_V1,
+  PROVIDER_ENDPOINT_SAFETY_LIMITS,
   ProviderConnectionV1Schema,
   ProviderProbeAuthorizationV1Schema,
   ProviderSettingsV1Schema,
@@ -26,12 +27,18 @@ import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/a
 import { readProviderSettingsForCli } from '../settings/read';
 import { resolveProviderConnectionForMachine } from '../registry/resolve';
 import { collectProviderConnectionDnsEvidence } from '../registry/dnsEvidence';
+import {
+  createProviderOperationLifetime,
+  ProviderOperationAbandonedError,
+  type ProviderOperationLifetime,
+} from '../operationLifetime';
 import type { ProviderRuntimeStateStore } from '../runtimeState';
 import type { ProviderProbeHostCredentialReference } from '../spawn/credentials';
 import { resolveRuntimeProviderCredential } from '../spawn/runtimeCredential';
 import type {
   ProviderProbeAuthorizationPort,
   ProviderProbeAuthorizationRequest,
+  ProviderProbeOperationScope,
 } from './authorization';
 import { createProviderCatalogService, type ProviderCatalogRefreshResult, type ProviderProbeEndpoint } from './catalog';
 import type { createProviderProbeHttpClient } from './client';
@@ -121,6 +128,7 @@ async function resolveDraftFacts(input: Readonly<{
   snapshot: ActiveAccountSettingsSnapshot;
   resolveAddresses: (hostname: string) => Promise<readonly string[]>;
   exactDestination?: Readonly<{ endpointUrl: string; resolvedAddresses: readonly string[] }>;
+  lifetime: ProviderOperationLifetime;
 }>) {
   const currentProviderSettings = readProviderSettingsForCli(input.snapshot.settings);
   if (currentProviderSettings.diagnostics.length > 0
@@ -133,13 +141,24 @@ async function resolveDraftFacts(input: Readonly<{
     connections: [connection],
   });
   const registry = { providersByContributionKey: new Map() };
-  let dnsEvidenceByEndpointUrl = await collectProviderConnectionDnsEvidence({
-    connectionId: input.request.draftConnectionId,
-    machineId: input.request.machineId,
-    providerSettings,
-    registry,
-    resolveAddresses: input.resolveAddresses,
-  });
+  let dnsEvidenceByEndpointUrl;
+  try {
+    dnsEvidenceByEndpointUrl = await collectProviderConnectionDnsEvidence({
+      connectionId: input.request.draftConnectionId,
+      machineId: input.request.machineId,
+      providerSettings,
+      registry,
+      resolveAddresses: input.resolveAddresses,
+      lifetime: input.lifetime,
+    });
+  } catch (abandoned) {
+    // A draft probe resolves DNS inside an admitted scheduler slot, so an
+    // unresponsive resolver would hold host capacity, not just this caller.
+    if (abandoned instanceof ProviderOperationAbandonedError) {
+      return { ok: false as const, error: error(input.request, 'provider_endpoint_unavailable') };
+    }
+    throw abandoned;
+  }
   if (input.exactDestination) {
     const exactEvidenceByEndpointUrl = new Map(dnsEvidenceByEndpointUrl);
     exactEvidenceByEndpointUrl.set(
@@ -208,6 +227,7 @@ export function createProviderDraftProbeService(input: Readonly<{
 
   async function currentRecordState(
     record: DraftAuthorizationRecord,
+    scope: ProviderProbeOperationScope,
     exactDestination?: Readonly<{ endpointUrl: string; resolvedAddresses: readonly string[] }>,
   ) {
     const at = now();
@@ -221,6 +241,7 @@ export function createProviderDraftProbeService(input: Readonly<{
       snapshot,
       resolveAddresses: input.resolveAddresses,
       ...(exactDestination ? { exactDestination } : {}),
+      lifetime: scope.lifetime,
     });
     if (!facts.ok) return facts;
     const endpoint = facts.record.endpoints.find((candidate) =>
@@ -254,7 +275,7 @@ export function createProviderDraftProbeService(input: Readonly<{
   }
 
   const authorization: ProviderProbeAuthorizationPort<DraftAuthorizationTicket, ProviderProbeHostCredentialReference> = {
-    authorize: async (request) => {
+    authorize: async (request, scope) => {
       const record = [...recordsById.values()].find((candidate) =>
         !candidate.consumed && requestMatches(candidate, request));
       if (!record) {
@@ -266,8 +287,9 @@ export function createProviderDraftProbeService(input: Readonly<{
           }),
         };
       }
+      if (!scope) return { ok: false, error: error(record.input, 'provider_endpoint_unavailable') };
       record.consumed = true;
-      const current = await currentRecordState(record);
+      const current = await currentRecordState(record, scope);
       if (!current.ok) return current;
       return {
         ok: true,
@@ -276,7 +298,7 @@ export function createProviderDraftProbeService(input: Readonly<{
         credentialRef: record.credentialRef,
       };
     },
-    revalidate: async (ticket, request) => {
+    revalidate: async (ticket, request, scope) => {
       const record = recordsById.get(ticket.authorization.id);
       if (!record || !record.consumed || !requestMatches(record, request)) {
         return {
@@ -287,10 +309,11 @@ export function createProviderDraftProbeService(input: Readonly<{
           }),
         };
       }
-      const current = await currentRecordState(record);
+      if (!scope) return { ok: false, error: error(record.input, 'provider_endpoint_unavailable') };
+      const current = await currentRecordState(record, scope);
       return current.ok ? { ok: true } : current;
     },
-    authorizeDestination: async (ticket, request, destination) => {
+    authorizeDestination: async (ticket, request, destination, scope) => {
       const record = recordsById.get(ticket.authorization.id);
       if (!record || !record.consumed || !requestMatches(record, request)) {
         return {
@@ -301,10 +324,11 @@ export function createProviderDraftProbeService(input: Readonly<{
           }),
         };
       }
+      if (!scope) return { ok: false, error: error(record.input, 'provider_endpoint_unavailable') };
       if (destination.origin !== new URL(record.endpointUrl).origin || destination.scope !== record.endpointScope) {
         return { ok: false, error: error(record.input, 'provider_authorization_changed') };
       }
-      const current = await currentRecordState(record, {
+      const current = await currentRecordState(record, scope, {
         endpointUrl: record.endpointUrl,
         resolvedAddresses: destination.resolvedAddresses,
       });
@@ -316,13 +340,21 @@ export function createProviderDraftProbeService(input: Readonly<{
     }),
   };
 
-  async function prepare(request: DaemonProviderDraftProbeRequestV1) {
+  async function prepare(
+    request: DaemonProviderDraftProbeRequestV1,
+    lifetime: ProviderOperationLifetime,
+  ) {
     if (!reserveAction(request)) {
       return { ok: false as const, error: error(request, 'provider_probe_authorization_invalid') };
     }
     const snapshot = input.getAccountSettingsSnapshot();
     if (!snapshot) return { ok: false as const, error: error(request, 'provider_probe_authorization_invalid') };
-    const facts = await resolveDraftFacts({ request, snapshot, resolveAddresses: input.resolveAddresses });
+    const facts = await resolveDraftFacts({
+      request,
+      snapshot,
+      resolveAddresses: input.resolveAddresses,
+      lifetime,
+    });
     if (!facts.ok) return facts;
     const selectedSecret = selectedSecretReference(request, snapshot);
     if (selectedSecret && 'code' in selectedSecret) return { ok: false as const, error: selectedSecret };
@@ -404,13 +436,20 @@ export function createProviderDraftProbeService(input: Readonly<{
   }
 
   return Object.freeze({
-    probe: async (raw: unknown): Promise<ProviderCatalogRefreshResult> => {
+    probe: async (
+      raw: unknown,
+      lifetime?: ProviderOperationLifetime,
+    ): Promise<ProviderCatalogRefreshResult> => {
       const request = DaemonProviderDraftProbeRequestV1Schema.parse(raw);
       if (request.machineId !== input.machineId) {
         return { status: 'error', error: error(request, 'provider_not_enabled_on_machine') };
       }
       if (request.template.catalog.source !== 'probe') return { status: 'not_supported' };
-      const prepared = await prepare(request);
+      const operationLifetime = lifetime ?? createProviderOperationLifetime({
+        wallTimeMs: PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs,
+      });
+      const operationScope: ProviderProbeOperationScope = { lifetime: operationLifetime };
+      const prepared = await prepare(request, operationLifetime);
       if (!prepared.ok) return { status: 'error', error: prepared.error };
       if (prepared.probes.length === 0) return { status: 'not_supported' };
       await input.beforeAuthorizationConsume?.();
@@ -426,6 +465,8 @@ export function createProviderDraftProbeService(input: Readonly<{
         machineId: request.machineId,
         endpoints: prepared.endpoints,
         probes: prepared.probes,
+        wallDeadlineAtMs: operationLifetime.wallDeadlineAtMs,
+        operationScope,
       });
     },
   });

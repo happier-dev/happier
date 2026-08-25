@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
+import { SESSION_REMOTE_PERMISSION_ACTIVE_GRANTS_MAX } from '@happier-dev/protocol';
 import { createDeferred } from '@/testkit/async/deferred';
 import { BasePermissionHandler, type PermissionResult } from './BasePermissionHandler';
 import type {
@@ -397,6 +398,201 @@ describe('BasePermissionHandler allowlist', () => {
     await expect(forged).rejects.toThrow('Session reset');
   });
 
+  it('projects and answers a source-bound AskUserQuestion even when remote permission approval is off', async () => {
+    const session = new FakeSession();
+    const handler = new TestPermissionHandler(session as any);
+    const sourceAuthority = {
+      kind: 'mediatedExternal',
+      mediatorPluginId: 'happier.channels',
+      sourceRef: 'binding:ops',
+      sourceRevisionOrEpoch: '42',
+      admittedPermissionCeiling: 'default',
+      remoteApprovalMaxScope: 'off',
+    } as const;
+    const pending = handler.request('remote-question', 'AskUserQuestion', {
+      questions: [{
+        question: 'Which branch should I use?',
+        options: [{ label: 'main' }, { label: 'release' }],
+      }],
+    }, {
+      causalPermissionContext: {
+        turnId: 'turn-remote-question',
+        causalPermissionAuthority: {
+          kind: 'admittedSessionInputV1',
+          admittedPermissionCeiling: 'default',
+          sourceAuthority,
+        },
+      },
+    });
+
+    expect(handler.listMediatedPendingRequests({
+      mediatorPluginId: 'happier.channels',
+      sourceRef: 'binding:ops',
+      sourceRevisionOrEpoch: '42',
+    })).toEqual({
+      requests: [{
+        kind: 'user_action',
+        requestId: 'remote-question',
+        turnId: 'turn-remote-question',
+        createdAtMs: expect.any(Number),
+        agentRequestSummary: {
+          kind: 'user_action',
+          questions: [{
+            question: 'Which branch should I use?',
+            selection: 'single',
+            required: true,
+            allowCustom: false,
+            choices: ['main', 'release'],
+          }],
+        },
+      }],
+      truncated: false,
+      nextCursor: null,
+    });
+
+    const answer = (handler as unknown as Readonly<{
+      respondToMediatedPendingUserAction: (input: Readonly<{
+        sessionId: string;
+        turnId: string;
+        requestId: string;
+        sourceRef: string;
+        sourceRevisionOrEpoch: string;
+        answers: readonly Readonly<{ questionIndex: number; values: readonly string[] }>[];
+        mediator: Readonly<{ pluginId: string; contributionLocalId: string }>;
+      }>) => Promise<unknown>;
+    }>).respondToMediatedPendingUserAction;
+    await expect(answer.call(handler, {
+      sessionId: session.sessionId,
+      turnId: 'turn-remote-question',
+      requestId: 'remote-question',
+      sourceRef: 'binding:ops',
+      sourceRevisionOrEpoch: '42',
+      answers: [{ questionIndex: 0, values: ['release'] }],
+      mediator: { pluginId: 'happier.channels', contributionLocalId: 'discord' },
+    })).resolves.toEqual({ status: 'applied', requestId: 'remote-question' });
+    await expect(pending).resolves.toEqual({
+      decision: 'approved',
+      answers: { 'Which branch should I use?': ['release'] },
+    });
+  });
+
+  it('validates every live remote AskUserQuestion answer before completing it', async () => {
+    const session = new FakeSession();
+    const handler = new TestPermissionHandler(session as any);
+    const sourceAuthority = {
+      kind: 'mediatedExternal',
+      mediatorPluginId: 'happier.channels',
+      sourceRef: 'binding:ops',
+      sourceRevisionOrEpoch: '42',
+      admittedPermissionCeiling: 'default',
+      remoteApprovalMaxScope: 'off',
+    } as const;
+    const answer = (handler as unknown as Readonly<{
+      respondToMediatedPendingUserAction: (input: Readonly<{
+        sessionId: string;
+        turnId: string;
+        requestId: string;
+        sourceRef: string;
+        sourceRevisionOrEpoch: string;
+        answers: readonly Readonly<{ questionIndex: number; values: readonly string[] }> [];
+        mediator: Readonly<{ pluginId: string; contributionLocalId: string }>;
+      }>) => Promise<unknown>;
+    }>).respondToMediatedPendingUserAction;
+    const responseInput = (requestId: string, answers: readonly Readonly<{
+      questionIndex: number;
+      values: readonly string[];
+    }>[]) => ({
+      sessionId: session.sessionId,
+      turnId: `turn-${requestId}`,
+      requestId,
+      sourceRef: 'binding:ops',
+      sourceRevisionOrEpoch: '42',
+      answers,
+      mediator: { pluginId: 'happier.channels', contributionLocalId: 'discord' },
+    });
+
+    const pending = handler.request('remote-question-contract', 'AskUserQuestion', {
+      questions: [{
+        id: 'release-mode',
+        question: 'Which release mode should I use?',
+        selection: 'single',
+        required: true,
+        allowCustom: true,
+        options: [{ id: 'safe', label: 'Safe' }, { id: 'other', label: 'Other' }],
+      }, {
+        id: 'notes',
+        question: 'Any notes?',
+        selection: 'text',
+        required: true,
+      }],
+    }, {
+      causalPermissionContext: {
+        turnId: 'turn-remote-question-contract',
+        causalPermissionAuthority: {
+          kind: 'admittedSessionInputV1',
+          admittedPermissionCeiling: 'default',
+          sourceAuthority,
+        },
+      },
+    });
+
+    await expect(answer.call(handler, responseInput('remote-question-contract', [{
+      questionIndex: 0,
+      values: ['unknown-choice'],
+    }]))).resolves.toEqual({ status: 'rejected', code: 'answerInvalid' });
+    expect(await settledState(pending)).toBe('pending');
+
+    await expect(answer.call(handler, responseInput('remote-question-contract', [{
+      questionIndex: 0,
+      values: ['Other'],
+    }]))).resolves.toEqual({ status: 'rejected', code: 'answerInvalid' });
+    expect(await settledState(pending)).toBe('pending');
+
+    await expect(answer.call(handler, responseInput('remote-question-contract', [{
+      questionIndex: 0,
+      values: ['Other'],
+    }, {
+      questionIndex: 1,
+      values: ['Ship after the smoke test'],
+    }]))).resolves.toEqual({ status: 'applied', requestId: 'remote-question-contract' });
+    await expect(pending).resolves.toEqual({
+      decision: 'approved',
+      answers: {
+        'release-mode': ['other'],
+        notes: ['Ship after the smoke test'],
+      },
+    });
+
+    const customPending = handler.request('remote-question-custom', 'AskUserQuestion', {
+      questions: [{
+        id: 'release-mode',
+        question: 'Which release mode should I use?',
+        selection: 'single',
+        required: true,
+        allowCustom: true,
+        options: [{ id: 'safe', label: 'Safe' }, { id: 'other', label: 'Other' }],
+      }],
+    }, {
+      causalPermissionContext: {
+        turnId: 'turn-remote-question-custom',
+        causalPermissionAuthority: {
+          kind: 'admittedSessionInputV1',
+          admittedPermissionCeiling: 'default',
+          sourceAuthority,
+        },
+      },
+    });
+
+    await expect(answer.call(handler, responseInput('remote-question-custom', [{
+      questionIndex: 0,
+      values: ['A custom release mode'],
+    }]))).resolves.toEqual({ status: 'applied', requestId: 'remote-question-custom' });
+    await expect(customPending).resolves.toEqual({
+      decision: 'approved',
+      answers: { 'release-mode': ['A custom release mode'] },
+    });
+  });
+
   it('marks a durable source-matched pending projection incomplete until compatible live waiters reattach', async () => {
     const session = new FakeSession();
     const handler = new TestPermissionHandler(session as any);
@@ -443,12 +639,18 @@ describe('BasePermissionHandler allowlist', () => {
         mediatorPluginId: string;
         sourceRef: string;
         sourceRevisionOrEpoch: string;
-      }>) => Readonly<{ requests: readonly Record<string, unknown>[]; truncated: boolean }>;
+        cursor?: string | null;
+      }>) => Readonly<{
+        requests: readonly Record<string, unknown>[];
+        truncated: boolean;
+        nextCursor: string | null;
+      }>;
     }>).listMediatedPendingRequests;
     const listMediatedPendingRequests = (input: Readonly<{
       mediatorPluginId: string;
       sourceRef: string;
       sourceRevisionOrEpoch: string;
+      cursor?: string | null;
     }>) => listMediatedPendingRequestsMethod.call(reloadedHandler, input);
     let reattached: Promise<PermissionResult>[] = [];
     let reattachedRequestScope: Promise<PermissionResult> | null = null;
@@ -458,7 +660,7 @@ describe('BasePermissionHandler allowlist', () => {
         mediatorPluginId: 'happier.channels',
         sourceRef: 'binding:ops',
         sourceRevisionOrEpoch: '42',
-      })).toEqual({ requests: [], truncated: true });
+      })).toEqual({ requests: [], truncated: true, nextCursor: null });
       expect(session.agentState.requests['remote-00']).toEqual(expect.objectContaining({
         turnId: 'turn-remote-00',
       }));
@@ -503,46 +705,103 @@ describe('BasePermissionHandler allowlist', () => {
         sourceRevisionOrEpoch: '42',
       });
 
-      expect(result.truncated).toBe(true);
+      // Every reattached waiter is projectable, so nothing is withheld; the
+      // remaining request is a further page, not an unanswerable one.
+      expect(result.truncated).toBe(false);
       expect(result.requests).toHaveLength(32);
-      expect(result.requests[0]).toEqual({
+      expect(result.requests[0]).toMatchObject({
+        kind: 'permission',
         requestId: 'remote-00',
         turnId: 'turn-remote-00',
         createdAtMs: expect.any(Number),
         allowedScopes: ['request', 'session'],
+        agentRequestSummary: {
+          kind: 'permission',
+          toolLabel: 'Bash',
+          title: expect.any(String),
+          detail: expect.any(String),
+        },
       });
-      expect(result.requests.at(-1)).toEqual({
+      expect(result.requests.at(-1)).toMatchObject({
+        kind: 'permission',
         requestId: 'remote-31',
         turnId: 'turn-remote-31',
         createdAtMs: expect.any(Number),
         allowedScopes: ['request', 'session'],
+        agentRequestSummary: {
+          kind: 'permission',
+          toolLabel: 'Bash',
+          title: expect.any(String),
+          detail: expect.any(String),
+        },
       });
-      expect(JSON.stringify(result)).not.toContain('Bash');
-      expect(JSON.stringify(result)).not.toContain('echo 0');
+      expect(result.requests[0]?.agentRequestSummary).toMatchObject({
+        kind: 'permission',
+        toolLabel: 'Bash',
+      });
+
+      // The bounded page is not the whole projection. A mediator holding
+      // custody for the thirty-third request must be able to reach it without
+      // waiting for the thirty-two older requests to settle first.
+      expect(result.nextCursor).toEqual(expect.any(String));
+      const secondPage = listMediatedPendingRequests({
+        mediatorPluginId: 'happier.channels',
+        sourceRef: 'binding:ops',
+        sourceRevisionOrEpoch: '42',
+        cursor: result.nextCursor,
+      });
+      expect(secondPage).toMatchObject({
+        requests: [{
+          kind: 'permission',
+          requestId: 'remote-32',
+          turnId: 'turn-remote-32',
+          createdAtMs: expect.any(Number),
+          allowedScopes: ['request', 'session'],
+          agentRequestSummary: {
+            kind: 'permission',
+            toolLabel: 'Bash',
+          },
+        }],
+        truncated: false,
+        nextCursor: null,
+      });
+      // An undecodable continuation is never read as proof of absence.
+      expect(listMediatedPendingRequests({
+        mediatorPluginId: 'happier.channels',
+        sourceRef: 'binding:ops',
+        sourceRevisionOrEpoch: '42',
+        cursor: 'not-a-cursor!!',
+      })).toEqual({ requests: [], truncated: true, nextCursor: null });
 
       expect(listMediatedPendingRequests({
         mediatorPluginId: 'happier.channels',
         sourceRef: 'binding:request',
         sourceRevisionOrEpoch: '42',
-      })).toEqual({
+      })).toMatchObject({
         requests: [{
+          kind: 'permission',
           requestId: 'remote-request-scope',
           turnId: 'turn-remote-request-scope',
           createdAtMs: expect.any(Number),
           allowedScopes: ['request'],
+          agentRequestSummary: {
+            kind: 'permission',
+            toolLabel: 'Bash',
+          },
         }],
         truncated: false,
+        nextCursor: null,
       });
       expect(listMediatedPendingRequests({
         mediatorPluginId: 'other.plugin',
         sourceRef: 'binding:ops',
         sourceRevisionOrEpoch: '42',
-      })).toEqual({ requests: [], truncated: false });
+      })).toEqual({ requests: [], truncated: false, nextCursor: null });
       expect(listMediatedPendingRequests({
         mediatorPluginId: 'happier.channels',
         sourceRef: 'binding:ops',
         sourceRevisionOrEpoch: '43',
-      })).toEqual({ requests: [], truncated: false });
+      })).toEqual({ requests: [], truncated: false, nextCursor: null });
     } finally {
       await reloadedHandler.reset();
       await handler.reset();
@@ -580,7 +839,7 @@ describe('BasePermissionHandler allowlist', () => {
         mediatorPluginId: 'happier.channels',
         sourceRef: 'binding:ops',
         sourceRevisionOrEpoch: '42',
-      })).toEqual({ requests: [], truncated: false });
+      })).toEqual({ requests: [], truncated: false, nextCursor: null });
     } finally {
       await handler.reset();
       await expect(pending).rejects.toThrow('Session reset');
@@ -629,14 +888,20 @@ describe('BasePermissionHandler allowlist', () => {
         mediatorPluginId: 'happier.channels',
         sourceRef: 'binding:ops',
         sourceRevisionOrEpoch: '42',
-      })).toEqual({
+      })).toMatchObject({
         requests: [{
+          kind: 'permission',
           requestId: 'remote-persisted-turn',
           turnId: 'turn-persisted',
           createdAtMs: 100,
           allowedScopes: ['request'],
+          agentRequestSummary: {
+            kind: 'permission',
+            toolLabel: 'Bash',
+          },
         }],
         truncated: false,
+        nextCursor: null,
       });
       expect(session.agentState.requests['remote-persisted-turn']).toEqual(expect.objectContaining({
         createdAt: 100,
@@ -780,6 +1045,17 @@ describe('BasePermissionHandler allowlist', () => {
       await expect(handler.respondToMediatedPendingPermission({
         ...response,
         sessionId: 'other-session',
+      } as never)).resolves.toEqual({ status: 'rejected', code: 'requestNotFound' });
+      expect(session.permissionResponseClaimWriteCount).toBe(0);
+      expect(recordStore.createExpectedAbsent).not.toHaveBeenCalled();
+      expect(await settledState(pending)).toBe('pending');
+
+      // The source tuple is part of the custody, not only the request
+      // identity: another binding of the same current mediator at the same
+      // revision cannot answer this request and learns nothing about it.
+      await expect(handler.respondToMediatedPendingPermission({
+        ...response,
+        sourceRef: 'binding:other',
       } as never)).resolves.toEqual({ status: 'rejected', code: 'requestNotFound' });
       expect(session.permissionResponseClaimWriteCount).toBe(0);
       expect(recordStore.createExpectedAbsent).not.toHaveBeenCalled();
@@ -989,7 +1265,7 @@ describe('BasePermissionHandler allowlist', () => {
         mediatorPluginId: 'happier.channels',
         sourceRef: 'binding:ops',
         sourceRevisionOrEpoch: '42',
-      })).toEqual({ requests: [], truncated: false });
+      })).toEqual({ requests: [], truncated: false, nextCursor: null });
       await expect(handler.respondToMediatedPendingPermission({
         sessionId: session.sessionId,
         turnId: `turn-${requestId}`,
@@ -1832,6 +2108,17 @@ describe('BasePermissionHandler allowlist', () => {
       ...sourceAuthority,
       sourceRevisionOrEpoch: '43',
     })).toBe(false);
+    // The grant is scoped to its exact source, not merely to its mediator and
+    // revision: another binding of the same current plugin at the same
+    // revision, and another mediator plugin, both fail to reuse it.
+    expect(handler.isAllowedByRemoteGrant('Bash', input, {
+      ...sourceAuthority,
+      sourceRef: 'binding:other',
+    })).toBe(false);
+    expect(handler.isAllowedByRemoteGrant('Bash', input, {
+      ...sourceAuthority,
+      mediatorPluginId: 'other.mediator',
+    })).toBe(false);
     expect(isMediatorContributionCurrent).toHaveBeenCalledWith({
       pluginId: 'happier.channels',
       contributionLocalId: 'discord',
@@ -1847,6 +2134,17 @@ describe('BasePermissionHandler allowlist', () => {
     const grantId = response.status === 'rejected' || response.effect.kind !== 'sessionGrant'
       ? ''
       : response.effect.grantId;
+    // Only this grant's own mediator may revoke it. Another mediator plugin
+    // must not learn the grant exists and must not reach the ledger CAS.
+    const casCallsBeforeForeignRevoke = vi.mocked(recordStore.compareAndSet).mock.calls.length;
+    await expect(handler.revokeMediatedPermissionGrant({
+      turnId: 'turn-remote-grant',
+      requestId: 'remote-grant',
+      grantId,
+      caller: { kind: 'mediatorPlugin', pluginId: 'other.mediator' },
+    })).resolves.toEqual({ status: 'rejected', code: 'notFound' });
+    expect(vi.mocked(recordStore.compareAndSet).mock.calls.length).toBe(casCallsBeforeForeignRevoke);
+    expect(readStored()?.record.revoked).toBeUndefined();
     await expect(handler.revokeMediatedPermissionGrant({
       turnId: 'turn-remote-grant',
       requestId: 'remote-grant',
@@ -1862,6 +2160,20 @@ describe('BasePermissionHandler allowlist', () => {
       },
       expectedRevision: 'ssr1.AAAACHNldHRsZW1lbnQtMwAAAAE',
     }));
+    // A duplicate revoke rejoins the already-revoked terminal outcome instead
+    // of writing a second revocation or reporting a transport failure, and it
+    // never re-enters the ledger CAS.
+    const casCallsAfterRevoke = vi.mocked(recordStore.compareAndSet).mock.calls.length;
+    const revokedAtMs = readStored()?.record.revoked?.atMs;
+    expect(revokedAtMs).toEqual(expect.any(Number));
+    await expect(handler.revokeMediatedPermissionGrant({
+      turnId: 'turn-remote-grant',
+      requestId: 'remote-grant',
+      grantId,
+      caller: { kind: 'mediatorPlugin', pluginId: 'happier.channels' },
+    })).resolves.toEqual({ status: 'alreadyRevoked', grantId });
+    expect(vi.mocked(recordStore.compareAndSet).mock.calls.length).toBe(casCallsAfterRevoke);
+    expect(readStored()?.record.revoked?.atMs).toBe(revokedAtMs);
   });
 
   it.each([
@@ -3155,7 +3467,7 @@ describe('BasePermissionHandler allowlist', () => {
         mediatorPluginId: sourceAuthority.mediatorPluginId,
         sourceRef: sourceAuthority.sourceRef,
         sourceRevisionOrEpoch: sourceAuthority.sourceRevisionOrEpoch,
-      })).toEqual({ requests: [], truncated: false });
+      })).toEqual({ requests: [], truncated: false, nextCursor: null });
       const response = {
         sessionId: session.sessionId,
         turnId: `turn-${requestId}`,
@@ -3591,6 +3903,175 @@ describe('BasePermissionHandler allowlist', () => {
       await handler.reset();
       await expect(pending).rejects.toThrow('Session reset');
     }
+  });
+
+  it('refuses a session-scope remote allow at the active-grant ceiling while request scope still settles', async () => {
+    const session = new FakeSession();
+    const rows = Array.from(
+      { length: SESSION_REMOTE_PERMISSION_ACTIVE_GRANTS_MAX },
+      (_, index) => activeRemoteMediationGrant(index),
+    );
+    // Only a grant with its ordinary approved completion counts toward the
+    // active ceiling, so the fixture ledger is projected into agent state.
+    session.agentState = {
+      requests: {},
+      completedRequests: Object.fromEntries(rows.map((row) => [
+        row.record.requestId,
+        {
+          turnId: row.record.turnId,
+          status: 'approved',
+          remoteMediationSettlementId: row.record.settlementId,
+        },
+      ])),
+    };
+    let created: PermissionMediationStoredRecord | null = null;
+    const recordStore: PermissionMediationRecordStore = {
+      read: vi.fn(async () => (
+        created ? { status: 'found' as const, stored: created } : { status: 'absent' as const }
+      )),
+      createExpectedAbsent: vi.fn(async (input) => {
+        created = { identity: input.identity, kind: input.kind, record: input.record, revision: 'ssr1.ceiling-1' };
+        return { status: 'created' as const, stored: created };
+      }),
+      list: vi.fn(async ({ cursor, limit = 500 }) => {
+        const all = created ? [...rows, created] : rows;
+        const start = cursor ? Number(cursor) : 0;
+        const records = all.slice(start, start + limit);
+        const next = start + records.length;
+        return {
+          status: 'ready' as const,
+          records,
+          nextCursor: next < all.length ? String(next) : null,
+          hasNext: next < all.length,
+        };
+      }),
+      pruneInactive: vi.fn(async () => ({ status: 'unavailable' as const })),
+      compareAndSet: vi.fn(async () => ({ status: 'unavailable' as const })),
+    };
+    const handler = new TestPermissionHandler(session as any, { mediationRecordStore: recordStore });
+    const sourceAuthority = {
+      kind: 'mediatedExternal',
+      mediatorPluginId: 'happier.channels',
+      sourceRef: 'binding:ops',
+      sourceRevisionOrEpoch: '42',
+      admittedPermissionCeiling: 'default',
+      remoteApprovalMaxScope: 'session',
+    } as const;
+    const pending = handler.request('ceiling-request', 'Bash', { command: ['bash', '-lc', 'echo ceiling'] }, {
+      causalPermissionContext: {
+        turnId: 'turn-ceiling-request',
+        causalPermissionAuthority: {
+          kind: 'admittedSessionInputV1',
+          admittedPermissionCeiling: 'default',
+          sourceAuthority,
+        },
+      },
+    });
+    const base = {
+      sessionId: session.sessionId,
+      turnId: 'turn-ceiling-request',
+      requestId: 'ceiling-request',
+      sourceRef: 'binding:ops',
+      sourceRevisionOrEpoch: '42',
+      actor: { namespace: 'discord', principalId: 'person-ceiling' },
+      mediator: { pluginId: 'happier.channels', contributionLocalId: 'discord' },
+    } as const;
+
+    await expect(handler.respondToMediatedPendingPermission({
+      ...base,
+      idempotencyKey: 'ceiling-session-scope',
+      decision: 'allow',
+      scope: 'session',
+    })).resolves.toEqual({ status: 'rejected', code: 'sessionGrantCapacityExceeded' });
+    expect(recordStore.createExpectedAbsent).not.toHaveBeenCalled();
+    expect(await settledState(pending)).toBe('pending');
+
+    await expect(handler.respondToMediatedPendingPermission({
+      ...base,
+      idempotencyKey: 'ceiling-request-scope',
+      decision: 'allow',
+      scope: 'request',
+    })).resolves.toEqual(expect.objectContaining({
+      status: 'applied',
+      decision: 'allow',
+      effect: { kind: 'allowOnce' },
+    }));
+    await expect(pending).resolves.toEqual({ decision: 'approved' });
+  });
+
+  it('refuses a session-scope remote allow whose exact tool rule exceeds its canonical bound', async () => {
+    const session = new FakeSession();
+    let created: PermissionMediationStoredRecord | null = null;
+    const recordStore: PermissionMediationRecordStore = {
+      read: vi.fn(async () => (
+        created ? { status: 'found' as const, stored: created } : { status: 'absent' as const }
+      )),
+      createExpectedAbsent: vi.fn(async (input) => {
+        created = { identity: input.identity, kind: input.kind, record: input.record, revision: 'ssr1.unsupported-1' };
+        return { status: 'created' as const, stored: created };
+      }),
+      list: vi.fn(async () => ({
+        status: 'ready' as const,
+        records: created ? [created] : [],
+        nextCursor: null,
+        hasNext: false,
+      })),
+      pruneInactive: vi.fn(async () => ({ status: 'unavailable' as const })),
+      compareAndSet: vi.fn(async () => ({ status: 'unavailable' as const })),
+    };
+    const handler = new TestPermissionHandler(session as any, { mediationRecordStore: recordStore });
+    const sourceAuthority = {
+      kind: 'mediatedExternal',
+      mediatorPluginId: 'happier.channels',
+      sourceRef: 'binding:ops',
+      sourceRevisionOrEpoch: '42',
+      admittedPermissionCeiling: 'default',
+      remoteApprovalMaxScope: 'session',
+    } as const;
+    // A single shell command longer than the canonical 1,024-byte exact-tool
+    // identifier bound: the host can settle this request but cannot express it
+    // as a reusable Session rule.
+    const input = { command: ['bash', '-lc', `echo ${'a'.repeat(1_100)}`] };
+    const pending = handler.request('unsupported-rule', 'Bash', input, {
+      causalPermissionContext: {
+        turnId: 'turn-unsupported-rule',
+        causalPermissionAuthority: {
+          kind: 'admittedSessionInputV1',
+          admittedPermissionCeiling: 'default',
+          sourceAuthority,
+        },
+      },
+    });
+    const base = {
+      sessionId: session.sessionId,
+      turnId: 'turn-unsupported-rule',
+      requestId: 'unsupported-rule',
+      sourceRef: 'binding:ops',
+      sourceRevisionOrEpoch: '42',
+      actor: { namespace: 'discord', principalId: 'person-unsupported' },
+      mediator: { pluginId: 'happier.channels', contributionLocalId: 'discord' },
+    } as const;
+
+    await expect(handler.respondToMediatedPendingPermission({
+      ...base,
+      idempotencyKey: 'unsupported-session-scope',
+      decision: 'allow',
+      scope: 'session',
+    })).resolves.toEqual({ status: 'rejected', code: 'sessionScopeUnsupported' });
+    expect(recordStore.createExpectedAbsent).not.toHaveBeenCalled();
+    expect(await settledState(pending)).toBe('pending');
+
+    await expect(handler.respondToMediatedPendingPermission({
+      ...base,
+      idempotencyKey: 'unsupported-request-scope',
+      decision: 'allow',
+      scope: 'request',
+    })).resolves.toEqual(expect.objectContaining({
+      status: 'applied',
+      decision: 'allow',
+      effect: { kind: 'allowOnce' },
+    }));
+    await expect(pending).resolves.toEqual({ decision: 'approved' });
   });
 
   it('fails closed after a second inactive-row revision conflict', async () => {

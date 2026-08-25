@@ -79,7 +79,7 @@ import {
 } from './takeoverStartAction';
 import {
   acknowledgeExternalSessionOperationProgressProjection,
-  compactExternalSessionOperationRecordToCompletionReceipt,
+  compactExternalSessionOperationRecordToTerminalReceipt,
   readExternalSessionOperationRecord,
   readExternalSessionOperationStoredEntry,
   resolveExternalSessionOperationStartAdmission,
@@ -1183,7 +1183,7 @@ describe('external-session operation progress producer selection', () => {
           operationId: predecessorInput.operationId,
           projectedRevision: predecessorInput.revision,
         });
-      await expect(compactExternalSessionOperationRecordToCompletionReceipt({
+      await expect(compactExternalSessionOperationRecordToTerminalReceipt({
         activeServerDir,
         operationId: predecessor.operationId,
         expectedRevision: predecessor.revision,
@@ -1548,7 +1548,7 @@ describe('external-session operation progress producer selection', () => {
       phase: 'validating',
     });
     await writeExternalSessionOperationRecord(activeServerDir, successor);
-    await expect(compactExternalSessionOperationRecordToCompletionReceipt({
+    await expect(compactExternalSessionOperationRecordToTerminalReceipt({
       activeServerDir,
       operationId: predecessor.operationId,
       expectedRevision: predecessor.revision,
@@ -1595,7 +1595,7 @@ describe('external-session operation progress producer selection', () => {
     await expect(readExternalSessionOperationStoredEntry(
       activeServerDir,
       predecessor.operationId,
-    )).resolves.toMatchObject({ kind: 'completion_receipt' });
+    )).resolves.toMatchObject({ kind: 'terminal_receipt' });
 
     await expect(repair(55)).resolves.toBe(1);
     await expect(readExternalSessionOperationRecord(
@@ -1649,7 +1649,7 @@ describe('external-session operation progress producer selection', () => {
       phase: 'validating',
     });
     await writeExternalSessionOperationRecord(activeServerDir, successorInput);
-    await expect(compactExternalSessionOperationRecordToCompletionReceipt({
+    await expect(compactExternalSessionOperationRecordToTerminalReceipt({
       activeServerDir,
       operationId: predecessor.operationId,
       expectedRevision: predecessor.revision,
@@ -3305,11 +3305,11 @@ describe('external-session operation progress producer selection', () => {
     await expect(readExternalSessionOperationStoredEntry(
       activeServerDir,
       completed.operationId,
-    )).resolves.toMatchObject({ kind: 'completion_receipt' });
+    )).resolves.toMatchObject({ kind: 'terminal_receipt' });
   });
 
   it.each(['cancelled', 'discarded'] as const)(
-    'compacts a settled %s external-linked takeover on the live acknowledgement path, not only at boot repair',
+    'compacts a settled %s external-linked takeover on the live acknowledgement path',
     async (status) => {
       const activeServerDir = await mkdtemp(join(
         tmpdir(),
@@ -3339,16 +3339,18 @@ describe('external-session operation progress producer selection', () => {
         },
       )).resolves.toBe('acknowledged');
 
-      // A settled external-linked takeover owns no private staging, so the
-      // acknowledgement that settles it is the last event that can touch the
-      // full record. Holding the inventory slot until the next daemon boot
-      // repair is the same leak in a slower shape.
+      // Acknowledgement is the final durable action for an external-linked
+      // settled takeover. It has no private staging and no remaining recovery
+      // action, so the canonical record owner compacts it to a receipt.
       await expect(readExternalSessionOperationStoredEntry(
         activeServerDir,
         settled.operationId,
       )).resolves.toMatchObject({
-        kind: 'completion_receipt',
-        receipt: { presentation: { status } },
+        kind: 'terminal_receipt',
+        receipt: {
+          reference: { operationId: settled.operationId },
+          presentation: { status },
+        },
       });
     },
   );
@@ -3383,7 +3385,7 @@ describe('external-session operation progress producer selection', () => {
       activeServerDir,
       completed.operationId,
     )).resolves.toMatchObject({
-      kind: 'completion_receipt',
+      kind: 'terminal_receipt',
       receipt: {
         reference: {
           sessionId: completed.request.sessionId,
@@ -3434,7 +3436,7 @@ describe('external-session operation progress producer selection', () => {
     await expect(readExternalSessionOperationStoredEntry(
       activeServerDir,
       completed.operationId,
-    )).resolves.toMatchObject({ kind: 'completion_receipt' });
+    )).resolves.toMatchObject({ kind: 'terminal_receipt' });
   });
 
   it('prunes an expired selected predecessor before boot compacts its already-acknowledged completed successor', async () => {
@@ -3462,7 +3464,7 @@ describe('external-session operation progress producer selection', () => {
         operationId: predecessorInput.operationId,
         projectedRevision: predecessorInput.revision,
       });
-    await expect(compactExternalSessionOperationRecordToCompletionReceipt({
+    await expect(compactExternalSessionOperationRecordToTerminalReceipt({
       activeServerDir,
       operationId: predecessor.operationId,
       expectedRevision: predecessor.revision,
@@ -3509,7 +3511,7 @@ describe('external-session operation progress producer selection', () => {
       successor.operationId,
     );
     expect(compactedSuccessor).toMatchObject({
-      kind: 'completion_receipt',
+      kind: 'terminal_receipt',
       receipt: {
         reference: {
           sessionId,
@@ -3570,7 +3572,7 @@ describe('external-session operation progress producer selection', () => {
         completed.operationId,
       );
       expect(stored).toMatchObject({
-        kind: 'completion_receipt',
+        kind: 'terminal_receipt',
         receipt: {
           reference: {
             sessionId: completed.request.sessionId,
@@ -3602,7 +3604,7 @@ describe('external-session operation progress producer selection', () => {
     },
   );
 
-  it('compacts an acknowledged cancelled materialize operation once boot repair clears its private staging', async () => {
+  it('keeps an acknowledged cancelled local private capture full at boot repair until Discard', async () => {
     const activeServerDir = await mkdtemp(join(
       tmpdir(),
       'happier-operation-materialize-cancelled-cleanup-',
@@ -3630,28 +3632,25 @@ describe('external-session operation progress producer selection', () => {
       { cleanupTerminalStaging },
     )).resolves.toBe(0);
 
-    // A settled cancellation with no remaining explicit-Discard recovery must
-    // release its inventory slot; otherwise ordinary Cancel cycles grow the
-    // Account inventory to its ceiling and brick every later operation.
-    expect(cleanupTerminalStaging).toHaveBeenCalledWith(cancelled.operationId);
+    // This local private form is still admitted to exact same-claim Discard.
+    // The Protocol recovery predicate therefore keeps both its staging and
+    // full record rather than making an action-dependent receipt.
+    expect(cleanupTerminalStaging).not.toHaveBeenCalled();
     await expect(readExternalSessionOperationStoredEntry(
       activeServerDir,
       cancelled.operationId,
     )).resolves.toMatchObject({
-      kind: 'completion_receipt',
-      receipt: {
-        reference: {
-          sessionId: cancelled.request.sessionId,
-          operationId: cancelled.operationId,
-          revision: cancelled.revision,
-        },
-        presentation: { status: 'cancelled' },
+      kind: 'full_record',
+      record: {
+        operationId: cancelled.operationId,
+        revision: cancelled.revision,
+        status: 'cancelled',
       },
     });
   });
 
   it.each(['cancelled', 'discarded'] as const)(
-    'compacts an acknowledged settled %s external-linked takeover whose staging is structurally absent',
+    'compacts an acknowledged settled %s external-linked takeover without staging cleanup',
     async (status) => {
       const activeServerDir = await mkdtemp(join(
         tmpdir(),
@@ -3681,14 +3680,18 @@ describe('external-session operation progress producer selection', () => {
       )).resolves.toBe(0);
 
       // An external-linked takeover owns no private staging in any settled
-      // state, so it must release its inventory slot without a staging owner.
+      // state, so boot repair skips cleanup and compacts the acknowledged
+      // terminal record directly through the canonical owner.
       expect(cleanupTerminalStaging).not.toHaveBeenCalled();
       await expect(readExternalSessionOperationStoredEntry(
         activeServerDir,
         settled.operationId,
       )).resolves.toMatchObject({
-        kind: 'completion_receipt',
-        receipt: { presentation: { status } },
+        kind: 'terminal_receipt',
+        receipt: {
+          reference: { operationId: settled.operationId },
+          presentation: { status },
+        },
       });
     },
   );

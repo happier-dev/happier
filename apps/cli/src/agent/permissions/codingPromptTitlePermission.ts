@@ -1,7 +1,7 @@
 import {
   extractShellCommand,
-  isCodingPromptSessionTitleUpdatesEnabled,
   parseHappierToolsShellBridgeCommand,
+  resolveEffectiveCodingPromptBehaviorV1,
 } from '@happier-dev/protocol';
 import { isChangeTitleToolLikeName } from '@happier-dev/protocol/tools/v2';
 
@@ -35,11 +35,24 @@ export function isAgentSessionTitleToolCall(toolName: string, input: unknown): b
     || isShellBridgeTitleCall(toolName, input);
 }
 
+/**
+ * Tool admission for agent-initiated session-title calls.
+ *
+ * Reads the SAME resolved `codingPromptBehavior` fact the prompt composer reads
+ * (`resolveEffectiveCodingPromptBehaviorV1`: Account default, then the selected
+ * Launch Profile's sparse override). Deciding from the Account value alone made
+ * this a second decision-maker: a profile that re-enabled title updates was told
+ * to call `change_title` by the system prompt while this gate denied every call.
+ */
 export function shouldDenyAgentSessionTitleToolCall(params: Readonly<{
   settings: unknown;
+  profileId?: string | null | undefined;
   toolName: string;
   input: unknown;
 }>): boolean {
-  return !isCodingPromptSessionTitleUpdatesEnabled(params.settings)
-    && isAgentSessionTitleToolCall(params.toolName, params.input);
+  if (!isAgentSessionTitleToolCall(params.toolName, params.input)) return false;
+  return resolveEffectiveCodingPromptBehaviorV1({
+    settings: params.settings,
+    profileId: params.profileId ?? null,
+  }).sessionTitleUpdates === 'disabled';
 }

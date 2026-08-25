@@ -53,13 +53,45 @@ describe('happier session review start (integration)', () => {
 
     const { encodeBase64: encodeBase64Session, encryptWithDataKey } = await import('@/api/encryption');
     const metadataCiphertext = encodeBase64Session(
-      encryptWithDataKey({ path: '/tmp', flavor: 'claude' }, dek),
+      encryptWithDataKey({ path: '/tmp', flavor: 'claude', machineId: 'machine-integration-1' }, dek),
       'base64',
     );
     const dataEncryptionKeyBase64 = encodeBase64Session(envelope, 'base64');
 
     server = createServer((req, res) => {
       const url = new URL(req.url ?? '/', `http://${req.headers.host ?? '127.0.0.1'}`);
+      if (req.method === 'GET' && url.pathname === '/v2/account/settings') {
+        res.statusCode = 200;
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify({
+          version: 1,
+          content: {
+            t: 'plain',
+            v: {
+              schemaVersion: 2,
+              actionsSettingsV1: {
+                v: 1,
+                actions: {
+                  'review.start': { enabled: true, disabledSurfaces: [], disabledPlacements: [] },
+                },
+              },
+            },
+          },
+        }));
+        return;
+      }
+      if (req.method === 'GET' && url.pathname === '/v1/account/encryption/currentness') {
+        res.statusCode = 200;
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify({
+          mode: 'e2ee',
+          version: 1,
+          signingKeyFingerprint: null,
+          contentKeyFingerprint: null,
+          updatedAt: 1,
+        }));
+        return;
+      }
       if (req.method === 'GET' && url.pathname === `/v2/sessions/${sessionId}`) {
         res.statusCode = 200;
         res.setHeader('content-type', 'application/json');
@@ -70,8 +102,8 @@ describe('happier session review start (integration)', () => {
               seq: 1,
               createdAt: 1,
               updatedAt: 2,
-              active: false,
-              activeAt: 0,
+              active: true,
+              activeAt: 2,
               metadata: metadataCiphertext,
               metadataVersion: 0,
               agentState: null,
@@ -79,6 +111,7 @@ describe('happier session review start (integration)', () => {
               pendingCount: 0,
               pendingVersion: 0,
               dataEncryptionKey: dataEncryptionKeyBase64,
+              machineId: 'machine-integration-1',
               share: null,
             },
           }),
@@ -163,7 +196,7 @@ describe('happier session review start (integration)', () => {
           'start',
           'sess_integration_review_start_123',
           '--engines',
-          'claude,codex',
+          'coderabbit,deepsec',
           '--instructions',
           'Review.',
           '--json',
@@ -181,12 +214,17 @@ describe('happier session review start (integration)', () => {
       );
 
       const parsed = output.json();
-      expect(parsed.ok).toBe(true);
+      expect(parsed.ok, JSON.stringify(parsed)).toBe(true);
       expect(parsed.kind).toBe('session_review_start');
       expect(parsed.data?.sessionId).toBe('sess_integration_review_start_123');
       expect(parsed.data?.results?.length).toBe(2);
-      expect(parsed.data?.results?.[0]?.key).toBe('claude');
-      expect(parsed.data?.results?.[1]?.key).toBe('codex');
+      expect(parsed.data?.results?.[0]?.key).toBe('coderabbit');
+      expect(parsed.data?.results?.[1]?.key).toBe('deepsec');
+      expect(
+        parsed.data?.results?.every((result: { ok?: boolean }) => result.ok === true),
+        JSON.stringify(parsed),
+      ).toBe(true);
+      expect(decryptedRpcCalls).toHaveLength(2);
     } finally {
       output.restore();
     }
@@ -225,7 +263,8 @@ describe('happier session review start (integration)', () => {
       );
 
       const parsed = output.json();
-      expect(parsed.ok).toBe(true);
+      expect(parsed.ok, JSON.stringify(parsed)).toBe(true);
+      expect(parsed.data?.results?.[0]?.ok).toBe(true);
       expect(decryptedRpcCalls).toHaveLength(1);
       expect(decryptedRpcCalls[0]?.intentInput).toMatchObject({
         engineId: 'coderabbit',

@@ -53,6 +53,7 @@ import {
 import { logger } from '@/ui/logger';
 import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
 import { resolveAgentToolsDelivery } from '@/agent/tools/happierTools/runtime/resolveAgentToolsDelivery';
+import { isSessionAgentChangeTitleToolAvailable } from '@/agent/tools/happierTools/resolveSessionNativeToolBridge';
 import { createRepositoryCheckpointPromptLifecycle } from '@/agent/runtime/checkpoints/repositoryCheckpointPromptLifecycle';
 import { notifyDaemonConnectedServiceTurnLifecycle } from '@/daemon/controlClient';
 import { HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY } from '@/daemon/connectedServices/connectedServiceChildEnvironment';
@@ -1324,6 +1325,10 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
           toolDeliveryDirectory: params.runtimeDirectory,
           memoryMachineId: params.machineId,
           memoryRecallGuidanceEnabled: params.memoryRecallGuidanceEnabled,
+          sessionTitleToolAvailable: isSessionAgentChangeTitleToolAvailable({
+            accountSettings: params.opts.accountSettingsContext?.settings ?? {},
+            profileId: params.session.getMetadataSnapshot()?.profileId ?? null,
+          }),
           toolPromptContributions: promptContributions.toolPromptContributions,
           promptAssetBlocks: promptContributions.promptAssetBlocks,
           cache: promptArtifactBodyCache,

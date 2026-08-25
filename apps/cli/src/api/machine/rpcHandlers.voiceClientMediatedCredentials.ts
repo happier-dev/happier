@@ -3,6 +3,8 @@ import {
   DaemonVoiceClientMediatedCredentialMaterializeResponseV1Schema,
   deriveVoiceCredentialBindingIdentityV1,
   resolveAccountSettingsVoiceCredentialSource,
+  resolveVoiceCredentialOperationAuthorization,
+  sameQualifiedConnectedAccountRef,
   type PluginContributionIdentityV1,
   type QualifiedConnectedAccountPurposeBindingTargetV1,
 } from '@happier-dev/protocol';
@@ -29,15 +31,6 @@ function sameContribution(
   return left.pluginId === right.pluginId && left.localId === right.localId;
 }
 
-function qualifyService(
-  pluginId: string,
-  service: string | PluginContributionIdentityV1,
-): PluginContributionIdentityV1 {
-  return typeof service === 'string'
-    ? Object.freeze({ pluginId, localId: service })
-    : Object.freeze({ ...service });
-}
-
 function failure(error: unknown) {
   if (isPluginError(error)
     && error.code === 'plugin_voice_provider_result_invalid') {
@@ -62,8 +55,7 @@ function sameSelectedTarget(
 ): boolean {
   if (left.kind === 'account') {
     return right.kind === 'account'
-      && sameContribution(left.account.service, right.account.service)
-      && left.account.accountId === right.account.accountId;
+      && sameQualifiedConnectedAccountRef(left.account, right.account);
   }
   return right.kind === 'group'
     && sameContribution(left.service, right.service)
@@ -175,22 +167,18 @@ export function registerMachineVoiceClientMediatedCredentialRpcHandlers(params: 
           return failure(null);
         }
         const selectedService = targetService(before.selection.target);
-        const source = declaration.credentials?.sources.flatMap((candidate) => (
-          candidate.kind === 'connectedAccount' ? [candidate] : []
-        )).find((candidate) => (
-          sameContribution(
-            qualifyService(provider.pluginId, candidate.service),
-            selectedService,
-          )
-        ));
-        const projection = source?.operationProjections?.find((candidate) => (
-          candidate.kind === 'materializedHttpHeaders'
-          && candidate.operation === operation.id
-          && candidate.phase === request.data.phase
-        ));
-        if (!source || !projection || projection.kind !== 'materializedHttpHeaders') {
+        const authorization = resolveVoiceCredentialOperationAuthorization({
+          pluginId: provider.pluginId,
+          contributionId: provider.identity.localId,
+          contribution: declaration,
+          selectedSource: { kind: 'connectedAccount', service: selectedService },
+          phase: request.data.phase,
+          operationId: operation.id,
+        });
+        if (!authorization || authorization.projection.kind !== 'materializedHttpHeaders') {
           return failure(null);
         }
+        const projection = authorization.projection;
         const connectedAccounts = lease.registry.resolveConnectedAccountPurposeBindingOwner?.() ?? null;
         if (!connectedAccounts) return failure(null);
         // The Account Settings snapshot read above and the Connected Account
@@ -200,7 +188,7 @@ export function registerMachineVoiceClientMediatedCredentialRpcHandlers(params: 
         const expectedSelection = request.data.expectedSelection;
         const materialization = await connectedAccounts.materialize({
           purpose: identity.purpose,
-          serviceRefs: Object.freeze([qualifyService(provider.pluginId, source.service)]),
+          serviceRefs: Object.freeze([selectedService]),
           ...(expectedSelection.kind === 'account'
             ? { expectedAccount: expectedSelection.account }
             : {}),

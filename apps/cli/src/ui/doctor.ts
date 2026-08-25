@@ -241,9 +241,21 @@ export async function runDoctorCommand(filter?: 'all' | 'daemon'): Promise<void>
             console.log(`  PID: ${state.pid}`);
             console.log(`  Started: ${new Date(state.startedAt).toLocaleString()}`);
             console.log(`  CLI Version: ${state.startedWithCliVersion}`);
+            if (state.startedWithRuntimeEntrypoint) {
+                console.log(`  Runtime: ${state.startedWithRuntimeEntrypoint}`);
+                console.log(`  Runtime Built: ${state.startedWithRuntimeBuiltAt ?? '(unverified)'}`);
+            }
             if (state.httpPort) {
                 console.log(`  HTTP Port: ${state.httpPort}`);
             }
+            // "Running" above is a PID probe and says nothing about whether the daemon can
+            // serve anything. This line is the daemon's own last word on that, so a live
+            // process with an incomplete machine-control registration stops reading as healthy.
+            console.log(`  Machine RPCs: ${state.machineControlReady === true
+                ? chalk.green('registered')
+                : state.machineControlReady === false
+                    ? chalk.red('not registered — this daemon cannot serve machine RPCs')
+                    : chalk.gray('(unknown — daemon reported no readiness)')}`);
         } else if (state && !isRunning) {
             console.log(chalk.yellow('⚠️  Daemon state exists but process not running (stale)'));
         } else {

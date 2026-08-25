@@ -1,6 +1,7 @@
 import type { ProviderEndpointRuntimeStateV1 } from '@happier-dev/protocol';
 
 import { ProviderProbeClientError } from './client';
+import type { ProviderProbeOperationScope } from './authorization';
 
 /**
  * Projects a probe failure onto observed endpoint health.
@@ -44,6 +45,8 @@ export function createProviderHealthProbeService(dependencies: Readonly<{
     probes: readonly import('@happier-dev/protocol').ProviderCatalogProbeV1[];
     mode: 'health';
     signal?: AbortSignal;
+    wallDeadlineAtMs?: number;
+    operationScope?: ProviderProbeOperationScope;
   }>): Promise<import('./catalog').ProviderCatalogRefreshResult>;
 }>) {
   return {

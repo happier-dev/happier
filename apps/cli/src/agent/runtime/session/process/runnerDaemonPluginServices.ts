@@ -55,26 +55,34 @@ import {
     EXTERNAL_SESSION_FOLLOW_CLOSE_TRANSPORT_TIMEOUT_MS,
 } from '@/session/external/hostOperationOwner';
 import {
+    EXTERNAL_SESSION_FOLLOW_LISTENER_TIMEOUT_MS,
+    settleFollowListenerBounded,
+} from '@/session/external/followListenerSettlement';
+import {
     projectAgentRuntimeDaemonServiceTurnWitnessV1,
 } from './agentRuntimeDaemonServiceTurnWitness';
 import {
     createStableRunnerPluginExecService,
     type HostAuthorizedPluginExecLaunch,
 } from '@/plugins/runtime/invocation/services/exec';
-import type {
-    RunnerDaemonManagedProviderBootstrapV1,
-    RunnerDaemonManagedProviderRetentionV1,
-    RunnerDaemonPluginSettingsScopeV1,
-    RunnerDaemonProviderOperationIdV1,
-    RunnerDaemonPluginServiceOperationV1,
-    RunnerDaemonPluginServiceSubscriptionEventV1,
-} from './agentRuntimeDaemonPluginServicesProtocol';
 import {
+    RunnerDaemonExternalSessionsAttachResultV1Schema,
+    RunnerDaemonExternalSessionsCapabilitiesResultV1Schema,
+    RunnerDaemonExternalSessionsFollowEventV1Schema,
+    RunnerDaemonExternalSessionsListResultV1Schema,
+    RunnerDaemonExternalSessionsTakeoverResultV1Schema,
+    RunnerDaemonExternalSessionsTranscriptResultV1Schema,
     RunnerDaemonManagedProviderBootstrapV1Schema,
     RunnerDaemonManagedProviderRetentionV1Schema,
     RunnerDaemonPluginServiceSubscriptionEventV1Schema,
     decodeRunnerDaemonPluginServiceWireValueV1,
     encodeRunnerDaemonPluginServiceWireValueV1,
+    type RunnerDaemonManagedProviderBootstrapV1,
+    type RunnerDaemonManagedProviderRetentionV1,
+    type RunnerDaemonPluginSettingsScopeV1,
+    type RunnerDaemonProviderOperationIdV1,
+    type RunnerDaemonPluginServiceOperationV1,
+    type RunnerDaemonPluginServiceSubscriptionEventV1,
 } from './agentRuntimeDaemonPluginServicesProtocol';
 
 export type RunnerDaemonPluginServicesDispatchOptionsV1 =
@@ -1071,6 +1079,13 @@ export async function prepareRunnerDaemonPluginServices(
         listener: (event: T) => void | Promise<void>,
         recoverLostHandle: boolean,
         cancellationSignal?: AbortSignal,
+        /**
+         * Acknowledge each delivery on the next request so the daemon-side publisher stays in
+         * custody of the event until this listener has actually run. Only subscriptions whose
+         * daemon owner does its own accounting (Plugin and Host Events) opt in; every other
+         * subscription keeps its fire-and-forget transport semantics.
+         */
+        acknowledgeDelivery = false,
     ): Readonly<{ dispose(): void }> => {
         assertAvailable(serviceId);
         const controller = new AbortController();
@@ -1114,12 +1129,24 @@ export async function prepareRunnerDaemonPluginServices(
                 { once: true },
             );
         }
-        const deliver = async (event: T): Promise<void> => {
-            if (controller.signal.aborted) return;
+        const deliver = async (
+            event: T,
+        ): Promise<'settled' | 'rejected'> => {
+            if (controller.signal.aborted) return 'settled';
             try {
                 await listener(event);
+                return 'settled';
             } catch {
-                input.local.logger.warn(`${label} listener failed`);
+                // Only the status crosses the wire; listener detail stays in this process. The
+                // diagnostic itself must not end the subscription — a failed listener is an
+                // isolated delivery failure the daemon owner decides about, and later events
+                // still have to arrive.
+                try {
+                    input.local.logger.warn(`${label} listener failed`);
+                } catch {
+                    // A logger that cannot record this is not a reason to stop delivering.
+                }
+                return 'rejected';
             }
         };
         const pump = async (): Promise<void> => {
@@ -1143,17 +1170,30 @@ export async function prepareRunnerDaemonPluginServices(
                     return;
                 }
                 try {
+                    let acknowledgement:
+                        | 'settled'
+                        | 'rejected'
+                        | undefined;
                     while (!controller.signal.aborted) {
+                        const sentRejection =
+                            acknowledgement === 'rejected';
                         const rawEvent =
                             await dispatch<unknown>({
                                 kind:
                                     'plugin_services.subscription.next_v1',
                                 ...requestBase(),
                                 subscriptionId,
+                                ...(acknowledgement
+                                    ? { acknowledgement }
+                                    : {}),
                             }, {
                                 signal: controller.signal,
                                 timeoutMs: null,
                             });
+                        acknowledgement = undefined;
+                        // A rejection acknowledgement is answered without an event: the daemon
+                        // owner decides what a failed listener means, and this loop keeps going.
+                        if (sentRejection && rawEvent === null) continue;
                         const parsed =
                             RunnerDaemonPluginServiceSubscriptionEventV1Schema
                                 .safeParse(rawEvent);
@@ -1172,7 +1212,10 @@ export async function prepareRunnerDaemonPluginServices(
                                     `Daemon returned an invalid ${label} event`,
                             });
                         }
-                        await deliver(event);
+                        const outcome = await deliver(event);
+                        if (acknowledgeDelivery) {
+                            acknowledgement = outcome;
+                        }
                     }
                 } catch (error) {
                     if (controller.signal.aborted) return;
@@ -1361,7 +1404,7 @@ export async function prepareRunnerDaemonPluginServices(
                 ...(options?.reason
                     ? { reason: options.reason }
                     : {}),
-            });
+            }, options?.signal ? { signal: options.signal } : undefined);
         },
         async set(id, value, options) {
             assertAvailable('secrets');
@@ -1378,7 +1421,7 @@ export async function prepareRunnerDaemonPluginServices(
                             options.expectedRevision,
                     }
                     : {}),
-            });
+            }, options?.signal ? { signal: options.signal } : undefined);
         },
         async delete(id, options) {
             assertAvailable('secrets');
@@ -1394,7 +1437,7 @@ export async function prepareRunnerDaemonPluginServices(
                             options.expectedRevision,
                     }
                     : {}),
-            });
+            }, options?.signal ? { signal: options.signal } : undefined);
         },
     } satisfies PluginServices['secrets']);
     const hostEvents: PluginServices['events']['host'] =
@@ -1467,6 +1510,8 @@ export async function prepareRunnerDaemonPluginServices(
                     },
                     listener,
                     false,
+                    undefined,
+                    true,
                 );
             },
         });
@@ -1479,6 +1524,9 @@ export async function prepareRunnerDaemonPluginServices(
             payload: Parameters<
                 PluginServices['events']['plugin']['emit']
             >[1],
+            options: Parameters<
+                PluginServices['events']['plugin']['emit']
+            >[2],
         ) {
             assertAvailable('events');
             return await dispatch<Awaited<ReturnType<
@@ -1491,7 +1539,7 @@ export async function prepareRunnerDaemonPluginServices(
                     encodeRunnerDaemonPluginServiceWireValueV1(
                         payload,
                     ),
-            });
+            }, options?.signal ? { signal: options.signal } : undefined);
         },
         subscribe<T extends JsonValue>(
             event: RunnerPluginEventRef,
@@ -1539,13 +1587,15 @@ export async function prepareRunnerDaemonPluginServices(
                     : null,
                 listener,
                 false,
+                undefined,
+                true,
             );
         },
         }),
         host: hostEvents,
     } satisfies PluginServices['events']);
     const httpService: PluginServices['http'] = Object.freeze({
-        async request(request) {
+        async request(request, options) {
             assertAvailable('http');
             return await dispatch<Awaited<ReturnType<
                 PluginServices['http']['request']
@@ -1580,7 +1630,7 @@ export async function prepareRunnerDaemonPluginServices(
                         }
                         : {}),
                 },
-            });
+            }, options?.signal ? { signal: options.signal } : undefined);
         },
         async openWebSocket() {
             // The runner wire owns finite request/response HTTP only. There
@@ -1601,18 +1651,18 @@ export async function prepareRunnerDaemonPluginServices(
                 ...(options?.maxBytes !== undefined
                     ? { maxBytes: options.maxBytes }
                     : {}),
-            });
+            }, options?.signal ? { signal: options.signal } : undefined);
         },
-        async writeFile(path, data) {
+        async writeFile(path, data, options) {
             assertAvailable('fs');
             await dispatch<null>({
                 kind: 'plugin_fs.write_file_v1',
                 ...requestBase(),
                 path,
                 data: Buffer.from(data).toString('base64'),
-            });
+            }, options?.signal ? { signal: options.signal } : undefined);
         },
-        async stat(path) {
+        async stat(path, options) {
             assertAvailable('fs');
             return await dispatch<Awaited<ReturnType<
                 PluginServices['fs']['stat']
@@ -1620,7 +1670,7 @@ export async function prepareRunnerDaemonPluginServices(
                 kind: 'plugin_fs.stat_v1',
                 ...requestBase(),
                 path,
-            });
+            }, options?.signal ? { signal: options.signal } : undefined);
         },
         async list(path, options) {
             assertAvailable('fs');
@@ -1636,7 +1686,7 @@ export async function prepareRunnerDaemonPluginServices(
                 ...(options?.limit !== undefined
                     ? { limit: options.limit }
                     : {}),
-            });
+            }, options?.signal ? { signal: options.signal } : undefined);
         },
         async remove(path, options) {
             assertAvailable('fs');
@@ -1647,7 +1697,7 @@ export async function prepareRunnerDaemonPluginServices(
                 ...(options?.recursive !== undefined
                     ? { recursive: options.recursive }
                     : {}),
-            });
+            }, options?.signal ? { signal: options.signal } : undefined);
         },
     } satisfies PluginServices['fs']);
     const resources: PluginServices['resources'] = Object.freeze({
@@ -1674,7 +1724,7 @@ export async function prepareRunnerDaemonPluginServices(
                 ...(options?.maxBytes !== undefined
                     ? { maxBytes: options.maxBytes }
                     : {}),
-            });
+            }, options?.signal ? { signal: options.signal } : undefined);
         },
         watch(id, listener) {
             assertSubscriptionAvailable(
@@ -1955,7 +2005,7 @@ export async function prepareRunnerDaemonPluginServices(
     } satisfies PluginServices['mcp']);
     const notifications: PluginServices['notifications'] =
         Object.freeze({
-            async send(request) {
+            async send(request, options) {
                 assertAvailable('notifications');
                 return await dispatch<Awaited<ReturnType<
                     PluginServices['notifications']['send']
@@ -1983,10 +2033,10 @@ export async function prepareRunnerDaemonPluginServices(
                                     encodeRunnerDaemonPluginServiceWireValueV1(
                                         request.data,
                                     ),
-                            }
-                            : {}),
+                        }
+                        : {}),
                     },
-                });
+                }, options?.signal ? { signal: options.signal } : undefined);
             },
             async listChannels(options) {
                 assertAvailable('notifications');
@@ -2004,7 +2054,7 @@ export async function prepareRunnerDaemonPluginServices(
                     ...(options?.limit !== undefined
                         ? { limit: options.limit }
                         : {}),
-                });
+                }, options?.signal ? { signal: options.signal } : undefined);
             },
             async listCategories(options) {
                 assertAvailable('notifications');
@@ -2022,9 +2072,9 @@ export async function prepareRunnerDaemonPluginServices(
                     ...(options?.limit !== undefined
                         ? { limit: options.limit }
                         : {}),
-                });
+                }, options?.signal ? { signal: options.signal } : undefined);
             },
-            async preferences(categoryId) {
+            async preferences(categoryId, options) {
                 assertAvailable('notifications');
                 return await dispatch<Awaited<ReturnType<
                     PluginServices['notifications'][
@@ -2035,7 +2085,7 @@ export async function prepareRunnerDaemonPluginServices(
                         'plugin_notifications.preferences_v1',
                     ...requestBase(),
                     categoryId,
-                });
+                }, options?.signal ? { signal: options.signal } : undefined);
             },
             watchPreferences(categoryId, listener) {
                 assertSubscriptionAvailable(
@@ -2697,17 +2747,17 @@ export async function prepareRunnerDaemonPluginServices(
     }
     const externalSessions = Object.freeze({
             async capabilities(options) {
-                return await dispatch<Awaited<ReturnType<
+                return RunnerDaemonExternalSessionsCapabilitiesResultV1Schema.parse(await dispatch<Awaited<ReturnType<
                     PluginServices['sessions']['external']['capabilities']
                 >>>({
                     kind: 'plugin_sessions.external.capabilities_v1',
                     ...requestBase(),
                 }, options?.signal
                     ? { signal: options.signal }
-                    : undefined);
+                    : undefined));
             },
             async list(query, options) {
-                return await dispatch<Awaited<ReturnType<
+                return RunnerDaemonExternalSessionsListResultV1Schema.parse(await dispatch<Awaited<ReturnType<
                     PluginServices['sessions']['external']['list']
                 >>>({
                     kind: 'plugin_sessions.external.list_v1',
@@ -2722,10 +2772,10 @@ export async function prepareRunnerDaemonPluginServices(
                         : {}),
                 }, options?.signal
                     ? { signal: options.signal }
-                    : undefined);
+                    : undefined));
             },
             async attach(ref, options) {
-                return await dispatch<Awaited<ReturnType<
+                return RunnerDaemonExternalSessionsAttachResultV1Schema.parse(await dispatch<Awaited<ReturnType<
                     PluginServices['sessions']['external']['attach']
                 >>>({
                     kind: 'plugin_sessions.external.attach_v1',
@@ -2735,10 +2785,10 @@ export async function prepareRunnerDaemonPluginServices(
                     ),
                 }, options?.signal
                     ? { signal: options.signal }
-                    : undefined);
+                    : undefined));
             },
             async readTranscript(ref, query, options) {
-                return await dispatch<Awaited<ReturnType<
+                return RunnerDaemonExternalSessionsTranscriptResultV1Schema.parse(await dispatch<Awaited<ReturnType<
                     PluginServices['sessions']['external'][
                         'readTranscript'
                     ]
@@ -2755,7 +2805,7 @@ export async function prepareRunnerDaemonPluginServices(
                         ),
                 }, options?.signal
                     ? { signal: options.signal }
-                    : undefined);
+                    : undefined));
             },
             async followTranscript(ref, options, listener) {
                 const subscriptionId = randomUUID();
@@ -2788,6 +2838,15 @@ export async function prepareRunnerDaemonPluginServices(
                 }
 
                 const controller = new AbortController();
+                /**
+                 * Caller and invocation cancellation, as one signal. The pump
+                 * races listener settlement against it so a callback that never
+                 * settles cannot outlive the cancellation of the operation that
+                 * is waiting on it.
+                 */
+                const cancellationSignal = options.signal
+                    ? AbortSignal.any([input.signal, options.signal])
+                    : input.signal;
                 type FollowAcquisition =
                     | Readonly<{
                         status: 'following';
@@ -3008,16 +3067,27 @@ export async function prepareRunnerDaemonPluginServices(
                                 acknowledgement = 'rejected';
                             } else {
                                 try {
-                                    await listener(
-                                        decodeRunnerDaemonPluginServiceWireValueV1(
-                                            parsed.data.event,
-                                        ) as Parameters<
-                                            PluginServices['sessions']['external'][
-                                                'followTranscript'
-                                            ]
-                                        >[2] extends (
-                                            event: infer Event,
-                                        ) => unknown ? Event : never,
+                                    const event =
+                                        RunnerDaemonExternalSessionsFollowEventV1Schema.parse(
+                                            decodeRunnerDaemonPluginServiceWireValueV1(
+                                                parsed.data.event,
+                                            ),
+                                        );
+                                    // The acknowledgement this pump owes the
+                                    // daemon is gated on author code settling.
+                                    // Awaiting it unbounded is what let one
+                                    // non-settling callback stop the pump before
+                                    // acquisition and leave `followTranscript()`
+                                    // pending forever, deaf to cancellation. The
+                                    // in-process follow path already bounds the
+                                    // same callback; this carrier uses the same
+                                    // deadline and the caller/invocation abort,
+                                    // and treats either as a rejected delivery.
+                                    await settleFollowListenerBounded(
+                                        Promise.resolve().then(async () =>
+                                            await listener(event)),
+                                        EXTERNAL_SESSION_FOLLOW_LISTENER_TIMEOUT_MS,
+                                        cancellationSignal,
                                     );
                                     acknowledgement = 'settled';
                                 } catch {
@@ -3106,7 +3176,7 @@ export async function prepareRunnerDaemonPluginServices(
                 });
             },
             async takeover(ref, request, options) {
-                return await dispatch<Awaited<ReturnType<
+                return RunnerDaemonExternalSessionsTakeoverResultV1Schema.parse(await dispatch<Awaited<ReturnType<
                     PluginServices['sessions']['external']['takeover']
                 >>>({
                     kind: 'plugin_sessions.external.takeover_v1',
@@ -3120,7 +3190,7 @@ export async function prepareRunnerDaemonPluginServices(
                         ),
                 }, options?.signal
                     ? { signal: options.signal }
-                    : undefined);
+                    : undefined));
             },
         } satisfies PluginServices['sessions']['external']);
     const sessions: PluginServices['sessions'] = Object.freeze({

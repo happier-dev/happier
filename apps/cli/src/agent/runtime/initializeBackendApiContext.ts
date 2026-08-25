@@ -1,3 +1,4 @@
+import { isPidPresent } from '@happier-dev/cli-common/process';
 import { ApiClient } from '@/api/api';
 import type { MachineMetadata } from '@/api/types';
 import { ensureMachineRegistered } from '@/api/machine/ensureMachineRegistered';
@@ -17,12 +18,7 @@ async function shouldSkipMachineRegistration(explicitSkip: boolean | undefined):
   const daemonState = await readDaemonState();
   if (!daemonState?.pid) return false;
 
-  try {
-    process.kill(daemonState.pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
+  return isPidPresent(daemonState.pid);
 }
 
 export async function initializeBackendApiContext(opts: {

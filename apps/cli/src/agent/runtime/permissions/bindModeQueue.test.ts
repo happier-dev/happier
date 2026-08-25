@@ -370,6 +370,76 @@ describe('registerPermissionModeMessageQueueBinding', () => {
     });
   });
 
+  it('refuses only the composer attachment whose media is still an unfinalized staged claim', () => {
+    // A queued Pending row stores raw Message *ingress*: only the target daemon's
+    // `finalizeComposerStagedMediaToSession`, which runs inside canonical Message
+    // admission, replaces this transfer-owned claim with the durable `sessionMedia`
+    // reference. The queue binding consumes the admitted envelope only, so an envelope
+    // that never reached that finalizer must fail closed rather than hand the provider a
+    // stage id it cannot resolve — while the same attachment without a staged claim is
+    // ordinary admitted input and still reaches the queue.
+    const attachment = {
+      v: 1,
+      instanceId: 'review-media-1',
+      attachment: { pluginId: 'acme.review', localId: 'review-media' },
+      key: 'review-image',
+      value: { reviewId: '42' },
+      presentation: { label: 'Review image', typeLabel: 'Review media' },
+    };
+    const stagedContent = {
+      kind: 'stagedMedia',
+      handle: {
+        v: 1,
+        id: 'stage-review-1',
+        executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
+        owner: { pluginId: 'acme.review', localId: 'review-media' },
+        mediaKind: 'image',
+        mimeType: 'image/png',
+        name: 'review.png',
+        sizeBytes: 67,
+        sha256: 'a'.repeat(64),
+      },
+    };
+
+    const staged = createHarness();
+    staged.emit({
+      role: 'user',
+      content: { type: 'text', text: 'look at this screenshot' },
+      localId: 'pending-staged-media',
+      meta: {
+        happierStructuredInputV1: {
+          v: 1,
+          composerAttachments: [{ ...attachment, content: stagedContent }],
+        },
+      },
+    } as UserMessage);
+
+    expect(staged.queueCalls).toEqual([]);
+    expect(staged.rejectPromptBeforeProvider).toHaveBeenCalledWith({
+      localIds: ['pending-staged-media'],
+      userMessageSeq: null,
+    });
+
+    const finalized = createHarness();
+    finalized.emit({
+      role: 'user',
+      content: { type: 'text', text: 'look at this screenshot' },
+      localId: 'pending-contentless-attachment',
+      meta: {
+        happierStructuredInputV1: { v: 1, composerAttachments: [attachment] },
+      },
+    } as UserMessage);
+
+    expect(finalized.queueCalls).toMatchObject([{
+      type: 'isolate',
+      message: {
+        localId: 'pending-contentless-attachment',
+        structuredInput: { composerAttachments: [attachment] },
+      },
+    }]);
+    expect(finalized.rejectPromptBeforeProvider).not.toHaveBeenCalled();
+  });
+
   it('does not decode a raw attachment envelope as structured input', () => {
     const harness = createHarness();
     const attachment = {

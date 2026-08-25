@@ -5,6 +5,7 @@ import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { createTransferPathAllowanceRegistry } from '@/transfers/targets/createTransferPathAllowanceRegistry';
+import { createOneBitGrayscalePng } from '@/testkit/media/pngFixtures';
 import { describe, expect, it } from 'vitest';
 
 import { garbageCollectSessionMedia, persistSessionMedia } from './persistSessionMedia';
@@ -75,6 +76,75 @@ describe('persistSessionMedia', () => {
       expect(JSON.stringify(result.item)).not.toContain(pngBytes.toString('base64'));
       await expect(readFile(resolve(workingDirectory, result.item.path))).resolves.toEqual(pngBytes);
       await expect(readFile(join(workingDirectory, '.git', 'info', 'exclude'), 'utf8')).resolves.toContain('/.happier/uploads/');
+    } finally {
+      await rm(workingDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it('persists an ordinary large decodable image with its dimensions', async () => {
+    const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-session-media-large-image-'));
+    const bytes = createOneBitGrayscalePng(4_096, 4_096);
+
+    try {
+      const result = await persistSessionMedia({
+        workingDirectory,
+        pathAllowanceRegistry: createTransferPathAllowanceRegistry(),
+        maxBytes: bytes.byteLength,
+        input: {
+          sessionId: 'session-large-image',
+          messageLocalId: 'message-1',
+          role: 'output',
+          category: 'generated',
+          source: {
+            kind: 'base64',
+            data: bytes.toString('base64'),
+            mimeType: 'image/png',
+            fileNameHint: 'large-artboard.png',
+          },
+          origin: { source: 'provider-generated' },
+        },
+      });
+
+      expect(result).toMatchObject({
+        success: true,
+        item: { width: 4_096, height: 4_096 },
+      });
+    } finally {
+      await rm(workingDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it('persists a valid image whose dimension probe is refused, omitting dimensions', async () => {
+    const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-session-media-undimensioned-image-'));
+    const bytes = createOneBitGrayscalePng(17_000, 17_000);
+
+    try {
+      const result = await persistSessionMedia({
+        workingDirectory,
+        pathAllowanceRegistry: createTransferPathAllowanceRegistry(),
+        maxBytes: bytes.byteLength,
+        input: {
+          sessionId: 'session-undimensioned-image',
+          messageLocalId: 'message-1',
+          role: 'output',
+          category: 'generated',
+          source: {
+            kind: 'base64',
+            data: bytes.toString('base64'),
+            mimeType: 'image/png',
+            fileNameHint: 'oversized-decoded-image.png',
+          },
+          origin: { source: 'provider-generated' },
+        },
+      });
+
+      expect(bytes.byteLength).toBe(35_201);
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+      expect(result.item.width).toBeUndefined();
+      expect(result.item.height).toBeUndefined();
+      expect(result.item.sizeBytes).toBe(bytes.byteLength);
+      await expect(readFile(resolve(workingDirectory, result.item.path))).resolves.toEqual(bytes);
     } finally {
       await rm(workingDirectory, { recursive: true, force: true });
     }

@@ -66,6 +66,8 @@ type SpeechCredentialRequirement = NonNullable<SpeechContribution['credentials']
 function speechManifest(options: Readonly<{
   requirement?: SpeechCredentialRequirement;
   credentialModeDefault?: boolean;
+  rawGrantPhases?: readonly ('settings' | 'speech')[];
+  settingsActions?: NonNullable<SpeechContribution['settings']>['actions'];
 }> = {}) {
   const requirement = options.requirement ?? { kind: 'always' as const };
   const parsed = readCanonicalPluginManifest(createPluginManifestV2Fixture({
@@ -84,7 +86,11 @@ function speechManifest(options: Readonly<{
           sources: [{
             kind: 'connectedAccount',
             service: { pluginId: 'happier.google', localId: 'oauth' },
-            rawGrants: [{ realm: 'daemon', phase: 'speech', request: rawRequest }],
+            rawGrants: (options.rawGrantPhases ?? ['speech']).map((phase) => ({
+              realm: 'daemon' as const,
+              phase,
+              request: rawRequest,
+            })),
           }],
         },
         settings: {
@@ -102,6 +108,7 @@ function speechManifest(options: Readonly<{
             default: options.credentialModeDefault ?? true,
             presentation: { control: 'switch' as const },
           }] : [])],
+          ...(options.settingsActions ? { actions: options.settingsActions } : {}),
         },
       }],
     },
@@ -480,6 +487,168 @@ describe('unified Voice speech machine RPC', () => {
     }));
     expect(materialize).toHaveBeenCalledTimes(3);
     expect(isCurrent).toHaveBeenCalled();
+    await registration.dispose();
+  });
+
+  it('does not materialize or publish through a newly selected Connected Account mid-invocation', async () => {
+    const { handlers, registrar } = manager();
+    const principal = PluginInstallReviewPrincipalDigestSchema.parse('c'.repeat(64));
+    const manifest = speechManifest({ requirement: { kind: 'optional' } });
+    const runtimeIsCurrent = vi.fn(() => true);
+    const snapshotFor = (accountId: string) => Object.freeze({
+      source: 'network' as const,
+      scopeKey: 'account-scope',
+      settingsVersion: 1,
+      loadedAtMs: 1,
+      settingsSecretsReadKeys: [],
+      settings: {
+        voiceSettingsV1: {
+          providers: {
+            'happier.voice.google/gemini-stt': {
+              schemaVersion: 2,
+              config: { model: 'gemini-2.5-flash' },
+            },
+          },
+          credentialBindings: [{
+            contribution: target,
+            credentialSlotId: 'api_key',
+            credentialSource: { kind: 'connectedAccount' },
+            credentialBindings: { account: {} },
+          }],
+        },
+        connectedAccountPurposeBindingsV1: {
+          v: 1,
+          bindings: [{
+            purpose: { consumer: target, purpose: 'voice.speech' },
+            target: {
+              kind: 'account',
+              account: {
+                service: { pluginId: 'happier.google', localId: 'oauth' },
+                accountId,
+              },
+            },
+          }],
+        },
+      } as never,
+    });
+    let currentSnapshot = snapshotFor('google-a');
+    const credentialRevision = 'csr_0123456789ABCDEFGHJKMNPQRS';
+    const materialize = vi.fn(async (input: Readonly<{
+      expectedAccount?: Readonly<{ accountId?: string }>;
+      credentialRevisionBasis?: Readonly<{
+        captureCredentialRevision(credentialRevision: string): void;
+      }>;
+    }>) => {
+      input.credentialRevisionBasis?.captureCredentialRevision(credentialRevision);
+      return Object.freeze({
+        kind: 'httpHeaders' as const,
+        headers: { authorization: `Bearer ${input.expectedAccount?.accountId ?? 'missing'}` },
+      });
+    });
+    let secondMaterializationError: unknown = null;
+    const runtime: SpeechProviderRuntime = Object.freeze({
+      kind: 'speech',
+      catalog: Object.freeze({
+        list: async (_request, context) => {
+          if (!context.credentials.raw) throw new Error('raw credential access must be available');
+          await expect(context.credentials.raw.materialize(rawRequest)).resolves.toEqual({
+            kind: 'httpHeaders',
+            headers: { authorization: 'Bearer google-a' },
+          });
+          currentSnapshot = snapshotFor('google-b');
+          try {
+            await context.credentials.raw.materialize(rawRequest);
+          } catch (error) {
+            secondMaterializationError = error;
+          }
+          return [];
+        },
+      }),
+      async transcribe(request) { return { requestId: request.requestId, text: '' }; },
+    });
+    const registryLease = {
+      registry: {
+        activateContributionsOnDemand: runtimeLeaseMocks.activateContributionsOnDemand,
+        generation: 9,
+        contributes: {
+          activationTargets: [{ pluginId: target.pluginId, manifest }],
+        },
+        voiceSpeechProviders: {
+          read: vi.fn(() => ({
+            generation: '9',
+            runtime,
+            contribution: manifest.contributes.voiceProviders?.[0],
+            isCurrent: runtimeIsCurrent,
+            retirementSignal: new AbortController().signal,
+            createHttp: () => http,
+          })),
+        },
+        resolveVoiceProviderRuntimeLifecycle: () => ({
+          generation: 'immutable-generation-9',
+          isCurrent: runtimeIsCurrent,
+          retirementSignal: new AbortController().signal,
+        }),
+        resolveConnectedAccountPurposeBindingOwner: () => ({
+          getBinding: async () => ({
+            purpose: 'voice.speech',
+            service: { pluginId: 'happier.google', localId: 'oauth' },
+            account: {
+              service: { pluginId: 'happier.google', localId: 'oauth' },
+              accountId: currentSnapshot.settings.connectedAccountPurposeBindingsV1.bindings[0]!.target.account.accountId,
+            },
+            target: { kind: 'account' as const, displayName: 'Selected Google account' },
+          }),
+          materialize,
+        }),
+      },
+      release: runtimeLeaseMocks.release,
+    };
+    runtimeLeaseMocks.acquire.mockResolvedValueOnce(registryLease);
+    const registration = registerMachineVoiceSpeechRpcHandlers({
+      rpcHandlerManager: registrar as never,
+      machineId: 'machine-a',
+      resolveRawCredentialDependencies: async () => ({
+        currentInstallReviewPrincipal: { readCurrent: async () => ({ digest: principal, presentation: null }) },
+        readCurrentGrantAuthoritySource: async () => daemonGrantAuthority,
+        grants: {
+          list: async (input) => ({
+            grants: [{
+              v: 1,
+              id: 'grant-1',
+              accountId: 'account-scope',
+              pluginId: target.pluginId,
+              capability: 'credentials.materialize.raw',
+              targetScope: { kind: 'account' },
+              // Both selections have a valid grant. Only the invocation's
+              // captured selection may disclose material during this call.
+              subject: input.subject!,
+              authoritySource: daemonGrantAuthority,
+              status: 'active',
+              grantedByUserId: 'user-1',
+              grantedAt: 1,
+              createdAt: 1,
+              updatedAt: 1,
+            }],
+            pendingRequests: [],
+          }),
+        },
+        getAccountSettingsSnapshot: () => currentSnapshot,
+      }),
+    });
+
+    const response = await handlers.get(RPC_METHODS.DAEMON_VOICE_SPEECH_CATALOG)?.({
+      target,
+      catalog: 'models',
+    });
+
+    expect(secondMaterializationError).toMatchObject({
+      code: 'plugin_voice_credential_access_unavailable',
+    });
+    expect(materialize).toHaveBeenCalledTimes(1);
+    expect(materialize).toHaveBeenCalledWith(expect.objectContaining({
+      expectedAccount: expect.objectContaining({ accountId: 'google-a' }),
+    }));
+    expect(response).toMatchObject({ ok: false, errorCode: 'provider_unavailable' });
     await registration.dispose();
   });
 
@@ -1038,6 +1207,214 @@ describe('unified Voice speech machine RPC', () => {
 
     expect(response).toEqual({ ok: false, errorCode: 'provider_unavailable' });
     expect(response).not.toHaveProperty('downloadId');
+    await registration.dispose();
+  });
+
+  it('fences an optional no-source settings action when Account Settings selects a source during execution', async () => {
+    const { handlers, registrar } = manager();
+    const settingsAction = {
+      id: 'refresh-voice',
+      title: 'Refresh voice',
+      placement: { kind: 'contributionFooter' as const },
+      confirmation: { kind: 'none' as const },
+      patchFieldIds: ['model'],
+    };
+    const manifest = speechManifest({
+      requirement: { kind: 'optional' },
+      rawGrantPhases: ['settings'],
+      settingsActions: [settingsAction],
+    });
+    const declaredContribution = manifest.contributes.voiceProviders?.[0];
+    if (!declaredContribution || declaredContribution.kind !== 'speech') {
+      throw new Error('speech manifest fixture must include its speech contribution');
+    }
+    const providerId = `${target.pluginId}/${target.localId}`;
+    const providerConfig = Object.freeze({ model: 'gemini-2.5-flash' });
+    let snapshot = {
+      source: 'network' as const,
+      scopeKey: 'account-scope',
+      settingsVersion: 1,
+      loadedAtMs: 1,
+      settingsSecretsReadKeys: [],
+      settings: {
+        voiceSettingsV1: {
+          providers: {
+            [providerId]: {
+              schemaVersion: declaredContribution.settings.schemaVersion,
+              config: providerConfig,
+            },
+          },
+          credentialBindings: [],
+        },
+      } as never,
+    };
+    const execute = vi.fn(async () => {
+      snapshot = {
+        ...snapshot,
+        settingsVersion: 2,
+        settings: {
+          voiceSettingsV1: {
+            providers: {
+              [providerId]: {
+                schemaVersion: declaredContribution.settings.schemaVersion,
+                config: providerConfig,
+              },
+            },
+            credentialBindings: [{
+              contribution: target,
+              credentialSlotId: 'api_key',
+              credentialSource: { kind: 'connectedAccount' },
+              credentialBindings: { account: {} },
+            }],
+          },
+          connectedAccountPurposeBindingsV1: {
+            v: 1,
+            bindings: [{
+              purpose: { consumer: target, purpose: 'voice.speech' },
+              target: {
+                kind: 'account',
+                account: {
+                  service: { pluginId: 'happier.google', localId: 'oauth' },
+                  accountId: 'google-a',
+                },
+              },
+            }],
+          },
+        } as never,
+      };
+      return { patch: { model: 'refreshed-model' } };
+    });
+    const runtime: SpeechProviderRuntime & Readonly<{
+      settingsActions: Readonly<{ execute: typeof execute }>;
+    }> = Object.freeze({
+      kind: 'speech',
+      settingsActions: Object.freeze({ execute }),
+    });
+    const current = () => true;
+    runtimeLeaseMocks.acquire.mockResolvedValueOnce({
+      registry: {
+        activateContributionsOnDemand: runtimeLeaseMocks.activateContributionsOnDemand,
+        generation: 8,
+        contributes: {
+          activationTargets: [{ pluginId: target.pluginId, manifest }],
+        },
+        voiceSpeechProviders: {
+          read: vi.fn(() => ({
+            generation: '8',
+            runtime,
+            contribution: declaredContribution,
+            isCurrent: current,
+            retirementSignal: new AbortController().signal,
+            createHttp: () => http,
+          })),
+        },
+        resolveVoiceProviderRuntimeLifecycle: () => ({
+          generation: 'immutable-generation-8',
+          isCurrent: current,
+          retirementSignal: new AbortController().signal,
+        }),
+      },
+      release: runtimeLeaseMocks.release,
+    });
+    const registration = registerMachineVoiceSpeechRpcHandlers({
+      rpcHandlerManager: registrar as never,
+      machineId: 'machine-a',
+      resolveRawCredentialDependencies: async () => ({
+        getAccountSettingsSnapshot: () => snapshot,
+      }),
+    });
+    const executeSettingsAction = handlers.get(
+      RPC_METHODS.DAEMON_VOICE_SPEECH_SETTINGS_ACTION_EXECUTE,
+    );
+    if (!executeSettingsAction) throw new Error('speech settings action RPC must be registered');
+
+    await expect(executeSettingsAction({ target, actionId: settingsAction.id })).resolves.toEqual({
+      ok: false,
+      errorCode: 'provider_unavailable',
+    });
+    expect(execute).toHaveBeenCalledTimes(1);
+    await registration.dispose();
+  });
+
+  it('executes only a declared speech settings action with fresh daemon settings and settings credentials', async () => {
+    const { handlers, registrar } = manager();
+    const settingsActionCredentials: VoiceCredentialAccess<'settings'> = Object.freeze({
+      phase: 'settings', mediated: null, raw: null,
+    });
+    let current = true;
+    let retireAfterExecution = false;
+    const execute = vi.fn(async (input, context) => {
+      expect(input).toEqual({ actionId: 'refresh-voice', settings: { voiceName: 'en-US-A' } });
+      expect(context.credentials).toBe(settingsActionCredentials);
+      expect(context.credentials.phase).toBe('settings');
+      expect(context.signal.aborted).toBe(false);
+      expect(context.tools).toEqual([]);
+      if (retireAfterExecution) current = false;
+      return { patch: { voiceName: 'refreshed-voice' } };
+    });
+    const definition = contribution({
+      roles: ['conversation_tts'],
+      settings: {
+        schemaVersion: 2,
+        fields: [{
+          id: 'voiceName',
+          title: 'Voice',
+          schema: { type: 'string', minLength: 1, maxLength: 256 },
+          default: 'en-US-A',
+          presentation: { control: 'text' },
+        }],
+        actions: [{
+          id: 'refresh-voice',
+          title: 'Refresh voice',
+          placement: { kind: 'contributionFooter' },
+          confirmation: { kind: 'none' },
+          patchFieldIds: ['voiceName'],
+        }],
+      },
+    });
+    const runtime: SpeechProviderRuntime & Readonly<{
+      settingsActions: Readonly<{ execute: typeof execute }>;
+    }> = { kind: 'speech', settingsActions: { execute } };
+    const registration = registerMachineVoiceSpeechRpcHandlers({
+      rpcHandlerManager: registrar as never,
+      resolveSpeechRuntime: vi.fn(async (): Promise<VoiceSpeechRuntimeLease> => ({
+        runtime,
+        contribution: definition,
+        readSettings: () => Object.freeze({
+          settings: Object.freeze({ voiceName: 'en-US-A' }),
+          resolveCredentials: (_settings, _signal, phase = 'speech') => (
+            phase === 'settings' ? settingsActionCredentials : credentials
+          ),
+          isCurrent: () => current,
+        }),
+        createHttp: () => http,
+        isCurrent: () => current,
+        retirementSignal: new AbortController().signal,
+        release: vi.fn(async () => undefined),
+      })),
+    });
+    const executeSettingsAction = handlers.get('daemon.voice.speech.settingsAction.execute');
+    if (!executeSettingsAction) {
+      throw new Error('speech settings action RPC must be registered');
+    }
+
+    await expect(executeSettingsAction({ target, actionId: 'refresh-voice' })).resolves.toEqual({
+      ok: true,
+      patch: { voiceName: 'refreshed-voice' },
+    });
+    expect(execute).toHaveBeenCalledTimes(1);
+
+    await expect(executeSettingsAction({
+      target,
+      actionId: 'refresh-voice',
+      settings: { voiceName: 'caller-controlled' },
+    })).resolves.toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
+
+    retireAfterExecution = true;
+    await expect(executeSettingsAction({ target, actionId: 'refresh-voice' })).resolves.toMatchObject({
+      ok: false,
+      errorCode: 'provider_unavailable',
+    });
     await registration.dispose();
   });
 });

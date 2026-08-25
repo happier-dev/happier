@@ -61,6 +61,8 @@ function baseContext(rawSettings: Readonly<Record<string, unknown>>) {
 }
 
 describe('authorizeLegacyProfileMigrationContext', () => {
+  const lifetime = { wallDeadlineAtMs: Date.now() + 60_000 };
+
   it('adds a fingerprint-bound account grant only after canonical public DNS resolution', async () => {
     const rawSettings = { favoriteProfiles: ['deepseek'] };
     const resolveAddresses = vi.fn(async () => ['8.8.8.8']);
@@ -70,6 +72,7 @@ describe('authorizeLegacyProfileMigrationContext', () => {
       providersByContributionKey: new Map([[contributionKey, resolvedContribution]]),
       machineId: 'machine_a',
       resolveAddresses,
+      lifetime,
     });
 
     expect(resolveAddresses).toHaveBeenCalledWith('api.deepseek.com');
@@ -98,6 +101,7 @@ describe('authorizeLegacyProfileMigrationContext', () => {
       providersByContributionKey: new Map([[contributionKey, resolvedContribution]]),
       machineId: 'machine_a',
       resolveAddresses: async () => addresses,
+      lifetime,
     });
 
     expect(context.candidates[0]).not.toHaveProperty('accountGrant');
@@ -129,6 +133,7 @@ describe('authorizeLegacyProfileMigrationContext', () => {
       providersByContributionKey: new Map([[contributionKey, resolvedContribution]]),
       machineId: 'machine_a',
       resolveAddresses: async () => ['8.8.8.8'],
+      lifetime,
     });
 
     expect(context.candidates).toEqual([]);
@@ -164,6 +169,7 @@ describe('authorizeLegacyProfileMigrationContext', () => {
       providersByContributionKey: new Map([[contributionKey, resolvedContribution]]),
       machineId: 'machine_a',
       resolveAddresses: async () => ['8.8.8.8'],
+      lifetime,
     });
 
     expect(context.candidates).toEqual([]);
@@ -203,6 +209,7 @@ describe('authorizeLegacyProfileMigrationContext', () => {
       providersByContributionKey: new Map([[contributionKey, resolvedContribution]]),
       machineId: 'machine_a',
       resolveAddresses: async () => ['8.8.8.8'],
+      lifetime,
     });
 
     expect(context.pendingCustomProfileIds).toEqual([]);

@@ -1,4 +1,4 @@
-import { chmod, lstat, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
@@ -74,6 +74,7 @@ import {
     readExternalSessionHookInstallationInventoryPage,
     readExternalSessionHookInstallationConfigSnapshot,
     readExternalSessionHookInstallationRecord,
+    resolveExternalSessionHookPhysicalTargetPath,
     resolveExternalSessionHookInstallationRecordPath,
     type ExternalSessionHookInstallationVariant,
     type ExternalSessionHookJsonValue,
@@ -87,6 +88,19 @@ async function fixture() {
     await mkdir(configDir, { recursive: true });
     if (process.platform !== 'win32') await chmod(activeServerDir, 0o700);
     return { root, activeServerDir, configDir };
+}
+
+async function withPlatform<T>(
+    platform: NodeJS.Platform,
+    run: () => Promise<T>,
+): Promise<T> {
+    const descriptor = Object.getOwnPropertyDescriptor(process, 'platform')!;
+    Object.defineProperty(process, 'platform', { ...descriptor, value: platform });
+    try {
+        return await run();
+    } finally {
+        Object.defineProperty(process, 'platform', descriptor);
+    }
 }
 
 function variant(targetIds: readonly string[] = ['settings']): ExternalSessionHookInstallationVariant {
@@ -216,7 +230,7 @@ describe('External Sessions hook installation configuration', () => {
                 targets: [
                     {
                         targetId: 'found',
-                        absolutePath: foundPath,
+                        absolutePath: await realpath(foundPath),
                         collectionId: 'hooks-found',
                         inputIdentity: expect.stringMatching(
                             /^input-v1:[0-9a-f]{64}$/u,
@@ -224,7 +238,7 @@ describe('External Sessions hook installation configuration', () => {
                     },
                     {
                         targetId: 'missing',
-                        absolutePath: missingPath,
+                        absolutePath: join(await realpath(ctx.configDir), 'missing.json'),
                         collectionId: 'hooks-missing',
                         inputIdentity: expect.stringMatching(
                             /^input-missing-v1:[0-9a-f]{64}$/u,
@@ -275,6 +289,163 @@ describe('External Sessions hook installation configuration', () => {
 
         expect(result).toEqual({ ok: false, code: 'invalid_target_path' });
         expect(await readFile(targetPath, 'utf8')).toBe(original);
+    });
+
+    it('rejects a dangling final target alias instead of replacing it as a missing configuration file', async () => {
+        const f = await fixture();
+        const targetDirectory = join(f.root, 'managed-config');
+        const missingTargetPath = join(targetDirectory, 'settings.json');
+        const aliasPath = join(f.configDir, 'settings.json');
+        const ordinaryMissingPath = join(f.configDir, 'ordinary-missing.json');
+        await mkdir(targetDirectory, { recursive: true });
+        await symlink(missingTargetPath, aliasPath, 'file');
+        const input = baseInput({
+            activeServerDir: f.activeServerDir,
+            selectedVariant: variant(),
+            targets: [{ targetId: 'settings', absolutePath: aliasPath }],
+        });
+
+        // A normal missing path remains a valid creation target. The final
+        // dangling alias is different: atomic replacement would destroy its
+        // declared indirection instead of creating the alias target.
+        await expect(resolveExternalSessionHookPhysicalTargetPath(
+            ordinaryMissingPath,
+        )).resolves.toBe(join(
+            await realpath(f.configDir),
+            'ordinary-missing.json',
+        ));
+        await expect(resolveExternalSessionHookPhysicalTargetPath(aliasPath))
+            .resolves.toBeNull();
+        await expect(readExternalSessionHookInstallationConfigSnapshot({
+            selectedVariant: input.selectedVariant,
+            targets: input.targets,
+        })).resolves.toEqual({ ok: false, code: 'invalid_target_path' });
+        await expect(applyExternalSessionHookInstallationAction({
+            ...input,
+            action: 'install',
+        })).resolves.toEqual({ ok: false, code: 'invalid_target_path' });
+
+        expect((await lstat(aliasPath)).isSymbolicLink()).toBe(true);
+        await expect(readFile(missingTargetPath)).rejects.toMatchObject({
+            code: 'ENOENT',
+        });
+        expect(await readExternalSessionHookInstallationRecord(recordPath(input)))
+            .toBeNull();
+    });
+
+    it('rejects two declared targets that name the same physical configuration file', async () => {
+        const f = await fixture();
+        const targetPath = join(f.configDir, 'settings.json');
+        const aliasPath = join(f.root, 'settings-alias.json');
+        const original = '{"hooks":{}}';
+        await writeFile(targetPath, original);
+        await symlink(targetPath, aliasPath, 'file');
+        const input = baseInput({
+            activeServerDir: f.activeServerDir,
+            selectedVariant: variant(['settings', 'alias']),
+            targets: [
+                { targetId: 'settings', absolutePath: targetPath },
+                { targetId: 'alias', absolutePath: aliasPath },
+            ],
+        });
+
+        await expect(applyExternalSessionHookInstallationAction({
+            ...input,
+            action: 'install',
+        })).resolves.toEqual({ ok: false, code: 'invalid_target_path' });
+        expect(await readFile(targetPath, 'utf8')).toBe(original);
+        expect(await readExternalSessionHookInstallationRecord(recordPath(input)))
+            .toBeNull();
+    });
+
+    it('rejects case-only missing target paths as one Windows physical identity', async () => {
+        const f = await fixture();
+        try {
+            const upperCasePath = join(f.configDir, 'Settings.json');
+            const lowerCasePath = join(f.configDir, 'settings.json');
+
+            await withPlatform('win32', async () => {
+                await expect(readExternalSessionHookInstallationConfigSnapshot({
+                    selectedVariant: variant(['upper', 'lower']),
+                    targets: [
+                        { targetId: 'upper', absolutePath: upperCasePath },
+                        { targetId: 'lower', absolutePath: lowerCasePath },
+                    ],
+                })).resolves.toEqual({
+                    ok: false,
+                    code: 'invalid_target_path',
+                });
+            });
+        } finally {
+            await rm(f.root, { recursive: true, force: true });
+        }
+    });
+
+    it('matches case-only missing targets to existing Windows custody while retaining I/O spelling', async () => {
+        const f = await fixture();
+        try {
+            const initialPath = join(f.configDir, 'Settings.json');
+            const replacementPath = join(f.configDir, 'settings.json');
+            let configurationBytes: Buffer | null = null;
+            const writes: string[] = [];
+            const missing = () => Object.assign(new Error('missing'), {
+                code: 'ENOENT',
+            });
+            const persistence = {
+                readConfiguration: async () => {
+                    if (!configurationBytes) throw missing();
+                    return configurationBytes;
+                },
+                readConfigurationForVerification: async () => {
+                    if (!configurationBytes) throw missing();
+                    return configurationBytes;
+                },
+                writeConfigurationAtomic: async (path: string, value: unknown) => {
+                    writes.push(path);
+                    configurationBytes = Buffer.from(
+                        JSON.stringify(value, null, 2),
+                        'utf8',
+                    );
+                },
+            };
+            const first = baseInput({
+                activeServerDir: f.activeServerDir,
+                selectedVariant: variant(),
+                targets: [{ targetId: 'settings', absolutePath: initialPath }],
+            });
+            const replacement = baseInput({
+                activeServerDir: f.activeServerDir,
+                selectedVariant: variant(),
+                targets: [{ targetId: 'settings', absolutePath: replacementPath }],
+            });
+
+            await withPlatform('win32', async () => {
+                await expect(applyExternalSessionHookInstallationAction({
+                    ...first,
+                    action: 'install',
+                    persistence,
+                })).resolves.toMatchObject({
+                    ok: true,
+                    state: 'installed_disabled',
+                });
+                await expect(applyExternalSessionHookInstallationAction({
+                    ...replacement,
+                    action: 'install',
+                    persistence,
+                })).resolves.toMatchObject({
+                    ok: true,
+                    state: 'installed_disabled',
+                });
+            });
+
+            expect(writes).toEqual([initialPath, replacementPath]);
+            expect(await readExternalSessionHookInstallationRecord(recordPath(first)))
+                .toMatchObject({
+                    targets: [{ absolutePath: replacementPath }],
+                });
+        } finally {
+            await rm(f.root, { recursive: true, force: true });
+        }
     });
 
     it('installs every selected-variant event and plugin-unavailable uninstall preserves identical foreign entries', async () => {
@@ -739,6 +910,92 @@ describe('External Sessions hook installation configuration', () => {
         expect(await readFile(movedPath)).toEqual(movedBefore);
     });
 
+    it('keeps hook custody on the original physical target when a parent alias is retargeted', async () => {
+        const f = await fixture();
+        const physicalRootA = join(f.root, 'agent-config-a');
+        const physicalRootB = join(f.root, 'agent-config-b');
+        const aliasRoot = join(f.root, 'agent-config-current');
+        const physicalTargetA = join(physicalRootA, 'settings.json');
+        const physicalTargetB = join(physicalRootB, 'settings.json');
+        await mkdir(physicalRootA, { recursive: true });
+        await mkdir(physicalRootB, { recursive: true });
+        await writeFile(physicalTargetA, '{"hooks":{}}');
+        await writeFile(physicalTargetB, '{"hooks":{}}');
+        await symlink(physicalRootA, aliasRoot, 'dir');
+        const input = baseInput({
+            activeServerDir: f.activeServerDir,
+            selectedVariant: variant(),
+            targets: [{ targetId: 'settings', absolutePath: join(aliasRoot, 'settings.json') }],
+        });
+
+        await expect(applyExternalSessionHookInstallationAction({
+            ...input,
+            action: 'install',
+        })).resolves.toMatchObject({ ok: true, state: 'installed_disabled' });
+        const staleAConfig = JSON.parse(await readFile(physicalTargetA, 'utf8')) as {
+            hooks: Record<string, unknown[]>;
+        };
+        expect(staleAConfig.hooks.SessionStart).toHaveLength(1);
+        await writeFile(physicalTargetB, JSON.stringify(staleAConfig));
+
+        await rm(aliasRoot);
+        await symlink(physicalRootB, aliasRoot, 'dir');
+        await expect(applyExternalSessionHookInstallationAction({
+            ...input,
+            action: 'uninstall',
+        })).resolves.toMatchObject({ ok: true, state: 'not_installed' });
+        await expect(applyExternalSessionHookInstallationAction({
+            ...input,
+            action: 'install',
+        })).resolves.toMatchObject({ ok: true, state: 'installed_disabled' });
+        expect(JSON.parse(await readFile(physicalTargetA, 'utf8'))).toMatchObject({
+            hooks: { SessionStart: [], Stop: [] },
+        });
+        expect(JSON.parse(await readFile(physicalTargetB, 'utf8'))).toMatchObject({
+            hooks: {
+                SessionStart: [expect.any(Object), expect.any(Object)],
+                Stop: [expect.any(Object), expect.any(Object)],
+            },
+        });
+    });
+
+    it('refuses the write when a target alias is retargeted between planning and replacement', async () => {
+        const f = await fixture();
+        const physicalRootA = join(f.root, 'alias-race-a');
+        const physicalRootB = join(f.root, 'alias-race-b');
+        const aliasRoot = join(f.root, 'alias-race-current');
+        const physicalTargetA = join(physicalRootA, 'settings.json');
+        const physicalTargetB = join(physicalRootB, 'settings.json');
+        await mkdir(physicalRootA, { recursive: true });
+        await mkdir(physicalRootB, { recursive: true });
+        const originalA = '{"hooks":{"Foreign":[{"keep":"a"}]}}';
+        const originalB = '{"hooks":{"Foreign":[{"keep":"b"}]}}';
+        await writeFile(physicalTargetA, originalA);
+        await writeFile(physicalTargetB, originalB);
+        await symlink(physicalRootA, aliasRoot, 'dir');
+        const input = baseInput({
+            activeServerDir: f.activeServerDir,
+            selectedVariant: variant(),
+            targets: [{ targetId: 'settings', absolutePath: join(aliasRoot, 'settings.json') }],
+        });
+
+        await expect(applyExternalSessionHookInstallationAction({
+            ...input,
+            action: 'install',
+            testHooks: {
+                beforeCompareAndSwap: async () => {
+                    await rm(aliasRoot);
+                    await symlink(physicalRootB, aliasRoot, 'dir');
+                },
+            },
+        })).resolves.toEqual({ ok: false, code: 'concurrent_edit' });
+
+        expect(await readFile(physicalTargetA, 'utf8')).toBe(originalA);
+        expect(await readFile(physicalTargetB, 'utf8')).toBe(originalB);
+        expect(await readExternalSessionHookInstallationRecord(recordPath(input)))
+            .toMatchObject({ state: 'preparing' });
+    });
+
     it('reports reconciliation and preserves newer bytes after a multi-target partial failure', async () => {
         const f = await fixture();
         const firstPath = join(f.configDir, 'first.json');
@@ -841,6 +1098,104 @@ describe('External Sessions hook installation configuration', () => {
             state: 'preparing',
         });
         expect(await readFile(targetPath)).toEqual(before);
+    });
+
+    it('refuses Disable for crash-visible preparing custody and still cleans it through Uninstall', async () => {
+        const f = await fixture();
+        const targetPath = join(f.configDir, 'settings.json');
+        const foreign = '{"hooks":{"SessionStart":[{"foreign":true}]}}';
+        await writeFile(targetPath, foreign);
+        const input = baseInput({
+            activeServerDir: f.activeServerDir,
+            selectedVariant: variant(),
+            targets: [{ targetId: 'settings', absolutePath: targetPath }],
+        });
+        let recordWrites = 0;
+        await applyExternalSessionHookInstallationAction({
+            ...input,
+            action: 'install',
+            persistence: {
+                writeInstallationRecordAtomic: async (path, value) => {
+                    recordWrites += 1;
+                    if (recordWrites === 2) throw new Error('simulated crash boundary');
+                    await writeJsonAtomic(path, value);
+                },
+            },
+        });
+        expect(await readExternalSessionHookInstallationRecord(recordPath(input)))
+            .toMatchObject({ state: 'preparing' });
+        expect(JSON.parse(await readFile(targetPath, 'utf8'))).toMatchObject({
+            hooks: {
+                SessionStart: [{ foreign: true }, expect.any(Object)],
+                Stop: [expect.any(Object)],
+            },
+        });
+
+        await expect(applyExternalSessionHookInstallationAction({
+            ...input,
+            action: 'disable',
+        })).resolves.toEqual({ ok: false, code: 'reconciliation_required' });
+
+        await expect(applyExternalSessionHookInstallationAction({
+            ...input,
+            action: 'uninstall',
+        })).resolves.toMatchObject({ ok: true, state: 'not_installed' });
+        expect(JSON.parse(await readFile(targetPath, 'utf8'))).toEqual({
+            hooks: { SessionStart: [{ foreign: true }], Stop: [] },
+        });
+        expect(await readExternalSessionHookInstallationRecord(recordPath(input)))
+            .toBeNull();
+    });
+
+    it('cleans crash-visible revoked custody on a retried Uninstall without touching foreign entries', async () => {
+        const f = await fixture();
+        const targetPath = join(f.configDir, 'settings.json');
+        const foreign = '{"hooks":{"SessionStart":[{"foreign":true}]}}';
+        await writeFile(targetPath, foreign);
+        const input = baseInput({
+            activeServerDir: f.activeServerDir,
+            selectedVariant: variant(),
+            targets: [{ targetId: 'settings', absolutePath: targetPath }],
+        });
+        await expect(applyExternalSessionHookInstallationAction({
+            ...input,
+            action: 'install',
+        })).resolves.toMatchObject({ ok: true, state: 'installed_disabled' });
+
+        // Currentness is lost after the configuration entries are already
+        // removed but before the record is deleted, which is exactly the crash
+        // shape that strands `revoked` custody.
+        let current = true;
+        await expect(applyExternalSessionHookInstallationAction({
+            ...input,
+            action: 'uninstall',
+            isCurrent: () => current,
+            persistence: {
+                writeConfigurationAtomic: async (path, value) => {
+                    await writeJsonAtomic(path, value);
+                    current = false;
+                },
+            },
+        })).resolves.toEqual({ ok: false, code: 'reconciliation_required' });
+        expect(await readExternalSessionHookInstallationRecord(recordPath(input)))
+            .toMatchObject({ state: 'revoked' });
+        expect(JSON.parse(await readFile(targetPath, 'utf8'))).toEqual({
+            hooks: { SessionStart: [{ foreign: true }], Stop: [] },
+        });
+
+        await expect(applyExternalSessionHookInstallationAction({
+            ...input,
+            action: 'disable',
+        })).resolves.toEqual({ ok: false, code: 'reconciliation_required' });
+        await expect(applyExternalSessionHookInstallationAction({
+            ...input,
+            action: 'uninstall',
+        })).resolves.toMatchObject({ ok: true, state: 'not_installed' });
+        expect(await readExternalSessionHookInstallationRecord(recordPath(input)))
+            .toBeNull();
+        expect(JSON.parse(await readFile(targetPath, 'utf8'))).toEqual({
+            hooks: { SessionStart: [{ foreign: true }], Stop: [] },
+        });
     });
 
     it('fails closed when the durable record is unreadable instead of reporting not installed', async () => {
@@ -1091,7 +1446,7 @@ describe('External Sessions hook installation configuration', () => {
             schemaVersion: 1,
             machineId: 'machine-1',
             variantId: 'fixture-lifecycle-v1',
-            targets: [{ absolutePath: targetPath }],
+            targets: [{ absolutePath: await realpath(targetPath) }],
             state: 'disabled',
             revision: 1,
         });

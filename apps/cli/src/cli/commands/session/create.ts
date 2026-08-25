@@ -100,10 +100,35 @@ export async function cmdSessionCreate(
     throw new Error(SESSION_CREATE_USAGE);
   }
 
-  const executor = createCliActionExecutorFromCredentials({ credentials });
+  const spawnRequest = { ...parsedOptions.spawnRequest };
+  const executor = createCliActionExecutorFromCredentials({
+    credentials,
+    ...(spawnRequest.machineId ? { machineId: spawnRequest.machineId } : {}),
+  });
+  if (credentials.credentialProvenance === 'api_token' && !spawnRequest.machineId) {
+    const machineTarget = await executor.resolveMachineTarget();
+    if (!machineTarget.ok) {
+      if (structuredCreationOutput) {
+        await printJsonEnvelope({
+          ok: false,
+          kind: 'session_create',
+          error: {
+            code: machineTarget.code,
+            ...(machineTarget.candidates ? { candidates: machineTarget.candidates } : {}),
+          },
+        });
+        return;
+      }
+      throw Object.assign(new Error(machineTarget.code), {
+        code: machineTarget.code,
+        ...(machineTarget.candidates ? { candidates: machineTarget.candidates } : {}),
+      });
+    }
+    spawnRequest.machineId = machineTarget.machineId;
+  }
   let actionRes;
   try {
-    const normalizedSpawn = await normalizeSessionCreateSpawnRequest(parsedOptions.spawnRequest);
+    const normalizedSpawn = await normalizeSessionCreateSpawnRequest(spawnRequest);
     const resolvedActionInput = await resolveSessionCreateConnectedServices({
       executor,
       parsedOptions,

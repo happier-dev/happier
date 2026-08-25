@@ -16,6 +16,8 @@ import {
 import type { DaemonProviderAgentCompatibilitySummaryV1 } from '@happier-dev/protocol/rpc';
 
 import type { ResolvedProviderContribution } from '@/plugins/projection/registry/types';
+import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
+import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { resolveProviderConnectionForMachine, type ProviderContributionRegistryView } from '@/providers/registry';
 import { createProviderConnectionRpcAdapter } from './rpcAdapter';
 import { createProviderConnectionService } from './service';
@@ -225,6 +227,7 @@ function harness(options: Readonly<{
   dnsEvidence?: ReadonlyMap<string, readonly string[]>;
   localDiscoveryEnabled?: boolean;
   managedEnabled?: boolean;
+  managedRuntimeRegistryLease?: PluginRuntimeRegistryLease;
 }> = {}) {
   let raw: Readonly<Record<string, unknown>> = {
     providerSettingsV1: DEFAULT_PROVIDER_SETTINGS_V1,
@@ -242,12 +245,13 @@ function harness(options: Readonly<{
   ) => Readonly<Record<string, unknown>>) | null = null;
   const providersByContributionKey = new Map([[contributionKey, contribution()]]);
   const registry: ProviderContributionRegistryView = { providersByContributionKey };
+  let currentRegistry: ProviderContributionRegistryView = registry;
   let lastSnapshot: ProviderConnectionServiceSnapshot | null = null;
-  const loadSnapshot = vi.fn(async (): Promise<ProviderConnectionServiceSnapshot> => {
+  const loadSnapshot = vi.fn<ProviderConnectionServiceDeps['loadSnapshot']>(async (registryProjection) => {
     const snapshot = {
       accountSettings: AccountSettingsSchema.parse(raw),
       rawAccountSettings: raw,
-      registry,
+      registry: registryProjection?.registry ?? currentRegistry,
     };
     lastSnapshot = snapshot;
     return snapshot;
@@ -269,7 +273,7 @@ function harness(options: Readonly<{
     mutationApplications.push({ input, output: raw });
     return raw;
   });
-  const collectDnsEvidence = vi.fn(async () => options.dnsEvidence ?? new Map([
+  const collectDnsEvidence = vi.fn<ProviderConnectionServiceDeps['collectDnsEvidence']>(async () => options.dnsEvidence ?? new Map([
     ['https://gateway.example/v1', ['1.1.1.1']],
     ['http://127.0.0.1:8080/v1', ['127.0.0.1']],
   ]));
@@ -318,6 +322,7 @@ function harness(options: Readonly<{
     project: compatibilitySummary,
     release: vi.fn(async () => undefined),
   }));
+  const managedRuntimeRegistryLease = options.managedRuntimeRegistryLease;
   const service = createProviderConnectionService({
     machineId: 'machine-a',
     featureGate: { isEnabled: (featureId) => featureId === 'providers'
@@ -338,6 +343,9 @@ function harness(options: Readonly<{
     discoveryCandidates,
     localInstallations,
     refreshOnEnable,
+    ...(managedRuntimeRegistryLease
+      ? { acquireManagedProviderRuntimeRegistryLease: async () => managedRuntimeRegistryLease }
+      : {}),
     startManagedProviderRuntime,
     resolveManagedPurposeBindingIntent,
     now: () => 100,
@@ -348,6 +356,7 @@ function harness(options: Readonly<{
     startManagedProviderRuntime,
     resolveManagedPurposeBindingIntent,
     providersByContributionKey,
+    setRegistry: (next: ProviderContributionRegistryView) => { currentRegistry = next; },
     getRaw: () => raw,
     getLastSnapshot: () => lastSnapshot,
     mutationApplications,
@@ -530,7 +539,66 @@ describe('provider connection service', () => {
     expect(runtimeSummaryInput?.accountSettings).toBe(snapshot?.accountSettings);
     expect(runtimeSummaryInput?.registry.providersByContributionKey).toBe(h.providersByContributionKey);
     expect(runtimeSummaryInput?.dnsEvidence).toBeInstanceOf(Map);
+    expect(runtimeSummaryInput?.lifetime).toBe(
+      h.collectDnsEvidence.mock.calls.at(-1)?.[0]?.lifetime,
+    );
     expect(runtimeSummaryInput?.resolution.record.deployment).toMatchObject({ kind: 'managedLocal' });
+  });
+
+  it('holds one registry projection and deadline through a setEnabled final description', async () => {
+    const h = harness();
+    await expect(h.service.create({
+      action: 'createContribution',
+      machineId: 'machine-a',
+      connectionId: 'pc_generation',
+      contributionKey,
+      displayName: null,
+      savedSecretId: 'secret_api',
+      enable: false,
+    })).resolves.toMatchObject({ status: 'success', created: true });
+    h.loadSnapshot.mockClear();
+    h.collectDnsEvidence.mockClear();
+
+    const replacement = contribution();
+    const replacementRegistry: ProviderContributionRegistryView = {
+      providersByContributionKey: new Map([[contributionKey, {
+        ...replacement,
+        definition: ProviderContributionV1Schema.parse({
+          ...replacement.definition,
+          name: 'Replacement Gateway',
+        }),
+      }]]),
+    };
+    h.beforeNextUpdate((current) => {
+      h.setRegistry(replacementRegistry);
+      return current;
+    });
+
+    await expect(h.service.setEnabled({
+      action: 'setEnabled',
+      machineId: 'machine-a',
+      connectionId: 'pc_generation',
+      enabled: true,
+    })).resolves.toMatchObject({
+      status: 'success',
+      providerName: 'Gateway',
+    });
+
+    const lifetimes = h.collectDnsEvidence.mock.calls.map(([input]) => input.lifetime);
+    expect(lifetimes).toHaveLength(2);
+    expect(lifetimes[0]).toBe(lifetimes[1]);
+    const finalProjection = h.loadSnapshot.mock.calls.at(-1)?.[0];
+    expect(finalProjection?.registry.providersByContributionKey).toBe(
+      h.providersByContributionKey,
+    );
+
+    await expect(h.service.describe({
+      machineId: 'machine-a',
+      connectionId: ProviderConnectionIdSchema.parse('pc_generation'),
+    })).resolves.toMatchObject({
+      status: 'success',
+      connections: [{ providerName: 'Replacement Gateway' }],
+    });
   });
 
   it('does not mutate persisted state for an unmatched managed authoring preview', async () => {
@@ -1777,6 +1845,53 @@ describe('provider connection service', () => {
     const startInput = h.startManagedProviderRuntime.mock.calls[0]?.[0];
     expect(startInput?.isAuthorizationCurrent()).toBe(true);
     await expect(startInput?.revalidateAuthorization()).resolves.toBe(true);
+  });
+
+  it('keeps the admitted runtime registry lease through local start revalidation', async () => {
+    const admittedProvidersByContributionKey = new Map<string, ResolvedProviderContribution>();
+    const release = vi.fn(async () => undefined);
+    const admittedLease: PluginRuntimeRegistryLease = {
+      registry: {
+        generation: 7,
+        contributes: { providersByContributionKey: admittedProvidersByContributionKey },
+      } as unknown as ResolvedExecutablePluginRuntimeRegistry,
+      source: 'active',
+      release,
+    };
+    const h = harness({
+      managedEnabled: false,
+      managedRuntimeRegistryLease: admittedLease,
+    });
+    const managed = localContribution();
+    admittedProvidersByContributionKey.set(contributionKey, {
+      ...managed,
+      definition: ProviderContributionV1Schema.parse({
+        ...managed.definition,
+        managedRuntime: {
+          kind: 'managed',
+          endpointTemplateIds: ['chat'],
+        },
+      }),
+    });
+    h.startManagedProviderRuntime.mockImplementation(async (request) => {
+      await expect(request.revalidateAuthorization()).resolves.toBe(true);
+      return { status: 'running' as const };
+    });
+
+    await expect(h.service.startLocal({
+      action: 'startLocal', machineId: 'machine-a', contributionKey,
+    })).resolves.toMatchObject({ status: 'success', phase: 'running' });
+
+    const startInput = h.startManagedProviderRuntime.mock.calls[0]?.[0];
+    expect(startInput?.runtimeRegistryLease).toBe(admittedLease);
+    expect(release).toHaveBeenCalledOnce();
+    expect(h.loadSnapshot).toHaveBeenCalledTimes(2);
+    const initialProjection = h.loadSnapshot.mock.calls[0]?.[0];
+    const revalidatedProjection = h.loadSnapshot.mock.calls[1]?.[0];
+    expect(revalidatedProjection).toBe(initialProjection);
+    expect(initialProjection).toMatchObject({ generation: '7' });
+    expect(initialProjection?.registry.providersByContributionKey)
+      .toBe(admittedProvidersByContributionKey);
   });
 
   it.each(['bundled', 'path', 'package'] as const)(

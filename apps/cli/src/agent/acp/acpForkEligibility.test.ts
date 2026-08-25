@@ -51,6 +51,15 @@ describe('isAcpForkEligibleForAgent', () => {
     ).toBe(true);
   });
 
+  it('keeps Pi ACP fork eligible when its tool delivery is a native extension', () => {
+    expect(
+      isAcpForkEligibleForAgent({
+        agentId: 'pi',
+        metadata: {},
+      }),
+    ).toBe(true);
+  });
+
   it('treats canonical codex runtime metadata as ACP eligibility for codex', () => {
     expect(
       isAcpForkEligibleForAgent({

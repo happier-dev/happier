@@ -2238,7 +2238,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         expect(runnerCreateRuntime).not.toHaveBeenCalled();
     });
 
-    it('projects the runner current-global External Sessions surface without acquiring the executable registry', async () => {
+    it('composes the retained exact-generation External Sessions surface without acquiring the executable registry', async () => {
         const {
             agentId,
             backendId,
@@ -2254,7 +2254,11 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             activeRegistry: null,
             lastResult: null,
         });
-        const currentExternalSessionProviderOps = {
+        // The retained runner owns exactly one External Sessions authority for
+        // its own Session: the immutable generation that admitted it. Nothing
+        // the daemon's current generation exposes may reach this composition.
+        const retainedExternalSessionProviderOps = {
+            externalLinkedTakeoverWriterSafety: 'unsupported' as const,
             validateSource: vi.fn(),
             listCandidates: vi.fn(),
             resolveLinkIdentity: vi.fn(),
@@ -2289,24 +2293,152 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
                 authorizeNewTurn: async () => ({
                     status: 'admitted' as const,
                 }),
-                currentExternalSessionProviderOps,
+                retainedExternalSessionProviderOps,
             },
         });
         const resolution = await registry.resolveForBackendId(backendId);
 
-        expect(resolution?.executionSurfaces.externalSession).toMatchObject({
-            validateSource: currentExternalSessionProviderOps.validateSource,
-            listCandidates: currentExternalSessionProviderOps.listCandidates,
-            resolveLinkIdentity: currentExternalSessionProviderOps.resolveLinkIdentity,
-            canonicalizeLinkedSession: currentExternalSessionProviderOps.canonicalizeLinkedSession,
-            pageTranscript: currentExternalSessionProviderOps.pageTranscript,
-            readAfterTranscript: currentExternalSessionProviderOps.readAfterTranscript,
-        });
+        expect(resolution?.executionSurfaces.externalSession)
+            .toBe(retainedExternalSessionProviderOps);
         expect(createRuntime).not.toHaveBeenCalled();
         expect(pluginReloadControllerTryAcquireRuntimeRegistryMock)
             .not.toHaveBeenCalled();
         expect(resolveExecutablePluginRuntimeRegistryMock)
             .not.toHaveBeenCalled();
+    });
+
+    it('composes the retained exact-generation External Sessions surface for a bundled first-party Agent', async () => {
+        const {
+            agentId,
+            backendId,
+            pluginId,
+            agent,
+            contributes: seededContributes,
+        } = seedExternalPrimaryAgentRegistry({
+            sessions: true,
+            executionRuns: false,
+            externalSessions: true,
+        });
+        // Every bundled Agent that ships External Sessions (codex, claude) is
+        // `first_party`, and `backend.provenance` mirrors the Agent, so a
+        // retained runner for one resolves through a different registry branch
+        // than the external fixture above. Both branches must reach the same
+        // exact-generation authority; covering only one leaves the branch the
+        // feature actually ships on unguarded.
+        const firstPartyAgent = {
+            ...agent,
+            provenance: 'first_party',
+            source: { kind: 'bundled' },
+            richDefinition: {
+                ...agent.richDefinition!,
+                provenance: 'first_party',
+            },
+        } as unknown as ResolvedAgentContribution;
+        const contributes = {
+            ...seededContributes,
+            agents: [firstPartyAgent],
+            agentDefinitionsById: new Map([[agentId, firstPartyAgent]]),
+        };
+        resolveMergedContributionRegistryMock.mockResolvedValue(contributes);
+        pluginReloadControllerStateMock.mockReturnValue({
+            generation: 1,
+            activeRegistry: null,
+            lastResult: null,
+        });
+        const retainedExternalSessionProviderOps = {
+            externalLinkedTakeoverWriterSafety: 'unsupported' as const,
+            validateSource: vi.fn(),
+            listCandidates: vi.fn(),
+            resolveLinkIdentity: vi.fn(),
+            canonicalizeLinkedSession: vi.fn(),
+            pageTranscript: vi.fn(),
+            readAfterTranscript: vi.fn(),
+        };
+        const createRuntime = vi.fn(async (): Promise<AgentRuntime> => ({
+            sessions: {
+                open: async () => {
+                    throw new Error('not invoked during resolution');
+                },
+            },
+        }));
+
+        const registry = await resolveCliEngineRegistry({
+            contributes,
+            requireRunnerAgentSessionRuntimeSource: true,
+            runnerAgentSessionRuntimeSource: {
+                agentContribution: firstPartyAgent,
+                identity: {
+                    pluginId,
+                    pluginVersion: '0.0.0',
+                    agentId,
+                    backendId,
+                    generation: 'runner-generation-1',
+                    isCurrent: () => true,
+                },
+                createRuntime,
+                createInvocationServices: () => ({}) as never,
+                authorizeNewTurn: async () => ({
+                    status: 'admitted' as const,
+                }),
+                retainedExternalSessionProviderOps,
+            },
+        });
+        const resolution = await registry.resolveForBackendId(backendId);
+
+        expect(resolution?.executionSurfaces.externalSession)
+            .toBe(retainedExternalSessionProviderOps);
+        expect(createRuntime).not.toHaveBeenCalled();
+    });
+
+    it('leaves the retained External Sessions composition unresolved when the retained generation has no companion', async () => {
+        const {
+            agentId,
+            backendId,
+            pluginId,
+            contributes,
+        } = seedExternalPrimaryAgentRegistry({
+            sessions: true,
+            executionRuns: false,
+            externalSessions: true,
+        });
+        pluginReloadControllerStateMock.mockReturnValue({
+            generation: 1,
+            activeRegistry: null,
+            lastResult: null,
+        });
+        const createRuntime = vi.fn(async (): Promise<AgentRuntime> => ({
+            sessions: {
+                open: async () => {
+                    throw new Error('not invoked during resolution');
+                },
+            },
+        }));
+
+        const registry = await resolveCliEngineRegistry({
+            contributes,
+            requireRunnerAgentSessionRuntimeSource: true,
+            runnerAgentSessionRuntimeSource: {
+                agentContribution:
+                    contributes.agentDefinitionsById.get(agentId)!,
+                identity: {
+                    pluginId,
+                    pluginVersion: '0.0.0',
+                    agentId,
+                    backendId,
+                    generation: 'runner-generation-1',
+                    isCurrent: () => true,
+                },
+                createRuntime,
+                createInvocationServices: () => ({}) as never,
+                authorizeNewTurn: async () => ({
+                    status: 'admitted' as const,
+                }),
+                retainedExternalSessionProviderOps: null,
+            },
+        });
+        const resolution = await registry.resolveForBackendId(backendId);
+
+        expect(resolution?.executionSurfaces.externalSession).toBeNull();
     });
 
     it.each([

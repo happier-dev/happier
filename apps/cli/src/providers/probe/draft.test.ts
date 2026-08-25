@@ -51,7 +51,11 @@ function snapshot(secretValue = 'secret-a') {
   return {
     source: 'cache' as const,
     settings: AccountSettingsSchema.parse({
-      secrets: [{ id: 'saved-secret-a', encryptedValue: { _isSecretValue: true, encryptedValue } }],
+      secrets: [{
+        id: 'saved-secret-a',
+        name: 'Draft probe secret',
+        encryptedValue: { _isSecretValue: true, encryptedValue },
+      }],
     }),
     settingsVersion: 1,
     loadedAtMs: 1,

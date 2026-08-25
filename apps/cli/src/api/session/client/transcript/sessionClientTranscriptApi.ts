@@ -8,6 +8,7 @@ import {
     readVoiceAgentTurnPayloadFromMeta,
     validatePluginHookPayloadV1,
     type ComposerAttachmentInputV1,
+    type ComposerContentHandleV1,
 } from '@happier-dev/protocol';
 import type {
     PrimaryTurnStatusV1,
@@ -120,6 +121,8 @@ type SessionPresenceSnapshot = Readonly<{
 export type SessionInputAdmissionSettlement = Readonly<{
     onAccepted: () => Promise<void> | void;
     onDefinitiveAdmissionFailure: () => Promise<void> | void;
+    /** Opaque target-daemon claims forwarded only through the Pending accepted fact. */
+    stagedMediaHandles?: readonly ComposerContentHandleV1[];
 }>;
 
 export type SessionInputTransformBeforeCommitResult =
@@ -154,6 +157,9 @@ function normalizeSessionInputTransformBeforeCommitResult(
     const settlement = asMetadataRecord(candidate?.settlement);
     const onAccepted = settlement?.onAccepted;
     const onDefinitiveAdmissionFailure = settlement?.onDefinitiveAdmissionFailure;
+    const stagedMediaHandles = Array.isArray(settlement?.stagedMediaHandles)
+        ? settlement.stagedMediaHandles as readonly ComposerContentHandleV1[]
+        : undefined;
     if (
         transformed
         && isSessionInputAdmissionSettlementCallback(onAccepted)
@@ -161,7 +167,11 @@ function normalizeSessionInputTransformBeforeCommitResult(
     ) {
         return {
             transformed,
-            settlement: { onAccepted, onDefinitiveAdmissionFailure },
+            settlement: {
+                onAccepted,
+                onDefinitiveAdmissionFailure,
+                ...(stagedMediaHandles ? { stagedMediaHandles } : {}),
+            },
         };
     }
     return { transformed: value };
@@ -254,6 +264,16 @@ export type SessionClientTranscriptApi = Readonly<{
             request: SessionInputRequestV1;
         }>;
     }>) => Promise<void>;
+    preparePendingMessageComposerAdmission: (params: Readonly<{
+        localId: string;
+        text: string;
+        meta: Record<string, unknown>;
+    }>) => Promise<Readonly<{
+        text: string;
+        meta: Record<string, unknown>;
+        composerAttachments: readonly ComposerAttachmentInputV1[];
+        stagedMediaHandles: readonly ComposerContentHandleV1[];
+    }>>;
     enqueueAgentMessageCommitted: (
         provider: ACPProvider,
         body: ACPMessageData,
@@ -632,6 +652,23 @@ export function createSessionClientTranscriptApi(
     };
 
     return {
+        async preparePendingMessageComposerAdmission(params) {
+            const transformed = await transformSessionInputPayloadBeforeCommit({
+                localId: params.localId,
+                text: params.text,
+                meta: params.meta,
+                timestampMs: Date.now(),
+            });
+            // Pending persistence is deliberately outside this API. Its canonical PATCH
+            // owner decides acceptance; uncalled settlement callbacks retain custody.
+            return {
+                text: transformed.text,
+                meta: transformed.meta,
+                composerAttachments: transformed.composerAttachments,
+                stagedMediaHandles: transformed.settlement?.stagedMediaHandles ?? [],
+            };
+        },
+
         async enqueueSessionEventCommitted(event, id) {
             const prepared = prepareSessionEventMessageViaPort(getTranscriptSendPort(), event, id);
             const now = Date.now();

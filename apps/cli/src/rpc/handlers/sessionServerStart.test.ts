@@ -57,6 +57,8 @@ const request: SessionServerStartDispatchRequestV1 = {
     start: {
         automationId: "automation-1",
         runId: "run-1",
+        attempt: 3,
+        claimedByMachineId: "machine-source",
         origin: "event",
         accountCurrentness: {
             mode: "plain",

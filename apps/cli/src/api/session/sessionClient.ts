@@ -1264,6 +1264,9 @@ export class ApiSessionClient extends EventEmitter {
             getStoredContentCryptoContext: () => this.storedContentCrypto,
         });
         this.sessionRuntimeControls.wakePendingMaterialization = () => this.wakePendingMaterialization();
+        this.sessionRuntimeControls.preparePendingMessageComposerAdmission = async (request) => (
+            await this.transcriptApi.preparePendingMessageComposerAdmission(request)
+        );
 
         const { userSocket, sessionConnectionSupervisor } = initializeSessionClientConnection({
             token: this.token,
@@ -1557,6 +1560,9 @@ export class ApiSessionClient extends EventEmitter {
         const hadGoalControls = typeof this.sessionRuntimeControls.setGoal === 'function'
             || typeof this.sessionRuntimeControls.clearGoal === 'function';
         applySessionRuntimeControls(this.sessionRuntimeControls, controls);
+        this.sessionRuntimeControls.preparePendingMessageComposerAdmission = async (request) => (
+            await this.transcriptApi.preparePendingMessageComposerAdmission(request)
+        );
         this.publishSessionGoalControlCapabilities({ forceUnsupportedWrite: hadGoalControls });
     }
 

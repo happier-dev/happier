@@ -667,8 +667,13 @@ export function createCliApprovalsArtifactStore(params: Readonly<{
         return { ok: false, errorCode: 'subject_mismatch', error: 'target_action_approval_subject_mismatch' };
       }
       if (targetActionApprovalRequestsEqual(existingRequest, request)) return { ok: true };
-      if (existingRequest.status !== 'open'
-        || (request.status !== 'approved' && request.status !== 'rejected' && request.status !== 'canceled')
+      const isOpenDecision = existingRequest.status === 'open'
+        && (request.status === 'approved' || request.status === 'rejected' || request.status === 'canceled');
+      const isApprovedExecution = existingRequest.status === 'approved'
+        && (request.status === 'executed' || request.status === 'failed')
+        && request.decision?.kind === 'approve'
+        && request.execution !== undefined;
+      if ((!isOpenDecision && !isApprovedExecution)
         || request.updatedAtMs < existingRequest.updatedAtMs) {
         return { ok: false, errorCode: 'invalid_transition', error: 'target_action_approval_invalid_transition' };
       }

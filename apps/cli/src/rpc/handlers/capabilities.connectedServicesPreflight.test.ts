@@ -72,28 +72,6 @@ describe('capabilities.invoke connected-service preflight', () => {
       payload: record,
       randomBytes: (length) => randomBytes(length),
     });
-    const getConnectedServiceAuthGroup = vi.fn(async () => ({
-      v: 1 as const,
-      serviceId: 'openai-codex' as const,
-      groupId: 'happier',
-      activeProfileId: 'leeroy',
-      generation: 1340,
-      policy: { v: 1 as const, autoSwitch: false, strategy: 'priority' as const },
-      state: {},
-      createdAt: 1,
-      updatedAt: 2,
-      members: [{
-        v: 1 as const,
-        serviceId: 'openai-codex' as const,
-        groupId: 'happier',
-        profileId: 'leeroy',
-        priority: 0,
-        enabled: true,
-        state: {},
-        createdAt: 1,
-        updatedAt: 2,
-      }],
-    }));
     const getConnectedServiceCredentialSealed = vi.fn(async () => ({
       revisionSemantics: 'revisioned' as const,
       credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
@@ -105,13 +83,10 @@ describe('capabilities.invoke connected-service preflight', () => {
         expiresAt: null,
       },
     }));
-    const updateConnectedServiceAuthGroupActiveProfile = vi.fn();
     const api = {
       getServerFeaturesSnapshot: async () => undefined,
       getAccountEncryptionMode: async () => 'e2ee' as const,
-      getConnectedServiceAuthGroup,
       getConnectedServiceCredentialSealed,
-      updateConnectedServiceAuthGroupActiveProfile,
       listConnectedServiceProfiles: async () => ({
         serviceId: 'openai-codex' as const,
         profiles: [{ profileId: 'leeroy', status: 'connected' as const }],
@@ -143,7 +118,7 @@ describe('capabilities.invoke connected-service preflight', () => {
 
     const response = await call(RPC_METHODS.CAPABILITIES_INVOKE, {
       id: 'cli.codex',
-      method: 'probeModels',
+      method: 'probePassiveRealtimeSetup',
       params: {
         cwd: tempDir,
         timeoutMs: 5_000,
@@ -152,26 +127,24 @@ describe('capabilities.invoke connected-service preflight', () => {
           bindingsByServiceId: {
             'openai-codex': {
               source: 'connected',
-              selection: 'group',
-              groupId: 'happier',
+              selection: 'profile',
+              profileId: 'leeroy',
             },
           },
         },
       },
     });
 
-    expect(response).toMatchObject({ ok: true, result: { source: 'dynamic' } });
-    expect(getConnectedServiceAuthGroup).toHaveBeenCalledWith({
-      serviceId: 'openai-codex',
-      groupId: 'happier',
-    });
+    expect(response).toEqual({ ok: true, result: { v: 1, status: 'ready' } });
     expect(getConnectedServiceCredentialSealed).toHaveBeenCalledWith({
       serviceId: 'openai-codex',
       profileId: 'leeroy',
     });
-    expect(updateConnectedServiceAuthGroupActiveProfile).not.toHaveBeenCalled();
     const captured = JSON.parse(readFileSync(captureFile, 'utf8')) as Record<string, unknown>;
     expect(captured.CODEX_HOME).toEqual(expect.any(String));
+    const methods = JSON.parse(readFileSync(join(tempDir, 'captured-methods.json'), 'utf8')) as string[];
+    expect(methods).toEqual(['initialize', 'account/read', 'experimentalFeature/list']);
+    expect(methods.some((method) => method.startsWith('thread/') || method.startsWith('realtime/'))).toBe(false);
   }, 90_000);
 
   it('fails closed instead of probing ambient auth when selected credentials are unavailable', async () => {

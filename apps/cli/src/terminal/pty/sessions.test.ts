@@ -1,6 +1,6 @@
 import { Buffer } from 'node:buffer';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   TERMINAL_STREAM_MAX_FRAME_DECODED_BYTES,
@@ -19,6 +19,7 @@ class FakePty implements PtyProcess {
   public readonly pid: number;
   public readonly writes: string[] = [];
   public readonly resizes: Array<Readonly<{ cols: number; rows: number }>> = [];
+  public killCount = 0;
   private readonly onDataListeners = new Set<(data: string | Buffer) => void>();
   private readonly onExitListeners = new Set<(e: PtyExitEvent) => void>();
 
@@ -35,7 +36,7 @@ class FakePty implements PtyProcess {
   }
 
   kill(): void {
-    // noop
+    this.killCount += 1;
   }
 
   onData(listener: (data: string) => void): Disposable {
@@ -177,6 +178,32 @@ describe('TerminalPtySessionManager', () => {
     expect(second).toEqual({ ok: true, terminalId: first.terminalId, reused: true });
   });
 
+  it('releases every live PTY when the daemon-owned manager is disposed', () => {
+    const provider = new FakePtyProvider();
+    const manager = createTerminalPtySessionManager({
+      ptyProvider: provider,
+      config: defaultConfig(),
+      now: () => 0,
+      env: BASH_ENV,
+      platform: 'linux',
+    });
+
+    const first = manager.ensure({ terminalKey: 'dispose-a', cwd: '/tmp' });
+    const second = manager.ensure({ terminalKey: 'dispose-b', cwd: '/tmp' });
+    expect(first.ok).toBe(true);
+    expect(second.ok).toBe(true);
+
+    (manager as unknown as Readonly<{ dispose: () => void }>).dispose();
+
+    expect(provider.spawned.map(({ pty }) => pty.killCount)).toEqual([1, 1]);
+    if (!first.ok) throw new Error('expected first terminal');
+    expect(manager.read({ terminalId: first.terminalId, cursor: 0, maxBytes: 1024, maxEvents: 10 })).toEqual({
+      ok: false,
+      errorCode: 'terminal_not_found',
+      error: 'terminal_not_found',
+    });
+  });
+
   it('reports resize-unavailable when a reused terminal cannot apply requested dimensions', () => {
     const provider = new FakeResizeUnavailableProvider();
     const manager = createTerminalPtySessionManager({
@@ -284,6 +311,42 @@ describe('TerminalPtySessionManager', () => {
       availableByteOffset: 4,
       droppedBeforeByteOffset: 0,
       done: false,
+    });
+  });
+
+  it('flushes incomplete UTF-8 carry into the legacy projection before process exit', () => {
+    const provider = new FakePtyProvider();
+    const manager = createTerminalPtySessionManager({
+      ptyProvider: provider,
+      config: defaultConfig(),
+      now: () => 0,
+      env: BASH_ENV,
+      platform: 'linux',
+    });
+
+    const ensured = manager.ensure({ terminalKey: 'exit-carry', cwd: '/tmp' });
+    expect(ensured.ok).toBe(true);
+    if (!ensured.ok) throw new Error('expected terminal');
+    const pty = provider.spawned[0]?.pty;
+    if (!pty) throw new Error('missing fake pty');
+
+    pty.emitData(Buffer.from([0xe2, 0x82]));
+    pty.emitExit({ exitCode: 0, signal: 0 });
+
+    expect(manager.read({
+      terminalId: ensured.terminalId,
+      cursor: 0,
+      maxBytes: 1024,
+      maxEvents: 10,
+    })).toEqual({
+      ok: true,
+      terminalId: ensured.terminalId,
+      events: [
+        { t: 'data', data: '\ufffd' },
+        { t: 'exit', exitCode: 0, signal: 0 },
+      ],
+      nextCursor: 2,
+      done: true,
     });
   });
 
@@ -478,6 +541,39 @@ describe('TerminalPtySessionManager', () => {
     now = 120;
     expect(manager.input({ terminalId: ensured.terminalId, data: 'still attached' })).toEqual({ ok: true });
     expect(pty.writes).toEqual(['still attached']);
+  });
+
+  it('reaps a silent PTY at its idle timeout without another manager request', () => {
+    vi.useFakeTimers();
+    try {
+      let now = 0;
+      const provider = new FakePtyProvider();
+      const manager = createTerminalPtySessionManager({
+        ptyProvider: provider,
+        config: defaultConfig({ idleTimeoutMs: 100 }),
+        now: () => now,
+        env: BASH_ENV,
+        platform: 'linux',
+      });
+
+      const ensured = manager.ensure({ terminalKey: 'idle-silent', cwd: '/tmp' });
+      expect(ensured.ok).toBe(true);
+      if (!ensured.ok) throw new Error('expected terminal');
+
+      now = 100;
+      vi.advanceTimersByTime(100);
+
+      expect(provider.spawned[0]?.pty.killCount).toBe(1);
+      expect(manager.read({ terminalId: ensured.terminalId, cursor: 0, maxBytes: 1024, maxEvents: 10 })).toEqual({
+        ok: false,
+        errorCode: 'terminal_not_found',
+        error: 'terminal_not_found',
+      });
+      manager.dispose();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('delivers byte-stream URL control frames even when byte credit is exhausted', () => {

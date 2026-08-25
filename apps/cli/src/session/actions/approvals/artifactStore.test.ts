@@ -471,7 +471,7 @@ describe('createCliApprovalsArtifactStore', () => {
     expect(mockPost).toHaveBeenCalledTimes(1);
   });
 
-  it('accepts one decision transition, makes its replay idempotent, and rejects terminal replacement', async () => {
+  it('persists an approved target action through one idempotent terminal execution transition', async () => {
     const credentials = createCredentials();
     const store = createStore(credentials);
     const open = TargetActionApprovalRequestV1Schema.parse({
@@ -497,18 +497,33 @@ describe('createCliApprovalsArtifactStore', () => {
     await expect(store.targetActionApprovalsUpdate({ artifactId: created.artifactId, request: approved }))
       .resolves.toEqual({ ok: true });
 
+    let executedPayload: any;
+    const executed = TargetActionApprovalRequestV1Schema.parse({
+      ...approved,
+      status: 'executed',
+      updatedAtMs: 3,
+      execution: { executedAtMs: 3, ok: true, result: { published: true } },
+    });
     mockGet.mockImplementationOnce(async () => fullRecord(approvedPayload, 2));
-    await expect(store.targetActionApprovalsUpdate({ artifactId: created.artifactId, request: approved }))
+    mockPost.mockImplementationOnce(async (_url: string, body: any) => {
+      executedPayload = body;
+      return { status: 200, data: { success: true } };
+    });
+    await expect(store.targetActionApprovalsUpdate({ artifactId: created.artifactId, request: executed }))
       .resolves.toEqual({ ok: true });
-    expect(mockPost).toHaveBeenCalledTimes(2);
 
-    mockGet.mockImplementationOnce(async () => fullRecord(approvedPayload, 2));
+    mockGet.mockImplementationOnce(async () => fullRecord(executedPayload, 3));
+    await expect(store.targetActionApprovalsUpdate({ artifactId: created.artifactId, request: executed }))
+      .resolves.toEqual({ ok: true });
+    expect(mockPost).toHaveBeenCalledTimes(3);
+
+    mockGet.mockImplementationOnce(async () => fullRecord(executedPayload, 3));
     const rejected = TargetActionApprovalRequestV1Schema.parse({
-      ...open, status: 'rejected', updatedAtMs: 3, decision: { kind: 'reject', decidedAtMs: 3 },
+      ...open, status: 'rejected', updatedAtMs: 4, decision: { kind: 'reject', decidedAtMs: 4 },
     });
     await expect(store.targetActionApprovalsUpdate({ artifactId: created.artifactId, request: rejected }))
       .resolves.toMatchObject({ ok: false, errorCode: 'invalid_transition' });
-    expect(mockPost).toHaveBeenCalledTimes(2);
+    expect(mockPost).toHaveBeenCalledTimes(3);
   });
 
   it('reads approval requests by decrypting artifact bodies', async () => {

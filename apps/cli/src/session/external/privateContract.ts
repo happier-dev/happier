@@ -196,6 +196,16 @@ export interface ExternalSessionsCompositionPort {
   resolveFollowTarget(input: {
     agentId: ExternalSessionAgentId;
     remoteSessionId: ExternalSessionRef['remoteSessionId'];
+    /**
+     * Exact source this Session is already bound to, read by the host from the
+     * Session's own link authority. When present the follow target resolves
+     * through that source alone instead of scanning the Agent's configured
+     * aggregate, so two configured sources exposing the same remote id cannot
+     * make an already-bound Session ambiguous or silently rebind it to a source
+     * it was never linked through. Callers outside the host's link authority
+     * must not supply it.
+     */
+    boundSource?: ExternalSessionsSource;
     /** Private terminal admission ceiling; never projected through the public author service. */
     admissionDeadlineAtMs?: number;
     signal?: AbortSignal;

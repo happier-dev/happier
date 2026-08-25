@@ -1,4 +1,5 @@
 import type { ExternalSessionsAgentId, ExternalSessionsSource } from '@happier-dev/protocol';
+import { isDeepStrictEqual } from 'node:util';
 
 import { configuration } from '@/configuration';
 import { resolveExternalSessionSourceSurface } from '@/session/actions/externalSessions/providerOpsResolution';
@@ -96,6 +97,19 @@ export async function validateExternalMachineSource(params: Readonly<{
     agentSettings: getActiveAccountSettingsSnapshot()?.settings,
     activeServerId: configuration.activeServerId,
     canonicalize: async (candidate) => {
+      // The requested source can itself be the declaration's authorized
+      // instance. Its first physical resolution above already produced the
+      // canonical value needed for the comparison, so issuing the identical
+      // leaf call again would make one browse action probe the same source
+      // twice. Different spellings still take the second resolution: that is
+      // what compares a caller's alias (for example, a trailing slash) with
+      // the configured canonical source.
+      if (
+        isDeepStrictEqual(candidate, resolved.source)
+        || isDeepStrictEqual(candidate, validated.source)
+      ) {
+        return validated.source;
+      }
       const authorized = await validateSource({ source: candidate, env });
       return authorized.ok ? authorized.source : null;
     },

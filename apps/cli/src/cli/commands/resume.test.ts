@@ -1065,29 +1065,35 @@ describe('happier resume', () => {
     }
   });
 
-  it('fails direct terminal resume typed instead of using raw auth-group CAS without the daemon switch owner', async () => {
+  it('fails direct terminal resume typed instead of using the raw qualified-group mutation without the daemon switch owner', async () => {
     const home = await mkdtemp(join(tmpdir(), 'happier-resume-group-owner-home-'));
     const directory = await mkdtemp(join(tmpdir(), 'happier-resume-group-owner-dir-'));
     const previousHome = process.env.HAPPIER_HOME_DIR;
     const previousServerUrl = process.env.HAPPIER_SERVER_URL;
     const previousWebappUrl = process.env.HAPPIER_WEBAPP_URL;
     const previousCwd = process.cwd();
-    let rawCasRequests = 0;
+    let rawGroupMutationRequests = 0;
     const restoreSpies: Array<() => void> = [];
 
     const server = await new Promise<Server>((resolve, reject) => {
       const next = createServer((req, res) => {
         const url = new URL(req.url ?? '/', `http://${req.headers.host ?? '127.0.0.1'}`);
         res.setHeader('content-type', 'application/json');
-        if (req.method === 'GET' && url.pathname === '/v3/connect/openai-codex/groups/codex-main') {
+        if (req.method === 'GET' && url.pathname === '/v4/connect/qualified/group') {
           res.end(JSON.stringify({
             group: {
               v: 1,
-              serviceId: 'openai-codex',
-              groupId: 'codex-main',
+              ref: {
+                service: {
+                  pluginId: 'happier.agent.codex',
+                  localId: 'openai-codex',
+                },
+                groupId: 'codex-main',
+              },
+              incarnation: 'qualified-group-row-codex-main',
               displayName: 'Codex main',
               policy: { v: 1, strategy: 'priority', autoSwitch: true },
-              activeProfileId: 'primary',
+              activeConnectedAccountId: 'primary',
               generation: 5,
               runtimeStateRevision: 0,
               state: {},
@@ -1096,9 +1102,7 @@ describe('happier resume', () => {
               members: [
                 {
                   v: 1,
-                  serviceId: 'openai-codex',
-                  groupId: 'codex-main',
-                  profileId: 'primary',
+                  connectedAccountId: 'primary',
                   priority: 1,
                   enabled: true,
                   state: {},
@@ -1107,9 +1111,7 @@ describe('happier resume', () => {
                 },
                 {
                   v: 1,
-                  serviceId: 'openai-codex',
-                  groupId: 'codex-main',
-                  profileId: 'backup',
+                  connectedAccountId: 'backup',
                   priority: 2,
                   enabled: true,
                   state: {},
@@ -1131,10 +1133,10 @@ describe('happier resume', () => {
           }));
           return;
         }
-        if (req.method === 'POST' && url.pathname === '/v3/connect/openai-codex/groups/codex-main/active-profile') {
-          rawCasRequests += 1;
+        if (req.method === 'POST' && url.pathname === '/v4/connect/qualified/group/active-account') {
+          rawGroupMutationRequests += 1;
           res.statusCode = 500;
-          res.end(JSON.stringify({ error: 'raw_cas_must_remain_unreachable' }));
+          res.end(JSON.stringify({ error: 'raw_group_mutation_must_remain_unreachable' }));
           return;
         }
         res.statusCode = 404;
@@ -1247,7 +1249,7 @@ describe('happier resume', () => {
 
       expect(foregroundAdmissionSpy).toHaveBeenCalledTimes(1);
       expect(foregroundReleaseSpy).toHaveBeenCalledTimes(1);
-      expect(rawCasRequests).toBe(0);
+      expect(rawGroupMutationRequests).toBe(0);
       const output = errorSpy.mock.calls.flat().join('\n');
       expect(output).toContain('Connected service auth group switch coordinator unavailable (openai-codex/codex-main)');
       expect(output).not.toContain('The Agent runtime cannot use this Provider binding.');

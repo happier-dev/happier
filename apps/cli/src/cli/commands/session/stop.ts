@@ -1,7 +1,7 @@
 import chalk from 'chalk';
 
 import type { StoredCredentials } from '@/persistence';
-import { readCommandPositionals } from '@/cli/commands/shared/argvFlags';
+import { readCommandPositionals, readFlagValue } from '@/cli/commands/shared/argvFlags';
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { normalizeActionExecuteResult } from './shared/normalizeActionExecuteResult';
@@ -19,10 +19,11 @@ export async function cmdSessionStop(
     usage: SESSION_STOP_USAGE,
     startIndex: 1,
     booleanFlags: ['--json'],
+    valueFlags: ['--machine-id'],
     maxPositionals: 1,
   });
   const json = wantsJson(argv);
-  const [idOrPrefix = ''] = readCommandPositionals(argv, { startIndex: 1 });
+  const [idOrPrefix = ''] = readCommandPositionals(argv, { startIndex: 1, valueFlags: ['--machine-id'] });
   if (!idOrPrefix) {
     throw new Error(SESSION_STOP_USAGE);
   }
@@ -37,7 +38,11 @@ export async function cmdSessionStop(
     process.exit(1);
   }
 
-  const executor = createCliActionExecutorFromCredentials({ credentials });
+  const machineId = readFlagValue(argv, '--machine-id');
+  const executor = createCliActionExecutorFromCredentials({
+    credentials,
+    ...(machineId !== null ? { machineId } : {}),
+  });
   const actionRes = await executor.execute(
     'session.stop',
     { sessionId: idOrPrefix },

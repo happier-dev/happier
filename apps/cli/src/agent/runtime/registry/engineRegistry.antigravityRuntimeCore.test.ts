@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { Credentials } from '@/persistence';
-import { BUNDLED_FIRST_PARTY_PLUGIN_PACKAGE_NAMES } from '../../../plugins/projection/registry/sources/generatedBundledPlugins';
+import { BUNDLED_FIRST_PARTY_PLUGIN_PACKAGE_NAMES } from '../../../plugins/projection/registry/sources/generatedBundledPluginManifests';
 import { resolveBuiltInContributions } from '../../../plugins/projection/registry/resolveBuiltInContributions';
 import type { ResolvedContributionRegistry } from '../../../plugins/projection/registry/types';
 import { resolveExecutablePluginRuntimeRegistry } from '../../../plugins/runtime/resolveExecutablePluginRuntimeRegistry';

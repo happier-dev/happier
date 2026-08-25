@@ -151,6 +151,70 @@ describe('setSessionModel', () => {
     expect(updateSessionMetadataWithRetry).not.toHaveBeenCalled();
   });
 
+  it('projects unexpected active RPC failures before exposing model-transition details', async () => {
+    resolveSessionTransportContext.mockResolvedValue(transport(true));
+    callSessionRpc.mockRejectedValue(new Error([
+      'client_secret=model-transition-client-secret-sentinel',
+      'https://alice:credential-url-sentinel@example.test/model?access_token=query-token-sentinel',
+      'path=/Users/alice/model-transition-private-sentinel.json',
+    ].join(' ')));
+
+    const result = await setSessionModel({
+      credentials,
+      idOrPrefix: 'sess-1',
+      modelId: 'next-model',
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      status: 'owner_unavailable',
+      requestedSelection: { modelId: 'next-model' },
+    });
+    if (result.ok || !('reason' in result)) throw new Error('Expected owner-unavailable reason');
+    expect(result.reason).not.toContain('model-transition-client-secret-sentinel');
+    expect(result.reason).not.toContain('credential-url-sentinel');
+    expect(result.reason).not.toContain('query-token-sentinel');
+    expect(result.reason).not.toContain('/Users/alice/model-transition-private-sentinel.json');
+    expect(updateSessionMetadataWithRetry).not.toHaveBeenCalled();
+  });
+
+  it('projects an active owner failure reason before exposing model-transition details', async () => {
+    resolveSessionTransportContext.mockResolvedValue(transport(true));
+    callSessionRpc.mockResolvedValue({
+      ok: false,
+      status: 'apply_failed',
+      activeSelection: metadata.modelSelectionIntentV1.selection,
+      requestedSelection: {
+        agentTargetKey: 'backend:codex',
+        providerConnectionId: null,
+        modelId: 'next-model',
+      },
+      reason: [
+        'client_secret=model-result-client-secret-sentinel',
+        'https://alice:model-result-password-sentinel@example.test/model?access_token=model-result-query-token-sentinel',
+        'path=/Users/alice/model-result-private-sentinel.json',
+      ].join(' '),
+    });
+
+    const result = await setSessionModel({
+      credentials,
+      idOrPrefix: 'sess-1',
+      modelId: 'next-model',
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      status: 'apply_failed',
+      requestedSelection: { modelId: 'next-model' },
+    });
+    if (result.ok || !('reason' in result)) throw new Error('Expected active-owner reason');
+    expect(result.reason).not.toContain('model-result-client-secret-sentinel');
+    expect(result.reason).not.toContain('model-result-password-sentinel');
+    expect(result.reason).not.toContain('model-result-query-token-sentinel');
+    expect(result.reason).not.toContain('/Users/alice/model-result-private-sentinel.json');
+    expect(updateSessionMetadataWithRetry).not.toHaveBeenCalled();
+  });
+
   it('inherits an omitted provider id from active binding facts, not a pending restart proposal', async () => {
     resolveSessionTransportContext.mockResolvedValue(transport(true, {
       metadata: JSON.stringify({

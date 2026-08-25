@@ -9,6 +9,7 @@ import type {
   SessionModelTransitionRequestV1,
   SessionActiveModelSelectionV1,
   AgentSessionRuntimeEvent,
+  SessionPendingMessageComposerAdmissionAcceptedRequestV1,
   SessionMetadataPublisherPreconditionV1,
 } from '@happier-dev/protocol';
 import type {
@@ -185,6 +186,7 @@ import {
 import { resolveNativeAgentModelApplyPolicy } from '@/providers/sessions/resolveNativeAgentModelApplyPolicy';
 import { applyActiveModelFacts } from '@/providers/sessions/applyActiveModelFacts';
 import { readProcessIdentityByPid } from '@/daemon/processIdentity';
+import { notifyComposerAttachmentsAfterMessageAccepted } from '@/session/composer/notifyComposerAttachmentsAfterMessageAccepted';
 
 type TransformSessionInputBeforeCommit = NonNullable<
   ApiSessionClientOptions['transformSessionInputBeforeCommit']
@@ -230,6 +232,7 @@ function createScopedSessionInputTransformer(
       settlement: {
         onAccepted: async () => await settle('accepted'),
         onDefinitiveAdmissionFailure: async () => await settle('definitiveFailure'),
+        stagedMediaHandles: stagedMedia.settlement.releaseIntents.map(({ handle }) => handle),
       },
     };
   };
@@ -246,6 +249,49 @@ function createScopedComposerAttachmentAcceptanceNotifier(
       event,
       signal,
     });
+  };
+}
+
+function createPendingMessageComposerAdmissionAcceptedControl(
+  bridge: SessionLoopLifecycleDeps['daemonTurnContributionsBridge'],
+  getSessionId: () => string,
+): ((request: SessionPendingMessageComposerAdmissionAcceptedRequestV1) => Promise<void>) | undefined {
+  if (!bridge) return undefined;
+  return async (request) => {
+    const sessionId = getSessionId();
+    if (request.sessionId !== sessionId) {
+      throw new Error('Pending Composer acceptance belongs to a different Session');
+    }
+
+    notifyComposerAttachmentsAfterMessageAccepted({
+      sessionId,
+      localId: request.localId,
+      attachments: request.structuredInput.composerAttachments ?? [],
+      notify: createScopedComposerAttachmentAcceptanceNotifier(bridge),
+      signal: new AbortController().signal,
+    });
+
+    const releaseIntents = request.stagedMediaHandles.map((handle) => ({
+      handle,
+      executionTarget: handle.executionTarget,
+      owner: handle.owner,
+    }));
+    if (releaseIntents.length > 0) {
+      if (!bridge.settleComposerStagedMedia) {
+        throw new Error('Daemon staged-media settlement authority is unavailable');
+      }
+      await bridge.settleComposerStagedMedia({
+        sessionId,
+        outcome: 'accepted',
+        settlement: {
+          v: 1,
+          releaseIntents,
+          createdWorkspaceRelativePaths: [],
+          workingDirectory: 'accepted-pending-message',
+        },
+      });
+    }
+
   };
 }
 
@@ -2375,6 +2421,11 @@ export async function runHostSessionRuntime(
     providerSessionMetadataKey: config.providerSessionMetadataKey,
   });
   if (nativeRuntime) {
+    const acceptPendingMessageComposerAdmission =
+      createPendingMessageComposerAdmissionAcceptedControl(
+        daemonTurnContributionsBridge,
+        () => currentLifecycleSession.sessionId,
+      );
     const voiceAuthority = config.agentSessionRealtimeVoiceAuthority;
     if (voiceAuthority) {
       disposeAgentSessionRealtimeVoiceRpc =
@@ -2412,6 +2463,7 @@ export async function runHostSessionRuntime(
         ? { interruptPendingInputAndRun: nativeRuntime.interruptPendingInputAndRun.bind(nativeRuntime) }
         : {}),
       ...(typeof nativeRuntime.handleUserMessage === 'function' ? { handleUserMessage: nativeRuntime.handleUserMessage.bind(nativeRuntime) } : {}),
+      ...(acceptPendingMessageComposerAdmission ? { acceptPendingMessageComposerAdmission } : {}),
     });
     await config.lifecycleHooks?.onRuntimeCreated?.({ session, runtime: nativeRuntime });
   }

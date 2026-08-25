@@ -655,6 +655,7 @@ describe('scm workspace integration', () => {
                 kind: 'git_worktree',
                 displayName: 'feature-auth',
                 baseRef: null,
+                branchMode: 'new',
             },
             registry,
         })).resolves.toBe(true);
@@ -672,6 +673,7 @@ describe('scm workspace integration', () => {
                 targetPath: '/repo/.worktrees/feature-auth',
                 displayName: 'feature-auth',
                 baseRef: null,
+                branchMode: 'new',
             },
         });
     });
@@ -679,6 +681,8 @@ describe('scm workspace integration', () => {
     it('uses a backend-reported materialized target path when legacy materialization rebinds the checkout', async () => {
         const materializeWorkspaceCheckout = vi.fn(async () => ({
             targetPath: '/repo/.dev/worktree/feature-auth',
+            branchName: 'feature-auth',
+            created: true,
         }));
         const registry = createScmBackendRegistry([
             createTestBackend({
@@ -698,11 +702,14 @@ describe('scm workspace integration', () => {
                 kind: 'git_worktree',
                 displayName: 'feature-auth',
                 baseRef: 'main',
+                branchMode: 'new',
             },
             registry,
         })).resolves.toEqual({
             kind: 'git_worktree',
             targetPath: '/repo/.dev/worktree/feature-auth',
+            branchName: 'feature-auth',
+            created: true,
         });
     });
 
@@ -710,6 +717,8 @@ describe('scm workspace integration', () => {
         const createWorkspaceCheckout = vi.fn(async () => ({
             kind: 'git_worktree' as const,
             targetPath: '/repo/.dev/worktree/feature-auth',
+            branchName: 'feature-auth',
+            created: true,
         }));
         const registry = createScmBackendRegistry([
             createTestBackend({
@@ -728,11 +737,14 @@ describe('scm workspace integration', () => {
                 kind: 'git_worktree',
                 displayName: 'feature-auth',
                 baseRef: 'main',
+                branchMode: 'new',
             },
             registry,
         })).resolves.toEqual({
             kind: 'git_worktree',
             targetPath: '/repo/.dev/worktree/feature-auth',
+            branchName: 'feature-auth',
+            created: true,
         });
 
         expect(createWorkspaceCheckout).toHaveBeenCalledWith({
@@ -747,6 +759,7 @@ describe('scm workspace integration', () => {
                 sourcePath: '/repo/packages/app',
                 displayName: 'feature-auth',
                 baseRef: 'main',
+                branchMode: 'new',
             },
         });
     });
@@ -755,10 +768,14 @@ describe('scm workspace integration', () => {
         const realizeWorkspaceCheckout = vi.fn(async () => ({
             kind: 'git_worktree' as const,
             targetPath: '/repo/.scm/feature-auth',
+            branchName: 'feature-auth',
+            created: true,
         }));
         const createWorkspaceCheckout = vi.fn(async () => ({
             kind: 'git_worktree' as const,
             targetPath: '/repo/.dev/worktree/feature-auth',
+            branchName: 'feature-auth',
+            created: true,
         }));
         const registry = createScmBackendRegistry([
             createTestBackend({
@@ -778,11 +795,14 @@ describe('scm workspace integration', () => {
                 kind: 'git_worktree',
                 displayName: 'feature-auth',
                 baseRef: 'main',
+                branchMode: 'new',
             },
             registry,
         })).resolves.toEqual({
             kind: 'git_worktree',
             targetPath: '/repo/.scm/feature-auth',
+            branchName: 'feature-auth',
+            created: true,
         });
 
         expect(realizeWorkspaceCheckout).toHaveBeenCalledWith({
@@ -797,6 +817,7 @@ describe('scm workspace integration', () => {
                 sourcePath: '/repo/packages/app',
                 displayName: 'feature-auth',
                 baseRef: 'main',
+                branchMode: 'new',
                 targetPath: null,
             },
         });
@@ -807,6 +828,8 @@ describe('scm workspace integration', () => {
         const realizeWorkspaceCheckout = vi.fn(async () => ({
             kind: 'git_worktree' as const,
             targetPath: '/repo/.scm/feature-auth',
+            branchName: 'feature-auth',
+            created: true,
         }));
         const materializeWorkspaceCheckout = vi.fn(async () => undefined);
         const registry = createScmBackendRegistry([
@@ -828,6 +851,7 @@ describe('scm workspace integration', () => {
                 kind: 'git_worktree',
                 displayName: 'feature-auth',
                 baseRef: 'main',
+                branchMode: 'new',
             },
             registry,
         })).resolves.toBe(true);
@@ -844,6 +868,7 @@ describe('scm workspace integration', () => {
                 sourcePath: '/repo/packages/app',
                 displayName: 'feature-auth',
                 baseRef: 'main',
+                branchMode: 'new',
                 targetPath: '/repo/.worktrees/feature-auth',
             },
         });

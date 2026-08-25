@@ -15,9 +15,11 @@ import {
     readLeadingSlashCommandName,
     readSessionProviderBindingMetadataV1,
     registerSensitiveDiagnosticValues,
+    resolveLinkedExternalSessionMetadataV1,
     SESSION_AGENT_ACTIVITY_HEADLINE_METADATA_KEY,
     SessionActivityHeadlineBundleV1Schema,
     SessionRuntimeIssueSourceV1Schema,
+    type ExternalSessionsSource,
     type SessionEnvOverlayV1,
     type SessionRuntimeIssueV1,
     type HostSemanticEventV1,
@@ -76,7 +78,10 @@ import { configuration as happierConfiguration } from '@/configuration';
 import {
     createProviderBindingLaunchMaterializationCleanup,
 } from '@/providers/spawn/compose';
-import type { HostCurrentSessionUiServices } from '@/agent/runtime/state/currentSessionUiTypes';
+import {
+    createHostSessionPresentationOwner,
+    type HostCurrentSessionUiServices,
+} from '@/agent/runtime/state/currentSessionUiTypes';
 import type { AgentRuntimeRegistrationLease } from '@/plugins/runtime/lifecycle/contributions/targetAgents';
 import type {
     ResolvedAgentContribution,
@@ -133,7 +138,7 @@ import { createExternalSessionSourceKeyOwnerFromAgentProjection } from '@/plugin
 import type { PluginExternalSessionsProviderOps } from '@/session/external/pluginExternalSessionsAdapter';
 import {
     getActiveAccountSettingsSnapshot,
-    resolveActiveAccountSettingsSnapshotRevision,
+    resolveActiveAccountConfiguredExternalSessionSourceRevision,
     subscribeActiveAccountSettingsSnapshot,
 } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { resolveNativeAgentSessionStateSharingPolicy } from './stateSharingPolicy';
@@ -1608,6 +1613,39 @@ function readConfiguredExternalSessionProviderOps(
             ? { resolveLinkIdentity: value.resolveLinkIdentity }
             : {}),
     };
+}
+
+/**
+ * Exact source this Session was linked through, read from the Session's own
+ * link authority.
+ *
+ * A retained Session that already holds a link binding must follow that source,
+ * not whichever configured source of the aggregate happens to answer for the
+ * same remote id: two configured sources can expose one remote session (two
+ * Connected Account profiles over one home, a default home overlapping a
+ * configured path), which otherwise reports the Session's own transcript as an
+ * ambiguous identity or rebinds it to a source it was never linked through.
+ *
+ * The stored source is provider-normalized and may carry canonical fields the
+ * configured instance never declared, so the follow-target owner selects its
+ * configured entry by source identity rather than by configured key.
+ */
+function readBoundExternalSessionSource(
+    agent: ResolvedAgentContribution,
+    metadata: Readonly<Record<string, unknown>>,
+): Readonly<{
+    source: ExternalSessionsSource;
+    remoteSessionId: string;
+}> | null {
+    const resolution = resolveLinkedExternalSessionMetadataV1(metadata);
+    if (!resolution.ok) return null;
+    const linked = resolution.linkedSession;
+    return linked.agentId === agent.id
+        ? Object.freeze({
+            source: linked.source,
+            remoteSessionId: linked.remoteSessionId,
+        })
+        : null;
 }
 
 function hasConnectedServiceProfileSourceInstances(agent: ResolvedAgentContribution): boolean {
@@ -3869,6 +3907,10 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                 params.externalSessionHostOperations?.bindSession(sessionId) ?? null;
             let disposeExternalSessions: (() => Promise<void>) | null = null;
             const providerOps = readConfiguredExternalSessionProviderOps(params.executionSurfaces?.externalSession);
+            const boundExternalSessionSource = readBoundExternalSessionSource(
+                params.agent,
+                hostRuntimeParams.metadata,
+            );
             const hasDeclaredInstances = params.agent.richDefinition?.definition.surfaces?.externalSession.sources.some(
                 (source) => (source.instances?.length ?? 0) > 0,
             ) === true;
@@ -3884,9 +3926,9 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                             ? await fetchAccountProfile({ token: params.sessionInput.credentials.token, signal })
                             : { connectedServicesV2: [] }
                     ),
-                    readAccountRevision: () => resolveActiveAccountSettingsSnapshotRevision(getActiveAccountSettingsSnapshot()),
+                    readAccountRevision: () => resolveActiveAccountConfiguredExternalSessionSourceRevision(getActiveAccountSettingsSnapshot()),
                     subscribeAccountRevision: (listener) => subscribeActiveAccountSettingsSnapshot(
-                        (_previous, next) => listener(resolveActiveAccountSettingsSnapshotRevision(next)),
+                        (_previous, next) => listener(resolveActiveAccountConfiguredExternalSessionSourceRevision(next)),
                     ),
                     isCurrent: identity.isCurrent,
                     resolveProviderOps: async (agentId) => agentId === params.agent.id ? providerOps : null,
@@ -3964,6 +4006,16 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                                     agentId: request.agentId,
                                     remoteSessionId:
                                         request.providerSessionId,
+                                    ...(boundExternalSessionSource
+                                        && boundExternalSessionSource
+                                            .remoteSessionId
+                                            === request.providerSessionId
+                                        ? {
+                                            boundSource:
+                                                boundExternalSessionSource
+                                                    .source,
+                                        }
+                                        : {}),
                                     ...(request.admissionDeadlineAtMs !== undefined
                                         ? {
                                             admissionDeadlineAtMs:
@@ -4368,7 +4420,7 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                     isGenerationCurrent: identity.isCurrent,
                     ...(identity.immutableGenerationId
                         ? {
-                            presentationOwner: Object.freeze({
+                            presentationOwner: createHostSessionPresentationOwner({
                                 pluginId: identity.pluginId,
                                 contributionId,
                                 generationId: identity.immutableGenerationId,

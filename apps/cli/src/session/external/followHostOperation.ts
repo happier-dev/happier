@@ -2,6 +2,7 @@ import {
     ExternalSessionsAgentIdSchema,
     type ExternalSessionsSource,
 } from '@happier-dev/protocol';
+import { measureSerializedValidatedStrictPluginJsonUtf8Bytes } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
 
 import {
@@ -66,7 +67,23 @@ type ObservationProjection = ReturnType<typeof createExternalSessionObservationD
 const MAX_INITIAL_REPLAY_PAGES = 100;
 const MAX_INITIAL_REPLAY_ITEMS = 10_000;
 const MAX_INITIAL_REPLAY_SERIALIZED_BYTES = 4 * 1024 * 1024;
-const textEncoder = new TextEncoder();
+
+/**
+ * Sizes an already admitted replay page through the canonical iterative
+ * Protocol byte owner. Recursive serialization would reject valid deep
+ * transcript values the strict-JSON contract deliberately admits, so the
+ * replay byte budget stays the only bound.
+ *
+ * The remaining allowance is passed through so an over-budget page returns the
+ * fail-closed `remaining + 1` sentinel instead of materializing its bytes.
+ */
+function measureReplayPageBytes(page: unknown, remainingBytes: number): number {
+    return measureSerializedValidatedStrictPluginJsonUtf8Bytes(
+        page,
+        'External Session initial replay page',
+        Math.max(0, remainingBytes),
+    );
+}
 
 function unavailable(code: string): HostExternalTranscriptFollowResult {
     return Object.freeze({ status: 'unavailable', code });
@@ -231,9 +248,10 @@ export function createExternalSessionFollowHostOperation(params: Readonly<{
                     });
                     replayPages += 1;
                     replayItems += page.items.length;
-                    replaySerializedBytes += textEncoder.encode(
-                        JSON.stringify(page),
-                    ).byteLength;
+                    replaySerializedBytes += measureReplayPageBytes(
+                        page,
+                        MAX_INITIAL_REPLAY_SERIALIZED_BYTES - replaySerializedBytes,
+                    );
                     if (
                         replayItems > MAX_INITIAL_REPLAY_ITEMS
                         || replaySerializedBytes > MAX_INITIAL_REPLAY_SERIALIZED_BYTES

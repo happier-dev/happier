@@ -113,6 +113,27 @@ describe('registerMachineTerminalRpcHandlers', () => {
     });
   });
 
+  it('disposes the terminal owner when the machine RPC lifecycle closes', () => {
+    const dispose = vi.fn();
+    const registered = new Map<string, (params: unknown) => Promise<unknown>>();
+    const rpcHandlerManager = {
+      registerHandler: (method: string, handler: (params: unknown) => Promise<unknown>) => registered.set(method, handler),
+    } as unknown as RpcHandlerManager;
+
+    const registration = registerMachineTerminalRpcHandlers({
+      rpcHandlerManager,
+      deps: {
+        env: {},
+        workingDirectory: process.cwd(),
+        sessionManager: { dispose } as unknown as TerminalPtySessionManager,
+      },
+    }) as unknown as Readonly<{ dispose: () => void }>;
+
+    registration.dispose();
+
+    expect(dispose).toHaveBeenCalledTimes(1);
+  });
+
   it('spawns a PTY session by default when cwd is allowed', async () => {
     const suiteDir = await mkdtemp(join(tmpdir(), 'happier-terminal-'));
     const rootDir = join(suiteDir, 'root');
@@ -513,37 +534,7 @@ describe('registerMachineTerminalRpcHandlers', () => {
     });
   });
 
-  it('converts legacy input errors to stream input response errors', async () => {
-    const registered = new Map<string, (params: unknown) => Promise<unknown>>();
-    const rpcHandlerManager = {
-      registerHandler: (method: string, handler: (params: unknown) => Promise<unknown>) => registered.set(method, handler),
-    } as unknown as RpcHandlerManager;
-
-    registerMachineTerminalRpcHandlers({
-      rpcHandlerManager,
-      deps: {
-        env: {},
-        workingDirectory: process.cwd(),
-        sessionManager: {
-          input: async () => ({ ok: false, errorCode: 'terminal_not_found', error: 'terminal_not_found' }),
-        } as unknown as TerminalPtySessionManager,
-      },
-    });
-
-    const sendInput = registered.get('daemon.terminal.stream.input');
-    expect(sendInput).toBeDefined();
-
-    await expect(sendInput!({
-      terminalId: 'term-1',
-      event: { t: 'text', text: 'ls\n' },
-    })).resolves.toEqual({
-      ok: false,
-      code: 'terminal_not_found',
-      message: 'terminal_not_found',
-    });
-  });
-
-  it('uses the shared terminal input encoder for legacy manager stream-input fallback', async () => {
+  it('does not make the RPC handler a second terminal input encoder when the stream owner is unavailable', async () => {
     const input = vi.fn(async () => ({ ok: true as const }));
     const resize = vi.fn(async () => ({ ok: true as const }));
     const registered = new Map<string, (params: unknown) => Promise<unknown>>();
@@ -569,22 +560,12 @@ describe('registerMachineTerminalRpcHandlers', () => {
     await expect(sendInput!({
       terminalId: 'term-1',
       event: { t: 'paste', text: 'a\nb', bracketed: true },
-    })).resolves.toEqual({ ok: true });
-    await expect(sendInput!({
-      terminalId: 'term-1',
-      event: { t: 'key', key: 'Enter', modifiers: [] },
-    })).resolves.toEqual({ ok: true });
-    await expect(sendInput!({
-      terminalId: 'term-1',
-      event: { t: 'mouse', kind: 'down', button: 0, x: 1, y: 1, modifiers: [] },
     })).resolves.toEqual({
       ok: false,
-      code: 'terminal_input_unsupported',
-      message: 'terminal_input_unsupported',
+      code: 'terminal_byte_stream_unavailable',
+      message: 'Terminal byte stream is not available on this daemon.',
     });
-
-    expect(input).toHaveBeenNthCalledWith(1, { terminalId: 'term-1', data: '\u001b[200~a\rb\u001b[201~' });
-    expect(input).toHaveBeenNthCalledWith(2, { terminalId: 'term-1', data: '\r' });
+    expect(input).not.toHaveBeenCalled();
     expect(resize).not.toHaveBeenCalled();
   });
 });

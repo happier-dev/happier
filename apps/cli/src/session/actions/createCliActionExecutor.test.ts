@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -155,6 +155,11 @@ vi.mock('@/api/machine/machineOperationProtocolCapabilities', () => ({
 
 import { createCliActionExecutor } from './createCliActionExecutor';
 import { createCliActionExecutorHarness } from './createCliActionExecutorHarness';
+import { executeExternalAction } from '@/daemon/externalActions/executeExternalAction';
+import {
+  resetActiveAccountSettingsSnapshotForTests,
+  setActiveAccountSettingsSnapshot,
+} from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { registerSessionSpawnNewRpcHandlers } from '@/rpc/handlers/sessionLifecycle';
 import type { RpcHandler, RpcHandlerRegistrar } from '@/api/rpc/types';
 import {
@@ -487,6 +492,7 @@ function mockMachineSpawnSuccess(
 
 describe('createCliActionExecutor', () => {
   beforeEach(() => {
+    resetActiveAccountSettingsSnapshotForTests();
     latestSessionSpawnRequest = null;
     callMachineRpc.mockReset();
     spawnMachineSession.mockReset();
@@ -613,6 +619,10 @@ describe('createCliActionExecutor', () => {
     mockAxiosPost.mockReset();
     process.env = { ...env };
     delete process.env.HAPPIER_ACTIONS_SETTINGS_V1;
+  });
+
+  afterEach(() => {
+    resetActiveAccountSettingsSnapshotForTests();
   });
 
   it('resolves execution backend options on the MCP surface', async () => {
@@ -1261,6 +1271,89 @@ describe('createCliActionExecutor', () => {
         reason: 'disabled_by_settings',
         settingsState: 'disabled',
       }),
+    });
+  });
+
+  it('enforces persisted API action policy through external Action admission', async () => {
+    const publishActionsSettings = (actionsSettingsV1: unknown, settingsVersion: number): void => {
+      setActiveAccountSettingsSnapshot({
+        source: 'network',
+        settings: accountSettingsParse({ actionsSettingsV1 }),
+        settingsVersion,
+        loadedAtMs: settingsVersion,
+        settingsSecretsReadKeys: [],
+        scopeKey: 'account:external-action-policy',
+      });
+    };
+    const executor = createDataKeyExecutor();
+    const execute = async () => await executeExternalAction({
+      actionId: 'action.spec.search',
+      envelope: {
+        v: 1,
+        target: { kind: 'machine', machineId: 'machine-1' },
+        input: { query: 'session' },
+      },
+      principal: {
+        accountId: 'account-1',
+        principalId: 'principal-1',
+        credentialId: 'credential-1',
+        authority: 'account_automation',
+      },
+      currentMachineId: 'machine-1',
+      resolveTarget: async () => ({ kind: 'machine', machineId: 'machine-1' }),
+      executor,
+    });
+
+    // One executor models an already-running daemon. The Account snapshot is
+    // republished by the live settings subscriber between API requests; each
+    // request must use its current revision rather than the startup env value.
+    publishActionsSettings({
+      v: 1,
+      actions: {
+        'action.spec.search': { disabledSurfaces: ['api'] },
+      },
+    }, 1);
+    await expect(execute()).resolves.toMatchObject({
+      kind: 'response',
+      response: {
+        actionId: 'action.spec.search',
+        execution: {
+          ok: false,
+          errorCode: 'action_disabled',
+        },
+      },
+    });
+
+    publishActionsSettings({
+      v: 1,
+      actions: {
+        'action.spec.search': { approvalRequiredSurfaces: ['api'] },
+      },
+    }, 2);
+    mockAxiosPost.mockResolvedValueOnce({ status: 200, data: { id: 'approval-api-1' } });
+    mockAxiosGet.mockResolvedValueOnce({ status: 200, data: { mode: 'e2ee', updatedAt: 1 } });
+    await expect(execute()).resolves.toMatchObject({
+      kind: 'response',
+      response: {
+        actionId: 'action.spec.search',
+        execution: {
+          ok: true,
+          result: {
+            kind: 'approval_request_created',
+            artifactId: 'approval-api-1',
+            actionId: 'action.spec.search',
+          },
+        },
+      },
+    });
+
+    publishActionsSettings({ v: 1, actions: {} }, 3);
+    await expect(execute()).resolves.toMatchObject({
+      kind: 'response',
+      response: {
+        actionId: 'action.spec.search',
+        execution: { ok: true },
+      },
     });
   });
 

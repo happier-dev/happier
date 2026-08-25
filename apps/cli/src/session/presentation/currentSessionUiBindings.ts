@@ -9,6 +9,7 @@ export type CurrentSessionCapabilityBinding = Readonly<{
     | 'handleToolCall'
     | 'listMediatedPendingRequests'
     | 'respondToMediatedPendingPermission'
+    | 'respondToMediatedPendingUserAction'
     | 'listMediatedPermissionGrants'
     | 'revokeMediatedPermissionGrant'
   >;

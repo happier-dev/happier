@@ -12,9 +12,19 @@ export type FirstClassSessionCommandDescriptor = Readonly<{
 function delegateToSessionCommand(sessionPath: readonly string[]): CommandHandler {
   return async (context: CommandContext) => {
     if (context.args.slice(1).some((arg) => arg === '--help' || arg === '-h')) {
-      const { formatFirstClassSessionCommandHelp } = await import('./commands/session/shared/sessionCommandUsage');
+      const [
+        { formatFirstClassSessionCommandHelp },
+        { emitSessionHelp, inferSessionKind },
+      ] = await Promise.all([
+        import('./commands/session/shared/sessionCommandUsage'),
+        import('./commands/session/handleSessionCommand'),
+      ]);
       const command = context.args[0] ?? sessionPath[0] ?? 'session';
-      console.log(formatFirstClassSessionCommandHelp({ command, sessionPath }));
+      await emitSessionHelp({
+        help: formatFirstClassSessionCommandHelp({ command, sessionPath }),
+        json: context.args.includes('--json'),
+        kind: inferSessionKind(sessionPath),
+      });
       return;
     }
     const { handleSessionCliCommand } = await import('./commands/session');

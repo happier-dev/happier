@@ -29,7 +29,9 @@ import {
 } from '@/daemon/waitForDaemonRunningWithinBudget';
 import { readDaemonStartWaitPollMs, readDaemonStartWaitTimeoutMs } from '@/daemon/startupWaitDefaults';
 import { readDaemonStatusSnapshot } from '@/daemon/statusSnapshot';
+import { describeDaemonRestartFailure } from '@/daemon/describeDaemonRestartFailure';
 import { restartDaemonAndWait } from '@/daemon/restartDaemonAndWait';
+import type { RestartDaemonAndWaitFailure } from '@/daemon/restartDaemonAndWait';
 import { handleServiceRepairCliCommand } from './service/repair/handleServiceRepairCliCommand';
 import { evaluateCurrentDaemonOwner } from '@/daemon/ownership/evaluateCurrentDaemonOwner';
 import { renderDaemonOwnerConflict } from '@/daemon/ownership/renderDaemonOwnerConflict';
@@ -642,6 +644,14 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
     const failureMessage = sessionRunnerRestart
       ? 'Session runner restart failed after daemon restart'
       : 'Failed to restart daemon';
+    // A restart stops the running daemon first, so a failure can leave this machine with no daemon
+    // at all. Report which half failed and the state the command is leaving behind rather than a
+    // bare "Failed to restart daemon", which reads as "nothing happened" (`F-DAEMON-6`).
+    const restartFailure: RestartDaemonAndWaitFailure | null =
+      typeof restartResult === 'object' && restartResult.ok === false && 'failedPhase' in restartResult
+        ? restartResult
+        : null;
+    const failureDetail = restartFailure ? describeDaemonRestartFailure(restartFailure) : null;
     if (jsonRequested) {
       await printDaemonJson({
         ok: false,
@@ -649,6 +659,13 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
         message: failureMessage,
         relay: configuration.serverUrl,
         relayId: configuration.activeServerId,
+        ...(restartFailure
+          ? {
+            failedPhase: restartFailure.failedPhase,
+            daemonStatus: restartFailure.daemonStatusAfterFailure,
+            ...(failureDetail ? { recoveryCommand: failureDetail.recoveryCommand } : {}),
+          }
+          : {}),
         ...(sessionRunnerRestart ? { sessionRunnerRestart } : {}),
         ...(latestDaemonLog?.path ? { latestDaemonLogPath: latestDaemonLog.path } : {}),
       });
@@ -656,7 +673,13 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
       if (sessionRunnerRestart) {
         printRestartAllSessionRunnersFailureAfterDaemonRestart(sessionRunnerRestart);
       } else {
-        console.error(errorFrame(failureMessage, []));
+        console.error(errorFrame(failureMessage, failureDetail
+          ? [
+            `Failed while ${failureDetail.failedStep}.`,
+            failureDetail.daemonState,
+            failureDetail.nextStep,
+          ]
+          : []));
       }
       if (!sessionRunnerRestart && latestDaemonLog?.path) {
         console.error(`  ${kv('Latest daemon log:', latestDaemonLog.path)}`);

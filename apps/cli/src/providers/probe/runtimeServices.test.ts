@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   DEFAULT_PROVIDER_SETTINGS_V1,
   AccountSettingsSchema,
+  PROVIDER_ENDPOINT_SAFETY_LIMITS,
   ProviderConnectionIdSchema,
   ProviderContributionV1Schema,
   ProviderSettingsV1Schema,
@@ -92,6 +93,36 @@ function grantedSettings() {
 }
 
 describe('runtime provider services', () => {
+  it('settles a picker read through the existing operation deadline when DNS never resolves', async () => {
+    vi.useFakeTimers();
+    try {
+      const services = createRuntimeProviderServices({
+        machineId: 'machine-a',
+        registry,
+        resolveAddresses: () => new Promise<readonly string[]>(() => {}),
+        getAccountSettingsSnapshot: () => ({
+          source: 'cache',
+          settings: AccountSettingsSchema.parse({ providerSettingsV1: grantedSettings() }),
+          settingsVersion: 1,
+          loadedAtMs: 1,
+          settingsSecretsReadKeys: [],
+          scopeKey: 'account-a',
+        }),
+        featureGate: { isEnabled: () => true },
+      });
+      const result = services.models({ connectionId, machineId: 'machine-a' });
+
+      await vi.advanceTimersByTimeAsync(PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs);
+
+      await expect(result).resolves.toMatchObject({
+        status: 'error',
+        error: { code: 'provider_endpoint_unavailable' },
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('uses a contribution availability probe as the safe connection test when no catalog probe is declared', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-provider-runtime-availability-'));
     temporaryPaths.push(happyHomeDir);
@@ -422,6 +453,7 @@ describe('runtime provider services', () => {
       modelId: 'probe-a',
       refreshFrontier: 'dispatch-a',
       ticket: { revision: 1 },
+      scope: { lifetime: { wallDeadlineAtMs: Date.now() + PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs } },
     };
     const first = services.modelLoadCatalog.refresh({ ...refreshInput, signal: firstController.signal });
     await vi.waitFor(() => expect(transport).toHaveBeenCalledTimes(1));
@@ -498,6 +530,7 @@ describe('runtime provider services', () => {
       refreshFrontier: 'dispatch-a',
       ticket: { revision: 1 },
       signal: new AbortController().signal,
+      scope: { lifetime: { wallDeadlineAtMs: Date.now() + PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs } },
     });
     releaseDemandRefresh();
     await vi.waitFor(() => expect(transport).toHaveBeenCalledTimes(2));
@@ -832,6 +865,7 @@ describe('runtime provider services', () => {
       accountSettings: initialAccountSettings,
       registry: initialRegistry,
       dnsEvidence: initialDnsEvidenceByEndpointUrl,
+      lifetime: { wallDeadlineAtMs: Date.now() + PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs },
     })).resolves.toMatchObject({
       status: 'success',
       probeObservationIdentity: initialIdentity,

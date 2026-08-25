@@ -342,6 +342,40 @@ describe('ProviderEnforcedPermissionHandler always-auto-approve matching', () =>
     }
   });
 
+  it('resolves the title decision through the session profile, not the Account value alone', async () => {
+    // The second call site of the shared title gate. Proven separately from
+    // CodexLikePermissionHandler because an un-threaded second handler would be
+    // exactly the split-brain this change exists to remove.
+    const session = new FakeSession();
+    session.metadata = { profileId: 'focused' };
+    const handler = new ProviderEnforcedPermissionHandler(session as any, {
+      logPrefix: '[Test]',
+      getAccountSettings: () => ({
+        codingPromptBehaviorV1: {
+          v: 1,
+          sessionTitleUpdates: 'disabled',
+          responseOptions: 'agent',
+        },
+        profiles: [{
+          v: 2,
+          id: 'focused',
+          name: 'Focused',
+          extraEnvironmentVariables: [],
+          defaultPermissionModeByTargetKey: {},
+          defaultPersistenceModeByTargetKey: {},
+          compatibilityByTargetKey: {},
+          codingPromptBehaviorOverrides: { sessionTitleUpdates: 'ongoing' },
+          createdAt: 1,
+          updatedAt: 1,
+        }],
+      } as any),
+    });
+
+    await expect(
+      handler.handleToolCall('title-1', 'mcp__happier__change_title', { title: 'Renamed' }),
+    ).resolves.toEqual({ decision: 'approved' });
+  });
+
   it('denies session title tool calls when coding prompt title updates are disabled', async () => {
     const session = new FakeSession();
     const handler = new ProviderEnforcedPermissionHandler(session as any, {

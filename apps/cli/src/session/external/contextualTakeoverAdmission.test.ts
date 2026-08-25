@@ -175,6 +175,18 @@ function dependencies(input: Readonly<{
     calls.push('link');
     return { sessionId: 'session-linked' };
   });
+  // The registry's real projection: the fixture Agent is bundled, so its
+  // durable identity resolves to the unqualified released routing id and every
+  // other identity is unknown to this catalog.
+  const resolveAgentRoutingId = vi.fn(async (
+    agent: Readonly<{ pluginId: string; localId: string }>,
+  ) => (
+    agent.pluginId === 'happier.agent.codex' && agent.localId === 'codex'
+      ? 'codex'
+      : agent.pluginId === 'acme.external-agent' && agent.localId === 'codex'
+        ? 'acme.external-agent/codex'
+        : null
+  ));
   const deriveTakeoverStartRequest = vi.fn(async (requestInput) => {
     calls.push('derive');
     return startRequest({
@@ -201,6 +213,7 @@ function dependencies(input: Readonly<{
     calls,
     resolveCurrentSource,
     ensureLink,
+    resolveAgentRoutingId,
     deriveTakeoverStartRequest,
     startDurableTakeover,
     value: {
@@ -208,6 +221,7 @@ function dependencies(input: Readonly<{
       pluginId: input.pluginId ?? 'plugin.alpha',
       resolveCurrentSource,
       ensureLink,
+      resolveAgentRoutingId,
       deriveTakeoverStartRequest,
       startDurableTakeover,
       nowMs: () => 5,
@@ -506,6 +520,48 @@ describe('contextual External Sessions takeover durable admission', () => {
       code: 'plugin_external_takeover_private_request_invalid',
     });
     expect(harness.calls).toEqual(['source', 'link', 'derive']);
+  });
+
+  it('admits an installed Agent whose routing id is its qualified identity', async () => {
+    const activeServerDir = await createRoot();
+    const harness = dependencies({ activeServerDir });
+    const installedRef = Object.freeze({
+      ...ref,
+      agentId: 'acme.external-agent/codex',
+    });
+    harness.deriveTakeoverStartRequest.mockImplementationOnce(async (
+      requestInput,
+    ) => {
+      harness.calls.push('derive');
+      const request = startRequest({
+        sessionId: requestInput.sessionId,
+        durableIdempotencyKey: requestInput.durableIdempotencyKey,
+        targetStorageMode: requestInput.targetStorageMode,
+      });
+      return {
+        ...request,
+        source: {
+          ...request.source,
+          qualifiedIdentity: {
+            ...request.source.qualifiedIdentity,
+            // An installed Agent's durable identity never equals its routing
+            // id; the registry projection is what relates them.
+            agent: { pluginId: 'acme.external-agent', localId: 'codex' },
+          },
+        },
+      };
+    });
+    const adapter = createContextualExternalSessionTakeoverAdapter(
+      harness.value,
+    );
+
+    await expect(adapter.takeover(installedRef, {
+      targetStorageMode: 'persisted',
+      idempotencyKey: 'installed-agent-key',
+    })).resolves.toMatchObject({
+      operationId: 'external-takeover:new-plugin-operation',
+    });
+    expect(harness.calls).toEqual(['source', 'link', 'derive', 'start']);
   });
 
   it('returns a committed operation after an outcome-unknown throw without replaying source or link', async () => {

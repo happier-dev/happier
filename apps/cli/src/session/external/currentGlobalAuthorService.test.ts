@@ -173,6 +173,7 @@ function createCurrentOwner(
 ): CurrentGlobalExternalSessionsAuthorService {
   return Object.freeze({
     authorService,
+    candidateIndexIdentities: Object.freeze([]),
     sourceRefusals: Object.freeze([]),
     bindAuthorService: () => authorService,
     resolveAuthorSource: vi.fn(async () => Object.freeze({
@@ -185,6 +186,7 @@ function createCurrentOwner(
         externalLinkedTakeoverWriterSafety: 'unsupported' as const,
       })),
       ensureLink: vi.fn(async () => Object.freeze({ sessionId: 'test-session' })),
+      resolveAgentRoutingId: vi.fn(async () => null),
       deriveTakeoverStartRequest: vi.fn(async () => {
         throw new Error('unused in this harness');
       }),
@@ -321,6 +323,62 @@ describe('current-global External Sessions author binding', () => {
     expect(freshList).toHaveBeenCalledOnce();
   });
 
+  it('uses current-public policy for every call while retaining caller-generation custody', async () => {
+    const hPage = Object.freeze({ items: Object.freeze([]), nextCursor: 'H' });
+    const iPage = Object.freeze({ items: Object.freeze([]), nextCursor: 'I' });
+    const hList = vi.fn(async () => hPage);
+    const iList = vi.fn(async () => iPage);
+    let current: CurrentGlobalExternalSessionsAuthorService | null =
+      createCurrentOwner(createAuthorService(hList));
+    let publicAccess: 'available' | 'denied' | 'unavailable' = 'available';
+    const binding = createCurrentGlobalExternalSessionsAuthorBinding({
+      pluginId: 'acme.sessions',
+      signal: new AbortController().signal,
+      isGenerationCurrent: () => true,
+      resolveCurrent: () => current,
+      activateConfiguredSources: async () => {},
+      readCurrentPublicAccess: () => publicAccess,
+    });
+
+    await expect(binding.list({ agentId: 'codex' })).resolves.toBe(hPage);
+
+    current = createCurrentOwner(createAuthorService(iList));
+    await expect(binding.list({ agentId: 'codex' })).resolves.toBe(iPage);
+
+    publicAccess = 'denied';
+    expect(await binding.capabilities()).toEqual({
+      list: { status: 'unavailable', code: 'plugin_service_unavailable' },
+      attach: { status: 'unavailable', code: 'plugin_service_unavailable' },
+      takeover: { status: 'unavailable', code: 'plugin_service_unavailable' },
+      transcript: { status: 'unavailable', code: 'plugin_service_unavailable' },
+      follow: { status: 'unavailable', code: 'plugin_service_unavailable' },
+    });
+    await expect(binding.list({ agentId: 'codex' })).rejects.toMatchObject({
+      code: 'plugin_service_unavailable',
+    });
+    await expect(binding.attach(externalSessionRef)).rejects.toMatchObject({
+      code: 'plugin_service_unavailable',
+    });
+    await expect(binding.readTranscript(externalSessionRef, {
+      mode: 'page',
+      direction: 'older',
+    })).rejects.toMatchObject({
+      code: 'plugin_service_unavailable',
+    });
+    await expect(binding.followTranscript(externalSessionRef, {}, vi.fn())).resolves.toEqual({
+      status: 'unavailable',
+      code: 'plugin_service_unavailable',
+    });
+    await expect(binding.takeover(externalSessionRef, {
+      targetStorageMode: 'persisted',
+      idempotencyKey: 'policy-denied',
+    })).rejects.toMatchObject({
+      code: 'plugin_service_unavailable',
+    });
+    expect(hList).toHaveBeenCalledOnce();
+    expect(iList).toHaveBeenCalledOnce();
+  });
+
   it('fences every new author operation by the caller generation before source activation or effects', async () => {
     const list = vi.fn(async () => Object.freeze({
       items: Object.freeze([]),
@@ -382,7 +440,7 @@ describe('current-global External Sessions author binding', () => {
     expect(service.takeover).not.toHaveBeenCalled();
   });
 
-  it('strictly validates raw unary cancellation options before activation or service effects', async () => {
+  it('accepts structural cancellation options while rejecting unknown keys and invalid signals', async () => {
     const list = vi.fn(async () => Object.freeze({
       items: Object.freeze([]),
       nextCursor: null,
@@ -410,10 +468,14 @@ describe('current-global External Sessions author binding', () => {
       idempotencyKey: 'strict-options-takeover',
     } as unknown as Parameters<typeof binding.takeover>[1];
 
+    await expect(binding.attach(externalSessionRef, accessorOptions as never)).resolves.toEqual({
+      sessionId: 'test-session',
+    });
+    expect(accessorReads).toBe(1);
+
     const attempts = [
       () => binding.capabilities({ extra: true } as never),
       () => binding.list(undefined, { extra: true } as never),
-      () => binding.attach(externalSessionRef, accessorOptions as never),
       () => binding.readTranscript(
         externalSessionRef,
         { mode: 'page', direction: 'older' },
@@ -432,11 +494,10 @@ describe('current-global External Sessions author binding', () => {
       });
     }
 
-    expect(accessorReads).toBe(0);
-    expect(activateConfiguredSources).not.toHaveBeenCalled();
-    expect(owner.bindCallerAuthorService).not.toHaveBeenCalled();
+    expect(activateConfiguredSources).toHaveBeenCalledOnce();
+    expect(owner.bindCallerAuthorService).toHaveBeenCalledOnce();
     expect(list).not.toHaveBeenCalled();
-    expect(service.attach).not.toHaveBeenCalled();
+    expect(service.attach).toHaveBeenCalledOnce();
     expect(service.readTranscript).not.toHaveBeenCalled();
     expect(service.takeover).not.toHaveBeenCalled();
   });
@@ -1159,6 +1220,7 @@ describe('current-global External Sessions follow lifecycle', () => {
       sessionId: 'linked-session-1',
     });
     const hostOwner = createExternalSessionHostOperationOwner();
+    let physicalDisposeAttempts = 0;
     const followOperation: ExternalSessionFollowHostOperation = Object.freeze({
       execute: vi.fn(async (request) => {
         let terminated = false;
@@ -1180,7 +1242,13 @@ describe('current-global External Sessions follow lifecycle', () => {
           status: 'following' as const,
           startingCursor: 'cursor-1',
           subscription: Object.freeze({
-            dispose: async () => await terminate('disposed'),
+            dispose: async () => {
+              physicalDisposeAttempts += 1;
+              await terminate('disposed');
+              if (physicalDisposeAttempts <= 2) {
+                throw new Error('physical follow disposal rejected');
+              }
+            },
           }),
         });
       }),
@@ -1236,8 +1304,16 @@ describe('current-global External Sessions follow lifecycle', () => {
     expect(result.status).toBe('following');
     if (result.status !== 'following') throw new Error('expected follow');
 
-    await result.subscription.dispose();
+    await expect(result.subscription.dispose()).rejects.toMatchObject({
+      message: 'External Sessions follow cleanup failed',
+      errors: [
+        expect.objectContaining({ message: 'physical follow disposal rejected' }),
+        expect.objectContaining({ message: 'physical follow disposal rejected' }),
+      ],
+    });
+    await expect(result.subscription.dispose()).resolves.toBeUndefined();
 
+    expect(physicalDisposeAttempts).toBe(3);
     expect(listener).toHaveBeenCalledWith({
       kind: 'terminated',
       reason: 'disposed',

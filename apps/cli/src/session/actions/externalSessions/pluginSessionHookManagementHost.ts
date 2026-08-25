@@ -31,6 +31,7 @@ import {
 import type { AgentRuntimeRegistrationLease } from '@/plugins/runtime/lifecycle/contributions/targetAgents';
 import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
+import { canonicalAbsolutePathsEqual } from '@/utils/path/expandHomeDirPath';
 
 import {
     applyExternalSessionHookInstallationAction,
@@ -38,6 +39,7 @@ import {
     readExternalSessionHookInstallationInventoryPage,
     readExternalSessionHookInstallationRecord,
     resolveExternalSessionHookInstallationRecordPath,
+    resolveExternalSessionHookPhysicalTargetPath,
     type ExternalSessionHookInstallationActionErrorCode,
     type ExternalSessionHookInstallationConfigSnapshot,
     type ExternalSessionHookInstallationInventoryRecord,
@@ -113,7 +115,20 @@ type ResolvedInstallation = Readonly<{
     selectedVariant: NonNullable<
         CurrentRuntime['lease']['externalSessionHooks']
     >['installationVariants'][number];
+    /**
+     * The physical files this installation owns. Durable custody records the
+     * same identity, so preview, record matching, custody projection and
+     * readiness all compare like with like.
+     */
     targets: readonly Readonly<{ targetId: string; absolutePath: string }>[];
+    /**
+     * The paths the Agent declared, kept only so the configuration owner can
+     * re-resolve them at its compare-and-swap fence.
+     */
+    declaredTargets: readonly Readonly<{
+        targetId: string;
+        absolutePath: string;
+    }>[];
     readiness: Readonly<{ kind: 'ready' }> | Readonly<{
         kind: 'needs_attention';
         diagnostic: PluginDiagnosticDataV1;
@@ -358,7 +373,10 @@ async function projectCurrentCustody(input: Readonly<{
             const current = currentByTargetId.get(recorded.targetId);
             return (
                 !current
-                || current.absolutePath !== recorded.absolutePath
+                || !canonicalAbsolutePathsEqual(
+                    current.absolutePath,
+                    recorded.absolutePath,
+                )
                 || current.collectionId !== recorded.collectionId
                 || current.inputIdentity !== recorded.inputIdentity
             );
@@ -524,6 +542,20 @@ async function resolveInstallation(
     if (!variantRunsOnPlatform(selectedVariant, platform)) {
         return { ok: false, reason: 'installation_unsupported' };
     }
+    // An unresolvable target (a symlink loop, an unreadable ancestor) keeps the
+    // declared path here so this resolution still has one comparable identity.
+    // It cannot install to it: the configuration owner re-resolves the declared
+    // path itself and refuses the whole action as `invalid_target_path`, and a
+    // record written from a resolvable path simply stops matching.
+    const physicalTargets = await Promise.all(
+        resolved.targets.map(async (target) => ({
+            targetId: target.targetId,
+            absolutePath:
+                await resolveExternalSessionHookPhysicalTargetPath(
+                    target.absolutePath,
+                ) ?? target.absolutePath,
+        })),
+    );
     return {
         ok: true,
         value: {
@@ -535,7 +567,8 @@ async function resolveInstallation(
             installationIdentity,
             executableIdentity,
             selectedVariant,
-            targets: resolved.targets,
+            targets: physicalTargets,
+            declaredTargets: resolved.targets,
             readiness: resolved.readiness.kind === 'ready'
                 ? resolved.readiness
                 : {
@@ -664,8 +697,11 @@ function recordMatchesResolution(
         && record.installationIdentity === resolution.installationIdentity
         && record.executableIdentity === resolution.executableIdentity
         && record.targets.length === resolvedTargets.size
-        && record.targets.every((entry) =>
-            resolvedTargets.get(entry.targetId) === entry.absolutePath);
+        && record.targets.every((entry) => {
+            const targetPath = resolvedTargets.get(entry.targetId);
+            return targetPath !== undefined
+                && canonicalAbsolutePathsEqual(targetPath, entry.absolutePath);
+        });
 }
 
 type InstallPreviewPlan =
@@ -907,142 +943,189 @@ export function createPluginSessionHookManagementHost(input: Readonly<{
                                 continue;
                             }
                             if (inventory.state !== 'active') continue;
-                            const current = findCurrentRuntime(
-                                registryLease.registry,
-                                inventory.qualifiedAgent,
-                            );
-                            if (!current) continue;
-                            const record =
-                                await dependencies.readInstallationRecord(
-                                    recordPath({
-                                        activeServerDir,
-                                        agent: inventory.qualifiedAgent,
-                                        installationId:
-                                            inventory.installationId,
-                                    }),
+                            // Restoring, rotating and enabling ingress is a
+                            // credential effect on one installation, so it
+                            // takes the same per-installation lock every
+                            // lifecycle action takes. The record is read after
+                            // the lock is held and the credentials stay
+                            // admitted under it, so a Disable or Uninstall
+                            // either runs first — and is then observed — or
+                            // waits until hydration has finished.
+                            const outcome = await withMutationLock(
+                                mutationKey(
+                                    inventory.qualifiedAgent,
+                                    inventory.installationId,
+                                ),
+                                async (): Promise<'next' | 'stop'> => {
+                                if (disposed || !featureEnabled()) return 'stop';
+                                const current = findCurrentRuntime(
+                                    registryLease.registry,
+                                    inventory.qualifiedAgent,
                                 );
-                            if (disposed || !featureEnabled()) return;
-                            if (!record) continue;
-                            if (
-                                record.state !== 'active'
-                                || record.hostInstallationId
-                                    !== inventory.installationId
-                            ) {
-                                continue;
-                            }
-                            const variant = resolveStructurallyCompatibleVariant(
-                                current,
-                                record,
-                            );
-                            if (!variant) continue;
-                            const restored: Awaited<ReturnType<
-                                QualifiedExternalSessionHookListener[
-                                    'restoreCredential'
-                                ]
-                            >>[] = [];
-                            let hydrationFailed = false;
-                            for (const event of variant.events) {
-                                const result =
-                                    await listener.restoreCredential({
-                                        machineId: input.machineId,
-                                        agentId: current.agentId,
-                                        qualifiedContributionId:
-                                            current.agent,
-                                        hostInstallationId:
-                                            record.hostInstallationId,
-                                        installationPrincipalRef:
-                                            record.ingressPrincipalRef,
-                                        installationIdentity:
-                                            record.installationIdentity,
-                                        variantId: record.variantId,
-                                        eventId: event.eventId,
-                                        pluginGeneration:
-                                            current.lease.generation,
-                                        retirementSignal:
-                                            current.lease.retirementSignal,
-                                    });
-                                restored.push(result);
-                                if (result.state === 'unavailable') {
-                                    hydrationFailed = true;
-                                    break;
-                                }
-                                if (disposed || !featureEnabled()) {
-                                    listener.disable(
-                                        result.credential.eventPrincipalRef,
+                                if (!current) return 'next';
+                                const record =
+                                    await dependencies.readInstallationRecord(
+                                        recordPath({
+                                            activeServerDir,
+                                            agent: inventory.qualifiedAgent,
+                                            installationId:
+                                                inventory.installationId,
+                                        }),
                                     );
-                                    return;
+                                if (disposed || !featureEnabled()) return 'stop';
+                                if (!record) return 'next';
+                                if (
+                                    record.state !== 'active'
+                                    || record.hostInstallationId
+                                        !== inventory.installationId
+                                ) {
+                                    return 'next';
                                 }
-                            }
-                            const credentials = restored.flatMap((result) =>
-                                result.state === 'restored'
-                                    ? [result.credential]
-                                    : []);
-                            if (
-                                hydrationFailed
-                                || credentials.length
-                                    !== variant.events.length
-                            ) {
-                                for (const credential of credentials) {
-                                    listener.disable(
-                                        credential.eventPrincipalRef,
-                                    );
-                                }
-                                continue;
-                            }
-                            let admittedCredentials = credentials;
-                            if (hydrationReason === 'plugin_reload') {
-                                const rotated: typeof credentials = [];
-                                try {
-                                    for (const event of variant.events) {
-                                        rotated.push(
-                                            await listener.rotateCredential({
-                                                machineId: input.machineId,
-                                                agentId: current.agentId,
-                                                qualifiedContributionId:
-                                                    current.agent,
-                                                hostInstallationId:
-                                                    record.hostInstallationId,
-                                                installationPrincipalRef:
-                                                    record.ingressPrincipalRef,
-                                                installationIdentity:
-                                                    record.installationIdentity,
-                                                variantId: record.variantId,
-                                                eventId: event.eventId,
-                                                pluginGeneration:
-                                                    current.lease.generation,
-                                                retirementSignal:
-                                                    current.lease
-                                                        .retirementSignal,
-                                            }),
-                                        );
+                                const variant = resolveStructurallyCompatibleVariant(
+                                    current,
+                                    record,
+                                );
+                                if (!variant) return 'next';
+                                const restored: Awaited<ReturnType<
+                                    QualifiedExternalSessionHookListener[
+                                        'restoreCredential'
+                                    ]
+                                >>[] = [];
+                                let hydrationFailed = false;
+                                for (const event of variant.events) {
+                                    const result =
+                                        await listener.restoreCredential({
+                                            machineId: input.machineId,
+                                            agentId: current.agentId,
+                                            qualifiedContributionId:
+                                                current.agent,
+                                            hostInstallationId:
+                                                record.hostInstallationId,
+                                            installationPrincipalRef:
+                                                record.ingressPrincipalRef,
+                                            installationIdentity:
+                                                record.installationIdentity,
+                                            variantId: record.variantId,
+                                            eventId: event.eventId,
+                                            pluginGeneration:
+                                                current.lease.generation,
+                                            retirementSignal:
+                                                current.lease.retirementSignal,
+                                        });
+                                    restored.push(result);
+                                    if (result.state === 'unavailable') {
+                                        hydrationFailed = true;
+                                        break;
                                     }
-                                    admittedCredentials = rotated;
-                                } catch {
-                                    for (const credential of [
-                                        ...credentials,
-                                        ...rotated,
-                                    ]) {
+                                    if (disposed || !featureEnabled()) {
+                                        listener.disable(
+                                            result.credential.eventPrincipalRef,
+                                        );
+                                        return 'stop';
+                                    }
+                                }
+                                const credentials = restored.flatMap((result) =>
+                                    result.state === 'restored'
+                                        ? [result.credential]
+                                        : []);
+                                if (
+                                    hydrationFailed
+                                    || credentials.length
+                                        !== variant.events.length
+                                ) {
+                                    for (const credential of credentials) {
                                         listener.disable(
                                             credential.eventPrincipalRef,
                                         );
                                     }
-                                    continue;
+                                    return 'next';
                                 }
-                            }
-                            for (const credential of admittedCredentials) {
-                                if (
-                                    !disposed
-                                    && featureEnabled()
-                                ) {
-                                    listener.enable(
-                                        credential.eventPrincipalRef,
-                                    );
-                                } else {
-                                    listener.disable(
-                                        credential.eventPrincipalRef,
-                                    );
+                                let admittedCredentials = credentials;
+                                if (hydrationReason === 'plugin_reload') {
+                                    const rotated: typeof credentials = [];
+                                    try {
+                                        for (const event of variant.events) {
+                                            rotated.push(
+                                                await listener.rotateCredential({
+                                                    machineId: input.machineId,
+                                                    agentId: current.agentId,
+                                                    qualifiedContributionId:
+                                                        current.agent,
+                                                    hostInstallationId:
+                                                        record.hostInstallationId,
+                                                    installationPrincipalRef:
+                                                        record.ingressPrincipalRef,
+                                                    installationIdentity:
+                                                        record.installationIdentity,
+                                                    variantId: record.variantId,
+                                                    eventId: event.eventId,
+                                                    pluginGeneration:
+                                                        current.lease.generation,
+                                                    retirementSignal:
+                                                        current.lease
+                                                            .retirementSignal,
+                                                }),
+                                            );
+                                        }
+                                        admittedCredentials = rotated;
+                                    } catch {
+                                        for (const credential of [
+                                            ...credentials,
+                                            ...rotated,
+                                        ]) {
+                                            listener.disable(
+                                                credential.eventPrincipalRef,
+                                            );
+                                        }
+                                        await dependencies.applyInstallationAction({
+                                            action: 'disable',
+                                            activeServerDir,
+                                            machineId: input.machineId,
+                                            qualifiedAgent: current.agent,
+                                            hostInstallationId:
+                                                record.hostInstallationId,
+                                            installationIdentity:
+                                                record.installationIdentity,
+                                            executableIdentity:
+                                                record.executableIdentity,
+                                            ingressPrincipalRef:
+                                                record.ingressPrincipalRef,
+                                        }).catch(() => undefined);
+                                        await Promise.allSettled(
+                                            ownedEventIds(record).map(
+                                                async (eventId) =>
+                                                    await listener.revokeDurableCredential({
+                                                        qualifiedContributionId:
+                                                            current.agent,
+                                                        hostInstallationId:
+                                                            record.hostInstallationId,
+                                                        installationPrincipalRef:
+                                                            record.ingressPrincipalRef,
+                                                        eventId,
+                                                    }),
+                                            ),
+                                        );
+                                        return 'next';
+                                    }
                                 }
-                            }
+                                for (const credential of admittedCredentials) {
+                                    if (
+                                        !disposed
+                                        && featureEnabled()
+                                    ) {
+                                        listener.enable(
+                                            credential.eventPrincipalRef,
+                                        );
+                                    } else {
+                                        listener.disable(
+                                            credential.eventPrincipalRef,
+                                        );
+                                    }
+                                }
+                                return 'next';
+                                },
+                            );
+                            if (outcome === 'stop') return;
                         }
                         const next = page.nextCursor;
                         if (!next) break;
@@ -1807,7 +1890,7 @@ export function createPluginSessionHookManagementHost(input: Readonly<{
                                 installationPrincipalRef!,
                             selectedVariant:
                                 resolution.value.selectedVariant,
-                            targets: resolution.value.targets,
+                            targets: resolution.value.declaredTargets,
                             expectedInputIdentities:
                                 preview.configSnapshot.targets.map(
                                     (configTarget) => ({
@@ -2285,20 +2368,27 @@ export function createPluginSessionHookManagementHost(input: Readonly<{
             }
             const listener = await input.listener.catch(() => null);
             try {
-                const disabled =
-                    await dependencies.applyInstallationAction({
-                        action: 'disable',
-                        activeServerDir,
-                        machineId: input.machineId,
-                        qualifiedAgent: mutation.agent,
-                        hostInstallationId: record.hostInstallationId,
-                        installationIdentity:
-                            record.installationIdentity,
-                        executableIdentity: record.executableIdentity,
-                        ingressPrincipalRef: record.ingressPrincipalRef,
-                        isCurrent: () => operationIsCurrent(undefined, options?.signal),
-                    });
-                if (!disabled.ok) return mapActionError(disabled.code);
+                // A crash between the transitional record and its final state
+                // leaves `preparing` or `revoked` custody, which Disable
+                // refuses by contract. Those records are exactly the ones the
+                // product surfaces as needing attention, so Uninstall cleans
+                // them directly through the same exact-occurrence removal.
+                if (record.state === 'active' || record.state === 'disabled') {
+                    const disabled =
+                        await dependencies.applyInstallationAction({
+                            action: 'disable',
+                            activeServerDir,
+                            machineId: input.machineId,
+                            qualifiedAgent: mutation.agent,
+                            hostInstallationId: record.hostInstallationId,
+                            installationIdentity:
+                                record.installationIdentity,
+                            executableIdentity: record.executableIdentity,
+                            ingressPrincipalRef: record.ingressPrincipalRef,
+                            isCurrent: () => operationIsCurrent(undefined, options?.signal),
+                        });
+                    if (!disabled.ok) return mapActionError(disabled.code);
+                }
                 for (const eventId of ownedEventIds(record)) {
                     const credential = {
                         qualifiedContributionId: mutation.agent,

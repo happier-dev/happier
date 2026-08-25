@@ -1,8 +1,13 @@
 import { randomUUID } from 'node:crypto';
 
 import type { Credentials } from '@/persistence';
-import type { ProviderAccountSettingsMigrationContextV1, ProviderContributionV1 } from '@happier-dev/protocol';
+import {
+  PROVIDER_ENDPOINT_SAFETY_LIMITS,
+  type ProviderAccountSettingsMigrationContextV1,
+  type ProviderContributionV1,
+} from '@happier-dev/protocol';
 import type { ResolvedProviderContribution } from '@/plugins/projection/registry/types';
+import { createProviderOperationLifetime } from '@/providers/operationLifetime';
 
 import { authorizeLegacyProfileMigrationContext } from './authorizeContext';
 import { buildLegacyProfileMigrationContext } from './buildContext';
@@ -85,6 +90,9 @@ export function createLegacyProfileMigrationCoordinator(deps: Readonly<{
     if (existing) return existing;
     const operation = (async (): Promise<LegacyProfileMigrationCoordinatorResult> => {
       try {
+        const lifetime = createProviderOperationLifetime({
+          wallTimeMs: PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs,
+        });
         const lease = await deps.acquireRegistryLease();
         try {
           const providersByContributionKey = readLegacyProfileMigrationContributionMap(lease.registry);
@@ -114,6 +122,7 @@ export function createLegacyProfileMigrationCoordinator(deps: Readonly<{
                 providersByContributionKey,
                 machineId: input.machineId,
                 ...(deps.resolveAddresses ? { resolveAddresses: deps.resolveAddresses } : {}),
+                lifetime,
               });
             },
           });

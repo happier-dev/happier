@@ -100,4 +100,42 @@ describe('plain-account RPC action ingress', () => {
     }));
     expect(mocks.readCredentials).not.toHaveBeenCalled();
   });
+
+  it('threads the exact daemon spawn transport into public session-spawn Action replay', async () => {
+    const { handlers, rpcHandlerManager } = createRegistrar();
+    const directTargetTransport = {
+      machineId: 'machine-1',
+      prepare: vi.fn(),
+      spawnedSession: {
+        spawn: vi.fn(),
+        resolveSpawnSessionByNonce: vi.fn(),
+      },
+    };
+
+    registerSessionSpawnNewRpcHandlers({
+      rpcHandlerManager,
+      sessionSpawnDirectTargetTransport: directTargetTransport,
+    } as Parameters<typeof registerSessionSpawnNewRpcHandlers>[0] & Readonly<{
+      sessionSpawnDirectTargetTransport: typeof directTargetTransport;
+    }>);
+
+    await expect(handlers.get(RPC_METHODS.SESSION_SPAWN_NEW)?.({
+      creationKey: 'manual:stored-credentials-direct-target',
+      executionTarget: { serverId: 'srv_account_current', machineId: 'machine-1' },
+      directory: '/tmp/project',
+      organizationPlacement: { folderId: null, tagIds: [] },
+      agentTarget: {
+        kind: 'agent',
+        identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+      },
+    })).resolves.toBeDefined();
+
+    expect(mocks.createExecutor).toHaveBeenCalledWith(expect.objectContaining({
+      credentials: {
+        token: 'token-only',
+        encryption: null,
+      },
+      sessionSpawnDirectTargetTransport: directTargetTransport,
+    }));
+  });
 });

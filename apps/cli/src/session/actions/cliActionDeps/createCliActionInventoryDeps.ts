@@ -26,7 +26,7 @@ import { resolveAvailableAccountSettings } from '@/settings/accountSettings/reso
 import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
 import { getPreferredHostName } from '@/daemon/machine/metadata';
 import { listServerProfiles } from '@/server/serverProfiles';
-import { mapProfileToListItem } from '@/settings/profiles/profileListProjection';
+import { projectProfilesListForActions } from '@/settings/profiles/profileListProjection';
 import { readProfilesFromAccountSettings } from '@/settings/profiles/readProfilesFromAccountSettings';
 import { resolveSpawnConnectedServicesDefaults } from '@/session/services/spawnConnectedServicesDefaults';
 import { resolveCatalogAgentConnectedServiceIds } from '@/agent/catalog/registry';
@@ -718,23 +718,18 @@ export function createCliActionInventoryDeps(params: Readonly<{
     },
     spawnProfilesList: async (args) => {
       const accountSettings = await readAccountSettings();
-      const { visibleProfiles } = accountSettings
+      const profileSnapshot = accountSettings
         ? readProfilesFromAccountSettings(accountSettings as any)
         : readProfilesFromAccountSettings({});
-      const normalizedAgentId = normalizeStringValue((args as { agentId?: unknown }).agentId);
-      const items = visibleProfiles
-        .map(mapProfileToListItem)
-        .filter((profile) => !normalizedAgentId || profile.supportedAgentIds.includes(normalizedAgentId))
-        .map((profile) => ({
-          ...profile,
-          value: profile.id,
-          label: profile.name,
-        }))
-        .sort((a, b) => a.label.localeCompare(b.label));
-      return {
-        ...(normalizedAgentId ? { agentId: normalizedAgentId } : {}),
-        items: limitItems(items, (args as { limit?: unknown }).limit),
-      };
+      // Filter, order, bound and completeness all come from the Protocol-owned
+      // projection, so which host answered cannot change what a caller reads —
+      // and a bounded answer says so rather than looking like a complete one.
+      return projectProfilesListForActions(profileSnapshot.visibleProfiles, {
+        agentId: normalizeStringValue((args as { agentId?: unknown }).agentId),
+        limit: (args as { limit?: unknown }).limit,
+        unreadableCount: profileSnapshot.opaqueProfiles.length,
+        available: accountSettings !== null,
+      });
     },
     spawnConnectedServicesList: async (args) => {
       const normalizedAgentId = normalizeStringValue((args as { agentId?: unknown }).agentId);

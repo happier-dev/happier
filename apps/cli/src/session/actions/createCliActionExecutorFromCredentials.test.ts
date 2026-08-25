@@ -127,6 +127,27 @@ describe('createCliActionExecutorFromCredentials', () => {
     }));
   });
 
+  it('forwards target-action approval replay only when daemon composition injects it', async () => {
+    const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
+    const credentials = {
+      token: 'token_test',
+      encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) },
+    };
+    const targetActionApprovalReplay = vi.fn<
+      NonNullable<ActionExecutorDeps['targetActionApprovalReplay']>
+    >();
+
+    createCliActionExecutorFromCredentials({ credentials });
+    expect(createCliActionExecutor).toHaveBeenLastCalledWith(
+      expect.not.objectContaining({ targetActionApprovalReplay: expect.any(Function) }),
+    );
+
+    createCliActionExecutorFromCredentials({ credentials, targetActionApprovalReplay });
+    expect(createCliActionExecutor).toHaveBeenLastCalledWith(expect.objectContaining({
+      targetActionApprovalReplay,
+    }));
+  });
+
   it('preserves the daemon-owned contributed, external-session, and exact-spawn Action seams', async () => {
     const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
     const credentials = {

@@ -372,15 +372,20 @@ async function probeGh(params: Readonly<{
     binPath: params.binPath,
     args: ['auth', 'status', '--hostname', 'github.com'],
   });
-  const authenticated = authResult.ok === true;
+  // `gh auth status` answers only when it exits. A probe the deadline killed — or one that never
+  // launched — comes back `ok: false` with `exitCode: null`; reporting that as "signed out" is the
+  // "sign in with gh CLI" instruction shown to an already-authenticated host.
+  const authStatus: GhDepData['authStatus'] = authResult.ok
+    ? 'authenticated'
+    : typeof authResult.exitCode === 'number' ? 'missing_auth' : 'unknown';
 
   return {
     binPath: params.binPath,
     resolvedSource: params.source,
     installedVersion: parseVersionFromGhOutput(versionResult.stdout),
-    authenticated,
-    authStatus: authenticated ? 'authenticated' : 'missing_auth',
-    remediationReason: authenticated ? null : 'auth_required',
+    authenticated: authStatus === 'unknown' ? null : authStatus === 'authenticated',
+    authStatus,
+    remediationReason: authStatus === 'missing_auth' ? 'auth_required' : null,
   };
 }
 
@@ -435,7 +440,11 @@ export async function getGhDepStatus(
     resolvedSource: selected?.resolvedSource ?? null,
     authenticated: selected?.authenticated ?? null,
     authStatus: selected?.authStatus ?? 'unknown',
-    remediationReason: selected?.remediationReason ?? (managedInstallSupported ? 'install_required' : 'unsupported'),
+    // `??` here would collapse two different facts: a probe that decided nothing is needed
+    // (`null`) and no probe at all. Only the second means "install gh".
+    remediationReason: selected
+      ? selected.remediationReason
+      : (managedInstallSupported ? 'install_required' : 'unsupported'),
     lastInstallLogPath: state.lastInstallLogPath,
     lastBackgroundUpdateCheckAtMs,
     ...(latestVersionCheck ? { latestVersionCheck } : {}),

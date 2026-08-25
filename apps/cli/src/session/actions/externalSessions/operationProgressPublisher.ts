@@ -3,12 +3,12 @@ import {
   writeSessionStateFieldToMetadata,
 } from '@happier-dev/agents/session/state/metadataWriters';
 import {
-  externalSessionOperationRetainsPartialDiscardRecoveryV1,
   EXTERNAL_SESSION_OPERATION_METADATA_KEY,
   EXTERNAL_SESSION_OPERATION_PRESENTATION_METADATA_KEY,
   ExternalSessionOperationReferenceV1Schema,
   ExternalSessionOperationSharedPresentationV1Schema,
   ExternalSessionOperationStateV1Schema,
+  isExternalSessionOperationTerminalStatusV1,
   isRetryableExternalLinkedAdmissionAcknowledgementReconciliationV1,
   projectExternalSessionOperationProgressV1,
   projectExternalSessionOperationSharedPresentationV1,
@@ -26,14 +26,15 @@ import {
 import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
 import {
   acknowledgeExternalSessionOperationProgressProjection,
-  compactExternalSessionOperationRecordToCompletionReceipt,
-  deleteExpiredExternalSessionOperationCompletionReceipt,
+  compactExternalSessionOperationRecordToTerminalReceipt,
+  deleteExpiredExternalSessionOperationTerminalReceipt,
+  isExternalSessionOperationSettledForTerminalCleanup,
   listExternalSessionOperationRecords,
   mutateExternalSessionOperationRecordAtRevision,
-  pruneExpiredExternalSessionOperationCompletionReceipts,
+  pruneExpiredExternalSessionOperationTerminalReceipts,
   readExternalSessionOperationRecord,
   readExternalSessionOperationStoredEntry,
-  resolveExternalSessionOperationCompletionCompactionEligibility,
+  resolveExternalSessionOperationTerminalReceiptCompactionEligibility,
   withExternalSessionOperationSessionAdmissionLock,
   type ExternalSessionOperationPriorTerminalReceiptEvidence,
 } from './operationRecordStore';
@@ -42,11 +43,6 @@ import { fetchAccountEncryptionCurrentness } from '@/api/client/connectedService
 import { resolveConnectedServicesServerApiTimeoutMs } from '@/api/client/connectedServicesServerApiTimeout';
 import { configuration } from '@/configuration';
 
-const REPLACEABLE_TERMINAL_STATUSES = new Set([
-  'completed',
-  'cancelled',
-  'discarded',
-]);
 const EXTERNAL_SESSION_OPERATION_PROJECTION_METADATA_MAX_ATTEMPTS = 6;
 
 type ExternalSessionOperationStagingDisposition =
@@ -97,21 +93,22 @@ function hasStructurallyAbsentPrivateStaging(
 }
 
 /**
- * A settled record whose full form nothing can still act on: every terminal
- * status qualifies except a cancelled operation whose explicit Discard still
- * has durable server-side partial history to release.
+ * A record whose full form nothing can still act on. The record store owns
+ * that decision; selecting work by a second settled-status set here is what
+ * let the two sides disagree silently — this publisher would elect a record
+ * the store then refused, and the cleanup simply never happened.
  */
 function isCompactableSettledRecord(
   record: ExternalSessionOperationRecordV1,
 ): boolean {
-  return REPLACEABLE_TERMINAL_STATUSES.has(record.status)
-    && !externalSessionOperationRetainsPartialDiscardRecoveryV1(record);
+  return resolveExternalSessionOperationTerminalReceiptCompactionEligibility(record)
+    === 'eligible';
 }
 
 /**
- * A settled record that owns no private staging, so the acknowledgement that
- * settles it is already the last event that can touch the full record and it
- * compacts with `not_applicable` staging on the spot.
+ * A settled record that owns no private staging, so its acknowledgement is
+ * already the last event that can touch the full record and it compacts with
+ * `not_applicable` staging on the spot.
  */
 function isSettledRecordWithoutPrivateStaging(
   record: ExternalSessionOperationRecordV1,
@@ -126,7 +123,7 @@ async function compactTerminalExternalSessionOperation(
   stagingDisposition: ExternalSessionOperationStagingDisposition,
 ): Promise<void> {
   if (
-    resolveExternalSessionOperationCompletionCompactionEligibility(record)
+    resolveExternalSessionOperationTerminalReceiptCompactionEligibility(record)
       !== 'eligible'
   ) {
     return;
@@ -138,7 +135,7 @@ async function compactTerminalExternalSessionOperation(
   ) {
     return;
   }
-  await compactExternalSessionOperationRecordToCompletionReceipt({
+  await compactExternalSessionOperationRecordToTerminalReceipt({
     activeServerDir,
     operationId: record.operationId,
     expectedRevision: record.revision,
@@ -297,11 +294,11 @@ export function selectExternalSessionOperationRecordsForPassiveRepair(
   const selected: ExternalSessionOperationRecordV1[] = [];
   for (const sessionRecords of bySession.values()) {
     const nonterminal = sessionRecords.filter(
-      (record) => !REPLACEABLE_TERMINAL_STATUSES.has(record.status),
+      (record) => !isExternalSessionOperationTerminalStatusV1(record.status),
     );
     const unsettledTerminal = sessionRecords.filter(
       (record) =>
-        REPLACEABLE_TERMINAL_STATUSES.has(record.status)
+        isExternalSessionOperationTerminalStatusV1(record.status)
         && (
           record.progressProjection.acknowledgedRevision === null
           || record.progressProjection.acknowledgedRevision < record.revision
@@ -353,7 +350,7 @@ async function isSettledTerminalPredecessorSelection(input: Readonly<{
   if (
     input.selectedRecord.revision !== 0
     || input.selectedRecord.progressProjection.acknowledgedRevision !== null
-    || REPLACEABLE_TERMINAL_STATUSES.has(input.selectedRecord.status)
+    || isExternalSessionOperationTerminalStatusV1(input.selectedRecord.status)
   ) {
     return false;
   }
@@ -361,7 +358,7 @@ async function isSettledTerminalPredecessorSelection(input: Readonly<{
     input.activeServerDir,
     input.remote.operationId,
   );
-  if (predecessor?.kind === 'completion_receipt') {
+  if (predecessor?.kind === 'terminal_receipt') {
     return predecessor.receipt.reference.sessionId
       === input.selectedRecord.request.sessionId
       && presentationsEqual(input.remote, predecessor.receipt.presentation);
@@ -370,7 +367,7 @@ async function isSettledTerminalPredecessorSelection(input: Readonly<{
     !predecessor
     || predecessor.record.request.sessionId
       !== input.selectedRecord.request.sessionId
-    || !REPLACEABLE_TERMINAL_STATUSES.has(predecessor.record.status)
+    || !isExternalSessionOperationTerminalStatusV1(predecessor.record.status)
     || predecessor.record.progressProjection.acknowledgedRevision === null
     || predecessor.record.progressProjection.acknowledgedRevision
       < predecessor.record.revision
@@ -428,7 +425,7 @@ export async function convergeExternalSessionOperationProgressProjection(
         projectedRevision: record.revision,
       });
       if (remote.revision === record.revision) {
-        await pruneExpiredExternalSessionOperationCompletionReceipts({
+        await pruneExpiredExternalSessionOperationTerminalReceipts({
           activeServerDir,
           nowMs: Date.now(),
           sessionIds: [record.request.sessionId],
@@ -489,7 +486,7 @@ export async function convergeExternalSessionOperationProgressProjection(
       projectedRevision: record.revision,
     });
   }
-  await pruneExpiredExternalSessionOperationCompletionReceipts({
+  await pruneExpiredExternalSessionOperationTerminalReceipts({
     activeServerDir,
     nowMs: Date.now(),
     sessionIds: [record.request.sessionId],
@@ -513,7 +510,7 @@ export async function settlePriorTerminalExternalSessionOperationProgressProject
 ): Promise<void> {
   const unsettled = priorTerminalRecords.filter(
     (record) =>
-      REPLACEABLE_TERMINAL_STATUSES.has(record.status)
+      isExternalSessionOperationTerminalStatusV1(record.status)
       && (
         record.progressProjection.acknowledgedRevision === null
         || record.progressProjection.acknowledgedRevision < record.revision
@@ -590,8 +587,10 @@ export async function repairExternalSessionOperationProgressProjections(
     for (const terminalRecord of sessionRecords) {
       const stagingIsStructurallyAbsent =
         isSettledRecordWithoutPrivateStaging(terminalRecord);
+      // Cleanup and compaction both follow settlement. A record only reaches a
+      // receipt after the same bounded staging cleanup has completed.
       const requiresTerminalStagingCleanup =
-        isCompactableSettledRecord(terminalRecord)
+        isExternalSessionOperationSettledForTerminalCleanup(terminalRecord)
         && !hasStructurallyAbsentPrivateStaging(terminalRecord);
       if (
         !stagingIsStructurallyAbsent
@@ -626,7 +625,7 @@ export async function repairExternalSessionOperationProgressProjections(
               // compaction. Repeat the same bounded convergence step on boot
               // so a crash after the ACK cannot strand the selected expired
               // predecessor once this full successor becomes a receipt.
-              await pruneExpiredExternalSessionOperationCompletionReceipts({
+              await pruneExpiredExternalSessionOperationTerminalReceipts({
                 activeServerDir,
                 nowMs: nowMs(),
                 sessionIds: [terminalRecord.request.sessionId],
@@ -925,7 +924,7 @@ function permitsDifferentTerminalReplacement(
   current: ExternalSessionOperationSharedPresentationV1,
   options: ExternalSessionOperationSelectionOptions,
 ): boolean {
-  return REPLACEABLE_TERMINAL_STATUSES.has(current.status)
+  return isExternalSessionOperationTerminalStatusV1(current.status)
     && options.allowDifferentTerminalReplacement === true
     && options.expectedDifferentTerminalPresentation !== undefined
     && presentationsEqual(
@@ -1166,7 +1165,7 @@ export async function assertExternalSessionOperationProgressCanBeSelected(
       || receiptReference.data.operationId
         !== receiptPresentation.data.operationId
       || receiptReference.data.revision !== receiptPresentation.data.revision
-      || !REPLACEABLE_TERMINAL_STATUSES.has(receiptPresentation.data.status)
+      || !isExternalSessionOperationTerminalStatusV1(receiptPresentation.data.status)
     ) {
       throw new Error('external_session_operation_projection_conflict');
     }
@@ -1194,7 +1193,7 @@ export async function assertExternalSessionOperationProgressCanBeSelected(
   for (const predecessor of input.priorTerminalRecords ?? []) {
     if (
       predecessor.request.sessionId !== input.sessionId
-      || !REPLACEABLE_TERMINAL_STATUSES.has(predecessor.status)
+      || !isExternalSessionOperationTerminalStatusV1(predecessor.status)
       || predecessor.progressProjection.acknowledgedRevision === null
       || predecessor.progressProjection.acknowledgedRevision
         < predecessor.revision
@@ -1365,7 +1364,7 @@ export async function publishExternalSessionOperationProgress(input: Readonly<{
           projectedRevision: selectedProgress.revision,
         });
       if (input.expectedDifferentTerminalPresentation) {
-        await deleteExpiredExternalSessionOperationCompletionReceipt({
+        await deleteExpiredExternalSessionOperationTerminalReceipt({
           activeServerDir: input.activeServerDir,
           sessionId: input.sessionId,
           operationId:

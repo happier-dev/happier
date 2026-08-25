@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { access, chmod, mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -36,6 +36,32 @@ import type {
   SpawnSessionOptions,
   SpawnSessionResult,
 } from '@/session/shared/spawnSessionContract';
+
+/**
+ * The durable record store owns its own on-disk layout, so locate the Account
+ * partition that actually holds this operation's row instead of reconstructing
+ * a path. A layout change fails loudly here rather than silently locking a
+ * directory the store does not use.
+ */
+async function resolveDurableRecordsDirectory(
+  activeServerDir: string,
+  operationId: string,
+): Promise<string> {
+  const root = join(activeServerDir, 'external-session-operations');
+  const byAccount = join(root, 'by-account');
+  const candidates = [
+    ...(await readdir(byAccount).catch(() => [] as string[]))
+      .map((accountDirectory) => join(byAccount, accountDirectory, 'records')),
+    join(root, 'records'),
+  ];
+  const key = createHash('sha256').update(operationId, 'utf8').digest('hex');
+  for (const candidate of candidates) {
+    const found = await access(join(candidate, `${key}.json`))
+      .then(() => true, () => false);
+    if (found) return candidate;
+  }
+  throw new Error('durable external-session operation record was not found');
+}
 
 function resolvedSpawn(
   options: SpawnSessionOptions,
@@ -448,6 +474,136 @@ describe('external-session persisted takeover admission action', () => {
         bindings: { targetRuntimeAttemptId: 'attempt-a' },
       });
       expect(sendHistoricalCommand).toHaveBeenCalledOnce();
+    } finally {
+      await rm(activeServerDir, { recursive: true, force: true });
+    }
+  });
+
+  it('resumes a recoverable admission under a fresh attempt so a late attempt A cannot complete B', async () => {
+    const activeServerDir = await mkdtemp(join(
+      tmpdir(),
+      'happier-takeover-resume-fresh-attempt-',
+    ));
+    const waiter = createPersistedTakeoverAdmissionWaiter();
+    const release = vi.fn(async () => undefined);
+    try {
+      // The first Resume episode launched attempt A under its own exclusion
+      // claim and left exactly this recoverable row behind when admission
+      // failed before commit.
+      const base = admissionReadyRecord();
+      const {
+        acceptedThroughServerSeq: _acceptedThroughServerSeq,
+        acknowledgedBatchId: _acknowledgedBatchId,
+        ...checkpoint
+      } = base.checkpoint;
+      const initial: ExternalSessionOperationRecordV1 = {
+        ...base,
+        status: 'failed',
+        checkpoint,
+        bindings: {
+          operationClaimId: 'attempt-a-claim',
+          targetRuntimeAttemptId: 'attempt-a',
+        },
+        error: {
+          code: 'admission_failed',
+          message: 'Attempt A admission did not complete.',
+          retryable: true,
+          occurredAtMs: 3,
+        },
+      };
+      await writeExternalSessionOperationRecord(activeServerDir, initial);
+      const observed: {
+        attemptIdAtSpawn?: string;
+        staleAttemptSettled?: boolean;
+        freshAttemptSettled?: boolean;
+      } = {};
+      const spawnSession = vi.fn(async () => {
+        const running = await readExternalSessionOperationRecord(
+          activeServerDir,
+          initial.operationId,
+        );
+        observed.attemptIdAtSpawn = running?.bindings.targetRuntimeAttemptId;
+        // The detached child launched under the released claim still reports
+        // `{ mode, operationId, attemptId }` only, so a retained attempt would
+        // let it satisfy the waiter this Resume registered.
+        observed.staleAttemptSettled = waiter.settle(
+          persistedAdmissionWaiterCorrelation({
+            operationId: initial.operationId,
+            attemptId: 'attempt-a',
+          }),
+          { status: 'committed' },
+        );
+        observed.freshAttemptSettled = waiter.settle(
+          persistedAdmissionWaiterCorrelation({
+            operationId: initial.operationId,
+            attemptId: 'attempt-b',
+          }),
+          { status: 'committed' },
+        );
+        return {
+          type: 'success' as const,
+          sessionId: initial.request.sessionId,
+        };
+      });
+      const executor = createExternalSessionTakeoverAdmissionActionExecutor({
+        activeServerDir,
+        operationExclusion: {
+          acquire: vi.fn(async (operationRequest) => ({
+            status: 'acquired' as const,
+            claim: {
+              record: {
+                schemaVersion: 1 as const,
+                claimId: 'attempt-b-claim',
+                ownerId: 'takeover-admission-test',
+                request: operationRequest,
+                acquiredAtMs: 1,
+                renewedAtMs: 1,
+                expiresAtMs: 20_001,
+              },
+              renew: async () => true,
+              release,
+            },
+          })),
+        },
+        prepareSpawn: async () => resolvedSpawn({
+          directory: '/workspace',
+          existingSessionId: initial.request.sessionId,
+        }),
+        spawnResolvedTakeoverSession,
+        spawnSession,
+        admissionWaiter: waiter,
+        isHostedAdmissionAvailable: () => true,
+        createAttemptId: () => 'attempt-b',
+        nowMs: () => 100,
+      });
+
+      await expect(executor.resume({
+        sessionId: initial.request.sessionId,
+        operationId: initial.operationId,
+        revision: initial.revision,
+      })).resolves.toMatchObject({ ok: true });
+      expect(observed).toEqual({
+        attemptIdAtSpawn: 'attempt-b',
+        staleAttemptSettled: false,
+        freshAttemptSettled: true,
+      });
+      expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({
+        persistedTakeoverAdmission: {
+          mode: 'persisted',
+          operationId: initial.operationId,
+          attemptId: 'attempt-b',
+        },
+      }));
+      expect((
+        await readExternalSessionOperationRecord(
+          activeServerDir,
+          initial.operationId,
+        )
+      )?.bindings).toMatchObject({
+        operationClaimId: 'attempt-b-claim',
+        targetRuntimeAttemptId: 'attempt-b',
+      });
+      expect(release).toHaveBeenCalledOnce();
     } finally {
       await rm(activeServerDir, { recursive: true, force: true });
     }
@@ -1262,6 +1418,98 @@ describe('external-session persisted takeover admission action', () => {
       expect(release).toHaveBeenCalledOnce();
       expect(cancelAdmissionWait).toHaveBeenCalledOnce();
     } finally {
+      await rm(activeServerDir, { recursive: true, force: true });
+    }
+  });
+
+  // POSIX-only: forcing the durable record store to reject a write needs
+  // directory permissions, and Windows `chmod` cannot express them.
+  it.skipIf(process.platform === 'win32')('refuses to report a stranded precommit admission as recovered when its transition cannot commit', async () => {
+    const activeServerDir = await mkdtemp(join(
+      tmpdir(),
+      'happier-takeover-admission-recovery-unresolved-',
+    ));
+    const release = vi.fn(async () => undefined);
+    const initial = admissionReadyRecord();
+    let lockedRecordsDirectory: string | null = null;
+    try {
+      await writeExternalSessionOperationRecord(activeServerDir, initial);
+      const spawnSession = vi.fn(async () => {
+        // The operation is committed to `running`/`admitting` for this exact
+        // attempt by now; make the durable store reject the recovery write.
+        lockedRecordsDirectory = await resolveDurableRecordsDirectory(
+          activeServerDir,
+          initial.operationId,
+        );
+        await chmod(lockedRecordsDirectory, 0o500);
+        return {
+          type: 'error' as const,
+          errorCode: 'SPAWN_FAILED' as const,
+          errorMessage: 'child did not start',
+        };
+      });
+      const executor = createExternalSessionTakeoverAdmissionActionExecutor({
+        activeServerDir,
+        operationExclusion: {
+          acquire: vi.fn(async (operationRequest) => ({
+            status: 'acquired' as const,
+            claim: {
+              record: {
+                schemaVersion: 1 as const,
+                claimId: 'resume-claim-1',
+                ownerId: 'takeover-admission-test',
+                request: operationRequest,
+                acquiredAtMs: 1,
+                renewedAtMs: 1,
+                expiresAtMs: 20_001,
+              },
+              renew: async () => true,
+              release,
+            },
+          })),
+        },
+        prepareSpawn: async () => resolvedSpawn({
+          directory: '/workspace',
+          existingSessionId: initial.request.sessionId,
+        }),
+        spawnResolvedTakeoverSession,
+        spawnSession,
+        admissionWaiter: {
+          isPending: vi.fn(() => true),
+          register: vi.fn(() => ({
+            outcome: new Promise<PersistedTakeoverAdmissionOutcome>(() => undefined),
+            readOutcome: vi.fn(() => null),
+            cancel: vi.fn(),
+          })),
+          settle: vi.fn(),
+        },
+        isHostedAdmissionAvailable: () => true,
+        createAttemptId: () => 'attempt-1',
+        nowMs: () => 100,
+      });
+
+      // The claim is released and the waiter cancelled in the same turn, so an
+      // operation still parked at `running`/`admitting` is stranded, not
+      // recovered, and must never be published as a successful outcome.
+      await expect(executor.resume({
+        sessionId: initial.request.sessionId,
+        operationId: initial.operationId,
+        revision: initial.revision,
+      })).resolves.toMatchObject({
+        ok: false,
+        error: { code: 'internal_error' },
+      });
+      await chmod(lockedRecordsDirectory!, 0o700);
+      lockedRecordsDirectory = null;
+      expect(await readExternalSessionOperationRecord(
+        activeServerDir,
+        initial.operationId,
+      )).toMatchObject({ status: 'running', phase: 'admitting' });
+      expect(release).toHaveBeenCalledOnce();
+    } finally {
+      if (lockedRecordsDirectory) {
+        await chmod(lockedRecordsDirectory, 0o700).catch(() => undefined);
+      }
       await rm(activeServerDir, { recursive: true, force: true });
     }
   });

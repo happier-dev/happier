@@ -28,6 +28,7 @@ import {
   ProviderProbeCredentialResolutionError,
   ProviderProbeDestinationAuthorizationError,
   type ProviderProbeAuthorizationPort,
+  type ProviderProbeOperationScope,
   type ProviderProbeAuthorizationRequest,
 } from './authorization';
 import {
@@ -229,11 +230,16 @@ export function createProviderCatalogService<TTicket, TCredentialRef>(dependenci
   async function updateAuthorized(
     authorizations: readonly Readonly<{ ticket: TTicket; request: ProviderProbeAuthorizationRequest }>[],
     transform: (state: ProviderRuntimeStateFileV1) => ProviderRuntimeStateFileV1,
+    operationScope?: ProviderProbeOperationScope,
   ): Promise<ProviderErrorV1 | null> {
     try {
       await dependencies.runtimeStore.update(async (state) => {
         for (const authorization of authorizations) {
-          const validation = await dependencies.authorization.revalidate(authorization.ticket, authorization.request);
+          const validation = await dependencies.authorization.revalidate(
+            authorization.ticket,
+            authorization.request,
+            operationScope,
+          );
           if (!validation.ok) throw new ProviderProbeCommitAuthorizationError(validation.error);
         }
         return transform(state);
@@ -254,6 +260,9 @@ export function createProviderCatalogService<TTicket, TCredentialRef>(dependenci
       catalogFallback?: ProviderCatalogCommandFallbackV1;
       mode?: 'catalog' | 'health';
       signal?: AbortSignal;
+      /** Absolute end of the caller's already-started Provider operation budget. */
+      wallDeadlineAtMs?: number;
+      operationScope?: ProviderProbeOperationScope;
       managedSource?: ProviderManagedCatalogSource;
       contributedCatalogParsers?: ContributedProviderCatalogParserBinding;
     }>): Promise<ProviderCatalogRefreshResult> {
@@ -261,6 +270,7 @@ export function createProviderCatalogService<TTicket, TCredentialRef>(dependenci
       const connectionId = ProviderConnectionIdSchema.parse(input.connectionId);
       const machineId = ProviderMachineIdSchema.parse(input.machineId);
       const contributedParsers = input.contributedCatalogParsers;
+      const operationScope = input.operationScope;
       // A contributed format's implementation belongs to one activation
       // generation. Queued or in-flight probe work can outlive a plugin
       // replacement, so refuse before dispatch and again before persistence
@@ -325,7 +335,7 @@ export function createProviderCatalogService<TTicket, TCredentialRef>(dependenci
           parser: probe.parser,
           probeRequestFingerprint: managedRequestFingerprint,
         };
-        const authorization = await dependencies.authorization.authorize(authorizationRequest);
+        const authorization = await dependencies.authorization.authorize(authorizationRequest, operationScope);
         if (!authorization.ok) return { status: 'error', error: authorization.error };
         if (authorization.credentialRef !== null) {
           throw new TypeError('Managed Provider catalog authorization must be credential-free');
@@ -333,6 +343,7 @@ export function createProviderCatalogService<TTicket, TCredentialRef>(dependenci
         const initialValidation = await dependencies.authorization.revalidate(
           authorization.ticket,
           authorizationRequest,
+          operationScope,
         );
         if (!initialValidation.ok) return { status: 'error', error: initialValidation.error };
 
@@ -344,6 +355,7 @@ export function createProviderCatalogService<TTicket, TCredentialRef>(dependenci
           revalidateBeforeEffect: () => dependencies.authorization.revalidate(
             authorization.ticket,
             authorizationRequest,
+            operationScope,
           ),
         });
         if (!launched.ok) return { status: 'error', error: launched.error };
@@ -351,6 +363,7 @@ export function createProviderCatalogService<TTicket, TCredentialRef>(dependenci
           const dispatchValidation = await dependencies.authorization.revalidate(
             authorization.ticket,
             authorizationRequest,
+            operationScope,
           );
           if (!dispatchValidation.ok) return { status: 'error', error: dispatchValidation.error };
           if (!launched.isCurrent()) {
@@ -396,6 +409,7 @@ export function createProviderCatalogService<TTicket, TCredentialRef>(dependenci
               }
             },
             ...(input.signal ? { signal: input.signal } : {}),
+            ...(input.wallDeadlineAtMs !== undefined ? { wallDeadlineAtMs: input.wallDeadlineAtMs } : {}),
           });
           if (result.requestFingerprint !== exactRuntimeFingerprint) {
             throw new TypeError('Managed Provider probe client returned a mismatched realized request fingerprint');
@@ -462,6 +476,7 @@ export function createProviderCatalogService<TTicket, TCredentialRef>(dependenci
                   }))),
               };
             },
+            operationScope,
           );
           if (commitError) return { status: 'error', error: commitError };
           return {
@@ -505,11 +520,12 @@ export function createProviderCatalogService<TTicket, TCredentialRef>(dependenci
           parser: request.probe.parser,
           probeRequestFingerprint: request.requestFingerprint,
         };
-        const authorization = await dependencies.authorization.authorize(authorizationRequest);
+        const authorization = await dependencies.authorization.authorize(authorizationRequest, operationScope);
         if (!authorization.ok) return { status: 'error', error: authorization.error };
         const secretResolutionValidation = await dependencies.authorization.revalidate(
           authorization.ticket,
           authorizationRequest,
+          operationScope,
         );
         if (!secretResolutionValidation.ok) {
           return { status: 'error', error: secretResolutionValidation.error };
@@ -548,6 +564,7 @@ export function createProviderCatalogService<TTicket, TCredentialRef>(dependenci
               endpointHealth: [...replaceProviderRuntimeStateRecord('endpointHealth', state.endpointHealth, checkingRecord)],
             };
           },
+          operationScope,
         );
         if (checkingCommitError) {
           return { status: 'error', error: checkingCommitError };
@@ -605,6 +622,7 @@ export function createProviderCatalogService<TTicket, TCredentialRef>(dependenci
                 authorization.ticket,
                 authorizationRequest,
                 destination,
+                operationScope,
               );
               if (!result.ok) throw new ProviderProbeDestinationAuthorizationError(result.error);
             },
@@ -616,6 +634,7 @@ export function createProviderCatalogService<TTicket, TCredentialRef>(dependenci
               },
             }),
             ...(input.signal ? { signal: input.signal } : {}),
+            ...(input.wallDeadlineAtMs !== undefined ? { wallDeadlineAtMs: input.wallDeadlineAtMs } : {}),
           });
           if (result.requestFingerprint !== request.requestFingerprint) {
             throw new TypeError('Provider probe client returned a mismatched request fingerprint');
@@ -677,7 +696,7 @@ export function createProviderCatalogService<TTicket, TCredentialRef>(dependenci
               catalogs: [...replaceProviderRuntimeStateRecord('catalogs', state.catalogs, catalogRecord)],
               modelLoadStates: [...modelLoadStates],
             };
-          });
+          }, operationScope);
           if (commitError) {
             await clearCheckingActivity();
             return { status: 'error', error: commitError };
@@ -713,7 +732,7 @@ export function createProviderCatalogService<TTicket, TCredentialRef>(dependenci
                 lastAccessedAt: observedAt,
               })],
             }
-          ));
+          ), operationScope);
           if (commitError) {
             await clearCheckingActivity();
             return { status: 'error', error: commitError };
@@ -752,6 +771,7 @@ export function createProviderCatalogService<TTicket, TCredentialRef>(dependenci
         const validation = await dependencies.authorization.revalidate(
           fallbackAuthorization.ticket,
           fallbackAuthorization.request,
+          operationScope,
         );
         if (!validation.ok) return { status: 'error', error: validation.error };
         if (contributionRetired()) return contributionUnavailable();
@@ -795,6 +815,7 @@ export function createProviderCatalogService<TTicket, TCredentialRef>(dependenci
                   !(row.key.machineId === machineId && row.key.connectionId === connectionId)),
               };
             },
+            operationScope,
           );
           if (commitError) return { status: 'error', error: commitError };
           return {
@@ -829,7 +850,7 @@ export function createProviderCatalogService<TTicket, TCredentialRef>(dependenci
             lastAccessedAt: failedAt,
           };
         }),
-      }));
+      }), operationScope);
       if (staleCommitError) return { status: 'error', error: staleCommitError };
       return { status: 'error', error: lastError };
     },

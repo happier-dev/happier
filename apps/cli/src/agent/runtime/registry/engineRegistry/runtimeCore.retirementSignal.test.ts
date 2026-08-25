@@ -84,7 +84,7 @@ function createCurrentnessRegistry(params: Readonly<{
         ? materialization
         : null
     ),
-    retirePluginConsumers: vi.fn(),
+    retirePluginConsumers: vi.fn(async () => undefined),
     settleRetiredBackgroundServices: vi.fn(async () => undefined),
     dispose: vi.fn(async () => undefined),
   } as unknown as ResolvedExecutablePluginRuntimeRegistry;

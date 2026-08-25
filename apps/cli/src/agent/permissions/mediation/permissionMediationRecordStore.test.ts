@@ -7,6 +7,7 @@ import {
 } from '@happier-dev/protocol';
 
 import type { SessionClientPort } from '@/api/session/sessionClientPort';
+import type { SessionEncryptionContext } from '@/session/transport/encryption/sessionEncryptionContext';
 
 import { createPermissionMediationRecordStore } from './permissionMediationRecordStore';
 
@@ -79,6 +80,16 @@ function createPlainSession(overrides: Partial<SessionClientPort> = {}): Session
   return Object.assign(session, overrides);
 }
 
+function createE2eeSession(
+  ctx: SessionEncryptionContext,
+  overrides: Partial<SessionClientPort> = {},
+): SessionClientPort {
+  return createPlainSession({
+    getStoredContentEncryptionContext: () => ({ mode: 'e2ee' as const, ctx }),
+    ...overrides,
+  });
+}
+
 function identityKey(identity: SessionPermissionMediationRecordIdentityV1): string {
   return JSON.stringify([identity.sessionId, identity.turnId, identity.requestId]);
 }
@@ -134,6 +145,60 @@ describe('permissionMediationRecordStore', () => {
       },
     }));
 
+    await expect(store.read({ identity: firstIdentity })).resolves.toEqual({ status: 'unavailable' });
+  });
+
+  it('seals an E2EE row, round trips it, and never reads a plain or undecryptable row as data', async () => {
+    const ctx: SessionEncryptionContext = {
+      encryptionKey: new Uint8Array(32).fill(7),
+      encryptionVariant: 'dataKey',
+    };
+    const record = settlementRecord();
+    const revision = 'ssr1.AAAACnJlY29yZC1vbmUAAAAB';
+    const write = vi.fn(async (params: Readonly<{
+      identity: SessionPermissionMediationRecordIdentityV1;
+      request: SessionPermissionMediationRecordWriteRequest;
+    }>) => ({ ...params.identity, kind: params.request.kind, content: params.request.content, revision }));
+    let readContent: SessionPermissionMediationRecordStored['content'] | null = null;
+    const read = vi.fn(async () => (readContent
+      ? { ...firstIdentity, kind: 'remote_settlement.v1' as const, content: readContent, revision }
+      : null));
+    const store = createPermissionMediationRecordStore(createE2eeSession(ctx, {
+      writePermissionMediationRecord: write,
+      readPermissionMediationRecord: read,
+    }));
+    expect(store).not.toBeNull();
+    if (!store) throw new Error('expected typed mediation store');
+
+    await expect(store.createExpectedAbsent({
+      identity: firstIdentity,
+      kind: 'remote_settlement.v1',
+      record,
+    })).resolves.toEqual({
+      status: 'created',
+      stored: { identity: firstIdentity, kind: 'remote_settlement.v1', record, revision },
+    });
+    // The transport only ever observes the sealed envelope for an E2EE
+    // Session: read back exactly what the host handed it.
+    const sealed = write.mock.calls[0]?.[0].request.content;
+    if (sealed?.t !== 'encrypted') throw new Error('expected a sealed E2EE envelope');
+    expect(typeof sealed.c).toBe('string');
+    // No actor or source field may survive in the transported bytes.
+    expect(JSON.stringify(sealed)).not.toContain('person-1');
+    expect(JSON.stringify(sealed)).not.toContain('happier.channels');
+
+    readContent = sealed;
+    await expect(store.read({ identity: firstIdentity })).resolves.toEqual({
+      status: 'found',
+      stored: { identity: firstIdentity, kind: 'remote_settlement.v1', record, revision },
+    });
+
+    // An E2EE Session must never reinterpret a plain row as data.
+    readContent = { t: 'plain', v: record };
+    await expect(store.read({ identity: firstIdentity })).resolves.toEqual({ status: 'unavailable' });
+
+    // A row this Session cannot open is unavailable, never partially applied.
+    readContent = { t: 'encrypted', c: 'bm90LWEtdmFsaWQtY2lwaGVydGV4dA==' };
     await expect(store.read({ identity: firstIdentity })).resolves.toEqual({ status: 'unavailable' });
   });
 

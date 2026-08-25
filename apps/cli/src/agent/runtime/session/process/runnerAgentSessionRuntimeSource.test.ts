@@ -35,14 +35,6 @@ const mocks = vi.hoisted(() => ({
     readCurrentPluginImmutableGenerationIntegrityCurrentness: vi.fn(),
     readPrivateBearerFile: vi.fn(),
     createRunnerAgentDaemonFacets: vi.fn(),
-    facetCurrentExternalSessionProviderOps: {
-        validateSource: vi.fn(),
-        listCandidates: vi.fn(),
-        resolveLinkIdentity: vi.fn(),
-        canonicalizeLinkedSession: vi.fn(),
-        pageTranscript: vi.fn(),
-        readAfterTranscript: vi.fn(),
-    },
     facetBindSession: vi.fn(),
     facetVoiceResolveDeclaration: vi.fn(),
     disposeDaemonFacets: vi.fn(),
@@ -368,8 +360,6 @@ describe('runner Agent session runtime source', () => {
             .mockImplementation(async ({ authority: input }) => ({
                 externalSessionHostOperations:
                     { bindSession: mocks.facetBindSession },
-                currentExternalSessionProviderOps:
-                    mocks.facetCurrentExternalSessionProviderOps,
                 agentSessionRealtimeVoiceAuthority:
                     {
                         generation:
@@ -431,8 +421,8 @@ describe('runner Agent session runtime source', () => {
         expect(source!.identity).not.toHaveProperty('runtimeAuthority');
         expect(source!.externalSessionHostOperations)
             .toBeDefined();
-        expect(source!.currentExternalSessionProviderOps)
-            .toBe(mocks.facetCurrentExternalSessionProviderOps);
+        expect(source!.retainedExternalSessionProviderOps)
+            .toBeDefined();
         expect(source!.agentSessionRealtimeVoiceAuthority)
             .toMatchObject({
                 generation: 'immutable-generation-1',
@@ -525,6 +515,124 @@ describe('runner Agent session runtime source', () => {
                 witness: daemonWitness,
             }),
         }));
+    });
+
+    it('keeps installed Agents with one local id distinct through runner construction', async () => {
+        const localAgentId = 'assistant';
+        const entries = [
+            {
+                pluginId: 'acme.alpha',
+                agentId: 'acme.alpha/agents/assistant',
+                generation: 'immutable-alpha',
+                path: '/tmp/happier-runner-source/alpha.json',
+            },
+            {
+                pluginId: 'acme.beta',
+                agentId: 'acme.beta/agents/assistant',
+                generation: 'immutable-beta',
+                path: '/tmp/happier-runner-source/beta.json',
+            },
+        ] as const;
+        const authorities = new Map(
+            entries.map((entry) => {
+                const base = authority();
+                return [entry.path, {
+                    ...base,
+                    sessionId: `${entry.pluginId}-session`,
+                    retainedAgent: {
+                        ...base.retainedAgent,
+                        pluginId: entry.pluginId,
+                        agentId: entry.agentId,
+                        localAgentId,
+                        immutableGenerationId: entry.generation,
+                    },
+                }];
+            }),
+        );
+        mocks.readAuthority.mockImplementation(async (input) =>
+            authorities.get(input.path) ?? null);
+
+        const runtimes = new Map<string, AgentRuntime>();
+        const factories = new Map<string, ReturnType<typeof vi.fn>>();
+        for (const entry of entries) {
+            const runtime = Object.freeze({
+                sessions: Object.freeze({ open: vi.fn() }),
+            });
+            const factory = vi.fn(async () => runtime);
+            runtimes.set(entry.agentId, runtime);
+            factories.set(entry.agentId, factory);
+        }
+        mocks.loadFactory.mockImplementation(async (input) => {
+            const binding = (input as Readonly<{
+                binding: Readonly<{ agentId: string }>;
+            }>).binding;
+            const factory = factories.get(binding.agentId);
+            if (!factory) throw new Error(`Missing factory for ${binding.agentId}`);
+            return factory;
+        });
+
+        const sources = await Promise.all(entries.map((entry) =>
+            createRunnerAgentSessionRuntimeSource({
+                happyHomeDir: '/tmp/happier-runner-source',
+                publicReleaseRing: 'stable',
+                authorityFilePath: entry.path,
+            }),
+        ));
+        expect(sources.every((source) => source !== null)).toBe(true);
+        expect(sources.map((source) => source?.identity.agentId)).toEqual([
+            entries[0].agentId,
+            entries[1].agentId,
+        ]);
+        expect(new Set(sources.map((source) => source?.identity.agentId)).size)
+            .toBe(2);
+
+        const signal = new AbortController().signal;
+        for (const [index, source] of sources.entries()) {
+            const entry = entries[index];
+            if (!source) throw new Error('Missing runner source');
+            await expect(source.createRuntime({ signal }))
+                .resolves.toBe(runtimes.get(entry.agentId));
+            await source.createInvocationServices({
+                pluginId: entry.pluginId,
+                pluginVersion: '1.0.0',
+                agentId: entry.agentId,
+                generation: entry.generation,
+                correlationId: `${entry.pluginId}-session`,
+                cwd: '/repo',
+                environment: {},
+                providerBindingActive: false,
+                signal,
+                session: {
+                    id: `${entry.pluginId}-session`,
+                    current: {} as never,
+                },
+                isGenerationCurrent: () => true,
+            });
+        }
+
+        for (const entry of entries) {
+            expect(factories.get(entry.agentId)).toHaveBeenCalledWith({
+                plugin: {
+                    id: entry.pluginId,
+                    version: '1.0.0',
+                },
+                agent: { id: localAgentId },
+                signal,
+            });
+        }
+        expect(mocks.createOperationServices.mock.calls.map(([seed]) => seed))
+            .toEqual(expect.arrayContaining(entries.map((entry) =>
+                expect.objectContaining({
+                    plugin: {
+                        id: entry.pluginId,
+                        version: '1.0.0',
+                    },
+                    contribution: {
+                        id: localAgentId,
+                        qualifiedId: entry.agentId,
+                    },
+                }),
+            )));
     });
 
     it('binds the exact loader companion into the retained follow resolver and fences it on retirement', async () => {
@@ -630,12 +738,25 @@ describe('runner Agent session runtime source', () => {
             pathAndQuery: '/session/remote-g/message',
             headers: { accept: 'application/json' },
         });
-        expect(
-            mocks.facetCurrentExternalSessionProviderOps.pageTranscript,
-        ).not.toHaveBeenCalled();
+        // The retained Session's own private composition surface reads the
+        // same exact companion; a separate case below proves that directly.
+        const privateComposition =
+            source!.retainedExternalSessionProviderOps!;
 
         await source?.retire?.();
         await expect(retainedOps?.pageTranscript({
+            source: {
+                kind: 'testSource',
+                baseUrl: 'http://127.0.0.1:4312',
+            },
+            remoteSessionId: 'remote-g',
+            direction: 'older',
+            maxBytes: 524_288,
+            maxItems: 1,
+        })).rejects.toMatchObject({
+            code: 'unavailable',
+        });
+        await expect(privateComposition.pageTranscript!({
             source: {
                 kind: 'testSource',
                 baseUrl: 'http://127.0.0.1:4312',
@@ -652,6 +773,93 @@ describe('runner Agent session runtime source', () => {
             mocks.bindAgentExternalSessionsManagedEndpoint,
         ).toHaveBeenCalledOnce();
         expect(mocks.managedEndpointRead).toHaveBeenCalledOnce();
+    });
+
+    it('composes the retained private External Sessions surface from the exact loader companion, never the daemon current-global facet', async () => {
+        const runtime = { sessions: { open: vi.fn() } };
+        mocks.loadFactory.mockResolvedValue(async () => runtime);
+        const resolveSource = vi.fn(async (request: Readonly<{
+            source: unknown;
+        }>) => ({
+            ok: true as const,
+            // The exact generation is the only authority allowed to normalize
+            // this Session's source. After G->H the current generation may
+            // normalize differently, so a normalization only G performs is the
+            // discriminating witness that H never answered.
+            value: {
+                source: {
+                    ...(request.source as Record<string, unknown>),
+                    normalizedBy: 'immutable-generation-1',
+                },
+            },
+        }));
+        mocks.externalSessionsCompanion = Object.freeze({
+            resolveSource,
+            listCandidates: async () => ({
+                ok: true as const,
+                value: { candidates: [], nextCursor: null },
+            }),
+            resolveLinkIdentity: async () => ({
+                ok: false as const,
+                code: 'candidate_not_found',
+            }),
+            resolveLinkedIdentity: async () => ({
+                ok: false as const,
+                code: 'candidate_not_found',
+            }),
+            pageTranscript: async () => ({
+                ok: false as const,
+                code: 'candidate_not_found',
+            }),
+            readAfterTranscript: async () => ({
+                ok: true as const,
+                value: { outcome: 'already_current' as const },
+            }),
+        });
+        const source = await createRunnerAgentSessionRuntimeSource({
+            happyHomeDir: '/tmp/happier-runner-source',
+            publicReleaseRing: 'stable',
+            authorityFilePath:
+                '/tmp/happier-runner-source/authority.json',
+        });
+
+        await expect(
+            source!.retainedExternalSessionProviderOps!.validateSource!({
+                source: { kind: 'testSource' },
+            }),
+        ).resolves.toMatchObject({
+            ok: true,
+            source: {
+                kind: 'testSource',
+                normalizedBy: 'immutable-generation-1',
+            },
+        });
+        expect(resolveSource).toHaveBeenCalledOnce();
+        // Nothing crossed the runner-to-daemon service boundary: the private
+        // composition never asks the daemon's current generation to answer for
+        // this Session.
+        expect(mocks.dispatch).not.toHaveBeenCalled();
+    });
+
+    it('fails the retained private composition closed when the retained generation has no External Sessions companion', async () => {
+        const runtime = { sessions: { open: vi.fn() } };
+        mocks.loadFactory.mockResolvedValue(async () => runtime);
+        mocks.externalSessionsCompanion = null;
+        const source = await createRunnerAgentSessionRuntimeSource({
+            happyHomeDir: '/tmp/happier-runner-source',
+            publicReleaseRing: 'stable',
+            authorityFilePath:
+                '/tmp/happier-runner-source/authority.json',
+        });
+
+        await expect(
+            source!.retainedExternalSessionProviderOps!.validateSource!({
+                source: { kind: 'testSource' },
+            }),
+        ).rejects.toMatchObject({
+            code: 'plugin_external_sessions_companion_unavailable',
+        });
+        expect(mocks.dispatch).not.toHaveBeenCalled();
     });
 
     it('retries early managed Provider preparation only after a proven before-effect refusal', async () => {
@@ -1490,7 +1698,7 @@ describe('runner Agent session runtime source', () => {
                 v: 1,
                 pluginId: 'happier.agent.ohmypi',
                 pluginVersion: '1.0.0',
-                agentId: 'ohmypi',
+                agentId: 'ohMyPi',
                 backendId: 'ohMyPi',
                 generation: 'activation-generation-1',
                 immutableGenerationId: 'immutable-generation-1',
@@ -1511,7 +1719,7 @@ describe('runner Agent session runtime source', () => {
         });
 
         expect(source?.identity).toMatchObject({
-            agentId: 'ohmypi',
+            agentId: 'ohMyPi',
             backendId: 'ohMyPi',
         });
         await expect(source?.prepareForSession?.({
@@ -1519,7 +1727,7 @@ describe('runner Agent session runtime source', () => {
             signal: new AbortController().signal,
         })).resolves.toBeUndefined();
         expect(source?.identity).toMatchObject({
-            agentId: 'ohmypi',
+            agentId: 'ohMyPi',
             backendId: 'ohMyPi',
         });
     });
@@ -1527,7 +1735,7 @@ describe('runner Agent session runtime source', () => {
     it.each([
         {
             identityField: 'plugin-local Agent',
-            descriptorIdentity: { agentId: 'ohmypi-other' },
+            descriptorIdentity: { agentId: 'ohMyPi-other' },
         },
         {
             identityField: 'catalog backend',
@@ -1552,7 +1760,7 @@ describe('runner Agent session runtime source', () => {
                     v: 1,
                     pluginId: 'happier.agent.ohmypi',
                     pluginVersion: '1.0.0',
-                    agentId: 'ohmypi',
+                    agentId: 'ohMyPi',
                     backendId: 'ohMyPi',
                     generation: 'activation-generation-1',
                     immutableGenerationId:
@@ -1844,8 +2052,6 @@ describe('runner Agent session runtime source', () => {
                 });
                 return {
                     externalSessionHostOperations,
-                    currentExternalSessionProviderOps:
-                        mocks.facetCurrentExternalSessionProviderOps,
                     agentSessionRealtimeVoiceAuthority:
                         voiceAuthority,
                     dispose,
@@ -1988,12 +2194,21 @@ describe('runner Agent session runtime source', () => {
             g2Private!.voiceAuthority.resolveDeclaration,
             hPrivate!.voiceAuthority.resolveDeclaration,
         ]).size).toBe(3);
-        expect(g1.currentExternalSessionProviderOps)
-            .toBe(mocks.facetCurrentExternalSessionProviderOps);
-        expect(g2.currentExternalSessionProviderOps)
-            .toBe(mocks.facetCurrentExternalSessionProviderOps);
-        expect(h.currentExternalSessionProviderOps)
-            .toBe(mocks.facetCurrentExternalSessionProviderOps);
+        // Each retained generation composes External Sessions from its own
+        // exact authority. One shared current-global object here would mean a
+        // G Session reading H's source normalization and link identity.
+        expect(new Set([
+            g1.retainedExternalSessionProviderOps,
+            g2.retainedExternalSessionProviderOps,
+            h.retainedExternalSessionProviderOps,
+        ]).size).toBe(3);
+        for (const retained of [
+            g1.retainedExternalSessionProviderOps,
+            g2.retainedExternalSessionProviderOps,
+            h.retainedExternalSessionProviderOps,
+        ]) {
+            expect(retained).toBeDefined();
+        }
 
         await expect(g1.createRuntime({ signal }))
             .resolves.toBe(g1Runtime);

@@ -14,6 +14,13 @@ import { bundlePluginDaemonRuntime } from '@/plugins/authoring/bundleDaemonRunti
 import { scaffoldLocalPlugin } from '@/plugins/scaffold/scaffold';
 import { createPluginStateStore } from '@/plugins/store/state.testkit';
 import { createMarketplaceSourceRegistryStore } from '@/plugins/store/marketplace/sources/store';
+import { createPluginRegistryStateStore } from '@/plugins/store/registry/currentState';
+import {
+    createNpmPluginDistributionIdentity,
+    createPluginTrustRecord,
+} from '@/plugins/store/install/trustIdentity';
+import { DaemonPluginChangePreparationError } from '@/plugins/daemon/changeService';
+import { resolveInstalledPluginUpdate } from '@/plugins/daemon/resolveInstalledUpdate';
 import type { PluginCatalogEntry } from '@/plugins/projection/catalog/installed';
 
 import { createCliCapabilitiesService } from './capabilities';
@@ -524,7 +531,7 @@ describe('createCliCapabilitiesService tool.plugins', () => {
         };
         loadMarketplaceIndexSourceMock.mockImplementation(async ({ source }) => createMarketplaceSnapshot({ source }));
         requestDaemonPluginChangeMock.mockImplementation(async (request: Readonly<{ kind: string; pluginId?: string }>) => (
-            request.kind === 'installNpm'
+            request.kind === 'update'
                 ? { kind: 'reviewRequired', pendingChangeId: 'pending-update', review }
                 : {
                     kind: 'committed',
@@ -580,13 +587,12 @@ describe('createCliCapabilitiesService tool.plugins', () => {
                     },
                 },
             });
-            expect(requestDaemonPluginChangeMock).toHaveBeenNthCalledWith(1, expect.objectContaining({
-                kind: 'installNpm',
-                expectedMarketplaceListing: expect.objectContaining({
-                    source: { id: sourceId, kind: 'curated', sourceUrl },
-                    pluginId: SAMPLE_PLUGIN_ID,
-                }),
-            }));
+            // The installed record — not the marketplace listing the caller named —
+            // is the update authority, so nothing about the catalog travels with it.
+            expect(requestDaemonPluginChangeMock).toHaveBeenNthCalledWith(1, {
+                kind: 'update',
+                pluginId: SAMPLE_PLUGIN_ID,
+            });
             expect(JSON.stringify(requestDaemonPluginChangeMock.mock.calls[0]?.[0])).not.toContain('untrusted.invalid');
 
             for (const method of ['rollback', 'uninstall', 'forgetTrust'] as const) {
@@ -678,14 +684,138 @@ describe('createCliCapabilitiesService tool.plugins', () => {
                 method: 'update',
                 params: { sourceId, pluginId: '   ' },
             })).resolves.toMatchObject({ ok: false, error: { code: 'plugin-not-found' } });
+            // An exact catalog install still requires the source it installs from;
+            // an update never did, because it does not read the catalog.
             await expect(service.invoke({
                 id: 'tool.plugins',
-                method: 'update',
+                method: 'install',
                 params: { sourceId: '   ', pluginId: SAMPLE_PLUGIN_ID },
             })).resolves.toMatchObject({ ok: false, error: { code: 'plugin_source_missing' } });
 
             expect(promptConfirmYesNoMock).not.toHaveBeenCalled();
             expect(decideDaemonPluginChangeMock).not.toHaveBeenCalled();
+        } finally {
+            envScope.restore();
+            reloadConfiguration();
+            await removeTempDir(home);
+        }
+    });
+
+    it('routes update through the canonical installed-update owner so a pinned installation is refused with its own reason', async () => {
+        const home = await createTempDir('happier-cli-capabilities-plugin-pinned-update-');
+        const sourceUrl = 'https://marketplace.example.test/catalog.json';
+        const envScope = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_MARKETPLACE_CURATED_SOURCE_URL']);
+        envScope.patch({
+            HAPPIER_HOME_DIR: home,
+            HAPPIER_MARKETPLACE_CURATED_SOURCE_URL: sourceUrl,
+        });
+        reloadConfiguration();
+        // A newer version is genuinely offered by the catalog: an update arm that
+        // installs the catalog version would advance this pinned installation.
+        loadMarketplaceIndexSourceMock.mockImplementation(async ({ source }) => {
+            const snapshot = createMarketplaceSnapshot({ source });
+            return {
+                ...snapshot,
+                entries: snapshot.entries.map((entry) => ({
+                    ...entry,
+                    distribution: { ...entry.distribution, version: '2.0.0' },
+                })),
+            };
+        });
+
+        try {
+            await createPluginStateStore({ happyHomeDir: home }).write({
+                t: 'happier_plugin_state_v1',
+                schemaVersion: 1,
+                plugins: {
+                    [SAMPLE_PLUGIN_ID]: {
+                        source: {
+                            kind: 'marketplace',
+                            locator: '@acme/sample@1.0.0',
+                            resolvedPath: join(home, 'plugins', SAMPLE_PLUGIN_ID),
+                            manifestPath: join(home, 'plugins', SAMPLE_PLUGIN_ID, '.happier-plugin', 'plugin.json'),
+                            trustPolicy: 'prompt',
+                            installPolicy: 'managed_install',
+                        },
+                        compatibility: { status: 'compatible', diagnostics: [] },
+                        install: {
+                            mode: 'managed_install',
+                            manifestVersion: '1.0.0',
+                            trust: createPluginTrustRecord({
+                                pluginId: SAMPLE_PLUGIN_ID,
+                                distribution: createNpmPluginDistributionIdentity({
+                                    registryOrigin: 'https://registry.npmjs.org',
+                                    packageName: '@acme/sample',
+                                }),
+                                approvedAtMs: 0,
+                            }),
+                            updatePolicy: 'pinned',
+                        },
+                        state: { enabled: true },
+                    },
+                },
+            });
+
+            // The daemon process is the mocked boundary; the decision it reports
+            // is the real canonical installed-update owner's decision.
+            requestDaemonPluginChangeMock.mockImplementation(async (request: Readonly<{ kind: string; pluginId?: string }>) => {
+                if (request.kind !== 'update') {
+                    return { kind: 'reviewRequired', pendingChangeId: 'pending-exact-install', review: {} };
+                }
+                const installed = (await createPluginRegistryStateStore({ happyHomeDir: home }).read())
+                    .plugins[request.pluginId ?? ''];
+                try {
+                    resolveInstalledPluginUpdate(request.pluginId ?? '', installed);
+                } catch (error) {
+                    return error instanceof DaemonPluginChangePreparationError
+                        ? { kind: 'failed', code: error.code, message: error.message }
+                        : { kind: 'failed', code: 'plugin_change_preparation_failed' };
+                }
+                return {
+                    kind: 'committed',
+                    pluginId: request.pluginId,
+                    desiredGeneration: 'generation-2',
+                    appliedGeneration: 'generation-2',
+                    pendingSurfaces: [],
+                };
+            });
+
+            // Derive the expected refusal from the canonical owner itself, so this
+            // test cannot pass against a fixture that is not actually pinned.
+            const canonicalRefusal = await (async () => {
+                const installed = (await createPluginRegistryStateStore({ happyHomeDir: home }).read())
+                    .plugins[SAMPLE_PLUGIN_ID];
+                try {
+                    resolveInstalledPluginUpdate(SAMPLE_PLUGIN_ID, installed);
+                } catch (error) {
+                    if (error instanceof DaemonPluginChangePreparationError) return error;
+                    throw error;
+                }
+                throw new Error('The pinned fixture must be refused by the canonical installed-update owner');
+            })();
+            expect(canonicalRefusal.code).toBe('plugin_update_pinned');
+
+            const sourceId = (await createMarketplaceSourceRegistryStore({ happyHomeDir: home }).read()).sources[0]!.id;
+            const service = await createCliCapabilitiesService();
+            await expect(service.invoke({
+                id: 'tool.plugins',
+                method: 'update',
+                params: { pluginId: SAMPLE_PLUGIN_ID, sourceId },
+            })).resolves.toEqual({
+                ok: false,
+                error: {
+                    code: canonicalRefusal.code,
+                    message: canonicalRefusal.message,
+                },
+            });
+
+            expect(requestDaemonPluginChangeMock).toHaveBeenCalledTimes(1);
+            expect(requestDaemonPluginChangeMock).toHaveBeenCalledWith({
+                kind: 'update',
+                pluginId: SAMPLE_PLUGIN_ID,
+            });
+            expect(requestDaemonPluginChangeMock.mock.calls.map(([request]) => request.kind))
+                .not.toContain('installNpm');
         } finally {
             envScope.restore();
             reloadConfiguration();

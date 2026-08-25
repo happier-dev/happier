@@ -12,6 +12,14 @@ export function mapUnknownErrorToControlError(error: unknown): ControlCliMappedE
     return { code: rawCode, unexpected: false, ...(error instanceof Error && error.message ? { message: error.message } : {}) };
   }
 
+  if (rawCode === 'invalid_token') {
+    return { code: 'not_authenticated', unexpected: false, ...(error instanceof Error && error.message ? { message: error.message } : {}) };
+  }
+
+  if (rawCode === 'target_unavailable') {
+    return { code: rawCode, unexpected: false, ...(error instanceof Error && error.message ? { message: error.message } : {}) };
+  }
+
   // Common network failures from axios/node.
   if (rawCode === 'ECONNREFUSED' || rawCode === 'ECONNRESET' || rawCode === 'ENOTFOUND' || rawCode === 'EAI_AGAIN') {
     return { code: 'server_unreachable', unexpected: false, ...(error instanceof Error && error.message ? { message: error.message } : {}) };

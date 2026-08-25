@@ -16,8 +16,6 @@ import {
     DaemonLocalServiceLauncherSnapshotResponseV1Schema,
     DaemonLocalServiceLauncherStartRequestV1Schema,
     DaemonLocalServiceLauncherStartResponseV1Schema,
-    DaemonLocalServiceManagedSnapshotRequestV1Schema,
-    DaemonLocalServiceManagedSnapshotResponseV1Schema,
     DaemonLocalServicePublicPreviewCopyUrlRequestV1Schema,
     DaemonLocalServicePublicPreviewCopyUrlResponseV1Schema,
     DaemonLocalServicePublicPreviewCreateRequestV1Schema,
@@ -36,7 +34,6 @@ import {
     type DaemonLocalServiceLauncherRegisterPreviewResponseV1,
     type DaemonLocalServiceLauncherSnapshotResponseV1,
     type DaemonLocalServiceLauncherStartResponseV1,
-    type DaemonLocalServiceManagedSnapshotResponseV1,
     type DaemonLocalServicePublicPreviewCopyUrlResponseV1,
     type DaemonLocalServicePublicPreviewCreateResponseV1,
     type DaemonLocalServicePublicPreviewRevokeResponseV1,
@@ -57,7 +54,6 @@ export type DaemonLocalServicesMachineRpcRoutes = Readonly<{
         & Partial<Pick<LocalServiceInventoryRoutes, 'watchSnapshot'>>
         | null;
     localServicesLauncher?: Pick<LocalServiceLauncherRoutes, 'getSnapshot'> & Partial<Pick<LocalServiceLauncherRoutes, 'startTarget' | 'leaves'>> | null;
-    localServicesManaged?: Readonly<{ getSnapshot(): Promise<DaemonLocalServiceManagedSnapshotResponseV1['snapshot']> }> | null;
     localServicesPreview?: LocalServicePreviewRoutes | null;
     localServicesActions?: Pick<LocalServiceActionRoutes, 'execute'> | null;
     localServicesPublicPreview?: LocalServicePublicPreviewRoutes | null;
@@ -97,15 +93,6 @@ function requireLauncherLeafRoutes(
         throw new Error('Local service launcher leaf runtime is unavailable');
     }
     return options.localServicesLauncher.leaves;
-}
-
-function requireManagedRoutes(
-    options: DaemonLocalServicesMachineRpcRoutes,
-): Readonly<{ getSnapshot(): Promise<DaemonLocalServiceManagedSnapshotResponseV1['snapshot']> }> {
-    if (!options.localServicesManaged) {
-        throw new Error('Managed local service runtime is unavailable');
-    }
-    return options.localServicesManaged;
 }
 
 function requireActionRoutes(
@@ -261,20 +248,6 @@ export function registerDaemonLocalServicesMachineRpcHandlers(
         registerDaemonLocalServicePreviewSnapshotHandler(rpc, {
             localServicesPreview: options.localServicesPreview,
         });
-    }
-
-    if (options.localServicesManaged) {
-        rpc.registerHandler(
-            RPC_METHODS.DAEMON_LOCAL_SERVICES_MANAGED_SNAPSHOT,
-            async (raw: unknown): Promise<DaemonLocalServiceManagedSnapshotResponseV1> => {
-                DaemonLocalServiceManagedSnapshotRequestV1Schema.parse(raw);
-                const routes = requireManagedRoutes(options);
-                return DaemonLocalServiceManagedSnapshotResponseV1Schema.parse({
-                    protocolVersion: 1,
-                    snapshot: await routes.getSnapshot(),
-                });
-            },
-        );
     }
 
     if (options.localServicesActions) {

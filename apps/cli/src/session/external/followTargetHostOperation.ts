@@ -7,7 +7,7 @@ import { configuration } from '@/configuration';
 import { readStoredCredentials } from '@/persistence';
 import {
     getActiveAccountSettingsSnapshot,
-    resolveActiveAccountSettingsSnapshotRevision,
+    resolveActiveAccountConfiguredExternalSessionSourceRevision,
 } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 
 import {
@@ -145,7 +145,7 @@ function createDefaultDependencies(): FollowTargetHostOperationDependencies {
             });
         },
         readAccountRevision: () =>
-            resolveActiveAccountSettingsSnapshotRevision(
+            resolveActiveAccountConfiguredExternalSessionSourceRevision(
                 getActiveAccountSettingsSnapshot(),
             ),
         readAgentSettings: () => getActiveAccountSettingsSnapshot()?.settings,
@@ -258,6 +258,7 @@ export function createExternalSessionFollowTargetHostOperation(params: Readonly<
                             account,
                             agentSettings: dependencies.readAgentSettings(),
                             activeServerId: dependencies.readActiveServerId(),
+                            activeServerDir: configuration.activeServerDir,
                             basis,
                             readCurrentBasis: () => Object.freeze({
                                 contributionGenerationId: runtimeContext.generationId,

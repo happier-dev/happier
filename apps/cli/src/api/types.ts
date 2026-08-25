@@ -413,14 +413,22 @@ export const DaemonTransferRuntimeStateSchema = z.object({
 
 export type DaemonTransferRuntimeState = z.infer<typeof DaemonTransferRuntimeStateSchema>
 
-const DaemonPeerMediationMachineRpcFlowStateSchema = z.object({
+const DaemonPeerMediationFlowStateSchema = z.object({
   active: z.boolean(),
 }).passthrough()
 
+/**
+ * One entry per `PeerFlowKindV1` the loopback endpoint can serve. `machine_rpc` was the only
+ * declared member while `live_stream`, `tcp_tunnel` and `voice_media` rode `.passthrough()`
+ * untyped, which is how `voice_media` came to be absent from the daemon's own state report (§7.5).
+ */
 const DaemonPeerMediationLoopbackStateSchema = z.object({
   endpoint: PeerLoopbackEndpointCandidateV1Schema.optional(),
   flows: z.object({
-    machine_rpc: DaemonPeerMediationMachineRpcFlowStateSchema.optional(),
+    machine_rpc: DaemonPeerMediationFlowStateSchema.optional(),
+    live_stream: DaemonPeerMediationFlowStateSchema.optional(),
+    tcp_tunnel: DaemonPeerMediationFlowStateSchema.optional(),
+    voice_media: DaemonPeerMediationFlowStateSchema.optional(),
   }).passthrough().optional(),
 }).passthrough()
 

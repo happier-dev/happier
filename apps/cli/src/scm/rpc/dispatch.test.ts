@@ -155,4 +155,80 @@ describe('runScmRoute', () => {
             }),
         }));
     });
+    // F-SCM-1: a detector that could not answer must never surface as the confident domain fact
+    // "this directory is not a repository". The product has a distinct state for it — the source
+    // control unavailable card, keyed off BACKEND_UNAVAILABLE — and a broken `git` used to render
+    // the other one.
+    it('reports a detector that could not answer as unavailable, never as a non-repository', async () => {
+        const workspace = mkdtempSync(join(tmpdir(), 'happier-scm-dispatch-'));
+        const onNonRepository = vi.fn().mockResolvedValue({
+            success: false,
+            errorCode: SCM_OPERATION_ERROR_CODES.NOT_REPOSITORY,
+        } satisfies TestResponse);
+        const runWithBackend = vi.fn();
+        const registry = createScmBackendRegistry([{
+            id: 'happier.scm.backend.git/git',
+            localId: 'git',
+            selection: { modeSelectionScores: { '.git': 50 } },
+            detectRepo: async () => {
+                throw Object.assign(
+                    new Error('Unable to determine whether this path is a Git repository'),
+                    { errorCode: SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE },
+                );
+            },
+        } as unknown as ScmBackend]);
+
+        const response = await runScmRoute<{ cwd?: string }, TestResponse>({
+            request: { cwd: '.' },
+            workingDirectory: workspace,
+            onNonRepository,
+            runWithBackend,
+            registry,
+        });
+
+        expect(response.success).toBe(false);
+        expect(response.errorCode).toBe(SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE);
+        expect(onNonRepository).not.toHaveBeenCalled();
+        expect(runWithBackend).not.toHaveBeenCalled();
+    });
+
+    it('still reports a real non-repository when another backend answered authoritatively', async () => {
+        const workspace = mkdtempSync(join(tmpdir(), 'happier-scm-dispatch-'));
+        const onNonRepository = vi.fn().mockResolvedValue({
+            success: false,
+            errorCode: SCM_OPERATION_ERROR_CODES.NOT_REPOSITORY,
+        } satisfies TestResponse);
+        const registry = createScmBackendRegistry([
+            {
+                id: 'happier.scm.backend.git/git',
+                localId: 'git',
+                selection: { modeSelectionScores: { '.git': 50 } },
+                detectRepo: async () => ({ isRepo: false, rootPath: null, mode: null }),
+            } as unknown as ScmBackend,
+            {
+                // An uninstalled second backend cannot answer, but it must not turn the first
+                // backend's real answer into an unknown.
+                id: 'happier.scm.backend.sapling/sapling',
+                localId: 'sapling',
+                selection: { modeSelectionScores: { '.sl': 100 } },
+                detectRepo: async () => {
+                    throw Object.assign(
+                        new Error('SCM executable not found for sapling-cli (sl)'),
+                        { errorCode: SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE },
+                    );
+                },
+            } as unknown as ScmBackend,
+        ]);
+
+        const response = await runScmRoute<{ cwd?: string }, TestResponse>({
+            request: { cwd: '.' },
+            workingDirectory: workspace,
+            onNonRepository,
+            runWithBackend: vi.fn(),
+            registry,
+        });
+
+        expect(response.errorCode).toBe(SCM_OPERATION_ERROR_CODES.NOT_REPOSITORY);
+        expect(onNonRepository).toHaveBeenCalledTimes(1);
+    });
 });

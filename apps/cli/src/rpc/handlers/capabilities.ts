@@ -30,6 +30,7 @@ import { probeAgentConfigOptionsBestEffort } from '@/capabilities/probes/agentCo
 import { configuration } from '@/configuration';
 import { getAgentModelConfig, type AgentId } from '@happier-dev/agents';
 import {
+    CodexPassiveRealtimeSetupResultV1Schema,
     ConnectedServiceBindingsV1Schema,
     PluginScaffoldUiModeSchema,
     qualifiedPurposeKey,
@@ -43,6 +44,7 @@ import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { resolveProbeBackendContext } from './capabilitiesProbeContext';
 import { resolvePreflightSessionControlsProbeAdapter } from '@/capabilities/probes/resolvePreflightSessionControlsProbeAdapter';
+import { withPreflightSessionControlsProbeEnvironment } from '@/capabilities/probes/preflightSessionControlsProbeEnvironment';
 import { resolveCatalogAgentConnectedServiceIds } from '@/agent/catalog/registry';
 import { resolveConnectedServiceAuthForSpawn } from '@/daemon/connectedServices/resolveConnectedServiceAuthForSpawn';
 import { generateConnectedServiceMaterializationIdentityV1 } from '@/daemon/connectedServices/materialization/identity';
@@ -215,7 +217,12 @@ async function invokeCliProbeOrInstallMethod(
         return invokeAgentCliInstall(agentId, params);
     }
 
-    if (method !== 'probeModels' && method !== 'probeModes' && method !== 'probeConfigOptions') {
+    if (
+        method !== 'probeModels'
+        && method !== 'probeModes'
+        && method !== 'probeConfigOptions'
+        && method !== 'probePassiveRealtimeSetup'
+    ) {
         return null;
     }
 
@@ -227,6 +234,16 @@ async function invokeCliProbeOrInstallMethod(
             ? agentId
             : null;
     const preflightAdapter = await resolvePreflightSessionControlsProbeAdapter(agentId).catch(() => null);
+    if (
+        method === 'probePassiveRealtimeSetup'
+        && (
+            !materializationAgentId
+            || !connectedServices
+            || preflightAdapter?.connectedServiceAuth !== 'materialized-env'
+        )
+    ) {
+        return { ok: true, result: { v: 1, status: 'unavailable' } };
+    }
     const requiresMaterializedAuth = Boolean(
         materializationAgentId
         && connectedServices
@@ -275,6 +292,30 @@ async function invokeCliProbeOrInstallMethod(
     };
 
     try {
+      if (method === 'probePassiveRealtimeSetup') {
+        const result = await withPreflightSessionControlsProbeEnvironment({
+          agentId,
+          processEnv: process.env,
+          materializedEnv: connectedServiceProbeEnvironment.materializedEnv ?? undefined,
+        }, async ({ env }) => {
+          if (!preflightAdapter?.probePassiveRealtimeSetupRaw) return { v: 1, status: 'unavailable' } as const;
+          const raw = await preflightAdapter.probePassiveRealtimeSetupRaw({
+            backendTarget: probeContext.backendTarget,
+            probeKind: 'passiveRealtimeSetup',
+            cwd,
+            timeoutMs,
+            accountSettings: probeContext.accountSettings,
+            env,
+            ...(requestContext.signal ? { signal: requestContext.signal } : {}),
+          });
+          const parsed = CodexPassiveRealtimeSetupResultV1Schema.safeParse(raw);
+          return parsed.success ? parsed.data : { v: 1, status: 'unavailable' } as const;
+        }).catch(() => ({ v: 1, status: 'unavailable' } as const));
+        if (dependencies.isAgentRegistryCurrent?.() === false) {
+          return { ok: true, result: { v: 1, status: 'unavailable' } };
+        }
+        return { ok: true, result };
+      }
       if (method === 'probeModels') {
         const modelConfig = getAgentModelConfig(agentId);
         const observation = modelConfig?.nativeCatalogObservation;
@@ -707,7 +748,10 @@ async function invokePluginMarketplaceAction(
         return { ok: false, error: { message: 'pluginId is required', code: 'plugin-not-found' } };
     }
 
-    if (action === 'install' || action === 'update') {
+    // Installing an exact catalog listing is its own explicit action: the caller
+    // names a marketplace source and gets exactly that published version.
+    // Updating is not that action — see the canonical `update` dispatch below.
+    if (action === 'install') {
         const sourceId = typeof params?.sourceId === 'string' ? params.sourceId.trim() : '';
         if (!sourceId) {
             return { ok: false, error: { message: 'sourceId is required', code: 'plugin_source_missing' } };
@@ -720,9 +764,7 @@ async function invokePluginMarketplaceAction(
         if (!exactInstall.ok) {
             return { ok: false, error: { message: exactInstall.message, code: exactInstall.code } };
         }
-        if (exactInstall.change.kind === 'reviewRequired' || (
-            action === 'update' && exactInstall.change.kind === 'committed'
-        )) {
+        if (exactInstall.change.kind === 'reviewRequired') {
             return {
                 ok: true,
                 result: {
@@ -737,7 +779,7 @@ async function invokePluginMarketplaceAction(
             return {
                 ok: false,
                 error: {
-                    message: `The daemon did not commit the exact marketplace ${action} (${exactInstall.change.kind}).`,
+                    message: `The daemon did not commit the exact marketplace install (${exactInstall.change.kind}).`,
                     code: exactInstall.change.kind,
                 },
             };
@@ -751,19 +793,37 @@ async function invokePluginMarketplaceAction(
         };
     }
 
+    // `update` carries only the plugin id on purpose. The installed record is the
+    // update authority: it owns the pinned/manual/automatic policy, the trusted
+    // distribution channel, and the newest-compatible selection. A marketplace
+    // listing is a discovery fact, never a second update resolver.
     const change = await requestUserPluginChange({
         request: action === 'uninstall'
             ? { kind: 'uninstall', pluginId }
             : { kind: action, pluginId },
         approval: 'none',
     });
+    // An update the installed policy still owes a present user travels back
+    // verbatim, exactly like an install review: only a present user can decide it.
+    if (action === 'update' && change.kind === 'reviewRequired') {
+        return { ok: true, result: { action, pluginId, change } };
+    }
     if (change.kind !== 'committed') {
         return {
             ok: false,
-            error: {
-                message: `The daemon did not commit the plugin ${action} (${change.kind}).`,
-                code: change.kind,
-            },
+            // A refusal the change owner explained — a pinned installation, an
+            // unavailable trusted channel — reaches the caller with that owner's
+            // own code and words, the same ones `happier install plugin update`
+            // prints.
+            error: change.kind === 'failed'
+                ? {
+                    message: change.message ?? `Plugin change failed (${change.code}).`,
+                    code: change.code,
+                }
+                : {
+                    message: `The daemon did not commit the plugin ${action} (${change.kind}).`,
+                    code: change.kind,
+                },
         };
     }
     return {
@@ -776,11 +836,19 @@ async function invokePluginMarketplaceAction(
     };
 }
 
-function createGenericCliCapability(
+async function resolveCliPassiveRealtimeSetupProbeSupport(
+    agentId: AgentCatalogEntry['id'],
+): Promise<boolean> {
+    const adapter = await resolvePreflightSessionControlsProbeAdapter(agentId).catch(() => null);
+    return Boolean(adapter?.probePassiveRealtimeSetupRaw);
+}
+
+async function createGenericCliCapability(
     agentId: AgentCatalogEntry['id'],
     dependencies: CliProbeDependencies,
-): Capability {
+): Promise<Capability> {
     const publicAgentId = resolvePublicCliCapabilityAgentId(agentId);
+    const supportsPassiveRealtimeSetup = await resolveCliPassiveRealtimeSetupProbeSupport(agentId);
     return {
         descriptor: {
             id: buildCapabilityId('cli', publicAgentId),
@@ -791,6 +859,9 @@ function createGenericCliCapability(
                 probeModels: { title: 'Probe models' },
                 probeModes: { title: 'Probe modes' },
                 probeConfigOptions: { title: 'Probe config options' },
+                ...(supportsPassiveRealtimeSetup
+                    ? { probePassiveRealtimeSetup: { title: 'Probe passive realtime setup' } }
+                    : {}),
             },
         },
         detect: async ({ request, context }) => {
@@ -853,19 +924,23 @@ function createPluginMarketplaceCapability(
     };
 }
 
-function augmentCliCapabilityWithProviderCliMethods(
+async function augmentCliCapabilityWithProviderCliMethods(
     cap: Capability,
     agentId: AgentCatalogEntry['id'],
     dependencies: CliProbeDependencies,
-): Capability {
+): Promise<Capability> {
     if (!cap.descriptor.id.startsWith('cli.')) return cap;
 
     const existingMethods = cap.descriptor.methods ?? {};
+    const supportsPassiveRealtimeSetup = await resolveCliPassiveRealtimeSetupProbeSupport(agentId);
     const methods = {
         ...existingMethods,
         ...(existingMethods.probeModels ? {} : { probeModels: { title: 'Probe models' } }),
         ...(existingMethods.probeModes ? {} : { probeModes: { title: 'Probe modes' } }),
         ...(existingMethods.probeConfigOptions ? {} : { probeConfigOptions: { title: 'Probe config options' } }),
+        ...(existingMethods.probePassiveRealtimeSetup || !supportsPassiveRealtimeSetup
+            ? {}
+            : { probePassiveRealtimeSetup: { title: 'Probe passive realtime setup' } }),
         ...(existingMethods.install ? {} : { install: { title: 'Install' } }),
     };
 
@@ -914,9 +989,9 @@ export async function createCliCapabilitiesService(dependencies: Readonly<{
         (Object.values(AGENTS) as AgentCatalogEntry[]).map(async (entry) => {
             if (entry.getCliCapabilityOverride) {
                 const override = await entry.getCliCapabilityOverride();
-                return augmentCliCapabilityWithProviderCliMethods(override, entry.id, cliProbeDependencies);
+                return await augmentCliCapabilityWithProviderCliMethods(override, entry.id, cliProbeDependencies);
             }
-            return createGenericCliCapability(entry.id, cliProbeDependencies);
+            return await createGenericCliCapability(entry.id, cliProbeDependencies);
         }),
     );
 

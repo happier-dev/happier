@@ -329,6 +329,88 @@ describe('handleDaemonCliCommand: daemon restart', () => {
         expect(exitSpy).toHaveBeenCalledWith(1);
     });
 
+    it('names the failed step, the daemon state and the recovery command when a restart leaves no daemon running', async () => {
+        // F-DAEMON-6: the observed failure printed only "Failed to restart daemon" while the stack was
+        // actually left with no daemon at all. The error must name what failed, what state the daemon
+        // is now in, and what the operator should do.
+        restartDaemonAndWaitMock.mockImplementation(async () => ({
+            ok: false,
+            failedPhase: 'start',
+            daemonStatusAfterFailure: 'not-running',
+        }));
+        const output = captureConsoleText();
+        const exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
+            throw new Error(`exit:${code ?? ''}`);
+        }) as any);
+
+        try {
+            await expect(
+                handleDaemonCliCommand({ args: ['daemon', 'restart'] } as any),
+            ).rejects.toThrow(/exit:1/);
+        } finally {
+            output.restore();
+        }
+
+        expect(output.text()).toContain('Failed to restart daemon');
+        expect(output.text()).toContain('starting the replacement daemon');
+        expect(output.text()).toContain('The daemon is not running');
+        expect(output.text()).toContain('daemon start');
+        expect(exitSpy).toHaveBeenCalledWith(1);
+    });
+
+    it('reports that the daemon is running when only the stop half of a restart failed', async () => {
+        restartDaemonAndWaitMock.mockImplementation(async () => ({
+            ok: false,
+            failedPhase: 'stop',
+            daemonStatusAfterFailure: 'running',
+        }));
+        const output = captureConsoleText();
+        const exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
+            throw new Error(`exit:${code ?? ''}`);
+        }) as any);
+
+        try {
+            await expect(
+                handleDaemonCliCommand({ args: ['daemon', 'restart'] } as any),
+            ).rejects.toThrow(/exit:1/);
+        } finally {
+            output.restore();
+        }
+
+        expect(output.text()).toContain('stopping the previous daemon');
+        expect(output.text()).toContain('A daemon is running');
+        expect(exitSpy).toHaveBeenCalledWith(1);
+    });
+
+    it('carries the failed step, daemon state and recovery command in restart failure JSON', async () => {
+        restartDaemonAndWaitMock.mockImplementation(async () => ({
+            ok: false,
+            failedPhase: 'start',
+            daemonStatusAfterFailure: 'not-running',
+        }));
+        const output = captureStdoutJsonOutput();
+        const exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
+            throw new Error(`exit:${code ?? ''}`);
+        }) as any);
+
+        try {
+            await expect(
+                handleDaemonCliCommand({ args: ['daemon', 'restart', '--json'] } as any),
+            ).rejects.toThrow(/exit:1/);
+        } finally {
+            output.restore();
+        }
+
+        expect(output.json()).toEqual(expect.objectContaining({
+            ok: false,
+            error: 'restart_failed',
+            failedPhase: 'start',
+            daemonStatus: 'not-running',
+            recoveryCommand: expect.stringContaining('daemon start'),
+        }));
+        expect(exitSpy).toHaveBeenCalledWith(1);
+    });
+
     it('runs bulk session-runner restart command with dry-run JSON', async () => {
         const output = captureConsoleLogAndMuteStdout();
         const exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {

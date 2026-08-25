@@ -30,6 +30,7 @@ import {
 import {
   stageExternalSessionHistoricalImportItem,
 } from '@/api/session/external/import/importExternalSessionTranscript';
+import { writeJsonAtomic } from '@/utils/fs/writeJsonAtomic';
 import { garbageCollectUncommittedSessionMedia } from '@/session/media/garbageCollect';
 
 import {
@@ -39,7 +40,7 @@ import {
 } from './materializeAction';
 import {
   acknowledgeExternalSessionOperationProgressProjection,
-  compactExternalSessionOperationRecordToCompletionReceipt,
+  compactExternalSessionOperationRecordToTerminalReceipt,
   listExternalSessionOperationRecords,
   readExternalSessionOperationRecord,
   readExternalSessionOperationStoredEntry,
@@ -587,7 +588,7 @@ describe('external session materialize action', () => {
       operationId: completed.operationId,
       projectedRevision: completed.revision,
     });
-    await expect(compactExternalSessionOperationRecordToCompletionReceipt({
+    await expect(compactExternalSessionOperationRecordToTerminalReceipt({
       activeServerDir,
       operationId: completed.operationId,
       expectedRevision: completed.revision,
@@ -735,7 +736,7 @@ describe('external session materialize action', () => {
     await expect(readExternalSessionOperationStoredEntry(
       activeServerDir,
       completedInput.operationId,
-    )).resolves.toMatchObject({ kind: 'completion_receipt' });
+    )).resolves.toMatchObject({ kind: 'terminal_receipt' });
   });
 
   it('retains an acknowledged cancelled initial partial through immediate cleanup until exact server Discard discharges it', async () => {
@@ -814,25 +815,26 @@ describe('external session materialize action', () => {
       },
     });
     expect(commands.map((command) => command.kind)).toEqual(['discard']);
-    // The server Discard discharged the retained partial history, so the
-    // settled record has nothing left to act on and releases its inventory
-    // slot as a minimal receipt.
+    // The server Discard discharged the retained partial history. Its now-clean
+    // terminal record has no recovery action left, so the canonical record
+    // owner retains the bounded receipt rather than a full record.
     await expect(readExternalSessionOperationStoredEntry(
       activeServerDir,
       cancelled.operationId,
     )).resolves.toMatchObject({
-      kind: 'completion_receipt',
+      kind: 'terminal_receipt',
       receipt: {
-        durableIdempotencyKey: cancelled.request.idempotencyKey,
+        reference: { operationId: cancelled.operationId },
         presentation: { status: 'discarded' },
+        durableIdempotencyKey: cancelled.request.idempotencyKey,
       },
     });
   });
 
-  it('retains discarded materialization idempotency evidence in the receipt left by canonical staging cleanup', async () => {
+  it('compacts a discarded materialization record after canonical staging cleanup', async () => {
     const activeServerDir = await mkdtemp(join(
       tmpdir(),
-      'happier-materialize-discarded-cleanup-full-record-',
+      'happier-materialize-discarded-cleanup-receipt-',
     ));
     roots.push(activeServerDir);
     const discarded = terminalMaterializeRecord('discarded');
@@ -858,6 +860,8 @@ describe('external session materialize action', () => {
       sendHistoricalCommand: vi.fn(),
     });
 
+    // Staging cleanup still runs for a discarded operation; once it is clean,
+    // its durable idempotency evidence lives in the existing receipt.
     await expect(executor.cleanupTerminalStaging?.(
       discarded.operationId,
     )).resolves.toBe('missing');
@@ -865,15 +869,15 @@ describe('external session materialize action', () => {
       activeServerDir,
       discarded.operationId,
     )).resolves.toMatchObject({
-      kind: 'completion_receipt',
+      kind: 'terminal_receipt',
       receipt: {
         reference: {
           sessionId: discarded.request.sessionId,
           operationId: discarded.operationId,
           revision: discarded.revision,
         },
-        durableIdempotencyKey: discarded.request.idempotencyKey,
         presentation: { status: 'discarded' },
+        durableIdempotencyKey: discarded.request.idempotencyKey,
       },
     });
   });
@@ -1752,6 +1756,199 @@ describe('external session materialize action', () => {
       'batch',
       'finalize',
     ]);
+  });
+
+  it('stops replay when Server ready is behind a durable acknowledged staging row', async () => {
+    const activeServerDir = await mkdtemp(join(
+      tmpdir(),
+      'happier-materialize-lost-ack-fold-server-conflict-',
+    ));
+    roots.push(activeServerDir);
+    const operationId = 'external-materialize:lost-ack-fold-server-conflict';
+    const semanticRequest = {
+      ...request(),
+      idempotencyKey: 'materialize-lost-ack-fold-server-conflict',
+    };
+    const capturedSource = {
+      sourceIdentity: 'source-identity-lost-ack-fold-server-conflict',
+      sourceGeneration: 'source-1',
+      revision: 'revision-1',
+      boundary: 'boundary-1',
+    } as const;
+    const limits = {
+      perOperation: { maxItems: 20, maxBytes: 50_000 },
+      aggregate: { maxItems: 40, maxBytes: 100_000 },
+    } as const;
+    const durableStaging = createExternalSessionOperationPrivateStagingStore({
+      activeServerDir,
+      limits,
+    });
+    const stagingReference = await durableStaging.beginOperation({
+      operationId,
+      representation: 'content',
+      capturedSource,
+    });
+    if (stagingReference.status !== 'ready') {
+      throw new Error('Expected staging admission.');
+    }
+    await durableStaging.appendPageGroup({
+      operationId,
+      captureIndex: 0,
+      groupId: 'acknowledged-page',
+      items: [item('acknowledged-page')],
+      sourceRead: {
+        availability: 'reachable',
+        sourceIdentity: capturedSource.sourceIdentity,
+        sourceGeneration: capturedSource.sourceGeneration,
+        revision: capturedSource.revision,
+        relationshipToCapture: 'same',
+        eof: true,
+      },
+    });
+    await durableStaging.completeCapture({ operationId });
+
+    let acknowledgedRowWritten = false;
+    let failHeaderFoldOnce = true;
+    const crashingStaging = createExternalSessionOperationPrivateStagingStore({
+      activeServerDir,
+      limits,
+      persistence: {
+        writeJsonAtomic: async (path, value) => {
+          const normalized = path.replaceAll('\\', '/');
+          if (
+            /group-\d+\.json$/.test(normalized)
+            && (value as { state?: string }).state === 'acknowledged'
+          ) {
+            await writeJsonAtomic(path, value);
+            acknowledgedRowWritten = true;
+            return;
+          }
+          if (
+            failHeaderFoldOnce
+            && acknowledgedRowWritten
+            && normalized.endsWith('manifest.json')
+          ) {
+            failHeaderFoldOnce = false;
+            throw new Error('simulated crash before acknowledged header fold');
+          }
+          await writeJsonAtomic(path, value);
+        },
+      },
+    });
+    await expect(crashingStaging.acknowledgeReplayGroup({
+      operationId,
+      captureIndex: 0,
+      groupId: 'acknowledged-page',
+      acceptedThroughServerSeq: 1,
+    })).rejects.toThrow('simulated crash before acknowledged header fold');
+
+    const interrupted: ExternalSessionOperationRecordV1 = {
+      v: 1,
+      operationId,
+      revision: 1,
+      request: semanticRequest,
+      status: 'awaiting_user_resume',
+      phase: 'importing',
+      timeline: resolveExternalSessionOperationTimelineV1(semanticRequest),
+      createdAtMs: 1,
+      updatedAtMs: 2,
+      priorStableStorage: machineOnlyPriorStableStorage,
+      currentStorageState: 'machine_only',
+      checkpoint: {
+        sourcePagesRead: 1,
+        stagedItemCount: 1,
+        importedItemCount: 0,
+        requiredItemFailures: {
+          total: 0,
+          record: 0,
+          media: 0,
+          conversion: 0,
+          diagnosticsTruncated: false,
+          diagnostics: [],
+        },
+      },
+      bindings: {
+        operationClaimId: 'lost-ack-fold-server-conflict-claim',
+        privateStagingId: stagingReference.stagingReference,
+        historicalImportJobId: 'lost-ack-fold-server-conflict-job',
+      },
+      progressProjection: { acknowledgedRevision: null },
+      canonicalOwnerEvidence: {
+        linkedSessionRevision: 1,
+        sourceSnapshotEvidenceRef: capturedSource.revision,
+      },
+      fence: { kind: 'none' },
+      retryTargetPhase: 'importing',
+    };
+    await writeExternalSessionOperationRecord(activeServerDir, interrupted);
+
+    const commands: ExternalSessionOperationSocketCommandV1[] = [];
+    const executor = createExternalSessionMaterializeActionExecutor({
+      activeServerDir,
+      operationExclusion: createExternalSessionOperationExclusion({
+        activeServerDir,
+        ownerId: 'materialize-lost-ack-fold-server-conflict-owner',
+      }),
+      staging: durableStaging,
+      describeSource: vi.fn(),
+      readNewestFirstPages: vi.fn(),
+      readFinalCatchUpPages: noFinalCatchUpPages,
+      sendHistoricalCommand: async (command) => {
+        const authority = inspectAuthorityResponse(command, machineOnlyPriorStableStorage);
+        if (authority) return authority;
+        commands.push(command);
+        if (command.kind === 'resume') {
+          return {
+            v: 1,
+            kind: 'ready',
+            claim: command.claim,
+            revision: command.expectedRevision,
+            historicalImportJobId: 'lost-ack-fold-server-conflict-job',
+            limits: { maxItems: 200, maxSerializedBytes: 524_288 },
+            priorStableStorage: machineOnlyPriorStableStorage,
+            acceptedThroughServerSeq: 0,
+          };
+        }
+        if (command.kind === 'finalize') {
+          return {
+            v: 1,
+            kind: 'finalized',
+            claim: command.claim,
+            revision: command.expectedRevision,
+            acceptedThroughServerSeq: command.expectedAcceptedThroughServerSeq,
+            publication: {
+              materializationPublicationId: 'lost-ack-fold-server-conflict-publication',
+              materializedThroughSourceAt: 1,
+              publishedThroughServerSeq: command.expectedAcceptedThroughServerSeq,
+            },
+          };
+        }
+        return {
+          v: 1,
+          kind: 'error',
+          errorCode: 'invalid_state',
+          message: `unexpected ${command.kind}`,
+        };
+      },
+      nowMs: () => 3,
+    });
+
+    await expect(executor.resume({
+      sessionId: semanticRequest.sessionId,
+      operationId,
+      revision: interrupted.revision,
+    })).resolves.toMatchObject({
+      ok: true,
+      progress: {
+        status: 'awaiting_user_resume',
+        phase: 'importing',
+        checkpoint: {
+          importedItemCount: 1,
+          acceptedThroughServerSeq: 1,
+        },
+      },
+    });
+    expect(commands.map((command) => command.kind)).toEqual(['resume']);
   });
 
   it('retains a committed per-group checkpoint when its progress publication fails', async () => {
@@ -4229,7 +4426,7 @@ describe('external session materialize action', () => {
     expect(readNewestFirstPages).toHaveBeenCalledTimes(readsBeforeRetry);
   });
 
-  it('retains cancelled staging across restart until Discard writes a full discarded record and admits a successor', async () => {
+  it('retains cancelled staging across restart until Discard writes a discarded receipt and admits a successor', async () => {
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-materialize-cancel-'));
     roots.push(activeServerDir);
     const staging = createExternalSessionOperationPrivateStagingStore({
@@ -4324,15 +4521,33 @@ describe('external session materialize action', () => {
     await expect(staging.readReplayState(discarded.progress.operationId)).resolves.toEqual({
       status: 'missing',
     });
+    // The discarded row remains the selected projection authority until that
+    // revision is acknowledged. Once acknowledged, an idempotent Discard retry
+    // reuses the existing cleanup owner and compacts the already-clean row.
+    await expect(readExternalSessionOperationStoredEntry(
+      activeServerDir,
+      cancelled.progress.operationId,
+    )).resolves.toMatchObject({ kind: 'full_record' });
+    await acknowledgeExternalSessionOperationProgressProjection({
+      activeServerDir,
+      operationId: discarded.progress.operationId,
+      projectedRevision: discarded.progress.revision,
+    });
+    await expect(restartedExecutor.discard(
+      operationReference(discarded),
+    )).resolves.toMatchObject({
+      ok: true,
+      progress: { status: 'discarded' },
+    });
     await expect(readExternalSessionOperationStoredEntry(
       activeServerDir,
       cancelled.progress.operationId,
     )).resolves.toMatchObject({
-      kind: 'full_record',
-      record: {
-        request: { idempotencyKey: 'materialize-cancel' },
-        status: 'discarded',
-        terminalResult: { kind: 'discarded' },
+      kind: 'terminal_receipt',
+      receipt: {
+        reference: { operationId: cancelled.progress.operationId },
+        presentation: { status: 'discarded' },
+        durableIdempotencyKey: 'materialize-cancel',
       },
     });
     const successor = await restartedExecutor.start({

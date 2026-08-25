@@ -1,6 +1,8 @@
 import { lstat, readFile, readdir, rm, stat, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 
+import { isPidPresent } from '@happier-dev/cli-common/process';
+
 import { writeJsonAtomic } from '@/utils/fs/writeJsonAtomic';
 
 import {
@@ -8,6 +10,7 @@ import {
   type WorkspaceReplicationJobRecord,
   safeParseWorkspaceReplicationJobRecordFromDiskValue,
 } from '../jobs/workspaceReplicationJobStore';
+import { parseCliDaemonPidFromOwnerId } from './leaseOwnerPid';
 import {
   createWorkspaceReplicationPaths,
   resolveWorkspaceReplicationJobPath,
@@ -22,7 +25,6 @@ const TERMINAL_JOB_STATUSES = new Set<WorkspaceReplicationJobRecord['status']['s
 ]);
 
 const VALID_JOB_ID_REGEX = /^[A-Za-z0-9._-]+$/u;
-const CLI_DAEMON_LEASE_OWNER_PID_REGEX = /^cli-daemon:(\d+)(?::|$)/u;
 
 function resolveTerminalAtMs(record: WorkspaceReplicationJobRecord): number | null {
   if (typeof record.completedAtMs === 'number') return record.completedAtMs;
@@ -70,19 +72,6 @@ async function readLeaseProbe(filePath: string): Promise<WorkspaceReplicationLea
   }
 }
 
-function isPidAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    const nodeError = error as NodeJS.ErrnoException;
-    if (nodeError?.code === 'EPERM') {
-      return true;
-    }
-    return false;
-  }
-}
-
 export async function recoverWorkspaceReplicationJobsAfterRestart(params: Readonly<{
   activeServerDir: string;
   nowMs: number;
@@ -116,14 +105,12 @@ export async function recoverWorkspaceReplicationJobsAfterRestart(params: Readon
         });
         const leaseProbe = await readLeaseProbe(join(stagingDir, 'lease', 'lease.json'));
         if (leaseProbe && leaseProbe.expiresAtMs > params.nowMs) {
-          const match = CLI_DAEMON_LEASE_OWNER_PID_REGEX.exec(leaseProbe.ownerId);
-          if (match) {
-            const pid = Number.parseInt(match[1] ?? '', 10);
-            if (Number.isFinite(pid) && pid > 0 && isPidAlive(pid)) {
-              // Another daemon process is still alive and appears to own the lease. Avoid clearing the
-              // lease or mutating the job record, since that could enable concurrent runners.
-              continue;
-            }
+          const ownerPid = parseCliDaemonPidFromOwnerId(leaseProbe.ownerId);
+          if (ownerPid !== null && isPidPresent(ownerPid)) {
+            // The owning daemon is still there — or we were not allowed to look, which is not
+            // evidence that it is gone. Avoid clearing the lease or mutating the job record,
+            // since that could enable concurrent runners.
+            continue;
           }
         }
       }

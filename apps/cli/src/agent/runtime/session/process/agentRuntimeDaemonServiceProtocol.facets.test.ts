@@ -190,88 +190,6 @@ describe('Agent runtime daemon-owned session facets protocol', () => {
     ).toBe(false);
   });
 
-  it('admits exactly the six current-global External Session author operations', () => {
-    const source = { kind: 'codexHome', home: 'user' } as const;
-    const operations = [
-      {
-        kind: 'external_session.current.resolve_source',
-        requestId: 'resolve-source-1',
-        agentId: 'codex',
-        source,
-        witness,
-      },
-      {
-        kind: 'external_session.current.list_candidates',
-        requestId: 'list-candidates-1',
-        agentId: 'codex',
-        source,
-        cursor: 'cursor-1',
-        limit: 20,
-        searchTerm: 'project',
-        searchMode: 'fast',
-        maxBytes: 65_536,
-      },
-      {
-        kind: 'external_session.current.resolve_link_identity',
-        requestId: 'resolve-link-1',
-        agentId: 'codex',
-        source,
-        remoteSessionId: 'remote-session-1',
-        metadata: { linkData: { provider: 'codex' } },
-      },
-      {
-        kind: 'external_session.current.resolve_linked_identity',
-        requestId: 'resolve-linked-1',
-        agentId: 'codex',
-        source,
-        remoteSessionId: 'remote-session-1',
-        metadata: { linkData: { provider: 'codex' } },
-      },
-      {
-        kind: 'external_session.current.page_transcript',
-        requestId: 'page-transcript-1',
-        agentId: 'codex',
-        source,
-        remoteSessionId: 'remote-session-1',
-        direction: 'older',
-        cursor: 'cursor-1',
-        maxBytes: 65_536,
-        maxItems: 100,
-      },
-      {
-        kind: 'external_session.current.read_after_transcript',
-        requestId: 'read-after-1',
-        agentId: 'codex',
-        source,
-        remoteSessionId: 'remote-session-1',
-        cursor: 'cursor-1',
-        maxBytes: 65_536,
-        maxItems: 100,
-      },
-    ] as const;
-
-    for (const operation of operations) {
-      expect(
-        AgentRuntimeDaemonServiceRequestV1Schema.safeParse(
-          request(operation),
-        ).success,
-      ).toBe(true);
-      expect(
-        AgentRuntimeDaemonServiceRequestV1Schema.safeParse(
-          request({ ...operation, invoke: 'arbitrary' }),
-        ).success,
-      ).toBe(false);
-    }
-    expect(
-      AgentRuntimeDaemonServiceRequestV1Schema.safeParse(
-        request({
-          ...operations[1],
-          cursor: 'x'.repeat(32_769),
-        }),
-      ).success,
-    ).toBe(false);
-  });
-
   it('admits only snapshot and retirement wait Voice authority operations', () => {
     expect(
       AgentRuntimeDaemonServiceRequestV1Schema.safeParse(
@@ -400,13 +318,12 @@ describe('Agent runtime daemon-owned session facets protocol', () => {
       AgentRuntimeDaemonServiceResponseV1Schema.safeParse({
         ok: true,
         result: {
-          kind: 'external_session.current.list_candidates',
-          result: {
-            candidates: [{
-              remoteSessionId: 'remote-session-1',
-              updatedAtMs: 1,
-            }],
-            nextCursor: null,
+          kind: 'external_session.follow.provider_request',
+          followId: 'follow-1',
+          providerRequestId: 'provider-request-1',
+          request: {
+            kind: 'validateSource',
+            source: { kind: 'codexHome', home: 'user' },
           },
         },
       }).success,
@@ -415,10 +332,12 @@ describe('Agent runtime daemon-owned session facets protocol', () => {
       AgentRuntimeDaemonServiceResponseV1Schema.safeParse({
         ok: true,
         result: {
-          kind: 'external_session.current.list_candidates',
-          result: {
-            candidates: [],
-            nextCursor: null,
+          kind: 'external_session.follow.provider_request',
+          followId: 'follow-1',
+          providerRequestId: 'provider-request-1',
+          request: {
+            kind: 'validateSource',
+            source: { kind: 'codexHome', home: 'user' },
           },
           invoke: 'arbitrary',
         },
@@ -428,38 +347,113 @@ describe('Agent runtime daemon-owned session facets protocol', () => {
 
   it('validates External Session state updates against their canonical field values', () => {
     const response = {
-      ok: true,
-      result: {
-        kind: 'external_session.current.resolve_link_identity',
-        result: {
-          remoteSessionId: 'remote-session-1',
-          source: { kind: 'codexHome', home: 'user' },
-          sessionStateUpdates: [{
-            fieldId: 'identity.providerSessionId',
-            value: 'provider-session-1',
-          }],
+      v: 1,
+      context: {
+        token: 'A'.repeat(43),
+        sessionId: 'session-1',
+      },
+      operation: {
+        kind: 'external_session.follow.next',
+        requestId: 'follow-provider-response-1',
+        followId: 'follow-1',
+        providerResponse: {
+          providerRequestId: 'provider-request-1',
+          status: 'success',
+          result: {
+            kind: 'resolveLinkIdentity',
+            value: {
+              remoteSessionId: 'remote-session-1',
+              source: { kind: 'codexHome', home: 'user' },
+              sessionStateUpdates: [{
+                fieldId: 'identity.providerSessionId',
+                value: 'provider-session-1',
+              }],
+            },
+          },
         },
       },
     } as const;
 
     expect(
-      AgentRuntimeDaemonServiceResponseV1Schema.safeParse(response)
+      AgentRuntimeDaemonServiceRequestV1Schema.safeParse(response)
         .success,
     ).toBe(true);
     expect(
-      AgentRuntimeDaemonServiceResponseV1Schema.safeParse({
+      AgentRuntimeDaemonServiceRequestV1Schema.safeParse({
         ...response,
-        result: {
-          ...response.result,
-          result: {
-            ...response.result.result,
-            sessionStateUpdates: [{
-              fieldId: 'identity.providerSessionId',
-              value: { unexpected: true },
-            }],
+        operation: {
+          ...response.operation,
+          providerResponse: {
+            ...response.operation.providerResponse,
+            result: {
+              ...response.operation.providerResponse.result,
+              value: {
+                ...response.operation.providerResponse.result.value,
+                sessionStateUpdates: [{
+                  fieldId: 'identity.providerSessionId',
+                  value: { unexpected: true },
+                }],
+              },
+            },
           },
         },
       }).success,
     ).toBe(false);
+  });
+
+  it('requires canonical External Session transcript identities and source timestamps', () => {
+    const response = {
+      ok: true,
+      result: {
+        kind: 'external_session.follow.event',
+        followId: 'follow-canonical-item-1',
+        eventId: 'event-canonical-item-1',
+        event: {
+          kind: 'data',
+          items: [{
+            id: 'provider-user-1',
+            localId: 'provider-fact-user-1',
+            timestampMs: 1,
+            kind: 'user',
+            userProjection: 'source_fact',
+            data: {
+              role: 'user',
+              content: { type: 'text', text: 'from the provider' },
+            },
+          }],
+          fromCursor: null,
+          nextCursor: 'cursor-1',
+        },
+      },
+    } as const;
+
+    expect(AgentRuntimeDaemonServiceResponseV1Schema.safeParse(response).success)
+      .toBe(true);
+    expect(AgentRuntimeDaemonServiceResponseV1Schema.safeParse({
+      ...response,
+      result: {
+        ...response.result,
+        event: {
+          ...response.result.event,
+          items: [{
+            ...response.result.event.items[0],
+            id: ' provider-user-1 ',
+          }],
+        },
+      },
+    }).success).toBe(false);
+    expect(AgentRuntimeDaemonServiceResponseV1Schema.safeParse({
+      ...response,
+      result: {
+        ...response.result,
+        event: {
+          ...response.result.event,
+          items: [{
+            ...response.result.event.items[0],
+            timestampMs: 1.5,
+          }],
+        },
+      },
+    }).success).toBe(false);
   });
 });

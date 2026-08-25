@@ -19,6 +19,7 @@ import type { ProviderRuntimeStateStore } from '../runtimeState';
 import type {
   ProviderCurrentModelObservation,
   ProviderModelLoadCatalogPort,
+  ProviderModelLoadOperationScope,
 } from './load';
 
 type ModelLoadResolvedCatalogRequest = ResolvedProviderProbeRpcRequest;
@@ -118,6 +119,7 @@ export function createProviderModelLoadCatalogPort<TTicket>(dependencies: Readon
   resolveSaved(input: Readonly<{
     connectionId: string;
     machineId: string;
+    scope: ProviderModelLoadOperationScope;
   }>): Promise<ModelLoadResolvedCatalogRequest>;
   runtimeStore: Pick<ProviderRuntimeStateStore, 'read'>;
   /** Explicit scheduler-backed refresh; completed TTL entries must be bypassed. */
@@ -127,14 +129,24 @@ export function createProviderModelLoadCatalogPort<TTicket>(dependencies: Readon
     signal: AbortSignal;
   }>): Promise<ProviderCatalogRefreshResult>;
 }>): ProviderModelLoadCatalogPort<TTicket> {
-  async function resolveExact(input: Readonly<{ connectionId: string; machineId: string }>) {
+  async function resolveExact(input: Readonly<{
+    connectionId: string;
+    machineId: string;
+    scope: ProviderModelLoadOperationScope;
+  }>) {
     const connectionId = ProviderConnectionIdSchema.parse(input.connectionId);
     const machineId = ProviderMachineIdSchema.parse(input.machineId);
-    const resolved = await dependencies.resolveSaved({ connectionId, machineId });
+    const resolved = await dependencies.resolveSaved({ connectionId, machineId, scope: input.scope });
     if (resolved.connectionId !== connectionId || resolved.machineId !== machineId) {
       throw new TypeError('Provider catalog resolver returned a different connection or machine');
     }
-    return resolved;
+    return {
+      ...resolved,
+      operationScope: {
+        ...(input.scope.registry ? { registry: input.scope.registry } : {}),
+        lifetime: input.scope.lifetime,
+      },
+    };
   }
 
   return Object.freeze({

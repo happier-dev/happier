@@ -2,11 +2,14 @@ import { describe, expect, it } from 'vitest';
 
 import { shouldDenyAgentSessionTitleToolCall } from './codingPromptTitlePermission';
 
-function settingsWithProfile(overrides: unknown): Record<string, unknown> {
+function settingsWithProfile(
+  overrides: unknown,
+  accountTitleUpdates: 'disabled' | 'initial' | 'ongoing' = 'ongoing',
+): Record<string, unknown> {
   return {
     codingPromptBehaviorV1: {
       v: 1,
-      sessionTitleUpdates: 'ongoing',
+      sessionTitleUpdates: accountTitleUpdates,
       responseOptions: 'agent',
     },
     profiles: [{
@@ -58,6 +61,29 @@ describe('shouldDenyAgentSessionTitleToolCall', () => {
       profileId: null,
       toolName: 'change_title',
       input: { title: 'x' },
+    })).toBe(true);
+  });
+
+  it('admits the call a profile re-enabled over a disabled account default', () => {
+    // The prompt composer resolves account -> profile and emits
+    // "you MUST call the change_title tool once" for this pair. Denying here
+    // would order the agent to do something admission refuses, every turn.
+    expect(shouldDenyAgentSessionTitleToolCall({
+      settings: settingsWithProfile({ sessionTitleUpdates: 'ongoing' }, 'disabled'),
+      profileId: 'focused',
+      toolName: 'change_title',
+      input: { title: 'x' },
+    })).toBe(false);
+  });
+
+  it('denies the shell-bridge title call the profile disabled', () => {
+    expect(shouldDenyAgentSessionTitleToolCall({
+      settings: settingsWithProfile({ sessionTitleUpdates: 'disabled' }),
+      profileId: 'focused',
+      toolName: 'bash',
+      input: {
+        command: 'happier tools call --source happier --tool change_title --args-json \'{"title":"x"}\'',
+      },
     })).toBe(true);
   });
 

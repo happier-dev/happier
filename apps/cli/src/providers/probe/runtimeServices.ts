@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { lookup } from 'node:dns/promises';
 
 import {
+  PROVIDER_ENDPOINT_SAFETY_LIMITS,
   createProviderEndpointFingerprintV1,
   createProviderErrorV1,
   readContributedProviderCatalogParserIds,
@@ -38,6 +39,11 @@ import { projectProviderCatalogPresentation } from '@/providers/catalog';
 import { createProviderRuntimeStateStore, type ProviderRuntimeStateStore } from '@/providers/runtimeState';
 import { getActiveAccountSettingsSnapshot, type ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { readProviderSettingsForCli } from '@/providers/settings/read';
+import {
+  createProviderOperationLifetime,
+  ProviderOperationAbandonedError,
+  type ProviderOperationLifetime,
+} from '@/providers/operationLifetime';
 import {
   providerConnectionResolutionError,
   resolveProviderProbeAuthorization,
@@ -98,6 +104,7 @@ type SavedResolution = Readonly<{
   request: ResolvedProviderProbeRpcRequest;
   connection: ResolvedProviderConnectionRecord;
   providerSettings: ProviderSettingsV1;
+  registry: ProviderContributionRegistryView;
 }>;
 
 type SavedResolutionResult =
@@ -109,6 +116,12 @@ type SavedProbeMode = 'catalog' | 'health';
 type RuntimeProviderIdentity = Readonly<{
   connectionId: string;
   machineId: string;
+}>;
+
+/** Exact facts carried by a single live Provider operation. */
+export type RuntimeProviderOperationScope = Readonly<{
+  registry?: ProviderContributionRegistryView;
+  lifetime: ProviderOperationLifetime;
 }>;
 
 type RuntimeProviderSummaryInput =
@@ -155,14 +168,17 @@ export type RuntimeProviderServices = Readonly<{
   resolveCatalogContext(
     identity: RuntimeProviderIdentity,
     runtimeStateOverride?: ProviderRuntimeStateFileV1,
+    scope?: RuntimeProviderOperationScope,
   ): Promise<RuntimeProviderCatalogContext>;
   resolvePresentationCatalogContext(
     identity: RuntimeProviderIdentity,
     runtimeStateOverride?: ProviderRuntimeStateFileV1,
+    scope?: RuntimeProviderOperationScope,
   ): Promise<RuntimeProviderCatalogContext>;
   scheduleDemandRefresh(
     identity: RuntimeProviderIdentity,
     trigger: 'detail_open' | 'picker_open',
+    scope?: RuntimeProviderOperationScope,
   ): Promise<void>;
   runtimeStore: ProviderRuntimeStateStore;
   probeInfrastructure: Readonly<{
@@ -375,8 +391,19 @@ export function createRuntimeProviderServices(input: Readonly<{
       && (waiterLifetime.isCurrent?.() ?? true),
   });
 
+  const withOperationLifetime = (
+    scope: RuntimeProviderOperationScope | undefined,
+    signal?: AbortSignal,
+  ): RuntimeProviderOperationScope => scope ?? {
+      lifetime: createProviderOperationLifetime({
+        ...(signal ? { signal } : {}),
+        wallTimeMs: PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs,
+      }),
+    };
+
   async function resolveConnectionContext(
     identity: Readonly<{ connectionId: string; machineId: string }>,
+    scope: RuntimeProviderOperationScope,
   ) {
     if (!isProviderFeatureEnabled()) {
       return { ok: false as const, error: providerFeatureDisabled(identity).error };
@@ -389,17 +416,29 @@ export function createRuntimeProviderServices(input: Readonly<{
       return { ok: false as const, error: createProviderErrorV1('provider_connection_not_found', identity) };
     }
     const providerSettings = readProviderSettingsForCli(snapshot.settings).settings;
-    const registry = await resolveRegistry();
+    const registry = scope?.registry ?? await resolveRegistry();
     if (!isProviderFeatureEnabled()) {
       return { ok: false as const, error: providerFeatureDisabled(identity).error };
     }
-    const dnsEvidenceByEndpointUrl = await collectProviderConnectionDnsEvidence({
-      connectionId: identity.connectionId,
-      machineId: identity.machineId,
-      providerSettings,
-      registry,
-      ...(input.resolveAddresses ? { resolveAddresses: input.resolveAddresses } : {}),
-    });
+    let dnsEvidenceByEndpointUrl;
+    try {
+      dnsEvidenceByEndpointUrl = await collectProviderConnectionDnsEvidence({
+        connectionId: identity.connectionId,
+        machineId: identity.machineId,
+        providerSettings,
+        registry,
+        ...(input.resolveAddresses ? { resolveAddresses: input.resolveAddresses } : {}),
+        lifetime: scope.lifetime,
+      });
+    } catch (error) {
+      if (error instanceof ProviderOperationAbandonedError) {
+        return {
+          ok: false as const,
+          error: createProviderErrorV1('provider_endpoint_unavailable', identity),
+        };
+      }
+      throw error;
+    }
     if (!isProviderFeatureEnabled()) {
       return { ok: false as const, error: providerFeatureDisabled(identity).error };
     }
@@ -492,6 +531,7 @@ export function createRuntimeProviderServices(input: Readonly<{
           value: {
             connection,
             providerSettings,
+            registry,
             request: {
               ...identity,
               endpoints: [],
@@ -585,7 +625,7 @@ export function createRuntimeProviderServices(input: Readonly<{
         purposeBindings: purposeBindingResolution,
         endpointTemplateId: endpointTemplate.id,
         protocol: endpointTemplate.protocol,
-        publicHeaders: {},
+        publicHeaders: endpointTemplate.publicHeaders ?? {},
       } as const;
       const probeRequestFingerprint = createProviderManagedProbeRequestFingerprintV1({
         ...managedSource,
@@ -624,6 +664,7 @@ export function createRuntimeProviderServices(input: Readonly<{
         value: {
           connection,
           providerSettings,
+          registry,
           request: {
             ...identity,
             endpoints: [],
@@ -691,6 +732,7 @@ export function createRuntimeProviderServices(input: Readonly<{
       value: {
         connection,
         providerSettings,
+        registry,
         request: {
           ...identity,
           endpoints,
@@ -711,11 +753,12 @@ export function createRuntimeProviderServices(input: Readonly<{
   async function resolveSaved(
     identity: Readonly<{ connectionId: string; machineId: string }>,
     mode: SavedProbeMode = 'catalog',
+    scope: RuntimeProviderOperationScope,
   ): Promise<SavedResolutionResult> {
     if (!isProviderFeatureEnabled()) {
       return { ok: false, error: providerFeatureDisabled(identity).error };
     }
-    const context = await resolveConnectionContext(identity);
+    const context = await resolveConnectionContext(identity, scope);
     if (!isProviderFeatureEnabled()) {
       return { ok: false, error: providerFeatureDisabled(identity).error };
     }
@@ -754,9 +797,10 @@ export function createRuntimeProviderServices(input: Readonly<{
   const resolveCatalogContext = async (
     identity: Readonly<{ connectionId: string; machineId: string }>,
     runtimeStateOverride?: Awaited<ReturnType<ProviderRuntimeStateStore['read']>>,
+    scope?: RuntimeProviderOperationScope,
   ) => {
     if (!isProviderFeatureEnabled()) return providerFeatureDisabled(identity);
-    const resolved = await resolveSaved(identity);
+    const resolved = await resolveSaved(identity, 'catalog', withOperationLifetime(scope));
     if (!resolved.ok) return { status: 'error' as const, error: resolved.error };
     if (!isProviderFeatureEnabled()) return providerFeatureDisabled(identity);
     const runtimeState = runtimeStateOverride ?? await runtimeStore.read();
@@ -767,9 +811,10 @@ export function createRuntimeProviderServices(input: Readonly<{
   const resolvePresentationCatalogContext = async (
     identity: Readonly<{ connectionId: string; machineId: string }>,
     runtimeStateOverride?: Awaited<ReturnType<ProviderRuntimeStateStore['read']>>,
+    scope?: RuntimeProviderOperationScope,
   ) => {
     if (!isProviderFeatureEnabled()) return providerFeatureDisabled(identity);
-    const connectionContext = await resolveConnectionContext(identity);
+    const connectionContext = await resolveConnectionContext(identity, withOperationLifetime(scope));
     if (!connectionContext.ok) {
       return { status: 'error' as const, error: connectionContext.error };
     }
@@ -795,18 +840,40 @@ export function createRuntimeProviderServices(input: Readonly<{
   };
 
   const lowLevelProbe = createProviderProbeRpcHandler({
-    resolveSaved: async (identity) => {
-      const resolved = await resolveSaved(identity);
+    resolveSaved: async (identity, lifetime) => {
+      const resolved = await resolveSaved(identity, 'catalog', { lifetime });
       if (!resolved.ok) throw new ProviderProbeRpcResolutionError(resolved.error);
-      return resolved.value.request;
+      return {
+        ...resolved.value.request,
+        operationScope: {
+          registry: resolved.value.registry,
+          // Admitted work is shared by scheduler waiters: preserve its single
+          // deadline but never let one caller's abort cancel another waiter.
+          lifetime: { wallDeadlineAtMs: lifetime.wallDeadlineAtMs },
+        },
+      };
     },
-    refresh: (request) => catalogService.refresh(request),
+    refresh: (request, lifetime) => catalogService.refresh({
+      ...request,
+      ...(lifetime ? { wallDeadlineAtMs: lifetime.wallDeadlineAtMs } : {}),
+    }),
+    schedule: (key, trigger, operation, options) => scheduler.runCatalog(key, trigger, operation, options),
+  });
+
+  const runResolvedCatalogProbe = createResolvedProviderProbeRunner({
+    refresh: (request, lifetime) => catalogService.refresh({
+      ...request,
+      ...(lifetime ? { wallDeadlineAtMs: lifetime.wallDeadlineAtMs } : {}),
+    }),
     schedule: (key, trigger, operation, options) => scheduler.runCatalog(key, trigger, operation, options),
   });
 
   const runResolvedHealthProbe = createResolvedProviderProbeRunner({
-    refresh: (request) => request.probes.length === 1
-      ? healthProbeService.refresh(request)
+    refresh: (request, lifetime) => request.probes.length === 1
+      ? healthProbeService.refresh({
+          ...request,
+          ...(lifetime ? { wallDeadlineAtMs: lifetime.wallDeadlineAtMs } : {}),
+        })
       : Promise.resolve({ status: 'not_supported' as const }),
     schedule: (key, trigger, operation, options) => scheduler.runHealth(key, trigger, operation, options),
   });
@@ -881,27 +948,42 @@ export function createRuntimeProviderServices(input: Readonly<{
   const scheduleDemandRefresh = async (
     identity: Readonly<{ connectionId: string; machineId: string }>,
     trigger: 'detail_open' | 'picker_open',
+    scope?: RuntimeProviderOperationScope,
   ): Promise<void> => {
     try {
       if (!isProviderFeatureEnabled()) return;
-      const catalog = await resolveSaved(identity);
+      const operationScope = withOperationLifetime(scope);
+      const catalog = await resolveSaved(identity, 'catalog', operationScope);
       if (!catalog.ok || !isProviderFeatureEnabled()) return;
       if (!await hasFreshExactCatalogObservation(catalog.value.request)) {
         if (!isProviderFeatureEnabled()) return;
-        await lowLevelProbe(
-          { ...identity, kind: 'saved', trigger },
+        const admittedScope: RuntimeProviderOperationScope = {
+          registry: catalog.value.registry,
+          // Work admitted by the scheduler is shared. Retain the caller's
+          // deadline and exact registry projection, but not its cancellation.
+          lifetime: { wallDeadlineAtMs: operationScope.lifetime.wallDeadlineAtMs },
+        };
+        await runResolvedCatalogProbe(
+          { ...catalog.value.request, operationScope: admittedScope },
+          trigger,
           withProviderFeatureCurrentness(),
+          admittedScope.lifetime,
         );
       }
       if (!isProviderFeatureEnabled()) return;
-      const health = await resolveSaved(identity, 'health');
+      const health = await resolveSaved(identity, 'health', operationScope);
       if (!health.ok || !isProviderFeatureEnabled() || health.value.request.probes.length !== 1) return;
       if (await hasFreshExactHealthObservation(health.value.request)) return;
       if (!isProviderFeatureEnabled()) return;
+      const admittedScope: RuntimeProviderOperationScope = {
+        registry: health.value.registry,
+        lifetime: { wallDeadlineAtMs: operationScope.lifetime.wallDeadlineAtMs },
+      };
       await runResolvedHealthProbe(
-        health.value.request,
+        { ...health.value.request, operationScope: admittedScope },
         trigger,
         withProviderFeatureCurrentness(),
+        admittedScope.lifetime,
       );
     } catch {
       // Demand refresh is advisory; callers project the current cached state.
@@ -909,29 +991,38 @@ export function createRuntimeProviderServices(input: Readonly<{
   };
 
   const modelLoadCatalog = createProviderModelLoadCatalogPort<unknown>({
-    resolveSaved: async (identity) => {
-      const resolved = await resolveSaved(identity);
+    resolveSaved: async ({ connectionId, machineId, scope }) => {
+      const resolved = await resolveSaved({ connectionId, machineId }, 'catalog', scope);
       if (!resolved.ok) throw new ProviderProbeRpcResolutionError(resolved.error);
       return resolved.value.request;
     },
     runtimeStore,
-    refresh: ({ signal, modelId, refreshFrontier, ...request }) => scheduler.runCatalogAfter(
-      createResolvedProviderProbeObservationIdentity(request),
-      JSON.stringify(['post-model-load', modelId, refreshFrontier]),
-      () => catalogService.refresh(request),
-      {
-        signal,
-        isCurrent: isProviderFeatureEnabled,
-        unavailable: () => providerProbeUnavailable({
-          connectionId: request.connectionId,
-          machineId: request.machineId,
+    refresh: ({ signal, modelId, refreshFrontier, operationScope, ...request }) => {
+      // createProviderModelLoadCatalogPort always attaches the admitted scope.
+      // Refuse a bypass rather than inventing a second authority or deadline.
+      if (!operationScope) throw new TypeError('Provider model-load catalog refresh requires an operation scope');
+      return scheduler.runCatalogAfter(
+        createResolvedProviderProbeObservationIdentity(request),
+        JSON.stringify(['post-model-load', modelId, refreshFrontier]),
+        () => catalogService.refresh({
+          ...request,
+          operationScope,
+          wallDeadlineAtMs: operationScope.lifetime.wallDeadlineAtMs,
         }),
-        localCapacityUnavailable: () => providerProbeCapacityExhausted({
-          connectionId: request.connectionId,
-          machineId: request.machineId,
-        }),
-      },
-    ),
+        {
+          signal,
+          isCurrent: isProviderFeatureEnabled,
+          unavailable: () => providerProbeUnavailable({
+            connectionId: request.connectionId,
+            machineId: request.machineId,
+          }),
+          localCapacityUnavailable: () => providerProbeCapacityExhausted({
+            connectionId: request.connectionId,
+            machineId: request.machineId,
+          }),
+        },
+      );
+    },
   });
 
   const projectModels = (
@@ -1007,9 +1098,10 @@ export function createRuntimeProviderServices(input: Readonly<{
   const models = createProviderSavedModelsRpcHandler({
     machineId: input.machineId,
     models: async (identity): Promise<ProviderSavedModelsRpcResult> => {
-      const context = await resolveCatalogContext(identity);
+      const operationScope = withOperationLifetime(undefined);
+      const context = await resolveCatalogContext(identity, undefined, operationScope);
       if (context.status === 'error') return context;
-      void scheduleDemandRefresh(identity, 'picker_open');
+      void scheduleDemandRefresh(identity, 'picker_open', operationScope);
       return projectModels(identity, context);
     },
   });
@@ -1017,11 +1109,16 @@ export function createRuntimeProviderServices(input: Readonly<{
   const probeDraft = (
     request: DaemonProviderDraftProbeRequestV1,
     waiterLifetime?: ProviderProbeWaiterLifetime,
+    now: () => number = Date.now,
   ) => isProviderFeatureEnabled()
     ? scheduler.runCatalog(
         createProviderDraftProbeSchedulerKey(request),
         'manual_refresh',
-        () => draftProbeService.probe(request),
+        // Draft resolution and dispatch run inside the admitted slot and are
+        // shared between waiters, so the slot carries the deadline only.
+        () => draftProbeService.probe(request, {
+          wallDeadlineAtMs: now() + PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs,
+        }),
         {
           ...withProviderFeatureCurrentness(waiterLifetime),
           unavailable: () => providerProbeUnavailable({
@@ -1047,6 +1144,12 @@ export function createRuntimeProviderServices(input: Readonly<{
     if (!isProviderFeatureEnabled()) return providerFeatureDisabled(identity);
     // Connection description is a point-in-time projection. Reuse its exact
     // settings resolution instead of replacing it with the latest snapshot.
+    const operationScope = 'resolution' in input
+      ? {
+          registry: input.registry,
+          lifetime: input.lifetime,
+        }
+      : withOperationLifetime(undefined);
     const resolved = 'resolution' in input
       ? await resolveSavedFromConnectionContext(identity, {
           connection: input.resolution.record,
@@ -1055,10 +1158,10 @@ export function createRuntimeProviderServices(input: Readonly<{
           registry: input.registry,
           dnsEvidenceByEndpointUrl: input.dnsEvidence,
         }, 'catalog')
-      : await resolveSaved(identity);
+      : await resolveSaved(identity, 'catalog', operationScope);
     if (!resolved.ok) return { status: 'error' as const, error: resolved.error };
     if (!isProviderFeatureEnabled()) return providerFeatureDisabled(identity);
-    void scheduleDemandRefresh(identity, 'detail_open');
+    void scheduleDemandRefresh(identity, 'detail_open', operationScope);
     const state = await runtimeStore.read();
     if (!isProviderFeatureEnabled()) return providerFeatureDisabled(identity);
     const request = resolved.value.request;

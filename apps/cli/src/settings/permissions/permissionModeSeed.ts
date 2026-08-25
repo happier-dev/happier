@@ -1,5 +1,5 @@
 import {
-  buildBackendTargetKey,
+  readAccountSettingValueForBackendTarget,
   type BackendTargetRefV1,
 } from '@happier-dev/protocol';
 import { AGENT_IDS, resolvePermissionModeGroupForAgent, type AgentId } from '@happier-dev/agents';
@@ -42,19 +42,22 @@ export function resolveAccountDefaultPermissionModeFromAccountSettings(opts: {
   backendTarget?: BackendTargetRefV1;
   accountSettings: unknown;
 }): PermissionMode | null {
-  const settings = opts.accountSettings;
-  const record =
-    settings && typeof settings === 'object' && !Array.isArray(settings) ? (settings as Record<string, unknown>) : null;
-  const rawMap = record?.sessionDefaultPermissionModeByTargetKey;
-  const map =
-    rawMap && typeof rawMap === 'object' && !Array.isArray(rawMap) ? (rawMap as Record<string, unknown>) : null;
-
   const preferredTarget = opts.backendTarget
     ?? ({ kind: 'builtInAgent', agentId: opts.agentId } as const satisfies BackendTargetRefV1);
-  const candidate = map?.[buildBackendTargetKey(preferredTarget)]
-    ?? (isBuiltInAgentId(opts.agentId)
-      ? map?.[buildBackendTargetKey({ kind: 'builtInAgent', agentId: opts.agentId })]
-      : undefined);
+  // The Account Settings catalog owns this map's key vocabulary. Building a
+  // legacy `agent:`/`acpBackend:` key here would never match the parsed
+  // projection, so an Account default the user set would be silently ignored.
+  const candidate = readAccountSettingValueForBackendTarget(
+    opts.accountSettings,
+    'sessionDefaultPermissionModeByTargetKey',
+    preferredTarget,
+  ) ?? (isBuiltInAgentId(opts.agentId)
+    ? readAccountSettingValueForBackendTarget(
+      opts.accountSettings,
+      'sessionDefaultPermissionModeByTargetKey',
+      { kind: 'builtInAgent', agentId: opts.agentId },
+    )
+    : undefined);
   return normalizePermissionModeForAgentStart({ agentId: opts.agentId, value: candidate });
 }
 

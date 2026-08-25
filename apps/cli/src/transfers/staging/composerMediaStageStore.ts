@@ -204,6 +204,7 @@ async function hashFile(path: string): Promise<string | null> {
   }
 }
 
+/** Verifies staged bytes against their declared handle: size, digest and sniffed container. */
 async function verifyContentFile(input: Readonly<{
   path: string;
   handle: ComposerContentHandleV1;

@@ -3,6 +3,7 @@ import { chmod, mkdir, open, readdir, rm, stat } from 'fs/promises';
 import { tmpdir } from 'os';
 import { dirname, join } from 'path';
 
+import { isPidPresent } from '@happier-dev/cli-common/process';
 import type { UploadTransferTarget } from '../targets/uploadTransferTarget';
 
 type UploadSession = {
@@ -103,21 +104,12 @@ export class TransferSessionStore {
       if (!entry.isDirectory()) return;
       const match = /^(?<pid>[1-9]\d*)-[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.exec(entry.name);
       const ownerPid = Number(match?.groups?.pid ?? Number.NaN);
-      if (!Number.isSafeInteger(ownerPid) || ownerPid <= 0 || this.isProcessAlive(ownerPid)) {
+      if (!Number.isSafeInteger(ownerPid) || ownerPid <= 0 || isPidPresent(ownerPid)) {
         // Unowned legacy roots and roots belonging to a possibly-live process are preserved.
         return;
       }
       await rm(join(this.baseTempRoot, entry.name), { recursive: true, force: true }).catch(() => undefined);
     }));
-  }
-
-  private isProcessAlive(pid: number): boolean {
-    try {
-      process.kill(pid, 0);
-      return true;
-    } catch (error) {
-      return !(error && typeof error === 'object' && 'code' in error && error.code === 'ESRCH');
-    }
   }
 
   private beginSessionOperation<TSession extends { activeOperationCount: number }>(

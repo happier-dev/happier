@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
+import { isPidPresent } from '@happier-dev/cli-common/process';
+
 const LIMITER_DIRECTORY_NAME = '.happier-action-slots';
 const OWNER_FILE_NAME = 'owner.json';
 const OWNERLESS_SLOT_STALE_MS = 30_000;
@@ -25,21 +27,12 @@ function remainingDeadlineMs(deadlineMs: number | undefined): number | undefined
   return Math.max(0, deadlineMs - Date.now());
 }
 
-function processIsAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code !== 'ESRCH';
-  }
-}
-
 async function reclaimDeadSlot(slotPath: string): Promise<void> {
   try {
     const ownerRaw = await readFile(join(slotPath, OWNER_FILE_NAME), 'utf8');
     const owner = JSON.parse(ownerRaw) as { pid?: unknown };
     const ownerPid = typeof owner.pid === 'number' && Number.isSafeInteger(owner.pid) ? owner.pid : null;
-    if (ownerPid === null || processIsAlive(ownerPid)) return;
+    if (ownerPid === null || isPidPresent(ownerPid)) return;
     await rm(slotPath, { recursive: true, force: true });
     return;
   } catch (error) {

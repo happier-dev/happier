@@ -80,42 +80,45 @@ export async function listSessions(params: Readonly<{
   limit?: number;
   cursor?: string;
 }>): Promise<ListSessionsResult> {
-  const page = await fetchSessionsPage({
-    token: params.credentials.token,
-    ...(params.cursor ? { cursor: params.cursor } : {}),
-    ...(params.limit ? { limit: params.limit } : {}),
-    activeOnly: params.activeOnly,
-    archivedOnly: params.archivedOnly,
-  });
-
-  const [accountSettingsContext, accountEncryptionCurrentness] = await Promise.all([
+  const [initialPage, accountSettingsContext, accountEncryptionCurrentness] = await Promise.all([
+    fetchSessionsPage({
+      token: params.credentials.token,
+      ...(params.cursor ? { cursor: params.cursor } : {}),
+      ...(params.limit ? { limit: params.limit } : {}),
+      activeOnly: params.activeOnly,
+      archivedOnly: params.archivedOnly,
+    }),
     bootstrapAccountSettingsContext({
       credentials: params.credentials,
       mode: 'fast',
     }),
     fetchAccountEncryptionCurrentness({ token: params.credentials.token }),
   ]);
-  const rowModels = page.sessions
-    .map((row) =>
-      buildCliSessionRowModel({
+  const resultLimit = normalizeResultLimit(params.limit);
+  const rawRowById = new Map<string, (typeof initialPage.sessions)[number]>();
+  const activityAtBySessionId = new Map<string, number>();
+  const rowModels: CliSessionRowModel[] = [];
+  const appendPageRows = (rawRows: typeof initialPage.sessions) => {
+    for (const rawRow of rawRows) {
+      rawRowById.set(rawRow.id, rawRow);
+      const meaningfulActivityAt = (rawRow as { meaningfulActivityAt?: unknown }).meaningfulActivityAt;
+      activityAtBySessionId.set(
+        rawRow.id,
+        typeof meaningfulActivityAt === 'number' && Number.isFinite(meaningfulActivityAt)
+          ? meaningfulActivityAt
+          : rawRow.updatedAt,
+      );
+      const row = buildCliSessionRowModel({
         credentials: params.credentials,
         accountEncryptionMode: accountEncryptionCurrentness.mode,
-        rawSession: row,
+        rawSession: rawRow,
         accountSettings: accountSettingsContext.settings,
-      }))
-    .filter((row) => params.includeSystem || row.isSystem !== true);
-
-  const activityAtBySessionId = new Map(page.sessions.map((row) => {
-    const meaningfulActivityAt = (row as { meaningfulActivityAt?: unknown }).meaningfulActivityAt;
-    return [
-      row.id,
-      typeof meaningfulActivityAt === 'number' && Number.isFinite(meaningfulActivityAt)
-        ? meaningfulActivityAt
-        : row.updatedAt,
-    ] as const;
-  }));
-
-  const filteredRows = params.resumableOnly
+      });
+      if (params.includeSystem || row.isSystem !== true) rowModels.push(row);
+    }
+  };
+  appendPageRows(initialPage.sessions);
+  const filteredRows = () => params.resumableOnly
     ? rowModels
         .filter((row) => row.vendorResume.eligible === true && row.archivedAt === null && row.active !== true)
         .sort((a, b) => {
@@ -125,10 +128,33 @@ export async function listSessions(params: Readonly<{
           return a.id < b.id ? 1 : a.id > b.id ? -1 : 0;
         })
     : rowModels;
-  const resultLimit = normalizeResultLimit(params.limit);
-  const limitedRows = resultLimit === null ? filteredRows : filteredRows.slice(0, resultLimit);
 
-  const rawRowById = new Map(page.sessions.map((row) => [row.id, row] as const));
+  let page = initialPage;
+  const shouldFillVisibleLimit = (params.includeSystem === false || params.resumableOnly)
+    // The active endpoint intentionally has no cursor contract.
+    && params.activeOnly === false;
+  const seenCursors = new Set(params.cursor ? [params.cursor] : []);
+  while (
+    resultLimit !== null
+    && shouldFillVisibleLimit
+    && filteredRows().length < resultLimit
+  ) {
+    if (!page.hasNext || page.nextCursor === null || seenCursors.has(page.nextCursor)) break;
+    const cursor = page.nextCursor;
+    seenCursors.add(cursor);
+    page = await fetchSessionsPage({
+      token: params.credentials.token,
+      cursor,
+      // The server cursor is after the whole raw page, so do not fetch more
+      // raw rows than can still be returned after client-side filtering.
+      limit: resultLimit - filteredRows().length,
+      activeOnly: params.activeOnly,
+      archivedOnly: params.archivedOnly,
+    });
+    appendPageRows(page.sessions);
+  }
+
+  const limitedRows = resultLimit === null ? filteredRows() : filteredRows().slice(0, resultLimit);
   let sessions = limitedRows.map((row) => {
       const rawRow = rawRowById.get(row.id);
       if (!rawRow) throw new Error(`Missing raw session row for ${row.id}`);

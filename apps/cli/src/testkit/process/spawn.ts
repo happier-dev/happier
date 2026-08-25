@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess, type SpawnOptions } from 'node:child_process'
 
+import { isPidPresent } from '@happier-dev/cli-common/process'
 import psList from 'ps-list'
 
 export function spawnTestProcess(
@@ -130,13 +131,9 @@ export async function spawnInlineNodeParentWithChild(
   return { parent, childPid }
 }
 
+/** The testkit's assertion name for the canonical predicate; the rule lives at the owner. */
 export function isPidAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0)
-    return true
-  } catch {
-    return false
-  }
+  return isPidPresent(pid)
 }
 
 async function isPidRunning(pid: number): Promise<boolean> {

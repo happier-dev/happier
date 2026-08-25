@@ -485,6 +485,78 @@ describe('external-session daemon host-operation owner', () => {
         }
     });
 
+    it('never reports unsettled explicit follow cleanup as disposal and keeps the exact handle retryable', async () => {
+        vi.useFakeTimers();
+        try {
+            let failFirstCleanup!: (error: unknown) => void;
+            let cleanupAttempts = 0;
+            const dispose = vi.fn(() => {
+                cleanupAttempts += 1;
+                if (cleanupAttempts === 1) {
+                    return new Promise<void>((_, reject) => {
+                        failFirstCleanup = reject;
+                    });
+                }
+                return Promise.resolve();
+            });
+            const owner = createExternalSessionHostOperationOwner();
+            await installOperations(owner, {
+                followOperation: unavailableFollowOperation(
+                    vi.fn(async () => Object.freeze({
+                        status: 'following' as const,
+                        startingCursor: 'cursor-1',
+                        subscription: Object.freeze({ dispose }),
+                    })),
+                ),
+            });
+            const binding = owner.bind(createBindingInput());
+            const followed = await binding.executeFollow(followRequest());
+            if (followed.status !== 'following') {
+                throw new Error('expected follow');
+            }
+
+            // Cleanup that has not settled by the ceiling is unresolved cleanup,
+            // not finished cleanup. Resolving here is what let the retained-Agent
+            // follow close delete a still-live provider subscription and report
+            // success for it.
+            const first = Promise.resolve(followed.subscription.dispose());
+            const firstSettled = first.catch(() => undefined);
+            await vi.advanceTimersByTimeAsync(4_999);
+            let settled = false;
+            void firstSettled.finally(() => { settled = true; });
+            await Promise.resolve();
+            expect(settled).toBe(false);
+            await vi.advanceTimersByTimeAsync(1);
+            await expect(first).rejects.toThrow(
+                'plugin_external_follow_cleanup_deadline_exceeded',
+            );
+
+            // A retry joins the invocation the provider is still running instead
+            // of disposing the same handle a second time.
+            const second = Promise.resolve(followed.subscription.dispose());
+            const secondSettled = second.catch(() => undefined);
+            await Promise.resolve();
+            expect(dispose).toHaveBeenCalledOnce();
+
+            // The failure that arrives after the ceiling is surfaced, not
+            // discarded beside the state machine.
+            failFirstCleanup(new Error('provider cleanup rejected'));
+            await expect(second).rejects.toThrow('provider cleanup rejected');
+            await secondSettled;
+
+            // Custody was retained through both failures, so the exact handle is
+            // disposed for real on the next attempt and only then leaves the
+            // owner's active sets.
+            await expect(followed.subscription.dispose())
+                .resolves.toBeUndefined();
+            expect(dispose).toHaveBeenCalledTimes(2);
+            await owner.retire();
+            expect(dispose).toHaveBeenCalledTimes(2);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
     it('disposes a listener-failed provisional follow without retiring sibling follows', async () => {
         const firstDispose = vi.fn(async () => undefined);
         const secondDispose = vi.fn(async () => undefined);
@@ -646,6 +718,48 @@ describe('external-session daemon host-operation owner', () => {
         );
         expect(disposals.every((dispose) => dispose.mock.calls.length === 1))
             .toBe(true);
+    });
+
+    it('admits a deeply nested valid follow event instead of reclassifying it as invalid', async () => {
+        // The canonical transcript contract carries no generic depth quota, so
+        // the follow-event byte bound must be measured iteratively.
+        let output: unknown = 'leaf';
+        for (let depth = 0; depth < 7_000; depth += 1) output = { nested: output };
+        const operationListeners: Array<
+            Parameters<ExternalSessionFollowHostOperation['execute']>[0]['listener']
+        > = [];
+        const followExecute: ExternalSessionFollowHostOperation['execute'] =
+            vi.fn(async (request) => {
+                operationListeners.push(request.listener);
+                return Object.freeze({
+                    status: 'following' as const,
+                    startingCursor: 'cursor-1',
+                    subscription: Object.freeze({ dispose: vi.fn(async () => undefined) }),
+                });
+            });
+        const owner = createExternalSessionHostOperationOwner();
+        await installOperations(owner, {
+            followOperation: unavailableFollowOperation(followExecute),
+        });
+        const binding = owner.bind(createBindingInput());
+        const follow = await binding.executeFollow(followRequest());
+        expect(follow.status).toBe('following');
+
+        await expect(operationListeners[0]!({
+            kind: 'data',
+            items: [Object.freeze({
+                id: 'deep',
+                kind: 'event' as const,
+                data: {
+                    role: 'agent',
+                    content: { type: 'codex', data: { type: 'tool-call-result', callId: 'call-1', output } },
+                },
+            })],
+            fromCursor: null,
+            nextCursor: 'cursor-2',
+        } as Parameters<typeof operationListeners[0]>[0])).resolves.toBeUndefined();
+
+        if (follow.status === 'following') await follow.subscription.dispose();
     });
 
     it('owns abort-triggered retirement failure and never publishes a replacement without a cleanup handle', async () => {

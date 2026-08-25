@@ -48,6 +48,11 @@ function resolveTargetBackend(
 export function mapExternalTakeoverLaunchPlanToSpawnOptions(params: Readonly<{
     plan: AgentExternalSessionTakeoverLaunchPlan;
     /**
+     * A host-vetted native resume reference from the selected external source.
+     * It remains private to the daemon-owned takeover-to-spawn path.
+     */
+    nativeResumeReference?: string;
+    /**
      * Host-authoritative local target selected before the durable takeover
      * request is admitted. Plugin launch plans may describe provider context,
      * but never choose the process working directory.
@@ -70,11 +75,16 @@ export function mapExternalTakeoverLaunchPlanToSpawnOptions(params: Readonly<{
         }
     }
 
+    const resume = params.nativeResumeReference
+        ?? params.resolvedIdentity.remoteSessionId;
     return {
         directory: params.targetDirectory,
         backendTarget: resolveTargetBackend(params.targetAgent),
         existingSessionId: params.linkedSessionId,
-        resume: params.resolvedIdentity.remoteSessionId,
+        resume,
+        ...(params.nativeResumeReference
+            ? { nativeResumeReference: params.nativeResumeReference }
+            : {}),
         approvedNewDirectoryCreation: true,
         ...(params.plan.backendModeHint
             ? { backendMode: params.plan.backendModeHint }

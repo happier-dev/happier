@@ -1,7 +1,7 @@
 import type { BackendTargetRefV1 } from '@happier-dev/protocol';
 
 export type PreflightSessionControlsProbeFailureCacheStrategy = 'cooldown' | 'retry';
-export type PreflightSessionControlsProbeKind = 'models' | 'modes' | 'configOptions';
+export type PreflightSessionControlsProbeKind = 'models' | 'modes' | 'configOptions' | 'passiveRealtimeSetup';
 
 export type PreflightSessionControlsProbeParams = Readonly<{
   backendTarget?: BackendTargetRefV1;
@@ -10,6 +10,7 @@ export type PreflightSessionControlsProbeParams = Readonly<{
   timeoutMs: number;
   accountSettings?: Readonly<Record<string, unknown>> | null;
   env?: NodeJS.ProcessEnv;
+  signal?: AbortSignal;
 }>;
 
 /**
@@ -26,4 +27,5 @@ export type PreflightSessionControlsProbeAdapter = Readonly<{
   verboseModelsCommandArgs?: ReadonlyArray<string>;
   probeModesRaw?: (params: PreflightSessionControlsProbeParams) => Promise<unknown | null>;
   probeConfigOptionsRaw?: (params: PreflightSessionControlsProbeParams) => Promise<unknown | null>;
+  probePassiveRealtimeSetupRaw?: (params: PreflightSessionControlsProbeParams) => Promise<unknown | null>;
 }>;

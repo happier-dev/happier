@@ -8,7 +8,10 @@ import { describe, expect, it, vi } from 'vitest';
 import type { Metadata } from '@/api/types';
 import type { RpcHandler, RpcHandlerRegistrar } from '@/api/rpc/types';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { SessionUsageLimitRecoveryV1Schema } from '@happier-dev/protocol';
+import {
+  SessionPendingMessageComposerAdmissionPrepareRequestV1Schema,
+  SessionUsageLimitRecoveryV1Schema,
+} from '@happier-dev/protocol';
 
 vi.mock('./capabilities', () => ({ registerCapabilitiesHandlers: vi.fn() }));
 vi.mock('./previewEnv', () => ({ registerPreviewEnvHandler: vi.fn() }));
@@ -43,6 +46,65 @@ function createRegistrar(): { handlers: Map<string, RpcHandler>; registrar: RpcH
 }
 
 describe('registerSessionHandlers session controls', () => {
+  it('prepares whole Pending input and settles only an explicitly accepted payload', async () => {
+    const registerSessionHandlers = await loadRegisterSessionHandlers();
+    const { handlers, registrar } = createRegistrar();
+    const admittedAttachment = {
+      v: 1 as const,
+      instanceId: 'issue-42',
+      attachment: { pluginId: 'acme.issues', localId: 'issue' },
+      key: '42',
+      value: { issueId: 43, prepared: true },
+      presentation: { label: 'Issue #43', typeLabel: 'Issue' },
+    };
+    const preparePendingMessageComposerAdmission = vi.fn(async () => ({
+      text: 'prepared text',
+      meta: { happierStructuredInputV1: { v: 1, composerAttachments: [admittedAttachment] } },
+      stagedMediaHandles: [],
+    }));
+    const acceptPendingMessageComposerAdmission = vi.fn(async () => undefined);
+
+    registerSessionHandlers(registrar, process.cwd(), {
+      sessionRuntimeControls: {
+        preparePendingMessageComposerAdmission,
+        acceptPendingMessageComposerAdmission,
+      },
+    });
+
+    const prepareRequest = {
+      localId: 'pending-successor-1',
+      text: 'draft text',
+      structuredInput: { v: 1 as const, composerAttachments: [admittedAttachment] },
+    };
+    expect(SessionPendingMessageComposerAdmissionPrepareRequestV1Schema.safeParse(prepareRequest))
+      .toMatchObject({ success: true });
+    await expect(handlers.get(
+      SESSION_RPC_METHODS.SESSION_PENDING_MESSAGE_COMPOSER_ADMISSION_PREPARE_V1,
+    )?.(prepareRequest)).resolves.toEqual({
+      ok: true,
+      text: 'prepared text',
+      structuredInput: { v: 1, composerAttachments: [admittedAttachment] },
+      stagedMediaHandles: [],
+    });
+    expect(preparePendingMessageComposerAdmission).toHaveBeenCalledWith({
+      localId: 'pending-successor-1',
+      text: 'draft text',
+      meta: { happierStructuredInputV1: prepareRequest.structuredInput },
+    });
+    expect(acceptPendingMessageComposerAdmission).not.toHaveBeenCalled();
+
+    const acceptedRequest = {
+      sessionId: 'session-1',
+      localId: 'pending-successor-1',
+      structuredInput: { v: 1, composerAttachments: [admittedAttachment] },
+      stagedMediaHandles: [],
+    };
+    await expect(handlers.get(
+      SESSION_RPC_METHODS.SESSION_PENDING_MESSAGE_COMPOSER_ADMISSION_ACCEPTED_V1,
+    )?.(acceptedRequest)).resolves.toEqual({ ok: true });
+    expect(acceptPendingMessageComposerAdmission).toHaveBeenCalledWith(acceptedRequest);
+  });
+
   it('routes goal RPCs to runtime goal controls and returns current work state', async () => {
     const registerSessionHandlers = await loadRegisterSessionHandlers();
     const { handlers, registrar } = createRegistrar();

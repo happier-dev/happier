@@ -2,8 +2,9 @@ import { z } from 'zod';
 
 import {
   AgentExternalSessionTranscriptRawRecordSchema,
+  ExternalSessionTranscriptItemIdV1Schema,
+  ExternalSessionTranscriptSourceTimestampV1Schema,
   ExternalSessionUserProjectionSchema,
-  ExternalSessionCandidateV1Schema,
   ExternalSessionOperationStateV1Schema,
   ExternalSessionTranscriptRawMessageV1Schema,
   ExternalSessionsSourceSchema,
@@ -29,13 +30,6 @@ import {
   type VoiceProviderContribution,
 } from '@happier-dev/protocol';
 import { AgentRuntimeJsonValueV1Schema } from '@happier-dev/protocol/runtime';
-import type {
-  ExternalSessionCandidatesPage,
-  ExternalSessionLinkIdentity,
-  ExternalSessionSourceValidationResult,
-  ExternalSessionTranscriptPage,
-  ExternalSessionTranscriptReadAfter,
-} from '@/session/external/providerOps';
 import {
   AgentRuntimeDaemonServiceTurnWitnessV1Schema,
 } from './agentRuntimeDaemonServiceTurnWitness';
@@ -62,10 +56,10 @@ export const RunnerAgentDaemonExternalSessionRefV1Schema = z.object({
 }).strict();
 
 const ExternalSessionTranscriptItemSchema = z.object({
-  id: z.string().trim().min(1).max(2_000),
-  localId: z.string().trim().min(1).max(2_000).optional(),
+  id: ExternalSessionTranscriptItemIdV1Schema,
+  localId: ExternalSessionTranscriptItemIdV1Schema.optional(),
   userProjection: ExternalSessionUserProjectionSchema.optional(),
-  timestampMs: z.number().finite().optional(),
+  timestampMs: ExternalSessionTranscriptSourceTimestampV1Schema.optional(),
   kind: z.enum(['user', 'agent', 'system', 'event']),
   data: AgentExternalSessionTranscriptRawRecordSchema,
 }).strict().superRefine((item, context) => {
@@ -168,13 +162,6 @@ const FollowTargetSchema = z.discriminatedUnion('kind', [
   }).strict(),
 ]);
 
-const CurrentExternalSessionOperationBase = {
-  requestId: BoundedIdSchema,
-  agentId: ExternalSessionIdSchema,
-  source: ExternalSessionsSourceSchema,
-  witness: AgentRuntimeDaemonServiceTurnWitnessV1Schema.optional(),
-} as const;
-
 const ExternalSessionTranscriptMediaReadRootsSchema = z.array(
   z.string().min(1).max(4_096),
 ).max(16).optional();
@@ -193,18 +180,6 @@ const ExternalSessionSourceValidationResultSchema = z.discriminatedUnion(
     }).strict(),
   ],
 );
-
-const ExternalSessionCandidatesPageSchema = z.object({
-  candidates: z.array(ExternalSessionCandidateV1Schema).max(5_000),
-  nextCursor:
-    RunnerAgentDaemonExternalSessionCursorV1Schema.nullable(),
-  searchIncomplete: z.boolean().optional(),
-  preparation: z.object({
-    kind: z.literal('building_candidate_index'),
-    scanned: z.number().int().nonnegative(),
-    total: z.number().int().nonnegative().optional(),
-  }).strict().optional(),
-}).strict();
 
 const ExternalSessionStateUpdateBase = {
   updatedAt: z.number().finite().optional(),
@@ -413,49 +388,6 @@ export type RunnerAgentDaemonExternalSessionFollowProviderResponseV1 =
 
 export const RUNNER_AGENT_DAEMON_FACET_OPERATION_SCHEMAS = [
   z.object({
-    kind: z.literal('external_session.current.resolve_source'),
-    ...CurrentExternalSessionOperationBase,
-  }).strict(),
-  z.object({
-    kind: z.literal('external_session.current.list_candidates'),
-    ...CurrentExternalSessionOperationBase,
-    cursor: RunnerAgentDaemonExternalSessionCursorV1Schema.optional(),
-    limit: z.number().int().min(1).max(5_000),
-    searchTerm: z.string().max(10_000).optional(),
-    searchMode: z.enum(['fast', 'full']).optional(),
-    maxBytes: z.number().int().min(1).max(10 * 1024 * 1024).optional(),
-  }).strict(),
-  z.object({
-    kind: z.literal('external_session.current.resolve_link_identity'),
-    ...CurrentExternalSessionOperationBase,
-    remoteSessionId: ExternalSessionRemoteIdSchema,
-    runtimeDescriptor: RuntimeDescriptorV1Schema.nullable().optional(),
-    metadata: ExternalSessionJsonObjectSchema.optional(),
-  }).strict(),
-  z.object({
-    kind: z.literal('external_session.current.resolve_linked_identity'),
-    ...CurrentExternalSessionOperationBase,
-    remoteSessionId: ExternalSessionRemoteIdSchema,
-    metadata: ExternalSessionJsonObjectSchema,
-  }).strict(),
-  z.object({
-    kind: z.literal('external_session.current.page_transcript'),
-    ...CurrentExternalSessionOperationBase,
-    remoteSessionId: ExternalSessionRemoteIdSchema,
-    direction: z.enum(['older', 'newer']),
-    cursor: RunnerAgentDaemonExternalSessionCursorV1Schema.optional(),
-    maxBytes: z.number().int().min(1).max(10 * 1024 * 1024),
-    maxItems: z.number().int().min(1).max(5_000),
-  }).strict(),
-  z.object({
-    kind: z.literal('external_session.current.read_after_transcript'),
-    ...CurrentExternalSessionOperationBase,
-    remoteSessionId: ExternalSessionRemoteIdSchema,
-    cursor: RunnerAgentDaemonExternalSessionCursorV1Schema,
-    maxBytes: z.number().int().min(1).max(10 * 1024 * 1024),
-    maxItems: z.number().int().min(1).max(5_000),
-  }).strict(),
-  z.object({
     kind: z.literal('external_session.follow.open'),
     requestId: BoundedIdSchema,
     followId: BoundedIdSchema,
@@ -510,34 +442,6 @@ export const RunnerAgentDaemonFacetResultV1Schema:
   'kind',
   [
     z.object({
-      kind: z.literal('external_session.current.resolve_source'),
-      result: ExternalSessionSourceValidationResultSchema,
-    }).strict(),
-    z.object({
-      kind: z.literal('external_session.current.list_candidates'),
-      result: ExternalSessionCandidatesPageSchema,
-    }).strict(),
-    z.object({
-      kind: z.literal('external_session.current.resolve_link_identity'),
-      result: ExternalSessionLinkIdentitySchema,
-    }).strict(),
-    z.object({
-      kind: z.literal('external_session.current.resolve_linked_identity'),
-      result: ExternalSessionLinkIdentitySchema.pick({
-        source: true,
-        remoteSessionId: true,
-        transcriptMediaReadRoots: true,
-      }).strict(),
-    }).strict(),
-    z.object({
-      kind: z.literal('external_session.current.page_transcript'),
-      result: ExternalSessionTranscriptPageSchema,
-    }).strict(),
-    z.object({
-      kind: z.literal('external_session.current.read_after_transcript'),
-      result: ExternalSessionTranscriptReadAfterSchema,
-    }).strict(),
-    z.object({
       kind: z.literal('external_session.follow.open'),
       followId: BoundedIdSchema,
       result:
@@ -585,33 +489,6 @@ type AgentSessionRealtimeVoiceDeclarationV1 = Extract<
 >;
 
 export type RunnerAgentDaemonFacetResultV1 =
-  | Readonly<{
-    kind: 'external_session.current.resolve_source';
-    result: ExternalSessionSourceValidationResult;
-  }>
-  | Readonly<{
-    kind: 'external_session.current.list_candidates';
-    result: ExternalSessionCandidatesPage;
-  }>
-  | Readonly<{
-    kind: 'external_session.current.resolve_link_identity';
-    result: ExternalSessionLinkIdentity;
-  }>
-  | Readonly<{
-    kind: 'external_session.current.resolve_linked_identity';
-    result: Pick<
-      ExternalSessionLinkIdentity,
-      'source' | 'remoteSessionId' | 'transcriptMediaReadRoots'
-    >;
-  }>
-  | Readonly<{
-    kind: 'external_session.current.page_transcript';
-    result: ExternalSessionTranscriptPage;
-  }>
-  | Readonly<{
-    kind: 'external_session.current.read_after_transcript';
-    result: ExternalSessionTranscriptReadAfter;
-  }>
   | Readonly<{
     kind: 'external_session.follow.open';
     followId: string;

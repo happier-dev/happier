@@ -164,7 +164,6 @@ describe('startExternalSessionPassiveObservation', () => {
                     link: { claim: sentinel },
                 });
             },
-            jitterDelay: async () => {},
             isRestoreEnabled: () => true,
         });
 
@@ -182,7 +181,32 @@ describe('startExternalSessionPassiveObservation', () => {
         await lifecycle.dispose();
     });
 
-    it('loads only explicit unarchived background-follow policies through the bounded canonical inventory', async () => {
+    it('starts passive restoration without random startup jitter', async () => {
+        const random = vi.spyOn(Math, 'random').mockReturnValue(0.5);
+        const listCurrentLinks = vi.fn(async () => []);
+        const lifecycle = startExternalSessionPassiveObservation({
+            machineId: 'machine-1',
+            projection: {
+                reconcileLink: vi.fn(async () => ({ state: 'observing' })),
+                removeLink: vi.fn(async () => ({ removed: true })),
+                releaseLink: vi.fn(async () => ({ removed: true as const })),
+            },
+            listCurrentLinks,
+            startPaused: true,
+            isRestoreEnabled: () => true,
+        });
+
+        try {
+            await lifecycle.resume();
+            expect(listCurrentLinks).toHaveBeenCalledOnce();
+            expect(random).not.toHaveBeenCalled();
+        } finally {
+            await lifecycle.dispose();
+            random.mockRestore();
+        }
+    });
+
+    it('loads only explicit unarchived background-follow policies through the canonical paginated inventory', async () => {
         const fetchPage = vi.fn()
             .mockResolvedValueOnce({
                 sessions: [
@@ -375,7 +399,7 @@ describe('startExternalSessionPassiveObservation', () => {
         expect(resolveLinkInput).toHaveBeenCalledOnce();
     });
 
-    it('restores its bounded set when persisted policies exceed the 100-policy bound', async () => {
+    it('restores every persisted policy when more than 100 are valid', async () => {
         const sessions = Array.from({ length: 101 }, (_, index) => ({
             id: `session-${index}`,
         }));
@@ -407,13 +431,48 @@ describe('startExternalSessionPassiveObservation', () => {
             resolveLinkInput: async ({ sessionId }) => resolvedInput(sessionId),
         });
 
-        // Refusing the whole inventory turned 101 valid persisted policies
-        // into zero background follows, because the restore that consumes this
-        // inventory swallows its rejection.
-        expect(policies).toHaveLength(100);
+        expect(policies).toHaveLength(101);
         expect(policies.map((policy) => policy.sessionId)).toEqual(
-            sessions.slice(0, 100).map((session) => session.id),
+            sessions.map((session) => session.id),
         );
+    });
+
+    it('consumes canonical session pagination beyond 25 pages', async () => {
+        const fetchPage = vi.fn(async ({ cursor }: { cursor?: string }) => {
+            const pageIndex = cursor ? Number(cursor.slice('page-'.length)) : 0;
+            const isLast = pageIndex === 25;
+            return {
+                sessions: isLast ? [{ id: 'policy-after-page-25' }] as never : [],
+                hasNext: !isLast,
+                nextCursor: isLast ? null : `page-${pageIndex + 1}`,
+            };
+        });
+
+        const policies = await listCurrentExternalSessionPassivePolicies({
+            machineId: 'machine-1',
+            signal: new AbortController().signal,
+            readCredentials: async () => ({ token: 'token' } as never),
+            fetchPage: fetchPage as never,
+            decryptOwnerMetadataView: ({ rawSession }) => ({
+                externalSessionV1: {
+                    v: 1,
+                    agentId: 'opencode',
+                    machineId: 'machine-1',
+                    remoteSessionId: (rawSession as { id: string }).id,
+                    source: { kind: 'opencodeServer', directory: '/tmp/project' },
+                    linkedAtMs: 1_000,
+                    followPolicyV1: {
+                        v: 1,
+                        policy: 'background_follow',
+                        updatedAtMs: 1_500,
+                    },
+                },
+            }),
+            resolveLinkInput: async ({ sessionId }) => resolvedInput(sessionId),
+        });
+
+        expect(fetchPage).toHaveBeenCalledTimes(26);
+        expect(policies.map((policy) => policy.sessionId)).toEqual(['policy-after-page-25']);
     });
 
     it('restores file-backed passive observation before transcript follow only after connectivity resumes', async () => {
@@ -436,7 +495,6 @@ describe('startExternalSessionPassiveObservation', () => {
             sessionId: 'session-1',
             observation: fileBacked,
         }]);
-        const jitterDelay = vi.fn(async () => {});
         const lifecycle = startExternalSessionPassiveObservation({
             machineId: 'machine-1',
             projection: { reconcileLink, removeLink, releaseLink },
@@ -444,7 +502,6 @@ describe('startExternalSessionPassiveObservation', () => {
             restoreFollowPolicy,
             pauseFollowPolicy,
             startPaused: true,
-            jitterDelay,
             isRestoreEnabled: () => true,
         });
 
@@ -462,7 +519,6 @@ describe('startExternalSessionPassiveObservation', () => {
                 fallbackDemand: false,
             },
         });
-        expect(jitterDelay).toHaveBeenCalledTimes(1);
         expect(listCurrentLinks).toHaveBeenCalledTimes(1);
         expect(restoreFollowPolicy).toHaveBeenCalledTimes(1);
         const reconcileCallOrder = reconcileLink.mock.invocationCallOrder[0]!;
@@ -577,7 +633,6 @@ describe('startExternalSessionPassiveObservation', () => {
                 observation: groupingOnly,
             }],
             startPaused: true,
-            jitterDelay: async () => {},
             isRestoreEnabled: () => true,
         });
 
@@ -613,7 +668,6 @@ describe('startExternalSessionPassiveObservation', () => {
             pauseFollowPolicy: vi.fn(async () => {}),
             disableFollowPolicy,
             startPaused: true,
-            jitterDelay: async () => {},
         });
 
         await lifecycle.resume();
@@ -722,7 +776,6 @@ describe('startExternalSessionPassiveObservation', () => {
                 await manager.releaseSession({ sessionId });
             },
             startPaused: true,
-            jitterDelay: async () => {},
         });
 
         await lifecycle.resume();
@@ -827,7 +880,6 @@ describe('startExternalSessionPassiveObservation', () => {
                 });
             },
             startPaused: true,
-            jitterDelay: async () => {},
             isRestoreEnabled: () => true,
             ...({
                 subscribeConnectedAccountInvalidations: (listener: () => void) => {
@@ -941,7 +993,6 @@ describe('startExternalSessionPassiveObservation', () => {
             pauseFollowPolicy: vi.fn(async () => {}),
             releaseFollowSession,
             startPaused: true,
-            jitterDelay: async () => {},
         });
 
         const initialRestore = lifecycle.resume();
@@ -1008,7 +1059,6 @@ describe('startExternalSessionPassiveObservation', () => {
             pauseFollowPolicy: vi.fn(async () => {}),
             releaseFollowSession,
             startPaused: true,
-            jitterDelay: async () => {},
         });
         await lifecycle.resume();
 
@@ -1064,7 +1114,6 @@ describe('startExternalSessionPassiveObservation', () => {
             restoreFollowPolicy,
             pauseFollowPolicy: vi.fn(async () => {}),
             startPaused: true,
-            jitterDelay: async () => {},
             isRestoreEnabled: () => true,
         });
 
@@ -1108,7 +1157,6 @@ describe('startExternalSessionPassiveObservation', () => {
             pauseFollowPolicy: vi.fn(async () => {}),
             releaseFollowSession,
             startPaused: true,
-            jitterDelay: async () => {},
             isRestoreEnabled: () => true,
         });
 
@@ -1159,7 +1207,6 @@ describe('startExternalSessionPassiveObservation', () => {
             },
             listCurrentLinks: async () => [],
             startPaused: true,
-            jitterDelay: async () => {},
             isRestoreEnabled: () => true,
             ...({
                 loadCurrentSessionPolicy: async () => ({
@@ -1254,7 +1301,6 @@ describe('startExternalSessionPassiveObservation', () => {
             }],
             restoreFollowPolicy,
             startPaused: true,
-            jitterDelay: async () => {},
             isRestoreEnabled: () => true,
         });
 
@@ -1319,7 +1365,6 @@ describe('startExternalSessionPassiveObservation', () => {
             }],
             restoreFollowPolicy,
             startPaused: true,
-            jitterDelay: async () => {},
             isRestoreEnabled: () => true,
         });
 
@@ -1379,7 +1424,6 @@ describe('startExternalSessionPassiveObservation', () => {
             pauseFollowPolicy: vi.fn(async () => {}),
             disableFollowPolicy,
             startPaused: true,
-            jitterDelay: async () => {},
             isRestoreEnabled: () => restoreEnabled,
             subscribeRestoreEnabled: (listener) => {
                 settingsListener = listener;
@@ -1428,7 +1472,6 @@ describe('startExternalSessionPassiveObservation', () => {
             },
             pauseFollowPolicy: vi.fn(async () => {}),
             startPaused: true,
-            jitterDelay: async () => {},
             isRestoreEnabled: () => true,
         });
 
@@ -1461,7 +1504,6 @@ describe('startExternalSessionPassiveObservation', () => {
             pauseFollowPolicy: vi.fn(async () => {}),
             disableFollowPolicy,
             startPaused: true,
-            jitterDelay: async () => {},
             isRestoreEnabled: () => true,
         });
 
@@ -1520,7 +1562,6 @@ describe('startExternalSessionPassiveObservation', () => {
                 await manager.releaseSession({ sessionId });
             },
             startPaused: true,
-            jitterDelay: async () => {},
             isRestoreEnabled: () => true,
         });
 
@@ -1579,7 +1620,6 @@ describe('startExternalSessionPassiveObservation', () => {
                 });
             },
             startPaused: true,
-            jitterDelay: async () => {},
             isRestoreEnabled: () => true,
         });
 
@@ -1663,7 +1703,6 @@ describe('startExternalSessionPassiveObservation', () => {
                 });
             },
             startPaused: true,
-            jitterDelay: async () => {},
             isRestoreEnabled: () => true,
             subscribeRuntimeReload: (listener) => {
                 runtimeReloadListener = listener;
@@ -1765,7 +1804,6 @@ describe('startExternalSessionPassiveObservation', () => {
                 await manager.releaseSession({ sessionId });
             },
             startPaused: true,
-            jitterDelay: async () => {},
             isRestoreEnabled: () => true,
             subscribeRuntimeReload: (listener) => {
                 runtimeReloadListener = listener;
@@ -1859,7 +1897,6 @@ describe('startExternalSessionPassiveObservation', () => {
                 });
             },
             startPaused: true,
-            jitterDelay: async () => {},
             isRestoreEnabled: () => true,
             subscribeRuntimeReload: (listener) => {
                 runtimeReloadListener = listener;
@@ -1931,7 +1968,6 @@ describe('startExternalSessionPassiveObservation', () => {
             restoreFollowPolicy,
             pauseFollowPolicy: vi.fn(async () => {}),
             startPaused: true,
-            jitterDelay: async () => {},
             isRestoreEnabled: () => true,
             subscribeRuntimeReload: (listener) => {
                 runtimeReloadListener = listener;
@@ -2007,7 +2043,6 @@ describe('startExternalSessionPassiveObservation', () => {
             restoreFollowPolicy,
             followLeaseManager: manager,
             startPaused: true,
-            jitterDelay: async () => {},
             isRestoreEnabled: () => true,
             ...({ loadCurrentSessionPolicy } as object),
         });
@@ -2088,7 +2123,6 @@ describe('startExternalSessionPassiveObservation', () => {
             followLeaseManager: manager,
             listCurrentLinks: async () => [],
             startPaused: true,
-            jitterDelay: async () => {},
             isRestoreEnabled: () => true,
         });
 
@@ -2178,7 +2212,6 @@ describe('startExternalSessionPassiveObservation', () => {
             },
             listCurrentLinks: async () => [],
             startPaused: true,
-            jitterDelay: async () => {},
             isRestoreEnabled: () => true,
         });
 
@@ -2281,7 +2314,6 @@ describe('startExternalSessionPassiveObservation', () => {
             followLeaseManager: manager,
             listCurrentLinks: async () => [],
             startPaused: true,
-            jitterDelay: async () => {},
             isRestoreEnabled: () => true,
         });
 
@@ -2323,7 +2355,6 @@ describe('startExternalSessionPassiveObservation', () => {
             loadCurrentSessionPolicy,
             restoreFollowPolicy,
             startPaused: true,
-            jitterDelay: async () => {},
             isRestoreEnabled: () => false,
         });
 
@@ -2377,7 +2408,6 @@ describe('startExternalSessionPassiveObservation', () => {
             },
             followLeaseManager: manager,
             startPaused: true,
-            jitterDelay: async () => {},
             isRestoreEnabled: () => true,
             ...({
                 loadCurrentSessionPolicy: async () => ({
@@ -2440,7 +2470,6 @@ describe('startExternalSessionPassiveObservation', () => {
             },
             followLeaseManager: manager,
             startPaused: true,
-            jitterDelay: async () => {},
             isRestoreEnabled: () => true,
             ...({
                 loadCurrentSessionPolicy: async () => ({
@@ -2498,7 +2527,6 @@ describe('startExternalSessionPassiveObservation', () => {
             listCurrentLinks: async () => [],
             restoreFollowPolicy,
             startPaused: true,
-            jitterDelay: async () => {},
             isRestoreEnabled: () => true,
             subscribeConnectedAccountInvalidations: (listener) => {
                 credentialInvalidationListener = listener;
@@ -2569,7 +2597,6 @@ describe('startExternalSessionPassiveObservation', () => {
             listCurrentLinks: async () => [],
             restoreFollowPolicy,
             startPaused: true,
-            jitterDelay: async () => {},
             isRestoreEnabled: () => true,
             ...({
                 loadCurrentSessionPolicy: async () => {
@@ -2616,7 +2643,6 @@ describe('startExternalSessionPassiveObservation', () => {
             listCurrentLinks: async () => [],
             restoreFollowPolicy,
             startPaused: true,
-            jitterDelay: async () => {},
             isRestoreEnabled: () => true,
             ...({
                 loadCurrentSessionPolicy: async () => {

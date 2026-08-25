@@ -1,7 +1,11 @@
 import { resolve } from 'path';
 
 import { createScmCapabilities, type ScmBackendPreference } from '@happier-dev/protocol';
-import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
+import {
+    SCM_OPERATION_ERROR_CODES,
+    ScmOperationErrorCodeSchema,
+    type ScmOperationErrorCode,
+} from '@happier-dev/protocol';
 
 import { runWithScmBackendRegistryLease } from '@/scm/scmBackendCatalog';
 import {
@@ -9,7 +13,7 @@ import {
     type ScmBackendRegistry,
     type ScmBackendSelection,
 } from '@/scm/registry';
-import { resolveScmSelection } from '@/scm/resolveScmSelection';
+import { resolveScmSelectionOutcome } from '@/scm/resolveScmSelection';
 import { createNonRepositorySnapshot, resolveCwd, resolveTildePath } from '@/scm/runtime';
 import type { ScmBackendContext } from '@/scm/types';
 import {
@@ -28,12 +32,24 @@ type ScmErrorResponse = {
     errorCode?: string;
 };
 
+/**
+ * A backend that rejects with its own classification keeps it. Detection failures use this to
+ * surface as `BACKEND_UNAVAILABLE` — the code the source-control surfaces already render as
+ * "Source control is unavailable for this session" — instead of the generic command failure
+ * (`F-SCM-1`).
+ */
+function readCarriedScmErrorCode(error: unknown): ScmOperationErrorCode | null {
+    const raw = (error as { errorCode?: unknown } | null | undefined)?.errorCode;
+    const parsed = ScmOperationErrorCodeSchema.safeParse(raw);
+    return parsed.success ? parsed.data : null;
+}
+
 function fallbackError<TResponse extends ScmErrorResponse>(error: unknown): TResponse {
     const message = error instanceof Error ? error.message : 'Unknown error';
     return {
         success: false,
         error: message,
-        errorCode: SCM_OPERATION_ERROR_CODES.COMMAND_FAILED,
+        errorCode: readCarriedScmErrorCode(error) ?? SCM_OPERATION_ERROR_CODES.COMMAND_FAILED,
     } as TResponse;
 }
 
@@ -92,19 +108,26 @@ export async function runScmRoute<TRequest extends ScmRequestBase, TResponse ext
 
         return await runWithScmBackendRegistryLease(input.registry, async (registry) => {
             if (input.signal?.aborted) throw new Error('SCM operation was aborted');
-            const resolved = await resolveScmSelection({
+            const outcome = await resolveScmSelectionOutcome({
                 workingDirectory: normalizedWorkingDirectory,
                 cwd: cwdResult.cwd,
                 backendPreference: input.request.backendPreference,
                 registry,
             });
             if (input.signal?.aborted) throw new Error('SCM operation was aborted');
-            if (!resolved) {
+            // `undetermined` means no backend could look, so the caller must not be handed the
+            // domain fact "this is not a repository" (`F-SCM-1`). The detector's own carried code
+            // makes this the source-control-unavailable surface rather than the non-repository one.
+            if (outcome.kind === 'undetermined') {
+                return fallbackError<TResponse>(outcome.error);
+            }
+            if (outcome.kind === 'not_a_repository') {
                 return await input.onNonRepository({
                     cwd: cwdResult.cwd,
                     workingDirectory: normalizedWorkingDirectory,
                 });
             }
+            const resolved = outcome;
             if (
                 input.request.backendPreference?.kind === 'prefer'
                 && resolveScmBackendById(

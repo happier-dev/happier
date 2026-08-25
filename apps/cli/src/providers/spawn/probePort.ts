@@ -1,4 +1,5 @@
 import {
+  PROVIDER_ENDPOINT_SAFETY_LIMITS,
   createProviderErrorV1,
   createProviderManagedRuntimeBindingEqualityKeyV1,
   normalizeProviderEndpointUrlSyntax,
@@ -8,7 +9,10 @@ import {
 } from '@happier-dev/protocol';
 
 import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
-import type { ProviderProbeAuthorizationPort } from '../probe/authorization';
+import type {
+  ProviderProbeAuthorizationPort,
+  ProviderProbeOperationScope,
+} from '../probe/authorization';
 import type {
   ProviderContributionRegistryView,
   ProviderEndpointDnsEvidence,
@@ -16,6 +20,10 @@ import type {
 import { readProviderSettingsForCli } from '../settings/read';
 import { createAccountBoundProviderSnapshotReader } from '../lifecycle/currentAccountSettingsSnapshot';
 import { collectProviderConnectionDnsEvidence } from '../registry/dnsEvidence';
+import {
+  createProviderOperationLifetime,
+  ProviderOperationAbandonedError,
+} from '../operationLifetime';
 import { resolveProviderConnectionForMachine } from '../registry/resolve';
 import {
   resolveManagedProviderPurposeBindingSnapshot,
@@ -33,17 +41,23 @@ import {
 } from './resolve';
 import type { ProviderProbeHostCredentialReference } from './credentials';
 import { resolveRuntimeProviderCredential } from './runtimeCredential';
+import type { ProviderModelLoadOperationScope } from '../modelManagement/load';
 
 export type RuntimeProviderModelLoadAuthorizationPort = Readonly<{
-  authorize(request: ProviderModelLoadHostRequest): Promise<ProviderModelLoadHostAuthorizationResult>;
+  authorize(
+    request: ProviderModelLoadHostRequest,
+    scope?: ProviderModelLoadOperationScope,
+  ): Promise<ProviderModelLoadHostAuthorizationResult>;
   revalidate(
     ticket: ProviderModelLoadHostAuthorizationTicket,
     request: ProviderModelLoadHostRequest,
+    scope?: ProviderModelLoadOperationScope,
   ): Promise<Readonly<{ ok: true }> | Readonly<{ ok: false; error: ProviderErrorV1 }>>;
   authorizeDestination(
     ticket: ProviderModelLoadHostAuthorizationTicket,
     request: ProviderModelLoadHostRequest,
     destination: import('@happier-dev/protocol').AssessedProviderEndpoint,
+    scope?: ProviderModelLoadOperationScope,
   ): Promise<Readonly<{ ok: true }> | Readonly<{ ok: false; error: ProviderErrorV1 }>>;
   resolveCredential(
     reference: ProviderProbeHostCredentialReference,
@@ -60,6 +74,31 @@ function bindExactDispatchAddressEvidence(
     destination.endpoint.resolvedAddresses,
   );
   return exactEvidence;
+}
+
+/**
+ * Direct authorization calls are public admission boundaries. Nested catalog
+ * work supplies its existing scope, so DNS and later destination checks spend
+ * the same deadline rather than creating a second timer.
+ */
+function startProbeOperationScope(
+  scope: ProviderProbeOperationScope | undefined,
+): ProviderProbeOperationScope {
+  return scope ?? {
+    lifetime: createProviderOperationLifetime({
+      wallTimeMs: PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs,
+    }),
+  };
+}
+
+function startModelLoadOperationScope(
+  scope: ProviderModelLoadOperationScope | undefined,
+): ProviderModelLoadOperationScope {
+  return scope ?? {
+    lifetime: createProviderOperationLifetime({
+      wallTimeMs: PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs,
+    }),
+  };
 }
 
 export function revalidateProviderProbeAuthorizationTicket(
@@ -161,8 +200,10 @@ export function createRuntimeProviderProbeAuthorizationPort(input: Readonly<{
   const authorizeWithDestination = async (
     request: Parameters<ProviderProbeAuthorizationPort<ProviderProbeHostAuthorizationTicket, ProviderProbeHostCredentialReference>['authorize']>[0],
     destination?: Readonly<{ endpointUrl: string; endpoint: AssessedProviderEndpoint }>,
+    scope?: ProviderProbeOperationScope,
   ): Promise<ProviderProbeHostAuthorizationResult> => {
-    const registry = input.resolveRegistry ? await input.resolveRegistry() : input.registry;
+    const operationScope = startProbeOperationScope(scope);
+    const registry = operationScope.registry ?? (input.resolveRegistry ? await input.resolveRegistry() : input.registry);
     if (!registry) throw new TypeError('Provider probe authorization requires a contribution registry');
     const snapshot = getAccountSettingsSnapshot();
     if (!snapshot) {
@@ -175,13 +216,28 @@ export function createRuntimeProviderProbeAuthorizationPort(input: Readonly<{
       };
     }
     const providerSettings = readProviderSettingsForCli(snapshot.settings).settings;
-    let dnsEvidenceByEndpointUrl = await collectProviderConnectionDnsEvidence({
-      connectionId: request.connectionId,
-      machineId: request.machineId,
-      providerSettings,
-      registry,
-      ...(input.resolveAddresses ? { resolveAddresses: input.resolveAddresses } : {}),
-    });
+    let dnsEvidenceByEndpointUrl;
+    try {
+      dnsEvidenceByEndpointUrl = await collectProviderConnectionDnsEvidence({
+        connectionId: request.connectionId,
+        machineId: request.machineId,
+        providerSettings,
+        registry,
+        ...(input.resolveAddresses ? { resolveAddresses: input.resolveAddresses } : {}),
+        lifetime: operationScope.lifetime,
+      });
+    } catch (error) {
+      if (error instanceof ProviderOperationAbandonedError) {
+        return {
+          ok: false,
+          error: createProviderErrorV1('provider_endpoint_unavailable', {
+            connectionId: request.connectionId,
+            machineId: request.machineId,
+          }),
+        };
+      }
+      throw error;
+    }
     if (destination) {
       dnsEvidenceByEndpointUrl = bindExactDispatchAddressEvidence(
         dnsEvidenceByEndpointUrl,
@@ -255,17 +311,19 @@ export function createRuntimeProviderProbeAuthorizationPort(input: Readonly<{
         : {}),
     });
   };
-  const authorize = (request: Parameters<typeof authorizeWithDestination>[0]) =>
-    authorizeWithDestination(request);
+  const authorize = (
+    request: Parameters<typeof authorizeWithDestination>[0],
+    scope?: ProviderProbeOperationScope,
+  ) => authorizeWithDestination(request, undefined, scope);
   return Object.freeze({
     authorize,
-    revalidate: async (ticket, request) => {
-      const current = await authorize(request);
+    revalidate: async (ticket, request, scope) => {
+      const current = await authorize(request, scope);
       return current.ok
         ? revalidateProviderProbeAuthorizationTicket(ticket, current.ticket)
         : { ok: false, error: current.error };
     },
-    authorizeDestination: async (ticket, request, destination) => {
+    authorizeDestination: async (ticket, request, destination, scope) => {
       if (ticket.deployment === 'managedLocal' || request.deployment === 'managedLocal') {
         return {
           ok: false,
@@ -288,7 +346,7 @@ export function createRuntimeProviderProbeAuthorizationPort(input: Readonly<{
       const current = await authorizeWithDestination(request, {
         endpointUrl: ticket.endpointUrl,
         endpoint: destination,
-      });
+      }, scope);
       if (!current.ok) return { ok: false, error: current.error };
       const validation = revalidateProviderProbeAuthorizationTicket(ticket, current.ticket);
       if (!validation.ok) return validation;
@@ -314,8 +372,10 @@ export function createRuntimeProviderModelLoadAuthorizationPort(input: Readonly<
   const authorizeWithDestination = async (
     request: ProviderModelLoadHostRequest,
     destination?: Readonly<{ endpointUrl: string; endpoint: AssessedProviderEndpoint }>,
+    scope?: ProviderModelLoadOperationScope,
   ): Promise<ProviderModelLoadHostAuthorizationResult> => {
-    const registry = input.resolveRegistry ? await input.resolveRegistry() : input.registry;
+    const operationScope = startModelLoadOperationScope(scope);
+    const registry = operationScope.registry ?? (input.resolveRegistry ? await input.resolveRegistry() : input.registry);
     if (!registry) throw new TypeError('Provider model-load authorization requires a contribution registry');
     const snapshot = getAccountSettingsSnapshot();
     if (!snapshot) {
@@ -328,20 +388,35 @@ export function createRuntimeProviderModelLoadAuthorizationPort(input: Readonly<
       };
     }
     const providerSettings = readProviderSettingsForCli(snapshot.settings).settings;
-    let dnsEvidenceByEndpointUrl = await collectProviderConnectionDnsEvidence({
-      connectionId: request.connectionId,
-      machineId: request.machineId,
-      providerSettings,
-      registry,
-      ...(input.resolveAddresses ? { resolveAddresses: input.resolveAddresses } : {}),
-    });
+    let dnsEvidenceByEndpointUrl;
+    try {
+      dnsEvidenceByEndpointUrl = await collectProviderConnectionDnsEvidence({
+        connectionId: request.connectionId,
+        machineId: request.machineId,
+        providerSettings,
+        registry,
+        ...(input.resolveAddresses ? { resolveAddresses: input.resolveAddresses } : {}),
+        lifetime: operationScope.lifetime,
+      });
+    } catch (error) {
+      if (error instanceof ProviderOperationAbandonedError) {
+        return {
+          status: 'error',
+          error: createProviderErrorV1('provider_endpoint_unavailable', {
+            connectionId: request.connectionId,
+            machineId: request.machineId,
+          }),
+        };
+      }
+      throw error;
+    }
     if (destination) {
       dnsEvidenceByEndpointUrl = bindExactDispatchAddressEvidence(
         dnsEvidenceByEndpointUrl,
         destination,
       );
     }
-    return resolveProviderModelLoadAuthorization({
+    const resolved = await resolveProviderModelLoadAuthorization({
       request,
       accountSettings: snapshot.settings,
       providerSettings,
@@ -351,12 +426,16 @@ export function createRuntimeProviderModelLoadAuthorizationPort(input: Readonly<
         ? { localCandidateUrlsByConnectionId: input.localCandidateUrlsByConnectionId }
         : {}),
     });
+    return resolved;
   };
-  const authorize = (request: ProviderModelLoadHostRequest) => authorizeWithDestination(request);
+  const authorize = (
+    request: ProviderModelLoadHostRequest,
+    scope?: ProviderModelLoadOperationScope,
+  ) => authorizeWithDestination(request, undefined, scope);
   return Object.freeze({
     authorize,
-    revalidate: async (ticket, request) => {
-      const current = await authorize(request);
+    revalidate: async (ticket, request, scope) => {
+      const current = await authorize(request, scope);
       if (current.status === 'error') return { ok: false, error: current.error };
       if (current.status === 'unavailable') {
         return {
@@ -369,7 +448,7 @@ export function createRuntimeProviderModelLoadAuthorizationPort(input: Readonly<
       }
       return revalidateProviderModelLoadAuthorizationTicket(ticket, current.authorization.ticket);
     },
-    authorizeDestination: async (ticket, request, destination) => {
+    authorizeDestination: async (ticket, request, destination, scope) => {
       const authorizedOrigin = new URL(ticket.endpointUrl).origin;
       if (destination.origin !== authorizedOrigin || destination.scope !== ticket.connectionScope) {
         return {
@@ -383,7 +462,7 @@ export function createRuntimeProviderModelLoadAuthorizationPort(input: Readonly<
       const current = await authorizeWithDestination(request, {
         endpointUrl: ticket.endpointUrl,
         endpoint: destination,
-      });
+      }, scope);
       if (current.status === 'error') return { ok: false, error: current.error };
       if (current.status === 'unavailable') {
         return {

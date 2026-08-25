@@ -45,7 +45,16 @@ describe('happier session list (action executor)', () => {
           limit: 10,
           cursor: 'cursor-1',
         },
-        { surface: 'cli', defaultSessionId: null },
+        {
+          surface: 'cli',
+          defaultSessionId: null,
+          // A finite list request must give PAT-backed public Action transport
+          // a cancellation lifetime instead of waiting for its daemon relay forever.
+          signal: expect.objectContaining({
+            aborted: false,
+            addEventListener: expect.any(Function),
+          }),
+        },
       );
 
       expect(output.json()).toEqual(expect.objectContaining({
@@ -56,6 +65,30 @@ describe('happier session list (action executor)', () => {
           nextCursor: null,
           hasNext: false,
         },
+      }));
+    } finally {
+      output.restore();
+    }
+  });
+
+  it('forwards an explicit machine selector to the shared Action transport owner', async () => {
+    execute.mockResolvedValueOnce({
+      ok: true,
+      result: { sessions: [], nextCursor: null, hasNext: false },
+    });
+    const { handleSessionCommand } = await import('./handleSessionCommand');
+
+    const output = captureConsoleJsonOutput();
+    try {
+      await handleSessionCommand(['list', '--machine-id', 'machine-remote', '--json'], {
+        readCredentialsFn: async () => ({
+          token: 'token_test',
+          encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+        }),
+      });
+
+      expect(createCliActionExecutorFromCredentials).toHaveBeenCalledWith(expect.objectContaining({
+        machineId: 'machine-remote',
       }));
     } finally {
       output.restore();
@@ -103,8 +136,43 @@ describe('happier session list (action executor)', () => {
       expect(execute).toHaveBeenLastCalledWith(
         'session.list',
         { limit: 200 },
-        { surface: 'cli', defaultSessionId: null },
+        {
+          surface: 'cli',
+          defaultSessionId: null,
+          signal: expect.objectContaining({
+            aborted: false,
+            addEventListener: expect.any(Function),
+          }),
+        },
       );
+    } finally {
+      output.restore();
+    }
+  });
+
+  it('preserves caller cancellation while adding the finite list deadline', async () => {
+    execute.mockResolvedValueOnce({
+      ok: true,
+      result: { sessions: [], nextCursor: null, hasNext: false },
+    });
+    const controller = new AbortController();
+    const reason = new Error('list invocation cancelled');
+    controller.abort(reason);
+    const { cmdSessionList } = await import('./list');
+
+    const output = captureConsoleJsonOutput();
+    try {
+      await cmdSessionList(['list', '--json'], {
+        readCredentialsFn: async () => ({
+          token: 'token_test',
+          encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+        }),
+        signal: controller.signal,
+      });
+
+      const actionContext = execute.mock.calls[0]?.[2] as Readonly<{ signal: AbortSignal }> | undefined;
+      expect(actionContext?.signal.aborted).toBe(true);
+      expect(actionContext?.signal.reason).toBe(reason);
     } finally {
       output.restore();
     }
@@ -149,7 +217,14 @@ describe('happier session list (action executor)', () => {
       expect(execute).toHaveBeenCalledWith(
         'session.list',
         { includeRows: true },
-        { surface: 'cli', defaultSessionId: null },
+        {
+          surface: 'cli',
+          defaultSessionId: null,
+          signal: expect.objectContaining({
+            aborted: false,
+            addEventListener: expect.any(Function),
+          }),
+        },
       );
     } finally {
       output.restore();

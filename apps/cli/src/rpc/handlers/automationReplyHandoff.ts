@@ -13,9 +13,9 @@ import {
     type AccountEncryptionCurrentnessResponse,
     type AccountScopedCryptoMaterialSnapshotV1,
     type AutomationAccountCurrentnessWitnessV1,
+    type AutomationConversationReplyContextCorrespondenceV1,
     type AutomationReplyHandoffDispatchResultV1,
     type AutomationReplyHandoffSettlementV1,
-    type AutomationResultDeliverySourceV1,
     type AutomationRunResultCorrespondenceV1,
 } from '@happier-dev/protocol';
 
@@ -113,19 +113,15 @@ function sameCorrespondence(
         && value.handoffId === expected.handoffId;
 }
 
-function sameResultDeliverySource(
-    source: AutomationResultDeliverySourceV1,
+function sameReplyContextCorrespondence(
+    correspondence: AutomationConversationReplyContextCorrespondenceV1,
     expected: Readonly<{
         automationId: string;
-        runId: string;
-        handoffId: string;
+        occurrenceKey: string;
     }>,
 ): boolean {
-    return source.kind === 'automationResult'
-        && source.automationRunId === expected.runId
-        && source.resultId === expected.handoffId
-        && source.automationId === expected.automationId
-        && source.resultDelivery === 'finalResult';
+    return correspondence.automationId === expected.automationId
+        && correspondence.occurrenceKey === expected.occurrenceKey;
 }
 
 function projectSettlement(
@@ -207,6 +203,10 @@ export function registerAutomationReplyHandoffRpcHandler(
             runId: request.handoff.runId,
             handoffId: request.handoff.handoffId,
         };
+        const expectedReplyContextCorrespondence = {
+            automationId: request.handoff.automationId,
+            occurrenceKey: request.handoff.occurrenceKey,
+        };
         const encryptionAtOpen = await resolveValidatedAutomationAccountEncryptionV1({
             signal,
             resolveAccountEncryptionCurrentness: options.resolveAccountEncryptionCurrentness,
@@ -246,8 +246,10 @@ export function registerAutomationReplyHandoffRpcHandler(
             resultContent.kind !== 'available'
             || contextContent.kind !== 'available'
             || !sameCorrespondence(resultContent.correspondence, expectedCorrespondence)
-            || !sameCorrespondence(contextContent.correspondence, expectedCorrespondence)
-            || !sameResultDeliverySource(contextContent.source, expectedCorrespondence)
+            || !sameReplyContextCorrespondence(
+                contextContent.correspondence,
+                expectedReplyContextCorrespondence,
+            )
         ) {
             // A transition can win after the claim-time/current-open witness
             // but before content opening. Re-read before classifying an
@@ -289,7 +291,14 @@ export function registerAutomationReplyHandoffRpcHandler(
             handoffId: expectedCorrespondence.handoffId,
             runId: expectedCorrespondence.runId,
             automationId: expectedCorrespondence.automationId,
-            source: contextContent.source,
+            source: {
+                kind: 'automationResult',
+                automationRunId: expectedCorrespondence.runId,
+                resultId: expectedCorrespondence.handoffId,
+                automationId: expectedCorrespondence.automationId,
+                templateVersion: contextContent.templateVersion,
+                resultDelivery: 'finalResult',
+            },
             result: resultContent.result,
             opaqueContext: contextContent.opaqueContext,
         });

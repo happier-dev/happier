@@ -11,9 +11,11 @@ import {
     ReviewCommentActionIdV1Schema,
     ReviewCommentActionInputSchemasV1,
     ReviewCommentActionOutputSchemasV1,
+    ReviewCommentMutationActionIdV1Schema,
     ReviewCommentPrincipalHeaderV1Schema,
     type ReviewCommentPrincipalHeaderV1,
     type ReviewCommentActionIdV1,
+    type ReviewCommentMutationActionIdV1,
     type ReviewCommentPrincipalProofV1,
     type AccountScopedCryptoMaterial,
     stringifyReviewCommentPrincipalCanonicalJsonV1,
@@ -81,8 +83,8 @@ function resolveAccountScopedMaterial(credentials: StoredCredentials): AccountSc
 
 function isReviewCommentMutationAction(
     actionId: ReviewCommentActionIdV1,
-): actionId is Exclude<ReviewCommentActionIdV1, 'reviews.comments.list' | 'reviews.comments.get'> {
-    return actionId !== 'reviews.comments.list' && actionId !== 'reviews.comments.get';
+): actionId is ReviewCommentMutationActionIdV1 {
+    return ReviewCommentMutationActionIdV1Schema.safeParse(actionId).success;
 }
 
 function readRequiredString(input: JsonRecord, key: string): string {
@@ -167,6 +169,14 @@ function createReviewCommentHttpRequest(
         return {
             method: 'post',
             path: `/v1/reviews/comments/${encodePathSegment(commentId)}/evidence`,
+            body: omitKeys(input, ['commentId']),
+        };
+    }
+    if (actionId === 'reviews.comments.claimPublicationDispatch') {
+        const commentId = readRequiredString(input, 'commentId');
+        return {
+            method: 'post',
+            path: `/v1/reviews/comments/${encodePathSegment(commentId)}/publication/claim`,
             body: omitKeys(input, ['commentId']),
         };
     }

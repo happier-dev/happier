@@ -22,24 +22,38 @@ import {
     SessionPermissionExternalHumanDecisionActorV1Schema,
     SessionInputCausalPermissionAuthorityV1Schema,
     SessionPermissionRemoteRespondInputV1Schema,
+    SessionUserActionRemoteAnswerInputV1Schema,
     SessionPermissionRemoteGrantRecordV1Schema,
     SessionPermissionRemoteSettlementRecordV1Schema,
     SESSION_REMOTE_PERMISSION_ACTIVE_GRANTS_MAX,
     SESSION_REMOTE_PERMISSION_MEDIATION_ROWS_MAX,
     SessionPermissionRequestIdV1Schema,
+    SESSION_PERMISSION_REMOTE_QUESTION_CHOICE_UTF8_BYTES,
+    SESSION_PERMISSION_REMOTE_QUESTION_TEXT_UTF8_BYTES,
+    SESSION_PERMISSION_REMOTE_SUMMARY_DETAIL_UTF8_BYTES,
+    SESSION_PERMISSION_REMOTE_SUMMARY_MAX_CHOICES_PER_QUESTION,
+    SESSION_PERMISSION_REMOTE_SUMMARY_MAX_QUESTIONS,
+    SESSION_PERMISSION_REMOTE_SUMMARY_TITLE_UTF8_BYTES,
+    SESSION_PERMISSION_REMOTE_SUMMARY_TOOL_LABEL_UTF8_BYTES,
     StructuredQuestionAnswersV1Schema,
     TurnIdSchema,
     type AccountSettings,
     type SessionPermissionRemoteRespondInputV1,
     type SessionPermissionRemoteRespondOutputV1,
     type SessionPermissionRemotePendingListOutputV1,
+    type SessionUserActionRemoteAnswerInputV1,
+    type SessionUserActionRemoteAnswerOutputV1,
     type SessionPermissionRemoteGrantRecordV1,
     type SessionPermissionRemoteGrantsListOutputV1,
     type SessionPermissionRemoteGrantRevokeOutputV1,
     type SessionPermissionMediationRecordIdentityV1,
     type SessionPermissionExternalHumanDecisionActorV1,
     type SessionPermissionSourceAuthorityV1,
+    type AgentRequestQuestionSummary,
     type StructuredQuestionAnswersV1,
+    buildAgentRequestSemanticSummary,
+    formatPermissionRequestSummary,
+    summarizeToolInputForNotification,
 } from '@happier-dev/protocol';
 import { CLAUDE_UNIFIED_TERMINAL_DIALOG_CHOICE_REQUEST_SOURCE } from '@happier-dev/protocol/agents/claude';
 import {
@@ -229,6 +243,209 @@ function mediationRecordIdentityKey(identity: SessionPermissionMediationRecordId
     return JSON.stringify([identity.sessionId, identity.turnId, identity.requestId]);
 }
 
+/**
+ * One bounded page of the remote pending-permission projection. The bound is
+ * the protocol's own `max(32)` on the projected array, not a nearby number.
+ */
+const REMOTE_PENDING_PERMISSION_PAGE_SIZE = 32;
+
+type MediatedPendingPermissionKeyset = Readonly<{
+    createdAtMs: number;
+    turnId: string;
+    requestId: string;
+}>;
+
+type MediatedPendingRequest = SessionPermissionRemotePendingListOutputV1['requests'][number];
+type MediatedPendingRequestSummary = MediatedPendingRequest['agentRequestSummary'];
+type MediatedPendingUserActionQuestion = Extract<
+    MediatedPendingRequest,
+    Readonly<{ kind: 'user_action' }>
+>['agentRequestSummary']['questions'][number];
+type MediatedPendingPermissionScopes = Extract<
+    MediatedPendingRequest,
+    Readonly<{ kind: 'permission' }>
+>['allowedScopes'];
+
+/**
+ * The single total order the projection is sorted by and its keyset cursor is
+ * compared with. Sorting and resuming must never use two comparators, or a
+ * page boundary can skip or repeat a request.
+ */
+function compareMediatedPendingPermissions(
+    left: MediatedPendingPermissionKeyset,
+    right: MediatedPendingPermissionKeyset,
+): number {
+    return left.createdAtMs - right.createdAtMs
+        || left.turnId.localeCompare(right.turnId)
+        || left.requestId.localeCompare(right.requestId);
+}
+
+function encodeMediatedPendingPermissionCursor(entry: MediatedPendingPermissionKeyset): string {
+    return Buffer.from(
+        JSON.stringify([entry.createdAtMs, entry.turnId, entry.requestId]),
+        'utf8',
+    ).toString('base64url');
+}
+
+function decodeMediatedPendingPermissionCursor(
+    cursor: string,
+): MediatedPendingPermissionKeyset | null {
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8'));
+    } catch {
+        return null;
+    }
+    if (!Array.isArray(parsed) || parsed.length !== 3) return null;
+    const [createdAtMs, turnId, requestId] = parsed;
+    if (typeof createdAtMs !== 'number' || !Number.isFinite(createdAtMs)) return null;
+    if (typeof turnId !== 'string' || typeof requestId !== 'string') return null;
+    return { createdAtMs, turnId, requestId };
+}
+
+const REMOTE_MEDIATION_TEXT_ENCODER = new TextEncoder();
+
+function truncateRemoteMediationText(value: string, fallback: string, maxUtf8Bytes: number): string {
+    const normalized = (value.trim() || fallback).normalize('NFC');
+    if (REMOTE_MEDIATION_TEXT_ENCODER.encode(normalized).byteLength <= maxUtf8Bytes) return normalized;
+
+    const ellipsis = '…';
+    const suffixBytes = REMOTE_MEDIATION_TEXT_ENCODER.encode(ellipsis).byteLength;
+    let retained = '';
+    let retainedBytes = 0;
+    for (const codePoint of normalized) {
+        const nextBytes = REMOTE_MEDIATION_TEXT_ENCODER.encode(codePoint).byteLength;
+        if (retainedBytes + nextBytes + suffixBytes > maxUtf8Bytes) break;
+        retained += codePoint;
+        retainedBytes += nextBytes;
+    }
+    return retained ? `${retained}${ellipsis}` : ellipsis;
+}
+
+function projectRemoteMediatedQuestion(
+    question: AgentRequestQuestionSummary,
+): MediatedPendingUserActionQuestion | null {
+    const questionText = question.question.normalize('NFC');
+    if (
+        questionText.trim().length === 0
+        || REMOTE_MEDIATION_TEXT_ENCODER.encode(questionText).byteLength
+            > SESSION_PERMISSION_REMOTE_QUESTION_TEXT_UTF8_BYTES
+        || question.choices.length > SESSION_PERMISSION_REMOTE_SUMMARY_MAX_CHOICES_PER_QUESTION
+    ) {
+        return null;
+    }
+
+    const choiceLabels = new Set<string>();
+    const choiceValues = new Set<string>();
+    const choices: string[] = [];
+    for (const choice of question.choices) {
+        const label = choice.label.normalize('NFC');
+        if (
+            label.trim().length === 0
+            || REMOTE_MEDIATION_TEXT_ENCODER.encode(label).byteLength
+                > SESSION_PERMISSION_REMOTE_QUESTION_CHOICE_UTF8_BYTES
+            || choiceLabels.has(label)
+            || choiceValues.has(choice.value)
+        ) {
+            return null;
+        }
+        choiceLabels.add(label);
+        choiceValues.add(choice.value);
+        choices.push(label);
+    }
+    Object.freeze(choices);
+
+    return {
+        question: questionText,
+        selection: question.selection,
+        required: question.required,
+        allowCustom: question.allowCustom,
+        choices,
+    };
+}
+
+function projectRemoteMediatedRequestSummary(params: Readonly<{
+    kind: 'permission' | 'user_action';
+    toolName: string;
+    toolInput: unknown;
+}>): MediatedPendingRequestSummary | null {
+    const semantic = buildAgentRequestSemanticSummary(params);
+    if (params.kind === 'permission') {
+        return {
+            kind: 'permission',
+            toolLabel: truncateRemoteMediationText(
+                semantic.normalizedToolLabel,
+                'tool operation',
+                SESSION_PERMISSION_REMOTE_SUMMARY_TOOL_LABEL_UTF8_BYTES,
+            ),
+            title: truncateRemoteMediationText(
+                formatPermissionRequestSummary({ toolName: params.toolName, toolInput: params.toolInput }),
+                'Permission required',
+                SESSION_PERMISSION_REMOTE_SUMMARY_TITLE_UTF8_BYTES,
+            ),
+            detail: truncateRemoteMediationText(
+                summarizeToolInputForNotification(params.toolName, params.toolInput) ?? '',
+                'Details unavailable',
+                SESSION_PERMISSION_REMOTE_SUMMARY_DETAIL_UTF8_BYTES,
+            ),
+        };
+    }
+
+    if (
+        semantic.questions.length === 0
+        || semantic.questions.length > SESSION_PERMISSION_REMOTE_SUMMARY_MAX_QUESTIONS
+    ) {
+        return null;
+    }
+    const answerKeys = new Set<string>();
+    const questions: MediatedPendingUserActionQuestion[] = [];
+    for (const question of semantic.questions) {
+        if (answerKeys.has(question.answerKey)) return null;
+        answerKeys.add(question.answerKey);
+        const projectedQuestion = projectRemoteMediatedQuestion(question);
+        if (!projectedQuestion) return null;
+        questions.push(projectedQuestion);
+    }
+    return {
+        kind: 'user_action',
+        questions,
+    };
+}
+
+function resolveRemoteMediatedQuestionValues(params: Readonly<{
+    question: AgentRequestQuestionSummary;
+    values: readonly string[];
+}>): readonly string[] | null {
+    const { question, values } = params;
+    if (question.selection !== 'multiple' && values.length !== 1) return null;
+    const resolved: string[] = [];
+    const identityKeys = new Set<string>();
+    let customCount = 0;
+    for (const value of values) {
+        const normalizedValue = value.normalize('NFC');
+        const matchingChoices = question.choices.filter((choice) => (
+            choice.label.normalize('NFC') === normalizedValue
+        ));
+        if (matchingChoices.length > 1) return null;
+        if (matchingChoices.length === 1) {
+            const resolvedValue = matchingChoices[0]!.value;
+            const identity = `choice:${resolvedValue}`;
+            if (identityKeys.has(identity)) return null;
+            identityKeys.add(identity);
+            resolved.push(resolvedValue);
+            continue;
+        }
+        if (!question.allowCustom) return null;
+        customCount += 1;
+        if (customCount > 1) return null;
+        const identity = `custom:${normalizedValue}`;
+        if (identityKeys.has(identity)) return null;
+        identityKeys.add(identity);
+        resolved.push(value);
+    }
+    return Object.freeze(resolved);
+}
+
 function isExactPendingPermissionUpdate(params: Readonly<{
     update: unknown;
     toolName: string;
@@ -377,6 +594,26 @@ export type MediatedPermissionResponseInput = Readonly<{
     actor: Readonly<{ namespace: string; principalId: string }>;
     decision: 'allow' | 'deny';
     scope: 'request' | 'session';
+    mediator: Readonly<{ pluginId: string; contributionLocalId: string }>;
+    signal?: AbortSignal;
+}>;
+
+/**
+ * Host-stamped mediator input for one AskUserQuestion completion. Unlike a
+ * permission decision this has no scope, grant, settlement row, or parallel
+ * replay ledger: the incumbent request coordinator remains the sole answer
+ * owner and resolves the bounded indices against its current request.
+ */
+export type MediatedUserActionResponseInput = Readonly<{
+    sessionId: string;
+    turnId: string;
+    requestId: string;
+    sourceRef: string;
+    sourceRevisionOrEpoch: string;
+    answers: readonly Readonly<{
+        questionIndex: number;
+        values: readonly string[];
+    }>[];
     mediator: Readonly<{ pluginId: string; contributionLocalId: string }>;
     signal?: AbortSignal;
 }>;
@@ -558,6 +795,22 @@ export abstract class BasePermissionHandler {
             return this.getAccountSettingsSnapshotFn();
         } catch (error) {
             logger.debug(`${this.getLogPrefix()} Failed to read account settings`, error);
+            return null;
+        }
+    }
+
+    /**
+     * Session-scoped Launch Profile identity, read from the same authority the
+     * effective-prompt owner reads (`agent/runtime/session/loop/lifecycle.ts`
+     * uses `session.getMetadataSnapshot()?.profileId`). Kept as a read of the
+     * live session reference rather than a constructor-injected callback so a
+     * post-`updateSession` swap cannot leave a stale profile behind.
+     */
+    protected getSessionProfileId(): string | null {
+        try {
+            return this.session.getMetadataSnapshot()?.profileId ?? null;
+        } catch (error) {
+            logger.debug(`${this.getLogPrefix()} Failed to read session profile id`, error);
             return null;
         }
     }
@@ -1314,83 +1567,124 @@ export abstract class BasePermissionHandler {
     }
 
     /**
-     * Project only the source-bound IDs that a host-stamped mediator can
-     * answer. This keeps live and AgentState-only correlation at the existing
-     * request owner and deliberately excludes every permission payload field.
+     * Project only bounded semantic facts for source-bound requests that a
+     * host-stamped mediator can answer. This keeps live and AgentState-only
+     * correlation at the existing request owner; it never exposes raw tool
+     * input or creates a Channels-owned request model.
      */
     listMediatedPendingRequests(params: Readonly<{
         mediatorPluginId: string;
         sourceRef: string;
         sourceRevisionOrEpoch: string;
+        cursor?: string | null;
     }>): SessionPermissionRemotePendingListOutputV1 {
         const mediatorPluginId = params.mediatorPluginId.trim();
         const sourceRef = params.sourceRef.trim();
         const sourceRevisionOrEpoch = params.sourceRevisionOrEpoch.trim();
         if (!mediatorPluginId || !sourceRef || !sourceRevisionOrEpoch) {
-            return { requests: [], truncated: false };
+            return { requests: [], truncated: false, nextCursor: null };
+        }
+        const after = params.cursor === undefined || params.cursor === null
+            ? null
+            : decodeMediatedPendingPermissionCursor(params.cursor);
+        if (after === null && params.cursor !== undefined && params.cursor !== null) {
+            // An undecodable continuation cannot certify an exact negative to a
+            // mediator that still holds custody, so it fails closed instead of
+            // silently restarting at the oldest request.
+            return { requests: [], truncated: true, nextCursor: null };
         }
 
         // A durable source-matched request can survive a handler restart before
         // its provider reattaches the live waiter. It is not yet answerable,
         // so omit it from the projection, but do not falsely certify an exact
-        // negative list to a mediator that must retain its custody.
+        // negative list to a mediator that must retain its custody. This is a
+        // whole-projection fact, so it is reported on every page.
         let hasUnprojectedDurableRequest = false;
-        const requests: SessionPermissionRemotePendingListOutputV1['requests'] = this.requestCoordinator.listResponseContexts()
-            .flatMap((context) => {
-                if (resolveAgentRequestKind(context.toolName) !== 'permission') return [];
-                const sourceAuthority = context.owner?.sourceAuthority;
-                if (
-                    !sourceAuthority
-                    || sourceAuthority.mediatorPluginId !== mediatorPluginId
-                    || sourceAuthority.sourceRef !== sourceRef
-                    || sourceAuthority.sourceRevisionOrEpoch !== sourceRevisionOrEpoch
-                    || sourceAuthority.remoteApprovalMaxScope === 'off'
-                    || !Number.isFinite(context.createdAt)
-                ) {
-                    return [];
+        const requests: MediatedPendingRequest[] = [];
+        for (const context of this.requestCoordinator.listResponseContexts()) {
+            const kind = resolveAgentRequestKind(context.toolName);
+            if (kind !== 'permission' && kind !== 'user_action') continue;
+            const sourceAuthority = context.owner?.sourceAuthority;
+            if (
+                !sourceAuthority
+                || sourceAuthority.mediatorPluginId !== mediatorPluginId
+                || sourceAuthority.sourceRef !== sourceRef
+                || sourceAuthority.sourceRevisionOrEpoch !== sourceRevisionOrEpoch
+                || (kind === 'permission' && sourceAuthority.remoteApprovalMaxScope === 'off')
+                || !Number.isFinite(context.createdAt)
+            ) {
+                continue;
+            }
+            // Do not trim or normalize the opaque request identity here:
+            // it is one member of the exact durable tuple.
+            const requestId = context.requestId;
+            if (!SessionPermissionRequestIdV1Schema.safeParse(requestId).success) continue;
+            // `requestId` is not sufficient custody for a remote mediator.
+            // Old/corrupt records without a host-stamped turn remain locally
+            // resolvable but are deliberately invisible to this authority-bearing projection.
+            const turnId = TurnIdSchema.safeParse(context.turnId);
+            if (!turnId.success) continue;
+            if (context.correlation !== 'record' || context.status !== 'live') {
+                const identity = mediationRecordIdentityKey({
+                    sessionId: this.session.sessionId,
+                    turnId: turnId.data,
+                    requestId,
+                });
+                if (!this.inertRemoteMediationRequestIdentities.has(identity)) {
+                    hasUnprojectedDurableRequest = true;
                 }
-                // Do not trim or normalize the opaque request identity here:
-                // it is one member of the exact durable tuple.
-                const requestId = context.requestId;
-                if (!SessionPermissionRequestIdV1Schema.safeParse(requestId).success) return [];
-                // `requestId` is not sufficient custody for a remote
-                // mediator. Old/corrupt records without a host-stamped turn
-                // remain locally resolvable but are deliberately invisible to
-                // this authority-bearing projection.
-                const turnId = TurnIdSchema.safeParse(context.turnId);
-                if (!turnId.success) return [];
-                if (context.correlation !== 'record' || context.status !== 'live') {
-                    const identity = mediationRecordIdentityKey({
-                        sessionId: this.session.sessionId,
-                        turnId: turnId.data,
-                        requestId,
-                    });
-                    if (!this.inertRemoteMediationRequestIdentities.has(identity)) {
-                        hasUnprojectedDurableRequest = true;
-                    }
-                    return [];
-                }
-                const allowedScopes = sourceAuthority.remoteApprovalMaxScope === 'session'
-                    ? ['request', 'session'] as ['request', 'session']
-                    : ['request'] as ['request'];
-                return [{
+                continue;
+            }
+
+            const agentRequestSummary = projectRemoteMediatedRequestSummary({
+                kind,
+                toolName: context.toolName,
+                toolInput: context.toolInput,
+            });
+            if (!agentRequestSummary) continue;
+            if (kind === 'user_action') {
+                if (agentRequestSummary.kind !== 'user_action') continue;
+                requests.push({
+                    kind,
                     requestId,
                     turnId: turnId.data,
                     createdAtMs: context.createdAt,
-                    allowedScopes,
-                }];
-            })
-            .sort((left, right) => (
-                left.createdAtMs - right.createdAtMs
-                || left.turnId.localeCompare(right.turnId)
-                || left.requestId.localeCompare(right.requestId)
-            ));
+                    agentRequestSummary,
+                });
+                continue;
+            }
+
+            if (agentRequestSummary.kind !== 'permission') continue;
+            const allowedScopes: MediatedPendingPermissionScopes =
+                sourceAuthority.remoteApprovalMaxScope === 'session'
+                    ? ['request', 'session']
+                    : ['request'];
+            requests.push({
+                kind,
+                requestId,
+                turnId: turnId.data,
+                createdAtMs: context.createdAt,
+                allowedScopes,
+                agentRequestSummary,
+            });
+        }
+        requests.sort(compareMediatedPendingPermissions);
+        const remaining = after === null
+            ? requests
+            : requests.filter((entry) => compareMediatedPendingPermissions(entry, after) > 0);
+        const page = remaining.slice(0, REMOTE_PENDING_PERMISSION_PAGE_SIZE);
+        const last = page.at(-1);
         return {
-            requests: requests.slice(0, 32),
-            // `truncated` is the existing protocol signal that this bounded
-            // projection is not exhaustive. A caller can therefore never use
-            // an empty result to suppress custody during restart hydration.
-            truncated: hasUnprojectedDurableRequest || requests.length > 32,
+            requests: page,
+            // `truncated` is the existing protocol signal that a durable
+            // source-matched request exists that this projection cannot yet
+            // answer for. A caller can therefore never use an empty result to
+            // suppress custody during restart hydration. Further pages are a
+            // different fact and are reported by `nextCursor`.
+            truncated: hasUnprojectedDurableRequest,
+            nextCursor: last !== undefined && remaining.length > page.length
+                ? encodeMediatedPendingPermissionCursor(last)
+                : null,
         };
     }
 
@@ -1724,6 +2018,134 @@ export abstract class BasePermissionHandler {
                 });
             }
         }
+    }
+
+    /**
+     * Routes a source-bound external answer through the incumbent
+     * user-action completion path. This deliberately has no permission scope,
+     * settlement record, grant, or result lookup: an AskUserQuestion remains
+     * a live Session request and the request coordinator is its only owner.
+     */
+    async respondToMediatedPendingUserAction(
+        params: MediatedUserActionResponseInput,
+    ): Promise<SessionUserActionRemoteAnswerOutputV1> {
+        const requestId = typeof params?.requestId === 'string' ? params.requestId : '';
+        if (!SessionPermissionRequestIdV1Schema.safeParse(requestId).success) {
+            return { status: 'rejected', code: 'requestNotFound' };
+        }
+        if (params.signal?.aborted) return { status: 'rejected', code: 'canceled' };
+        if (
+            !PluginIdSchema.safeParse(params.mediator?.pluginId).success
+            || !PluginContributionLocalIdSchema.safeParse(params.mediator?.contributionLocalId).success
+        ) {
+            return { status: 'rejected', code: 'mediationStateUnavailable' };
+        }
+        const parsed = SessionUserActionRemoteAnswerInputV1Schema.safeParse({
+            sessionId: params.sessionId,
+            turnId: params.turnId,
+            requestId,
+            sourceRef: params.sourceRef,
+            sourceRevisionOrEpoch: params.sourceRevisionOrEpoch,
+            answers: params.answers,
+        });
+        if (!parsed.success) return { status: 'rejected', code: 'answerInvalid' };
+        const input = parsed.data;
+        if (input.sessionId !== this.session.sessionId) {
+            return { status: 'rejected', code: 'requestNotFound' };
+        }
+
+        const context = this.currentMediatedUserActionContext({
+            input,
+            mediatorPluginId: params.mediator.pluginId,
+        });
+        if (!context) return { status: 'rejected', code: 'requestNotFound' };
+        const answers = this.resolveMediatedUserActionAnswers({ context, input });
+        if (!answers) return { status: 'rejected', code: 'answerInvalid' };
+
+        const isCurrent = (): boolean => this.currentMediatedUserActionContext({
+            input,
+            mediatorPluginId: params.mediator.pluginId,
+        }) !== null;
+        if (!isCurrent()) return { status: 'rejected', code: 'requestNotPending' };
+        const outcome = await this.handleIncomingPermissionResponse({
+            id: input.requestId,
+            approved: true,
+            decision: 'approved',
+            answers,
+        }, {
+            expectedRequestKind: 'user_action',
+            isCurrent,
+        });
+        if (outcome.status === 'resolved') {
+            return { status: 'applied', requestId: input.requestId };
+        }
+        return {
+            status: 'rejected',
+            code: outcome.status === 'invalid' ? 'answerInvalid' : 'requestNotPending',
+        };
+    }
+
+    private currentMediatedUserActionContext(params: Readonly<{
+        input: SessionUserActionRemoteAnswerInputV1;
+        mediatorPluginId: string;
+    }>): PermissionRequestCoordinatorContext | null {
+        const context = this.requestCoordinator.getResponseContext(params.input.requestId);
+        if (
+            !context
+            || context.correlation !== 'record'
+            || context.status !== 'live'
+            || resolveAgentRequestKind(context.toolName) !== 'user_action'
+            || !matchesMediatedPermissionTurnId(context.turnId, params.input)
+            || !matchesRemoteMediationSourceAuthority(
+                context.owner?.sourceAuthority,
+                params.input,
+                params.mediatorPluginId,
+            )
+        ) {
+            return null;
+        }
+        return context;
+    }
+
+    private resolveMediatedUserActionAnswers(params: Readonly<{
+        context: PermissionRequestCoordinatorContext;
+        input: SessionUserActionRemoteAnswerInputV1;
+    }>): StructuredQuestionAnswersV1 | null {
+        const semantic = buildAgentRequestSemanticSummary({
+            kind: 'user_action',
+            toolName: params.context.toolName,
+            toolInput: params.context.toolInput,
+        });
+        if (
+            semantic.questions.length === 0
+            || semantic.questions.length > SESSION_PERMISSION_REMOTE_SUMMARY_MAX_QUESTIONS
+        ) {
+            return null;
+        }
+        const answersByQuestionIndex = new Map<number, readonly string[]>();
+        for (const answer of params.input.answers) {
+            if (
+                answer.questionIndex >= semantic.questions.length
+                || answersByQuestionIndex.has(answer.questionIndex)
+            ) {
+                return null;
+            }
+            answersByQuestionIndex.set(answer.questionIndex, answer.values);
+        }
+        const answers: Record<string, readonly string[]> = Object.create(null);
+        for (const [questionIndex, question] of semantic.questions.entries()) {
+            if (answers[question.answerKey] !== undefined) return null;
+            const values = answersByQuestionIndex.get(questionIndex);
+            if (!values) {
+                if (question.required) return null;
+                continue;
+            }
+            const resolvedValues = resolveRemoteMediatedQuestionValues({ question, values });
+            if (!resolvedValues) return null;
+            answers[question.answerKey] = resolvedValues;
+        }
+        const parsed = StructuredQuestionAnswersV1Schema.safeParse(answers);
+        return parsed.success ? parsed.data : null;
     }
 
     private prepareMediatedPermissionResponse(
@@ -2139,7 +2561,18 @@ export abstract class BasePermissionHandler {
         let recordWrite: PermissionMediationRecordWrite;
         if (input.decision === 'allow' && input.scope === 'session') {
             const grant = SessionPermissionRemoteGrantRecordV1Schema.safeParse(recordPayload);
-            if (!grant.success) {
+            if (grant.success === false) {
+                // A request the host cannot express as a canonical exact-tool
+                // rule has no Session scope. That is a permanent property of
+                // this request, not a transient ledger failure: telling the
+                // mediator so is what keeps request scope usable.
+                if (grant.error.issues.some((issue) => (
+                    issue.path[0] === 'effect'
+                    && issue.path[1] === 'rule'
+                    && issue.path[2] === 'identifier'
+                ))) {
+                    return { status: 'rejected', code: 'sessionScopeUnsupported' };
+                }
                 logger.debug(`${this.getLogPrefix()} Failed to construct a valid remote permission grant`, grant.error);
                 return { status: 'rejected', code: 'mediationStateUnavailable' };
             }
@@ -2743,6 +3176,7 @@ export abstract class BasePermissionHandler {
         options?: Readonly<{
             expectedRequestKind?: 'permission' | 'user_action';
             permissionDecisionActorV1?: SocketRpcSessionPermissionRespondAuthorizationContext['actor'];
+            isCurrent?: () => boolean;
         }>,
     ): Promise<PermissionResponseRoutingResult> {
         return await this.requestCoordinator.withResponseClaim(response.id, async () => {
@@ -2815,6 +3249,7 @@ export abstract class BasePermissionHandler {
         options?: Readonly<{
             expectedRequestKind?: 'permission' | 'user_action';
             permissionDecisionActorV1?: SocketRpcSessionPermissionRespondAuthorizationContext['actor'];
+            isCurrent?: () => boolean;
         }>,
     ): Promise<PermissionResponseRoutingResult> {
         const legacyPending = this.pendingRequests.get(response.id);
@@ -2856,6 +3291,7 @@ export abstract class BasePermissionHandler {
             ...(options?.permissionDecisionActorV1 ? {
                 permissionDecisionActorV1: options.permissionDecisionActorV1,
             } : {}),
+            ...(options?.isCurrent ? { isCurrent: options.isCurrent } : {}),
         });
         return completed ? { status: 'resolved' } : { status: 'not_found' };
     }
@@ -2935,7 +3371,11 @@ export abstract class BasePermissionHandler {
             logger.debug(`${this.getLogPrefix()} Permission response did not complete any pending request`);
             return false;
         }
-        if (isCurrent && !isCurrent()) return false;
+        // `isCurrent` already fences the incumbent AgentState terminal write.
+        // A successful completion removes the live request by design, so a
+        // second check afterwards must not reinterpret that committed answer
+        // as a stale rejection (notably for remote AskUserQuestion answers).
+        if (!completed && isCurrent && !isCurrent()) return false;
 
         this.applyPermissionResponseSideEffects({
             response: effectiveResponse,
@@ -3372,7 +3812,10 @@ function permissionRequestOwnerAllowlistKey(owner: PermissionRequestOwner): stri
 
 function matchesRemoteMediationSourceAuthority(
     sourceAuthority: PermissionRequestOwner['sourceAuthority'] | undefined,
-    input: SessionPermissionRemoteRespondInputV1,
+    input: Readonly<{
+        sourceRef: string;
+        sourceRevisionOrEpoch: string;
+    }>,
     mediatorPluginId: string,
 ): boolean {
     return Boolean(
@@ -3386,7 +3829,7 @@ function matchesRemoteMediationSourceAuthority(
 /** A mediated row and its AgentState claim must carry the same causal turn. */
 function matchesMediatedPermissionTurnId(
     value: unknown,
-    input: SessionPermissionRemoteRespondInputV1,
+    input: Readonly<{ turnId: string }>,
 ): boolean {
     const turnId = TurnIdSchema.safeParse(value);
     return turnId.success && turnId.data === input.turnId;

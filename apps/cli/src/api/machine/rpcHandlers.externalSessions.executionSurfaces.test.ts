@@ -957,7 +957,12 @@ describe('registerMachineExternalSessionsRpcHandlers execution-surface seam', ()
       source,
       limit: 10,
     });
-    expect(externalSessions.resolveSource).toHaveBeenCalledTimes(1);
+    // A caller-chosen Oh My Pi directory must be compared with the separately
+    // resolved declaration-default directory. The other fixtures request the
+    // declaration's exact authorized instance and reuse its first resolution.
+    expect(externalSessions.resolveSource).toHaveBeenCalledTimes(
+      agentId === 'ohMyPi' ? 2 : 1,
+    );
     expect(externalSessions.listCandidates).toHaveBeenCalledTimes(1);
     expect(response).toEqual({
       ok: true,
@@ -1343,7 +1348,7 @@ describe('registerMachineExternalSessionsRpcHandlers execution-surface seam', ()
     });
   });
 
-  it('removes the never-released external alias and retains predecessor direct cleanup only', async () => {
+  it('does not register never-released direct-session inbound follow methods', async () => {
     const calls: string[] = [];
     const actionExecutor: RpcActionExecutor = {
       execute: async (actionId) => {
@@ -1367,15 +1372,31 @@ describe('registerMachineExternalSessionsRpcHandlers execution-surface seam', ()
     const canonicalHandler = rpcHandlerManager.handlers.get(
       RPC_METHODS.DAEMON_EXTERNAL_SESSION_BACKGROUND_FOLLOW_SET,
     );
+    const canonicalAttachHandler = rpcHandlerManager.handlers.get(
+      RPC_METHODS.DAEMON_EXTERNAL_SESSION_ATTACH,
+    );
+    const canonicalDetachHandler = rpcHandlerManager.handlers.get(
+      RPC_METHODS.DAEMON_EXTERNAL_SESSION_DETACH,
+    );
     const priorExternalHandler = rpcHandlerManager.handlers.get(
       'daemon.externalSessions.followPolicy.set',
     );
-    const releasedDirectHandler = rpcHandlerManager.handlers.get(
+    const directAttachHandler = rpcHandlerManager.handlers.get(
+      RPC_METHODS.DAEMON_DIRECT_SESSION_ATTACH_LEGACY,
+    );
+    const directDetachHandler = rpcHandlerManager.handlers.get(
+      RPC_METHODS.DAEMON_DIRECT_SESSION_DETACH_LEGACY,
+    );
+    const directFollowPolicyHandler = rpcHandlerManager.handlers.get(
       RPC_METHODS.DAEMON_DIRECT_SESSION_FOLLOW_POLICY_SET_LEGACY,
     );
     expect(canonicalHandler).toBeDefined();
+    expect(canonicalAttachHandler).toBeDefined();
+    expect(canonicalDetachHandler).toBeDefined();
     expect(priorExternalHandler).toBeUndefined();
-    expect(releasedDirectHandler).toBeDefined();
+    expect(directAttachHandler).toBeUndefined();
+    expect(directDetachHandler).toBeUndefined();
+    expect(directFollowPolicyHandler).toBeUndefined();
 
     const input = {
       machineId: 'machine-1',
@@ -1390,29 +1411,8 @@ describe('registerMachineExternalSessionsRpcHandlers execution-surface seam', ()
       errorCode: 'agent_unavailable',
       error: 'external_session_agent_unavailable',
     };
-    const { agentId, ...releasedDirectInput } = input;
-
     await expect(canonicalHandler!(input)).resolves.toEqual(expected);
-    await expect(releasedDirectHandler!({
-      ...releasedDirectInput,
-      providerId: agentId,
-    })).resolves.toEqual({
-      ok: false,
-      errorCode: 'provider_unavailable',
-      error: 'background_follow_not_supported',
-    });
-    await expect(releasedDirectHandler!({
-      ...releasedDirectInput,
-      providerId: agentId,
-      enabled: false,
-    })).resolves.toEqual({
-      ...expected,
-      errorCode: 'provider_unavailable',
-    });
-    expect(calls).toEqual([
-      'sessions.external.backgroundFollow.set',
-      'sessions.external.backgroundFollow.set',
-    ]);
+    expect(calls).toEqual(['sessions.external.backgroundFollow.set']);
   });
 
   it('maps generic external-session ActionExecuteResult failures to direct-session response envelopes', async () => {

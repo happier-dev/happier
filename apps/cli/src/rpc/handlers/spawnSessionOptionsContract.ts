@@ -65,7 +65,10 @@ type CanonicalSpawnBackendTarget = BackendTargetRefV2;
 
 export type SpawnDaemonSessionRequest = Omit<
   SpawnSessionOptions,
-  'experimentalCodexAcp' | 'backendTarget' | 'providerBindingMetadataV1'
+  | 'experimentalCodexAcp'
+  | 'backendTarget'
+  | 'nativeResumeReference'
+  | 'providerBindingMetadataV1'
 > & {
   /** Private machine transport discriminator retained for lifecycle routing. */
   type?: 'spawn-in-directory' | 'resume-session';

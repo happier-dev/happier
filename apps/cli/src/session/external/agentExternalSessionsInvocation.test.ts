@@ -705,6 +705,51 @@ describe('bounded Agent External Sessions invocation', () => {
         });
     });
 
+    it('applies the canonical transcript item identity bound at the Agent wrapper', async () => {
+        const page = (id: string) => ({
+            ok: true as const,
+            value: { items: [{ id, createdAtMs: 1, raw: canonicalTranscriptRaw }], nextCursor: null },
+        });
+        const exact = 'x'.repeat(2_000);
+        const accepted = createWrapper({ contribution: contributionWith(() => page(exact)) });
+        const acceptedResult = await accepted.pageTranscript(requestFor('pageTranscript'));
+        expect(acceptedResult.ok
+            && (acceptedResult.value as { items: readonly { id: string }[] }).items[0]?.id)
+            .toBe(exact);
+
+        for (const id of ['x'.repeat(2_001), ` ${'x'.repeat(10)} `, '']) {
+            const rejected = createWrapper({ contribution: contributionWith(() => page(id)) });
+            await expect(rejected.pageTranscript(requestFor('pageTranscript'))).resolves.toEqual({
+                ok: false,
+                code: 'agent_error',
+                retryable: false,
+            });
+        }
+    });
+
+    it('admits a deeply nested canonical transcript result under the serialized byte ceiling', async () => {
+        // The canonical schema deliberately carries no generic depth quota, so result
+        // sizing must not reintroduce one through recursive serialization.
+        let output: unknown = 'leaf';
+        for (let depth = 0; depth < 7_000; depth += 1) output = { nested: output };
+        const item = {
+            id: 'item-deep',
+            createdAtMs: 1,
+            raw: {
+                role: 'agent',
+                content: { type: 'codex', data: { type: 'tool-call-result', callId: 'call-1', output } },
+            },
+        };
+        const wrapped = createWrapper({
+            contribution: contributionWith(() => ({ ok: true, value: { items: [item], nextCursor: null } })),
+        });
+
+        const result = await wrapped.pageTranscript(requestFor('pageTranscript'));
+
+        expect(result).toMatchObject({ ok: true });
+        expect(result.ok && (result.value as { items: readonly { id: string }[] }).items[0]?.id).toBe('item-deep');
+    });
+
     it.each([
         ['candidate remote Session id', 'remoteSessionId', EXTERNAL_SESSIONS_INVOCATION_POLICY.idMaxCodeUnits],
         ['candidate title', 'title', EXTERNAL_SESSIONS_INVOCATION_POLICY.titleMaxCodeUnits],
@@ -1118,10 +1163,11 @@ describe('bounded Agent External Sessions invocation', () => {
             });
         });
 
-        it('admits a transcript record nested deeper than the link-data depth bound', async () => {
+        it('admits transcript records beyond the removed depth and node quotas', async () => {
             let output: unknown = 'leaf';
-            for (let depth = 0; depth < 12; depth += 1) output = { nested: output };
-            await expect(callWithRaw('pageTranscript', {
+            for (let depth = 0; depth < 32; depth += 1) output = { nested: output };
+            const wideOutput = Array.from({ length: 8_300 }, () => null);
+            for (const admittedOutput of [output, wideOutput]) await expect(callWithRaw('pageTranscript', {
                 role: 'agent',
                 content: {
                     type: 'codex',
@@ -1129,7 +1175,7 @@ describe('bounded Agent External Sessions invocation', () => {
                         type: 'tool-call-result',
                         callId: 'call-1',
                         id: 'tool-1',
-                        output,
+                        output: admittedOutput,
                     },
                 },
             })).resolves.toMatchObject({
@@ -1138,7 +1184,7 @@ describe('bounded Agent External Sessions invocation', () => {
             });
         });
 
-        it('rejects accessor, prototype, cyclic, and non-finite transcript raw carriers', async () => {
+        it('accepts structural transcript DTOs and rejects cyclic or non-finite broadened data', async () => {
             const accessor: Record<string, unknown> = { role: 'user' };
             Object.defineProperty(accessor, 'content', {
                 enumerable: true,
@@ -1149,16 +1195,24 @@ describe('bounded Agent External Sessions invocation', () => {
                 content: { type: 'text', text: 'x' },
             };
             cyclic.self = cyclic;
-            const carriers: readonly unknown[] = [
-                accessor,
-                Object.assign(Object.create({ inherited: true }), {
+            const accepted: readonly (readonly [string, unknown])[] = [
+                ['accessor-backed', accessor],
+                ['custom-prototype', Object.assign(Object.create({ inherited: true }), {
                     role: 'user',
                     content: { type: 'text', text: 'x' },
-                }),
+                })],
+            ];
+            for (const [representation, raw] of accepted) {
+                await expect(callWithRaw('pageTranscript', raw), representation).resolves.toMatchObject({
+                    ok: true,
+                    value: { items: [{ raw: { role: 'user' } }] },
+                });
+            }
+            const rejected: readonly unknown[] = [
                 cyclic,
                 { role: 'user', content: { type: 'text', text: 'x' }, ordinal: Number.NaN },
             ];
-            for (const raw of carriers) {
+            for (const raw of rejected) {
                 await expect(callWithRaw('pageTranscript', raw)).resolves.toEqual({
                     ok: false,
                     code: 'agent_error',
@@ -1614,19 +1668,36 @@ describe('bounded Agent External Sessions invocation', () => {
         });
     });
 
-    it('rejects accessor, prototype, unknown-field, and non-finite output carriers', async () => {
+    it('accepts structural and accessor-backed output DTOs while rejecting unknown and invalid data', async () => {
         const accessor = {};
         Object.defineProperty(accessor, 'source', {
             enumerable: true,
             get: () => source,
         });
-        const outputs: readonly unknown[] = [
+        class StructuralResult {
+            get source() {
+                return source;
+            }
+        }
+        const accepted: readonly unknown[] = [
             accessor,
             Object.assign(Object.create({ inherited: true }), { source }),
+            new StructuralResult(),
+        ];
+        for (const value of accepted) {
+            const wrapped = createWrapper({
+                contribution: contributionWith(() => ({ ok: true, value })),
+            });
+            await expect(wrapped.resolveSource(requestFor('resolveSource'))).resolves.toEqual({
+                ok: true,
+                value: { source },
+            });
+        }
+        const rejected: readonly unknown[] = [
             { source, extra: true },
             { source: { kind: 'fixture', value: Number.POSITIVE_INFINITY } },
         ];
-        for (const value of outputs) {
+        for (const value of rejected) {
             const wrapped = createWrapper({
                 contribution: contributionWith(() => ({ ok: true, value })),
             });
@@ -1636,6 +1707,19 @@ describe('bounded Agent External Sessions invocation', () => {
                 retryable: false,
             });
         }
+
+        const throwing = Object.defineProperty({}, 'source', {
+            enumerable: true,
+            get: () => { throw new Error('property read failed'); },
+        });
+        const wrapped = createWrapper({
+            contribution: contributionWith(() => ({ ok: true, value: throwing })),
+        });
+        await expect(wrapped.resolveSource(requestFor('resolveSource'))).resolves.toEqual({
+            ok: false,
+            code: 'agent_error',
+            retryable: false,
+        });
     });
 
     it.each(['resolveSource', 'listCandidates', 'resolveLinkIdentity', 'resolveLinkedIdentity', 'pageTranscript', 'readAfterTranscript'] as const)(
@@ -1724,6 +1808,13 @@ describe('bounded Agent External Sessions invocation', () => {
         const first = await wrapped.listCandidates(requestFor('listCandidates'));
         if (!first.ok || first.value.nextCursor === null) throw new Error('Expected a qualified cursor');
         expect(first.value.nextCursor).not.toBe('native-list');
+        const cursorPayload = JSON.parse(Buffer.from(
+            first.value.nextCursor.slice('happier_external_cursor_v1:'.length),
+            'base64url',
+        ).toString('utf8'));
+        expect(cursorPayload).toMatchObject({
+            s: 'k8lKpzUekt_M2U67yXPwVdBPEbwAlcJT-l9lwkjd9HQ',
+        });
 
         const second = await wrapped.listCandidates({
             ...requestFor('listCandidates'),

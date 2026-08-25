@@ -5,6 +5,8 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { createOneBitGrayscalePng } from '@/testkit/media/pngFixtures';
+
 import {
   resolveTransferUploadInitTarget,
   type TransferUploadInitRequest,
@@ -49,10 +51,7 @@ describe('resolveTransferUploadInitTarget composer media staging', () => {
     const tempDirectory = await mkdtemp(join(tmpdir(), 'happier-composer-media-target-'));
     tempDirectories.push(tempDirectory);
     const executionTarget = { serverId: 'server-current', machineId: 'machine-current' } as const;
-    const bytes = Buffer.from([
-      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
-      0x00, 0x00, 0x00, 0x0d,
-    ]);
+    const bytes = createOneBitGrayscalePng(1, 1);
     const sourcePath = join(tempDirectory, 'incoming.png');
     await writeFile(sourcePath, bytes);
     const stageStore = createComposerMediaStageStore({
