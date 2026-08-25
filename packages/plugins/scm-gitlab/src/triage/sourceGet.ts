@@ -23,6 +23,10 @@ import type {
 } from '@happier-dev/triage-protocol/v1';
 
 import { authorizeGitlabConfiguredInstance } from './configuredInstance.js';
+import {
+  admitGitlabItemIdentity,
+  resolveGitlabItemRoute,
+} from './admission.js';
 import { GITLAB_TRIAGE_KIND_IDS } from './contribution.js';
 import {
   buildGitlabApiUrl,
@@ -30,7 +34,6 @@ import {
   type GitlabConnectedAccounts,
   type GitlabHttpFetcher,
 } from './http/gitlabClient.js';
-import { readGitlabScopeProjectId } from './identity.js';
 import { readGitlabViewerIdentity } from './invocation.js';
 import { decodeGitlabRow } from './mapping/gitlabEntry.js';
 import { deriveGitlabItemInvolvement } from './mapping/gitlabInvolvement.js';
@@ -58,22 +61,15 @@ function unresolved(
   return { kind: 'unresolved', localRef, failure };
 }
 
-function isDeclaredKind(kindId: string): kindId is GitlabKindId {
-  return (GITLAB_TRIAGE_KIND_IDS as readonly string[]).includes(kindId);
-}
-
 export async function getGitlabTriageEntry(
   input: GitlabGetOperationInput,
 ): Promise<TriageGetResultV1> {
   const localRef = input.get.localRef;
-  if (!isDeclaredKind(localRef.kindId)) {
-    return unresolved(localRef, {
-      class: 'unsupportedContract',
-      code: 'undeclared-kind',
-      detail: 'This source declares only merge requests and issues.',
-    });
-  }
-  const kindId = localRef.kindId;
+  const identity = admitGitlabItemIdentity({
+    localRef,
+    admissibleKinds: GITLAB_TRIAGE_KIND_IDS,
+  });
+  if (!identity.ok) return unresolved(localRef, identity.failure);
 
   const authorized = await authorizeGitlabConfiguredInstance({
     instance: input.get.instance,
@@ -85,29 +81,15 @@ export async function getGitlabTriageEntry(
   }
   const { origin, invocation } = authorized.resolved;
 
-  const projectId = readGitlabScopeProjectId(localRef.collisionScope, origin);
-  if (projectId === null) {
-    // The reference was keyed against a different deployment. Reading it here
-    // would answer with another origin's project carrying the same number.
-    return unresolved(localRef, {
-      class: 'unsupportedContract',
-      code: 'scope-outside-binding',
-      detail: 'The requested entry was not keyed against this configured deployment.',
-    });
-  }
-  if (!/^[1-9][0-9]*$/u.test(localRef.entryId)) {
-    return unresolved(localRef, {
-      class: 'unsupportedContract',
-      code: 'unusable-entry-id',
-      detail: 'A GitLab entry id is a positive project-internal id.',
-    });
-  }
+  const routed = resolveGitlabItemRoute(identity.identity, origin);
+  if (!routed.ok) return unresolved(localRef, routed.failure);
+  const { projectId, iid, kindId } = routed.route;
 
   const item = await requestGitlabJson({
     invocation,
     url: buildGitlabApiUrl(
       origin,
-      `/projects/${projectId}/${KIND_ITEM_SEGMENT[kindId]}/${localRef.entryId}`,
+      `/projects/${projectId}/${KIND_ITEM_SEGMENT[kindId]}/${iid}`,
     ),
     fetcher: input.fetcher,
     signal: input.signal,

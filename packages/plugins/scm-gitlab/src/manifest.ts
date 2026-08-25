@@ -48,12 +48,16 @@ import {
   scanGitlabSourceAction,
 } from './triage/operations.js';
 import {
+  assignGitlabIssue,
+  changeGitlabIssueLabels,
+  changeGitlabMergeRequestReviewers,
   closeGitlabIssue,
   closeGitlabMergeRequest,
   markGitlabMergeRequestReady,
   mergeGitlabMergeRequest,
   reopenGitlabIssue,
   reopenGitlabMergeRequest,
+  resolveGitlabMergeRequestDiscussion,
 } from './triage/mutations/operations.js';
 
 const GITLAB_ACTION_DECLARATIONS = [
@@ -120,7 +124,7 @@ export const GITLAB_PLUGIN = definePlugin({
     [GITLAB_SCM_HOSTING_PROVIDER_LOCAL_ID]: {
       declaration: {
         title: 'GitLab',
-        description: 'GitLab.com and configured self-managed GitLab repositories.',
+        description: 'GitLab.com repositories.',
         kind: 'gitlab',
         capabilities: ['detect', 'clone', 'fetch', 'push', 'pullRequest'],
       },
@@ -234,6 +238,22 @@ export const GITLAB_PLUGIN = definePlugin({
     [GITLAB_TRIAGE_MUTATION_ACTION_IDS.issueReopen]: {
       ...readGitlabActionDeclaration(GITLAB_TRIAGE_MUTATION_ACTION_IDS.issueReopen),
       run: reopenGitlabIssue,
+    },
+    [GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestReviewerChange]: {
+      ...readGitlabActionDeclaration(GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestReviewerChange),
+      run: changeGitlabMergeRequestReviewers,
+    },
+    [GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestDiscussionResolution]: {
+      ...readGitlabActionDeclaration(GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestDiscussionResolution),
+      run: resolveGitlabMergeRequestDiscussion,
+    },
+    [GITLAB_TRIAGE_MUTATION_ACTION_IDS.issueAssign]: {
+      ...readGitlabActionDeclaration(GITLAB_TRIAGE_MUTATION_ACTION_IDS.issueAssign),
+      run: assignGitlabIssue,
+    },
+    [GITLAB_TRIAGE_MUTATION_ACTION_IDS.issueLabel]: {
+      ...readGitlabActionDeclaration(GITLAB_TRIAGE_MUTATION_ACTION_IDS.issueLabel),
+      run: changeGitlabIssueLabels,
     },
   },
   ui: {

@@ -65,6 +65,13 @@ export type GitlabEntryIdentity = Readonly<{
 export type GitlabEntryLocator = Readonly<{
   /** Host plus non-default port, derived from the binding's base URL. */
   forgeHostId: string;
+  /**
+   * `GitlabConfiguredOrigin.normalized` — the deployment this read reached,
+   * scheme and host folded and the path prefix preserved. It is the launch
+   * placement join's deployment component: `forgeHostId` drops the path prefix,
+   * which is a real deployment distinction on a self-managed GitLab.
+   */
+  deploymentBaseUrl: string;
   /** `group/subgroup/project` full path, lowercased. Nested groups keep their slashes. */
   repositoryKey: string;
   /** `group/subgroup/project!7` or `group/subgroup/project#7`. */

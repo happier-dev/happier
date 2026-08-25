@@ -8,14 +8,25 @@ import {
 } from './pullRequests.js';
 
 /**
- * How many workspace repository-listing pages one scan call may read.
+ * How many provider requests the repository enumeration may cost one scan call.
  *
- * The listing is what makes the `review-requested` lane set exist at all, and it is itself paged.
- * Bounding it per call keeps a single scan page's request cost bounded against a 1,000/hour budget
- * while still letting the walk reach every repository: the unread cursor travels in the
- * continuation, so a later page continues the enumeration instead of paying for it again.
+ * The listing is what makes the review lane set exist at all, and it is itself paged. Bounding
+ * the enumeration per call keeps a single scan page's request cost bounded against the documented
+ * `/2.0/repositories/*` rate band — 1,000/hour at its floor — while still letting the walk reach
+ * every repository: the unread cursor travels in the continuation, so a later page continues the
+ * enumeration instead of paying for it again.
+ *
+ * It counts REPOSITORIES ENTERED as well as listing pages fetched, because both cost exactly one
+ * serial provider request and the entries are by far the larger number. Counting only the listing
+ * pages bounded the cheap half and left the expensive half free: one listing page names up to
+ * `BITBUCKET_MAX_PAGE_LENGTH` repositories, so four listing pages authorised four hundred serial
+ * pull-request requests inside one page a person was waiting on — and a repository with no open
+ * pull requests answers zero rows, so the walk's row budget could never stop it either.
+ *
+ * Nothing is refused when it is reached. The enumeration reports `paused`, the walk stays open,
+ * and the very next scan page continues from the same cursor.
  */
-export const BITBUCKET_REPOSITORY_PAGES_PER_SCAN_PAGE = 4;
+export const BITBUCKET_REPOSITORY_REQUESTS_PER_SCAN_PAGE = 4;
 
 export type BitbucketRepositoryAdvance =
   /** The next repository to walk, in provider list order. */
@@ -67,7 +78,8 @@ export function createBitbucketRepositoryEnumerator(
     repositories: readonly BitbucketRepositoryRef[];
     nextUrl: string | null;
   }> | null = null;
-  let fetches = 0;
+  // One counter for both costs: a listing fetch and a repository entered are one request each.
+  let spent = 0;
 
   return {
     cursorUrl: () => cursor,
@@ -75,9 +87,9 @@ export function createBitbucketRepositoryEnumerator(
       for (;;) {
         if (page === null) {
           if (cursor === null) return { kind: 'ended' };
-          if (fetches >= BITBUCKET_REPOSITORY_PAGES_PER_SCAN_PAGE) return { kind: 'paused' };
+          if (spent >= BITBUCKET_REPOSITORY_REQUESTS_PER_SCAN_PAGE) return { kind: 'paused' };
           const requestUrl = cursor;
-          fetches += 1;
+          spent += 1;
           const listing = await listBitbucketWorkspaceRepositories({
             client: input.client,
             workspaceUuid: input.workspaceUuid,
@@ -110,6 +122,8 @@ export function createBitbucketRepositoryEnumerator(
           continue;
         }
 
+        if (spent >= BITBUCKET_REPOSITORY_REQUESTS_PER_SCAN_PAGE) return { kind: 'paused' };
+        spent += 1;
         entered = next.uuid;
         // Resume from this page while it still holds an unentered repository, and from its `next`
         // once the entered repository is its last: either way a later scan page continues the

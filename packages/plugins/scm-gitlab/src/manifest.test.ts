@@ -56,6 +56,10 @@ describe('GitLab plugin manifest', () => {
     // path is the forge-activation unit's atomic change, not this one's.
     expect(PLUGIN_MANIFEST.contributes.scmHostingProviders[0])
       .not.toHaveProperty('authService');
+    expect(PLUGIN_MANIFEST.contributes.scmHostingProviders[0]?.description)
+      .toContain('GitLab.com');
+    expect(PLUGIN_MANIFEST.contributes.scmHostingProviders[0]?.description.toLowerCase())
+      .not.toContain('self-managed');
   });
 
   it('authorizes exact account materialization and never a caller-chosen selection', () => {
@@ -235,7 +239,10 @@ describe('GitLab merge-request mutation Actions', () => {
           typeof value === 'object' && value !== null && 'key' in value)
         .map(({ key }) => key);
     });
-    expect(keys).toHaveLength(9);
+    // Derived, not counted by hand: every mutation Action declares a confirmation title, body and
+    // confirm label, and a hard-coded total goes stale the moment the next Action lands — which is
+    // exactly what happened when this file still said nine.
+    expect(keys).toHaveLength(Object.keys(GITLAB_TRIAGE_MUTATION_ACTION_IDS).length * 3);
 
     for (const locale of locales) {
       const messages = GITLAB_ADDITIONAL_UI_TRANSLATIONS[

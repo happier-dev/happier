@@ -155,6 +155,15 @@ export const BitbucketMutationResultV1Schema = defineProtocolUnion([
     kind: defineProtocolLiteral('unavailable'),
     failure: TriageSourceFailureV1Schema,
   }, { policy: 'closed' }),
+  defineProtocolObject({
+    kind: defineProtocolLiteral('unchanged'),
+    observation: TriageSourceObservationV1Schema,
+  }, { policy: 'closed' }),
+  defineProtocolObject({
+    kind: defineProtocolLiteral('uncertain'),
+    observation: TriageSourceObservationV1Schema.optional(),
+    failure: TriageSourceFailureV1Schema.optional(),
+  }, { policy: 'closed' }),
 ]);
 export type BitbucketMutationResultV1 = ReturnType<typeof BitbucketMutationResultV1Schema.parse>;
 
@@ -227,6 +236,15 @@ export const BitbucketCommentResolutionResultV1Schema = defineProtocolUnion([
   defineProtocolObject({
     kind: defineProtocolLiteral('unavailable'),
     failure: TriageSourceFailureV1Schema,
+  }, { policy: 'closed' }),
+  defineProtocolObject({
+    kind: defineProtocolLiteral('unchanged'),
+    resolution: BitbucketCommentResolutionV1Schema,
+  }, { policy: 'closed' }),
+  defineProtocolObject({
+    kind: defineProtocolLiteral('uncertain'),
+    resolution: BitbucketCommentResolutionV1Schema.optional(),
+    failure: TriageSourceFailureV1Schema.optional(),
   }, { policy: 'closed' }),
 ]);
 export type BitbucketCommentResolutionResultV1 = ReturnType<

@@ -49,7 +49,7 @@ describe('GitHub detail UI build configuration', () => {
     expect(GITHUB_TRIAGE_SETTINGS_ARTIFACT_ID_V1).not.toBe(GITHUB_TRIAGE_SETTINGS_RENDERER_ID_V1);
 
     // Each declared artifact must be one this package actually emits.
-    expect(PLUGIN_MANIFEST.contributes.ui.renderers).toEqual([expect.objectContaining({
+    expect((PLUGIN_MANIFEST.contributes.ui?.renderers ?? [])).toEqual([expect.objectContaining({
       id: GITHUB_TRIAGE_DETAIL_RENDERER_ID_V1,
       kind: 'reactNative',
       artifact: config.targets[0]?.rendererId,
@@ -77,13 +77,13 @@ describe('GitHub detail UI build configuration', () => {
     // Without this declaration the settings surface is dormant source: the host
     // has no page to route to, so nothing in the product can reach the source
     // administration Action at all.
-    expect(PLUGIN_MANIFEST.contributes.ui.settingsPages).toEqual([expect.objectContaining({
+    expect((PLUGIN_MANIFEST.contributes.ui?.settingsPages ?? [])).toEqual([expect.objectContaining({
       id: GITHUB_TRIAGE_SETTINGS_PAGE_ID_V1,
       renderer: GITHUB_TRIAGE_SETTINGS_RENDERER_ID_V1,
     })]);
-    const page = PLUGIN_MANIFEST.contributes.ui.settingsPages[0];
+    const page = (PLUGIN_MANIFEST.contributes.ui?.settingsPages ?? [])[0];
     expect(page.group).toEqual({ kind: 'plugin', localId: GITHUB_TRIAGE_SETTINGS_GROUP_ID_V1 });
-    expect(PLUGIN_MANIFEST.contributes.ui.settingsGroups)
+    expect((PLUGIN_MANIFEST.contributes.ui?.settingsGroups ?? []))
       .toEqual([expect.objectContaining({ id: GITHUB_TRIAGE_SETTINGS_GROUP_ID_V1 })]);
   });
 });

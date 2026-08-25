@@ -49,6 +49,45 @@ describe('GitLab CLI auth detection', () => {
     expect(resolveGitlabCliHost('not a url')).toBe('gitlab.com');
   });
 
+  it('does not report a glab probe that never completed as a missing CLI', async () => {
+    await expect(detectGitlabCliAuth({
+      providerBaseUrl: 'https://gitlab.com',
+      runCommand: async () => ({
+        ok: false,
+        stdout: '',
+        stderr: '',
+        exitCode: null,
+      }),
+    })).resolves.toEqual({
+      kind: 'command-failed',
+      host: 'gitlab.com',
+    });
+  });
+
+  it('does not mine the partial stderr of a glab probe that never completed', async () => {
+    await expect(detectGitlabCliAuth({
+      providerBaseUrl: 'https://gitlab.com',
+      runCommand: async () => ({
+        ok: false,
+        stdout: '',
+        stderr: 'project not found',
+        exitCode: null,
+      }),
+    })).resolves.toEqual({
+      kind: 'command-failed',
+      host: 'gitlab.com',
+    });
+  });
+
+  it('does not report a host that wired no command runner as a missing CLI', async () => {
+    await expect(detectGitlabCliAuth({
+      providerBaseUrl: 'https://gitlab.com',
+    })).resolves.toEqual({
+      kind: 'command-failed',
+      host: 'gitlab.com',
+    });
+  });
+
   it('distinguishes missing glab from unauthenticated glab', async () => {
     await expect(detectGitlabCliAuth({
       providerBaseUrl: 'https://gitlab.com',

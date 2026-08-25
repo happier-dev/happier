@@ -9,7 +9,28 @@ const provider = {
 } as const;
 
 describe('Azure DevOps CLI auth diagnostics', () => {
-  it('reports missing Azure CLI as install remediation without invoking az', async () => {
+  it('reports an unresolvable Azure CLI as install remediation without invoking az', async () => {
+    const mod = await import('./azureDevopsAuth.js').catch(() => null);
+    expect(mod).not.toBeNull();
+    if (!mod) return;
+
+    const executeCommand = vi.fn(async () => {
+      throw Object.assign(new Error('System tool is unavailable'), { code: 'plugin_system_tool_unavailable' });
+    });
+
+    await expect(mod.detectAzureDevopsCliAuth({
+      provider,
+      runtimeServices: { executeCommand },
+    })).resolves.toEqual(expect.objectContaining({
+      kind: 'missing-cli',
+      capabilityId: 'azure-cli',
+      remediation: expect.objectContaining({
+        kind: 'install_required',
+      }),
+    }));
+  });
+
+  it('does not report a host that wired no command runner as a missing Azure CLI', async () => {
     const mod = await import('./azureDevopsAuth.js').catch(() => null);
     expect(mod).not.toBeNull();
     if (!mod) return;
@@ -18,11 +39,47 @@ describe('Azure DevOps CLI auth diagnostics', () => {
       provider,
       runtimeServices: {},
     })).resolves.toEqual(expect.objectContaining({
-      kind: 'missing-cli',
+      kind: 'undetermined',
       capabilityId: 'azure-cli',
-      remediation: expect.objectContaining({
-        kind: 'install_required',
-      }),
+    }));
+  });
+
+  it('does not report an az probe that never completed as an unauthenticated host', async () => {
+    const mod = await import('./azureDevopsAuth.js').catch(() => null);
+    expect(mod).not.toBeNull();
+    if (!mod) return;
+
+    const executeCommand = vi.fn(async () => ({
+      ok: false,
+      stdout: '',
+      stderr: '',
+      exitCode: null,
+    }));
+
+    await expect(mod.detectAzureDevopsCliAuth({
+      provider,
+      runtimeServices: { executeCommand },
+    })).resolves.toEqual(expect.objectContaining({
+      kind: 'undetermined',
+      capabilityId: 'azure-cli',
+    }));
+  });
+
+  it('does not report an az probe that threw as an unauthenticated host', async () => {
+    const mod = await import('./azureDevopsAuth.js').catch(() => null);
+    expect(mod).not.toBeNull();
+    if (!mod) return;
+
+    const executeCommand = vi.fn(async () => {
+      throw new Error('SCM hosting command execution generation is stale');
+    });
+
+    await expect(mod.detectAzureDevopsCliAuth({
+      provider,
+      runtimeServices: { executeCommand },
+    })).resolves.toEqual(expect.objectContaining({
+      kind: 'undetermined',
+      capabilityId: 'azure-cli',
     }));
   });
 

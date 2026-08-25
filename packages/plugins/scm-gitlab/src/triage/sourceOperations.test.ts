@@ -421,6 +421,45 @@ describe('GitLab scan', () => {
     expect(secondResult.kind === 'page' || secondResult.kind === 'complete').toBe(true);
   });
 
+  it('keeps a valid continuation usable when the viewer lookup transiently fails', async () => {
+    const routes = {
+      '/api/v4/user': { body: VIEWER },
+      '/api/v4/merge_requests': { body: mergeRequestList },
+      '/api/v4/issues': { body: issueList },
+    } as const;
+    const first = harness(routes);
+    const firstResult = await scanGitlabTriageSource({
+      scan: { v: 1, instance: configuredInstance(), page: { kind: 'initial', limit: 2 } },
+      connectedAccounts: first.connectedAccounts,
+      fetcher: first.fetcher,
+      signal: new AbortController().signal,
+      nowMs: NOW_MS,
+    });
+    if (firstResult.kind !== 'page') throw new Error('expected a continuation page');
+
+    const resumed = harness({
+      ...routes,
+      '/api/v4/user': { status: 500, body: { message: 'temporary failure' } },
+    });
+    const resumedResult = await scanGitlabTriageSource({
+      scan: {
+        v: 1,
+        instance: configuredInstance(),
+        page: { kind: 'continuation', continuation: firstResult.continuation },
+      },
+      connectedAccounts: resumed.connectedAccounts,
+      fetcher: resumed.fetcher,
+      signal: new AbortController().signal,
+      nowMs: NOW_MS,
+    });
+
+    expect(resumedResult).not.toMatchObject({
+      kind: 'failed',
+      failure: { code: 'unknown-continuation' },
+    });
+    expect(resumed.requested.some((url) => !url.endsWith('/api/v4/user'))).toBe(true);
+  });
+
   it('keeps observations plus omitted rows inside the caller’s one-page limit', async () => {
     const malformed = [{ iid: 7, project_id: 3 }, ...mergeRequestList, { nope: true }];
     const seam = harness({
@@ -569,7 +608,7 @@ describe('GitLab get', () => {
 
     expect(result).toMatchObject({
       kind: 'unresolved',
-      failure: { class: 'unsupportedContract', code: 'undeclared-kind' },
+      failure: { class: 'unsupportedContract', code: 'gitlab-kind-unsupported' },
     });
     expect(seam.fetcher).not.toHaveBeenCalled();
   });

@@ -90,6 +90,18 @@ function checkpointRow(input: Readonly<{
   };
 }
 
+function checkpointRetirementCandidate(row: GithubAutomationEventCheckpointRowV1) {
+  return {
+    automationId: row[GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.automationId],
+    eventRef: {
+      pluginId: row[GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.eventPluginId],
+      localId: row[GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.eventLocalId],
+    },
+    sourceSelectorId: row[GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.sourceSelectorId],
+    sourceContractVersion: row[GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.payload].sourceContractVersion,
+  } as const;
+}
+
 function historyGapCheckpointRow(input: Readonly<{
   automationId: string;
   sourceSelectorId: string;
@@ -115,6 +127,7 @@ function createCheckpointCollection(
     beforeGet?: (rowId: string) => Promise<void>;
     forcePutConflict?: boolean;
     deleteConflictCount?: number;
+    queryFailureCount?: number;
     maxRows?: number;
     pageSize?: number;
   }> = {},
@@ -192,7 +205,15 @@ function createCheckpointCollection(
     return Object.freeze({ rowId, revision: current.revision + 1, deleted: true as const });
   });
 
+  let remainingQueryFailures = settings.queryFailureCount ?? 0;
   const query = vi.fn(async (request: Readonly<{ cursor?: string; limit?: number }>) => {
+    if (remainingQueryFailures > 0) {
+      remainingQueryFailures -= 1;
+      throw new PluginError({
+        code: 'plugin_collection_unavailable',
+        message: 'checkpoint Collection query failed',
+      });
+    }
     const ordered = [...rows.values()]
       .sort((left, right) => left.rowId.localeCompare(right.rowId));
     const available = request.cursor === undefined
@@ -1555,6 +1576,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
   });
 
   it('adopts a complete checkpointed-pull source catalog after a cursor chain beyond the former page ceiling', async () => {
+    const checkpoints = createCheckpointCollection([]);
     let sourceListCalls = 0;
     const statuses: AutomationEventSourceStatusReport[] = [];
     const nonCatalogActions: unknown[] = [];
@@ -1593,7 +1615,9 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
       contribution: { id: 'observer', qualifiedId: `${GITHUB_PLUGIN_ID}/backgroundServices/observer` },
       surface: 'background' as const,
       signal: new AbortController().signal,
-      services: { actions },
+      // A catalog only becomes current once its checkpoint rows reconcile, so
+      // this fixture supplies the Account Collection that pass reads.
+      services: { actions, storage: { account: { collection: vi.fn(() => checkpoints.collection) } } },
     } as unknown as BackgroundServiceContext;
     const observer = createGithubAutomationEventCheckpointedPullObserver({ now: () => 2_000 });
 
@@ -1628,14 +1652,41 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
       eventRef: { pluginId: GITHUB_PLUGIN_ID, localId: EVENT_LOCAL_ID },
       sourceSelectorId: sourceSelectorB,
     });
+    const exactCheckpoint = checkpointRow({
+      automationId: source.automationId,
+      sourceSelectorId: source.sourceSelectorId,
+    });
+    const retiredCheckpoint = checkpointRow({
+      automationId: rotated.automationId,
+      sourceSelectorId: rotated.sourceSelectorId,
+      sourceContractVersion: 2,
+    });
+    const elsewhereCheckpoint = checkpointRow({
+      automationId: 'automation-watched-elsewhere',
+      sourceSelectorId: sourceSelectorB,
+    });
     const checkpoints = createCheckpointCollection([
-      checkpointRow({ automationId: source.automationId, sourceSelectorId: source.sourceSelectorId }),
-      checkpointRow({ automationId: rotated.automationId, sourceSelectorId: rotated.sourceSelectorId }),
-      checkpointRow({ automationId: 'automation-watched-elsewhere', sourceSelectorId: sourceSelectorB }),
+      exactCheckpoint,
+      retiredCheckpoint,
+      elsewhereCheckpoint,
     ], { pageSize: 1 });
     const actions = {
-      execute: vi.fn(async (actionId: string) => {
+      execute: vi.fn(async (actionId: string, input: unknown) => {
         if (actionId === 'automation.event.sources.list') {
+          const request = input as PluginActionInputById['automation.event.sources.list'];
+          if (request.checkpointRetirementCandidates !== undefined) {
+            expect(request).toMatchObject({
+              transport: { kind: 'checkpointedPull' },
+              knownRevision: '7',
+            });
+            return {
+              kind: 'unchanged',
+              revision: '7',
+              checkpointRetirements: request.checkpointRetirementCandidates.filter(
+                (candidate) => candidate.automationId === rotated.automationId,
+              ),
+            } satisfies PluginActionResultById['automation.event.sources.list'];
+          }
           return {
             kind: 'page', revision: '7', definitions: [source, rotated], nextCursor: null,
           } satisfies PluginActionResultById['automation.event.sources.list'];
@@ -1662,16 +1713,138 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
     await observer.runCycle(sourceAttemptContext(observer, context));
 
     expect(checkpoints.query).toHaveBeenCalledTimes(3);
-    // Only the listed-but-incompatible row is retirement authority this
-    // observer owns. A row the caller-scoped catalog does not list belongs to
-    // another watcher, a disabled Automation, or a watcher that just moved.
+    // The observer only applies the server's bounded retirement subset. Its
+    // caller-scoped catalog never decides whether a checkpoint is retired.
     expect(checkpoints.delete).toHaveBeenCalledTimes(1);
     expect(checkpoints.delete).toHaveBeenCalledWith(rotatedRowId, expect.anything());
     expect(checkpoints.read(exactRowId)).not.toBeNull();
     expect(checkpoints.read(elsewhereRowId)).not.toBeNull();
   });
 
-  it('retires a retained checkpoint when its source instance rotates at the same selector', async () => {
+  it('deletes only the server-classified retired checkpoints through their existing Collection CAS', async () => {
+    const absent = checkpointRow({ automationId: 'automation-absent', sourceSelectorId: sourceSelectorA });
+    const softDeletedWithoutRuns = checkpointRow({ automationId: 'automation-deleted-empty', sourceSelectorId: sourceSelectorB });
+    const selectorChanged = checkpointRow({
+      automationId: 'automation-selector-changed',
+      sourceSelectorId: '00000000-0000-4000-8000-000000000003',
+    });
+    const contractChanged = checkpointRow({
+      automationId: 'automation-contract-changed',
+      sourceSelectorId: '00000000-0000-4000-8000-000000000004',
+    });
+    const disabled = checkpointRow({
+      automationId: 'automation-disabled',
+      sourceSelectorId: '00000000-0000-4000-8000-000000000005',
+    });
+    const softDeletedWithRun = checkpointRow({
+      automationId: 'automation-deleted-retained-run',
+      sourceSelectorId: '00000000-0000-4000-8000-000000000006',
+    });
+    const checkpoints = createCheckpointCollection([
+      absent,
+      softDeletedWithoutRuns,
+      selectorChanged,
+      contractChanged,
+      disabled,
+      softDeletedWithRun,
+    ]);
+    const retired = [absent, softDeletedWithoutRuns, selectorChanged, contractChanged]
+      .map(checkpointRetirementCandidate);
+    const actions = {
+      execute: vi.fn(async (actionId: string, input: unknown) => {
+        if (actionId === 'automation.event.sources.list') {
+          const request = input as PluginActionInputById['automation.event.sources.list'];
+          if (request.checkpointRetirementCandidates === undefined) {
+            expect(request).toEqual({ transport: { kind: 'checkpointedPull' } });
+            return {
+              kind: 'page', revision: '7', definitions: [], nextCursor: null,
+            } satisfies PluginActionResultById['automation.event.sources.list'];
+          }
+          expect(request).toEqual({
+            transport: { kind: 'checkpointedPull' },
+            knownRevision: '7',
+            checkpointRetirementCandidates: expect.arrayContaining([
+              checkpointRetirementCandidate(absent),
+              checkpointRetirementCandidate(softDeletedWithoutRuns),
+              checkpointRetirementCandidate(selectorChanged),
+              checkpointRetirementCandidate(contractChanged),
+              checkpointRetirementCandidate(disabled),
+              checkpointRetirementCandidate(softDeletedWithRun),
+            ]),
+          });
+          return {
+            kind: 'unchanged', revision: '7', checkpointRetirements: retired,
+          } satisfies PluginActionResultById['automation.event.sources.list'];
+        }
+        if (actionId === 'automation.event.source.status.report') {
+          return {} satisfies PluginActionResultById['automation.event.source.status.report'];
+        }
+        throw new Error(`unexpected Action ${actionId}`);
+      }),
+    };
+    const observer = createGithubAutomationEventCheckpointedPullObserver({ now: () => 2_000 });
+    const context = observerBackgroundContext({
+      actions,
+      collection: checkpoints.collection,
+      http: { request: vi.fn() },
+    });
+
+    await observer.runCycle(sourceAttemptContext(observer, context));
+
+    expect(checkpoints.delete).toHaveBeenCalledTimes(4);
+    for (const row of [absent, softDeletedWithoutRuns, selectorChanged, contractChanged]) {
+      expect(checkpoints.read(row.id)).toBeNull();
+    }
+    expect(checkpoints.read(disabled.id)).not.toBeNull();
+    expect(checkpoints.read(softDeletedWithRun.id)).not.toBeNull();
+  });
+
+  it('withholds checkpoint CAS when server retirement classification races the adopted revision', async () => {
+    const row = checkpointRow({ automationId: 'automation-raced', sourceSelectorId: sourceSelectorA });
+    const checkpoints = createCheckpointCollection([row]);
+    const statuses: AutomationEventSourceStatusReport[] = [];
+    const actions = {
+      execute: vi.fn(async (actionId: string, input: unknown) => {
+        if (actionId === 'automation.event.sources.list') {
+          const request = input as PluginActionInputById['automation.event.sources.list'];
+          if (request.checkpointRetirementCandidates === undefined) {
+            return {
+              kind: 'page', revision: '7', definitions: [], nextCursor: null,
+            } satisfies PluginActionResultById['automation.event.sources.list'];
+          }
+          expect(request).toMatchObject({
+            transport: { kind: 'checkpointedPull' },
+            knownRevision: '7',
+            checkpointRetirementCandidates: [checkpointRetirementCandidate(row)],
+          });
+          return {
+            kind: 'cursorStale', currentRevision: '8',
+          } satisfies PluginActionResultById['automation.event.sources.list'];
+        }
+        if (actionId === 'automation.event.source.status.report') {
+          statuses.push(input as AutomationEventSourceStatusReport);
+          return {} satisfies PluginActionResultById['automation.event.source.status.report'];
+        }
+        throw new Error(`unexpected Action ${actionId}`);
+      }),
+    };
+    const observer = createGithubAutomationEventCheckpointedPullObserver({ now: () => 2_000 });
+    const context = observerBackgroundContext({
+      actions,
+      collection: checkpoints.collection,
+      http: { request: vi.fn() },
+    });
+
+    await observer.runCycle(sourceAttemptContext(observer, context));
+
+    expect(checkpoints.delete).not.toHaveBeenCalled();
+    expect(checkpoints.read(row.id)).not.toBeNull();
+    expect(catalogStatuses(statuses)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ observedRevision: '7', adoptedRevision: null, state: 'reconciling' }),
+    ]));
+  });
+
+  it('fails closed without retiring a same-key checkpoint when only its source instance rotates', async () => {
     const source = definition({
       automationId: 'automation-a',
       sourceSelectorId: sourceSelectorA,
@@ -1682,16 +1855,26 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
       eventRef: source.eventRef,
       sourceSelectorId: source.sourceSelectorId,
     });
-    const checkpoints = createCheckpointCollection([
-      checkpointRow({
-        automationId: source.automationId,
-        sourceSelectorId: source.sourceSelectorId,
-        sourceInstanceId: 'github:repository:77',
-      }),
-    ]);
+    const retainedCheckpoint = checkpointRow({
+      automationId: source.automationId,
+      sourceSelectorId: source.sourceSelectorId,
+      sourceInstanceId: 'github:repository:77',
+    });
+    const checkpoints = createCheckpointCollection([retainedCheckpoint]);
     const actions = {
-      execute: vi.fn(async (actionId: string) => {
+      execute: vi.fn(async (actionId: string, input: unknown) => {
         if (actionId === 'automation.event.sources.list') {
+          const request = input as PluginActionInputById['automation.event.sources.list'];
+          if (request.checkpointRetirementCandidates !== undefined) {
+            expect(request).toMatchObject({
+              transport: { kind: 'checkpointedPull' },
+              knownRevision: '7',
+              checkpointRetirementCandidates: [checkpointRetirementCandidate(retainedCheckpoint)],
+            });
+            return {
+              kind: 'unchanged', revision: '7', checkpointRetirements: [],
+            } satisfies PluginActionResultById['automation.event.sources.list'];
+          }
           return {
             kind: 'page', revision: '7', definitions: [source], nextCursor: null,
           } satisfies PluginActionResultById['automation.event.sources.list'];
@@ -1717,34 +1900,43 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
 
     await observer.runCycle(sourceAttemptContext(observer, context));
 
-    expect(checkpoints.delete).toHaveBeenCalledTimes(1);
+    expect(checkpoints.delete).not.toHaveBeenCalled();
     expect(checkpoints.read(rowId)).toMatchObject({
-      revision: 1,
-      value: { payload: { sourceInstanceId: 'github:repository:88', sourceContractVersion: 1 } },
+      value: { payload: { sourceInstanceId: 'github:repository:77', sourceContractVersion: 1 } },
     });
   });
 
-  it('leaves a selector-rotated predecessor checkpoint retained, because absence is not a retirement fact', async () => {
-    // The row key is derived from (automationId, eventRef, sourceSelectorId),
-    // so rotating the selector produces a NEW row and the predecessor simply
-    // vanishes from the caller-scoped catalog. Refusing to infer deletion from
-    // absence is correct — it is how one watcher avoids deleting another's
-    // continuity — but it means an actual retirement has no positive fact and
-    // the predecessor row occupies Account Collection capacity indefinitely.
-    // This pins the real contract so the "rotated identities are CAS-deleted"
-    // claim cannot be restated without a positive retirement signal existing.
+  it('retires a selector-rotated predecessor only after server classification', async () => {
+    // A caller-scoped catalog cannot distinguish a moved watcher from an
+    // obsolete selector. The server resolves that identity under the adopted
+    // revision and returns the only subset this observer may CAS-delete.
     const rotated = definition({ automationId: 'automation-a', sourceSelectorId: sourceSelectorB });
     const predecessorRowId = createGithubAutomationEventCheckpointRowId({
       automationId: 'automation-a',
       eventRef: rotated.eventRef,
       sourceSelectorId: sourceSelectorA,
     });
-    const checkpoints = createCheckpointCollection([
-      checkpointRow({ automationId: 'automation-a', sourceSelectorId: sourceSelectorA }),
-    ]);
+    const predecessor = checkpointRow({
+      automationId: 'automation-a',
+      sourceSelectorId: sourceSelectorA,
+    });
+    const checkpoints = createCheckpointCollection([predecessor]);
     const actions = {
-      execute: vi.fn(async (actionId: string) => {
+      execute: vi.fn(async (actionId: string, input: unknown) => {
         if (actionId === 'automation.event.sources.list') {
+          const request = input as PluginActionInputById['automation.event.sources.list'];
+          if (request.checkpointRetirementCandidates !== undefined) {
+            expect(request).toMatchObject({
+              transport: { kind: 'checkpointedPull' },
+              knownRevision: '7',
+              checkpointRetirementCandidates: [checkpointRetirementCandidate(predecessor)],
+            });
+            return {
+              kind: 'unchanged',
+              revision: '7',
+              checkpointRetirements: request.checkpointRetirementCandidates,
+            } satisfies PluginActionResultById['automation.event.sources.list'];
+          }
           return {
             kind: 'page', revision: '7', definitions: [rotated], nextCursor: null,
           } satisfies PluginActionResultById['automation.event.sources.list'];
@@ -1770,8 +1962,8 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
 
     await observer.runCycle(sourceAttemptContext(observer, context));
 
-    expect(checkpoints.delete).not.toHaveBeenCalled();
-    expect(checkpoints.read(predecessorRowId)).not.toBeNull();
+    expect(checkpoints.delete).toHaveBeenCalledWith(predecessorRowId, expect.anything());
+    expect(checkpoints.read(predecessorRowId)).toBeNull();
   });
 
   it('retires a retained checkpoint when its source contract is no longer compatible', async () => {
@@ -1781,16 +1973,28 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
       eventRef: source.eventRef,
       sourceSelectorId: source.sourceSelectorId,
     });
-    const checkpoints = createCheckpointCollection([
-      checkpointRow({
-        automationId: source.automationId,
-        sourceSelectorId: source.sourceSelectorId,
-        sourceContractVersion: 2,
-      }),
-    ]);
+    const retiredCheckpoint = checkpointRow({
+      automationId: source.automationId,
+      sourceSelectorId: source.sourceSelectorId,
+      sourceContractVersion: 2,
+    });
+    const checkpoints = createCheckpointCollection([retiredCheckpoint]);
     const actions = {
-      execute: vi.fn(async (actionId: string) => {
+      execute: vi.fn(async (actionId: string, input: unknown) => {
         if (actionId === 'automation.event.sources.list') {
+          const request = input as PluginActionInputById['automation.event.sources.list'];
+          if (request.checkpointRetirementCandidates !== undefined) {
+            expect(request).toMatchObject({
+              transport: { kind: 'checkpointedPull' },
+              knownRevision: '7',
+              checkpointRetirementCandidates: [checkpointRetirementCandidate(retiredCheckpoint)],
+            });
+            return {
+              kind: 'unchanged',
+              revision: '7',
+              checkpointRetirements: request.checkpointRetirementCandidates,
+            } satisfies PluginActionResultById['automation.event.sources.list'];
+          }
           return {
             kind: 'page', revision: '7', definitions: [source], nextCursor: null,
           } satisfies PluginActionResultById['automation.event.sources.list'];
@@ -1844,12 +2048,18 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
         throw new Error(`unexpected Action ${actionId}`);
       }),
     };
+    // This scenario fails closed before any checkpoint row is read, but the
+    // Account Collection is still a real empty store rather than an undefined
+    // binding that would only fault if the pass ever reached it.
+    const checkpoints = createCheckpointCollection([]);
     const context = {
       plugin: { id: GITHUB_PLUGIN_ID, version: '0.0.0' },
       contribution: { id: 'observer', qualifiedId: `${GITHUB_PLUGIN_ID}/backgroundServices/observer` },
       surface: 'background' as const,
       signal: new AbortController().signal,
-      services: { actions },
+      // A catalog only becomes current once its checkpoint rows reconcile, so
+      // this fixture supplies the Account Collection that pass reads.
+      services: { actions, storage: { account: { collection: vi.fn(() => checkpoints.collection) } } },
     } as unknown as BackgroundServiceContext;
     const observer = createGithubAutomationEventCheckpointedPullObserver({ now: () => 2_000 });
 
@@ -1892,12 +2102,18 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
         throw new Error(`unexpected Action ${actionId}`);
       }),
     };
+    // This scenario fails closed before any checkpoint row is read, but the
+    // Account Collection is still a real empty store rather than an undefined
+    // binding that would only fault if the pass ever reached it.
+    const checkpoints = createCheckpointCollection([]);
     const context = {
       plugin: { id: GITHUB_PLUGIN_ID, version: '0.0.0' },
       contribution: { id: 'observer', qualifiedId: `${GITHUB_PLUGIN_ID}/backgroundServices/observer` },
       surface: 'background' as const,
       signal: new AbortController().signal,
-      services: { actions },
+      // A catalog only becomes current once its checkpoint rows reconcile, so
+      // this fixture supplies the Account Collection that pass reads.
+      services: { actions, storage: { account: { collection: vi.fn(() => checkpoints.collection) } } },
     } as unknown as BackgroundServiceContext;
     const observer = createGithubAutomationEventCheckpointedPullObserver({ now: () => 2_000 });
 
@@ -2010,8 +2226,19 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
     });
     const checkpoints = createCheckpointCollection([elsewhere]);
     const actions = {
-      execute: vi.fn(async (actionId: string) => {
+      execute: vi.fn(async (actionId: string, input: unknown) => {
         if (actionId === 'automation.event.sources.list') {
+          const request = input as PluginActionInputById['automation.event.sources.list'];
+          if (request.checkpointRetirementCandidates !== undefined) {
+            expect(request).toMatchObject({
+              transport: { kind: 'checkpointedPull' },
+              knownRevision: '7',
+              checkpointRetirementCandidates: [checkpointRetirementCandidate(elsewhere)],
+            });
+            return {
+              kind: 'unchanged', revision: '7', checkpointRetirements: [],
+            } satisfies PluginActionResultById['automation.event.sources.list'];
+          }
           return {
             kind: 'page', revision: '7', definitions: [], nextCursor: null,
           } satisfies PluginActionResultById['automation.event.sources.list'];
@@ -2046,15 +2273,31 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
       checkpointRow({
         automationId: source.automationId,
         sourceSelectorId: source.sourceSelectorId,
-        sourceInstanceId: 'github:repository:77',
+        sourceContractVersion: 2,
       }),
     ], { deleteConflictCount: 1 });
     let sourceListCalls = 0;
     const actions = {
       execute: vi.fn(async (actionId: string, input: unknown) => {
         if (actionId === 'automation.event.sources.list') {
-          sourceListCalls += 1;
           const request = input as PluginActionInputById['automation.event.sources.list'];
+          if (request.checkpointRetirementCandidates !== undefined) {
+            expect(request).toMatchObject({
+              transport: { kind: 'checkpointedPull' },
+              knownRevision: '7',
+              checkpointRetirementCandidates: [expect.objectContaining({
+                automationId: source.automationId,
+                sourceSelectorId: source.sourceSelectorId,
+                sourceContractVersion: 2,
+              })],
+            });
+            return {
+              kind: 'unchanged',
+              revision: '7',
+              checkpointRetirements: request.checkpointRetirementCandidates,
+            } satisfies PluginActionResultById['automation.event.sources.list'];
+          }
+          sourceListCalls += 1;
           if (sourceListCalls === 1) {
             expect(request).toEqual({ transport: { kind: 'checkpointedPull' } });
             return {
@@ -2087,7 +2330,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
 
     await expect(observer.runCycle(sourceAttemptContext(observer, context))).resolves.toBeUndefined();
     expect(checkpoints.read(rowId)).toMatchObject({
-      value: { payload: { sourceInstanceId: 'github:repository:77' } },
+      value: { payload: { sourceContractVersion: 2 } },
     });
     await expect(observer.runCycle(sourceAttemptContext(observer, context))).resolves.toBeUndefined();
 
@@ -2095,6 +2338,85 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
     // written by the next observation that is due for this source.
     expect(checkpoints.delete).toHaveBeenCalledTimes(2);
     expect(checkpoints.read(rowId)).toBeNull();
+  });
+
+  it('withholds a current catalog until the adopted revision reconciles its checkpoint rows', async () => {
+    const source = definition({ automationId: 'automation-a', sourceSelectorId: sourceSelectorA });
+    const checkpoints = createCheckpointCollection([
+      checkpointRow({ automationId: source.automationId, sourceSelectorId: source.sourceSelectorId }),
+    ], { queryFailureCount: 1 });
+    const statuses: AutomationEventSourceStatusReport[] = [];
+    let sourceListCalls = 0;
+    const actions = {
+      execute: vi.fn(async (actionId: string, input: unknown) => {
+        if (actionId === 'automation.event.sources.list') {
+          sourceListCalls += 1;
+          return sourceListCalls === 1
+            ? { kind: 'page', revision: '7', definitions: [source], nextCursor: null } satisfies PluginActionResultById['automation.event.sources.list']
+            : { kind: 'unchanged', revision: '7' } satisfies PluginActionResultById['automation.event.sources.list'];
+        }
+        if (actionId === 'automation.event.source.status.report') {
+          statuses.push(input as AutomationEventSourceStatusReport);
+          return {} satisfies PluginActionResultById['automation.event.source.status.report'];
+        }
+        throw new Error(`unexpected Action ${actionId}`);
+      }),
+    };
+    const observer = createGithubAutomationEventCheckpointedPullObserver({ now: () => 2_000 });
+    const context = observerBackgroundContext({ actions, collection: checkpoints.collection });
+
+    await expect(observer.runCycle(sourceAttemptContext(observer, context))).resolves.toBeUndefined();
+
+    // The checkpoint query failed, so this revision is not reconciled and the
+    // product must not claim its pull catalog is current.
+    expect(catalogStatuses(statuses).map((status) => status.state)).toEqual(['reconciling']);
+
+    await expect(observer.runCycle(sourceAttemptContext(observer, context))).resolves.toBeUndefined();
+
+    expect(catalogStatuses(statuses).at(-1)).toMatchObject({
+      observedRevision: '7',
+      adoptedRevision: '7',
+      state: 'current',
+    });
+  });
+
+  it('scans checkpoint rows once for an adopted revision instead of on every unchanged cycle', async () => {
+    const source = definition({ automationId: 'automation-a', sourceSelectorId: sourceSelectorA });
+    const checkpoints = createCheckpointCollection([
+      checkpointRow({ automationId: source.automationId, sourceSelectorId: source.sourceSelectorId }),
+    ]);
+    let sourceListCalls = 0;
+    const actions = {
+      execute: vi.fn(async (actionId: string) => {
+        if (actionId === 'automation.event.sources.list') {
+          sourceListCalls += 1;
+          if (sourceListCalls === 1) {
+            return { kind: 'page', revision: '7', definitions: [source], nextCursor: null } satisfies PluginActionResultById['automation.event.sources.list'];
+          }
+          if (sourceListCalls <= 3) {
+            return { kind: 'unchanged', revision: '7' } satisfies PluginActionResultById['automation.event.sources.list'];
+          }
+          return { kind: 'page', revision: '8', definitions: [source], nextCursor: null } satisfies PluginActionResultById['automation.event.sources.list'];
+        }
+        if (actionId === 'automation.event.source.status.report') {
+          return {} satisfies PluginActionResultById['automation.event.source.status.report'];
+        }
+        throw new Error(`unexpected Action ${actionId}`);
+      }),
+    };
+    const observer = createGithubAutomationEventCheckpointedPullObserver({ now: () => 2_000 });
+    const context = observerBackgroundContext({ actions, collection: checkpoints.collection });
+
+    await observer.runCycle(sourceAttemptContext(observer, context));
+    const afterAdoption = checkpoints.query.mock.calls.length;
+    expect(afterAdoption).toBeGreaterThan(0);
+
+    await observer.runCycle(sourceAttemptContext(observer, context));
+    await observer.runCycle(sourceAttemptContext(observer, context));
+    expect(checkpoints.query.mock.calls.length).toBe(afterAdoption);
+
+    await observer.runCycle(sourceAttemptContext(observer, context));
+    expect(checkpoints.query.mock.calls.length).toBeGreaterThan(afterAdoption);
   });
 
   it('releases checkpoint Collection quota before writing the replacement baseline', async () => {
@@ -2108,16 +2430,32 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
       eventRef: source.eventRef,
       sourceSelectorId: source.sourceSelectorId,
     });
-    const checkpoints = createCheckpointCollection([
-      checkpointRow({
-        automationId: source.automationId,
-        sourceSelectorId: source.sourceSelectorId,
-        sourceInstanceId: 'github:repository:77',
-      }),
-    ], { maxRows: 1 });
+    const retiredCheckpoint = checkpointRow({
+      automationId: source.automationId,
+      sourceSelectorId: sourceSelectorB,
+    });
+    const retiredRowId = createGithubAutomationEventCheckpointRowId({
+      automationId: retiredCheckpoint[GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.automationId],
+      eventRef: source.eventRef,
+      sourceSelectorId: retiredCheckpoint[GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.sourceSelectorId],
+    });
+    const checkpoints = createCheckpointCollection([retiredCheckpoint], { maxRows: 1 });
     const actions = {
-      execute: vi.fn(async (actionId: string) => {
+      execute: vi.fn(async (actionId: string, input: unknown) => {
         if (actionId === 'automation.event.sources.list') {
+          const request = input as PluginActionInputById['automation.event.sources.list'];
+          if (request.checkpointRetirementCandidates !== undefined) {
+            expect(request).toMatchObject({
+              transport: { kind: 'checkpointedPull' },
+              knownRevision: '7',
+              checkpointRetirementCandidates: [checkpointRetirementCandidate(retiredCheckpoint)],
+            });
+            return {
+              kind: 'unchanged',
+              revision: '7',
+              checkpointRetirements: request.checkpointRetirementCandidates,
+            } satisfies PluginActionResultById['automation.event.sources.list'];
+          }
           return {
             kind: 'page', revision: '7', definitions: [source], nextCursor: null,
           } satisfies PluginActionResultById['automation.event.sources.list'];
@@ -2143,6 +2481,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
 
     await observer.runCycle(sourceAttemptContext(observer, context));
 
+    expect(checkpoints.read(retiredRowId)).toBeNull();
     expect(checkpoints.read(rowId)).toMatchObject({
       revision: 1,
       value: { payload: { sourceInstanceId: 'github:repository:88' } },

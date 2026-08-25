@@ -60,6 +60,12 @@ function sourceDefinition(automationId: string) {
   };
 }
 
+/**
+ * The webhook handler reads only the caller, cancellation, and Action service;
+ * the host stamps the rest of the invocation context. The fixture keeps its
+ * literal shape so overriding spreads stay checkable, and each call site
+ * supplies the handler's parameter cast.
+ */
 function webhookContext(execute: ReturnType<typeof vi.fn>) {
   return {
     surface: 'plugin',
@@ -74,7 +80,7 @@ function webhookContext(execute: ReturnType<typeof vi.fn>) {
     },
     signal: new AbortController().signal,
     services: { actions: { execute } },
-  } as never;
+  };
 }
 
 describe('GitHub webhook Action caller admission', () => {
@@ -121,7 +127,7 @@ describe('GitHub webhook Action caller admission', () => {
           qualifiedId: 'happier.scm.forge.github/other-events',
         },
       },
-    })).resolves.toEqual({
+    } as never)).resolves.toEqual({
       kind: 'deadLetter',
       code: 'github_webhook_caller_invalid',
     });
@@ -160,7 +166,7 @@ describe('GitHub webhook Action caller admission', () => {
       throw new Error(`unexpected Action ${actionId}`);
     });
 
-    await expect(createGithubWebhookActionHandlerV1()(webhookInput, webhookContext(execute))).resolves.toEqual({
+    await expect(createGithubWebhookActionHandlerV1()(webhookInput, webhookContext(execute) as never)).resolves.toEqual({
       kind: 'retry',
       code: 'github.automation-unavailable',
     });
@@ -197,7 +203,7 @@ describe('GitHub webhook Action caller admission', () => {
     await expect(createGithubWebhookActionHandlerV1()(webhookInput, {
       ...webhookContext(execute),
       signal: controller.signal,
-    })).rejects.toMatchObject({ name: 'AbortError' });
+    } as never)).rejects.toMatchObject({ name: 'AbortError' });
     expect(execute.mock.calls.filter(([actionId]) => actionId === 'automation.event.admit')).toHaveLength(1);
   });
 });

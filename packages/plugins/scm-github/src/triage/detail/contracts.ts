@@ -23,6 +23,13 @@ import {
   GITHUB_MAX_TIMELINE_ROWS_V1,
 } from './projection.js';
 import { GITHUB_MAX_DETAIL_PAGE_SIZE_V1 } from './routes.js';
+import {
+  GITHUB_FEEDBACK_COMMENT_PAGE_SIZE_V1,
+  GITHUB_FEEDBACK_REPLY_PAGE_SIZE_V1,
+  GITHUB_FEEDBACK_REQUEST_PAGE_SIZE_V1,
+  GITHUB_FEEDBACK_REVIEW_PAGE_SIZE_V1,
+  GITHUB_FEEDBACK_THREAD_PAGE_SIZE_V1,
+} from '../feedback.js';
 
 /**
  * The five source-native detail Action contracts.
@@ -83,6 +90,12 @@ const CommentBodySchema = defineProtocolUtf8String({
 });
 const TimestampSchema = defineProtocolNumber({ integer: true });
 const CountSchema = defineProtocolNumber({ integer: true, minimum: 0 });
+
+const ReviewDecisionSchema = defineProtocolUnion([
+  defineProtocolLiteral('approved'),
+  defineProtocolLiteral('changes-requested'),
+  defineProtocolLiteral('review-required'),
+]);
 
 const RoutingTokenSchema = defineProtocolUtf8String({
   maxUtf8Bytes: MAX_TRIAGE_ROUTING_TOKEN_UTF8_BYTES_V1,
@@ -273,6 +286,116 @@ export const GithubCommentsResultV1Schema = defineProtocolUnion([
 ]);
 export type GithubCommentsResultV1 = ReturnType<typeof GithubCommentsResultV1Schema.parse>;
 
+/* ------------------------------------------------------------------- feedback */
+
+const feedbackInputBase = {
+  v: defineProtocolLiteral(1),
+  instance: TriageConfiguredSourceInstanceV1Schema,
+  localRef: TriageSourceEntryLocalRefV1Schema,
+  routingToken: RoutingTokenSchema,
+  cursor: ContinuationSchema.optional(),
+};
+
+export const GithubFeedbackInputV1Schema = defineProtocolUnion([
+  defineProtocolObject({
+    ...feedbackInputBase,
+    connection: defineProtocolUnion([
+      defineProtocolLiteral('comments'),
+      defineProtocolLiteral('threads'),
+      defineProtocolLiteral('reviews'),
+      defineProtocolLiteral('requests'),
+    ]),
+  }, { policy: 'closed' }),
+  defineProtocolObject({
+    ...feedbackInputBase,
+    connection: defineProtocolLiteral('threadReplies'),
+    threadId: IdentifierSchema,
+  }, { policy: 'closed' }),
+]);
+export type GithubFeedbackInputV1 = ReturnType<typeof GithubFeedbackInputV1Schema.parse>;
+
+export const GithubFeedbackCommentV1Schema = defineProtocolObject({
+  id: IdentifierSchema,
+  author: LabelSchema.optional(),
+  body: CommentBodySchema,
+  createdAtMs: TimestampSchema.optional(),
+  url: LocationSchema.optional(),
+  truncated: defineProtocolLiteral(true).optional(),
+}, { policy: 'closed' });
+
+export const GithubFeedbackThreadV1Schema = defineProtocolObject({
+  id: IdentifierSchema,
+  isResolved: GithubBooleanSchema,
+  path: PathSchema.optional(),
+  line: CountSchema.optional(),
+  replies: defineProtocolArray(GithubFeedbackCommentV1Schema, {
+    maxItems: GITHUB_FEEDBACK_REPLY_PAGE_SIZE_V1,
+  }),
+  previousRepliesCursor: ContinuationSchema.optional(),
+  truncated: defineProtocolLiteral(true).optional(),
+}, { policy: 'closed' });
+
+export const GithubFeedbackReviewV1Schema = defineProtocolObject({
+  id: IdentifierSchema,
+  author: LabelSchema.optional(),
+  body: CommentBodySchema,
+  state: LabelSchema,
+  submittedAtMs: TimestampSchema.optional(),
+  url: LocationSchema.optional(),
+  truncated: defineProtocolLiteral(true).optional(),
+}, { policy: 'closed' });
+
+export const GithubFeedbackRequestV1Schema = defineProtocolObject({
+  kind: defineProtocolUnion([
+    defineProtocolLiteral('user'),
+    defineProtocolLiteral('team'),
+  ]),
+  subject: LabelSchema,
+  truncated: defineProtocolLiteral(true).optional(),
+}, { policy: 'closed' });
+
+export const GithubFeedbackResultV1Schema = defineProtocolUnion([
+  defineProtocolObject({
+    kind: defineProtocolLiteral('comments'),
+    rows: defineProtocolArray(GithubFeedbackCommentV1Schema, {
+      maxItems: GITHUB_FEEDBACK_COMMENT_PAGE_SIZE_V1,
+    }),
+    previousCursor: ContinuationSchema.optional(),
+  }, { policy: 'closed' }),
+  defineProtocolObject({
+    kind: defineProtocolLiteral('threads'),
+    rows: defineProtocolArray(GithubFeedbackThreadV1Schema, {
+      maxItems: GITHUB_FEEDBACK_THREAD_PAGE_SIZE_V1,
+    }),
+    previousCursor: ContinuationSchema.optional(),
+  }, { policy: 'closed' }),
+  defineProtocolObject({
+    kind: defineProtocolLiteral('reviews'),
+    rows: defineProtocolArray(GithubFeedbackReviewV1Schema, {
+      maxItems: GITHUB_FEEDBACK_REVIEW_PAGE_SIZE_V1,
+    }),
+    reviewDecision: ReviewDecisionSchema.optional(),
+    previousCursor: ContinuationSchema.optional(),
+  }, { policy: 'closed' }),
+  defineProtocolObject({
+    kind: defineProtocolLiteral('requests'),
+    rows: defineProtocolArray(GithubFeedbackRequestV1Schema, {
+      maxItems: GITHUB_FEEDBACK_REQUEST_PAGE_SIZE_V1,
+    }),
+    nextCursor: ContinuationSchema.optional(),
+  }, { policy: 'closed' }),
+  defineProtocolObject({
+    kind: defineProtocolLiteral('threadReplies'),
+    threadId: IdentifierSchema,
+    rows: defineProtocolArray(GithubFeedbackCommentV1Schema, {
+      maxItems: GITHUB_FEEDBACK_REPLY_PAGE_SIZE_V1,
+    }),
+    previousCursor: ContinuationSchema.optional(),
+  }, { policy: 'closed' }),
+  GithubDetailUnavailableSchema,
+]);
+export type GithubFeedbackResultV1 = ReturnType<typeof GithubFeedbackResultV1Schema.parse>;
+
 /* --------------------------------------------------------------------- checks */
 
 /**
@@ -300,6 +423,7 @@ export const GithubProjectedCheckRowV1Schema = defineProtocolObject({
   detailsUrl: LocationSchema.optional(),
   startedAtMs: TimestampSchema.optional(),
   completedAtMs: TimestampSchema.optional(),
+  logExcerpt: CommentBodySchema.optional(),
   truncated: defineProtocolLiteral(true).optional(),
 }, { policy: 'closed' });
 
@@ -406,12 +530,6 @@ export const GithubProjectedReviewRequestRowV1Schema = defineProtocolObject({
  * depends on branch-protection rules these REST reads never see, so the member is
  * OPTIONAL and an absent decision means unresolved — never "not approved".
  */
-const ReviewDecisionSchema = defineProtocolUnion([
-  defineProtocolLiteral('approved'),
-  defineProtocolLiteral('changes-requested'),
-  defineProtocolLiteral('review-required'),
-]);
-
 export const GithubReviewsResultV1Schema = defineProtocolUnion([
   defineProtocolObject({
     kind: defineProtocolLiteral('reviews'),
@@ -428,6 +546,10 @@ export const GithubReviewsResultV1Schema = defineProtocolUnion([
     reviewsFailure: TriageSourceFailureV1Schema.optional(),
     /** Present when the requested-reviewers walk failed; the reviews still render. */
     requestsFailure: TriageSourceFailureV1Schema.optional(),
+    /** GitHub still advertised another reviews page at its 1,000-row result ceiling. */
+    reviewsIncomplete: defineProtocolLiteral(true).optional(),
+    /** GitHub still advertised another requested-reviewers page at that same ceiling. */
+    requestsIncomplete: defineProtocolLiteral(true).optional(),
     omittedRowCount: CountSchema,
     projectionTruncated: GithubBooleanSchema,
   }, { policy: 'closed' }),

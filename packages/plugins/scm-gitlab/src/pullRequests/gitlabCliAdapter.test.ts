@@ -372,6 +372,45 @@ describe('GitLab CLI merge request adapter', () => {
     });
   });
 
+  it('does not report an auth probe that could not answer as an unsupported feature', async () => {
+    await expect(createGitlabCliAdapter({
+      detectAuth: async () => ({ kind: 'command-failed', host: 'gitlab.com' }),
+      runCommand: async () => {
+        throw new Error('should not run');
+      },
+    }).listPullRequests({ provider, head: 'feature/auth' })).rejects.toMatchObject({
+      errorCode: 'COMMAND_FAILED',
+    });
+  });
+
+  it('does not classify a glab command that never completed from its partial stderr', async () => {
+    await expect(createGitlabCliAdapter({
+      detectAuth: async () => authenticated(),
+      runCommand: async () => ({
+        ok: false,
+        stdout: '',
+        stderr: 'not logged in to gitlab.com',
+        exitCode: null,
+      }),
+    }).listPullRequests({ provider, head: 'feature/auth' })).rejects.toMatchObject({
+      errorCode: 'COMMAND_FAILED',
+    });
+  });
+
+  it('still classifies a completed glab command from its stderr', async () => {
+    await expect(createGitlabCliAdapter({
+      detectAuth: async () => authenticated(),
+      runCommand: async () => ({
+        ok: false,
+        stdout: '',
+        stderr: 'not logged in to gitlab.com',
+        exitCode: 1,
+      }),
+    }).listPullRequests({ provider, head: 'feature/auth' })).rejects.toMatchObject({
+      errorCode: 'REMOTE_AUTH_REQUIRED',
+    });
+  });
+
   it('uses glab-cli as the daemon-local PR cache auth profile key', async () => {
     expect(createGitlabCliAdapter().getPullRequestAuthProfileKey({ provider })).toBe('glab-cli');
   });

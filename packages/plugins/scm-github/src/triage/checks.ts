@@ -57,6 +57,8 @@ export type GithubCheckObservationV1 = Readonly<{
   detailsUrl: string | null;
   startedAtMs: number | null;
   completedAtMs: number | null;
+  /** GitHub Check Run output, when the provider published diagnostic evidence. */
+  logExcerpt?: string | null;
 }>;
 
 export type GithubChecksStateV1 = 'none' | 'unknown' | 'knownIncomplete' | 'resolved';
@@ -88,6 +90,10 @@ const FAILING_CONCLUSIONS = new Set([
 ]);
 const NEUTRAL_CONCLUSIONS = new Set(['neutral', 'skipped', 'cancelled', 'stale']);
 
+export function isGithubFailingCheckConclusion(value: string | undefined | null): boolean {
+  return value !== undefined && value !== null && FAILING_CONCLUSIONS.has(value);
+}
+
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -112,6 +118,15 @@ function readEpochMs(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function readCheckOutput(value: unknown): string | null {
+  if (!isRecord(value)) return null;
+  const parts = [value.title, value.summary, value.text]
+    .map(readTrimmedString)
+    .filter((part): part is string => part !== null);
+  const distinct = parts.filter((part, index) => parts.indexOf(part) === index);
+  return distinct.length === 0 ? null : distinct.join('\n\n');
+}
+
 function decodeCheckRun(raw: unknown): GithubCheckObservationV1 | null {
   if (!isRecord(raw)) return null;
   const id = readPositiveDecimal(raw.id);
@@ -127,6 +142,7 @@ function decodeCheckRun(raw: unknown): GithubCheckObservationV1 | null {
     detailsUrl: readTrimmedString(raw.details_url),
     startedAtMs: readEpochMs(raw.started_at),
     completedAtMs: readEpochMs(raw.completed_at),
+    logExcerpt: readCheckOutput(raw.output),
   });
 }
 
@@ -147,6 +163,7 @@ function decodeCommitStatus(raw: unknown): GithubCheckObservationV1 | null {
     detailsUrl: readTrimmedString(raw.target_url),
     startedAtMs: readEpochMs(raw.created_at),
     completedAtMs: state === 'pending' ? null : readEpochMs(raw.updated_at),
+    logExcerpt: null,
   });
 }
 
@@ -357,7 +374,7 @@ export function projectGithubChecksSurface(input: Readonly<{
       running += 1;
       continue;
     }
-    if (observation.conclusion !== null && FAILING_CONCLUSIONS.has(observation.conclusion)) {
+    if (isGithubFailingCheckConclusion(observation.conclusion)) {
       failing += 1;
       continue;
     }

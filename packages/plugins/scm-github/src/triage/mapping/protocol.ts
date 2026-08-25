@@ -2,6 +2,7 @@ import {
   MAX_TRIAGE_TEXT_UTF8_BYTES_V1,
   projectTriageDisplayTextV1,
 } from '@happier-dev/triage-protocol/v1';
+import { normalizeScmHostingRepositoryIdentity } from '@happier-dev/plugin-sdk/scm';
 
 import type {
   TriageEntryLocatorV1,
@@ -14,6 +15,8 @@ import type {
   TriageSourceScanObservationV1,
   TriageSourceViewerFactsV1,
 } from '@happier-dev/triage-protocol/v1';
+
+import { GITHUB_TRIAGE_DEPLOYMENT_BASE_URL_V1 } from '../configuration.js';
 
 import type {
   GithubTriageEntryLocalRefV1,
@@ -72,7 +75,15 @@ type ProjectedFacts = Readonly<{ facts: readonly TriageRowFactV1[]; dropped: boo
  * whose fact text projected to nothing is dropped rather than emitted invalid: one
  * empty string would make the target reject the whole page atomically.
  */
-function toTriageFacts(facts: readonly GithubTriageRowFactV1[]): ProjectedFacts {
+/**
+ * Projects GitHub's private row-fact vocabulary to the published Triage one.
+ *
+ * The detail Feedback surface uses this same conversion when it replaces a
+ * snapshot's stale review/check facts with its live state facts. Keeping that
+ * conversion here prevents the two surfaces from disagreeing on the public
+ * status payload spelling.
+ */
+export function toTriageFacts(facts: readonly GithubTriageRowFactV1[]): ProjectedFacts {
   const projected: TriageRowFactV1[] = [];
   let dropped = false;
   for (const fact of facts) {
@@ -194,6 +205,13 @@ function toTriagePresentObservation(
   observation: Extract<GithubTriageObservationV1, Readonly<{ kind: 'present' }>>,
 ): Extract<TriageSourceObservationV1, Readonly<{ kind: 'present' }>> {
   const snapshot = observation.snapshot;
+  const repository = snapshot.nameWithOwner === null
+    ? null
+    : normalizeScmHostingRepositoryIdentity({
+        kind: 'github',
+        deployment: GITHUB_TRIAGE_DEPLOYMENT_BASE_URL_V1,
+        repository: snapshot.nameWithOwner,
+      });
   return Object.freeze({
     kind: 'present' as const,
     localRef: toTriageLocalRef(observation.localRef),
@@ -204,6 +222,10 @@ function toTriagePresentObservation(
       ? { sourceUpdatedAtMs: snapshot.sourceUpdatedAtMs }
       : {}),
     ...(snapshot.nativeRevision ? { nativeRevision: snapshot.nativeRevision } : {}),
+    // The forge repository, in the exact vocabulary a project's resolved SCM
+    // hosting provider already uses, so launch placement joins the two by
+    // equality instead of by parsing a remote URL.
+    ...(repository === null ? {} : { repository }),
   });
 }
 

@@ -6,10 +6,13 @@ export type ScmWorkspaceIntegrationWorkspaceCheckoutMaterializationRequest = Rea
   targetPath: string;
   displayName: string;
   baseRef: string | null;
+  branchMode: 'new' | 'existing';
 }>;
 
 export type ScmWorkspaceIntegrationWorkspaceCheckoutMaterializationResult = Readonly<{
   targetPath: string;
+  branchName: string;
+  created: boolean;
 }>;
 
 export function resolveScmWorkspaceIntegrationWorkspaceCheckoutMaterializationKind(
@@ -42,8 +45,18 @@ export function resolveScmWorkspaceIntegrationWorkspaceCheckoutMaterializationBa
   return input.baseRef;
 }
 
+export function resolveScmWorkspaceIntegrationWorkspaceCheckoutMaterializationBranchMode(
+  input: ScmWorkspaceIntegrationWorkspaceCheckoutMaterializationRequest,
+): 'new' | 'existing' {
+  return input.branchMode;
+}
+
 export function createScmWorkspaceIntegrationWorkspaceCheckoutMaterializationResult(
   input: ScmWorkspaceIntegrationWorkspaceCheckoutMaterializationResult,
 ): ScmWorkspaceIntegrationWorkspaceCheckoutMaterializationResult {
-  return { targetPath: input.targetPath };
+  return {
+    targetPath: input.targetPath,
+    branchName: input.branchName,
+    created: input.created,
+  };
 }

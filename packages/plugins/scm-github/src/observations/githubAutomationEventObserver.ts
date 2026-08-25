@@ -3,8 +3,10 @@ import type { PluginActionInputById, PluginActionResultById } from '@happier-dev
 import type { BackgroundServiceContext } from '@happier-dev/plugin-sdk/background-services';
 import type { ConnectedAccountRef } from '@happier-dev/plugin-sdk/connected-accounts';
 import type { PluginEventAutomationHistoryGapResetActionResultV1 } from '@happier-dev/plugin-sdk/events';
-import type {
-  PluginCollectionRow,
+import {
+  PLUGIN_COLLECTION_MUTATION_BATCH_MAX_ROWS_V1,
+  PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1,
+  type PluginCollectionRow,
 } from '@happier-dev/plugin-sdk/collections';
 import { parseForgeLinkHeader } from '@happier-dev/triage-sources/runtime';
 import { readTriageResponseHeaderV1 } from '@happier-dev/triage-protocol/v1';
@@ -55,14 +57,12 @@ import { requireGithubAccountStorage } from '../requiredAccountStorage.js';
 
 const REPOSITORY_EVENTS_ENDPOINT_KIND = 'repositoryEvents' as const;
 const REPOSITORY_EVENTS_PAGE_SIZE = 100;
-const GITHUB_AUTOMATION_EVENT_ADMISSIONS_PER_POLL = 100;
 const DEFAULT_SOURCE_POLL_INTERVAL_MS = 60_000;
 const DEFAULT_RECONCILIATION_INTERVAL_MS = 60_000;
 const DEFAULT_RETRY_DELAY_MS = 1_000;
 const DEFAULT_RECONCILIATION_LATE_AFTER_MS = 60_000;
 const MAX_CONCURRENT_SOURCES = 32;
 const MAX_PROVIDER_WAIT_MS = 24 * 60 * 60 * 1_000;
-const GITHUB_AUTOMATION_EVENT_CHECKPOINT_QUERY_PAGE_SIZE = 200;
 type JsonRecord = Readonly<Record<string, unknown>>;
 type AutomationEventSourcesListResultV1 = PluginActionResultById['automation.event.sources.list'];
 export type GithubAutomationEventSourceDefinitionV1 = Extract<
@@ -87,6 +87,9 @@ type AutomationEventCatalogStatusInputV1 = Extract<
   AutomationEventSourceStatusReportV1,
   Readonly<{ kind: 'catalogReconciliation' }>
 >;
+type AutomationEventCheckpointRetirementCandidateV1 = NonNullable<
+  PluginActionInputById['automation.event.sources.list']['checkpointRetirementCandidates']
+>[number];
 
 type GithubAutomationRepositoryEventObservationV1 = Readonly<{
   occurrenceId: string;
@@ -129,12 +132,10 @@ type SourceFailureStatusV1 = Readonly<{
 type GithubAutomationAdoptedSourcesV1 = Readonly<{
   revision: string;
   candidates: readonly GithubAutomationObservedSourceCandidateV1[];
-  desiredCheckpointsByRowId: ReadonlyMap<string, GithubAutomationDesiredCheckpointV1 | null>;
+  knownCurrentCheckpointsByRowId: ReadonlyMap<string, GithubAutomationKnownCurrentCheckpointV1 | null>;
 }>;
 
-type GithubAutomationDesiredCheckpointV1 = Readonly<{
-  automationId: string;
-  sourceSelectorId: string;
+type GithubAutomationKnownCurrentCheckpointV1 = Readonly<{
   sourceInstanceId: string;
   sourceContractVersion: number;
 }>;
@@ -157,6 +158,14 @@ type GithubAutomationSourceCycleResultV1 = Readonly<{
 type GithubAutomationObserverStateV1 = {
   adopted: GithubAutomationAdoptedSourcesV1 | null;
   reconciliation: GithubAutomationReconciliationV1 | null;
+  /**
+   * The adopted catalog revision whose checkpoint rows completed one
+   * conflict-free reconciliation pass in this generation. Until that holds,
+   * the revision is still reconciling: it is neither published as `current`
+   * nor allowed to stop retrying. After it holds, an unchanged catalog has no
+   * new retirement information, so the Account-wide scan does not repeat.
+   */
+  checkpointsReconciledRevision: string | null;
   nextEligibleAtBySource: Map<string, number>;
   nextFairSourceOffset: number;
 };
@@ -617,76 +626,134 @@ function isCollectionCurrentnessConflict(error: unknown): boolean {
   return isPluginError(error) && error.code === 'plugin_collection_conflict';
 }
 
-function checkpointNeedsRetirement(input: Readonly<{
-  row: StoredCheckpointRowV1;
-  desiredCheckpointsByRowId: ReadonlyMap<string, GithubAutomationDesiredCheckpointV1 | null>;
-}>): boolean {
-  const checkpoint = input.row.value;
-  if (!isGithubAutomationEventCheckpointRowV1(checkpoint)) return false;
-  const desired = input.desiredCheckpointsByRowId.get(input.row.rowId);
-  // The source catalog is scoped to ONE watcher materialization and to
-  // currently enabled, undeleted Automations, while this checkpoint row is
-  // Account-scoped and addressed by Automation/event/selector alone. Absence
-  // from that caller-scoped catalog therefore proves nothing about the row: it
-  // may belong to another Machine's watcher, to a temporarily disabled
-  // Automation whose continuity a re-enable still needs, or to a watcher that
-  // has just moved to the materialization which will resume from this exact
-  // cursor. Only an explicitly present, same-identity-but-incompatible fact is
-  // retirement authority this observer owns.
-  if (desired === undefined || desired === null) return false;
+function readCheckpointRetirementCandidate(
+  row: StoredCheckpointRowV1,
+): Readonly<{
+  candidate: AutomationEventCheckpointRetirementCandidateV1;
+  sourceInstanceId: string;
+  sourceContractVersion: number;
+}> | null {
+  const checkpoint = row.value;
+  if (!isGithubAutomationEventCheckpointRowV1(checkpoint)) return null;
   const payload = checkpoint[GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.payload];
-  return checkpoint[GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.automationId] !== desired.automationId
-    || checkpoint[GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.sourceSelectorId] !== desired.sourceSelectorId
-    || payload.sourceInstanceId !== desired.sourceInstanceId
-    || payload.sourceContractVersion !== desired.sourceContractVersion;
+  return Object.freeze({
+    candidate: Object.freeze({
+      automationId: checkpoint[GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.automationId],
+      eventRef: Object.freeze({
+        pluginId: checkpoint[GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.eventPluginId],
+        localId: checkpoint[GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.eventLocalId],
+      }),
+      sourceSelectorId: checkpoint[GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.sourceSelectorId],
+      sourceContractVersion: payload.sourceContractVersion,
+    }),
+    sourceInstanceId: payload.sourceInstanceId,
+    sourceContractVersion: payload.sourceContractVersion,
+  });
+}
+
+function checkpointRetirementCandidateForServerClassification(input: Readonly<{
+  row: StoredCheckpointRowV1;
+  knownCurrentCheckpointsByRowId: ReadonlyMap<string, GithubAutomationKnownCurrentCheckpointV1 | null>;
+}>): AutomationEventCheckpointRetirementCandidateV1 | null {
+  const checkpoint = readCheckpointRetirementCandidate(input.row);
+  if (checkpoint === null) return null;
+  const knownCurrent = input.knownCurrentCheckpointsByRowId.get(input.row.rowId);
+  // This is only an inquiry reduction: an exact current source has no stale
+  // identity to ask the catalog about. Every absence, ambiguity, source change,
+  // or contract change is still classified by the server before any CAS.
+  if (
+    knownCurrent !== undefined
+    && knownCurrent !== null
+    && checkpoint.sourceInstanceId === knownCurrent.sourceInstanceId
+    && checkpoint.sourceContractVersion === knownCurrent.sourceContractVersion
+  ) return null;
+  return checkpoint.candidate;
+}
+
+function checkpointRetirementRowId(candidate: AutomationEventCheckpointRetirementCandidateV1): string {
+  return createGithubAutomationEventCheckpointRowId({
+    automationId: candidate.automationId,
+    eventRef: candidate.eventRef,
+    sourceSelectorId: candidate.sourceSelectorId,
+  });
 }
 
 /**
- * Once an exact catalog revision is fully adopted, retire the checkpoint rows
- * this observer positively knows are incompatible with the current source
- * definition, through their existing Collection CAS. Contraction of rows whose
- * Automation no longer exists is deliberately NOT done here: the caller-scoped
- * catalog carries no positive retirement fact, and inferring one from absence
- * is how one watcher deletes another watcher's continuity.
+ * Once an exact catalog revision is fully adopted, the server classifies each
+ * bounded checkpoint page under that same revision. This observer never infers
+ * retirement from its caller-scoped projection; it consumes only the returned
+ * server subset and keeps the existing Account Collection CAS as deletion owner.
  */
 async function reconcileCheckpointRows(input: Readonly<{
   context: BackgroundServiceContext;
   adopted: GithubAutomationAdoptedSourcesV1;
-}>): Promise<void> {
+}>): Promise<Readonly<{ complete: boolean }>> {
   const collection = requireGithubAccountStorage(input.context).collection(
     GITHUB_AUTOMATION_EVENT_CHECKPOINT_COLLECTION,
   );
   let cursor: string | undefined;
+  let complete = true;
   while (true) {
     input.context.signal.throwIfAborted();
     const page = await collection.query({
       index: GITHUB_AUTOMATION_EVENT_CHECKPOINT_INDEX_ID.byAutomationEventSource,
       order: 'asc',
-      limit: GITHUB_AUTOMATION_EVENT_CHECKPOINT_QUERY_PAGE_SIZE,
+      limit: PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1,
       ...(cursor === undefined ? {} : { cursor }),
     }, { signal: input.context.signal });
     input.context.signal.throwIfAborted();
+    const candidatesByRowId = new Map<string, Readonly<{
+      row: StoredCheckpointRowV1;
+      candidate: AutomationEventCheckpointRetirementCandidateV1;
+    }>>();
     for (const row of page.rows) {
-      if (!checkpointNeedsRetirement({
+      const candidate = checkpointRetirementCandidateForServerClassification({
         row,
-        desiredCheckpointsByRowId: input.adopted.desiredCheckpointsByRowId,
-      })) continue;
-      try {
-        await collection.delete(row.rowId, {
-          expectedRevision: row.revision,
-          signal: input.context.signal,
-        });
-      } catch (error) {
-        input.context.signal.throwIfAborted();
-        // A source attempt or another observer may have won this row. Its
-        // next ordinary source scan will decide whether any successor remains
-        // stale; this path never turns CAS loss into deletion authority.
-        if (isCollectionCurrentnessConflict(error)) continue;
-        throw error;
+        knownCurrentCheckpointsByRowId: input.adopted.knownCurrentCheckpointsByRowId,
+      });
+      if (candidate !== null) {
+        candidatesByRowId.set(checkpointRetirementRowId(candidate), Object.freeze({ row, candidate }));
       }
-      input.context.signal.throwIfAborted();
     }
-    if (page.nextCursor === undefined) return;
+    if (candidatesByRowId.size > 0) {
+      const result = await input.context.services.actions.execute('automation.event.sources.list', {
+        transport: { kind: 'checkpointedPull' },
+        knownRevision: input.adopted.revision,
+        checkpointRetirementCandidates: [...candidatesByRowId.values()].map(({ candidate }) => candidate),
+      }, { signal: input.context.signal });
+      input.context.signal.throwIfAborted();
+      if (
+        result.kind !== 'unchanged'
+        || result.revision !== input.adopted.revision
+        || result.checkpointRetirements === undefined
+      ) return Object.freeze({ complete: false });
+      const retirementRows = result.checkpointRetirements.map(checkpointRetirementRowId);
+      if (retirementRows.some((rowId) => !candidatesByRowId.has(rowId))) {
+        return Object.freeze({ complete: false });
+      }
+      for (const rowId of retirementRows) {
+        const candidate = candidatesByRowId.get(rowId);
+        if (candidate === undefined) return Object.freeze({ complete: false });
+        try {
+          await collection.delete(candidate.row.rowId, {
+            expectedRevision: candidate.row.revision,
+            signal: input.context.signal,
+          });
+        } catch (error) {
+          input.context.signal.throwIfAborted();
+          // A source attempt or another observer may have won this row. Its
+          // next ordinary source scan will decide whether any successor remains
+          // stale; this path never turns CAS loss into deletion authority.
+          if (isCollectionCurrentnessConflict(error)) {
+            complete = false;
+            continue;
+          }
+          throw error;
+        }
+        input.context.signal.throwIfAborted();
+      }
+    }
+    if (page.nextCursor === undefined) return Object.freeze({ complete });
     cursor = page.nextCursor;
   }
 }
@@ -911,38 +978,33 @@ function isGithubCheckpointedPullDefinition(
     && definition.observationTransport.kind === 'checkpointedPull';
 }
 
-function desiredCheckpointsByRowId(
+function knownCurrentCheckpointsByRowId(
   definitions: readonly GithubAutomationEventSourceDefinitionV1[],
-): ReadonlyMap<string, GithubAutomationDesiredCheckpointV1 | null> {
-  const desired = new Map<string, GithubAutomationDesiredCheckpointV1 | null>();
+): ReadonlyMap<string, GithubAutomationKnownCurrentCheckpointV1 | null> {
+  const current = new Map<string, GithubAutomationKnownCurrentCheckpointV1 | null>();
   for (const definition of definitions) {
     if (!isGithubCheckpointedPullDefinition(definition)) continue;
     const rowId = checkpointRowId(definition);
     const next = Object.freeze({
-      automationId: definition.automationId,
-      sourceSelectorId: definition.sourceSelectorId,
       sourceInstanceId: definition.sourceInstanceId,
       sourceContractVersion: definition.sourceContractVersion,
     });
-    const current = desired.get(rowId);
-    if (current === undefined) {
-      desired.set(rowId, next);
+    const existing = current.get(rowId);
+    if (existing === undefined) {
+      current.set(rowId, next);
     } else if (
-      current !== null
+      existing !== null
       && (
-        current.automationId !== next.automationId
-        || current.sourceSelectorId !== next.sourceSelectorId
-        || current.sourceInstanceId !== next.sourceInstanceId
-        || current.sourceContractVersion !== next.sourceContractVersion
+        existing.sourceInstanceId !== next.sourceInstanceId
+        || existing.sourceContractVersion !== next.sourceContractVersion
       )
     ) {
-      // The host normally owns source-selector uniqueness. If a complete
-      // source page ever violates it, retain the row until that authority
-      // settles rather than selecting one definition to delete against.
-      desired.set(rowId, null);
+      // A duplicated source identity is not definite retention evidence, so
+      // defer it to the catalog's server-side classifier.
+      current.set(rowId, null);
     }
   }
-  return desired;
+  return current;
 }
 
 function beginReconciliation(input: Readonly<{
@@ -986,8 +1048,10 @@ async function reportPendingReconciliation(input: Readonly<{
 
 async function reportCurrentCatalog(input: Readonly<{
   context: BackgroundServiceContext;
+  state: GithubAutomationObserverStateV1;
   revision: string;
 }>): Promise<void> {
+  input.state.reconciliation = null;
   await reportCatalogStatus({
     context: input.context,
     observedRevision: input.revision,
@@ -996,6 +1060,33 @@ async function reportCurrentCatalog(input: Readonly<{
     scanStartedAt: null,
     nextRetryAt: null,
   });
+}
+
+/**
+ * A revision-complete catalog is only `current` once its checkpoint rows have
+ * reconciled. Reporting `current` first would let the product claim a healthy
+ * pull source while a required retirement of stale or incompatible rows had
+ * failed with nothing to expose it.
+ */
+async function reportAdoptedCatalog(input: Readonly<{
+  context: BackgroundServiceContext;
+  state: GithubAutomationObserverStateV1;
+  revision: string;
+  now: number;
+  reconciliationLateAfterMs: number;
+  retryDelayMs: number;
+  alreadyReportedPending?: boolean;
+}>): Promise<void> {
+  if (input.state.checkpointsReconciledRevision === input.revision) {
+    await reportCurrentCatalog({
+      context: input.context,
+      state: input.state,
+      revision: input.revision,
+    });
+    return;
+  }
+  if (input.alreadyReportedPending === true) return;
+  await reportPendingReconciliation({ ...input, observedRevision: input.revision });
 }
 
 function sourceRefreshResult(
@@ -1021,6 +1112,7 @@ async function refreshCurrentSources(input: Readonly<{
   const seenCursors = new Set<string>();
   let cursor: string | undefined;
   let revision: string | null = null;
+  let reportedPending = false;
   while (true) {
     input.context.signal.throwIfAborted();
     const result = await input.context.services.actions.execute('automation.event.sources.list', {
@@ -1032,8 +1124,7 @@ async function refreshCurrentSources(input: Readonly<{
     input.context.signal.throwIfAborted();
     if (result.kind === 'unchanged') {
       if (input.state.adopted !== null && input.state.adopted.revision === result.revision) {
-        input.state.reconciliation = null;
-        await reportCurrentCatalog({ context: input.context, revision: result.revision });
+        await reportAdoptedCatalog({ ...input, revision: result.revision });
         return sourceRefreshResult(input.state.adopted, true);
       }
       await reportPendingReconciliation({
@@ -1063,17 +1154,20 @@ async function refreshCurrentSources(input: Readonly<{
     }
     if (input.state.adopted === null || input.state.adopted.revision !== revision) {
       await reportPendingReconciliation({ ...input, observedRevision: revision });
+      reportedPending = true;
     }
     definitions.push(...result.definitions);
     if (result.nextCursor === null) {
       const adopted = Object.freeze({
         revision,
         candidates: sourceCandidates(definitions),
-        desiredCheckpointsByRowId: desiredCheckpointsByRowId(definitions),
+        knownCurrentCheckpointsByRowId: knownCurrentCheckpointsByRowId(definitions),
       });
       input.state.adopted = adopted;
-      input.state.reconciliation = null;
-      await reportCurrentCatalog({ context: input.context, revision });
+      if (input.state.checkpointsReconciledRevision !== revision) {
+        input.state.checkpointsReconciledRevision = null;
+      }
+      await reportAdoptedCatalog({ ...input, revision, alreadyReportedPending: reportedPending });
       return sourceRefreshResult(adopted, true);
     }
     if (seenCursors.has(result.nextCursor)) {
@@ -1138,7 +1232,7 @@ function checkpointForSafeObservations(input: Readonly<{
       cursor: input.cursor,
       observedAtMs: input.observedAtMs,
       etag: input.etag,
-      maxEntries: GITHUB_AUTOMATION_EVENT_ADMISSIONS_PER_POLL,
+      maxEntries: PLUGIN_COLLECTION_MUTATION_BATCH_MAX_ROWS_V1,
       events: input.events,
     });
     return full.kind === 'observations' ? full.checkpoint : null;
@@ -1272,7 +1366,7 @@ async function runObservedSource(input: Readonly<{
       cursor: existing.cursor,
       observedAtMs,
       etag: polled.etag,
-      maxEntries: GITHUB_AUTOMATION_EVENT_ADMISSIONS_PER_POLL,
+      maxEntries: PLUGIN_COLLECTION_MUTATION_BATCH_MAX_ROWS_V1,
       events: polled.events,
     });
     if (classified.kind === 'historyGap') {
@@ -1581,6 +1675,7 @@ export function createGithubAutomationEventCheckpointedPullObserver(
   const state: GithubAutomationObserverStateV1 = {
     adopted: null,
     reconciliation: null,
+    checkpointsReconciledRevision: null,
     nextEligibleAtBySource: new Map<string, number>(),
     nextFairSourceOffset: 0,
   };
@@ -1601,8 +1696,20 @@ export function createGithubAutomationEventCheckpointedPullObserver(
         reconciliationLateAfterMs,
         retryDelayMs,
       });
-      if (refreshed.isCurrent && refreshed.adopted !== null) {
-        await reconcileCheckpointRows({ context, adopted: refreshed.adopted });
+      if (
+        refreshed.isCurrent
+        && refreshed.adopted !== null
+        && state.checkpointsReconciledRevision !== refreshed.adopted.revision
+      ) {
+        const reconciled = await reconcileCheckpointRows({ context, adopted: refreshed.adopted });
+        if (reconciled.complete) {
+          state.checkpointsReconciledRevision = refreshed.adopted.revision;
+          await reportCurrentCatalog({
+            context,
+            state,
+            revision: refreshed.adopted.revision,
+          });
+        }
       }
     } catch (error) {
       if (context.signal.aborted) throw error;

@@ -1,19 +1,27 @@
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { TriageSourceFailureV1 } from '@happier-dev/triage-protocol/v1';
 
-import { admitGithubEntryInvocation } from './admission.js';
+import { admitGithubDetailInvocation } from './admission.js';
 import {
   GithubChangedFilesInputV1Schema,
   GithubChecksInputV1Schema,
   GithubCommentsInputV1Schema,
+  GithubFeedbackInputV1Schema,
+  GithubFeedbackResultV1Schema,
   GithubReviewsInputV1Schema,
   GithubTimelineInputV1Schema,
   type GithubChangedFilesResultV1,
   type GithubChecksResultV1,
   type GithubCommentsResultV1,
+  type GithubFeedbackResultV1,
   type GithubReviewsResultV1,
   type GithubTimelineResultV1,
 } from './detail/contracts.js';
+import {
+  readGithubFeedbackConnection,
+  type GithubFeedbackCommentV1,
+} from './feedback.js';
+import { readGithubRepositoryIdFromCollisionScope } from './identity.js';
 import {
   decodeGithubDetailContinuation,
   encodeGithubDetailContinuation,
@@ -132,17 +140,16 @@ export async function listGithubTimeline(
   const parsed = GithubTimelineInputV1Schema.safeParse(input);
   if (!parsed.success) return unavailable(INVALID_INPUT_FAILURE);
   const request = parsed.data;
+  const position = resolvePage(request.continuation, request.limit);
+  if (!position.ok) return unavailable(CONTINUATION_UNREADABLE_FAILURE);
 
-  const admitted = await admitGithubEntryInvocation({
+  const admitted = await admitGithubDetailInvocation({
     instance: request.instance,
     localRef: request.localRef,
     routingToken: request.routingToken,
     admissibleKinds: ['pull-request', 'issue'],
   }, context);
   if (!admitted.ok) return unavailable(admitted.failure);
-
-  const position = resolvePage(request.continuation, request.limit);
-  if (!position.ok) return unavailable(CONTINUATION_UNREADABLE_FAILURE);
 
   const page = await readGithubTimelinePage({
     route: admitted.route,
@@ -168,8 +175,10 @@ export async function listGithubChangedFiles(
   const parsed = GithubChangedFilesInputV1Schema.safeParse(input);
   if (!parsed.success) return unavailable(INVALID_INPUT_FAILURE);
   const request = parsed.data;
+  const position = resolvePage(request.continuation, request.limit);
+  if (!position.ok) return unavailable(CONTINUATION_UNREADABLE_FAILURE);
 
-  const admitted = await admitGithubEntryInvocation({
+  const admitted = await admitGithubDetailInvocation({
     instance: request.instance,
     localRef: request.localRef,
     routingToken: request.routingToken,
@@ -178,9 +187,6 @@ export async function listGithubChangedFiles(
     admissibleKinds: ['pull-request'],
   }, context);
   if (!admitted.ok) return unavailable(admitted.failure);
-
-  const position = resolvePage(request.continuation, request.limit);
-  if (!position.ok) return unavailable(CONTINUATION_UNREADABLE_FAILURE);
 
   const page = await readGithubChangedFilesPage({
     route: admitted.route,
@@ -206,17 +212,16 @@ export async function listGithubComments(
   const parsed = GithubCommentsInputV1Schema.safeParse(input);
   if (!parsed.success) return unavailable(INVALID_INPUT_FAILURE);
   const request = parsed.data;
+  const position = resolvePage(request.continuation, request.limit);
+  if (!position.ok) return unavailable(CONTINUATION_UNREADABLE_FAILURE);
 
-  const admitted = await admitGithubEntryInvocation({
+  const admitted = await admitGithubDetailInvocation({
     instance: request.instance,
     localRef: request.localRef,
     routingToken: request.routingToken,
     admissibleKinds: ['pull-request', 'issue'],
   }, context);
   if (!admitted.ok) return unavailable(admitted.failure);
-
-  const position = resolvePage(request.continuation, request.limit);
-  if (!position.ok) return unavailable(CONTINUATION_UNREADABLE_FAILURE);
 
   const page = await readGithubIssueCommentsPage({
     route: admitted.route,
@@ -229,6 +234,96 @@ export async function listGithubComments(
   return Object.freeze({
     kind: 'comments' as const,
     ...shapePage(page.value, request.limit),
+  });
+}
+
+/* ------------------------------------------------------------------- feedback */
+
+/** Reads exactly one independently paged GitHub pull-request feedback connection. */
+export async function readGithubFeedback(
+  input: unknown,
+  context: PluginInvocationContext,
+): Promise<GithubFeedbackResultV1> {
+  const parsed = GithubFeedbackInputV1Schema.safeParse(input);
+  if (!parsed.success) return unavailable(INVALID_INPUT_FAILURE);
+  const request = parsed.data;
+
+  const admitted = await admitGithubDetailInvocation({
+    instance: request.instance,
+    localRef: request.localRef,
+    routingToken: request.routingToken,
+    admissibleKinds: ['pull-request'],
+  }, context);
+  if (!admitted.ok) return unavailable(admitted.failure);
+  const repositoryId = readGithubRepositoryIdFromCollisionScope(admitted.localRef.collisionScope);
+  if (repositoryId === null) return unavailable(INVALID_INPUT_FAILURE);
+
+  const common = {
+    route: admitted.route,
+    repositoryId,
+    number: admitted.entryNumber,
+    kindId: 'pull-request' as const,
+    cursor: request.cursor ?? null,
+  };
+  const result = await readGithubFeedbackConnection(
+    request.connection === 'threadReplies'
+      ? { ...common, connection: 'threadReplies', threadId: request.threadId }
+      : { ...common, connection: request.connection },
+    { client: admitted.client, now: Date.now, signal: admitted.signal },
+  );
+
+  if (result.kind === 'unavailable') return result;
+  if (result.kind === 'requests') {
+    return Object.freeze({
+      kind: result.kind,
+      rows: result.rows.map((row) => ({ ...row })),
+      ...(result.nextCursor === null ? {} : { nextCursor: result.nextCursor }),
+    });
+  }
+  if (result.kind === 'reviews') {
+    return Object.freeze({
+      kind: result.kind,
+      rows: result.rows.map((row) => ({
+        id: row.id,
+        body: row.body,
+        state: row.state,
+        ...(row.author === null ? {} : { author: row.author }),
+        ...(row.submittedAtMs === null ? {} : { submittedAtMs: row.submittedAtMs }),
+        ...(row.url === null ? {} : { url: row.url }),
+        ...(row.truncated === true ? { truncated: true as const } : {}),
+      })),
+      ...(result.reviewDecision === null ? {} : { reviewDecision: result.reviewDecision }),
+      ...(result.previousCursor === null ? {} : { previousCursor: result.previousCursor }),
+    });
+  }
+  const shapeComment = (row: GithubFeedbackCommentV1) => ({
+    id: row.id,
+    body: row.body,
+    ...(row.author !== null ? { author: row.author } : {}),
+    ...(row.createdAtMs !== null ? { createdAtMs: row.createdAtMs } : {}),
+    ...(row.url !== null ? { url: row.url } : {}),
+    ...(row.truncated === true ? { truncated: true as const } : {}),
+  });
+  if (result.kind === 'threads') {
+    return GithubFeedbackResultV1Schema.parse({
+      kind: 'threads',
+      rows: result.rows.map((row) => ({
+        id: row.id,
+        isResolved: row.isResolved,
+        replies: row.replies.map(shapeComment),
+        ...(row.path === null ? {} : { path: row.path }),
+        ...(row.line === null ? {} : { line: row.line }),
+        ...(row.previousRepliesCursor === null ? {} : { previousRepliesCursor: row.previousRepliesCursor }),
+        ...(row.truncated === true ? { truncated: true as const } : {}),
+      })),
+      ...(result.previousCursor === null ? {} : { previousCursor: result.previousCursor }),
+    });
+  }
+  return GithubFeedbackResultV1Schema.parse({
+    kind: result.kind,
+    ...('threadId' in result ? { threadId: result.threadId } : {}),
+    rows: result.rows.map(shapeComment),
+    ...(result.previousCursor === null ? {} : { previousCursor: result.previousCursor }),
   });
 }
 
@@ -250,7 +345,7 @@ export async function readGithubChecks(
   if (!parsed.success) return unavailable(INVALID_INPUT_FAILURE);
   const request = parsed.data;
 
-  const admitted = await admitGithubEntryInvocation({
+  const admitted = await admitGithubDetailInvocation({
     instance: request.instance,
     localRef: request.localRef,
     routingToken: request.routingToken,
@@ -261,7 +356,7 @@ export async function readGithubChecks(
   const read = await readGithubChecksSurface({
     route: admitted.route,
     entryNumber: admitted.entryNumber,
-  }, { client: admitted.client, now: Date.now, signal: context.signal });
+  }, { client: admitted.client, now: Date.now, signal: admitted.signal });
   if (!read.ok) return unavailable(toTriageFailure(read.failure));
 
   const { headRevision, surface } = read.value;
@@ -317,7 +412,7 @@ export async function readGithubReviews(
   if (!parsed.success) return unavailable(INVALID_INPUT_FAILURE);
   const request = parsed.data;
 
-  const admitted = await admitGithubEntryInvocation({
+  const admitted = await admitGithubDetailInvocation({
     instance: request.instance,
     localRef: request.localRef,
     routingToken: request.routingToken,
@@ -328,7 +423,7 @@ export async function readGithubReviews(
   const surface = await readGithubReviewsSurface({
     route: admitted.route,
     entryNumber: admitted.entryNumber,
-  }, { client: admitted.client, now: Date.now, signal: context.signal });
+  }, { client: admitted.client, now: Date.now, signal: admitted.signal });
 
   const projected = projectGithubReviewPeople({
     historical: surface.historical,
@@ -348,6 +443,8 @@ export async function readGithubReviews(
     ...(surface.requestsFailure === null
       ? {}
       : { requestsFailure: toTriageFailure(surface.requestsFailure) }),
+    ...(surface.reviewsIncomplete ? { reviewsIncomplete: true as const } : {}),
+    ...(surface.requestsIncomplete ? { requestsIncomplete: true as const } : {}),
     omittedRowCount: projected.omittedRowCount,
     projectionTruncated: projected.projectionTruncated,
   });

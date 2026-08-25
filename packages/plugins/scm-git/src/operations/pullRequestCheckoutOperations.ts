@@ -347,6 +347,7 @@ export function createGitPullRequestCheckoutOperations(
                     sourcePath: request.sourcePath,
                     displayName: branch,
                     baseRef: branch,
+                    branchMode: 'existing',
                     targetPath: request.mode === 'local' ? context.cwd : null,
                 },
             });

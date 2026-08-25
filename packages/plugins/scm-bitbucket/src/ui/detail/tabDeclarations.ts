@@ -6,12 +6,17 @@
  * place that states each panel's lifetime, exactly what survives a leave, which
  * read owns its data, and which component owns its vertical scroll.
  *
- * There is exactly one entry kind on this forge, so there is one composition.
- * `Diff` is deliberately ABSENT rather than present and empty: Bitbucket serves
- * a diff as a redirected raw text stream rather than a JSON file array, and its
- * reader is a separate unit. An empty tab and an unbuilt tab must not look
- * alike, and a `Diff` tab that rendered nothing would read as "this pull request
- * changes nothing". There is likewise no Issues affordance — Atlassian is
+ * There is exactly one entry kind on this forge — a pull request — so there is
+ * one composition, and it declares NO Sessions plane. The Triage common header
+ * is the one source-neutral owner of an entry's intent and of its Session
+ * relationship (`core/SURFACE.md` §2.2); a forge's `Work Sessions` tab exists
+ * only on an ISSUE composition, "because a PR's Session relationship is already
+ * in the aggregate's common header and a second surface for it would be a
+ * second owner" (`sources/SCM.md` §3.7.6). A source contributes capability and
+ * provider Actions, never a second Session surface.
+ *
+ * `Diff` reads Bitbucket's redirected raw text and its JSON diffstat companion through one
+ * source-owned Action. There is likewise no Issues affordance — Atlassian is
  * removing the Bitbucket Cloud issue tracker, so there is no durable product to
  * build a tab against.
  */
@@ -19,9 +24,9 @@
 export type BitbucketDetailTabIdV1 =
   | 'overview'
   | 'activity'
+  | 'diff'
   | 'builds'
-  | 'comments'
-  | 'sessions';
+  | 'comments';
 
 /** Which read a panel's content comes from. */
 export type BitbucketDetailTabReadPlaneV1 =
@@ -29,12 +34,12 @@ export type BitbucketDetailTabReadPlaneV1 =
   | 'observation'
   /** The one endpoint carrying approvals, updates and comments together. */
   | 'activity'
+  /** The raw-diff redirect and diffstat collection. */
+  | 'diff'
   /** The pull request's own build-status collection. */
   | 'builds'
   /** The pull request's comment collection, in provider order. */
-  | 'comments'
-  /** The bounded linked-Session projection the launch input carried. */
-  | 'linkedSessions';
+  | 'comments';
 
 export type BitbucketDetailTabDeclarationV1 = Readonly<{
   id: BitbucketDetailTabIdV1;
@@ -66,6 +71,14 @@ export const BITBUCKET_DETAIL_TABS_V1: readonly BitbucketDetailTabDeclarationV1[
     scrollOwner: 'list' as const,
   }),
   Object.freeze({
+    id: 'diff' as const,
+    title: 'Diff',
+    retention: 'retain' as const,
+    retainedState: 'the bounded raw prefix, diffstat rows and reader scroll anchor',
+    readPlane: 'diff' as const,
+    scrollOwner: 'scrollArea' as const,
+  }),
+  Object.freeze({
     id: 'builds' as const,
     title: 'Builds',
     retention: 'discard' as const,
@@ -80,14 +93,6 @@ export const BITBUCKET_DETAIL_TABS_V1: readonly BitbucketDetailTabDeclarationV1[
     retainedState: 'nothing: comment rows, the opaque next link, the 30-record window, scroll,'
       + ' reply expansion and any draft remount from defaults',
     readPlane: 'comments' as const,
-    scrollOwner: 'list' as const,
-  }),
-  Object.freeze({
-    id: 'sessions' as const,
-    title: 'Sessions',
-    retention: 'discard' as const,
-    retainedState: 'nothing; there is no provider or Session-store read to keep alive',
-    readPlane: 'linkedSessions' as const,
     scrollOwner: 'list' as const,
   }),
 ] as const);

@@ -1,32 +1,6 @@
-import { GITHUB_API_ORIGIN } from './githubProviderContracts.js';
-
-export const MAX_GITHUB_ISSUE_COMMENT_CONTINUATION_URL_LENGTH = 2_048;
-const MAX_GITHUB_ISSUE_COMMENT_CONTINUATION_SCOPE_LENGTH = 512;
-
 export type GithubIssueCommentCursorPositionV1 = Readonly<{
   updatedAtIso: string;
   commentIdAtUpdatedAt: string;
-}>;
-
-export type GithubIssueCommentContinuationV1 = Readonly<{
-  transport: 'poll';
-  connectionId: string;
-  providerConnectionKey: string;
-  /** The immutable `since` filter shared by every Link page in this window. */
-  filterSince: string;
-  /**
-   * The furthest terminal classification in this Link window. The outer cursor
-   * remains at the window start until every continuation page is exhausted so
-   * a later page cannot hide a lower ID at the same update timestamp.
-   */
-  windowHighWatermark: GithubIssueCommentCursorPositionV1;
-  /**
-   * A bounded replay cursor only for re-reading this exact URL after a batch
-   * cap. It must not be applied to a later Link page, whose equal-timestamp
-   * IDs are not guaranteed to be ordered by page.
-   */
-  replayCursor?: GithubIssueCommentCursorPositionV1;
-  url: string;
 }>;
 
 export type GithubIssueCommentCursorV1 = Readonly<{
@@ -34,11 +8,6 @@ export type GithubIssueCommentCursorV1 = Readonly<{
   updatedAtIso: string;
   commentIdAtUpdatedAt: string;
   etag: string | null;
-  /**
-   * A bounded private checkpoint continuation. Older released V1 cursors did
-   * not have this field and normalize to `null` on read.
-   */
-  continuation?: GithubIssueCommentContinuationV1 | null;
 }>;
 
 export type GithubIssueCommentCursorCandidateV1 = Readonly<{
@@ -84,78 +53,6 @@ function normalizeGithubCommentId(value: string): string {
   return value;
 }
 
-function readBoundedScopeValue(value: unknown, label: string): string {
-  if (typeof value !== 'string' || !value.trim() || value.length > MAX_GITHUB_ISSUE_COMMENT_CONTINUATION_SCOPE_LENGTH) {
-    throw new RangeError(`GitHub issue-comment continuation ${label} is invalid`);
-  }
-  return value;
-}
-
-function parseCursorPosition(value: unknown, label: string): GithubIssueCommentCursorPositionV1 {
-  if (!isRecord(value)) {
-    throw new RangeError(`GitHub issue-comment ${label} must be an object`);
-  }
-  if (typeof value.updatedAtIso !== 'string' || typeof value.commentIdAtUpdatedAt !== 'string') {
-    throw new RangeError(`GitHub issue-comment ${label} is missing its ordering boundary`);
-  }
-  return Object.freeze({
-    updatedAtIso: canonicalIsoTimestamp(parseGithubTimestamp(value.updatedAtIso)),
-    commentIdAtUpdatedAt: normalizeCursorDecimalId(value.commentIdAtUpdatedAt),
-  });
-}
-
-function parseGithubIssueCommentContinuation(value: unknown): GithubIssueCommentContinuationV1 | null {
-  if (value === undefined || value === null) return null;
-  if (!isRecord(value)) {
-    throw new RangeError('GitHub issue-comment continuation must be an object');
-  }
-  // A checkpoint from another transport must restart at its stable cursor
-  // boundary; it must never lend that transport's opaque pagination URL to
-  // polling. The current provider has no selectable durable-push path, but
-  // this makes a future transport transition fail closed in the cursor owner.
-  if (value.transport !== 'poll') return null;
-  if (typeof value.url !== 'string'
-    || !value.url
-    || value.url.length > MAX_GITHUB_ISSUE_COMMENT_CONTINUATION_URL_LENGTH) {
-    throw new RangeError('GitHub issue-comment continuation URL is invalid');
-  }
-  let parsedUrl: URL;
-  try {
-    parsedUrl = new URL(value.url);
-  } catch {
-    throw new RangeError('GitHub issue-comment continuation URL is invalid');
-  }
-  if (
-    parsedUrl.protocol !== 'https:'
-    || parsedUrl.origin !== GITHUB_API_ORIGIN
-    || parsedUrl.username
-    || parsedUrl.password
-    || parsedUrl.hash
-  ) {
-    throw new RangeError('GitHub issue-comment continuation URL must stay on the declared GitHub API origin');
-  }
-  const filterSince = canonicalIsoTimestamp(parseGithubTimestamp(readBoundedScopeValue(value.filterSince, 'filter since')))
-    .replace(/\.\d{3}Z$/u, 'Z');
-  const sinceValues = parsedUrl.searchParams.getAll('since');
-  if (sinceValues.length !== 1
-    || canonicalIsoTimestamp(parseGithubTimestamp(sinceValues[0]!)).replace(/\.\d{3}Z$/u, 'Z') !== filterSince) {
-    throw new RangeError('GitHub issue-comment continuation URL does not match its stored filter');
-  }
-  const windowHighWatermark = parseCursorPosition(value.windowHighWatermark, 'continuation high watermark');
-  const replayCursor = value.replayCursor === undefined
-    ? undefined
-    : parseCursorPosition(value.replayCursor, 'continuation replay cursor');
-  return Object.freeze({
-    transport: 'poll',
-    connectionId: readBoundedScopeValue(value.connectionId, 'connection ID'),
-    providerConnectionKey: readBoundedScopeValue(value.providerConnectionKey, 'connection key'),
-    filterSince,
-    windowHighWatermark,
-    ...(replayCursor === undefined ? {} : { replayCursor }),
-    url: parsedUrl.toString(),
-  });
-}
-
 function parseGithubTimestamp(value: string): number {
   const timestamp = Date.parse(value);
   if (!Number.isSafeInteger(timestamp) || timestamp < 0) {
@@ -199,21 +96,12 @@ function positionFromCursorPosition(position: GithubIssueCommentCursorPositionV1
   };
 }
 
-function cursorPositionFromPosition(position: GithubIssueCommentPosition): GithubIssueCommentCursorPositionV1 {
-  return Object.freeze({
-    updatedAtIso: canonicalIsoTimestamp(position.updatedAtMs),
-    commentIdAtUpdatedAt: position.commentId,
-  });
-}
-
 /** Keeps every comparison of GitHub's `(updated_at, id)` cursor order in its canonical owner. */
-export function maximumGithubIssueCommentCursorPosition(
+export function compareGithubIssueCommentCursorPositions(
   left: GithubIssueCommentCursorPositionV1,
   right: GithubIssueCommentCursorPositionV1,
-): GithubIssueCommentCursorPositionV1 {
-  const leftPosition = positionFromCursorPosition(left);
-  const rightPosition = positionFromCursorPosition(right);
-  return cursorPositionFromPosition(comparePositions(leftPosition, rightPosition) >= 0 ? leftPosition : rightPosition);
+): number {
+  return comparePositions(positionFromCursorPosition(left), positionFromCursorPosition(right));
 }
 
 /** Parses the persisted provider-owned cursor without lending it a third feature cursor shape. */
@@ -227,34 +115,12 @@ export function parseGithubIssueCommentCursor(value: unknown): GithubIssueCommen
   if (value.etag !== null && typeof value.etag !== 'string') {
     throw new RangeError('GitHub issue-comment checkpoint has an invalid ETag');
   }
-  const rawContinuation = value.continuation;
-  const continuation = parseGithubIssueCommentContinuation(rawContinuation);
-  const cursor: GithubIssueCommentCursorV1 = Object.freeze({
+  return Object.freeze({
     v: 1,
     updatedAtIso: canonicalIsoTimestamp(parseGithubTimestamp(value.updatedAtIso)),
     commentIdAtUpdatedAt: normalizeCursorDecimalId(value.commentIdAtUpdatedAt),
-    // ETags are validators for a complete first page only. A continuation
-    // window, including one inherited from another transport, starts fresh.
-    etag: continuation === null && (rawContinuation === undefined || rawContinuation === null)
-      ? value.etag
-      : null,
-    continuation,
+    etag: value.etag,
   });
-  const cursorPosition = positionFromCursor(cursor);
-  if (continuation !== null) {
-    if (continuation.filterSince !== createGithubIssueCommentSince(cursor)) {
-      throw new RangeError('GitHub issue-comment continuation filter does not match its checkpoint');
-    }
-    const highWatermark = positionFromCursorPosition(continuation.windowHighWatermark);
-    if (comparePositions(highWatermark, cursorPosition) < 0) {
-      throw new RangeError('GitHub issue-comment continuation high watermark precedes its checkpoint');
-    }
-    if (continuation.replayCursor !== undefined
-      && comparePositions(positionFromCursorPosition(continuation.replayCursor), highWatermark) > 0) {
-      throw new RangeError('GitHub issue-comment continuation replay cursor exceeds its high watermark');
-    }
-  }
-  return cursor;
 }
 
 function positionFromCandidate(candidate: GithubIssueCommentCursorCandidateV1): GithubIssueCommentPosition {
@@ -318,7 +184,6 @@ export function classifyGithubIssueCommentPage(input: Readonly<{
       updatedAtIso: canonicalIsoTimestamp(position.updatedAtMs),
       commentIdAtUpdatedAt: position.commentId,
       etag: cursor.etag,
-      continuation: cursor.continuation ?? null,
     };
     cursorPosition = position;
   }

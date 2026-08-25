@@ -1,17 +1,25 @@
 import type { TriageConfiguredSourceInstanceV1 } from '@happier-dev/triage-protocol/v1';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import currentUser from '../fixtures/currentUser.json' with { type: 'json' };
+import pullRequestSelf from '../fixtures/pullRequestSelf.json' with { type: 'json' };
 
 import { encodeBitbucketConfiguration } from '../instance.js';
 import { BITBUCKET_CONNECTED_ACCOUNT_PURPOSE } from './descriptor.js';
 import {
+  BITBUCKET_MOUNTED_DETAIL_DEADLINE_MS,
   listBitbucketActivity,
   listBitbucketBuilds,
   listBitbucketComments,
+  readBitbucketDiff,
+  readBitbucketOverview,
 } from './detailActions.js';
 import {
   BitbucketActivityResultV1Schema,
   BitbucketBuildsResultV1Schema,
   BitbucketCommentsResultV1Schema,
+  BitbucketDiffResultV1Schema,
+  BitbucketOverviewResultV1Schema,
 } from './detailContracts.js';
 import {
   accountRef,
@@ -70,6 +78,47 @@ function harness(route: (url: string) => StubReply | undefined) {
 function envelope(values: readonly unknown[], next?: string): StubReply {
   return { body: { pagelen: 25, page: 1, values, ...(next === undefined ? {} : { next }) } };
 }
+
+afterEach(() => {
+  vi.useRealTimers();
+});
+
+describe('the mounted Bitbucket detail deadline', () => {
+  it('bounds account materialization as part of the whole operation', async () => {
+    vi.useFakeTimers();
+    const { connectedAccounts: baseAccounts } = createConnectedAccountsStub({
+      accounts: [{ accountId: 'account-1' }],
+    });
+    const connectedAccounts = {
+      ...baseAccounts,
+      async materializeListedAccount(
+        _request: unknown,
+        options?: Readonly<{ signal?: AbortSignal }>,
+      ) {
+        return await new Promise<never>((_resolve, reject) => {
+          options?.signal?.addEventListener('abort', () => {
+            reject(options.signal?.reason);
+          }, { once: true });
+        });
+      },
+    } as typeof baseAccounts;
+    const { http } = createHttpStub(() => undefined);
+    const settling = readBitbucketOverview(
+      planeInput(),
+      createInvocationContext(connectedAccounts, http),
+    );
+
+    await vi.advanceTimersByTimeAsync(BITBUCKET_MOUNTED_DETAIL_DEADLINE_MS);
+
+    const settled = BitbucketOverviewResultV1Schema.parse(await settling);
+    expect(settled.kind).toBe('unavailable');
+    if (settled.kind !== 'unavailable') return;
+    expect(settled.failure).toMatchObject({
+      class: 'transient',
+      code: 'invocation-deadline-exceeded',
+    });
+  });
+});
 
 /* -------------------------------------------------------------------- builds */
 
@@ -330,5 +379,110 @@ describe('Bitbucket detail admission', () => {
     if (settled.kind !== 'unavailable') throw new Error('unreachable');
     expect(settled.failure.code).toBe('kind-not-declared');
     expect(seam.requests).toHaveLength(0);
+  });
+});
+
+describe('Bitbucket authoritative Overview and Diff planes', () => {
+  it('re-reads Overview from Bitbucket instead of replaying only the launch observation', async () => {
+    const fresh = { ...pullRequestSelf, title: 'Fresh provider title' };
+    const seam = harness((url) => {
+      if (url.endsWith('/2.0/user')) return { body: currentUser };
+      if (url.includes('/pullrequests/42')) return { body: fresh };
+      return undefined;
+    });
+    const settled = BitbucketOverviewResultV1Schema.parse(
+      await readBitbucketOverview(planeInput(), seam.context),
+    );
+    expect(settled.kind).toBe('overview');
+    if (settled.kind !== 'overview' || settled.observation.kind !== 'present') {
+      throw new Error('the fresh overview must be present');
+    }
+    expect(settled.observation.snapshot.title).toBe('Fresh provider title');
+    expect(settled.observation.snapshot.summary).toBe(pullRequestSelf.summary.raw);
+    expect(seam.requests.map((request) => request.url)).toEqual([
+      'https://api.bitbucket.org/2.0/user',
+      `https://api.bitbucket.org/2.0/repositories/${encodeURIComponent(WORKSPACE_UUID)}`
+        + `/${encodeURIComponent(REPOSITORY_UUID)}/pullrequests/42`,
+    ]);
+  });
+
+  it('reports a failed authoritative Overview read as unavailable, never as refreshed', async () => {
+    const seam = harness((url) => (
+      url.endsWith('/2.0/user') ? { status: 401, body: { type: 'error' } } : undefined
+    ));
+    const settled = BitbucketOverviewResultV1Schema.parse(
+      await readBitbucketOverview(planeInput(), seam.context),
+    );
+    expect(settled.kind).toBe('unavailable');
+    expect(seam.requests).toHaveLength(1);
+  });
+
+  it('follows the provider raw-diff redirect, keeps diffstat, and truncates the result by Action bytes', async () => {
+    const redirected = 'https://api.bitbucket.org/2.0/repositories/x/y/diff/main..feature';
+    // Backslashes expand in JSON, so this exceeds the Action gate without a multi-megabyte fixture.
+    const oversized = `diff --git a/a.ts b/a.ts\n${'\\'.repeat(550_000)}`;
+    const seam = harness((url) => {
+      if (url.endsWith('/pullrequests/42/diff')) {
+        return { status: 302, headers: { location: redirected } };
+      }
+      if (url === redirected) return { bodyBytes: oversized };
+      if (url.includes('/pullrequests/42/diffstat')) {
+        return envelope([{
+          status: 'modified',
+          lines_added: 2,
+          lines_removed: 1,
+          old: { path: 'src/a.ts' },
+          new: { path: 'src/a.ts' },
+        }]);
+      }
+      return undefined;
+    });
+
+    const settled = BitbucketDiffResultV1Schema.parse(
+      await readBitbucketDiff(planeInput(), seam.context),
+    );
+    expect(settled.kind).toBe('diff');
+    if (settled.kind !== 'diff') throw new Error('the diff must settle');
+    expect(settled.files.map((file) => file.path)).toEqual(['src/a.ts']);
+    expect(settled.raw).toMatchObject({ kind: 'available', truncated: true });
+    expect(new TextEncoder().encode(JSON.stringify(settled)).length).toBeLessThanOrEqual(1_024 * 1_024);
+    if (settled.raw?.kind !== 'available') throw new Error('the raw prefix must be available');
+    expect(new TextEncoder().encode(JSON.stringify({
+      ...settled,
+      raw: { ...settled.raw, text: `${settled.raw.text}\\` },
+    })).length).toBeGreaterThan(1_024 * 1_024);
+    expect(seam.requests.find((request) => request.url.endsWith('/pullrequests/42/diff'))?.redirect)
+      .toBe('manual');
+    expect(seam.requests.some((request) => request.url === redirected)).toBe(true);
+  });
+
+  it('keeps the pull request and reports Bitbucket 555 as a typed too-large diff', async () => {
+    const seam = harness((url) => {
+      if (url.endsWith('/pullrequests/42/diff')) return { status: 555, body: { type: 'error' } };
+      if (url.includes('/pullrequests/42/diffstat')) return envelope([]);
+      return undefined;
+    });
+    const settled = BitbucketDiffResultV1Schema.parse(
+      await readBitbucketDiff(planeInput(), seam.context),
+    );
+    expect(settled).toMatchObject({ kind: 'diff', raw: { kind: 'tooLarge' } });
+  });
+
+  it('refuses a raw-diff redirect outside the Bitbucket API origin before sending credentials', async () => {
+    const seam = harness((url) => {
+      if (url.endsWith('/pullrequests/42/diff')) {
+        return { status: 302, headers: { location: 'https://example.invalid/stolen.diff' } };
+      }
+      if (url.includes('/pullrequests/42/diffstat')) return envelope([]);
+      return undefined;
+    });
+    const settled = BitbucketDiffResultV1Schema.parse(
+      await readBitbucketDiff(planeInput(), seam.context),
+    );
+    expect(settled.kind).toBe('unavailable');
+    if (settled.kind !== 'unavailable') throw new Error('unreachable');
+    expect(settled.failure.code).toBe('untrusted-diff-redirect');
+    expect(seam.requests.every((request) => request.url.startsWith('https://api.bitbucket.org/')))
+      .toBe(true);
   });
 });

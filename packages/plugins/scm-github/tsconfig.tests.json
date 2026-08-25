@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "incremental": false,
+    // The manifest and UI build-config assertions import the package's authored
+    // `.mjs` build config and the repository Windows invocation owner, so the
+    // test program reads JavaScript too.
+    "allowJs": true,
+    // The test tree deliberately reaches sibling workspace sources through the
+    // shared testkits, so the published `src` root cannot contain the program.
+    "rootDir": "../../.."
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx"],
+  "exclude": ["node_modules", "dist"]
+}

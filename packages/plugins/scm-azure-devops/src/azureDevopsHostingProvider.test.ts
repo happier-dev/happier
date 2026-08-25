@@ -162,6 +162,22 @@ describe('bundled Azure DevOps SCM hosting provider plugin', () => {
         allowedOrigins: ['https://happier-dev.visualstudio.com'],
       },
     });
+    expect(adapter.detectRemote({
+      remoteName: 'server',
+      remoteUrl: 'https://server.example/tfs/DefaultCollection/Payments/_git/checkout',
+    })).toMatchObject({
+      id: 'happier.scm.forge.azure-devops/azure-devops',
+      kind: 'azure-devops',
+      baseUrl: 'https://server.example/tfs/DefaultCollection',
+      nameWithOwner: 'DefaultCollection/Payments/checkout',
+      repositoryWebUrl: 'https://server.example/tfs/DefaultCollection/Payments/_git/checkout',
+      remoteName: 'server',
+      urlSafety: {
+        allowedSchemes: ['https:'],
+        allowedBaseUrls: ['https://server.example/tfs/DefaultCollection'],
+        allowedOrigins: ['https://server.example'],
+      },
+    });
   });
 
   it('builds encoded compare URLs and treats malformed Azure-like remotes as unknown', async () => {
@@ -237,7 +253,7 @@ describe('bundled Azure DevOps SCM hosting provider plugin', () => {
     })).toBeNull();
     expect(adapter.detectRemote({
       remoteName: 'origin',
-      remoteUrl: 'https://not-dev.azure.com/happier-dev/platform/_git/happier.git',
+      remoteUrl: 'https://not-dev.azure.com/platform/_git/happier.git',
     })).toBeNull();
     for (const remoteUrl of [
       'https://dev.azure.com:8443/happier-dev/platform/_git/happier.git',

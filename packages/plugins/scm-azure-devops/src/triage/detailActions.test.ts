@@ -369,6 +369,31 @@ describe('Azure policies plane', () => {
       encodeURIComponent(`vstfs:///CodeReview/CodeReviewId/${PROJECT_ID}/17`),
     );
   });
+
+  it('reads every policy-evaluation page before reporting the plane complete', async () => {
+    const evaluations = Array.from({ length: 101 }, (_, index) => ({
+      evaluationId: `evaluation-${String(index + 1)}`,
+      status: 'approved',
+      configuration: { isBlocking: false, type: { id: `type-${String(index + 1)}` } },
+    }));
+    const otherRoutes = respondWith(collection([]));
+    const seam = harness((url) => {
+      if (!url.includes('/policy/evaluations')) return otherRoutes(url);
+      return collection(url.includes('$skip=100') ? evaluations.slice(100) : evaluations.slice(0, 100));
+    });
+
+    const settled = AzurePoliciesResultV1Schema.parse(
+      await readAzureDevOpsPolicies(planeInput(), seam.context),
+    );
+
+    if (settled.kind !== 'policies') throw new Error('the policies read must settle');
+    expect(settled.evaluations).toHaveLength(100);
+    expect(settled.evaluationsPartial).toBe(false);
+    expect(settled.omittedRowCount).toBe(1);
+    expect(settled.projectionTruncated).toBe(true);
+    expect(seam.urls.filter((url) => url.includes('/policy/evaluations'))).toHaveLength(2);
+    expect(seam.urls.some((url) => url.includes('$skip=100'))).toBe(true);
+  });
 });
 
 /* ------------------------------------------------------------------- threads */
@@ -402,6 +427,30 @@ describe('Azure threads read', () => {
     expect(settled.rows[0]?.path).toBe('/src/a.ts');
     expect(settled.rows[1]).not.toHaveProperty('path');
     expect(settled.omittedRowCount).toBe(0);
+  });
+
+  it('retains the newest bounded comment window when a thread has more comments than fit', async () => {
+    const comments = Array.from({ length: 62 }, (_, index) => ({
+      id: index + 1,
+      content: `reply-${String(index + 1)}`,
+      author: { displayName: 'Reviewer' },
+    }));
+    const seam = harness((url) => (
+      url.includes('/threads')
+        ? collection([{ id: 1, status: 'active', comments }])
+        : undefined
+    ));
+
+    const settled = AzureThreadsResultV1Schema.parse(
+      await readAzureDevOpsThreads(planeInput(), seam.context),
+    );
+
+    if (settled.kind !== 'threads') throw new Error('the threads read must settle');
+    expect(settled.rows[0]?.comments).toHaveLength(60);
+    expect(settled.rows[0]?.comments[0]?.content).toBe('reply-3');
+    expect(settled.rows[0]?.comments.slice(-2).map((comment) => comment.content))
+      .toEqual(['reply-61', 'reply-62']);
+    expect(settled.rows[0]?.omittedCommentCount).toBe(2);
   });
 
   it('publishes no cursor, because the documented endpoint issues none', async () => {
@@ -520,10 +569,48 @@ describe('the mounted detail deadline', () => {
    * Nothing above this seam can distinguish it from a slow read, which is why
    * the source has to own the bound rather than wait for the transport to.
    */
-  function silentHarness() {
+  function silentHarness(options: Readonly<{ silentListing?: true }> = {}) {
     let aborted = 0;
     const services = {
       connectedAccounts: {
+        // The configured-base currentness gate runs BEFORE any provider request, so a
+        // harness that could not answer it never reached the deadline path at all and
+        // proved nothing about it. `silentListing` is the other half: the LISTING is what
+        // never answers, which is the case that would otherwise be reported as a listing
+        // that refused rather than as the deadline that actually fired.
+        async listAccounts(
+          _request: unknown,
+          listingOptions?: Readonly<{ signal?: AbortSignal }>,
+        ) {
+          if (options.silentListing === true) {
+            const signal = listingOptions?.signal;
+            return await new Promise<never>((_resolve, reject) => {
+              if (signal === undefined) return;
+              signal.addEventListener('abort', () => {
+                aborted += 1;
+                reject(signal.reason);
+              }, { once: true });
+            });
+          }
+          return {
+            status: 'complete' as const,
+            accounts: [{
+              account: accountRef('account-1'),
+              displayName: 'Acme',
+              state: 'connected' as const,
+              connectedAccountOrigins: ['https://dev.azure.com'],
+              connectedAccountBases: [BASE_URL],
+            }],
+          };
+        },
+        async getBinding(purpose: string) {
+          return {
+            purpose,
+            service: accountRef('account-1').service,
+            account: accountRef('account-1'),
+            target: { kind: 'account' as const, displayName: 'Acme' },
+          };
+        },
         async materializeListedAccount() {
           return { kind: 'httpHeaders' as const, headers: { authorization: 'Basic <pat>' } };
         },
@@ -576,6 +663,40 @@ describe('the mounted detail deadline', () => {
     // The deadline aborts the outstanding provider request rather than leaving
     // it running behind a settled result.
     expect(seam.abortedCount()).toBe(1);
+  });
+
+  it('classifies a deadline on the Policies preliminary pull-request read as deadline expiry', async () => {
+    vi.useFakeTimers();
+    const seam = silentHarness();
+
+    const settling = readAzureDevOpsPolicies(planeInput(), seam.context);
+    await vi.advanceTimersByTimeAsync(AZURE_DEVOPS_MOUNTED_DETAIL_DEADLINE_MS);
+
+    const settled = AzurePoliciesResultV1Schema.parse(await settling);
+    if (settled.kind !== 'unavailable') throw new Error('the read must settle unavailable');
+    expect(settled.failure.class).toBe('transient');
+    expect(settled.failure.code).toBe('azure-devops/timed-out');
+  });
+
+  /**
+   * The currentness gate is the FIRST thing every authorized read does, so it is also
+   * the first thing a deadline can land on. It reads the Connected Accounts listing, and
+   * a listing that never answers looks exactly like one that refused — unless the abort
+   * is classified by the same owner every other request already defers to. Reporting it
+   * as `account-listing-failed` would tell the reader their accounts are unreadable when
+   * what actually happened is that this panel ran out of time.
+   */
+  it('reports a deadline that lands on the currentness gate as the deadline, not as a listing failure', async () => {
+    vi.useFakeTimers();
+    const seam = silentHarness({ silentListing: true });
+
+    const settling = readAzureDevOpsIterations(planeInput(), seam.context);
+    await vi.advanceTimersByTimeAsync(AZURE_DEVOPS_MOUNTED_DETAIL_DEADLINE_MS);
+
+    const settled = AzureIterationsResultV1Schema.parse(await settling);
+    if (settled.kind !== 'unavailable') throw new Error('the read must settle unavailable');
+    expect(settled.failure.class).toBe('transient');
+    expect(settled.failure.code).toBe('azure-devops/timed-out');
   });
 
   it('leaves a caller cancellation reported as a cancellation, not as a deadline', async () => {

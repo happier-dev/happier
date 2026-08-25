@@ -19,6 +19,7 @@ import type {
   ConnectedAccountsService,
 } from '@happier-dev/plugin-sdk/connected-accounts';
 import {
+  isBoundedInvocationDeadline,
   materializeTriageSourceAuthorizationV1,
   type TriageSourceAuthorizationFailureReasonV1,
 } from '@happier-dev/triage-sources/runtime';
@@ -306,9 +307,15 @@ export async function requestGitlabJson(input: GitlabRequestInput): Promise<Gitl
   } catch (error) {
     return {
       kind: 'failed',
-      failure: isAbortError(error)
-        ? { class: 'transient', code: 'cancelled' }
-        : { class: 'transient', code: 'transport-failed' },
+      // Three different things, and the reader is owed the one that is true: this source's own
+      // deadline elapsed, the caller went away, or the request never completed. Folding the first
+      // into either of the others tells a person their panel was cancelled when in fact GitLab
+      // stopped answering.
+      failure: isBoundedInvocationDeadline(error)
+        ? { class: 'transient', code: 'deadline-exceeded' }
+        : isAbortError(error)
+          ? { class: 'transient', code: 'cancelled' }
+          : { class: 'transient', code: 'transport-failed' },
     };
   }
 

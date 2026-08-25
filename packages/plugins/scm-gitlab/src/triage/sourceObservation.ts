@@ -9,12 +9,14 @@
 import {
   MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1,
   MAX_TRIAGE_LOCATION_UTF8_BYTES_V1,
+  MAX_TRIAGE_REPOSITORY_PATH_UTF8_BYTES_V1,
   MAX_TRIAGE_ROUTING_TOKEN_UTF8_BYTES_V1,
   normalizeTriageSingleLineV1,
   type TriageRowFactV1,
   type TriageSourceEntrySnapshotV1,
   type TriageSourceScanObservationV1,
 } from '@happier-dev/triage-protocol/v1';
+import { normalizeScmHostingRepositoryIdentity } from '@happier-dev/plugin-sdk/scm';
 
 import { boundGitlabText, type BoundedText } from './mapping/bounded.js';
 import type {
@@ -116,6 +118,7 @@ export function projectGitlabPresentObservation(entry: GitlabMappedEntry): Prese
   const webUrl = entry.locator.webUrl === null
     ? null
     : fittingGitlabLocation(entry.locator.webUrl, MAX_TRIAGE_LOCATION_UTF8_BYTES_V1);
+  const repository = projectRepository(entry);
   const locatorTruncated = displayPath.truncated
     || routingToken === null
     || (webUrl === null && entry.locator.webUrl !== null);
@@ -139,5 +142,35 @@ export function projectGitlabPresentObservation(entry: GitlabMappedEntry): Prese
       ? {}
       : { sourceUpdatedAtMs: entry.snapshot.sourceUpdatedAtMs }),
     ...(nativeRevision === null ? {} : { nativeRevision }),
+    ...(repository === null ? {} : { repository }),
   };
+}
+
+/**
+ * The forge repository this entry belongs to, in the vocabulary a project's
+ * resolved `ScmHostingProviderRef` already uses, so launch placement joins the
+ * two by equality and nothing parses a git remote.
+ *
+ * All three components are emitted whole or the identity is omitted: a
+ * shortened deployment or project path is a DIFFERENT repository, and an entry
+ * that proves no repository must resolve to no checkout rather than to every
+ * checkout on the deployment.
+ */
+function projectRepository(
+  entry: GitlabMappedEntry,
+): PresentObservation['repository'] | null {
+  const deployment = fittingGitlabLocation(
+    entry.locator.deploymentBaseUrl,
+    MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1,
+  );
+  const nameWithOwner = fittingGitlabLocation(
+    entry.locator.repositoryKey,
+    MAX_TRIAGE_REPOSITORY_PATH_UTF8_BYTES_V1,
+  );
+  if (deployment === null || nameWithOwner === null) return null;
+  return normalizeScmHostingRepositoryIdentity({
+    kind: 'gitlab',
+    deployment,
+    repository: nameWithOwner,
+  });
 }

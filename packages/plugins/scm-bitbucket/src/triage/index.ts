@@ -65,7 +65,7 @@ export {
   type BitbucketPageGeometry,
 } from './pagination.js';
 export {
-  BITBUCKET_REPOSITORY_PAGES_PER_SCAN_PAGE,
+  BITBUCKET_REPOSITORY_REQUESTS_PER_SCAN_PAGE,
   createBitbucketRepositoryEnumerator,
   type BitbucketRepositoryAdvance,
   type BitbucketRepositoryEnumerator,

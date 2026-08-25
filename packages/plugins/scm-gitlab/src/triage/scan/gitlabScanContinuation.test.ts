@@ -38,8 +38,9 @@ describe('the GitLab scan continuation codec', () => {
     expect(resumed.nativePageSize).toBe(frontier.nativePageSize);
     expect([...resumed.walkHealth]).toEqual(['undecodable-items']);
 
-    // No credential, account ref, viewer identity, delivered-id history or accumulated
-    // row ever rides in the token.
+    // No credential, account ref, extra viewer field, delivered-id history or
+    // accumulated row ever rides in the token. The reviewed lane's existing
+    // provider URL already carries the id needed to rebuild that same lane.
     const token = continuation.token.toLowerCase();
     expect(token).not.toContain('authorization');
     expect(token).not.toContain('bearer');

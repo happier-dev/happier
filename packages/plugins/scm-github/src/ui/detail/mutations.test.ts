@@ -1,17 +1,29 @@
 import {
   TriageDetailSurfaceInputV1Schema,
   type TriageDetailSurfaceInputV1,
+  type TriageSourceObservationV1,
 } from '@happier-dev/triage-protocol/v1';
 import { describe, expect, it } from 'vitest';
 
 import { GITHUB_CONNECTED_ACCOUNT_PURPOSE } from '../../observations/githubProviderContracts.js';
 
 import {
+  GITHUB_ISSUE_CLOSE_REASONS_V1,
   GITHUB_MERGE_METHODS_V1,
+  buildGithubIssueAssigneesInputV1,
+  buildGithubIssueCloseInputV1,
+  buildGithubIssueLabelsInputV1,
+  buildGithubIssueReopenInputV1,
+  buildGithubPullRequestMarkReadyInputV1,
   buildGithubPullRequestMergeInputV1,
+  buildGithubPullRequestReviewersInputV1,
   buildGithubPullRequestTargetInputV1,
+  buildGithubPullRequestThreadResolutionInputV1,
+  buildGithubPullRequestUpdateBranchInputV1,
   githubOfferedMutationsV1,
   projectGithubMutationOutcomeV1,
+  readGithubLabelsV1,
+  readGithubNamesV1,
 } from './mutations.js';
 
 const SOURCE_CONTRIBUTION = Object.freeze({
@@ -89,7 +101,9 @@ function detailInput(
   });
 }
 
-const APPLIED_OBSERVATION = Object.freeze({
+// Typed against the published observation union so a drifted arm, state, or
+// locator shape fails the program instead of only the assertion that reads it.
+const APPLIED_OBSERVATION: TriageSourceObservationV1 = {
   kind: 'present',
   localRef: {
     kindId: 'pull-request',
@@ -110,7 +124,7 @@ const APPLIED_OBSERVATION = Object.freeze({
     facts: [],
   },
   viewer: { involvement: ['reviewRequested'] },
-});
+};
 
 describe('githubOfferedMutationsV1', () => {
   it('offers merge and close on an open pull request, and reopen once it is closed', () => {
@@ -129,19 +143,98 @@ describe('githubOfferedMutationsV1', () => {
     })).toEqual(['reopen']);
   });
 
-  it('offers nothing for an issue or for a state this build cannot read', () => {
-    // All three Actions are pull-request writes. An issue that showed them would offer
-    // a control whose every press GitHub refuses.
+  it('offers an issue its own two transitions, and never merge', () => {
+    // An issue has both state Actions registered, and a surface that offered it
+    // nothing left six registered writes unreachable from the product. It has no
+    // merge: that control's every press would be refused.
     expect(githubOfferedMutationsV1({
       kindId: 'issue',
       state: detailInput({ kindId: 'issue' }).observation.snapshot.state,
-    })).toEqual([]);
+    })).toEqual(['close']);
 
     expect(githubOfferedMutationsV1({
-      kindId: 'pull-request',
-      state: detailInput({ presentation: 'unknown', nativeLabel: 'unknown' })
+      kindId: 'issue',
+      state: detailInput({ kindId: 'issue', presentation: 'closed', nativeLabel: 'Closed as completed' })
         .observation.snapshot.state,
-    })).toEqual([]);
+    })).toEqual(['reopen']);
+  });
+
+  it('offers nothing for a state this build cannot read, on either kind', () => {
+    for (const kindId of ['pull-request', 'issue'] as const) {
+      expect(githubOfferedMutationsV1({
+        kindId,
+        state: detailInput({ kindId, presentation: 'unknown', nativeLabel: 'unknown' })
+          .observation.snapshot.state,
+      }), kindId).toEqual([]);
+    }
+  });
+});
+
+describe('the issue write inputs', () => {
+  it('carries the reason the reader chose and never a default one', () => {
+    const built = buildGithubIssueCloseInputV1(detailInput({ kindId: 'issue' }), 'not_planned');
+    expect(built).toMatchObject({
+      v: 1,
+      localRef: { kindId: 'issue', collisionScope: 'github:1296269', entryId: '1284' },
+      routingToken: 'octo-org/example-app',
+      stateReason: 'not_planned',
+    });
+    // Every reason the contract declares is offered, in GitHub's own vocabulary.
+    expect(GITHUB_ISSUE_CLOSE_REASONS_V1).toEqual(['completed', 'not_planned', 'duplicate']);
+  });
+
+  it('builds nothing for either issue write when the observation carries no route', () => {
+    const routeless = detailInput({ kindId: 'issue', routingToken: null });
+    expect(buildGithubIssueCloseInputV1(routeless, 'completed')).toBeNull();
+    expect(buildGithubIssueReopenInputV1(routeless)).toBeNull();
+  });
+});
+
+describe('the remaining exact mutation inputs', () => {
+  it('pins mark-ready and update-branch to the head the reader saw', () => {
+    for (const built of [
+      buildGithubPullRequestMarkReadyInputV1(detailInput()),
+      buildGithubPullRequestUpdateBranchInputV1(detailInput()),
+    ]) {
+      expect(built).toMatchObject({
+        localRef: { kindId: 'pull-request', collisionScope: 'github:1296269', entryId: '1284' },
+        routingToken: 'octo-org/example-app',
+        headRevision: OBSERVED_HEAD,
+      });
+    }
+    expect(buildGithubPullRequestMarkReadyInputV1(detailInput({ nativeRevision: null }))).toBeNull();
+    expect(buildGithubPullRequestUpdateBranchInputV1(detailInput({ nativeRevision: null }))).toBeNull();
+  });
+
+  it('builds exact reviewer deltas and never sends an empty one', () => {
+    expect(readGithubNamesV1(' octocat, hubot\noctocat ')).toEqual(['octocat', 'hubot']);
+    expect(buildGithubPullRequestReviewersInputV1(
+      detailInput(),
+      ['octocat'],
+      ['maintainers'],
+      'add',
+    )).toMatchObject({ users: ['octocat'], teams: ['maintainers'] });
+    expect(buildGithubPullRequestReviewersInputV1(detailInput(), [], [], 'remove')).toBeNull();
+  });
+
+  it('builds issue member deltas without turning one direction into a runtime flag', () => {
+    const issue = detailInput({ kindId: 'issue' });
+    expect(buildGithubIssueAssigneesInputV1(issue, ['octocat', 'hubot'], 'add'))
+      .toMatchObject({ usernames: ['octocat', 'hubot'] });
+    expect(buildGithubIssueAssigneesInputV1(issue, [], 'remove')).toBeNull();
+
+    expect(readGithubLabelsV1('needs triage\nrelease, blocker\nneeds triage'))
+      .toEqual(['needs triage', 'release, blocker']);
+    expect(buildGithubIssueLabelsInputV1(issue, ['needs triage', 'release, blocker'], 'add'))
+      .toMatchObject({ labels: ['needs triage', 'release, blocker'] });
+    expect(buildGithubIssueLabelsInputV1(issue, ['needs triage'], 'remove'))
+      .toMatchObject({ label: 'needs triage' });
+    expect(buildGithubIssueLabelsInputV1(issue, ['one', 'two'], 'remove')).toBeNull();
+  });
+
+  it('names one opaque review thread and one requested resolution state', () => {
+    expect(buildGithubPullRequestThreadResolutionInputV1(detailInput(), ' PRRT_kwDOA ', false))
+      .toMatchObject({ threadId: 'PRRT_kwDOA', resolved: false });
   });
 });
 
@@ -271,6 +364,13 @@ describe('projectGithubMutationOutcomeV1', () => {
       { status: 'success', result: null },
       { kind: 'uncertain', failure },
     )).toEqual({ kind: 'uncertain', failure });
+  });
+
+  it('keeps GitHub\'s accepted branch update distinct from applied and uncertain', () => {
+    expect(projectGithubMutationOutcomeV1(
+      { status: 'success', result: null },
+      { kind: 'pending', observation: APPLIED_OBSERVATION },
+    )).toEqual({ kind: 'pending' });
   });
 
   it('keeps a stated provider failure as a failure', () => {

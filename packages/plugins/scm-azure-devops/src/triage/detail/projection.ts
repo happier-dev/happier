@@ -472,8 +472,10 @@ export function projectAzureThreadRows(
       ? readPositiveInteger(context.rightFileStart.line)
       : null;
 
+    const allComments = Array.isArray(raw.comments) ? raw.comments : [];
+    const retainedComments = allComments.slice(-AZURE_MAX_THREAD_COMMENTS_V1);
     const comments = projectRows<AzureProjectedThreadCommentV1>(
-      { value: raw.comments },
+      { value: retainedComments },
       AZURE_MAX_THREAD_COMMENTS_V1,
       (comment) => {
         const commentId = readPositiveInteger(comment.id);
@@ -508,7 +510,8 @@ export function projectAzureThreadRows(
         ...(path === null ? {} : { path: path.value }),
         ...(rightStart === null ? {} : { rightFileStartLine: rightStart }),
         comments: comments.rows,
-        omittedCommentCount: comments.omittedRowCount,
+        omittedCommentCount:
+          Math.max(0, allComments.length - retainedComments.length) + comments.omittedRowCount,
         ...(truncated ? { truncated: true as const } : {}),
       }),
       truncated,

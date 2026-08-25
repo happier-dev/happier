@@ -7,10 +7,12 @@ import type {
   ConnectedAccountRuntime as PluginConnectedAccountRuntime,
 } from '@happier-dev/plugin-sdk/connected-accounts';
 
+import { createAzureDevOpsApiClient } from '../triage/client.js';
+import { decodeAzureConnectionData } from '../triage/decode.js';
 import { normalizeAzureDevOpsBaseUrl } from '../triage/origin.js';
+import type { AzureDevOpsOrigin } from '../triage/types.js';
 
-type ConnectedAccountCredentialReader =
-  Parameters<PluginConnectedAccountRuntime['status']>[0]['credentials'];
+type ConnectedAccountReadContext = Parameters<PluginConnectedAccountRuntime['status']>[0];
 
 /** The one declared authentication mode: an explicitly configured deployment plus a PAT. */
 export const AZURE_DEVOPS_MANUAL_MODE_ID = 'manual';
@@ -43,12 +45,10 @@ export function encodeAzureDevOpsPatAuthorization(token: string): string {
 /**
  * The deployment this account was configured for, used as its display name.
  *
- * `sources/SCM.md` §6.1 specifies a health read against the configured REST base's connection
- * identity endpoint, which would supply the provider's own name for this principal. This runtime
- * performs no network read, so the deployment is the truthful value it can name; it is never a
- * claim about who the token belongs to. The host, the port and the organization or collection
- * segment are all part of that name — every Azure DevOps Services deployment shares one host, so a
- * host-only label would render every organization identically.
+ * Identity validation proves who owns the credential, while this label identifies where the
+ * account connects. The host, the port and the organization or collection segment are all part of
+ * that name — every Azure DevOps Services deployment shares one host, so a host-only label would
+ * render every organization identically.
  */
 function readConfiguredDeploymentLabel(values: Readonly<Record<string, unknown>>): string {
   const configured = values[AZURE_DEVOPS_BASE_CONFIGURATION_FIELD];
@@ -64,10 +64,107 @@ function readStoredToken(raw: string | null | undefined): string | null {
   return trimmed.length === 0 ? null : trimmed;
 }
 
+type AzureDevOpsIdentityConfirmation =
+  | Readonly<{
+    status: 'confirmed';
+    accountId: string;
+  }>
+  | Readonly<{
+    status: 'rejected' | 'unavailable';
+    diagnostic: ReturnType<typeof diagnostic>;
+  }>;
+
+async function confirmAzureDevOpsIdentity(
+  input: Readonly<{ token: string; origin: AzureDevOpsOrigin }>,
+  context: Pick<PluginConnectedAccountAuthenticationContext, 'services' | 'signal'>,
+  options?: Readonly<{ signal?: AbortSignal }>,
+): Promise<AzureDevOpsIdentityConfirmation> {
+  const signal = options?.signal ?? context.signal;
+  const client = createAzureDevOpsApiClient({
+    origin: input.origin,
+    authorization: {
+      headers: { Authorization: encodeAzureDevOpsPatAuthorization(input.token) },
+    },
+    transport: async (request) => {
+      const response = await context.services.http.request({
+        url: request.url,
+        method: request.method,
+        headers: request.headers,
+        ...(request.body === undefined
+          ? {}
+          : { body: new TextEncoder().encode(request.body) }),
+        // Azure can intercept an invalid PAT with a sign-in redirect. Following it would forward
+        // the attempted credential outside the deployment the user configured.
+        redirect: 'error',
+      }, { signal: request.signal });
+      return {
+        status: response.status,
+        headers: response.headers,
+        bodyText: new TextDecoder().decode(response.body),
+      };
+    },
+    now: () => Date.now(),
+  });
+  const response = await client.request({ route: { resource: 'connectionData' }, signal });
+  if (!response.ok) {
+    const failure = response.failure;
+    if (failure.class === 'unauthorized') {
+      return {
+        status: 'rejected',
+        diagnostic: diagnostic(
+          'azure_devops_manual_credentials_invalid',
+          'Azure DevOps rejected this personal access token.',
+        ),
+      };
+    }
+    if (failure.class === 'forbidden') {
+      return {
+        status: 'rejected',
+        diagnostic: diagnostic(
+          'azure_devops_manual_credentials_insufficient',
+          'This Azure DevOps personal access token cannot read the configured deployment.',
+        ),
+      };
+    }
+    if (failure.class === 'restVersionUnsupported') {
+      return {
+        status: 'rejected',
+        diagnostic: diagnostic(
+          'azure_devops_rest_version_unsupported',
+          'This Azure DevOps Server cannot serve the REST 7.1 contract required by this integration.',
+        ),
+      };
+    }
+    return {
+      status: 'unavailable',
+      diagnostic: diagnostic(
+        'azure_devops_identity_unavailable',
+        'Azure DevOps could not confirm this connection.',
+      ),
+    };
+  }
+
+  const connection = decodeAzureConnectionData(response.body);
+  if (connection === null) {
+    return {
+      status: 'unavailable',
+      diagnostic: diagnostic(
+        'azure_devops_identity_invalid',
+        'Azure DevOps returned an invalid authenticated identity.',
+      ),
+    };
+  }
+  return {
+    status: 'confirmed',
+    accountId: connection.authenticatedUserId,
+  };
+}
+
 async function readHealth(
-  credentials: ConnectedAccountCredentialReader,
+  context: ConnectedAccountReadContext,
+  options?: Readonly<{ signal?: AbortSignal }>,
 ): Promise<PluginConnectedAccountHealthResult> {
-  const token = readStoredToken(await credentials.get(TOKEN_CREDENTIAL_KEY));
+  const token = readStoredToken(await context.credentials.get(TOKEN_CREDENTIAL_KEY, options));
   if (token === null) {
     return {
       status: 'unavailable',
@@ -77,7 +174,35 @@ async function readHealth(
       ),
     };
   }
-  return { status: 'connected', scopes: [] };
+  const configured = context.configuration.values[AZURE_DEVOPS_BASE_CONFIGURATION_FIELD];
+  const normalized = typeof configured === 'string'
+    ? normalizeAzureDevOpsBaseUrl(configured)
+    : { ok: false as const };
+  if (!normalized.ok) {
+    return {
+      status: 'reconnectRequired',
+      diagnostic: diagnostic(
+        'azure_devops_base_invalid',
+        'This Azure DevOps connection has no usable organization or collection URL.',
+      ),
+    };
+  }
+  const identity = await confirmAzureDevOpsIdentity(
+    { token, origin: normalized.origin },
+    context,
+    options,
+  );
+  if (identity.status === 'rejected') {
+    return { status: 'reconnectRequired', diagnostic: identity.diagnostic };
+  }
+  if (identity.status === 'unavailable') {
+    return { status: 'unavailable', diagnostic: identity.diagnostic };
+  }
+  return {
+    status: 'connected',
+    displayName: readConfiguredDeploymentLabel(context.configuration.values),
+    scopes: [],
+  };
 }
 
 /**
@@ -102,6 +227,7 @@ const azureDevopsConnectedAccountRuntimeDefinition: PluginConnectedAccountRuntim
         async complete(
           input: PluginConnectedAccountManualCompletion,
           context: PluginConnectedAccountAuthenticationContext,
+          options,
         ) {
           const token = readStoredToken(input.fields[TOKEN_CREDENTIAL_KEY]);
           if (token === null) {
@@ -113,29 +239,49 @@ const azureDevopsConnectedAccountRuntimeDefinition: PluginConnectedAccountRuntim
               ),
             };
           }
-          await context.attemptCredentials.set(TOKEN_CREDENTIAL_KEY, token);
+          const configured = context.configuration.values[AZURE_DEVOPS_BASE_CONFIGURATION_FIELD];
+          const normalized = typeof configured === 'string'
+            ? normalizeAzureDevOpsBaseUrl(configured)
+            : { ok: false as const };
+          if (!normalized.ok) {
+            return {
+              status: 'rejected' as const,
+              diagnostic: diagnostic(
+                'azure_devops_base_invalid',
+                'Azure DevOps requires a usable organization or collection URL.',
+              ),
+            };
+          }
+          const identity = await confirmAzureDevOpsIdentity(
+            { token, origin: normalized.origin },
+            context,
+            options,
+          );
+          if (identity.status !== 'confirmed') return identity;
+          await context.attemptCredentials.set(TOKEN_CREDENTIAL_KEY, token, options);
           return {
             status: 'connected' as const,
             ...(context.attempt.kind === 'reconnect'
               ? { accountId: context.attempt.account.accountId }
               : {}),
             displayName: readConfiguredDeploymentLabel(context.configuration.values),
+            providerIdentity: { accountId: identity.accountId },
             scopes: [],
           };
         },
       },
     },
   },
-  async refresh(context) {
-    return readHealth(context.credentials);
+  async refresh(context, options) {
+    return readHealth(context, options);
   },
   async revoke() {
     // A personal access token is revoked in Azure DevOps itself; claiming otherwise would tell a
     // user their token is dead while it still authorizes every other client that holds it.
     return { status: 'remoteUnsupported' as const };
   },
-  async status(context) {
-    return readHealth(context.credentials);
+  async status(context, options) {
+    return readHealth(context, options);
   },
   async materialize(request, context) {
     if (request.kind !== 'httpHeaders') {

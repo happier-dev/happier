@@ -8,16 +8,13 @@ import type {
   HostingProviderPullRequestListInput as ScmHostingProviderPullRequestListInput,
 } from '@happier-dev/plugin-sdk/scm/hosting';
 import type {
-  ScmOperationErrorCode,
   ScmPullRequestSummary,
 } from '@happier-dev/plugin-sdk/scm';
 import type {
   ScmHostingProviderRef } from '@happier-dev/plugin-sdk/scm/hosting';
-import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/scm';
 
 import { githubHostingProviderAdapter } from '../adapter.js';
-import { createGithubCliAdapter, type GithubCliPullRequestAdapter } from './cliAdapter.js';
-import { isGithubAuthRequiredError } from './errors.js';
+import { createGithubAuthRequiredError } from './errors.js';
 import {
   createGithubRestAdapter,
   isGithubDotComProvider,
@@ -35,70 +32,25 @@ export type GithubPullRequestAdapter = typeof githubHostingProviderAdapter & Rea
   ): Promise<ScmHostingProviderPullRequestCheckoutReferenceMetadata>;
 }>;
 
-type GithubPullRequestOperationName =
-  | 'listPullRequests'
-  | 'getPullRequest'
-  | 'createPullRequest'
-  | 'getDefaultBranch'
-  | 'resolvePullRequestCheckoutReference';
-
-function shouldTryRest(provider: ScmHostingProviderRef): boolean {
-  return isGithubDotComProvider(provider);
-}
-
-function readErrorCode(error: unknown): ScmOperationErrorCode | null {
-  if (!error || typeof error !== 'object') return null;
-  const code = (error as { errorCode?: unknown }).errorCode;
-  return typeof code === 'string' && Object.values(SCM_OPERATION_ERROR_CODES).includes(code as ScmOperationErrorCode)
-    ? code as ScmOperationErrorCode
-    : null;
-}
-
-function hasRecoverableHttpStatus(message: string): boolean {
-  const match = /\bstatus\s+(\d{3})\b/i.exec(message);
-  if (!match) return false;
-  const status = Number(match[1]);
-  return status === 408 || status === 429 || status >= 500;
-}
-
-function isRecoverableGithubRestFailure(error: unknown): boolean {
-  if (isGithubAuthRequiredError(error)) return true;
-  if (error instanceof TypeError) return true;
-  if (!error || typeof error !== 'object') return false;
-  const code = readErrorCode(error);
-  if (code === SCM_OPERATION_ERROR_CODES.COMMAND_FAILED) {
-    const message = error instanceof Error ? error.message : '';
-    return hasRecoverableHttpStatus(message)
-      || /\b(fetch failed|network|econnreset|etimedout|socket hang up)\b/i.test(message);
-  }
-  return false;
-}
-
-async function runWithAuthChain<TResult>(
-  input: Readonly<{
-    provider: ScmHostingProviderRef;
-    operationName: GithubPullRequestOperationName;
-    runRest: () => Promise<TResult>;
-    runCli: () => Promise<TResult>;
-  }>,
-): Promise<TResult> {
-  if (!shouldTryRest(input.provider)) {
-    return input.runCli();
-  }
-  try {
-    return await input.runRest();
-  } catch (error) {
-    if (!isRecoverableGithubRestFailure(error)) throw error;
-    return input.runCli();
-  }
+/**
+ * The bound GitHub Connected Account is the sole authenticated authority for
+ * pull-request reads and mutations. A host with no qualified Connected Account
+ * path — every non-`github.com` host, including GitHub Enterprise — is refused
+ * typed rather than executed with whatever credentials happen to be present on
+ * the machine.
+ */
+function requireBoundAccountHost(provider: ScmHostingProviderRef): void {
+  if (isGithubDotComProvider(provider)) return;
+  throw createGithubAuthRequiredError(
+    'GitHub pull request operations require a bound github.com Connected Account; '
+    + 'this host has no qualified GitHub Connected Account.',
+  );
 }
 
 export function createGithubPullRequestAdapter(params?: Readonly<{
   restAdapter?: Partial<GithubRestPullRequestAdapter>;
-  cliAdapter?: Partial<GithubCliPullRequestAdapter>;
 }>): GithubPullRequestAdapter {
   const restAdapter = params?.restAdapter ?? createGithubRestAdapter();
-  const cliAdapter = params?.cliAdapter ?? createGithubCliAdapter();
 
   return Object.freeze({
     ...githubHostingProviderAdapter,
@@ -107,65 +59,42 @@ export function createGithubPullRequestAdapter(params?: Readonly<{
         ? restAdapter.getPullRequestAuthProfileKey(input)
         : null;
     },
-    listPullRequests(input: ScmHostingProviderPullRequestListInput) {
-      return runWithAuthChain({
-        provider: input.provider,
-        operationName: 'listPullRequests',
-        runRest: () => restAdapter.listPullRequests
-          ? restAdapter.listPullRequests(input)
-          : Promise.reject(new Error('REST pull request listing is unavailable')),
-        runCli: () => cliAdapter.listPullRequests
-          ? cliAdapter.listPullRequests(input)
-          : Promise.reject(new Error('GitHub CLI pull request listing is unavailable')),
-      });
+    async listPullRequests(input: ScmHostingProviderPullRequestListInput) {
+      requireBoundAccountHost(input.provider);
+      if (!restAdapter.listPullRequests) {
+        throw createGithubAuthRequiredError('GitHub pull request listing is unavailable');
+      }
+      return await restAdapter.listPullRequests(input);
     },
-    getPullRequest(input: ScmHostingProviderPullRequestGetInput) {
-      return runWithAuthChain({
-        provider: input.provider,
-        operationName: 'getPullRequest',
-        runRest: () => restAdapter.getPullRequest
-          ? restAdapter.getPullRequest(input)
-          : Promise.reject(new Error('REST pull request lookup is unavailable')),
-        runCli: () => cliAdapter.getPullRequest
-          ? cliAdapter.getPullRequest(input)
-          : Promise.reject(new Error('GitHub CLI pull request lookup is unavailable')),
-      });
+    async getPullRequest(input: ScmHostingProviderPullRequestGetInput) {
+      requireBoundAccountHost(input.provider);
+      if (!restAdapter.getPullRequest) {
+        throw createGithubAuthRequiredError('GitHub pull request lookup is unavailable');
+      }
+      return await restAdapter.getPullRequest(input);
     },
-    createPullRequest(input: ScmHostingProviderPullRequestCreateInput) {
-      return runWithAuthChain({
-        provider: input.provider,
-        operationName: 'createPullRequest',
-        runRest: () => restAdapter.createPullRequest
-          ? restAdapter.createPullRequest(input)
-          : Promise.reject(new Error('REST pull request creation is unavailable')),
-        runCli: () => cliAdapter.createPullRequest
-          ? cliAdapter.createPullRequest(input)
-          : Promise.reject(new Error('GitHub CLI pull request creation is unavailable')),
-      });
+    async createPullRequest(input: ScmHostingProviderPullRequestCreateInput) {
+      requireBoundAccountHost(input.provider);
+      if (!restAdapter.createPullRequest) {
+        throw createGithubAuthRequiredError('GitHub pull request creation is unavailable');
+      }
+      return await restAdapter.createPullRequest(input);
     },
-    getDefaultBranch(input: ScmHostingProviderDefaultBranchInput) {
-      return runWithAuthChain({
-        provider: input.provider,
-        operationName: 'getDefaultBranch',
-        runRest: () => restAdapter.getDefaultBranch
-          ? restAdapter.getDefaultBranch(input)
-          : Promise.reject(new Error('REST default branch lookup is unavailable')),
-        runCli: () => cliAdapter.getDefaultBranch
-          ? cliAdapter.getDefaultBranch(input)
-          : Promise.reject(new Error('GitHub CLI default branch lookup is unavailable')),
-      });
+    async getDefaultBranch(input: ScmHostingProviderDefaultBranchInput) {
+      requireBoundAccountHost(input.provider);
+      if (!restAdapter.getDefaultBranch) {
+        throw createGithubAuthRequiredError('GitHub default branch lookup is unavailable');
+      }
+      return await restAdapter.getDefaultBranch(input);
     },
-    resolvePullRequestCheckoutReference(input: ScmHostingProviderPullRequestCheckoutReferenceInput) {
-      return runWithAuthChain({
-        provider: input.provider,
-        operationName: 'resolvePullRequestCheckoutReference',
-        runRest: () => restAdapter.resolvePullRequestCheckoutReference
-          ? restAdapter.resolvePullRequestCheckoutReference(input)
-          : Promise.reject(new Error('REST checkout reference lookup is unavailable')),
-        runCli: () => cliAdapter.resolvePullRequestCheckoutReference
-          ? cliAdapter.resolvePullRequestCheckoutReference(input)
-          : Promise.reject(new Error('GitHub CLI checkout reference lookup is unavailable')),
-      });
+    async resolvePullRequestCheckoutReference(
+      input: ScmHostingProviderPullRequestCheckoutReferenceInput,
+    ) {
+      requireBoundAccountHost(input.provider);
+      if (!restAdapter.resolvePullRequestCheckoutReference) {
+        throw createGithubAuthRequiredError('GitHub checkout reference lookup is unavailable');
+      }
+      return await restAdapter.resolvePullRequestCheckoutReference(input);
     },
   });
 }

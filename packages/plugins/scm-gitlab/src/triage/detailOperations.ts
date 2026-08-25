@@ -21,7 +21,11 @@
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { TriageSourceFailureV1 } from '@happier-dev/triage-protocol/v1';
 
-import { admitGitlabItemInvocation } from './admission.js';
+import {
+  GITLAB_MOUNTED_DETAIL_DEADLINE_MS,
+  admitGitlabItemInvocation,
+} from './admission.js';
+import { withGitlabInvocationDeadline } from './invocationDeadline.js';
 import {
   GitlabActivityEventsInputV1Schema,
   GitlabApprovalsInputV1Schema,
@@ -127,7 +131,7 @@ function shapeWalkPosition(page: GitlabWalkPositionV1, limit: number): PagedShap
  * one GitLab collection, read through the item segment its kind names, at the
  * window that tab declares.
  */
-export async function listGitlabNotes(
+async function listGitlabNotesUnbounded(
   input: unknown,
   context: PluginInvocationContext,
 ): Promise<GitlabNotesResultV1> {
@@ -171,7 +175,7 @@ export async function listGitlabNotes(
  * advance label events because the reader asked for more state events, and the
  * union would then be missing the rows nobody skipped on purpose.
  */
-export async function listGitlabActivityEvents(
+async function listGitlabActivityEventsUnbounded(
   input: unknown,
   context: PluginInvocationContext,
 ): Promise<GitlabActivityEventsResultV1> {
@@ -210,7 +214,7 @@ export async function listGitlabActivityEvents(
 /* --------------------------------------------------------------- discussions */
 
 /** One bounded page of the discussion threads of a merge request. */
-export async function listGitlabDiscussions(
+async function listGitlabDiscussionsUnbounded(
   input: unknown,
   context: PluginInvocationContext,
 ): Promise<GitlabDiscussionsResultV1> {
@@ -256,7 +260,7 @@ export async function listGitlabDiscussions(
  * to `editionUnsupported` — so a Free-tier reader gets a working tab instead of
  * one that reports the whole feature as unavailable.
  */
-export async function readGitlabApprovals(
+async function readGitlabApprovalsUnbounded(
   input: unknown,
   context: PluginInvocationContext,
 ): Promise<GitlabApprovalsResultV1> {
@@ -308,7 +312,7 @@ export async function readGitlabApprovals(
  * would be a number the reader cannot interpret, and a zeroed one would be a
  * number they would trust.
  */
-export async function listGitlabPipelines(
+async function listGitlabPipelinesUnbounded(
   input: unknown,
   context: PluginInvocationContext,
 ): Promise<GitlabPipelinesResultV1> {
@@ -361,7 +365,7 @@ export async function listGitlabPipelines(
  * supply the 18.4 truncation fields, so no whole-diff claim is made. It is never
  * upgraded to `reported` by a projector that filled the gap with `false`.
  */
-export async function listGitlabChanges(
+async function listGitlabChangesUnbounded(
   input: unknown,
   context: PluginInvocationContext,
 ): Promise<GitlabChangesResultV1> {
@@ -395,3 +399,28 @@ export async function listGitlabChanges(
     ...shapeWalkPosition(page.value, request.limit),
   });
 }
+
+export const listGitlabNotes = withGitlabInvocationDeadline(
+  GITLAB_MOUNTED_DETAIL_DEADLINE_MS,
+  listGitlabNotesUnbounded,
+);
+export const listGitlabActivityEvents = withGitlabInvocationDeadline(
+  GITLAB_MOUNTED_DETAIL_DEADLINE_MS,
+  listGitlabActivityEventsUnbounded,
+);
+export const listGitlabDiscussions = withGitlabInvocationDeadline(
+  GITLAB_MOUNTED_DETAIL_DEADLINE_MS,
+  listGitlabDiscussionsUnbounded,
+);
+export const readGitlabApprovals = withGitlabInvocationDeadline(
+  GITLAB_MOUNTED_DETAIL_DEADLINE_MS,
+  readGitlabApprovalsUnbounded,
+);
+export const listGitlabPipelines = withGitlabInvocationDeadline(
+  GITLAB_MOUNTED_DETAIL_DEADLINE_MS,
+  listGitlabPipelinesUnbounded,
+);
+export const listGitlabChanges = withGitlabInvocationDeadline(
+  GITLAB_MOUNTED_DETAIL_DEADLINE_MS,
+  listGitlabChangesUnbounded,
+);

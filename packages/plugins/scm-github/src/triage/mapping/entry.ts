@@ -1,6 +1,9 @@
 import { buildGithubEntryLocalRef } from '../identity.js';
 import { buildGithubEntryLocator } from '../locator.js';
+import { GITHUB_API_ORIGIN } from '../../observations/githubProviderContracts.js';
 import {
+  MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1,
+  MAX_TRIAGE_REPOSITORY_PATH_UTF8_BYTES_V1,
   MAX_TRIAGE_TEXT_UTF8_BYTES_V1,
   projectTriageDisplayTextV1,
 } from '@happier-dev/triage-protocol/v1';
@@ -108,6 +111,15 @@ export function readGithubRepositoryRouteFromApiUrl(value: unknown): Readonly<{
   try {
     parsed = new URL(text);
   } catch {
+    return null;
+  }
+  if (
+    parsed.origin !== GITHUB_API_ORIGIN
+    || parsed.username !== ''
+    || parsed.password !== ''
+    || parsed.search !== ''
+    || parsed.hash !== ''
+  ) {
     return null;
   }
   const segments = parsed.pathname.split('/').filter((segment) => segment.length > 0);
@@ -245,6 +257,25 @@ export function decodeGithubIssueBody(
   });
 }
 
+/**
+ * The repository identity launch placement joins on, or `null`.
+ *
+ * It is emitted only when it fits the published repository-path bound. A truncated
+ * `owner/name` is not a weaker identity — it is a different one, and it would
+ * match a checkout the reader never asked for. Omitting it resolves no launch
+ * candidate, which is the honest answer.
+ */
+function utf8ByteLength(value: string): number {
+  return new TextEncoder().encode(value).byteLength;
+}
+
+function buildGithubNameWithOwner(owner: string, name: string): string | null {
+  const nameWithOwner = `${owner}/${name}`;
+  return utf8ByteLength(nameWithOwner) <= MAX_TRIAGE_REPOSITORY_PATH_UTF8_BYTES_V1
+    ? nameWithOwner
+    : null;
+}
+
 export type GithubEntryProjectionExtrasV1 = Readonly<{
   reviewDecision?: GithubReviewDecisionV1 | null;
   checks?: GithubChecksRowStateV1 | null;
@@ -319,6 +350,7 @@ export function projectGithubEntry(
       title: title.value,
       scopeLabel: scopeLabel.value,
       webUrl: locator.webUrl,
+      nameWithOwner: buildGithubNameWithOwner(view.owner, view.name),
       createdAtMs: view.createdAtMs,
       sourceUpdatedAtMs: view.updatedAtMs,
       nativeRevision: view.nativeRevision,

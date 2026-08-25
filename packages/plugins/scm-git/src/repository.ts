@@ -7,7 +7,7 @@ import type {
 } from '@happier-dev/plugin-sdk/scm';
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/scm';
 
-import { runScmCommand } from './runtime.js';
+import { runScmCommand, type ScmExecResult } from './runtime.js';
 import { normalizeRepoRootRelativePath } from './runtime.js';
 import { buildGitSnapshot } from './statusSnapshot.js';
 import { inspectGitCheckoutIdentity } from './checkoutIdentity.js';
@@ -79,6 +79,27 @@ function resolveMainWorktreePathFromCheckoutIdentity(
     return dirname(checkoutIdentity.commonDirPath);
 }
 
+const NOT_A_REPOSITORY: ScmRepoDetection = { isRepo: false, rootPath: null, mode: null };
+
+/**
+ * `git` produced no answer at all — the binary is missing, the spawn failed, the probe was cut
+ * short by its deadline, or the output cap killed it. Rejecting is the contract the host registry
+ * already reads as "this backend could not look"; returning `isRepo: false` would publish the
+ * confident domain fact *"this directory is not under source control"* about a directory nothing
+ * inspected (`F-SCM-1`).
+ */
+function detectionUnavailable(detail: string): Error {
+    return Object.assign(
+        new Error(`Unable to determine whether this path is a Git repository: ${detail}`),
+        { errorCode: SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE },
+    );
+}
+
+/** True when the command did not run to completion, so its exit code carries no meaning. */
+function commandProducedNoAnswer(result: ScmExecResult): boolean {
+    return result.timedOut === true || result.outputLimitExceeded === true || result.exitCode < 0;
+}
+
 export async function detectGitRepo(input: { cwd: string }): Promise<ScmRepoDetection> {
     const gitRepoCheck = await runScmCommand({
         bin: 'git',
@@ -87,11 +108,27 @@ export async function detectGitRepo(input: { cwd: string }): Promise<ScmRepoDete
         timeoutMs: 5000,
     });
     if (!gitRepoCheck.success || gitRepoCheck.exitCode !== 0) {
-        return {
-            isRepo: false,
-            rootPath: null,
-            mode: null,
-        };
+        if (commandProducedNoAnswer(gitRepoCheck)) {
+            throw detectionUnavailable(gitRepoCheck.stderr.trim() || 'the repository probe did not complete');
+        }
+
+        // `git` ran and refused. That covers the real "not a repository" answer (exit 128,
+        // `fatal: not a git repository`) *and* every other git fatal, including an installed but
+        // broken git — the exit code cannot separate them. Ask the binary the one question that
+        // succeeds for any working git; `GIT_INSTALLABLE_DESCRIPTOR` already declares `--version`
+        // as its version/liveness probe.
+        const liveness = await runScmCommand({
+            bin: 'git',
+            cwd: input.cwd,
+            args: ['--version'],
+            timeoutMs: 5000,
+        });
+        if (!liveness.success || liveness.exitCode !== 0) {
+            throw detectionUnavailable(
+                (liveness.stderr.trim() || gitRepoCheck.stderr.trim()) || 'git is not usable on this machine',
+            );
+        }
+        return NOT_A_REPOSITORY;
     }
 
     const rootResult = await runScmCommand({

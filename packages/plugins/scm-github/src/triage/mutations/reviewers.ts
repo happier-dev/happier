@@ -1,4 +1,5 @@
 import type { TriageSourceFailureV1 } from '@happier-dev/triage-protocol/v1';
+import { settleAtMostOnceProviderWrite } from '@happier-dev/triage-sources/runtime';
 
 import {
   decodeGithubJsonResponse,
@@ -219,24 +220,84 @@ async function applyGithubPullRequestReviewerDelta(
     });
   }
 
+  const dispatch = async (): Promise<
+    | Readonly<{ ok: true; response: GithubApiResponseV1 }>
+    | Readonly<{ ok: false; failure: TriageSourceFailureV1 }>
+  > => {
+    try {
+      return Object.freeze({
+        ok: true as const,
+        response: await dependencies.client.request({
+          url,
+          method: direction.method,
+          headers: { 'content-type': 'application/json' },
+          // Only the named members. An empty member is omitted rather than sent as
+          // an empty array, which GitHub reads as a well-formed request for nobody.
+          body: new TextEncoder().encode(JSON.stringify({
+            ...(input.users.length === 0 ? {} : { reviewers: [...input.users] }),
+            ...(input.teams.length === 0 ? {} : { team_reviewers: [...input.teams] }),
+          })),
+        }),
+      });
+    } catch (error) {
+      return Object.freeze({
+        ok: false as const,
+        failure: toTriageFailure(classifyGithubTransportFailure(error)),
+      });
+    }
+  };
+
   let response: GithubApiResponseV1;
-  try {
-    response = await dependencies.client.request({
-      url,
-      method: direction.method,
-      headers: { 'content-type': 'application/json' },
-      // Only the named members. An empty member is omitted rather than sent as
-      // an empty array, which GitHub reads as a well-formed request for nobody.
-      body: new TextEncoder().encode(JSON.stringify({
-        ...(input.users.length === 0 ? {} : { reviewers: [...input.users] }),
-        ...(input.teams.length === 0 ? {} : { team_reviewers: [...input.teams] }),
-      })),
+  // Requesting review is at-most-once because a second POST re-notifies people.
+  // Withdrawal is naturally idempotent and retains its ordinary response path.
+  if (direction.requestedAfterwards) {
+    const settlement = await settleAtMostOnceProviderWrite({
+      dispatch,
+      mayHaveChanged: (result) => !result.ok,
+      confirm: async () => {
+        const confirmed = await readRequestedReviewers(url, dependencies);
+        if (!confirmed.ok) {
+          return Object.freeze({ kind: 'uncertain' as const, failure: confirmed.failure });
+        }
+        return satisfies(confirmed.reviewers, input, true)
+          ? Object.freeze({ kind: 'applied' as const, observation: confirmed.reviewers })
+          : Object.freeze({ kind: 'unchanged' as const, observation: confirmed.reviewers });
+      },
     });
-  } catch (error) {
-    return Object.freeze({
-      kind: 'failed' as const,
-      failure: toTriageFailure(classifyGithubTransportFailure(error)),
-    });
+    if (settlement.kind === 'applied') {
+      return Object.freeze({
+        kind: 'applied' as const,
+        effect: 'changed' as const,
+        requestedReviewers: settlement.observation,
+      });
+    }
+    if (settlement.kind === 'unchanged') {
+      return Object.freeze({
+        kind: 'uncertain' as const,
+        requestedReviewers: settlement.observation,
+      });
+    }
+    if (settlement.kind === 'uncertain') {
+      return Object.freeze({
+        kind: 'uncertain' as const,
+        ...(settlement.observation === undefined
+          ? {}
+          : { requestedReviewers: settlement.observation }),
+        ...(settlement.failure === undefined ? {} : { failure: settlement.failure }),
+      });
+    }
+    if (!settlement.result.ok) {
+      // Unreachable by the at-most-once classifier above, but keeping the
+      // exhaustive arm makes a future classifier change fail safely.
+      return Object.freeze({ kind: 'failed' as const, failure: settlement.result.failure });
+    }
+    response = settlement.result.response;
+  } else {
+    const written = await dispatch();
+    if (!written.ok) {
+      return Object.freeze({ kind: 'failed' as const, failure: written.failure });
+    }
+    response = written.response;
   }
   if (!isGithubSuccessStatus(response.status)) {
     return Object.freeze({

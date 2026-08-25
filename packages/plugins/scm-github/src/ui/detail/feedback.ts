@@ -1,15 +1,21 @@
 import type { TriageRowFactV1 } from '@happier-dev/triage-protocol/v1';
 
 import type {
-  GithubProjectedCommentRowV1,
   GithubProjectedReviewRequestRowV1,
   GithubProjectedReviewerRowV1,
 } from '../../triage/detail/projection.js';
+import type {
+  GithubFeedbackCommentV1,
+  GithubFeedbackRequestV1,
+  GithubFeedbackReviewV1,
+  GithubFeedbackThreadV1,
+} from '../../triage/feedback.js';
 import {
   buildGithubStateRowFactsV1,
   type GithubChecksRowStateV1,
   type GithubReviewDecisionV1,
 } from '../../triage/mapping/facts.js';
+import { toTriageFacts } from '../../triage/mapping/protocol.js';
 
 /**
  * The GitHub `Feedback` plane's projection.
@@ -21,19 +27,17 @@ import {
  * product that answers it across four screens has not answered it.
  *
  * Everything here is a projection of values the surface ALREADY holds: the
- * conversation its own panel read, and the state facts the applied observation
- * arrived with. Nothing in this module issues, schedules or implies a provider
- * request, so the plane costs the same rate budget as the conversation alone.
+ * conversation its own panel read, the authoritative review and check reads,
+ * and the mergeability fact the applied observation arrived with. Nothing in
+ * this module issues, schedules or implies a provider request.
  *
- * What this build cannot see, it says rather than implies. GitHub serves
- * line-anchored review threads and their resolved state through a separate
- * resource this build does not read, and a panel that quietly omitted them
- * would present a partial conversation as the whole one. The renderer states
- * the omission; this module simply never fabricates those facts.
+ * Line-anchored review threads remain their own resource even though this plane
+ * renders them beside issue comments. Their cursor, replies and resolved state
+ * are projected directly; none is inferred from review history or timeline rows.
  *
- * Review people and the review decision come from the AUTHORITATIVE review read
- * (`triage/reviews.ts`, reached through the `reviews` plane) and from nowhere
- * else. The event timeline mentions reviews too, and deriving them from it was
+ * Review history, outstanding requests and the review decision come from three
+ * explicit GraphQL facts and from nowhere else. The event timeline mentions
+ * reviews too, and deriving them from it was
  * cheaper by one request — but it is a different, weaker answer: the events are
  * paged, so who has approved depended on how far the reader had scrolled; a
  * review GitHub later dismissed still counted; and an outstanding request
@@ -41,19 +45,19 @@ import {
  * Two owners for "who has signed off" is one owner too many, so the timeline is
  * no longer read for it here.
  *
- * The adverse-state findings come from the same live reads: `checks.ts` already
- * derives the row-fact state over every observation it read, and this plane
- * folds it in through the SHARED fact constructors the list row uses, so
- * "Changes requested" is one sentence in this product rather than two.
+ * The live review decision and checks replace those two snapshot facts before anything
+ * renders. Snapshot mergeability stays: this detail surface has no live
+ * mergeability read, so dropping it would turn a fact GitHub did publish into
+ * an invented absence. `checks.ts` already derives its row-fact state over
+ * every observation it read, and this plane folds it in through the SHARED fact
+ * constructors the list row uses, so "Changes requested" is one sentence in
+ * this product rather than two.
  */
 
 export type GithubFeedbackToneV1 = Extract<TriageRowFactV1['value'], { kind: 'status' }>['tone'];
 
 /**
  * One finding, in the arms this build can actually prove.
- *
- * `thread` is deliberately absent rather than empty: an arm that could only
- * ever be empty is a promise the reader would read as an answer.
  */
 export type GithubFeedbackFindingV1 =
   | Readonly<{
@@ -66,6 +70,28 @@ export type GithubFeedbackFindingV1 =
     body: string;
     webUrl: string | null;
     truncated: boolean;
+  }>
+  | Readonly<{
+    resource: 'review';
+    kind: 'remark';
+    id: string;
+    atMs: number | null;
+    author: string | null;
+    body: string;
+    state: string;
+    webUrl: string | null;
+    truncated: boolean;
+  }>
+  | Readonly<{
+    resource: 'thread';
+    kind: 'thread';
+    id: string;
+    atMs: number | null;
+    path: string | null;
+    line: number | null;
+    isResolved: boolean;
+    replies: readonly GithubFeedbackCommentV1[];
+    previousRepliesCursor: string | null;
   }>
   | Readonly<{
     resource: 'state';
@@ -123,11 +149,6 @@ export type GithubFeedbackReviewPeopleV1 = Readonly<{
  * Rendering "nobody has reviewed this" over a read still in flight is the one
  * answer this plane must never give by accident.
  */
-export type GithubFeedbackReviewsV1 = GithubFeedbackReviewPeopleV1 & Readonly<{
-  /** `null` means unresolved: REST cannot prove GitHub's `REVIEW_REQUIRED` arm. */
-  reviewDecision: GithubReviewDecisionV1 | null;
-}>;
-
 const NO_REVIEW_PEOPLE: GithubFeedbackReviewPeopleV1 = Object.freeze({
   reviewed: Object.freeze([]),
   requested: Object.freeze([]),
@@ -144,14 +165,19 @@ export type GithubFeedbackInputV1 = Readonly<{
   facts: readonly TriageRowFactV1[];
   /** When the applied observation was taken; the time its state findings have. */
   observedAtMs: number;
-  comments: readonly GithubProjectedCommentRowV1[];
+  comments: readonly GithubFeedbackCommentV1[];
+  historicalReviews: readonly GithubFeedbackReviewV1[];
+  threads: readonly GithubFeedbackThreadV1[];
   /**
    * The settled authoritative review read, or `null` while it has not settled.
    *
    * Required rather than optional for the same reason the timeline once was: an
    * omitted member would silently produce "nobody has reviewed this".
    */
-  reviews: GithubFeedbackReviewsV1 | null;
+  /** GitHub's authoritative pull-request reviewDecision field. */
+  reviewDecision: GithubReviewDecisionV1 | null;
+  /** GitHub's outstanding reviewRequests connection, kept separate from history. */
+  requests: readonly GithubFeedbackRequestV1[];
   /**
    * The check-suite row state the checks plane read, or `null` when that plane
    * has not settled or could not answer.
@@ -170,6 +196,25 @@ const STATE_FINDING_KINDS: Readonly<Record<string, 'check' | 'conflict' | undefi
   });
 
 const REVIEW_DECISION_FACT_ID = 'github/review-decision';
+const CHECKS_FACT_ID = 'github/checks';
+
+/**
+ * The applied observation is intentionally not a second authority for the two
+ * facts the Feedback panel reads live. Retain mergeability and every other
+ * snapshot fact, then install the current answer through the same constructors
+ * the list row uses.
+ */
+function currentFacts(input: GithubFeedbackInputV1): readonly TriageRowFactV1[] {
+  const liveFacts = toTriageFacts(buildGithubStateRowFactsV1({
+    reviewDecision: input.reviewDecision,
+    checks: input.checks,
+  })).facts;
+  return Object.freeze([
+    ...input.facts.filter((fact) =>
+      fact.id !== REVIEW_DECISION_FACT_ID && fact.id !== CHECKS_FACT_ID),
+    ...liveFacts,
+  ]);
+}
 
 function statusValue(
   fact: TriageRowFactV1,
@@ -177,6 +222,25 @@ function statusValue(
   return fact.value.kind === 'status'
     ? { label: fact.value.value, tone: fact.value.tone }
     : null;
+}
+
+function reviewPeople(
+  historical: readonly GithubFeedbackReviewV1[],
+  requests: readonly GithubFeedbackRequestV1[],
+): GithubFeedbackReviewPeopleV1 {
+  if (historical.length === 0 && requests.length === 0) return NO_REVIEW_PEOPLE;
+  const latestByAuthor = new Map<string, GithubFeedbackReviewV1>();
+  for (const review of historical) {
+    if (review.author !== null) latestByAuthor.set(review.author, review);
+  }
+  return Object.freeze({
+    reviewed: Object.freeze([...latestByAuthor.entries()].map(([login, review]) => Object.freeze({
+      login,
+      state: review.state,
+      ...(review.submittedAtMs === null ? {} : { submittedAtMs: review.submittedAtMs }),
+    }))),
+    requested: Object.freeze(requests.map((request) => Object.freeze({ ...request }))),
+  });
 }
 
 function reviewSummary(facts: readonly TriageRowFactV1[]): GithubFeedbackReviewSummaryV1 {
@@ -216,17 +280,49 @@ function stateFindings(
 }
 
 function remarkFindings(
-  comments: readonly GithubProjectedCommentRowV1[],
+  comments: readonly GithubFeedbackCommentV1[],
 ): readonly GithubFeedbackFindingV1[] {
   return comments.map((row) => ({
     resource: 'comment' as const,
     kind: 'remark' as const,
     id: row.id,
-    atMs: row.atMs ?? null,
-    author: row.author ?? null,
+    atMs: row.createdAtMs,
+    author: row.author,
     body: row.body,
-    webUrl: row.webUrl ?? null,
+    webUrl: row.url,
     truncated: row.truncated === true,
+  }));
+}
+
+function reviewFindings(
+  reviews: readonly GithubFeedbackReviewV1[],
+): readonly GithubFeedbackFindingV1[] {
+  return reviews.map((review) => ({
+    resource: 'review' as const,
+    kind: 'remark' as const,
+    id: review.id,
+    atMs: review.submittedAtMs,
+    author: review.author,
+    body: review.body,
+    state: review.state,
+    webUrl: review.url,
+    truncated: review.truncated === true,
+  }));
+}
+
+function threadFindings(
+  threads: readonly GithubFeedbackThreadV1[],
+): readonly GithubFeedbackFindingV1[] {
+  return threads.map((thread) => ({
+    resource: 'thread' as const,
+    kind: 'thread' as const,
+    id: thread.id,
+    atMs: thread.replies[0]?.createdAtMs ?? null,
+    path: thread.path,
+    line: thread.line,
+    isResolved: thread.isResolved,
+    replies: thread.replies,
+    previousRepliesCursor: thread.previousRepliesCursor,
   }));
 }
 
@@ -249,101 +345,17 @@ function compareFindings(a: GithubFeedbackFindingV1, b: GithubFeedbackFindingV1)
   return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
 }
 
-/**
- * Chronological order, computed here rather than assumed of the caller.
- *
- * The fold below is sequential — a removal after a request means something a
- * removal before it does not — so an ordering the caller merely happens to
- * supply would make this derivation depend on a page-arrival accident. An event
- * with no readable instant sorts last rather than to the epoch, where it would
- * claim to predate every dated event.
- */
-function chronological(
-  rows: readonly GithubProjectedTimelineRowV1[],
-): readonly GithubProjectedTimelineRowV1[] {
-  return [...rows].sort((left, right) => {
-    const leftAt = left.atMs ?? null;
-    const rightAt = right.atMs ?? null;
-    if (leftAt === null || rightAt === null) {
-      if (leftAt !== rightAt) return leftAt === null ? 1 : -1;
-    } else if (leftAt !== rightAt) {
-      return leftAt - rightAt;
-    }
-    return left.id < right.id ? -1 : left.id > right.id ? 1 : 0;
-  });
-}
-
-/**
- * Who has reviewed, and who is still being waited on.
- *
- * Both come from the events already read, so both are only ever as complete as
- * that walk. The renderer states that basis; this function never presents a
- * partially-read history as a settled one.
- *
- * One bound is worth naming: a request addressed to a TEAM is answered on
- * GitHub when any member reviews, and the member's login is not the team's
- * name, so such a request stays listed here. Guessing team membership from a
- * review author would invent a fact this build never read.
- */
-function reviewPeople(
-  timeline: readonly GithubProjectedTimelineRowV1[],
-): GithubFeedbackReviewPeopleV1 {
-  const reviewed = new Map<string, GithubFeedbackReviewerV1>();
-  const requested = new Map<string, GithubFeedbackReviewRequestV1>();
-
-  for (const row of chronological(timeline)) {
-    if (row.kind === 'reviewed') {
-      const login = row.actor ?? null;
-      // Keyed by the reviewer, so a reviewer who asked for changes and then
-      // approved is APPROVED rather than two rows, one of which blocks a pull
-      // request they already signed off. A review GitHub returned without an
-      // author keeps its own key: two unattributable reviews are two reviews,
-      // not one person named nobody who reviewed twice.
-      reviewed.set(login ?? `\u0000${row.id}`, Object.freeze({
-        id: row.id,
-        login,
-        state: row.summary ?? null,
-        atMs: row.atMs ?? null,
-        webUrl: row.webUrl ?? null,
-      }));
-      // Submitting a review answers that person's request. GitHub emits a
-      // removal event only for a request somebody withdrew, so a request
-      // fulfilled by its reviewer would otherwise be waited on forever.
-      if (login !== null) requested.delete(login);
-      continue;
-    }
-    if (row.kind !== 'reviewRequested' && row.kind !== 'reviewRequestRemoved') continue;
-    const subject = row.summary;
-    // A request GitHub returned naming neither a user nor a team cannot be
-    // rendered as somebody being waited on. The row keeps its place in the
-    // Timeline panel; it is only unnameable here.
-    if (subject === undefined) continue;
-    if (row.kind === 'reviewRequested') {
-      requested.set(subject, Object.freeze({
-        id: row.id,
-        subject,
-        atMs: row.atMs ?? null,
-        webUrl: row.webUrl ?? null,
-      }));
-      continue;
-    }
-    requested.delete(subject);
-  }
-
-  return Object.freeze({
-    reviewed: Object.freeze([...reviewed.values()]),
-    requested: Object.freeze([...requested.values()]),
-  });
-}
-
 export function projectGithubFeedback(input: GithubFeedbackInputV1): GithubFeedbackViewV1 {
+  const facts = currentFacts(input);
   const findings = [
     ...remarkFindings(input.comments),
-    ...stateFindings(input.facts, input.observedAtMs),
+    ...reviewFindings(input.historicalReviews),
+    ...threadFindings(input.threads),
+    ...stateFindings(facts, input.observedAtMs),
   ].sort(compareFindings);
   return {
-    review: reviewSummary(input.facts),
-    people: reviewPeople(input.timeline),
+    review: reviewSummary(facts),
+    people: reviewPeople(input.historicalReviews, input.requests),
     findings: Object.freeze(findings),
   };
 }

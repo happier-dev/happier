@@ -114,4 +114,11 @@ describe('Bitbucket failure classification', () => {
     expect(classifyBitbucketTransportFailure(new Error('socket hang up')))
       .toMatchObject({ class: 'transient', code: 'transport-failure' });
   });
+
+  it('reports an owner deadline as unavailable rather than caller cancellation', () => {
+    const timedOut = new DOMException('deadline elapsed', 'TimeoutError');
+
+    expect(classifyBitbucketTransportFailure(timedOut))
+      .toMatchObject({ class: 'transient', code: 'invocation-deadline-exceeded' });
+  });
 });

@@ -16,7 +16,10 @@ import type { BitbucketSourceRuntime } from './authorization.js';
 export type StubReply = Readonly<{
   status?: number;
   body?: unknown;
+  /** Exact response bytes for non-JSON provider resources such as Bitbucket's raw diff. */
+  bodyBytes?: string | Uint8Array;
   headers?: Readonly<Record<string, string>>;
+  finalUrl?: string;
 }>;
 
 export type StubRequest = Readonly<{
@@ -26,6 +29,7 @@ export type StubRequest = Readonly<{
   headers: Readonly<Record<string, string>>;
   /** The decoded request body, or `undefined` when the client sent none. */
   body: unknown;
+  redirect: 'error' | 'follow' | 'manual';
 }>;
 
 function decodeStubBody(raw: unknown): unknown {
@@ -48,16 +52,26 @@ export function createHttpStub(
     async request(input: Parameters<HttpService['request']>[0]) {
       const method = input.method ?? 'GET';
       const body = decodeStubBody((input as { body?: unknown }).body);
-      requests.push({ url: input.url, method, headers: { ...input.headers }, body });
+      requests.push({
+        url: input.url,
+        method,
+        headers: { ...input.headers },
+        body,
+        redirect: input.redirect,
+      });
       const reply = route(input.url, { method, body })
         ?? { status: 404, body: { error: { message: 'not routed' } } };
       return {
         status: reply.status ?? 200,
-        finalUrl: input.url,
+        finalUrl: reply.finalUrl ?? input.url,
         headers: reply.headers ?? {},
-        body: new TextEncoder().encode(
-          reply.body === undefined ? '' : JSON.stringify(reply.body),
-        ),
+        body: reply.bodyBytes instanceof Uint8Array
+          ? reply.bodyBytes
+          : new TextEncoder().encode(
+            typeof reply.bodyBytes === 'string'
+              ? reply.bodyBytes
+              : reply.body === undefined ? '' : JSON.stringify(reply.body),
+          ),
       };
     },
   } as unknown as HttpService;

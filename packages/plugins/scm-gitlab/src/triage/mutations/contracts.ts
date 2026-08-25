@@ -1,7 +1,7 @@
 /**
  * The GitLab mutation Action contracts.
  *
- * Six exact Actions, six strict input schemas, six strict result unions. There
+ * Ten exact Actions, ten strict input schemas, ten strict result unions. There
  * is deliberately no `mutate({ operation, payload })` envelope and no shared
  * operation discriminant: `sources/SCM.md` §3.8 makes every externally visible
  * write its own named Action so a caller cannot reach a write the host never
@@ -31,6 +31,7 @@ import {
   defineProtocolLiteral,
   defineProtocolNumber,
   defineProtocolObject,
+  defineProtocolUniqueArray,
   defineProtocolUnion,
   defineProtocolUtf8String,
   type ProtocolComposableSchema,
@@ -61,6 +62,7 @@ const LocationSchema = defineProtocolUtf8String({
   minLength: 1,
 });
 const TimestampSchema = defineProtocolNumber({ integer: true });
+const ProjectIdSchema = defineProtocolNumber({ integer: true, minimum: 1 });
 
 /**
  * The commit the user acted on.
@@ -93,6 +95,7 @@ export const GitlabObservedHeadShaV1Schema = defineProtocolUtf8String({
  * the evidence the user reads.
  */
 export const GitlabMergeRequestStateRowV1Schema = defineProtocolObject({
+  projectId: ProjectIdSchema,
   iid: IdentifierSchema,
   state: LabelSchema,
   draft: GitlabBooleanSchema,
@@ -119,6 +122,7 @@ export const GitlabMergeRequestStateRowV1Schema = defineProtocolObject({
    * person waiting on a release, so it is never folded into one.
    */
   autoMergeScheduled: GitlabBooleanSchema,
+  reviewerUsernames: defineProtocolArray(LabelSchema).optional(),
 }, { policy: 'closed' });
 export type GitlabMergeRequestStateRowV1 =
   ReturnType<typeof GitlabMergeRequestStateRowV1Schema.parse>;
@@ -136,11 +140,14 @@ export type GitlabMergeRequestStateRowV1 =
  * currentness gate the issue Actions compare their caller's pin against.
  */
 export const GitlabIssueStateRowV1Schema = defineProtocolObject({
+  projectId: ProjectIdSchema,
   iid: IdentifierSchema,
   state: LabelSchema,
   revision: IdentifierSchema.optional(),
   closedAtMs: TimestampSchema.optional(),
   webUrl: LocationSchema.optional(),
+  assigneeUsernames: defineProtocolArray(LabelSchema).optional(),
+  labelNames: defineProtocolArray(LabelSchema).optional(),
 }, { policy: 'closed' });
 export type GitlabIssueStateRowV1 = ReturnType<typeof GitlabIssueStateRowV1Schema.parse>;
 
@@ -461,3 +468,98 @@ export const GitlabIssueReopenResultV1Schema = defineProtocolUnion([
   ...SHARED_ISSUE_MUTATION_ARMS,
 ]);
 export type GitlabIssueReopenResultV1 = ReturnType<typeof GitlabIssueReopenResultV1Schema.parse>;
+
+/* ---------------------------------------------------------- member deltas */
+
+const GitlabDeltaOperationV1Schema = defineProtocolUnion([
+  defineProtocolLiteral('add'),
+  defineProtocolLiteral('remove'),
+]);
+
+const NonEmptyUniqueNamesSchema = defineProtocolUniqueArray(LabelSchema, {
+  minItems: 1,
+});
+
+export const GitlabMergeRequestReviewerChangeInputV1Schema = defineProtocolObject({
+  v: defineProtocolLiteral(1),
+  instance: TriageConfiguredSourceInstanceV1Schema,
+  localRef: TriageSourceEntryLocalRefV1Schema,
+  observedHeadSha: GitlabObservedHeadShaV1Schema,
+  operation: GitlabDeltaOperationV1Schema,
+  reviewerUsernames: NonEmptyUniqueNamesSchema,
+}, { policy: 'closed' });
+export type GitlabMergeRequestReviewerChangeInputV1 = ReturnType<
+  typeof GitlabMergeRequestReviewerChangeInputV1Schema.parse
+>;
+
+export const GitlabMergeRequestReviewerChangeResultV1Schema = defineProtocolUnion([
+  defineProtocolObject({
+    kind: defineProtocolLiteral('reviewersChanged'),
+    item: GitlabMergeRequestStateRowV1Schema,
+  }, { policy: 'closed' }),
+  ...SHARED_MUTATION_ARMS,
+]);
+export type GitlabMergeRequestReviewerChangeResultV1 = ReturnType<
+  typeof GitlabMergeRequestReviewerChangeResultV1Schema.parse
+>;
+
+export const GitlabIssueAssignInputV1Schema = defineProtocolObject({
+  ...GitlabIssueMutationInputFields,
+  operation: GitlabDeltaOperationV1Schema,
+  assigneeUsernames: NonEmptyUniqueNamesSchema,
+}, { policy: 'closed' });
+export type GitlabIssueAssignInputV1 = ReturnType<typeof GitlabIssueAssignInputV1Schema.parse>;
+
+export const GitlabIssueAssignResultV1Schema = defineProtocolUnion([
+  defineProtocolObject({
+    kind: defineProtocolLiteral('assigneesChanged'),
+    item: GitlabIssueStateRowV1Schema,
+  }, { policy: 'closed' }),
+  ...SHARED_ISSUE_MUTATION_ARMS,
+]);
+export type GitlabIssueAssignResultV1 = ReturnType<typeof GitlabIssueAssignResultV1Schema.parse>;
+
+export const GitlabIssueLabelInputV1Schema = defineProtocolObject({
+  ...GitlabIssueMutationInputFields,
+  operation: GitlabDeltaOperationV1Schema,
+  labelNames: NonEmptyUniqueNamesSchema,
+}, { policy: 'closed' });
+export type GitlabIssueLabelInputV1 = ReturnType<typeof GitlabIssueLabelInputV1Schema.parse>;
+
+export const GitlabIssueLabelResultV1Schema = defineProtocolUnion([
+  defineProtocolObject({
+    kind: defineProtocolLiteral('labelsChanged'),
+    item: GitlabIssueStateRowV1Schema,
+  }, { policy: 'closed' }),
+  ...SHARED_ISSUE_MUTATION_ARMS,
+]);
+export type GitlabIssueLabelResultV1 = ReturnType<typeof GitlabIssueLabelResultV1Schema.parse>;
+
+const GitlabDiscussionStateV1Schema = defineProtocolObject({
+  id: IdentifierSchema,
+  resolved: GitlabBooleanSchema,
+}, { policy: 'closed' });
+
+export const GitlabMergeRequestDiscussionResolutionInputV1Schema = defineProtocolObject({
+  v: defineProtocolLiteral(1),
+  instance: TriageConfiguredSourceInstanceV1Schema,
+  localRef: TriageSourceEntryLocalRefV1Schema,
+  observedHeadSha: GitlabObservedHeadShaV1Schema,
+  discussionId: IdentifierSchema,
+  resolved: GitlabBooleanSchema,
+}, { policy: 'closed' });
+export type GitlabMergeRequestDiscussionResolutionInputV1 = ReturnType<
+  typeof GitlabMergeRequestDiscussionResolutionInputV1Schema.parse
+>;
+
+export const GitlabMergeRequestDiscussionResolutionResultV1Schema = defineProtocolUnion([
+  defineProtocolObject({
+    kind: defineProtocolLiteral('discussionStateChanged'),
+    item: GitlabMergeRequestStateRowV1Schema,
+    discussion: GitlabDiscussionStateV1Schema,
+  }, { policy: 'closed' }),
+  ...SHARED_MUTATION_ARMS,
+]);
+export type GitlabMergeRequestDiscussionResolutionResultV1 = ReturnType<
+  typeof GitlabMergeRequestDiscussionResolutionResultV1Schema.parse
+>;

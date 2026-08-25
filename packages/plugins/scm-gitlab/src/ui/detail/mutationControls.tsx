@@ -29,12 +29,14 @@
  */
 
 import * as React from 'react';
+import type { JsonValue } from '@happier-dev/plugin-sdk';
 import {
   Banner,
   Button,
   Row,
   Stack,
   Text,
+  TextField,
   useExecutePluginAction,
   usePluginTranslation,
   type PluginTranslate,
@@ -49,18 +51,21 @@ import {
   GITLAB_PLUGIN_ID,
   GITLAB_TRIAGE_MUTATION_ACTION_IDS,
 } from '../../triage/contribution.js';
-import type {
-  GitlabMergeRequestCloseInputV1,
-  GitlabMergeRequestMarkReadyInputV1,
-  GitlabMergeRequestMergeInputV1,
-} from '../../triage/mutations/contracts.js';
 import {
   buildGitlabMergeRequestCloseInputV1,
   buildGitlabMergeRequestMarkReadyInputV1,
   buildGitlabMergeRequestMergeInputV1,
+  buildGitlabMergeRequestReopenInputV1,
+  buildGitlabReviewerChangeInputV1,
+  buildGitlabDiscussionResolutionInputV1,
+  buildGitlabIssueCloseInputV1,
+  buildGitlabIssueReopenInputV1,
+  buildGitlabIssueAssignInputV1,
+  buildGitlabIssueLabelInputV1,
+  gitlabOfferedIssueWritesV1,
   gitlabOfferedMergeRequestWritesV1,
   projectGitlabWriteOutcomeV1,
-  type GitlabMergeRequestWriteIdV1,
+  type GitlabWriteIdV1,
   type GitlabWriteEffectV1,
   type GitlabWriteOutcomeV1,
 } from './mutations.js';
@@ -70,10 +75,7 @@ import {
  * contract schema, so this names what may be dispatched without widening it to
  * an untyped bag.
  */
-type GitlabWriteInputV1 =
-  | GitlabMergeRequestMergeInputV1
-  | GitlabMergeRequestMarkReadyInputV1
-  | GitlabMergeRequestCloseInputV1;
+type GitlabWriteInputV1 = JsonValue;
 
 const ACTION_BY_WRITE = Object.freeze({
   merge: Object.freeze({
@@ -88,6 +90,34 @@ const ACTION_BY_WRITE = Object.freeze({
     pluginId: GITLAB_PLUGIN_ID,
     localId: GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestClose,
   }),
+  mergeRequestReopen: Object.freeze({
+    pluginId: GITLAB_PLUGIN_ID,
+    localId: GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestReopen,
+  }),
+  reviewerChange: Object.freeze({
+    pluginId: GITLAB_PLUGIN_ID,
+    localId: GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestReviewerChange,
+  }),
+  discussionResolution: Object.freeze({
+    pluginId: GITLAB_PLUGIN_ID,
+    localId: GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestDiscussionResolution,
+  }),
+  issueClose: Object.freeze({
+    pluginId: GITLAB_PLUGIN_ID,
+    localId: GITLAB_TRIAGE_MUTATION_ACTION_IDS.issueClose,
+  }),
+  issueReopen: Object.freeze({
+    pluginId: GITLAB_PLUGIN_ID,
+    localId: GITLAB_TRIAGE_MUTATION_ACTION_IDS.issueReopen,
+  }),
+  issueAssign: Object.freeze({
+    pluginId: GITLAB_PLUGIN_ID,
+    localId: GITLAB_TRIAGE_MUTATION_ACTION_IDS.issueAssign,
+  }),
+  issueLabel: Object.freeze({
+    pluginId: GITLAB_PLUGIN_ID,
+    localId: GITLAB_TRIAGE_MUTATION_ACTION_IDS.issueLabel,
+  }),
 });
 
 /** What one settled write is presented as. */
@@ -97,7 +127,13 @@ function describeRefusal(
   reason: string,
   dispatched: boolean,
   text: PluginTranslate,
+  issueWrite: boolean,
 ): string {
+  if (issueWrite) {
+    return dispatched
+      ? 'GitLab rejected this issue change after it was dispatched.'
+      : 'Nothing was written: GitLab reports this issue cannot accept that change.';
+  }
   switch (reason) {
     case 'headAdvanced':
       return text(
@@ -141,6 +177,7 @@ function describeRefusal(
 function describeApplied(
   effect: GitlabWriteEffectV1,
   text: PluginTranslate,
+  issueWrite: boolean,
 ): SettledWriteV1 {
   switch (effect) {
     case 'merged':
@@ -168,7 +205,26 @@ function describeApplied(
           'Ready for review. GitLab cleared the draft flag and notified the reviewers.',
         ),
       };
+    case 'reopened':
+      return { tone: 'success', title: 'Reopened. GitLab confirmed this entry is open.' };
+    case 'reviewersChanged':
+      return {
+        tone: 'success',
+        title: 'Reviewers updated. GitLab confirmed the new reviewer set.',
+      };
+    case 'discussionStateChanged':
+      return {
+        tone: 'success',
+        title: 'Discussion updated. GitLab confirmed its resolution state.',
+      };
+    case 'assigneesChanged':
+      return { tone: 'success', title: 'Assignees updated. GitLab confirmed the new assignee set.' };
+    case 'labelsChanged':
+      return { tone: 'success', title: 'Labels updated. GitLab confirmed the new label set.' };
     default:
+      if (issueWrite) {
+        return { tone: 'success', title: 'Closed. GitLab confirmed this issue is closed.' };
+      }
       return {
         tone: 'success',
         title: text(
@@ -180,23 +236,28 @@ function describeApplied(
 }
 
 function projectSettledWrite(
+  write: GitlabWriteIdV1,
   outcome: GitlabWriteOutcomeV1 | null,
   text: PluginTranslate,
 ): SettledWriteV1 | null {
   if (outcome === null) return null;
+  const issueWrite = write === 'issueClose' || write === 'issueReopen'
+    || write === 'issueAssign' || write === 'issueLabel';
   switch (outcome.kind) {
     case 'applied':
-      return describeApplied(outcome.effect, text);
+      return describeApplied(outcome.effect, text, issueWrite);
     case 'reconfirmationRequired':
       return {
         tone: 'warning',
-        title: text(
-          'plugins.gitlab.ui.mutations.reconfirm',
-          'Nothing was written: this merge request changed after you read it. Reload and decide again.',
-        ),
+        title: issueWrite
+          ? 'Nothing was written: this issue changed after you read it. Reload and decide again.'
+          : text(
+            'plugins.gitlab.ui.mutations.reconfirm',
+            'Nothing was written: this merge request changed after you read it. Reload and decide again.',
+          ),
       };
     case 'refused':
-      return { tone: 'warning', title: describeRefusal(outcome.reason, outcome.dispatched, text) };
+      return { tone: 'warning', title: describeRefusal(outcome.reason, outcome.dispatched, text, issueWrite) };
     case 'unconfirmed': {
       // The request reached GitLab and its effect is unproven. This must never
       // read as "nothing happened", and never as a simple retry.
@@ -230,18 +291,22 @@ function projectSettledWrite(
     case 'uncertain':
       return {
         tone: 'warning',
-        title: text(
-          'plugins.gitlab.ui.mutations.outcomeUnknown',
-          'The outcome is unknown. Reload this merge request before trying again.',
-        ),
+        title: issueWrite
+          ? 'The outcome is unknown. Reload this issue before trying again.'
+          : text(
+            'plugins.gitlab.ui.mutations.outcomeUnknown',
+            'The outcome is unknown. Reload this merge request before trying again.',
+          ),
       };
     case 'rejected':
       return {
         tone: 'danger',
-        title: text(
-          'plugins.gitlab.ui.mutations.rejected',
-          'This did not complete. Reload this merge request to see where it stands.',
-        ),
+        title: issueWrite
+          ? 'This did not complete. Reload this issue to see where it stands.'
+          : text(
+            'plugins.gitlab.ui.mutations.rejected',
+            'This did not complete. Reload this merge request to see where it stands.',
+          ),
       };
     default:
       return {
@@ -284,19 +349,20 @@ function GitlabWriteControl({
   labelKey,
   variant,
 }: Readonly<{
-  write: GitlabMergeRequestWriteIdV1;
-  input: GitlabWriteInputV1;
+  write: GitlabWriteIdV1;
+  input: GitlabWriteInputV1 | null;
   label: string;
-  labelKey: string;
+  labelKey?: string;
   variant: 'primary' | 'secondary';
 }>): React.ReactElement {
   const text = usePluginTranslation();
   const controller = useExecutePluginAction(ACTION_BY_WRITE[write]);
   const run = React.useCallback(() => {
-    void controller.execute(input);
+    if (input !== null) void controller.execute(input);
   }, [controller, input]);
 
   const settled = projectSettledWrite(
+    write,
     projectGitlabWriteOutcomeV1(write, controller.execution),
     text,
   );
@@ -306,13 +372,57 @@ function GitlabWriteControl({
       <Row gap="small">
         <Button
           title={label}
-          titleKey={labelKey}
+          {...(labelKey === undefined ? {} : { titleKey: labelKey })}
           variant={variant}
           busy={controller.execution.status === 'pending'}
+          disabled={input === null}
           onPress={run}
         />
       </Row>
       <SettledWriteBanner settled={settled} />
+    </Stack>
+  );
+}
+
+function parseNames(value: string): readonly string[] {
+  const name = value.trim();
+  return name === '' ? [] : [name];
+}
+
+function NamedDeltaControls({ input, kind }: Readonly<{
+  input: TriageDetailSurfaceInputV1;
+  kind: 'reviewers' | 'assignees' | 'labels';
+}>): React.ReactElement {
+  const [value, setValue] = React.useState('');
+  const names = parseNames(value);
+  const build = (operation: 'add' | 'remove') => kind === 'reviewers'
+    ? buildGitlabReviewerChangeInputV1(input, operation, names)
+    : kind === 'assignees'
+      ? buildGitlabIssueAssignInputV1(input, operation, names)
+      : buildGitlabIssueLabelInputV1(input, operation, names);
+  const write: GitlabWriteIdV1 = kind === 'reviewers'
+    ? 'reviewerChange'
+    : kind === 'assignees' ? 'issueAssign' : 'issueLabel';
+  const fieldLabel = kind === 'reviewers'
+    ? 'Reviewer username'
+    : kind === 'assignees' ? 'Assignee username' : 'Label name';
+  return (
+    <Stack gap="small">
+      <TextField label={fieldLabel} value={value} onChange={setValue} />
+      <Row gap="small">
+        {(['add', 'remove'] as const).map((operation) => {
+          const built = build(operation);
+          return (
+            <GitlabWriteControl
+              key={operation}
+              write={write}
+              input={built}
+              label={`${operation === 'add' ? 'Add' : 'Remove'} ${kind}`}
+              variant="secondary"
+            />
+          );
+        })}
+      </Row>
     </Stack>
   );
 }
@@ -329,7 +439,7 @@ export function GitlabMutationControls({
   input,
 }: Readonly<{ input: TriageDetailSurfaceInputV1 }>): React.ReactElement | null {
   const text = usePluginTranslation();
-  const offered = gitlabOfferedMergeRequestWritesV1({
+  const mergeRequestWrites = gitlabOfferedMergeRequestWritesV1({
     kindId: input.observation.entryRef.kindId,
     state: input.observation.snapshot.state,
   });
@@ -342,22 +452,30 @@ export function GitlabMutationControls({
   const mergeInput = buildGitlabMergeRequestMergeInputV1(input);
   const markReadyInput = buildGitlabMergeRequestMarkReadyInputV1(input);
   const closeInput = buildGitlabMergeRequestCloseInputV1(input);
+  const reopenInput = buildGitlabMergeRequestReopenInputV1(input);
+  const issueWrites = gitlabOfferedIssueWritesV1({
+    kindId: input.observation.entryRef.kindId,
+    state: input.observation.snapshot.state,
+  });
+  const issueCloseInput = buildGitlabIssueCloseInputV1(input);
+  const issueReopenInput = buildGitlabIssueReopenInputV1(input);
 
-  if (offered.length === 0) return null;
+  if (mergeRequestWrites.length === 0 && issueWrites.length === 0) return null;
   // A withheld head-pinned write is announced rather than silently missing: a
   // reader who cannot see Merge is owed the reason, and "GitLab has not reported
   // this merge request's head yet" is a different fact from "you may not merge".
-  const headPinUnavailable = mergeInput === null || markReadyInput === null;
+  const headPinUnavailable = mergeRequestWrites.includes('merge')
+    && (mergeInput === null || markReadyInput === null);
 
   return (
     <Stack gap="large">
-      <Text
-        variant="label"
-        valueKey="plugins.gitlab.ui.mutations.title"
-        fallback="Merge request actions"
-      />
+      <Text variant="label">
+        {input.observation.entryRef.kindId === 'issue'
+          ? 'Issue actions'
+          : text('plugins.gitlab.ui.mutations.title', 'Merge request actions')}
+      </Text>
       <Stack gap="small">
-        {mergeInput === null ? null : (
+        {!mergeRequestWrites.includes('merge') || mergeInput === null ? null : (
           <GitlabWriteControl
             write="merge"
             input={mergeInput}
@@ -366,7 +484,7 @@ export function GitlabMutationControls({
             variant="primary"
           />
         )}
-        {markReadyInput === null ? null : (
+        {!mergeRequestWrites.includes('markReady') || markReadyInput === null ? null : (
           <GitlabWriteControl
             write="markReady"
             input={markReadyInput}
@@ -375,7 +493,7 @@ export function GitlabMutationControls({
             variant="secondary"
           />
         )}
-        {closeInput === null ? null : (
+        {!mergeRequestWrites.includes('close') || closeInput === null ? null : (
           <GitlabWriteControl
             write="close"
             input={closeInput}
@@ -384,7 +502,19 @@ export function GitlabMutationControls({
             variant="secondary"
           />
         )}
-        {closeInput === null ? null : (
+        {!mergeRequestWrites.includes('mergeRequestReopen') || reopenInput === null ? null : (
+          <GitlabWriteControl write="mergeRequestReopen" input={reopenInput} label="Reopen" variant="secondary" />
+        )}
+        {!mergeRequestWrites.includes('reviewerChange') ? null : <NamedDeltaControls input={input} kind="reviewers" />}
+        {!issueWrites.includes('issueClose') ? null : (
+          <GitlabWriteControl write="issueClose" input={issueCloseInput} label="Close issue" variant="secondary" />
+        )}
+        {!issueWrites.includes('issueReopen') ? null : (
+          <GitlabWriteControl write="issueReopen" input={issueReopenInput} label="Reopen issue" variant="secondary" />
+        )}
+        {!issueWrites.includes('issueAssign') ? null : <NamedDeltaControls input={input} kind="assignees" />}
+        {!issueWrites.includes('issueLabel') ? null : <NamedDeltaControls input={input} kind="labels" />}
+        {!mergeRequestWrites.includes('close') || closeInput === null ? null : (
           <Text
             variant="caption"
             tone="neutral"
@@ -402,5 +532,21 @@ export function GitlabMutationControls({
         ) : null}
       </Stack>
     </Stack>
+  );
+}
+
+export function GitlabDiscussionResolutionControl({ input, discussionId, resolved }: Readonly<{
+  input: TriageDetailSurfaceInputV1;
+  discussionId: string;
+  resolved: boolean;
+}>): React.ReactElement | null {
+  const built = buildGitlabDiscussionResolutionInputV1(input, discussionId, !resolved);
+  return built === null ? null : (
+    <GitlabWriteControl
+      write="discussionResolution"
+      input={built}
+      label={resolved ? 'Reopen discussion' : 'Resolve discussion'}
+      variant="secondary"
+    />
   );
 }

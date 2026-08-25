@@ -67,6 +67,30 @@ export function encodeGitlabScanContinuation(
   return token === null ? null : { v: 1, token };
 }
 
+/**
+ * Recovers only the invocation fact needed to rebuild the same lane set when
+ * GitLab's `/user` endpoint has a transient failure on a continuation call.
+ * The complete decoder still revalidates the resulting lanes and every URL.
+ */
+export function readGitlabScanContinuationViewerUserId(
+  continuation: TriageScanContinuationV1,
+): number | null | undefined {
+  const record = decodeTriagePagingTokenV1(continuation.token);
+  if (record === null || record.v !== CONTINUATION_VERSION) return undefined;
+  if (!Array.isArray(record.lanes)) return undefined;
+  const reviewed = record.lanes
+    .map(readRecord)
+    .find((lane): lane is Readonly<Record<string, unknown>> => lane !== null && lane.key === 'merge-request:reviewed');
+  if (reviewed === undefined || typeof reviewed.nextUrl !== 'string') return null;
+  try {
+    const raw = new URL(reviewed.nextUrl).searchParams.get('approved_by_ids[]');
+    if (raw === null) return undefined;
+    return readCount(Number(raw), 1) ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export type GitlabScanContinuationDecodeInput = Readonly<{
   continuation: TriageScanContinuationV1;
   /** The origin this invocation was authorized against; every URL is re-admitted to it. */

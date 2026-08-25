@@ -9,6 +9,7 @@ import {
 import {
   MAX_TRIAGE_ROUTING_TOKEN_UTF8_BYTES_V1,
   TriageConfiguredSourceInstanceV1Schema,
+  TriageGetResultV1Schema,
   TriageSourceEntryLocalRefV1Schema,
   TriageSourceFailureV1Schema,
 } from '@happier-dev/triage-protocol/v1';
@@ -19,8 +20,11 @@ import {
   BITBUCKET_MAX_DETAIL_ROWS_V1,
 } from '../detail/projection.js';
 
+/** The real aggregate Action-value gate; the result itself is the measured value. */
+export const BITBUCKET_ACTION_RESULT_JSON_BYTE_LIMIT_V1 = 1_024 * 1_024;
+
 /**
- * The three source-native Bitbucket Cloud detail Action contracts.
+ * The five source-native Bitbucket Cloud detail Action contracts.
  *
  * The detail body runs in a UI artifact that holds no credential and speaks no
  * HTTP, while `apiClient.ts` is this source's sole credential reader. The bridge
@@ -83,6 +87,13 @@ const pagedPlaneInput = defineProtocolObject({
   routingToken: RoutingTokenSchema,
   /** Present only for a following page, and only as this source minted it. */
   continuation: ContinuationSchema.optional(),
+}, { policy: 'closed' });
+
+const unpagedPlaneInput = defineProtocolObject({
+  v: defineProtocolLiteral(1),
+  instance: TriageConfiguredSourceInstanceV1Schema,
+  localRef: TriageSourceEntryLocalRefV1Schema,
+  routingToken: RoutingTokenSchema,
 }, { policy: 'closed' });
 
 const BitbucketDetailUnavailableSchema = defineProtocolObject({
@@ -222,3 +233,52 @@ export const BitbucketCommentsResultV1Schema = defineProtocolUnion([
   BitbucketDetailUnavailableSchema,
 ]);
 export type BitbucketCommentsResultV1 = ReturnType<typeof BitbucketCommentsResultV1Schema.parse>;
+
+/* ------------------------------------------------------------------ overview */
+
+export const BitbucketOverviewInputV1Schema = unpagedPlaneInput;
+export const BitbucketOverviewResultV1Schema = defineProtocolUnion([
+  defineProtocolObject({
+    kind: defineProtocolLiteral('overview'),
+    observedAtMs: TimestampSchema,
+    observation: TriageGetResultV1Schema,
+  }, { policy: 'closed' }),
+  BitbucketDetailUnavailableSchema,
+]);
+export type BitbucketOverviewResultV1 = ReturnType<typeof BitbucketOverviewResultV1Schema.parse>;
+
+/* ---------------------------------------------------------------------- diff */
+
+export const BitbucketDiffInputV1Schema = pagedPlaneInput;
+export const BitbucketProjectedDiffstatRowV1Schema = defineProtocolObject({
+  path: TextSchema,
+  status: LabelSchema,
+  linesAdded: CountSchema,
+  linesRemoved: CountSchema,
+  truncated: defineProtocolLiteral(true).optional(),
+}, { policy: 'closed' });
+
+const BitbucketRawDiffV1Schema = defineProtocolUnion([
+  defineProtocolObject({
+    kind: defineProtocolLiteral('available'),
+    text: defineProtocolUtf8String({ maxUtf8Bytes: BITBUCKET_ACTION_RESULT_JSON_BYTE_LIMIT_V1 }),
+    truncated: BitbucketBooleanSchema,
+  }, { policy: 'closed' }),
+  defineProtocolObject({ kind: defineProtocolLiteral('tooLarge') }, { policy: 'closed' }),
+]);
+
+export const BitbucketDiffResultV1Schema = defineProtocolUnion([
+  defineProtocolObject({
+    kind: defineProtocolLiteral('diff'),
+    files: defineProtocolArray(BitbucketProjectedDiffstatRowV1Schema, {
+      maxItems: BITBUCKET_MAX_DETAIL_ROWS_V1,
+    }),
+    omittedRowCount: CountSchema,
+    projectionTruncated: BitbucketBooleanSchema,
+    continuation: ContinuationSchema.optional(),
+    /** Present on the first page only; later diffstat pages do not re-fetch the raw body. */
+    raw: BitbucketRawDiffV1Schema.optional(),
+  }, { policy: 'closed' }),
+  BitbucketDetailUnavailableSchema,
+]);
+export type BitbucketDiffResultV1 = ReturnType<typeof BitbucketDiffResultV1Schema.parse>;

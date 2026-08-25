@@ -13,6 +13,14 @@ const SERVICES_ORIGIN = 'https://dev.azure.com';
 const SERVER_BASE = 'https://server.example/tfs/DefaultCollection';
 const SERVER_ORIGIN = 'https://server.example';
 const TOKEN = 'azure-devops-test-pat';
+const CONNECTION_DATA = {
+  authenticatedUser: {
+    id: 'd6245f20-2af8-44f4-9451-8107cb2767db',
+    providerDisplayName: 'Ada Lovelace',
+  },
+  deploymentType: 'hosted',
+  instanceId: '1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d',
+};
 
 const ACCOUNT = {
   service: { pluginId: 'happier.scm.forge.azure-devops', localId: 'azure-devops-account' },
@@ -27,8 +35,10 @@ const ACCOUNT = {
 function createHarness(input: Readonly<{
   base?: string;
   credentials?: Readonly<Record<string, string>>;
+  response?: Readonly<{ status: number; body: unknown }>;
 }> = {}) {
   const stored = new Map<string, string>(Object.entries(input.credentials ?? {}));
+  const requests: Array<Readonly<{ url: string; headers: Readonly<Record<string, string>> }>> = [];
   const configuration = {
     target: { kind: 'account' as const, account: ACCOUNT, modeId: AZURE_DEVOPS_MANUAL_MODE_ID },
     revision: 'revision-1',
@@ -38,6 +48,22 @@ function createHarness(input: Readonly<{
     getSecret: async () => null,
   };
   const signal = new AbortController().signal;
+  const services = {
+    http: {
+      async request(request: Readonly<{
+        url: string;
+        headers: Readonly<Record<string, string>>;
+      }>) {
+        requests.push(request);
+        const response = input.response ?? { status: 200, body: CONNECTION_DATA };
+        return {
+          status: response.status,
+          headers: { 'content-type': 'application/json' },
+          body: new TextEncoder().encode(JSON.stringify(response.body)),
+        };
+      },
+    },
+  };
   return {
     stored,
     authenticationContext: {
@@ -50,13 +76,16 @@ function createHarness(input: Readonly<{
         async set(key: string, value: string) { stored.set(key, value); },
         async delete(key: string) { stored.delete(key); },
       },
+      services,
     },
     readContext: {
       signal,
       account: ACCOUNT,
       configuration,
       credentials: { async get(key: string) { return stored.get(key) ?? null; } },
+      services,
     },
+    requests,
   };
 }
 
@@ -67,6 +96,66 @@ function manualMode() {
 }
 
 describe('Azure DevOps connected-account runtime', () => {
+  it('confirms the provider identity before persisting the attempted PAT', async () => {
+    const harness = createHarness({ base: SERVICES_BASE });
+
+    const result = await manualMode().complete(
+      { fields: { token: TOKEN } },
+      harness.authenticationContext as never,
+    );
+
+    expect(result.status).toBe('connected');
+    expect(harness.requests).toHaveLength(1);
+    expect(harness.requests[0]?.url).toBe(
+      'https://dev.azure.com/acme/_apis/connectionData?api-version=7.1-preview.1',
+    );
+    expect(harness.requests[0]?.headers.Authorization).toBe(
+      `Basic ${Buffer.from(`:${TOKEN}`, 'utf8').toString('base64')}`,
+    );
+    expect(harness.stored.get('token')).toBe(TOKEN);
+    if (result.status !== 'connected') return;
+    expect(result.providerIdentity?.accountId).toBe(CONNECTION_DATA.authenticatedUser.id);
+  });
+
+  it('rejects an invalid PAT without leaving it in the attempt credential store', async () => {
+    const harness = createHarness({
+      base: SERVICES_BASE,
+      response: { status: 401, body: { message: 'Unauthorized' } },
+    });
+
+    const result = await manualMode().complete(
+      { fields: { token: 'mistyped-token' } },
+      harness.authenticationContext as never,
+    );
+
+    expect(result.status).toBe('rejected');
+    expect(harness.stored.has('token')).toBe(false);
+  });
+
+  it('rejects a Server that cannot serve REST 7.1 before persisting its PAT', async () => {
+    const harness = createHarness({
+      base: SERVER_BASE,
+      response: {
+        status: 400,
+        body: {
+          message: 'The requested REST API version of 7.1 is out of range for this server.',
+          typeKey: 'VssVersionNotSupportedException',
+        },
+      },
+    });
+
+    const result = await manualMode().complete(
+      { fields: { token: TOKEN } },
+      harness.authenticationContext as never,
+    );
+
+    expect(result.status).toBe('rejected');
+    if (result.status === 'rejected') {
+      expect(result.diagnostic.code).toBe('azure_devops_rest_version_unsupported');
+    }
+    expect(harness.stored.has('token')).toBe(false);
+  });
+
   it('names the account by the configured deployment base, not by the shared service host', async () => {
     // Every Azure DevOps Services account lives on one host, so a host-only label would render
     // every organization identically in the account list.
@@ -88,7 +177,7 @@ describe('Azure DevOps connected-account runtime', () => {
     }
   });
 
-  it('falls back to the product name when no usable base is configured', async () => {
+  it('rejects a connection whose configured deployment cannot be validated', async () => {
     const harness = createHarness({ base: 'not a url' });
 
     const result = await manualMode().complete(
@@ -96,9 +185,9 @@ describe('Azure DevOps connected-account runtime', () => {
       harness.authenticationContext as never,
     );
 
-    expect(result.status).toBe('connected');
-    if (result.status !== 'connected') return;
-    expect(result.displayName).toBe('Azure DevOps');
+    expect(result.status).toBe('rejected');
+    expect(harness.requests).toHaveLength(0);
+    expect(harness.stored.has('token')).toBe(false);
   });
 
   it('materializes the personal access token for the bare origin the host admits', async () => {
@@ -130,5 +219,18 @@ describe('Azure DevOps connected-account runtime', () => {
     const health = await azureDevopsConnectedAccountRuntime.status(harness.readContext as never);
 
     expect(health.status).toBe('unavailable');
+  });
+
+  it('reports a stored PAT reconnect-required when Azure no longer accepts it', async () => {
+    const harness = createHarness({
+      base: SERVICES_BASE,
+      credentials: { token: TOKEN },
+      response: { status: 401, body: { message: 'Unauthorized' } },
+    });
+
+    const health = await azureDevopsConnectedAccountRuntime.status(harness.readContext as never);
+
+    expect(health.status).toBe('reconnectRequired');
+    expect(harness.requests).toHaveLength(1);
   });
 });

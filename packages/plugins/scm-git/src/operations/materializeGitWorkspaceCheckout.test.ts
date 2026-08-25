@@ -49,11 +49,13 @@ describe('materializeGitWorkspaceCheckout', () => {
                 repoRoot,
                 displayName: 'feature/@',
                 baseRef: 'main',
+                branchMode: 'new',
             }))).rejects.toThrow('Invalid Git worktree name');
             await expect(runWithRealGitScmRuntime(() => createGitWorkspaceCheckoutAtDefaultPath({
                 repoRoot,
                 displayName: 'feature.lock',
                 baseRef: 'main',
+                branchMode: 'new',
             }))).rejects.toThrow('Invalid Git worktree name');
             await expect(runGit(repoRoot, ['worktree', 'list', '--porcelain'])).resolves.not.toContain('.dev/worktree');
         } finally {
@@ -81,10 +83,13 @@ describe('materializeGitWorkspaceCheckout', () => {
                 targetPath: targetRoot,
                 displayName: 'feature-auth',
                 baseRef: 'main',
+                branchMode: 'new',
             }));
 
             expect(materializedCheckout).toEqual({
                 targetPath: targetRoot,
+                branchName: 'feature-auth',
+                reused: false,
             });
             await expect(runGit(targetRoot, ['rev-parse', '--abbrev-ref', 'HEAD'])).resolves.toBe('feature-auth');
             await expect(runGit(targetRoot, ['rev-parse', '--git-common-dir'])).resolves.toBe(await realpath(join(repoRoot, '.git')));
@@ -116,11 +121,14 @@ describe('materializeGitWorkspaceCheckout', () => {
                 repoRoot,
                 displayName: 'feature/auth',
                 baseRef: 'main',
+                branchMode: 'new',
             }));
             const restoredIdentity = await runWithRealGitScmRuntime(() => inspectGitCheckoutIdentity({ cwd: restoredRoot }));
 
             expect(createdCheckout).toEqual({
                 targetPath: restoredIdentity?.registeredWorktreePath,
+                branchName: 'feature/auth',
+                reused: true,
             });
             expect(restoredIdentity).toEqual(expect.objectContaining({
                 branchName: 'feature/auth',
@@ -132,6 +140,39 @@ describe('materializeGitWorkspaceCheckout', () => {
         } finally {
             await rm(repoRoot, { recursive: true, force: true });
             await rm(originalWorktreeRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('reuses the worktree that already holds an existing branch at a non-default path', async () => {
+        const repoRoot = await makeTempDir('git-materialize-existing-branch-repo-');
+        const existingWorktreeRoot = await makeTempDir('git-materialize-existing-branch-worktree-');
+
+        try {
+            await runGit(repoRoot, ['init']);
+            await configureGitRepo(repoRoot);
+            await runGit(repoRoot, ['branch', '-M', 'main']);
+            await writeTrackedFile(repoRoot, 'README.md', 'main\n');
+            await runGit(repoRoot, ['commit', '-m', 'initial']);
+            await runGit(repoRoot, ['branch', 'feature/auth']);
+            await runGit(repoRoot, ['worktree', 'add', existingWorktreeRoot, 'feature/auth']);
+
+            const materialized = await runWithRealGitScmRuntime(() => createGitWorkspaceCheckoutAtDefaultPath({
+                repoRoot,
+                displayName: 'feature/auth',
+                baseRef: 'main',
+                branchMode: 'existing',
+            }));
+
+            expect(await realpath(materialized.targetPath)).toBe(await realpath(existingWorktreeRoot));
+            expect(materialized).toMatchObject({
+                branchName: 'feature/auth',
+                reused: true,
+            });
+            await expect(runGit(repoRoot, ['branch', '--list', 'feature/auth-2']))
+                .resolves.toBe('');
+        } finally {
+            await rm(repoRoot, { recursive: true, force: true });
+            await rm(existingWorktreeRoot, { recursive: true, force: true });
         }
     });
 
@@ -157,11 +198,14 @@ describe('materializeGitWorkspaceCheckout', () => {
                 targetPath: restoredRoot,
                 displayName: 'feature-auth',
                 baseRef: 'main',
+                branchMode: 'new',
             }));
             const restoredIdentity = await runWithRealGitScmRuntime(() => inspectGitCheckoutIdentity({ cwd: restoredRoot }));
 
             expect(materializedCheckout).toEqual({
                 targetPath: restoredIdentity?.registeredWorktreePath,
+                branchName: 'feature-auth',
+                reused: true,
             });
             expect(restoredIdentity).toEqual(expect.objectContaining({
                 branchName: 'feature-auth',

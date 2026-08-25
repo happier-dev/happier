@@ -67,6 +67,7 @@ function launchInput(overrides: Readonly<{
   kindId?: string;
   state?: Readonly<Record<string, unknown>>;
   nativeRevision?: string | undefined;
+  linkedSessions?: readonly Readonly<{ sessionId: string; displayTitle?: string }>[];
 }> = {}): JsonValue {
   const revision = 'nativeRevision' in overrides ? overrides.nativeRevision : OBSERVED_HEAD;
   return {
@@ -91,11 +92,12 @@ function launchInput(overrides: Readonly<{
       viewer: { involvement: ['reviewRequested'] },
       ...(revision === undefined ? {} : { nativeRevision: revision }),
     },
-    linkedSessions: [],
+    linkedSessions: overrides.linkedSessions ?? [],
   } as unknown as JsonValue;
 }
 
 const STATE_ROW = Object.freeze({
+  projectId: 3,
   iid: '412',
   state: 'opened',
   draft: false,
@@ -151,6 +153,35 @@ describe('the mounted GitLab merge-request writes', () => {
     await expect(detail.queryByRole('button', { name: 'Mark ready for review' }))
       .resolves.toBeDefined();
     await expect(detail.queryByRole('button', { name: 'Close' })).resolves.toBeDefined();
+    await expect(detail.queryByRole('textbox', { label: 'Reviewer username' })).resolves.toBeDefined();
+    await expect(detail.queryByRole('button', { name: 'Add reviewers' })).resolves.toBeDefined();
+    await expect(detail.queryByRole('button', { name: 'Remove reviewers' })).resolves.toBeDefined();
+  });
+
+  it('offers the registered merge-request reopen on a closed merge request', async () => {
+    const detail = await mountDetail(launchInput({ state: { presentation: 'closed', nativeLabel: 'Closed' } }));
+    await expect(detail.queryByRole('button', { name: 'Reopen' })).resolves.toBeDefined();
+  });
+
+  it('offers issue state, assignee, and label controls without deleting their input paths', async () => {
+    const detail = await mountDetail(launchInput({ kindId: 'issue', nativeRevision: '2026-08-12T09:00:00.000Z' }));
+    await expect(detail.queryByRole('button', { name: 'Close issue' })).resolves.toBeDefined();
+    await expect(detail.queryByRole('textbox', { label: 'Assignee username' })).resolves.toBeDefined();
+    await expect(detail.queryByRole('textbox', { label: 'Label name' })).resolves.toBeDefined();
+    for (const name of ['Add assignees', 'Remove assignees', 'Add labels', 'Remove labels']) {
+      await expect(detail.queryByRole('button', { name })).resolves.toBeDefined();
+    }
+  });
+
+  it('opens a linked Work Session through the incumbent host Action', async () => {
+    const detail = await mountDetail(launchInput({
+      kindId: 'issue',
+      nativeRevision: '2026-08-12T09:00:00.000Z',
+      linkedSessions: [{ sessionId: 'session-1', displayTitle: 'Fix GitLab issue' }],
+    }));
+    await act(async () => { await detail.press(await detail.getByRole('tab', { name: 'Work Sessions' })); });
+    await act(async () => { await detail.press(await detail.getByRole('button', { name: 'Open Fix GitLab issue' })); });
+    expect(recorded.at(-1)).toEqual({ action: 'session.open', input: { sessionId: 'session-1' } });
   });
 
   it('sends the merge pinned to the exact commit the reader was shown', async () => {
@@ -257,7 +288,7 @@ describe('the mounted GitLab merge-request writes', () => {
     )).resolves.toBeDefined();
   });
 
-  it('offers no write on a merge request that is no longer open', async () => {
+  it('offers no close on a merge request that is no longer open', async () => {
     const detail = await mountDetail(launchInput({
       state: { presentation: 'closed', nativeLabel: 'Merged' },
     }));
@@ -266,7 +297,7 @@ describe('the mounted GitLab merge-request writes', () => {
     await expect(detail.queryByRole('button', { name: 'Close' })).resolves.toBeUndefined();
   });
 
-  it('offers no write on an issue, because all three transition a merge request', async () => {
+  it('does not offer merge-request writes on an issue', async () => {
     const detail = await mountDetail(launchInput({ kindId: 'issue' }));
 
     await expect(detail.queryByRole('button', { name: 'Merge' })).resolves.toBeUndefined();

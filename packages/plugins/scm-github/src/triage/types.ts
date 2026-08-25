@@ -72,6 +72,15 @@ export type GithubTriageEntrySnapshotV1 = Readonly<{
   title: string;
   scopeLabel: string;
   webUrl: string | null;
+  /**
+   * The provider's own `owner/name` for the repository this entry belongs to.
+   *
+   * It is the repository's IDENTITY, not its label: `scopeLabel` above is
+   * display text that the shared bounded-text owner may shorten, and a
+   * shortened identity would join to the wrong checkout. `null` when it cannot
+   * be emitted within the published identifier bound.
+   */
+  nameWithOwner: string | null;
   createdAtMs: number;
   sourceUpdatedAtMs: number;
   nativeRevision: string | null;

@@ -26,6 +26,8 @@ export const BITBUCKET_COMMENTS_PAGE_LENGTH_V1 = 30;
 export const BITBUCKET_ACTIVITY_PAGE_LENGTH_V1 = 25;
 /** `Builds` mounts one page of the pull request's own status collection. */
 export const BITBUCKET_STATUSES_PAGE_LENGTH_V1 = 25;
+/** Bitbucket's documented global maximum; one diffstat page never asks for more than it permits. */
+export const BITBUCKET_DIFFSTAT_PAGE_LENGTH_V1 = 100;
 
 export type BitbucketDetailRouteInputV1 = Readonly<{
   workspaceUuid: string;
@@ -71,4 +73,19 @@ export function buildBitbucketStatusesUrl(input: BitbucketDetailRouteInputV1): s
 /** `GET …/pullrequests/{id}/comments`. */
 export function buildBitbucketCommentsUrl(input: BitbucketDetailRouteInputV1): string {
   return pullRequestPath(input, '/comments');
+}
+
+/** The authoritative pull-request self read used by Overview refresh. */
+export function buildBitbucketOverviewUrl(input: BitbucketDetailRouteInputV1): string {
+  return pullRequestPath(input, '');
+}
+
+/** The documented 302-to-raw-text diff resource. */
+export function buildBitbucketDiffUrl(input: BitbucketDetailRouteInputV1): string {
+  return pullRequestPath(input, '/diff');
+}
+
+/** The JSON file summary paired with the raw diff. */
+export function buildBitbucketDiffstatUrl(input: BitbucketDetailRouteInputV1): string {
+  return pullRequestPath(input, '/diffstat');
 }

@@ -44,6 +44,28 @@ function readTimestampMs(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function readStringList(value: unknown): readonly string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const values: string[] = [];
+  for (const member of value) {
+    const item = readLabel(member);
+    if (item === null) return undefined;
+    if (!values.includes(item)) values.push(item);
+  }
+  return Object.freeze(values);
+}
+
+function readUsernameList(value: unknown): readonly string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const values: string[] = [];
+  for (const member of value) {
+    const item = readLabel(readRecord(member)?.username);
+    if (item === null) return undefined;
+    if (!values.includes(item)) values.push(item);
+  }
+  return Object.freeze(values);
+}
+
 export type GitlabIssueRowDecoding =
   | Readonly<{ ok: true; row: GitlabIssueStateRowV1 }>
   | Readonly<{ ok: false }>;
@@ -53,8 +75,11 @@ export function decodeGitlabIssueStateRow(body: unknown): GitlabIssueRowDecoding
   if (record === null) return Object.freeze({ ok: false as const });
 
   const iid = record.iid;
+  const projectId = record.project_id;
   const state = readLabel(record.state);
-  if (typeof iid !== 'number' || !Number.isSafeInteger(iid) || iid < 1 || state === null) {
+  if (typeof iid !== 'number' || !Number.isSafeInteger(iid) || iid < 1
+    || typeof projectId !== 'number' || !Number.isSafeInteger(projectId) || projectId < 1
+    || state === null) {
     return Object.freeze({ ok: false as const });
   }
 
@@ -63,15 +88,20 @@ export function decodeGitlabIssueStateRow(body: unknown): GitlabIssueRowDecoding
   const revision = readNonEmptyString(record.updated_at);
   const closedAtMs = readTimestampMs(record.closed_at);
   const webUrl = readNonEmptyString(record.web_url);
+  const assigneeUsernames = readUsernameList(record.assignees);
+  const labelNames = readStringList(record.labels);
 
   return Object.freeze({
     ok: true as const,
     row: Object.freeze({
+      projectId,
       iid: String(iid),
       state,
       ...(revision === null ? {} : { revision }),
       ...(closedAtMs === null ? {} : { closedAtMs }),
       ...(webUrl === null ? {} : { webUrl }),
+      ...(assigneeUsernames === undefined ? {} : { assigneeUsernames }),
+      ...(labelNames === undefined ? {} : { labelNames }),
     }),
   });
 }
@@ -89,3 +119,11 @@ export const GITLAB_ISSUE_MUTATION_SUBJECT_V1: GitlabMutationSubjectV1<GitlabIss
     decode: decodeGitlabIssueStateRow,
     observedPin: (row) => row.revision,
   });
+
+/** The project path (`group/project`) carried by GitLab's own issue reference. */
+export function readGitlabIssueProjectPath(body: unknown): string | null {
+  const reference = readNonEmptyString(readRecord(readRecord(body)?.references)?.full);
+  if (reference === null) return null;
+  const path = reference.split('#')[0] ?? '';
+  return path === '' ? null : path;
+}

@@ -7,8 +7,11 @@ import type {
 import type { GithubApiClientV1 } from '../observations/githubApiClient.js';
 
 import { readGithubTriageKindId } from './contribution.js';
+import { GITHUB_ROUTE_BODY_MISMATCH_FAILURE } from './errors.js';
+import { buildGithubCollisionScope } from './identity.js';
 import { parseGithubRoutingToken, type GithubRepositoryRouteV1 } from './locator.js';
 import { openGithubTriageClient, resolveGithubTriageInstance } from './operations.js';
+import { createGithubRepositoryReader } from './repositories.js';
 import type { GithubTriageEntryLocalRefV1, GithubTriageKindIdV1 } from './types.js';
 
 /**
@@ -48,10 +51,17 @@ export type GithubAdmittedInvocationV1 =
     localRef: GithubTriageEntryLocalRefV1;
     kindId: GithubTriageKindIdV1;
     client: GithubApiClientV1;
+    signal: AbortSignal;
   }>
   | Readonly<{ ok: false; failure: TriageSourceFailureV1 }>;
 
-export async function admitGithubEntryInvocation(
+/** One mounted GitHub detail read, including every provider call behind it. */
+export const GITHUB_MOUNTED_DETAIL_DEADLINE_MS = 20_000;
+
+/** One exact GitHub mutation: preflight, one write, and confirmation together. */
+export const GITHUB_MUTATION_DEADLINE_MS = 45_000;
+
+async function admitGithubEntryInvocationWithinDeadline(
   input: Readonly<{
     instance: TriageConfiguredSourceInstanceV1;
     localRef: Readonly<{ kindId: string; collisionScope: string; entryId: string }>;
@@ -88,5 +98,43 @@ export async function admitGithubEntryInvocation(
     }),
     kindId,
     client: opened.client,
+    signal: context.signal,
   });
+}
+
+export async function admitGithubEntryInvocation(
+  input: Parameters<typeof admitGithubEntryInvocationWithinDeadline>[0],
+  context: PluginInvocationContext,
+): Promise<GithubAdmittedInvocationV1> {
+  return admitGithubEntryInvocationWithinDeadline(input, context);
+}
+
+/**
+ * Detail-read admission adds the identity fact those collection endpoints do not
+ * return themselves. `owner/name` is only a mutable route; the local reference is
+ * scoped by GitHub's immutable numeric repository id. A rename followed by path
+ * reuse must therefore stop before the detail collection is requested.
+ *
+ * Writes keep using `admitGithubEntryInvocation`: their canonical entity reread
+ * already resolves and compares the repository id, so charging them a second
+ * repository request here would add no authority.
+ */
+export async function admitGithubDetailInvocation(
+  input: Parameters<typeof admitGithubEntryInvocation>[0],
+  context: PluginInvocationContext,
+): Promise<GithubAdmittedInvocationV1> {
+  const admitted = await admitGithubEntryInvocationWithinDeadline(input, context);
+  if (!admitted.ok) return admitted;
+
+  const repository = await createGithubRepositoryReader({
+    client: admitted.client,
+    now: Date.now,
+  }).read(admitted.route);
+  if (repository.kind !== 'readable') {
+    return Object.freeze({ ok: false as const, failure: repository.failure });
+  }
+  if (buildGithubCollisionScope(repository.repositoryId) !== admitted.localRef.collisionScope) {
+    return Object.freeze({ ok: false as const, failure: GITHUB_ROUTE_BODY_MISMATCH_FAILURE });
+  }
+  return admitted;
 }

@@ -2,10 +2,11 @@
  * What the GitHub detail surface may write, what each write needs, and what its
  * answer means.
  *
- * The three pull-request writes are declared Actions with their own strict inputs
- * (`triage/mutations/contracts.ts`). This module owns only the three decisions the
- * SURFACE has to make around them, and it owns them as plain functions so they can
- * be checked without mounting a device:
+ * The writes this surface offers — merge, close and reopen — are declared Actions
+ * with their own strict inputs (`triage/mutations/contracts.ts`), one per kind that
+ * can take them: five in all, three on a pull request and two on an issue. This
+ * module owns only the three decisions the SURFACE has to make around them, and it
+ * owns them as plain functions so they can be checked without mounting a device:
  *
  *  1. which writes the applied observation actually offers;
  *  2. how an offered write's input is built from that same observation — and when
@@ -33,13 +34,50 @@ import type {
 } from '@happier-dev/triage-protocol/v1';
 
 import {
+  GithubIssueAssigneeAddInputV1Schema,
+  GithubIssueAssigneeRemoveInputV1Schema,
+  GithubIssueCloseInputV1Schema,
+  GithubIssueDeltaResultV1Schema,
+  GithubIssueLabelAddInputV1Schema,
+  GithubIssueLabelRemoveInputV1Schema,
+  GithubIssueReopenInputV1Schema,
+  GithubPullRequestAddReviewersInputV1Schema,
   GithubPullRequestCloseInputV1Schema,
+  GithubPullRequestMarkReadyInputV1Schema,
+  GithubPullRequestMarkReadyResultV1Schema,
   GithubPullRequestMergeInputV1Schema,
+  GithubPullRequestReviewPublicationInputV1Schema,
+  GithubPullRequestRemoveReviewersInputV1Schema,
+  GithubPullRequestReviewersResultV1Schema,
+  GithubPullRequestThreadResolutionInputV1Schema,
+  GithubPullRequestThreadResolutionResultV1Schema,
+  GithubPullRequestUpdateBranchInputV1Schema,
+  GithubPullRequestUpdateBranchResultV1Schema,
+  type GithubIssueAssigneeAddInputV1,
+  type GithubIssueAssigneeRemoveInputV1,
+  type GithubIssueCloseInputV1,
+  type GithubIssueCloseReasonV1,
+  type GithubIssueDeltaResultV1,
+  type GithubIssueLabelAddInputV1,
+  type GithubIssueLabelRemoveInputV1,
+  type GithubIssueReopenInputV1,
   type GithubMergeMethodV1,
+  type GithubPullRequestAddReviewersInputV1,
   type GithubPullRequestCloseInputV1,
+  type GithubPullRequestMarkReadyInputV1,
+  type GithubPullRequestMarkReadyResultV1,
   type GithubPullRequestMergeInputV1,
   type GithubPullRequestMergeResultV1,
+  type GithubPullRequestReviewPublicationInputV1,
+  type GithubPullRequestReviewPublicationResultV1,
+  type GithubPullRequestReviewVerdictV1,
+  type GithubPullRequestRemoveReviewersInputV1,
+  type GithubPullRequestReviewersResultV1,
   type GithubPullRequestStateResultV1,
+  type GithubPullRequestThreadResolutionInputV1,
+  type GithubPullRequestThreadResolutionResultV1,
+  type GithubPullRequestUpdateBranchInputV1,
+  type GithubPullRequestUpdateBranchResultV1,
 } from '../../triage/mutations/contracts.js';
 import type { GithubTriageKindIdV1 } from '../../triage/types.js';
 
@@ -57,19 +95,30 @@ export const GITHUB_MERGE_METHODS_V1: readonly GithubMergeMethodV1[] = Object.fr
   'rebase',
 ]);
 
+/**
+ * What a reader may do to the entry in front of them, in this product's words.
+ *
+ * `close` and `reopen` are ONE offer each across both kinds because they are one
+ * thing to the person pressing them. They are two different Actions underneath —
+ * closing an issue takes a reason and closing a pull request does not — and the
+ * renderer resolves which from the kind. Splitting the offer per kind would make
+ * every caller re-derive the same state rule twice.
+ */
 export type GithubPullRequestMutationIdV1 = 'merge' | 'close' | 'reopen';
 
 type ObservedState = TriageDetailSurfaceInputV1['observation']['snapshot']['state'];
 
 const OPEN_MUTATIONS: readonly GithubPullRequestMutationIdV1[] = Object.freeze(['merge', 'close']);
+const ISSUE_OPEN_MUTATIONS: readonly GithubPullRequestMutationIdV1[] = Object.freeze(['close']);
 const CLOSED_MUTATIONS: readonly GithubPullRequestMutationIdV1[] = Object.freeze(['reopen']);
 const NO_MUTATIONS: readonly GithubPullRequestMutationIdV1[] = Object.freeze([]);
 
 /**
  * The writes this entry offers, from the applied observation alone.
  *
- * All three Actions are pull-request writes, so an issue offers none of them: a
- * control whose every press the provider refuses is worse than no control.
+ * An issue offers `close` and `reopen` but never `merge`, because GitHub has no
+ * merge to refuse there: a control whose every press the provider refuses is worse
+ * than no control.
  *
  * The branch is on the projected `presentation` state and never on `nativeLabel`.
  * The native label is GitHub's own word kept for display, and deciding what a user
@@ -82,14 +131,19 @@ export function githubOfferedMutationsV1(params: Readonly<{
   kindId: GithubTriageKindIdV1;
   state: ObservedState;
 }>): readonly GithubPullRequestMutationIdV1[] {
+  // `resolved`, `unknown` and anything a later contract adds state nothing this
+  // build can turn into a transition, so they offer nothing rather than guessing.
+  if (params.kindId === 'issue') {
+    // An issue cannot be merged, and GitHub closes one as completed, not planned
+    // or duplicate — a reason the reader supplies, not one this build picks.
+    if (params.state.presentation === 'active') return ISSUE_OPEN_MUTATIONS;
+    return params.state.presentation === 'closed' ? CLOSED_MUTATIONS : NO_MUTATIONS;
+  }
   if (params.kindId !== 'pull-request') return NO_MUTATIONS;
   if (params.state.presentation === 'active') return OPEN_MUTATIONS;
   if (params.state.presentation === 'closed') return CLOSED_MUTATIONS;
-  // `resolved`, `unknown` and anything a later contract adds state nothing this
-  // build can turn into a transition, so it offers nothing rather than guessing.
   return NO_MUTATIONS;
 }
-
 /**
  * The target shape every GitHub write names: the configured instance whose account
  * is rematerialized for the invocation, the canonical entry ref, and the
@@ -143,6 +197,165 @@ export function buildGithubPullRequestMergeInputV1(
   return parsed.success ? parsed.data : null;
 }
 
+/** The two head-pinned pull-request transitions share the observed-head source. */
+export function buildGithubPullRequestMarkReadyInputV1(
+  input: TriageDetailSurfaceInputV1,
+): GithubPullRequestMarkReadyInputV1 | null {
+  const parsed = GithubPullRequestMarkReadyInputV1Schema.safeParse({
+    ...mutationTargetOf(input),
+    headRevision: input.observation.nativeRevision,
+  });
+  return parsed.success ? parsed.data : null;
+}
+
+export function buildGithubPullRequestUpdateBranchInputV1(
+  input: TriageDetailSurfaceInputV1,
+): GithubPullRequestUpdateBranchInputV1 | null {
+  const parsed = GithubPullRequestUpdateBranchInputV1Schema.safeParse({
+    ...mutationTargetOf(input),
+    headRevision: input.observation.nativeRevision,
+  });
+  return parsed.success ? parsed.data : null;
+}
+
+/** Builds the one head-pinned review publication request from visible user input. */
+export function buildGithubPullRequestReviewPublicationInputV1(
+  input: TriageDetailSurfaceInputV1,
+  verdict: GithubPullRequestReviewVerdictV1,
+  summary: string,
+): GithubPullRequestReviewPublicationInputV1 | null {
+  const parsed = GithubPullRequestReviewPublicationInputV1Schema.safeParse({
+    ...mutationTargetOf(input),
+    headRevision: input.observation.nativeRevision,
+    verdict,
+    summary,
+  });
+  return parsed.success ? parsed.data : null;
+}
+
+/** GitHub login/team inputs cannot contain whitespace, so pasted separators are unambiguous. */
+export function readGithubNamesV1(value: string): readonly string[] {
+  return [...new Set(value.split(/[\s,]+/u).map((name) => name.trim()).filter(Boolean))];
+}
+
+/** Labels may contain spaces and punctuation, including commas; one line therefore means one label. */
+export function readGithubLabelsV1(value: string): readonly string[] {
+  return [...new Set(value.split(/\r?\n/u).map((label) => label.trim()).filter(Boolean))];
+}
+
+export function buildGithubPullRequestReviewersInputV1(
+  input: TriageDetailSurfaceInputV1,
+  users: readonly string[],
+  teams: readonly string[],
+  direction: 'add' | 'remove',
+): GithubPullRequestAddReviewersInputV1 | GithubPullRequestRemoveReviewersInputV1 | null {
+  if (users.length === 0 && teams.length === 0) return null;
+  const candidate = {
+    ...mutationTargetOf(input),
+    ...(users.length === 0 ? {} : { users }),
+    ...(teams.length === 0 ? {} : { teams }),
+  };
+  const schema = direction === 'add'
+    ? GithubPullRequestAddReviewersInputV1Schema
+    : GithubPullRequestRemoveReviewersInputV1Schema;
+  const parsed = schema.safeParse(candidate);
+  return parsed.success ? parsed.data : null;
+}
+
+export function buildGithubPullRequestThreadResolutionInputV1(
+  input: TriageDetailSurfaceInputV1,
+  threadId: string,
+  resolved: boolean,
+): GithubPullRequestThreadResolutionInputV1 | null {
+  const parsed = GithubPullRequestThreadResolutionInputV1Schema.safeParse({
+    ...mutationTargetOf(input),
+    threadId: threadId.trim(),
+    resolved,
+  });
+  return parsed.success ? parsed.data : null;
+}
+
+/**
+ * GitHub's own closing reasons, in the order the chooser offers them.
+ *
+ * Typed against the contract's union so a reason added or renamed there fails
+ * this build rather than silently disappearing from the chooser. There is no
+ * default: `completed` and `not_planned` are different statements about the same
+ * issue, and picking one on the reader's behalf puts words in their mouth in a
+ * place everyone watching the issue can read.
+ */
+export const GITHUB_ISSUE_CLOSE_REASONS_V1: readonly GithubIssueCloseReasonV1[] =
+  Object.freeze(['completed', 'not_planned', 'duplicate']);
+
+/**
+ * The issue close input, carrying the reason the reader chose.
+ *
+ * `null` when the observation carries no route, exactly as the pull-request
+ * target builder is: a path is never guessed from identity, display text or a
+ * git remote.
+ */
+export function buildGithubIssueCloseInputV1(
+  input: TriageDetailSurfaceInputV1,
+  stateReason: GithubIssueCloseReasonV1,
+): GithubIssueCloseInputV1 | null {
+  const parsed = GithubIssueCloseInputV1Schema.safeParse({
+    v: 1,
+    instance: input.instance,
+    localRef: localRefOf(input),
+    routingToken: input.observation.locator.routingToken,
+    stateReason,
+  });
+  return parsed.success ? parsed.data : null;
+}
+
+/** Reopening an issue names no reason: GitHub sets `reopened` itself. */
+export function buildGithubIssueReopenInputV1(
+  input: TriageDetailSurfaceInputV1,
+): GithubIssueReopenInputV1 | null {
+  const parsed = GithubIssueReopenInputV1Schema.safeParse({
+    v: 1,
+    instance: input.instance,
+    localRef: localRefOf(input),
+    routingToken: input.observation.locator.routingToken,
+  });
+  return parsed.success ? parsed.data : null;
+}
+
+export function buildGithubIssueAssigneesInputV1(
+  input: TriageDetailSurfaceInputV1,
+  usernames: readonly string[],
+  direction: 'add' | 'remove',
+): GithubIssueAssigneeAddInputV1 | GithubIssueAssigneeRemoveInputV1 | null {
+  const schema = direction === 'add'
+    ? GithubIssueAssigneeAddInputV1Schema
+    : GithubIssueAssigneeRemoveInputV1Schema;
+  const parsed = schema.safeParse({ ...mutationTargetOf(input), usernames });
+  return parsed.success ? parsed.data : null;
+}
+
+export function buildGithubIssueLabelsInputV1(
+  input: TriageDetailSurfaceInputV1,
+  labels: readonly string[],
+  direction: 'add' | 'remove',
+): GithubIssueLabelAddInputV1 | GithubIssueLabelRemoveInputV1 | null {
+  const parsed = direction === 'add'
+    ? GithubIssueLabelAddInputV1Schema.safeParse({ ...mutationTargetOf(input), labels })
+    : GithubIssueLabelRemoveInputV1Schema.safeParse({
+      ...mutationTargetOf(input),
+      label: labels.length === 1 ? labels[0] : undefined,
+    });
+  return parsed.success ? parsed.data : null;
+}
+
+function mutationTargetOf(input: TriageDetailSurfaceInputV1) {
+  return {
+    v: 1 as const,
+    instance: input.instance,
+    localRef: localRefOf(input),
+    routingToken: input.observation.locator.routingToken,
+  };
+}
+
 function localRefOf(input: TriageDetailSurfaceInputV1) {
   const { entryRef } = input.observation;
   return {
@@ -163,6 +376,7 @@ function localRefOf(input: TriageDetailSurfaceInputV1) {
  */
 export type GithubMutationOutcomeV1 =
   | Readonly<{ kind: 'applied'; effect: 'changed' | 'alreadySatisfied' }>
+  | Readonly<{ kind: 'pending' }>
   | Readonly<{ kind: 'refused'; reason: GithubMutationRefusalReasonV1 }>
   | Readonly<{ kind: 'uncertain'; failure: TriageSourceFailureV1 | null }>
   | Readonly<{ kind: 'failed'; failure: TriageSourceFailureV1 }>
@@ -171,7 +385,13 @@ export type GithubMutationOutcomeV1 =
 
 export type GithubMutationResultV1 =
   | GithubPullRequestMergeResultV1
-  | GithubPullRequestStateResultV1;
+  | GithubPullRequestReviewPublicationResultV1
+  | GithubPullRequestStateResultV1
+  | GithubPullRequestMarkReadyResultV1
+  | GithubPullRequestUpdateBranchResultV1
+  | GithubPullRequestReviewersResultV1
+  | GithubIssueDeltaResultV1
+  | GithubPullRequestThreadResolutionResultV1;
 
 export type GithubMutationRefusalReasonV1 =
   Extract<GithubMutationResultV1, { kind: 'refused' }>['reason'];
@@ -204,8 +424,12 @@ export function projectGithubMutationOutcomeV1(
   }
   if (parsed === null) return Object.freeze({ kind: 'unreadable' as const });
   if (parsed.kind === 'applied') {
-    return Object.freeze({ kind: 'applied' as const, effect: parsed.effect });
+    return Object.freeze({
+      kind: 'applied' as const,
+      effect: 'effect' in parsed ? parsed.effect : 'changed',
+    });
   }
+  if (parsed.kind === 'pending') return Object.freeze({ kind: 'pending' as const });
   if (parsed.kind === 'refused') {
     return Object.freeze({ kind: 'refused' as const, reason: parsed.reason });
   }
@@ -213,6 +437,13 @@ export function projectGithubMutationOutcomeV1(
     return Object.freeze({
       kind: 'uncertain' as const,
       failure: parsed.failure ?? null,
+    });
+  }
+  if (parsed.kind === 'rejected') {
+    return Object.freeze({
+      kind: 'rejected' as const,
+      code: parsed.reason,
+      message: parsed.reason,
     });
   }
   return Object.freeze({ kind: 'failed' as const, failure: parsed.failure });

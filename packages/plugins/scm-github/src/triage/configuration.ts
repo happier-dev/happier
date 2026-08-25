@@ -42,6 +42,18 @@ export type GithubTriageConfigurationDecodeV1 =
  */
 export const GITHUB_TRIAGE_LOCAL_INSTANCE_KEY_V1 = 'github.com';
 
+/**
+ * The forge DEPLOYMENT an entry from this source belongs to.
+ *
+ * Derived from the admitted deployment above rather than written twice: if
+ * GitHub Enterprise is ever admitted, this constant is one of the two places
+ * that must move together, and a per-instance deployment becomes a configured
+ * fact instead of a constant. It is the same string a project's resolved
+ * `ScmHostingProviderRef.baseUrl` canonicalizes to, which is what makes the two
+ * halves of launch placement comparable by equality.
+ */
+export const GITHUB_TRIAGE_DEPLOYMENT_BASE_URL_V1 = `https://${GITHUB_TRIAGE_LOCAL_INSTANCE_KEY_V1}`;
+
 const CONFIGURATION_DECODE_FAILURE: GithubTriageFailureV1 = Object.freeze({
   class: 'unsupportedContract',
   code: 'github_configuration_invalid',

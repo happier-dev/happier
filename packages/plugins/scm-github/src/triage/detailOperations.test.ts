@@ -1,7 +1,7 @@
 import type { ConnectedAccountRef } from '@happier-dev/plugin-sdk/connected-accounts';
 import type { TriageConfiguredSourceInstanceV1 } from '@happier-dev/triage-protocol/v1';
 import { createTriageSourceV1Fixture } from '@happier-dev/triage-protocol/testing/v1';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   GITHUB_CONNECTED_ACCOUNT_PURPOSE,
@@ -12,6 +12,7 @@ import {
   GITHUB_FIXTURE_OWNER,
   GITHUB_FIXTURE_REPOSITORY,
   GITHUB_PULL_REQUEST_RESPONSE,
+  GITHUB_REQUESTED_REVIEWERS_RESPONSE,
   githubChangedFile,
   githubCheckRun,
   githubCheckRunsResponse,
@@ -19,6 +20,7 @@ import {
   githubCommitStatus,
   githubFollowUpLinkHeader,
   githubIssueComment,
+  githubReview,
   githubTimelineEvent,
 } from './__fixtures__/githubResponses.js';
 import { encodeGithubTriageConfiguration } from './configuration.js';
@@ -26,17 +28,24 @@ import {
   GithubChangedFilesResultV1Schema,
   GithubChecksResultV1Schema,
   GithubCommentsResultV1Schema,
+  GithubFeedbackResultV1Schema,
+  GithubReviewsResultV1Schema,
   GithubTimelineResultV1Schema,
 } from './detail/contracts.js';
 import { encodeGithubDetailContinuation } from './detail/continuation.js';
 import {
   listGithubChangedFiles,
   listGithubComments,
+  readGithubFeedback,
   listGithubTimeline,
   readGithubChecks,
+  readGithubReviews,
 } from './detailOperations.js';
+import { GITHUB_MOUNTED_DETAIL_DEADLINE_MS } from './admission.js';
+import { withGithubInvocationDeadline } from './invocation.js';
 import {
   createStubGithubTransport,
+  readRecordedJsonBody,
   type RecordedGithubRequest,
   type StubHttpResponse,
 } from './testkit/githubTriage.test-support.js';
@@ -76,6 +85,31 @@ const ISSUE_REF = Object.freeze({
   kindId: 'issue',
   collisionScope: 'github:4210',
   entryId: '1284',
+});
+
+it('bounds a never-settling mounted detail read with the source-owned invocation deadline', async () => {
+  vi.useFakeTimers();
+  try {
+    const stub = createStubGithubTransport({
+      respond: (request) => new URL(request.url).pathname.endsWith('/timeline')
+        ? new Promise<StubHttpResponse>(() => {})
+        : undefined,
+    });
+    const pending = withGithubInvocationDeadline(
+      GITHUB_MOUNTED_DETAIL_DEADLINE_MS,
+      listGithubTimeline,
+    )(planeInput(), stub.context);
+
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    await expect(pending).resolves.toEqual({
+      kind: 'unavailable',
+      failure: { class: 'transient', code: 'github_request_timed_out' },
+    });
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 function planeInput(overrides: Readonly<Record<string, unknown>> = {}) {
@@ -131,7 +165,9 @@ describe('GitHub timeline plane', () => {
     expect(parsedSecond.rows.map((row) => row.id)).toEqual(['github-timeline-event:2']);
     expect(parsedSecond.continuation).toBeUndefined();
 
-    expect(stub.requests.map((request) => new URL(request.url).searchParams.get('page')))
+    expect(stub.requests
+      .filter((request) => request.url.includes('/timeline'))
+      .map((request) => new URL(request.url).searchParams.get('page')))
       .toEqual(['1', '2']);
   });
 
@@ -234,6 +270,27 @@ describe('GitHub timeline plane', () => {
     });
     expect(stub.requests).toEqual([]);
   });
+
+  it('refuses the mutable repository route when it now names another immutable repository', async () => {
+    const stub = createStubGithubTransport({
+      respond: (request) => {
+        const pathname = new URL(request.url).pathname;
+        if (pathname === '/repos/octo-org/example-app') {
+          return jsonResponse({ id: 8815, full_name: 'octo-org/example-app' });
+        }
+        if (pathname.endsWith('/issues/1284/timeline')) return jsonResponse([]);
+        return undefined;
+      },
+    });
+
+    const result = await listGithubTimeline(planeInput(), stub.context);
+    expect(result).toEqual({
+      kind: 'unavailable',
+      failure: { class: 'unknown', code: 'route-body-mismatch' },
+    });
+    expect(stub.requests.some((request) => request.url.includes('/issues/1284/timeline')))
+      .toBe(false);
+  });
 });
 
 /* ---------------------------------------------------------------- changed files */
@@ -322,7 +379,67 @@ describe('GitHub comments plane', () => {
       expect(result.rows[0]?.author).toBe('monalisa');
       expect(result.rows[0]?.body).toBe('First\n\nsecond');
     }
-    expect(stub.requests.every((request) => request.url.includes('per_page=30'))).toBe(true);
+    expect(stub.requests
+      .filter((request) => request.url.includes('/comments?'))
+      .every((request) => request.url.includes('per_page=30'))).toBe(true);
+  });
+});
+
+/* --------------------------------------------------------------------- feedback */
+
+describe('GitHub feedback plane', () => {
+  it('routes the newest pull-request conversation through the one GraphQL feedback fetcher', async () => {
+    const stub = createStubGithubTransport({
+      respond: (request) => {
+        const pathname = new URL(request.url).pathname;
+        if (pathname === '/repos/octo-org/example-app') {
+          return jsonResponse({ id: 4210, full_name: 'octo-org/example-app' });
+        }
+        if (pathname !== '/graphql') return undefined;
+        const body = readRecordedJsonBody(request) as {
+          query: string;
+          variables: Record<string, unknown>;
+        };
+        expect(body.query).toContain('GithubFeedbackComments');
+        expect(body.variables).toMatchObject({
+          owner: 'octo-org',
+          name: 'example-app',
+          number: 1284,
+          commentCount: 40,
+          commentCursor: null,
+        });
+        return jsonResponse({
+          data: {
+            repository: {
+              databaseId: 4210,
+              pullRequest: {
+                comments: {
+                  nodes: [
+                    { id: 'IC_2', author: { login: 'later' }, body: 'later', createdAt: '2026-08-12T12:00:00Z', url: 'https://github.com/o/r/pull/1#issuecomment-2' },
+                    { id: 'IC_1', author: { login: 'earlier' }, body: 'earlier', createdAt: '2026-08-11T12:00:00Z', url: 'https://github.com/o/r/pull/1#issuecomment-1' },
+                  ],
+                  pageInfo: { hasPreviousPage: true, startCursor: 'comments-before' },
+                },
+              },
+            },
+          },
+        });
+      },
+    });
+
+    const result = GithubFeedbackResultV1Schema.parse(await readGithubFeedback({
+      v: 1,
+      instance: configuredInstance(),
+      localRef: PULL_REQUEST_REF,
+      routingToken: REPOSITORY_KEY,
+      connection: 'comments',
+    }, stub.context));
+
+    expect(result).toMatchObject({
+      kind: 'comments',
+      previousCursor: 'comments-before',
+      rows: [{ id: 'IC_1' }, { id: 'IC_2' }],
+    });
   });
 });
 
@@ -454,7 +571,7 @@ describe('GitHub checks plane', () => {
     });
     // The two check reads are never issued against a revision this source
     // could not establish.
-    expect(stub.requests).toHaveLength(1);
+    expect(stub.requests.filter((request) => request.url.includes('/pulls/1284'))).toHaveLength(1);
   });
 
   it('refuses a pull-request body that answers for another entry', async () => {
@@ -468,5 +585,77 @@ describe('GitHub checks plane', () => {
       kind: 'unavailable',
       failure: { class: 'unsupportedContract', code: 'github_detail_response_invalid' },
     });
+  });
+});
+
+/* -------------------------------------------------------------------- reviews */
+
+describe('GitHub reviews plane', () => {
+  it('publishes the current review decision and requested people from their canonical resources', async () => {
+    const stub = createStubGithubTransport({
+      respond: (request) => {
+        if (request.url.includes('/pulls/1284/reviews')) {
+          return jsonResponse([
+            githubReview({
+              id: 101,
+              login: 'monalisa',
+              state: 'APPROVED',
+              submittedAt: '2026-08-10T09:00:00Z',
+            }),
+            githubReview({
+              id: 102,
+              login: 'monalisa',
+              state: 'CHANGES_REQUESTED',
+              submittedAt: '2026-08-11T09:00:00Z',
+            }),
+          ]);
+        }
+        if (request.url.includes('/pulls/1284/requested_reviewers')) {
+          return jsonResponse(GITHUB_REQUESTED_REVIEWERS_RESPONSE);
+        }
+        return undefined;
+      },
+    });
+
+    const result = GithubReviewsResultV1Schema.parse(
+      await readGithubReviews(checksInput(), stub.context),
+    );
+    if (result.kind !== 'reviews') throw new Error('the reviews read must settle as reviews');
+
+    // The historical list is GitHub's current collapsed review state, not a
+    // timeline fragment. The separately read requests retain both a user and a
+    // team that are still awaiting review.
+    expect(result.reviewed).toEqual([{
+      login: 'monalisa',
+      state: 'CHANGES_REQUESTED',
+      submittedAtMs: Date.parse('2026-08-11T09:00:00Z'),
+    }]);
+    expect(result.requested).toEqual([
+      { kind: 'user', subject: 'hubot' },
+      { kind: 'team', subject: 'Client Platform' },
+    ]);
+    expect(result.reviewDecision).toBe('changes-requested');
+    expect(stub.requests.filter((request) => request.url.includes('/pulls/1284/'))).toHaveLength(2);
+    expect(stub.requests.some((request) => request.url.includes('/reviews?'))).toBe(true);
+    expect(stub.requests.some((request) => request.url.includes('/requested_reviewers?'))).toBe(true);
+  });
+
+  it('publishes that a review walk stopped at GitHub\'s result ceiling', async () => {
+    const stub = createStubGithubTransport({
+      respond: (request) => {
+        if (request.url.includes('/requested_reviewers')) {
+          return jsonResponse({ users: [], teams: [] });
+        }
+        if (!request.url.includes('/pulls/1284/reviews')) return undefined;
+        const page = Number(new URL(request.url).searchParams.get('page') ?? '1');
+        return jsonResponse(
+          [githubReview({ id: page, login: `reviewer-${page}`, state: 'COMMENTED' })],
+          { link: githubFollowUpLinkHeader({ requestedUrl: request.url, nextPage: page + 1 }) },
+        );
+      },
+    });
+
+    const result = await readGithubReviews(checksInput(), stub.context);
+    expect(result).toMatchObject({ kind: 'reviews', reviewsIncomplete: true });
   });
 });

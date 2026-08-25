@@ -24,8 +24,11 @@ describe('GitHub plugin daemon entry', () => {
 
     expect(Object.keys(projection)).toEqual([GITHUB_AUTOMATION_EVENT_CHECKPOINT_COLLECTION_ID]);
     for (const declaration of parsed.manifest.contributes.accountCollections) {
+      // The ingested manifest keeps declaration bodies opaque, so the declared
+      // migration order is read through its published shape.
+      const declaredMigrations = (declaration.migrations ?? []) as readonly Readonly<{ id: string }>[];
       expect(projection[declaration.id]?.map((migration) => migration.id)).toEqual(
-        declaration.migrations.map((migration) => migration.id),
+        declaredMigrations.map((migration) => migration.id),
       );
     }
   });

@@ -24,6 +24,10 @@ import {
 import {
   GitlabIssueCloseInputV1Schema,
   GitlabIssueCloseResultV1Schema,
+  GitlabIssueAssignInputV1Schema,
+  GitlabIssueAssignResultV1Schema,
+  GitlabIssueLabelInputV1Schema,
+  GitlabIssueLabelResultV1Schema,
   GitlabIssueReopenInputV1Schema,
   GitlabIssueReopenResultV1Schema,
   GitlabMergeRequestCloseInputV1Schema,
@@ -34,6 +38,10 @@ import {
   GitlabMergeRequestMergeResultV1Schema,
   GitlabMergeRequestReopenInputV1Schema,
   GitlabMergeRequestReopenResultV1Schema,
+  GitlabMergeRequestReviewerChangeInputV1Schema,
+  GitlabMergeRequestReviewerChangeResultV1Schema,
+  GitlabMergeRequestDiscussionResolutionInputV1Schema,
+  GitlabMergeRequestDiscussionResolutionResultV1Schema,
 } from './mutations/contracts.js';
 import {
   GitlabActivityEventsInputV1Schema,
@@ -108,8 +116,12 @@ export const GITLAB_TRIAGE_MUTATION_ACTION_IDS = Object.freeze({
   mergeRequestMarkReady: 'gitlab/merge-request/mark-ready',
   mergeRequestClose: 'gitlab/merge-request/close',
   mergeRequestReopen: 'gitlab/merge-request/reopen',
+  mergeRequestReviewerChange: 'gitlab/merge-request/reviewer-change',
+  mergeRequestDiscussionResolution: 'gitlab/merge-request/discussion-resolution',
   issueClose: 'gitlab/issue/close',
   issueReopen: 'gitlab/issue/reopen',
+  issueAssign: 'gitlab/issue/assign',
+  issueLabel: 'gitlab/issue/label',
 });
 
 /**
@@ -381,7 +393,7 @@ export const GITLAB_TRIAGE_DETAIL_ACTION_DECLARATIONS: readonly TriageActionDecl
   })));
 
 /**
- * The six mutation Action declarations.
+ * The ten mutation Action declarations.
  *
  * Four properties of these declarations are load-bearing rather than
  * decorative, and each is a rule from `sources/SCM.md` §3.8:
@@ -553,6 +565,58 @@ export const GITLAB_TRIAGE_MUTATION_ACTION_DECLARATIONS:
       },
       inputSchema: GitlabIssueReopenInputV1Schema.jsonSchema,
       resultSchema: GitlabIssueReopenResultV1Schema.jsonSchema,
+    },
+    {
+      id: GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestReviewerChange,
+      title: 'Change GitLab merge request reviewers',
+      description: 'Adds or removes only the selected reviewers through GitLab’s native delta operation.',
+      dangerLevel: 'writesRemote' as const,
+      confirmation: {
+        title: { key: 'plugins.gitlab.actions.reviewerChange.confirm.title', fallback: 'Change reviewers?' },
+        body: { key: 'plugins.gitlab.actions.reviewerChange.confirm.body', fallback: 'GitLab adds or removes only the selected reviewers.' },
+        confirmLabel: { key: 'plugins.gitlab.actions.reviewerChange.confirm.label', fallback: 'Change reviewers' },
+      },
+      inputSchema: GitlabMergeRequestReviewerChangeInputV1Schema.jsonSchema,
+      resultSchema: GitlabMergeRequestReviewerChangeResultV1Schema.jsonSchema,
+    },
+    {
+      id: GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestDiscussionResolution,
+      title: 'Resolve or reopen a GitLab discussion',
+      description: 'Changes the resolved state of one exact merge request discussion.',
+      dangerLevel: 'writesRemote' as const,
+      confirmation: {
+        title: { key: 'plugins.gitlab.actions.discussionResolution.confirm.title', fallback: 'Change discussion state?' },
+        body: { key: 'plugins.gitlab.actions.discussionResolution.confirm.body', fallback: 'GitLab changes this discussion’s resolved state.' },
+        confirmLabel: { key: 'plugins.gitlab.actions.discussionResolution.confirm.label', fallback: 'Change state' },
+      },
+      inputSchema: GitlabMergeRequestDiscussionResolutionInputV1Schema.jsonSchema,
+      resultSchema: GitlabMergeRequestDiscussionResolutionResultV1Schema.jsonSchema,
+    },
+    {
+      id: GITLAB_TRIAGE_MUTATION_ACTION_IDS.issueAssign,
+      title: 'Change GitLab issue assignees',
+      description: 'Adds or removes only the selected assignees through GitLab’s native delta operation.',
+      dangerLevel: 'writesRemote' as const,
+      confirmation: {
+        title: { key: 'plugins.gitlab.actions.issueAssign.confirm.title', fallback: 'Change assignees?' },
+        body: { key: 'plugins.gitlab.actions.issueAssign.confirm.body', fallback: 'GitLab adds or removes only the selected assignees.' },
+        confirmLabel: { key: 'plugins.gitlab.actions.issueAssign.confirm.label', fallback: 'Change assignees' },
+      },
+      inputSchema: GitlabIssueAssignInputV1Schema.jsonSchema,
+      resultSchema: GitlabIssueAssignResultV1Schema.jsonSchema,
+    },
+    {
+      id: GITLAB_TRIAGE_MUTATION_ACTION_IDS.issueLabel,
+      title: 'Change GitLab issue labels',
+      description: 'Adds or removes only the selected labels through GitLab’s native delta fields.',
+      dangerLevel: 'writesRemote' as const,
+      confirmation: {
+        title: { key: 'plugins.gitlab.actions.issueLabel.confirm.title', fallback: 'Change labels?' },
+        body: { key: 'plugins.gitlab.actions.issueLabel.confirm.body', fallback: 'GitLab adds or removes only the selected labels.' },
+        confirmLabel: { key: 'plugins.gitlab.actions.issueLabel.confirm.label', fallback: 'Change labels' },
+      },
+      inputSchema: GitlabIssueLabelInputV1Schema.jsonSchema,
+      resultSchema: GitlabIssueLabelResultV1Schema.jsonSchema,
     },
   ].map((declaration) => Object.freeze({
     ...declaration,

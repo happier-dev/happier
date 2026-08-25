@@ -10,6 +10,18 @@
  */
 
 export const BITBUCKET_FORGE_HOST_ID = 'bitbucket.org';
+
+/**
+ * The forge DEPLOYMENT an entry from this source belongs to.
+ *
+ * Bitbucket Cloud is the only deployment this source reaches, and this constant
+ * derives from the host id above rather than repeating it, so admitting a
+ * Bitbucket Data Center deployment would have to make the deployment a
+ * configured fact here instead of silently inheriting Cloud's identity. It is
+ * the same string a project's resolved `ScmHostingProviderRef.baseUrl`
+ * canonicalizes to.
+ */
+export const BITBUCKET_TRIAGE_DEPLOYMENT_BASE_URL_V1 = `https://${BITBUCKET_FORGE_HOST_ID}`;
 export const BITBUCKET_COLLISION_SCOPE_PREFIX = 'bitbucket:';
 
 const BRACED_UUID_PATTERN = /^\{[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\}$/i;

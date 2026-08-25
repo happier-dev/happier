@@ -21,6 +21,7 @@ import {
   GithubPullRequestMarkReadyResultV1Schema,
   GithubPullRequestMergeResultV1Schema,
   GithubPullRequestReviewersResultV1Schema,
+  GithubPullRequestReviewPublicationResultV1Schema,
   GithubPullRequestStateResultV1Schema,
   GithubPullRequestThreadResolutionResultV1Schema,
   GithubPullRequestUpdateBranchResultV1Schema,
@@ -36,6 +37,7 @@ import {
   removeGithubIssueAssigneesAction,
   removeGithubIssueLabelAction,
   removeGithubPullRequestReviewersAction,
+  publishGithubPullRequestReviewAction,
   reopenGithubIssueAction,
   reopenGithubPullRequestAction,
   setGithubPullRequestThreadResolutionAction,
@@ -152,6 +154,7 @@ function json(body: unknown, status = 200): StubHttpResponse {
 const PULL_REQUEST_PATH = `/repos/${GITHUB_FIXTURE_OWNER}/${GITHUB_FIXTURE_REPOSITORY}/pulls/1284`;
 const REPOSITORY_PATH = `/repos/${GITHUB_FIXTURE_OWNER}/${GITHUB_FIXTURE_REPOSITORY}`;
 const REVIEWERS_PATH = `${PULL_REQUEST_PATH}/requested_reviewers`;
+const REVIEWS_PATH = `${PULL_REQUEST_PATH}/reviews`;
 const UPDATE_BRANCH_PATH = `${PULL_REQUEST_PATH}/update-branch`;
 const GRAPHQL_PATH = '/graphql';
 
@@ -176,13 +179,25 @@ function transportFor(input: Readonly<{
   /** Answers, in order, the preflight read and then every following read. */
   reads: readonly Readonly<Record<string, unknown>>[];
   repository?: Readonly<Record<string, unknown>>;
-  write?: StubHttpResponse;
+  write?: StubHttpResponse | Error;
   readStatus?: number;
   /** Answers, in order, the reviewer preflight read and then the confirming read. */
   reviewerReads?: readonly Readonly<Record<string, unknown>>[];
+  /** Answers, in order, the review-publication baseline and confirming reads. */
+  reviewPublicationReads?: readonly unknown[][];
 }>) {
   let read = 0;
   let reviewerRead = 0;
+  let reviewPublicationRead = 0;
+  /**
+   * `write: new Error(...)` states that the boundary recorded the request and
+   * then lost its answer, which is a rejected request rather than a response
+   * with no status.
+   */
+  const writeAnswer = (fallback: StubHttpResponse): StubHttpResponse => {
+    if (input.write instanceof Error) throw input.write;
+    return input.write ?? fallback;
+  };
   return createStubGithubTransport({
     respond: (request: RecordedGithubRequest): StubHttpResponse | undefined => {
       const path = new URL(request.url).pathname;
@@ -199,24 +214,24 @@ function transportFor(input: Readonly<{
         return json(input.repository ?? GITHUB_REPOSITORY_RESPONSE);
       }
       if (request.method === 'PUT' && path === `${PULL_REQUEST_PATH}/merge`) {
-        return input.write ?? json({ merged: true, sha: OBSERVED_HEAD });
+        return writeAnswer(json({ merged: true, sha: OBSERVED_HEAD }));
       }
       if (request.method === 'PATCH' && path === PULL_REQUEST_PATH) {
-        return input.write ?? json(input.reads[input.reads.length - 1]);
+        return writeAnswer(json(input.reads[input.reads.length - 1]));
       }
       if (request.method === 'PUT' && path === UPDATE_BRANCH_PATH) {
         // GitHub answers a branch update with `202 Accepted`, which states only
         // that it took the request.
-        return input.write ?? {
+        return writeAnswer({
           status: 202,
           headers: { 'content-type': 'application/json' },
           body: { message: 'Updating pull request branch.' },
-        };
+        });
       }
       if (request.method === 'POST' && path === GRAPHQL_PATH) {
-        return input.write ?? json({
+        return writeAnswer(json({
           data: { markPullRequestReadyForReview: { pullRequest: { isDraft: false } } },
-        });
+        }));
       }
       if (request.method === 'GET' && path === REVIEWERS_PATH) {
         const collections = input.reviewerReads ?? [reviewerCollection({})];
@@ -224,14 +239,175 @@ function transportFor(input: Readonly<{
         reviewerRead += 1;
         return json(body);
       }
+      if (request.method === 'GET' && path === REVIEWS_PATH) {
+        const pages = input.reviewPublicationReads ?? [[]];
+        const body = pages[Math.min(reviewPublicationRead, pages.length - 1)];
+        reviewPublicationRead += 1;
+        return json(body);
+      }
       if ((request.method === 'POST' || request.method === 'DELETE')
         && path === REVIEWERS_PATH) {
+        if (input.write instanceof Error) throw input.write;
         return input.write ?? json(GITHUB_PULL_REQUEST_RESPONSE);
+      }
+      if (request.method === 'POST' && path === REVIEWS_PATH) {
+        if (input.write instanceof Error) throw input.write;
+        return input.write ?? json({ id: 991, state: 'APPROVED' }, 201);
       }
       return undefined;
     },
   });
 }
+
+/* ---------------------------------------------------------- review publication */
+
+describe('GitHub pull-request review publication', () => {
+  function publicationInput(overrides: Readonly<Record<string, unknown>> = {}) {
+    return {
+      v: 1,
+      instance: configuredInstance(),
+      localRef: PULL_REQUEST_REF,
+      routingToken: REPOSITORY_KEY,
+      headRevision: OBSERVED_HEAD,
+      verdict: 'approve',
+      summary: 'The implementation is ready to merge.',
+      ...overrides,
+    };
+  }
+
+  it('submits summary and verdict atomically at the observed head, then returns the authoritative detail', async () => {
+    const stub = transportFor({ reads: [pullRequestBody(), pullRequestBody()] });
+
+    const result = GithubPullRequestReviewPublicationResultV1Schema.parse(
+      await publishGithubPullRequestReviewAction(publicationInput(), stub.context),
+    );
+
+    expect(result.kind).toBe('applied');
+    if (result.kind !== 'applied') throw new Error(`expected applied, got ${result.kind}`);
+    expect(result.observation.kind).toBe('present');
+    expect(entryReads(stub)).toHaveLength(2);
+    const dispatched = writes(stub);
+    expect(dispatched).toHaveLength(1);
+    expect(dispatched[0]?.method).toBe('POST');
+    expect(new URL(dispatched[0]?.url ?? '').pathname).toBe(REVIEWS_PATH);
+    expect(readRecordedJsonBody(dispatched[0] as RecordedGithubRequest)).toEqual({
+      commit_id: OBSERVED_HEAD,
+      event: 'APPROVE',
+      body: 'The implementation is ready to merge.',
+      comments: [],
+    });
+  });
+
+  it('rejects a moved observed head before dispatch and returns what GitHub has now', async () => {
+    const stub = transportFor({ reads: [pullRequestBody({ headSha: ADVANCED_HEAD })] });
+
+    const result = GithubPullRequestReviewPublicationResultV1Schema.parse(
+      await publishGithubPullRequestReviewAction(publicationInput(), stub.context),
+    );
+
+    expect(result.kind).toBe('rejected');
+    if (result.kind !== 'rejected') throw new Error(`expected rejected, got ${result.kind}`);
+    expect(result.reason).toBe('head_advanced');
+    expect(result.observation?.kind).toBe('present');
+    expect(writes(stub)).toHaveLength(0);
+  });
+
+  it('reports uncertainty when GitHub accepted the one submission but the authoritative reread fails', async () => {
+    const stub = transportFor({
+      reads: [pullRequestBody(), pullRequestBody()],
+      readStatus: 503,
+      write: json({ id: 991, state: 'CHANGES_REQUESTED' }, 201),
+    });
+
+    const result = GithubPullRequestReviewPublicationResultV1Schema.parse(
+      await publishGithubPullRequestReviewAction(
+        publicationInput({ verdict: 'requestChanges' }),
+        stub.context,
+      ),
+    );
+
+    expect(result.kind).toBe('uncertain');
+    expect(writes(stub)).toHaveLength(1);
+  });
+
+  it('does not fabricate rejection when GitHub returns a server failure after dispatch', async () => {
+    const stub = transportFor({
+      reads: [pullRequestBody(), pullRequestBody()],
+      write: json({ message: 'Internal Server Error' }, 503),
+    });
+
+    const result = GithubPullRequestReviewPublicationResultV1Schema.parse(
+      await publishGithubPullRequestReviewAction(publicationInput(), stub.context),
+    );
+
+    expect(result.kind).toBe('uncertain');
+    if (result.kind !== 'uncertain') throw new Error(`expected uncertain, got ${result.kind}`);
+    expect(result.observation?.kind).toBe('present');
+    expect(writes(stub)).toHaveLength(1);
+  });
+
+  it('confirms an answer-lost submission from a new authoritative review and never writes twice', async () => {
+    const stub = transportFor({
+      reads: [pullRequestBody(), pullRequestBody()],
+      reviewPublicationReads: [
+        [],
+        [{
+          id: 991,
+          commit_id: OBSERVED_HEAD,
+          state: 'APPROVED',
+          body: 'The implementation is ready to merge.',
+          user: { login: 'octocat' },
+          submitted_at: '2026-08-13T10:00:00Z',
+        }],
+      ],
+      // The boundary records the POST and then loses its answer. The source must
+      // reconcile that one attempt; issuing another POST would duplicate the review.
+      write: new Error('socket closed after request dispatch'),
+    });
+
+    const result = GithubPullRequestReviewPublicationResultV1Schema.parse(
+      await publishGithubPullRequestReviewAction(publicationInput(), stub.context),
+    );
+
+    expect(result.kind).toBe('applied');
+    expect(writes(stub)).toHaveLength(1);
+    expect(stub.requests.filter((request) => request.method === 'GET'
+      && new URL(request.url).pathname === REVIEWS_PATH)).toHaveLength(2);
+  });
+
+  it('keeps an answer-lost submission uncertain when the authoritative review read cannot decide', async () => {
+    const stub = transportFor({
+      reads: [pullRequestBody()],
+      reviewPublicationReads: [[], [{}]],
+      write: new Error('socket closed after request dispatch'),
+    });
+
+    const result = GithubPullRequestReviewPublicationResultV1Schema.parse(
+      await publishGithubPullRequestReviewAction(publicationInput(), stub.context),
+    );
+
+    expect(result.kind).toBe('uncertain');
+    expect(writes(stub)).toHaveLength(1);
+    expect(stub.requests.filter((request) => request.method === 'GET'
+      && new URL(request.url).pathname === REVIEWS_PATH)).toHaveLength(2);
+  });
+
+  it('rejects inline anchors the source cannot currently project instead of guessing positions', async () => {
+    const stub = transportFor({ reads: [pullRequestBody()] });
+
+    const result = GithubPullRequestReviewPublicationResultV1Schema.parse(
+      await publishGithubPullRequestReviewAction(
+        publicationInput({ comments: [{ path: 'src/index.ts', line: 12, body: 'Explain this.' }] }),
+        stub.context,
+      ),
+    );
+
+    expect(result.kind).toBe('rejected');
+    if (result.kind !== 'rejected') throw new Error(`expected rejected, got ${result.kind}`);
+    expect(result.reason).toBe('invalid_input');
+    expect(stub.requests).toHaveLength(0);
+  });
+});
 
 function writes(stub: ReturnType<typeof transportFor>): readonly RecordedGithubRequest[] {
   return stub.requests.filter((request) => request.method !== 'GET');
@@ -660,6 +836,36 @@ describe('GitHub pull-request update branch', () => {
     expect(entryReads(stub)).toHaveLength(2);
   });
 
+  it('confirms an answer-lost update once and never maps it to definite failure', async () => {
+    let pullRequestRead = 0;
+    const stub = createStubGithubTransport({
+      respond: (request) => {
+        const path = new URL(request.url).pathname;
+        if (request.method === 'GET' && path === PULL_REQUEST_PATH) {
+          const body = pullRequestRead++ === 0
+            ? pullRequestBody()
+            : pullRequestBody({ headSha: ADVANCED_HEAD });
+          return json(body);
+        }
+        if (request.method === 'PUT' && path === UPDATE_BRANCH_PATH) {
+          return Promise.reject(new Error('answer lost after dispatch'));
+        }
+        return undefined;
+      },
+    });
+
+    const result = GithubPullRequestUpdateBranchResultV1Schema.parse(
+      await updateGithubPullRequestBranchAction(
+        stateInput({ headRevision: OBSERVED_HEAD }),
+        stub.context,
+      ),
+    );
+
+    expect(result.kind).toBe('applied');
+    expect(writes(stub)).toHaveLength(1);
+    expect(entryReads(stub)).toHaveLength(2);
+  });
+
   it('refuses an update whose head advanced, with zero PUTs', async () => {
     const stub = transportFor({ reads: [pullRequestBody({ headSha: ADVANCED_HEAD })] });
 
@@ -838,6 +1044,40 @@ describe('GitHub pull-request reviewer requests', () => {
     expect(result.requestedReviewers).toEqual({ users: [], teams: [] });
     // One request, never retried: a retry would notify a second time.
     expect(writes(stub)).toHaveLength(1);
+  });
+
+  it('confirms an answer-lost reviewer request once and never re-notifies', async () => {
+    let reviewerRead = 0;
+    const stub = createStubGithubTransport({
+      respond: (request) => {
+        const path = new URL(request.url).pathname;
+        if (request.method === 'GET' && path === PULL_REQUEST_PATH) {
+          return json(pullRequestBody());
+        }
+        if (request.method === 'GET' && path === REVIEWERS_PATH) {
+          return json(reviewerRead++ === 0
+            ? reviewerCollection({})
+            : reviewerCollection({ users: ['octocat'] }));
+        }
+        if (request.method === 'POST' && path === REVIEWERS_PATH) {
+          return Promise.reject(new Error('answer lost after dispatch'));
+        }
+        return undefined;
+      },
+    });
+
+    const result = GithubPullRequestReviewersResultV1Schema.parse(
+      await addGithubPullRequestReviewersAction(
+        stateInput({ users: ['octocat'] }),
+        stub.context,
+      ),
+    );
+
+    expect(result.kind).toBe('applied');
+    expect(writes(stub)).toHaveLength(1);
+    expect(stub.requests.filter((request) => (
+      request.method === 'GET' && new URL(request.url).pathname === REVIEWERS_PATH
+    ))).toHaveLength(2);
   });
 
   it('never requests reviewers on a route whose entry identity no longer validates', async () => {

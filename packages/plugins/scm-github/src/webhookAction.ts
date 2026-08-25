@@ -6,7 +6,7 @@ import {
   type PluginWebhookActionResult,
 } from '@happier-dev/plugin-sdk/webhooks';
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
-import type { PluginActionResultById } from '@happier-dev/plugin-sdk/actions';
+import type { PluginActionInputById, PluginActionResultById } from '@happier-dev/plugin-sdk/actions';
 
 import {
   normalizeGithubWebhookDelivery,
@@ -28,6 +28,22 @@ type GithubAutomationWebhookSourceSnapshotV1 = Readonly<{
   revision: string;
   definitions: readonly GithubAutomationWebhookSourceDefinitionV1[];
 }>;
+
+type GithubAutomationWebhookSourceReadV1 = Readonly<{
+  snapshot: GithubAutomationWebhookSourceSnapshotV1;
+  /** True only for the read that first adopted this revision in this generation. */
+  adoptedRevision: boolean;
+}>;
+
+type AutomationEventSourceStatusReportV1 = PluginActionInputById['automation.event.source.status.report'];
+type AutomationEventSourceStatusInputV1 = Extract<
+  AutomationEventSourceStatusReportV1,
+  Readonly<{ kind: 'source' }>
+>;
+type AutomationEventCatalogStatusInputV1 = Extract<
+  AutomationEventSourceStatusReportV1,
+  Readonly<{ kind: 'catalogReconciliation' }>
+>;
 
 /**
  * One handler closure is registered for one active plugin generation. Its
@@ -92,7 +108,7 @@ async function readCurrentAutomationSources(params: Readonly<{
   context: PluginInvocationContext;
   endpointSourceInstanceId: string;
   sourceSnapshots: Map<string, GithubAutomationWebhookSourceSnapshotV1>;
-}>): Promise<GithubAutomationWebhookSourceSnapshotV1> {
+}>): Promise<GithubAutomationWebhookSourceReadV1> {
   const key = sourceSnapshotKey(params.endpointSourceInstanceId);
   const previous = params.sourceSnapshots.get(key) ?? null;
   const definitions: GithubAutomationWebhookSourceDefinitionV1[] = [];
@@ -111,7 +127,7 @@ async function readCurrentAutomationSources(params: Readonly<{
     params.context.signal.throwIfAborted();
     if (result.kind === 'unchanged') {
       if (cursor === undefined && previous !== null && result.revision === previous.revision) {
-        return previous;
+        return { snapshot: previous, adoptedRevision: false };
       }
       throw new Error('github_automation_source_revision_unavailable');
     }
@@ -132,7 +148,7 @@ async function readCurrentAutomationSources(params: Readonly<{
         definitions: Object.freeze([...definitions]),
       });
       params.sourceSnapshots.set(key, next);
-      return next;
+      return { snapshot: next, adoptedRevision: previous === null || previous.revision !== revision };
     }
     if (seenCursors.has(result.nextCursor)) {
       throw new Error('github_automation_source_cursor_repeated');
@@ -142,23 +158,116 @@ async function readCurrentAutomationSources(params: Readonly<{
   }
 }
 
+/**
+ * Reports the same Automation health facts through the same canonical host
+ * status owner the checkpointed-pull observer uses. Without a durable-push
+ * producer, `automation.event.source.status.report`'s `durablePush` catalog
+ * scope had no writer at all and a push Automation's status stayed permanently
+ * null while its pull twin reported every cycle.
+ *
+ * A status report is never allowed to change the delivery disposition: the
+ * admission above is the authoritative fact, and re-delivering an accepted
+ * occurrence to repair telemetry would re-admit it. Cancellation still
+ * propagates, because an aborted invocation must not settle.
+ */
+async function reportAutomationWebhookStatus(params: Readonly<{
+  context: PluginInvocationContext;
+  reports: readonly AutomationEventSourceStatusReportV1[];
+}>): Promise<void> {
+  try {
+    for (const report of params.reports) {
+      params.context.signal.throwIfAborted();
+      await params.context.services.actions.execute(
+        'automation.event.source.status.report',
+        report,
+        { signal: params.context.signal },
+      );
+    }
+  } catch (error) {
+    if (params.context.signal.aborted) throw error;
+  }
+}
+
+function catalogStatusReports(params: Readonly<{
+  definitions: readonly GithubAutomationWebhookSourceDefinitionV1[];
+  revision: string;
+}>): readonly AutomationEventCatalogStatusInputV1[] {
+  // The catalog fact is scoped to one endpoint, and only the definitions this
+  // delivery matched name an endpoint this handler has authority to speak for.
+  const endpointIds = new Set<string>();
+  for (const definition of params.definitions) {
+    if (definition.observationTransport.kind !== 'durablePush') continue;
+    endpointIds.add(definition.observationTransport.webhookEndpointId);
+  }
+  return [...endpointIds].map((webhookEndpointId) => ({
+    kind: 'catalogReconciliation',
+    scope: { kind: 'durablePush', webhookEndpointId },
+    observedRevision: params.revision,
+    adoptedRevision: params.revision,
+    state: 'current',
+    scanStartedAt: null,
+    nextRetryAt: null,
+  }));
+}
+
+function sourceStatusReports(params: Readonly<{
+  definitions: readonly GithubAutomationWebhookSourceDefinitionV1[];
+  observedAtMs: number;
+  admitted: boolean;
+}>): readonly AutomationEventSourceStatusInputV1[] {
+  return params.definitions.map((definition) => ({
+    kind: 'source',
+    automationId: definition.automationId,
+    templateVersion: definition.templateVersion,
+    eventRef: definition.eventRef,
+    sourceSelectorId: definition.sourceSelectorId,
+    state: params.admitted ? 'observing' : 'attention',
+    code: params.admitted ? 'none' : 'admissionUnavailable',
+    lastObservedAt: params.observedAtMs,
+    lastDispositionAt: params.admitted ? params.observedAtMs : null,
+    nextRetryAt: null,
+    // Only a settled delivery advances the counters. An unavailable admission
+    // is redelivered, so counting it here would multiply one occurrence by its
+    // attempt count.
+    observedDelta: params.admitted ? 1 : 0,
+    admittedDelta: params.admitted ? 1 : 0,
+    skippedDelta: 0,
+  }));
+}
+
 async function admitAutomationWebhookEvent(params: Readonly<{
   input: PluginWebhookActionInput;
   normalized: NonNullable<ReturnType<typeof normalizeGithubWebhookDelivery>['automationEvent']>;
   context: PluginInvocationContext;
   sourceSnapshots: Map<string, GithubAutomationWebhookSourceSnapshotV1>;
 }>): Promise<PluginWebhookActionResult> {
-  const snapshot = await readCurrentAutomationSources({
+  const read = await readCurrentAutomationSources({
     context: params.context,
     endpointSourceInstanceId: params.input.endpoint.sourceInstanceId,
     sourceSnapshots: params.sourceSnapshots,
   });
-  const definitions = snapshot.definitions.filter((definition) => (
+  const definitions = read.snapshot.definitions.filter((definition) => (
     isMatchingAutomationDefinition(definition, params.normalized.sourceInstanceId)
   ));
   if (definitions.length === 0) {
     return PluginWebhookActionResultSchema.parse({ kind: 'settled', disposition: 'ignored' });
   }
+  const catalogReports = read.adoptedRevision
+    ? catalogStatusReports({ definitions, revision: read.snapshot.revision })
+    : [];
+  const reportHealth = async (admitted: boolean): Promise<void> => {
+    await reportAutomationWebhookStatus({
+      context: params.context,
+      reports: [
+        ...catalogReports,
+        ...sourceStatusReports({
+          definitions,
+          observedAtMs: params.input.delivery.receivedAtMs,
+          admitted,
+        }),
+      ],
+    });
+  };
 
   try {
     params.context.signal.throwIfAborted();
@@ -179,6 +288,7 @@ async function admitAutomationWebhookEvent(params: Readonly<{
     }, { signal: params.context.signal });
     params.context.signal.throwIfAborted();
     if (!isCheckpointSafeAdmissionResult(admitted, definitions.length)) {
+      await reportHealth(false);
       return PluginWebhookActionResultSchema.parse({
         kind: 'retry',
         code: 'github.automation-unavailable',
@@ -186,11 +296,13 @@ async function admitAutomationWebhookEvent(params: Readonly<{
     }
   } catch (error) {
     if (params.context.signal.aborted) throw error;
+    await reportHealth(false);
     return PluginWebhookActionResultSchema.parse({
       kind: 'retry',
       code: 'github.automation-unavailable',
     });
   }
+  await reportHealth(true);
   return PluginWebhookActionResultSchema.parse({ kind: 'settled', disposition: 'accepted' });
 }
 
@@ -226,9 +338,10 @@ async function handleGithubWebhookActionV1(
       code: 'github_payload_invalid',
     });
   }
-  if (normalized.comment !== null) {
-    return PluginWebhookActionResultSchema.parse({ kind: 'retry', code: 'github.consumer-unavailable' });
-  }
+  // Only the Automation Event arm has a consumer today. Every other delivery
+  // GitHub sends to this endpoint — including a normalized issue comment — is
+  // settled as ignored: retrying cannot make a missing consumer appear, so a
+  // retry would only burn twelve attempts and record a misleading dead letter.
   if (normalized.automationEvent === null) {
     return PluginWebhookActionResultSchema.parse({ kind: 'settled', disposition: 'ignored' });
   }

@@ -3,8 +3,10 @@ import { dirname, join } from 'node:path';
 
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/scm';
 
-import { normalizeCommitRef } from '../runtime.js';
+import { normalizeCommitRef, runScmCommand } from '../runtime.js';
 import { inspectGitCheckoutIdentity, isGitLinkedWorktreeIdentity } from '../checkoutIdentity.js';
+import { buildScmNonInteractiveEnv } from '../providers/shared/nonInteractiveEnv.js';
+import { parseGitWorktreeListPorcelain } from '../worktreeListParser.js';
 import { repairGitWorktreeAdminReference } from './repairGitWorktreeAdminReference.js';
 import {
     buildWorktreeTargetPath,
@@ -22,6 +24,7 @@ type GitWorkspaceCheckoutCreationInput = Readonly<{
     repoRoot: string;
     displayName: string;
     baseRef: string | null;
+    branchMode: 'new' | 'existing';
 }>;
 
 function resolveNormalizedBaseRef(baseRef: string | null): string | null {
@@ -61,6 +64,7 @@ async function addGitWorktree(input: Readonly<{
     targetPath: string;
     branchName: string;
     baseRef: string | null;
+    branchMode: 'new' | 'existing';
 }>): Promise<void> {
     await mkdir(dirname(input.targetPath), { recursive: true });
 
@@ -68,7 +72,7 @@ async function addGitWorktree(input: Readonly<{
         repoRoot: input.repoRoot,
         worktreePath: input.targetPath,
         branchName: input.branchName,
-        branchMode: 'new',
+        branchMode: input.branchMode,
         baseRef: input.baseRef,
     });
     if (result.success) {
@@ -100,6 +104,7 @@ async function materializeGitWorktreeIntoExistingDirectory(input: Readonly<{
     targetPath: string;
     branchName: string;
     baseRef: string | null;
+    branchMode: 'new' | 'existing';
 }>): Promise<string> {
     const temporaryTargetPath = `${input.targetPath}.happier-materialize-tmp`;
     await rm(temporaryTargetPath, { recursive: true, force: true });
@@ -109,6 +114,7 @@ async function materializeGitWorktreeIntoExistingDirectory(input: Readonly<{
         targetPath: temporaryTargetPath,
         branchName: input.branchName,
         baseRef: input.baseRef,
+        branchMode: input.branchMode,
     });
 
     try {
@@ -141,6 +147,9 @@ async function tryReuseExistingGitWorktree(input: Readonly<{
     targetPath: string;
     branchName: string;
 }>): Promise<string | null> {
+    if (!await pathExists(input.targetPath)) {
+        return null;
+    }
     const [repoIdentity, targetIdentity] = await Promise.all([
         inspectGitCheckoutIdentity({ cwd: input.repoRoot }),
         inspectGitCheckoutIdentity({ cwd: input.targetPath }),
@@ -163,13 +172,36 @@ async function tryReuseExistingGitWorktree(input: Readonly<{
     return await resolveGitMaterializedWorktreeTargetPath({ targetPath: input.targetPath });
 }
 
+async function tryReuseGitWorktreeByBranch(input: Readonly<{
+    repoRoot: string;
+    branchName: string;
+}>): Promise<string | null> {
+    const listed = await runScmCommand({
+        bin: 'git',
+        cwd: input.repoRoot,
+        args: ['worktree', 'list', '--porcelain'],
+        timeoutMs: 15_000,
+        env: buildScmNonInteractiveEnv(),
+    });
+    if (!listed.success) return null;
+
+    return parseGitWorktreeListPorcelain({
+        worktreesOutput: listed.stdout,
+        currentWorktreePath: input.repoRoot,
+        mainWorktreePath: input.repoRoot,
+    }).find((worktree) => worktree.branch === input.branchName)?.path ?? null;
+}
+
 export async function materializeGitWorkspaceCheckoutAtPath(input: Readonly<{
     repoRoot: string;
     targetPath: string;
     displayName: string;
     baseRef: string | null;
+    branchMode: 'new' | 'existing';
 }>): Promise<Readonly<{
     targetPath: string;
+    branchName: string;
+    reused: boolean;
 }>> {
     const branchName = resolveWorktreeBranchName(input.displayName);
 
@@ -181,10 +213,28 @@ export async function materializeGitWorkspaceCheckoutAtPath(input: Readonly<{
     if (reusedTargetPath) {
         return {
             targetPath: reusedTargetPath,
+            branchName,
+            reused: true,
         };
     }
 
-    const normalizedBaseRef = resolveNormalizedBaseRef(input.baseRef);
+    if (input.branchMode === 'existing') {
+        const existingBranchPath = await tryReuseGitWorktreeByBranch({
+            repoRoot: input.repoRoot,
+            branchName,
+        });
+        if (existingBranchPath) {
+            return {
+                targetPath: existingBranchPath,
+                branchName,
+                reused: true,
+            };
+        }
+    }
+
+    const normalizedBaseRef = input.branchMode === 'existing'
+        ? null
+        : resolveNormalizedBaseRef(input.baseRef);
     if (!await isDirectoryEmpty(input.targetPath)) {
         return {
             targetPath: await materializeGitWorktreeIntoExistingDirectory({
@@ -192,7 +242,10 @@ export async function materializeGitWorkspaceCheckoutAtPath(input: Readonly<{
                 targetPath: input.targetPath,
                 branchName,
                 baseRef: normalizedBaseRef,
+                branchMode: input.branchMode,
             }),
+            branchName,
+            reused: false,
         };
     }
 
@@ -201,10 +254,13 @@ export async function materializeGitWorkspaceCheckoutAtPath(input: Readonly<{
         targetPath: input.targetPath,
         branchName,
         baseRef: normalizedBaseRef,
+        branchMode: input.branchMode,
     });
 
     return {
         targetPath: await resolveGitMaterializedWorktreeTargetPath({ targetPath: input.targetPath }),
+        branchName,
+        reused: false,
     };
 }
 
@@ -212,10 +268,14 @@ export async function createGitWorkspaceCheckoutAtDefaultPath(
     input: GitWorkspaceCheckoutCreationInput,
 ): Promise<Readonly<{
     targetPath: string;
+    branchName: string;
+    reused: boolean;
 }>> {
     const branchName = resolveWorktreeBranchName(input.displayName);
 
-    const normalizedBaseRef = resolveNormalizedBaseRef(input.baseRef);
+    const normalizedBaseRef = input.branchMode === 'existing'
+        ? null
+        : resolveNormalizedBaseRef(input.baseRef);
 
     for (let attempt = 1; attempt <= GIT_WORKTREE_NAME_ATTEMPT_LIMIT; attempt += 1) {
         const candidateBranchName = gitWorktreeNameForAttempt(branchName, attempt);
@@ -226,12 +286,19 @@ export async function createGitWorkspaceCheckoutAtDefaultPath(
                 targetPath: candidateTargetPath,
                 displayName: candidateBranchName,
                 baseRef: normalizedBaseRef,
+                branchMode: input.branchMode,
             });
             return {
                 targetPath: materialized.targetPath,
+                branchName: materialized.branchName,
+                reused: materialized.reused,
             };
         } catch (error) {
-            if (attempt < GIT_WORKTREE_NAME_ATTEMPT_LIMIT && isGitWorktreeAlreadyExistsFailure(error)) {
+            if (
+                input.branchMode === 'new'
+                && attempt < GIT_WORKTREE_NAME_ATTEMPT_LIMIT
+                && isGitWorktreeAlreadyExistsFailure(error)
+            ) {
                 continue;
             }
             throw error;

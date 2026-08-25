@@ -1,4 +1,5 @@
 import type {
+  ConnectedAccountMetadataList,
   ConnectedAccountMaterialization,
   QualifiedConnectedAccountRef,
 } from '@happier-dev/plugin-sdk/connected-accounts';
@@ -130,7 +131,11 @@ const PUBLISHED_BASES: readonly string[] = [BASE_URL, SERVER_BASE_URL];
 
 function createRecorder(
   respond: (request: AzureDevOpsHttpRequest) => Route,
-  options: Readonly<{ now?: number; publishedBases?: readonly string[] }> = {},
+  options: Readonly<{
+    now?: number;
+    publishedBases?: readonly string[];
+    accountListing?: ConnectedAccountMetadataList;
+  }> = {},
 ): Recorder {
   const urls: string[] = [];
   const materializedAccounts: QualifiedConnectedAccountRef[] = [];
@@ -142,7 +147,7 @@ function createRecorder(
     services: {
       connectedAccounts: {
         async listAccounts() {
-          return {
+          return options.accountListing ?? {
             status: 'complete' as const,
             accounts: [{
               account: accountRef('account-1'),
@@ -492,6 +497,25 @@ describe('Azure DevOps Triage scan', () => {
     expect(recorder.urls).toHaveLength(0);
   });
 
+  it('does not report a configured account disconnected when a truncated listing omitted it', async () => {
+    const recorder = createRecorder(happyPath(), {
+      accountListing: { status: 'truncated', accounts: [] },
+    });
+
+    const result = await runAzureTriageScan({
+      services: recorder.services,
+      request: { v: 1, instance: configuredInstance(), page: { kind: 'initial', limit: 8 } },
+      signal: new AbortController().signal,
+    });
+
+    expect(result.kind).toBe('failed');
+    if (result.kind !== 'failed') throw new Error('expected an attributed incomplete listing');
+    expect(result.failure.code).toBe('azure-devops/configured-account-listing-truncated');
+    expect(result.failure.class).toBe('transient');
+    expect(result.failure.code).not.toBe('azure-devops/configured-account-unavailable');
+    expect(recorder.materializedAccounts).toHaveLength(0);
+  });
+
   it('walks an Azure DevOps Server collection base while still authorizing by its bare origin', async () => {
     // Server differs from Services only in the base the user configured: an arbitrary host plus a
     // case-bearing collection path. Nothing classifies the deployment; the same walk runs beneath
@@ -752,6 +776,60 @@ describe('Azure DevOps Triage scan', () => {
       observation.kind === 'present' ? Number(observation.localRef.entryId) : -1
     ));
     expect(resumedIds.every((entryId) => entryId >= 500 && entryId < 600)).toBe(true);
+  });
+
+  it('keeps resumed lane offsets bound to the active repository when another repository is inserted', async () => {
+    const INSERTED_REPOSITORY_ID = '11111111-2222-4333-8444-555555555555';
+    const first = createRecorder((request) => {
+      if (request.url.includes('_apis/connectionData')) return { body: CONNECTION_DATA };
+      if (request.url.includes('_apis/projects')) return page([project()]);
+      if (request.url.includes('_apis/git/repositories?')) return page([repository()]);
+      if (request.url.includes('searchCriteria.creatorId')) {
+        return page(Array.from({ length: AZURE_NATIVE_PAGE_SIZE }, (_unused, index) => (
+          pullRequest(100 + index)
+        )));
+      }
+      if (request.url.includes('searchCriteria.reviewerId')) return page([]);
+      throw new Error(`unexpected request: ${request.url}`);
+    });
+    const firstResult = await runAzureTriageScan({
+      services: first.services,
+      request: {
+        v: 1,
+        instance: configuredInstance(),
+        page: { kind: 'initial', limit: AZURE_NATIVE_PAGE_SIZE },
+      },
+      signal: new AbortController().signal,
+    });
+    if (firstResult.kind !== 'page') throw new Error('expected a resumable first page');
+
+    const second = createRecorder((request) => {
+      if (request.url.includes('_apis/connectionData')) return { body: CONNECTION_DATA };
+      if (request.url.includes('_apis/git/repositories?')) {
+        return page([
+          repository(INSERTED_REPOSITORY_ID, 'inserted'),
+          repository(),
+        ]);
+      }
+      if (request.url.includes('searchCriteria.creatorId')) return page([]);
+      if (request.url.includes('searchCriteria.reviewerId')) return page([]);
+      throw new Error(`unexpected request: ${request.url}`);
+    });
+    const secondResult = await runAzureTriageScan({
+      services: second.services,
+      request: {
+        v: 1,
+        instance: configuredInstance(),
+        page: { kind: 'continuation', continuation: firstResult.continuation },
+      },
+      signal: new AbortController().signal,
+    });
+
+    if (secondResult.kind === 'failed') throw new Error(secondResult.failure.code);
+    const firstResumedLaneUrl = second.urls.find((url) => url.includes('searchCriteria.'));
+    expect(firstResumedLaneUrl).toContain(REPOSITORY_ID);
+    expect(firstResumedLaneUrl).toContain('searchCriteria.reviewerId');
+    expect(firstResumedLaneUrl).not.toContain(INSERTED_REPOSITORY_ID);
   });
 
   it('charges the page budget in raw provider rows so omitted rows cannot overfill the page', async () => {

@@ -68,6 +68,29 @@ describe('GitHub pull-request checks', () => {
     expect(surface.rowState).toEqual({ kind: 'failing', failingCount: 1 });
   });
 
+  it('carries failed check output as evidence instead of substituting the check name', async () => {
+    const { surface } = await readChecks((request) => (request.url.includes('/check-runs')
+      ? {
+        status: 200,
+        body: githubCheckRunsResponse({
+          runs: [githubCheckRun({
+            id: 9_003,
+            name: 'build',
+            status: 'completed',
+            conclusion: 'failure',
+            output: { title: 'Build failed', summary: 'Typecheck found 2 errors.' },
+          })],
+        }),
+      }
+      : emptyStatus()));
+
+    expect(surface.observations[0]).toMatchObject({
+      name: 'build',
+      logExcerpt: 'Build failed\n\nTypecheck found 2 errors.',
+    });
+    expect(surface.observations[0]?.logExcerpt).not.toBe(surface.observations[0]?.name);
+  });
+
   it('qualifies a check run and a commit status that share a numeric id', async () => {
     const { surface } = await readChecks((request) => (request.url.includes('/check-runs')
       ? {

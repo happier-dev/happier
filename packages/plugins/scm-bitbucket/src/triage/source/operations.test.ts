@@ -662,13 +662,12 @@ describe('Bitbucket get', () => {
       collisionScope: `bitbucket:${REPOSITORY_UUID}`,
       entryId: '42',
     });
-    // The `self` read is the one shape that carries `reviewers`, and the complete reviewer set is
-    // still detail-surface content: an authoritative read is not permission to put a document on a
-    // list row. Wherever the fact survives the published bound it is the deferred arm.
-    expect(result.snapshot.facts.every((fact) => (
-      fact.id !== 'bitbucket/reviewers' || fact.value.kind === 'detailOnly'
-    ))).toBe(true);
-    expect(result.snapshot).not.toHaveProperty('summary');
+    // The authoritative `self` shape carries the description and complete reviewer roster needed
+    // by the detail launch. Both survive as bounded projection rather than forcing the mounted
+    // Overview to pretend the list-page omission was an authoritative empty answer.
+    expect(result.snapshot.facts.find((fact) => fact.id === 'bitbucket/reviewers'))
+      .toMatchObject({ value: { kind: 'text', value: 'Example Maintainer, Example Reviewer' } });
+    expect(result.snapshot.summary).toBe(pullRequestSelf.summary.raw);
     // The routing token is the repository locator, so the entry stays addressable without the
     // caller re-deriving a path from identity.
     expect(result.locator.routingToken).toBe('example-workspace/deploy-tools');
@@ -805,13 +804,13 @@ describe('Bitbucket detail projection', () => {
       // rather than shown a list that quietly claims to be complete.
       projectionTruncated: true,
     });
-    // A retained link whose Session summary is unavailable keeps its id and loses only display text.
-    expect(overview.linkedSessions).toEqual([{ sessionId: 'session-1' }]);
-    // A fact the list defers is a row the detail surface is expected to resolve, never a value it
-    // renders from the list projection.
-    expect(overview.fields.every((field) => (
-      field.id !== 'bitbucket/reviewers' || field.kind === 'pending'
-    ))).toBe(true);
+    // The entry's Session relationship belongs to the Triage common header, so this source-owned
+    // projection publishes none of it. `linkedSessions` on the launch input above is what makes
+    // this discriminating: a projection that still carried it would have something to copy.
+    expect(overview).not.toHaveProperty('linkedSessions');
+    expect(overview.summary).toBe(pullRequestSelf.summary.raw);
+    expect(overview.fields.find((field) => field.id === 'bitbucket/reviewers'))
+      .toMatchObject({ kind: 'text', value: 'Example Maintainer, Example Reviewer' });
   });
 });
 

@@ -6,9 +6,12 @@ import { promisify } from 'node:util';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/scm';
+
 import type { ScmBackendContext } from './types.js';
 import { createGitBackend } from './backend.js';
-import { runWithRealGitScmRuntime } from './testkit/scmRuntime.test-support.js';
+import { detectGitRepo } from './repository.js';
+import { runWithGitScmCommandRunner, runWithRealGitScmRuntime } from './testkit/scmRuntime.test-support.js';
 
 const execFile = promisify(execFileCallback);
 
@@ -114,5 +117,73 @@ describe('Git repository worktree status enrichment', () => {
         expect(response.worktrees?.[0]?.path).toBe(canonicalRoot);
         expect(response.worktrees?.[0]?.changeCount).toBeGreaterThanOrEqual(1);
         expect(response.worktrees?.[0]?.lastActivityAt).toBeGreaterThan(0);
+    });
+});
+
+describe('Git repository detection', () => {
+    // F-SCM-1. `git rev-parse --is-inside-work-tree` exits non-zero for a directory that is not a
+    // repository AND for a git that cannot run at all, so the exit code alone cannot tell a real
+    // negative from a broken tool. Reported live: a `git` that failed every invocation made the
+    // session source-control pane say "This directory is not under source control" about a healthy
+    // repository, and it stayed wrong after `git` came back.
+    it('refuses to answer when git fails every invocation, instead of reporting "not a repository"', async () => {
+        const detection = runWithGitScmCommandRunner(
+            async () => ({
+                success: false,
+                stdout: '',
+                stderr: 'fatal: broken git\n',
+                exitCode: 128,
+            }),
+            () => detectGitRepo({ cwd: '/tmp/happier-scm-detect-broken-git' }),
+        );
+
+        await expect(detection).rejects.toMatchObject({
+            errorCode: SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE,
+        });
+    });
+
+    it('still reports a real non-repository as one when git itself is healthy', async () => {
+        const detection = await runWithGitScmCommandRunner(
+            async (input) => (
+                input.args[0] === '--version'
+                    ? { success: true, stdout: 'git version 2.49.0\n', stderr: '', exitCode: 0 }
+                    : {
+                        success: false,
+                        stdout: '',
+                        stderr: 'fatal: not a git repository (or any of the parent directories): .git\n',
+                        exitCode: 128,
+                    }
+            ),
+            () => detectGitRepo({ cwd: '/tmp/happier-scm-detect-plain-folder' }),
+        );
+
+        expect(detection).toEqual({ isRepo: false, rootPath: null, mode: null });
+    });
+
+    it('refuses to answer when the probe is cut short even though the binary works', async () => {
+        const detection = runWithGitScmCommandRunner(
+            async (input) => (
+                input.args[0] === '--version'
+                    ? { success: true, stdout: 'git version 2.49.0\n', stderr: '', exitCode: 0 }
+                    : { success: false, stdout: '', stderr: '', exitCode: -1, timedOut: true }
+            ),
+            () => detectGitRepo({ cwd: '/tmp/happier-scm-detect-stalled' }),
+        );
+
+        await expect(detection).rejects.toMatchObject({
+            errorCode: SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE,
+        });
+    });
+
+    it('detects a real repository against the real git binary', async () => {
+        const repoRoot = await initRepoWithCommit('git-plugin-detect-real-');
+        try {
+            const detection = await runWithRealGitScmRuntime(() => detectGitRepo({ cwd: repoRoot }));
+            expect(detection.isRepo).toBe(true);
+            expect(detection.mode).toBe('.git');
+            expect(detection.rootPath).toBe(await realpath(repoRoot));
+        } finally {
+            await rm(repoRoot, { recursive: true, force: true });
+        }
     });
 });

@@ -139,6 +139,23 @@ function boundedWebUrl(value: unknown, bounds: GithubDetailBoundsV1): string | n
   return new TextEncoder().encode(absolute).length <= bounds.locationUtf8Bytes ? absolute : null;
 }
 
+/** Boundary helpers reused by the GraphQL Feedback connections. */
+export function projectGithubDetailIdentifierV1(value: unknown): TriageBoundedTextV1 | null {
+  return boundedOrNull(value, GITHUB_DETAIL_BOUNDS_V1.identifierUtf8Bytes);
+}
+
+export function projectGithubDetailLabelV1(value: unknown): TriageBoundedTextV1 | null {
+  return boundedOrNull(value, GITHUB_DETAIL_BOUNDS_V1.labelUtf8Bytes);
+}
+
+export function projectGithubDetailPathV1(value: unknown): TriageBoundedTextV1 | null {
+  return boundedOrNull(value, GITHUB_DETAIL_BOUNDS_V1.pathUtf8Bytes);
+}
+
+export function projectGithubDetailWebUrlV1(value: unknown): string | null {
+  return boundedWebUrl(value, GITHUB_DETAIL_BOUNDS_V1);
+}
+
 /* --------------------------------------------------------------- comment body */
 
 /** C0 controls that are not line structure, plus `U+007F`. */
@@ -622,6 +639,7 @@ export type GithubProjectedCheckRowV1 = Readonly<{
   detailsUrl?: string;
   startedAtMs?: number;
   completedAtMs?: number;
+  logExcerpt?: string;
   truncated?: true;
 }>;
 
@@ -651,10 +669,14 @@ export function projectGithubCheckRows(
     const status = bounded(observation.status, bounds.labelUtf8Bytes);
     const conclusion = boundedOrNull(observation.conclusion, bounds.labelUtf8Bytes);
     const detailsUrl = boundedWebUrl(observation.detailsUrl, bounds);
+    const logExcerpt = observation.logExcerpt === null || observation.logExcerpt === undefined
+      ? null
+      : projectGithubCommentBody(observation.logExcerpt, bounds.commentBodyUtf8Bytes);
     const truncated = key.truncated
       || name.truncated
       || status.truncated
-      || (conclusion?.truncated ?? false);
+      || (conclusion?.truncated ?? false)
+      || (logExcerpt?.truncated ?? false);
     projectionTruncated = projectionTruncated || truncated;
 
     rows.push(Object.freeze({
@@ -666,6 +688,7 @@ export function projectGithubCheckRows(
       ...(detailsUrl === null ? {} : { detailsUrl }),
       ...(observation.startedAtMs === null ? {} : { startedAtMs: observation.startedAtMs }),
       ...(observation.completedAtMs === null ? {} : { completedAtMs: observation.completedAtMs }),
+      ...(logExcerpt === null ? {} : { logExcerpt: logExcerpt.value }),
       ...(truncated ? { truncated: true as const } : {}),
     }));
   }

@@ -27,6 +27,7 @@
 
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { TriageSourceFailureV1 } from '@happier-dev/triage-protocol/v1';
+import { settleAtMostOnceProviderWrite } from '@happier-dev/triage-sources/runtime';
 
 import { buildGitlabItemUrl } from '../detail/routes.js';
 import { requestGitlabJson } from '../http/gitlabClient.js';
@@ -40,7 +41,7 @@ import {
 } from './preflight.js';
 
 /** The minimum every re-observed row carries. */
-type GitlabIdentifiedRow = Readonly<{ iid: string }>;
+type GitlabIdentifiedRow = Readonly<{ projectId: number; iid: string }>;
 
 /**
  * The outcome of one transition, in the Action-neutral spelling.
@@ -105,29 +106,44 @@ export async function runGitlabStateTransition<TRow extends GitlabIdentifiedRow>
     };
   }
 
-  const write = await requestGitlabJson({
-    invocation: preflight.dependencies.invocation,
-    url: buildGitlabItemUrl(preflight.route),
-    method: 'PUT',
-    // Exactly the transition, and nothing else. GitLab's update also accepts
-    // `title`, `description`, `labels`, `assignee_ids` and (on a merge request)
-    // `should_remove_source_branch`, and every one of them would REPLACE state
-    // this control never asked to touch.
-    body: { state_event: input.transition.stateEvent },
-    fetcher: preflight.dependencies.fetcher,
-    signal: preflight.dependencies.signal,
-    nowMs: preflight.dependencies.nowMs,
+  const settled = await settleAtMostOnceProviderWrite({
+    dispatch: async () => await requestGitlabJson({
+      invocation: preflight.dependencies.invocation,
+      url: buildGitlabItemUrl(preflight.route),
+      method: 'PUT',
+      // Exactly the transition, and nothing else. GitLab's update also accepts
+      // `title`, `description`, `labels`, `assignee_ids` and (on a merge request)
+      // `should_remove_source_branch`, and every one of them would REPLACE state
+      // this control never asked to touch.
+      body: { state_event: input.transition.stateEvent },
+      fetcher: preflight.dependencies.fetcher,
+      signal: preflight.dependencies.signal,
+      nowMs: preflight.dependencies.nowMs,
+    }),
+    // A provider response or an answer-lost transport/deadline may both have changed state. The
+    // only no-effect arm is a source-classified failure that proves the request was never sent.
+    mayHaveChanged: (write) => write.kind !== 'failed' || gitlabWriteAnswerLost(write),
+    confirm: async () => {
+      const confirmed = await confirmGitlabItemMutation(preflight);
+      if (!confirmed.ok) return { kind: 'uncertain' as const, failure: confirmed.failure };
+      return input.transition.proven(confirmed.row)
+        ? { kind: 'applied' as const, observation: confirmed.row }
+        : { kind: 'unchanged' as const, observation: confirmed.row };
+    },
   });
-  if (write.kind === 'failed' && !gitlabWriteAnswerLost(write)) {
-    return { kind: 'unavailable', failure: projectGitlabSourceFailure(write.failure) };
+  if (settled.kind === 'settled') {
+    const write = settled.result;
+    return write.kind === 'failed'
+      ? { kind: 'unavailable', failure: projectGitlabSourceFailure(write.failure) }
+      // `mayHaveChanged` sends every non-failure through confirmation. Keep the impossible arm
+      // honest if that provider-owned classifier is later changed without this projection.
+      : { kind: 'unconfirmed' };
   }
-  // A write whose answer was lost falls through to the same confirming read a
-  // `200` gets: the transition may have run, and `unavailable` would claim
-  // nothing was attempted.
-
-  const confirmed = await confirmGitlabItemMutation(preflight);
-  if (!confirmed.ok) return { kind: 'unconfirmed', failure: confirmed.failure };
-  return input.transition.proven(confirmed.row)
-    ? { kind: 'applied', item: confirmed.row }
-    : { kind: 'unconfirmed', observed: confirmed.row };
+  if (settled.kind === 'applied') return { kind: 'applied', item: settled.observation };
+  if (settled.kind === 'unchanged') return { kind: 'unconfirmed', observed: settled.observation };
+  return {
+    kind: 'unconfirmed',
+    ...(settled.observation === undefined ? {} : { observed: settled.observation }),
+    ...(settled.failure === undefined ? {} : { failure: settled.failure }),
+  };
 }

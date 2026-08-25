@@ -69,7 +69,7 @@ function createNotFoundError(message = 'GitLab merge request was not found'): Gi
 }
 
 function defaultRunCommand(): never {
-  throw createUnsupportedError('GitLab CLI command runner is unavailable');
+  throw createCommandFailedError('GitLab CLI command runner is unavailable');
 }
 
 type GitlabAdapterCommandRunner = (request: Readonly<{
@@ -190,7 +190,12 @@ function parseGitlabMergeRequestNumberFromProviderUrl(provider: ScmHostingProvid
   }
 }
 
-function mapCliFailure(result: Readonly<{ stderr: string }>): never {
+function mapCliFailure(result: Readonly<{ stderr: string; exitCode: number | null }>): never {
+  // A command that never exited has no verdict: matching "not logged in" or "not found" in the
+  // stderr it happened to have written when it was cut short invents an answer glab never gave.
+  if (typeof result.exitCode !== 'number') {
+    throw createCommandFailedError('GitLab CLI command did not complete');
+  }
   const normalized = result.stderr.toLowerCase();
   if (/\b(not logged|not authenticated|authentication|authorization|auth required|credentials?)\b/.test(normalized)) {
     throw createAuthRequiredError();
@@ -208,7 +213,8 @@ function mapAuthFailure(auth: Exclude<GitlabCliAuthDetectionResult, { kind: 'aut
   if (auth.kind === 'missing-cli') {
     throw createUnsupportedError('GitLab CLI is not available');
   }
-  throw createUnsupportedError(`GitLab CLI auth status failed for ${auth.host}`);
+  // The probe could not answer. That is a failed command, not a backend that lacks the feature.
+  throw createCommandFailedError(`GitLab CLI auth status could not be checked for ${auth.host}`);
 }
 
 function mapListState(state: ScmHostingProviderPullRequestListInput['state']): string {

@@ -1,4 +1,8 @@
 import type { HttpService } from '@happier-dev/plugin-sdk/http';
+import {
+  createBoundedInvocation,
+  type BoundedInvocation,
+} from '@happier-dev/triage-sources/runtime';
 
 import type { AzureDevOpsHttpRequest, AzureDevOpsHttpResponse } from './types.js';
 
@@ -25,17 +29,11 @@ const TEXT_DECODER = new TextDecoder('utf-8', { fatal: false });
  * experiences: several calls behind one panel or one button must not be allowed to wait several
  * times the number here.
  */
-export function boundAzureInvocation(callerSignal: AbortSignal, deadlineMs: number): AbortSignal {
-  const deadline = new AbortController();
-  const timer = setTimeout(() => {
-    deadline.abort(new DOMException(
-      'Azure DevOps did not answer within this invocation deadline.',
-      'TimeoutError',
-    ));
-  }, deadlineMs);
-  (timer as unknown as Readonly<{ unref?: () => void }>).unref?.();
-  callerSignal.addEventListener('abort', () => { clearTimeout(timer); }, { once: true });
-  return AbortSignal.any([callerSignal, deadline.signal]);
+export function boundAzureInvocation(
+  callerSignal: AbortSignal,
+  deadlineMs: number,
+): BoundedInvocation {
+  return createBoundedInvocation({ callerSignal, timeoutMs: deadlineMs });
 }
 
 /**

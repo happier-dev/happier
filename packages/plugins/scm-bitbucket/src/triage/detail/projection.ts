@@ -401,3 +401,48 @@ export function projectBitbucketCommentRows(
     };
   });
 }
+
+/* ------------------------------------------------------------------ diffstat */
+
+export type BitbucketProjectedDiffstatRowV1 = Readonly<{
+  path: string;
+  status: string;
+  linesAdded: number;
+  linesRemoved: number;
+  truncated?: true;
+}>;
+
+/** Projects Bitbucket's JSON diffstat companion without interpreting the raw diff text. */
+export function projectBitbucketDiffstatRows(
+  values: readonly unknown[],
+  bounds: BitbucketDetailBoundsV1,
+  maxRows: number = BITBUCKET_MAX_DETAIL_ROWS_V1,
+): BitbucketPageProjectionV1<BitbucketProjectedDiffstatRowV1> {
+  return projectRows(values, maxRows, (raw) => {
+    const oldPath = isRecord(raw.old) ? readString(raw.old.path) : null;
+    const newPath = isRecord(raw.new) ? readString(raw.new.path) : null;
+    const rawPath = newPath ?? oldPath;
+    const rawStatus = readString(raw.status);
+    if (rawPath === null || rawStatus === null) return null;
+    const path = toBoundedDisplayLine(rawPath, bounds.textUtf8Bytes);
+    const status = toBoundedDisplayLine(rawStatus, bounds.labelUtf8Bytes);
+    if (path === null || status === null) return null;
+    const linesAdded = typeof raw.lines_added === 'number'
+      && Number.isSafeInteger(raw.lines_added) && raw.lines_added >= 0
+      ? raw.lines_added : 0;
+    const linesRemoved = typeof raw.lines_removed === 'number'
+      && Number.isSafeInteger(raw.lines_removed) && raw.lines_removed >= 0
+      ? raw.lines_removed : 0;
+    const truncated = path.truncated || status.truncated;
+    return {
+      row: Object.freeze({
+        path: path.value,
+        status: status.value,
+        linesAdded,
+        linesRemoved,
+        ...(truncated ? { truncated: true as const } : {}),
+      }),
+      truncated,
+    };
+  });
+}

@@ -198,6 +198,11 @@ export const AzureMutationResultV1Schema = defineProtocolUnion([
     kind: defineProtocolLiteral('unavailable'),
     failure: TriageSourceFailureV1Schema,
   }, { policy: 'closed' }),
+  defineProtocolObject({
+    kind: defineProtocolLiteral('uncertain'),
+    observation: TriageSourceObservationV1Schema.optional(),
+    failure: TriageSourceFailureV1Schema.optional(),
+  }, { policy: 'closed' }),
 ]);
 export type AzureMutationResultV1 = ReturnType<typeof AzureMutationResultV1Schema.parse>;
 
@@ -293,6 +298,11 @@ export const AzureThreadStatusResultV1Schema = defineProtocolUnion([
   defineProtocolObject({
     kind: defineProtocolLiteral('unavailable'),
     failure: TriageSourceFailureV1Schema,
+  }, { policy: 'closed' }),
+  defineProtocolObject({
+    kind: defineProtocolLiteral('uncertain'),
+    status: AzureObservedThreadStatusV1Schema.optional(),
+    failure: TriageSourceFailureV1Schema.optional(),
   }, { policy: 'closed' }),
 ]);
 export type AzureThreadStatusResultV1 = ReturnType<typeof AzureThreadStatusResultV1Schema.parse>;

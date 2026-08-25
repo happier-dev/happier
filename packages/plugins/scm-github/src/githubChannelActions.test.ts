@@ -61,6 +61,10 @@ function githubChannelDeliveryInput(deliveryKey: string) {
   };
 }
 
+/** The exact published request input, so recorded calls keep their real shape. */
+type GithubHttpRequestInput =
+  Parameters<PluginInvocationContext['services']['http']['request']>[0];
+
 function jsonResponse(
   value: unknown,
   status = 200,
@@ -80,7 +84,10 @@ function jsonResponse(
 }
 
 function coreContext(
-  services: Pick<PluginInvocationContext['services'], 'connectedAccounts' | 'http'>,
+  services: Readonly<{
+    connectedAccounts: Partial<PluginInvocationContext['services']['connectedAccounts']>;
+    http: Partial<PluginInvocationContext['services']['http']>;
+  }>,
   signal: AbortSignal = new AbortController().signal,
 ): PluginInvocationContext {
   return {
@@ -97,6 +104,11 @@ function coreContext(
         id: 'connection-setup-v1',
         qualifiedId: 'happier.channels/actions/connection-setup-v1',
       },
+      materialization: {
+        machineId: 'github-channel-actions-fixture-machine',
+        materializationId: 'github-channel-actions-fixture-materialization',
+        pluginId: 'happier.channels',
+      },
     },
     signal,
     services: services as PluginInvocationContext['services'],
@@ -112,7 +124,7 @@ describe('GitHub Channel Actions', () => {
       })),
     };
     const http = {
-      request: vi.fn(async () => {
+      request: vi.fn(async (_request: GithubHttpRequestInput) => {
         throw new Error('The unsupported transport must not make a GitHub request.');
       }),
     };
@@ -142,7 +154,7 @@ describe('GitHub Channel Actions', () => {
       })),
     };
     const http = {
-      request: vi.fn(async () => {
+      request: vi.fn(async (_request: GithubHttpRequestInput) => {
         throw new Error('An unauthorized caller must not make a GitHub request.');
       }),
     };
@@ -154,6 +166,11 @@ describe('GitHub Channel Actions', () => {
         contribution: {
           id: 'unrelated-caller-role',
           qualifiedId: 'happier.other-plugin/actions/unrelated-caller-role',
+        },
+        materialization: {
+          machineId: 'github-channel-actions-fixture-machine',
+          materializationId: 'github-channel-actions-fixture-materialization',
+          pluginId: 'happier.other-plugin',
         },
       },
     };
@@ -174,7 +191,7 @@ describe('GitHub Channel Actions', () => {
       })),
     };
     const http = {
-      request: vi.fn(async (request: Readonly<{ url: string }>) => (
+      request: vi.fn(async (request: GithubHttpRequestInput) => (
         request.url === 'https://api.github.com/repos/acme/widgets'
           ? jsonResponse({
             id: 77,
@@ -238,7 +255,7 @@ describe('GitHub Channel Actions', () => {
       })),
     };
     const http = {
-      request: vi.fn(async (request: Readonly<{ url: string }>) => (
+      request: vi.fn(async (request: GithubHttpRequestInput) => (
         request.url === 'https://api.github.com/repos/acme/widgets'
           ? jsonResponse({
             id: 77,
@@ -299,8 +316,8 @@ describe('GitHub Channel Actions', () => {
 
     expect(result.kind).toBe('batch');
     if (result.kind !== 'batch') throw new Error(`Expected a GitHub poll batch, received ${result.kind}`);
-    const observations = result.observations.flatMap((ingress) => (
-      ingress.kind === 'fullText' ? [ingress.observation] : []
+    const observations = result.observations.flatMap(({ observation }) => (
+      observation.kind === 'fullText' ? [observation.observation] : []
     ));
     expect(observations).toHaveLength(2);
     expect(observations.map((observation) => observation.occurrenceId)).toEqual([
@@ -319,7 +336,6 @@ describe('GitHub Channel Actions', () => {
       updatedAtIso: '2026-08-10T12:00:02.000Z',
       commentIdAtUpdatedAt: '10',
       etag: null,
-      continuation: null,
     });
   });
 
@@ -331,7 +347,7 @@ describe('GitHub Channel Actions', () => {
       })),
     };
     const http = {
-      request: vi.fn(async () => jsonResponse({ ok: true })),
+      request: vi.fn(async (_request: GithubHttpRequestInput) => jsonResponse({ ok: true })),
     };
     const client = await createGithubApiClient(coreContext({ connectedAccounts, http }), GITHUB_ACCOUNT);
 
@@ -343,7 +359,7 @@ describe('GitHub Channel Actions', () => {
       },
     });
 
-    const requestHeaders = http.request.mock.calls[0]?.[0].headers as Readonly<Record<string, string>>;
+    const requestHeaders = http.request.mock.calls[0]?.[0]?.headers ?? {};
     expect(Object.entries(requestHeaders).filter(([name]) => name.toLowerCase() === 'authorization')).toEqual([
       ['Authorization', 'Bearer exact-account-token'],
     ]);
@@ -362,7 +378,7 @@ describe('GitHub Channel Actions', () => {
     );
   });
 
-  it('reports a malformed persisted GitHub continuation as a provider-history gap without request or checkpoint advance', async () => {
+  it('reports a malformed persisted GitHub checkpoint as a provider-history gap without request or checkpoint advance', async () => {
     const connectedAccounts = {
       materialize: vi.fn(async () => ({
         kind: 'httpHeaders' as const,
@@ -391,20 +407,9 @@ describe('GitHub Channel Actions', () => {
       credentialRef: GITHUB_ACCOUNT,
       checkpoint: {
         v: 1,
-        updatedAtIso: '2026-08-10T12:00:00.000Z',
+        updatedAtIso: 'not an ISO timestamp',
         commentIdAtUpdatedAt: '1',
         etag: null,
-        continuation: {
-          transport: 'poll',
-          connectionId: 'connection-1',
-          providerConnectionKey: 'github:repository:77',
-          filterSince: '2026-08-10T11:59:59Z',
-          windowHighWatermark: {
-            updatedAtIso: '2026-08-10T12:00:00.000Z',
-            commentIdAtUpdatedAt: '1',
-          },
-          url: 'https://evil.example/repos/acme/widgets/issues/comments?sort=updated&direction=asc&since=2026-08-10T11%3A59%3A59Z&per_page=100&page=11',
-        },
       },
       limit: 10,
       waitMs: 0,
@@ -424,7 +429,7 @@ describe('GitHub Channel Actions', () => {
       })),
     };
     const http = {
-      request: vi.fn(async () => jsonResponse([], 200, {
+      request: vi.fn(async (_request: GithubHttpRequestInput) => jsonResponse([], 200, {
         link: '<https://api.github.com/repos/acme/widgets/issues/comments?sort=updated&direction=asc&per_page=100&page=2>; rel="next"',
       })),
     };
@@ -464,7 +469,7 @@ describe('GitHub Channel Actions', () => {
       })),
     };
     const http = {
-      request: vi.fn(async (request: Readonly<{ url: string }>) => (
+      request: vi.fn(async (request: GithubHttpRequestInput) => (
         request.url.includes('/issues/comments')
           ? jsonResponse([{
             id: 9,
@@ -511,28 +516,31 @@ describe('GitHub Channel Actions', () => {
     expect(result).toMatchObject({
       kind: 'batch',
       observations: [{
-        kind: 'routableNonAdmission',
-        reason: 'unsupportedEdit',
-        shell: {
-          occurrenceId: 'github:repository:77:issue-comment:9',
-          transport: { kind: 'poll' },
-          endpoint: {
-            kind: 'githubIssue',
-            audience: 'shared',
-            id: 'github:repository:77:issue:5:number:1',
-          },
-          actor: {
-            principalId: '123',
-            label: 'octocat',
-            kind: 'human',
-            isIntegrationSelf: false,
-          },
-          message: {
-            id: '9',
-            revision: '2026-08-10T12:00:01.000Z',
-            addressingEvidence: 'none',
-            contentProvenance: 'original',
-            providerTimestamp: Date.parse('2026-08-10T12:00:01.000Z'),
+        eventCandidate: null,
+        observation: {
+          kind: 'routableNonAdmission',
+          reason: 'unsupportedEdit',
+          shell: {
+            occurrenceId: 'github:repository:77:issue-comment:9',
+            transport: { kind: 'poll' },
+            endpoint: {
+              kind: 'githubIssue',
+              audience: 'shared',
+              id: 'github:repository:77:issue:5:number:1',
+            },
+            actor: {
+              principalId: '123',
+              label: 'octocat',
+              kind: 'human',
+              isIntegrationSelf: false,
+            },
+            message: {
+              id: '9',
+              revision: '2026-08-10T12:00:01.000Z',
+              addressingEvidence: 'none',
+              contentProvenance: 'original',
+              providerTimestamp: Date.parse('2026-08-10T12:00:01.000Z'),
+            },
           },
         },
       }],
@@ -541,9 +549,9 @@ describe('GitHub Channel Actions', () => {
         commentIdAtUpdatedAt: '9',
       },
     });
-    expect(result.kind === 'batch' ? result.observations[0] : undefined)
+    expect(result.kind === 'batch' ? result.observations[0]?.observation : undefined)
       .not.toHaveProperty('shell.message.text');
-    expect(result.kind === 'batch' ? result.observations[0] : undefined)
+    expect(result.kind === 'batch' ? result.observations[0]?.observation : undefined)
       .not.toHaveProperty('shell.streamKey');
   });
 
@@ -582,7 +590,7 @@ describe('GitHub Channel Actions', () => {
       })),
     };
     const http = {
-      request: vi.fn(async (request: Readonly<{ url: string }>) => (
+      request: vi.fn(async (request: GithubHttpRequestInput) => (
         request.url.includes('/issues/comments')
           ? jsonResponse([{
             id: 10,
@@ -627,18 +635,21 @@ describe('GitHub Channel Actions', () => {
     expect(result).toMatchObject({
       kind: 'batch',
       observations: [{
-        kind: 'routableNonAdmission',
-        reason,
-        shell: {
-          occurrenceId: 'github:repository:77:issue-comment:10',
-          message: {
-            id: '10',
-            revision: new Date(updatedAt).toISOString(),
+        eventCandidate: null,
+        observation: {
+          kind: 'routableNonAdmission',
+          reason,
+          shell: {
+            occurrenceId: 'github:repository:77:issue-comment:10',
+            message: {
+              id: '10',
+              revision: new Date(updatedAt).toISOString(),
+            },
           },
         },
       }],
     });
-    expect(result.kind === 'batch' ? result.observations[0] : undefined)
+    expect(result.kind === 'batch' ? result.observations[0]?.observation : undefined)
       .not.toHaveProperty('shell.message.text');
   });
 
@@ -650,7 +661,7 @@ describe('GitHub Channel Actions', () => {
       })),
     };
     const http = {
-      request: vi.fn(async () => jsonResponse([], 429, { 'retry-after': '60' })),
+      request: vi.fn(async (_request: GithubHttpRequestInput) => jsonResponse([], 429, { 'retry-after': '60' })),
     };
     const providerConfig = {
       v: 1,
@@ -694,7 +705,7 @@ describe('GitHub Channel Actions', () => {
       })),
     };
     const http = {
-      request: vi.fn(async () => jsonResponse([], 429, { 'retry-after': '86401' })),
+      request: vi.fn(async (_request: GithubHttpRequestInput) => jsonResponse([], 429, { 'retry-after': '86401' })),
     };
 
     await expect(testGithubChannelConnection({
@@ -715,7 +726,7 @@ describe('GitHub Channel Actions', () => {
       })),
     };
     const http = {
-      request: vi.fn(async () => jsonResponse([], 429, {
+      request: vi.fn(async (_request: GithubHttpRequestInput) => jsonResponse([], 429, {
         'x-ratelimit-reset': String(Math.ceil((Date.now() + MAX_CONVERSATION_RETRY_AFTER_MS + 3_600_000) / 1_000)),
       })),
     };
@@ -745,7 +756,7 @@ describe('GitHub Channel Actions', () => {
       })),
     };
     const http = {
-      request: vi.fn(async () => jsonResponse({
+      request: vi.fn(async (_request: GithubHttpRequestInput) => jsonResponse({
         message: 'You have exceeded a secondary rate limit.',
       }, 403)),
     };
@@ -791,7 +802,7 @@ describe('GitHub Channel Actions', () => {
       })),
     };
     const http = {
-      request: vi.fn(async () => jsonResponse({
+      request: vi.fn(async (_request: GithubHttpRequestInput) => jsonResponse({
         message: 'Resource not accessible by integration',
       }, 403, {
         'x-ratelimit-remaining': '4999',
@@ -832,7 +843,7 @@ describe('GitHub Channel Actions', () => {
       })),
     };
     const http = {
-      request: vi.fn(async (request: Readonly<{ url: string }>) => (
+      request: vi.fn(async (request: GithubHttpRequestInput) => (
         request.url === 'https://api.github.com/repos/acme/widgets/issues/12'
           ? jsonResponse({
             id: 300,
@@ -884,7 +895,7 @@ describe('GitHub Channel Actions', () => {
       })),
     };
     const http = {
-      request: vi.fn(async (request: Readonly<{ url: string }>) => {
+      request: vi.fn(async (request: GithubHttpRequestInput) => {
         if (!request.url.startsWith('https://api.github.com/search/users?')) {
           throw new Error(`Unexpected GitHub request: ${request.url}`);
         }
@@ -928,7 +939,7 @@ describe('GitHub Channel Actions', () => {
       })),
     };
     const http = {
-      request: vi.fn(async (request: Readonly<{ url: string }>) => (
+      request: vi.fn(async (request: GithubHttpRequestInput) => (
         request.url === 'https://api.github.com/repos/acme/widgets/issues/1'
           ? jsonResponse({ message: 'Not Found' }, 404)
           : request.url.startsWith('https://api.github.com/search/users?')
@@ -1013,7 +1024,7 @@ describe('GitHub Channel Actions', () => {
         })),
       };
       const http = {
-        request: vi.fn(async () => {
+        request: vi.fn(async (_request: GithubHttpRequestInput) => {
           controller.abort();
           throw cancellation;
         }),
@@ -1098,7 +1109,7 @@ describe('GitHub Channel Actions', () => {
       })),
     };
     const http = {
-      request: vi.fn(async () => {
+      request: vi.fn(async (_request: GithubHttpRequestInput) => {
         controller.abort();
         throw cancellation;
       }),
@@ -1126,7 +1137,7 @@ describe('GitHub Channel Actions', () => {
       })),
     };
     const http = {
-      request: vi.fn(async () => {
+      request: vi.fn(async (_request: GithubHttpRequestInput) => {
         throw retirement;
       }),
     };
@@ -1149,7 +1160,7 @@ describe('GitHub Channel Actions', () => {
       })),
     };
     const http = {
-      request: vi.fn(async (request: Readonly<{ url: string; method: string }>) => (
+      request: vi.fn(async (request: GithubHttpRequestInput) => (
         request.url === 'https://api.github.com/repos/acme/widgets/issues/1'
           ? jsonResponse({ id: 5, number: 1, title: 'Issue title' })
           : request.url === 'https://api.github.com/repos/acme/widgets/issues/1/comments'
@@ -1197,7 +1208,7 @@ describe('GitHub Channel Actions', () => {
       'https://api.github.com/repos/acme/widgets/issues/1',
       'https://api.github.com/repos/acme/widgets/issues/1/comments',
     ]);
-    const body = http.request.mock.calls[1]?.[0].body;
+    const body = http.request.mock.calls[1]?.[0]?.body;
     expect(JSON.parse(new TextDecoder().decode(body))).toEqual({
       body: 'Thanks @\u200Boctocat and @\u200Bacme/team',
     });
@@ -1211,7 +1222,7 @@ describe('GitHub Channel Actions', () => {
       })),
     };
     const http = {
-      request: vi.fn(async (request: Readonly<{ url: string }>) => (
+      request: vi.fn(async (request: GithubHttpRequestInput) => (
         request.url === 'https://api.github.com/repos/acme/widgets/issues/1'
           ? jsonResponse({ id: 5, number: 1, title: 'Issue title' })
           : request.url === 'https://api.github.com/repos/acme/widgets/issues/1/comments'
@@ -1269,7 +1280,7 @@ describe('GitHub Channel Actions', () => {
       })),
     };
     const http = {
-      request: vi.fn(async (request: Readonly<{ url: string }>) => (
+      request: vi.fn(async (request: GithubHttpRequestInput) => (
         request.url === 'https://api.github.com/repos/acme/widgets/issues/1'
           ? jsonResponse({ message: 'You have exceeded a secondary rate limit.' }, 403)
           : Promise.reject(new Error(`Unexpected GitHub request: ${request.url}`))
@@ -1322,7 +1333,7 @@ describe('GitHub Channel Actions', () => {
       })),
     };
     const http = {
-      request: vi.fn(async () => jsonResponse([], 429, { 'retry-after': '86401' })),
+      request: vi.fn(async (_request: GithubHttpRequestInput) => jsonResponse([], 429, { 'retry-after': '86401' })),
     };
 
     await expect(deliverGithubChannelMessage(
@@ -1440,7 +1451,7 @@ describe('GitHub Channel Actions', () => {
       })),
     };
     const http = {
-      request: vi.fn(async () => {
+      request: vi.fn(async (_request: GithubHttpRequestInput) => {
         throw new Error('GitHub endpoint revalidation network failure');
       }),
     };
@@ -1463,7 +1474,7 @@ describe('GitHub Channel Actions', () => {
       })),
     };
     const http = {
-      request: vi.fn(async () => jsonResponse({ message: 'Service Unavailable' }, 503)),
+      request: vi.fn(async (_request: GithubHttpRequestInput) => jsonResponse({ message: 'Service Unavailable' }, 503)),
     };
 
     await expect(deliverGithubChannelMessage(
@@ -1481,7 +1492,7 @@ describe('GitHub Channel Actions', () => {
       })),
     };
     const http = {
-      request: vi.fn(async () => jsonResponse({ id: 'not-a-decimal', number: 1 }, 200)),
+      request: vi.fn(async (_request: GithubHttpRequestInput) => jsonResponse({ id: 'not-a-decimal', number: 1 }, 200)),
     };
 
     await expect(deliverGithubChannelMessage(
@@ -1499,7 +1510,7 @@ describe('GitHub Channel Actions', () => {
       })),
     };
     const http = {
-      request: vi.fn(async (request: Readonly<{ url: string }>) => (
+      request: vi.fn(async (request: GithubHttpRequestInput) => (
         request.url === 'https://api.github.com/repos/acme/widgets/issues/1'
           ? jsonResponse({ id: 5, number: 1, title: 'Issue title' })
           : Promise.reject(new Error('GitHub comment POST transport ambiguity'))
@@ -1524,7 +1535,7 @@ describe('GitHub Channel Actions', () => {
       })),
     };
     const http = {
-      request: vi.fn(async (request: Readonly<{ url: string }>) => (
+      request: vi.fn(async (request: GithubHttpRequestInput) => (
         request.url === 'https://api.github.com/repos/acme/widgets/issues/1'
           ? jsonResponse({ id: 5, number: 1, title: 'Issue title' })
           : request.url === 'https://api.github.com/repos/acme/widgets/issues/1/comments'
@@ -1580,7 +1591,7 @@ describe('GitHub Channel Actions', () => {
     };
     let deliveredCommentCount = 0;
     const http = {
-      request: vi.fn(async (request: Readonly<{ url: string }>) => (
+      request: vi.fn(async (request: GithubHttpRequestInput) => (
         request.url === 'https://api.github.com/repos/acme/widgets/issues/1'
           ? jsonResponse({ id: 5, number: 1, title: 'Issue title' })
           : request.url === 'https://api.github.com/repos/acme/widgets/issues/1/comments'
@@ -1650,7 +1661,7 @@ describe('GitHub Channel Actions', () => {
     };
     let deliveredCommentCount = 0;
     const http = {
-      request: vi.fn(async (request: Readonly<{ url: string }>) => (
+      request: vi.fn(async (request: GithubHttpRequestInput) => (
         request.url === 'https://api.github.com/repos/acme/widgets/issues/1'
           ? jsonResponse({ id: 5, number: 1, title: 'Issue title' })
           : request.url === 'https://api.github.com/repos/acme/widgets/issues/1/comments'
@@ -1710,7 +1721,7 @@ describe('GitHub content-creation 422 classification', () => {
 
   function commentPostHttp(commentResponse: ReturnType<typeof jsonResponse>) {
     return {
-      request: vi.fn(async (request: Readonly<{ url: string }>) => (
+      request: vi.fn(async (request: GithubHttpRequestInput) => (
         request.url === 'https://api.github.com/repos/acme/widgets/issues/1'
           ? jsonResponse({ id: 5, number: 1, title: 'Issue title' })
           : request.url === 'https://api.github.com/repos/acme/widgets/issues/1/comments'
@@ -1757,7 +1768,7 @@ describe('GitHub content-creation 422 classification', () => {
 
   it('reports a throttled endpoint read as rate limited rather than misconfigured', async () => {
     const http = {
-      request: vi.fn(async () => jsonResponse(
+      request: vi.fn(async (_request: GithubHttpRequestInput) => jsonResponse(
         { message: 'You have exceeded a secondary rate limit.' },
         422,
       )),
@@ -1789,7 +1800,7 @@ describe('GitHub Channel readiness probe', () => {
   // so it must exercise the endpoint the Channel actually polls.
   it('reports ready only after the configured account can read repository issue comments', async () => {
     const http = {
-      request: vi.fn(async (request: Readonly<{ url: string }>) => (
+      request: vi.fn(async (request: GithubHttpRequestInput) => (
         request.url === 'https://api.github.com/user'
           ? jsonResponse({ id: 99, login: 'happier-bot' })
           : request.url === ISSUE_COMMENTS_PROBE_URL
@@ -1826,7 +1837,7 @@ describe('GitHub Channel readiness probe', () => {
       },
     ]) {
       const http = {
-        request: vi.fn(async (request: Readonly<{ url: string }>) => (
+        request: vi.fn(async (request: GithubHttpRequestInput) => (
           request.url === 'https://api.github.com/user'
             ? jsonResponse({ id: 99, login: 'happier-bot' })
             : probe.response

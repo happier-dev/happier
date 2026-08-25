@@ -8,20 +8,25 @@ import {
   projectBitbucketActivityRows,
   projectBitbucketBuildRollup,
   projectBitbucketCommentRows,
+  projectBitbucketDiffstatRows,
   projectBitbucketStatusRows,
   type BitbucketBuildRollupV1,
   type BitbucketPageProjectionV1,
   type BitbucketProjectedActivityRowV1,
   type BitbucketProjectedCommentRowV1,
+  type BitbucketProjectedDiffstatRowV1,
   type BitbucketProjectedStatusRowV1,
 } from './projection.js';
 import {
   BITBUCKET_ACTIVITY_PAGE_LENGTH_V1,
   BITBUCKET_COMMENTS_PAGE_LENGTH_V1,
   BITBUCKET_STATUSES_PAGE_LENGTH_V1,
+  BITBUCKET_DIFFSTAT_PAGE_LENGTH_V1,
   buildBitbucketActivityUrl,
   buildBitbucketCommentsUrl,
   buildBitbucketStatusesUrl,
+  buildBitbucketDiffUrl,
+  buildBitbucketDiffstatUrl,
   type BitbucketDetailRouteInputV1,
 } from './routes.js';
 
@@ -191,4 +196,44 @@ export async function readBitbucketCommentsPage(
     pageLength: BITBUCKET_COMMENTS_PAGE_LENGTH_V1,
     project: (values) => projectBitbucketCommentRows(values, BITBUCKET_DETAIL_BOUNDS_V1),
   });
+}
+
+/* ---------------------------------------------------------------------- diff */
+
+export async function readBitbucketDiffstatPage(
+  input: Readonly<{
+    route: BitbucketDetailRouteInputV1;
+    position: BitbucketDetailPagePositionV1;
+  }>,
+  dependencies: BitbucketDetailReadDependenciesV1,
+): Promise<BitbucketDetailReadResultV1<BitbucketDetailPageV1<BitbucketProjectedDiffstatRowV1>>> {
+  return readDetailPage(dependencies, {
+    position: input.position,
+    buildFirstUrl: () => buildBitbucketDiffstatUrl(input.route),
+    pageLength: BITBUCKET_DIFFSTAT_PAGE_LENGTH_V1,
+    project: (values) => projectBitbucketDiffstatRows(values, BITBUCKET_DETAIL_BOUNDS_V1),
+  });
+}
+
+export async function readBitbucketRawDiff(
+  route: BitbucketDetailRouteInputV1,
+  dependencies: BitbucketDetailReadDependenciesV1,
+): Promise<BitbucketDetailReadResultV1<
+  Readonly<{ kind: 'available'; text: string }> | Readonly<{ kind: 'tooLarge' }>
+>> {
+  let url: string;
+  try {
+    url = buildBitbucketDiffUrl(route);
+  } catch {
+    return { ok: false, failure: REQUEST_INVALID };
+  }
+  const result = await dependencies.client.requestRawDiff({
+    url,
+    ...(dependencies.signal === undefined ? {} : { signal: dependencies.signal }),
+  });
+  return result.ok
+    ? { ok: true, value: result.kind === 'available'
+      ? Object.freeze({ kind: 'available' as const, text: result.text })
+      : Object.freeze({ kind: 'tooLarge' as const }) }
+    : result;
 }

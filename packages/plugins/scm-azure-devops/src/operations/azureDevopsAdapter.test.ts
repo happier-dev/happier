@@ -220,7 +220,7 @@ describe('Azure DevOps operations adapter', () => {
     expect(executeCommand).not.toHaveBeenCalled();
   });
 
-  it('surfaces missing Azure CLI as auth remediation without generic shellout', async () => {
+  it('reports a host that wired no command runner as a failed command, not an unsupported feature', async () => {
     const adapter = createAzureDevopsOperationsAdapter();
 
     await expect(adapter.listPullRequests({
@@ -228,17 +228,20 @@ describe('Azure DevOps operations adapter', () => {
       head: 'feature/azure',
       runtimeServices: {},
     })).rejects.toMatchObject({
-      errorCode: SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED,
+      errorCode: SCM_OPERATION_ERROR_CODES.COMMAND_FAILED,
     });
   });
 
-  it('reports Azure CLI install remediation when publish-target discovery cannot resolve az', async () => {
+  it('reports Azure CLI install remediation when az cannot be resolved on this machine', async () => {
     const adapter = createAzureDevopsOperationsAdapter();
+    const executeCommand = vi.fn(async () => {
+      throw Object.assign(new Error('System tool is unavailable'), { code: 'plugin_system_tool_unavailable' });
+    });
 
     await expect(adapter.describePublishTargets({
       provider,
       defaultRepositoryName: 'next-repo',
-      runtimeServices: {},
+      runtimeServices: { executeCommand },
     })).resolves.toMatchObject({
       auth: {
         state: 'unsupported',
@@ -256,6 +259,72 @@ describe('Azure DevOps operations adapter', () => {
         }),
       ],
     });
+  });
+
+  it('does not offer an az login instruction when the sign-in probe never completed', async () => {
+    const adapter = createAzureDevopsOperationsAdapter();
+    const executeCommand = vi.fn(async () => ({
+      ok: false,
+      stdout: '',
+      stderr: '',
+      exitCode: null,
+    }));
+
+    await expect(adapter.describePublishTargets({
+      provider,
+      defaultRepositoryName: 'next-repo',
+      runtimeServices: { executeCommand },
+    })).rejects.toMatchObject({
+      errorCode: SCM_OPERATION_ERROR_CODES.COMMAND_FAILED,
+    });
+  });
+
+  it('does not offer a publish target when the host wired no command runner', async () => {
+    const adapter = createAzureDevopsOperationsAdapter();
+
+    await expect(adapter.describePublishTargets({
+      provider,
+      defaultRepositoryName: 'next-repo',
+      runtimeServices: {},
+    })).rejects.toMatchObject({
+      errorCode: SCM_OPERATION_ERROR_CODES.COMMAND_FAILED,
+    });
+  });
+
+  it('does not read a cut-short az command as a missing repository', async () => {
+    const adapter = createAzureDevopsOperationsAdapter();
+    const executeCommand = vi.fn(async () => ({
+      ok: false,
+      stdout: '',
+      stderr: 'ERROR: The repository was not found',
+      exitCode: null,
+    }));
+
+    await expect(adapter.getRepository({
+      provider,
+      owner: 'happier-dev/platform',
+      repositoryName: 'next-repo',
+      runtimeServices: { executeCommand },
+    })).rejects.toMatchObject({
+      errorCode: SCM_OPERATION_ERROR_CODES.COMMAND_FAILED,
+    });
+  });
+
+  it('still reads a completed az command that reported a missing repository as absent', async () => {
+    const adapter = createAzureDevopsOperationsAdapter();
+    const executeCommand = vi.fn(async () => ({
+      ok: false,
+      stdout: '',
+      stderr: 'ERROR: The repository was not found',
+      exitCode: 1,
+    }));
+
+    await expect(adapter.getRepository({
+      provider,
+      owner: 'happier-dev/platform',
+      repositoryName: 'next-repo',
+      runtimeServices: { executeCommand },
+    })).resolves.toBeNull();
   });
 
   it('describes Azure repository publish targets and creates repositories inside the provider project', async () => {

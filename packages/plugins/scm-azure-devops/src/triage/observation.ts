@@ -1,6 +1,7 @@
 import {
   MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1,
   MAX_TRIAGE_LOCATION_UTF8_BYTES_V1,
+  MAX_TRIAGE_REPOSITORY_PATH_UTF8_BYTES_V1,
   MAX_TRIAGE_ROUTING_TOKEN_UTF8_BYTES_V1,
   MAX_TRIAGE_ROW_FACT_VALUE_UTF8_BYTES_V1,
   MAX_TRIAGE_ROW_FACTS_V1,
@@ -14,6 +15,7 @@ import {
   type TriageSourceScanObservationV1,
   type TriageViewerInvolvementV1,
 } from '@happier-dev/triage-protocol/v1';
+import { normalizeScmHostingRepositoryIdentity } from '@happier-dev/plugin-sdk/scm';
 
 import type {
   AzureInvolvement,
@@ -112,6 +114,28 @@ export function projectAzurePresentObservation(input: Readonly<{
     ...(routingToken === null ? {} : { routingToken }),
   };
 
+  // The forge repository, in the vocabulary a project's resolved
+  // `ScmHostingProviderRef` already uses, so launch placement joins the two by
+  // equality and nothing parses a git remote. Emitted whole or not at all: a
+  // shortened deployment or repository key is a DIFFERENT repository, and an
+  // entry that proves none resolves to no checkout rather than to every
+  // checkout on the deployment.
+  const repositoryDeployment = fittingWithin(
+    normalizeTriageSingleLineV1(entry.locator.deploymentBaseUrl),
+    MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1,
+  );
+  const repositoryNameWithOwner = fittingWithin(
+    normalizeTriageSingleLineV1(entry.locator.repositoryKey),
+    MAX_TRIAGE_REPOSITORY_PATH_UTF8_BYTES_V1,
+  );
+  const repository = repositoryDeployment === null || repositoryNameWithOwner === null
+    ? null
+    : normalizeScmHostingRepositoryIdentity({
+      kind: 'azure-devops',
+      deployment: repositoryDeployment,
+      repository: repositoryNameWithOwner,
+    });
+
   const observation: PresentObservation = {
     kind: 'present',
     localRef: {
@@ -123,6 +147,7 @@ export function projectAzurePresentObservation(input: Readonly<{
     snapshot,
     viewer: { involvement: dedupeInvolvement(input.involvement) },
     ...(nativeRevision === null ? {} : { nativeRevision }),
+    ...(repository === null ? {} : { repository }),
   };
   return observation;
 }

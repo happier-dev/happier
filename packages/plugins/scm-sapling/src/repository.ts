@@ -6,10 +6,11 @@ import type {
   ScmWorkingEntry,
   ScmWorkingSnapshot,
 } from '@happier-dev/plugin-sdk/scm';
+import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/scm';
 import type { BackendRuntimeDetection as ScmRepoDetection } from '@happier-dev/plugin-sdk/scm/backend';
 
 import { createSaplingCapabilities } from './capabilities.js';
-import { runSaplingCommand as runScmCommand } from './runtime.js';
+import { runSaplingCommand as runScmCommand, type SaplingExecResult } from './runtime.js';
 import { parseGitPatchDiffStats } from './parsing/diffStats.js';
 import { parseSaplingPaths } from './parsing/remotePathsParser.js';
 import { parseSaplingStatusLine } from './parsing/statusParser.js';
@@ -55,6 +56,24 @@ async function computeUntrackedStatsByPath(repoRoot: string, rawPaths: string[])
     return statsByPath;
 }
 
+/**
+ * Sibling of `detectGitRepo`'s contract (`F-SCM-1`): a detector that could not run must reject, so
+ * the host registry reads it as "this backend could not look" rather than as the domain fact "this
+ * directory is not under source control". `sl` being absent — the common case on a machine that
+ * only uses Git — is exactly such a non-answer, and it must not be counted as an authoritative
+ * negative that masks a broken Git alongside it.
+ */
+function detectionUnavailable(detail: string): Error {
+    return Object.assign(
+        new Error(`Unable to determine whether this path is a Sapling repository: ${detail}`),
+        { errorCode: SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE },
+    );
+}
+
+function commandProducedNoAnswer(result: SaplingExecResult): boolean {
+    return result.timedOut === true || result.outputLimitExceeded === true || result.exitCode < 0;
+}
+
 export async function detectSaplingRepo(input: { cwd: string }): Promise<ScmRepoDetection> {
     const root = await runScmCommand({
         cwd: input.cwd,
@@ -62,6 +81,23 @@ export async function detectSaplingRepo(input: { cwd: string }): Promise<ScmRepo
         timeoutMs: 5000,
     });
     if (!root.success) {
+        if (commandProducedNoAnswer(root)) {
+            throw detectionUnavailable(root.stderr.trim() || 'the repository probe did not complete');
+        }
+
+        // `sl root` exits non-zero both outside a repository and when the binary itself is broken.
+        // `SAPLING_INSTALLABLE_DESCRIPTOR` declares `--version` as its liveness probe; a working
+        // binary makes the refusal a real answer.
+        const liveness = await runScmCommand({
+            cwd: input.cwd,
+            args: ['--version'],
+            timeoutMs: 5000,
+        });
+        if (!liveness.success || liveness.exitCode !== 0) {
+            throw detectionUnavailable(
+                (liveness.stderr.trim() || root.stderr.trim()) || 'sl is not usable on this machine',
+            );
+        }
         return {
             isRepo: false,
             rootPath: null,

@@ -1,9 +1,12 @@
 import type {
+  HostingProviderRuntimeServices as ScmHostingProviderRuntimeServices,
   ScmHostingProviderRef } from '@happier-dev/plugin-sdk/scm/hosting';
 import type {
   ScmPullRequestSummary,
 } from '@happier-dev/plugin-sdk/scm';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+import { createGithubPullRequestAdapter } from './authChain.js';
 
 const githubProvider: ScmHostingProviderRef = {
   id: 'scm.github',
@@ -29,24 +32,34 @@ const pullRequest: ScmPullRequestSummary = {
   state: 'open',
 };
 
-describe('GitHub pull request auth chain', () => {
-  it('uses github.com REST before gh CLI', async () => {
-    const mod = await import('./authChain.js').catch(() => null);
-    expect(mod).not.toBeNull();
-    if (!mod) return;
+/**
+ * The bound Connected Account is the sole authenticated authority, so no
+ * operation may reach the machine's ambient `gh`. `executeCommand` is the only
+ * process seam the GitHub CLI path can use, so a never-called spy on it
+ * falsifies any ambient-credential fallback.
+ */
+function createAmbientProcessSpy() {
+  const executeCommand = vi.fn(async () => ({
+    ok: true,
+    stdout: '',
+    stderr: '',
+    exitCode: 0,
+  }));
+  return {
+    executeCommand,
+    runtimeServices: { executeCommand } as unknown as ScmHostingProviderRuntimeServices,
+  };
+}
 
+describe('GitHub pull request adapter authority', () => {
+  it('serves github.com pull requests from the bound-account REST adapter alone', async () => {
+    const ambient = createAmbientProcessSpy();
     const calls: string[] = [];
-    const adapter = mod.createGithubPullRequestAdapter({
+    const adapter = createGithubPullRequestAdapter({
       restAdapter: {
         listPullRequests: async () => {
           calls.push('rest');
           return [pullRequest];
-        },
-      },
-      cliAdapter: {
-        listPullRequests: async () => {
-          calls.push('cli');
-          return [];
         },
       },
     });
@@ -54,60 +67,42 @@ describe('GitHub pull request auth chain', () => {
     await expect(adapter.listPullRequests({
       provider: githubProvider,
       head: 'feature/chain',
+      runtimeServices: ambient.runtimeServices,
     })).resolves.toEqual([pullRequest]);
     expect(calls).toEqual(['rest']);
+    expect(ambient.executeCommand).not.toHaveBeenCalled();
   });
 
-  it('falls through to authenticated gh when REST auth is stale', async () => {
-    const mod = await import('./authChain.js').catch(() => null);
-    expect(mod).not.toBeNull();
-    if (!mod) return;
-
-    const error = new Error('GitHub REST authentication failed');
-    Object.assign(error, { errorCode: 'REMOTE_AUTH_REQUIRED' });
-    const calls: string[] = [];
-    const adapter = mod.createGithubPullRequestAdapter({
+  it('fails typed instead of running ambient gh when the bound account is unauthenticated', async () => {
+    const ambient = createAmbientProcessSpy();
+    const error = Object.assign(new Error('GitHub REST authentication failed'), {
+      errorCode: 'REMOTE_AUTH_REQUIRED',
+    });
+    const adapter = createGithubPullRequestAdapter({
       restAdapter: {
         listPullRequests: async () => {
-          calls.push('rest');
           throw error;
         },
       },
-      cliAdapter: {
-        listPullRequests: async () => {
-          calls.push('cli');
-          return [pullRequest];
-        },
-      },
     });
 
     await expect(adapter.listPullRequests({
       provider: githubProvider,
       head: 'feature/chain',
-    })).resolves.toEqual([pullRequest]);
-    expect(calls).toEqual(['rest', 'cli']);
+      runtimeServices: ambient.runtimeServices,
+    })).rejects.toBe(error);
+    expect(ambient.executeCommand).not.toHaveBeenCalled();
   });
 
-  it('falls through to authenticated gh when github.com REST has a recoverable server failure', async () => {
-    const mod = await import('./authChain.js').catch(() => null);
-    expect(mod).not.toBeNull();
-    if (!mod) return;
-
+  it('fails a pull-request mutation typed instead of running ambient gh on a recoverable REST status', async () => {
+    const ambient = createAmbientProcessSpy();
     const error = Object.assign(new Error('GitHub REST request failed with status 502'), {
       errorCode: 'COMMAND_FAILED',
     });
-    const calls: string[] = [];
-    const adapter = mod.createGithubPullRequestAdapter({
+    const adapter = createGithubPullRequestAdapter({
       restAdapter: {
         createPullRequest: async () => {
-          calls.push('rest');
           throw error;
-        },
-      },
-      cliAdapter: {
-        createPullRequest: async () => {
-          calls.push('cli');
-          return pullRequest;
         },
       },
     });
@@ -117,27 +112,18 @@ describe('GitHub pull request auth chain', () => {
       base: 'main',
       head: 'feature/chain',
       title: 'Adapter chain',
-    })).resolves.toEqual(pullRequest);
-    expect(calls).toEqual(['rest', 'cli']);
+      runtimeServices: ambient.runtimeServices,
+    })).rejects.toBe(error);
+    expect(ambient.executeCommand).not.toHaveBeenCalled();
   });
 
-  it('falls through to authenticated gh when github.com REST has a network failure', async () => {
-    const mod = await import('./authChain.js').catch(() => null);
-    expect(mod).not.toBeNull();
-    if (!mod) return;
-
-    const calls: string[] = [];
-    const adapter = mod.createGithubPullRequestAdapter({
+  it('propagates a REST network failure instead of running ambient gh', async () => {
+    const ambient = createAmbientProcessSpy();
+    const error = new TypeError('fetch failed');
+    const adapter = createGithubPullRequestAdapter({
       restAdapter: {
         getPullRequest: async () => {
-          calls.push('rest');
-          throw new TypeError('fetch failed');
-        },
-      },
-      cliAdapter: {
-        getPullRequest: async () => {
-          calls.push('cli');
-          return pullRequest;
+          throw error;
         },
       },
     });
@@ -145,58 +131,19 @@ describe('GitHub pull request auth chain', () => {
     await expect(adapter.getPullRequest({
       provider: githubProvider,
       reference: { number: 3 },
-    })).resolves.toEqual(pullRequest);
-    expect(calls).toEqual(['rest', 'cli']);
-  });
-
-  it('does not fall through to gh for permanent REST errors', async () => {
-    const mod = await import('./authChain.js').catch(() => null);
-    expect(mod).not.toBeNull();
-    if (!mod) return;
-
-    const error = Object.assign(new Error('GitHub REST resource not found'), {
-      errorCode: 'REMOTE_NOT_FOUND',
-    });
-    const calls: string[] = [];
-    const adapter = mod.createGithubPullRequestAdapter({
-      restAdapter: {
-        listPullRequests: async () => {
-          calls.push('rest');
-          throw error;
-        },
-      },
-      cliAdapter: {
-        listPullRequests: async () => {
-          calls.push('cli');
-          return [pullRequest];
-        },
-      },
-    });
-
-    await expect(adapter.listPullRequests({
-      provider: githubProvider,
-      head: 'feature/chain',
+      runtimeServices: ambient.runtimeServices,
     })).rejects.toBe(error);
-    expect(calls).toEqual(['rest']);
+    expect(ambient.executeCommand).not.toHaveBeenCalled();
   });
 
-  it('skips github.com REST tokens for Enterprise hosts and tries gh', async () => {
-    const mod = await import('./authChain.js').catch(() => null);
-    expect(mod).not.toBeNull();
-    if (!mod) return;
-
+  it('refuses GitHub Enterprise hosts typed because they have no bound-account path', async () => {
+    const ambient = createAmbientProcessSpy();
     const calls: string[] = [];
-    const adapter = mod.createGithubPullRequestAdapter({
+    const adapter = createGithubPullRequestAdapter({
       restAdapter: {
         listPullRequests: async () => {
           calls.push('rest');
           return [];
-        },
-      },
-      cliAdapter: {
-        listPullRequests: async () => {
-          calls.push('cli');
-          return [{ ...pullRequest, provider: enterpriseProvider }];
         },
       },
     });
@@ -204,9 +151,27 @@ describe('GitHub pull request auth chain', () => {
     await expect(adapter.listPullRequests({
       provider: enterpriseProvider,
       head: 'feature/chain',
-    })).resolves.toEqual([
-      expect.objectContaining({ provider: enterpriseProvider }),
-    ]);
-    expect(calls).toEqual(['cli']);
+      runtimeServices: ambient.runtimeServices,
+    })).rejects.toMatchObject({ errorCode: 'REMOTE_AUTH_REQUIRED' });
+    expect(calls).toEqual([]);
+    expect(ambient.executeCommand).not.toHaveBeenCalled();
+  });
+
+  it('refuses an Enterprise pull-request mutation typed', async () => {
+    const ambient = createAmbientProcessSpy();
+    const adapter = createGithubPullRequestAdapter({
+      restAdapter: {
+        createPullRequest: async () => pullRequest,
+      },
+    });
+
+    await expect(adapter.createPullRequest({
+      provider: enterpriseProvider,
+      base: 'main',
+      head: 'feature/chain',
+      title: 'Adapter chain',
+      runtimeServices: ambient.runtimeServices,
+    })).rejects.toMatchObject({ errorCode: 'REMOTE_AUTH_REQUIRED' });
+    expect(ambient.executeCommand).not.toHaveBeenCalled();
   });
 });

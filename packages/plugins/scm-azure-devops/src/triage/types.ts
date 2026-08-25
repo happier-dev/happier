@@ -402,6 +402,14 @@ export type AzureInvolvement = 'author' | 'reviewRequested' | 'participating';
 
 export type AzureEntryLocator = Readonly<{
   forgeHostId: string;
+  /**
+   * `AzureDevOpsOrigin.baseUrl` — the deployment this read reached, host folded
+   * and the collection or organization path preserved. It is the launch
+   * placement join's deployment component and `forgeHostId` cannot stand in for
+   * it: on Azure DevOps the organization lives in the base PATH, so two
+   * organizations on `dev.azure.com` share one host id.
+   */
+  deploymentBaseUrl: string;
   /** `organization/project/repo`, case preserved. Addresses the API and renders the row. */
   repositoryKey: string;
   organizationOrCollection: string | null;

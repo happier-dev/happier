@@ -75,7 +75,7 @@ describe('GitHub webhook Action', () => {
       verifier: { kind: 'github_hmac_sha256_v1', routing: 'accountEndpoint' },
       handlerAction: { localId: GITHUB_WEBHOOK_ACTION_ID },
     })]);
-    const declaredAction = PLUGIN_MANIFEST.contributes.actions.find(
+    const declaredAction = (PLUGIN_MANIFEST.contributes.actions ?? []).find(
       (action) => action.id === GITHUB_WEBHOOK_ACTION_ID,
     );
     expect(declaredAction).toEqual(expect.objectContaining({
@@ -494,12 +494,190 @@ describe('GitHub webhook Action', () => {
     expect(execute).toHaveBeenCalledOnce();
   });
 
-  it('keeps the separate GitHub issue-comment delivery path retryable', async () => {
+  it('settles a delivery no consumer exists for instead of retrying it into a dead letter', async () => {
+    const execute = vi.fn();
     const handler = createGithubWebhookActionHandlerV1();
-    await expect(handler(issueCommentInput, contextWithActions(vi.fn()))).resolves.toEqual({
-      kind: 'retry',
-      code: 'github.consumer-unavailable',
+    // An issue comment normalizes cleanly but reaches no Channels or Automation
+    // owner. Retrying it would consume every attempt and then dead-letter, so
+    // the handler settles it and invokes no feature Action at all.
+    await expect(handler(issueCommentInput, contextWithActions(execute))).resolves.toEqual({
+      kind: 'settled',
+      disposition: 'ignored',
     });
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('reports the canonical durable-push source health the pull twin already reports', async () => {
+    const reports: unknown[] = [];
+    const execute = vi.fn(async (actionId: string, actionInput: unknown) => {
+      if (actionId === 'automation.event.sources.list') {
+        const listInput = actionInput as Readonly<{ knownRevision?: string }>;
+        return listInput.knownRevision === '7'
+          ? { kind: 'unchanged' as const, revision: '7' }
+          : {
+            kind: 'page' as const,
+            revision: '7',
+            definitions: [sourceDefinition('automation-1', 'github:repository:77')],
+            nextCursor: null,
+          };
+      }
+      if (actionId === 'automation.event.admit') {
+        return { results: [{ kind: 'admitted' as const, runId: 'run-1', checkpointSafe: true as const }] };
+      }
+      if (actionId === 'automation.event.source.status.report') {
+        reports.push(actionInput);
+        return {};
+      }
+      throw new Error(`unexpected Action ${actionId}`);
+    });
+    const handler = createGithubWebhookActionHandlerV1();
+    const context = contextWithActions(execute);
+
+    await expect(handler(input, context)).resolves.toEqual({
+      kind: 'settled',
+      disposition: 'accepted',
+    });
+    expect(reports).toEqual([
+      {
+        kind: 'catalogReconciliation',
+        scope: { kind: 'durablePush', webhookEndpointId: 'wh_ep_AAECAwQFBgcICQoLDA0ODw' },
+        observedRevision: '7',
+        adoptedRevision: '7',
+        state: 'current',
+        scanStartedAt: null,
+        nextRetryAt: null,
+      },
+      {
+        kind: 'source',
+        ...definitionSelector('automation-1'),
+        eventRef: {
+          pluginId: 'happier.scm.forge.github',
+          localId: 'automation/repository-event-v1',
+        },
+        state: 'observing',
+        code: 'none',
+        lastObservedAt: 1,
+        lastDispositionAt: 1,
+        nextRetryAt: null,
+        observedDelta: 1,
+        admittedDelta: 1,
+        skippedDelta: 0,
+      },
+    ]);
+
+    // The catalog fact is reported when a revision is adopted, not on every
+    // delivery: a second delivery on the unchanged revision still reports the
+    // per-Automation health but must not repeat the catalog round trip.
+    reports.length = 0;
+    await expect(handler(input, context)).resolves.toEqual({
+      kind: 'settled',
+      disposition: 'accepted',
+    });
+    expect(reports).toEqual([expect.objectContaining({ kind: 'source', state: 'observing' })]);
+  });
+
+  it('reports attention on the same source when the admission the delivery needs is unavailable', async () => {
+    const reports: unknown[] = [];
+    const execute = vi.fn(async (actionId: string, actionInput: unknown) => {
+      if (actionId === 'automation.event.sources.list') {
+        return {
+          kind: 'page' as const,
+          revision: '7',
+          definitions: [sourceDefinition('automation-1', 'github:repository:77')],
+          nextCursor: null,
+        };
+      }
+      if (actionId === 'automation.event.admit') {
+        return {
+          results: [{
+            kind: 'blocked' as const,
+            reason: 'temporarilyUnavailable' as const,
+            checkpointSafe: false as const,
+          }],
+        };
+      }
+      if (actionId === 'automation.event.source.status.report') {
+        reports.push(actionInput);
+        return {};
+      }
+      throw new Error(`unexpected Action ${actionId}`);
+    });
+    const handler = createGithubWebhookActionHandlerV1();
+
+    await expect(handler(input, contextWithActions(execute))).resolves.toEqual({
+      kind: 'retry',
+      code: 'github.automation-unavailable',
+    });
+    expect(reports).toContainEqual(expect.objectContaining({
+      kind: 'source',
+      automationId: 'automation-1',
+      state: 'attention',
+      code: 'admissionUnavailable',
+      // A retried delivery is re-observed, so the terminal counters stay put
+      // rather than double counting the same occurrence on every attempt.
+      observedDelta: 0,
+      admittedDelta: 0,
+      skippedDelta: 0,
+    }));
+  });
+
+  it('settles an admitted delivery even when its health report cannot be recorded', async () => {
+    // Failing the delivery to fix telemetry would re-deliver an occurrence the
+    // admission owner has already accepted.
+    const execute = vi.fn(async (actionId: string) => {
+      if (actionId === 'automation.event.sources.list') {
+        return {
+          kind: 'page' as const,
+          revision: '7',
+          definitions: [sourceDefinition('automation-1', 'github:repository:77')],
+          nextCursor: null,
+        };
+      }
+      if (actionId === 'automation.event.admit') {
+        return { results: [{ kind: 'admitted' as const, runId: 'run-1', checkpointSafe: true as const }] };
+      }
+      if (actionId === 'automation.event.source.status.report') {
+        throw new Error('status_unavailable');
+      }
+      throw new Error(`unexpected Action ${actionId}`);
+    });
+    const handler = createGithubWebhookActionHandlerV1();
+
+    await expect(handler(input, contextWithActions(execute))).resolves.toEqual({
+      kind: 'settled',
+      disposition: 'accepted',
+    });
+  });
+
+  it('does not settle a delivery whose invocation is cancelled while its health is being reported', async () => {
+    // The health report is the last step before `accepted`, and it deliberately
+    // swallows a failed report so telemetry never re-delivers an occurrence the
+    // admission owner already accepted. Cancellation is the one exception: an
+    // aborted invocation must not settle, so the report's error handling has to
+    // distinguish the two rather than swallowing both.
+    const controller = new AbortController();
+    const execute = vi.fn(async (actionId: string) => {
+      if (actionId === 'automation.event.sources.list') {
+        return {
+          kind: 'page' as const,
+          revision: '7',
+          definitions: [sourceDefinition('automation-1', 'github:repository:77')],
+          nextCursor: null,
+        };
+      }
+      if (actionId === 'automation.event.admit') {
+        return { results: [{ kind: 'admitted' as const, runId: 'run-1', checkpointSafe: true as const }] };
+      }
+      if (actionId === 'automation.event.source.status.report') {
+        controller.abort();
+        throw new Error('status_unavailable');
+      }
+      throw new Error(`unexpected Action ${actionId}`);
+    });
+    const handler = createGithubWebhookActionHandlerV1();
+
+    await expect(handler(input, contextWithActions(execute, controller.signal))).rejects
+      .toThrow('status_unavailable');
   });
 
   it('does not settle a delivery after invocation cancellation', async () => {
@@ -546,7 +724,7 @@ function sourceDefinition(automationId: string, sourceInstanceId: string) {
   };
 }
 
-function contextWithActions(execute: ReturnType<typeof vi.fn>) {
+function contextWithActions(execute: ReturnType<typeof vi.fn>, signal?: AbortSignal) {
   return {
     surface: 'plugin',
     caller: {
@@ -558,7 +736,7 @@ function contextWithActions(execute: ReturnType<typeof vi.fn>) {
         qualifiedId: 'happier.scm.forge.github/github-events',
       },
     },
-    signal: new AbortController().signal,
+    signal: signal ?? new AbortController().signal,
     services: {
       actions: { execute },
     },

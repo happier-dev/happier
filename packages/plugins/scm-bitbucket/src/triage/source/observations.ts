@@ -12,6 +12,7 @@ import {
   type TriageSourceScanObservationV1,
   type TriageSourceViewerFactsV1,
 } from '@happier-dev/triage-protocol/v1';
+import { normalizeScmHostingRepositoryIdentity } from '@happier-dev/plugin-sdk/scm';
 
 import type {
   BitbucketAccountRef,
@@ -19,8 +20,12 @@ import type {
   BitbucketPullRequestEntry,
   BitbucketPullRequestState,
 } from '../entries.js';
+import {
+  BITBUCKET_TRIAGE_DEPLOYMENT_BASE_URL_V1,
+} from '../identity.js';
 import type { BitbucketInvolvement } from '../pullRequests.js';
 import { toBoundedDisplayLine } from '../text.js';
+
 import { BITBUCKET_PULL_REQUEST_KIND_ID } from './descriptor.js';
 
 /**
@@ -86,20 +91,38 @@ function textFact(
 }
 
 /**
- * The viewer's own participant record, or `null`.
+ * The viewer's own review VERDICT on this pull request, or `null`.
  *
- * The record carries the viewer's identity and their approval in one object, so this match is exact
- * rather than a correlation across two lists. It is present on an authoritative read and on any
- * collection page fetched with the participants projection, and absent on an unprojected one.
- * Absent means unknown, never "no verdict": nothing here invents a decision the provider did not
- * report.
+ * This is the one owner of "did I review this?", and both the canonical `participating`
+ * involvement and the native `bitbucket/your-review` row fact are derived from it. Two readers
+ * would be two answers to one question, and the drifting one would be the one deciding which
+ * lane a row lands in.
+ *
+ * Membership of `participants` is deliberately NOT the test. Bitbucket's participant list is
+ * every account that has interacted with the pull request — Atlassian's own contract includes
+ * users who "are not explicit reviewers, but have approved" it, and the same list carries
+ * `role: PARTICIPANT`, `approved: false`, `state: null` records for people who merely commented.
+ * `CONTRACT.md` §4 maps only "reviewed, approved, or a non-zero native review vote" to
+ * `participating`, and `sources/SCM.md` §5.5 says "participants with `approved`". Reading bare
+ * presence as a review tells a reader they have already reviewed something they only commented
+ * on, and files it under work they have finished.
+ *
+ * A verdict is read from the record's own `state` first, because that is where Bitbucket puts
+ * `changes_requested` — a non-zero native vote that is emphatically not an approval, and which
+ * `approved: false` alone cannot be distinguished from silence.
+ *
+ * An ABSENT participant list means unknown, never "no verdict": a collection page fetched
+ * without the participants projection reports `review-evidence-unprojected` at the walk instead
+ * of publishing that silence here.
  */
-function readViewerParticipation(
+function readViewerReviewVerdict(
   entry: BitbucketPullRequestEntry,
   viewerAccountUuid: string,
-): BitbucketParticipantFact | null {
-  return entry.participants?.find((participant) => participant.user.uuid === viewerAccountUuid)
-    ?? null;
+): BitbucketParticipantFact['state'] {
+  const participant = entry.participants
+    ?.find((candidate) => candidate.user.uuid === viewerAccountUuid);
+  if (participant === undefined) return null;
+  return participant.state ?? (participant.approved ? 'approved' : null);
 }
 
 /**
@@ -110,14 +133,34 @@ function readViewerParticipation(
  * "approved" and "changes requested" are different answers to the only question a reviewer asks
  * about their own row.
  */
-function reviewVerdictFact(participant: BitbucketParticipantFact | null): FactDraft | null {
-  if (participant === null) return null;
-  const verdict = participant.state ?? (participant.approved ? 'approved' : null);
+function reviewVerdictFact(verdict: BitbucketParticipantFact['state']): FactDraft | null {
   if (verdict === null) return null;
   const value = verdict === 'approved' ? 'Approved' : 'Changes requested';
   const tone = verdict === 'approved' ? 'success' as const : 'warning' as const;
   return {
     fact: { id: 'bitbucket/your-review', importance: 'primary', value: { kind: 'status', value, tone } },
+    truncated: false,
+  };
+}
+
+/** The authoritative roster from `self`, or the existing deferred answer on a collection row. */
+function reviewersFact(entry: BitbucketPullRequestEntry): FactDraft {
+  if (entry.reviewers === null) {
+    return {
+      fact: { id: 'bitbucket/reviewers', importance: 'secondary', value: { kind: 'detailOnly' } },
+      truncated: false,
+    };
+  }
+  const labels = entry.reviewers
+    .map(readActorLabel)
+    .filter((label): label is string => label !== null);
+  return textFact(
+    'bitbucket/reviewers',
+    'secondary',
+    'text',
+    labels.length === 0 ? 'No reviewers' : labels.join(', '),
+  ) ?? {
+    fact: { id: 'bitbucket/reviewers', importance: 'secondary', value: { kind: 'detailOnly' } },
     truncated: false,
   };
 }
@@ -131,10 +174,8 @@ function reviewVerdictFact(participant: BitbucketParticipantFact | null): FactDr
  * this projection does not perform, so they are omitted rather than reported as `0` — the source
  * did not ask.
  *
- * `bitbucket/reviewers` is always the `detailOnly` arm. The complete reviewer set with its per
- * reviewer state is detail-surface content fetched by a live materialization; the scan projection
- * reads the reviewer and participant lists only to prove this viewer's own involvement, and never
- * to publish a roster onto a list row.
+   * `bitbucket/reviewers` is `detailOnly` when a collection row omitted it, and a bounded roster when
+   * the authoritative self read returned it. The latter is detail launch data, not a second read.
  *
  * There is deliberately no repository fact. `scopeLabel` is a required snapshot field carrying
  * exactly that string, and with five slots a fact that repeats a field already on the row spends a
@@ -145,12 +186,13 @@ function reviewVerdictFact(participant: BitbucketParticipantFact | null): FactDr
  */
 function buildRowFacts(
   entry: BitbucketPullRequestEntry,
-  participant: BitbucketParticipantFact | null,
+  verdict: BitbucketParticipantFact['state'],
 ): Readonly<{ facts: readonly TriageRowFactV1[]; truncated: boolean }> {
   const drafts: (FactDraft | null)[] = [
-    reviewVerdictFact(participant),
+    reviewVerdictFact(verdict),
     { fact: { id: 'bitbucket/number', importance: 'primary', value: { kind: 'text', value: `#${entry.entryId}` } }, truncated: false },
     textFact('bitbucket/author', 'secondary', 'actor', readActorLabel(entry.author)),
+    reviewersFact(entry),
     entry.updatedAtMs === null ? null : {
       fact: {
         id: 'bitbucket/updated',
@@ -165,10 +207,6 @@ function buildRowFacts(
         importance: 'secondary',
         value: { kind: 'status', value: 'Draft', tone: 'warning' },
       },
-      truncated: false,
-    },
-    {
-      fact: { id: 'bitbucket/reviewers', importance: 'secondary', value: { kind: 'detailOnly' } },
       truncated: false,
     },
     textFact('bitbucket/target-branch', 'supplementary', 'text', entry.destination?.branchName ?? null),
@@ -238,7 +276,7 @@ function buildViewerFacts(
   input: Readonly<{
     laneInvolvement?: BitbucketInvolvement;
     viewerAccountUuid: string;
-    participant: BitbucketParticipantFact | null;
+    verdict: BitbucketParticipantFact['state'];
   }>,
 ): TriageSourceViewerFactsV1 {
   const involvement = new Set<TriageSourceViewerFactsV1['involvement'][number]>();
@@ -247,7 +285,11 @@ function buildViewerFacts(
   if (entry.reviewers?.some((reviewer) => reviewer.uuid === input.viewerAccountUuid) === true) {
     involvement.add('reviewRequested');
   }
-  if (input.participant !== null) involvement.add('participating');
+  // Only a real verdict. See `readViewerReviewVerdict`: bare membership of Bitbucket's
+  // participant list is interaction, not review, and there is no canonical token for
+  // "commented without deciding" — so such a viewer contributes no involvement from it rather
+  // than borrowing the one that means they are done.
+  if (input.verdict !== null) involvement.add('participating');
   // `sourceAttention` is deliberately not emitted. Bitbucket publishes no attention signal beyond
   // the involvement this projection already carries, and declaring a source-owned attention level
   // from involvement alone would invent a provider fact rather than report one.
@@ -281,9 +323,10 @@ export function toBitbucketPresentObservation(
   entry: BitbucketPullRequestEntry,
   input: Readonly<{ laneInvolvement?: BitbucketInvolvement; viewerAccountUuid: string }>,
 ): Extract<TriageSourceScanObservationV1, Readonly<{ kind: 'present' }>> {
-  const participant = readViewerParticipation(entry, input.viewerAccountUuid);
-  const rowFacts = buildRowFacts(entry, participant);
+  const verdict = readViewerReviewVerdict(entry, input.viewerAccountUuid);
+  const rowFacts = buildRowFacts(entry, verdict);
   const title = projectLine(entry.title, MAX_TRIAGE_TEXT_UTF8_BYTES_V1);
+  const summary = projectLine(entry.summary, MAX_TRIAGE_TEXT_UTF8_BYTES_V1);
   const scopeLabel = projectLine(readScopeLabelSource(entry), MAX_TRIAGE_TEXT_UTF8_BYTES_V1);
   const nativeLabel = projectLine(entry.state.nativeLabel, MAX_TRIAGE_TEXT_UTF8_BYTES_V1);
   const nativeRevision = projectLine(
@@ -295,11 +338,13 @@ export function toBitbucketPresentObservation(
   const projectionTruncated = entry.projectionTruncated
     || rowFacts.truncated
     || (title?.truncated ?? false)
+    || (summary?.truncated ?? false)
     || (scopeLabel?.truncated ?? false);
 
   const snapshot: TriageSourceEntrySnapshotV1 = {
     v: 1,
     title: title?.value ?? `Pull request #${entry.entryId}`,
+    ...(summary === null ? {} : { summary: summary.value }),
     // The repository UUID is the last resort and is always a valid single line, so a required
     // field is never published blank.
     scopeLabel: scopeLabel?.value ?? entry.repository.uuid,
@@ -312,12 +357,26 @@ export function toBitbucketPresentObservation(
     ...(projectionTruncated ? { projectionTruncated: true as const } : {}),
   };
 
+  const repository = entry.repository.repositoryKey === null
+    ? null
+    // The forge repository, in the vocabulary a project's resolved
+    // `ScmHostingProviderRef` already uses, so launch placement joins the two by
+    // equality and nothing parses a git remote. A row whose `full_name` never
+    // resolved a two-segment key proves no repository and resolves to no
+    // checkout rather than to every checkout on Bitbucket Cloud.
+    : normalizeScmHostingRepositoryIdentity({
+      kind: 'bitbucket',
+      deployment: BITBUCKET_TRIAGE_DEPLOYMENT_BASE_URL_V1,
+      repository: entry.repository.repositoryKey,
+    });
+
   return {
     kind: 'present',
     localRef: buildBitbucketLocalRef(entry),
     locator: buildLocator(entry),
+    ...(repository === null ? {} : { repository }),
     snapshot,
-    viewer: buildViewerFacts(entry, { ...input, participant }),
+    viewer: buildViewerFacts(entry, { ...input, verdict }),
     ...(entry.updatedAtMs === null ? {} : { sourceUpdatedAtMs: entry.updatedAtMs }),
     ...(nativeRevision === null || nativeRevision.truncated
       ? {}

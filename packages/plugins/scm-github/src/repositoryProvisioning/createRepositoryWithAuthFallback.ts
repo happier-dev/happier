@@ -6,7 +6,6 @@ import type {
   HostingProviderRepositoryGetInput as ScmHostingProviderRepositoryGetInput,
 } from '@happier-dev/plugin-sdk/scm/hosting';
 import type {
-  ScmOperationErrorCode,
   ScmHostingRepositoryAuthSummary,
   ScmHostingRepositorySummary,
   ScmRepositoryCloneTarget,
@@ -14,7 +13,6 @@ import type {
 } from '@happier-dev/plugin-sdk/scm';
 import type {
   ScmHostingProviderRef } from '@happier-dev/plugin-sdk/scm/hosting';
-import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/scm';
 
 import { githubHostingProviderAdapter } from '../adapter.js';
 import { parseScmRemoteUrl } from '../remoteUrl.js';
@@ -24,10 +22,6 @@ import {
   createGithubRepositoryUnsupportedError,
   isGithubRepositoryAuthRequiredError,
 } from './githubRepositoryErrors.js';
-import {
-  createGithubRepositoryCliAdapter,
-  type GithubRepositoryCliAdapter,
-} from './githubRepositoryCliAdapter.js';
 import {
   isGithubDotComRepositoryProvider,
 } from './githubRepositoryApiBase.js';
@@ -47,40 +41,8 @@ export type GithubRepositoryProvisioningAdapter = typeof githubHostingProviderAd
   getRepository(input: ScmHostingProviderRepositoryGetInput): Promise<ScmHostingRepositorySummary | null>;
 }>;
 
-type GithubRepositoryOperationName =
-  | 'describePublishTargets'
-  | 'describeCloneTargets'
-  | 'createRepository'
-  | 'getRepository';
-
 function shouldTryRest(provider: ScmHostingProviderRef): boolean {
   return isGithubDotComRepositoryProvider(provider);
-}
-
-function readErrorCode(error: unknown): ScmOperationErrorCode | null {
-  if (!error || typeof error !== 'object') return null;
-  const code = (error as { errorCode?: unknown }).errorCode;
-  return typeof code === 'string' && Object.values(SCM_OPERATION_ERROR_CODES).includes(code as ScmOperationErrorCode)
-    ? code as ScmOperationErrorCode
-    : null;
-}
-
-function hasRecoverableHttpStatus(message: string): boolean {
-  const match = /\bstatus\s+(\d{3})\b/i.exec(message);
-  if (!match) return false;
-  const status = Number(match[1]);
-  return status === 408 || status === 429 || status >= 500;
-}
-
-function isRecoverableGithubRepositoryRestFailure(error: unknown): boolean {
-  if (isGithubRepositoryAuthRequiredError(error)) return true;
-  if (error instanceof TypeError) return true;
-  if (!error || typeof error !== 'object') return false;
-  const code = readErrorCode(error);
-  if (code !== SCM_OPERATION_ERROR_CODES.COMMAND_FAILED) return false;
-  const message = error instanceof Error ? error.message : '';
-  return hasRecoverableHttpStatus(message)
-    || /\b(fetch failed|network|econnreset|etimedout|socket hang up)\b/i.test(message);
 }
 
 function createNoAuthTargetDiscoveryResult(): ScmHostingProviderRepositoryDescribePublishTargetsResult {
@@ -204,126 +166,71 @@ function describeRepositoryCloneTargets(input: Readonly<{
   };
 }
 
-async function runWithAuthChain<TResult>(
-  input: Readonly<{
-    provider: ScmHostingProviderRef;
-    operationName: GithubRepositoryOperationName;
-    runRest: () => Promise<TResult>;
-    runCli: () => Promise<TResult>;
-    noAuthFallback?: () => TResult;
-  }>,
-): Promise<TResult> {
-  if (!shouldTryRest(input.provider)) {
-    try {
-      return await input.runCli();
-    } catch (error) {
-      if (input.noAuthFallback && isGithubRepositoryAuthRequiredError(error)) {
-        return input.noAuthFallback();
-      }
-      throw error;
-    }
-  }
-
-  try {
-    return await input.runRest();
-  } catch (error) {
-    if (!isRecoverableGithubRepositoryRestFailure(error)) throw error;
-  }
-
-  try {
-    return await input.runCli();
-  } catch (error) {
-    if (input.noAuthFallback && isGithubRepositoryAuthRequiredError(error)) {
-      return input.noAuthFallback();
-    }
-    throw error;
-  }
+/**
+ * The bound GitHub Connected Account is the sole authenticated authority for
+ * repository reads and mutations. A host with no qualified Connected Account
+ * path — every non-`github.com` host, including GitHub Enterprise — is refused
+ * typed rather than executed with whatever credentials happen to be present on
+ * the machine.
+ */
+function requireBoundAccountHost(provider: ScmHostingProviderRef): void {
+  if (shouldTryRest(provider)) return;
+  throw createGithubRepositoryAuthRequiredError(
+    'GitHub repository operations require a bound github.com Connected Account; '
+    + 'this host has no qualified GitHub Connected Account.',
+  );
 }
 
 export function createGithubRepositoryProvisioningAdapter(params?: Readonly<{
   restAdapter?: Partial<GithubRepositoryRestAdapter>;
-  cliAdapter?: Partial<GithubRepositoryCliAdapter>;
 }>): GithubRepositoryProvisioningAdapter {
   const restAdapter = params?.restAdapter ?? createGithubRepositoryRestAdapter();
-  const cliAdapter = params?.cliAdapter ?? createGithubRepositoryCliAdapter();
 
   return Object.freeze({
     ...githubHostingProviderAdapter,
-    describePublishTargets(input: ScmHostingProviderRepositoryDescribePublishTargetsInput) {
-      return runWithAuthChain({
-        provider: input.provider,
-        operationName: 'describePublishTargets',
-        runRest: () => restAdapter.describePublishTargets
-          ? restAdapter.describePublishTargets(input)
-          : Promise.reject(createGithubRepositoryAuthRequiredError()),
-        runCli: () => cliAdapter.describePublishTargets
-          ? cliAdapter.describePublishTargets(input)
-          : Promise.reject(createGithubRepositoryAuthRequiredError()),
-        noAuthFallback: createNoAuthTargetDiscoveryResult,
-      });
+    async describePublishTargets(input: ScmHostingProviderRepositoryDescribePublishTargetsInput) {
+      if (!shouldTryRest(input.provider) || !restAdapter.describePublishTargets) {
+        return createNoAuthTargetDiscoveryResult();
+      }
+      try {
+        return await restAdapter.describePublishTargets(input);
+      } catch (error) {
+        if (isGithubRepositoryAuthRequiredError(error)) {
+          return createNoAuthTargetDiscoveryResult();
+        }
+        throw error;
+      }
     },
-    describeCloneTargets(input: ScmHostingProviderRepositoryDescribeCloneTargetsInput) {
+    async describeCloneTargets(input: ScmHostingProviderRepositoryDescribeCloneTargetsInput) {
+      requireBoundAccountHost(input.provider);
       const repositorySelector = parseNameWithOwner(input.repository.nameWithOwner);
       if (!repositorySelector) {
         throw createGithubRepositoryUnsupportedError('GitHub repository clone requires a valid owner/name selector');
       }
-
-      const getRepositoryInput = {
-        provider: input.provider,
-        owner: repositorySelector.owner,
-        repositoryName: repositorySelector.repositoryName,
-        ...(input.runtimeServices ? { runtimeServices: input.runtimeServices } : {}),
-      };
-      return runWithAuthChain({
-        provider: input.provider,
-        operationName: 'describeCloneTargets',
-        runRest: async () => {
-          const repository = restAdapter.getRepository
-            ? await restAdapter.getRepository(getRepositoryInput)
-            : null;
-          if (!repository) throw createGithubRepositoryNotFoundError();
-          return describeRepositoryCloneTargets({
+      const repository = restAdapter.getRepository
+        ? await restAdapter.getRepository({
             provider: input.provider,
-            repository,
-            auth: { state: 'authenticated', profileKind: 'connected_account' },
-          });
-        },
-        runCli: async () => {
-          const repository = cliAdapter.getRepository
-            ? await cliAdapter.getRepository(getRepositoryInput)
-            : null;
-          if (!repository) throw createGithubRepositoryNotFoundError();
-          return describeRepositoryCloneTargets({
-            provider: input.provider,
-            repository,
-            auth: { state: 'authenticated', profileKind: 'provider_cli' },
-          });
-        },
+            owner: repositorySelector.owner,
+            repositoryName: repositorySelector.repositoryName,
+            ...(input.runtimeServices ? { runtimeServices: input.runtimeServices } : {}),
+          })
+        : null;
+      if (!repository) throw createGithubRepositoryNotFoundError();
+      return describeRepositoryCloneTargets({
+        provider: input.provider,
+        repository,
+        auth: { state: 'authenticated', profileKind: 'connected_account' },
       });
     },
-    createRepository(input: ScmHostingProviderRepositoryCreateInput) {
-      return runWithAuthChain({
-        provider: input.provider,
-        operationName: 'createRepository',
-        runRest: () => restAdapter.createRepository
-          ? restAdapter.createRepository(input)
-          : Promise.reject(createGithubRepositoryAuthRequiredError()),
-        runCli: () => cliAdapter.createRepository
-          ? cliAdapter.createRepository(input)
-          : Promise.reject(createGithubRepositoryAuthRequiredError()),
-      });
+    async createRepository(input: ScmHostingProviderRepositoryCreateInput) {
+      requireBoundAccountHost(input.provider);
+      if (!restAdapter.createRepository) throw createGithubRepositoryAuthRequiredError();
+      return await restAdapter.createRepository(input);
     },
-    getRepository(input: ScmHostingProviderRepositoryGetInput) {
-      return runWithAuthChain({
-        provider: input.provider,
-        operationName: 'getRepository',
-        runRest: () => restAdapter.getRepository
-          ? restAdapter.getRepository(input)
-          : Promise.reject(createGithubRepositoryAuthRequiredError()),
-        runCli: () => cliAdapter.getRepository
-          ? cliAdapter.getRepository(input)
-          : Promise.reject(createGithubRepositoryAuthRequiredError()),
-      });
+    async getRepository(input: ScmHostingProviderRepositoryGetInput) {
+      requireBoundAccountHost(input.provider);
+      if (!restAdapter.getRepository) throw createGithubRepositoryAuthRequiredError();
+      return await restAdapter.getRepository(input);
     },
   });
 }

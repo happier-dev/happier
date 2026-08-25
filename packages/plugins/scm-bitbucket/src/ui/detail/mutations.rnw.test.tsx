@@ -1,10 +1,12 @@
 // @vitest-environment jsdom
+import * as React from 'react';
 import { act } from 'react';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
 import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import { createTriageSourceV1Fixture } from '@happier-dev/triage-protocol/testing/v1';
+import { TriagePostMutationCompletionProvider } from '@happier-dev/triage-sources/ui';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { BITBUCKET_PLUGIN_ID } from '../../bitbucketContracts.js';
@@ -34,6 +36,7 @@ const recorded: { action: unknown; input: unknown }[] = [];
 const mounted: PluginUiTestkit[] = [];
 
 let nextResult: JsonValue = { kind: 'unavailable', failure: { class: 'transient', code: 'unset' } };
+let completedMutations = 0;
 
 /**
  * What a specific read answers, when a case needs one.
@@ -79,7 +82,13 @@ async function mountDetail(
         viewId: 'bitbucket-triage-detail',
         generation: 'bitbucket-detail-mount',
       },
-      surface: renderSurface,
+      surface: (context) => (
+        <TriagePostMutationCompletionProvider
+          onComplete={async () => { completedMutations += 1; }}
+        >
+          {renderSurface(context)}
+        </TriagePostMutationCompletionProvider>
+      ),
       surfaceContext: createSurfaceContextFixture(),
       adapter: createPluginUiRnwSemanticSurfaceAdapter(),
       launchInput,
@@ -99,6 +108,7 @@ async function mountDetail(
 afterEach(async () => {
   recorded.splice(0);
   readResults = {};
+  completedMutations = 0;
   for (const fixture of mounted.splice(0)) await fixture.dispose();
 });
 
@@ -111,6 +121,15 @@ function recordedWrites(): { action: unknown; input: unknown }[] {
 }
 
 describe('the mounted Bitbucket Cloud pull-request writes', () => {
+  it('hands an applied write to the target-owned re-observation seam', async () => {
+    nextResult = { kind: 'applied', observation: FIXTURE.getResult as unknown as JsonValue } as JsonValue;
+    const detail = await mountDetail();
+
+    await detail.press(await detail.getByRole('button', { name: 'Decline' }));
+
+    expect(completedMutations).toBe(1);
+  });
+
   it('offers Decline and sends the exact entry it is mounted on', async () => {
     nextResult = { kind: 'applied', observation: FIXTURE.getResult as unknown as JsonValue } as JsonValue;
     const detail = await mountDetail();
@@ -118,7 +137,7 @@ describe('the mounted Bitbucket Cloud pull-request writes', () => {
     const decline = await detail.getByRole('button', { name: 'Decline' });
     await detail.press(decline);
 
-    expect(recorded).toEqual([{
+    expect(recordedWrites()).toEqual([{
       action: {
         pluginId: BITBUCKET_PLUGIN_ID,
         localId: BITBUCKET_TRIAGE_MUTATION_ACTION_IDS.decline,
@@ -155,7 +174,7 @@ describe('the mounted Bitbucket Cloud pull-request writes', () => {
     });
     await detail.press(await detail.getByRole('button', { name: 'Merge' }));
 
-    expect(recorded).toEqual([{
+    expect(recordedWrites()).toEqual([{
       action: {
         pluginId: BITBUCKET_PLUGIN_ID,
         localId: BITBUCKET_TRIAGE_MUTATION_ACTION_IDS.merge,
@@ -175,6 +194,52 @@ describe('the mounted Bitbucket Cloud pull-request writes', () => {
     }]);
   });
 
+  it('pins merge to the provider-fresh head shown in Overview, not the launch-time revision', async () => {
+    if (FIXTURE.getResult.kind !== 'present') throw new Error('fixture must be present');
+    const displayedHead = 'provider-fresh-head';
+    readResults = {
+      [BITBUCKET_TRIAGE_DETAIL_ACTION_IDS.readOverview]: {
+        kind: 'overview',
+        observedAtMs: 1_780_000_000_000,
+        observation: { ...FIXTURE.getResult, nativeRevision: displayedHead },
+      } as unknown as JsonValue,
+    };
+    nextResult = {
+      kind: 'applied',
+      observation: { ...FIXTURE.getResult, nativeRevision: displayedHead },
+    } as unknown as JsonValue;
+    const detail = await mountDetail();
+
+    await detail.press(await detail.getByRole('radio', { name: 'Squash' }));
+    await detail.press(await detail.getByRole('button', { name: 'Merge' }));
+
+    expect(recordedWrites()).toHaveLength(1);
+    expect(recordedWrites()[0]?.input).toMatchObject({ observedHeadCommit: displayedHead });
+    expect(recordedWrites()[0]?.input).not.toMatchObject({
+      observedHeadCommit: FIXTURE.detailInput.observation.nativeRevision,
+    });
+  });
+
+  it('refuses merge when the refreshed Overview cannot prove the head it shows', async () => {
+    if (FIXTURE.getResult.kind !== 'present') throw new Error('fixture must be present');
+    const { nativeRevision: _omitted, ...freshWithoutHead } = FIXTURE.getResult;
+    readResults = {
+      [BITBUCKET_TRIAGE_DETAIL_ACTION_IDS.readOverview]: {
+        kind: 'overview',
+        observedAtMs: 1_780_000_000_000,
+        observation: freshWithoutHead,
+      } as unknown as JsonValue,
+    };
+    const detail = await mountDetail();
+
+    await detail.press(await detail.getByRole('radio', { name: 'Squash' }));
+
+    await expect(detail.getByRole('button', { name: 'Merge' })).resolves.toMatchObject({
+      state: { disabled: true },
+    });
+    expect(recordedWrites()).toEqual([]);
+  });
+
   it('does not delete the source branch unless the reader asked for it', async () => {
     // The sibling test above presses the switch and asserts `true`, which a
     // hard-coded `closeSourceBranch: true` would satisfy just as well. This is
@@ -191,8 +256,9 @@ describe('the mounted Bitbucket Cloud pull-request writes', () => {
     })).resolves.toMatchObject({ state: { checked: false } });
     await detail.press(await detail.getByRole('button', { name: 'Merge' }));
 
-    expect(recorded).toHaveLength(1);
-    expect(recorded[0]?.input).toMatchObject({ closeSourceBranch: false, mergeStrategy: 'squash' });
+    const writes = recordedWrites();
+    expect(writes).toHaveLength(1);
+    expect(writes[0]?.input).toMatchObject({ closeSourceBranch: false, mergeStrategy: 'squash' });
   });
 
   it('says a refusal wrote nothing rather than returning to rest', async () => {
@@ -250,6 +316,14 @@ describe('the mounted Bitbucket Cloud pull-request writes', () => {
     [
       { kind: 'unavailable', failure: { class: 'transient', code: 'bitbucket-unreachable' } },
       'Bitbucket could not complete this write.',
+    ],
+    [
+      { kind: 'unchanged', observation: FIXTURE.getResult },
+      'Bitbucket did not apply this write.',
+    ],
+    [
+      { kind: 'uncertain', observation: FIXTURE.getResult },
+      'Bitbucket may have applied this write. Reload the pull request before trying again.',
     ],
     [{ kind: 'something-this-build-does-not-know' }, 'This build could not read what Bitbucket answered.'],
   ])('reports settled write %# in its own words', async (result, sentence) => {

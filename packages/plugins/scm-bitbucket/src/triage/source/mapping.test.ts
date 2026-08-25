@@ -24,6 +24,10 @@ const WORKSPACE_UUID = '{4b2f0e6c-8a71-4f2e-9d51-6c3b70a19d44}';
 const AUTHOR_UUID = '{9f1c2a44-5d0e-4c8b-8b0a-1d7e6f3a2c19}';
 const MAINTAINER_UUID = '{7c8d9e0f-1a2b-4c3d-8e4f-5a6b7c8d9e0f}';
 const OTHER_VIEWER_UUID = '{00000000-0000-4000-8000-00000000beef}';
+/** The fixture participant who commented and rendered no verdict: `approved:false`, `state:null`. */
+const COMMENTER_UUID = '{0a1b2c3d-4e5f-4061-8273-8495a6b7c8d9}';
+/** The fixture reviewer whose native vote is `changes_requested` — a verdict, and not an approval. */
+const CHANGES_REQUESTED_REVIEWER_UUID = '{5e6f7a8b-9c0d-4e1f-8a2b-3c4d5e6f7a8b}';
 
 function decodeFixtureRow(raw: unknown) {
   const decoded = decodeBitbucketPullRequestRow(raw);
@@ -123,16 +127,17 @@ describe('Bitbucket present-observation projection', () => {
     const priorityOrder = [
       'bitbucket/number',
       'bitbucket/author',
-      'bitbucket/updated',
       'bitbucket/reviewers',
+      'bitbucket/updated',
       'bitbucket/target-branch',
       'bitbucket/comments',
       'bitbucket/tasks',
     ];
     expect(parsed.kind === 'present' && parsed.snapshot.facts.map((fact) => fact.id))
       .toEqual(priorityOrder.slice(0, MAX_TRIAGE_ROW_FACTS_V1));
-    // The pull-request body is detail-surface content and never rides a list result.
-    expect(parsed.kind === 'present' && parsed.snapshot).not.toHaveProperty('summary');
+    expect(parsed.kind === 'present' && parsed.snapshot.summary).toBe(
+      'The poller outlived its own invocation. Bind it to the supplied signal.',
+    );
     // Facts the bound dropped are reported as truncation, not silently lost.
     expect(parsed.kind === 'present' && parsed.snapshot.projectionTruncated).toBe(true);
   });
@@ -150,7 +155,7 @@ describe('Bitbucket present-observation projection', () => {
       .toEqual({ kind: 'detailOnly' });
   });
 
-  it('projects provider prose as one bounded display line and never as a body excerpt', () => {
+  it('projects launch prose as bounded display lines instead of dropping the description', () => {
     // A real Bitbucket title can carry newlines and tabs, and a description is a whole markdown
     // document. Both are rejected by the published single-line string, so the source normalizes
     // before it projects rather than emitting a result the target parses and throws away whole.
@@ -168,8 +173,8 @@ describe('Bitbucket present-observation projection', () => {
     expect(new TextEncoder().encode(parsed.snapshot.title).byteLength)
       .toBeLessThanOrEqual(MAX_TRIAGE_TEXT_UTF8_BYTES_V1);
     expect(parsed.snapshot.projectionTruncated).toBe(true);
-    // The description is the detail surface's to fetch live; it is not a row subtitle.
-    expect(parsed.snapshot).not.toHaveProperty('summary');
+    expect(parsed.snapshot.summary).toBe('Line one. Line two of the description body.');
+    expect(/[ -]/u.test(parsed.snapshot.summary ?? '')).toBe(false);
     expect(parsed.snapshot.facts.length).toBeLessThanOrEqual(MAX_TRIAGE_ROW_FACTS_V1);
   });
 
@@ -204,6 +209,43 @@ describe('Bitbucket present-observation projection', () => {
     });
     expect(uninvolved.snapshot.facts.some((fact) => fact.id === 'bitbucket/your-review'))
       .toBe(false);
+  });
+
+  it('does not read a verdictless participant as having reviewed', () => {
+    // Bitbucket's `participants` is every account that has interacted with the pull request, and
+    // Atlassian's own contract says so: the fixture's third participant is `role: PARTICIPANT`,
+    // `approved: false`, `state: null` — somebody who commented and rendered no verdict.
+    // `CONTRACT.md` §4 maps only "reviewed, approved, or a non-zero native review vote" to
+    // `participating`, and `sources/SCM.md` §5.5 says "participants with `approved`". Presence in
+    // the array is neither. Publishing it as `participating` tells a reader they already reviewed
+    // a pull request they only commented on, and puts it in their reviewed lane.
+    const commenter = toBitbucketPresentObservation(decodeFixtureRow(pullRequestSelf), {
+      viewerAccountUuid: COMMENTER_UUID,
+    });
+    expect(commenter.viewer.involvement).toEqual([]);
+    expect(commenter.snapshot.facts.some((fact) => fact.id === 'bitbucket/your-review')).toBe(false);
+
+    // The other half of the same rule: a non-zero native vote IS a verdict, so `changes_requested`
+    // still yields `participating` and keeps the provider's own word beside it. Without this the
+    // fix could be "drop `participating` whenever `approved` is false", which is a different bug.
+    const dissenting = toBitbucketPresentObservation(decodeFixtureRow(pullRequestSelf), {
+      viewerAccountUuid: CHANGES_REQUESTED_REVIEWER_UUID,
+    });
+    expect([...dissenting.viewer.involvement].sort()).toEqual(['participating', 'reviewRequested']);
+    expect(dissenting.snapshot.facts.find((fact) => fact.id === 'bitbucket/your-review')?.value)
+      .toEqual({ kind: 'status', value: 'Changes requested', tone: 'warning' });
+  });
+
+  it('carries the bounded description and authoritative reviewer roster into detail launch', () => {
+    const observation = toBitbucketPresentObservation(decodeFixtureRow(pullRequestSelf), {
+      viewerAccountUuid: MAINTAINER_UUID,
+    });
+
+    expect(observation.snapshot.summary).toBe(
+      'The poller outlived its own invocation. Bind it to the supplied signal.',
+    );
+    expect(observation.snapshot.facts.find((fact) => fact.id === 'bitbucket/reviewers')?.value)
+      .toEqual({ kind: 'text', value: 'Example Maintainer, Example Reviewer' });
   });
 
   it('keeps a declined pull request present and closed with the provider word', () => {

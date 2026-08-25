@@ -117,6 +117,7 @@ export function buildGitlabEntryIdentity(input: GitlabIdentityInput): GitlabIden
     },
     locator: {
       forgeHostId: input.origin.forgeHostId,
+      deploymentBaseUrl: input.origin.normalized,
       repositoryKey,
       displayPath: `${repositoryKey}${KIND_REFERENCE_SEPARATOR[input.kindId]}${entryId}`,
       // The routing token is the repository key, verbatim. There is no envelope,

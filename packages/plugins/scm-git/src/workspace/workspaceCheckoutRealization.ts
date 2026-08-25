@@ -5,12 +5,15 @@ export type ScmWorkspaceIntegrationWorkspaceCheckoutRealizationRequest = Readonl
   sourcePath: string;
   displayName: string;
   baseRef: string | null;
+  branchMode: 'new' | 'existing';
   targetPath: string | null;
 }>;
 
 export type ScmWorkspaceIntegrationWorkspaceCheckoutRealizationResult = Readonly<{
   kind: ScmWorkspaceIntegrationWorkspaceCheckoutKind;
   targetPath: string;
+  branchName: string;
+  created: boolean;
 }>;
 
 export function resolveScmWorkspaceIntegrationWorkspaceCheckoutRealizationKind(
@@ -37,6 +40,12 @@ export function resolveScmWorkspaceIntegrationWorkspaceCheckoutRealizationBaseRe
   return input.baseRef;
 }
 
+export function resolveScmWorkspaceIntegrationWorkspaceCheckoutRealizationBranchMode(
+  input: ScmWorkspaceIntegrationWorkspaceCheckoutRealizationRequest,
+): 'new' | 'existing' {
+  return input.branchMode;
+}
+
 export function resolveScmWorkspaceIntegrationWorkspaceCheckoutRealizationTargetPath(
   input: ScmWorkspaceIntegrationWorkspaceCheckoutRealizationRequest,
 ): string | null {
@@ -49,5 +58,7 @@ export function createScmWorkspaceIntegrationWorkspaceCheckoutRealizationResult(
   return {
     kind: input.kind,
     targetPath: input.targetPath,
+    branchName: input.branchName,
+    created: input.created,
   };
 }

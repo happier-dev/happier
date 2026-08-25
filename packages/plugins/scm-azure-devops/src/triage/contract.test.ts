@@ -50,6 +50,7 @@ function entry(overrides: Partial<AzurePullRequestEntry> = {}): AzurePullRequest
     entryId: '17',
     locator: {
       forgeHostId: base.forgeHostId,
+      deploymentBaseUrl: base.baseUrl,
       repositoryKey: 'acme/Payments/checkout',
       organizationOrCollection: 'acme',
       projectId: '5feb1c2d-3e4f-4a5b-8c9d-0e1f2a3b4c5d',
@@ -296,7 +297,7 @@ describe('Azure DevOps present-observation projection', () => {
       entry: entry({
         title: 'Fix the parser\r\n\tand the printer',
         headCommitId: 'b3f1c0a9d2e4',
-        facts: [{ kind: 'label', value: 'needs rebase' }],
+        facts: [{ kind: 'label', value: 'needs\0rebase' }],
       }),
       involvement: ['author'],
     });

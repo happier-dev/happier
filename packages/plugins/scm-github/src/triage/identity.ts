@@ -44,6 +44,15 @@ export function buildGithubCollisionScope(repositoryId: unknown): string | null 
   return utf8ByteLength(scope) <= MAX_TRIAGE_COLLISION_SCOPE_UTF8_BYTES_V1 ? scope : null;
 }
 
+/** Reads the immutable repository id from this source's own collision scope. */
+export function readGithubRepositoryIdFromCollisionScope(value: unknown): string | null {
+  if (typeof value !== 'string' || !value.startsWith(GITHUB_COLLISION_SCOPE_PREFIX)) return null;
+  const repositoryId = readPositiveDecimal(value.slice(GITHUB_COLLISION_SCOPE_PREFIX.length));
+  return repositoryId !== null && buildGithubCollisionScope(repositoryId) === value
+    ? repositoryId
+    : null;
+}
+
 /**
  * Builds one entry ref, or `null` when the raw entity cannot prove its identity. A row
  * without a usable repository id or item number is skipped and counted as an omission;

@@ -22,6 +22,7 @@ import {
   decodeGithubPullRequestBody,
   decodeGithubSearchItem,
   projectGithubEntry,
+  readGithubRepositoryRouteFromApiUrl,
 } from './entry.js';
 import { buildGithubRowFacts, formatGithubLabelSummary } from './facts.js';
 import { toTriageSnapshot } from './protocol.js';
@@ -34,6 +35,23 @@ function requireProjection(value: ReturnType<typeof projectGithubEntry>) {
 }
 
 describe('GitHub triage entry mapping', () => {
+  it('accepts repository_url only from the fixed GitHub API origin without query or fragment', () => {
+    expect(readGithubRepositoryRouteFromApiUrl(
+      'https://api.github.com/repos/octo-org/example-app',
+    )).toEqual({ owner: 'octo-org', name: 'example-app' });
+
+    for (const unsafe of [
+      'https://evil.example/repos/octo-org/example-app',
+      'http://api.github.com/repos/octo-org/example-app',
+      'https://api.github.com:444/repos/octo-org/example-app',
+      'https://api.github.com/repos/octo-org/example-app?redirect=evil',
+      'https://api.github.com/repos/octo-org/example-app#fragment',
+      'https://user@api.github.com/repos/octo-org/example-app',
+    ]) {
+      expect(readGithubRepositoryRouteFromApiUrl(unsafe), unsafe).toBeNull();
+    }
+  });
+
   it('keys a pull request on the repository id and the number, never on the item id', () => {
     const view = decodeGithubSearchItem(GITHUB_SEARCH_PULL_REQUEST_ITEM);
     expect(view).not.toBeNull();

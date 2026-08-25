@@ -31,11 +31,11 @@ import {
 const BOUNDS = GITHUB_DETAIL_BOUNDS_V1;
 
 /**
- * The canonical ceiling every contributed Action input and result crosses,
- * owned by `packages/protocol/src/runtime/agentSessionLimitsV1.ts`
- * (`p0MeasuredCandidates.jsonValueMaxJsonBytes`). Referenced by value for the
- * same reason `triage-protocol` does: `@happier-dev/protocol` is outside this
- * package's dependency surface.
+ * A local serialized-size regression budget for projected GitHub detail values.
+ * It is not a Protocol Action-admission boundary: `AgentRuntimeJsonValueV1Schema`
+ * establishes strict JSON safety without an aggregate byte cap. A future
+ * transport or persistence ceiling must be owned and tested at that named
+ * boundary.
  */
 const ACTION_JSON_BYTE_GATE = 1_024 * 1_024;
 

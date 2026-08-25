@@ -6,6 +6,7 @@ import type { HttpService } from '@happier-dev/plugin-sdk/http';
 import pageOne from './fixtures/pullRequestsPageOne.json' with { type: 'json' };
 import pageTwo from './fixtures/pullRequestsPageTwo.json' with { type: 'json' };
 import pullRequestSelf from './fixtures/pullRequestSelf.json' with { type: 'json' };
+import repositoriesPage from './fixtures/workspaceRepositoriesPage.json' with { type: 'json' };
 import workspacesPage from './fixtures/userWorkspacesPage.json' with { type: 'json' };
 import errorNotFound from './fixtures/errorNotFound.json' with { type: 'json' };
 import {
@@ -14,7 +15,10 @@ import {
 } from './apiClient.js';
 import { createAuthorizedBitbucketClient } from './source/authorization.js';
 import { resolveBitbucketPageGeometry } from './pagination.js';
-import { createBitbucketRepositoryEnumerator } from './repositoryFrontier.js';
+import {
+  BITBUCKET_REPOSITORY_REQUESTS_PER_SCAN_PAGE,
+  createBitbucketRepositoryEnumerator,
+} from './repositoryFrontier.js';
 import {
   buildBitbucketAuthoredLaneUrl,
   buildBitbucketPullRequestUrl,
@@ -22,6 +26,7 @@ import {
   buildBitbucketUserWorkspacesUrl,
   buildBitbucketWorkspaceRepositoriesUrl,
   getBitbucketPullRequest,
+  listBitbucketWorkspaceRepositories,
   listBitbucketWorkspaces,
   readBitbucketLaneAvailability,
   scanBitbucketPullRequests,
@@ -52,7 +57,10 @@ function isRepositoryListingUrl(url: string): boolean {
   return url.includes('/2.0/repositories/') && !url.includes('/pullrequests');
 }
 
-function createHttpStub(replies: readonly Reply[]): {
+function createHttpStub(
+  replies: readonly Reply[],
+  repositoryListingReply: Reply = EMPTY_REPOSITORY_LISTING,
+): {
   http: HttpService;
   requests: RecordedRequest[];
 } {
@@ -64,7 +72,7 @@ function createHttpStub(replies: readonly Reply[]): {
       // The repository enumeration runs for real in these cases; only the lane pages are queued,
       // so the listing is answered out of band rather than consuming a queued reply.
       const reply = isRepositoryListingUrl(input.url)
-        ? EMPTY_REPOSITORY_LISTING
+        ? repositoryListingReply
         : replies[index++] ?? { status: 500 };
       return {
         status: reply.status ?? 200,
@@ -80,8 +88,14 @@ function createHttpStub(replies: readonly Reply[]): {
   return { http, requests };
 }
 
-function createClient(replies: readonly Reply[], overrides?: Readonly<{ nowMs?: number }>) {
-  const { http, requests } = createHttpStub(replies);
+function createClient(replies: readonly Reply[], overrides?: Readonly<{
+  nowMs?: number;
+  repositoryListingReply?: Reply;
+}>) {
+  const { http, requests } = createHttpStub(
+    replies,
+    overrides?.repositoryListingReply ?? EMPTY_REPOSITORY_LISTING,
+  );
   const authorize = vi.fn(async () => AUTHORIZATION);
   const client = createBitbucketTriageApiClient({
     http,
@@ -446,8 +460,8 @@ describe('Bitbucket bounded pull-request scan', () => {
 
     expect(outcome.ok).toBe(true);
     if (!outcome.ok) return;
-    // The repository is entered only after the workspace-wide lane ends, and it stays in the
-    // frontier by stable uuid so a later page finds its successor in provider list order.
+    // The repository is entered on the review plane's own turn, and it stays in the frontier by
+    // stable uuid so a later page finds its successor in provider list order.
     expect(outcome.frontier.currentRepository)
       .toEqual({ repositoryUuid: REPOSITORY_UUID, lane: { nextUrl: null, ended: true } });
     expect(requests.filter((url) => url.includes('values.participants'))).toHaveLength(1);
@@ -508,6 +522,188 @@ describe('Bitbucket bounded pull-request scan', () => {
     destination: { repository: { uuid: REPOSITORY_UUID, full_name: 'example-workspace/repo' } },
     reviewers: [],
     ...(participants === undefined ? {} : { participants }),
+  });
+
+  /**
+   * A walk over a workspace whose repository listing names `repositoryCount` repositories, against
+   * an authored lane that answers `authoredPages` full pages and then keeps naming a `next`.
+   *
+   * Everything below the HTTP boundary runs for real, including the enumeration, the rotation and
+   * the budget accounting: only the provider answers are supplied.
+   */
+  function createWorkspaceStub(input: Readonly<{
+    repositoryCount: number;
+    authoredRows: number;
+    reviewRows?: readonly unknown[];
+  }>) {
+    const repositories = Array.from({ length: input.repositoryCount }, (_unused, index) => ({
+      type: 'repository',
+      uuid: `{1a2b3c4d-5e6f-4071-8293-a4b5c6d7e8${String(index).padStart(2, '0')}}`,
+      name: `repo-${index}`,
+      full_name: `example-workspace/repo-${index}`,
+    }));
+    const authoredRow = (index: number) => ({
+      id: 1_000 + index,
+      title: `Authored ${index}`,
+      state: 'OPEN',
+      destination: { repository: { uuid: REPOSITORY_UUID, full_name: 'example-workspace/deploy-tools' } },
+    });
+    const requests: string[] = [];
+    const http = {
+      async request(request: Parameters<HttpService['request']>[0]) {
+        requests.push(request.url);
+        if (isRepositoryListingUrl(request.url)) {
+          return {
+            status: 200,
+            finalUrl: request.url,
+            headers: {},
+            body: encodeBody({ pagelen: 100, page: 1, values: repositories }),
+          };
+        }
+        if (request.url.includes('values.participants')) {
+          return {
+            status: 200,
+            finalUrl: request.url,
+            headers: {},
+            body: encodeBody({ pagelen: 50, page: 1, values: input.reviewRows ?? [] }),
+          };
+        }
+        // The authored lane is bottomless: every page is full and names a successor, which is what
+        // a busy account's own pull requests look like.
+        return {
+          status: 200,
+          finalUrl: request.url,
+          headers: {},
+          body: encodeBody({
+            pagelen: 50,
+            page: 1,
+            values: Array.from({ length: input.authoredRows }, (_unused, index) => authoredRow(index)),
+            next: `${AUTHORED_SEED_URL}?pagelen=50&page=${requests.length + 1}`,
+          }),
+        };
+      },
+      openWebSocket() {
+        throw new Error('not used');
+      },
+    } as unknown as HttpService;
+    const client = createBitbucketTriageApiClient({
+      http,
+      authorize: vi.fn(async () => AUTHORIZATION),
+      now: () => 1_000,
+    });
+    return { client, requests };
+  }
+
+  it('gives the repository review plane its turn instead of waiting for a bottomless authored lane', async () => {
+    // The workspace-wide `authored` route is the only lane this forge can serve without walking
+    // repositories, and it is the one lane that can always answer. Entering the repository plane
+    // only once `authored` has run out means an account with more open pull requests of its own
+    // than one refresh can drain never sees a review waiting on it — on this page, and on every
+    // page after it, because the rotation restarts at the same lane. The reviews are the rows a
+    // triage reader is actually there for.
+    const { client, requests } = createWorkspaceStub({
+      repositoryCount: 1,
+      authoredRows: 50,
+      reviewRows: [{
+        id: 900,
+        title: 'Review me',
+        state: 'OPEN',
+        destination: { repository: { uuid: REPOSITORY_UUID, full_name: 'example-workspace/repo-0' } },
+        reviewers: [],
+        participants: [],
+      }],
+    });
+
+    const outcome = await walkAuthored(client, SCAN_LIMIT, {
+      repositories: createBitbucketRepositoryEnumerator({
+        client,
+        workspaceUuid: WORKSPACE_UUID,
+        resumeUrl: null,
+        enteredRepositoryUuid: null,
+        initial: true,
+      }),
+    });
+
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+    // The authored lane never ends in this stub, so any repository read at all proves the plane
+    // was given a turn rather than queued behind it.
+    expect(requests.filter((url) => url.includes('values.participants')).length)
+      .toBeGreaterThanOrEqual(1);
+    expect(requests.some((url) => url.startsWith(AUTHORED_SEED_URL))).toBe(true);
+  });
+
+  it('resumes repository enumeration strictly after the repository named by the frontier', async () => {
+    const { client } = createWorkspaceStub({ repositoryCount: 3, authoredRows: 0 });
+    const enteredRepositoryUuid = '{1a2b3c4d-5e6f-4071-8293-a4b5c6d7e800}';
+    const expectedSuccessorUuid = '{1a2b3c4d-5e6f-4071-8293-a4b5c6d7e801}';
+    const resumeUrl = withBitbucketPageLength(
+      buildBitbucketWorkspaceRepositoriesUrl({ workspaceUuid: WORKSPACE_UUID }),
+      100,
+    );
+    const repositories = createBitbucketRepositoryEnumerator({
+      client,
+      workspaceUuid: WORKSPACE_UUID,
+      resumeUrl,
+      enteredRepositoryUuid,
+      initial: false,
+    });
+
+    // The continuation names the repository already entered, so asking the resumed frontier for
+    // its next repository must not replay that position or restart at the page seed.
+    await expect(repositories.advance()).resolves.toEqual({
+      kind: 'repository',
+      repositoryUuid: expectedSuccessorUuid,
+    });
+    expect(repositories.cursorUrl()).toBe(resumeUrl);
+  });
+
+  it('spends no more provider pages on a workspace of empty repositories than the caller budgeted', async () => {
+    // A repository with no open pull requests answers an empty page: it costs a serial request and
+    // buys no rows, so a budget charged only in rows never stops. A workspace of a hundred of them
+    // therefore made one scan call issue a hundred serial requests before it could return
+    // anything, which is a page the reader waits minutes for.
+    //
+    // The bound is the enumeration's own per-call request budget, which already existed and
+    // already stated this exact purpose — it simply counted the cheap half. A repository entered
+    // costs one serial request just as a listing page does.
+    const { client, requests } = createWorkspaceStub({ repositoryCount: 400, authoredRows: 0 });
+
+    const repositories = createBitbucketRepositoryEnumerator({
+      client,
+      workspaceUuid: WORKSPACE_UUID,
+      resumeUrl: null,
+      enteredRepositoryUuid: null,
+      initial: true,
+    });
+    const outcome = await walkAuthored(client, SCAN_LIMIT, {
+      // The authored lane is already settled, so the repository plane is the only one open and
+      // nothing else can stop the walk.
+      authored: { nextUrl: null, ended: true },
+      repositories,
+    });
+
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+    expect(requests.filter((url) => url.includes('values.participants')).length)
+      .toBeLessThanOrEqual(BITBUCKET_REPOSITORY_REQUESTS_PER_SCAN_PAGE);
+    // Nothing is refused: the enumeration is still open, so the next page continues it.
+    expect(outcome.walkOpen).toBe(true);
+    /*
+     * And it has to say WHY it stopped, in the one vocabulary a page has for its own budget.
+     *
+     * `walkOpen` alone was not enough, and asserting only that was how the starvation shipped: the
+     * page went back to `runTriageScanPass` carrying zero rows, zero charged rows and a
+     * `walkFinished` evidence arm, and the pass's non-progress guard condemned the lane as stalled.
+     * A stalled lane is offered no continuation, so the next refresh restarted at these same empty
+     * repositories, for ever. This page stopped on ITS OWN budget with work still pending; that is
+     * `projection-budget`, not a finished walk.
+     */
+    expect(outcome.projectionBudget).toBe(true);
+    // And the frontier it hands back names a position strictly past the one it was given — which is
+    // exactly what makes the page progress rather than a request to be asked the same thing again.
+    expect(outcome.frontier.currentRepository?.repositoryUuid).toBeDefined();
+    expect(repositories.cursorUrl()).not.toBeNull();
   });
 
   it('reports a review page that came back without its participants projection instead of reading it as no approvals', async () => {
@@ -624,5 +820,47 @@ describe('Bitbucket workspace enumeration', () => {
     expect(outcome.complete).toBe(false);
     expect(outcome.workspaces).toHaveLength(2);
     expect(outcome.failure).toMatchObject({ class: 'transient' });
+  });
+
+  it('marks an otherwise-finished workspace page incomplete when one row is malformed', async () => {
+    const { client } = createClient([{ body: {
+      ...workspacesPage,
+      values: [
+        ...workspacesPage.values,
+        { type: 'workspace_permission', workspace: { slug: 'missing-uuid' } },
+      ],
+    } }]);
+
+    const outcome = await listBitbucketWorkspaces({ client });
+
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+    expect(outcome.workspaces).toHaveLength(workspacesPage.values.length);
+    expect(outcome.complete).toBe(false);
+    expect(outcome.failure).toMatchObject({
+      class: 'unsupportedContract',
+      code: 'collection-items-undecodable',
+    });
+  });
+
+  it('marks an otherwise-finished repository page incomplete when one row is malformed', async () => {
+    const { client } = createClient([], { repositoryListingReply: { body: {
+      ...repositoriesPage,
+      values: [...repositoriesPage.values, { type: 'repository', name: 'missing-uuid' }],
+    } } });
+
+    const outcome = await listBitbucketWorkspaceRepositories({
+      client,
+      workspaceUuid: WORKSPACE_UUID,
+    });
+
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+    expect(outcome.repositories).toHaveLength(2);
+    expect(outcome.complete).toBe(false);
+    expect(outcome.failure).toMatchObject({
+      class: 'unsupportedContract',
+      code: 'collection-items-undecodable',
+    });
   });
 });

@@ -38,6 +38,7 @@ import {
 import {
   decodeGitlabScanContinuation,
   encodeGitlabScanContinuation,
+  readGitlabScanContinuationViewerUserId,
 } from './scan/gitlabScanContinuation.js';
 import {
   createGitlabScanFrontier,
@@ -98,7 +99,21 @@ export async function scanGitlabTriageSource(
     // would report the same thing less clearly.
     return { kind: 'failed', failure: projectGitlabSourceFailure(viewer.failure) };
   }
-  const viewerUserId = viewer.kind === 'identified' ? viewer.viewer.userId : null;
+  const viewerUserId = viewer.kind === 'identified'
+    ? viewer.viewer.userId
+    : input.scan.page.kind === 'continuation'
+      ? readGitlabScanContinuationViewerUserId(input.scan.page.continuation)
+      : null;
+  if (viewerUserId === undefined) {
+    return {
+      kind: 'failed',
+      failure: {
+        class: 'unsupportedContract',
+        code: 'unknown-continuation',
+        detail: 'This source did not mint the continuation it was handed.',
+      },
+    };
+  }
 
   const requests: GitlabLaneRequest[] = [];
   const unavailableLanes: GitlabUnavailableLane[] = [];

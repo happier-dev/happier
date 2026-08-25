@@ -40,10 +40,6 @@ export function createAzureCommandFailedError(message = 'Azure DevOps operation 
   return new AzureDevopsAdapterError(message, SCM_OPERATION_ERROR_CODES.COMMAND_FAILED);
 }
 
-export function createAzureUnsupportedError(message = 'Azure CLI is unavailable'): AzureDevopsAdapterError {
-  return new AzureDevopsAdapterError(message, SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED);
-}
-
 export function createAzureDuplicatePullRequestError(input: Readonly<{
   message?: string;
   pullRequestNumber?: number;

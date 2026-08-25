@@ -13,6 +13,7 @@ import {
   GithubPullRequestCloseInputV1Schema,
   GithubPullRequestMarkReadyInputV1Schema,
   GithubPullRequestMergeInputV1Schema,
+  GithubPullRequestReviewPublicationInputV1Schema,
   GithubPullRequestRemoveReviewersInputV1Schema,
   GithubPullRequestReopenInputV1Schema,
   GithubPullRequestThreadResolutionInputV1Schema,
@@ -37,6 +38,7 @@ import {
   closeGithubPullRequest,
   markGithubPullRequestReady,
   mergeGithubPullRequest,
+  publishGithubPullRequestReview,
   reopenGithubPullRequest,
   updateGithubPullRequestBranch,
 } from './mutations/pullRequest.js';
@@ -132,7 +134,43 @@ export async function mergeGithubPullRequestAction(
     mergeMethod: request.mergeMethod,
     ...(request.commitTitle === undefined ? {} : { commitTitle: request.commitTitle }),
     ...(request.commitMessage === undefined ? {} : { commitMessage: request.commitMessage }),
-  }, { client: admitted.client, now: Date.now, signal: context.signal });
+  }, { client: admitted.client, now: Date.now, signal: admitted.signal });
+}
+
+/** Publishes one summary+verdict review through GitHub's single review endpoint. */
+export async function publishGithubPullRequestReviewAction(
+  input: unknown,
+  context: PluginInvocationContext,
+) {
+  const parsed = GithubPullRequestReviewPublicationInputV1Schema.safeParse(input);
+  if (!parsed.success) {
+    return Object.freeze({
+      kind: 'rejected' as const,
+      reason: 'invalid_input' as const,
+      failure: INVALID_INPUT_FAILURE,
+    });
+  }
+  const request = parsed.data;
+  const admitted = await admitGithubEntryInvocation({
+    instance: request.instance,
+    localRef: request.localRef,
+    routingToken: request.routingToken,
+    admissibleKinds: ['pull-request'],
+  }, context);
+  if (!admitted.ok) {
+    return Object.freeze({
+      kind: 'rejected' as const,
+      reason: 'admission_failed' as const,
+      failure: admitted.failure,
+    });
+  }
+  return await publishGithubPullRequestReview({
+    localRef: admitted.localRef,
+    route: admitted.route,
+    headRevision: request.headRevision,
+    verdict: request.verdict,
+    summary: request.summary,
+  }, { client: admitted.client, now: Date.now, signal: admitted.signal });
 }
 
 /** Closes one open pull request, leaving its branch and commits untouched. */
@@ -154,7 +192,7 @@ export async function closeGithubPullRequestAction(
 
   return await closeGithubPullRequest(
     { localRef: admitted.localRef, route: admitted.route },
-    { client: admitted.client, now: Date.now, signal: context.signal },
+    { client: admitted.client, now: Date.now, signal: admitted.signal },
   );
 }
 
@@ -177,7 +215,7 @@ export async function reopenGithubPullRequestAction(
 
   return await reopenGithubPullRequest(
     { localRef: admitted.localRef, route: admitted.route },
-    { client: admitted.client, now: Date.now, signal: context.signal },
+    { client: admitted.client, now: Date.now, signal: admitted.signal },
   );
 }
 
@@ -209,7 +247,7 @@ export async function markGithubPullRequestReadyAction(
     localRef: admitted.localRef,
     route: admitted.route,
     headRevision: request.headRevision,
-  }, { client: admitted.client, now: Date.now, signal: context.signal });
+  }, { client: admitted.client, now: Date.now, signal: admitted.signal });
 }
 
 /**
@@ -240,7 +278,7 @@ export async function updateGithubPullRequestBranchAction(
     localRef: admitted.localRef,
     route: admitted.route,
     headRevision: request.headRevision,
-  }, { client: admitted.client, now: Date.now, signal: context.signal });
+  }, { client: admitted.client, now: Date.now, signal: admitted.signal });
 }
 
 /**
@@ -272,7 +310,7 @@ export async function addGithubPullRequestReviewersAction(
 
   return await requestGithubPullRequestReviewers(
     { localRef: admitted.localRef, route: admitted.route, ...named },
-    { client: admitted.client, now: Date.now, signal: context.signal },
+    { client: admitted.client, now: Date.now, signal: admitted.signal },
   );
 }
 
@@ -305,7 +343,7 @@ export async function removeGithubPullRequestReviewersAction(
 
   return await removeGithubPullRequestReviewers(
     { localRef: admitted.localRef, route: admitted.route, ...named },
-    { client: admitted.client, now: Date.now, signal: context.signal },
+    { client: admitted.client, now: Date.now, signal: admitted.signal },
   );
 }
 
@@ -345,7 +383,7 @@ export async function setGithubPullRequestThreadResolutionAction(
     route: admitted.route,
     threadId: request.threadId,
     resolved: request.resolved,
-  }, { client: admitted.client, now: Date.now, signal: context.signal });
+  }, { client: admitted.client, now: Date.now, signal: admitted.signal });
 }
 
 /* --------------------------------------------------------------- issue writes */
@@ -391,7 +429,7 @@ export async function closeGithubIssueAction(
     localRef: admitted.localRef,
     route: admitted.route,
     stateReason: request.stateReason,
-  }, { client: admitted.client, now: Date.now, signal: context.signal });
+  }, { client: admitted.client, now: Date.now, signal: admitted.signal });
 }
 
 /** Reopens one closed issue. GitHub owns the `reopened` reason itself. */
@@ -413,7 +451,7 @@ export async function reopenGithubIssueAction(
 
   return await reopenGithubIssue(
     { localRef: admitted.localRef, route: admitted.route },
-    { client: admitted.client, now: Date.now, signal: context.signal },
+    { client: admitted.client, now: Date.now, signal: admitted.signal },
   );
 }
 
@@ -445,7 +483,7 @@ export async function addGithubIssueAssigneesAction(
     localRef: admitted.localRef,
     route: admitted.route,
     usernames: request.usernames,
-  }, { client: admitted.client, now: Date.now, signal: context.signal });
+  }, { client: admitted.client, now: Date.now, signal: admitted.signal });
 }
 
 export async function removeGithubIssueAssigneesAction(
@@ -468,7 +506,7 @@ export async function removeGithubIssueAssigneesAction(
     localRef: admitted.localRef,
     route: admitted.route,
     usernames: request.usernames,
-  }, { client: admitted.client, now: Date.now, signal: context.signal });
+  }, { client: admitted.client, now: Date.now, signal: admitted.signal });
 }
 
 export async function addGithubIssueLabelsAction(
@@ -491,7 +529,7 @@ export async function addGithubIssueLabelsAction(
     localRef: admitted.localRef,
     route: admitted.route,
     labels: request.labels,
-  }, { client: admitted.client, now: Date.now, signal: context.signal });
+  }, { client: admitted.client, now: Date.now, signal: admitted.signal });
 }
 
 /**
@@ -519,5 +557,5 @@ export async function removeGithubIssueLabelAction(
     localRef: admitted.localRef,
     route: admitted.route,
     label: request.label,
-  }, { client: admitted.client, now: Date.now, signal: context.signal });
+  }, { client: admitted.client, now: Date.now, signal: admitted.signal });
 }

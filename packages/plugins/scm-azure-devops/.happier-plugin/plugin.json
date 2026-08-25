@@ -1295,6 +1295,45 @@
                             "type": "string",
                             "x-happier-max-utf8-bytes": 128
                           },
+                          "repository": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "deployment": {
+                                "minLength": 1,
+                                "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                "type": "string",
+                                "x-happier-max-utf8-bytes": 128
+                              },
+                              "kind": {
+                                "anyOf": [
+                                  {
+                                    "const": "github"
+                                  },
+                                  {
+                                    "const": "gitlab"
+                                  },
+                                  {
+                                    "const": "bitbucket"
+                                  },
+                                  {
+                                    "const": "azure-devops"
+                                  }
+                                ]
+                              },
+                              "repository": {
+                                "minLength": 1,
+                                "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                "type": "string",
+                                "x-happier-max-utf8-bytes": 255
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "deployment",
+                              "repository"
+                            ],
+                            "type": "object"
+                          },
                           "snapshot": {
                             "additionalProperties": true,
                             "properties": {
@@ -1979,6 +2018,45 @@
                             "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                             "type": "string",
                             "x-happier-max-utf8-bytes": 128
+                          },
+                          "repository": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "deployment": {
+                                "minLength": 1,
+                                "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                "type": "string",
+                                "x-happier-max-utf8-bytes": 128
+                              },
+                              "kind": {
+                                "anyOf": [
+                                  {
+                                    "const": "github"
+                                  },
+                                  {
+                                    "const": "gitlab"
+                                  },
+                                  {
+                                    "const": "bitbucket"
+                                  },
+                                  {
+                                    "const": "azure-devops"
+                                  }
+                                ]
+                              },
+                              "repository": {
+                                "minLength": 1,
+                                "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                "type": "string",
+                                "x-happier-max-utf8-bytes": 255
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "deployment",
+                              "repository"
+                            ],
+                            "type": "object"
                           },
                           "snapshot": {
                             "additionalProperties": true,
@@ -2925,6 +3003,45 @@
                   "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                   "type": "string",
                   "x-happier-max-utf8-bytes": 128
+                },
+                "repository": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "deployment": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
+                    },
+                    "kind": {
+                      "anyOf": [
+                        {
+                          "const": "github"
+                        },
+                        {
+                          "const": "gitlab"
+                        },
+                        {
+                          "const": "bitbucket"
+                        },
+                        {
+                          "const": "azure-devops"
+                        }
+                      ]
+                    },
+                    "repository": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 255
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "deployment",
+                    "repository"
+                  ],
+                  "type": "object"
                 },
                 "snapshot": {
                   "additionalProperties": true,
@@ -5911,6 +6028,45 @@
                           "type": "string",
                           "x-happier-max-utf8-bytes": 128
                         },
+                        "repository": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "deployment": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            },
+                            "kind": {
+                              "anyOf": [
+                                {
+                                  "const": "github"
+                                },
+                                {
+                                  "const": "gitlab"
+                                },
+                                {
+                                  "const": "bitbucket"
+                                },
+                                {
+                                  "const": "azure-devops"
+                                }
+                              ]
+                            },
+                            "repository": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 255
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "deployment",
+                            "repository"
+                          ],
+                          "type": "object"
+                        },
                         "snapshot": {
                           "additionalProperties": true,
                           "properties": {
@@ -6576,6 +6732,45 @@
                           "type": "string",
                           "x-happier-max-utf8-bytes": 128
                         },
+                        "repository": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "deployment": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            },
+                            "kind": {
+                              "anyOf": [
+                                {
+                                  "const": "github"
+                                },
+                                {
+                                  "const": "gitlab"
+                                },
+                                {
+                                  "const": "bitbucket"
+                                },
+                                {
+                                  "const": "azure-devops"
+                                }
+                              ]
+                            },
+                            "repository": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 255
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "deployment",
+                            "repository"
+                          ],
+                          "type": "object"
+                        },
                         "snapshot": {
                           "additionalProperties": true,
                           "properties": {
@@ -7237,6 +7432,45 @@
                           "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                           "type": "string",
                           "x-happier-max-utf8-bytes": 128
+                        },
+                        "repository": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "deployment": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            },
+                            "kind": {
+                              "anyOf": [
+                                {
+                                  "const": "github"
+                                },
+                                {
+                                  "const": "gitlab"
+                                },
+                                {
+                                  "const": "bitbucket"
+                                },
+                                {
+                                  "const": "azure-devops"
+                                }
+                              ]
+                            },
+                            "repository": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 255
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "deployment",
+                            "repository"
+                          ],
+                          "type": "object"
                         },
                         "snapshot": {
                           "additionalProperties": true,
@@ -7922,6 +8156,45 @@
                           "type": "string",
                           "x-happier-max-utf8-bytes": 128
                         },
+                        "repository": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "deployment": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            },
+                            "kind": {
+                              "anyOf": [
+                                {
+                                  "const": "github"
+                                },
+                                {
+                                  "const": "gitlab"
+                                },
+                                {
+                                  "const": "bitbucket"
+                                },
+                                {
+                                  "const": "azure-devops"
+                                }
+                              ]
+                            },
+                            "repository": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 255
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "deployment",
+                            "repository"
+                          ],
+                          "type": "object"
+                        },
                         "snapshot": {
                           "additionalProperties": true,
                           "properties": {
@@ -8581,6 +8854,755 @@
               "required": [
                 "kind",
                 "failure"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "failure": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "class": {
+                      "anyOf": [
+                        {
+                          "const": "authentication"
+                        },
+                        {
+                          "const": "permission"
+                        },
+                        {
+                          "const": "rateLimit"
+                        },
+                        {
+                          "const": "transient"
+                        },
+                        {
+                          "const": "unsupportedContract"
+                        },
+                        {
+                          "const": "unknown"
+                        }
+                      ]
+                    },
+                    "code": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
+                    },
+                    "detail": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 256
+                    },
+                    "retryNotBeforeMs": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "class",
+                    "code"
+                  ],
+                  "type": "object"
+                },
+                "kind": {
+                  "const": "uncertain"
+                },
+                "observation": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "kind": {
+                          "const": "present"
+                        },
+                        "localRef": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "collisionScope": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+(?:\\u001f[^\\u0000-\\u001f\\u007f]+)?$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 192
+                            },
+                            "entryId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            },
+                            "kindId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            }
+                          },
+                          "required": [
+                            "kindId",
+                            "collisionScope",
+                            "entryId"
+                          ],
+                          "type": "object"
+                        },
+                        "locator": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "displayPath": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 512
+                            },
+                            "routingToken": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 192
+                            },
+                            "v": {
+                              "const": 1
+                            },
+                            "webUrl": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 384
+                            }
+                          },
+                          "required": [
+                            "v"
+                          ],
+                          "type": "object"
+                        },
+                        "nativeRevision": {
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                          "type": "string",
+                          "x-happier-max-utf8-bytes": 128
+                        },
+                        "repository": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "deployment": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            },
+                            "kind": {
+                              "anyOf": [
+                                {
+                                  "const": "github"
+                                },
+                                {
+                                  "const": "gitlab"
+                                },
+                                {
+                                  "const": "bitbucket"
+                                },
+                                {
+                                  "const": "azure-devops"
+                                }
+                              ]
+                            },
+                            "repository": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 255
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "deployment",
+                            "repository"
+                          ],
+                          "type": "object"
+                        },
+                        "snapshot": {
+                          "additionalProperties": true,
+                          "properties": {
+                            "createdAtMs": {
+                              "maximum": 9007199254740991,
+                              "minimum": -9007199254740991,
+                              "type": "integer"
+                            },
+                            "facts": {
+                              "items": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "id": {
+                                    "minLength": 1,
+                                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                    "type": "string",
+                                    "x-happier-max-utf8-bytes": 64
+                                  },
+                                  "importance": {
+                                    "anyOf": [
+                                      {
+                                        "const": "primary"
+                                      },
+                                      {
+                                        "const": "secondary"
+                                      },
+                                      {
+                                        "const": "supplementary"
+                                      }
+                                    ]
+                                  },
+                                  "label": {
+                                    "minLength": 1,
+                                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                    "type": "string",
+                                    "x-happier-max-utf8-bytes": 64
+                                  },
+                                  "value": {
+                                    "anyOf": [
+                                      {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "kind": {
+                                            "const": "text"
+                                          },
+                                          "value": {
+                                            "minLength": 1,
+                                            "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                            "type": "string",
+                                            "x-happier-max-utf8-bytes": 64
+                                          }
+                                        },
+                                        "required": [
+                                          "kind",
+                                          "value"
+                                        ],
+                                        "type": "object"
+                                      },
+                                      {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "kind": {
+                                            "const": "actor"
+                                          },
+                                          "value": {
+                                            "minLength": 1,
+                                            "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                            "type": "string",
+                                            "x-happier-max-utf8-bytes": 64
+                                          }
+                                        },
+                                        "required": [
+                                          "kind",
+                                          "value"
+                                        ],
+                                        "type": "object"
+                                      },
+                                      {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "atMs": {
+                                            "maximum": 9007199254740991,
+                                            "minimum": -9007199254740991,
+                                            "type": "integer"
+                                          },
+                                          "format": {
+                                            "anyOf": [
+                                              {
+                                                "const": "relative"
+                                              },
+                                              {
+                                                "const": "absolute"
+                                              }
+                                            ]
+                                          },
+                                          "kind": {
+                                            "const": "timestamp"
+                                          }
+                                        },
+                                        "required": [
+                                          "kind",
+                                          "atMs",
+                                          "format"
+                                        ],
+                                        "type": "object"
+                                      },
+                                      {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "approximate": {
+                                            "const": true
+                                          },
+                                          "format": {
+                                            "anyOf": [
+                                              {
+                                                "const": "compact"
+                                              },
+                                              {
+                                                "const": "plain"
+                                              }
+                                            ]
+                                          },
+                                          "kind": {
+                                            "const": "number"
+                                          },
+                                          "value": {
+                                            "type": "number"
+                                          }
+                                        },
+                                        "required": [
+                                          "kind",
+                                          "value",
+                                          "format"
+                                        ],
+                                        "type": "object"
+                                      },
+                                      {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "kind": {
+                                            "const": "status"
+                                          },
+                                          "tone": {
+                                            "anyOf": [
+                                              {
+                                                "const": "success"
+                                              },
+                                              {
+                                                "const": "warning"
+                                              },
+                                              {
+                                                "const": "danger"
+                                              },
+                                              {
+                                                "const": "info"
+                                              },
+                                              {
+                                                "const": "neutral"
+                                              }
+                                            ]
+                                          },
+                                          "value": {
+                                            "minLength": 1,
+                                            "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                            "type": "string",
+                                            "x-happier-max-utf8-bytes": 64
+                                          }
+                                        },
+                                        "required": [
+                                          "kind",
+                                          "value",
+                                          "tone"
+                                        ],
+                                        "type": "object"
+                                      },
+                                      {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "kind": {
+                                            "const": "detailOnly"
+                                          }
+                                        },
+                                        "required": [
+                                          "kind"
+                                        ],
+                                        "type": "object"
+                                      }
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "id",
+                                  "importance",
+                                  "value"
+                                ],
+                                "type": "object"
+                              },
+                              "maxItems": 4,
+                              "type": "array"
+                            },
+                            "projectionTruncated": {
+                              "const": true
+                            },
+                            "scopeLabel": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 512
+                            },
+                            "state": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "nativeLabel": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 512
+                                },
+                                "presentation": {
+                                  "anyOf": [
+                                    {
+                                      "const": "active"
+                                    },
+                                    {
+                                      "const": "resolved"
+                                    },
+                                    {
+                                      "const": "closed"
+                                    },
+                                    {
+                                      "const": "suppressed"
+                                    },
+                                    {
+                                      "const": "unknown"
+                                    }
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "presentation"
+                              ],
+                              "type": "object"
+                            },
+                            "summary": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 512
+                            },
+                            "title": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 512
+                            },
+                            "v": {
+                              "const": 1
+                            }
+                          },
+                          "required": [
+                            "v",
+                            "title",
+                            "scopeLabel",
+                            "state",
+                            "facts"
+                          ],
+                          "type": "object"
+                        },
+                        "sourceUpdatedAtMs": {
+                          "maximum": 9007199254740991,
+                          "minimum": -9007199254740991,
+                          "type": "integer"
+                        },
+                        "viewer": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "involvement": {
+                              "items": {
+                                "anyOf": [
+                                  {
+                                    "const": "author"
+                                  },
+                                  {
+                                    "const": "assignee"
+                                  },
+                                  {
+                                    "const": "reviewRequested"
+                                  },
+                                  {
+                                    "const": "mentioned"
+                                  },
+                                  {
+                                    "const": "subscribed"
+                                  },
+                                  {
+                                    "const": "participating"
+                                  }
+                                ]
+                              },
+                              "maxItems": 6,
+                              "type": "array",
+                              "uniqueItems": true
+                            },
+                            "sourceAttention": {
+                              "anyOf": [
+                                {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "level": {
+                                      "const": "none"
+                                    }
+                                  },
+                                  "required": [
+                                    "level"
+                                  ],
+                                  "type": "object"
+                                },
+                                {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "level": {
+                                      "anyOf": [
+                                        {
+                                          "const": "suggested"
+                                        },
+                                        {
+                                          "const": "required"
+                                        }
+                                      ]
+                                    },
+                                    "reasonId": {
+                                      "minLength": 1,
+                                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                      "type": "string",
+                                      "x-happier-max-utf8-bytes": 128
+                                    },
+                                    "reasonLabel": {
+                                      "minLength": 1,
+                                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                      "type": "string",
+                                      "x-happier-max-utf8-bytes": 512
+                                    }
+                                  },
+                                  "required": [
+                                    "level",
+                                    "reasonId",
+                                    "reasonLabel"
+                                  ],
+                                  "type": "object"
+                                }
+                              ]
+                            }
+                          },
+                          "required": [
+                            "involvement"
+                          ],
+                          "type": "object"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "localRef",
+                        "locator",
+                        "snapshot",
+                        "viewer"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "kind": {
+                          "const": "absent"
+                        },
+                        "localRef": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "collisionScope": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+(?:\\u001f[^\\u0000-\\u001f\\u007f]+)?$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 192
+                            },
+                            "entryId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            },
+                            "kindId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            }
+                          },
+                          "required": [
+                            "kindId",
+                            "collisionScope",
+                            "entryId"
+                          ],
+                          "type": "object"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "localRef"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "kind": {
+                          "const": "merged"
+                        },
+                        "localRef": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "collisionScope": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+(?:\\u001f[^\\u0000-\\u001f\\u007f]+)?$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 192
+                            },
+                            "entryId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            },
+                            "kindId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            }
+                          },
+                          "required": [
+                            "kindId",
+                            "collisionScope",
+                            "entryId"
+                          ],
+                          "type": "object"
+                        },
+                        "successor": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "collisionScope": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+(?:\\u001f[^\\u0000-\\u001f\\u007f]+)?$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 192
+                            },
+                            "entryId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            },
+                            "kindId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            }
+                          },
+                          "required": [
+                            "kindId",
+                            "collisionScope",
+                            "entryId"
+                          ],
+                          "type": "object"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "localRef",
+                        "successor"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "failure": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "class": {
+                              "anyOf": [
+                                {
+                                  "const": "authentication"
+                                },
+                                {
+                                  "const": "permission"
+                                },
+                                {
+                                  "const": "rateLimit"
+                                },
+                                {
+                                  "const": "transient"
+                                },
+                                {
+                                  "const": "unsupportedContract"
+                                },
+                                {
+                                  "const": "unknown"
+                                }
+                              ]
+                            },
+                            "code": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            },
+                            "detail": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 256
+                            },
+                            "retryNotBeforeMs": {
+                              "maximum": 9007199254740991,
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "class",
+                            "code"
+                          ],
+                          "type": "object"
+                        },
+                        "kind": {
+                          "const": "unresolved"
+                        },
+                        "localRef": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "collisionScope": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+(?:\\u001f[^\\u0000-\\u001f\\u007f]+)?$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 192
+                            },
+                            "entryId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            },
+                            "kindId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            }
+                          },
+                          "required": [
+                            "kindId",
+                            "collisionScope",
+                            "entryId"
+                          ],
+                          "type": "object"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "localRef",
+                        "failure"
+                      ],
+                      "type": "object"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "kind"
               ],
               "type": "object"
             }
@@ -8910,6 +9932,45 @@
                           "type": "string",
                           "x-happier-max-utf8-bytes": 128
                         },
+                        "repository": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "deployment": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            },
+                            "kind": {
+                              "anyOf": [
+                                {
+                                  "const": "github"
+                                },
+                                {
+                                  "const": "gitlab"
+                                },
+                                {
+                                  "const": "bitbucket"
+                                },
+                                {
+                                  "const": "azure-devops"
+                                }
+                              ]
+                            },
+                            "repository": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 255
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "deployment",
+                            "repository"
+                          ],
+                          "type": "object"
+                        },
                         "snapshot": {
                           "additionalProperties": true,
                           "properties": {
@@ -9575,6 +10636,45 @@
                           "type": "string",
                           "x-happier-max-utf8-bytes": 128
                         },
+                        "repository": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "deployment": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            },
+                            "kind": {
+                              "anyOf": [
+                                {
+                                  "const": "github"
+                                },
+                                {
+                                  "const": "gitlab"
+                                },
+                                {
+                                  "const": "bitbucket"
+                                },
+                                {
+                                  "const": "azure-devops"
+                                }
+                              ]
+                            },
+                            "repository": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 255
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "deployment",
+                            "repository"
+                          ],
+                          "type": "object"
+                        },
                         "snapshot": {
                           "additionalProperties": true,
                           "properties": {
@@ -10236,6 +11336,45 @@
                           "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                           "type": "string",
                           "x-happier-max-utf8-bytes": 128
+                        },
+                        "repository": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "deployment": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            },
+                            "kind": {
+                              "anyOf": [
+                                {
+                                  "const": "github"
+                                },
+                                {
+                                  "const": "gitlab"
+                                },
+                                {
+                                  "const": "bitbucket"
+                                },
+                                {
+                                  "const": "azure-devops"
+                                }
+                              ]
+                            },
+                            "repository": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 255
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "deployment",
+                            "repository"
+                          ],
+                          "type": "object"
                         },
                         "snapshot": {
                           "additionalProperties": true,
@@ -10921,6 +12060,45 @@
                           "type": "string",
                           "x-happier-max-utf8-bytes": 128
                         },
+                        "repository": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "deployment": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            },
+                            "kind": {
+                              "anyOf": [
+                                {
+                                  "const": "github"
+                                },
+                                {
+                                  "const": "gitlab"
+                                },
+                                {
+                                  "const": "bitbucket"
+                                },
+                                {
+                                  "const": "azure-devops"
+                                }
+                              ]
+                            },
+                            "repository": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 255
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "deployment",
+                            "repository"
+                          ],
+                          "type": "object"
+                        },
                         "snapshot": {
                           "additionalProperties": true,
                           "properties": {
@@ -11580,6 +12758,755 @@
               "required": [
                 "kind",
                 "failure"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "failure": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "class": {
+                      "anyOf": [
+                        {
+                          "const": "authentication"
+                        },
+                        {
+                          "const": "permission"
+                        },
+                        {
+                          "const": "rateLimit"
+                        },
+                        {
+                          "const": "transient"
+                        },
+                        {
+                          "const": "unsupportedContract"
+                        },
+                        {
+                          "const": "unknown"
+                        }
+                      ]
+                    },
+                    "code": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
+                    },
+                    "detail": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 256
+                    },
+                    "retryNotBeforeMs": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "class",
+                    "code"
+                  ],
+                  "type": "object"
+                },
+                "kind": {
+                  "const": "uncertain"
+                },
+                "observation": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "kind": {
+                          "const": "present"
+                        },
+                        "localRef": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "collisionScope": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+(?:\\u001f[^\\u0000-\\u001f\\u007f]+)?$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 192
+                            },
+                            "entryId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            },
+                            "kindId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            }
+                          },
+                          "required": [
+                            "kindId",
+                            "collisionScope",
+                            "entryId"
+                          ],
+                          "type": "object"
+                        },
+                        "locator": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "displayPath": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 512
+                            },
+                            "routingToken": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 192
+                            },
+                            "v": {
+                              "const": 1
+                            },
+                            "webUrl": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 384
+                            }
+                          },
+                          "required": [
+                            "v"
+                          ],
+                          "type": "object"
+                        },
+                        "nativeRevision": {
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                          "type": "string",
+                          "x-happier-max-utf8-bytes": 128
+                        },
+                        "repository": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "deployment": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            },
+                            "kind": {
+                              "anyOf": [
+                                {
+                                  "const": "github"
+                                },
+                                {
+                                  "const": "gitlab"
+                                },
+                                {
+                                  "const": "bitbucket"
+                                },
+                                {
+                                  "const": "azure-devops"
+                                }
+                              ]
+                            },
+                            "repository": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 255
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "deployment",
+                            "repository"
+                          ],
+                          "type": "object"
+                        },
+                        "snapshot": {
+                          "additionalProperties": true,
+                          "properties": {
+                            "createdAtMs": {
+                              "maximum": 9007199254740991,
+                              "minimum": -9007199254740991,
+                              "type": "integer"
+                            },
+                            "facts": {
+                              "items": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "id": {
+                                    "minLength": 1,
+                                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                    "type": "string",
+                                    "x-happier-max-utf8-bytes": 64
+                                  },
+                                  "importance": {
+                                    "anyOf": [
+                                      {
+                                        "const": "primary"
+                                      },
+                                      {
+                                        "const": "secondary"
+                                      },
+                                      {
+                                        "const": "supplementary"
+                                      }
+                                    ]
+                                  },
+                                  "label": {
+                                    "minLength": 1,
+                                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                    "type": "string",
+                                    "x-happier-max-utf8-bytes": 64
+                                  },
+                                  "value": {
+                                    "anyOf": [
+                                      {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "kind": {
+                                            "const": "text"
+                                          },
+                                          "value": {
+                                            "minLength": 1,
+                                            "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                            "type": "string",
+                                            "x-happier-max-utf8-bytes": 64
+                                          }
+                                        },
+                                        "required": [
+                                          "kind",
+                                          "value"
+                                        ],
+                                        "type": "object"
+                                      },
+                                      {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "kind": {
+                                            "const": "actor"
+                                          },
+                                          "value": {
+                                            "minLength": 1,
+                                            "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                            "type": "string",
+                                            "x-happier-max-utf8-bytes": 64
+                                          }
+                                        },
+                                        "required": [
+                                          "kind",
+                                          "value"
+                                        ],
+                                        "type": "object"
+                                      },
+                                      {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "atMs": {
+                                            "maximum": 9007199254740991,
+                                            "minimum": -9007199254740991,
+                                            "type": "integer"
+                                          },
+                                          "format": {
+                                            "anyOf": [
+                                              {
+                                                "const": "relative"
+                                              },
+                                              {
+                                                "const": "absolute"
+                                              }
+                                            ]
+                                          },
+                                          "kind": {
+                                            "const": "timestamp"
+                                          }
+                                        },
+                                        "required": [
+                                          "kind",
+                                          "atMs",
+                                          "format"
+                                        ],
+                                        "type": "object"
+                                      },
+                                      {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "approximate": {
+                                            "const": true
+                                          },
+                                          "format": {
+                                            "anyOf": [
+                                              {
+                                                "const": "compact"
+                                              },
+                                              {
+                                                "const": "plain"
+                                              }
+                                            ]
+                                          },
+                                          "kind": {
+                                            "const": "number"
+                                          },
+                                          "value": {
+                                            "type": "number"
+                                          }
+                                        },
+                                        "required": [
+                                          "kind",
+                                          "value",
+                                          "format"
+                                        ],
+                                        "type": "object"
+                                      },
+                                      {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "kind": {
+                                            "const": "status"
+                                          },
+                                          "tone": {
+                                            "anyOf": [
+                                              {
+                                                "const": "success"
+                                              },
+                                              {
+                                                "const": "warning"
+                                              },
+                                              {
+                                                "const": "danger"
+                                              },
+                                              {
+                                                "const": "info"
+                                              },
+                                              {
+                                                "const": "neutral"
+                                              }
+                                            ]
+                                          },
+                                          "value": {
+                                            "minLength": 1,
+                                            "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                            "type": "string",
+                                            "x-happier-max-utf8-bytes": 64
+                                          }
+                                        },
+                                        "required": [
+                                          "kind",
+                                          "value",
+                                          "tone"
+                                        ],
+                                        "type": "object"
+                                      },
+                                      {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "kind": {
+                                            "const": "detailOnly"
+                                          }
+                                        },
+                                        "required": [
+                                          "kind"
+                                        ],
+                                        "type": "object"
+                                      }
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "id",
+                                  "importance",
+                                  "value"
+                                ],
+                                "type": "object"
+                              },
+                              "maxItems": 4,
+                              "type": "array"
+                            },
+                            "projectionTruncated": {
+                              "const": true
+                            },
+                            "scopeLabel": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 512
+                            },
+                            "state": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "nativeLabel": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 512
+                                },
+                                "presentation": {
+                                  "anyOf": [
+                                    {
+                                      "const": "active"
+                                    },
+                                    {
+                                      "const": "resolved"
+                                    },
+                                    {
+                                      "const": "closed"
+                                    },
+                                    {
+                                      "const": "suppressed"
+                                    },
+                                    {
+                                      "const": "unknown"
+                                    }
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "presentation"
+                              ],
+                              "type": "object"
+                            },
+                            "summary": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 512
+                            },
+                            "title": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 512
+                            },
+                            "v": {
+                              "const": 1
+                            }
+                          },
+                          "required": [
+                            "v",
+                            "title",
+                            "scopeLabel",
+                            "state",
+                            "facts"
+                          ],
+                          "type": "object"
+                        },
+                        "sourceUpdatedAtMs": {
+                          "maximum": 9007199254740991,
+                          "minimum": -9007199254740991,
+                          "type": "integer"
+                        },
+                        "viewer": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "involvement": {
+                              "items": {
+                                "anyOf": [
+                                  {
+                                    "const": "author"
+                                  },
+                                  {
+                                    "const": "assignee"
+                                  },
+                                  {
+                                    "const": "reviewRequested"
+                                  },
+                                  {
+                                    "const": "mentioned"
+                                  },
+                                  {
+                                    "const": "subscribed"
+                                  },
+                                  {
+                                    "const": "participating"
+                                  }
+                                ]
+                              },
+                              "maxItems": 6,
+                              "type": "array",
+                              "uniqueItems": true
+                            },
+                            "sourceAttention": {
+                              "anyOf": [
+                                {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "level": {
+                                      "const": "none"
+                                    }
+                                  },
+                                  "required": [
+                                    "level"
+                                  ],
+                                  "type": "object"
+                                },
+                                {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "level": {
+                                      "anyOf": [
+                                        {
+                                          "const": "suggested"
+                                        },
+                                        {
+                                          "const": "required"
+                                        }
+                                      ]
+                                    },
+                                    "reasonId": {
+                                      "minLength": 1,
+                                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                      "type": "string",
+                                      "x-happier-max-utf8-bytes": 128
+                                    },
+                                    "reasonLabel": {
+                                      "minLength": 1,
+                                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                      "type": "string",
+                                      "x-happier-max-utf8-bytes": 512
+                                    }
+                                  },
+                                  "required": [
+                                    "level",
+                                    "reasonId",
+                                    "reasonLabel"
+                                  ],
+                                  "type": "object"
+                                }
+                              ]
+                            }
+                          },
+                          "required": [
+                            "involvement"
+                          ],
+                          "type": "object"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "localRef",
+                        "locator",
+                        "snapshot",
+                        "viewer"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "kind": {
+                          "const": "absent"
+                        },
+                        "localRef": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "collisionScope": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+(?:\\u001f[^\\u0000-\\u001f\\u007f]+)?$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 192
+                            },
+                            "entryId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            },
+                            "kindId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            }
+                          },
+                          "required": [
+                            "kindId",
+                            "collisionScope",
+                            "entryId"
+                          ],
+                          "type": "object"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "localRef"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "kind": {
+                          "const": "merged"
+                        },
+                        "localRef": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "collisionScope": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+(?:\\u001f[^\\u0000-\\u001f\\u007f]+)?$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 192
+                            },
+                            "entryId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            },
+                            "kindId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            }
+                          },
+                          "required": [
+                            "kindId",
+                            "collisionScope",
+                            "entryId"
+                          ],
+                          "type": "object"
+                        },
+                        "successor": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "collisionScope": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+(?:\\u001f[^\\u0000-\\u001f\\u007f]+)?$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 192
+                            },
+                            "entryId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            },
+                            "kindId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            }
+                          },
+                          "required": [
+                            "kindId",
+                            "collisionScope",
+                            "entryId"
+                          ],
+                          "type": "object"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "localRef",
+                        "successor"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "failure": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "class": {
+                              "anyOf": [
+                                {
+                                  "const": "authentication"
+                                },
+                                {
+                                  "const": "permission"
+                                },
+                                {
+                                  "const": "rateLimit"
+                                },
+                                {
+                                  "const": "transient"
+                                },
+                                {
+                                  "const": "unsupportedContract"
+                                },
+                                {
+                                  "const": "unknown"
+                                }
+                              ]
+                            },
+                            "code": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            },
+                            "detail": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 256
+                            },
+                            "retryNotBeforeMs": {
+                              "maximum": 9007199254740991,
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "class",
+                            "code"
+                          ],
+                          "type": "object"
+                        },
+                        "kind": {
+                          "const": "unresolved"
+                        },
+                        "localRef": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "collisionScope": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+(?:\\u001f[^\\u0000-\\u001f\\u007f]+)?$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 192
+                            },
+                            "entryId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            },
+                            "kindId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            }
+                          },
+                          "required": [
+                            "kindId",
+                            "collisionScope",
+                            "entryId"
+                          ],
+                          "type": "object"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "localRef",
+                        "failure"
+                      ],
+                      "type": "object"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "kind"
               ],
               "type": "object"
             }
@@ -11909,6 +13836,45 @@
                           "type": "string",
                           "x-happier-max-utf8-bytes": 128
                         },
+                        "repository": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "deployment": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            },
+                            "kind": {
+                              "anyOf": [
+                                {
+                                  "const": "github"
+                                },
+                                {
+                                  "const": "gitlab"
+                                },
+                                {
+                                  "const": "bitbucket"
+                                },
+                                {
+                                  "const": "azure-devops"
+                                }
+                              ]
+                            },
+                            "repository": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 255
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "deployment",
+                            "repository"
+                          ],
+                          "type": "object"
+                        },
                         "snapshot": {
                           "additionalProperties": true,
                           "properties": {
@@ -12574,6 +14540,45 @@
                           "type": "string",
                           "x-happier-max-utf8-bytes": 128
                         },
+                        "repository": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "deployment": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            },
+                            "kind": {
+                              "anyOf": [
+                                {
+                                  "const": "github"
+                                },
+                                {
+                                  "const": "gitlab"
+                                },
+                                {
+                                  "const": "bitbucket"
+                                },
+                                {
+                                  "const": "azure-devops"
+                                }
+                              ]
+                            },
+                            "repository": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 255
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "deployment",
+                            "repository"
+                          ],
+                          "type": "object"
+                        },
                         "snapshot": {
                           "additionalProperties": true,
                           "properties": {
@@ -13235,6 +15240,45 @@
                           "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                           "type": "string",
                           "x-happier-max-utf8-bytes": 128
+                        },
+                        "repository": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "deployment": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            },
+                            "kind": {
+                              "anyOf": [
+                                {
+                                  "const": "github"
+                                },
+                                {
+                                  "const": "gitlab"
+                                },
+                                {
+                                  "const": "bitbucket"
+                                },
+                                {
+                                  "const": "azure-devops"
+                                }
+                              ]
+                            },
+                            "repository": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 255
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "deployment",
+                            "repository"
+                          ],
+                          "type": "object"
                         },
                         "snapshot": {
                           "additionalProperties": true,
@@ -13920,6 +15964,45 @@
                           "type": "string",
                           "x-happier-max-utf8-bytes": 128
                         },
+                        "repository": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "deployment": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            },
+                            "kind": {
+                              "anyOf": [
+                                {
+                                  "const": "github"
+                                },
+                                {
+                                  "const": "gitlab"
+                                },
+                                {
+                                  "const": "bitbucket"
+                                },
+                                {
+                                  "const": "azure-devops"
+                                }
+                              ]
+                            },
+                            "repository": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 255
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "deployment",
+                            "repository"
+                          ],
+                          "type": "object"
+                        },
                         "snapshot": {
                           "additionalProperties": true,
                           "properties": {
@@ -14579,6 +16662,755 @@
               "required": [
                 "kind",
                 "failure"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "failure": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "class": {
+                      "anyOf": [
+                        {
+                          "const": "authentication"
+                        },
+                        {
+                          "const": "permission"
+                        },
+                        {
+                          "const": "rateLimit"
+                        },
+                        {
+                          "const": "transient"
+                        },
+                        {
+                          "const": "unsupportedContract"
+                        },
+                        {
+                          "const": "unknown"
+                        }
+                      ]
+                    },
+                    "code": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
+                    },
+                    "detail": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 256
+                    },
+                    "retryNotBeforeMs": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "class",
+                    "code"
+                  ],
+                  "type": "object"
+                },
+                "kind": {
+                  "const": "uncertain"
+                },
+                "observation": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "kind": {
+                          "const": "present"
+                        },
+                        "localRef": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "collisionScope": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+(?:\\u001f[^\\u0000-\\u001f\\u007f]+)?$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 192
+                            },
+                            "entryId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            },
+                            "kindId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            }
+                          },
+                          "required": [
+                            "kindId",
+                            "collisionScope",
+                            "entryId"
+                          ],
+                          "type": "object"
+                        },
+                        "locator": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "displayPath": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 512
+                            },
+                            "routingToken": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 192
+                            },
+                            "v": {
+                              "const": 1
+                            },
+                            "webUrl": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 384
+                            }
+                          },
+                          "required": [
+                            "v"
+                          ],
+                          "type": "object"
+                        },
+                        "nativeRevision": {
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                          "type": "string",
+                          "x-happier-max-utf8-bytes": 128
+                        },
+                        "repository": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "deployment": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            },
+                            "kind": {
+                              "anyOf": [
+                                {
+                                  "const": "github"
+                                },
+                                {
+                                  "const": "gitlab"
+                                },
+                                {
+                                  "const": "bitbucket"
+                                },
+                                {
+                                  "const": "azure-devops"
+                                }
+                              ]
+                            },
+                            "repository": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 255
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "deployment",
+                            "repository"
+                          ],
+                          "type": "object"
+                        },
+                        "snapshot": {
+                          "additionalProperties": true,
+                          "properties": {
+                            "createdAtMs": {
+                              "maximum": 9007199254740991,
+                              "minimum": -9007199254740991,
+                              "type": "integer"
+                            },
+                            "facts": {
+                              "items": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "id": {
+                                    "minLength": 1,
+                                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                    "type": "string",
+                                    "x-happier-max-utf8-bytes": 64
+                                  },
+                                  "importance": {
+                                    "anyOf": [
+                                      {
+                                        "const": "primary"
+                                      },
+                                      {
+                                        "const": "secondary"
+                                      },
+                                      {
+                                        "const": "supplementary"
+                                      }
+                                    ]
+                                  },
+                                  "label": {
+                                    "minLength": 1,
+                                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                    "type": "string",
+                                    "x-happier-max-utf8-bytes": 64
+                                  },
+                                  "value": {
+                                    "anyOf": [
+                                      {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "kind": {
+                                            "const": "text"
+                                          },
+                                          "value": {
+                                            "minLength": 1,
+                                            "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                            "type": "string",
+                                            "x-happier-max-utf8-bytes": 64
+                                          }
+                                        },
+                                        "required": [
+                                          "kind",
+                                          "value"
+                                        ],
+                                        "type": "object"
+                                      },
+                                      {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "kind": {
+                                            "const": "actor"
+                                          },
+                                          "value": {
+                                            "minLength": 1,
+                                            "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                            "type": "string",
+                                            "x-happier-max-utf8-bytes": 64
+                                          }
+                                        },
+                                        "required": [
+                                          "kind",
+                                          "value"
+                                        ],
+                                        "type": "object"
+                                      },
+                                      {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "atMs": {
+                                            "maximum": 9007199254740991,
+                                            "minimum": -9007199254740991,
+                                            "type": "integer"
+                                          },
+                                          "format": {
+                                            "anyOf": [
+                                              {
+                                                "const": "relative"
+                                              },
+                                              {
+                                                "const": "absolute"
+                                              }
+                                            ]
+                                          },
+                                          "kind": {
+                                            "const": "timestamp"
+                                          }
+                                        },
+                                        "required": [
+                                          "kind",
+                                          "atMs",
+                                          "format"
+                                        ],
+                                        "type": "object"
+                                      },
+                                      {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "approximate": {
+                                            "const": true
+                                          },
+                                          "format": {
+                                            "anyOf": [
+                                              {
+                                                "const": "compact"
+                                              },
+                                              {
+                                                "const": "plain"
+                                              }
+                                            ]
+                                          },
+                                          "kind": {
+                                            "const": "number"
+                                          },
+                                          "value": {
+                                            "type": "number"
+                                          }
+                                        },
+                                        "required": [
+                                          "kind",
+                                          "value",
+                                          "format"
+                                        ],
+                                        "type": "object"
+                                      },
+                                      {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "kind": {
+                                            "const": "status"
+                                          },
+                                          "tone": {
+                                            "anyOf": [
+                                              {
+                                                "const": "success"
+                                              },
+                                              {
+                                                "const": "warning"
+                                              },
+                                              {
+                                                "const": "danger"
+                                              },
+                                              {
+                                                "const": "info"
+                                              },
+                                              {
+                                                "const": "neutral"
+                                              }
+                                            ]
+                                          },
+                                          "value": {
+                                            "minLength": 1,
+                                            "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                            "type": "string",
+                                            "x-happier-max-utf8-bytes": 64
+                                          }
+                                        },
+                                        "required": [
+                                          "kind",
+                                          "value",
+                                          "tone"
+                                        ],
+                                        "type": "object"
+                                      },
+                                      {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "kind": {
+                                            "const": "detailOnly"
+                                          }
+                                        },
+                                        "required": [
+                                          "kind"
+                                        ],
+                                        "type": "object"
+                                      }
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "id",
+                                  "importance",
+                                  "value"
+                                ],
+                                "type": "object"
+                              },
+                              "maxItems": 4,
+                              "type": "array"
+                            },
+                            "projectionTruncated": {
+                              "const": true
+                            },
+                            "scopeLabel": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 512
+                            },
+                            "state": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "nativeLabel": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 512
+                                },
+                                "presentation": {
+                                  "anyOf": [
+                                    {
+                                      "const": "active"
+                                    },
+                                    {
+                                      "const": "resolved"
+                                    },
+                                    {
+                                      "const": "closed"
+                                    },
+                                    {
+                                      "const": "suppressed"
+                                    },
+                                    {
+                                      "const": "unknown"
+                                    }
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "presentation"
+                              ],
+                              "type": "object"
+                            },
+                            "summary": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 512
+                            },
+                            "title": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 512
+                            },
+                            "v": {
+                              "const": 1
+                            }
+                          },
+                          "required": [
+                            "v",
+                            "title",
+                            "scopeLabel",
+                            "state",
+                            "facts"
+                          ],
+                          "type": "object"
+                        },
+                        "sourceUpdatedAtMs": {
+                          "maximum": 9007199254740991,
+                          "minimum": -9007199254740991,
+                          "type": "integer"
+                        },
+                        "viewer": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "involvement": {
+                              "items": {
+                                "anyOf": [
+                                  {
+                                    "const": "author"
+                                  },
+                                  {
+                                    "const": "assignee"
+                                  },
+                                  {
+                                    "const": "reviewRequested"
+                                  },
+                                  {
+                                    "const": "mentioned"
+                                  },
+                                  {
+                                    "const": "subscribed"
+                                  },
+                                  {
+                                    "const": "participating"
+                                  }
+                                ]
+                              },
+                              "maxItems": 6,
+                              "type": "array",
+                              "uniqueItems": true
+                            },
+                            "sourceAttention": {
+                              "anyOf": [
+                                {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "level": {
+                                      "const": "none"
+                                    }
+                                  },
+                                  "required": [
+                                    "level"
+                                  ],
+                                  "type": "object"
+                                },
+                                {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "level": {
+                                      "anyOf": [
+                                        {
+                                          "const": "suggested"
+                                        },
+                                        {
+                                          "const": "required"
+                                        }
+                                      ]
+                                    },
+                                    "reasonId": {
+                                      "minLength": 1,
+                                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                      "type": "string",
+                                      "x-happier-max-utf8-bytes": 128
+                                    },
+                                    "reasonLabel": {
+                                      "minLength": 1,
+                                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                      "type": "string",
+                                      "x-happier-max-utf8-bytes": 512
+                                    }
+                                  },
+                                  "required": [
+                                    "level",
+                                    "reasonId",
+                                    "reasonLabel"
+                                  ],
+                                  "type": "object"
+                                }
+                              ]
+                            }
+                          },
+                          "required": [
+                            "involvement"
+                          ],
+                          "type": "object"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "localRef",
+                        "locator",
+                        "snapshot",
+                        "viewer"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "kind": {
+                          "const": "absent"
+                        },
+                        "localRef": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "collisionScope": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+(?:\\u001f[^\\u0000-\\u001f\\u007f]+)?$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 192
+                            },
+                            "entryId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            },
+                            "kindId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            }
+                          },
+                          "required": [
+                            "kindId",
+                            "collisionScope",
+                            "entryId"
+                          ],
+                          "type": "object"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "localRef"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "kind": {
+                          "const": "merged"
+                        },
+                        "localRef": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "collisionScope": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+(?:\\u001f[^\\u0000-\\u001f\\u007f]+)?$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 192
+                            },
+                            "entryId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            },
+                            "kindId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            }
+                          },
+                          "required": [
+                            "kindId",
+                            "collisionScope",
+                            "entryId"
+                          ],
+                          "type": "object"
+                        },
+                        "successor": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "collisionScope": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+(?:\\u001f[^\\u0000-\\u001f\\u007f]+)?$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 192
+                            },
+                            "entryId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            },
+                            "kindId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            }
+                          },
+                          "required": [
+                            "kindId",
+                            "collisionScope",
+                            "entryId"
+                          ],
+                          "type": "object"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "localRef",
+                        "successor"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "failure": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "class": {
+                              "anyOf": [
+                                {
+                                  "const": "authentication"
+                                },
+                                {
+                                  "const": "permission"
+                                },
+                                {
+                                  "const": "rateLimit"
+                                },
+                                {
+                                  "const": "transient"
+                                },
+                                {
+                                  "const": "unsupportedContract"
+                                },
+                                {
+                                  "const": "unknown"
+                                }
+                              ]
+                            },
+                            "code": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            },
+                            "detail": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 256
+                            },
+                            "retryNotBeforeMs": {
+                              "maximum": 9007199254740991,
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "class",
+                            "code"
+                          ],
+                          "type": "object"
+                        },
+                        "kind": {
+                          "const": "unresolved"
+                        },
+                        "localRef": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "collisionScope": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+(?:\\u001f[^\\u0000-\\u001f\\u007f]+)?$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 192
+                            },
+                            "entryId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            },
+                            "kindId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            }
+                          },
+                          "required": [
+                            "kindId",
+                            "collisionScope",
+                            "entryId"
+                          ],
+                          "type": "object"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "localRef",
+                        "failure"
+                      ],
+                      "type": "object"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "kind"
               ],
               "type": "object"
             }
@@ -14926,6 +17758,45 @@
                           "type": "string",
                           "x-happier-max-utf8-bytes": 128
                         },
+                        "repository": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "deployment": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            },
+                            "kind": {
+                              "anyOf": [
+                                {
+                                  "const": "github"
+                                },
+                                {
+                                  "const": "gitlab"
+                                },
+                                {
+                                  "const": "bitbucket"
+                                },
+                                {
+                                  "const": "azure-devops"
+                                }
+                              ]
+                            },
+                            "repository": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 255
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "deployment",
+                            "repository"
+                          ],
+                          "type": "object"
+                        },
                         "snapshot": {
                           "additionalProperties": true,
                           "properties": {
@@ -15591,6 +18462,45 @@
                           "type": "string",
                           "x-happier-max-utf8-bytes": 128
                         },
+                        "repository": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "deployment": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            },
+                            "kind": {
+                              "anyOf": [
+                                {
+                                  "const": "github"
+                                },
+                                {
+                                  "const": "gitlab"
+                                },
+                                {
+                                  "const": "bitbucket"
+                                },
+                                {
+                                  "const": "azure-devops"
+                                }
+                              ]
+                            },
+                            "repository": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 255
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "deployment",
+                            "repository"
+                          ],
+                          "type": "object"
+                        },
                         "snapshot": {
                           "additionalProperties": true,
                           "properties": {
@@ -16252,6 +19162,45 @@
                           "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                           "type": "string",
                           "x-happier-max-utf8-bytes": 128
+                        },
+                        "repository": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "deployment": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            },
+                            "kind": {
+                              "anyOf": [
+                                {
+                                  "const": "github"
+                                },
+                                {
+                                  "const": "gitlab"
+                                },
+                                {
+                                  "const": "bitbucket"
+                                },
+                                {
+                                  "const": "azure-devops"
+                                }
+                              ]
+                            },
+                            "repository": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 255
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "deployment",
+                            "repository"
+                          ],
+                          "type": "object"
                         },
                         "snapshot": {
                           "additionalProperties": true,
@@ -16937,6 +19886,45 @@
                           "type": "string",
                           "x-happier-max-utf8-bytes": 128
                         },
+                        "repository": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "deployment": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            },
+                            "kind": {
+                              "anyOf": [
+                                {
+                                  "const": "github"
+                                },
+                                {
+                                  "const": "gitlab"
+                                },
+                                {
+                                  "const": "bitbucket"
+                                },
+                                {
+                                  "const": "azure-devops"
+                                }
+                              ]
+                            },
+                            "repository": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 255
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "deployment",
+                            "repository"
+                          ],
+                          "type": "object"
+                        },
                         "snapshot": {
                           "additionalProperties": true,
                           "properties": {
@@ -17596,6 +20584,755 @@
               "required": [
                 "kind",
                 "failure"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "failure": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "class": {
+                      "anyOf": [
+                        {
+                          "const": "authentication"
+                        },
+                        {
+                          "const": "permission"
+                        },
+                        {
+                          "const": "rateLimit"
+                        },
+                        {
+                          "const": "transient"
+                        },
+                        {
+                          "const": "unsupportedContract"
+                        },
+                        {
+                          "const": "unknown"
+                        }
+                      ]
+                    },
+                    "code": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
+                    },
+                    "detail": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 256
+                    },
+                    "retryNotBeforeMs": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "class",
+                    "code"
+                  ],
+                  "type": "object"
+                },
+                "kind": {
+                  "const": "uncertain"
+                },
+                "observation": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "kind": {
+                          "const": "present"
+                        },
+                        "localRef": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "collisionScope": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+(?:\\u001f[^\\u0000-\\u001f\\u007f]+)?$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 192
+                            },
+                            "entryId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            },
+                            "kindId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            }
+                          },
+                          "required": [
+                            "kindId",
+                            "collisionScope",
+                            "entryId"
+                          ],
+                          "type": "object"
+                        },
+                        "locator": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "displayPath": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 512
+                            },
+                            "routingToken": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 192
+                            },
+                            "v": {
+                              "const": 1
+                            },
+                            "webUrl": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 384
+                            }
+                          },
+                          "required": [
+                            "v"
+                          ],
+                          "type": "object"
+                        },
+                        "nativeRevision": {
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                          "type": "string",
+                          "x-happier-max-utf8-bytes": 128
+                        },
+                        "repository": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "deployment": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            },
+                            "kind": {
+                              "anyOf": [
+                                {
+                                  "const": "github"
+                                },
+                                {
+                                  "const": "gitlab"
+                                },
+                                {
+                                  "const": "bitbucket"
+                                },
+                                {
+                                  "const": "azure-devops"
+                                }
+                              ]
+                            },
+                            "repository": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 255
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "deployment",
+                            "repository"
+                          ],
+                          "type": "object"
+                        },
+                        "snapshot": {
+                          "additionalProperties": true,
+                          "properties": {
+                            "createdAtMs": {
+                              "maximum": 9007199254740991,
+                              "minimum": -9007199254740991,
+                              "type": "integer"
+                            },
+                            "facts": {
+                              "items": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "id": {
+                                    "minLength": 1,
+                                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                    "type": "string",
+                                    "x-happier-max-utf8-bytes": 64
+                                  },
+                                  "importance": {
+                                    "anyOf": [
+                                      {
+                                        "const": "primary"
+                                      },
+                                      {
+                                        "const": "secondary"
+                                      },
+                                      {
+                                        "const": "supplementary"
+                                      }
+                                    ]
+                                  },
+                                  "label": {
+                                    "minLength": 1,
+                                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                    "type": "string",
+                                    "x-happier-max-utf8-bytes": 64
+                                  },
+                                  "value": {
+                                    "anyOf": [
+                                      {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "kind": {
+                                            "const": "text"
+                                          },
+                                          "value": {
+                                            "minLength": 1,
+                                            "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                            "type": "string",
+                                            "x-happier-max-utf8-bytes": 64
+                                          }
+                                        },
+                                        "required": [
+                                          "kind",
+                                          "value"
+                                        ],
+                                        "type": "object"
+                                      },
+                                      {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "kind": {
+                                            "const": "actor"
+                                          },
+                                          "value": {
+                                            "minLength": 1,
+                                            "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                            "type": "string",
+                                            "x-happier-max-utf8-bytes": 64
+                                          }
+                                        },
+                                        "required": [
+                                          "kind",
+                                          "value"
+                                        ],
+                                        "type": "object"
+                                      },
+                                      {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "atMs": {
+                                            "maximum": 9007199254740991,
+                                            "minimum": -9007199254740991,
+                                            "type": "integer"
+                                          },
+                                          "format": {
+                                            "anyOf": [
+                                              {
+                                                "const": "relative"
+                                              },
+                                              {
+                                                "const": "absolute"
+                                              }
+                                            ]
+                                          },
+                                          "kind": {
+                                            "const": "timestamp"
+                                          }
+                                        },
+                                        "required": [
+                                          "kind",
+                                          "atMs",
+                                          "format"
+                                        ],
+                                        "type": "object"
+                                      },
+                                      {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "approximate": {
+                                            "const": true
+                                          },
+                                          "format": {
+                                            "anyOf": [
+                                              {
+                                                "const": "compact"
+                                              },
+                                              {
+                                                "const": "plain"
+                                              }
+                                            ]
+                                          },
+                                          "kind": {
+                                            "const": "number"
+                                          },
+                                          "value": {
+                                            "type": "number"
+                                          }
+                                        },
+                                        "required": [
+                                          "kind",
+                                          "value",
+                                          "format"
+                                        ],
+                                        "type": "object"
+                                      },
+                                      {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "kind": {
+                                            "const": "status"
+                                          },
+                                          "tone": {
+                                            "anyOf": [
+                                              {
+                                                "const": "success"
+                                              },
+                                              {
+                                                "const": "warning"
+                                              },
+                                              {
+                                                "const": "danger"
+                                              },
+                                              {
+                                                "const": "info"
+                                              },
+                                              {
+                                                "const": "neutral"
+                                              }
+                                            ]
+                                          },
+                                          "value": {
+                                            "minLength": 1,
+                                            "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                            "type": "string",
+                                            "x-happier-max-utf8-bytes": 64
+                                          }
+                                        },
+                                        "required": [
+                                          "kind",
+                                          "value",
+                                          "tone"
+                                        ],
+                                        "type": "object"
+                                      },
+                                      {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "kind": {
+                                            "const": "detailOnly"
+                                          }
+                                        },
+                                        "required": [
+                                          "kind"
+                                        ],
+                                        "type": "object"
+                                      }
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "id",
+                                  "importance",
+                                  "value"
+                                ],
+                                "type": "object"
+                              },
+                              "maxItems": 4,
+                              "type": "array"
+                            },
+                            "projectionTruncated": {
+                              "const": true
+                            },
+                            "scopeLabel": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 512
+                            },
+                            "state": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "nativeLabel": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 512
+                                },
+                                "presentation": {
+                                  "anyOf": [
+                                    {
+                                      "const": "active"
+                                    },
+                                    {
+                                      "const": "resolved"
+                                    },
+                                    {
+                                      "const": "closed"
+                                    },
+                                    {
+                                      "const": "suppressed"
+                                    },
+                                    {
+                                      "const": "unknown"
+                                    }
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "presentation"
+                              ],
+                              "type": "object"
+                            },
+                            "summary": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 512
+                            },
+                            "title": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 512
+                            },
+                            "v": {
+                              "const": 1
+                            }
+                          },
+                          "required": [
+                            "v",
+                            "title",
+                            "scopeLabel",
+                            "state",
+                            "facts"
+                          ],
+                          "type": "object"
+                        },
+                        "sourceUpdatedAtMs": {
+                          "maximum": 9007199254740991,
+                          "minimum": -9007199254740991,
+                          "type": "integer"
+                        },
+                        "viewer": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "involvement": {
+                              "items": {
+                                "anyOf": [
+                                  {
+                                    "const": "author"
+                                  },
+                                  {
+                                    "const": "assignee"
+                                  },
+                                  {
+                                    "const": "reviewRequested"
+                                  },
+                                  {
+                                    "const": "mentioned"
+                                  },
+                                  {
+                                    "const": "subscribed"
+                                  },
+                                  {
+                                    "const": "participating"
+                                  }
+                                ]
+                              },
+                              "maxItems": 6,
+                              "type": "array",
+                              "uniqueItems": true
+                            },
+                            "sourceAttention": {
+                              "anyOf": [
+                                {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "level": {
+                                      "const": "none"
+                                    }
+                                  },
+                                  "required": [
+                                    "level"
+                                  ],
+                                  "type": "object"
+                                },
+                                {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "level": {
+                                      "anyOf": [
+                                        {
+                                          "const": "suggested"
+                                        },
+                                        {
+                                          "const": "required"
+                                        }
+                                      ]
+                                    },
+                                    "reasonId": {
+                                      "minLength": 1,
+                                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                      "type": "string",
+                                      "x-happier-max-utf8-bytes": 128
+                                    },
+                                    "reasonLabel": {
+                                      "minLength": 1,
+                                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                      "type": "string",
+                                      "x-happier-max-utf8-bytes": 512
+                                    }
+                                  },
+                                  "required": [
+                                    "level",
+                                    "reasonId",
+                                    "reasonLabel"
+                                  ],
+                                  "type": "object"
+                                }
+                              ]
+                            }
+                          },
+                          "required": [
+                            "involvement"
+                          ],
+                          "type": "object"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "localRef",
+                        "locator",
+                        "snapshot",
+                        "viewer"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "kind": {
+                          "const": "absent"
+                        },
+                        "localRef": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "collisionScope": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+(?:\\u001f[^\\u0000-\\u001f\\u007f]+)?$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 192
+                            },
+                            "entryId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            },
+                            "kindId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            }
+                          },
+                          "required": [
+                            "kindId",
+                            "collisionScope",
+                            "entryId"
+                          ],
+                          "type": "object"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "localRef"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "kind": {
+                          "const": "merged"
+                        },
+                        "localRef": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "collisionScope": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+(?:\\u001f[^\\u0000-\\u001f\\u007f]+)?$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 192
+                            },
+                            "entryId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            },
+                            "kindId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            }
+                          },
+                          "required": [
+                            "kindId",
+                            "collisionScope",
+                            "entryId"
+                          ],
+                          "type": "object"
+                        },
+                        "successor": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "collisionScope": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+(?:\\u001f[^\\u0000-\\u001f\\u007f]+)?$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 192
+                            },
+                            "entryId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            },
+                            "kindId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            }
+                          },
+                          "required": [
+                            "kindId",
+                            "collisionScope",
+                            "entryId"
+                          ],
+                          "type": "object"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "localRef",
+                        "successor"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "failure": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "class": {
+                              "anyOf": [
+                                {
+                                  "const": "authentication"
+                                },
+                                {
+                                  "const": "permission"
+                                },
+                                {
+                                  "const": "rateLimit"
+                                },
+                                {
+                                  "const": "transient"
+                                },
+                                {
+                                  "const": "unsupportedContract"
+                                },
+                                {
+                                  "const": "unknown"
+                                }
+                              ]
+                            },
+                            "code": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            },
+                            "detail": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 256
+                            },
+                            "retryNotBeforeMs": {
+                              "maximum": 9007199254740991,
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "class",
+                            "code"
+                          ],
+                          "type": "object"
+                        },
+                        "kind": {
+                          "const": "unresolved"
+                        },
+                        "localRef": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "collisionScope": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+(?:\\u001f[^\\u0000-\\u001f\\u007f]+)?$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 192
+                            },
+                            "entryId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            },
+                            "kindId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            }
+                          },
+                          "required": [
+                            "kindId",
+                            "collisionScope",
+                            "entryId"
+                          ],
+                          "type": "object"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "localRef",
+                        "failure"
+                      ],
+                      "type": "object"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "kind"
               ],
               "type": "object"
             }
@@ -18070,6 +21807,96 @@
                 "failure"
               ],
               "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "failure": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "class": {
+                      "anyOf": [
+                        {
+                          "const": "authentication"
+                        },
+                        {
+                          "const": "permission"
+                        },
+                        {
+                          "const": "rateLimit"
+                        },
+                        {
+                          "const": "transient"
+                        },
+                        {
+                          "const": "unsupportedContract"
+                        },
+                        {
+                          "const": "unknown"
+                        }
+                      ]
+                    },
+                    "code": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
+                    },
+                    "detail": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 256
+                    },
+                    "retryNotBeforeMs": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "class",
+                    "code"
+                  ],
+                  "type": "object"
+                },
+                "kind": {
+                  "const": "uncertain"
+                },
+                "status": {
+                  "anyOf": [
+                    {
+                      "anyOf": [
+                        {
+                          "const": "active"
+                        },
+                        {
+                          "const": "fixed"
+                        },
+                        {
+                          "const": "wontFix"
+                        },
+                        {
+                          "const": "closed"
+                        },
+                        {
+                          "const": "byDesign"
+                        },
+                        {
+                          "const": "pending"
+                        }
+                      ]
+                    },
+                    {
+                      "const": "unknown"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "type": "object"
             }
           ]
         },
@@ -18200,6 +22027,7 @@
       }
     ],
     "sessionHeaderActions": [],
+    "sessionInfoSections": [],
     "settings": [],
     "systemTools": [
       {

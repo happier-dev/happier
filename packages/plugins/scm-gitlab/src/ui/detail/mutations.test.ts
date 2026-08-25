@@ -22,6 +22,13 @@ import {
   buildGitlabMergeRequestCloseInputV1,
   buildGitlabMergeRequestMarkReadyInputV1,
   buildGitlabMergeRequestMergeInputV1,
+  buildGitlabMergeRequestReopenInputV1,
+  buildGitlabReviewerChangeInputV1,
+  buildGitlabDiscussionResolutionInputV1,
+  buildGitlabIssueCloseInputV1,
+  buildGitlabIssueReopenInputV1,
+  buildGitlabIssueAssignInputV1,
+  buildGitlabIssueLabelInputV1,
   gitlabOfferedMergeRequestWritesV1,
   projectGitlabWriteOutcomeV1,
 } from './mutations.js';
@@ -42,6 +49,23 @@ const CONFIGURED_INSTANCE = Object.freeze({
   }),
   localInstanceKey: 'gitlab-com',
   configuration: Object.freeze({ v: 1, token: 'gitlab-configuration-token-v1' }),
+});
+
+describe('the remaining registered write inputs', () => {
+  it('builds each MR input from the mounted entry and its observed head', () => {
+    const input = detailInput();
+    expect(buildGitlabMergeRequestReopenInputV1(input)).toMatchObject({ localRef: { kindId: 'merge-request' } });
+    expect(buildGitlabReviewerChangeInputV1(input, 'add', ['alice'])).toMatchObject({ operation: 'add', reviewerUsernames: ['alice'], observedHeadSha: OBSERVED_HEAD });
+    expect(buildGitlabDiscussionResolutionInputV1(input, 'discussion-1', true)).toMatchObject({ discussionId: 'discussion-1', resolved: true, observedHeadSha: OBSERVED_HEAD });
+  });
+
+  it('builds each issue input without replacing the user-entered member names', () => {
+    const input = detailInput({ kindId: 'issue', nativeRevision: '2026-08-12T09:00:00.000Z' });
+    expect(buildGitlabIssueCloseInputV1(input)).toMatchObject({ observedRevision: '2026-08-12T09:00:00.000Z' });
+    expect(buildGitlabIssueReopenInputV1(input)).toMatchObject({ observedRevision: '2026-08-12T09:00:00.000Z' });
+    expect(buildGitlabIssueAssignInputV1(input, 'remove', ['alice'])).toMatchObject({ operation: 'remove', assigneeUsernames: ['alice'] });
+    expect(buildGitlabIssueLabelInputV1(input, 'add', ['needs-review'])).toMatchObject({ operation: 'add', labelNames: ['needs-review'] });
+  });
 });
 
 /** GitLab's own `sha` for this merge request, exactly as the read observed it. */
@@ -87,6 +111,7 @@ function detailInput(
 }
 
 const STATE_ROW = Object.freeze({
+  projectId: 3,
   iid: '412',
   state: 'merged',
   draft: false,
@@ -98,11 +123,11 @@ function success(result: unknown): PluginActionExecution<unknown> {
 }
 
 describe('gitlabOfferedMergeRequestWritesV1', () => {
-  it('offers all three transitions of an open merge request', () => {
+  it('offers every registered open merge-request write', () => {
     expect(gitlabOfferedMergeRequestWritesV1({
       kindId: 'merge-request',
       state: { presentation: 'active', nativeLabel: 'Opened' },
-    })).toEqual(['merge', 'markReady', 'close']);
+    })).toEqual(['merge', 'markReady', 'close', 'reviewerChange']);
   });
 
   it('offers nothing on an issue, because all three Actions are merge-request writes', () => {
@@ -112,11 +137,11 @@ describe('gitlabOfferedMergeRequestWritesV1', () => {
     })).toEqual([]);
   });
 
-  it('offers nothing on a closed merge request, since GitLab declares no reopen write', () => {
+  it('offers the declared reopen on a closed merge request', () => {
     expect(gitlabOfferedMergeRequestWritesV1({
       kindId: 'merge-request',
       state: { presentation: 'closed', nativeLabel: 'Merged' },
-    })).toEqual([]);
+    })).toEqual(['mergeRequestReopen']);
   });
 
   it('branches on the projected state and never on GitLab’s display word', () => {
@@ -131,8 +156,8 @@ describe('gitlabOfferedMergeRequestWritesV1', () => {
       state: { presentation: 'active', nativeLabel: 'Merged' },
     });
 
-    expect(relabelled).toEqual(['merge', 'markReady', 'close']);
-    expect(closedLookingLabel).toEqual(['merge', 'markReady', 'close']);
+    expect(relabelled).toEqual(['merge', 'markReady', 'close', 'reviewerChange']);
+    expect(closedLookingLabel).toEqual(['merge', 'markReady', 'close', 'reviewerChange']);
   });
 });
 

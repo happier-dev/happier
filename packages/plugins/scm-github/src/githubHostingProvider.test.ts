@@ -43,10 +43,6 @@ describe('bundled GitHub SCM hosting provider plugin', () => {
             // is present that no declared write consumes.
             methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
           }),
-        }), expect.objectContaining({
-          id: 'github-cli-process',
-          capability: 'process',
-          scope: { executables: [{ kind: 'systemTool', id: 'github-cli' }] },
         })]),
         optional: [],
       },
@@ -82,7 +78,6 @@ describe('bundled GitHub SCM hosting provider plugin', () => {
             },
           }),
         ],
-        systemTools: [{ id: 'github-cli', executableNames: ['gh'] }],
       },
     });
     expect(mod.PLUGIN_MANIFEST).not.toHaveProperty('source');
@@ -101,11 +96,11 @@ describe('bundled GitHub SCM hosting provider plugin', () => {
     const { PLUGIN_MANIFEST } = await import('./manifest.js');
     expect(ingestPluginManifestV2({
       ...PLUGIN_MANIFEST,
-      contributes: { ...PLUGIN_MANIFEST.contributes, scmHostingProviders: [{ ...PLUGIN_MANIFEST.contributes.scmHostingProviders[0], authService: 'missing' }] },
+      contributes: { ...PLUGIN_MANIFEST.contributes, scmHostingProviders: [{ ...(PLUGIN_MANIFEST.contributes.scmHostingProviders ?? [])[0], authService: 'missing' }] },
     })).toMatchObject({ ok: false, diagnostics: [expect.objectContaining({ code: 'plugin_manifest_dangling_reference' })] });
     expect(ingestPluginManifestV2({
       ...PLUGIN_MANIFEST,
-      contributes: { ...PLUGIN_MANIFEST.contributes, scmHostingProviders: [{ ...PLUGIN_MANIFEST.contributes.scmHostingProviders[0], authService: 'github' }] },
+      contributes: { ...PLUGIN_MANIFEST.contributes, scmHostingProviders: [{ ...(PLUGIN_MANIFEST.contributes.scmHostingProviders ?? [])[0], authService: 'github' }] },
     })).toMatchObject({ ok: false, diagnostics: [expect.objectContaining({ code: 'plugin_manifest_wrong_family_reference' })] });
     expect(ingestPluginManifestV2({
       ...PLUGIN_MANIFEST,
@@ -141,7 +136,7 @@ describe('bundled GitHub SCM hosting provider plugin', () => {
           return { dispose() {} };
         },
       },
-    } as Parameters<typeof mod.activate>[0]);
+    } as unknown as Parameters<typeof mod.activate>[0]);
 
     try {
       expect(registered).toEqual([
@@ -164,14 +159,14 @@ describe('bundled GitHub SCM hosting provider plugin', () => {
       ]);
       expect(registered[0]).not.toHaveProperty('auth');
       expect(registered.map((registration) => (registration as Readonly<{ id: string }>).id))
-        .toEqual((await import('./manifest.js')).PLUGIN_MANIFEST.contributes.scmHostingProviders.map(({ id }) => id));
+        .toEqual(((await import('./manifest.js')).PLUGIN_MANIFEST.contributes.scmHostingProviders ?? []).map(({ id }) => id));
       expect(hooks).toEqual([]);
     } finally {
       if (typeof cleanup === 'function') await cleanup();
     }
   });
 
-  it('registered repository hooks consume operation-scoped runtime services', async () => {
+  it('discovers publish targets without ambient CLI credentials when no bound account materializes', async () => {
     const mod = await import('./activate.js').catch(() => null);
     expect(mod).not.toBeNull();
     if (!mod) return;
@@ -195,9 +190,10 @@ describe('bundled GitHub SCM hosting provider plugin', () => {
           return { dispose() {} };
         },
       },
-    } as Parameters<typeof mod.activate>[0]);
+    } as unknown as Parameters<typeof mod.activate>[0]);
 
     try {
+      const executedCommands: string[] = [];
       const describePublishTargets = registered[0]?.adapter.describePublishTargets;
       expect(describePublishTargets).toEqual(expect.any(Function));
       if (typeof describePublishTargets !== 'function') return;
@@ -216,22 +212,18 @@ describe('bundled GitHub SCM hosting provider plugin', () => {
             kind: 'missing',
             reason: 'credential_unavailable',
           }),
+          // The bound Connected Account is the only authenticated authority: a
+          // machine-local `gh` must never be reached, so any invocation fails here.
           executeCommand: async (request: Readonly<{ args: readonly string[] }>) => {
-            if (request.args[0] === 'auth') {
-              return { ok: true, stdout: '', stderr: '', exitCode: 0 };
-            }
-            if (request.args.join(' ') === 'api user --hostname github.com') {
-              return { ok: true, stdout: JSON.stringify({ login: 'octocat' }), stderr: '', exitCode: 0 };
-            }
-            return { ok: true, stdout: '[]', stderr: '', exitCode: 0 };
+            executedCommands.push(request.args.join(' '));
+            return { ok: true, stdout: '', stderr: '', exitCode: 0 };
           },
         },
       })).resolves.toMatchObject({
-        auth: { state: 'authenticated', profileKind: 'provider_cli' },
-        targets: [
-          expect.objectContaining({ owner: 'octocat' }),
-        ],
+        auth: { state: 'authentication_required', profileKind: 'no_auth' },
+        targets: [],
       });
+      expect(executedCommands).toEqual([]);
     } finally {
       if (typeof cleanup === 'function') await cleanup();
     }
@@ -242,10 +234,10 @@ describe('bundled GitHub SCM hosting provider plugin', () => {
     expect(mod).not.toBeNull();
     if (!mod) return;
 
-    const adapter = mod.githubHostingProviderAdapter as Adapter;
+    const adapter = mod.githubHostingProviderAdapter as unknown as Adapter;
     const enterpriseAdapter = mod.createGithubScmHostingProviderAdapter({
       exactHosts: ['github.company.com', 'ghe.internal.test'],
-    }) as Adapter;
+    }) as unknown as Adapter;
 
     expect(adapter.detectRemote({
       remoteName: 'origin',
@@ -301,7 +293,7 @@ describe('bundled GitHub SCM hosting provider plugin', () => {
     expect(mod).not.toBeNull();
     if (!mod) return;
 
-    const adapter = mod.githubHostingProviderAdapter as Adapter;
+    const adapter = mod.githubHostingProviderAdapter as unknown as Adapter;
     const provider = adapter.detectRemote({
       remoteName: 'origin',
       remoteUrl: 'https://github.com/happier-dev/happier.git',

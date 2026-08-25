@@ -9,7 +9,7 @@ const encodeJson = (value: unknown) => new TextEncoder().encode(JSON.stringify(v
 
 describe('GitHub Connected Account mode contract', () => {
   it('declares a manual fine-grained PAT mode without reusing Happier login OAuth', () => {
-    const descriptor = PLUGIN_MANIFEST.contributes.connectedAccountDescriptors[0];
+    const descriptor = (PLUGIN_MANIFEST.contributes.connectedAccountDescriptors ?? [])[0];
 
     expect(descriptor).toMatchObject({
       id: 'github-account',
@@ -27,7 +27,7 @@ describe('GitHub Connected Account mode contract', () => {
     });
     expect(descriptor).not.toHaveProperty('auth');
     expect(JSON.stringify(descriptor)).not.toContain('githubOAuth');
-    expect(PLUGIN_MANIFEST.hostAccess.required[0]?.scope.targets).toContainEqual({
+    expect((PLUGIN_MANIFEST.hostAccess?.required ?? [])[0]?.scope.targets).toContainEqual({
       kind: 'fixedOrigin',
       origin: 'https://api.github.com',
     });
@@ -49,7 +49,7 @@ describe('GitHub Connected Account mode contract', () => {
           return { dispose() {} };
         },
       },
-    } as Parameters<typeof activate>[0]);
+    } as unknown as Parameters<typeof activate>[0]);
 
     try {
       expect(registrations.map(({ id }) => id)).toEqual(['github-account']);
@@ -82,7 +82,7 @@ describe('GitHub Connected Account mode contract', () => {
           async set(key: string, value: string) { connectCredentialValues.set(key, value); },
           async delete(key: string) { connectCredentialValues.delete(key); },
         },
-      } as Parameters<typeof authentication.complete>[1]);
+      } as unknown as Parameters<typeof authentication.complete>[1]);
       expect(connectResult).toEqual({
         status: 'connected',
         accountId: '12345',
@@ -120,7 +120,7 @@ describe('GitHub Connected Account mode contract', () => {
           async set(key: string, value: string) { reconnectCredentialValues.set(key, value); },
           async delete(key: string) { reconnectCredentialValues.delete(key); },
         },
-      } as Parameters<typeof authentication.complete>[1]);
+      } as unknown as Parameters<typeof authentication.complete>[1]);
       expect(reconnectResult).toEqual({
         status: 'connected',
         accountId: '67890',
@@ -150,7 +150,7 @@ describe('GitHub Connected Account mode contract', () => {
           return { dispose() {} };
         },
       },
-    } as Parameters<typeof activate>[0]);
+    } as unknown as Parameters<typeof activate>[0]);
     try {
       const authentication = registrations[0]?.authentication.modes['fine-grained-pat'];
       if (!authentication || authentication.kind !== 'manual') {
@@ -178,7 +178,7 @@ describe('GitHub Connected Account mode contract', () => {
           async set(key: string, value: string) { credentialValues.set(key, value); },
           async delete(key: string) { credentialValues.delete(key); },
         },
-      } as Parameters<typeof authentication.complete>[1]);
+      } as unknown as Parameters<typeof authentication.complete>[1]);
 
       expect(result).toMatchObject({
         status: 'unavailable',

@@ -9,6 +9,7 @@ import { BITBUCKET_PLUGIN_ID } from '../../bitbucketContracts.js';
 import type {
   BitbucketProjectedActivityRowV1,
   BitbucketProjectedCommentRowV1,
+  BitbucketProjectedDiffstatRowV1,
   BitbucketProjectedStatusRowV1,
 } from '../../triage/detail/projection.js';
 import { BITBUCKET_TRIAGE_DETAIL_ACTION_IDS } from '../../triage/source/detailActions.js';
@@ -16,6 +17,8 @@ import {
   BitbucketActivityResultV1Schema,
   BitbucketBuildsResultV1Schema,
   BitbucketCommentsResultV1Schema,
+  BitbucketDiffResultV1Schema,
+  BitbucketOverviewResultV1Schema,
 } from '../../triage/source/detailContracts.js';
 
 import {
@@ -356,4 +359,109 @@ export function useBitbucketComments(
   }, [execute, instance, localRef, routingToken]);
 
   return useBitbucketPagedWalk(readPage);
+}
+
+/* ------------------------------------------------------------------ overview */
+
+export type BitbucketOverviewControllerV1 = Readonly<{
+  result: ReturnType<typeof BitbucketOverviewResultV1Schema.parse> | null;
+  pending: boolean;
+  refresh: () => void;
+}>;
+
+export function useBitbucketOverview(
+  input: TriageDetailSurfaceInputV1,
+): BitbucketOverviewControllerV1 {
+  const action = useMemo(() => ({
+    pluginId: BITBUCKET_PLUGIN_ID,
+    localId: BITBUCKET_TRIAGE_DETAIL_ACTION_IDS.readOverview,
+  }), []);
+  const { execute } = useExecutePluginAction(action);
+  const localRef = useBitbucketEntryLocalRef(input);
+  const { instance } = input;
+  const routingToken = input.observation.locator.routingToken;
+  const { active, activeSignal } = useTabPanelActivity();
+  const [result, setResult] = useState<ReturnType<typeof BitbucketOverviewResultV1Schema.parse> | null>(null);
+  const [pending, setPending] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  useEffect(() => {
+    if (!active) return;
+    let current = true;
+    setPending(true);
+    void execute({
+      v: 1,
+      instance,
+      localRef,
+      routingToken: routingToken ?? '',
+    }, { signal: activeSignal }).then((execution: ExecuteResult) => {
+      if (!current || activeSignal.aborted) return;
+      const parsed = execution.status === 'success'
+        ? BitbucketOverviewResultV1Schema.safeParse(execution.result)
+        : null;
+      setResult(parsed?.success === true ? parsed.data : {
+        kind: 'unavailable',
+        failure: dispatchFailure(execution.status, execution.code ?? 'bitbucket-overview-read-failed'),
+      });
+      setPending(false);
+    });
+    return () => { current = false; };
+  }, [active, activeSignal, execute, instance, localRef, refreshKey, routingToken]);
+
+  return useMemo(() => ({
+    result,
+    pending,
+    refresh: () => { if (!pending) setRefreshKey((value) => value + 1); },
+  }), [pending, result]);
+}
+
+/* ---------------------------------------------------------------------- diff */
+
+export type BitbucketDiffControllerV1 = BitbucketPagedControllerV1<BitbucketProjectedDiffstatRowV1>
+  & Readonly<{ raw: Extract<ReturnType<typeof BitbucketDiffResultV1Schema.parse>, { kind: 'diff' }>['raw'] | null }>;
+
+export function useBitbucketDiff(
+  input: TriageDetailSurfaceInputV1,
+): BitbucketDiffControllerV1 {
+  const action = useMemo(() => ({
+    pluginId: BITBUCKET_PLUGIN_ID,
+    localId: BITBUCKET_TRIAGE_DETAIL_ACTION_IDS.readDiff,
+  }), []);
+  const { execute } = useExecutePluginAction(action);
+  const localRef = useBitbucketEntryLocalRef(input);
+  const { instance } = input;
+  const routingToken = input.observation.locator.routingToken;
+  const [raw, setRaw] = useState<BitbucketDiffControllerV1['raw']>(null);
+  const readPage: PageReader<BitbucketProjectedDiffstatRowV1> = useCallback(async (
+    continuation,
+    signal,
+  ) => {
+    const execution = await execute({
+      v: 1,
+      instance,
+      localRef,
+      routingToken: routingToken ?? '',
+      ...(continuation === null ? {} : { continuation }),
+    }, { signal }) as ExecuteResult;
+    if (execution.status !== 'success') {
+      return { kind: 'failed' as const, failure: dispatchFailure(
+        execution.status,
+        execution.code ?? 'bitbucket-diff-read-failed',
+      ) };
+    }
+    const parsed = BitbucketDiffResultV1Schema.safeParse(execution.result);
+    if (!parsed.success) return { kind: 'failed' as const, failure: UNREADABLE_RESULT };
+    if (parsed.data.kind === 'unavailable') {
+      return { kind: 'failed' as const, failure: parsed.data.failure };
+    }
+    if (continuation === null) setRaw(parsed.data.raw ?? null);
+    return { kind: 'page' as const, page: toPage({
+      rows: parsed.data.files,
+      omittedRowCount: parsed.data.omittedRowCount,
+      projectionTruncated: parsed.data.projectionTruncated,
+      ...(parsed.data.continuation === undefined ? {} : { continuation: parsed.data.continuation }),
+    }) };
+  }, [execute, instance, localRef, routingToken]);
+  const controller = useBitbucketPagedWalk(readPage);
+  return useMemo(() => ({ ...controller, raw }), [controller, raw]);
 }

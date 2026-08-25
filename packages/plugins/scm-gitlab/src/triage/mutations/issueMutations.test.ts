@@ -20,11 +20,13 @@
  *     never saw.
  */
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { GITLAB_MUTATION_DEADLINE_MS } from '../admission.js';
 import {
   createStubGitlabTransport,
   gitlabTestConfiguredInstance,
+  GITLAB_STUB_NEVER_ANSWERS,
   GITLAB_TEST_COLLISION_SCOPE,
   type RecordedGitlabRequest,
   type StubGitlabResponse,
@@ -60,7 +62,10 @@ function issueBody(overrides: Readonly<Record<string, unknown>> = {}): unknown {
 /** The answer GitLab never sent back: a request that left, and no reply at all. */
 const ANSWER_LOST = Symbol('gitlab-answer-lost');
 
-type ScriptedGitlabAnswer = StubGitlabResponse | typeof ANSWER_LOST;
+type ScriptedGitlabAnswer =
+  | StubGitlabResponse
+  | typeof ANSWER_LOST
+  | typeof GITLAB_STUB_NEVER_ANSWERS;
 
 function scriptedTransport(script: Readonly<Record<string, readonly ScriptedGitlabAnswer[]>>) {
   const cursors = new Map<string, number>();
@@ -309,5 +314,56 @@ describe('gitlab/issue/reopen', () => {
       kind: 'unavailable',
       failure: { class: 'permission', code: 'item-unreadable' },
     });
+  });
+});
+
+/**
+ * The issue half of the same rule: a state write that was DISPATCHED and then lost its answer to
+ * this source's own deadline may already have transitioned the issue, so it is settled by the one
+ * confirming read every Action performs — never by reporting that nothing was attempted.
+ */
+describe('an issue write whose answer this source’s deadline took', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  async function pastMutationDeadline<TResult>(start: () => Promise<TResult>): Promise<TResult> {
+    vi.useFakeTimers();
+    const pending = start();
+    await vi.advanceTimersByTimeAsync(GITLAB_MUTATION_DEADLINE_MS + 1);
+    return pending;
+  }
+
+  it('reports a close GitLab performed as closed, never as nothing attempted', async () => {
+    const transport = scriptedTransport({
+      [`GET ${ISSUE_URL}`]: [
+        { status: 200, body: issueBody({ state: 'opened' }) },
+        { status: 200, body: issueBody({ state: 'closed' }) },
+      ],
+      [`PUT ${ISSUE_URL}`]: [GITLAB_STUB_NEVER_ANSWERS],
+    });
+
+    const result = await pastMutationDeadline(
+      () => closeGitlabIssue(issueInput(), transport.context),
+    );
+
+    expect(result).toMatchObject({ kind: 'closed', item: { state: 'closed' } });
+    expect(transport.requests.filter((request) => request.method === 'PUT')).toHaveLength(1);
+  });
+
+  it('reports a reopen GitLab performed as reopened, never as nothing attempted', async () => {
+    const transport = scriptedTransport({
+      [`GET ${ISSUE_URL}`]: [
+        { status: 200, body: issueBody({ state: 'closed' }) },
+        { status: 200, body: issueBody({ state: 'opened' }) },
+      ],
+      [`PUT ${ISSUE_URL}`]: [GITLAB_STUB_NEVER_ANSWERS],
+    });
+
+    const result = await pastMutationDeadline(
+      () => reopenGitlabIssue(issueInput(), transport.context),
+    );
+
+    expect(result).toMatchObject({ kind: 'reopened', item: { state: 'opened' } });
   });
 });

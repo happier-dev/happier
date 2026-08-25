@@ -7,6 +7,7 @@ import type {
 
 import {
   AZURE_DETAIL_BOUNDS_V1,
+  AZURE_MAX_DETAIL_ROWS_V1,
   projectAzureCommitRows,
   projectAzureIterationChanges,
   projectAzureIterationRows,
@@ -56,6 +57,14 @@ export const AZURE_COMMITS_PAGE_SIZE_V1 = 30;
 export const AZURE_CHANGES_PAGE_SIZE_V1 = 100;
 /** One bounded page of policy evaluations. */
 export const AZURE_POLICY_EVALUATIONS_PAGE_SIZE_V1 = 100;
+
+function collectionPageLength(body: unknown): number {
+  return typeof body === 'object'
+    && body !== null
+    && Array.isArray((body as Readonly<{ value?: unknown }>).value)
+    ? ((body as Readonly<{ value: readonly unknown[] }>).value.length)
+    : 0;
+}
 
 function malformed(detail: string): AzureDevOpsFailure {
   return createAzureDevOpsFailure({ failureClass: 'malformedResponse', detail });
@@ -247,45 +256,66 @@ export async function readAzurePoliciesSurface(
   if (!statuses.ok) return statuses;
   const projectedStatuses = projectAzureStatusRows(statuses.value.body, AZURE_DETAIL_BOUNDS_V1);
 
-  const evaluations = await requestJson(
-    dependencies,
-    { resource: 'policyEvaluations', project: input.project },
-    {
-      // The documented artifact identifier for a pull request's code review.
-      artifactId:
-        `vstfs:///CodeReview/CodeReviewId/${input.projectId}/${String(input.pullRequestId)}`,
-      $top: AZURE_POLICY_EVALUATIONS_PAGE_SIZE_V1,
-      $skip: 0,
-    },
-  );
-  if (!evaluations.ok) {
+  const artifactId =
+    `vstfs:///CodeReview/CodeReviewId/${input.projectId}/${String(input.pullRequestId)}`;
+  const projectedEvaluationRows: AzureProjectedPolicyEvaluationRowV1[] = [];
+  let evaluationOmissions = 0;
+  let evaluationProjectionTruncated = false;
+  let skip = 0;
+
+  for (;;) {
+    const evaluations = await requestJson(
+      dependencies,
+      { resource: 'policyEvaluations', project: input.project },
+      {
+        // The documented artifact identifier for a pull request's code review.
+        artifactId,
+        $top: AZURE_POLICY_EVALUATIONS_PAGE_SIZE_V1,
+        $skip: skip,
+      },
+    );
+    if (!evaluations.ok) {
     // The statuses are real evidence and are kept; only the evaluation half is
     // reported short. Failing both would hide policy state the reader can see.
-    return {
-      ok: true,
-      value: Object.freeze({
-        statuses: projectedStatuses.rows,
-        evaluations: Object.freeze([]),
-        evaluationsPartial: true,
-        omittedRowCount: projectedStatuses.omittedRowCount,
-        projectionTruncated: projectedStatuses.projectionTruncated,
-      }),
-    };
+      return {
+        ok: true,
+        value: Object.freeze({
+          statuses: projectedStatuses.rows,
+          evaluations: Object.freeze(projectedEvaluationRows),
+          evaluationsPartial: true,
+          omittedRowCount: projectedStatuses.omittedRowCount + evaluationOmissions,
+          projectionTruncated:
+            projectedStatuses.projectionTruncated || evaluationProjectionTruncated,
+        }),
+      };
+    }
+
+    const projectedPage = projectAzurePolicyEvaluationRows(
+      evaluations.value.body,
+      AZURE_DETAIL_BOUNDS_V1,
+    );
+    const available = Math.max(0, AZURE_MAX_DETAIL_ROWS_V1 - projectedEvaluationRows.length);
+    projectedEvaluationRows.push(...projectedPage.rows.slice(0, available));
+    const clipped = Math.max(0, projectedPage.rows.length - available);
+    evaluationOmissions += projectedPage.omittedRowCount + clipped;
+    evaluationProjectionTruncated = evaluationProjectionTruncated
+      || projectedPage.projectionTruncated
+      || clipped > 0;
+
+    const pageLength = collectionPageLength(evaluations.value.body);
+    if (pageLength < AZURE_POLICY_EVALUATIONS_PAGE_SIZE_V1) break;
+    skip += pageLength;
   }
 
-  const projectedEvaluations = projectAzurePolicyEvaluationRows(
-    evaluations.value.body,
-    AZURE_DETAIL_BOUNDS_V1,
-  );
   return {
     ok: true,
     value: Object.freeze({
       statuses: projectedStatuses.rows,
-      evaluations: projectedEvaluations.rows,
+      evaluations: Object.freeze(projectedEvaluationRows),
       evaluationsPartial: false,
-      omittedRowCount: projectedStatuses.omittedRowCount + projectedEvaluations.omittedRowCount,
+      omittedRowCount: projectedStatuses.omittedRowCount + evaluationOmissions,
       projectionTruncated:
-        projectedStatuses.projectionTruncated || projectedEvaluations.projectionTruncated,
+        projectedStatuses.projectionTruncated || evaluationProjectionTruncated,
     }),
   };
 }

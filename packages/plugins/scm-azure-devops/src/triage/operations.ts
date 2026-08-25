@@ -32,6 +32,7 @@ import { decodeAzureScanContinuation, encodeAzureScanContinuation } from './cont
 import { decodeAzureConnectionData, decodeAzurePullRequestRow, readRecord, readString } from './decode.js';
 import { AZURE_DEVOPS_TRIAGE_PURPOSE } from './descriptor.js';
 import { createAzureSourceFailure, projectAzureSourceFailure } from './failureProjection.js';
+import { classifyAzureDevOpsTransportFailure } from './failures.js';
 import { isAzureGuid } from './identity.js';
 import { parseAzureEntryLocalRef } from './localRef.js';
 import { mapAzurePullRequestEntry } from './mapping.js';
@@ -379,7 +380,15 @@ async function walkAzureScan(input: Readonly<{
       }
       recordScopeOmission(frontier, repositories.undecodable);
 
-      const next = repositories.repositories[0];
+      // A continuation's lane offsets belong to `currentRepositoryId`, not to whatever happens
+      // to sort first in a freshly enumerated repository array. A repository inserted before the
+      // active one must wait for the next walk; adopting it here would reset the active offsets
+      // and replay that repository from lane zero.
+      const next = frontier.currentRepositoryId === null
+        ? repositories.repositories[0]
+        : repositories.repositories.find((candidate) => (
+          candidate.id === frontier.currentRepositoryId
+        )) ?? repositories.repositories[0];
       if (next === undefined) {
         frontier.projectId = null;
         frontier.currentRepositoryId = null;
@@ -837,6 +846,18 @@ async function confirmAzureConfiguredBaseIsCurrent(input: Readonly<{
     signal: input.signal,
   });
   if (outcome.kind === 'failed') {
+    // An abort is not a listing that refused. This gate runs FIRST on every read, so
+    // classifying its own deadline or its own caller cancellation as a generic listing
+    // failure would erase the one distinction `isAzureDevOpsDeadlineAbort` exists to
+    // preserve — a mount that went away versus a provider still owing an answer — for
+    // every detail and scan read in the vertical. It is deferred to the same abort owner
+    // every other request already uses rather than decided a second time here.
+    if (input.signal.aborted) {
+      return projectAzureSourceFailure(classifyAzureDevOpsTransportFailure({
+        error: outcome.error,
+        signal: input.signal,
+      }));
+    }
     return createAzureSourceFailure({
       class: 'transient',
       code: 'azure-devops/account-listing-failed',
@@ -850,6 +871,13 @@ async function confirmAzureConfiguredBaseIsCurrent(input: Readonly<{
     && candidate.account.service.localId === input.binding.account.service.localId
   ));
   if (listed === undefined) {
+    if (outcome.kind === 'listed' && outcome.listing.status === 'truncated') {
+      return createAzureSourceFailure({
+        class: 'transient',
+        code: 'azure-devops/configured-account-listing-truncated',
+        detail: 'The Connected Accounts listing ended before this configured Azure DevOps account could be confirmed.',
+      });
+    }
     return createAzureSourceFailure({
       class: 'authentication',
       code: 'azure-devops/configured-account-unavailable',

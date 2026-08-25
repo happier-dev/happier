@@ -110,10 +110,34 @@ function readLegacySshProject(host: string, segments: readonly string[]): AzureR
   };
 }
 
+/**
+ * Azure DevOps Server has no product-owned hostname. Its HTTPS clone URL identifies itself by the
+ * source-owned `.../{collection}/{project}/_git/{repository}` route instead, with any configured
+ * virtual-directory segments retained ahead of the collection.
+ */
+function readServerHttpsProject(host: string, segments: readonly string[]): AzureRemoteProject | null {
+  if (segments.length < 4 || segments[segments.length - 2] !== '_git') return null;
+  const repository = segments[segments.length - 1];
+  const project = segments[segments.length - 3];
+  const baseSegments = segments.slice(0, -3);
+  const organization = baseSegments[baseSegments.length - 1];
+  if (!organization || !project || !repository) return null;
+  const webOrigin = `https://${host}`;
+  return {
+    organization,
+    project,
+    repository,
+    baseUrl: `${webOrigin}/${baseSegments.map(encodeURIComponent).join('/')}`,
+    webOrigin,
+  };
+}
+
 function readAzureRemoteProject(scheme: 'https:' | 'ssh:' | 'scp:', host: string, path: string): AzureRemoteProject | null {
   const segments = path.split('/').filter(Boolean);
   if (scheme === 'https:') {
-    return readCurrentHttpsProject(host, segments) ?? readLegacyHttpsProject(host, segments);
+    return readCurrentHttpsProject(host, segments)
+      ?? readLegacyHttpsProject(host, segments)
+      ?? readServerHttpsProject(host, segments);
   }
   if (scheme === 'ssh:' || scheme === 'scp:') {
     return readCurrentSshProject(host, segments) ?? readLegacySshProject(host, segments);
@@ -145,7 +169,7 @@ function readProviderBaseContext(baseUrl: string): AzureProviderBaseContext | nu
     return null;
   }
   if (parsed.protocol !== 'https:') return null;
-  if (parsed.port || parsed.search || parsed.hash) return null;
+  if (parsed.username || parsed.password || parsed.port || parsed.search || parsed.hash) return null;
 
   const host = parsed.hostname.toLowerCase();
   const segments = parsed.pathname.split('/').filter(Boolean);
@@ -158,10 +182,24 @@ function readProviderBaseContext(baseUrl: string): AzureProviderBaseContext | nu
   }
 
   const organization = readVisualStudioOrganization(host);
-  if (!organization || segments.length !== 0) return null;
+  if (organization && segments.length === 0) {
+    return {
+      organization,
+      baseUrl: `https://${host}`,
+    };
+  }
+
+  if (segments.length === 0) return null;
+  let serverCollection: string;
+  try {
+    serverCollection = decodeURIComponent(segments[segments.length - 1] ?? '');
+  } catch {
+    return null;
+  }
+  if (!isSafeNameWithOwnerSegment(serverCollection)) return null;
   return {
-    organization,
-    baseUrl: `https://${host}`,
+    organization: serverCollection,
+    baseUrl: `${parsed.origin}${stripTrailingSlash(parsed.pathname)}`,
   };
 }
 
@@ -203,6 +241,8 @@ export const azureDevopsHostingProviderAdapter: AzureDevopsScmHostingProviderAda
     if (organization !== context.organization) return null;
     if (!parts.every(isSafeNameWithOwnerSegment)) return null;
     const baseUrl = stripTrailingSlash(context.baseUrl);
+    const repositoryWebUrl = `${baseUrl}/${encodeURIComponent(project)}/_git/${encodeURIComponent(repository)}`;
+    if (provider.repositoryWebUrl !== repositoryWebUrl) return null;
     return `${baseUrl}/${encodeURIComponent(project)}/_git/${encodeURIComponent(repository)}/branchCompare?baseVersion=GB${encodeCompareRef(input.base)}&targetVersion=GB${encodeCompareRef(input.head)}`;
   },
 });

@@ -333,6 +333,22 @@ describe('Azure DevOps pull-request completion', () => {
     if (settled.kind !== 'rejected') throw new Error('an ignored field is not a success');
     expect(settled.reason).toBe('fields-ignored');
   });
+
+  it('confirms an answer-lost completion instead of returning unavailable', async () => {
+    const { context, requests } = harness({
+      reads: [pullRequest(), completed({ deleteSourceBranch: false })],
+      respond: ({ method }) => (
+        method === 'PATCH' ? { status: 502, body: { message: 'gateway' } } : undefined
+      ),
+    });
+
+    const settled = AzureMutationResultV1Schema.parse(
+      await completeAzureDevOpsPullRequest(completeInput(), context),
+    );
+
+    expect(settled.kind).toBe('applied');
+    expect(writes(requests)).toHaveLength(1);
+  });
 });
 
 /**
@@ -418,6 +434,22 @@ describe('Azure DevOps pull-request abandonment', () => {
     expect(settled.reason).toBe('entry-not-active');
     expect(writes(requests)).toHaveLength(0);
   });
+
+  it('confirms an answer-lost abandon instead of returning unavailable', async () => {
+    const { context, requests } = harness({
+      reads: [pullRequest(), pullRequest({ status: 'abandoned' })],
+      respond: ({ method }) => (
+        method === 'PATCH' ? { status: 502, body: { message: 'gateway' } } : undefined
+      ),
+    });
+
+    const settled = AzureMutationResultV1Schema.parse(
+      await abandonAzureDevOpsPullRequest(abandonInput(), context),
+    );
+
+    expect(settled.kind).toBe('applied');
+    expect(writes(requests)).toHaveLength(1);
+  });
 });
 
 /* ---------------------------------------------------------------- reactivate */
@@ -473,6 +505,22 @@ describe('Azure DevOps pull-request reactivation', () => {
     );
 
     expect(settled.kind).toBe('pending');
+  });
+
+  it('confirms an answer-lost reactivation instead of returning unavailable', async () => {
+    const { context, requests } = harness({
+      reads: [pullRequest({ status: 'abandoned' }), pullRequest({ status: 'active' })],
+      respond: ({ method }) => (
+        method === 'PATCH' ? { status: 502, body: { message: 'gateway' } } : undefined
+      ),
+    });
+
+    const settled = AzureMutationResultV1Schema.parse(
+      await reactivateAzureDevOpsPullRequest(reactivateInput(), context),
+    );
+
+    expect(settled.kind).toBe('applied');
+    expect(writes(requests)).toHaveLength(1);
   });
 });
 
@@ -710,6 +758,27 @@ describe('Azure DevOps thread status', () => {
     expect(written[0]?.url).toContain('api-version=7.1');
     // No comments array and no thread context: a status change must not rewrite the conversation.
     expect(written[0]?.body).toEqual({ status: 'fixed' });
+  });
+
+  it('confirms an answer-lost thread update instead of returning unavailable', async () => {
+    let read = 0;
+    const { context, requests } = harness({
+      reads: [pullRequest()],
+      respond: ({ url, method }) => {
+        if (!url.includes(THREAD_URL_FRAGMENT)) return undefined;
+        if (method === 'PATCH') return { status: 502, body: { message: 'gateway' } };
+        const status = read === 0 ? 'active' : 'fixed';
+        read += 1;
+        return { body: { id: THREAD_ID, status } };
+      },
+    });
+
+    const settled = AzureThreadStatusResultV1Schema.parse(
+      await setAzureDevOpsPullRequestThreadStatus(threadStatusInput(), context),
+    );
+
+    expect(settled.kind).toBe('applied');
+    expect(nonReadRequests(requests)).toHaveLength(1);
   });
 
   it('writes nothing when the thread already carries the requested status', async () => {

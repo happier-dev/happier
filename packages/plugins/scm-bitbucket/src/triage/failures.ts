@@ -109,7 +109,10 @@ export function classifyBitbucketTransportFailure(error: unknown): BitbucketTria
   const name = typeof error === 'object' && error !== null
     ? (error as { name?: unknown }).name
     : undefined;
-  if (name === 'AbortError' || name === 'TimeoutError') {
+  if (name === 'TimeoutError') {
+    return createBitbucketFailure('transient', 'invocation-deadline-exceeded');
+  }
+  if (name === 'AbortError') {
     return createBitbucketFailure('cancelled', 'invocation-cancelled');
   }
   return createBitbucketFailure('transient', 'transport-failure');

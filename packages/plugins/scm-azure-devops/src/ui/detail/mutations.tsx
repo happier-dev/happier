@@ -17,6 +17,10 @@ import {
   describeTriageSourceFailureV1 as failureDescription,
   type TriageDetailSurfaceInputV1,
 } from '@happier-dev/triage-protocol/v1';
+import {
+  useTriagePostMutationCompletion,
+  type TriagePostMutationCompletionV1,
+} from '@happier-dev/triage-sources/ui';
 
 import { AZURE_DEVOPS_PLUGIN_ID } from '../../azureDevopsContracts.js';
 import { AZURE_ABANDONED_NATIVE_STATE_LABEL } from '../../triage/mapping.js';
@@ -255,6 +259,32 @@ function unreadableResult(text: PluginTranslate): SettledMutationV1 {
   };
 }
 
+async function completeAfterEntryWrite(
+  execution: PluginActionExecution<unknown>,
+  complete: TriagePostMutationCompletionV1,
+): Promise<void> {
+  if (execution.status !== 'success') return;
+  const parsed = AzureMutationResultV1Schema.safeParse(execution.result);
+  if (parsed.success && (
+    parsed.data.kind === 'applied'
+    || parsed.data.kind === 'pending'
+    || parsed.data.kind === 'uncertain'
+  )) await complete();
+}
+
+async function completeAfterThreadWrite(
+  execution: PluginActionExecution<unknown>,
+  complete: TriagePostMutationCompletionV1,
+): Promise<void> {
+  if (execution.status !== 'success') return;
+  const parsed = AzureThreadStatusResultV1Schema.safeParse(execution.result);
+  if (parsed.success && (
+    parsed.data.kind === 'applied'
+    || parsed.data.kind === 'rejected'
+    || parsed.data.kind === 'uncertain'
+  )) await complete();
+}
+
 function projectSettledMutation(
   operation: AzureEntryMutationV1,
   execution: PluginActionExecution<unknown>,
@@ -308,7 +338,18 @@ function projectSettledMutation(
       // text rather than folded into this build's sentence.
       return { tone: 'danger', title, ...(result.detail === undefined ? {} : { detail: result.detail }) };
     }
-    default: {
+    case 'uncertain':
+      return {
+        tone: 'warning',
+        title: text(
+          'plugins.azureDevops.ui.mutations.uncertain',
+          'Azure DevOps may have applied this write. Reload the pull request before trying again.',
+        ),
+        ...(result.failure === undefined ? {} : {
+          detail: failureDescription(result.failure, ''),
+        }),
+      };
+    case 'unavailable': {
       const title = text(
         'plugins.azureDevops.ui.mutations.unavailable',
         'Azure DevOps could not complete this write.',
@@ -366,6 +407,7 @@ export function AzureMutationControls({
   overview: AzureDetailOverviewV1;
 }>): React.ReactElement | null {
   const text = usePluginTranslation();
+  const completeMutation = useTriagePostMutationCompletion();
   const localRef = useAzureEntryLocalRef(input);
   const complete = useExecutePluginAction(COMPLETE_ACTION);
   const abandon = useExecutePluginAction(ABANDON_ACTION);
@@ -386,16 +428,18 @@ export function AzureMutationControls({
       localRef,
       observedSourceCommitId,
       deleteSourceBranch,
-    });
-  }, [complete, deleteSourceBranch, input.instance, localRef, observedSourceCommitId]);
+    }).then(async (execution) => await completeAfterEntryWrite(execution, completeMutation));
+  }, [complete, completeMutation, deleteSourceBranch, input.instance, localRef, observedSourceCommitId]);
 
   const runAbandon = React.useCallback(() => {
-    void abandon.execute({ v: 1, instance: input.instance, localRef });
-  }, [abandon, input.instance, localRef]);
+    void abandon.execute({ v: 1, instance: input.instance, localRef })
+      .then(async (execution) => await completeAfterEntryWrite(execution, completeMutation));
+  }, [abandon, completeMutation, input.instance, localRef]);
 
   const runReactivate = React.useCallback(() => {
-    void reactivate.execute({ v: 1, instance: input.instance, localRef });
-  }, [input.instance, localRef, reactivate]);
+    void reactivate.execute({ v: 1, instance: input.instance, localRef })
+      .then(async (execution) => await completeAfterEntryWrite(execution, completeMutation));
+  }, [completeMutation, input.instance, localRef, reactivate]);
 
   const runRequestReview = React.useCallback(() => {
     const ids = readReviewerIds(reviewerIdsValue);
@@ -407,8 +451,8 @@ export function AzureMutationControls({
       localRef,
       observedSourceCommitId,
       reviewerIds: ids,
-    });
-  }, [input.instance, localRef, observedSourceCommitId, requestReview, reviewerIdsValue]);
+    }).then(async (execution) => await completeAfterEntryWrite(execution, completeMutation));
+  }, [completeMutation, input.instance, localRef, observedSourceCommitId, requestReview, reviewerIdsValue]);
 
   if (overview.state.presentation !== 'active') {
     // Azure's reopen, and the only transition a non-active pull request has. `closed` covers
@@ -640,7 +684,18 @@ function projectSettledThreadStatus(
           { status: result.status },
         ),
       };
-    default: {
+    case 'uncertain':
+      return {
+        tone: 'warning',
+        title: text(
+          'plugins.azureDevops.ui.mutations.threadStatus.uncertain',
+          'Azure DevOps may have changed this thread. Reload it before trying again.',
+        ),
+        ...(result.failure === undefined ? {} : {
+          detail: failureDescription(result.failure, ''),
+        }),
+      };
+    case 'unavailable': {
       const title = text(
         'plugins.azureDevops.ui.mutations.unavailable',
         'Azure DevOps could not complete this write.',
@@ -670,6 +725,7 @@ export function AzureThreadStatusControl({
   onClose: () => void;
 }>): React.ReactElement {
   const text = usePluginTranslation();
+  const completeMutation = useTriagePostMutationCompletion();
   const localRef = useAzureEntryLocalRef(input);
   const threadStatus = useExecutePluginAction(THREAD_STATUS_ACTION);
   const [status, setStatus] = React.useState<AzureRequestableThreadStatusV1 | null>(null);
@@ -682,8 +738,8 @@ export function AzureThreadStatusControl({
       localRef,
       threadId: thread.id,
       status,
-    });
-  }, [input.instance, localRef, status, thread.id, threadStatus]);
+    }).then(async (execution) => await completeAfterThreadWrite(execution, completeMutation));
+  }, [completeMutation, input.instance, localRef, status, thread.id, threadStatus]);
 
   return (
     <Stack gap="small">

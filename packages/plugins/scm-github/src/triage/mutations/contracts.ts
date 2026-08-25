@@ -113,6 +113,34 @@ export const GithubPullRequestMarkReadyInputV1Schema = defineProtocolObject({
 export type GithubPullRequestMarkReadyInputV1 =
   ReturnType<typeof GithubPullRequestMarkReadyInputV1Schema.parse>;
 
+/** GitHub's review-verdict vocabulary, narrowed to the three endpoint events. */
+export const GithubPullRequestReviewVerdictV1Schema = defineProtocolUnion([
+  defineProtocolLiteral('approve'),
+  defineProtocolLiteral('requestChanges'),
+  defineProtocolLiteral('comment'),
+]);
+export type GithubPullRequestReviewVerdictV1 =
+  ReturnType<typeof GithubPullRequestReviewVerdictV1Schema.parse>;
+
+/**
+ * Publishes one review summary and verdict against the exact observed head.
+ *
+ * Inline comments are deliberately absent. The source's current changed-file
+ * projection publishes whether a patch exists but not trustworthy diff-position
+ * data, so accepting comment anchors here would invite the adapter to guess. The
+ * closed schema makes that limitation loud until the source projects positions.
+ */
+export const GithubPullRequestReviewPublicationInputV1Schema = defineProtocolObject({
+  ...mutationTargetShape,
+  headRevision: RevisionSchema,
+  verdict: GithubPullRequestReviewVerdictV1Schema,
+  // The canonical review proposal contract already admits bodies up to this
+  // boundary; this source does not invent a smaller provider-specific ceiling.
+  summary: defineProtocolUtf8String({ maxUtf8Bytes: 65_536, minLength: 1 }),
+}, { policy: 'closed' });
+export type GithubPullRequestReviewPublicationInputV1 =
+  ReturnType<typeof GithubPullRequestReviewPublicationInputV1Schema.parse>;
+
 /**
  * Update this pull request's branch from its base.
  *
@@ -314,6 +342,35 @@ export const GithubPullRequestMarkReadyResultV1Schema = defineProtocolUnion([
 ]);
 export type GithubPullRequestMarkReadyResultV1 =
   ReturnType<typeof GithubPullRequestMarkReadyResultV1Schema.parse>;
+
+/**
+ * Review publication has exactly three truthful terminal classes.
+ *
+ * `rejected` means no effect was accepted (including a local stale-head refusal);
+ * `uncertain` means the one POST may have landed but authoritative re-observation
+ * could not settle the source detail. Neither arm can be mistaken for success.
+ */
+export const GithubPullRequestReviewPublicationResultV1Schema = defineProtocolUnion([
+  defineProtocolObject({
+    kind: defineProtocolLiteral('applied'),
+    observation: TriageSourceObservationV1Schema,
+  }, { policy: 'closed' }),
+  defineProtocolObject({
+    kind: defineProtocolLiteral('rejected'),
+    reason: defineProtocolUnion([
+      defineProtocolLiteral('invalid_input'),
+      defineProtocolLiteral('admission_failed'),
+      defineProtocolLiteral('head_advanced'),
+      defineProtocolLiteral('state_changed'),
+      defineProtocolLiteral('provider_rejected'),
+    ]),
+    observation: TriageSourceObservationV1Schema.optional(),
+    failure: TriageSourceFailureV1Schema.optional(),
+  }, { policy: 'closed' }),
+  UncertainArmSchema,
+]);
+export type GithubPullRequestReviewPublicationResultV1 =
+  ReturnType<typeof GithubPullRequestReviewPublicationResultV1Schema.parse>;
 
 /**
  * `pending` exists for exactly one provider fact: GitHub answers a branch update

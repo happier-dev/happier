@@ -43,6 +43,17 @@ function readTimestampMs(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function readUsernameList(value: unknown): readonly string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const usernames: string[] = [];
+  for (const member of value) {
+    const username = readLabel(readRecord(member)?.username);
+    if (username === null) return undefined;
+    if (!usernames.includes(username)) usernames.push(username);
+  }
+  return Object.freeze(usernames);
+}
+
 /**
  * GitLab has spelled scheduled auto-merge more than one way across its own
  * versions. Either flag being true means the same thing to a person — GitLab
@@ -61,8 +72,11 @@ export function decodeGitlabMergeRequestStateRow(body: unknown): GitlabMergeRequ
   if (record === null) return Object.freeze({ ok: false as const });
 
   const iid = record.iid;
+  const projectId = record.project_id;
   const state = readLabel(record.state);
-  if (typeof iid !== 'number' || !Number.isSafeInteger(iid) || iid < 1 || state === null) {
+  if (typeof iid !== 'number' || !Number.isSafeInteger(iid) || iid < 1
+    || typeof projectId !== 'number' || !Number.isSafeInteger(projectId) || projectId < 1
+    || state === null) {
     return Object.freeze({ ok: false as const });
   }
 
@@ -73,10 +87,12 @@ export function decodeGitlabMergeRequestStateRow(body: unknown): GitlabMergeRequ
   const mergedAtMs = readTimestampMs(record.merged_at);
   const webUrl = readNonEmptyString(record.web_url);
   const detailedMergeStatus = readLabel(record.detailed_merge_status);
+  const reviewerUsernames = readUsernameList(record.reviewers);
 
   return Object.freeze({
     ok: true as const,
     row: Object.freeze({
+      projectId,
       iid: String(iid),
       state,
       draft: record.draft === true,
@@ -86,6 +102,7 @@ export function decodeGitlabMergeRequestStateRow(body: unknown): GitlabMergeRequ
       ...(webUrl === null ? {} : { webUrl }),
       ...(detailedMergeStatus === null ? {} : { detailedMergeStatus }),
       autoMergeScheduled: readAutoMergeScheduled(record),
+      ...(reviewerUsernames === undefined ? {} : { reviewerUsernames }),
     }),
   });
 }

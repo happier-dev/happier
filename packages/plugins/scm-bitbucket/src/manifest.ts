@@ -50,6 +50,8 @@ import {
   listBitbucketActivity,
   listBitbucketBuilds,
   listBitbucketComments,
+  readBitbucketDiff,
+  readBitbucketOverview,
 } from './triage/source/detailActions.js';
 import {
   BitbucketActivityInputV1Schema,
@@ -58,6 +60,10 @@ import {
   BitbucketBuildsResultV1Schema,
   BitbucketCommentsInputV1Schema,
   BitbucketCommentsResultV1Schema,
+  BitbucketDiffInputV1Schema,
+  BitbucketDiffResultV1Schema,
+  BitbucketOverviewInputV1Schema,
+  BitbucketOverviewResultV1Schema,
 } from './triage/source/detailContracts.js';
 import {
   BITBUCKET_TRIAGE_MUTATION_ACTION_IDS,
@@ -251,6 +257,32 @@ export const BITBUCKET_PLUGIN = definePlugin({
       connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
       run: listBitbucketActivity,
     },
+    [BITBUCKET_TRIAGE_DETAIL_ACTION_IDS.readOverview]: {
+      title: 'Refresh a Bitbucket pull-request overview',
+      description: 'Reads the pull request authoritatively from Bitbucket for the mounted Overview.',
+      scopes: ['global'],
+      surfaces: ['plugin'],
+      execution: { target: 'daemon' },
+      dangerLevel: 'safe',
+      inputSchema: BitbucketOverviewInputV1Schema.jsonSchema,
+      resultSchema: BitbucketOverviewResultV1Schema.jsonSchema,
+      hostAccess: READ_HOST_ACCESS,
+      connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
+      run: readBitbucketOverview,
+    },
+    [BITBUCKET_TRIAGE_DETAIL_ACTION_IDS.readDiff]: {
+      title: 'Read a Bitbucket pull-request diff',
+      description: 'Reads the raw diff and its bounded diffstat projection without dropping the pull request.',
+      scopes: ['global'],
+      surfaces: ['plugin'],
+      execution: { target: 'daemon' },
+      dangerLevel: 'safe',
+      inputSchema: BitbucketDiffInputV1Schema.jsonSchema,
+      resultSchema: BitbucketDiffResultV1Schema.jsonSchema,
+      hostAccess: READ_HOST_ACCESS,
+      connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
+      run: readBitbucketDiff,
+    },
     [BITBUCKET_TRIAGE_DETAIL_ACTION_IDS.listBuilds]: {
       title: 'Read a Bitbucket build-status page',
       description: 'Reads one bounded page of the build statuses reported against one pull'
@@ -419,6 +451,7 @@ export const BITBUCKET_PLUGIN = definePlugin({
                 title: 'Email or username',
                 description: 'The email address or username associated with the Bitbucket API token.',
                 schema: { type: 'string', minLength: 1 },
+                secret: false,
               },
               {
                 id: 'token',

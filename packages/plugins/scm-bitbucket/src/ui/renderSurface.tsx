@@ -11,13 +11,12 @@
  * belong to the aggregate (`CONTRACT.md` §7, `core/SURFACE.md` §2.2); repeating them here is a
  * second renderer of one header, and the copy that drifts is the one the user is looking at.
  *
- * What it does own are Bitbucket's own facts: the combined activity stream, the build statuses
- * reported against the pull request, and the conversation. Each is a real read with its own
+ * What it does own are Bitbucket's own facts: the authoritative overview, combined activity
+ * stream, raw diff plus diffstat, build statuses, and conversation. Each is a real read with its own
  * lifetime, issued when its tab becomes active and never on mount.
  *
- * `Diff` is deliberately absent rather than empty. Bitbucket serves a diff as a redirected raw
- * text stream rather than a JSON file array, and its reader is a separate unit; a `Diff` tab that
- * rendered nothing would read as "this pull request changes nothing". There is likewise no Issues
+ * Bitbucket serves Diff as a same-origin redirected raw text response paired with JSON diffstat;
+ * neither is parsed as the other. There is no Issues
  * affordance — Atlassian is removing the Bitbucket Cloud issue tracker, so there is no durable
  * product to build a tab against.
  */
@@ -52,7 +51,6 @@ import {
 import {
   TriageDetailSurfaceInputV1Schema,
   type TriageDetailSurfaceInputV1,
-  type TriageLinkedSessionProjectionV1,
   type TriageSourceFailureV1,
 } from '@happier-dev/triage-protocol/v1';
 // The presentation rules used below are projections of the Triage contract's own
@@ -69,6 +67,7 @@ import {
 import type {
   BitbucketProjectedActivityRowV1,
   BitbucketProjectedCommentRowV1,
+  BitbucketProjectedDiffstatRowV1,
   BitbucketProjectedStatusRowV1,
 } from '../triage/detail/projection.js';
 import {
@@ -85,6 +84,8 @@ import {
   useBitbucketActivity,
   useBitbucketBuilds,
   useBitbucketComments,
+  useBitbucketDiff,
+  useBitbucketOverview,
 } from './detail/panelReaders.js';
 import type { BitbucketPagedStateV1 } from './detail/panelState.js';
 import {
@@ -176,15 +177,40 @@ function PagedFooter({
 
 function OverviewPanel({
   input,
-  overview,
   locale,
   nowMs,
 }: Readonly<{
   input: TriageDetailSurfaceInputV1;
-  overview: BitbucketDetailOverviewV1;
   locale: string;
   nowMs: number;
 }>): React.ReactElement {
+  const controller = useBitbucketOverview(input);
+  const overviewResult = controller.result?.kind === 'overview' ? controller.result : null;
+  const freshObservation = overviewResult?.observation.kind === 'present'
+    ? overviewResult.observation
+    : null;
+  const {
+    nativeRevision: _launchNativeRevision,
+    sourceUpdatedAtMs: _launchSourceUpdatedAtMs,
+    ...stableLaunchObservation
+  } = input.observation;
+  const effectiveInput = freshObservation === null || overviewResult === null ? input : {
+    ...input,
+    observation: {
+      ...stableLaunchObservation,
+      locator: freshObservation.locator,
+      snapshot: freshObservation.snapshot,
+      viewer: freshObservation.viewer,
+      observedAtMs: overviewResult.observedAtMs,
+      ...(freshObservation.nativeRevision === undefined
+        ? {}
+        : { nativeRevision: freshObservation.nativeRevision }),
+      ...(freshObservation.sourceUpdatedAtMs === undefined
+        ? {}
+        : { sourceUpdatedAtMs: freshObservation.sourceUpdatedAtMs }),
+    },
+  };
+  const overview: BitbucketDetailOverviewV1 = projectBitbucketDetailOverview(effectiveInput);
   const statusFields = overview.fields.filter(
     (field): field is Extract<BitbucketDetailFieldV1, { kind: 'status' }> => field.kind === 'status',
   );
@@ -198,6 +224,16 @@ function OverviewPanel({
   return (
     <ScrollArea>
       <Stack gap="large">
+        {controller.result?.kind !== 'unavailable' ? null : (
+          <Banner
+            tone="warning"
+            title="Showing the launch observation"
+            description={failureDescription(
+              controller.result.failure,
+              'Bitbucket could not refresh this overview.',
+            )}
+          />
+        )}
         {!overview.projectionTruncated ? null : (
           <Banner
             tone="neutral"
@@ -206,6 +242,12 @@ function OverviewPanel({
             description="Open the pull request in Bitbucket to read the complete text."
             descriptionKey="plugins.bitbucket.ui.shortened.description"
           />
+        )}
+        {overview.summary === null ? null : (
+          <Stack gap="small">
+            <Text variant="caption" tone="neutral" fallback="Description" />
+            <Text value={overview.summary} />
+          </Stack>
         )}
         {statusFields.length === 0 ? null : (
           <Row gap="small">
@@ -235,7 +277,7 @@ function OverviewPanel({
           * already states what this pull request currently is. A tab of their own would put a
           * destructive control behind a click that says nothing about what is behind it.
           */}
-        <BitbucketMutationControls input={input} overview={overview} />
+        <BitbucketMutationControls input={effectiveInput} overview={overview} />
         <Divider />
         <Metadata
           title="Observation"
@@ -252,6 +294,77 @@ function OverviewPanel({
                 value: formatTimestamp(locale, overview.sourceUpdatedAtMs, 'relative', nowMs),
               }]),
           ]}
+        />
+        <Action.Refresh
+          onRefresh={controller.refresh}
+          disabled={controller.pending}
+          variant="plain"
+          accessibilityLabel="Re-read this overview from Bitbucket"
+        />
+      </Stack>
+    </ScrollArea>
+  );
+}
+
+/* ------------------------------------------------------------------------ Diff */
+
+function DiffPanel({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }>): React.ReactElement {
+  const text = usePluginTranslation();
+  const controller = useBitbucketDiff(input);
+  const { state } = controller;
+  if (state.kind === 'idle' || state.kind === 'loading') {
+    return <LoadingState title="Reading this diff from Bitbucket" />;
+  }
+  if (state.kind === 'unavailable') {
+    return (
+      <ErrorState
+        title="The diff is unavailable"
+        description={failureDescription(
+          state.failure,
+          text('plugins.bitbucket.ui.readFailed', 'Bitbucket could not complete this read.'),
+        )}
+      />
+    );
+  }
+  return (
+    <ScrollArea>
+      <Stack gap="large">
+        <PageFailureBanner state={state} />
+        {controller.raw?.kind !== 'tooLarge' ? null : (
+          <Banner
+            tone="warning"
+            title="This diff is too large for Bitbucket to return"
+            description="The pull request remains available; open it in Bitbucket for the full diff."
+          />
+        )}
+        {controller.raw?.kind !== 'available' ? null : (
+          <Stack gap="small">
+            {controller.raw.truncated ? (
+              <Banner
+                tone="neutral"
+                title="The raw diff was shortened"
+                description="The returned prefix fits Happier's Action-result boundary."
+              />
+            ) : null}
+            <Text variant="code" value={controller.raw.text} />
+          </Stack>
+        )}
+        <Metadata
+          title="Changed files"
+          entries={state.rows.map((row: BitbucketProjectedDiffstatRowV1) => ({
+            label: row.path,
+            value: `${row.status} · +${String(row.linesAdded)} −${String(row.linesRemoved)}`,
+          }))}
+        />
+        <PagedFooter
+          state={state}
+          loadMoreTitle="Show more changed files"
+          onLoadMore={controller.loadMore}
+          onRefresh={controller.refresh}
+          refreshLabel="Re-read this diff from Bitbucket"
+          summary={`${String(state.rows.length)} changed file(s) read.`}
+          summaryKey="plugins.bitbucket.ui.diffFilesRead"
+          summaryValues={{ count: state.rows.length }}
         />
       </Stack>
     </ScrollArea>
@@ -582,38 +695,6 @@ function CommentsPanel({
   );
 }
 
-/* -------------------------------------------------------------------- Sessions */
-
-function SessionsPanel({
-  sessions,
-}: Readonly<{ sessions: readonly TriageLinkedSessionProjectionV1[] }>): React.ReactElement {
-  if (sessions.length === 0) {
-    return (
-      <EmptyState
-        title="No linked sessions"
-        titleKey="plugins.bitbucket.ui.noSessions"
-        description="Sessions started from this pull request will be listed here."
-        descriptionKey="plugins.bitbucket.ui.noSessions.description"
-      />
-    );
-  }
-  return (
-    <List accessibilityLabel="Sessions linked to this Bitbucket pull request" accessibilityLabelKey="plugins.bitbucket.ui.sessionsLabel">
-      <ItemGroup>
-        {sessions.map((session) => (
-          <Item
-            key={session.sessionId}
-            title={session.displayTitle ?? session.sessionId}
-            // A retained link whose Session summary is unavailable keeps its id and loses only
-            // its display text. It is never presented as "never linked".
-            subtitle={session.displayTitle === undefined ? 'Session details are unavailable' : undefined}
-          />
-        ))}
-      </ItemGroup>
-    </List>
-  );
-}
-
 /* ------------------------------------------------------------------------ shell */
 
 function BitbucketDetailBody({
@@ -625,14 +706,12 @@ function BitbucketDetailBody({
   );
   // One render-time read, passed down as data, so no child owns a hidden clock.
   const nowMs = Date.now();
-  const overview = React.useMemo(() => projectBitbucketDetailOverview(input), [input]);
-
   const panels: Readonly<Record<BitbucketDetailTabIdV1, React.ReactNode>> = {
-    overview: <OverviewPanel input={input} overview={overview} locale={locale} nowMs={nowMs} />,
+    overview: <OverviewPanel input={input} locale={locale} nowMs={nowMs} />,
     activity: <ActivityPanel input={input} locale={locale} nowMs={nowMs} />,
+    diff: <DiffPanel input={input} />,
     builds: <BuildsPanel input={input} locale={locale} nowMs={nowMs} />,
     comments: <CommentsPanel input={input} locale={locale} nowMs={nowMs} />,
-    sessions: <SessionsPanel sessions={overview.linkedSessions} />,
   };
 
   return (
@@ -655,9 +734,6 @@ function BitbucketDetailBody({
             // Stated, never inherited: the shared primitive would otherwise discard a panel this
             // source means to keep, or keep one it means to discard.
             retention={declaration.retention}
-            {...(declaration.id === 'sessions' && overview.linkedSessions.length > 0
-              ? { badge: String(overview.linkedSessions.length) }
-              : {})}
           >
             {panels[declaration.id]}
           </Tabs.Item>

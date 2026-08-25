@@ -109,17 +109,20 @@ export type BitbucketScanFrontierRecord = Readonly<{
   }> | null;
 }>;
 
-function countOpenLanes(frontier: BitbucketScanFrontierRecord): number {
-  const repository = frontier.currentRepository?.lanes.some((lane) => !lane.ended) === true ? 1 : 0;
-  return (frontier.authored.ended ? 0 : 1) + repository;
-}
-
 /**
- * Encodes the frontier, or returns `null` when it does not fit the published paging bound.
+ * The two planes this walk rotates over: the workspace-wide `authored` route, and the repository
+ * review route. `nextLaneIndex` names one of them.
  *
- * A frontier that cannot be encoded within the bound ends the walk with bounded partial evidence.
- * It is never truncated: half a frontier addresses the wrong repository.
+ * It is a rotation POSITION, not an offset into whatever happens to be open. A plane can be
+ * momentarily closed — the repository plane before its first repository is entered, the authored
+ * lane once it has run out — and the position still correctly says whose turn is next; the walk's
+ * own selector scans both planes and skips a closed one, so a stale position can never make it
+ * miss work. Validating the position against the open count instead refused exactly the tokens
+ * that keep the two planes alternating, which is how the `authored` lane came to hold the
+ * rotation for a whole walk.
  */
+const BITBUCKET_WALK_PLANE_COUNT = 2;
+
 export function encodeBitbucketScanContinuation(
   frontier: BitbucketScanFrontierRecord,
 ): TriageScanContinuationV1 | null {
@@ -176,7 +179,7 @@ export function decodeBitbucketScanContinuation(
   if (currentRepository === undefined) return null;
 
   const nextLaneIndex = readCount(record.i, 0);
-  if (nextLaneIndex === null) return null;
+  if (nextLaneIndex === null || nextLaneIndex >= BITBUCKET_WALK_PLANE_COUNT) return null;
 
   const frontier: BitbucketScanFrontierRecord = {
     scanLimit,
@@ -187,8 +190,6 @@ export function decodeBitbucketScanContinuation(
     repositoryListNextUrl,
     currentRepository,
   };
-  const open = countOpenLanes(frontier);
-  if (open === 0 ? nextLaneIndex !== 0 : nextLaneIndex >= open) return null;
   return frontier;
 }
 

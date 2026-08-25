@@ -152,4 +152,24 @@ describe('GitHub pull-request review people', () => {
     expect(pages).toEqual(['1', '2']);
     expect(surface.historical.map((reviewer) => reviewer.login)).toEqual(['monalisa', 'octocat']);
   });
+
+  it('reports the reviews connection incomplete when GitHub still offers a page at its result ceiling', async () => {
+    const { surface, transport } = await readReviewers((request) => {
+      if (request.url.includes('/requested_reviewers')) {
+        return { status: 200, body: { users: [], teams: [] } };
+      }
+      const page = Number(new URL(request.url).searchParams.get('page') ?? '1');
+      return {
+        status: 200,
+        headers: {
+          link: `<https://api.github.com/repos/octo-org/example-app/pulls/1284/reviews?per_page=100&page=${page + 1}>; rel="next"`,
+        },
+        body: [githubReview({ id: page, login: `reviewer-${page}`, state: 'COMMENTED' })],
+      };
+    });
+
+    expect(transport.requests.filter((request) => request.url.includes('/reviews?'))).toHaveLength(10);
+    expect(surface.reviewsIncomplete).toBe(true);
+    expect(surface.reviewsFailure).toBeNull();
+  });
 });

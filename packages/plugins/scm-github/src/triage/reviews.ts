@@ -46,6 +46,22 @@ export type GithubHistoricalReviewerV1 = Readonly<{
   submittedAtMs: number | null;
 }>;
 
+/**
+ * The provider-native facts that identify one submitted review.
+ *
+ * This is deliberately richer than the collapsed reviewer row above. Mutation
+ * reconciliation must distinguish a review that existed before one invocation
+ * from a review first observed afterwards; author/state alone cannot do that.
+ */
+export type GithubPullRequestReviewRecordV1 = Readonly<{
+  providerId: string;
+  authorLogin: string;
+  commitRevision: string;
+  state: GithubReviewStateV1;
+  body: string;
+  submittedAtMs: number | null;
+}>;
+
 export type GithubRequestedReviewerV1 =
   | Readonly<{ kind: 'user'; login: string }>
   | Readonly<{ kind: 'team'; slug: string; name: string }>;
@@ -60,6 +76,8 @@ export type GithubReviewersSurfaceV1 = Readonly<{
   reviewDecision: GithubReviewDecisionV1 | null;
   reviewsFailure: GithubTriageFailureV1 | null;
   requestsFailure: GithubTriageFailureV1 | null;
+  reviewsIncomplete: boolean;
+  requestsIncomplete: boolean;
 }>;
 
 export type GithubReviewsDependenciesV1 = Readonly<{
@@ -100,6 +118,39 @@ export function decodeGithubReview(raw: unknown): GithubHistoricalReviewerV1 | n
   return Object.freeze({
     login,
     state: state as GithubReviewStateV1,
+    submittedAtMs: readEpochMs(raw.submitted_at),
+  });
+}
+
+function readProviderId(value: unknown): string | null {
+  if (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0) return String(value);
+  return readTrimmedString(value);
+}
+
+export function decodeGithubPullRequestReviewRecord(
+  raw: unknown,
+): GithubPullRequestReviewRecordV1 | null {
+  if (!isRecord(raw)) return null;
+  const providerId = readProviderId(raw.id);
+  const authorLogin = isRecord(raw.user) ? readTrimmedString(raw.user.login) : null;
+  const commitRevision = readTrimmedString(raw.commit_id);
+  const state = readTrimmedString(raw.state);
+  if (
+    providerId === null
+    || authorLogin === null
+    || commitRevision === null
+    || state === null
+    || !REVIEW_STATES.has(state as GithubReviewStateV1)
+    || typeof raw.body !== 'string'
+  ) {
+    return null;
+  }
+  return Object.freeze({
+    providerId,
+    authorLogin,
+    commitRevision,
+    state: state as GithubReviewStateV1,
+    body: raw.body,
     submittedAtMs: readEpochMs(raw.submitted_at),
   });
 }
@@ -160,15 +211,19 @@ export function decodeGithubRequestedReviewers(
   return Object.freeze(reviewers);
 }
 
-async function readPaginated<T>(
+async function readPaginated<T, TPageRow = unknown>(
   dependencies: GithubReviewsDependenciesV1,
   input: Readonly<{
     initialUrl: string;
-    readPage: (body: unknown) => readonly unknown[] | null;
-    decodeRow: (raw: unknown) => T | null;
+    readPage: (body: unknown) => readonly TPageRow[] | null;
+    decodeRow: (raw: TPageRow) => T | null;
     maxPages: number;
   }>,
-): Promise<Readonly<{ rows: readonly T[]; failure: GithubTriageFailureV1 | null }>> {
+): Promise<Readonly<{
+  rows: readonly T[];
+  failure: GithubTriageFailureV1 | null;
+  incomplete: boolean;
+}>> {
   const rows: T[] = [];
   let url: string | null = input.initialUrl;
   let pages = 0;
@@ -178,6 +233,7 @@ async function readPaginated<T>(
       return Object.freeze({
         rows: Object.freeze([...rows]),
         failure: Object.freeze({ class: 'transient', code: 'github_request_cancelled' }),
+        incomplete: false,
       });
     }
     const requestedUrl: string = url;
@@ -188,21 +244,24 @@ async function readPaginated<T>(
       return Object.freeze({
         rows: Object.freeze([...rows]),
         failure: classifyGithubTransportFailure(error),
+        incomplete: false,
       });
     }
     if (!isGithubSuccessStatus(response.status)) {
       return Object.freeze({
         rows: Object.freeze([...rows]),
         failure: classifyGithubResponseFailure(response, dependencies.now()),
+        incomplete: false,
       });
     }
-    let page: readonly unknown[] | null;
+    let page: readonly TPageRow[] | null;
     try {
       page = input.readPage(decodeGithubJsonResponse(response));
     } catch (error) {
       return Object.freeze({
         rows: Object.freeze([...rows]),
         failure: classifyGithubTransportFailure(error),
+        incomplete: false,
       });
     }
     if (page === null) {
@@ -212,6 +271,7 @@ async function readPaginated<T>(
           class: 'unsupportedContract',
           code: 'github_reviews_envelope_invalid',
         }),
+        incomplete: false,
       });
     }
     for (const raw of page) {
@@ -230,13 +290,53 @@ async function readPaginated<T>(
           class: 'unsupportedContract',
           code: 'github_reviews_link_invalid',
         }),
+        incomplete: false,
       });
     } else {
       url = null;
     }
   }
 
-  return Object.freeze({ rows: Object.freeze([...rows]), failure: null });
+  return Object.freeze({
+    rows: Object.freeze([...rows]),
+    failure: null,
+    // A validated next page after the provider-derived 1,000-row budget is
+    // evidence that this connection did not finish. Rows already read remain
+    // useful, but they may not be presented as the whole review history.
+    incomplete: url !== null,
+  });
+}
+
+export type GithubPullRequestReviewRecordsReadV1 = Readonly<{
+  reviews: readonly GithubPullRequestReviewRecordV1[];
+  failure: GithubTriageFailureV1 | null;
+  incomplete: boolean;
+}>;
+
+/** The one canonical walk of GitHub's submitted-review collection. */
+export async function readGithubPullRequestReviewRecords(
+  input: Readonly<{ route: GithubRepositoryRouteV1; number: string }>,
+  dependencies: GithubReviewsDependenciesV1,
+): Promise<GithubPullRequestReviewRecordsReadV1> {
+  const maxPages = Math.ceil(GITHUB_SEARCH_RESULT_CEILING_V1 / GITHUB_MAX_PAGE_SIZE_V1);
+  const base = buildGithubApiUrl([
+    'repos',
+    input.route.owner,
+    input.route.name,
+    'pulls',
+    input.number,
+  ]);
+  const read = await readPaginated<GithubPullRequestReviewRecordV1>(dependencies, {
+    initialUrl: `${base}/reviews?per_page=${GITHUB_MAX_PAGE_SIZE_V1}`,
+    maxPages,
+    decodeRow: decodeGithubPullRequestReviewRecord,
+    readPage: (body) => (Array.isArray(body) ? Object.freeze([...body]) : null),
+  });
+  return Object.freeze({
+    reviews: read.rows,
+    failure: read.failure,
+    incomplete: read.incomplete,
+  });
 }
 
 export async function readGithubPullRequestReviewers(
@@ -252,28 +352,29 @@ export async function readGithubPullRequestReviewers(
     input.number,
   ]);
 
-  const reviews = await readPaginated<GithubHistoricalReviewerV1>(dependencies, {
-    initialUrl: `${base}/reviews?per_page=${GITHUB_MAX_PAGE_SIZE_V1}`,
-    maxPages,
-    decodeRow: decodeGithubReview,
-    readPage: (body) => (Array.isArray(body) ? Object.freeze([...body]) : null),
-  });
+  const reviews = await readGithubPullRequestReviewRecords(input, dependencies);
 
   // `GET /requested_reviewers` returns TOP-LEVEL `users` and `teams`, unlike the pull
   // request object's nested `requested_reviewers`/`requested_teams`. One shape, read once.
-  const requests = await readPaginated<GithubRequestedReviewerV1>(dependencies, {
+  const requests = await readPaginated<GithubRequestedReviewerV1, GithubRequestedReviewerV1>(dependencies, {
     initialUrl: `${base}/requested_reviewers?per_page=${GITHUB_MAX_PAGE_SIZE_V1}`,
     maxPages,
-    decodeRow: (raw) => (raw as GithubRequestedReviewerV1 | null),
+    decodeRow: (raw) => raw,
     readPage: (body) => decodeGithubRequestedReviewers(body),
   });
 
-  const historical = collapseGithubHistoricalReviewers(reviews.rows);
+  const historical = collapseGithubHistoricalReviewers(reviews.reviews.map((review) => ({
+    login: review.authorLogin,
+    state: review.state,
+    submittedAtMs: review.submittedAtMs,
+  })));
   return Object.freeze({
     historical,
     outstanding: requests.rows,
     reviewDecision: reviews.failure === null ? deriveGithubReviewDecision(historical) : null,
     reviewsFailure: reviews.failure,
     requestsFailure: requests.failure,
+    reviewsIncomplete: reviews.incomplete,
+    requestsIncomplete: requests.incomplete,
   });
 }

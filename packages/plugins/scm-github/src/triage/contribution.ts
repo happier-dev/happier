@@ -27,7 +27,7 @@ export const GITHUB_TRIAGE_ACTION_IDS_V1 = Object.freeze({
 });
 
 /**
- * The five source-native detail Action ids.
+ * The source-native detail Action ids.
  *
  * They bind to no Triage operation role. A mounted Plugin UI surface holds
  * `PluginUiHostApi`, which has no storage member and no transport of its own, so
@@ -40,6 +40,7 @@ export const GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1 = Object.freeze({
   listTimeline: 'triage/list-github-timeline',
   listChangedFiles: 'triage/list-github-changed-files',
   listComments: 'triage/list-github-comments',
+  readFeedback: 'triage/read-github-feedback',
   readChecks: 'triage/read-github-checks',
   readReviews: 'triage/read-github-reviews',
 });
@@ -70,6 +71,7 @@ export const GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1 = Object.freeze({
  */
 export const GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1 = Object.freeze({
   pullRequestMerge: 'github/pull-request/merge',
+  pullRequestSubmitReview: 'github/pull-request/submit-review',
   pullRequestClose: 'github/pull-request/close',
   pullRequestReopen: 'github/pull-request/reopen',
   pullRequestMarkReady: 'github/pull-request/mark-ready',

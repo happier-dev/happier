@@ -238,6 +238,21 @@ describe('Bitbucket pull-request merge', () => {
     // A refused merge is reported, never repeated.
     expect(writesTo(requests, MERGE_URL)).toBe(1);
   });
+
+  it('confirms an answer-lost merge once instead of returning unavailable or writing again', async () => {
+    const { context, requests } = harness({
+      reads: [pullRequest('OPEN'), pullRequest('MERGED')],
+      write: (url) => (url === MERGE_URL ? { status: 502, body: { error: { message: 'gateway' } } } : undefined),
+    });
+
+    const settled = BitbucketMutationResultV1Schema.parse(
+      await mergeBitbucketPullRequestAction(mergeInput(), context),
+    );
+
+    expect(settled.kind).toBe('applied');
+    expect(writesTo(requests, MERGE_URL)).toBe(1);
+    expect(requests.filter((request) => request.url === PULL_REQUEST_URL)).toHaveLength(2);
+  });
 });
 
 /* ------------------------------------------------------------------- decline */
@@ -272,6 +287,20 @@ describe('Bitbucket pull-request decline', () => {
     if (settled.kind !== 'refused') throw new Error('a merged pull request cannot be declined');
     expect(settled.reason).toBe('entry-not-open');
     expect(writesTo(requests, DECLINE_URL)).toBe(0);
+  });
+
+  it('confirms an answer-lost decline once instead of returning unavailable', async () => {
+    const { context, requests } = harness({
+      reads: [pullRequest('OPEN'), pullRequest('DECLINED')],
+      write: (url) => (url === DECLINE_URL ? { status: 502, body: { error: { message: 'gateway' } } } : undefined),
+    });
+
+    const settled = BitbucketMutationResultV1Schema.parse(
+      await declineBitbucketPullRequestAction(declineInput(), context),
+    );
+
+    expect(settled.kind).toBe('applied');
+    expect(writesTo(requests, DECLINE_URL)).toBe(1);
   });
 });
 
@@ -437,6 +466,21 @@ describe('Bitbucket comment resolution', () => {
     if (settled.kind !== 'rejected') throw new Error('an unprovable write must not be applied');
     expect(settled.reason).toBe('resolution-unconfirmed');
     expect(settled.resolution).toBe('unknown');
+  });
+
+  it('confirms an answer-lost comment resolution once instead of returning unavailable', async () => {
+    const { context, requests } = commentHarness({
+      reads: [comment('unresolved'), comment('resolved')],
+      write: () => ({ status: 502, body: { error: { message: 'gateway' } } }),
+    });
+
+    const settled = BitbucketCommentResolutionResultV1Schema.parse(
+      await resolveBitbucketCommentAction(commentInput(), context),
+    );
+
+    expect(settled.kind).toBe('applied');
+    expect(writesTo(requests, COMMENT_RESOLUTION_URL)).toBe(1);
+    expect(requests.filter((request) => request.url === COMMENT_URL)).toHaveLength(2);
   });
 
   it('refuses a comment id it could not have minted, before any request exists', async () => {

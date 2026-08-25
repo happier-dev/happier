@@ -36,7 +36,6 @@ import {
   createAzureCommandFailedError,
   createAzureDuplicatePullRequestError,
   createAzureNotFoundError,
-  createAzureUnsupportedError,
 } from './errors.js';
 
 const AZURE_CLI_EXECUTABLE = Object.freeze({ kind: 'systemTool' as const, id: 'azure-cli' });
@@ -106,6 +105,12 @@ function parseDuplicateHint(stderr: string): Readonly<{
 }
 
 function mapAzFailure(result: ScmHostingProviderRuntimeCommandResult): never {
+  // A command that never exited has no verdict: its stderr is whatever it had written when it was
+  // cut short, so reading "not found"/"login" out of it invents an answer the CLI never gave. The
+  // host reports that as `exitCode: null` (see the SCM hosting `executeCommand` boundary).
+  if (typeof result.exitCode !== 'number') {
+    throw createAzureCommandFailedError('Azure CLI command did not complete');
+  }
   const normalized = result.stderr.toLowerCase();
   if (/\b(login|authentication|authorization|not logged|credentials?)\b/.test(normalized)) {
     throw createAzureAuthRequiredError('Azure CLI authentication is required');
@@ -130,7 +135,7 @@ async function runAzJson(input: Readonly<{
   timeoutMs?: number;
 }>): Promise<unknown> {
   const runner = input.runtimeServices?.executeCommand;
-  if (!runner) throw createAzureUnsupportedError('Azure CLI command runner is unavailable');
+  if (!runner) throw createAzureCommandFailedError('Azure CLI command runner is unavailable');
   const result = await runner({
     executable: AZURE_CLI_EXECUTABLE,
     args: input.args,
@@ -193,6 +198,12 @@ function authSummary(
           kind: 'auth_required',
           ...(detection.remediation.kind === 'auth_required' ? { action: detection.remediation.commandPreview.join(' ') } : {}),
         },
+      };
+    case 'undetermined':
+      return {
+        state: 'unknown',
+        profileKind: 'provider_cli',
+        remediation: { kind: 'retry' },
       };
     default:
       break;
@@ -443,10 +454,14 @@ export function createAzureDevopsOperationsAdapter(): AzureDevopsOperationsAdapt
       return { name: repository?.defaultBranch ?? 'main' };
     },
     async describePublishTargets(input: ScmHostingProviderRepositoryDescribePublishTargetsInput) {
-      const auth = authSummary(await detectAzureDevopsCliAuth({
+      const detection = await detectAzureDevopsCliAuth({
         provider: input.provider,
         ...(input.runtimeServices ? { runtimeServices: input.runtimeServices } : {}),
-      }));
+      });
+      // A probe that could not answer is a failed discovery, never a publish form carrying a
+      // sign-in instruction the user cannot act on.
+      if (detection.kind === 'undetermined') throw createAzureCommandFailedError(detection.message);
+      const auth = authSummary(detection);
       return {
         auth,
         targets: [publishTarget({ provider: input.provider, auth })],

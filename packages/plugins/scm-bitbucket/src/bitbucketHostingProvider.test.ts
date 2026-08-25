@@ -3,6 +3,9 @@ import { ingestPluginManifestV2 } from '@happier-dev/protocol';
 import type { ConnectedAccountRuntime as PluginConnectedAccountRuntime } from '@happier-dev/plugin-sdk/connected-accounts';
 
 import { encodeBitbucketBasicAuthorization } from './auth/basicCredentials.js';
+
+/** The immutable account id Bitbucket answers `GET /2.0/user` with in these cases. */
+const VIEWER_UUID = '{9f1c2a44-5d0e-4c8b-8b0a-1d7e6f3a2c19}';
 import { BITBUCKET_TRIAGE_ACTION_IDS } from './triage/source/actions.js';
 import { BITBUCKET_TRIAGE_DETAIL_ACTION_IDS } from './triage/source/detailActions.js';
 import { BITBUCKET_TRIAGE_MUTATION_ACTION_IDS } from './triage/source/mutationActions.js';
@@ -319,18 +322,41 @@ describe('bundled Bitbucket SCM hosting provider plugin', () => {
       async set(key: string, value: string) { credentialValues.set(key, value); },
       async delete(key: string) { credentialValues.delete(key); },
     };
+    // Completion and health are one authenticated read of `GET /2.0/user`; the account this
+    // runtime reports is the one Bitbucket named, so a context without that boundary cannot
+    // exercise either. The semantics themselves are owned by
+    // `auth/connectedAccountModeContract.test.ts`; what this case proves is that the runtime the
+    // ACTIVATION registered is the one that does it.
+    const confirmingServices = {
+      http: {
+        async request() {
+          return {
+            status: 200,
+            headers: {},
+            body: new TextEncoder().encode(JSON.stringify({
+              uuid: VIEWER_UUID,
+              nickname: 'example-maintainer',
+              display_name: 'Example Maintainer',
+            })),
+          };
+        },
+      },
+    };
+    const authenticationBoundary = {
+      services: confirmingServices,
+      signal: new AbortController().signal,
+    };
     const authenticationResult = await authentication.complete({
       fields: { identity: ' account@example.com ', token: ' token-secret ' },
     }, {
       attempt: { kind: 'connect', attemptId: 'connect-attempt' },
       attemptCredentials: credentialStore,
+      ...authenticationBoundary,
     } as Parameters<typeof authentication.complete>[1]);
     expect(authenticationResult).toEqual({
       status: 'connected',
-      providerIdentity: {
-        accountId: 'account@example.com',
-      },
-      displayName: 'account@example.com',
+      providerIdentity: { accountId: VIEWER_UUID },
+      displayName: 'example-maintainer',
       scopes: [],
     });
 
@@ -351,25 +377,27 @@ describe('bundled Bitbucket SCM hosting provider plugin', () => {
         async set(key: string, value: string) { reconnectCredentialValues.set(key, value); },
         async delete(key: string) { reconnectCredentialValues.delete(key); },
       },
+      ...authenticationBoundary,
     } as Parameters<typeof authentication.complete>[1]);
     expect(reconnectResult).toEqual({
       status: 'connected',
       accountId: 'account@example.com',
-      providerIdentity: {
-        accountId: 'renamed@example.com',
-      },
-      displayName: 'renamed@example.com',
+      providerIdentity: { accountId: VIEWER_UUID },
+      displayName: 'example-maintainer',
       scopes: [],
     });
 
-    const readContext = { credentials: credentialStore } as Parameters<typeof connectedAccountRuntime.status>[0];
+    const readContext = {
+      credentials: credentialStore,
+      ...authenticationBoundary,
+    } as Parameters<typeof connectedAccountRuntime.status>[0];
     expect(await connectedAccountRuntime.status(readContext)).toEqual({
       status: 'connected',
-      displayName: 'account@example.com',
+      displayName: 'example-maintainer',
       scopes: [],
     });
     expect(await connectedAccountRuntime.refresh(readContext as Parameters<typeof connectedAccountRuntime.refresh>[0]))
-      .toEqual({ status: 'connected', displayName: 'account@example.com', scopes: [] });
+      .toEqual({ status: 'connected', displayName: 'example-maintainer', scopes: [] });
     expect(await connectedAccountRuntime.revoke(readContext)).toEqual({ status: 'remoteUnsupported' });
 
     const materialized = await connectedAccountRuntime.materialize({
@@ -413,6 +441,7 @@ describe('bundled Bitbucket SCM hosting provider plugin', () => {
     }, {
       attempt: { kind: 'connect', attemptId: 'unicode-connect-attempt' },
       attemptCredentials: credentialStore,
+      ...authenticationBoundary,
     } as Parameters<typeof authentication.complete>[1]);
     const unicodeMaterialized = await connectedAccountRuntime.materialize({
       kind: 'httpHeaders',
@@ -441,6 +470,7 @@ describe('bundled Bitbucket SCM hosting provider plugin', () => {
     }, {
       attempt: { kind: 'connect', attemptId: 'rejected-connect-attempt' },
       attemptCredentials: credentialStore,
+      ...authenticationBoundary,
     } as Parameters<typeof authentication.complete>[1]);
     expect(rejected).toMatchObject({
       status: 'rejected',

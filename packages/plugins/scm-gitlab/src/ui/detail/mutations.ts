@@ -44,19 +44,40 @@ import {
   GitlabMergeRequestMarkReadyResultV1Schema,
   GitlabMergeRequestMergeInputV1Schema,
   GitlabMergeRequestMergeResultV1Schema,
+  GitlabMergeRequestReopenInputV1Schema,
+  GitlabMergeRequestReopenResultV1Schema,
+  GitlabMergeRequestReviewerChangeInputV1Schema,
+  GitlabMergeRequestReviewerChangeResultV1Schema,
+  GitlabMergeRequestDiscussionResolutionInputV1Schema,
+  GitlabMergeRequestDiscussionResolutionResultV1Schema,
+  GitlabIssueCloseInputV1Schema,
+  GitlabIssueCloseResultV1Schema,
+  GitlabIssueReopenInputV1Schema,
+  GitlabIssueReopenResultV1Schema,
+  GitlabIssueAssignInputV1Schema,
+  GitlabIssueAssignResultV1Schema,
+  GitlabIssueLabelInputV1Schema,
+  GitlabIssueLabelResultV1Schema,
   type GitlabMergeRequestCloseInputV1,
   type GitlabMergeRequestMarkReadyInputV1,
   type GitlabMergeRequestMergeInputV1,
   type GitlabMergeRequestStateRowV1,
+  type GitlabIssueStateRowV1,
 } from '../../triage/mutations/contracts.js';
 
 /** The three declared writes, named by the effect a person asked for. */
-export type GitlabMergeRequestWriteIdV1 = 'merge' | 'markReady' | 'close';
+export type GitlabWriteIdV1 =
+  | 'merge' | 'markReady' | 'close' | 'mergeRequestReopen'
+  | 'reviewerChange' | 'discussionResolution'
+  | 'issueClose' | 'issueReopen' | 'issueAssign' | 'issueLabel';
+export type GitlabMergeRequestWriteIdV1 =
+  | 'merge' | 'markReady' | 'close' | 'mergeRequestReopen'
+  | 'reviewerChange' | 'discussionResolution';
 
 type ObservedState = TriageDetailSurfaceInputV1['observation']['snapshot']['state'];
 
 const ACTIVE_WRITES: readonly GitlabMergeRequestWriteIdV1[] =
-  Object.freeze(['merge', 'markReady', 'close']);
+  Object.freeze(['merge', 'markReady', 'close', 'reviewerChange']);
 const NO_WRITES: readonly GitlabMergeRequestWriteIdV1[] = Object.freeze([]);
 
 /**
@@ -87,7 +108,22 @@ export function gitlabOfferedMergeRequestWritesV1(params: Readonly<{
   // nothing this build can turn into a transition, so they offer nothing rather
   // than guessing. GitLab declares no reopen Action, so a closed merge request
   // is correctly offered no control at all.
-  return params.state.presentation === 'active' ? ACTIVE_WRITES : NO_WRITES;
+  if (params.state.presentation === 'active') return ACTIVE_WRITES;
+  return params.state.presentation === 'closed'
+    ? Object.freeze(['mergeRequestReopen'])
+    : NO_WRITES;
+}
+
+export function gitlabOfferedIssueWritesV1(params: Readonly<{
+  kindId: string;
+  state: ObservedState;
+}>): readonly GitlabWriteIdV1[] {
+  if (params.kindId !== 'issue') return NO_WRITES;
+  return params.state.presentation === 'active'
+    ? Object.freeze(['issueClose', 'issueAssign', 'issueLabel'])
+    : params.state.presentation === 'closed'
+      ? Object.freeze(['issueReopen', 'issueAssign', 'issueLabel'])
+      : NO_WRITES;
 }
 
 function localRefOf(input: TriageDetailSurfaceInputV1) {
@@ -122,6 +158,100 @@ export function buildGitlabMergeRequestCloseInputV1(
     localRef: localRefOf(input),
   });
   return parsed.success ? parsed.data : null;
+}
+
+function buildWithSchema<T>(
+  schema: { safeParse(value: unknown): { success: true; data: T } | { success: false } },
+  value: unknown,
+): T | null {
+  const parsed = schema.safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
+
+export function buildGitlabMergeRequestReopenInputV1(input: TriageDetailSurfaceInputV1) {
+  return buildWithSchema(GitlabMergeRequestReopenInputV1Schema, {
+    v: 1,
+    instance: input.instance,
+    localRef: localRefOf(input),
+  });
+}
+
+export function buildGitlabIssueCloseInputV1(input: TriageDetailSurfaceInputV1) {
+  return buildWithSchema(GitlabIssueCloseInputV1Schema, {
+    v: 1,
+    instance: input.instance,
+    localRef: localRefOf(input),
+    observedRevision: input.observation.nativeRevision,
+  });
+}
+
+export function buildGitlabIssueReopenInputV1(input: TriageDetailSurfaceInputV1) {
+  return buildWithSchema(GitlabIssueReopenInputV1Schema, {
+    v: 1,
+    instance: input.instance,
+    localRef: localRefOf(input),
+    observedRevision: input.observation.nativeRevision,
+  });
+}
+
+export function buildGitlabReviewerChangeInputV1(
+  input: TriageDetailSurfaceInputV1,
+  operation: 'add' | 'remove',
+  reviewerUsernames: readonly string[],
+) {
+  return buildWithSchema(GitlabMergeRequestReviewerChangeInputV1Schema, {
+    v: 1,
+    instance: input.instance,
+    localRef: localRefOf(input),
+    observedHeadSha: input.observation.nativeRevision,
+    operation,
+    reviewerUsernames,
+  });
+}
+
+export function buildGitlabDiscussionResolutionInputV1(
+  input: TriageDetailSurfaceInputV1,
+  discussionId: string,
+  resolved: boolean,
+) {
+  return buildWithSchema(GitlabMergeRequestDiscussionResolutionInputV1Schema, {
+    v: 1,
+    instance: input.instance,
+    localRef: localRefOf(input),
+    observedHeadSha: input.observation.nativeRevision,
+    discussionId,
+    resolved,
+  });
+}
+
+export function buildGitlabIssueAssignInputV1(
+  input: TriageDetailSurfaceInputV1,
+  operation: 'add' | 'remove',
+  assigneeUsernames: readonly string[],
+) {
+  return buildWithSchema(GitlabIssueAssignInputV1Schema, {
+    v: 1,
+    instance: input.instance,
+    localRef: localRefOf(input),
+    observedRevision: input.observation.nativeRevision,
+    operation,
+    assigneeUsernames,
+  });
+}
+
+export function buildGitlabIssueLabelInputV1(
+  input: TriageDetailSurfaceInputV1,
+  operation: 'add' | 'remove',
+  labelNames: readonly string[],
+) {
+  return buildWithSchema(GitlabIssueLabelInputV1Schema, {
+    v: 1,
+    instance: input.instance,
+    localRef: localRefOf(input),
+    observedRevision: input.observation.nativeRevision,
+    operation,
+    labelNames,
+  });
 }
 
 /**
@@ -187,25 +317,28 @@ export const GITLAB_CURRENT_INTENT_REJECTED_CODE = 'plugin_action_current_intent
  * the difference: a `scheduled` merge has not merged, and telling someone
  * waiting on a release that it did would be false.
  */
-export type GitlabWriteEffectV1 = 'merged' | 'scheduled' | 'ready' | 'closed';
+export type GitlabWriteEffectV1 =
+  | 'merged' | 'scheduled' | 'ready' | 'closed' | 'reopened'
+  | 'reviewersChanged' | 'discussionStateChanged' | 'assigneesChanged' | 'labelsChanged';
+type GitlabMutationStateRowV1 = GitlabMergeRequestStateRowV1 | GitlabIssueStateRowV1;
 
 export type GitlabWriteOutcomeV1 =
   /** GitLab proved the requested state, by a confirming read. */
-  | Readonly<{ kind: 'applied'; effect: GitlabWriteEffectV1; item: GitlabMergeRequestStateRowV1 }>
+  | Readonly<{ kind: 'applied'; effect: GitlabWriteEffectV1; item: GitlabMutationStateRowV1 }>
   /** The item moved under the user and NOTHING was written. */
-  | Readonly<{ kind: 'reconfirmationRequired'; observed: GitlabMergeRequestStateRowV1 }>
+  | Readonly<{ kind: 'reconfirmationRequired'; observed: GitlabMutationStateRowV1 }>
   /** GitLab, or this client's preflight, performed no transition. */
   | Readonly<{
     kind: 'refused';
     reason: string;
     dispatched: boolean;
-    observed?: GitlabMergeRequestStateRowV1;
+    observed?: GitlabMutationStateRowV1;
     messages?: readonly string[];
   }>
   /** The write was dispatched and its outcome is NOT proven. Never a blind retry. */
   | Readonly<{
     kind: 'unconfirmed';
-    observed?: GitlabMergeRequestStateRowV1;
+    observed?: GitlabMutationStateRowV1;
     failure?: TriageSourceFailureV1;
   }>
   /** Nothing was attempted: admission, authorization or the currentness read failed. */
@@ -223,6 +356,13 @@ const RESULT_SCHEMA_BY_WRITE = Object.freeze({
   merge: GitlabMergeRequestMergeResultV1Schema,
   markReady: GitlabMergeRequestMarkReadyResultV1Schema,
   close: GitlabMergeRequestCloseResultV1Schema,
+  mergeRequestReopen: GitlabMergeRequestReopenResultV1Schema,
+  reviewerChange: GitlabMergeRequestReviewerChangeResultV1Schema,
+  discussionResolution: GitlabMergeRequestDiscussionResolutionResultV1Schema,
+  issueClose: GitlabIssueCloseResultV1Schema,
+  issueReopen: GitlabIssueReopenResultV1Schema,
+  issueAssign: GitlabIssueAssignResultV1Schema,
+  issueLabel: GitlabIssueLabelResultV1Schema,
 });
 
 /**
@@ -236,6 +376,11 @@ const APPLIED_EFFECT_BY_KIND: Readonly<Record<string, GitlabWriteEffectV1 | unde
     scheduled: 'scheduled',
     ready: 'ready',
     closed: 'closed',
+    reopened: 'reopened',
+    reviewersChanged: 'reviewersChanged',
+    discussionStateChanged: 'discussionStateChanged',
+    assigneesChanged: 'assigneesChanged',
+    labelsChanged: 'labelsChanged',
   });
 
 /**
@@ -251,7 +396,7 @@ const APPLIED_EFFECT_BY_KIND: Readonly<Record<string, GitlabWriteEffectV1 | unde
  * states the control itself already shows and not settled facts to report.
  */
 export function projectGitlabWriteOutcomeV1(
-  write: GitlabMergeRequestWriteIdV1,
+  write: GitlabWriteIdV1,
   execution: PluginActionExecution<unknown>,
 ): GitlabWriteOutcomeV1 | null {
   if (execution.status === 'idle' || execution.status === 'pending') return null;

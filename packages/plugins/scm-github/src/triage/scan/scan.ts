@@ -346,7 +346,7 @@ export async function runGithubTriageScan(
     if (page.incompleteResults) frontier.walkHealth.add('incomplete-results');
 
     const involvement = mapGithubLaneToInvolvement(lane.laneId);
-    for (const rawItem of page.items) {
+    const views = page.items.map((rawItem) => {
       // Budget is spent on RAW provider cardinality, before and regardless of decoding. A
       // malformed row still consumed a row of this page, and counting only the rows that
       // mapped is how `observations + omittedItemCount` grew past the submitted limit —
@@ -354,7 +354,30 @@ export async function runGithubTriageScan(
       frontier.remainingBudget -= 1;
       // The raw cursor advances by response cardinality BEFORE tolerant decoding, so an
       // undecodable item can never make a following raw item vanish.
-      const view = decodeGithubSearchItem(rawItem);
+      return decodeGithubSearchItem(rawItem);
+    });
+    // GitHub omits `repository` from a search item, so identity needs one read per
+    // DISTINCT repository this page names. Every one of them is ASKED FOR here,
+    // before any answer is awaited below, because taken one after another they are
+    // a chain of round trips inside a single lane's page: an involvement inbox
+    // spanning fifty repositories would spend fifty sequential round trips before
+    // the second lane is asked at all, and the invocation would settle on its
+    // budget with the later lanes never read. That is the fairness the round-robin
+    // rotation exists to provide, lost inside one page.
+    //
+    // The request COUNT is unchanged — the reader memoizes by path for the
+    // invocation, so a page of a hundred rows in three repositories still issues
+    // three reads. At most one page of rows is outstanding, and the walk already
+    // bounds a page to GitHub's own maximum page size, so this batch cannot exceed
+    // the concurrency GitHub documents for its REST API.
+    for (const view of views) {
+      if (view === null || view.repositoryId !== null) continue;
+      // Its failure is read below, on the awaited memoized promise; this call only
+      // starts it.
+      void repositories.read({ owner: view.owner, name: view.name })
+        .catch(() => undefined);
+    }
+    for (const view of views) {
       if (view === null) {
         health.omittedItemCount += 1;
         frontier.walkHealth.add('undecodable-items');

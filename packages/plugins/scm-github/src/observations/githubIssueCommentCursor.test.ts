@@ -15,37 +15,41 @@ const initialCursor: GithubIssueCommentCursorV1 = {
 };
 
 describe('GitHub issue-comment checkpoint', () => {
-  it('reads released V1 checkpoints without a continuation as a completed pull window', () => {
+  it('reads a persisted V1 checkpoint as its ordered boundary and validator', () => {
     expect(parseGithubIssueCommentCursor({
       v: 1,
       updatedAtIso: '2026-08-10T12:00:00.000Z',
       commentIdAtUpdatedAt: '8',
       etag: 'released-etag',
-    })).toMatchObject({
+    })).toEqual({
       v: 1,
       updatedAtIso: '2026-08-10T12:00:00.000Z',
       commentIdAtUpdatedAt: '8',
       etag: 'released-etag',
-      continuation: null,
     });
   });
 
-  it('clears a stale continuation and its ETag when the checkpoint changes transport', () => {
+  it('ignores a predecessor pagination payload instead of lending it a second ordering authority', () => {
+    // `(updated_at, id)` is the only checkpoint fact. A predecessor build also
+    // persisted an opaque provider page URL; reading it back must neither
+    // resurrect that traversal nor reject the checkpoint.
     expect(parseGithubIssueCommentCursor({
       v: 1,
       updatedAtIso: '2026-08-10T12:00:00.000Z',
       commentIdAtUpdatedAt: '8',
-      etag: 'stale-poll-etag',
+      etag: 'released-etag',
       continuation: {
-        transport: 'webhook',
+        transport: 'poll',
         connectionId: 'connection-1',
         providerConnectionKey: 'github:repository:77',
         filterSince: '2026-08-10T11:59:59Z',
-        url: 'https://api.github.com/repos/acme/widgets/issues/comments?sort=updated&direction=asc&since=2026-08-10T11%3A59%3A59Z&per_page=100&page=11',
+        url: 'https://api.github.com/repos/acme/widgets/issues/comments?page=11',
       },
-    })).toMatchObject({
-      etag: null,
-      continuation: null,
+    })).toEqual({
+      v: 1,
+      updatedAtIso: '2026-08-10T12:00:00.000Z',
+      commentIdAtUpdatedAt: '8',
+      etag: 'released-etag',
     });
   });
 

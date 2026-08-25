@@ -4,6 +4,12 @@ import type {
   TriageSourceFailureV1,
 } from '@happier-dev/triage-protocol/v1';
 
+import {
+  createBoundedInvocation,
+  settleAtMostOnceProviderWrite,
+  type BoundedInvocation,
+} from '@happier-dev/triage-sources/runtime';
+
 import { createBitbucketFailure } from '../failures.js';
 import { isBitbucketCommentId } from '../identity.js';
 import {
@@ -79,9 +85,6 @@ export const BITBUCKET_MUTATION_DEADLINE_MS = 45_000;
  * cancellable, and when it ends without observing `MERGED` the answer is `pending` — the UI is
  * never told a queued merge merged.
  */
-const MERGE_POLL_ATTEMPTS = 3;
-const MERGE_POLL_INTERVAL_MS = 750;
-
 const INVALID_INPUT = createBitbucketFailure('unsupportedContract', 'mutation-input-invalid');
 const INVOCATION_CANCELLED = createBitbucketFailure('cancelled', 'invocation-cancelled');
 
@@ -92,39 +95,19 @@ function unavailable(failure: TriageSourceFailureV1): BitbucketMutationResultV1 
 /**
  * The caller's signal, additionally bounded by this Action's own deadline.
  *
- * The deadline aborts with a `TimeoutError` so the classifier can tell it apart from a caller
- * cancellation; whichever fired first travels through every provider boundary below. The timer is
- * dropped as soon as the caller's own signal aborts and is unreferenced, so a write nobody is
- * waiting on cannot hold the daemon open.
+ * The composition itself is the shared forge rule and lives at its one owner; only the duration
+ * and the sentence are this source's. Two copies of a `clearTimeout`/`unref` pair is how one of
+ * them ends up holding the daemon open for a write nobody is waiting on.
+ *
+ * NOTE, recorded rather than silently relied on: the deadline aborts with a `TimeoutError` so a
+ * classifier CAN tell it apart from a caller cancellation, but this source's classifier
+ * (`triage/failures.ts#classifyBitbucketTransportFailure`) currently folds both into
+ * `cancelled/invocation-cancelled`. The distinction is available and unused here.
  */
-function boundMutation(callerSignal: AbortSignal | undefined): AbortSignal {
-  const deadline = new AbortController();
-  const timer = setTimeout(() => {
-    deadline.abort(new DOMException(
-      'Bitbucket did not answer this pull-request write within its deadline.',
-      'TimeoutError',
-    ));
-  }, BITBUCKET_MUTATION_DEADLINE_MS);
-  (timer as unknown as Readonly<{ unref?: () => void }>).unref?.();
-  if (callerSignal === undefined) return deadline.signal;
-  callerSignal.addEventListener('abort', () => { clearTimeout(timer); }, { once: true });
-  return AbortSignal.any([callerSignal, deadline.signal]);
-}
-
-/** Waits between two poll attempts, and stops waiting the moment the invocation is abandoned. */
-async function pause(ms: number, signal: AbortSignal): Promise<void> {
-  if (signal.aborted) return;
-  await new Promise<void>((resolve) => {
-    const timer = setTimeout(() => {
-      signal.removeEventListener('abort', onAbort);
-      resolve();
-    }, ms);
-    (timer as unknown as Readonly<{ unref?: () => void }>).unref?.();
-    function onAbort(): void {
-      clearTimeout(timer);
-      resolve();
-    }
-    signal.addEventListener('abort', onAbort, { once: true });
+function boundMutation(callerSignal: AbortSignal | undefined): BoundedInvocation {
+  return createBoundedInvocation({
+    callerSignal,
+    timeoutMs: BITBUCKET_MUTATION_DEADLINE_MS,
   });
 }
 
@@ -150,20 +133,34 @@ async function admitMutation(
   }>,
   context: PluginInvocationContext,
 ): Promise<
-  | Readonly<{ ok: true; context: MutationContext }>
+  | Readonly<{ ok: true; context: MutationContext; dispose(): void }>
   | Readonly<{ ok: false; result: BitbucketMutationResultV1 }>
 > {
-  const signal = boundMutation(context.signal);
-  const runtime = toBitbucketRuntime(context, signal);
+  const bounded = boundMutation(context.signal);
+  const runtime = toBitbucketRuntime(context, bounded.signal);
   const admitted = await admitBitbucketEntryInvocation(input, runtime);
-  if (!admitted.ok) return { ok: false, result: unavailable(admitted.failure) };
+  if (!admitted.ok) {
+    const deadlineExpired = bounded.signal.aborted
+      && (bounded.signal.reason as Readonly<{ name?: unknown }> | null)?.name === 'TimeoutError';
+    bounded.dispose();
+    return {
+      ok: false,
+      result: unavailable(deadlineExpired
+        ? toTriageSourceFailure(createBitbucketFailure(
+          'transient',
+          'invocation-deadline-exceeded',
+        ))
+        : admitted.failure),
+    };
+  }
   return {
     ok: true,
+    dispose: bounded.dispose,
     context: {
       client: admitted.client,
       route: admitted.route,
       localRef: input.localRef,
-      signal,
+      signal: bounded.signal,
     },
   };
 }
@@ -185,6 +182,10 @@ function shapeUnsettledWrite(
       failure: toTriageSourceFailure(outcome.failure),
     })
     : unavailable(toTriageSourceFailure(outcome.failure));
+}
+
+function isBitbucketAmbiguousWriteFailure(failure: Readonly<{ class: string }>): boolean {
+  return false;
 }
 
 /* --------------------------------------------------------------------- merge */
@@ -216,6 +217,7 @@ export async function mergeBitbucketPullRequestAction(
   );
   if (!admitted.ok) return admitted.result;
   const mutation = admitted.context;
+  try {
 
   const current = await observeBitbucketEntryWithFacts(mutation);
   if (current.observation.kind !== 'present') {
@@ -242,39 +244,60 @@ export async function mergeBitbucketPullRequestAction(
     });
   }
 
-  const write = await mergeBitbucketPullRequest({
-    client: mutation.client,
-    route: mutation.route,
-    parameters: {
-      closeSourceBranch: request.closeSourceBranch,
-      mergeStrategy: request.mergeStrategy,
-      ...(request.message === undefined ? {} : { message: request.message }),
+  let dispatched: BitbucketWriteOutcomeV1 | null = null;
+  const write = await settleAtMostOnceProviderWrite({
+    dispatch: async () => {
+      dispatched = await mergeBitbucketPullRequest({
+        client: mutation.client,
+        route: mutation.route,
+        parameters: {
+          closeSourceBranch: request.closeSourceBranch,
+          mergeStrategy: request.mergeStrategy,
+          ...(request.message === undefined ? {} : { message: request.message }),
+        },
+        signal: mutation.signal,
+      });
+      return dispatched;
     },
-    signal: mutation.signal,
+    mayHaveChanged: (result) => result.kind === 'succeeded'
+      || result.kind === 'queued'
+      || (result.kind === 'failed' && isBitbucketAmbiguousWriteFailure(result.failure)),
+    confirm: async () => {
+      const confirmed = await observeBitbucketEntryWithFacts(mutation);
+      if (confirmed.state === 'MERGED') {
+        return { kind: 'applied' as const, observation: confirmed.observation };
+      }
+      if (confirmed.observation.kind === 'unresolved') {
+        return { kind: 'uncertain' as const, failure: confirmed.observation.failure };
+      }
+      return dispatched?.kind === 'queued' && confirmed.state === 'OPEN'
+        ? { kind: 'uncertain' as const, observation: confirmed.observation }
+        : { kind: 'unchanged' as const, observation: confirmed.observation };
+    },
   });
-
-  if (write.kind === 'rejected' || write.kind === 'failed') return shapeUnsettledWrite(write);
-
-  if (write.kind === 'succeeded') {
-    // One confirming read, never a poll: a terminal `200` is not an invitation to keep asking.
-    const confirmed = await observeBitbucketEntryWithFacts(mutation);
-    return confirmed.state === 'MERGED'
-      ? Object.freeze({ kind: 'applied' as const, observation: confirmed.observation })
-      : Object.freeze({ kind: 'pending' as const, observation: confirmed.observation });
+  if (write.kind === 'settled') {
+    return write.result.kind === 'rejected' || write.result.kind === 'failed'
+      ? shapeUnsettledWrite(write.result)
+      : unavailable(toTriageSourceFailure(INVOCATION_CANCELLED));
   }
-
-  // A queued merge. The location Bitbucket issued was already proven to be a Bitbucket API
-  // location; terminality is then read from the pull request itself, because that is the resource
-  // whose contract this source decodes and the fact the user actually asked about.
-  let settled = await observeBitbucketEntryWithFacts(mutation);
-  for (let attempt = 1; attempt < MERGE_POLL_ATTEMPTS && settled.state !== 'MERGED'; attempt += 1) {
-    if (mutation.signal.aborted) break;
-    await pause(MERGE_POLL_INTERVAL_MS, mutation.signal);
-    settled = await observeBitbucketEntryWithFacts(mutation);
+  if (write.kind === 'applied') {
+    return Object.freeze({ kind: 'applied' as const, observation: write.observation });
   }
-  return settled.state === 'MERGED'
-    ? Object.freeze({ kind: 'applied' as const, observation: settled.observation })
-    : Object.freeze({ kind: 'pending' as const, observation: settled.observation });
+  if (write.kind === 'unchanged') {
+    return Object.freeze({ kind: 'unchanged' as const, observation: write.observation });
+  }
+  const dispatchedOutcome = dispatched as BitbucketWriteOutcomeV1 | null;
+  if (dispatchedOutcome?.kind === 'queued' && write.observation !== undefined) {
+    return Object.freeze({ kind: 'pending' as const, observation: write.observation });
+  }
+  return Object.freeze({
+    kind: 'uncertain' as const,
+    ...(write.observation === undefined ? {} : { observation: write.observation }),
+    ...(write.failure === undefined ? {} : { failure: toTriageSourceFailure(write.failure) }),
+  });
+  } finally {
+    admitted.dispose();
+  }
 }
 
 /* ------------------------------------------------------------------- decline */
@@ -302,6 +325,7 @@ export async function declineBitbucketPullRequestAction(
   );
   if (!admitted.ok) return admitted.result;
   const mutation = admitted.context;
+  try {
 
   if (mutation.signal.aborted) return unavailable(toTriageSourceFailure(INVOCATION_CANCELLED));
 
@@ -324,17 +348,40 @@ export async function declineBitbucketPullRequestAction(
     });
   }
 
-  const write = await declineBitbucketPullRequest({
-    client: mutation.client,
-    route: mutation.route,
-    signal: mutation.signal,
+  const write = await settleAtMostOnceProviderWrite({
+    dispatch: async () => await declineBitbucketPullRequest({
+      client: mutation.client,
+      route: mutation.route,
+      signal: mutation.signal,
+    }),
+    mayHaveChanged: (result) => result.kind === 'succeeded'
+      || (result.kind === 'failed' && isBitbucketAmbiguousWriteFailure(result.failure)),
+    confirm: async () => {
+      const confirmed = await observeBitbucketEntryWithFacts(mutation);
+      if (confirmed.state === 'DECLINED') {
+        return { kind: 'applied' as const, observation: confirmed.observation };
+      }
+      if (confirmed.observation.kind === 'unresolved') {
+        return { kind: 'uncertain' as const, failure: confirmed.observation.failure };
+      }
+      return { kind: 'unchanged' as const, observation: confirmed.observation };
+    },
   });
-  if (write.kind === 'rejected' || write.kind === 'failed') return shapeUnsettledWrite(write);
-
-  const confirmed = await observeBitbucketEntryWithFacts(mutation);
-  return confirmed.state === 'DECLINED'
-    ? Object.freeze({ kind: 'applied' as const, observation: confirmed.observation })
-    : Object.freeze({ kind: 'pending' as const, observation: confirmed.observation });
+  if (write.kind === 'settled') {
+    return write.result.kind === 'rejected' || write.result.kind === 'failed'
+      ? shapeUnsettledWrite(write.result)
+      : unavailable(toTriageSourceFailure(INVOCATION_CANCELLED));
+  }
+  if (write.kind === 'applied') return Object.freeze({ kind: 'applied' as const, observation: write.observation });
+  if (write.kind === 'unchanged') return Object.freeze({ kind: 'unchanged' as const, observation: write.observation });
+  return Object.freeze({
+    kind: 'uncertain' as const,
+    ...(write.observation === undefined ? {} : { observation: write.observation }),
+    ...(write.failure === undefined ? {} : { failure: toTriageSourceFailure(write.failure) }),
+  });
+  } finally {
+    admitted.dispose();
+  }
 }
 
 /* --------------------------------------------------------- comment resolution */
@@ -382,6 +429,7 @@ async function runBitbucketCommentResolution(
     );
   }
   const mutation = admitted.context;
+  try {
 
   if (mutation.signal.aborted) {
     return commentUnavailable(toTriageSourceFailure(INVOCATION_CANCELLED));
@@ -406,37 +454,77 @@ async function runBitbucketCommentResolution(
   // responses this build cannot read the resolution out of. The confirming read below still has to
   // prove the effect.
 
-  const write = target === 'resolved'
-    ? await resolveBitbucketComment({
-      client: mutation.client,
-      route: mutation.route,
-      commentId: request.commentId,
-      signal: mutation.signal,
-    })
-    : await unresolveBitbucketComment({
-      client: mutation.client,
-      route: mutation.route,
-      commentId: request.commentId,
-      signal: mutation.signal,
-    });
-  if (write.kind === 'failed') {
-    return commentUnavailable(toTriageSourceFailure(write.failure));
-  }
-
-  const confirmed = await readBitbucketCommentResolutionState({
-    client: mutation.client,
-    route: mutation.route,
-    commentId: request.commentId,
-    signal: mutation.signal,
+  let dispatched: BitbucketWriteOutcomeV1 | null = null;
+  const write = await settleAtMostOnceProviderWrite({
+    dispatch: async () => {
+      dispatched = target === 'resolved'
+        ? await resolveBitbucketComment({
+        client: mutation.client,
+        route: mutation.route,
+        commentId: request.commentId,
+        signal: mutation.signal,
+      })
+        : await unresolveBitbucketComment({
+        client: mutation.client,
+        route: mutation.route,
+        commentId: request.commentId,
+        signal: mutation.signal,
+      });
+      return dispatched;
+    },
+    mayHaveChanged: (result) => result.kind === 'succeeded'
+      || (result.kind === 'failed' && isBitbucketAmbiguousWriteFailure(result.failure)),
+    confirm: async () => {
+      const confirmed = await readBitbucketCommentResolutionState({
+        client: mutation.client,
+        route: mutation.route,
+        commentId: request.commentId,
+        signal: mutation.signal,
+      });
+      if (!confirmed.ok) return { kind: 'uncertain' as const, failure: confirmed.failure };
+      if (confirmed.resolution === target) {
+        return { kind: 'applied' as const, observation: confirmed.resolution };
+      }
+      return confirmed.resolution === 'unknown'
+        ? { kind: 'uncertain' as const, observation: confirmed.resolution }
+        : { kind: 'unchanged' as const, observation: confirmed.resolution };
+    },
   });
-  if (!confirmed.ok) return commentUnavailable(toTriageSourceFailure(confirmed.failure));
-  return confirmed.resolution === target
-    ? Object.freeze({ kind: 'applied' as const, resolution: confirmed.resolution })
-    : Object.freeze({
+  if (write.kind === 'settled') {
+    return write.result.kind === 'failed'
+      ? commentUnavailable(toTriageSourceFailure(write.result.failure))
+      : Object.freeze({ kind: 'uncertain' as const });
+  }
+  if (write.kind === 'applied') {
+    return Object.freeze({ kind: 'applied' as const, resolution: write.observation });
+  }
+  if (write.kind === 'unchanged') {
+    const dispatchedOutcome = dispatched as BitbucketWriteOutcomeV1 | null;
+    if (dispatchedOutcome?.kind === 'succeeded') {
+      return Object.freeze({
+        kind: 'rejected' as const,
+        reason: 'resolution-unconfirmed' as const,
+        resolution: write.observation,
+      });
+    }
+    return Object.freeze({ kind: 'unchanged' as const, resolution: write.observation });
+  }
+  const dispatchedOutcome = dispatched as BitbucketWriteOutcomeV1 | null;
+  if (dispatchedOutcome?.kind === 'succeeded' && write.observation !== undefined) {
+    return Object.freeze({
       kind: 'rejected' as const,
       reason: 'resolution-unconfirmed' as const,
-      resolution: confirmed.resolution,
+      resolution: write.observation,
     });
+  }
+  return Object.freeze({
+    kind: 'uncertain' as const,
+    ...(write.observation === undefined ? {} : { resolution: write.observation }),
+    ...(write.failure === undefined ? {} : { failure: toTriageSourceFailure(write.failure) }),
+  });
+  } finally {
+    admitted.dispose();
+  }
 }
 
 function commentUnavailable(failure: TriageSourceFailureV1): BitbucketCommentResolutionResultV1 {

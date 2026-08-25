@@ -4,6 +4,7 @@ import type {
   TriageSourceEntryLocalRefV1,
   TriageSourceFailureV1,
 } from '@happier-dev/triage-protocol/v1';
+import { settleAtMostOnceProviderWrite } from '@happier-dev/triage-sources/runtime';
 
 import { resolveAzureConfiguredOrigin } from './configuration.js';
 import { createAzureSourceFailure, projectAzureSourceFailure } from './failureProjection.js';
@@ -158,7 +159,7 @@ async function admitAzureMutation(
   }>,
   context: PluginInvocationContext,
 ): Promise<
-  | Readonly<{ ok: true; mutation: MutationContext }>
+  | Readonly<{ ok: true; mutation: MutationContext; dispose(): void }>
   | Readonly<{ ok: false; result: AzureMutationResultV1 }>
 > {
   const origin = resolveAzureConfiguredOrigin(request.instance.configuration);
@@ -167,28 +168,32 @@ async function admitAzureMutation(
   const address = parseAzureEntryLocalRef(request.localRef, origin);
   if (address === null) return { ok: false, result: unavailable(entryOutsideInstance()) };
 
-  const signal = boundAzureInvocation(context.signal, AZURE_DEVOPS_MUTATION_DEADLINE_MS);
+  const bounded = boundAzureInvocation(context.signal, AZURE_DEVOPS_MUTATION_DEADLINE_MS);
   const opened = await openClient({
     services: {
       connectedAccounts: context.services.connectedAccounts,
-      transport: toAzureTransport(context.services.http, signal),
+      transport: toAzureTransport(context.services.http, bounded.signal),
       now: () => Date.now(),
     },
     instance: request.instance,
     origin,
-    signal,
+    signal: bounded.signal,
   });
-  if (!opened.ok) return { ok: false, result: unavailable(opened.failure) };
+  if (!opened.ok) {
+    bounded.dispose();
+    return { ok: false, result: unavailable(opened.failure) };
+  }
 
   return {
     ok: true,
+    dispose: bounded.dispose,
     mutation: {
       client: opened.client,
       viewerId: opened.viewerId,
       origin,
       address,
       localRef: request.localRef,
-      signal,
+      signal: bounded.signal,
     },
   };
 }
@@ -202,6 +207,61 @@ function observe(mutation: MutationContext): Promise<AzureEntryObservation> {
     localRef: mutation.localRef,
     signal: mutation.signal,
   });
+}
+
+async function settleAzureEntryWrite(input: Readonly<{
+  mutation: MutationContext;
+  dispatch: () => Promise<Readonly<{ ok: true }> | Readonly<{ ok: false; failure: AzureDevOpsFailure }>>;
+  applied: (row: AzurePullRequestRow) => boolean;
+}>): Promise<
+  | Readonly<{ kind: 'accepted' }>
+  | Readonly<{ kind: 'result'; result: AzureMutationResultV1 }>
+> {
+  const settled = await settleAtMostOnceProviderWrite({
+    dispatch: input.dispatch,
+    mayHaveChanged: (write) => !write.ok && isAzureAmbiguousWriteFailure(write.failure),
+    confirm: async () => {
+      const confirmed = await observe(input.mutation);
+      if (confirmed.row === null) {
+        return confirmed.observation.kind === 'unresolved'
+          ? { kind: 'uncertain' as const, failure: confirmed.observation.failure }
+          : { kind: 'uncertain' as const };
+      }
+      return input.applied(confirmed.row)
+        ? { kind: 'applied' as const, observation: confirmed.observation }
+        : { kind: 'unchanged' as const, observation: confirmed.observation };
+    },
+  });
+  if (settled.kind === 'settled') {
+    return settled.result.ok
+      ? { kind: 'accepted' }
+      : { kind: 'result', result: unavailable(projectAzureSourceFailure(settled.result.failure)) };
+  }
+  if (settled.kind === 'applied' && settled.observation !== undefined) {
+    return { kind: 'result', result: Object.freeze({ kind: 'applied', observation: settled.observation }) };
+  }
+  if (settled.kind === 'unchanged') {
+    return {
+      kind: 'result',
+      result: Object.freeze({
+        kind: 'uncertain' as const,
+        ...(settled.observation === undefined ? {} : { observation: settled.observation }),
+      }),
+    };
+  }
+  if (settled.kind === 'applied') {
+    return { kind: 'result', result: Object.freeze({ kind: 'uncertain' as const }) };
+  }
+  return {
+    kind: 'result',
+    result: Object.freeze({
+      kind: 'uncertain' as const,
+      ...(settled.observation === undefined ? {} : { observation: settled.observation }),
+      ...(settled.failure === undefined
+        ? {}
+        : { failure: settled.failure }),
+    }),
+  };
 }
 
 function boundedDetail(value: string | null): string | undefined {
@@ -240,6 +300,7 @@ export async function completeAzureDevOpsPullRequest(
   );
   if (!admitted.ok) return admitted.result;
   const mutation = admitted.mutation;
+  try {
 
   const current = await observe(mutation);
   if (current.row === null) {
@@ -273,13 +334,17 @@ export async function completeAzureDevOpsPullRequest(
     bypassPolicy: false as const,
     bypassReason: '' as const,
   };
-  const write = await completeAzurePullRequest({
-    client: mutation.client,
-    address: mutation.address,
-    completionOptions: sent,
-    signal: mutation.signal,
+  const write = await settleAzureEntryWrite({
+    mutation,
+    dispatch: async () => await completeAzurePullRequest({
+      client: mutation.client,
+      address: mutation.address,
+      completionOptions: sent,
+      signal: mutation.signal,
+    }),
+    applied: (row) => isCompletionTerminal(row),
   });
-  if (!write.ok) return unavailable(projectAzureSourceFailure(write.failure));
+  if (write.kind === 'result') return write.result;
 
   // The `200` acknowledged the status update. Everything below reads the pull request itself.
   let settled = await observe(mutation);
@@ -338,6 +403,7 @@ export async function completeAzureDevOpsPullRequest(
     observation: settled.observation,
     ...(row.autoCompleteSetBy === null ? {} : { autoCompleteEnabled: true as const }),
   });
+  } finally { admitted.dispose(); }
 }
 
 /**
@@ -378,6 +444,7 @@ export async function abandonAzureDevOpsPullRequest(
   );
   if (!admitted.ok) return admitted.result;
   const mutation = admitted.mutation;
+  try {
 
   const current = await observe(mutation);
   if (current.row === null) {
@@ -396,12 +463,16 @@ export async function abandonAzureDevOpsPullRequest(
     });
   }
 
-  const write = await abandonAzurePullRequest({
-    client: mutation.client,
-    address: mutation.address,
-    signal: mutation.signal,
+  const write = await settleAzureEntryWrite({
+    mutation,
+    dispatch: async () => await abandonAzurePullRequest({
+      client: mutation.client,
+      address: mutation.address,
+      signal: mutation.signal,
+    }),
+    applied: (row) => row.status === 'abandoned',
   });
-  if (!write.ok) return unavailable(projectAzureSourceFailure(write.failure));
+  if (write.kind === 'result') return write.result;
 
   // One confirming read, and it compares the field we sent rather than the status code: a `PATCH`
   // Azure silently ignored answers `200` and changes nothing.
@@ -409,6 +480,7 @@ export async function abandonAzureDevOpsPullRequest(
   return settled.row?.status === 'abandoned'
     ? Object.freeze({ kind: 'applied' as const, observation: settled.observation })
     : Object.freeze({ kind: 'pending' as const, observation: settled.observation });
+  } finally { admitted.dispose(); }
 }
 
 /* ---------------------------------------------------------------- reactivate */
@@ -435,6 +507,7 @@ export async function reactivateAzureDevOpsPullRequest(
   );
   if (!admitted.ok) return admitted.result;
   const mutation = admitted.mutation;
+  try {
 
   const current = await observe(mutation);
   if (current.row === null) {
@@ -450,12 +523,16 @@ export async function reactivateAzureDevOpsPullRequest(
     });
   }
 
-  const write = await reactivateAzurePullRequest({
-    client: mutation.client,
-    address: mutation.address,
-    signal: mutation.signal,
+  const write = await settleAzureEntryWrite({
+    mutation,
+    dispatch: async () => await reactivateAzurePullRequest({
+      client: mutation.client,
+      address: mutation.address,
+      signal: mutation.signal,
+    }),
+    applied: (row) => row.status === 'active',
   });
-  if (!write.ok) return unavailable(projectAzureSourceFailure(write.failure));
+  if (write.kind === 'result') return write.result;
 
   // The same confirming comparison abandon makes, against the field this write sent: a `PATCH`
   // Azure silently ignored answers `200` and changes nothing.
@@ -463,6 +540,7 @@ export async function reactivateAzureDevOpsPullRequest(
   return settled.row?.status === 'active'
     ? Object.freeze({ kind: 'applied' as const, observation: settled.observation })
     : Object.freeze({ kind: 'pending' as const, observation: settled.observation });
+  } finally { admitted.dispose(); }
 }
 
 /* ------------------------------------------------------------ request review */
@@ -497,6 +575,7 @@ export async function requestAzureDevOpsPullRequestReview(
   );
   if (!admitted.ok) return admitted.result;
   const mutation = admitted.mutation;
+  try {
 
   const current = await observe(mutation);
   if (current.row === null) {
@@ -569,6 +648,7 @@ export async function requestAzureDevOpsPullRequestReview(
   // answer is still `pending`: the reconciling read may have raced the provider, and reporting the
   // write's own transport failure would claim a negative this Action never observed.
   return Object.freeze({ kind: 'pending' as const, observation: settled.observation });
+  } finally { admitted.dispose(); }
 }
 
 /**
@@ -626,6 +706,7 @@ export async function setAzureDevOpsPullRequestThreadStatus(
     );
   }
   const mutation = admitted.mutation;
+  try {
 
   const current = await readAzurePullRequestThread({
     client: mutation.client,
@@ -644,14 +725,46 @@ export async function setAzureDevOpsPullRequestThreadStatus(
     });
   }
 
-  const write = await setAzurePullRequestThreadStatus({
-    client: mutation.client,
-    address: mutation.address,
-    threadId,
-    status: request.status,
-    signal: mutation.signal,
+  const write = await settleAtMostOnceProviderWrite({
+    dispatch: async () => await setAzurePullRequestThreadStatus({
+      client: mutation.client,
+      address: mutation.address,
+      threadId,
+      status: request.status,
+      signal: mutation.signal,
+    }),
+    mayHaveChanged: (result) => !result.ok && isAzureAmbiguousWriteFailure(result.failure),
+    confirm: async () => {
+      const confirmed = await readAzurePullRequestThread({
+        client: mutation.client,
+        address: mutation.address,
+        threadId,
+        signal: mutation.signal,
+      });
+      if (!confirmed.ok) return { kind: 'uncertain' as const, failure: confirmed.failure };
+      return confirmed.status === request.status
+        ? { kind: 'applied' as const, observation: confirmed.status }
+        : { kind: 'unchanged' as const, observation: confirmed.status };
+    },
   });
-  if (!write.ok) return threadUnavailable(projectAzureSourceFailure(write.failure));
+  if (write.kind !== 'settled') {
+    if (write.kind === 'applied') {
+      return Object.freeze({ kind: 'applied' as const, status: write.observation });
+    }
+    if (write.kind === 'unchanged') {
+      return Object.freeze({ kind: 'uncertain' as const, status: write.observation });
+    }
+    return Object.freeze({
+      kind: 'uncertain' as const,
+      ...(write.observation === undefined ? {} : { status: write.observation }),
+      ...(write.failure === undefined
+        ? {}
+        : { failure: projectAzureSourceFailure(write.failure) }),
+    });
+  }
+  if (!write.result.ok) {
+    return threadUnavailable(projectAzureSourceFailure(write.result.failure));
+  }
 
   const settled = await readAzurePullRequestThread({
     client: mutation.client,
@@ -667,4 +780,5 @@ export async function setAzureDevOpsPullRequestThreadStatus(
       reason: 'fields-ignored' as const,
       status: settled.status,
     });
+  } finally { admitted.dispose(); }
 }

@@ -64,7 +64,14 @@ const ITEM_UNREADABLE_FAILURE: TriageSourceFailureV1 = Object.freeze({
 });
 
 /** The minimum every re-observed row carries: the identity the write addressed. */
-type GitlabIdentifiedRow = Readonly<{ iid: string }>;
+type GitlabIdentifiedRow = Readonly<{ projectId: number; iid: string }>;
+
+export function gitlabMutationRowMatchesRouteV1(
+  row: GitlabIdentifiedRow,
+  route: Readonly<{ projectId: number; iid: string }>,
+): boolean {
+  return row.projectId === route.projectId && row.iid === route.iid;
+}
 
 /**
  * Everything a mutation needs to know about the KIND it addresses, stated once
@@ -156,7 +163,7 @@ export async function preflightGitlabItemMutation<TRow extends GitlabIdentifiedR
 
   const decoded = input.subject.decode(read.response.body);
   if (!decoded.ok) return unavailable(UNDECODABLE_ITEM_FAILURE);
-  if (decoded.row.iid !== input.localRef.entryId) {
+  if (!gitlabMutationRowMatchesRouteV1(decoded.row, admitted.route)) {
     return unavailable(IDENTITY_MISMATCH_FAILURE);
   }
 
@@ -192,16 +199,28 @@ export async function preflightGitlabItemMutation<TRow extends GitlabIdentifiedR
 
 /**
  * The failures that mean the request left this process and GitLab's answer did
- * not come back: a dropped connection, a cancelled invocation, and a body this
- * client could not decode — which is a **2xx** GitLab already acted on.
+ * not come back: a dropped connection, a cancelled invocation, this source's own
+ * deadline elapsing, and a body this client could not decode — which is a **2xx**
+ * GitLab already acted on.
  *
  * It is a positive list rather than "no status", because the absence of a status
  * also covers the two refusals this client makes before dispatch, and reading a
  * never-sent request as possibly-performed would be the opposite error.
+ *
+ * `deadline-exceeded` belongs here for exactly the reason `cancelled` does, and
+ * the reason is not that they are the same event — they are deliberately
+ * distinguished at the classifier, because *this panel gave up on GitLab* and
+ * *you navigated away* are different answers. What they share is the only
+ * property this predicate asks about: the request was dispatched and its answer
+ * never arrived. A deadline that elapses while a `PUT /merge` is in flight says
+ * nothing about whether GitLab merged, so classifying it as a refusal made
+ * before dispatch would report "nothing was attempted" about a merge that may
+ * be in production.
  */
 const ANSWER_LOST_FAILURE_CODES: ReadonlySet<string> = new Set([
   'transport-failed',
   'cancelled',
+  'deadline-exceeded',
   'undecodable-body',
 ]);
 

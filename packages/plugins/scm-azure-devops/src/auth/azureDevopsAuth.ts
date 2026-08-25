@@ -21,6 +21,11 @@ export type AzureDevopsCliAuthDetectionResult =
       kind: 'missing-cli';
       capabilityId: typeof AZURE_CLI_LOCAL_ID;
       remediation: AzureDevopsAuthRemediation;
+    }>
+  | Readonly<{
+      kind: 'undetermined';
+      capabilityId: typeof AZURE_CLI_LOCAL_ID;
+      message: string;
     }>;
 
 export type AzureDevopsAuthRemediation =
@@ -52,32 +57,66 @@ function parseAccount(stdout: string): Readonly<{ accountName: string | null; te
   }
 }
 
+/**
+ * The three facts the host's command boundary can report, and the only ones this
+ * detector is entitled to translate into an answer:
+ *
+ * - the probe **exited**            (`exitCode` is a number) — `az` answered;
+ * - the probe **could not be run**  (the boundary throws `plugin_system_tool_unavailable`) — `az` is absent;
+ * - the probe **did not complete**  (`exitCode` is `null`, or the boundary threw for any other
+ *   reason) — nothing was learned, and that is never rendered as a sign-in instruction.
+ */
+const AZURE_CLI_UNRESOLVABLE_ERROR_CODE = 'plugin_system_tool_unavailable' as const;
+
+function readErrorCode(error: unknown): string | null {
+  if (!error || typeof error !== 'object') return null;
+  const code = (error as { code?: unknown }).code;
+  return typeof code === 'string' ? code : null;
+}
+
+function undeterminedAuth(message: string): AzureDevopsCliAuthDetectionResult {
+  return { kind: 'undetermined', capabilityId: AZURE_CLI_LOCAL_ID, message };
+}
+
+function missingAzureCli(): AzureDevopsCliAuthDetectionResult {
+  return {
+    kind: 'missing-cli',
+    capabilityId: AZURE_CLI_LOCAL_ID,
+    remediation: {
+      kind: 'install_required',
+      setupUrl: AZ_CLI_SETUP_URL,
+    },
+  };
+}
+
 export async function detectAzureDevopsCliAuth(input: Readonly<{
   provider: ScmHostingProviderRef;
   runtimeServices?: ScmHostingProviderRuntimeServices;
 }>): Promise<AzureDevopsCliAuthDetectionResult> {
   const executeCommand = input.runtimeServices?.executeCommand;
   if (!executeCommand) {
-    return {
-      kind: 'missing-cli',
-      capabilityId: AZURE_CLI_LOCAL_ID,
-      remediation: {
-        kind: 'install_required',
-        setupUrl: AZ_CLI_SETUP_URL,
-      },
-    };
+    return undeterminedAuth('Azure CLI sign-in status could not be checked: no command runner is available');
   }
 
-  const result = await executeCommand({
-    executable: AZURE_CLI_EXECUTABLE,
-    args: ['account', 'show', '--output', 'json'],
-    timeoutMs: 2_000,
-    env: {
-      AZURE_CORE_NO_COLOR: '1',
-      AZURE_CORE_ONLY_SHOW_ERRORS: '1',
-    },
-  });
+  let result: Awaited<ReturnType<NonNullable<ScmHostingProviderRuntimeServices['executeCommand']>>> | undefined;
+  try {
+    result = await executeCommand({
+      executable: AZURE_CLI_EXECUTABLE,
+      args: ['account', 'show', '--output', 'json'],
+      timeoutMs: 2_000,
+      env: {
+        AZURE_CORE_NO_COLOR: '1',
+        AZURE_CORE_ONLY_SHOW_ERRORS: '1',
+      },
+    });
+  } catch (error) {
+    if (readErrorCode(error) === AZURE_CLI_UNRESOLVABLE_ERROR_CODE) return missingAzureCli();
+    return undeterminedAuth('Azure CLI sign-in status could not be checked');
+  }
   if (!result?.ok) {
+    if (typeof result?.exitCode !== 'number') {
+      return undeterminedAuth('Azure CLI sign-in check did not complete');
+    }
     return {
       kind: 'missing-auth',
       capabilityId: AZURE_CLI_LOCAL_ID,

@@ -69,10 +69,21 @@ export async function walkBitbucketCollection<TItem>(
   const pageLength = input.pageLength ?? BITBUCKET_MAX_PAGE_LENGTH;
   const maxPages = input.maxPages ?? BITBUCKET_COLLECTION_PAGE_CEILING;
   const items: TItem[] = [];
+  let skippedItem = false;
   let url: string | null = input.resumeUrl ?? withBitbucketPageLength(input.url, pageLength);
 
+  const finished = (): BitbucketCollectionOutcome<TItem> => skippedItem
+    ? {
+      ok: true,
+      items,
+      complete: false,
+      nextUrl: null,
+      failure: createBitbucketFailure('unsupportedContract', 'collection-items-undecodable'),
+    }
+    : { ok: true, items, complete: true, nextUrl: null };
+
   for (let page = 0; page < maxPages; page += 1) {
-    if (url === null) return { ok: true, items, complete: true, nextUrl: null };
+    if (url === null) return finished();
     if (input.signal?.aborted === true) {
       return { ok: false, failure: createBitbucketFailure('cancelled', 'invocation-cancelled') };
     }
@@ -93,7 +104,8 @@ export async function walkBitbucketCollection<TItem>(
 
     for (const raw of envelope.envelope.values) {
       const decoded = input.decode(raw);
-      if (decoded !== null) items.push(decoded);
+      if (decoded === null) skippedItem = true;
+      else items.push(decoded);
     }
 
     const next = resolveBitbucketNextPageUrl(envelope.envelope);
@@ -105,7 +117,7 @@ export async function walkBitbucketCollection<TItem>(
 
   // The collection ended exactly on the last admitted page: a bounded walk that read everything is
   // complete, not truncated.
-  if (url === null) return { ok: true, items, complete: true, nextUrl: null };
+  if (url === null) return finished();
 
   // Stopping at the page ceiling leaves an unread frontier. It travels back to the caller so a
   // walk that can resume continues instead of restarting, and it stays attributed for a caller

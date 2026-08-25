@@ -127,6 +127,7 @@ const BASE_FIELD = {
   semantic: 'connectedAccountBase' as const,
   schema: { type: 'string' as const, minLength: 8, maxLength: 2048 },
   required: true as const,
+  secret: false as const,
 };
 
 const TOKEN_FIELD = {

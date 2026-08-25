@@ -51,6 +51,16 @@ export type StubGitlabResponse = Readonly<{
   body?: unknown;
 }>;
 
+/**
+ * A request GitLab never answers.
+ *
+ * A real HTTP boundary neither returns nor throws for such a request until its signal aborts, and
+ * that is exactly the condition an invocation deadline exists for. The stub reproduces it — and
+ * rejects with the abort reason, as the platform does — so a deadline test exercises the real
+ * signal composition rather than a mocked timeout.
+ */
+export const GITLAB_STUB_NEVER_ANSWERS = 'never-answers';
+
 export type StubGitlabTransport = Readonly<{
   requests: readonly RecordedGitlabRequest[];
   context: PluginInvocationContext;
@@ -64,7 +74,8 @@ export type StubGitlabTransport = Readonly<{
  * a green test ends up asserting nothing.
  */
 export function createStubGitlabTransport(input: Readonly<{
-  respond: (request: RecordedGitlabRequest) => StubGitlabResponse | undefined;
+  respond: (request: RecordedGitlabRequest) =>
+    StubGitlabResponse | typeof GITLAB_STUB_NEVER_ANSWERS | undefined;
   signal?: AbortSignal;
 }>): StubGitlabTransport {
   const requests: RecordedGitlabRequest[] = [];
@@ -95,6 +106,7 @@ export function createStubGitlabTransport(input: Readonly<{
         body?: Uint8Array;
         redirect: 'error' | 'follow' | 'manual';
       }>,
+      options?: Readonly<{ signal?: AbortSignal }>,
     ): Promise<Readonly<{
       status: number;
       finalUrl: string;
@@ -114,6 +126,14 @@ export function createStubGitlabTransport(input: Readonly<{
       const response = input.respond(recorded);
       if (response === undefined) {
         throw new Error(`No stubbed GitLab response for ${recorded.method} ${recorded.url}`);
+      }
+      if (response === GITLAB_STUB_NEVER_ANSWERS) {
+        return new Promise((_resolve, reject) => {
+          const signal = options?.signal;
+          if (signal === undefined) return;
+          if (signal.aborted) { reject(signal.reason); return; }
+          signal.addEventListener('abort', () => { reject(signal.reason); }, { once: true });
+        });
       }
       return Object.freeze({
         status: response.status,

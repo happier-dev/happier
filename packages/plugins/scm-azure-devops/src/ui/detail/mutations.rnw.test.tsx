@@ -1,10 +1,12 @@
 // @vitest-environment jsdom
+import * as React from 'react';
 import { act } from 'react';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
 import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import { createTriageSourceV1Fixture } from '@happier-dev/triage-protocol/testing/v1';
+import { TriagePostMutationCompletionProvider } from '@happier-dev/triage-sources/ui';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { AZURE_DEVOPS_PLUGIN_ID } from '../../azureDevopsContracts.js';
@@ -35,6 +37,7 @@ const recorded: { action: unknown; input: unknown }[] = [];
 const mounted: PluginUiTestkit[] = [];
 
 let nextResult: JsonValue = { kind: 'unavailable', failure: { class: 'transient', code: 'unset' } };
+let completedMutations = 0;
 
 /**
  * What a specific read answers, when a case needs one.
@@ -87,7 +90,13 @@ async function mountDetail(
         viewId: 'azure-devops-triage-detail',
         generation: 'azure-devops-detail-mount',
       },
-      surface: renderSurface,
+      surface: (context) => (
+        <TriagePostMutationCompletionProvider
+          onComplete={async () => { completedMutations += 1; }}
+        >
+          {renderSurface(context)}
+        </TriagePostMutationCompletionProvider>
+      ),
       surfaceContext: createSurfaceContextFixture(),
       adapter: createPluginUiRnwSemanticSurfaceAdapter(),
       launchInput,
@@ -115,10 +124,20 @@ function recordedWrites(): { action: unknown; input: unknown }[] {
 afterEach(async () => {
   recorded.splice(0);
   readResults = {};
+  completedMutations = 0;
   for (const fixture of mounted.splice(0)) await fixture.dispose();
 });
 
 describe('the mounted Azure DevOps pull-request writes', () => {
+  it('hands an applied write to the target-owned re-observation seam', async () => {
+    nextResult = { kind: 'applied', observation: FIXTURE.getResult as unknown as JsonValue } as JsonValue;
+    const detail = await mountDetail();
+
+    await detail.press(await detail.getByRole('button', { name: 'Abandon' }));
+
+    expect(completedMutations).toBe(1);
+  });
+
   it('offers Abandon and sends the exact entry it is mounted on', async () => {
     nextResult = { kind: 'applied', observation: FIXTURE.getResult as unknown as JsonValue } as JsonValue;
     const detail = await mountDetail();
@@ -234,6 +253,10 @@ describe('the mounted Azure DevOps pull-request writes', () => {
     [
       { kind: 'unavailable', failure: { class: 'transient', code: 'azure-unreachable' } },
       'Azure DevOps could not complete this write.',
+    ],
+    [
+      { kind: 'uncertain', observation: FIXTURE.getResult },
+      'Azure DevOps may have applied this write. Reload the pull request before trying again.',
     ],
     [
       { kind: 'something-this-build-does-not-know' },

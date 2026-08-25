@@ -36,6 +36,19 @@ import {
  */
 const WRITE_IDS = Object.values(GITLAB_TRIAGE_MUTATION_ACTION_IDS);
 
+const APPROVED_WRITE_IDS = Object.freeze([
+  'gitlab/merge-request/merge',
+  'gitlab/merge-request/mark-ready',
+  'gitlab/merge-request/close',
+  'gitlab/merge-request/reopen',
+  'gitlab/merge-request/reviewer-change',
+  'gitlab/merge-request/discussion-resolution',
+  'gitlab/issue/close',
+  'gitlab/issue/reopen',
+  'gitlab/issue/assign',
+  'gitlab/issue/label',
+] as const);
+
 function declarationOf(id: string) {
   const declaration = GITLAB_TRIAGE_MUTATION_ACTION_DECLARATIONS.find(
     (candidate) => candidate.id === id,
@@ -45,6 +58,10 @@ function declarationOf(id: string) {
 }
 
 describe('GitLab merge-request write declarations', () => {
+  it('mounts every mutation the approved GitLab V1 source contract enables', () => {
+    expect([...WRITE_IDS].sort()).toEqual([...APPROVED_WRITE_IDS].sort());
+  });
+
   it('declares exactly the enabled write ids, once each', () => {
     // Two independent constants: the id map names what is enabled, the declaration
     // array is what the manifest actually publishes. A write that exists in one and

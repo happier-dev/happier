@@ -53,9 +53,16 @@ export function resolveGitlabCliHost(providerBaseUrl: string): string {
   }
 }
 
+/**
+ * `exitCode === null` means the probe produced no exit status at all: the deadline killed it, a
+ * signal ended it, it never launched, or no runner ran it. That is not evidence about whether
+ * `glab` is installed. The single exception is a launch failure that names the missing binary,
+ * which the runner reports through the same channel.
+ */
 function isMissingCliFailure(result: GitlabCliCommandResult): boolean {
-  return result.exitCode === null
-    || /\b(enoent|not found|no such file|command not found)\b/i.test(result.stderr);
+  return typeof result.exitCode === 'number'
+    ? /\b(enoent|not found|no such file|command not found)\b/i.test(result.stderr)
+    : /\b(enoent|no such file|command not found)\b/i.test(result.stderr);
 }
 
 function isMissingAuthFailure(result: GitlabCliCommandResult): boolean {

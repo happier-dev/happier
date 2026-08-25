@@ -6,6 +6,11 @@ import {
   type GithubApiClientV1,
 } from '../../observations/githubApiClient.js';
 import { GITHUB_PLUGIN_ID } from '../../observations/githubProviderContracts.js';
+import {
+  GITHUB_FIXTURE_OWNER,
+  GITHUB_FIXTURE_REPOSITORY,
+  GITHUB_REPOSITORY_RESPONSE,
+} from '../__fixtures__/githubResponses.js';
 
 /**
  * Test support for the GitHub Triage vertical.
@@ -88,7 +93,15 @@ export function jsonBody(value: unknown): Uint8Array {
  * silently returning an empty page.
  */
 export function createStubGithubTransport(input: Readonly<{
-  respond: (request: RecordedGithubRequest) => StubHttpResponse | undefined;
+  /**
+   * A responder may answer later. A synchronous answer settles on the same
+   * microtask, which makes every request look serial no matter how the caller
+   * issued them — so a test that has to tell "one after another" from "in one
+   * batch" holds its answers open until it has seen who is waiting.
+   */
+  respond: (
+    request: RecordedGithubRequest,
+  ) => StubHttpResponse | Promise<StubHttpResponse> | undefined;
   signal?: AbortSignal;
   /** Present only for discovery tests; absent leaves the listing unimplemented. */
   listing?: StubConnectedAccountListing | (() => never);
@@ -153,6 +166,7 @@ export function createStubGithubTransport(input: Readonly<{
         body?: Uint8Array;
         redirect: 'error' | 'follow' | 'manual';
       }>,
+      options?: Readonly<{ signal?: AbortSignal }>,
     ): Promise<Readonly<{
       status: number;
       finalUrl: string;
@@ -167,7 +181,21 @@ export function createStubGithubTransport(input: Readonly<{
         ...(request.body === undefined ? {} : { body: request.body }),
       });
       requests.push(recorded);
-      const response = input.respond(recorded);
+      const answered = await new Promise<StubHttpResponse | undefined>((resolve, reject) => {
+        const signal = options?.signal;
+        const onAbort = () => reject(signal?.reason ?? new DOMException('Aborted', 'AbortError'));
+        signal?.addEventListener('abort', onAbort, { once: true });
+        Promise.resolve(input.respond(recorded)).then(resolve, reject).finally(() => {
+          signal?.removeEventListener('abort', onAbort);
+        });
+      });
+      const pathname = new URL(recorded.url).pathname;
+      const response = answered ?? (
+        recorded.method === 'GET'
+        && pathname === `/repos/${GITHUB_FIXTURE_OWNER}/${GITHUB_FIXTURE_REPOSITORY}`
+          ? { status: 200, body: GITHUB_REPOSITORY_RESPONSE }
+          : undefined
+      );
       if (response === undefined) {
         throw new Error(`No stubbed GitHub response for ${recorded.method} ${recorded.url}`);
       }

@@ -49,7 +49,7 @@ function automationContext(params: Readonly<{
     services: {
       connectedAccounts: params.connectedAccounts,
       http: params.http,
-    } as PluginInvocationContext['services'],
+    } as unknown as PluginInvocationContext['services'],
   };
 }
 

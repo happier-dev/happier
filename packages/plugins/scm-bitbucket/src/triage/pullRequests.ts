@@ -178,7 +178,12 @@ export type BitbucketScanOutcome =
     omittedItemCount: number;
     /** The walk-level facts that must still be true on the call that settles the walk. */
     walkHealth: readonly BitbucketWalkHealthReason[];
-    /** This call's own page-shape fact: another whole native page did not fit its budget. */
+    /**
+     * This call's own page-shape fact: it stopped on a budget of its own with work still pending —
+     * either another whole native page that did not fit the row budget, or a repository enumeration
+     * that reached its per-call request budget. One reason, because it is one fact: the caller was
+     * not told the walk finished, it was told this call's allowance ran out.
+     */
     projectionBudget: boolean;
     frontier: BitbucketScanWalkFrontier;
     /** Whether any lane or the repository enumeration is still open after this page. */
@@ -217,12 +222,13 @@ type BitbucketWalkLane = {
  * frontier so the caller can issue a continuation, and only an all-lanes-ended walk over a finished
  * repository enumeration has nothing left to carry.
  *
- * Lane selection is round-robin over the lanes still open — one native page from each before either
- * deep-pages again — and deliberately not a fixed N-way split of the budget. This forge's review
- * involvement is repository-scoped, so the lane set is discovered *during* the invocation and still
- * growing while the walk runs; N is unknown when the budget is bound. The workspace-wide `authored`
- * lane therefore alternates with the one repository being walked, and the remaining repositories
- * stay pending until a preceding repository's lanes end.
+ * Lane selection is round-robin over two PLANES — the workspace-wide `authored` route, and the
+ * repository review route — and deliberately not a fixed N-way split of the budget. This forge's
+ * review involvement is repository-scoped, so the lane set is discovered *during* the invocation
+ * and still growing while the walk runs; N is unknown when the budget is bound. The repository
+ * plane's own turn is what enters the next repository, so a workspace with review work waiting is
+ * never queued behind an account's own pull requests; the remaining repositories stay pending, in
+ * the listing cursor, until the plane's turn comes round again.
  *
  * Nothing about the walk survives cancellation, interruption, or settlement, and no arm of this
  * function can produce an absence conclusion.
@@ -286,17 +292,31 @@ export async function scanBitbucketPullRequests(
     );
 
   const isOpen = (lane: BitbucketWalkLane | null): boolean => lane !== null && !lane.ended;
-  // Rotation resumes where the previous page stopped. A position the caller cannot justify starts
-  // the round at the first open lane instead of skipping a lane it cannot account for.
-  let slot = isOpen(authoredLane) && isOpen(repositoryLane) && input.nextLaneIndex === 1 ? 1 : 0;
 
-  const takeNextLane = (): BitbucketWalkLane | null => {
+  /**
+   * Whether the repository REVIEW PLANE can still produce a page in this call.
+   *
+   * The plane is not the same thing as the one repository lane that happens to be open: a
+   * workspace whose enumeration has not yet named a repository still has review work waiting.
+   * Treating an unopened plane as closed is what let the workspace-wide `authored` lane hold the
+   * rotation for the whole walk — reviews waiting on the reader were reachable only after their
+   * own pull requests ran out, which on a busy account is never.
+   */
+  let repositoryPlaneSettled = false;
+  const isRepositoryPlaneOpen = (): boolean => !repositoryPlaneSettled
+    && (isOpen(repositoryLane) || input.repositories.cursorUrl() !== null);
+
+  // Rotation resumes where the previous page stopped. A stale position can only decide which of
+  // two open planes goes first — the selector below scans both, so it can never skip one.
+  let slot = input.nextLaneIndex === 1 ? 1 : 0;
+
+  const selectPlane = (): 'authored' | 'repository' | null => {
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const index = (slot + attempt) % 2;
-      const lane = index === 0 ? authoredLane : repositoryLane;
-      if (lane !== null && !lane.ended) {
+      const open = index === 0 ? isOpen(authoredLane) : isRepositoryPlaneOpen();
+      if (open) {
         slot = (index + 1) % 2;
-        return lane;
+        return index === 0 ? 'authored' : 'repository';
       }
     }
     return null;
@@ -306,6 +326,7 @@ export async function scanBitbucketPullRequests(
   let omittedItemCount = 0;
   let remaining = input.geometry.scanLimit;
   let stoppedOnBudget = false;
+
 
   for (;;) {
     if (isCancelled()) {
@@ -319,28 +340,56 @@ export async function scanBitbucketPullRequests(
       break;
     }
 
-    const lane = takeNextLane();
-    if (lane === null) {
-      const advance = await input.repositories.advance();
-      if (advance.kind === 'failed') return { ok: false, failure: advance.failure };
-      if (advance.kind === 'incomplete') {
-        health.add('repository-enumeration-incomplete');
-        break;
+    const plane = selectPlane();
+    if (plane === null) break;
+
+    let lane: BitbucketWalkLane;
+    if (plane === 'authored') {
+      lane = authoredLane;
+    } else {
+      if (!isOpen(repositoryLane)) {
+        // The plane's turn is what opens the next repository, so entering one is part of the
+        // rotation rather than something that happens once every other lane is exhausted.
+        const advance = await input.repositories.advance();
+        if (advance.kind === 'failed') return { ok: false, failure: advance.failure };
+        if (advance.kind === 'incomplete') {
+          health.add('repository-enumeration-incomplete');
+          repositoryPlaneSettled = true;
+          continue;
+        }
+        if (advance.kind === 'paused') {
+          // `paused` settles the plane for THIS call only: the listing cursor travels back in the
+          // frontier, so `walkOpen` stays true and the next page continues the enumeration.
+          //
+          // It is also this call's own page-shape fact, and the page has to report it. A workspace
+          // whose first repositories hold no open pull request produces a page with no rows at all,
+          // and a page that reported `walkFinished` there told the caller the walk was DONE while
+          // handing it a continuation — which the host's non-progress guard reads as a lane that
+          // consumed nothing and asks to be called again. That killed the lane and made the reviews
+          // behind those repositories unreachable rather than merely deferred.
+          stoppedOnBudget = true;
+          repositoryPlaneSettled = true;
+          continue;
+        }
+        if (advance.kind === 'ended') {
+          repositoryPlaneSettled = true;
+          continue;
+        }
+        repositoryLane = {
+          routeInvolvement: null,
+          projectsReviewEvidence: true,
+          repositoryUuid: advance.repositoryUuid,
+          url: withBitbucketPageLength(
+            input.buildRepositoryLaneUrl(advance.repositoryUuid),
+            nativePageSize,
+          ),
+          advanced: false,
+          ended: false,
+        };
       }
-      if (advance.kind === 'ended' || advance.kind === 'paused') break;
-      repositoryLane = {
-        routeInvolvement: null,
-        projectsReviewEvidence: true,
-        repositoryUuid: advance.repositoryUuid,
-        url: withBitbucketPageLength(
-          input.buildRepositoryLaneUrl(advance.repositoryUuid),
-          nativePageSize,
-        ),
-        advanced: false,
-        ended: false,
-      };
-      slot = 1;
-      continue;
+      // `isOpen` above guarantees a lane here; the local narrowing is what the compiler needs.
+      if (repositoryLane === null) continue;
+      lane = repositoryLane;
     }
 
     const response = await input.client.requestJson({
@@ -421,7 +470,9 @@ export async function scanBitbucketPullRequests(
     walkHealth: BITBUCKET_WALK_HEALTH_REASONS.filter((reason) => health.has(reason)),
     projectionBudget: stoppedOnBudget && walkOpen,
     frontier: {
-      nextLaneIndex: isOpen(authoredLane) && isOpen(repositoryLane) && slot === 1 ? 1 : 0,
+      // The rotation position is carried as it stands. Collapsing it to zero whenever one plane
+      // is momentarily closed is what made every page restart at the same lane.
+      nextLaneIndex: slot,
       authored: carriedLane(authoredLane),
       currentRepository,
     },

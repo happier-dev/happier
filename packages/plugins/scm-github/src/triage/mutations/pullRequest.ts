@@ -1,4 +1,5 @@
 import type { TriageSourceFailureV1 } from '@happier-dev/triage-protocol/v1';
+import { settleAtMostOnceProviderWrite } from '@happier-dev/triage-sources/runtime';
 
 import type {
   GithubApiMethodV1,
@@ -22,9 +23,17 @@ import {
   createGithubRepositoryReader,
   type GithubRepositoryReaderV1,
 } from '../repositories.js';
+import {
+  readGithubPullRequestReviewRecords,
+  type GithubPullRequestReviewRecordV1,
+  type GithubPullRequestReviewRecordsReadV1,
+} from '../reviews.js';
 import type { GithubTriageEntryLocalRefV1 } from '../types.js';
 
-import type { GithubMergeMethodV1 } from './contracts.js';
+import type {
+  GithubMergeMethodV1,
+  GithubPullRequestReviewVerdictV1,
+} from './contracts.js';
 import { sendGithubGraphqlRequest } from './graphql.js';
 
 /**
@@ -108,6 +117,16 @@ export type GithubPullRequestMarkReadyOutcomeV1 =
   | Refused<GithubPinnedTransitionRefusalReasonV1>
   | Uncertain
   | Failed;
+
+export type GithubPullRequestReviewPublicationOutcomeV1 =
+  | Readonly<{ kind: 'applied'; observation: ProjectedObservation }>
+  | Readonly<{
+    kind: 'rejected';
+    reason: 'admission_failed' | 'head_advanced' | 'state_changed' | 'provider_rejected';
+    observation?: ProjectedObservation;
+    failure?: TriageSourceFailureV1;
+  }>
+  | Uncertain;
 
 /**
  * `pending` is a settled outcome of its own: GitHub accepted the request and the
@@ -232,6 +251,206 @@ function alreadySatisfied(current: Current & Readonly<{ ok: true }>): Applied {
 function openResolver(dependencies: GithubMutationDependenciesV1): GithubRepositoryReaderV1 {
   return dependencies.repositories
     ?? createGithubRepositoryReader({ client: dependencies.client, now: dependencies.now });
+}
+
+/* --------------------------------------------------------- review publication */
+
+const GITHUB_REVIEW_EVENT_BY_VERDICT: Readonly<
+  Record<GithubPullRequestReviewVerdictV1, 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT'>
+> = Object.freeze({
+  approve: 'APPROVE',
+  requestChanges: 'REQUEST_CHANGES',
+  comment: 'COMMENT',
+});
+
+const GITHUB_REVIEW_STATE_BY_VERDICT: Readonly<
+  Record<GithubPullRequestReviewVerdictV1, 'APPROVED' | 'CHANGES_REQUESTED' | 'COMMENTED'>
+> = Object.freeze({
+  approve: 'APPROVED',
+  requestChanges: 'CHANGES_REQUESTED',
+  comment: 'COMMENTED',
+});
+
+function matchingReviewIds(
+  read: GithubPullRequestReviewRecordsReadV1,
+  input: Readonly<{
+    headRevision: string;
+    verdict: GithubPullRequestReviewVerdictV1;
+    summary: string;
+  }>,
+): ReadonlySet<string> | null {
+  if (read.failure !== null || read.incomplete) return null;
+  return new Set(read.reviews
+    .filter((review: GithubPullRequestReviewRecordV1) => (
+      review.commitRevision === input.headRevision
+      && review.state === GITHUB_REVIEW_STATE_BY_VERDICT[input.verdict]
+      && review.body === input.summary
+    ))
+    .map((review) => review.providerId));
+}
+
+/**
+ * Publishes one GitHub review summary and verdict through one provider request.
+ *
+ * The ordinary mutation owner supplies the whole lifecycle: current account
+ * materialization happens above this function, and this leaf rereads the exact
+ * pull request (including the repository read that proves the caller can still
+ * access it), compares the observed head, dispatches once, and folds a fresh
+ * source observation into every post-dispatch outcome.
+ */
+export async function publishGithubPullRequestReview(
+  input: Readonly<{
+    localRef: GithubTriageEntryLocalRefV1;
+    route: GithubRepositoryRouteV1;
+    headRevision: string;
+    verdict: GithubPullRequestReviewVerdictV1;
+    summary: string;
+  }>,
+  dependencies: GithubMutationDependenciesV1,
+): Promise<GithubPullRequestReviewPublicationOutcomeV1> {
+  const repositories = openResolver(dependencies);
+  const current = reduce(
+    await readGithubPullRequest(input.localRef, input.route, repositories, dependencies),
+  );
+  if (!current.ok) {
+    return Object.freeze({
+      kind: 'rejected' as const,
+      reason: 'admission_failed' as const,
+      failure: current.failure,
+    });
+  }
+  if (current.facts.state !== 'open' || current.facts.merged) {
+    return Object.freeze({
+      kind: 'rejected' as const,
+      reason: 'state_changed' as const,
+      observation: current.observation,
+    });
+  }
+  if (current.facts.headRevision !== input.headRevision) {
+    return Object.freeze({
+      kind: 'rejected' as const,
+      reason: 'head_advanced' as const,
+      observation: current.observation,
+    });
+  }
+
+  // Invocation-local baseline only: it lets the confirming read distinguish a
+  // newly observed provider review from an identical review that already existed.
+  // If the baseline cannot finish, dispatch still occurs once, but an ambiguous
+  // settlement can only remain uncertain.
+  const reviewBaseline = matchingReviewIds(
+    await readGithubPullRequestReviewRecords({
+      route: input.route,
+      number: input.localRef.entryId,
+    }, dependencies),
+    input,
+  );
+
+  const settlement = await settleAtMostOnceProviderWrite<
+    Awaited<ReturnType<typeof send>>,
+    ProjectedObservation,
+    TriageSourceFailureV1
+  >({
+    dispatch: () => send(dependencies, {
+      url: `${pullRequestUrl(input.route, input.localRef.entryId)}/reviews`,
+      method: 'POST',
+      body: {
+        commit_id: input.headRevision,
+        event: GITHUB_REVIEW_EVENT_BY_VERDICT[input.verdict],
+        body: input.summary,
+        // Inline anchoring remains deliberately out of this lane: the source does
+        // not yet project diff positions. An empty collection keeps the one-request
+        // shape explicit without pretending an anchor can be reconstructed.
+        comments: [],
+      },
+    }),
+    // A lost transport answer and a server-side failure both sit inside the
+    // response-loss window. A definite 4xx is handled below without reconciliation.
+    mayHaveChanged: (result) => !result.ok || result.response.status >= 500,
+    confirm: async () => {
+      const confirmedReviews = matchingReviewIds(
+        await readGithubPullRequestReviewRecords({
+          route: input.route,
+          number: input.localRef.entryId,
+        }, dependencies),
+        input,
+      );
+      if (reviewBaseline === null || confirmedReviews === null) {
+        return Object.freeze({ kind: 'uncertain' as const });
+      }
+      const hasNewMatchingReview = [...confirmedReviews]
+        .some((providerId) => !reviewBaseline.has(providerId));
+      const confirmedPullRequest = await confirm(
+        input.localRef,
+        input.route,
+        repositories,
+        dependencies,
+      );
+      if (!confirmedPullRequest.ok) {
+        return Object.freeze({
+          kind: 'uncertain' as const,
+          failure: confirmedPullRequest.failure,
+        });
+      }
+      return hasNewMatchingReview
+        ? Object.freeze({
+          kind: 'applied' as const,
+          observation: confirmedPullRequest.observation,
+        })
+        : Object.freeze({
+          kind: 'unchanged' as const,
+          observation: confirmedPullRequest.observation,
+        });
+    },
+  });
+  if (settlement.kind === 'applied') {
+    return Object.freeze({ kind: 'applied' as const, observation: settlement.observation });
+  }
+  if (settlement.kind === 'unchanged') {
+    return Object.freeze({
+      kind: 'uncertain' as const,
+      observation: settlement.observation,
+    });
+  }
+  if (settlement.kind === 'uncertain') {
+    return Object.freeze({
+      kind: 'uncertain' as const,
+      ...(settlement.observation === undefined ? {} : { observation: settlement.observation }),
+      ...(settlement.failure === undefined ? {} : { failure: settlement.failure }),
+    });
+  }
+  const written = settlement.result;
+  if (!written.ok) {
+    // Unreachable while transport failures are classified as ambiguous above.
+    // Keep the residual fail-safe if that provider-owned predicate changes.
+    return Object.freeze({ kind: 'uncertain' as const, failure: written.failure });
+  }
+
+  const confirmed = await confirm(input.localRef, input.route, repositories, dependencies);
+  if (!isGithubSuccessStatus(written.response.status)) {
+    const failure = toTriageFailure(
+      classifyGithubResponseFailure(written.response, dependencies.now()),
+    );
+    // The shared ladder classifies 5xx above. This residual arm fails safe if
+    // that predicate changes rather than turning possible application into a
+    // definite rejection.
+    if (written.response.status >= 500) {
+      return Object.freeze({
+        kind: 'uncertain' as const,
+        ...(confirmed.ok ? { observation: confirmed.observation } : {}),
+        failure,
+      });
+    }
+    return Object.freeze({
+      kind: 'rejected' as const,
+      reason: 'provider_rejected' as const,
+      ...(confirmed.ok ? { observation: confirmed.observation } : {}),
+      failure,
+    });
+  }
+  return confirmed.ok
+    ? Object.freeze({ kind: 'applied' as const, observation: confirmed.observation })
+    : Object.freeze({ kind: 'uncertain' as const, failure: confirmed.failure });
 }
 
 /* ---------------------------------------------------------------------- merge */
@@ -471,12 +690,50 @@ export async function updateGithubPullRequestBranch(
     });
   }
 
-  const written = await send(dependencies, {
-    url: `${pullRequestUrl(input.route, input.localRef.entryId)}/update-branch`,
-    method: 'PUT',
-    body: { expected_head_sha: input.headRevision },
+  const settlement = await settleAtMostOnceProviderWrite({
+    dispatch: () => send(dependencies, {
+      url: `${pullRequestUrl(input.route, input.localRef.entryId)}/update-branch`,
+      method: 'PUT',
+      body: { expected_head_sha: input.headRevision },
+    }),
+    // A transport failure cannot say whether GitHub accepted the PUT. A response
+    // can, and keeps its status-specific handling below.
+    mayHaveChanged: (result) => !result.ok,
+    confirm: async () => {
+      const confirmed = await confirm(input.localRef, input.route, repositories, dependencies);
+      if (!confirmed.ok) {
+        return Object.freeze({ kind: 'uncertain' as const, failure: confirmed.failure });
+      }
+      return confirmed.facts.headRevision !== null
+        && confirmed.facts.headRevision !== input.headRevision
+        ? Object.freeze({ kind: 'applied' as const, observation: confirmed.observation })
+        : Object.freeze({ kind: 'unchanged' as const, observation: confirmed.observation });
+    },
   });
-  if (!written.ok) return Object.freeze({ kind: 'failed' as const, failure: written.failure });
+  if (settlement.kind === 'applied') {
+    return Object.freeze({
+      kind: 'applied' as const,
+      effect: 'changed' as const,
+      observation: settlement.observation,
+    });
+  }
+  if (settlement.kind === 'unchanged') {
+    return Object.freeze({ kind: 'uncertain' as const, observation: settlement.observation });
+  }
+  if (settlement.kind === 'uncertain') {
+    return Object.freeze({
+      kind: 'uncertain' as const,
+      ...(settlement.observation === undefined ? {} : { observation: settlement.observation }),
+      ...(settlement.failure === undefined ? {} : { failure: settlement.failure }),
+    });
+  }
+  const written = settlement.result;
+  // `mayHaveChanged` classifies every transport failure above, but the shared
+  // generic deliberately cannot encode that provider-owned predicate as a type
+  // refinement. Keep the impossible residual honest if the classifier changes.
+  if (!written.ok) {
+    return Object.freeze({ kind: 'uncertain' as const, failure: written.failure });
+  }
 
   const response = written.response;
   if (isGithubSuccessStatus(response.status)) {

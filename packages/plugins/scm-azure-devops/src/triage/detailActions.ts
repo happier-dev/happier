@@ -122,6 +122,7 @@ type AdmittedInvocation =
     address: AzureEntryAddress;
     client: AzureDevOpsApiClient;
     dependencies: AzureDetailReadDependenciesV1;
+    dispose(): void;
   }>
   | Readonly<{ ok: false; failure: TriageSourceFailureV1 }>;
 
@@ -154,25 +155,29 @@ async function admitAzureDetailInvocation(
   // boundary so account materialization is inside it too: a connection that
   // hangs while the credential is being materialized strands the panel exactly
   // as a hanging read does.
-  const signal = boundAzureInvocation(context.signal, AZURE_DEVOPS_MOUNTED_DETAIL_DEADLINE_MS);
+  const bounded = boundAzureInvocation(context.signal, AZURE_DEVOPS_MOUNTED_DETAIL_DEADLINE_MS);
 
   const authorized = await authorizeClient({
     services: {
       connectedAccounts: context.services.connectedAccounts,
-      transport: toAzureTransport(context.services.http, signal),
+      transport: toAzureTransport(context.services.http, bounded.signal),
       now: () => Date.now(),
     },
     instance: request.instance,
     origin,
-    signal,
+    signal: bounded.signal,
   });
-  if (!authorized.ok) return { ok: false, failure: authorized.failure };
+  if (!authorized.ok) {
+    bounded.dispose();
+    return { ok: false, failure: authorized.failure };
+  }
 
   return {
     ok: true,
+    dispose: bounded.dispose,
     address,
     client: authorized.client,
-    dependencies: Object.freeze({ client: authorized.client, signal }),
+    dependencies: Object.freeze({ client: authorized.client, signal: bounded.signal }),
   };
 }
 
@@ -197,6 +202,7 @@ export async function readAzureDevOpsIterations(
     localRef: parsed.data.localRef,
   }, context);
   if (!admitted.ok) return unavailable(admitted.failure);
+  try {
 
   const read = await readAzureIterations(admitted.address, admitted.dependencies);
   if (!read.ok) return unavailable(projectAzureSourceFailure(read.failure));
@@ -209,6 +215,7 @@ export async function readAzureDevOpsIterations(
     omittedRowCount: read.value.omittedRowCount,
     projectionTruncated: read.value.projectionTruncated,
   });
+  } finally { admitted.dispose(); }
 }
 
 /* ------------------------------------------------------------------- commits */
@@ -226,6 +233,7 @@ export async function listAzureDevOpsCommits(
     localRef: parsed.data.localRef,
   }, context);
   if (!admitted.ok) return unavailable(admitted.failure);
+  try {
 
   const read = await readAzureCommitsPage({
     ...admitted.address,
@@ -241,6 +249,7 @@ export async function listAzureDevOpsCommits(
     omittedRowCount: read.value.omittedRowCount,
     projectionTruncated: read.value.projectionTruncated,
   });
+  } finally { admitted.dispose(); }
 }
 
 /* --------------------------------------------------------- iteration changes */
@@ -265,6 +274,7 @@ export async function listAzureDevOpsIterationChanges(
     localRef: parsed.data.localRef,
   }, context);
   if (!admitted.ok) return unavailable(admitted.failure);
+  try {
 
   const read = await readAzureIterationChangesPage({
     ...admitted.address,
@@ -285,6 +295,7 @@ export async function listAzureDevOpsIterationChanges(
     omittedRowCount: read.value.omittedRowCount,
     projectionTruncated: read.value.projectionTruncated,
   });
+  } finally { admitted.dispose(); }
 }
 
 /* ------------------------------------------------------------------ policies */
@@ -309,10 +320,11 @@ export async function readAzureDevOpsPolicies(
     localRef: parsed.data.localRef,
   }, context);
   if (!admitted.ok) return unavailable(admitted.failure);
+  try {
 
   const pullRequest = await admitted.client.request({
     route: { resource: 'pullRequest', ...admitted.address },
-    signal: context.signal,
+    signal: admitted.dependencies.signal,
   });
   if (!pullRequest.ok) {
     return unavailable(projectAzureSourceFailure(pullRequest.failure));
@@ -335,6 +347,7 @@ export async function readAzureDevOpsPolicies(
     omittedRowCount: read.value.omittedRowCount,
     projectionTruncated: read.value.projectionTruncated,
   });
+  } finally { admitted.dispose(); }
 }
 
 /* ------------------------------------------------------------------- threads */
@@ -358,6 +371,7 @@ export async function readAzureDevOpsThreads(
     localRef: parsed.data.localRef,
   }, context);
   if (!admitted.ok) return unavailable(admitted.failure);
+  try {
 
   const { iteration, baseIteration } = parsed.data;
   // A lens is a comparison: one half alone is not a narrower query, it is a
@@ -380,4 +394,5 @@ export async function readAzureDevOpsThreads(
     omittedRowCount: read.value.omittedRowCount,
     projectionTruncated: read.value.projectionTruncated,
   });
+  } finally { admitted.dispose(); }
 }

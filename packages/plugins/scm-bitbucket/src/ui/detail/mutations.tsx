@@ -17,6 +17,10 @@ import {
   describeTriageSourceFailureV1 as failureDescription,
   type TriageDetailSurfaceInputV1,
 } from '@happier-dev/triage-protocol/v1';
+import {
+  useTriagePostMutationCompletion,
+  type TriagePostMutationCompletionV1,
+} from '@happier-dev/triage-sources/ui';
 
 import { BITBUCKET_PLUGIN_ID } from '../../bitbucketContracts.js';
 import { BITBUCKET_TRIAGE_MUTATION_ACTION_IDS } from '../../triage/source/mutationActions.js';
@@ -151,6 +155,32 @@ function unreadableResult(text: PluginTranslate): SettledMutationV1 {
   };
 }
 
+async function completeAfterEntryWrite(
+  execution: PluginActionExecution<unknown>,
+  complete: TriagePostMutationCompletionV1,
+): Promise<void> {
+  if (execution.status !== 'success') return;
+  const parsed = BitbucketMutationResultV1Schema.safeParse(execution.result);
+  if (parsed.success && (
+    parsed.data.kind === 'applied'
+    || parsed.data.kind === 'pending'
+    || parsed.data.kind === 'uncertain'
+  )) await complete();
+}
+
+async function completeAfterCommentWrite(
+  execution: PluginActionExecution<unknown>,
+  complete: TriagePostMutationCompletionV1,
+): Promise<void> {
+  if (execution.status !== 'success') return;
+  const parsed = BitbucketCommentResolutionResultV1Schema.safeParse(execution.result);
+  if (parsed.success && (
+    parsed.data.kind === 'applied'
+    || parsed.data.kind === 'rejected'
+    || parsed.data.kind === 'uncertain'
+  )) await complete();
+}
+
 function projectSettledMutation(
   operation: 'merge' | 'decline',
   execution: PluginActionExecution<unknown>,
@@ -215,7 +245,26 @@ function projectSettledMutation(
             'Bitbucket timed out on a response too large to return.',
           ),
       };
-    default: {
+    case 'unchanged':
+      return {
+        tone: 'warning',
+        title: text(
+          'plugins.bitbucket.ui.mutations.unchanged',
+          'Bitbucket did not apply this write.',
+        ),
+      };
+    case 'uncertain':
+      return {
+        tone: 'warning',
+        title: text(
+          'plugins.bitbucket.ui.mutations.uncertain',
+          'Bitbucket may have applied this write. Reload the pull request before trying again.',
+        ),
+        ...(result.failure === undefined ? {} : {
+          detail: failureDescription(result.failure, ''),
+        }),
+      };
+    case 'unavailable': {
       const title = text(
         'plugins.bitbucket.ui.mutations.unavailable',
         'Bitbucket could not complete this write.',
@@ -253,6 +302,7 @@ export function BitbucketMutationControls({
   overview: BitbucketDetailOverviewV1;
 }>): React.ReactElement | null {
   const text = usePluginTranslation();
+  const completeMutation = useTriagePostMutationCompletion();
   const localRef = useBitbucketEntryLocalRef(input);
   const merge = useExecutePluginAction(MERGE_ACTION);
   const decline = useExecutePluginAction(DECLINE_ACTION);
@@ -274,9 +324,10 @@ export function BitbucketMutationControls({
       closeSourceBranch,
       mergeStrategy: strategy,
       ...(trimmedMessage === '' ? {} : { message: trimmedMessage }),
-    });
+    }).then(async (execution) => await completeAfterEntryWrite(execution, completeMutation));
   }, [
     closeSourceBranch,
+    completeMutation,
     input.instance,
     localRef,
     merge,
@@ -286,8 +337,9 @@ export function BitbucketMutationControls({
   ]);
 
   const runDecline = React.useCallback(() => {
-    void decline.execute({ v: 1, instance: input.instance, localRef });
-  }, [decline, input.instance, localRef]);
+    void decline.execute({ v: 1, instance: input.instance, localRef })
+      .then(async (execution) => await completeAfterEntryWrite(execution, completeMutation));
+  }, [completeMutation, decline, input.instance, localRef]);
 
   if (overview.state.presentation !== 'active') return null;
 
@@ -448,7 +500,26 @@ function projectSettledCommentResolution(
           'Bitbucket accepted this but the comment does not show it. Re-read the comments.',
         ),
       };
-    default: {
+    case 'unchanged':
+      return {
+        tone: 'warning',
+        title: text(
+          'plugins.bitbucket.ui.mutations.comment.unchanged',
+          'Bitbucket did not apply this thread change.',
+        ),
+      };
+    case 'uncertain':
+      return {
+        tone: 'warning',
+        title: text(
+          'plugins.bitbucket.ui.mutations.comment.uncertain',
+          'Bitbucket may have changed this thread. Reload it before trying again.',
+        ),
+        ...(result.failure === undefined ? {} : {
+          detail: failureDescription(result.failure, ''),
+        }),
+      };
+    case 'unavailable': {
       const title = text(
         'plugins.bitbucket.ui.mutations.unavailable',
         'Bitbucket could not complete this write.',
@@ -479,17 +550,20 @@ export function BitbucketCommentResolutionControls({
   comment: BitbucketProjectedCommentRowV1;
 }>): React.ReactElement | null {
   const text = usePluginTranslation();
+  const completeMutation = useTriagePostMutationCompletion();
   const localRef = useBitbucketEntryLocalRef(input);
   const resolve = useExecutePluginAction(RESOLVE_COMMENT_ACTION);
   const reopen = useExecutePluginAction(UNRESOLVE_COMMENT_ACTION);
 
   const runResolve = React.useCallback(() => {
-    void resolve.execute({ v: 1, instance: input.instance, localRef, commentId: comment.id });
-  }, [comment.id, input.instance, localRef, resolve]);
+    void resolve.execute({ v: 1, instance: input.instance, localRef, commentId: comment.id })
+      .then(async (execution) => await completeAfterCommentWrite(execution, completeMutation));
+  }, [comment.id, completeMutation, input.instance, localRef, resolve]);
 
   const runReopen = React.useCallback(() => {
-    void reopen.execute({ v: 1, instance: input.instance, localRef, commentId: comment.id });
-  }, [comment.id, input.instance, localRef, reopen]);
+    void reopen.execute({ v: 1, instance: input.instance, localRef, commentId: comment.id })
+      .then(async (execution) => await completeAfterCommentWrite(execution, completeMutation));
+  }, [comment.id, completeMutation, input.instance, localRef, reopen]);
 
   // A deleted comment has no thread left to resolve, and Bitbucket keeps the row only as a
   // tombstone. Offering a write against it would be offering something that can only fail.

@@ -269,6 +269,7 @@ export function githubCheckRun(input: Readonly<{
   name: string;
   status: 'queued' | 'in_progress' | 'completed' | 'waiting' | 'requested' | 'pending';
   conclusion?: string | null;
+  output?: Readonly<{ title?: string | null; summary?: string | null; text?: string | null }>;
 }>): JsonRecord {
   return Object.freeze({
     id: input.id,
@@ -282,7 +283,12 @@ export function githubCheckRun(input: Readonly<{
     /** Matrix legs legitimately share a name and a details URL. */
     details_url: `https://ci.example.com/${OWNER}/${REPOSITORY}/checks`,
     html_url: `https://github.com/${OWNER}/${REPOSITORY}/runs/${input.id}`,
-    output: Object.freeze({ title: null, summary: null, annotations_count: 0 }),
+    output: Object.freeze({
+      title: input.output?.title ?? null,
+      summary: input.output?.summary ?? null,
+      text: input.output?.text ?? null,
+      annotations_count: 0,
+    }),
   });
 }
 

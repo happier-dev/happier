@@ -1,4 +1,4 @@
-import { PluginActionContributionV2Schema, ingestPluginManifestV2 } from '@happier-dev/protocol';
+import { ingestPluginManifestV2 } from '@happier-dev/protocol';
 import { checkTriageSourceContributionV1 } from '@happier-dev/triage-protocol/testing/v1';
 import {
   TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,
@@ -162,29 +162,45 @@ describe('Azure DevOps Triage source contribution conformance', () => {
       throw new Error('The three Triage reads must be declared before their bindings can be judged.');
     }
 
-    // `scan`'s published input is a two-arm union, and the declaration is accepted only because
+    const ingestWithScan = (replacement: typeof scan) => ingestPluginManifestV2(JSON.parse(JSON.stringify({
+      ...PLUGIN_MANIFEST,
+      contributes: {
+        ...PLUGIN_MANIFEST.contributes,
+        actions: PLUGIN_MANIFEST.contributes.actions.map((action) => (
+          action.id === scan.id ? replacement : action
+        )),
+      },
+    })));
+
+    // The canonical whole-manifest admission owner accepts the published union only because
     // both arms carry the same exact credential-ref leaf at the bound path.
-    expect(() => PluginActionContributionV2Schema.parse(scan)).not.toThrow();
+    expect(ingestWithScan(scan)).toMatchObject({ ok: true });
 
     // A binding that cannot fail proves nothing. The same declaration is re-checked against a
     // union whose second arm — `listInstances`' own published input — never reaches the bound
     // path; only arm coverage differs from the accepted declaration.
-    expect(() => PluginActionContributionV2Schema.parse({
+    expect(ingestWithScan({
       ...scan,
       inputSchema: { anyOf: [get.inputSchema, listInstances.inputSchema] },
-    })).toThrow(
-      'Connected Account purpose bindings must target one exact qualified credential-ref input leaf in every declared input arm.',
-    );
+    })).toMatchObject({
+      ok: false,
+      diagnostics: expect.arrayContaining([expect.objectContaining({
+        message: 'Connected Account purpose bindings must target one exact qualified credential-ref input leaf in every declared input arm.',
+      })]),
+    });
 
     // And a leaf only the initial-page arm declares is rejected for the same reason.
-    expect(() => PluginActionContributionV2Schema.parse({
+    expect(ingestWithScan({
       ...scan,
       connectedAccountPurposeBindings: [
         { path: 'page.limit', purpose: AZURE_DEVOPS_TRIAGE_PURPOSE },
       ],
-    })).toThrow(
-      'Connected Account purpose bindings must target one exact qualified credential-ref input leaf in every declared input arm.',
-    );
+    })).toMatchObject({
+      ok: false,
+      diagnostics: expect.arrayContaining([expect.objectContaining({
+        message: 'Connected Account purpose bindings must target one exact qualified credential-ref input leaf in every declared input arm.',
+      })]),
+    });
   });
 
   it('binds the declared detail surface to a renderer this plugin actually declares', () => {

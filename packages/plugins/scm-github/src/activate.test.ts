@@ -66,8 +66,9 @@ describe('activate', () => {
           operations: GITHUB_CHANNEL_PROVIDER_OPERATIONS,
         }]),
       );
-      expect(PLUGIN_MANIFEST.contributes.targetedPluginContributions
-        .map((contribution) => contribution.target.pluginId).sort())
+      expect((PLUGIN_MANIFEST.contributes.targetedPluginContributions ?? [])
+        .map((contribution) => (contribution.target as Readonly<{ pluginId: string }>).pluginId)
+        .sort())
         .toEqual(['happier.channels', 'happier.triage']);
       expect(testkit.registrations()).toEqual(expect.arrayContaining([
         { family: 'actions', localId: GITHUB_WEBHOOK_ACTION_ID },
@@ -89,7 +90,7 @@ describe('activate', () => {
         handlerAction: { localId: GITHUB_WEBHOOK_ACTION_ID },
       })]);
 
-      const actions = new Map(PLUGIN_MANIFEST.contributes.actions.map((action) => [action.id, action]));
+      const actions = new Map((PLUGIN_MANIFEST.contributes.actions ?? []).map((action) => [action.id, action]));
       expect(actions.get(GITHUB_WEBHOOK_ACTION_ID)).toEqual(expect.objectContaining({
         inputSchema: expect.objectContaining({
           $schema: 'http://json-schema.org/draft-07/schema#',
@@ -139,7 +140,7 @@ describe('activate', () => {
   });
 
   it('declares the single checkpointed-pull Event observer with its provider-owned checkpoint collection', async () => {
-    expect(PLUGIN_MANIFEST.hostAccess.required).toContainEqual({
+    expect((PLUGIN_MANIFEST.hostAccess?.required ?? [])).toContainEqual({
       id: 'automation-event-checkpoint-storage',
       capability: 'storage.account',
       reason: 'Persist per-Automation GitHub Event source checkpoints.',
@@ -167,13 +168,13 @@ describe('activate', () => {
   });
 
   it('declares exact Channels provider Action roles plus the Automation setup and explicit history-gap baseline Actions', () => {
-    const sourceSetupAction = PLUGIN_MANIFEST.contributes.actions.find(
+    const sourceSetupAction = (PLUGIN_MANIFEST.contributes.actions ?? []).find(
       ({ id }) => id === 'automation/setup-repository-event-v1',
     );
-    const channelsSetupAction = PLUGIN_MANIFEST.contributes.actions.find(
+    const channelsSetupAction = (PLUGIN_MANIFEST.contributes.actions ?? []).find(
       ({ id }) => id === GITHUB_CHANNEL_ACTION_IDS.setup,
     );
-    const historyGapResetAction = PLUGIN_MANIFEST.contributes.actions.find(
+    const historyGapResetAction = (PLUGIN_MANIFEST.contributes.actions ?? []).find(
       ({ id }) => id === GITHUB_AUTOMATION_REPOSITORY_BASELINE_RESET_ACTION_ID,
     );
     // The built-in Automation form dispatches this provider fact producer;
@@ -247,7 +248,7 @@ describe('activate', () => {
     // Manifest projection may clone the two action declarations; users depend
     // on the same rendered fields, not a shared in-memory object reference.
     expect(channelsSetupAction?.inputHints).toEqual(sourceSetupAction?.inputHints);
-    const actionIds = new Set(PLUGIN_MANIFEST.contributes.actions.map(({ id }) => id));
+    const actionIds = new Set((PLUGIN_MANIFEST.contributes.actions ?? []).map(({ id }) => id));
     expect([...actionIds]).toEqual(expect.arrayContaining([
       ...Object.values(GITHUB_CHANNEL_ACTION_IDS),
     ]));
@@ -301,7 +302,12 @@ describe('activate', () => {
         }),
       ]),
     });
-    expect(repositoryEvent?.automation?.source?.webhookContributionRef).toEqual({
+    // The cold Event projection widens `automation` to an opaque object, so the
+    // declared webhook source is read through its published shape.
+    const repositoryEventAutomationSource = (repositoryEvent?.automation as
+      | Readonly<{ source?: Readonly<{ webhookContributionRef?: unknown }> }>
+      | undefined)?.source;
+    expect(repositoryEventAutomationSource?.webhookContributionRef).toEqual({
       pluginId: PLUGIN_MANIFEST.id,
       localId: GITHUB_WEBHOOK_CONTRIBUTION_ID,
     });
@@ -311,7 +317,8 @@ describe('activate', () => {
         properties: expect.objectContaining({ sourceConfig: expect.any(Object) }),
       }),
     });
-    expect(sourceSetupAction?.hostAccess?.filter((id) => id === 'github-connected-account'))
+    expect(((sourceSetupAction?.hostAccess ?? []) as readonly string[])
+      .filter((id) => id === 'github-connected-account'))
       .toEqual(['github-connected-account']);
     const credentialActions = [
       ...Object.values(GITHUB_CHANNEL_ACTION_IDS),
@@ -319,7 +326,7 @@ describe('activate', () => {
       GITHUB_AUTOMATION_REPOSITORY_SOURCE_ATTEMPT_ACTION_ID,
       GITHUB_AUTOMATION_REPOSITORY_BASELINE_RESET_ACTION_ID,
     ];
-    expect(PLUGIN_MANIFEST.hostAccess.required).toContainEqual(expect.objectContaining({
+    expect((PLUGIN_MANIFEST.hostAccess?.required ?? [])).toContainEqual(expect.objectContaining({
       id: 'github-connected-account',
       capability: 'connectedAccounts',
       scope: {
@@ -329,7 +336,7 @@ describe('activate', () => {
       },
     }));
     for (const actionId of credentialActions) {
-      expect(PLUGIN_MANIFEST.contributes.actions.find(({ id }) => id === actionId)?.hostAccess)
+      expect((PLUGIN_MANIFEST.contributes.actions ?? []).find(({ id }) => id === actionId)?.hostAccess)
         .toContain('github-connected-account');
     }
   });

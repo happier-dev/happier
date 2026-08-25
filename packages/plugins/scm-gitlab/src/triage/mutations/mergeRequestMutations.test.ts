@@ -8,11 +8,13 @@
  * request ever leaves the process.
  */
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { GITLAB_MUTATION_DEADLINE_MS } from '../admission.js';
 import {
   createStubGitlabTransport,
   gitlabTestConfiguredInstance,
+  GITLAB_STUB_NEVER_ANSWERS,
   GITLAB_TEST_COLLISION_SCOPE,
   type RecordedGitlabRequest,
   type StubGitlabResponse,
@@ -71,7 +73,10 @@ function mergeRequestBody(overrides: Readonly<Record<string, unknown>> = {}): un
  */
 const ANSWER_LOST = Symbol('gitlab-answer-lost');
 
-type ScriptedGitlabAnswer = StubGitlabResponse | typeof ANSWER_LOST;
+type ScriptedGitlabAnswer =
+  | StubGitlabResponse
+  | typeof ANSWER_LOST
+  | typeof GITLAB_STUB_NEVER_ANSWERS;
 
 function scriptedTransport(script: Readonly<Record<string, readonly ScriptedGitlabAnswer[]>>) {
   const cursors = new Map<string, number>();
@@ -84,6 +89,9 @@ function scriptedTransport(script: Readonly<Record<string, readonly ScriptedGitl
       cursors.set(key, index + 1);
       const answer = answers[Math.min(index, answers.length - 1)];
       if (answer === ANSWER_LOST) throw new Error('socket hang up');
+      // `GITLAB_STUB_NEVER_ANSWERS` is returned rather than thrown: the stub holds the request
+      // open until the invocation's own signal aborts it, which is what a provider that stopped
+      // answering does to a real `HttpService`.
       return answer;
     },
   });
@@ -118,6 +126,20 @@ function bodyOf(request: RecordedGitlabRequest | undefined): Record<string, unkn
 }
 
 describe('gitlab/merge-request/merge', () => {
+  it('refuses a same-IID response from a different project before writing', async () => {
+    const transport = scriptedTransport({
+      [`GET ${ITEM_URL}`]: [{ status: 200, body: mergeRequestBody({ project_id: 99 }) }],
+    });
+
+    const result = await mergeGitlabMergeRequest(mergeInput(), transport.context);
+
+    expect(result).toMatchObject({
+      kind: 'unavailable',
+      failure: { class: 'unsupportedContract', code: 'identity-mismatch' },
+    });
+    expect(transport.requests.filter((request) => request.method === 'PUT')).toHaveLength(0);
+  });
+
   it('sends the caller-observed head as GitLab’s own sha precondition', async () => {
     const transport = scriptedTransport({
       [`GET ${ITEM_URL}`]: [
@@ -757,5 +779,148 @@ describe('gitlab/merge-request/reopen', () => {
       failure: { code: 'gitlab-kind-unsupported' },
     });
     expect(transport.requests).toHaveLength(0);
+  });
+});
+
+
+/**
+ * The source-owned deadline on an exact GitLab mutation.
+ *
+ * `CONTRACT.md` §5.2 gives the SOURCE the deadline for each exact provider Action, its
+ * confirmation and its poll, and says Triage supplies none. It is the same bound as a detail
+ * read's in mechanism and a different one in duration, because it covers a currentness read, a
+ * write and a confirming read that are one press of one button.
+ */
+describe('the GitLab mutation deadline', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('gives up on a merge-request write whose provider never answers, before any effect', async () => {
+    vi.useFakeTimers();
+    const transport = createStubGitlabTransport({ respond: () => GITLAB_STUB_NEVER_ANSWERS });
+
+    const pending = mergeGitlabMergeRequest(mergeInput(), transport.context);
+    await vi.advanceTimersByTimeAsync(GITLAB_MUTATION_DEADLINE_MS + 1);
+    const result = await pending;
+
+    // The currentness read is what hung, so nothing was written and the Action says so with the
+    // reason that is true: the deadline elapsed, not that the caller cancelled.
+    expect(result).toMatchObject({
+      kind: 'unavailable',
+      failure: { class: 'transient', code: 'deadline-exceeded' },
+    });
+    expect(transport.requests.every((request) => request.method === 'GET')).toBe(true);
+  });
+});
+
+/**
+ * A write that WAS DISPATCHED and then lost its answer to this source's own deadline.
+ *
+ * The deadline exists so a mounted control gives up on a provider that stopped answering; it does
+ * not, and cannot, tell the caller that the provider did nothing. `sources/SCM.md` §4.7.2's rule is
+ * that a status code is not evidence of an effect, and its dual is that a MISSING answer is not
+ * evidence of no effect — so a deadline abort belongs with the dropped connection, not with the two
+ * refusals this client makes before dispatch.
+ *
+ * Every case below scripts the item as GitLab would report it if the write HAD landed. A result of
+ * `unavailable` is therefore the precise failure the arm's own contract names — "nothing was
+ * attempted" — asserted about a transition that happened.
+ */
+describe('a mutation write whose answer this source’s deadline took', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  async function pastMutationDeadline<TResult>(start: () => Promise<TResult>): Promise<TResult> {
+    vi.useFakeTimers();
+    const pending = start();
+    await vi.advanceTimersByTimeAsync(GITLAB_MUTATION_DEADLINE_MS + 1);
+    return pending;
+  }
+
+  it('reports a merge GitLab performed as merged, never as nothing attempted', async () => {
+    const transport = scriptedTransport({
+      [`GET ${ITEM_URL}`]: [
+        { status: 200, body: mergeRequestBody() },
+        { status: 200, body: mergeRequestBody({ state: 'merged', merged_at: '2026-08-12T09:05:00.000Z' }) },
+      ],
+      [`PUT ${MERGE_URL}`]: [GITLAB_STUB_NEVER_ANSWERS],
+    });
+
+    const result = await pastMutationDeadline(
+      () => mergeGitlabMergeRequest(mergeInput(), transport.context),
+    );
+
+    expect(result).toMatchObject({ kind: 'merged', item: { state: 'merged' } });
+    // One PUT. A lost answer is settled by the confirming read, never by a second write.
+    expect(transport.requests.filter((request) => request.method === 'PUT')).toHaveLength(1);
+  });
+
+  it('reports a draft GitLab cleared as ready, never as nothing attempted', async () => {
+    const transport = scriptedTransport({
+      [`GET ${ITEM_URL}`]: [
+        { status: 200, body: mergeRequestBody({ draft: true }) },
+        { status: 200, body: mergeRequestBody({ draft: false }) },
+      ],
+      [`POST ${GRAPHQL_URL}`]: [GITLAB_STUB_NEVER_ANSWERS],
+    });
+
+    const result = await pastMutationDeadline(
+      () => markGitlabMergeRequestReady(mergeInput(), transport.context),
+    );
+
+    expect(result).toMatchObject({ kind: 'ready', item: { draft: false } });
+    expect(transport.requests.filter((request) => request.method === 'POST')).toHaveLength(1);
+  });
+
+  it('reports a close GitLab performed as closed, never as nothing attempted', async () => {
+    const transport = scriptedTransport({
+      [`GET ${ITEM_URL}`]: [
+        { status: 200, body: mergeRequestBody({ state: 'opened' }) },
+        { status: 200, body: mergeRequestBody({ state: 'closed' }) },
+      ],
+      [`PUT ${ITEM_URL}`]: [GITLAB_STUB_NEVER_ANSWERS],
+    });
+
+    const result = await pastMutationDeadline(
+      () => closeGitlabMergeRequest(closeInput(), transport.context),
+    );
+
+    expect(result).toMatchObject({ kind: 'closed', item: { state: 'closed' } });
+  });
+
+  it('reports a reopen GitLab performed as reopened, never as nothing attempted', async () => {
+    const transport = scriptedTransport({
+      [`GET ${ITEM_URL}`]: [
+        { status: 200, body: mergeRequestBody({ state: 'closed' }) },
+        { status: 200, body: mergeRequestBody({ state: 'opened' }) },
+      ],
+      [`PUT ${ITEM_URL}`]: [GITLAB_STUB_NEVER_ANSWERS],
+    });
+
+    const result = await pastMutationDeadline(
+      () => reopenGitlabMergeRequest(closeInput(), transport.context),
+    );
+
+    expect(result).toMatchObject({ kind: 'reopened', item: { state: 'opened' } });
+  });
+
+  it('still reports a write the deadline took and the confirming read cannot settle as unconfirmed', async () => {
+    // The other arm of the same rule: when the re-observation proves nothing, the honest answer is
+    // that the outcome is unknown — which is still not `unavailable`.
+    const transport = scriptedTransport({
+      [`GET ${ITEM_URL}`]: [
+        { status: 200, body: mergeRequestBody() },
+        { status: 200, body: mergeRequestBody({ state: 'opened' }) },
+      ],
+      [`PUT ${MERGE_URL}`]: [GITLAB_STUB_NEVER_ANSWERS],
+    });
+
+    const result = await pastMutationDeadline(
+      () => mergeGitlabMergeRequest(mergeInput(), transport.context),
+    );
+
+    expect(result).toMatchObject({ kind: 'unconfirmed', observed: { state: 'opened' } });
   });
 });

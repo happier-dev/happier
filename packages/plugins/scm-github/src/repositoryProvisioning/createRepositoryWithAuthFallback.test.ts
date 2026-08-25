@@ -1,10 +1,13 @@
 import type {
+  HostingProviderRuntimeServices as ScmHostingProviderRuntimeServices,
   ScmHostingProviderRef } from '@happier-dev/plugin-sdk/scm/hosting';
 import type {
   ScmHostingRepositorySummary,
 } from '@happier-dev/plugin-sdk/scm';
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/scm';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+import { createGithubRepositoryProvisioningAdapter } from './createRepositoryWithAuthFallback.js';
 
 const githubProvider: ScmHostingProviderRef = {
   id: 'scm.github',
@@ -32,26 +35,35 @@ const repository: ScmHostingRepositorySummary = {
   defaultBranch: 'main',
 };
 
-describe('GitHub repository provisioning auth chain', () => {
-  it('falls through to gh when REST auth is stale', async () => {
-    const mod = await import('./createRepositoryWithAuthFallback.js').catch(() => null);
-    expect(mod).not.toBeNull();
-    if (!mod) return;
+/**
+ * `executeCommand` is the only process seam the GitHub CLI path can use, so a
+ * never-called spy on it falsifies any ambient-credential fallback.
+ */
+function createAmbientProcessSpy() {
+  const executeCommand = vi.fn(async () => ({
+    ok: true,
+    stdout: '',
+    stderr: '',
+    exitCode: 0,
+  }));
+  return {
+    executeCommand,
+    runtimeServices: { executeCommand } as unknown as ScmHostingProviderRuntimeServices,
+  };
+}
 
-    const error = new Error('GitHub REST authentication failed');
-    Object.assign(error, { errorCode: 'REMOTE_AUTH_REQUIRED' });
+describe('GitHub repository provisioning authority', () => {
+  it('fails repository creation typed instead of running ambient gh when the bound account is unauthenticated', async () => {
+    const ambient = createAmbientProcessSpy();
+    const error = Object.assign(new Error('GitHub REST authentication failed'), {
+      errorCode: SCM_OPERATION_ERROR_CODES.REMOTE_AUTH_REQUIRED,
+    });
     const calls: string[] = [];
-    const adapter = mod.createGithubRepositoryProvisioningAdapter({
+    const adapter = createGithubRepositoryProvisioningAdapter({
       restAdapter: {
         createRepository: async () => {
           calls.push('rest');
           throw error;
-        },
-      },
-      cliAdapter: {
-        createRepository: async () => {
-          calls.push('cli');
-          return repository;
         },
       },
     });
@@ -61,32 +73,23 @@ describe('GitHub repository provisioning auth chain', () => {
       owner: 'happier-dev',
       repositoryName: 'happier',
       visibility: 'private',
-    })).resolves.toBe(repository);
-    expect(calls).toEqual(['rest', 'cli']);
+      runtimeServices: ambient.runtimeServices,
+    })).rejects.toBe(error);
+    expect(calls).toEqual(['rest']);
+    expect(ambient.executeCommand).not.toHaveBeenCalled();
   });
 
-  it('falls through to gh when github.com REST has a recoverable server failure', async () => {
-    const mod = await import('./createRepositoryWithAuthFallback.js').catch(() => null);
-    expect(mod).not.toBeNull();
-    if (!mod) return;
-
+  it('fails repository creation typed instead of running ambient gh on a recoverable REST status', async () => {
+    const ambient = createAmbientProcessSpy();
     const error = Object.assign(new Error('GitHub REST request failed with status 502'), {
       errorCode: SCM_OPERATION_ERROR_CODES.COMMAND_FAILED,
     });
-    const calls: string[] = [];
-    const adapter = mod.createGithubRepositoryProvisioningAdapter({
+    const adapter = createGithubRepositoryProvisioningAdapter({
       restAdapter: {
         createRepository: async () => {
-          calls.push('rest');
           throw error;
         },
       },
-      cliAdapter: {
-        createRepository: async () => {
-          calls.push('cli');
-          return repository;
-        },
-      },
     });
 
     await expect(adapter.createRepository({
@@ -94,27 +97,18 @@ describe('GitHub repository provisioning auth chain', () => {
       owner: 'happier-dev',
       repositoryName: 'happier',
       visibility: 'private',
-    })).resolves.toBe(repository);
-    expect(calls).toEqual(['rest', 'cli']);
+      runtimeServices: ambient.runtimeServices,
+    })).rejects.toBe(error);
+    expect(ambient.executeCommand).not.toHaveBeenCalled();
   });
 
-  it('falls through to gh when github.com REST has a network failure', async () => {
-    const mod = await import('./createRepositoryWithAuthFallback.js').catch(() => null);
-    expect(mod).not.toBeNull();
-    if (!mod) return;
-
-    const calls: string[] = [];
-    const adapter = mod.createGithubRepositoryProvisioningAdapter({
+  it('propagates a REST network failure instead of running ambient gh', async () => {
+    const ambient = createAmbientProcessSpy();
+    const error = new TypeError('fetch failed');
+    const adapter = createGithubRepositoryProvisioningAdapter({
       restAdapter: {
         createRepository: async () => {
-          calls.push('rest');
-          throw new TypeError('fetch failed');
-        },
-      },
-      cliAdapter: {
-        createRepository: async () => {
-          calls.push('cli');
-          return repository;
+          throw error;
         },
       },
     });
@@ -124,15 +118,12 @@ describe('GitHub repository provisioning auth chain', () => {
       owner: 'happier-dev',
       repositoryName: 'happier',
       visibility: 'private',
-    })).resolves.toBe(repository);
-    expect(calls).toEqual(['rest', 'cli']);
+      runtimeServices: ambient.runtimeServices,
+    })).rejects.toBe(error);
+    expect(ambient.executeCommand).not.toHaveBeenCalled();
   });
 
-  it('does not fall through to gh for permanent REST errors', async () => {
-    const mod = await import('./createRepositoryWithAuthFallback.js').catch(() => null);
-    expect(mod).not.toBeNull();
-    if (!mod) return;
-
+  it('propagates permanent REST errors', async () => {
     const permanentErrors = [
       Object.assign(new Error('GitHub REST request was forbidden'), {
         errorCode: SCM_OPERATION_ERROR_CODES.REMOTE_REJECTED,
@@ -146,18 +137,13 @@ describe('GitHub repository provisioning auth chain', () => {
     ] as const;
 
     for (const error of permanentErrors) {
+      const ambient = createAmbientProcessSpy();
       const calls: string[] = [];
-      const adapter = mod.createGithubRepositoryProvisioningAdapter({
+      const adapter = createGithubRepositoryProvisioningAdapter({
         restAdapter: {
           createRepository: async () => {
             calls.push('rest');
             throw error;
-          },
-        },
-        cliAdapter: {
-          createRepository: async () => {
-            calls.push('cli');
-            return repository;
           },
         },
       });
@@ -167,28 +153,21 @@ describe('GitHub repository provisioning auth chain', () => {
         owner: 'happier-dev',
         repositoryName: 'happier',
         visibility: 'private',
+        runtimeServices: ambient.runtimeServices,
       })).rejects.toBe(error);
       expect(calls).toEqual(['rest']);
+      expect(ambient.executeCommand).not.toHaveBeenCalled();
     }
   });
 
-  it('skips REST for Enterprise hosts', async () => {
-    const mod = await import('./createRepositoryWithAuthFallback.js').catch(() => null);
-    expect(mod).not.toBeNull();
-    if (!mod) return;
-
+  it('refuses Enterprise repository creation typed because it has no bound-account path', async () => {
+    const ambient = createAmbientProcessSpy();
     const calls: string[] = [];
-    const adapter = mod.createGithubRepositoryProvisioningAdapter({
+    const adapter = createGithubRepositoryProvisioningAdapter({
       restAdapter: {
         createRepository: async () => {
           calls.push('rest');
           return repository;
-        },
-      },
-      cliAdapter: {
-        createRepository: async () => {
-          calls.push('cli');
-          return { ...repository, provider: enterpriseProvider };
         },
       },
     });
@@ -198,29 +177,21 @@ describe('GitHub repository provisioning auth chain', () => {
       owner: 'happier-dev',
       repositoryName: 'happier',
       visibility: 'private',
-    })).resolves.toMatchObject({
-      provider: enterpriseProvider,
+      runtimeServices: ambient.runtimeServices,
+    })).rejects.toMatchObject({
+      errorCode: SCM_OPERATION_ERROR_CODES.REMOTE_AUTH_REQUIRED,
     });
-    expect(calls).toEqual(['cli']);
+    expect(calls).toEqual([]);
+    expect(ambient.executeCommand).not.toHaveBeenCalled();
   });
 
-  it('reports no-auth remediation for target discovery', async () => {
-    const mod = await import('./createRepositoryWithAuthFallback.js').catch(() => null);
-    expect(mod).not.toBeNull();
-    if (!mod) return;
-
-    const adapter = mod.createGithubRepositoryProvisioningAdapter({
+  it('reports no-auth remediation for target discovery when the bound account is unauthenticated', async () => {
+    const ambient = createAmbientProcessSpy();
+    const adapter = createGithubRepositoryProvisioningAdapter({
       restAdapter: {
         describePublishTargets: async () => {
           const error = new Error('GitHub REST authentication failed');
-          Object.assign(error, { errorCode: 'REMOTE_AUTH_REQUIRED' });
-          throw error;
-        },
-      },
-      cliAdapter: {
-        describePublishTargets: async () => {
-          const error = new Error('GitHub CLI is not authenticated');
-          Object.assign(error, { errorCode: 'REMOTE_AUTH_REQUIRED' });
+          Object.assign(error, { errorCode: SCM_OPERATION_ERROR_CODES.REMOTE_AUTH_REQUIRED });
           throw error;
         },
       },
@@ -229,6 +200,7 @@ describe('GitHub repository provisioning auth chain', () => {
     await expect(adapter.describePublishTargets({
       provider: githubProvider,
       defaultRepositoryName: 'happier',
+      runtimeServices: ambient.runtimeServices,
     })).resolves.toMatchObject({
       auth: {
         state: 'authentication_required',
@@ -239,38 +211,48 @@ describe('GitHub repository provisioning auth chain', () => {
       },
       targets: [],
     });
+    expect(ambient.executeCommand).not.toHaveBeenCalled();
+  });
+
+  it('reports no-auth remediation for Enterprise target discovery without running ambient gh', async () => {
+    const ambient = createAmbientProcessSpy();
+    const calls: string[] = [];
+    const adapter = createGithubRepositoryProvisioningAdapter({
+      restAdapter: {
+        describePublishTargets: async () => {
+          calls.push('rest');
+          throw new Error('unreachable');
+        },
+      },
+    });
+
+    await expect(adapter.describePublishTargets({
+      provider: enterpriseProvider,
+      defaultRepositoryName: 'happier',
+      runtimeServices: ambient.runtimeServices,
+    })).resolves.toMatchObject({
+      auth: {
+        state: 'authentication_required',
+        profileKind: 'no_auth',
+      },
+      targets: [],
+    });
+    expect(calls).toEqual([]);
+    expect(ambient.executeCommand).not.toHaveBeenCalled();
   });
 
   it('describes clone targets through provider-owned repository lookup', async () => {
-    const mod = await import('./createRepositoryWithAuthFallback.js').catch(() => null);
-    expect(mod).not.toBeNull();
-    if (!mod) return;
-
     const calls: string[] = [];
-    const adapter = mod.createGithubRepositoryProvisioningAdapter({
+    const adapter = createGithubRepositoryProvisioningAdapter({
       restAdapter: {
         getRepository: async (input: Readonly<{ owner: string; repositoryName: string }>) => {
           calls.push(`${input.owner}/${input.repositoryName}`);
           return repository;
         },
       },
-      cliAdapter: {},
     });
-    const describeCloneTargets = (adapter as {
-      describeCloneTargets?: (input: Readonly<{
-        provider: ScmHostingProviderRef;
-        repository: {
-          nameWithOwner: string;
-          cloneUrl?: string;
-          visibility: 'private' | 'public' | 'internal';
-        };
-      }>) => Promise<unknown>;
-    }).describeCloneTargets;
 
-    expect(describeCloneTargets).toEqual(expect.any(Function));
-    if (!describeCloneTargets) return;
-
-    await expect(describeCloneTargets({
+    await expect(adapter.describeCloneTargets({
       provider: githubProvider,
       repository: {
         nameWithOwner: 'happier-dev/happier',
@@ -300,5 +282,31 @@ describe('GitHub repository provisioning auth chain', () => {
       ],
     });
     expect(calls).toEqual(['happier-dev/happier']);
+  });
+
+  it('refuses Enterprise clone-target description typed without running ambient gh', async () => {
+    const ambient = createAmbientProcessSpy();
+    const calls: string[] = [];
+    const adapter = createGithubRepositoryProvisioningAdapter({
+      restAdapter: {
+        getRepository: async () => {
+          calls.push('rest');
+          return repository;
+        },
+      },
+    });
+
+    await expect(adapter.describeCloneTargets({
+      provider: enterpriseProvider,
+      repository: {
+        nameWithOwner: 'happier-dev/happier',
+        visibility: 'private',
+      },
+      runtimeServices: ambient.runtimeServices,
+    })).rejects.toMatchObject({
+      errorCode: SCM_OPERATION_ERROR_CODES.REMOTE_AUTH_REQUIRED,
+    });
+    expect(calls).toEqual([]);
+    expect(ambient.executeCommand).not.toHaveBeenCalled();
   });
 });

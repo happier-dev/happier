@@ -10,11 +10,14 @@ import type { GithubTriageKindIdV1 } from '../../triage/types.js';
  * the rendered surface follows rather than restating inline, and the facts a
  * test can check without mounting a device.
  *
- * `retainedState` is deliberately narrow. Retention on this source buys the
- * already-measured reader state and nothing else: every panel's loaded
- * projection is discarded when its active interval ends, whether or not its
- * subtree stays mounted. Retention is a scroll-position concession, never
- * permission to keep provider content a reader is no longer looking at.
+ * `retainedState` is deliberately narrow, and it is the one thing a panel may
+ * not overstate: `panelReaders.ts` reads this exact field's tab to decide what
+ * survives a leave, so a tab that claims to keep something it drops is a defect
+ * rather than prose. A `discard` panel keeps nothing at all and re-reads from
+ * the first page. `retain` is spent only where restarting would re-charge a
+ * reader's already-paid provider walk and lose their place in it — it is never
+ * permission to hold provider content indefinitely, because the retained walk
+ * lives and dies with the mounted detail body.
  *
  * Which tabs exist is a function of the entry KIND, not of a read. A pull
  * request has changed files and checks; an issue has neither, and an issue is
@@ -110,9 +113,12 @@ export const GITHUB_DETAIL_TABS_V1: readonly GithubDetailTabDeclarationV1[] = Ob
     title: 'Files',
     titleKey: 'plugins.github.ui.tab.files',
     retention: 'retain' as const,
-    retainedState: 'its one vertical list viewport and scroll anchor only; the loaded'
-      + ' changed-file rows, page position and errors are discarded when the panel'
-      + ' becomes inactive, and no rich diff body is retained while B6 is held',
+    retainedState: 'the changed-file rows already walked, the position of the next'
+      + ' page, and the list viewport and scroll anchor over them, so a reader who'
+      + ' walked nine pages and glanced at Checks returns to the same nine pages in'
+      + ' the same place rather than paying GitHub for them twice; a page in flight'
+      + ' at the leave is re-asked once on return, and no rich diff body is'
+      + ' retained while B6 is held',
     readPlane: 'changedFiles' as const,
     scrollOwner: 'list' as const,
     kinds: PULL_REQUEST_ONLY,

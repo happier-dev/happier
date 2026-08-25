@@ -1,4 +1,5 @@
 import { readTriageResponseHeaderV1 } from '@happier-dev/triage-protocol/v1';
+import { isBoundedInvocationDeadline } from '@happier-dev/triage-sources/runtime';
 
 import {
   isGithubRateLimited,
@@ -89,6 +90,9 @@ export function classifyGithubResponseFailure(
 
 /** A thrown transport/cancellation outcome, classified without inspecting a credential. */
 export function classifyGithubTransportFailure(error: unknown): GithubTriageFailureV1 {
+  if (isBoundedInvocationDeadline(error)) {
+    return Object.freeze({ class: 'transient', code: 'github_request_timed_out' });
+  }
   if (error instanceof Error && (error.name === 'AbortError' || error.name === 'TimeoutError')) {
     return Object.freeze({ class: 'transient', code: 'github_request_cancelled' });
   }

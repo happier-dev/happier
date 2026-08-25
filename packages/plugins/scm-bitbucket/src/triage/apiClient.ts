@@ -1,4 +1,5 @@
 import type { HttpService } from '@happier-dev/plugin-sdk/http';
+import { readTriageResponseHeaderV1 } from '@happier-dev/triage-protocol/v1';
 
 import {
   BITBUCKET_CLOUD_API_BASE_URL,
@@ -73,6 +74,15 @@ export type BitbucketTriageApiClient = Readonly<{
     body?: unknown;
     signal?: AbortSignal;
   }>): Promise<BitbucketJsonResponse>;
+  /** Reads Bitbucket's one non-JSON success resource through its documented redirect. */
+  requestRawDiff(input: Readonly<{
+    url: string;
+    signal?: AbortSignal;
+  }>): Promise<
+    | Readonly<{ ok: true; kind: 'available'; text: string }>
+    | Readonly<{ ok: true; kind: 'tooLarge' }>
+    | Readonly<{ ok: false; failure: BitbucketTriageFailure }>
+  >;
 }>;
 
 /**
@@ -202,6 +212,80 @@ export function createBitbucketTriageApiClient(
         }),
         telemetry,
       };
+    },
+    async requestRawDiff(request) {
+      const url = readBitbucketApiUrl(request.url);
+      if (url === null) {
+        return {
+          ok: false,
+          failure: createBitbucketFailure('unsupportedContract', 'untrusted-request-origin'),
+        };
+      }
+      if (request.signal?.aborted === true) {
+        return { ok: false, failure: createBitbucketFailure('cancelled', 'invocation-cancelled') };
+      }
+
+      let headers: BitbucketAuthorizationHeaders;
+      try {
+        headers = await authorize(request.signal);
+      } catch (error) {
+        return { ok: false, failure: classifyBitbucketTransportFailure(error) };
+      }
+
+      const fetchRaw = async (target: string, redirect: 'manual' | 'error') => input.http.request({
+        url: target,
+        method: 'GET',
+        headers: { Accept: 'text/plain', ...headers },
+        redirect,
+        timeoutMs,
+      }, { ...(request.signal === undefined ? {} : { signal: request.signal }) });
+
+      let first: Awaited<ReturnType<typeof fetchRaw>>;
+      try {
+        first = await fetchRaw(url, 'manual');
+      } catch (error) {
+        return { ok: false, failure: classifyBitbucketTransportFailure(error) };
+      }
+      if (first.status === 555) return { ok: true, kind: 'tooLarge' };
+      if (first.status !== 302) {
+        return {
+          ok: false,
+          failure: classifyBitbucketHttpFailure({
+            status: first.status,
+            headers: first.headers,
+            body: null,
+            nowMs: input.now(),
+          }),
+        };
+      }
+      const location = readTriageResponseHeaderV1(first.headers, 'location');
+      const target = location === null ? null : readBitbucketApiUrl(location);
+      if (target === null) {
+        return {
+          ok: false,
+          failure: createBitbucketFailure('unsupportedContract', 'untrusted-diff-redirect'),
+        };
+      }
+
+      let redirected: Awaited<ReturnType<typeof fetchRaw>>;
+      try {
+        redirected = await fetchRaw(target, 'error');
+      } catch (error) {
+        return { ok: false, failure: classifyBitbucketTransportFailure(error) };
+      }
+      if (redirected.status === 555) return { ok: true, kind: 'tooLarge' };
+      if (redirected.status !== 200) {
+        return {
+          ok: false,
+          failure: classifyBitbucketHttpFailure({
+            status: redirected.status,
+            headers: redirected.headers,
+            body: null,
+            nowMs: input.now(),
+          }),
+        };
+      }
+      return { ok: true, kind: 'available', text: new TextDecoder().decode(redirected.body) };
     },
   };
 }

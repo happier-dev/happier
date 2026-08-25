@@ -112,6 +112,11 @@ describe('provider row decoding', () => {
     expect(draftRow.completionOptions).toEqual({
       deleteSourceBranch: true,
       transitionWorkItems: true,
+      // Read as a fact for the same reason as its neighbours: somebody who enabled
+      // auto-complete through the web UI can already have stored a justification, and a
+      // completion this build performs must overwrite it explicitly rather than leave
+      // stranded text attached to its merge. `null` is Azure returning none.
+      bypassReason: null,
       bypassPolicy: null,
     });
     expect(rowAt(authoredPage, 0).labels).toEqual(['infrastructure']);

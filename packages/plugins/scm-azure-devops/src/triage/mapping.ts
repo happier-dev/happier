@@ -112,6 +112,7 @@ export function mapAzurePullRequestEntry(input: Readonly<{
     entryId,
     locator: {
       forgeHostId: origin.forgeHostId,
+      deploymentBaseUrl: origin.baseUrl,
       repositoryKey: buildAzureRepositoryKey({
         organizationOrCollection: origin.organizationOrCollection,
         forgeHostId: origin.forgeHostId,

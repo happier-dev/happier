@@ -1,6 +1,5 @@
 import type {
   TriageDetailSurfaceInputV1,
-  TriageLinkedSessionProjectionV1,
   TriageRowFactNumberFormatV1,
   TriageRowFactStatusToneV1,
   TriageRowFactTimestampFormatV1,
@@ -65,7 +64,6 @@ export type BitbucketDetailOverviewV1 = Readonly<{
   projectionTruncated: boolean;
   fields: readonly BitbucketDetailFieldV1[];
   involvement: readonly TriageViewerInvolvementV1[];
-  linkedSessions: readonly TriageLinkedSessionProjectionV1[];
   observedAtMs: number;
   sourceUpdatedAtMs: number | null;
 }>;
@@ -118,9 +116,9 @@ function toDetailField(fact: TriageRowFactV1): BitbucketDetailFieldV1 | null {
 /**
  * Projects the mounted detail input into the source's Overview model.
  *
- * The bounded linked-Session projection passes through unchanged. A retained link whose Session
- * summary is unavailable keeps its id and loses only its display text; no renderer may read that
- * as "never linked", and this projection never drops such a link.
+ * It deliberately does NOT project `input.linkedSessions`. An entry's Session relationship is owned
+ * by the Triage common header, and this forge's one entry kind is a pull request, so a source-owned
+ * projection of it would be a second owner of the same relationship (`sources/SCM.md` §3.7.6).
  */
 export function projectBitbucketDetailOverview(
   input: TriageDetailSurfaceInputV1,
@@ -143,7 +141,6 @@ export function projectBitbucketDetailOverview(
     projectionTruncated: snapshot.projectionTruncated === true,
     fields,
     involvement: viewer.involvement,
-    linkedSessions: input.linkedSessions,
     observedAtMs: input.observation.observedAtMs,
     sourceUpdatedAtMs: input.observation.sourceUpdatedAtMs ?? null,
   };

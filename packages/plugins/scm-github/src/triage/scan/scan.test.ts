@@ -7,6 +7,8 @@ import {
   GITHUB_FIXTURE_REPOSITORY_ID,
   GITHUB_REPOSITORY_RESPONSE,
   GITHUB_SEARCH_ISSUE_ITEM,
+  GITHUB_FIXTURE_OTHER_REPOSITORY,
+  GITHUB_OTHER_REPOSITORY_RESPONSE,
   GITHUB_SEARCH_ITEM_WITHOUT_REPOSITORY,
   GITHUB_SEARCH_PULL_REQUEST_ITEM,
   GITHUB_SEARCH_UNDECODABLE_ITEM,
@@ -57,7 +59,7 @@ function pullRequestItems(count: number, offset = 0): readonly Record<string, un
 }
 
 async function runScan(input: Readonly<{
-  respond: (request: RecordedGithubRequest) => StubHttpResponse | undefined;
+  respond: (request: RecordedGithubRequest) => StubHttpResponse | Promise<StubHttpResponse> | undefined;
   limit?: number;
   signal?: AbortSignal;
   nowMs?: number;
@@ -87,7 +89,7 @@ async function runScan(input: Readonly<{
  * calls and no page is buffered — each result is applied as it arrives.
  */
 async function runWalk(input: Readonly<{
-  respond: (request: RecordedGithubRequest) => StubHttpResponse | undefined;
+  respond: (request: RecordedGithubRequest) => StubHttpResponse | Promise<StubHttpResponse> | undefined;
   limit?: number;
   maxPages?: number;
 }>) {
@@ -667,5 +669,63 @@ describe('GitHub triage scan', () => {
     const first = result.observations[0];
     expect(first?.kind === 'present' && first.localRef.collisionScope)
       .toBe(`github:${GITHUB_FIXTURE_REPOSITORY_ID}`);
+  });
+
+  it('asks for every repository a page needs at once rather than one after another', async () => {
+    // GitHub omits `repository` from a search item, so identity needs one read per
+    // DISTINCT repository on the page. Taken one after another that is a chain of
+    // round trips inside one lane's page — an involvement inbox spanning fifty
+    // repositories spends fifty sequential round trips before the second lane is
+    // ever asked, and the invocation settles on the budget with the later lanes
+    // unread. The request COUNT is not the problem and does not change here; the
+    // serialization is.
+    let inFlight = 0;
+    let concurrentRepositoryReads = 0;
+    const release: Array<() => void> = [];
+    const { result } = await runScan({
+      limit: 100,
+      respond: (request) => {
+        if (!request.url.includes('/repos/')) {
+          return {
+            status: 200,
+            body: githubSearchResponse({
+              items: [
+                { ...GITHUB_SEARCH_ITEM_WITHOUT_REPOSITORY, number: 4001, id: 6_000_001 },
+                { ...GITHUB_SEARCH_ITEM_WITHOUT_REPOSITORY, number: 4002, id: 6_000_002 },
+                {
+                  ...GITHUB_SEARCH_ISSUE_ITEM,
+                  repository: undefined,
+                  number: 4003,
+                  id: 6_000_003,
+                },
+              ],
+            }),
+          };
+        }
+        inFlight += 1;
+        concurrentRepositoryReads = Math.max(concurrentRepositoryReads, inFlight);
+        const body = request.url.endsWith(GITHUB_FIXTURE_OTHER_REPOSITORY)
+          ? GITHUB_OTHER_REPOSITORY_RESPONSE
+          : GITHUB_REPOSITORY_RESPONSE;
+        // Held open across a macrotask, so everything issued in the same tick is
+        // outstanding together and countable. A chain settles one at a time and
+        // never counts more than one — which is the failure, not a hang.
+        return new Promise<StubHttpResponse>((resolve) => {
+          release.push(() => {
+            inFlight -= 1;
+            resolve({ status: 200, body });
+          });
+          setTimeout(() => {
+            for (const settle of release.splice(0)) settle();
+          }, 0);
+        });
+      },
+    });
+
+    // Two distinct repositories on the page, both outstanding at the same moment.
+    expect(concurrentRepositoryReads).toBe(2);
+    expect(result.kind).toBe('page');
+    if (result.kind !== 'page') return;
+    expect(result.observations).toHaveLength(3);
   });
 });

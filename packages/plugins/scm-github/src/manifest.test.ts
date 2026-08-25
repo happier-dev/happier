@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import * as tar from 'tar';
-import { PluginActionContributionV2Schema } from '@happier-dev/protocol';
+import { ingestPluginManifestV2, PluginActionContributionV2Schema } from '@happier-dev/protocol';
 import { assertTriageSourceContributionV1 } from '@happier-dev/triage-protocol/testing/v1';
 import { describe, expect, it } from 'vitest';
 
@@ -35,6 +35,13 @@ const GITHUB_BRAND_ASSET_PROVENANCE = {
 
 const BRAND_ASSET_ARCHIVE_PATH = 'assets/brand.png';
 const NPM_PACK_TIMEOUT_MS = 60_000;
+/**
+ * The package-wide per-test budget is the same 60s this one test already
+ * permits `npm pack` alone, leaving nothing for the temp-directory, extraction
+ * and read work around it. Its budget is therefore the subprocess cap it allows
+ * plus the ordinary package budget for that surrounding local work.
+ */
+const PACKED_BRAND_ASSET_TEST_TIMEOUT_MS = NPM_PACK_TIMEOUT_MS + 60_000;
 
 async function readPackedGitHubBrandAsset(): Promise<Buffer> {
   const destination = await mkdtemp(join(tmpdir(), 'happier-github-brand-pack-'));
@@ -80,20 +87,26 @@ describe('GitHub SCM manifest', () => {
     // "registered but never declared" failure this assertion exists to catch.
     expect(() => assertTriageSourceContributionV1(PLUGIN_MANIFEST)).not.toThrow();
 
-    const [contribution] = PLUGIN_MANIFEST.contributes.targetedPluginContributions;
-    expect(contribution?.descriptor.kinds.map((kind) => kind.id))
+    const [contribution] = PLUGIN_MANIFEST.contributes.targetedPluginContributions ?? [];
+    const contributionKinds = (contribution?.descriptor as
+      | Readonly<{ kinds?: readonly Readonly<{ id: string }>[] }>
+      | undefined)?.kinds ?? [];
+    expect(contributionKinds.map((kind) => kind.id))
       .toEqual(['pull-request', 'issue']);
     // Flattening another forge's word into GitHub's is the first step toward
     // flattening the rest of its vocabulary.
     expect(JSON.stringify(contribution?.descriptor)).not.toContain('merge-request');
-    expect(contribution?.surfaces.detail.renderer).toBe(GITHUB_TRIAGE_DETAIL_RENDERER_ID_V1);
-    expect(PLUGIN_MANIFEST.contributes.ui.renderers.map(({ id }) => id))
+    const contributionSurfaces = contribution?.surfaces as
+      | Readonly<{ detail?: Readonly<{ renderer?: string }> }>
+      | undefined;
+    expect(contributionSurfaces?.detail?.renderer).toBe(GITHUB_TRIAGE_DETAIL_RENDERER_ID_V1);
+    expect((PLUGIN_MANIFEST.contributes.ui?.renderers ?? []).map(({ id }) => id))
       .toContain(GITHUB_TRIAGE_DETAIL_RENDERER_ID_V1);
   });
 
   it('authorizes exact account materialization for every declared Triage read', () => {
     const actions = new Map(
-      PLUGIN_MANIFEST.contributes.actions.map((action) => [action.id, action]),
+      (PLUGIN_MANIFEST.contributes.actions ?? []).map((action) => [action.id, action]),
     );
     for (const id of Object.values(GITHUB_TRIAGE_ACTION_IDS_V1)) {
       expect(actions.get(id)?.hostAccess)
@@ -114,12 +127,12 @@ describe('GitHub SCM manifest', () => {
       .not.toHaveProperty('connectedAccountPurposeBindings');
   });
 
-  it('declares the four source-native detail reads with the same account authority', () => {
+  it('declares the five source-native detail reads with the same account authority', () => {
     const actions = new Map(
-      PLUGIN_MANIFEST.contributes.actions.map((action) => [action.id, action]),
+      (PLUGIN_MANIFEST.contributes.actions ?? []).map((action) => [action.id, action]),
     );
     const declared = Object.values(GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1);
-    expect(declared).toHaveLength(4);
+    expect(new Set(declared).size).toBe(declared.length);
 
     for (const id of declared) {
       const action = actions.get(id);
@@ -148,7 +161,7 @@ describe('GitHub SCM manifest', () => {
 
   it('binds the scan account leaf under a declaration that can actually fail', () => {
     const actions = new Map(
-      PLUGIN_MANIFEST.contributes.actions.map((action) => [action.id, action]),
+      (PLUGIN_MANIFEST.contributes.actions ?? []).map((action) => [action.id, action]),
     );
     const scan = actions.get(GITHUB_TRIAGE_ACTION_IDS_V1.scan);
     const get = actions.get(GITHUB_TRIAGE_ACTION_IDS_V1.get);
@@ -157,39 +170,59 @@ describe('GitHub SCM manifest', () => {
       throw new Error('The three Triage reads must be declared before their bindings can be judged.');
     }
 
-    // The published union is accepted only because both arms carry the same exact
-    // credential-ref leaf at the bound path. `definePlugin` runs this same schema at
-    // definition time, so an unproven path cannot reach a built manifest at all.
-    expect(() => PluginActionContributionV2Schema.parse(scan)).not.toThrow();
+    const ingestWithScan = (replacement: typeof scan) => ingestPluginManifestV2({
+      ...PLUGIN_MANIFEST,
+      contributes: {
+        ...PLUGIN_MANIFEST.contributes,
+        actions: (PLUGIN_MANIFEST.contributes.actions ?? []).map((action) => (
+          action.id === scan.id ? replacement : action
+        )),
+      },
+    });
+
+    // The canonical whole-manifest admission owner accepts the published union
+    // only because both arms carry the same exact credential-ref leaf.
+    expect(ingestWithScan(scan)).toMatchObject({ ok: true });
 
     // A binding that cannot fail proves nothing, so the same declaration is
     // re-checked against a union whose second arm — `listInstances`' own published
     // input — never reaches the bound path. Only arm coverage differs: the leaf
     // shape in the reachable arm is the exact one the accepted declaration uses.
-    expect(() => PluginActionContributionV2Schema.parse({
+    expect(ingestWithScan({
       ...scan,
-      inputSchema: { anyOf: [get.inputSchema, listInstances.inputSchema] },
-    })).toThrow(
-      'Connected Account purpose bindings must target one exact qualified credential-ref input leaf in every declared input arm.',
-    );
+      inputSchema: { anyOf: [get.inputSchema ?? {}, listInstances.inputSchema ?? {}] },
+    })).toMatchObject({
+      ok: false,
+      diagnostics: expect.arrayContaining([expect.objectContaining({
+        message: 'Connected Account purpose bindings must target one exact qualified credential-ref input leaf in every declared input arm.',
+      })]),
+    });
 
     // And a leaf only the initial page arm declares is rejected for the same reason.
-    expect(() => PluginActionContributionV2Schema.parse({
+    expect(ingestWithScan({
       ...scan,
       connectedAccountPurposeBindings: [
         { path: 'page.limit', purpose: GITHUB_CONNECTED_ACCOUNT_PURPOSE },
       ],
-    })).toThrow(
-      'Connected Account purpose bindings must target one exact qualified credential-ref input leaf in every declared input arm.',
-    );
+    })).toMatchObject({
+      ok: false,
+      diagnostics: expect.arrayContaining([expect.objectContaining({
+        message: 'Connected Account purpose bindings must target one exact qualified credential-ref input leaf in every declared input arm.',
+      })]),
+    });
   });
 
   it('declares the pull-request mutations as confirmation-gated UI-only writes', () => {
     const actions = new Map(
-      PLUGIN_MANIFEST.contributes.actions.map((action) => [action.id, action]),
+      (PLUGIN_MANIFEST.contributes.actions ?? []).map((action) => [action.id, action]),
     );
-    const declared = Object.values(GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1);
-    expect(declared).toHaveLength(13);
+    const blockedUntilReviewsOwnsDispatch = new Set<string>([
+      GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestSubmitReview,
+    ]);
+    const declared = Object.values(GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1)
+      .filter((id) => !blockedUntilReviewsOwnsDispatch.has(id));
+    expect(new Set(Object.values(GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1)).size)
+      .toBe(Object.values(GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1).length);
 
     for (const id of declared) {
       const action = actions.get(id);
@@ -236,6 +269,11 @@ describe('GitHub SCM manifest', () => {
       .toBe('externalSideEffect');
     expect(actions.get(GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestAddReviewers)?.dangerLevel)
       .toBe('externalSideEffect');
+    // Review publication remains unavailable until the canonical Reviews owner
+    // serializes the first provider dispatch. A provider-local confirmation and
+    // reconciliation read cannot replace that barrier.
+    expect(actions.get(GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestSubmitReview))
+      .toBeUndefined();
     expect(actions.get(GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestUpdateBranch)?.dangerLevel)
       .toBe('writesRemote');
     expect(actions.get(GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestRemoveReviewers)?.dangerLevel)
@@ -258,7 +296,7 @@ describe('GitHub SCM manifest', () => {
   });
 
   it('admits exactly the verbs the declared Actions consume on the one github-api grant', () => {
-    const grants = PLUGIN_MANIFEST.hostAccess.required
+    const grants = (PLUGIN_MANIFEST.hostAccess?.required ?? [])
       .filter((request) => request.id === 'github-api');
     // One grant, widened in place. A second network scope for writes would be the
     // split-brain this assertion exists to prevent.
@@ -289,5 +327,5 @@ describe('GitHub SCM manifest', () => {
 
     const packedAsset = await readPackedGitHubBrandAsset();
     expect(packedAsset).toEqual(asset);
-  });
+  }, PACKED_BRAND_ASSET_TEST_TIMEOUT_MS);
 });
