@@ -51,7 +51,19 @@ export const PluginEventContributionV1Schema = z.discriminatedUnion('kind', [
     payloadSchema: PluginJsonSchemaV2Schema.optional(),
     automation: PluginEventAutomationDeclarationV1Schema.optional(),
     metadata: z.record(z.string(), PluginJsonValueV2Schema).optional(),
-  }).strict(),
+  }).strict().superRefine((value, context) => {
+    // An Automation authors filters, payload mappings and run inputs against
+    // the Event payload. Admitting an eligible Event with no published payload
+    // contract offers the author a source whose occurrences have no describable
+    // shape, so eligibility and the payload contract are declared together.
+    if (value.automation !== undefined && value.payloadSchema === undefined) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['payloadSchema'],
+        message: 'An Automation-eligible Event must publish a payload schema',
+      });
+    }
+  }),
   z.object({
     id: PluginContributionLocalIdZodSchema,
     kind: z.literal('subscription'),

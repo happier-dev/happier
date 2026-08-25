@@ -9,7 +9,7 @@ export const PluginInstallationManifestPublisherProofV1Schema = z.object({
   installationId: z.string().trim().min(1),
   issuedAt: z.number().int().nonnegative(),
   nonce: z.string().trim().min(1),
-  method: z.enum(['POST']),
+  method: z.enum(['GET', 'POST']),
   path: z.string().trim().min(1),
   bodySha256Base64Url: z.string().trim().min(1),
   signatureBase64Url: z.string().trim().min(1),

@@ -27,6 +27,8 @@ export {
   accountSettingsParse,
   deriveAttentionDeliveryPolicyFromLegacySettings,
   getNotificationsSettingsV1FromAccountSettings,
+  isBackendTargetDisabledByAccountSettings,
+  readAccountSettingValueForBackendTarget,
   resolveAttentionDeliveryPolicyDecision,
   resolveNewSessionWizardSectionPresentation,
   SessionHandoffDefaultsV1Schema,

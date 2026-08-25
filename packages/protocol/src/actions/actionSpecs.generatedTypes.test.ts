@@ -62,6 +62,18 @@ type UnknownPublicResultIds = {
   [K in PublicActionId]: IsUnknown<PublicActionResultById[K]> extends true ? K : never;
 }[PublicActionId];
 
+type ActionDiscoverySummary = PublicActionResultById['action.spec.search']['actionSpecs'][number];
+type ActionDiscoveryDefinition = PublicActionResultById['action.spec.get']['actionSpec'];
+
+// @ts-expect-error external Action discovery summaries are a closed DTO
+type ActionDiscoverySummaryUnknownMember = ActionDiscoverySummary['unexpected'];
+// @ts-expect-error external Action discovery slash bindings are closed
+type ActionDiscoverySlashUnknownMember = NonNullable<ActionDiscoverySummary['slash']>['unexpected'];
+// @ts-expect-error external Action discovery bindings are closed
+type ActionDiscoveryBindingsUnknownMember = NonNullable<ActionDiscoverySummary['bindings']>['unexpected'];
+// @ts-expect-error external Action discovery execution descriptors are closed
+type ActionDiscoveryExecutionUnknownMember = NonNullable<ActionDiscoveryDefinition['execution']>['unexpected'];
+
 type PluginActionInputByRuntimeSchemaMap = Readonly<{
   [K in keyof typeof PLUGIN_ACTION_INPUT_SCHEMAS]: z.input<
     (typeof PLUGIN_ACTION_INPUT_SCHEMAS)[K]
@@ -87,6 +99,11 @@ type PublicActionResultByRuntimeSchemaMap = Readonly<{
 }>;
 
 describe('ActionSpec-generated plugin action types', () => {
+  it('keeps external Action discovery result DTOs closed', () => {
+    expectTypeOf<ActionDiscoverySummary['id']>().toEqualTypeOf<string>();
+    expectTypeOf<ActionDiscoveryDefinition['kindVersion']>().toEqualTypeOf<1>();
+  });
+
   it('preserves distinct literal-id input and result types', () => {
     expectTypeOf<PluginActionInputById['memory.search']>().toMatchTypeOf<{
       machineId: string;
@@ -364,16 +381,16 @@ describe('ActionSpec-generated plugin action types', () => {
     expect(PublicActionIdSchema.parse('session.spawn_new')).toBe('session.spawn_new');
     expect(PublicActionIdSchema.safeParse('sessions.external.materialize.start').success).toBe(false);
     expect(PublicActionIdSchema.safeParse('plugins.permissions.grants.revoke').success).toBe(false);
-    expect(PublicActionIdSchema.safeParse('browser.session.create').success).toBe(false);
+    expect(PublicActionIdSchema.safeParse('devices.simulator.input.orientation').success).toBe(false);
     expect(Object.hasOwn(PUBLIC_ACTION_INPUT_SCHEMAS, 'session.spawn_new')).toBe(true);
     expect(Object.hasOwn(PUBLIC_ACTION_INPUT_SCHEMAS, 'sessions.external.materialize.start')).toBe(false);
     expect(Object.hasOwn(PUBLIC_ACTION_INPUT_SCHEMAS, 'plugins.permissions.grants.revoke')).toBe(false);
-    expect(Object.hasOwn(PUBLIC_ACTION_INPUT_SCHEMAS, 'browser.session.create')).toBe(false);
+    expect(Object.hasOwn(PUBLIC_ACTION_INPUT_SCHEMAS, 'devices.simulator.input.orientation')).toBe(false);
 
     expectTypeOf<Extract<PublicActionId, 'session.spawn_new'>>().toEqualTypeOf<'session.spawn_new'>();
     expectTypeOf<Extract<PublicActionId, 'sessions.external.materialize.start'>>().toEqualTypeOf<never>();
     expectTypeOf<Extract<PublicActionId, 'plugins.permissions.grants.revoke'>>().toEqualTypeOf<never>();
-    expectTypeOf<Extract<PublicActionId, 'browser.session.create'>>().toEqualTypeOf<never>();
+    expectTypeOf<Extract<PublicActionId, 'devices.simulator.input.orientation'>>().toEqualTypeOf<never>();
     expectTypeOf<UnknownPublicInputIds>().toEqualTypeOf<never>();
     expectTypeOf<UnknownPublicResultIds>().toEqualTypeOf<never>();
     expectTypeOf<keyof typeof PUBLIC_ACTION_INPUT_SCHEMAS>().toEqualTypeOf<PublicActionId>();

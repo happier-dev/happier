@@ -652,7 +652,11 @@ export function defineProtocolObject<
   } else if (options.policy === 'additive-open/drop') {
     projection.additionalProperties = true;
   } else if (additional === undefined) {
-    projection.additionalProperties = true;
+    // `true` is the canonical JSON Schema spelling for accepting then
+    // dropping unknown keys. Preserve needs a distinct emitted spelling so an
+    // exact-generation manifest can reconstruct the Protocol parser without
+    // consulting a target module.
+    projection.additionalProperties = {};
   } else {
     additionalSchema = requireProtocolComposableSchema<unknown, unknown>(
       additional,
@@ -838,4 +842,201 @@ export function defineProtocolJsonValue<TValue extends ProtocolJsonValue = Proto
       }
     },
   );
+}
+
+type CanonicalComposableSchema = ProtocolComposableSchema<ProtocolJsonValue, ProtocolJsonValue>;
+type CanonicalComposableObjectPropertySchema = ProtocolComposableSchema<
+  ProtocolJsonValue | undefined,
+  ProtocolJsonValue | undefined
+>;
+
+function eraseCanonicalObjectProjectionType(
+  schema: AnyProtocolComposableSchema,
+): CanonicalComposableSchema {
+  // The object builder's mapped type preserves optional-property `undefined`
+  // as an authoring input marker. At runtime those keys are omitted, so the
+  // parsed whole object remains strict JSON at this canonical conversion seam.
+  return schema as unknown as CanonicalComposableSchema;
+}
+
+function hasOnlyCanonicalSchemaKeys(
+  schema: Readonly<Record<string, unknown>>,
+  allowed: readonly string[],
+): boolean {
+  return Object.keys(schema).every((key) => allowed.includes(key));
+}
+
+function readCanonicalComposableSchemaProjection(
+  value: unknown,
+): CanonicalComposableSchema | null {
+  if (!isProtocolRecord(value) || Object.hasOwn(value, '$schema')) return null;
+
+  try {
+    if (Object.hasOwn(value, 'const')) {
+      if (!hasOnlyCanonicalSchemaKeys(value, ['const'])) return null;
+      const literal = value.const;
+      if (literal !== null
+        && typeof literal !== 'string'
+        && typeof literal !== 'number'
+        && typeof literal !== 'boolean') {
+        return null;
+      }
+      return defineProtocolLiteral(literal);
+    }
+
+    if (Object.hasOwn(value, 'anyOf')) {
+      if (!hasOnlyCanonicalSchemaKeys(value, ['anyOf']) || !Array.isArray(value.anyOf)) return null;
+      const members = value.anyOf;
+      if (members.length < 2) return null;
+      if (members.length === 2
+        && isProtocolRecord(members[1])
+        && Object.keys(members[1]).length === 1
+        && members[1].type === 'null') {
+        const nullable = readCanonicalComposableSchemaProjection(members[0]);
+        return nullable?.nullable() ?? null;
+      }
+      const rehydratedMembers = members.map(readCanonicalComposableSchemaProjection);
+      if (rehydratedMembers.some((member) => member === null)) return null;
+      return defineProtocolUnion(rehydratedMembers as [
+        CanonicalComposableSchema,
+        CanonicalComposableSchema,
+        ...CanonicalComposableSchema[],
+      ]);
+    }
+
+    if (value.type === 'string') {
+      if (!hasOnlyCanonicalSchemaKeys(value, [
+        'type',
+        'minLength',
+        'maxLength',
+        'pattern',
+        HAPPIER_MAX_UTF8_BYTES_KEYWORD,
+      ])) return null;
+      const options = Object.freeze({
+        ...(typeof value.minLength === 'number' ? { minLength: value.minLength } : {}),
+        ...(typeof value.maxLength === 'number' ? { maxLength: value.maxLength } : {}),
+        ...(typeof value.pattern === 'string' ? { pattern: value.pattern } : {}),
+      });
+      const maxUtf8Bytes = value[HAPPIER_MAX_UTF8_BYTES_KEYWORD];
+      return maxUtf8Bytes === undefined
+        ? defineProtocolString(options)
+        : typeof maxUtf8Bytes === 'number'
+          ? defineProtocolUtf8String({ ...options, maxUtf8Bytes })
+          : null;
+    }
+
+    if (value.type === 'number' || value.type === 'integer') {
+      if (!hasOnlyCanonicalSchemaKeys(value, ['type', 'minimum', 'maximum'])) return null;
+      const minimum = value.minimum;
+      const maximum = value.maximum;
+      if ((minimum !== undefined && typeof minimum !== 'number')
+        || (maximum !== undefined && typeof maximum !== 'number')) return null;
+      if (value.type === 'integer' && (minimum === undefined || maximum === undefined)) return null;
+      return defineProtocolNumber({
+        ...(value.type === 'integer' ? { integer: true } : {}),
+        ...(minimum === undefined ? {} : { minimum }),
+        ...(maximum === undefined ? {} : { maximum }),
+      });
+    }
+
+    if (value.type === 'array') {
+      if (!hasOnlyCanonicalSchemaKeys(value, [
+        'type',
+        'items',
+        'minItems',
+        'maxItems',
+        'uniqueItems',
+      ]) || !Object.hasOwn(value, 'items')) return null;
+      if ((value.minItems !== undefined && typeof value.minItems !== 'number')
+        || (value.maxItems !== undefined && typeof value.maxItems !== 'number')
+        || (value.uniqueItems !== undefined && value.uniqueItems !== true)) return null;
+      const item = readCanonicalComposableSchemaProjection(value.items);
+      if (!item) return null;
+      const options = Object.freeze({
+        ...(value.minItems === undefined ? {} : { minItems: value.minItems }),
+        ...(value.maxItems === undefined ? {} : { maxItems: value.maxItems }),
+      });
+      return value.uniqueItems === true
+        ? defineProtocolUniqueArray(item, options)
+        : defineProtocolArray(item, options);
+    }
+
+    if (value.type === 'object') {
+      if (!hasOnlyCanonicalSchemaKeys(value, [
+        'type',
+        'properties',
+        'required',
+        'additionalProperties',
+      ])
+        || !isProtocolRecord(value.properties)
+        || !Object.hasOwn(value, 'additionalProperties')) return null;
+      const required = value.required;
+      if (required !== undefined
+        && (!Array.isArray(required)
+          || required.some((key) => typeof key !== 'string')
+          || new Set(required).size !== required.length)) return null;
+      const requiredKeys = new Set(required ?? []);
+      const shape: Record<string, CanonicalComposableObjectPropertySchema> = {};
+      for (const [key, schema] of Object.entries(value.properties)) {
+        const child = readCanonicalComposableSchemaProjection(schema);
+        if (!child) return null;
+        shape[key] = requiredKeys.has(key) ? child : child.optional();
+      }
+      if ([...requiredKeys].some((key) => !Object.hasOwn(shape, key))) return null;
+
+      const additionalProperties = value.additionalProperties;
+      if (additionalProperties === false) {
+        return eraseCanonicalObjectProjectionType(defineProtocolObject(shape, { policy: 'closed' }));
+      }
+      if (additionalProperties === true) {
+        return eraseCanonicalObjectProjectionType(defineProtocolObject(shape, { policy: 'additive-open/drop' }));
+      }
+      if (!isProtocolRecord(additionalProperties)) return null;
+      if (Object.keys(additionalProperties).length === 0) {
+        return eraseCanonicalObjectProjectionType(defineProtocolObject(shape, { policy: 'additive-open/preserve' }));
+      }
+      const additional = readCanonicalComposableSchemaProjection(additionalProperties);
+      return additional
+        ? eraseCanonicalObjectProjectionType(defineProtocolObject(shape, {
+          policy: 'additive-open/preserve',
+          additionalProperties: additional,
+        }))
+        : null;
+    }
+
+    if (Object.keys(value).length === 0) return defineProtocolJsonValue();
+    if (hasOnlyCanonicalSchemaKeys(value, [HAPPIER_MAX_SERIALIZED_UTF8_BYTES_KEYWORD])
+      && typeof value[HAPPIER_MAX_SERIALIZED_UTF8_BYTES_KEYWORD] === 'number') {
+      return defineProtocolJsonValue({
+        maxSerializedUtf8Bytes: value[HAPPIER_MAX_SERIALIZED_UTF8_BYTES_KEYWORD] as number,
+      });
+    }
+  } catch {
+    // A schema can be valid JSON Schema while not being an exact projection of
+    // this DSL. This compiler intentionally declines such input instead of
+    // inferring a similar parser.
+  }
+  return null;
+}
+
+/**
+ * Rehydrates only the exact JSON Schema grammar emitted by this module's
+ * composable-schema constructors. It is deliberately not a general JSON
+ * Schema compiler: unsupported or hand-authored shapes return `null`.
+ */
+export function rehydrateCanonicalProtocolComposableSchema(
+  schema: object,
+): CanonicalComposableSchema | null {
+  let normalized: PluginJsonSchemaV2;
+  try {
+    normalized = normalizePluginJsonSchema(schema);
+  } catch {
+    return null;
+  }
+  if (normalized.$schema !== CANONICAL_PLUGIN_JSON_SCHEMA_DIALECT) return null;
+  const { $schema: _dialect, ...projection } = normalized;
+  const rehydrated = readCanonicalComposableSchemaProjection(projection);
+  return rehydrated && pluginJsonValuesEqual(rehydrated.jsonSchema, normalized)
+    ? rehydrated
+    : null;
 }

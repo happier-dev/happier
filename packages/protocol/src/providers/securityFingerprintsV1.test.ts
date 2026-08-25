@@ -109,6 +109,11 @@ function publicManagedDeploymentWithPurposes(purposes: readonly string[]) {
         },
       })),
     },
+    logicalEndpoints: [{
+      endpointTemplateId: 'responses',
+      protocol: 'openai-responses',
+      publicHeaders: { 'x-route': 'tenant-a' },
+    }],
   } as const;
 }
 
@@ -292,6 +297,26 @@ describe('typed provider security fingerprints', () => {
             },
           }],
         },
+      },
+    })).not.toBe(fingerprint);
+    expect(createProviderConnectionSecurityFingerprintV1({
+      ...input,
+      managedDeployment: {
+        ...managedDeployment,
+        logicalEndpoints: [{
+          ...managedDeployment.logicalEndpoints[0],
+          publicHeaders: { 'x-route': 'tenant-b' },
+        }],
+      },
+    })).not.toBe(fingerprint);
+    expect(createProviderConnectionSecurityFingerprintV1({
+      ...input,
+      managedDeployment: {
+        ...managedDeployment,
+        logicalEndpoints: [{
+          ...managedDeployment.logicalEndpoints[0],
+          protocol: 'openai-chat',
+        }],
       },
     })).not.toBe(fingerprint);
     expect(() => createProviderConnectionSecurityFingerprintV1({

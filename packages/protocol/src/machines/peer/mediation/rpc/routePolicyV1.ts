@@ -203,7 +203,6 @@ const DIRECT_EPHEMERAL_POLICIES = Object.freeze([
   directEphemeral(RPC_METHODS.DAEMON_PLUGIN_ACTION_FORM_CONNECTED_ACCOUNT_OPTIONS_RESOLVE, 'Daemon-local, generation-leased Connected Account form option read derives one Action-declared select authorization and returns only bounded safe labels plus opaque exact account references; no durable form state, account enumeration, or server persistence.'),
   directEphemeral(RPC_METHODS.DAEMON_PLUGIN_UI_ARTIFACT_BYTES_READ, 'Daemon-local installed plugin UI artifact byte read with no server persistence or cross-device fanout.'),
   directEphemeral(RPC_METHODS.DAEMON_PLUGIN_COMPOSER_REFERENCE_SEARCH, 'Daemon-local generation-leased composer-reference picker search returns bounded candidates through the canonical registered reference; no durable resolved context, server persistence, or cross-device fanout.'),
-  directEphemeral(RPC_METHODS.DAEMON_PLUGIN_COMPOSER_ATTACHMENT_PREPARE, 'Daemon-local generation-leased composer-attachment preparation returns bounded pre-admission data through the canonical registry; it creates no durable Message identity, server persistence, or cross-device fanout.'),
   directEphemeral(RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ, 'Daemon-local generation-leased plugin resource snapshot read for a mounted plugin UI surface; no server persistence or cross-device fanout.'),
   directEphemeral(RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_OPEN, 'Daemon-local plugin resource invalidation subscription open; establishes one bounded daemon-side observer and returns its current digest without server persistence or cross-device fanout.'),
   directEphemeral(RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_NEXT, 'Daemon-local plugin resource invalidation long-poll; returns one bounded signal carrying no resource bytes, without server persistence or cross-device fanout.'),
@@ -212,8 +211,8 @@ const DIRECT_EPHEMERAL_POLICIES = Object.freeze([
   directEphemeral(RPC_METHODS.DAEMON_VOICE_DIAGNOSTICS_ARTIFACT_DOWNLOAD_CHUNK, 'Exact-machine Voice diagnostics export chunk reads encrypted bytes from an already-authorized ephemeral download session.'),
   directEphemeral(RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_SNAPSHOT, 'Daemon-local local-services inventory snapshot read with no server persistence or cross-device fanout.'),
   directEphemeral(RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_REFRESH, 'Daemon-local local-services inventory refresh with typed snapshot response and no server persistence or cross-device fanout.'),
+  directEphemeral(RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH, 'Daemon-local local-services inventory change long-poll; parks on the daemon-local inventory event producer and answers with one bounded typed snapshot or a no-change result, with no server persistence or cross-device fanout.'),
   directEphemeral(RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_SNAPSHOT, 'Daemon-local local-services launcher snapshot read with no server persistence or cross-device fanout.'),
-  directEphemeral(RPC_METHODS.DAEMON_LOCAL_SERVICES_MANAGED_SNAPSHOT, 'Daemon-local managed local-services runtime snapshot read with no server persistence or cross-device fanout.'),
   directEphemeral(RPC_METHODS.DAEMON_LOCAL_SERVICES_PREVIEW_SNAPSHOT, 'Daemon-local local-services preview snapshot read with no server persistence or cross-device fanout.'),
   directEphemeral(RPC_METHODS.DAEMON_LOCAL_SERVICES_PUBLIC_PREVIEW_STATUS, 'Daemon-local public-preview status read returns server-derived exposure state through an explicit machine/session/preview-bound snapshot without mutating exposure state.'),
   directEphemeral(RPC_METHODS.DAEMON_LOCAL_SERVICES_PUBLIC_PREVIEW_COPY_URL, 'Daemon-local public-preview copy URL reads an already-active known public exposure URL without creating or inferring exposure state.'),
@@ -369,6 +368,7 @@ const REVIEW_COMMENT_METHODS = [
   RPC_METHODS.REVIEW_COMMENTS_SET_DISPOSITION,
   RPC_METHODS.REVIEW_COMMENTS_ATTACH_EVIDENCE,
   RPC_METHODS.REVIEW_COMMENTS_BULK_TRANSITION,
+  RPC_METHODS.REVIEW_COMMENTS_CLAIM_PUBLICATION_DISPATCH,
 ] as const;
 
 const SESSION_AUTH_CONTROL_METHODS = [
@@ -501,6 +501,10 @@ const AMBIGUOUS_READ_OR_EXTERNAL_METHODS = [
   RPC_METHODS.TRANSCRIPT_PAGE,
   RPC_METHODS.TRANSCRIPT_READ_AFTER,
   RPC_METHODS.TRANSCRIPT_FOLLOW,
+  // Releasing a follow lease is classified with the follow that created it: one lease lifecycle
+  // cannot be created on the server route and released on a direct one. It is also an ActionSpec
+  // `write`, so it is not eligible for a receipt-free direct class.
+  RPC_METHODS.TRANSCRIPT_UNFOLLOW,
   RPC_METHODS.TRANSCRIPT_SEARCH,
   RPC_METHODS.SCM_STATUS_SNAPSHOT,
   RPC_METHODS.SCM_DIFF_FILE,

@@ -15,6 +15,7 @@ import { createProviderFingerprintV1 } from '../fingerprints.js';
 import { ProviderAgentTargetKeySchema } from '../ids.js';
 import { compareProviderCanonicalStringsV1 } from '../canonicalOrderV1.js';
 import {
+  agentSupportsNoAuthForProtocolV1,
   AgentProviderRequirementsV1Schema,
   type AgentProviderRequirementsV1,
   type ProviderBindingCompatibilityV1,
@@ -78,18 +79,40 @@ function matchesTransport(
     });
 }
 
+/**
+ * The single canonical choice of the runtime credential transport a given Agent
+ * will actually use for a wire protocol. Compatibility acceptance, compatibility
+ * fingerprinting and host spawn materialization all consume this, so the
+ * transport described by a compatibility result is the transport bound at
+ * launch. Throws when the declaration is ambiguous rather than picking one.
+ */
+export function selectProviderRuntimeCredentialTransportV1(input: Readonly<{
+  transports: readonly ProviderCredentialTransportV1[];
+  agent: AgentProviderRequirementsV1;
+  protocol: ProviderEndpointTemplateV1['protocol'];
+}>): ProviderCredentialTransportV1 | null {
+  const matches = input.transports.filter((transport) =>
+    matchesTransport(transport, input.agent, input.protocol));
+  if (matches.length > 1) {
+    throw new TypeError('Multiple runtime credential transports match the selected agent protocol');
+  }
+  return matches[0] ?? null;
+}
+
 function credentialReasons(
   credential: ProviderApiKeyCredentialRequirementV1 | undefined,
   agent: AgentProviderRequirementsV1,
   protocol: ProviderEndpointTemplateV1['protocol'],
 ): ProviderCompatibilityReasonCodeV1[] {
-  if (!credential) return agent.credentialSupport.supportsNoAuth ? [] : ['no_auth_unsupported'];
-  const matches = credential.transports.filter((transport) => matchesTransport(transport, agent, protocol));
-  if (matches.length > 1) {
-    throw new TypeError('Multiple runtime credential transports match the selected agent protocol');
-  }
-  if (matches.length === 0) return ['credential_transport_unavailable'];
-  if (credential.required === false && !agent.credentialSupport.supportsNoAuth) return ['optional_credential_no_auth_unsupported'];
+  const supportsNoAuth = agentSupportsNoAuthForProtocolV1(agent, protocol);
+  if (!credential) return supportsNoAuth ? [] : ['no_auth_unsupported'];
+  const selected = selectProviderRuntimeCredentialTransportV1({
+    transports: credential.transports,
+    agent,
+    protocol,
+  });
+  if (!selected) return ['credential_transport_unavailable'];
+  if (credential.required === false && !supportsNoAuth) return ['optional_credential_no_auth_unsupported'];
   return [];
 }
 
@@ -243,7 +266,8 @@ function candidateCredentialProjection(
   agent: AgentProviderRequirementsV1,
   protocol: ProviderEndpointTemplateV1['protocol'],
 ) {
-  if (!credential) return { kind: 'none' as const, supportsNoAuth: agent.credentialSupport.supportsNoAuth };
+  const supportsNoAuth = agentSupportsNoAuthForProtocolV1(agent, protocol);
+  if (!credential) return { kind: 'none' as const, supportsNoAuth };
   const runtimeMatches = credential.transports
     .filter((transport) => matchesTransport(transport, agent, protocol))
     .map((transport) => ({ destination: transport.destination }))
@@ -251,7 +275,7 @@ function candidateCredentialProjection(
   return {
     kind: 'apiKey' as const,
     required: credential.required,
-    supportsNoAuth: credential.required === false ? agent.credentialSupport.supportsNoAuth : null,
+    supportsNoAuth: credential.required === false ? supportsNoAuth : null,
     runtimeMatches,
   };
 }

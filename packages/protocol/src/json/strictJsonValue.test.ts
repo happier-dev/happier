@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { normalizeStrictJsonValue } from './strictJsonValue.js';
+import { normalizeStrictJsonValue, sameStrictJsonValue } from './strictJsonValue.js';
 
 function nested(depth: number): unknown {
   let value: unknown = 'leaf';
@@ -33,5 +33,18 @@ describe('normalizeStrictJsonValue', () => {
     const value = 'x'.repeat(1_024 * 1_024);
 
     expect(normalizeStrictJsonValue(value)).toBe(value);
+  });
+});
+
+describe('sameStrictJsonValue', () => {
+  it('compares strict JSON semantically rather than by object insertion order', () => {
+    const left = normalizeStrictJsonValue({ nested: { a: 1, b: 2 }, items: ['x', null] });
+    const right = normalizeStrictJsonValue({ items: ['x', null], nested: { b: 2, a: 1 } });
+
+    expect(sameStrictJsonValue(left, right)).toBe(true);
+    expect(sameStrictJsonValue(left, normalizeStrictJsonValue({
+      items: [null, 'x'],
+      nested: { a: 1, b: 2 },
+    }))).toBe(false);
   });
 });

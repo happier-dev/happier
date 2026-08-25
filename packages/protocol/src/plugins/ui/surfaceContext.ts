@@ -194,6 +194,15 @@ export type PluginUiHostApiSurfaceContextV1 = z.infer<
   typeof PluginUiHostApiSurfaceContextV1Schema
 >;
 
+/** One current hosted render snapshot for context reads and watches. */
+export const PluginUiHostApiRenderContextSnapshotV1Schema = z.object({
+  surface: PluginUiHostApiSurfaceContextV1Schema,
+  activity: z.object({ active: z.boolean() }).strict(),
+}).strict();
+export type PluginUiHostApiRenderContextSnapshotV1 = z.infer<
+  typeof PluginUiHostApiRenderContextSnapshotV1Schema
+>;
+
 export const PluginUiSurfaceContextV1Schema = z.object({
   pluginId: z.string().trim().min(1),
   contributionId: z.string().trim().min(1),

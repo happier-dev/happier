@@ -7,9 +7,17 @@ import {
 } from './v2.js';
 import {
   PLUGIN_CONTRIBUTION_CATALOG_V2,
-  derivePluginContributionRegistrationRights,
 } from '../contributions/catalog.js';
-import { PLUGIN_DECLARATIVE_DOCUMENT_CONTENT_TYPE_V1 } from '../contributions/ui/declarativeDocument.js';
+import {
+  MAX_PLUGIN_DECLARATIVE_DOCUMENT_RESOURCE_BYTES_V1,
+  PLUGIN_DECLARATIVE_DOCUMENT_CONTENT_TYPE_V1,
+} from '../contributions/ui/declarativeDocument.js';
+import {
+  COMPOSER_CONTROL_STATE_CONTENT_TYPE_V1,
+  ComposerControlStateV1Schema,
+  MAX_COMPOSER_CONTROL_STATE_RESOURCE_BYTES_V1,
+} from '../ui/composer.js';
+import { MAX_COMPOSER_ATTACHMENT_INSTANCES_V1 } from '../../runtime/input/composerAttachmentV1.js';
 import {
   PluginEventAutomationHistoryGapResetActionInputV1JsonSchema,
   PluginEventAutomationHistoryGapResetActionResultV1JsonSchema,
@@ -137,6 +145,14 @@ function automationEvent(overrides: Record<string, unknown> = {}): Record<string
     id: 'repository-updated',
     kind: 'event',
     title: 'Repository updated',
+    // An Automation-eligible Event publishes the payload its filters and
+    // mappings are authored against, so the fixture declares one too.
+    payloadSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: { repository: { type: 'string', minLength: 1, maxLength: 512 } },
+      required: ['repository'],
+    },
     automation: {
       v: 1,
       eligible: true,
@@ -461,15 +477,204 @@ describe('canonical plugin manifest ingestion', () => {
     });
   });
 
-  it('reads a packaged Action declaration authored before the execution realm as a daemon Action', () => {
-    // `contributes.actions[].execution` was introduced after plugins were
-    // already packaging `.happier-plugin/plugin.json`. Every realm that existed
-    // before it was the daemon, so an absent declaration is that realm and not
-    // a rejected manifest: `schemaVersion` is still 2 and `runtime.apiVersion`
-    // is still 1, so a packaged declaration carries no signal that it must be
-    // re-authored. One owner decides this, and the raw catalog projection that
-    // routes an Action to its realm has to reach the same answer as ingestion.
-    const legacyAction = {
+  it('admits a Resource-backed declarative Session-info section', () => {
+    const result = ingestPluginManifestV2(manifest({
+      contributes: {
+        actions: [{
+          id: 'open-details',
+          title: 'Open details',
+          scopes: ['session'],
+          surfaces: ['ui'],
+          placementBindings: ['rowAction'],
+          dangerLevel: 'safe',
+          execution: { target: 'daemon' },
+        }],
+        resources: [{
+          id: 'session-overview',
+          source: 'dynamic',
+          kind: 'config',
+          contentType: PLUGIN_DECLARATIVE_DOCUMENT_CONTENT_TYPE_V1,
+          maxBytes: 65_536,
+          scope: 'session',
+        }],
+        sessionInfoSections: [{
+          id: 'overview',
+          resourceId: 'session-overview',
+          actions: ['open-details'],
+        }],
+      },
+    }));
+
+    expect(result).toMatchObject({
+      ok: true,
+      manifest: { contributes: { sessionInfoSections: [{
+        id: 'overview',
+        resourceId: 'session-overview',
+        actions: ['open-details'],
+      }] } },
+    });
+  });
+
+  it('rejects a Session-info section backed by a non-declarative Resource', () => {
+    const result = ingestPluginManifestV2(manifest({
+      contributes: {
+        resources: [{
+          id: 'session-overview',
+          source: 'dynamic',
+          kind: 'config',
+          contentType: 'application/json',
+          maxBytes: 65_536,
+          scope: 'session',
+        }],
+        sessionInfoSections: [{ id: 'overview', resourceId: 'session-overview' }],
+      },
+    }));
+
+    expect(result).toEqual({
+      ok: false,
+      diagnostics: [expect.objectContaining({
+        code: 'plugin_manifest_invalid',
+        path: ['contributes', 'sessionInfoSections', 0, 'resourceId'],
+      })],
+    });
+  });
+
+  describe('composer control state Resource admission', () => {
+    function composerControlManifest(resource: Record<string, unknown>): Record<string, unknown> {
+      return manifest({
+        contributes: {
+          actions: [{
+            id: 'open-picker',
+            title: 'Open picker',
+            scopes: ['session'],
+            surfaces: ['ui'],
+            placementBindings: ['rowAction'],
+            dangerLevel: 'safe',
+            execution: { target: 'daemon' },
+          }],
+          resources: [resource],
+          composerControls: [{
+            id: 'model-control',
+            label: 'Model',
+            icon: 'settings',
+            state: { resource: 'control-state' },
+            interaction: { kind: 'action', action: 'open-picker' },
+          }],
+        },
+      });
+    }
+
+    it('admits a bounded, exactly typed dynamic Resource', () => {
+      const result = ingestPluginManifestV2(composerControlManifest({
+        id: 'control-state',
+        source: 'dynamic',
+        kind: 'config',
+        contentType: COMPOSER_CONTROL_STATE_CONTENT_TYPE_V1,
+        maxBytes: MAX_COMPOSER_CONTROL_STATE_RESOURCE_BYTES_V1,
+        scope: 'session',
+      }));
+
+      expect(result).toMatchObject({ ok: true });
+    });
+
+    it('rejects a composer control state Resource that omits maxBytes', () => {
+      const result = ingestPluginManifestV2(composerControlManifest({
+        id: 'control-state',
+        source: 'dynamic',
+        kind: 'config',
+        contentType: COMPOSER_CONTROL_STATE_CONTENT_TYPE_V1,
+        scope: 'session',
+      }));
+
+      expect(result).toEqual({
+        ok: false,
+        diagnostics: [expect.objectContaining({
+          code: 'plugin_manifest_invalid',
+          path: ['contributes', 'composerControls', 0, 'state', 'resource'],
+        })],
+      });
+    });
+
+    it('rejects a composer control state Resource above the purpose-specific ceiling', () => {
+      const result = ingestPluginManifestV2(composerControlManifest({
+        id: 'control-state',
+        source: 'dynamic',
+        kind: 'config',
+        contentType: COMPOSER_CONTROL_STATE_CONTENT_TYPE_V1,
+        maxBytes: MAX_COMPOSER_CONTROL_STATE_RESOURCE_BYTES_V1 + 1,
+        scope: 'session',
+      }));
+
+      expect(result).toEqual({
+        ok: false,
+        diagnostics: [expect.objectContaining({
+          code: 'plugin_manifest_invalid',
+          path: ['contributes', 'composerControls', 0, 'state', 'resource'],
+        })],
+      });
+    });
+
+    it('rejects a composer control state Resource that is not the exact V1 content type', () => {
+      const result = ingestPluginManifestV2(composerControlManifest({
+        id: 'control-state',
+        source: 'dynamic',
+        kind: 'config',
+        contentType: 'application/json',
+        maxBytes: MAX_COMPOSER_CONTROL_STATE_RESOURCE_BYTES_V1,
+        scope: 'session',
+      }));
+
+      expect(result).toEqual({
+        ok: false,
+        diagnostics: [expect.objectContaining({
+          code: 'plugin_manifest_invalid',
+          path: ['contributes', 'composerControls', 0, 'state', 'resource'],
+        })],
+      });
+    });
+
+    it('rejects a packaged Resource bound as composer control state', () => {
+      const result = ingestPluginManifestV2(composerControlManifest({
+        id: 'control-state',
+        source: 'packaged',
+        kind: 'config',
+        path: './state.json',
+        contentType: COMPOSER_CONTROL_STATE_CONTENT_TYPE_V1,
+      }));
+
+      expect(result).toEqual({
+        ok: false,
+        diagnostics: [expect.objectContaining({
+          code: 'plugin_manifest_invalid',
+          path: ['contributes', 'composerControls', 0, 'state', 'resource'],
+        })],
+      });
+    });
+
+    it('bounds the ceiling above the largest natural schema-valid control state document', () => {
+      const astral = '\u{1F600}'.repeat(128);
+      const largest = {
+        visible: true,
+        enabled: true,
+        selected: true,
+        count: Number.MAX_SAFE_INTEGER,
+        icon: 'settings',
+        label: astral,
+        accessibilityLabel: `${astral}${astral}`,
+        unavailableReason: `${astral}${astral}`,
+        selectedChoiceIds: Array.from(
+          { length: MAX_COMPOSER_ATTACHMENT_INSTANCES_V1 },
+          (_unused, index) => `${astral.slice(0, 250)}${index}`,
+        ),
+      };
+      expect(ComposerControlStateV1Schema.safeParse(largest).success).toBe(true);
+      expect(new TextEncoder().encode(JSON.stringify(largest)).byteLength)
+        .toBeLessThanOrEqual(MAX_COMPOSER_CONTROL_STATE_RESOURCE_BYTES_V1);
+    });
+  });
+
+  it('requires every packaged Action to declare its execution target', () => {
+    const actionWithoutExecution = {
       id: 'summarize',
       title: 'Summarize',
       scopes: ['session'],
@@ -477,29 +682,26 @@ describe('canonical plugin manifest ingestion', () => {
       dangerLevel: 'safe',
     };
     const ingested = ingestPluginManifestV2(manifest({
-      contributes: { actions: [legacyAction] },
+      contributes: { actions: [actionWithoutExecution] },
     }));
 
-    expect(ingested.ok).toBe(true);
-    expect(ingested.ok && ingested.manifest.contributes.actions).toEqual([
-      { ...legacyAction, execution: { target: 'daemon' } },
-    ]);
-    expect(derivePluginContributionRegistrationRights({ actions: [legacyAction] }))
-      .toEqual([expect.objectContaining({
-        localId: 'summarize',
-        target: { realm: 'daemon' },
-      })]);
+    expect(ingested).toEqual({
+      ok: false,
+      diagnostics: expect.arrayContaining([
+        expect.objectContaining({ code: 'plugin_manifest_invalid' }),
+      ]),
+    });
 
-    // The backfill is a default for an absent realm, never tolerance for a
-    // declared one: an unknown target still fails, and so does a client target
-    // that omits the artifact tuple the client realm is entitled by.
+    // A declared target remains strict: host is private to canonical host
+    // ActionSpecs, client requires its exact artifact tuple, and daemon cannot
+    // carry client-only fields.
     for (const execution of [
       { target: 'host' },
       { target: 'client' },
       { target: 'daemon', client: { artifactId: 'a', modulePath: './a', exportName: 'a' } },
     ]) {
       expect(ingestPluginManifestV2(manifest({
-        contributes: { actions: [{ ...legacyAction, execution }] },
+        contributes: { actions: [{ ...actionWithoutExecution, execution }] },
       })).ok).toBe(false);
     }
   });
@@ -1107,7 +1309,7 @@ describe('canonical plugin manifest ingestion', () => {
         sessionHeaderActions: [{
           id: 'open-provider',
           title: 'Open provider',
-          action: {
+          command: {
             kind: 'openSurface',
             destination: { pluginId: 'com.acme.provider', localId: 'repair-view' },
           },
@@ -1134,7 +1336,7 @@ describe('canonical plugin manifest ingestion', () => {
             headerActions: [{
               id: 'open-settings',
               title: 'Open settings',
-              action: {
+              command: {
                 kind: 'openSurface',
                 destination: { pluginId: 'com.acme.provider', localId: 'repair-settings' },
               },
@@ -1154,11 +1356,11 @@ describe('canonical plugin manifest ingestion', () => {
       diagnostics: expect.arrayContaining([
         expect.objectContaining({
           code: 'plugin_manifest_dangling_reference',
-          path: ['contributes', 'sessionHeaderActions', 0, 'action', 'destination'],
+          path: ['contributes', 'sessionHeaderActions', 0, 'command', 'destination'],
         }),
         expect.objectContaining({
           code: 'plugin_manifest_dangling_reference',
-          path: ['contributes', 'ui', 'views', 0, 'headerActions', 0, 'action', 'destination'],
+          path: ['contributes', 'ui', 'views', 0, 'headerActions', 0, 'command', 'destination'],
         }),
         expect.objectContaining({
           code: 'plugin_manifest_dangling_reference',
@@ -1361,6 +1563,7 @@ describe('canonical plugin manifest ingestion', () => {
           source: 'dynamic',
           kind: 'config',
           contentType: PLUGIN_DECLARATIVE_DOCUMENT_CONTENT_TYPE_V1,
+          maxBytes: MAX_PLUGIN_DECLARATIVE_DOCUMENT_RESOURCE_BYTES_V1,
         }],
         ui: { renderers: [renderer] },
       },
@@ -1380,6 +1583,51 @@ describe('canonical plugin manifest ingestion', () => {
         path: ['contributes', 'ui', 'renderers', 0, 'documentSource', 'resourceId'],
       })],
     });
+  });
+
+  it('requires a declarative document Resource to declare a UI-thread byte ceiling', () => {
+    const renderer = {
+      id: 'live-panel',
+      kind: 'declarative',
+      root: { kind: 'text', text: 'Static first paint' },
+      documentSource: { kind: 'resource', resourceId: 'live-document' },
+    };
+    const withMaxBytes = (maxBytes?: number) => manifest({
+      contributes: {
+        resources: [{
+          id: 'live-document',
+          source: 'dynamic',
+          kind: 'config',
+          contentType: PLUGIN_DECLARATIVE_DOCUMENT_CONTENT_TYPE_V1,
+          ...(maxBytes === undefined ? {} : { maxBytes }),
+        }],
+        ui: { renderers: [renderer] },
+      },
+    });
+
+    // Independent literal: the ceiling is a product bound derived from the
+    // approved 256 KiB aggregate string/key budget, not whatever the constant
+    // happens to say, so a silent widening fails here.
+    expect(MAX_PLUGIN_DECLARATIVE_DOCUMENT_RESOURCE_BYTES_V1).toBe(512 * 1024);
+    expect(ingestPluginManifestV2(withMaxBytes())).toEqual({
+      ok: false,
+      diagnostics: [expect.objectContaining({
+        code: 'plugin_manifest_invalid',
+        path: ['contributes', 'ui', 'renderers', 0, 'documentSource', 'resourceId'],
+      })],
+    });
+    expect(ingestPluginManifestV2(
+      withMaxBytes(MAX_PLUGIN_DECLARATIVE_DOCUMENT_RESOURCE_BYTES_V1 + 1),
+    )).toEqual({
+      ok: false,
+      diagnostics: [expect.objectContaining({
+        code: 'plugin_manifest_invalid',
+        path: ['contributes', 'ui', 'renderers', 0, 'documentSource', 'resourceId'],
+      })],
+    });
+    expect(ingestPluginManifestV2(
+      withMaxBytes(MAX_PLUGIN_DECLARATIVE_DOCUMENT_RESOURCE_BYTES_V1),
+    )).toEqual({ ok: true, manifest: expect.any(Object) });
   });
 
   it('rejects a packaged Resource as a live declarative document source', () => {
@@ -1422,6 +1670,7 @@ describe('canonical plugin manifest ingestion', () => {
             source: 'dynamic',
             kind: 'config',
             contentType,
+            maxBytes: MAX_PLUGIN_DECLARATIVE_DOCUMENT_RESOURCE_BYTES_V1,
           }],
           ui: {
             renderers: [{

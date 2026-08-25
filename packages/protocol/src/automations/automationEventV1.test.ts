@@ -45,6 +45,7 @@ import {
   isAutomationEventObservationFreshV1,
   validateAutomationEventFilterAgainstPayloadSchemaV1,
 } from './automationEventV1.js';
+import { AutomationEventSourcesListResultV1Schema } from './automationActionSpecsV1.js';
 import {
   buildAutomationPluginEventOccurrenceEvidenceV1,
   deriveAutomationOccurrenceKeyV1,
@@ -502,6 +503,53 @@ describe('Automation event V1 contracts', () => {
       scanStartedAt: 1_723_247_200_000,
       nextRetryAt: null,
     }).success).toBe(true);
+  });
+
+  it('permits checkpoint retirement classification only as one bounded revision-confirming pull read', () => {
+    const candidate = {
+      automationId: 'automation-1',
+      eventRef: { pluginId: 'com.acme.github', localId: 'repository-event' },
+      sourceSelectorId,
+      sourceContractVersion: 1,
+    } as const;
+
+    expect(AutomationEventSourcesListInputV1Schema.safeParse({
+      transport: { kind: 'checkpointedPull' },
+      knownRevision: '7',
+      checkpointRetirementCandidates: [candidate],
+    }).success).toBe(true);
+    expect(AutomationEventSourcesListInputV1Schema.safeParse({
+      transport: { kind: 'checkpointedPull' },
+      checkpointRetirementCandidates: [candidate],
+    }).success).toBe(false);
+    expect(AutomationEventSourcesListInputV1Schema.safeParse({
+      transport: { kind: 'durablePush' },
+      knownRevision: '7',
+      checkpointRetirementCandidates: [candidate],
+    }).success).toBe(false);
+    expect(AutomationEventSourcesListInputV1Schema.safeParse({
+      transport: { kind: 'checkpointedPull' },
+      cursor: 'a'.repeat(43),
+      knownRevision: '7',
+      checkpointRetirementCandidates: [candidate],
+    }).success).toBe(false);
+    expect(AutomationEventSourcesListInputV1Schema.safeParse({
+      transport: { kind: 'checkpointedPull' },
+      knownRevision: '7',
+      checkpointRetirementCandidates: [candidate, candidate],
+    }).success).toBe(false);
+    expect(AutomationEventSourcesListResultV1Schema.safeParse({
+      kind: 'unchanged',
+      revision: '7',
+      checkpointRetirements: [candidate],
+    }).success).toBe(true);
+    expect(AutomationEventSourcesListResultV1Schema.safeParse({
+      kind: 'page',
+      revision: '7',
+      definitions: [],
+      nextCursor: null,
+      checkpointRetirements: [],
+    }).success).toBe(false);
   });
 
   it('keeps the exact-machine stored-definition hop strict and envelope-only', () => {

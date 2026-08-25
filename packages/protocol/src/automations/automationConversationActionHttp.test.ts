@@ -5,6 +5,7 @@ import {
   AutomationConversationActionHttpRequestSchemasV1,
   AutomationConversationActionOutputSchemasV1,
 } from './automationEventV1.js';
+import { sealAccountScopedBlobCiphertext } from '../crypto/accountScopedCipher.js';
 
 const input = {
   automationId: 'automation-1',
@@ -21,6 +22,22 @@ const input = {
       localId: 'automation/result-deliver-v1',
     },
     opaqueContext: { conversationId: 'conversation-1', messageId: 'message-1' },
+  },
+} as const;
+
+const finalReplyHandoff = {
+  actionRef: input.resultDelivery.actionRef,
+  replyContextEnvelope: {
+    t: 'plain',
+    v: {
+      v: 1,
+      correspondence: {
+        automationId: input.automationId,
+        occurrenceKey: 'A'.repeat(43),
+      },
+      templateVersion: input.templateVersion,
+      opaqueContext: input.resultDelivery.opaqueContext,
+    },
   },
 } as const;
 
@@ -56,20 +73,33 @@ describe('Automation conversation admission HTTP contract', () => {
       ...request,
       caller: { ...request.caller, machineId: 'caller-selected-machine' },
     }).success).toBe(false);
+    // Binding a conversation delegates unattended execution to an external
+    // sender, so the selector carries the Automation's nonsecret execution
+    // consequences. It still carries no definition bytes, prompt, recipe,
+    // watcher or schedule facts, and remains strict.
+    const listedItem = {
+      automationId: 'automation-1',
+      templateVersion: 3,
+      label: 'Conversation target',
+      execution: { targetType: 'execution_run', enabled: true },
+    };
     expect(outputs[actionId]!.parse({
-      items: [{ automationId: 'automation-1', templateVersion: 3, label: 'Conversation target' }],
+      items: [listedItem],
       nextCursor: null,
-    })).toEqual({
-      items: [{ automationId: 'automation-1', templateVersion: 3, label: 'Conversation target' }],
+    })).toEqual({ items: [listedItem], nextCursor: null });
+    expect(outputs[actionId]!.safeParse({
+      items: [{ ...listedItem, targetType: 'execution_run' }],
       nextCursor: null,
-    });
+    }).success).toBe(false);
     expect(outputs[actionId]!.safeParse({
       items: [{
-        automationId: 'automation-1',
-        templateVersion: 3,
-        label: 'Conversation target',
-        targetType: 'execution_run',
+        ...listedItem,
+        execution: { ...listedItem.execution, templateCiphertext: 'secret' },
       }],
+      nextCursor: null,
+    }).success).toBe(false);
+    expect(outputs[actionId]!.safeParse({
+      items: [{ automationId: 'automation-1', templateVersion: 3, label: 'Conversation target' }],
       nextCursor: null,
     }).success).toBe(false);
   });
@@ -154,6 +184,7 @@ describe('Automation conversation admission HTTP contract', () => {
         },
       },
       input,
+      replyHandoff: finalReplyHandoff,
     } as const;
 
     expect(AutomationConversationActionHttpPathsV1[actionId]).toBe(
@@ -185,6 +216,7 @@ describe('Automation conversation admission HTTP contract', () => {
         },
       },
       input,
+      replyHandoff: finalReplyHandoff,
     } as const;
 
     expect(AutomationConversationActionHttpRequestSchemasV1[actionId].safeParse({
@@ -223,13 +255,25 @@ describe('Automation conversation admission HTTP contract', () => {
       input,
     } as const;
 
-    expect(AutomationConversationActionHttpRequestSchemasV1[actionId].parse({
-      ...request,
+    const noDeliveryRequest = {
+      v: 1,
+      caller: request.caller,
       input: { ...input, resultDelivery: { kind: 'none' } },
-    })).toEqual({
-      ...request,
-      input: { ...input, resultDelivery: { kind: 'none' } },
+    } as const;
+    expect(AutomationConversationActionHttpRequestSchemasV1[actionId].parse(noDeliveryRequest)).toEqual({
+      ...noDeliveryRequest,
     });
+    const { replyHandoff: _replyHandoff, ...missingHandoffRequest } = request;
+    expect(AutomationConversationActionHttpRequestSchemasV1[actionId].safeParse(
+      missingHandoffRequest,
+    ).success).toBe(false);
+    expect(AutomationConversationActionHttpRequestSchemasV1[actionId].safeParse({
+      ...request,
+      replyHandoff: {
+        ...finalReplyHandoff,
+        actionRef: { pluginId: 'happier.channels', localId: 'other-result-action' },
+      },
+    }).success).toBe(false);
     expect(AutomationConversationActionHttpRequestSchemasV1[actionId].safeParse({
       ...request,
       input: {
@@ -264,6 +308,14 @@ describe('Automation conversation admission HTTP contract', () => {
 
   it('admits any plugin as the delivery target of the Conversation it admitted', () => {
     const actionId = 'automation.conversation.admit';
+    const thirdPartyResultDelivery = {
+      kind: 'finalResult' as const,
+      actionRef: {
+        pluginId: 'acme.slack-bridge',
+        localId: 'automation/reply-deliver-v1',
+      },
+      opaqueContext: input.resultDelivery.opaqueContext,
+    };
     const thirdPartyRequest = {
       v: 1,
       caller: {
@@ -277,13 +329,21 @@ describe('Automation conversation admission HTTP contract', () => {
       },
       input: {
         ...input,
-        resultDelivery: {
-          kind: 'finalResult',
-          actionRef: {
-            pluginId: 'acme.slack-bridge',
-            localId: 'automation/reply-deliver-v1',
+        resultDelivery: thirdPartyResultDelivery,
+      },
+      replyHandoff: {
+        actionRef: thirdPartyResultDelivery.actionRef,
+        replyContextEnvelope: {
+          t: 'plain',
+          v: {
+            v: 1,
+            correspondence: {
+              automationId: input.automationId,
+              occurrenceKey: 'A'.repeat(43),
+            },
+            templateVersion: input.templateVersion,
+            opaqueContext: input.resultDelivery.opaqueContext,
           },
-          opaqueContext: input.resultDelivery.opaqueContext,
         },
       },
     } as const;
@@ -320,5 +380,82 @@ describe('Automation conversation admission HTTP contract', () => {
       caller: thirdPartyCaller,
       input: { ...input, resultDelivery: { kind: 'none' } },
     });
+  });
+
+  it('admits an encrypted Conversation body that structurally cannot carry plugin input', () => {
+    const actionId = 'automation.conversation.admit';
+    const requests = AutomationConversationActionHttpRequestSchemasV1 as Readonly<Record<string, {
+      parse(value: unknown): unknown;
+      safeParse(value: unknown): { success: boolean };
+    }>>;
+    const material = { type: 'dataKey' as const, machineKey: new Uint8Array(32).fill(11) };
+    const seal = (seed: number) => sealAccountScopedBlobCiphertext({
+      kind: 'automation_trigger_evidence',
+      material,
+      payload: { v: 1, seed },
+      randomBytes: (length) => Uint8Array.from({ length }, (_, index) => index + seed),
+    });
+    const caller = {
+      pluginId: 'happier.channels',
+      contributionLocalId: 'provider/observation-ingest-v1',
+      materialization: {
+        machineId: 'machine-1',
+        materializationId: 'materialization-1',
+        pluginId: 'happier.channels',
+      },
+    } as const;
+    const hostEvidence = {
+      v: 1,
+      t: 'encrypted',
+      accountCurrentness: { mode: 'e2ee', version: 4, contentKeyFingerprint: 'aemk1_content' },
+      automationId: 'automation-1',
+      templateVersion: 3,
+      occurrenceKey: 'A'.repeat(43),
+      occurredAt: 1_700_000_000_000,
+      triggerEvidenceEnvelope: { t: 'encrypted', c: seal(1) },
+      executionTriggerEvidenceEnvelope: { t: 'encrypted', c: seal(9) },
+      occurrenceEvidenceEqualityTag: `${'A'.repeat(42)}g`,
+    } as const;
+    const request = { v: 1, caller, hostEvidence } as const;
+
+    expect(requests[actionId]!.parse(request)).toEqual(request);
+    // No plaintext member may ride along with the sealed arm.
+    expect(requests[actionId]!.safeParse({
+      ...request,
+      input: {
+        automationId: 'automation-1',
+        bindingId: 'binding-1',
+        templateVersion: 3,
+        occurrenceId: 'telegram:update:1',
+        occurredAt: 1_700_000_000_000,
+        sender: { id: 'sender-1' },
+        text: 'Please summarize the latest change.',
+        resultDelivery: { kind: 'none' },
+      },
+    }).success).toBe(false);
+    // Plain Account currentness cannot authorize a sealed body.
+    expect(requests[actionId]!.safeParse({
+      ...request,
+      hostEvidence: {
+        ...hostEvidence,
+        accountCurrentness: { mode: 'plain', version: 4, contentKeyFingerprint: null },
+      },
+    }).success).toBe(false);
+    // A ciphertext from another Account-scoped domain is not trigger evidence.
+    expect(requests[actionId]!.safeParse({
+      ...request,
+      hostEvidence: {
+        ...hostEvidence,
+        triggerEvidenceEnvelope: {
+          t: 'encrypted',
+          c: sealAccountScopedBlobCiphertext({
+            kind: 'automation_run_result',
+            material,
+            payload: { v: 1, kind: 'text', text: 'not evidence' },
+            randomBytes: (length) => Uint8Array.from({ length }, (_, index) => index + 3),
+          }),
+        },
+      },
+    }).success).toBe(false);
   });
 });

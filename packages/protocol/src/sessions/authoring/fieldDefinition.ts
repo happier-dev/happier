@@ -3,6 +3,7 @@ import type { input as ZodInput, ZodTypeAny } from 'zod';
 import type { SessionAuthoringContextKind } from './contextKinds.js';
 
 export type SessionAuthoringFieldStorageClass = 'template' | 'liveOnly' | 'derived' | 'inheritedOnly';
+export type SessionAuthoringDraftStorage = 'sync' | 'composer' | 'exclude';
 export type SessionAuthoringFieldEditability = 'editable' | 'inherited' | 'hidden';
 export type SessionAuthoringFieldSurface = 'chip' | 'section' | 'chip+section' | 'hidden';
 
@@ -10,6 +11,8 @@ export type SessionAuthoringFieldDefinition<TSchema extends ZodTypeAny = ZodType
   schema: TSchema;
   description: string;
   storageClass: SessionAuthoringFieldStorageClass;
+  draftStorage: SessionAuthoringDraftStorage;
+  draftSchema?: ZodTypeAny;
   contexts: ReadonlyArray<SessionAuthoringContextKind>;
   defaultSurface: SessionAuthoringFieldSurface;
   requiresLiveSessionData?: boolean;
@@ -23,6 +26,8 @@ type SessionAuthoringFieldDefinitionInput<TSchema extends ZodTypeAny = ZodTypeAn
   schema: TSchema;
   description: string;
   storageClass: SessionAuthoringFieldStorageClass;
+  draftStorage: SessionAuthoringDraftStorage;
+  draftSchema?: ZodTypeAny;
   contexts: ReadonlyArray<SessionAuthoringContextKind>;
   defaultSurface: SessionAuthoringFieldSurface;
   requiresLiveSessionData?: boolean;
@@ -30,13 +35,10 @@ type SessionAuthoringFieldDefinitionInput<TSchema extends ZodTypeAny = ZodTypeAn
   default?: ZodInput<TSchema>;
 }>;
 
-type NormalizedSessionAuthoringFieldDefinition<TValue extends SessionAuthoringFieldDefinitionInput<ZodTypeAny>> =
-  SessionAuthoringFieldDefinition<Extract<TValue['schema'], ZodTypeAny>>;
-
 export function defineSessionAuthoringFields<
   const TDefinitions extends Readonly<Record<string, SessionAuthoringFieldDefinitionInput<ZodTypeAny>>>
 >(
   definitions: TDefinitions,
-): { readonly [TKey in keyof TDefinitions]: NormalizedSessionAuthoringFieldDefinition<TDefinitions[TKey]> } {
-  return definitions as unknown as { readonly [TKey in keyof TDefinitions]: NormalizedSessionAuthoringFieldDefinition<TDefinitions[TKey]> };
+): TDefinitions {
+  return definitions;
 }

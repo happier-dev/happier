@@ -27,6 +27,7 @@ export const REVIEW_COMMENT_ACTION_IDS_V1 = Object.freeze([
   'reviews.comments.setDisposition',
   'reviews.comments.attachEvidence',
   'reviews.comments.bulkTransition',
+  'reviews.comments.claimPublicationDispatch',
 ] as const);
 
 export const REVIEW_COMMENT_PRINCIPAL_HEADER_V1 = 'x-happier-review-comment-principal' as const;
@@ -169,6 +170,34 @@ export const ReviewCommentGetResponseV1Schema = z.object({
 }).strict();
 export type ReviewCommentGetResponseV1 = z.infer<typeof ReviewCommentGetResponseV1Schema>;
 
+export const ReviewCommentPublicationTargetV1Schema = z.object({
+  providerId: z.string().min(1),
+  configuredAccountId: z.string().min(1),
+  entryRef: z.object({
+    sourceId: z.string().min(1),
+    kindId: z.string().min(1),
+    collisionScope: z.string().min(1),
+    entryId: z.string().min(1),
+  }).strict(),
+}).strict();
+export type ReviewCommentPublicationTargetV1 = z.infer<typeof ReviewCommentPublicationTargetV1Schema>;
+
+export const ReviewCommentClaimPublicationDispatchRequestV1Schema = z.object({
+  commentId: z.string().min(1),
+  target: ReviewCommentPublicationTargetV1Schema,
+}).strict();
+export type ReviewCommentClaimPublicationDispatchRequestV1 = z.infer<
+  typeof ReviewCommentClaimPublicationDispatchRequestV1Schema
+>;
+
+export const ReviewCommentClaimPublicationDispatchResponseV1Schema = z.object({
+  disposition: z.enum(['dispatch', 'reconcile']),
+  publicationCorrelationId: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
+}).strict();
+export type ReviewCommentClaimPublicationDispatchResponseV1 = z.infer<
+  typeof ReviewCommentClaimPublicationDispatchResponseV1Schema
+>;
+
 export const ReviewCommentCreateResponseV1Schema = z.object({
   comment: ReviewCommentV1Schema,
   replayed: z.boolean().optional(),
@@ -255,6 +284,7 @@ export const ReviewCommentActionInputSchemasV1 = Object.freeze({
   'reviews.comments.setDisposition': ReviewCommentSetDispositionRequestV1Schema,
   'reviews.comments.attachEvidence': ReviewCommentAttachEvidenceRequestV1Schema,
   'reviews.comments.bulkTransition': ReviewCommentBulkTransitionRequestV1Schema,
+  'reviews.comments.claimPublicationDispatch': ReviewCommentClaimPublicationDispatchRequestV1Schema,
 });
 
 export const ReviewCommentActionOutputSchemasV1 = Object.freeze({
@@ -268,4 +298,5 @@ export const ReviewCommentActionOutputSchemasV1 = Object.freeze({
   'reviews.comments.setDisposition': ReviewCommentSetDispositionResponseV1Schema,
   'reviews.comments.attachEvidence': ReviewCommentAttachEvidenceResponseV1Schema,
   'reviews.comments.bulkTransition': ReviewCommentBulkTransitionResponseV1Schema,
+  'reviews.comments.claimPublicationDispatch': ReviewCommentClaimPublicationDispatchResponseV1Schema,
 });

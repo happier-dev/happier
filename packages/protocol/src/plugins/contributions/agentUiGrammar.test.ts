@@ -13,7 +13,6 @@ import { PluginAgentUiBehaviorContributionV2Schema } from './v2.js';
 const SUPPORTED_DECLARATION = {
   behavior: {
     descriptorId: 'acme.uiBehavior.v1',
-    mcpServers: { supportsDetectedConfigScan: true },
     permissions: { footer: { usePermissionUpdates: true, stopHandling: 'denyAndAbortRun' } },
     resume: {
       experimentSwitches: [{
@@ -29,7 +28,7 @@ const SUPPORTED_DECLARATION = {
     },
     payload: {
       spawnSessionExtras: { kind: 'static', value: { acmeMode: 'fast' } },
-      sessionExtras: { providerId: 'acme.agent', outputKey: 'acmeMode', values: ['fast', 'thorough'] },
+      sessionExtras: { outputKey: 'acmeMode', values: ['fast', 'thorough'] },
     },
     externalSessions: {
       browse: {
@@ -88,13 +87,27 @@ describe('public Agent UI authoring grammar', () => {
     }).success).toBe(false);
   });
 
+  it('rejects a nested Agent identity that could conflict with the enclosing contribution', () => {
+    expect(parse({
+      behavior: {
+        payload: {
+          sessionExtras: {
+            providerId: 'another.agent',
+            outputKey: 'acmeMode',
+            values: ['fast'],
+          },
+        },
+      },
+    }).success).toBe(false);
+  });
+
   /**
    * Each of these is a shape the client interpreter answers with a refusal
    * diagnostic — a compiled first-party component, a compiled payload adapter,
    * a compiled message-meta descriptor. A public grammar that accepted them
    * would promise external authors a capability that cannot work.
    */
-  it('refuses the compiled first-party escape hatches while accepting their declarative twins', () => {
+  it('refuses compiled component ids while admitting same-plugin inline surfaces', () => {
     expect(parse({
       components: { slots: [{ id: 'x', slot: 'session.detailsTabs', componentId: 'firstParty.claude.teammateDetailsTab' }] },
     }).success).toBe(false);
@@ -102,12 +115,45 @@ describe('public Agent UI authoring grammar', () => {
       components: {
         slots: [{
           id: 'x',
-          slot: 'session.detailsTabs',
+          slot: 'sessionSubagents.teammateDetailsTab',
+          surfaceId: 'subagent-details',
           resourceKind: 'acmeTeams',
+          iconName: 'people',
           tab: { keyPrefix: 'acme', titleKey: 'acme.tab.title' },
         }],
       },
     }).success).toBe(true);
+    expect(parse({
+      components: {
+        slots: [{
+          id: 'x',
+          slot: 'sessionSubagents.launchCards',
+          surfaceId: 'subagent-launch',
+          props: { teamIds: { kind: 'subagentGroupKeys', subagentKinds: ['agent_team_member'] } },
+        }],
+      },
+    }).success).toBe(true);
+    // The declarative twin is the host-owned control, which really renders.
+    expect(parse({
+      components: {
+        slots: [{
+          id: 'acme-indexing',
+          slot: 'newSession.agentInputExtraActionChips',
+          chip: {
+            kind: 'booleanOption',
+            optionStateKey: 'allowIndexing',
+            iconName: 'magnifying-glass',
+            onLabelKey: 'acme.chip.on',
+            offLabelKey: 'acme.chip.off',
+          },
+        }],
+      },
+    }).success).toBe(true);
+    // A slot row without the control is refused where it is written rather
+    // than silently contributing nothing.
+    expect(parse({
+      components: { slots: [{ id: 'acme-indexing', slot: 'newSession.agentInputExtraActionChips' }] },
+    }).success).toBe(false);
 
     expect(parse({
       behavior: { payload: { spawnSessionExtras: { kind: 'adapter', adapterId: 'codex.backendMode' } } },
@@ -141,7 +187,6 @@ describe('public Agent UI authoring grammar', () => {
       behavior: {
         payload: {
           backendTransport: {
-            providerId: 'acme.agent',
             legacyModeOutputKey: 'acmeBackendMode',
             backendMode: { values: ['acp', 'appServer'], aliases: { mcp: 'appServer' } },
             runtimeHandleFields: ['backendMode', 'providerSessionId'],
@@ -163,7 +208,6 @@ describe('public Agent UI authoring grammar', () => {
       behavior: {
         payload: {
           environmentVariables: {
-            providerId: 'acme.agent',
             backendMode: {
               envKey: 'ACME_MODE',
               settingKey: 'acmeMode',
@@ -180,7 +224,7 @@ describe('public Agent UI authoring grammar', () => {
   });
 
   it('refuses an unknown top-level block rather than carrying it as an opaque bag', () => {
-    expect(parse({ behaviour: { mcpServers: { supportsDetectedConfigScan: true } } }).success).toBe(false);
+    expect(parse({ behaviour: { guidance: {} } }).success).toBe(false);
     expect(parse({ behavior: { session: {} } }).success).toBe(false);
   });
 

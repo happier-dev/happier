@@ -39,6 +39,7 @@ const conversationProviderReadinessAttentionTransportFactV1 = defineProtocolObje
     code: defineProtocolUnion([
         defineProtocolLiteral(CONVERSATION_PROVIDER_READINESS_ATTENTION_CODES_V1[0]),
         defineProtocolLiteral(CONVERSATION_PROVIDER_READINESS_ATTENTION_CODES_V1[1]),
+        defineProtocolLiteral(CONVERSATION_PROVIDER_READINESS_ATTENTION_CODES_V1[2]),
     ]),
     diagnostic: ConversationProviderDiagnosticV1ProtocolSchema.optional(),
 }, { policy: 'closed' });

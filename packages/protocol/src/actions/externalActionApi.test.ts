@@ -13,13 +13,13 @@ import {
   ExternalActionRequestEnvelopeV1Schema,
   ExternalActionResponseEnvelopeV1Schema,
   ExternalActionTargetV1Schema,
+  createExternalActionDaemonDispatchResponseV1,
   createExternalActionResultTooLargeExecutionV1,
   enforceExternalActionResponseEnvelopeLimitV1,
   measureExternalActionResponseEnvelopeUtf8BytesV1,
   parseExternalActionResponseEnvelopeV1,
   prepareExternalActionResponseEnvelopeV1,
   parseExternalActionDaemonDispatchResultV1,
-  projectExternalActionDaemonDispatchResultV1,
   projectExternalActionResponseEnvelopeV1,
   projectExternalActionExecutionResultV1,
   projectExternalActionHttpErrorV1,
@@ -142,18 +142,17 @@ describe('External Action API envelope v1', () => {
   });
 
   it('keeps reserved relay admission failures distinct from admitted Action results', () => {
-    const admitted = {
-      kind: 'response' as const,
-      response: {
-        v: 1,
-        actionId: 'daemon.newly-introduced-action',
-        execution: {
-          ok: false as const,
-          errorCode: 'invalid_action',
-          error: 'The admitted Action rejected this input',
-        },
+    const response = {
+      v: 1,
+      actionId: 'daemon.newly-introduced-action',
+      execution: {
+        ok: false as const,
+        errorCode: 'invalid_action',
+        error: 'The admitted Action rejected this input',
       },
     };
+    const prepared = prepareExternalActionResponseEnvelopeV1(response);
+    const admitted = createExternalActionDaemonDispatchResponseV1(prepared);
 
     expect(ExternalActionDaemonDispatchResultV1Schema.parse({
       kind: 'invalid_request',
@@ -163,17 +162,20 @@ describe('External Action API envelope v1', () => {
       errorCode: 'invalid_action',
     });
     expect(ExternalActionDaemonDispatchResultV1Schema.parse(admitted)).toEqual(admitted);
-    expect(parseExternalActionDaemonDispatchResultV1(admitted)).toEqual(admitted);
-    expect(projectExternalActionDaemonDispatchResultV1({
-      ...admitted,
-      response: {
-        ...admitted.response,
+    expect(parseExternalActionDaemonDispatchResultV1(admitted)).toEqual({
+      kind: 'response',
+      prepared,
+    });
+    expect(parseExternalActionDaemonDispatchResultV1({
+      kind: 'response',
+      body: new TextEncoder().encode(JSON.stringify({
+        ...response,
         execution: {
-          ...admitted.response.execution,
+          ...response.execution,
           actionHandlerInvocation: 'notStarted',
         },
-      },
-    })).toEqual(admitted);
+      })),
+    })).toBeNull();
     expect(ExternalActionDaemonDispatchResultV1Schema.safeParse({
       kind: 'invalid_request',
       errorCode: 'request_too_large',
@@ -250,6 +252,25 @@ describe('External Action API envelope v1', () => {
     expect(prepared.response).toEqual(response);
     expect(prepared.body).toBe(JSON.stringify(response));
     expect(prepared.byteLength).toBe(new TextEncoder().encode(prepared.body).byteLength);
+  });
+
+  it('carries one already-prepared response as binary bytes through the reserved daemon relay', () => {
+    const prepared = prepareExternalActionResponseEnvelopeV1({
+      v: 1,
+      actionId: 'session.spawn_new',
+      requestId: 'request-relay-prepared',
+      execution: { ok: true, result: { sessionId: 'session-1' } },
+    });
+    const relay = {
+      kind: 'response' as const,
+      body: new TextEncoder().encode(prepared.body),
+    };
+
+    expect(ExternalActionDaemonDispatchResultV1Schema.parse(relay)).toEqual(relay);
+    expect(parseExternalActionDaemonDispatchResultV1(relay)).toEqual({
+      kind: 'response',
+      prepared,
+    });
   });
 
   it('projects a strict under-limit response that native JSON cannot represent to invalid_action_output', () => {

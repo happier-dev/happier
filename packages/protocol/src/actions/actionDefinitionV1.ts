@@ -56,6 +56,7 @@ export const ActionDefinitionBindingsV1Schema = z
     mcpToolName: z.string().min(1).optional(),
     sdkMethod: z.string().min(1).optional(),
     rpcMethod: z.string().min(1).optional(),
+    rpcMethodAliases: z.array(z.string().min(1)).optional(),
   })
   .passthrough()
   .nullable();
@@ -146,3 +147,71 @@ export type ActionDefinitionV1 = z.infer<typeof ActionDefinitionV1Schema>;
 
 export const SerializedActionDefinitionV1Schema = ActionDefinitionV1Schema;
 export type SerializedActionDefinitionV1 = z.infer<typeof SerializedActionDefinitionV1Schema>;
+
+const ActionDiscoverySlashV1Schema = z
+  .object({
+    tokens: z.array(z.string().min(1)),
+  })
+  .strict()
+  .nullable();
+
+const ActionDiscoveryBindingsV1Schema = z
+  .object({
+    voiceClientToolName: z.string().min(1).optional(),
+    mcpToolName: z.string().min(1).optional(),
+    sdkMethod: z.string().min(1).optional(),
+    rpcMethod: z.string().min(1).optional(),
+    rpcMethodAliases: z.array(z.string().min(1)).optional(),
+  })
+  .strict()
+  .nullable();
+
+const ActionDiscoveryExamplesV1Schema = z
+  .object({
+    voice: z.object({
+      argsExample: z.string().min(1).optional(),
+    }).strict().nullable().optional(),
+    mcp: z.object({
+      argsExample: z.string().min(1).optional(),
+    }).strict().nullable().optional(),
+    sdk: z.object({
+      codeExample: z.string().min(1).optional(),
+    }).strict().nullable().optional(),
+  })
+  .strict()
+  .nullable();
+
+const ActionDiscoveryExecutionHandlerRefV1Schema = z.union([
+  z.string().min(1),
+  z.object({
+    target: z.enum(['host', 'plugin', 'daemon']),
+    exportName: OptionalStringSchema,
+    registrationId: OptionalStringSchema,
+  }).strict(),
+]);
+
+const ActionDiscoveryExecutionDescriptorV1Schema = z
+  .object({
+    handler: ActionDiscoveryExecutionHandlerRefV1Schema.optional(),
+    transport: z.enum(['host', 'plugin', 'rpc', 'api']).optional(),
+    routing: OptionalStringSchema,
+    approvalPolicy: OptionalStringSchema,
+    resultSchema: LooseJsonObjectSchema.optional(),
+  })
+  .strict();
+
+export const ActionDiscoveryDefinitionSummaryV1Schema = ActionDefinitionSummaryV1Schema.extend({
+  slash: ActionDiscoverySlashV1Schema,
+  bindings: ActionDiscoveryBindingsV1Schema,
+  examples: ActionDiscoveryExamplesV1Schema,
+  execution: ActionDiscoveryExecutionDescriptorV1Schema.optional(),
+})
+  .strict();
+export type ActionDiscoveryDefinitionSummaryV1 = z.infer<typeof ActionDiscoveryDefinitionSummaryV1Schema>;
+
+export const ActionDiscoveryDefinitionV1Schema = ActionDiscoveryDefinitionSummaryV1Schema.extend({
+  kindVersion: z.literal(1).default(1),
+  inputSchema: LooseJsonObjectSchema,
+  compatibility: LooseJsonObjectSchema.optional(),
+}).strict();
+export type ActionDiscoveryDefinitionV1 = z.infer<typeof ActionDiscoveryDefinitionV1Schema>;

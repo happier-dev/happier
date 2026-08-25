@@ -2,7 +2,6 @@ import { z } from 'zod';
 
 import {
   openAccountScopedBlobCiphertext,
-  resealAccountScopedHistoricalAliasCiphertext,
   sealAccountScopedBlobCiphertext,
   type AccountScopedBlobKind,
   type AccountScopedCryptoMaterial,
@@ -166,38 +165,4 @@ export function openQualifiedConnectedAccountContentEnvelope(
         ciphertext: envelope.c,
       });
   return opened?.value ?? null;
-}
-
-export function resealQualifiedConnectedAccountConfigurationContentEnvelopeIfHistoricalAlias(
-  params: Readonly<{
-    material: AccountScopedCryptoMaterial;
-    envelope: StoredJsonContentEnvelope;
-    randomBytes: (length: number) => Uint8Array;
-    validatePayload: (value: unknown) => unknown | null;
-  }>,
-): Readonly<{
-  envelope: StoredJsonContentEnvelope;
-  value: unknown;
-  resealed: boolean;
-}> | null {
-  const envelope = StoredJsonContentEnvelopeSchema.parse(params.envelope);
-  if (envelope.t !== 'encrypted') return null;
-  const result = resealAccountScopedHistoricalAliasCiphertext({
-    kind: 'qualified_connected_account_configuration',
-    material: params.material,
-    ciphertext: envelope.c,
-    randomBytes: params.randomBytes,
-    validatePayload: params.validatePayload,
-  });
-  if (!result) return null;
-  return {
-    envelope: result.resealed
-      ? StoredJsonContentEnvelopeSchema.parse({
-          t: 'encrypted',
-          c: result.ciphertext,
-        })
-      : envelope,
-    value: result.opened.value,
-    resealed: result.resealed,
-  };
 }

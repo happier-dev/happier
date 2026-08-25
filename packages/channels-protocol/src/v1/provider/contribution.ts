@@ -8,6 +8,10 @@ import {
     CONVERSATION_PROVIDERS_CONTRIBUTION_PROTOCOL_VERSION_V1,
 } from '../bounds.js';
 import {
+    ConversationProviderAutomationEventAdmitInputV1Schema,
+    ConversationProviderAutomationEventAdmitResultV1Schema,
+} from './automationEvents.js';
+import {
     ConversationDeliveryInputV1Schema,
     ConversationDeliveryReconcileInputV1Schema,
     ConversationDeliveryResultV1Schema,
@@ -83,6 +87,17 @@ export const ConversationProvidersContributionProtocolV1 = defineContributionPro
             input: { kind: 'protocolDefined', schema: ConversationPollInputV1Schema },
             resultSchema: ConversationPollResultV1Schema,
             action: { surface: 'plugin', dangerLevel: 'safe' },
+        },
+        /**
+         * Optional stateless bridge from one durable Channels Event obligation
+         * to the provider's own current Automation definitions. The Channels
+         * core remains the only retry, currentness, and checkpoint owner.
+         */
+        automationEventAdmit: {
+            required: false,
+            input: { kind: 'protocolDefined', schema: ConversationProviderAutomationEventAdmitInputV1Schema },
+            resultSchema: ConversationProviderAutomationEventAdmitResultV1Schema,
+            action: { surface: 'plugin', dangerLevel: 'writesRemote' },
         },
         messageDeliver: {
             required: true,

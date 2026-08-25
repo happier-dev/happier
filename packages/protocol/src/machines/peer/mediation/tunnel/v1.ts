@@ -6,7 +6,6 @@ import { SignedDirectRouteGrantV1Schema, type SignedDirectRouteGrantV1 } from '.
 import {
   PeerTcpTunnelRelayAuthorizationSchema,
   type PeerTcpTunnelRelayAuthorization,
-  type PeerTcpTunnelRelayAuthorizationV1,
 } from './authorization.js';
 import { PeerTcpTunnelEncodingSchema } from './encoding.js';
 
@@ -196,5 +195,4 @@ export function validatePeerTcpTunnelDataFrameCaps(input: Readonly<{
 
 export type PeerTcpTunnelOpenGrantV1 = SignedDirectRouteGrantV1;
 export type PeerTcpTunnelOpenNonceProofV1 = PeerRouteNonceProofV1;
-export type PeerTcpTunnelOpenRelayAuthorizationV1 = PeerTcpTunnelRelayAuthorizationV1;
 export type PeerTcpTunnelOpenRelayAuthorization = PeerTcpTunnelRelayAuthorization;

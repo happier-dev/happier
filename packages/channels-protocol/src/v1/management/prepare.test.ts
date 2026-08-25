@@ -17,6 +17,10 @@ describe('Channels V1 connection preparation result', () => {
                 unit: 'unicodeCodePoints',
             },
             destinationLabel: 'Example destination',
+            setupGuidance: {
+                externalUrl: 'https://provider.example.test/install',
+                requiredPermissionsLabel: 'Read messages, Send messages',
+            },
         } as const;
 
         expect(ConversationConnectionPrepareResultV1Schema.parse(ready)).toEqual(ready);

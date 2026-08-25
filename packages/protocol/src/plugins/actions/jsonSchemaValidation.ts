@@ -53,6 +53,7 @@ export {
   normalizePluginJsonSchema,
   pluginJsonValuesEqual,
   ProtocolValidationError,
+  rehydrateCanonicalProtocolComposableSchema,
 } from './protocolComposableSchema.js';
 export type {
   PluginJsonSchema,

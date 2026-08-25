@@ -33,10 +33,6 @@ import {
 export const MAX_AUTOMATION_EVENT_SOURCE_DEFINITIONS_PER_PAGE = 500;
 /** One complete private Event-admission call has an independently bounded cardinality. */
 export const MAX_AUTOMATION_EVENT_ADMIT_DEFINITIONS_PER_CALL = 15;
-/** The Account-owned enabled-source ceiling also bounds one semantic Action. */
-export const MAX_ENABLED_AUTOMATION_EVENT_SOURCE_DEFINITIONS_PER_ACCOUNT = 10_000;
-export const MAX_AUTOMATION_EVENT_ADMIT_DEFINITIONS_PER_ACTION =
-  MAX_ENABLED_AUTOMATION_EVENT_SOURCE_DEFINITIONS_PER_ACCOUNT;
 export const MAX_AUTOMATION_EVENT_FILTER_CLAUSES = 32;
 export const MAX_AUTOMATION_EVENT_FILTER_IN_VALUES = 64;
 export const MAX_AUTOMATION_EVENT_FILTER_VALUE_CODE_POINTS = 256;
@@ -152,6 +148,53 @@ export type AutomationEventSourceCatalogScopeV1 = z.infer<
   typeof AutomationEventSourceCatalogScopeV1Schema
 >;
 
+/**
+ * A checkpoint owner presents this durable identity to the catalog owner after
+ * it has completed a source scan. The catalog owner alone decides whether the
+ * checkpoint is now retired; the provider keeps its incumbent row-level CAS.
+ */
+export const AutomationEventCheckpointRetirementCandidateV1Schema = z.object({
+  automationId: asProtocolZod(AutomationIdV1Schema),
+  eventRef: asProtocolZod(AutomationQualifiedPluginContributionRefV1Schema),
+  sourceSelectorId: AutomationSourceSelectorIdV1Schema,
+  sourceContractVersion: POSITIVE_SAFE_INTEGER_SCHEMA,
+}).strict();
+export type AutomationEventCheckpointRetirementCandidateV1 = z.infer<
+  typeof AutomationEventCheckpointRetirementCandidateV1Schema
+>;
+
+function checkpointRetirementCandidateKey(value: AutomationEventCheckpointRetirementCandidateV1): string {
+  return createCanonicalJsonSigningInput(value);
+}
+
+function addDuplicateCheckpointRetirementCandidateIssues(
+  values: readonly AutomationEventCheckpointRetirementCandidateV1[],
+  context: z.RefinementCtx,
+): void {
+  const seen = new Set<string>();
+  values.forEach((value, index) => {
+    const key = checkpointRetirementCandidateKey(value);
+    if (seen.has(key)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [index],
+        message: 'Checkpoint retirement candidates must be unique',
+      });
+      return;
+    }
+    seen.add(key);
+  });
+}
+
+export const AutomationEventCheckpointRetirementsV1Schema = z.array(
+  AutomationEventCheckpointRetirementCandidateV1Schema,
+)
+  .max(MAX_AUTOMATION_EVENT_SOURCE_DEFINITIONS_PER_PAGE)
+  .superRefine(addDuplicateCheckpointRetirementCandidateIssues);
+export type AutomationEventCheckpointRetirementsV1 = z.infer<
+  typeof AutomationEventCheckpointRetirementsV1Schema
+>;
+
 export const AutomationEventSourcesListInputV1Schema = z.object({
   transport: AutomationEventSourcesListTransportV1Schema,
   pageSize: z.number().int().min(1).max(MAX_AUTOMATION_EVENT_SOURCE_DEFINITIONS_PER_PAGE).default(
@@ -159,12 +202,39 @@ export const AutomationEventSourcesListInputV1Schema = z.object({
   ),
   cursor: OPAQUE_CURSOR_SCHEMA.optional(),
   knownRevision: UNSIGNED_DECIMAL_BIGINT_SCHEMA.optional(),
+  checkpointRetirementCandidates: z.array(AutomationEventCheckpointRetirementCandidateV1Schema)
+    .min(1)
+    .max(MAX_AUTOMATION_EVENT_SOURCE_DEFINITIONS_PER_PAGE)
+    .superRefine(addDuplicateCheckpointRetirementCandidateIssues)
+    .optional(),
 }).strict().superRefine((value, context) => {
   if (value.cursor !== undefined && value.knownRevision !== undefined) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
       path: ['knownRevision'],
       message: 'knownRevision is valid only on the first source-list page',
+    });
+  }
+  if (value.checkpointRetirementCandidates === undefined) return;
+  if (value.transport.kind !== 'checkpointedPull') {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['checkpointRetirementCandidates'],
+      message: 'Checkpoint retirement classification is valid only for checkpointed pulls',
+    });
+  }
+  if (value.knownRevision === undefined) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['knownRevision'],
+      message: 'Checkpoint retirement classification requires a known catalog revision',
+    });
+  }
+  if (value.cursor !== undefined) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['cursor'],
+      message: 'Checkpoint retirement classification requires a complete no-cursor catalog read',
     });
   }
 });
@@ -178,7 +248,11 @@ export const AutomationEventSourcesListResultV1Schema = z.discriminatedUnion('ki
       .max(MAX_AUTOMATION_EVENT_SOURCE_DEFINITIONS_PER_PAGE),
     nextCursor: OPAQUE_CURSOR_SCHEMA.nullable(),
   }).strict(),
-  z.object({ kind: z.literal('unchanged'), revision: UNSIGNED_DECIMAL_BIGINT_SCHEMA }).strict(),
+  z.object({
+    kind: z.literal('unchanged'),
+    revision: UNSIGNED_DECIMAL_BIGINT_SCHEMA,
+    checkpointRetirements: AutomationEventCheckpointRetirementsV1Schema.optional(),
+  }).strict(),
   z.object({ kind: z.literal('cursorStale'), currentRevision: UNSIGNED_DECIMAL_BIGINT_SCHEMA }).strict(),
 ]);
 export type AutomationEventSourcesListResultV1 = z.infer<typeof AutomationEventSourcesListResultV1Schema>;
@@ -203,8 +277,7 @@ const AutomationEventAdmitInputFieldsV1 = {
 export const AutomationEventAdmitInputV1Schema = z.object({
   ...AutomationEventAdmitInputFieldsV1,
   definitions: z.array(AutomationEventAdmitDefinitionSelectorV1Schema)
-    .min(1)
-    .max(MAX_AUTOMATION_EVENT_ADMIT_DEFINITIONS_PER_ACTION),
+    .min(1),
 }).strict();
 export type AutomationEventAdmitInputV1 = z.infer<typeof AutomationEventAdmitInputV1Schema>;
 
@@ -242,8 +315,7 @@ export const AutomationEventAdmitItemResultV1Schema = z.discriminatedUnion('kind
 export type AutomationEventAdmitItemResultV1 = z.infer<typeof AutomationEventAdmitItemResultV1Schema>;
 
 export const AutomationEventAdmitResultV1Schema = z.object({
-  results: z.array(AutomationEventAdmitItemResultV1Schema)
-    .max(MAX_AUTOMATION_EVENT_ADMIT_DEFINITIONS_PER_ACTION),
+  results: z.array(AutomationEventAdmitItemResultV1Schema),
 }).strict();
 export type AutomationEventAdmitResultV1 = z.infer<typeof AutomationEventAdmitResultV1Schema>;
 
@@ -314,10 +386,26 @@ export const AutomationConversationTargetsListInputV1Schema = z.object({
 }).strict();
 export type AutomationConversationTargetsListInputV1 = z.infer<typeof AutomationConversationTargetsListInputV1Schema>;
 
+/**
+ * Binding an Automation to a conversation delegates unattended execution to an
+ * external sender, so selection and the final binding confirmation need the
+ * Automation's nonsecret execution consequences, not only its name. These are
+ * Account-owned columns; no prompt, recipe, secret, or template content is
+ * projected, and nothing here is readable only in plain mode.
+ */
+export const AutomationConversationTargetExecutionV1Schema = z.object({
+  targetType: z.enum(['new_session', 'existing_session', 'execution_run']),
+  enabled: z.boolean(),
+}).strict();
+export type AutomationConversationTargetExecutionV1 = z.infer<
+  typeof AutomationConversationTargetExecutionV1Schema
+>;
+
 export const AutomationConversationTargetsListItemV1Schema = z.object({
   automationId: asProtocolZod(AutomationIdV1Schema),
   templateVersion: NONNEGATIVE_SAFE_INTEGER_SCHEMA,
   label: z.string().min(1).max(256),
+  execution: AutomationConversationTargetExecutionV1Schema,
 }).strict();
 export type AutomationConversationTargetsListItemV1 = z.infer<typeof AutomationConversationTargetsListItemV1Schema>;
 

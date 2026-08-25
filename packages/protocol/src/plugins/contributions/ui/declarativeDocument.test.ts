@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { derivePluginUiTargetedSurfaceMountInstanceKeyV1 } from '../../ui/targetedContributions.js';
 import {
+  MAX_PLUGIN_DECLARATIVE_DOCUMENT_RESOURCE_BYTES_V1,
   PLUGIN_DECLARATIVE_DOCUMENT_CONTENT_TYPE_V1,
   assertPluginDeclarativeDocumentResourceContentTypesV1,
   normalizePluginDeclarativeDocumentV1,
@@ -194,6 +195,7 @@ describe('declarative document normalizer v1', () => {
         version: 1,
         root: {
           kind: 'collectionList',
+          label: { key: 'tasks.open.label', fallback: 'Open tasks' },
           source: {
             collectionId: 'tasks',
             uiQueryId: 'open-tasks',
@@ -213,6 +215,7 @@ describe('declarative document normalizer v1', () => {
 
     expect(normalized.root).toMatchObject({
       kind: 'collectionList',
+      label: { key: 'tasks.open.label', fallback: 'Open tasks' },
       source: {
         collectionId: 'tasks',
         uiQueryId: 'open-tasks',
@@ -785,5 +788,39 @@ describe('declarative document normalizer v1', () => {
         root: { kind: 'targetedSurface', surface, input: {}, instanceKey: 42 },
       },
     }), 'plugin_declarative_document_invalid');
+  });
+
+  it('rejects oversized and deeply nested documents before recursive parsing', () => {
+    const deeplyNestedRoot: Record<string, unknown> = { kind: 'text', text: 'leaf' };
+    let current = deeplyNestedRoot;
+    // The declared semantic-node bound is 512. This deliberately exceeds it
+    // by far enough that the predecessor's recursive Zod parser overflows
+    // before reaching its late post-parse node count check.
+    for (let index = 0; index < 10_000; index += 1) {
+      current = { kind: 'stack', children: [current] };
+    }
+
+    expectNormalizationFailure(() => normalizePluginDeclarativeDocumentV1({
+      pluginId: 'com.acme.dashboard',
+      generation: 'generation-4',
+      actions: [],
+      document: { version: 1, root: current },
+    }), 'plugin_declarative_nodes_exceeded');
+
+    const oversizedDocument = {
+      version: 1,
+      root: {
+        kind: 'text',
+        text: 'x'.repeat(MAX_PLUGIN_DECLARATIVE_DOCUMENT_RESOURCE_BYTES_V1),
+      },
+    };
+    expect(new TextEncoder().encode(JSON.stringify(oversizedDocument)).byteLength)
+      .toBeGreaterThan(MAX_PLUGIN_DECLARATIVE_DOCUMENT_RESOURCE_BYTES_V1);
+    expectNormalizationFailure(() => normalizePluginDeclarativeDocumentV1({
+      pluginId: 'com.acme.dashboard',
+      generation: 'generation-4',
+      actions: [],
+      document: oversizedDocument,
+    }), 'plugin_declarative_document_bytes_exceeded');
   });
 });

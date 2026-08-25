@@ -94,6 +94,30 @@ export function buildQualifiedPluginContributionKey(identity: PluginContribution
 }
 
 /**
+ * Whether one host Agent routing id can address this durable
+ * `{pluginId, localId}` identity.
+ *
+ * A contributed Agent's routing id is a projection of its durable identity:
+ * an installed Agent is routed by the qualified key above, while a bundled
+ * first-party Agent keeps its unqualified released id. Records persist the
+ * identity and public refs carry the routing id, so a record-level invariant
+ * that compares a routing id against a bare `localId` accepts only bundled
+ * Agents and makes every installed Agent's record unparseable.
+ *
+ * Only the host plugin registry knows which projection a given Agent received,
+ * so this accepts either one. It is a record-coherence check, not an authority
+ * decision: the host resolves the exact routing id through its registry before
+ * admitting the operation that writes both sides.
+ */
+export function agentRoutingIdAddressesContributionIdentityV1(
+  routingId: string,
+  identity: PluginContributionIdentityV1,
+): boolean {
+  return routingId === identity.localId
+    || routingId === buildQualifiedPluginContributionKey(identity);
+}
+
+/**
  * Exact, bounded import for the scheduled predecessor's durable Oh My Pi Agent id.
  *
  * The flat value is accepted only at persistence ingress. It is not a catalog alias,

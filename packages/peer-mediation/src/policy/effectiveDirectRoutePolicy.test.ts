@@ -10,12 +10,11 @@ const baseInput = {
     accountMachinePreference: 'inherit',
     accountDefaultPreference: 'inherit',
     productDefaultPreference: 'disabled',
-    topologyAvailable: true,
     grant: { status: 'valid' },
 } as const;
 
 describe('resolveEffectivePeerDirectRoutePolicy', () => {
-    it('allows account per-machine direct preference after server/topology/grant checks pass', () => {
+    it('allows account per-machine direct preference after server and grant checks pass', () => {
         expect(resolveEffectivePeerDirectRoutePolicy({
             ...baseInput,
             accountMachinePreference: 'enabled',
@@ -47,17 +46,7 @@ describe('resolveEffectivePeerDirectRoutePolicy', () => {
         });
     });
 
-    it('does not let account preference bypass topology or grant validity', () => {
-        expect(resolveEffectivePeerDirectRoutePolicy({
-            ...baseInput,
-            accountMachinePreference: 'enabled',
-            topologyAvailable: false,
-        })).toEqual({
-            allowed: false,
-            source: 'topology',
-            reasonCode: 'topology_unavailable',
-        });
-
+    it('does not let account preference bypass grant validity', () => {
         expect(resolveEffectivePeerDirectRoutePolicy({
             ...baseInput,
             accountMachinePreference: 'enabled',

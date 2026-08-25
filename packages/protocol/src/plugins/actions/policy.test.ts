@@ -16,10 +16,6 @@ const scope = Object.freeze({
 });
 
 const allowed: PluginActionPolicyInput = Object.freeze({
-  packageTrust: Object.freeze({
-    packageIdentity: 'npm:acme.plugin@1.0.0#sha256:reviewed',
-    reviewedPackageIdentity: 'npm:acme.plugin@1.0.0#sha256:reviewed',
-  }),
   generation: Object.freeze({
     targetGeneration: 'generation-7',
     desiredGeneration: 'generation-7',
@@ -57,7 +53,15 @@ function withInput(overrides: Partial<PluginActionPolicyInput>): PluginActionPol
 }
 
 describe('evaluatePluginActionPolicy', () => {
-  it('allows only the exact reviewed, current, selected, granted, and available action facts', () => {
+  it('treats an exact admitted current generation as the package-trust fact', () => {
+    expect(evaluatePluginActionPolicy(allowed)).toEqual({
+      outcome: 'visible',
+      code: 'plugin_action_available',
+      requiresCurrentIntent: true,
+    });
+  });
+
+  it('allows only the exact current, selected, granted, and available action facts', () => {
     expect(evaluatePluginActionPolicy(allowed)).toEqual({
       outcome: 'visible',
       code: 'plugin_action_available',
@@ -66,11 +70,6 @@ describe('evaluatePluginActionPolicy', () => {
   });
 
   it.each([
-    [
-      'exact package trust',
-      withInput({ packageTrust: { ...allowed.packageTrust, reviewedPackageIdentity: 'npm:acme.plugin@1.0.0#sha256:other' } }),
-      { outcome: 'denied', code: 'plugin_action_package_untrusted' },
-    ],
     [
       'desired generation',
       withInput({ generation: { ...allowed.generation, desiredGeneration: 'generation-8' } }),

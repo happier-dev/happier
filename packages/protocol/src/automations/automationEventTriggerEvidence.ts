@@ -12,27 +12,28 @@ import {
   type AutomationOccurrenceEvidenceV1,
 } from './automationOccurrenceV1.js';
 import {
-  AutomationRunPluginEventTriggerEvidenceV1Schema,
-  type AutomationRunPluginEventTriggerEvidenceV1,
+  AutomationRunTriggerEvidenceV1Schema,
+  type AutomationRunTriggerEvidenceV1,
 } from './automationRunExecutionRecipeV1.js';
 
 export const AUTOMATION_TRIGGER_EVIDENCE_ACCOUNT_SCOPED_BLOB_KIND_V1 =
   'automation_trigger_evidence' as const;
 
-export type AutomationEventTriggerEvidenceEnvelopeV1 = Readonly<{
+export type AutomationTriggerEvidenceEnvelopeV1 = Readonly<{
   t: 'encrypted';
   c: string;
 }>;
 
 /**
- * Seals one host-derived Event occurrence evidence payload for durable E2EE
- * Automation rejoin. Plugin Action input never supplies this envelope.
+ * Seals one host-derived occurrence evidence payload — Event or Conversation —
+ * for durable E2EE Automation rejoin. Plugin Action input never supplies this
+ * envelope.
  */
-export function sealAutomationEventTriggerEvidenceEnvelopeV1(params: Readonly<{
+export function sealAutomationOccurrenceTriggerEvidenceEnvelopeV1(params: Readonly<{
   material: AccountScopedCryptoMaterial;
   evidence: AutomationOccurrenceEvidenceV1;
   randomBytes: (length: number) => Uint8Array;
-}>): AutomationEventTriggerEvidenceEnvelopeV1 {
+}>): AutomationTriggerEvidenceEnvelopeV1 {
   const evidence = AutomationOccurrenceEvidenceV1Schema.parse(params.evidence);
   return {
     t: 'encrypted',
@@ -46,17 +47,17 @@ export function sealAutomationEventTriggerEvidenceEnvelopeV1(params: Readonly<{
 }
 
 /**
- * Seals the complete immutable Event evidence retained by a frozen Run recipe.
- * The base occurrence helper remains the equality-tag input owner; this keeps
- * source/filter correspondence in the same Account-scoped Event-evidence
- * ciphertext domain.
+ * Seals the complete immutable occurrence evidence retained by a frozen Run
+ * recipe, for either origin arm. The base occurrence helper remains the
+ * equality-tag input owner; this keeps source/filter and Conversation
+ * correspondence in the same Account-scoped trigger-evidence ciphertext domain.
  */
-export function sealAutomationRunPluginEventTriggerEvidenceEnvelopeV1(params: Readonly<{
+export function sealAutomationRunTriggerEvidenceEnvelopeV1(params: Readonly<{
   material: AccountScopedCryptoMaterial;
-  evidence: AutomationRunPluginEventTriggerEvidenceV1;
+  evidence: AutomationRunTriggerEvidenceV1;
   randomBytes: (length: number) => Uint8Array;
-}>): AutomationEventTriggerEvidenceEnvelopeV1 {
-  const evidence = AutomationRunPluginEventTriggerEvidenceV1Schema.parse(params.evidence);
+}>): AutomationTriggerEvidenceEnvelopeV1 {
+  const evidence = AutomationRunTriggerEvidenceV1Schema.parse(params.evidence);
   return {
     t: 'encrypted',
     c: sealAccountScopedBlobCiphertext({
@@ -70,9 +71,9 @@ export function sealAutomationRunPluginEventTriggerEvidenceEnvelopeV1(params: Re
 
 /**
  * Lets the ciphertext-blind server reject an otherwise valid Account-scoped
- * envelope whose authenticated domain is not Event trigger evidence.
+ * envelope whose authenticated domain is not occurrence trigger evidence.
  */
-export function isAutomationEventTriggerEvidenceCiphertextV1(
+export function isAutomationTriggerEvidenceCiphertextV1(
   ciphertext: string,
 ): boolean {
   return isAccountScopedBlobCiphertextForKind({
@@ -85,7 +86,7 @@ export function isAutomationEventTriggerEvidenceCiphertextV1(
  * Produces the opaque E2EE rejoin tag with the dedicated Account-content
  * derivation. The server compares the tag but cannot calculate it.
  */
-export function deriveAutomationEventTriggerEvidenceEqualityTagV1(params: Readonly<{
+export function deriveAutomationOccurrenceTriggerEvidenceEqualityTagV1(params: Readonly<{
   material: AccountScopedCryptoMaterial;
   accountId: string;
   automationId: string;

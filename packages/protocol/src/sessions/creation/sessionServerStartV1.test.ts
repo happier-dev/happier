@@ -89,6 +89,8 @@ describe('SessionServerStartSpawnDraftV1Schema', () => {
       start: {
         automationId: 'automation-1',
         runId: 'run-1',
+        attempt: 3,
+        claimedByMachineId: 'machine-source',
         origin: 'event',
         accountCurrentness: { mode: 'plain', version: 7, contentKeyFingerprint: null },
         // The server validates only the bounded envelope framing. The target
@@ -128,6 +130,16 @@ describe('SessionServerStartSpawnDraftV1Schema', () => {
       ...request,
       start: { ...request.start, unexpected: true },
     }).success).toBe(false);
+    // The stamped Run correspondence is what the pre-submit guard revalidates,
+    // so a dispatch that omits it is not a dispatchable request.
+    for (const omitted of ['attempt', 'claimedByMachineId'] as const) {
+      const start: Record<string, unknown> = { ...request.start };
+      delete start[omitted];
+      expect(contract.SessionServerStartDispatchRequestV1Schema?.safeParse({
+        ...request,
+        start,
+      }).success).toBe(false);
+    }
   });
 
   it('accepts only Run correspondence plus an opaque mode-correct request at the machine ingress', () => {

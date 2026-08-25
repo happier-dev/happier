@@ -27,6 +27,13 @@ export {
 export { isProfileCompatibleWithAgent, isProfileCompatibleWithBackendTarget } from './profileCompatibility.js';
 
 export {
+  mapAiLaunchProfileToListItemV1,
+  projectLaunchProfileListV1,
+  type LaunchProfileListItemV1,
+  type LaunchProfileListProjectionV1,
+} from './listProjection.js';
+
+export {
   getRequiredConfigEnvVarNames,
   getMissingRequiredConfigEnvVarNames,
   getRequiredSecretEnvVarNames,

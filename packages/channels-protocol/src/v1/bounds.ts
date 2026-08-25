@@ -31,7 +31,6 @@ export const CONVERSATION_MANAGEMENT_ACTION_IDS_V1 = Object.freeze({
     connectionCreate: 'connection/create-v1',
     connectionTransfer: 'connection/transfer-v1',
     connectionUpdate: 'connection/update-v1',
-    connectionSetEnabled: 'connection/set-enabled-v1',
     connectionDelete: 'connection/delete-v1',
     connectionAbandon: 'connection/abandon-v1',
     connectionPrepare: 'connection/prepare-v1',
@@ -45,7 +44,6 @@ export const CONVERSATION_MANAGEMENT_ACTION_IDS_V1 = Object.freeze({
     bindingUpdate: 'binding/update-v1',
     bindingSetEnabled: 'binding/set-enabled-v1',
     bindingDelete: 'binding/delete-v1',
-    bindingTargetRotate: 'binding/target-rotate-v1',
     streamBaselineAccept: 'stream/baseline-accept-v1',
     deliveryResolve: 'delivery/resolve-v1',
     ingressRetry: 'ingress/retry-v1',
@@ -67,7 +65,21 @@ export const MAX_CONVERSATION_PROVIDER_DIAGNOSTIC_UTF8_BYTES = 1024;
 export const MAX_CONVERSATION_PAIRING_DEEP_LINK_TEMPLATE_UTF8_BYTES = 2 * 1024;
 export const MAX_CONVERSATION_CHECKPOINT_UTF8_BYTES = 48 * 1024;
 export const MAX_CONVERSATION_OCCURRENCE_ID_UTF8_BYTES = 128;
+/**
+ * An Event source instance is an opaque provider-owned fact. The ceiling
+ * matches the existing provider Event setup surfaces, while keeping one
+ * durable Channels ingress obligation safely inside its Account-row budget.
+ */
+export const MAX_CONVERSATION_AUTOMATION_EVENT_SOURCE_INSTANCE_ID_UTF8_BYTES = 512;
 export const MAX_CONVERSATION_ACTOR_PRINCIPAL_ID_UTF8_BYTES = 256;
+/**
+ * The chat-approval request identifier a `/allow`/`/deny` sender may name.
+ * Ingress text is bounded far above this, so the inbound command grammar must
+ * apply this bound itself: the frozen ingress obligation persists the exact
+ * identifier, and the canonical Permission mediation contract accepts at most
+ * 256 UTF-8 bytes for one request id.
+ */
+export const MAX_CONVERSATION_APPROVAL_REQUEST_ID_UTF8_BYTES = 256;
 export const MAX_CONVERSATION_PROVIDER_MESSAGE_ID_UTF8_BYTES = 512;
 export const MAX_CONVERSATION_INGRESS_TEXT_UTF8_BYTES = 64 * 1024;
 export const MAX_CONVERSATION_DELIVERY_TEXT_UTF8_BYTES = 192 * 1024;
@@ -80,6 +92,41 @@ export const MAX_CONVERSATION_RETRY_AFTER_MS = 86_400_000;
 export const MAX_CONVERSATION_INBOUND_DEBOUNCE_MS = 5_000;
 export const MIN_CONVERSATION_OBSERVATION_AGE_MS = 60_000;
 export const MAX_CONVERSATION_OBSERVATION_AGE_MS = 30 * 86_400_000;
+
+/**
+ * The freshness window a connection is created with for an omitted choice.
+ *
+ * Setup has to send `maximumObservationAgeMs` — the create contract requires
+ * it — so this is the one place that answers for every surface, instead of a
+ * surface reaching for the smallest configurable value and calling it a
+ * default. A bound is not a default: seeding
+ * `MIN_CONVERSATION_OBSERVATION_AGE_MS` means a message that arrived while the
+ * machine was away for two minutes is discarded on return, which is exactly
+ * the mail a checkpointed pull exists to replay.
+ *
+ * The 24 hours are the flagship V1 provider's own documented retention
+ * ceiling, and that is where this number comes from. Telegram Bot API,
+ * "Getting updates" (https://core.telegram.org/bots/api#getting-updates):
+ * "Incoming updates are stored on the server until the bot receives them
+ * either way, but they will not be kept longer than 24 hours." A longer
+ * default therefore recovers nothing Telegram still holds, and a shorter one
+ * discards mail Telegram would have replayed. Being one number rather than a
+ * per-provider recommendation is deliberate: it is exact for Telegram, inert
+ * for Discord (a socket observer that persists no cursor replays nothing for
+ * an age filter to reject), and knowingly lossy for GitHub after an outage
+ * longer than a day, where the owner can raise it as far as
+ * `MAX_CONVERSATION_OBSERVATION_AGE_MS`.
+ *
+ * It must also clear `MAX_CONVERSATION_RETRY_AFTER_MS`, which coincides at the
+ * same number today: a provider can hold this host's poller off for that long
+ * through its retry hint, and dropping everything the host was told to wait
+ * through would make the host discard mail because it obeyed the provider.
+ * That is a separate floor, not this value's derivation — writing the default
+ * as the retry ceiling would silently move the Telegram anchoring whenever the
+ * retry ceiling moved. `bounds.test.ts` pins the anchoring and the floor
+ * independently, so raising the retry ceiling past a day fails loudly instead.
+ */
+export const CONVERSATION_OBSERVATION_AGE_MS_FOR_OMITTED_FIELD_V1 = 86_400_000;
 
 /**
  * `occurredAt` is minted by the provider's clock and compared against this
@@ -152,10 +199,18 @@ export const CONVERSATION_CONNECTION_HISTORY_GAP_REASONS_V1 = [
     'applicationAdmissionLost',
 ] as const;
 
-/** Stable, provider-neutral connection readiness attention codes. */
+/**
+ * Stable, provider-neutral connection readiness attention codes. The three
+ * name different repairs: a remote permission the integration must be granted,
+ * a remote configuration the integration owner must correct, and a Connected
+ * Account credential the user must replace or resynchronize. Collapsing the
+ * credential case into configuration sends the user to a surface that cannot
+ * clear the attention.
+ */
 export const CONVERSATION_PROVIDER_READINESS_ATTENTION_CODES_V1 = [
     'providerPermissionMissing',
     'providerConfigurationInvalid',
+    'providerCredentialInvalid',
 ] as const;
 
 export const CONVERSATION_MESSAGE_CONTENT_PROVENANCE_V1 = [

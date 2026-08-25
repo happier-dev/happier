@@ -102,23 +102,7 @@ export const PluginActionExecutionV2Schema = z.discriminatedUnion('target', [
 ]);
 export type PluginActionExecutionV2 = z.infer<typeof PluginActionExecutionV2Schema>;
 
-/**
- * `contributes.actions[].execution` was introduced after plugins were already
- * packaging `.happier-plugin/plugin.json`, and it arrived without a version
- * signal: `schemaVersion` is still 2 and `runtime.apiVersion` is still 1, so a
- * packaged declaration authored before it carries nothing that tells its author
- * to re-author. The only realm that existed then was the daemon, so an *absent*
- * realm reads as that realm.
- *
- * This is the one owner of that reading. It is a default for an absent
- * declaration, never tolerance for a declared one: an unknown target, or a
- * client target missing the artifact tuple the client realm is entitled by,
- * still fails. Every reader that routes an Action to its realm parses through
- * this schema so ingestion, the raw catalog projection and the daemon registry
- * projection cannot reach different answers.
- */
-export const PluginActionDeclaredExecutionV2Schema = PluginActionExecutionV2Schema
-  .default(() => ({ target: 'daemon' as const }));
+export const PluginActionDeclaredExecutionV2Schema = PluginActionExecutionV2Schema;
 
 export const PluginActionPlacementV2Schema = z.enum([
   'primary',

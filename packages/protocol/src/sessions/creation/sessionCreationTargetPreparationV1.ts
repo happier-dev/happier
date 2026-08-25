@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 import { SessionAuthoringCheckoutCreationDraftV1Schema } from '../authoring/fieldCatalog.js';
-import { SessionExecutionTargetV1Schema } from './sessionSpawnNewResultV1.js';
+import { SessionExecutionTargetV1Schema } from './sessionExecutionTargetV1.js';
 
 /**
  * Host-only evidence that a user approved creation of this exact canonical

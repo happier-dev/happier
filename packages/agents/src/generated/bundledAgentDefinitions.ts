@@ -174,7 +174,7 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
   "runtimeContributions": {
     "agentCatalogEntry": {
       "importName": "ANTIGRAVITY_AGENT_RUNTIME_CONTRIBUTION",
-      "source": "./agent/contributions/runtime"
+      "source": "./agent/contributions/catalog"
     },
     "protocolRuntimeDescriptor": {
       "buildFunction": "buildAntigravityRuntimeDescriptorV1",
@@ -443,7 +443,7 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
   "runtimeContributions": {
     "agentCatalogEntry": {
       "importName": "AUGGIE_AGENT_RUNTIME_CONTRIBUTION",
-      "source": "./agent/contributions/runtime"
+      "source": "./agent/contributions/catalog"
     }
   },
   "sessionModeDescriptor": {
@@ -1055,7 +1055,7 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
   "runtimeContributions": {
     "agentCatalogEntry": {
       "importName": "CLAUDE_AGENT_RUNTIME_CONTRIBUTION",
-      "source": "./agent/contributions/runtime"
+      "source": "./agent/contributions/catalog"
     },
     "protocolMemoryDefaults": {
       "exportName": "CLAUDE_MEMORY_DEFAULTS",
@@ -1338,7 +1338,7 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
   "runtimeContributions": {
     "agentCatalogEntry": {
       "importName": "CODEX_AGENT_RUNTIME_CONTRIBUTION",
-      "source": "./agent/contributions/runtime"
+      "source": "./agent/contributions/catalog"
     },
     "protocolBuiltInBackendProfiles": {
       "exportName": "CODEX_BUILT_IN_BACKEND_PROFILES",
@@ -1968,7 +1968,7 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
   "runtimeContributions": {
     "agentCatalogEntry": {
       "importName": "CURSOR_AGENT_RUNTIME_CONTRIBUTION",
-      "source": "./agent/contributions/runtime"
+      "source": "./agent/contributions/catalog"
     }
   },
   "sessionModeDescriptor": {
@@ -2129,7 +2129,7 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
   "runtimeContributions": {
     "agentCatalogEntry": {
       "importName": "GEMINI_AGENT_RUNTIME_CONTRIBUTION",
-      "source": "./agent/contributions/runtime"
+      "source": "./agent/contributions/catalog"
     },
     "protocolBuiltInBackendProfiles": {
       "exportName": "GEMINI_BUILT_IN_BACKEND_PROFILES",
@@ -2272,7 +2272,7 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
   "runtimeContributions": {
     "agentCatalogEntry": {
       "importName": "GROK_AGENT_RUNTIME_CONTRIBUTION",
-      "source": "./agent/contributions/runtime"
+      "source": "./agent/contributions/catalog"
     }
   },
   "sessionModeDescriptor": {
@@ -2367,7 +2367,7 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
   "runtimeContributions": {
     "agentCatalogEntry": {
       "importName": "KILO_AGENT_RUNTIME_CONTRIBUTION",
-      "source": "./agent/contributions/runtime"
+      "source": "./agent/contributions/catalog"
     }
   },
   "sessionModeDescriptor": {
@@ -2493,7 +2493,7 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
   "runtimeContributions": {
     "agentCatalogEntry": {
       "importName": "KIMI_AGENT_RUNTIME_CONTRIBUTION",
-      "source": "./agent/contributions/runtime"
+      "source": "./agent/contributions/catalog"
     }
   },
   "sessionModeDescriptor": {
@@ -2595,7 +2595,7 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
   "runtimeContributions": {
     "agentCatalogEntry": {
       "importName": "KIRO_AGENT_RUNTIME_CONTRIBUTION",
-      "source": "./agent/contributions/runtime"
+      "source": "./agent/contributions/catalog"
     }
   },
   "sessionModeDescriptor": {
@@ -2770,7 +2770,7 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
   "runtimeContributions": {
     "agentCatalogEntry": {
       "importName": "OH_MY_PI_AGENT_RUNTIME_CONTRIBUTION",
-      "source": "./agent/contributions/runtime"
+      "source": "./agent/contributions/catalog"
     }
   },
   "sessionModeDescriptor": {
@@ -2946,7 +2946,7 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
   "runtimeContributions": {
     "agentCatalogEntry": {
       "importName": "OPENCODE_AGENT_RUNTIME_CONTRIBUTION",
-      "source": "./agent/contributions/runtime"
+      "source": "./agent/contributions/catalog"
     },
     "protocolRuntimeDescriptor": {
       "buildFunction": "buildOpenCodeAgentRuntimeDescriptorV1",
@@ -3297,7 +3297,7 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
   "runtimeContributions": {
     "agentCatalogEntry": {
       "importName": "PI_AGENT_RUNTIME_CONTRIBUTION",
-      "source": "./agent/contributions/runtime"
+      "source": "./agent/contributions/catalog"
     },
     "protocolRuntimeDescriptor": {
       "buildFunction": "buildPiAgentRuntimeDescriptorV1",

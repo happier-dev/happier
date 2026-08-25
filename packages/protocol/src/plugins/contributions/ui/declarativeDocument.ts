@@ -43,6 +43,9 @@ import {
   type PluginDeclarativeDocumentV1,
 } from './declarativeDocumentAuthoringV1.js';
 import {
+  preflightPluginDeclarativeDocumentV1,
+} from './declarativeDocumentPreflightV1.js';
+import {
   type PluginDeclarativeActionVariantV2,
   type PluginDeclarativeComposerApplyEffectV1,
   type PluginDeclarativeCollectionListProjectionV1,
@@ -62,6 +65,7 @@ import {
  * the browser-safe leaf. Normalization below remains the host-owned reader.
  */
 export {
+  MAX_PLUGIN_DECLARATIVE_DOCUMENT_RESOURCE_BYTES_V1,
   PLUGIN_DECLARATIVE_DOCUMENT_CONTENT_TYPE_V1,
   PluginDeclarativeDocumentContentTypeV1Schema,
   isPluginDeclarativeDocumentContentTypeV1,
@@ -69,9 +73,8 @@ export {
   type PluginDeclarativeDocumentV1,
   PluginDeclarativeDocumentV1Schema,
 } from './declarativeDocumentAuthoringV1.js';
-
-/** One document may render at most this many semantic nodes. */
-export const MAX_PLUGIN_DECLARATIVE_DOCUMENT_NODES_V1 = 512;
+export { MAX_PLUGIN_DECLARATIVE_DOCUMENT_NODES_V1 } from './declarativeDocumentPreflightV1.js';
+export { parsePluginDeclarativeDocumentResourceBytesV1 } from './declarativeDocumentPreflightV1.js';
 
 const MAX_PLUGIN_DECLARATIVE_DOCUMENT_GENERATION_LENGTH_V1 = 256;
 
@@ -80,6 +83,7 @@ export type PluginDeclarativeDocumentNormalizationErrorCodeV1 =
   | 'plugin_declarative_generation_invalid'
   | 'plugin_declarative_invalid_plain_data'
   | 'plugin_declarative_document_invalid'
+  | 'plugin_declarative_document_bytes_exceeded'
   | 'plugin_declarative_document_content_type_invalid'
   | 'plugin_declarative_action_inventory_invalid'
   | 'plugin_declarative_action_missing'
@@ -250,6 +254,7 @@ export type PluginDeclarativeNormalizedNodeV1 =
   }>)
   | (PluginDeclarativeNormalizedNodeBaseV1 & Readonly<{
     kind: 'collectionList';
+    label?: PluginLocalizedStringV2;
     source: Readonly<{
       collectionId: string;
       uiQueryId: string;
@@ -947,7 +952,11 @@ export function normalizePluginDeclarativeDocumentV1(
       input.resourceContentTypes.returnedContentType,
     );
   }
-  const plainDocument = cloneStrictPlainData(input.document);
+  const preflight = preflightPluginDeclarativeDocumentV1(input.document);
+  if (!preflight.ok) {
+    return fail(preflight.code, preflight.message);
+  }
+  const plainDocument = preflight.document;
   const parsedDocument = PluginDeclarativeDocumentV1Schema.safeParse(plainDocument);
   if (!parsedDocument.success) {
     return fail('plugin_declarative_document_invalid', 'Declarative document is invalid');
@@ -972,9 +981,6 @@ export function normalizePluginDeclarativeDocumentV1(
     path: string,
     isRoot: boolean,
   ): PluginDeclarativeNormalizedNodeV1 {
-    if (nodes.length >= MAX_PLUGIN_DECLARATIVE_DOCUMENT_NODES_V1) {
-      return fail('plugin_declarative_nodes_exceeded', 'Declarative document has too many nodes');
-    }
     const order = nodes.length;
     nodes.push(undefined as unknown as PluginDeclarativeNormalizedNodeV1);
     const normalizeChildren = (children: readonly PluginDeclarativeNodeV2[]) => Object.freeze(
@@ -1083,6 +1089,7 @@ export function normalizePluginDeclarativeDocumentV1(
           kind: source.kind,
           path,
           order,
+          ...(source.label ? { label: source.label } : {}),
           source: binding.source,
           query: binding.query,
           projection: binding.projection,

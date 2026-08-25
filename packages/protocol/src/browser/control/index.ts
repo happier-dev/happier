@@ -1,12 +1,10 @@
 export {
-  BrowserCloseSessionCommandV1Schema,
   BrowserCloseViewCommandV1Schema,
   BrowserCommandDispatchErrorV1Schema,
   BrowserCommandDispatchResultV1Schema,
   BrowserCommandErrorCodeV1Schema,
   BrowserCommandKindV1Schema,
   BrowserCommandV1Schema,
-  BrowserCreateSessionCommandV1Schema,
   BrowserFocusViewCommandV1Schema,
   BrowserGoBackCommandV1Schema,
   BrowserGoForwardCommandV1Schema,

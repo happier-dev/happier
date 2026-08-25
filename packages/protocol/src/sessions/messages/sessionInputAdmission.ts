@@ -4,6 +4,7 @@ import { sha256 } from '@noble/hashes/sha2';
 import { resolveEffectivePermissionMode } from '../../actions/permissionPrivilege.js';
 import { encodeBase64 } from '../../crypto/base64.js';
 import { readConversationTurnOriginV1FromMessageMeta } from '../../messages/structured/conversationTurnOriginV1.js';
+import { SubagentLaunchV1Schema } from '../../messages/structured/subagentLaunchV1.js';
 import { PluginContributionLocalIdSchema } from '../../plugins/contributionIdentity.js';
 import { PluginIdSchema } from '../../plugins/pluginId.js';
 import { AgentPermissionIntentV1Schema } from '../../runtime/permissionIntentV1.js';
@@ -243,7 +244,7 @@ export function requireSessionInputContent(
 }
 
 /** Public plugin-authored intent. Caller identity and admitted authority are host-owned. */
-export const PluginSessionInputRequestV1Schema = z.object({
+const PluginSessionUserTextInputRequestV1Schema = z.object({
   kind: z.literal('userText'),
   /**
    * Blank only when an attachment carries the input. `requireSessionInputContent`
@@ -255,6 +256,17 @@ export const PluginSessionInputRequestV1Schema = z.object({
   /** Declared attachment drafts admitted alongside the text. */
   attachments: PluginSessionInputAttachmentsV1Schema.optional(),
 }).strict().superRefine(requireSessionInputContent);
+
+const PluginSessionSubagentLaunchInputRequestV1Schema = z.object({
+  kind: z.literal('sessionSubagentLaunch'),
+  launch: SubagentLaunchV1Schema,
+  idempotencyKey: PluginSessionInputIdempotencyKeyV1Schema,
+}).strict();
+
+export const PluginSessionInputRequestV1Schema = z.union([
+  PluginSessionUserTextInputRequestV1Schema,
+  PluginSessionSubagentLaunchInputRequestV1Schema,
+]);
 export type PluginSessionInputRequestV1 = z.infer<typeof PluginSessionInputRequestV1Schema>;
 
 /** Canonical durable Pending identity for one host-attributed plugin Session input. */

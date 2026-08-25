@@ -2,8 +2,13 @@ import { describe, expect, it } from 'vitest';
 
 import {
   derivePluginUiTargetedSurfaceMountInstanceKeyV1,
+  PLUGIN_UI_TARGETED_CONTRIBUTION_PROTOCOLS_MAX_V1,
+  PLUGIN_UI_TARGETED_CONTRIBUTIONS_MAX_V1,
   PluginTargetedContributionSelectionV1Schema,
   PluginUiTargetedContributionsV1Schema,
+  selectPluginUiTargetedContributionOperationV1,
+  selectPluginUiTargetedContributionSurfaceV1,
+  selectPluginUiTargetedContributionV1,
 } from './targetedContributions.js';
 
 const admittedSnapshot = {
@@ -223,6 +228,29 @@ describe('targeted Host API contribution projection', () => {
         protocols: [],
       }],
     }).success).toBe(false);
+    const protocolsAtLimit = Array.from({ length: PLUGIN_UI_TARGETED_CONTRIBUTION_PROTOCOLS_MAX_V1 }, (_, index) => ({
+      ...admittedSnapshot.points[0].protocols[0],
+      protocol: { id: 'connection', version: index + 1 },
+      contributions: [],
+    }));
+    expect(PluginUiTargetedContributionsV1Schema.safeParse({
+      ...admittedSnapshot,
+      points: [{
+        ...admittedSnapshot.points[0],
+        protocols: protocolsAtLimit,
+      }],
+    }).success).toBe(true);
+    expect(PluginUiTargetedContributionsV1Schema.safeParse({
+      ...admittedSnapshot,
+      points: [{
+        ...admittedSnapshot.points[0],
+        protocols: [...protocolsAtLimit, {
+          ...admittedSnapshot.points[0].protocols[0],
+          protocol: { id: 'connection', version: PLUGIN_UI_TARGETED_CONTRIBUTION_PROTOCOLS_MAX_V1 + 1 },
+          contributions: [],
+        }],
+      }],
+    }).success).toBe(false);
     expect(PluginUiTargetedContributionsV1Schema.safeParse({
       ...admittedSnapshot,
       points: [{
@@ -271,7 +299,10 @@ describe('targeted Host API contribution projection', () => {
         ...admittedSnapshot.points[0],
         protocols: [{
           ...admittedSnapshot.points[0].protocols[0],
-          contributions: Array.from({ length: 257 }, () => admittedSnapshot.points[0].protocols[0].contributions[0]),
+          contributions: Array.from(
+            { length: PLUGIN_UI_TARGETED_CONTRIBUTIONS_MAX_V1 + 1 },
+            () => admittedSnapshot.points[0].protocols[0].contributions[0],
+          ),
         }],
       }],
     }).success).toBe(false);
@@ -295,7 +326,7 @@ describe('targeted Host API contribution projection', () => {
       ...admittedSnapshot,
       points: [{
         ...admittedSnapshot.points[0],
-        protocols: Array.from({ length: 5 }, (_, index) => ({
+        protocols: Array.from({ length: PLUGIN_UI_TARGETED_CONTRIBUTION_PROTOCOLS_MAX_V1 + 1 }, (_, index) => ({
           ...admittedSnapshot.points[0].protocols[0],
           protocol: { id: 'connection', version: index + 1 },
           contributions: [],
@@ -472,5 +503,73 @@ describe('targeted Host API contribution projection', () => {
         }],
       }],
     }).success).toBe(false);
+  });
+});
+
+describe('target-local contribution selection', () => {
+  const admitted = PluginUiTargetedContributionsV1Schema.parse(admittedSnapshot);
+  const contribution = admitted.points[0]!.protocols[0]!.contributions[0]!;
+  const selector = {
+    pointId: 'connection',
+    protocol: { id: 'connection', version: 1 },
+    contributor: { pluginId: 'acme.provider', contributionId: 'github-connection' },
+  } as const;
+
+  it('returns the exact admitted contribution, surface and operation objects', () => {
+    expect(selectPluginUiTargetedContributionV1(admitted, selector)).toBe(contribution);
+    expect(selectPluginUiTargetedContributionSurfaceV1(admitted, { ...selector, role: 'detail' }))
+      .toBe(contribution.surfaces[0]);
+    expect(selectPluginUiTargetedContributionOperationV1(
+      admitted,
+      { ...selector, role: 'connectionTest' },
+    )).toBe(contribution.operations[0]);
+  });
+
+  it('returns undefined for every non-matching identity component', () => {
+    const misses = [
+      { ...selector, pointId: 'other-point' },
+      { ...selector, protocol: { id: 'other-protocol', version: 1 } },
+      { ...selector, protocol: { id: 'connection', version: 2 } },
+      { ...selector, contributor: { ...selector.contributor, pluginId: 'acme.other' } },
+      { ...selector, contributor: { ...selector.contributor, contributionId: 'other' } },
+    ] as const;
+    for (const miss of misses) {
+      expect(selectPluginUiTargetedContributionV1(admitted, miss)).toBeUndefined();
+      expect(selectPluginUiTargetedContributionSurfaceV1(admitted, { ...miss, role: 'detail' }))
+        .toBeUndefined();
+    }
+    expect(selectPluginUiTargetedContributionSurfaceV1(admitted, { ...selector, role: 'summary' }))
+      .toBeUndefined();
+    expect(selectPluginUiTargetedContributionOperationV1(admitted, { ...selector, role: 'other' }))
+      .toBeUndefined();
+  });
+
+  it('fails closed for a stale nested generation and for duplicated candidates', () => {
+    const staleSurfaceGeneration = {
+      ...admitted,
+      points: [{
+        ...admitted.points[0]!,
+        protocols: [{
+          ...admitted.points[0]!.protocols[0]!,
+          contributions: [{
+            ...contribution,
+            surfaces: [{
+              ...contribution.surfaces[0]!,
+              contributor: {
+                ...contribution.surfaces[0]!.contributor,
+                immutableGenerationId: 'provider-generation-b',
+              },
+            }],
+          }],
+        }],
+      }],
+    };
+    expect(selectPluginUiTargetedContributionSurfaceV1(
+      staleSurfaceGeneration,
+      { ...selector, role: 'detail' },
+    )).toBeUndefined();
+
+    const duplicatedPoints = { ...admitted, points: [...admitted.points, ...admitted.points] };
+    expect(selectPluginUiTargetedContributionV1(duplicatedPoints, selector)).toBeUndefined();
   });
 });

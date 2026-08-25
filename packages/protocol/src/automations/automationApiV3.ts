@@ -1,4 +1,9 @@
 import { z } from 'zod';
+
+import {
+  AutomationReplyHandoffStateV1Schema,
+  type AutomationReplyHandoffStateV1,
+} from './automationReplyHandoffStateV1.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
 
 import { AutomationRunStateV3Schema } from './automationRunStateV3.js';
@@ -459,6 +464,49 @@ export const AutomationV3DefinitionListResponseSchema = z.object({
 }).strict();
 export type AutomationV3DefinitionListResponse = z.infer<typeof AutomationV3DefinitionListResponseSchema>;
 
+export const DEFAULT_AUTOMATION_V3_MAX_ACTIVE_RUNS_PER_MACHINE = 4;
+export const DEFAULT_AUTOMATION_V3_RUN_RETENTION = 'thirtyDays';
+
+/**
+ * Account-scoped Automation preferences are server-readable operational
+ * policy, not Account private-settings content: the assignment and retention
+ * owners must apply them while an Account is E2EE.
+ *
+ * Prisma `Int` is signed 32-bit on the portable PostgreSQL/MySQL schema, so
+ * this upper bound is a persistence contract rather than a product ceiling.
+ */
+export const AutomationV3MaxActiveRunsPerMachineSchema = z.number()
+  .int()
+  .min(1)
+  .max(2_147_483_647);
+export type AutomationV3MaxActiveRunsPerMachine = z.infer<
+  typeof AutomationV3MaxActiveRunsPerMachineSchema
+>;
+
+export const AutomationV3RunRetentionSchema = z.enum([
+  'thirtyDays',
+  'keepForever',
+]);
+export type AutomationV3RunRetention = z.infer<typeof AutomationV3RunRetentionSchema>;
+
+export const AutomationV3SettingsSchema = z.object({
+  maxActiveRunsPerMachine: AutomationV3MaxActiveRunsPerMachineSchema,
+  runRetention: AutomationV3RunRetentionSchema,
+}).strict();
+export type AutomationV3Settings = z.infer<typeof AutomationV3SettingsSchema>;
+
+/** A PUT replaces the complete bounded Automation preference record. */
+export const AutomationV3SettingsUpdateRequestSchema = AutomationV3SettingsSchema;
+export type AutomationV3SettingsUpdateRequest = z.infer<
+  typeof AutomationV3SettingsUpdateRequestSchema
+>;
+
+/** The worker consumes only the per-machine claim cap, never retention policy. */
+export const AutomationV3WorkerSettingsSchema = z.object({
+  maxActiveRunsPerMachine: AutomationV3MaxActiveRunsPerMachineSchema,
+}).strict();
+export type AutomationV3WorkerSettings = z.infer<typeof AutomationV3WorkerSettingsSchema>;
+
 /**
  * Worker wake projection. It deliberately carries no definition/private
  * envelope: the durable claim endpoint remains the work authority.
@@ -472,6 +520,7 @@ export type AutomationV3WorkerAssignment = z.infer<typeof AutomationV3WorkerAssi
 
 export const AutomationV3WorkerAssignmentsResponseSchema = z.object({
   assignments: z.array(AutomationV3WorkerAssignmentSchema),
+  settings: AutomationV3WorkerSettingsSchema,
 }).strict();
 export type AutomationV3WorkerAssignmentsResponse = z.infer<
   typeof AutomationV3WorkerAssignmentsResponseSchema
@@ -715,16 +764,8 @@ export type AutomationExecutionDispatchStateV3 = z.infer<
   typeof AutomationExecutionDispatchStateV3Schema
 >;
 
-export const AutomationReplyHandoffStateV3Schema = z.enum([
-  'none',
-  'awaitingResult',
-  'ready',
-  'handingOff',
-  'accepted',
-  'suppressed',
-  'blocked',
-]);
-export type AutomationReplyHandoffStateV3 = z.infer<typeof AutomationReplyHandoffStateV3Schema>;
+export const AutomationReplyHandoffStateV3Schema = AutomationReplyHandoffStateV1Schema;
+export type AutomationReplyHandoffStateV3 = AutomationReplyHandoffStateV1;
 
 /**
  * Bounded, non-secret Run list item. It intentionally omits equality tags,
@@ -750,6 +791,8 @@ export const AutomationV3RunListItemSchema = z.object({
   replyHandoffState: AutomationReplyHandoffStateV3Schema,
   replyHandoffAttempt: z.number().int().nonnegative().safe(),
   replyHandoffDueAt: TIMESTAMP_SCHEMA.nullable(),
+  /** Server time at which readable Run content was physically compacted. */
+  contentRemovedAt: TIMESTAMP_SCHEMA.nullable(),
   createdAt: TIMESTAMP_SCHEMA,
   updatedAt: TIMESTAMP_SCHEMA,
 }).strict();
@@ -830,6 +873,14 @@ export const AutomationV3RunListResponseSchema = z.object({
   nextCursor: z.string().nullable(),
 }).strict();
 export type AutomationV3RunListResponse = z.infer<typeof AutomationV3RunListResponseSchema>;
+
+/** Result of removing eligible terminal history for one Automation. */
+export const AutomationV3ClearRunHistoryResponseSchema = z.object({
+  clearedRuns: z.number().int().nonnegative().safe(),
+}).strict();
+export type AutomationV3ClearRunHistoryResponse = z.infer<
+  typeof AutomationV3ClearRunHistoryResponseSchema
+>;
 
 export const AutomationV3RunMutationResponseSchema = z.object({
   run: AutomationV3RunListItemSchema,

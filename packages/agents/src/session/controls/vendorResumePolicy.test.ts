@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildBackendTargetKey } from '@happier-dev/protocol';
+import { accountSettingsParse, buildBackendTargetKey } from '@happier-dev/protocol';
 
 import { AGENTS_CORE } from '../../manifest.js';
 
@@ -443,12 +443,16 @@ describe('vendorResumePolicy', () => {
       evaluateVendorResumeEligibility({
         agentId: 'codex',
         metadata: { codexSessionId: 'x1' },
-        accountSettings: {
+        // The fixture is the canonical PARSED projection, not a record keyed by
+        // the same builder the policy used to call. Restating that builder here
+        // made the assertion pass for any key vocabulary, including one the
+        // catalog no longer stores.
+        accountSettings: accountSettingsParse({
           codexBackendMode: 'acp',
           backendEnabledByTargetKey: {
             [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'codex' })]: false,
           },
-        },
+        }) as unknown as Record<string, unknown>,
       }),
     ).toEqual({ eligible: false, reasonCode: 'backend_disabled_by_account_settings' });
   });

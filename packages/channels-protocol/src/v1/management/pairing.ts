@@ -19,6 +19,7 @@ import { ConversationConnectionIdV1ProtocolSchema } from '../identity.js';
 import { ConversationEndpointDisplayLabelV1ProtocolSchema } from '../provider/resolution.js';
 import {
     ConversationAutomationTargetNotVerifiedResultV1ProtocolSchema,
+    ConversationBindingEndpointSelectionV1ProtocolSchema,
 } from './bindings.js';
 import {
     ConversationBindingTargetMutationV1ProtocolSchema,
@@ -134,10 +135,18 @@ const conversationPairingResourceV1 = defineProtocolObject({
     }),
 }, { policy: 'closed' });
 
-/** @internal Relative-only input for pairing creation. */
+/**
+ * @internal Relative-only input for pairing creation.
+ *
+ * Pairing proves an external human through a private message, but the
+ * conversation it binds is the one the owner selected. The two are separate
+ * facts, so the selected destination travels with the challenge instead of
+ * being inferred from wherever the proof happened to arrive.
+ */
 export const ConversationPairingCreateInputV1ProtocolSchema = defineProtocolObject({
     connectionId: ConversationConnectionIdV1ProtocolSchema,
     expectedConnectionRevision: positiveSafeInteger,
+    endpointSelection: ConversationBindingEndpointSelectionV1ProtocolSchema,
     target: ConversationBindingTargetMutationV1ProtocolSchema,
 }, { policy: 'closed' });
 

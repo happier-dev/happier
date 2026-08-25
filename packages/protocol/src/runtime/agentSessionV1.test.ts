@@ -145,11 +145,11 @@ describe('Agent session VB4 open inputs', () => {
     expect(accessorInvoked).toBe(false);
   });
 
-  it('reuses the strict-JSON aggregate bound for launch data without inventing another limit', () => {
-    const oversized = Object.fromEntries(
+  it('does not invent an aggregate bound for generic launch data', () => {
+    const formerAggregatePayload = Object.fromEntries(
       Array.from({ length: 5 }, (_, index) => [`ENV_${index}`, 'x'.repeat(220_000)]),
     );
-    expect(AgentLaunchEnvironmentV1Schema.safeParse({ values: oversized, unset: [] }).success).toBe(false);
+    expect(AgentLaunchEnvironmentV1Schema.safeParse({ values: formerAggregatePayload, unset: [] }).success).toBe(true);
   });
 });
 
@@ -200,12 +200,12 @@ describe('AgentRuntimeJsonValueV1Schema', () => {
     expect(accessorInvoked).toBe(false);
   });
 
-  it('enforces the owner aggregate byte bound without inventing field-local quotas', () => {
-    const maximumEncodedBytes = 1_024 * 1_024;
-    expect(AgentRuntimeJsonValueV1Schema.safeParse('x'.repeat(maximumEncodedBytes - 2)).success).toBe(true);
-    expect(AgentRuntimeJsonValueV1Schema.safeParse('x'.repeat(maximumEncodedBytes - 1)).success).toBe(false);
+  it('does not impose an aggregate byte cap without a real boundary', () => {
+    const formerAggregateLimit = 1_024 * 1_024;
+    expect(AgentRuntimeJsonValueV1Schema.safeParse('x'.repeat(formerAggregateLimit - 2)).success).toBe(true);
+    expect(AgentRuntimeJsonValueV1Schema.safeParse('x'.repeat(formerAggregateLimit - 1)).success).toBe(true);
     expect(AgentRuntimeJsonValueV1Schema.safeParse({ ['k'.repeat(257)]: true }).success).toBe(true);
-    expect(AgentRuntimeJsonValueV1Schema.safeParse(Array.from({ length: 6 }, () => 'x'.repeat(200_000))).success).toBe(false);
+    expect(AgentRuntimeJsonValueV1Schema.safeParse(Array.from({ length: 6 }, () => 'x'.repeat(200_000))).success).toBe(true);
   });
 
   it('does not invent depth or node quotas below the aggregate byte boundary', () => {
@@ -671,7 +671,7 @@ describe('AgentSessionSendRequestV1Schema', () => {
     }).success).toBe(false);
   });
 
-  it('rejects non-plain and over-bound structured JSON values', () => {
+  it('rejects non-plain structured JSON values without imposing the removed aggregate cap', () => {
     class ProviderPayload {
       value = 'native';
     }
@@ -687,6 +687,6 @@ describe('AgentSessionSendRequestV1Schema', () => {
     expect(AgentSessionSendRequestV1Schema.safeParse({
       ...request,
       input: { text: 'hello', structuredInput: 'x'.repeat(1_024 * 1_024) },
-    }).success).toBe(false);
+    }).success).toBe(true);
   });
 });

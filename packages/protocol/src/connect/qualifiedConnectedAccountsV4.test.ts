@@ -13,6 +13,7 @@ import {
   QualifiedConnectedAccountCredentialReadV4Schema,
   QualifiedConnectedAccountGroupCreateV4Schema,
   QualifiedConnectedAccountGroupActiveAccountV4Schema,
+  QualifiedConnectedAccountGroupV4Schema,
   QualifiedConnectedAccountGroupPatchV4Schema,
   QualifiedConnectedAccountGroupRuntimeStatePatchV4Schema,
   QualifiedConnectedAccountGroupListResponseV4Schema,
@@ -21,11 +22,14 @@ import {
   QualifiedConnectedAccountListResponseV4Schema,
   QualifiedConnectedAccountProfileV4Schema,
   QualifiedConnectedAccountQuotaResponseV4Schema,
+  QualifiedProviderAccountUsageRecordResponseV4Schema,
   QualifiedProviderAccountUsageWriteV4Schema,
   QualifiedConnectedAccountRefSchema,
   QualifiedConnectedServiceUsageSourceV4Schema,
+  isQualifiedConnectedAccountProfileActiveV4,
   openQualifiedConnectedAccountQuotaResponseV4,
   projectProviderAccountUsageSnapshotToQualifiedConnectedAccountQuotaSnapshotV4,
+  resolveQualifiedConnectedAccountGroupActiveAccountV4,
 } from './qualifiedConnectedAccountsV4.js';
 import { ConnectedServicesCapabilitiesSchema } from '../features/payload/capabilities/connectedServicesCapabilities.js';
 import {
@@ -41,6 +45,55 @@ const service = {
 const credentialRevision = 'csr_abcdefghijklmnopqrstuvwxyz';
 
 describe('qualified connected-account V4 wire contract', () => {
+  it('uses one revision-fenced active-account predicate for direct and group targets', () => {
+    const active = QualifiedConnectedAccountProfileV4Schema.parse({
+      ref: { service, accountId: 'team/primary' },
+      status: 'connected',
+      authenticationModeId: 'oauth',
+      revisionSemantics: 'revisioned',
+      credentialRevision,
+      configurationRevision: null,
+      configurationReady: true,
+      displayName: 'Primary',
+      scopes: [],
+    });
+    const legacyUnfenced = QualifiedConnectedAccountProfileV4Schema.parse({
+      ...active,
+      revisionSemantics: 'legacy_unfenced',
+      credentialRevision: null,
+    });
+    const group = QualifiedConnectedAccountGroupV4Schema.parse({
+      v: 1,
+      ref: { service, groupId: 'team' },
+      incarnation: 'qualified-group-row-team',
+      displayName: 'Team',
+      policy: {},
+      activeConnectedAccountId: active.ref.accountId,
+      generation: 1,
+      runtimeStateRevision: 1,
+      state: {},
+      createdAt: 1,
+      updatedAt: 1,
+      members: [{
+        v: 1,
+        connectedAccountId: active.ref.accountId,
+        priority: 1,
+        enabled: true,
+        state: {},
+        createdAt: 1,
+        updatedAt: 1,
+      }],
+    });
+
+    expect(isQualifiedConnectedAccountProfileActiveV4(active, 100)).toBe(true);
+    expect(isQualifiedConnectedAccountProfileActiveV4(legacyUnfenced, 100)).toBe(false);
+    expect(resolveQualifiedConnectedAccountGroupActiveAccountV4({
+      group,
+      accounts: [legacyUnfenced],
+      now: 100,
+    })).toBeNull();
+  });
+
   it('keeps qualified identity structured and strict even when ids contain path separators', () => {
     expect(QualifiedConnectedAccountRefSchema.parse({
       service,
@@ -483,6 +536,22 @@ describe('qualified connected-account V4 wire contract', () => {
     }).success).toBe(false);
   });
 
+  it('carries every source a record is linked through instead of rejecting the record', () => {
+    // Sources are derived from the account binding plus one per group membership, so
+    // an Account at the group capacity reaches 501 sources for a single record. The
+    // record GET/DELETE/refresh owners all read this array; a bound here would make
+    // the stored record unreadable and undeletable through its own routes.
+    const source = {
+      ref: { service, accountId: 'team/primary' },
+      bindingKind: 'account',
+    } as const;
+    expect(QualifiedProviderAccountUsageRecordResponseV4Schema.safeParse({
+      content: { t: 'plain', v: { any: 'payload' } },
+      metadata: { fetchedAt: 1, staleAfterMs: 2, status: 'ok' },
+      sources: Array.from({ length: 501 }, () => source),
+    }).success).toBe(true);
+  });
+
   it('reuses the canonical provider-usage payload and record-id write contract', () => {
     const recordKey = {
       providerId: 'acme-provider',
@@ -849,10 +918,12 @@ describe('qualified connected-account V4 wire contract', () => {
         scopes: ['x'.repeat(257)],
       }],
     }).success).toBe(false);
+    // Same rule as the group list: what the Account already holds stays readable,
+    // including rows preserved past the capacity a current writer would admit.
     expect(QualifiedConnectedAccountListResponseV4Schema.safeParse({
       service,
       accounts: Array.from({ length: 501 }, () => account),
-    }).success).toBe(false);
+    }).success).toBe(true);
 
     const group = {
       v: 1,
@@ -887,9 +958,13 @@ describe('qualified connected-account V4 wire contract', () => {
     expect(QualifiedConnectedAccountGroupResponseV4Schema.safeParse({
       group: { ...group, serviceId: 'openai' },
     }).success).toBe(false);
+    // An Account can retain more groups than a current writer is allowed to add
+    // (migrated rows, or rows a predecessor wrote without this capacity). The list
+    // response must still carry them: rejecting the server's own authoritative rows
+    // would leave the Account unable to read or delete its way back under capacity.
     expect(QualifiedConnectedAccountGroupListResponseV4Schema.safeParse({
       groups: Array.from({ length: 501 }, () => group),
-    }).success).toBe(false);
+    }).success).toBe(true);
   });
 
   it('freezes the atomic route family and advertises only protocol version 4', () => {

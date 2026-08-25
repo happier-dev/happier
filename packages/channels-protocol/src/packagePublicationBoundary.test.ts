@@ -21,9 +21,14 @@ describe('Channels protocol publication boundary', () => {
         )) as Readonly<{
             private?: boolean;
             exports?: Record<string, unknown>;
+            happier?: { publicSdkRelease?: { posture?: string } };
         }>;
 
         expect(packageJson.private).not.toBe(true);
+        // The canonical npm release owner packs this package through the public
+        // pack sandbox, whose publication transform refuses a public candidate
+        // without Developer Preview release metadata.
+        expect(packageJson.happier?.publicSdkRelease?.posture).toBe('developer_preview');
         expect(Object.keys(packageJson.exports ?? {}).sort()).toEqual([
             '.',
             './testing/v1',
@@ -51,5 +56,21 @@ describe('Channels protocol publication boundary', () => {
             { path: 'dist/testing/v1/index.js', exists: true },
             { path: 'dist/testing/v1/index.d.ts', exists: true },
         ]);
+    });
+
+    it('prepares its published dist itself, because the pack sandbox never builds a candidate', async () => {
+        const packageJson = JSON.parse(await readFile(
+            new URL('package.json', packageDirectory),
+            'utf8',
+        )) as Readonly<{ scripts?: Record<string, string> }>;
+
+        // Both candidate producers - the canonical npm release owner and the
+        // natural packed-artifact builder - pack this package through the pack
+        // sandbox, which copies source and runs `npm pack` without ever
+        // building. `dist` is a git-ignored build output, so on a clean
+        // checkout the candidate ships as package.json plus README unless this
+        // package prepares itself through its own pack lifecycle.
+        expect(typeof packageJson.scripts?.build).toBe('string');
+        expect(packageJson.scripts?.prepack).toBe(packageJson.scripts?.build);
     });
 });

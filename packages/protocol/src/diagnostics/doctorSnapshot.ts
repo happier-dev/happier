@@ -55,7 +55,19 @@ export const DoctorSnapshotDaemonStatusSchema = z.object({
     comparableKey: NonEmptyString.nullable(),
   }),
   daemon: z.object({
+    /** The daemon process exists. Answers "is something there", never "does it work". */
     running: z.boolean(),
+    /**
+     * Whether the daemon can actually serve the machine RPCs the product drives it with,
+     * as the daemon itself last reported it — not as an observer inferred it from a PID.
+     *
+     * `true` the daemon published a completed machine-control RPC registration;
+     * `false` it published that the registration is outstanding (a live process that
+     *   cannot serve a single machine RPC — the 2026-08-24 pid-26058 outage state);
+     * `null`/absent the daemon published no such fact, so health is **unknown**. Unknown is
+     *   never treated as unhealthy, and nothing may act destructively on either value.
+     */
+    healthy: z.boolean().nullable().optional(),
     pid: z.number().int().positive().nullable(),
     httpPort: z.number().int().positive().nullable(),
     startedWithCliVersion: NonEmptyString.optional(),

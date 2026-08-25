@@ -145,19 +145,35 @@ describe('Channels V1 normalized ingress', () => {
         }).success).toBe(false);
     });
 
-    it('accepts only normalized ingress at the provider-to-core boundary', () => {
-        const input = {
-            connectionId: 'connection-1',
+    it('accepts one observed ingress entry with its provider-owned Automation Event candidate at the provider-to-core boundary', () => {
+        const entry = {
             observation: {
                 kind: 'fullText',
                 observation,
             },
+            eventCandidate: {
+                eventRef: {
+                    pluginId: 'happier.channel.telegram',
+                    localId: 'automation/chat-message-v1',
+                },
+                sourceInstanceId: 'telegram:chat:123:100',
+                sourceContractVersion: 1,
+                payload: {
+                    chatId: '100',
+                    messageId: 'message-42',
+                    text: observation.message.text,
+                },
+            },
+        } as const;
+        const input = {
+            connectionId: 'connection-1',
+            entry,
         } as const;
         expect(ConversationProviderObservationIngestInputV1Schema.parse(input)).toEqual(input);
         expect(ConversationProviderObservationIngestInputV1Schema.jsonSchema).toMatchObject({
             type: 'object',
             additionalProperties: false,
-            required: ['connectionId', 'observation'],
+            required: ['connectionId', 'entry'],
         });
 
         for (const invalid of [
@@ -168,6 +184,16 @@ describe('Channels V1 normalized ingress', () => {
             {
                 ...input,
                 checkpointAfter: { cursor: 'provider-owned-checkpoint' },
+            },
+            {
+                ...input,
+                entry: {
+                    ...entry,
+                    eventCandidate: {
+                        ...entry.eventCandidate,
+                        sourceContractVersion: 0,
+                    },
+                },
             },
         ]) {
             expect(ConversationProviderObservationIngestInputV1Schema.safeParse(invalid).success)

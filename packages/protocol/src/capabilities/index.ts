@@ -47,3 +47,10 @@ export type CapabilitiesInvokeRequest = {
 export type CapabilitiesInvokeResponse =
   | { ok: true; result: unknown }
   | { ok: false; error: { message: string; code?: string }; logPath?: string };
+
+export {
+  CodexPassiveRealtimeSetupResultV1Schema,
+  CodexPassiveRealtimeSetupStatusV1Schema,
+  type CodexPassiveRealtimeSetupResultV1,
+  type CodexPassiveRealtimeSetupStatusV1,
+} from './codexPassiveRealtimeSetup.js';

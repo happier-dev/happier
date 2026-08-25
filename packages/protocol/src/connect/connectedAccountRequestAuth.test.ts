@@ -1,6 +1,16 @@
+import { readFileSync } from 'node:fs';
+
 import { describe, expect, it } from 'vitest';
+import { z } from 'zod';
 
 import {
+  CONNECTED_ACCOUNT_REQUEST_AUTH_FAILURE_PATH,
+  CONNECTED_ACCOUNT_REQUEST_AUTH_LOOKUP_PATH,
+  CONNECTED_ACCOUNT_REQUEST_AUTH_QUOTA_FAILURE_PATH,
+  ConnectedAccountRequestAuthErrorResponseV1Schema,
+  ConnectedAccountRequestAuthFailureSuccessResponseV1Schema,
+  ConnectedAccountRequestAuthLookupSuccessResponseV1Schema,
+  getConnectedAccountRequestAuthErrorHttpStatusV1,
   ConnectedAccountAuthFailureRequestV1Schema,
   ConnectedAccountRequestAuthMaterializationV1Schema,
   ConnectedAccountQuotaFailureRequestV1Schema,
@@ -9,6 +19,23 @@ import {
   OAuthBearerLeaseV1Schema,
   RequestAuthFailureOutcomeV1Schema,
 } from './connectedAccountRequestAuth.js';
+
+const requestAuthHttpVectors = z.object({
+  v: z.literal(1),
+  paths: z.object({
+    lookup: z.string(),
+    authFailure: z.string(),
+    quotaFailure: z.string(),
+  }).strict(),
+  responses: z.array(z.object({
+    name: z.string(),
+    status: z.number().int(),
+    body: z.unknown(),
+  }).strict()),
+}).strict().parse(JSON.parse(readFileSync(
+  new URL('./connectedAccountRequestAuthHttpV1.vectors.json', import.meta.url),
+  'utf8',
+)));
 
 const service = {
   pluginId: 'happier.connected-account.test',
@@ -31,6 +58,39 @@ const credentialContext = {
 } as const;
 
 describe('private connected-account request-auth wire', () => {
+  it('owns strict HTTP envelopes, status mapping, and Go conformance vectors', () => {
+    expect(requestAuthHttpVectors.paths).toEqual({
+      lookup: CONNECTED_ACCOUNT_REQUEST_AUTH_LOOKUP_PATH,
+      authFailure: CONNECTED_ACCOUNT_REQUEST_AUTH_FAILURE_PATH,
+      quotaFailure: CONNECTED_ACCOUNT_REQUEST_AUTH_QUOTA_FAILURE_PATH,
+    });
+
+    for (const vector of requestAuthHttpVectors.responses) {
+      if (vector.status === 200) {
+        expect(ConnectedAccountRequestAuthFailureSuccessResponseV1Schema.parse(vector.body))
+          .toEqual(vector.body);
+        continue;
+      }
+      const error = ConnectedAccountRequestAuthErrorResponseV1Schema.parse(vector.body);
+      expect(getConnectedAccountRequestAuthErrorHttpStatusV1(error.error.code))
+        .toBe(vector.status);
+    }
+
+    expect(ConnectedAccountRequestAuthErrorResponseV1Schema.safeParse({
+      ok: false,
+      error: { code: 'fixture_error' },
+    }).success).toBe(false);
+    expect(ConnectedAccountRequestAuthErrorResponseV1Schema.safeParse({
+      ok: false,
+      error: { code: 'request_auth_not_active', message: 'nope' },
+    }).success).toBe(false);
+    expect(ConnectedAccountRequestAuthFailureSuccessResponseV1Schema.safeParse({
+      ok: true,
+      value: { status: 'current_unchanged' },
+      unexpected: true,
+    }).success).toBe(false);
+  });
+
   it('accepts only an exact canonical HTTPS origin and lowercase unique requested headers', () => {
     expect(ConnectedAccountRequestAuthMaterializationV1Schema.parse({
       kind: 'httpHeaders',
@@ -96,21 +156,23 @@ describe('private connected-account request-auth wire', () => {
   });
 
   it('accepts a minimal bearer lease and rejects competing Authorization header authority', () => {
-    expect(OAuthBearerLeaseV1Schema.parse({
+    const lease = {
       accessToken: 'secret',
       requiredHeaders: {
         'chatgpt-account-id': 'acct_123',
       },
       expiresAt: 10_000,
       credentialContext,
-    })).toEqual({
-      accessToken: 'secret',
-      requiredHeaders: {
-        'chatgpt-account-id': 'acct_123',
-      },
-      expiresAt: 10_000,
-      credentialContext,
-    });
+    } as const;
+    expect(OAuthBearerLeaseV1Schema.parse(lease)).toEqual(lease);
+    expect(ConnectedAccountRequestAuthLookupSuccessResponseV1Schema.parse({
+      ok: true,
+      value: lease,
+    })).toEqual({ ok: true, value: lease });
+    expect(ConnectedAccountRequestAuthLookupSuccessResponseV1Schema.safeParse({
+      ok: true,
+      value: { ...lease, unexpected: true },
+    }).success).toBe(false);
 
     expect(OAuthBearerLeaseV1Schema.safeParse({
       accessToken: 'secret',

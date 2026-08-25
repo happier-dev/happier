@@ -237,6 +237,51 @@ describe('RecipientContractV1', () => {
     expect(nextPage.headers).toEqual({ accept: 'application/json', 'x-request-id': 'request-2' });
   });
 
+  it('materializes a bounded bodyless DELETE recipient operation', () => {
+    const contract = {
+      ...input,
+      operations: [{
+        ...input.operations[0],
+        id: 'delete-tool',
+        purpose: 'voice.provision.tool.delete',
+        effect: 'mutation' as const,
+        request: {
+          ...input.operations[0].request,
+          pathTemplate: '/v1/convai/tools/{toolId}',
+          queryTemplate: [{ name: 'force', value: 'false' }],
+          bodyTemplate: { kind: 'none' as const },
+          method: 'DELETE' as const,
+          maxBodyBytes: 0,
+          contentTypes: [],
+        },
+        parameters: {
+          schema: {
+            type: 'object' as const,
+            properties: { toolId: { type: 'string' as const, minLength: 1, maxLength: 256 } },
+            required: ['toolId'],
+            additionalProperties: false,
+          },
+          mapping: [{
+            parameter: 'toolId',
+            target: { kind: 'path' as const, placeholder: 'toolId', encoding: 'uri_component' as const },
+          }],
+        },
+      }],
+    };
+
+    expect(materializeRecipientOperationRequestV1({
+      contract,
+      operationId: 'delete-tool',
+      parameters: { toolId: 'tool/created' },
+    })).toMatchObject({
+      method: 'DELETE',
+      url: 'https://api.example.com/v1/convai/tools/tool%2Fcreated?force=false',
+      headers: { accept: 'application/json' },
+      body: null,
+      redirect: 'error',
+    });
+  });
+
   it('fails closed when an unresolved path mapping is optional in the parameter schema', () => {
     const contract = {
       ...input,

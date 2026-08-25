@@ -12,7 +12,6 @@ import {
 } from './permissionIntentV1.js';
 import { SESSION_RUNTIME_ACTIVITY_ACTIVE_COUNT_MAX } from '../sessions/runtime/activity/sessionRuntimeActivity.js';
 import { StrictJsonValueSchema, type JsonValue as StrictJsonValue } from '../json/strictJsonValue.js';
-import { measureSerializedValidatedStrictPluginJsonUtf8Bytes } from '../plugins/contributions/strictJsonValue.js';
 import { AGENT_SESSION_RUNTIME_EVENT_KINDS_V1 } from './eventKindsV1.js';
 import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
 
@@ -51,38 +50,24 @@ const HostIdSchema = exactString(HOST_ID_MAX);
 const ProviderIdSchema = exactString(PROVIDER_ID_MAX);
 const InputIdSchema = opaqueNonBlankString(HOST_ID_MAX);
 const SafeIntegerSchema = z.number().int().nonnegative().max(LIMITS.safeIntegerMax);
-const AGENT_RUNTIME_JSON_VALUE_MAX_BYTES = LIMITS.p0MeasuredCandidates.jsonValueMaxJsonBytes;
-
 /**
- * The strict runtime JSON value at an **admission** boundary: launch data, a
- * configuration snapshot, a send request's structured input, a contributed
- * Action's input/result. Each of those admits a value the caller has not yet
- * committed anywhere, so the shared aggregate ceiling is reused here rather
- * than reinvented per field, and an oversized value is refused before it is
- * accepted.
+ * The strict runtime JSON value used at admission boundaries. Aggregate byte
+ * limits belong to a real transport, persistence, or external contract owner;
+ * this shared vocabulary enforces JSON safety without inventing one.
  */
-export const AgentRuntimeJsonValueV1Schema: z.ZodType<StrictJsonValue, unknown> = StrictJsonValueSchema.refine(
-  (value) => (
-    measureSerializedValidatedStrictPluginJsonUtf8Bytes(
-      value,
-      'Agent Runtime JSON',
-      AGENT_RUNTIME_JSON_VALUE_MAX_BYTES,
-    ) <= AGENT_RUNTIME_JSON_VALUE_MAX_BYTES
-  ),
-  'Agent Runtime JSON exceeds the aggregate byte bound',
-);
+export const AgentRuntimeJsonValueV1Schema: z.ZodType<StrictJsonValue, unknown> = StrictJsonValueSchema;
 
 /**
- * The same strict JSON value on the canonical runtime **event** union, where
+ * The strict JSON value on the canonical runtime **event** union, where
  * the boundary is the event's own `eventMaxJsonBytes` ceiling and nothing else.
  *
- * The distinction is not cosmetic. `AgentSessionRuntimeEventV1Schema` is parsed
+ * The distinction remains important. `AgentSessionRuntimeEventV1Schema` is parsed
  * on read — Host Event dispatch (`plugins/events/hostV1.ts`), external-session
  * transcript replay (`apps/cli/src/session/external/terminalFollowProjection.ts`)
  * — so a tool payload that was admissible when the event was written has to
- * stay readable. Applying the admission ceiling here would retroactively refuse
- * every already-written payload between it and the event bound; a ~1.5 MB tool
- * result is an ordinary size for a file read or a search. The event bound is
+ * stay readable. Applying a smaller unrelated ceiling here would retroactively
+ * refuse already-written payloads; a ~1.5 MB tool result is an ordinary size
+ * for a file read or a search. The event bound is
  * the ceiling that was in force when the event was produced, so it is the only
  * one a reader may enforce.
  */

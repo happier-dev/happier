@@ -172,13 +172,13 @@ generation-A handle fails as unavailable instead of invoking replacement
 generation B.
 
 Start from the ordinary `happier plugins create` scaffold; it already owns the
-package entrypoint, build, test, and pack loop. Add the role Actions and this
+package entrypoint, build, test, and managed source-development loop. Add the role Actions and this
 one `contributesTo` value to that generated `definePlugin(...)` source. There
 is intentionally no Channels-specific scaffold, provider base class, or
 registration callback. When the SDK and this protocol are available from an
-approved registry, use the released package ranges named there. A workspace
-link or a locally packed archive can exercise source mechanics, but it cannot
-prove that an outside author can install the public packages.
+approved registry, use the released package ranges named there. Current source projections exercise feature mechanics. Outside-author
+publication availability is established only by the authorized release workflow
+and is not a feature-completion gate.
 
 `ConversationProviderSetupResultV1Schema` is the Channels result validator.
 The `setup` Action's input is contributor-defined; all other role inputs and
@@ -430,7 +430,7 @@ input/result schema, surface, and danger level against the public role
 declarations. It is a source-level conformance check, not host admission: it
 does not install or activate a plugin, resolve target availability, establish
 generation currentness, or perform provider I/O. Those lifecycle checks remain
-with the host and packed external-provider gate.
+with the host and managed source-development external-provider gate.
 
 For a source package, run the repository-managed checks from the workspace
 root:
@@ -441,11 +441,17 @@ yarn workspace @happier-dev/channels-protocol typecheck
 yarn workspace @happier-dev/channels-protocol build
 ```
 
-For a provider plugin, run its normal managed author checks and the public
-fixture/import boundary. Workspace links and a local tarball do not establish
-official publication availability; that claim requires a clean external
-workspace resolving the published SDK and Channels protocol from the approved
-origin, then building, packing, installing, admitting, invoking, updating, and
-uninstalling the provider. If either published package is unavailable from that
-origin, report that external-install proof as blocked rather than substituting
-a workspace link, locally built package, candidate tarball, or registry stand-in.
+For a provider plugin, run its normal managed source-author checks, the public
+fixture/import boundary, and the loaded development-stack lifecycle. Feature QA
+does not create or install local release archives. Official publication
+availability is established only by the release workflow after publication; it
+is not a feature-completion gate.
+
+## Release posture
+
+This package is part of the Happier Developer Preview. Its V1 protocol epoch is
+stable within `V1`, but the package line itself is pre-1.0 and is published only
+through the repository's canonical npm release owner
+(`node scripts/pipeline/run.mjs npm-release --publish-channels-protocol true`).
+Publishing it from a checkout or any other path is not an approved origin.
+Release automation alone establishes publication availability.

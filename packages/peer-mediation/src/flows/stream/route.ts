@@ -96,7 +96,6 @@ export function resolveLiveStreamRouteDecision(input: ResolveLiveStreamRouteDeci
                 accountMachinePreference: input.accountMachinePreference,
                 accountDefaultPreference: input.accountDefaultPreference,
                 productDefaultPreference: input.productDefaultPreference,
-                topologyAvailable: true,
                 grant: input.directGrant,
             });
             if (directPolicy.allowed) {

@@ -169,6 +169,63 @@ describe('DoctorSnapshotSchema', () => {
     expect(result.success).toBe(true);
   });
 
+  // `healthy` answers "does this daemon work", separately from `running`, which only answers
+  // "does a process exist". The daemon snapshot is validated through this schema before it is
+  // written, so an undeclared field would be stripped in silence and `happier doctor` would go
+  // on reporting a PID probe as health.
+  it('carries the daemon service-health verdict and its explicit unknown', () => {
+    const parseDaemonHealth = (healthy: boolean | null | undefined) => {
+      const result = DoctorSnapshotSchema.safeParse({
+        capturedAt: '2026-02-23T00:00:00.000Z',
+        server: {
+          activeServerId: 'cloud',
+          serverUrl: 'https://api.happier.dev',
+          publicServerUrl: 'https://api.happier.dev',
+          webappUrl: 'https://app.happier.dev',
+        },
+        accountId: null,
+        settings: { activeServerId: null, servers: [], knownAccountIds: [] },
+        daemonStatus: {
+          server: {
+            activeServerId: 'cloud',
+            serverUrl: 'https://api.happier.dev',
+            localServerUrl: null,
+            publicServerUrl: 'https://api.happier.dev',
+            webappUrl: 'https://app.happier.dev',
+            comparableKey: 'https://api.happier.dev',
+          },
+          daemon: {
+            running: true,
+            ...(healthy === undefined ? {} : { healthy }),
+            pid: 4321,
+            httpPort: null,
+          },
+          service: { installed: true, running: true },
+          auth: {
+            authenticated: true,
+            machineRegistered: true,
+            machineId: 'machine_1',
+            needsAuth: false,
+            accountId: null,
+          },
+        },
+      });
+      expect(result.success).toBe(true);
+      if (!result.success) throw new Error('expected a valid snapshot');
+      return result.data.daemonStatus?.daemon;
+    };
+
+    // A live process whose machine-control registration never completed.
+    expect(parseDaemonHealth(false)).toMatchObject({ running: true, healthy: false });
+    expect(parseDaemonHealth(true)).toMatchObject({ running: true, healthy: true });
+    // Explicitly inconclusive, and distinct from unhealthy.
+    expect(parseDaemonHealth(null)).toMatchObject({ running: true, healthy: null });
+    // A snapshot from a CLI that predates the field still parses, and reads as unknown.
+    const older = parseDaemonHealth(undefined);
+    expect(older).toMatchObject({ running: true });
+    expect(older?.healthy ?? null).toBeNull();
+  });
+
   it('preserves optional repair and local runtime diagnostic sections', () => {
     const result = DoctorSnapshotSchema.safeParse({
       capturedAt: '2026-02-23T00:00:00.000Z',

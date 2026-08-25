@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  SessionPendingMessageComposerAdmissionAcceptedRequestV1Schema,
+  SessionPendingMessageComposerAdmissionPrepareRequestV1Schema,
   readAttachmentEnvelopeLocalImagePaths,
   sanitizeSessionUserMessageSendMeta,
   SessionUserMessageSendRequestSchema,
@@ -361,5 +363,47 @@ describe('SessionUserMessageSendRequestSchema', () => {
     expect(envelope?.vendorPluginMentions).toEqual([
       { vendorPluginRef: 'plugin://gmail@openai-curated', label: 'Gmail' },
     ]);
+  });
+});
+
+describe('SessionPendingMessageComposerAdmissionPrepareRequestV1Schema', () => {
+  it('carries one stable Message identity and the complete draft attachment input', () => {
+    const parsed = SessionPendingMessageComposerAdmissionPrepareRequestV1Schema.parse({
+      localId: 'successor-1',
+      text: '',
+      structuredInput: {
+        v: 1,
+        composerAttachments: [{
+          ...pluginAttachment,
+          content: { kind: 'stagedMedia', handle: stagedMediaHandle },
+        }],
+      },
+    });
+
+    expect(parsed.localId).toBe('successor-1');
+    expect(parsed.structuredInput.composerAttachments?.[0]?.content?.kind).toBe('stagedMedia');
+  });
+});
+
+describe('SessionPendingMessageComposerAdmissionAcceptedRequestV1Schema', () => {
+  it('accepts only the canonical accepted fact, never UI-asserted draft and admitted attachment lists', () => {
+    const accepted = {
+      sessionId: 'session-1',
+      localId: 'pending-successor-1',
+      structuredInput: {
+        v: 1,
+        composerAttachments: [pluginAttachment],
+      },
+      stagedMediaHandles: [stagedMediaHandle],
+    };
+    expect(SessionPendingMessageComposerAdmissionAcceptedRequestV1Schema.safeParse(accepted).success).toBe(true);
+    expect(SessionPendingMessageComposerAdmissionAcceptedRequestV1Schema.safeParse({
+      localId: accepted.localId,
+      draftAttachments: [{
+        ...pluginAttachment,
+        content: { kind: 'stagedMedia', handle: stagedMediaHandle },
+      }],
+      admittedAttachments: accepted.structuredInput.composerAttachments,
+    }).success).toBe(false);
   });
 });

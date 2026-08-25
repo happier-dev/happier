@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import * as AutomationApiV3 from './automationApiV3.js';
+import { AutomationRunReplyHandoffStateV1Schema } from './automationEventV1.js';
 
 import {
   AutomationApiV2Schema,
@@ -7,9 +8,12 @@ import {
   AutomationRunExecutionInputV1Schema,
   AutomationV3DefinitionDetailSchema,
   AutomationV3DefinitionListItemSchema,
+  AutomationV3ClearRunHistoryResponseSchema,
   AutomationV3ManualDefinitionCreateRequestSchema,
   AutomationV3PluginEventDefinitionCreateRequestSchema,
   AutomationV3PluginEventDefinitionPatchRequestSchema,
+  AutomationV3SettingsSchema,
+  AutomationV3SettingsUpdateRequestSchema,
   AutomationV3WorkerClaimResponseSchema,
   AutomationV3WorkerAssignmentsResponseSchema,
   AutomationV3WorkerExecutionDispatchSettlementRequestSchema,
@@ -21,6 +25,8 @@ import {
   AutomationV3RunDetailSchema,
   AutomationV3ScheduleDefinitionCreateRequestSchema,
   AutomationV3RunListItemSchema,
+  DEFAULT_AUTOMATION_V3_MAX_ACTIVE_RUNS_PER_MACHINE,
+  DEFAULT_AUTOMATION_V3_RUN_RETENTION,
 } from './automationApiV3.js';
 
 const timestamp = 1_786_257_600_000;
@@ -165,11 +171,16 @@ const v3EventRun = {
   replyHandoffState: 'none',
   replyHandoffAttempt: 0,
   replyHandoffDueAt: null,
+  contentRemovedAt: null,
   createdAt: timestamp,
   updatedAt: timestamp,
 };
 
 describe('Automation versioned API schemas', () => {
+  it('keeps the V1 and V3 reply-handoff exports on one Protocol leaf', () => {
+    expect(AutomationApiV3.AutomationReplyHandoffStateV3Schema)
+      .toBe(AutomationRunReplyHandoffStateV1Schema);
+  });
   it('exposes only explicit V3 definition list and detail contracts', () => {
     expect(AutomationApiV3).not.toHaveProperty('AutomationV3DefinitionSchema');
   });
@@ -486,6 +497,15 @@ describe('Automation versioned API schemas', () => {
       },
     });
     expect(AutomationV3RunListItemSchema.parse(v3EventRun)).toEqual(v3EventRun);
+    expect(AutomationV3RunListItemSchema.parse({
+      ...v3EventRun,
+      contentRemovedAt: timestamp,
+    })).toEqual({
+      ...v3EventRun,
+      contentRemovedAt: timestamp,
+    });
+    const { contentRemovedAt: _contentRemovedAt, ...missingContentRemovedAt } = v3EventRun;
+    expect(AutomationV3RunListItemSchema.safeParse(missingContentRemovedAt).success).toBe(false);
     expect(AutomationV3RunListItemSchema.safeParse({
       ...v3EventRun,
       errorMessage: 'private provider detail',
@@ -523,7 +543,12 @@ describe('Automation versioned API schemas', () => {
   });
 
   it('projects a durable claim wake separately from the bounded definition payload', () => {
+    const settings = {
+      maxActiveRunsPerMachine: 4,
+      runRetention: 'thirtyDays' as const,
+    };
     const response = {
+      settings: { maxActiveRunsPerMachine: settings.maxActiveRunsPerMachine },
       assignments: [{
         machineId: 'machine-1',
         automationId: 'automation-event',
@@ -534,7 +559,33 @@ describe('Automation versioned API schemas', () => {
     expect(AutomationV3WorkerAssignmentsResponseSchema.safeParse({
       assignments: [{ ...response.assignments[0], automation: v3EventDefinition }],
     }).success).toBe(false);
+    expect(AutomationV3SettingsSchema.parse(settings)).toEqual(settings);
+    expect(AutomationV3SettingsUpdateRequestSchema.parse(settings)).toEqual(settings);
+    expect(AutomationV3SettingsSchema.safeParse({
+      ...settings,
+      maxActiveRunsPerMachine: 0,
+    }).success).toBe(false);
+    expect(AutomationV3SettingsSchema.safeParse({
+      ...settings,
+      runRetention: 'forever',
+    }).success).toBe(false);
+    expect(AutomationV3SettingsUpdateRequestSchema.safeParse({
+      ...settings,
+      unexpected: true,
+    }).success).toBe(false);
+    expect(DEFAULT_AUTOMATION_V3_MAX_ACTIVE_RUNS_PER_MACHINE).toBe(4);
+    expect(DEFAULT_AUTOMATION_V3_RUN_RETENTION).toBe('thirtyDays');
   });
+
+  it('keeps a clear-history result bounded and explicit', () => {
+    expect(AutomationV3ClearRunHistoryResponseSchema.parse({ clearedRuns: 2 }))
+      .toEqual({ clearedRuns: 2 });
+    expect(AutomationV3ClearRunHistoryResponseSchema.safeParse({ clearedRuns: -1 }).success)
+      .toBe(false);
+    expect(AutomationV3ClearRunHistoryResponseSchema.safeParse({ clearedRuns: 1, extra: true }).success)
+      .toBe(false);
+  });
+
 
   it('keeps current V3 schedule writes and worker settlement distinct from predecessor V2 payloads', () => {
     const create = {

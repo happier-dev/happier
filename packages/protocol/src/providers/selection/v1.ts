@@ -170,6 +170,24 @@ export function projectSessionModelSelectionIntentToLegacyModelOverrideV1(
 }
 
 /**
+ * The single decision for "this flat selection means the Agent's own automatic
+ * model". `default` is the legacy native reset sentinel; a Provider connection
+ * is allowed to expose a literal model named `default`, so the sentinel applies
+ * only when no connection is bound. Every flat boundary — CLI argv, in-session
+ * transition projection, label projection — must consume this rather than
+ * re-deciding, because two implementations assign different meaning to one
+ * user choice.
+ */
+export function isNativeAutomaticModelSelectionInputV1(input: Readonly<{
+  providerConnectionId?: string | null;
+  modelId?: string | null;
+}>): boolean {
+  if (input.providerConnectionId != null) return false;
+  const modelId = input.modelId?.trim() ?? '';
+  return modelId.length === 0 || modelId === 'default';
+}
+
+/**
  * Converts a flat model-selection boundary into the canonical structured ref.
  * The legacy `default` reset sentinel is meaningful only for a native
  * selection; a provider is allowed to expose a literal model named `default`.
@@ -184,7 +202,10 @@ export function resolveSessionModelSelectionInputRefV1(input: Readonly<{
     ? null
     : ProviderConnectionIdSchema.parse(input.providerConnectionId);
   const normalizedModelId = input.modelId.trim();
-  if (!normalizedModelId || (normalizedModelId === 'default' && providerConnectionId === null)) {
+  if (
+    isNativeAutomaticModelSelectionInputV1({ providerConnectionId, modelId: normalizedModelId })
+    || !normalizedModelId
+  ) {
     if (providerConnectionId !== null) {
       ProviderModelIdSchema.parse(normalizedModelId);
     }

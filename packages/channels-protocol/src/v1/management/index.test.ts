@@ -44,10 +44,6 @@ describe('Channels V1 public management barrel', () => {
             inputSchema: management.ConversationBindingUpdateInputV1JsonSchema,
             resultSchema: management.ConversationBindingMutationResultV1JsonSchema,
         });
-        expect(management.ConversationBindingTargetRotateManagementActionDeclarationV1).toEqual({
-            inputSchema: management.ConversationBindingTargetRotateInputV1JsonSchema,
-            resultSchema: management.ConversationBindingTargetMutationResultV1JsonSchema,
-        });
         expect(management.ConversationBindingDeleteManagementActionDeclarationV1).toEqual({
             inputSchema: management.ConversationBindingDeleteInputV1JsonSchema,
             resultSchema: management.ConversationBindingDeleteResultV1JsonSchema,
@@ -66,7 +62,6 @@ describe('Channels V1 public management barrel', () => {
             connectionPrepare: management.ConversationConnectionPrepareManagementActionDeclarationV1,
             connectionRetest: management.ConversationConnectionRetestManagementActionDeclarationV1,
             connectionUpdate: management.ConversationConnectionUpdateManagementActionDeclarationV1,
-            connectionSetEnabled: management.ConversationConnectionSetEnabledManagementActionDeclarationV1,
             connectionDelete: management.ConversationConnectionDeleteManagementActionDeclarationV1,
             connectionAbandon: management.ConversationConnectionAbandonManagementActionDeclarationV1,
             streamBaselineAccept: management.ConversationStreamBaselineAcceptManagementActionDeclarationV1,
@@ -78,12 +73,13 @@ describe('Channels V1 public management barrel', () => {
             bindingCreate: management.ConversationBindingCreateManagementActionDeclarationV1,
             bindingUpdate: management.ConversationBindingUpdateManagementActionDeclarationV1,
             bindingSetEnabled: management.ConversationBindingSetEnabledManagementActionDeclarationV1,
-            bindingTargetRotate: management.ConversationBindingTargetRotateManagementActionDeclarationV1,
             bindingDelete: management.ConversationBindingDeleteManagementActionDeclarationV1,
             ingressRetry: management.ConversationIngressRetryManagementActionDeclarationV1,
             deliveryResolve: management.ConversationDeliveryResolveManagementActionDeclarationV1,
             connectionPollRetry: management.ConversationConnectionPollRetryManagementActionDeclarationV1,
         });
+        expect(management).not.toHaveProperty('ConversationConnectionSetEnabledManagementActionDeclarationV1');
+        expect(management).not.toHaveProperty('ConversationBindingTargetRotateManagementActionDeclarationV1');
     });
 
     it('does not leak relative-only protocol composition inputs through the public barrel', () => {

@@ -42,6 +42,10 @@
       "types": "./dist/crypto/canonicalDigest.d.ts",
       "default": "./dist/crypto/canonicalDigest.js"
     },
+    "./crypto/canonicalJson": {
+      "types": "./dist/crypto/canonicalJson.d.ts",
+      "default": "./dist/crypto/canonicalJson.js"
+    },
     "./machines/administration/pluginMachineExecutionOriginV1": {
       "types": "./dist/machines/administration/pluginMachineExecutionOriginV1.d.ts",
       "default": "./dist/machines/administration/pluginMachineExecutionOriginV1.js"
@@ -239,6 +243,10 @@
       "types": "./dist/plugins/sourceSpecV1.d.ts",
       "default": "./dist/plugins/sourceSpecV1.js"
     },
+    "./plugins/contributions/system-tools": {
+      "types": "./dist/plugins/contributions/systemTools.d.ts",
+      "default": "./dist/plugins/contributions/systemTools.js"
+    },
     "./plugins/plugin-id": {
       "types": "./dist/plugins/pluginId.d.ts",
       "default": "./dist/plugins/pluginId.js"
@@ -350,6 +358,10 @@
     "./connect/connected-account-purpose-bindings": {
       "types": "./dist/connect/connectedAccountPurposeBindings.d.ts",
       "default": "./dist/connect/connectedAccountPurposeBindings.js"
+    },
+    "./connect/plugin-connected-account-authentication-v2": {
+      "types": "./dist/connect/pluginConnectedAccountAuthenticationV2.d.ts",
+      "default": "./dist/connect/pluginConnectedAccountAuthenticationV2.js"
     },
     "./connect/build-connected-service-credential-record": {
       "types": "./dist/connect/buildConnectedServiceCredentialRecord.d.ts",

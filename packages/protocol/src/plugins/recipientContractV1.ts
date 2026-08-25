@@ -146,7 +146,7 @@ export const RecipientOperationV1Schema = z.object({
       name: HeaderNameSchema,
     }).strict()).max(64),
     bodyTemplate: RecipientBodyTemplateV1Schema,
-    method: z.enum(['GET', 'POST', 'PATCH']),
+    method: z.enum(['GET', 'POST', 'PATCH', 'DELETE']),
     credential: RecipientCredentialPlacementV1Schema,
     redirect: z.literal('error'),
     maxBodyBytes: z.number().int().min(0).max(4 * 1024 * 1024),
@@ -445,7 +445,7 @@ export function createVoiceProviderRecipientContractFromCredentialsV1(input: Rea
 export type MaterializedRecipientOperationRequestV1 = Readonly<{
   operation: RecipientOperationV1;
   url: string;
-  method: 'GET' | 'POST' | 'PATCH';
+  method: RecipientOperationV1['request']['method'];
   headers: Readonly<Record<string, string>>;
   body: Uint8Array | null;
   redirect: 'error';

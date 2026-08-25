@@ -5,6 +5,18 @@ import { getActionSpec } from '../../actions/actionSpecs.js';
 import { RPC_METHODS } from '../../rpc/index.js';
 
 describe('external-session background-follow action compatibility', () => {
+  it.each([
+    ['sessions.external.attach', 'sessions.external.follow'],
+    ['sessions.external.detach', 'sessions.external.unfollow'],
+  ] as const)(
+    'does not normalize the never-released %s alias to %s',
+    (alias, canonical) => {
+      expect(ActionIdSchema.safeParse(alias).success).toBe(false);
+      expect(normalizeLegacyActionId(alias)).toBe(alias);
+      expect(normalizeLegacyActionId(alias)).not.toBe(canonical);
+    },
+  );
+
   it('does not normalize the never-released prior external follow-policy id', () => {
     expect(ActionIdSchema.safeParse('sessions.external.backgroundFollow.set').success).toBe(true);
     expect(ActionIdSchema.safeParse('sessions.external.followPolicy.set').success).toBe(false);

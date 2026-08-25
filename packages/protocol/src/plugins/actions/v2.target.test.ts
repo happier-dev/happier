@@ -117,15 +117,12 @@ describe('plugin executable contribution target grammar', () => {
       surfaces: ['voice'],
       execution: { target: 'daemon' },
     });
-    // An absent realm is the daemon realm — the realm that was the only one
-    // when packaged declarations were authored without this field. A *declared*
-    // realm is never defaulted.
     const { execution: _absent, ...withoutExecution } = daemonVoiceAction;
-    expect(PluginActionContributionV2Schema.parse(withoutExecution).execution).toEqual({ target: 'daemon' });
-    expect(PluginActionContributionV2Schema.parse({
+    expect(PluginActionContributionV2Schema.safeParse(withoutExecution).success).toBe(false);
+    expect(PluginActionContributionV2Schema.safeParse({
       ...daemonVoiceAction,
       execution: undefined,
-    }).execution).toEqual({ target: 'daemon' });
+    }).success).toBe(false);
     expect(PluginActionContributionV2Schema.safeParse({
       ...daemonVoiceAction,
       execution: { target: 'host' },

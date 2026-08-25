@@ -6,6 +6,7 @@ import {
 } from '../actions/protocolComposableSchema.js';
 import {
   COMPOSER_CONTROL_STATE_CONTENT_TYPE_V1,
+  MAX_COMPOSER_CONTROL_STATE_RESOURCE_BYTES_V1,
   ComposerControlStateV1Schema,
   ComposerControlStateContentTypeV1Schema,
   ComposerDecorationSetV1Schema,
@@ -19,6 +20,7 @@ import {
   ComposerTransactionV1Schema,
   isComposerControlStateContentTypeV1,
 } from './composer.js';
+import * as protocolUiClient from './client.js';
 import type {
   ComposerRefV1,
   ComposerSnapshotV1,
@@ -132,6 +134,19 @@ describe('Composer protocol surface', () => {
     ]) {
       expect(isComposerControlStateContentTypeV1(nonCanonical)).toBe(false);
     }
+  });
+
+  it('projects the canonical control-state Resource contract through the browser-safe UI client', () => {
+    const client = protocolUiClient as Readonly<Record<string, unknown>>;
+
+    expect(client['COMPOSER_CONTROL_STATE_CONTENT_TYPE_V1'])
+      .toBe(COMPOSER_CONTROL_STATE_CONTENT_TYPE_V1);
+    expect(client['MAX_COMPOSER_CONTROL_STATE_RESOURCE_BYTES_V1'])
+      .toBe(MAX_COMPOSER_CONTROL_STATE_RESOURCE_BYTES_V1);
+    expect(client['ComposerControlStateContentTypeV1Schema'])
+      .toBe(ComposerControlStateContentTypeV1Schema);
+    expect(client['ComposerControlStateV1Schema'])
+      .toBe(ComposerControlStateV1Schema);
   });
 
   it('rejects lossy whitespace around Resource-selected choice identities', () => {

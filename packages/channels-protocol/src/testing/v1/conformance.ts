@@ -5,6 +5,10 @@ import {
 import { pluginJsonValuesEqual } from '@happier-dev/plugin-sdk/protocol';
 
 import {
+    CONVERSATION_CORE_PLUGIN_ID_V1,
+    CONVERSATION_PROVIDERS_CONTRIBUTION_POINT_ID_V1,
+} from '../../v1/bounds.js';
+import {
     ConversationProvidersContributionPointV1,
     ConversationProvidersContributionProtocolV1,
 } from '../../v1/provider/contribution.js';
@@ -55,8 +59,8 @@ export type ConversationProviderContributionConformanceResultV1 =
         errors: readonly string[];
     }>;
 
-const CHANNELS_CORE_PLUGIN_ID = 'happier.channels';
-const CHANNELS_PROVIDER_POINT_ID = 'providers';
+const CHANNELS_CORE_PLUGIN_ID = CONVERSATION_CORE_PLUGIN_ID_V1;
+const CHANNELS_PROVIDER_POINT_ID = CONVERSATION_PROVIDERS_CONTRIBUTION_POINT_ID_V1;
 const providerOperations = ConversationProvidersContributionProtocolV1.operations;
 const expectedRoleDefinitions = ConversationProvidersContributionPointV1.protocols[0]!.operations;
 

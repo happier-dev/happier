@@ -110,8 +110,6 @@ export const QualifiedConnectedAccountConfigurationPatchV4Schema = z.object({
   expectedConfigurationRevision: RevisionSchema.nullable(),
   expectedCredentialRevision: ConnectedServiceCredentialRevisionV1Schema,
   replacementContentEnvelope: StoredJsonContentEnvelopeSchema,
-  preserveConfigurationRevisionForCiphertextReseal:
-    z.literal(true).optional(),
 }).strict();
 
 export const QualifiedConnectedAccountListQueryV4Schema = z.object({
@@ -194,11 +192,6 @@ export const QualifiedConnectedAccountCredentialErrorV4Schema = z.union([
   }).strict(),
   z.object({
     error: z.literal('connect_credential_referenced_by_group'),
-  }).strict(),
-  // The Account already holds every credential the unpaginated list wire shape can
-  // carry. Refused before persistence so the Account keeps a readable credential list.
-  z.object({
-    error: z.literal('connect_connected_account_capacity_exhausted'),
   }).strict(),
   QualifiedConnectedAccountCredentialMutationSupersededV4Schema,
 ]);
@@ -305,8 +298,9 @@ export const QualifiedConnectedAccountGroupActiveAccountV4Schema = z.object({
   overrideRuntimeCooldown: z.boolean().optional(),
 }).strict();
 
+/** Every group the Account holds. */
 export const QualifiedConnectedAccountGroupListResponseV4Schema = z.object({
-  groups: z.array(QualifiedConnectedAccountGroupV4Schema).max(500),
+  groups: z.array(QualifiedConnectedAccountGroupV4Schema),
 }).strict();
 
 export const QualifiedConnectedAccountGroupResponseV4Schema = z.object({
@@ -529,6 +523,13 @@ export const QualifiedProviderAccountUsageWriteSuccessV4Schema = z.object({
   source: QualifiedProviderAccountUsageSourceLinkOutcomeV4Schema.optional(),
 }).strict();
 
+/**
+ * `sources` is derived, not independently sized: one entry per account binding plus
+ * one per group membership that resolves to the same Provider subject. Its size
+ * therefore follows the credential and group capacities, and it carries no bound of
+ * its own — the record GET, DELETE and refresh owners all read this array, so a
+ * bound here would make a stored record unreadable through its own routes.
+ */
 export const QualifiedProviderAccountUsageRecordResponseV4Schema = z.object({
   content: StoredJsonContentEnvelopeSchema,
   metadata: z.object({
@@ -537,7 +538,7 @@ export const QualifiedProviderAccountUsageRecordResponseV4Schema = z.object({
     status: z.enum(['ok', 'unavailable', 'estimated', 'error']),
     refreshRequestedAt: z.number().int().nonnegative().optional(),
   }).strict(),
-  sources: z.array(QualifiedConnectedServiceUsageSourceV4Schema).max(500),
+  sources: z.array(QualifiedConnectedServiceUsageSourceV4Schema),
 }).strict();
 
 export type QualifiedConnectedAccountServiceRef = PluginContributionIdentityV1;
@@ -572,6 +573,46 @@ export type QualifiedConnectedAccountGroupV4 = z.infer<
 > & Readonly<{
   incarnation: z.infer<typeof QualifiedConnectedAccountGroupIncarnationV4Schema>;
 }>;
+
+/**
+ * A V4 account is eligible to authorize a current purpose only while its
+ * revision-fenced credential is connected and unexpired.  Direct targets and
+ * group targets share this exact policy.
+ */
+export function isQualifiedConnectedAccountProfileActiveV4(
+  account: QualifiedConnectedAccountProfileV4,
+  now: number,
+): boolean {
+  return account.status === 'connected'
+    && account.revisionSemantics === 'revisioned'
+    && (typeof account.expiresAt !== 'number' || account.expiresAt > now);
+}
+
+/**
+ * Resolve the one account that makes a qualified group passively usable.
+ * Group runtime status is diagnostic state; authority comes from the active,
+ * enabled member and a current connected revisioned account projection.
+ */
+export function resolveQualifiedConnectedAccountGroupActiveAccountV4(input: Readonly<{
+  group: QualifiedConnectedAccountGroupV4;
+  accounts: readonly QualifiedConnectedAccountProfileV4[];
+  now: number;
+}>): QualifiedConnectedAccountProfileV4 | null {
+  const activeAccountId = input.group.activeConnectedAccountId;
+  if (!activeAccountId) return null;
+  if (!input.group.members.some((member) => (
+    member.connectedAccountId === activeAccountId
+    && member.enabled !== false
+  ))) return null;
+  const activeAccountRef = {
+    service: input.group.ref.service,
+    accountId: activeAccountId,
+  };
+  return input.accounts.find((account) => (
+    sameQualifiedConnectedAccountRef(account.ref, activeAccountRef)
+    && isQualifiedConnectedAccountProfileActiveV4(account, input.now)
+  )) ?? null;
+}
 export type QualifiedConnectedServiceUsageSourceV4 = z.infer<
   typeof QualifiedConnectedServiceUsageSourceV4Schema
 >;

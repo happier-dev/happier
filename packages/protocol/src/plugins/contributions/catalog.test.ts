@@ -13,7 +13,7 @@ import { PluginContributesV2Schema, PLUGIN_CORE_CONTRIBUTION_FAMILIES_V2 } from 
 describe('plugin contribution catalog', () => {
   it('accounts for every schema family with executable semantic metadata', () => {
     expect(PLUGIN_CORE_CONTRIBUTION_FAMILIES_V2.map((entry) => entry.family)).toEqual([
-      'agents', 'providers', 'actions', 'commands', 'tools', 'resources', 'transcriptActivities',
+      'agents', 'providers', 'actions', 'commands', 'tools', 'resources', 'transcriptActivities', 'sessionInfoSections',
       'sessionHeaderActions', 'browserTargets', 'browserActions', 'settings', 'events',
       'executionRunProfiles', 'notifications', 'notificationChannels', 'scmHostingProviders',
       'scmBackends', 'connectedAccountDescriptors', 'managedDependencies', 'systemTools',

@@ -57,10 +57,16 @@ export type SessionServerStartTargetV1 = z.infer<typeof SessionServerStartTarget
  * bounded mode-tagged envelope. It deliberately does not parse an inner
  * Session V2 request; the Automation-owned wrapper validates only the outer
  * E2EE purpose tag here, and the exact target opens it later.
+ *
+ * `attempt` and `claimedByMachineId` carry the exact Run claim the server
+ * derived, so the same stamped request can be revalidated against canonical
+ * Run state, claim, attempt, and lease immediately before target submission.
  */
 export const SessionServerStartClaimV1Schema = z.object({
   automationId: SessionServerStartHostIdV1Schema,
   runId: SessionServerStartHostIdV1Schema,
+  attempt: z.number().int().positive().safe(),
+  claimedByMachineId: SessionServerStartHostIdV1Schema,
   origin: z.enum(['schedule', 'manual', 'event', 'conversation']),
   accountCurrentness: AutomationAccountCurrentnessWitnessV1Schema,
   requestEnvelope: AutomationSessionStartRequestEnvelopeV1Schema,

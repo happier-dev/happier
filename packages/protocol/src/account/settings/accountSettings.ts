@@ -1,7 +1,12 @@
 import { z } from 'zod';
 
 import { buildSettingArtifacts } from '../../settings/registry/buildSettingArtifacts.js';
-import { BackendTargetKeyV2InputSchema } from '../../backends/targets/backendTargetRefV2.js';
+import {
+  BackendTargetKeyV2InputSchema,
+  buildBackendTargetKeyV2,
+  readBackendTargetRefV2,
+  type BackendTargetRefV2Input,
+} from '../../backends/targets/backendTargetRefV2.js';
 import { LlmTaskRunnerConfigV1Schema } from '../../llm/tasks/llmTaskRunnerConfigV1.js';
 import { InstallableAutoUpdateModeSchema } from '../../installables/descriptor.js';
 import {
@@ -82,6 +87,7 @@ import {
 } from './workspaceFileViewerPreferencesV1.js';
 import {
   ACCOUNT_SETTINGS_MAX_PROVIDER_SUBTREE_BYTES,
+  ACCOUNT_SETTINGS_MAX_SAVED_SECRETS_BYTES,
   inspectAccountSettingValueBounds,
   withAccountSettingBounds,
   type AccountSettingStructuralBoundsOwner,
@@ -543,12 +549,33 @@ type AccountCatalogDefinitionOptions = Readonly<{
   compatibility?: Readonly<{ provenance: string; removalCondition: string }>;
 }>;
 
+/**
+ * Why the catalog refused a value. The definition owner already knows this from
+ * the bound inspector's typed reason and from Zod's issue code, so it reports
+ * the classification directly instead of leaving callers to recover it by
+ * matching refusal wording — a coupling that silently degrades every size
+ * refusal to `invalidValue` the moment a message is reworded.
+ */
+export type AccountSettingValueRefusalReason = 'tooLarge' | 'tooDeep' | 'invalidValue';
+
+function classifyAccountSettingSchemaIssues(
+  issues: readonly Readonly<{ code: string }>[],
+): AccountSettingValueRefusalReason {
+  return issues.some((issue) => issue.code === 'too_big') ? 'tooLarge' : 'invalidValue';
+}
+
+export type AccountSettingValueParseResult =
+  | Readonly<{ success: true; data: unknown }>
+  | Readonly<{
+    success: false;
+    issues: readonly string[];
+    reason: AccountSettingValueRefusalReason;
+  }>;
+
 function parseAccountSettingMutationValue(
   schema: z.core.$ZodType,
   value: unknown,
-):
-  | Readonly<{ success: true; data: unknown }>
-  | Readonly<{ success: false; issues: readonly string[] }> {
+): AccountSettingValueParseResult {
   if (schema instanceof z.ZodCatch) {
     return parseAccountSettingMutationValue(schema.removeCatch(), value);
   }
@@ -558,7 +585,11 @@ function parseAccountSettingMutationValue(
   const parsed = z.safeParse(schema, value);
   return parsed.success
     ? { success: true, data: parsed.data }
-    : { success: false, issues: parsed.error.issues.map((issue) => issue.message) };
+    : {
+      success: false,
+      issues: parsed.error.issues.map((issue) => issue.message),
+      reason: classifyAccountSettingSchemaIssues(parsed.error.issues),
+    };
 }
 
 export function accountCatalogDefinition<TSchema extends z.ZodTypeAny>(
@@ -575,16 +606,14 @@ export function accountCatalogDefinition<TSchema extends z.ZodTypeAny>(
   const parsedDefault = boundedSchema.parse(defaultValue);
   const recoverySchema = boundedSchema.catch(parsedDefault);
   const missingValueDefaultSchema = z.undefined().transform(() => parsedDefault);
-  const parseMutationValue = (value: unknown):
-    | Readonly<{ success: true; data: unknown }>
-    | Readonly<{ success: false; issues: readonly string[] }> => {
+  const parseMutationValue = (value: unknown): AccountSettingValueParseResult => {
     const boundIssue = inspectAccountSettingValueBounds(
       value,
       options.maximumSerializedValueBytes,
       structuralBoundsOwner,
     );
     return boundIssue
-      ? { success: false, issues: [boundIssue.message] }
+      ? { success: false, issues: [boundIssue.message], reason: boundIssue.reason }
       : parseAccountSettingMutationValue(schema, value);
   };
   return {
@@ -964,7 +993,12 @@ const SavedSecretsSchema = z.preprocess((value) => {
 const ACCOUNT_LEGACY_ROOT_CATALOG_DEFINITIONS = {
   profiles: accountLegacy(BoundedLegacyArraySchema, [], 'profile entities', 128 * 1024),
   profileEnabledById: accountLegacy(BoundedLegacyRecordSchema, {}, 'profile entity state', 32 * 1024),
-  secrets: accountLegacy(SavedSecretsSchema, [], 'saved-secret records', 128 * 1024),
+  secrets: accountLegacy(
+    SavedSecretsSchema,
+    [],
+    'saved-secret records',
+    ACCOUNT_SETTINGS_MAX_SAVED_SECRETS_BYTES,
+  ),
   secretBindingsByProfileId: accountLegacy(BoundedLegacyRecordSchema, {}, 'profile secret bindings', 32 * 1024),
   connectedAccountServiceConfigurationsV1: accountLegacy(
     ConnectedAccountServiceConfigurationsV1Schema,
@@ -1195,9 +1229,15 @@ export const NEW_SESSION_PRESENTATION_MODES = [
   'modal',
 ] as const;
 
+export const NEW_SESSION_DRAFT_ENTRY_MODES = [
+  'resumePrevious',
+  'alwaysFresh',
+] as const;
+
 export type NewSessionWizardSelectionSectionId = typeof NEW_SESSION_WIZARD_SELECTION_SECTION_IDS[number];
 export type NewSessionWizardSectionPresentation = typeof NEW_SESSION_WIZARD_SECTION_PRESENTATIONS[number];
 export type NewSessionPresentationModeV1 = typeof NEW_SESSION_PRESENTATION_MODES[number];
+export type NewSessionDraftEntryMode = typeof NEW_SESSION_DRAFT_ENTRY_MODES[number];
 
 const NewSessionWizardSectionIdSchema = z.enum(NEW_SESSION_WIZARD_SELECTION_SECTION_IDS);
 const NewSessionWizardSectionPresentationSchema = z.enum(NEW_SESSION_WIZARD_SECTION_PRESENTATIONS);
@@ -1243,6 +1283,11 @@ const ACCOUNT_SESSION_AUTHORING_CATALOG_DEFINITIONS = {
     {},
     'session authoring',
     32 * 1024,
+  ),
+  newSessionDraftEntryMode: accountPreference(
+    z.enum(NEW_SESSION_DRAFT_ENTRY_MODES),
+    'resumePrevious',
+    'session authoring',
   ),
   rememberLastProjectSessionSelections: accountPreference(z.boolean(), true, 'session authoring'),
   rememberLastEngineSelectionsV1: accountPreference(z.boolean(), true, 'session authoring'),
@@ -1726,6 +1771,62 @@ export type AccountSettings = z.infer<typeof AccountSettingsSchema>;
 
 export function accountSettingsParse(raw: unknown): AccountSettings {
   return AccountSettingsSchema.parse(raw);
+}
+
+/**
+ * Reads one entry out of a target-keyed Account setting map.
+ *
+ * Every such map is stored under the canonical V2 target key, and
+ * `accountSettingsParse` rewrites a legacy `agent:<id>` / `acpBackend:<id>` key
+ * into that spelling. A reader that builds a legacy key and indexes the parsed
+ * projection therefore always misses, and silently reports "no preference" for
+ * a preference the user actually set. Every reader consults this one owner so
+ * the key vocabulary cannot diverge again; the legacy spelling is still honored
+ * because an unparsed document may carry it.
+ */
+export function readAccountSettingValueForBackendTarget(
+  settingsLike: unknown,
+  settingKey: AccountSettingKey,
+  target: BackendTargetRefV2Input,
+): unknown {
+  const record = settingsLike && typeof settingsLike === 'object' && !Array.isArray(settingsLike)
+    ? (settingsLike as Record<string, unknown>)[settingKey]
+    : null;
+  if (!record || typeof record !== 'object' || Array.isArray(record)) return undefined;
+  const byKey = record as Record<string, unknown>;
+
+  let canonicalKey: string;
+  try {
+    canonicalKey = buildBackendTargetKeyV2(readBackendTargetRefV2(target));
+  } catch {
+    return undefined;
+  }
+  if (Object.hasOwn(byKey, canonicalKey)) return byKey[canonicalKey];
+
+  // An unparsed document may still hold the legacy spelling the catalog would
+  // rewrite on its next read.
+  for (const [key, value] of Object.entries(byKey)) {
+    try {
+      if (buildBackendTargetKeyV2(readBackendTargetRefV2(key as BackendTargetRefV2Input)) === canonicalKey) {
+        return value;
+      }
+    } catch {
+      continue;
+    }
+  }
+  return undefined;
+}
+
+/** Canonical answer to "did the user turn this backend target off in Account Settings". */
+export function isBackendTargetDisabledByAccountSettings(
+  settingsLike: unknown,
+  target: BackendTargetRefV2Input,
+): boolean {
+  return readAccountSettingValueForBackendTarget(
+    settingsLike,
+    'backendEnabledByTargetKey',
+    target,
+  ) === false;
 }
 
 export function getNotificationsSettingsV1FromAccountSettings(settingsLike: unknown): NotificationsSettingsV1 {

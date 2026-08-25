@@ -416,6 +416,8 @@ describe('agent approval floor is derived from the danger SSOT (CON-1..3/6)', ()
     'browser.automation.focus',
     'browser.automation.select',
     'browser.automation.setValue',
+    'browser.automation.upload',
+    'browser.automation.drag',
   ] as const;
 
   // Read-only verbs (no navigation/input/mutation/egress) stay agent-allowed without consent.

@@ -29,3 +29,22 @@ export function browserViewKey(
   }
   return key;
 }
+
+/**
+ * The daemon-derived browser context id: a view key further scoped by navigation generation.
+ *
+ * F2: two owners composed this by hand as `` `${browserSessionId} ${viewId} ${navigationGeneration}` ``
+ * — `daemon/browser/context/routes.ts` (the fallback when a caller omits `contextId`) and
+ * `daemon/browser/automation/adapters/controlBridge.ts` (unconditionally). The result is the primary
+ * map key of the browser context store (`context/store.ts` `itemsByContextId`), and a space is legal
+ * inside an id, so `{sid:'a b', viewId:'c', gen:1}` and `{sid:'a', viewId:'b c', gen:1}` keyed the
+ * same entry: one capture silently overwrote the other's context item, and clearing one removed the
+ * wrong one. Same collision class, same separator, as the eleven owners `browserViewKey` collapsed.
+ *
+ * A caller-supplied `contextId` is still honoured verbatim; only the derived value comes from here.
+ */
+export function browserViewContextId(
+  input: Readonly<{ browserSessionId: string; viewId: string; navigationGeneration: number }>,
+): string {
+  return browserViewKey(input, input.navigationGeneration);
+}

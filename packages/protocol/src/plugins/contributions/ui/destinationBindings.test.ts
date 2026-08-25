@@ -44,7 +44,7 @@ if (false) {
   const pageHeaderActions: PluginUiPageHeaderActionV1Input[] = [{
     id: 'refresh',
     title: 'Refresh',
-    action: { kind: 'executeAction', action: 'refresh-activity' },
+    command: { kind: 'executeAction', action: 'refresh-activity' },
   }];
   const acceptedAppPageHeaderActions: PluginUiViewV2Input = {
     id: 'accepted-app-page-header-actions',
@@ -388,6 +388,26 @@ describe('plugin UI destination binding normalization', () => {
     expect(session?.target).toEqual({ kind: 'session', sessionIdPath: '/session/id' });
     expect(project?.target).toEqual({ kind: 'project', projectIdPath: '/project/id' });
   });
+
+  it.each(['sessionSubagentLaunch', 'sessionSubagentDetails'] as const)(
+    'admits %s only as a Session-targeted non-navigable inline view',
+    (container) => {
+      const localId = container === 'sessionSubagentLaunch' ? 'subagent-launch' : 'subagent-details';
+      const parsed = PluginUiViewV2Schema.safeParse({
+        id: localId,
+        renderer: `${localId}-renderer`,
+        container,
+        target: { kind: 'session' },
+      });
+      expect(parsed.success ? null : parsed.error.issues).toBeNull();
+      expect(PluginUiViewV2Schema.safeParse({
+        id: localId,
+        renderer: `${localId}-renderer`,
+        container,
+        target: { kind: 'app' },
+      }).success).toBe(false);
+    },
+  );
 
   it('normalizes a Settings page through the fixed app target instead of a Settings-local target rule', () => {
     expect(normalizePluginUiSettingsPageBindingV1({

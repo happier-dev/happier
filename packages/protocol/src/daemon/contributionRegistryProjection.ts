@@ -47,7 +47,7 @@ import {
 } from '../plugins/ui/composer.js';
 import {
   PluginAgentCapabilitiesV2Schema,
-  PluginAgentUiBehaviorContributionV2Schema,
+  AgentUiProjectedDeclarationV1Schema,
   PluginResourceContextV1Schema,
   PluginResourceKindV2Schema,
 } from '../plugins/contributions/v2.js';
@@ -99,10 +99,6 @@ import {
   ComposerReferenceTriggerV1Schema,
   normalizeComposerReferenceQueryV1,
 } from '../plugins/contributions/composerReferenceProviders.js';
-import {
-  ComposerAttachmentPrepareRequestV1Schema,
-  ComposerAttachmentPrepareResultV1Schema,
-} from '../plugins/contributions/composerAttachmentRuntimeV1.js';
 import { PluginComposerAttachmentContributionV1Schema } from '../plugins/contributions/composerAttachments.js';
 import { PluginComposerControlContributionV1Schema } from '../plugins/contributions/composerControls.js';
 import { PluginComposerRegionContributionV1Schema } from '../plugins/contributions/composerRegions.js';
@@ -346,6 +342,16 @@ export type DaemonContributionRegistryProjectionMountedTargetV1 = z.infer<
 
 export const DaemonContributionRegistryProjectionDescribeRequestSchema = z.object({
   machineId: z.string().trim().min(1),
+  /**
+   * The caller's display locale. Plugin translation bundles are the largest part
+   * of this response and a client reads exactly two of them — its preferred
+   * locale merged over English — so naming the locale lets the daemon ship only
+   * those. Omitting it keeps the whole set, which is what an older client
+   * receives and what an older daemon returns for a newer client (the request
+   * schema is `.passthrough()`, so an unknown field is accepted and ignored
+   * rather than rejected).
+   */
+  locale: z.string().trim().min(1).max(64).optional(),
   reactNativeHostRuntimeIdentity: DaemonReactNativeHostRuntimeIdentityV1Schema.optional(),
   reactNativeWebLoaderCapability: DaemonReactNativeWebLoaderCapabilityV1Schema.optional(),
   hostedWebFrameCapability: DaemonHostedWebFrameCapabilityV1Schema.optional(),
@@ -865,38 +871,6 @@ export type DaemonPluginComposerReferenceSearchResponse = z.infer<
   typeof DaemonPluginComposerReferenceSearchResponseSchema
 >;
 
-/**
- * One target-daemon callback invocation for an already grouped attachment
- * contribution. The nested request is the exact public runtime DTO: this
- * transport adds only routing/currentness facts and never a terminal Message
- * identity or a second attachment payload.
- */
-export const DaemonPluginComposerAttachmentPrepareRequestSchema = z.object({
-  machineId: z.string().trim().min(1),
-  expectedGeneration: z.string().trim().min(1),
-  attachment: PluginContributionIdentityV1Schema,
-  request: ComposerAttachmentPrepareRequestV1Schema,
-}).strict();
-export type DaemonPluginComposerAttachmentPrepareRequest = z.infer<
-  typeof DaemonPluginComposerAttachmentPrepareRequestSchema
->;
-
-export const DaemonPluginComposerAttachmentPrepareResponseSchema = z.union([
-  z.object({
-    ok: z.literal(true),
-    attachment: PluginContributionIdentityV1Schema,
-    result: ComposerAttachmentPrepareResultV1Schema,
-  }).strict(),
-  z.object({
-    ok: z.literal(false),
-    code: z.string().trim().min(1),
-    reason: z.enum(['invalid_payload', 'stale_generation', 'unavailable', 'not_current']),
-  }).strict(),
-]);
-export type DaemonPluginComposerAttachmentPrepareResponse = z.infer<
-  typeof DaemonPluginComposerAttachmentPrepareResponseSchema
->;
-
 export const DaemonPluginReactNativeBundleCacheIdentityV1Schema = z.object({
   pluginId: z.string().trim().min(1),
   contributionId: z.string().trim().min(1),
@@ -915,6 +889,27 @@ export const DaemonPluginReactNativeBundleCacheIdentityV1Schema = z.object({
 export type DaemonPluginReactNativeBundleCacheIdentityV1 = z.infer<
   typeof DaemonPluginReactNativeBundleCacheIdentityV1Schema
 >;
+
+/** Stable process-local key for one exact daemon-issued RN compatibility identity. */
+export function deriveDaemonPluginReactNativeBundleCacheIdentityKeyV1(
+  identity: DaemonPluginReactNativeBundleCacheIdentityV1,
+): string {
+  return [
+    identity.pluginId,
+    identity.contributionId,
+    identity.artifactDigest,
+    identity.hostAppVersion,
+    identity.hostUiApiVersion,
+    identity.reactVersion,
+    identity.reactNativeVersion,
+    identity.expoRuntimeVersion ?? '',
+    identity.hermesVersion ?? '',
+    identity.platform,
+    identity.channel,
+    identity.nativeCapabilitiesDigest,
+    String(identity.projectionGeneration),
+  ].join(':');
+}
 
 /**
  * Exact daemon-read correlation for one generated hosted-web renderer. This
@@ -1025,34 +1020,75 @@ export type DaemonPluginReactNativeCrashBindingTokenV1 = z.infer<
   typeof DaemonPluginReactNativeCrashBindingTokenV1Schema
 >;
 
-function isSameDaemonPluginReactNativeCrashMountV1(
-  left: DaemonPluginReactNativeCrashBindingTokenV1['mount'],
-  right: DaemonPluginReactNativeCrashBindingTokenV1['mount'],
-): boolean {
-  if (left.kind !== right.kind) return false;
-  if (left.kind === 'destination') {
-    return right.kind === 'destination'
-      && left.destination.pluginId === right.destination.pluginId
-      && left.destination.localId === right.destination.localId;
+/**
+ * The one stable serialization of a daemon-selected React Native crash mount.
+ * Both comparators below and every consumer that needs a mount-scoped key
+ * derive from this, so a new mount member cannot be honoured by one owner and
+ * silently ignored by another.
+ */
+export function deriveDaemonPluginReactNativeCrashMountKeyV1(
+  mount: DaemonPluginReactNativeCrashMountV1,
+): string {
+  switch (mount.kind) {
+    case 'destination':
+      return [
+        'destination',
+        mount.destination.pluginId,
+        mount.destination.localId,
+      ].join('\u0000');
+    case 'targetedSurface':
+      return [
+        'targetedSurface',
+        mount.target.pluginId,
+        mount.target.immutableGenerationId,
+        mount.point.pointId,
+        mount.point.protocol.id,
+        String(mount.point.protocol.version),
+        mount.contributor.pluginId,
+        mount.contributor.contributionId,
+        mount.contributor.immutableGenerationId,
+        mount.role,
+        mount.presentation,
+      ].join('\u0000');
+    case 'composer':
+      return [
+        'composer',
+        mount.contribution.pluginId,
+        mount.contribution.localId,
+        mount.immutableGenerationId,
+        mount.role,
+      ].join('\u0000');
   }
-  if (left.kind === 'targetedSurface') {
-    return right.kind === 'targetedSurface'
-      && left.target.pluginId === right.target.pluginId
-      && left.target.immutableGenerationId === right.target.immutableGenerationId
-      && left.point.pointId === right.point.pointId
-      && left.point.protocol.id === right.point.protocol.id
-      && left.point.protocol.version === right.point.protocol.version
-      && left.contributor.pluginId === right.contributor.pluginId
-      && left.contributor.contributionId === right.contributor.contributionId
-      && left.contributor.immutableGenerationId === right.contributor.immutableGenerationId
-      && left.role === right.role
-      && left.presentation === right.presentation;
-  }
-  return right.kind === 'composer'
-    && left.contribution.pluginId === right.contribution.pluginId
-    && left.contribution.localId === right.contribution.localId
-    && left.immutableGenerationId === right.immutableGenerationId
-    && left.role === right.role;
+}
+
+/**
+ * Stable key for the daemon-selected binding, excluding the artifact and crash
+ * epoch. Local pending failures use this only to discard a superseded token;
+ * callers that need exact currentness must use the token key below.
+ */
+export function deriveDaemonPluginReactNativeCrashBindingKeyV1(
+  token: DaemonPluginReactNativeCrashBindingTokenV1,
+): string {
+  return [
+    deriveDaemonPluginReactNativeCrashMountKeyV1(token.mount),
+    token.renderer.pluginId,
+    token.renderer.localId,
+  ].join('\u0000');
+}
+
+/**
+ * Stable key for exact daemon-owned React Native crash-state currentness. A
+ * consumer that needs a lifecycle/dependency key composes this with its own
+ * local scope rather than re-expanding the mount union.
+ */
+export function deriveDaemonPluginReactNativeCrashBindingTokenKeyV1(
+  token: DaemonPluginReactNativeCrashBindingTokenV1,
+): string {
+  return [
+    deriveDaemonPluginReactNativeCrashBindingKeyV1(token),
+    token.artifactDigest,
+    String(token.crashStateEpoch),
+  ].join('\u0000');
 }
 
 /**
@@ -1064,9 +1100,8 @@ export function isSameDaemonPluginReactNativeCrashBindingV1(
   left: DaemonPluginReactNativeCrashBindingTokenV1,
   right: DaemonPluginReactNativeCrashBindingTokenV1,
 ): boolean {
-  return isSameDaemonPluginReactNativeCrashMountV1(left.mount, right.mount)
-    && left.renderer.pluginId === right.renderer.pluginId
-    && left.renderer.localId === right.renderer.localId;
+  return deriveDaemonPluginReactNativeCrashBindingKeyV1(left)
+    === deriveDaemonPluginReactNativeCrashBindingKeyV1(right);
 }
 
 /**
@@ -1078,9 +1113,8 @@ export function isSameDaemonPluginReactNativeCrashBindingTokenV1(
   left: DaemonPluginReactNativeCrashBindingTokenV1,
   right: DaemonPluginReactNativeCrashBindingTokenV1,
 ): boolean {
-  return isSameDaemonPluginReactNativeCrashBindingV1(left, right)
-    && left.artifactDigest === right.artifactDigest
-    && left.crashStateEpoch === right.crashStateEpoch;
+  return deriveDaemonPluginReactNativeCrashBindingTokenKeyV1(left)
+    === deriveDaemonPluginReactNativeCrashBindingTokenKeyV1(right);
 }
 
 export const DaemonPluginReactNativeCrashStateV1Schema = z.object({
@@ -1621,12 +1655,17 @@ export const PluginProjectedAgentV2Schema = z.object({
   cli: PluginAgentCliMetadataSchema.optional(),
   externalSessions: PluginProjectedAgentExternalSessionsV2Schema.optional(),
   /**
-   * The Agent's own client UI-behavior descriptor, carried verbatim. This is
+   * The Agent's own client UI-behavior declaration, carried verbatim. This is
    * the runtime channel an installed Agent uses to reach the client's single
    * fail-closed descriptor interpreter; absent it, the client has only its
    * build-time bundled projection and degrades the Agent to neutral behavior.
+   *
+   * Carried structurally, not re-validated: the strict public grammar is the
+   * authoring contract, and re-applying it here would let one unreadable field
+   * remove the whole Agent from the catalog instead of refusing that one
+   * declaration.
    */
-  ui: PluginAgentUiBehaviorContributionV2Schema.optional(),
+  ui: AgentUiProjectedDeclarationV1Schema.optional(),
 }).strict();
 export type PluginProjectedAgentV2 = z.infer<typeof PluginProjectedAgentV2Schema>;
 
@@ -2307,7 +2346,7 @@ const PluginProjectedBrowserEntryV2Schema = strictProjectedFamilyEntrySchema([
   'order',
 ] as const);
 const PluginProjectedUiHeaderActionV2Schema = PluginUiHeaderActionPresentationV1Schema.extend({
-  action: PluginUiResolvedSemanticCommandV1Schema,
+  command: PluginUiResolvedSemanticCommandV1Schema,
 }).strict();
 
 const PROJECTED_OPENABLE_CONTENT_VIEWER_FIELDS = new Set([
@@ -2394,7 +2433,7 @@ const PluginProjectedUiEntryV2Schema = strictProjectedFamilyEntrySchema([
   'reactNativeCrashState',
   'diagnostics',
 ] as const).extend({
-  action: PluginUiResolvedSemanticCommandV1Schema.optional(),
+  command: PluginUiResolvedSemanticCommandV1Schema.optional(),
   headerActions: z.array(PluginProjectedUiHeaderActionV2Schema).optional(),
   binding: PluginUiDestinationBindingV1Schema.optional(),
   container: PluginUiContainerV1Schema.optional(),

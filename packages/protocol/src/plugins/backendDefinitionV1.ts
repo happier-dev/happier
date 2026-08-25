@@ -161,8 +161,9 @@ export const PluginBackendExternalSessionSourceInstanceV1Schema = z.discriminate
   z.object({
     /**
      * A configured source which replaces the declaration's paired default.
-     * Keeping this as a distinct kind lets older hosts drop it while retaining
-     * that default, rather than rejecting a known strict instance shape.
+     * It stays a distinct kind from `agentSetting` because replacement is part
+     * of the declared contract: the pairing above is read from the kind rather
+     * than inferred from a flag every materializer would have to reconcile.
      */
     kind: z.literal('agentSettingOverride'),
     settingId: z.string().trim().min(1),
@@ -180,44 +181,16 @@ export const PluginBackendExternalSessionSourceInstanceV1Schema = z.discriminate
 export type PluginBackendExternalSessionSourceInstanceV1 =
   z.infer<typeof PluginBackendExternalSessionSourceInstanceV1Schema>;
 
-const EXTERNAL_SESSION_SOURCE_INSTANCE_KINDS_V1 = Object.freeze([
-  'default',
-  'connectedServiceProfiles',
-  'agentSetting',
-  'agentSettingOverride',
-] as const satisfies readonly PluginBackendExternalSessionSourceInstanceV1['kind'][]);
-
-const EXTERNAL_SESSION_SOURCE_INSTANCE_KIND_SET: ReadonlySet<string> =
-  new Set(EXTERNAL_SESSION_SOURCE_INSTANCE_KINDS_V1);
-
-function isKnownExternalSessionSourceInstanceKind(kind: unknown): boolean {
-  return typeof kind === 'string' && EXTERNAL_SESSION_SOURCE_INSTANCE_KIND_SET.has(kind);
-}
-
 /**
- * Instance kinds this reader does not know are ignored rather than failing the
- * whole declaration, so an older host stays usable against a newer producer's
- * manifest/projection. Known kinds remain strictly validated, and the accepted
- * type stays `never` so no first-party declaration can author an unknown kind.
+ * The declared instance kinds are closed. Admitting an unknown kind and then
+ * dropping it would activate a declaration with fewer sources than it authored,
+ * which is indistinguishable from a working one; refusing the declaration is
+ * the only spelling an author can act on.
  */
-const UnknownPluginBackendExternalSessionSourceInstanceV1Schema = z.custom<never>((value) => {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  const kind = (value as Readonly<Record<string, unknown>>).kind;
-  return typeof kind === 'string'
-    && kind.trim().length > 0
-    && !EXTERNAL_SESSION_SOURCE_INSTANCE_KIND_SET.has(kind);
-});
-
-const PluginBackendExternalSessionSourceInstancesV1Schema = z.array(z.union([
-  PluginBackendExternalSessionSourceInstanceV1Schema,
-  UnknownPluginBackendExternalSessionSourceInstanceV1Schema,
-]))
-  .min(1)
-  .max(MAX_PLUGIN_TRANSCRIPT_SOURCES_PER_CONTRIBUTION)
-  .transform((instances) => instances.filter(
-    (instance): instance is PluginBackendExternalSessionSourceInstanceV1 =>
-      isKnownExternalSessionSourceInstanceKind(instance.kind),
-  ));
+const PluginBackendExternalSessionSourceInstancesV1Schema =
+  z.array(PluginBackendExternalSessionSourceInstanceV1Schema)
+    .min(1)
+    .max(MAX_PLUGIN_TRANSCRIPT_SOURCES_PER_CONTRIBUTION);
 
 function isStructurallyCompleteExternalSessionSourceInstance(
   instance: PluginBackendExternalSessionSourceInstanceV1,

@@ -39,7 +39,11 @@ export function pluginUiHostApiWireIdentitiesEqual(
   expected: PluginUiHostApiWireIdentityV1,
   actual: PluginUiHostApiWireIdentityV1,
 ): boolean {
-  return expected.pluginId === actual.pluginId;
+  return expected.pluginId === actual.pluginId
+    && expected.pluginVersion === actual.pluginVersion
+    && expected.viewId === actual.viewId
+    && expected.generation === actual.generation
+    && expected.sessionId === actual.sessionId;
 }
 
 const WireBase = z.object({ wireVersion: z.literal(PLUGIN_UI_HOST_API_WIRE_VERSION_V1), identity: PluginUiHostApiWireIdentityV1Schema });

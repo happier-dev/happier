@@ -170,23 +170,26 @@ assert.equal(
 
 const observationA = v1A.ConversationProviderObservationIngestInputV1Schema.parse({
   connectionId: 'connection-copy-a',
-  observation: {
-    kind: 'fullText',
+  entry: {
     observation: {
-      v: 1,
-      occurrenceId: 'copy-a:occurrence:1',
-      occurredAt: 1_700_000_000_000,
-      transport: { kind: 'poll', providerDeliveryId: 'copy-a:delivery:1' },
-      endpoint: { kind: 'direct', audience: 'direct', id: 'copy-a:conversation' },
-      actor: { principalId: 'copy-a:human', kind: 'human', isIntegrationSelf: false },
-      message: {
-        id: 'copy-a:message:1',
-        text: 'serialized V1 interop',
-        addressingEvidence: 'none',
-        contentProvenance: 'original',
-        providerTimestamp: 1_700_000_000_000,
+      kind: 'fullText',
+      observation: {
+        v: 1,
+        occurrenceId: 'copy-a:occurrence:1',
+        occurredAt: 1_700_000_000_000,
+        transport: { kind: 'poll', providerDeliveryId: 'copy-a:delivery:1' },
+        endpoint: { kind: 'direct', audience: 'direct', id: 'copy-a:conversation' },
+        actor: { principalId: 'copy-a:human', kind: 'human', isIntegrationSelf: false },
+        message: {
+          id: 'copy-a:message:1',
+          text: 'serialized V1 interop',
+          addressingEvidence: 'none',
+          contentProvenance: 'original',
+          providerTimestamp: 1_700_000_000_000,
+        },
       },
     },
+    eventCandidate: null,
   },
 });
 assert.deepEqual(

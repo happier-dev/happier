@@ -26,6 +26,7 @@ import {
 import {
     ConversationIntegrationPrincipalV1ProtocolSchema,
 } from './lifecycle.js';
+import { ConversationEndpointDisplayLabelV1ProtocolSchema } from './resolution.js';
 import { ConversationProviderFailureV1ProtocolSchema } from '../diagnostics.js';
 
 const ConversationPluginContributionRefV1ProtocolSchema = PluginContributionIdentityV1Schema;
@@ -48,6 +49,16 @@ const pairingDeepLinkTemplateV1 = defineProtocolUtf8String({
     minLength: 1,
     pattern: '^(?:(?!\\{\\{token\\}\\})[\\s\\S])*\\{\\{token\\}\\}(?:(?!\\{\\{token\\}\\})[\\s\\S])*$',
 });
+
+/** @internal Bounded provider-neutral guidance for one external setup step. */
+export const ConversationProviderSetupGuidanceV1ProtocolSchema = defineProtocolObject({
+    externalUrl: defineProtocolUtf8String({
+        maxUtf8Bytes: MAX_CONVERSATION_PAIRING_DEEP_LINK_TEMPLATE_UTF8_BYTES,
+        minLength: 1,
+        pattern: '^https://[^\\s]+$',
+    }),
+    requiredPermissionsLabel: ConversationEndpointDisplayLabelV1ProtocolSchema,
+}, { policy: 'closed' });
 
 /**
  * @internal The three provider-declared connection facts that transport-free
@@ -96,6 +107,7 @@ export const ConversationProviderSetupResultV1ProtocolSchema = defineProtocolObj
     replayContinuity: ConversationConnectionReplayContinuityV1ProtocolSchema,
     outboundTextLimit: ConversationOutboundTextLimitV1ProtocolSchema,
     sharedEndpointInputModes: ConversationSharedEndpointInputModesV1ProtocolSchema.optional(),
+    setupGuidance: ConversationProviderSetupGuidanceV1ProtocolSchema.optional(),
     pairingDeepLinkTemplate: pairingDeepLinkTemplateV1.optional(),
     webhookContributionRef: conversationPluginContributionRefV1.optional(),
 }, { policy: 'closed' });

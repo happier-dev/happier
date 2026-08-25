@@ -56,9 +56,11 @@ export const BrowserSidecarBinaryProvenanceV1Schema = z
   .strict();
 export type BrowserSidecarBinaryProvenanceV1 = z.infer<typeof BrowserSidecarBinaryProvenanceV1Schema>;
 
+// `browser_policy_denied` was retired with the `browserUseAllowed` chain (E2-F1): it was a second
+// decision-maker for a question the `browser.sidecar` feature bit already owns, so a policy denial
+// is reported as `feature_disabled` from the one fail-close point in `createSidecarLaunchPlan`.
 export const BrowserSidecarErrorCodeV1Schema = z.enum([
   'feature_disabled',
-  'browser_policy_denied',
   'managed_package_missing',
   'unsupported_platform',
   'system_browser_unavailable',

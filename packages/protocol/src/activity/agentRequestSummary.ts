@@ -2,6 +2,29 @@ import { extractShellCommand, stripShellCommandPreludeForDisplay } from './shell
 
 export type AgentRequestKind = 'permission' | 'user_action';
 export type AgentPermissionRisk = 'low' | 'high';
+export type AgentRequestQuestionSelection = 'text' | 'single' | 'multiple';
+
+export type AgentRequestQuestionChoiceSummary = Readonly<{
+  /** User-visible label rendered by a mediator. */
+  label: string;
+  /** Canonical value returned to the live requester when that label is selected. */
+  value: string;
+}>;
+
+/**
+ * Provider-neutral AskUserQuestion semantics. This is intentionally derived
+ * at the existing request-summary owner rather than by each notification or
+ * mediator surface parsing a provider payload for itself.
+ */
+export type AgentRequestQuestionSummary = Readonly<{
+  /** Live requester key; never supplied by a remote mediator. */
+  answerKey: string;
+  question: string;
+  selection: AgentRequestQuestionSelection;
+  required: boolean;
+  allowCustom: boolean;
+  choices: readonly AgentRequestQuestionChoiceSummary[];
+}>;
 
 export type AgentRequestSemanticSummary = Readonly<{
   kind: AgentRequestKind;
@@ -12,6 +35,7 @@ export type AgentRequestSemanticSummary = Readonly<{
   filePath: string | null;
   firstQuestionText: string | null;
   questionCount: number;
+  questions: readonly AgentRequestQuestionSummary[];
 }>;
 
 type FormatPermissionRequestSummaryParams = Readonly<{
@@ -104,17 +128,53 @@ function extractFilePathLike(input: unknown): string | null {
   );
 }
 
-function extractQuestionTexts(toolName: string, toolInput: unknown): string[] {
+function extractQuestionSummaries(
+  toolName: string,
+  toolInput: unknown,
+): readonly AgentRequestQuestionSummary[] {
   if (!isAskUserQuestionToolName(toolName)) return [];
   const obj = asRecord(toolInput);
   const questions = Array.isArray(obj?.questions) ? obj.questions : [];
-  const texts: string[] = [];
+  const summaries: AgentRequestQuestionSummary[] = [];
   for (const question of questions) {
     const record = asRecord(question);
-    const next = firstString(record?.question);
-    if (next) texts.push(next);
+    const text = firstString(record?.question) ?? firstString(record?.header);
+    if (!text) continue;
+    const optionValues = Array.isArray(record?.options)
+      ? record.options
+      : Array.isArray(record?.choices)
+        ? record.choices
+        : [];
+    const choices: AgentRequestQuestionChoiceSummary[] = [];
+    for (const option of optionValues) {
+      const optionRecord = asRecord(option);
+      const label = firstString(optionRecord?.label) ?? firstString(option);
+      if (!label) continue;
+      const value = firstString(optionRecord?.id)
+        ?? firstString(optionRecord?.choice)
+        ?? firstString(optionRecord?.value)
+        ?? label;
+      choices.push(Object.freeze({ label, value }));
+    }
+    const declaredSelection = firstString(record?.selection)?.toLowerCase();
+    const selection: AgentRequestQuestionSelection = declaredSelection === 'text'
+      ? 'text'
+      : declaredSelection === 'multiple'
+        || record?.multiSelect === true
+        || record?.multiple === true
+        ? 'multiple'
+        : 'single';
+    const hasExplicitFreeform = asRecord(record?.freeform) !== null || record?.allowCustom === true;
+    summaries.push(Object.freeze({
+      answerKey: firstString(record?.id) ?? text,
+      question: text,
+      selection,
+      required: record?.required !== false,
+      allowCustom: selection === 'text' || choices.length === 0 || hasExplicitFreeform,
+      choices: Object.freeze(choices),
+    }));
   }
-  return texts;
+  return Object.freeze(summaries);
 }
 
 function shortPath(raw: string): string {
@@ -154,7 +214,7 @@ export function buildAgentRequestSemanticSummary(params: Readonly<{
 }>): AgentRequestSemanticSummary {
   const obj = asRecord(params.toolInput);
   const permission = asRecord(obj?.permission);
-  const questions = extractQuestionTexts(params.toolName, params.toolInput);
+  const questions = extractQuestionSummaries(params.toolName, params.toolInput);
 
   return {
     kind: params.kind,
@@ -163,8 +223,9 @@ export function buildAgentRequestSemanticSummary(params: Readonly<{
     permissionTitle: firstString(permission?.title) ?? firstString(obj?.title) ?? null,
     shellCommand: extractShellCommand(params.toolInput),
     filePath: extractFilePathLike(params.toolInput),
-    firstQuestionText: questions[0] ?? null,
+    firstQuestionText: questions[0]?.question ?? null,
     questionCount: questions.length,
+    questions,
   };
 }
 

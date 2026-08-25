@@ -4,6 +4,7 @@ import {
   resolveVoiceSpeechEndpointPolicy,
   resolveVoiceSpeechSettingsCorrespondence,
   deriveVoiceCredentialBindingIdentityV1,
+  resolveVoiceCredentialOperationAuthorization,
   VoiceCredentialSlotIdSchema,
   VoiceProviderContributionSchema,
   VoiceProviderSettingsSchema,
@@ -69,6 +70,163 @@ const hostOperation = Object.freeze({
 });
 
 describe('canonical Voice provider declarations', () => {
+  it('authorizes a host-mediated operation only for its exact selected source and host phase', () => {
+    const contribution = VoiceProviderContributionSchema.parse({
+      id: 'phase-separated',
+      title: 'Phase separated',
+      kind: 'conversation',
+      roles: ['realtime_conversation'],
+      platforms: ['web'],
+      capabilities: {
+        turn: { cancelResponse: false, bargeIn: false },
+      },
+      client: {
+        artifactId: 'voice-runtime-web',
+        modulePath: './voiceRuntime',
+        exportName: 'activate',
+      },
+      credentials: {
+        slot: credential.slot,
+        requirement: credential.requirement,
+        sources: [{
+          kind: 'savedSecret',
+          secretKinds: ['apiKey'],
+          operationProjections: [{
+            kind: 'recipientCredential',
+            operation: 'catalog',
+            phase: 'connection',
+            format: 'bearer',
+          }],
+        }, {
+          kind: 'connectedAccount',
+          service: { pluginId: 'acme.accounts', localId: 'openai' },
+          operationProjections: [{
+            kind: 'materializedHttpHeaders',
+            operation: 'catalog',
+            phase: 'prepare',
+            request: {
+              kind: 'httpHeaders',
+              origin: 'https://speech.googleapis.com',
+              headerNames: ['authorization'],
+            },
+            allowedHeaderNames: ['authorization'],
+          }],
+        }],
+        hostMediated: { operations: [hostOperation] },
+      },
+    });
+
+    const input = {
+      pluginId: 'acme.voice',
+      contributionId: 'phase-separated',
+      contribution,
+      operationId: 'catalog',
+    } as const;
+
+    expect(resolveVoiceCredentialOperationAuthorization({
+      ...input,
+      selectedSource: { kind: 'savedSecret' },
+      phase: 'prepare',
+    })).toBeNull();
+    expect(resolveVoiceCredentialOperationAuthorization({
+      ...input,
+      selectedSource: { kind: 'savedSecret' },
+      phase: 'connection',
+    })).toMatchObject({
+      projection: { kind: 'recipientCredential', phase: 'connection' },
+    });
+    expect(resolveVoiceCredentialOperationAuthorization({
+      ...input,
+      selectedSource: {
+        kind: 'connectedAccount',
+        service: { pluginId: 'acme.accounts', localId: 'openai' },
+      },
+      phase: 'prepare',
+    })).toMatchObject({
+      projection: { kind: 'materializedHttpHeaders', phase: 'prepare' },
+    });
+    expect(resolveVoiceCredentialOperationAuthorization({
+      ...input,
+      selectedSource: {
+        kind: 'connectedAccount',
+        service: { pluginId: 'acme.accounts', localId: 'openai' },
+      },
+      phase: 'connection',
+    })).toBeNull();
+    expect(resolveVoiceCredentialOperationAuthorization({
+      ...input,
+      selectedSource: {
+        kind: 'connectedAccount',
+        service: { pluginId: 'acme.accounts', localId: 'different' },
+      },
+      phase: 'prepare',
+    })).toBeNull();
+  });
+
+  it('fails closed when shorthand and self-qualified Connected Account sources match the same selection', () => {
+    const source = (service: string | Readonly<{ pluginId: string; localId: string }>) => ({
+      kind: 'connectedAccount' as const,
+      service,
+      operationProjections: [{
+        kind: 'materializedHttpHeaders' as const,
+        operation: 'catalog',
+        phase: 'prepare' as const,
+        request: {
+          kind: 'httpHeaders' as const,
+          origin: 'https://speech.googleapis.com',
+          headerNames: ['authorization'],
+        },
+        allowedHeaderNames: ['authorization'],
+      }],
+    });
+    const shorthand = source('openai');
+    const qualifiedSelf = source({ pluginId: 'acme.voice', localId: 'openai' });
+    const authorize = (sources: readonly ReturnType<typeof source>[]) => {
+      const contribution = VoiceProviderContributionSchema.parse({
+        id: 'duplicate-qualified-source',
+        title: 'Duplicate qualified source',
+        kind: 'conversation',
+        roles: ['realtime_conversation'],
+        platforms: ['web'],
+        capabilities: {
+          turn: { cancelResponse: false, bargeIn: false },
+        },
+        client: {
+          artifactId: 'voice-runtime-web',
+          modulePath: './voiceRuntime',
+          exportName: 'activate',
+        },
+        credentials: {
+          slot: credential.slot,
+          requirement: credential.requirement,
+          sources,
+          hostMediated: { operations: [hostOperation] },
+        },
+      });
+      return resolveVoiceCredentialOperationAuthorization({
+        pluginId: 'acme.voice',
+        contributionId: 'duplicate-qualified-source',
+        contribution,
+        selectedSource: {
+          kind: 'connectedAccount',
+          service: { pluginId: 'acme.voice', localId: 'openai' },
+        },
+        phase: 'prepare',
+        operationId: 'catalog',
+      });
+    };
+
+    expect(authorize([shorthand])).toMatchObject({
+      projection: { kind: 'materializedHttpHeaders', phase: 'prepare' },
+    });
+    for (const sources of [
+      [shorthand, qualifiedSelf],
+      [qualifiedSelf, shorthand],
+    ]) {
+      expect(authorize(sources)).toBeNull();
+    }
+  });
+
   it('uses the final contribution union at the active manifest-family owner', () => {
     expect(PluginContributesV2Schema.safeParse({
       voiceProviders: [{
@@ -438,7 +596,7 @@ describe('canonical Voice provider declarations', () => {
     }).success).toBe(false);
   });
 
-  it('preserves settings v1, requires exact static options, and enforces one speech-phase projection per operation', () => {
+  it('preserves settings v1, requires exact static options, and admits speech settings-phase credentials only through the declared phase', () => {
     expect(VoiceProviderSettingsSchema.safeParse({
       schemaVersion: 1,
       fields: [],
@@ -508,7 +666,25 @@ describe('canonical Voice provider declarations', () => {
           operationProjections: [{ ...projection, phase: 'settings' }],
         }],
       },
-    }).success).toBe(false);
+    }).success).toBe(true);
+    expect(VoiceProviderContributionSchema.safeParse({
+      ...contribution,
+      credentials: {
+        ...contribution.credentials,
+        sources: [{
+          ...contribution.credentials.sources[0],
+          rawGrants: [{
+            realm: 'daemon',
+            phase: 'settings',
+            request: {
+              kind: 'httpHeaders',
+              origin: 'https://speech.googleapis.com',
+              headerNames: ['authorization'],
+            },
+          }],
+        }],
+      },
+    }).success).toBe(true);
   });
 
   it('bounds Voice action nonempty conditions to declared string settings', () => {

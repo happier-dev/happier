@@ -27,11 +27,11 @@ export function mapPeerDirectPolicyDenyReasonToLiveStreamDisabledReason(
         case 'disabled_by_account_preference':
         case 'disabled_by_product_default':
             return 'account_preference_disabled';
-        case 'topology_unavailable':
-            return 'topology_unavailable';
+        // No `topology_unavailable` case: the policy no longer models topology. That code is still
+        // produced for callers, by `route.ts#routeUnavailableReason`, which is the sole owner of the
+        // topology denial and runs before the policy is consulted.
         case 'grant_missing':
         case 'grant_expired':
-        case 'grant_revoked':
         case 'grant_scope_mismatch':
             return 'grant_rejected';
     }

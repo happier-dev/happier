@@ -11,12 +11,12 @@ describe('plugin-UI public subpath initialization', () => {
     expect(PluginSessionHeaderActionDescriptorV1Schema.parse({
       id: 'open-activity',
       title: 'Open activity',
-      action: {
+      command: {
         kind: 'openSurface',
         destination: 'activity',
       },
     })).toMatchObject({
-      action: {
+      command: {
         kind: 'openSurface',
         destination: 'activity',
       },

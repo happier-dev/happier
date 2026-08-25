@@ -63,12 +63,12 @@ describe('ConversationTurnOriginV1', () => {
   });
 
   it.each([
-    ['happier.voice.elevenlabs', 'realtime_elevenlabs', 'realtime-elevenlabs'],
-    ['happier.voice.google', 'google_gemini', 'gemini-stt'],
-    ['happier.voice.google', 'google_cloud', 'google-cloud-tts'],
+    ['happier.voice.elevenlabs', 'realtime_elevenlabs'],
+    ['happier.voice.google', 'google_gemini'],
+    ['happier.voice.google', 'google_cloud'],
   ] as const)(
-    'normalizes historical Voice source %s/%s on read without changing the stored shape',
-    (pluginId, contributionId, canonicalContributionId) => {
+    'rejects legacy Voice source %s/%s in stored provenance',
+    (pluginId, contributionId) => {
       const historicalOrigin = {
         v: 1,
         channel: 'realtime_conversation',
@@ -82,11 +82,7 @@ describe('ConversationTurnOriginV1', () => {
           payload: { v: 1 },
           conversationTurnOriginV1: historicalOrigin,
         },
-      })).toEqual({
-        ...historicalOrigin,
-        source: { pluginId, contributionId: canonicalContributionId },
-      });
-      expect(historicalOrigin.source.contributionId).toBe(contributionId);
+      })).toBeNull();
     },
   );
 

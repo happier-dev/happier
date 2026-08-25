@@ -137,6 +137,20 @@ describe('projectAgentCapabilitiesV2FromDefinition', () => {
     });
     expect(projected.executionRuns).toEqual({ open: ['create'], checkpoint: true, stop: true });
   });
+
+  it('projects only declared tool-delivery modes from the Agent definition', () => {
+    const project = (delivery: string) => projectAgentCapabilitiesV2FromDefinition({
+      ...NO_CAPABILITIES,
+      tools: { delivery },
+    } as AgentDefinitionCapabilityFacts, {
+      executionRuns: { open: ['create'], checkpoint: false, stop: true },
+    });
+
+    expect(project('native_mcp').tools).toEqual({ delivery: 'native_mcp' });
+    expect(project('native_extension').tools).toEqual({ delivery: 'native_extension' });
+    expect(project('shell_bridge').tools).toEqual({ delivery: 'shell_bridge' });
+    expect(project('unsupported')).not.toHaveProperty('tools');
+  });
 });
 
 type PublishedAgentContribution = Readonly<{

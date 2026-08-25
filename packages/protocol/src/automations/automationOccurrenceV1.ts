@@ -22,10 +22,16 @@ import {
   AutomationHostIdentifierV1Schema,
   AutomationIdV1Schema,
 } from './automationIdV1.js';
-import { AutomationEventPayloadV1Schema } from './automationEventJsonBoundsV1.js';
+import {
+  AutomationEventPayloadV1Schema,
+  AutomationEventSourceOrOccurrenceIdV1Schema,
+} from './automationEventJsonBoundsV1.js';
 import {
   AutomationOriginOccurredAtV1Schema,
 } from './automationOriginOccurredAtV1.js';
+// Type-only: the reply-context identity commits to the admitted delivery arm
+// without this occurrence owner depending on the delivery module at runtime.
+import type { AutomationConversationResultDeliveryV1 } from './automationResultDeliveryV1.js';
 import {
   AutomationSourceSelectorIdV1JsonSchema,
   AutomationSourceSelectorIdV1Schema,
@@ -68,7 +74,7 @@ function boundedNfcString(maxUtf8Bytes: number, label: string) {
   });
 }
 
-const OCCURRENCE_ID_SCHEMA = boundedNfcString(512, 'Occurrence identifiers');
+const OCCURRENCE_ID_SCHEMA = AutomationEventSourceOrOccurrenceIdV1Schema;
 export const AutomationConversationBindingIdV1Schema = boundedNfcString(
   256,
   'Conversation binding identifiers',
@@ -177,6 +183,63 @@ export const AutomationConversationOccurrenceEvidenceV1Schema = z.object({
 export type AutomationConversationOccurrenceEvidenceV1 = z.infer<
   typeof AutomationConversationOccurrenceEvidenceV1Schema
 >;
+
+export const AUTOMATION_CONVERSATION_REPLY_CONTEXT_IDENTITY_DOMAIN_V1 =
+  'happier.automation-conversation-reply-context.v1' as const;
+
+/**
+ * The opaque reply-context identity retained inside Conversation occurrence
+ * evidence. It commits the immutable occurrence to the exact Account mode and
+ * delivery arm that was admitted, so occurrence equality still covers the
+ * reply handoff for an Account whose evidence the server cannot read.
+ */
+export function deriveAutomationConversationReplyContextIdentityV1(params: Readonly<{
+  accountMode: 'plain' | 'e2ee';
+  resultDelivery: AutomationConversationResultDeliveryV1;
+}>): string {
+  return computeCanonicalDomainSeparatedDigest(
+    AUTOMATION_CONVERSATION_REPLY_CONTEXT_IDENTITY_DOMAIN_V1,
+    [
+      '1',
+      params.accountMode,
+      createCanonicalJsonSigningInput(params.resultDelivery),
+    ],
+  );
+}
+
+/**
+ * Creates the sole canonical evidence projection for one Conversation
+ * occurrence. The plain server writer and the E2EE admission host both build
+ * it here, so a sealed occurrence and a plaintext one describe the same
+ * immutable facts and derive the same occurrence key.
+ */
+export function buildAutomationConversationOccurrenceEvidenceV1(params: Readonly<{
+  accountMode: 'plain' | 'e2ee';
+  bindingId: z.input<typeof AutomationConversationBindingIdV1Schema>;
+  occurrenceId: z.input<typeof OCCURRENCE_ID_SCHEMA>;
+  occurredAt: z.input<typeof AutomationOriginOccurredAtV1Schema>;
+  caller: AutomationConversationAdmissionCallerIdentityV1;
+  sender: unknown;
+  text: string;
+  resultDelivery: AutomationConversationResultDeliveryV1;
+}>): AutomationConversationOccurrenceEvidenceV1 {
+  return AutomationConversationOccurrenceEvidenceV1Schema.parse({
+    v: 1,
+    kind: 'conversation',
+    bindingId: params.bindingId,
+    occurrenceId: params.occurrenceId,
+    occurredAt: params.occurredAt,
+    caller: params.caller,
+    input: {
+      sender: params.sender,
+      text: params.text,
+    },
+    replyContextIdentity: deriveAutomationConversationReplyContextIdentityV1({
+      accountMode: params.accountMode,
+      resultDelivery: params.resultDelivery,
+    }),
+  });
+}
 
 export const AutomationOccurrenceEvidenceV1Schema = z.discriminatedUnion('kind', [
   AutomationPluginEventOccurrenceEvidenceV1Schema,

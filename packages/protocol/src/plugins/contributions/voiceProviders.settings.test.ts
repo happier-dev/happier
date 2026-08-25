@@ -18,6 +18,14 @@ const baseContribution = Object.freeze({
   },
 });
 
+function nestedJson(depth: number): unknown {
+  let value: unknown = 'leaf';
+  for (let index = 0; index < depth; index += 1) {
+    value = { next: value };
+  }
+  return value;
+}
+
 describe('Voice provider structured settings declarations', () => {
   it('accepts a localized disclosure without inventing a provider setting', () => {
     const parsed = PluginContributesV2Schema.parse({
@@ -145,6 +153,26 @@ describe('Voice provider structured settings declarations', () => {
         },
       }],
     }).success).toBe(true);
+  });
+
+  it('admits byte-small deeply nested JSON settings through the Voice contribution boundary', () => {
+    const parsed = PluginContributesV2Schema.safeParse({
+      voiceProviders: [{
+        ...baseContribution,
+        settings: {
+          schemaVersion: 2,
+          fields: [{
+            id: 'nested',
+            title: 'Nested configuration',
+            schema: { type: 'object', additionalProperties: true },
+            default: nestedJson(128),
+            presentation: { control: 'json' },
+          }],
+        },
+      }],
+    });
+
+    expect(parsed.success).toBe(true);
   });
 
   it('rejects a nested JSON default that violates its declared schema at the public contribution boundary', () => {

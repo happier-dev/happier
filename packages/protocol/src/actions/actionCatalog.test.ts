@@ -149,6 +149,11 @@ describe('actionCatalog action-definition adapter', () => {
       api: false,
       plugin: false,
     });
+
+    expect(SerializedActionDefinitionV1Schema.safeParse({
+      ...current,
+      compatibilityExtension: { introducedBy: 'supported-predecessor' },
+    }).success).toBe(true);
   });
 
   it('filters action definitions by surface and enabled predicate', () => {

@@ -10,6 +10,9 @@ import {
 } from './sourceCatalog.js';
 import { ExternalSessionTakeoverStorageModeV1Schema } from './takeoverV1.js';
 import { asProtocolZod } from "../../plugins/actions/internalProtocolZodAdapter.js";
+import {
+  agentRoutingIdAddressesContributionIdentityV1,
+} from '../../plugins/contributionIdentity.js';
 
 const OperationIdSchema = z.string().trim().min(1).max(256);
 const OperationReferenceIdSchema = z.string().trim().min(1).max(512);
@@ -834,10 +837,17 @@ export const ExternalSessionOperationRecordV1Schema = z.object({
   }
 
   if (operation.authorIntent?.kind === 'takeover') {
+    // `authorIntent.agentId` is the host routing id the author called with,
+    // while the semantic request carries the Agent's durable
+    // `{pluginId, localId}` identity. Comparing the routing id against a bare
+    // `localId` here accepted only bundled Agents and made every installed
+    // Agent's takeover record unparseable.
     if (
       operation.request.plan !== 'takeover'
-      || operation.authorIntent.agentId
-        !== operation.request.source.qualifiedIdentity.agent.localId
+      || !agentRoutingIdAddressesContributionIdentityV1(
+        operation.authorIntent.agentId,
+        operation.request.source.qualifiedIdentity.agent,
+      )
       || operation.authorIntent.remoteSessionId
         !== operation.request.source.remoteSessionId
       || operation.authorIntent.targetStorageMode
@@ -1218,11 +1228,33 @@ export type ExternalSessionOperationUpdateDecisionV1 =
   | Readonly<{ kind: 'updated_at_regression' }>
   | Readonly<{ kind: 'terminal_operation' }>;
 
-const TERMINAL_OPERATION_STATUSES: readonly ExternalSessionOperationStatusV1[] = [
-  'cancelled',
-  'completed',
-  'discarded',
-];
+/**
+ * Terminal (settled) membership for every operation status. The record is
+ * exhaustive by type, so a new status cannot compile until it is classified
+ * here — which is what previously let admission, projection, dismissal and
+ * new-operation blocking drift apart with independent literal sets.
+ *
+ * Narrower owner policies such as completion-receipt compaction eligibility
+ * are deliberately *not* this concept and stay with their own owner.
+ */
+const EXTERNAL_SESSION_OPERATION_TERMINAL_STATUS_V1: Readonly<
+  Record<ExternalSessionOperationStatusV1, boolean>
+> = Object.freeze({
+  running: false,
+  awaiting_user_resume: false,
+  cancel_requested: false,
+  cancelled: true,
+  failed: false,
+  reconciliation_required: false,
+  completed: true,
+  discarded: true,
+});
+
+export function isExternalSessionOperationTerminalStatusV1(
+  status: ExternalSessionOperationStatusV1,
+): boolean {
+  return EXTERNAL_SESSION_OPERATION_TERMINAL_STATUS_V1[status];
+}
 
 function resolveCancelledDiscardSubjectV1(
   previous: ExternalSessionOperationRecordV1,
@@ -1246,6 +1278,19 @@ function resolveCancelledDiscardSubjectV1(
       === previous.fence.acceptedThroughServerSeq
     && previous.bindings.historicalImportJobId !== undefined;
   return isCancelledInitialPartial ? 'initial_server_partial' : null;
+}
+
+/**
+ * A cancelled private materialization remains actionable while its exact
+ * same-claim Discard transition is still admitted. That includes a local
+ * private capture (which has no server work) and the initial server-partial
+ * form (which still names the remote import job). Retention must not turn
+ * either into a receipt before that recovery choice is discharged.
+ */
+export function externalSessionOperationRetainsDiscardRecoveryV1(
+  record: ExternalSessionOperationRecordV1,
+): boolean {
+  return resolveCancelledDiscardSubjectV1(record) !== null;
 }
 
 /**
@@ -1311,7 +1356,7 @@ export function decideExternalSessionOperationUpdateV1(
     return Object.freeze({ kind: 'revision_gap' });
   }
   if (
-    TERMINAL_OPERATION_STATUSES.includes(previous.status)
+    isExternalSessionOperationTerminalStatusV1(previous.status)
     && !isCancelledDiscardTransition(previous, next)
   ) {
     return Object.freeze({ kind: 'terminal_operation' });

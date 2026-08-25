@@ -37,6 +37,7 @@ export type {
 export {
   SessionMessageProvenanceV1Schema,
   assertSessionInputAdmissionReceiptForRequestV1,
+  hasSessionInputContentV1,
   settleSessionInputRequestV1,
 } from './messages/sessionInputAdmission.js';
 export {

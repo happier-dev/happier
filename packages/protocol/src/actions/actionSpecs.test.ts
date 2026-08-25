@@ -35,8 +35,6 @@ const RETIRED_UNBACKED_RUNTIME_ACTION_IDS = [
 ] as const;
 
 const RUNTIME_ACTION_IDS = [
-  'browser.session.create',
-  'browser.session.close',
   'browser.view.open',
   'browser.view.close',
   'browser.view.focus',
@@ -164,6 +162,9 @@ const RESULT_REQUIRED_BLOCKING_ACTION_IDS = [
   'session.handoff.prepare_target_result.get',
   'session.handoff.status.get',
   'paths.list_recent',
+  'projects.list',
+  'prompts.invocations.list',
+  'prompts.invocation.resolve',
   'machines.list',
   'servers.list',
   'review.engines.list',
@@ -277,6 +278,7 @@ const RESULT_NONE_DEFERRED_ACTION_IDS = [
   'automation.conversation.admit',
   'session.permission.remote.pending.list',
   'session.permission.remote.respond',
+  'session.user_action.remote.answer',
   'session.permission.remote.grants.list',
   'session.permission.remote.grants.revoke',
   'reviews.comments.create',
@@ -289,6 +291,7 @@ const RESULT_NONE_DEFERRED_ACTION_IDS = [
   'reviews.comments.setDisposition',
   'reviews.comments.attachEvidence',
   'reviews.comments.bulkTransition',
+  'reviews.comments.claimPublicationDispatch',
 ] as const;
 
 const RESULT_OPTIONAL_DEFERRED_ACTION_IDS = [
@@ -355,11 +358,11 @@ const RESULT_OPTIONAL_DEFERRED_ACTION_IDS = [
   'plugins.scaffold',
   'plugins.install',
   'plugins.uninstall',
-  'plugins.dev',
-  'plugins.author.install',
-  'plugins.author.typecheck',
-  'plugins.author.build',
-  'plugins.author.test',
+  'plugins.dev.submit',
+  'plugins.dev.install',
+  'plugins.dev.typecheck',
+  'plugins.dev.build',
+  'plugins.dev.test',
   'plugins.doctor',
   'plugins.pack',
   'plugins.reload',
@@ -384,11 +387,11 @@ describe('Action Spec Registry', () => {
       ['plugins.scaffold', 'danger'],
       ['plugins.install', 'danger'],
       ['plugins.uninstall', 'danger'],
-      ['plugins.dev', 'danger'],
-      ['plugins.author.install', 'danger'],
-      ['plugins.author.typecheck', 'danger'],
-      ['plugins.author.build', 'danger'],
-      ['plugins.author.test', 'danger'],
+      ['plugins.dev.submit', 'danger'],
+      ['plugins.dev.install', 'danger'],
+      ['plugins.dev.typecheck', 'danger'],
+      ['plugins.dev.build', 'danger'],
+      ['plugins.dev.test', 'danger'],
       ['plugins.doctor', 'danger'],
       ['plugins.pack', 'danger'],
       ['plugins.reload', 'danger'],
@@ -408,14 +411,16 @@ describe('Action Spec Registry', () => {
     }
 
     expect(expectations.map(([actionId]) => actionId)).toEqual(PLUGIN_DEV_LOOP_ACTION_IDS_V1);
+    expect(PUBLIC_ACTION_IDS).toEqual(expect.arrayContaining(expectations.map(([actionId]) => actionId)));
+    expect(PUBLIC_ACTION_IDS).not.toContain('plugins.dev');
   });
 
   it('projects daemon-issued plugin reviews through one typed pending-review envelope', () => {
-    const schema = getActionSpec('plugins.dev').outputSchema;
+    const schema = getActionSpec('plugins.dev.submit').outputSchema;
 
     expect(schema?.safeParse({
       ok: false,
-      kind: 'plugins_dev',
+      kind: 'plugins_dev_submit',
       outcome: 'reviewRequired',
       pendingReview: {
         kind: 'sourceRootReviewRequired',
@@ -436,14 +441,14 @@ describe('Action Spec Registry', () => {
 
     expect(schema?.safeParse({
       ok: false,
-      kind: 'plugins_dev',
+      kind: 'plugins_dev_submit',
       outcome: 'reviewRequired',
       pendingChangeId: 'pending-plugin-change',
       review: { sourceRootPath: '/plugins/acme' },
     }).success).toBe(false);
     expect(schema?.safeParse({
       ok: false,
-      kind: 'plugins_dev',
+      kind: 'plugins_dev_submit',
       outcome: 'reviewRequired',
     }).success).toBe(false);
     expect(schema?.safeParse({
@@ -461,7 +466,7 @@ describe('Action Spec Registry', () => {
       kind: 'plugins_unknown',
     }).success).toBe(false);
 
-    expect(serializeActionSpec(getActionSpec('plugins.dev')).outputSchema).toMatchObject({
+    expect(serializeActionSpec(getActionSpec('plugins.dev.submit')).outputSchema).toMatchObject({
       anyOf: expect.any(Array),
     });
 
@@ -872,7 +877,6 @@ describe('Action Spec Registry', () => {
         requestedBy: 'agent',
         requesterRef: { kind: 'session', id: 'session-1' },
         timeoutMs: 1_000,
-        leaseId: 'lease-1',
       };
 
       expect(inputSchema.safeParse({ ...request, actionKind }).success).toBe(true);
@@ -883,8 +887,7 @@ describe('Action Spec Registry', () => {
   it('matches runtime surface availability to the actual backing census', () => {
     expect(resolveRuntimeActionSurfaces('localServices.inventory.list').agent).toBe(true);
     expect(resolveRuntimeActionSurfaces('localServices.inventory.refresh').agent).toBe(true);
-    expect(resolveRuntimeActionSurfaces('browser.session.create').agent).toBe(false);
-    expect(resolveRuntimeActionSurfaces('browser.session.close').agent).toBe(false);
+    expect(resolveRuntimeActionSurfaces('devices.simulator.input.orientation').agent).toBe(false);
   });
 
   it('projects strict Agent inventory rows for SDK Agent selection', () => {
@@ -1029,6 +1032,7 @@ describe('Action Spec Registry', () => {
     for (const actionId of [
       'session.permission.remote.pending.list',
       'session.permission.remote.respond',
+      'session.user_action.remote.answer',
       'session.permission.remote.grants.list',
       'session.permission.remote.grants.revoke',
     ] as const) {
@@ -1042,6 +1046,7 @@ describe('Action Spec Registry', () => {
     // owner-visible grant ledger operations remain ordinary Account API.
     expect(getActionSpec('session.permission.remote.pending.list').surfaces.api).toBe(false);
     expect(getActionSpec('session.permission.remote.respond').surfaces.api).toBe(false);
+    expect(getActionSpec('session.user_action.remote.answer').surfaces.api).toBe(false);
     expect(getActionSpec('session.permission.remote.grants.list').surfaces.api).toBe(true);
     expect(getActionSpec('session.permission.remote.grants.revoke').surfaces.api).toBe(true);
   });
@@ -1183,11 +1188,11 @@ describe('Action Spec Registry', () => {
       sessionId: 'session-1',
       provider: 'codex',
     })).toMatchObject({ sessionId: 'session-1', agentId: 'codex' });
-    expect(PluginInvocableActionIdSchema.safeParse('sessions.subagents.list').success).toBe(true);
+    expect(PluginInvocableActionIdSchema.safeParse('sessions.subagents.list').success).toBe(false);
     expect(PluginInvocableActionIdSchema.safeParse('voice_agent.start').success).toBe(true);
   });
 
-  it('projects public subagent registry reads to Plugin while retaining lifecycle maintenance host-internal', () => {
+  it('keeps every raw subagent registry Action off the Plugin surface while retaining its RPC binding', () => {
     const rawSubagentActionIds = [
       'sessions.subagents.list',
       'sessions.subagents.get',
@@ -1196,7 +1201,7 @@ describe('Action Spec Registry', () => {
       'sessions.subagents.updateStatus',
       'sessions.subagents.complete',
     ] as const;
-    const publicSubagentActionIds = new Set([
+    const pluginExcludedReadActionIds = new Set([
       'sessions.subagents.list',
       'sessions.subagents.get',
       'sessions.subagents.watch',
@@ -1204,12 +1209,17 @@ describe('Action Spec Registry', () => {
 
     for (const actionId of rawSubagentActionIds) {
       const spec = getActionSpec(actionId);
-      const publicProjection = publicSubagentActionIds.has(actionId);
       expect(spec.surfaces.rpc).toBe(true);
-      expect(spec.surfaces.plugin).toBe(publicProjection);
-      expect(PluginInvocableActionIdSchema.safeParse(actionId).success).toBe(publicProjection);
-      expect(Object.hasOwn(PLUGIN_ACTION_INPUT_SCHEMAS, actionId)).toBe(publicProjection);
-      expect(Object.hasOwn(PLUGIN_ACTION_OUTPUT_SCHEMAS, actionId)).toBe(publicProjection);
+      expect(spec.surfaces.plugin).toBe(false);
+      expect(PluginInvocableActionIdSchema.safeParse(actionId).success).toBe(false);
+      expect(Object.hasOwn(PLUGIN_ACTION_INPUT_SCHEMAS, actionId)).toBe(false);
+      expect(Object.hasOwn(PLUGIN_ACTION_OUTPUT_SCHEMAS, actionId)).toBe(false);
+      expect(isPluginSurfaceExcludedActionId(actionId)).toBe(
+        pluginExcludedReadActionIds.has(actionId),
+      );
+      expect(isInternalActionId(actionId)).toBe(
+        !pluginExcludedReadActionIds.has(actionId),
+      );
     }
   });
 
@@ -1343,10 +1353,13 @@ describe('Action Spec Registry', () => {
       sessionId: 'session-1',
       ttlMs: 1_000,
     })).toEqual({ sessionId: 'session-1', ttlMs: 1_000 });
-    expect(getActionSpec('sessions.external.follow').inputSchema.safeParse({
+    expect(getActionSpec('sessions.external.follow').inputSchema.parse({
       sessionId: 'session-1',
       acceptedTailCursor: ' happier_external_cursor_v1:Y3Vyc29y ',
-    }).success).toBe(false);
+    })).toEqual({
+      sessionId: 'session-1',
+      acceptedTailCursor: 'happier_external_cursor_v1:Y3Vyc29y',
+    });
     expect(getActionSpec('sessions.external.unfollow').inputSchema.safeParse({
       sessionId: 'session-1',
       leaseId: 'lease-1',
@@ -2799,11 +2812,11 @@ describe('Action Spec Registry', () => {
   });
 
   it('projects external-session actions through canonical external-session RPC bindings and legacy direct-session aliases', () => {
-    const expected: readonly [ActionId, string, string, string | null, 'read' | 'write' | 'danger', boolean][] = [
+    const expected: readonly [ActionId, string, string | null, string | null, 'read' | 'write' | 'danger', boolean][] = [
       ['sessions.external.candidates.list', RPC_METHODS.DAEMON_EXTERNAL_SESSIONS_CANDIDATES_LIST, RPC_METHODS.DAEMON_DIRECT_SESSIONS_CANDIDATES_LIST_LEGACY, 'sessions.external.listCandidates', 'read', true],
       ['sessions.external.link.ensure', RPC_METHODS.DAEMON_EXTERNAL_SESSION_LINK_ENSURE, RPC_METHODS.DAEMON_DIRECT_SESSION_LINK_ENSURE_LEGACY, null, 'write', true],
-      ['sessions.external.follow', RPC_METHODS.DAEMON_EXTERNAL_SESSION_ATTACH, RPC_METHODS.DAEMON_DIRECT_SESSION_ATTACH_LEGACY, null, 'write', true],
-      ['sessions.external.unfollow', RPC_METHODS.DAEMON_EXTERNAL_SESSION_DETACH, RPC_METHODS.DAEMON_DIRECT_SESSION_DETACH_LEGACY, null, 'write', true],
+      ['sessions.external.follow', RPC_METHODS.DAEMON_EXTERNAL_SESSION_ATTACH, null, null, 'write', true],
+      ['sessions.external.unfollow', RPC_METHODS.DAEMON_EXTERNAL_SESSION_DETACH, null, null, 'write', true],
       ['sessions.external.status.get', RPC_METHODS.DAEMON_EXTERNAL_SESSION_STATUS_GET, RPC_METHODS.DAEMON_DIRECT_SESSION_STATUS_GET_LEGACY, null, 'read', true],
       ['sessions.external.transcript.page', RPC_METHODS.DAEMON_EXTERNAL_SESSION_TRANSCRIPT_PAGE, RPC_METHODS.DAEMON_DIRECT_SESSION_TRANSCRIPT_PAGE_LEGACY, 'sessions.external.pageTranscript', 'read', true],
       ['sessions.external.transcript.readAfter', RPC_METHODS.DAEMON_EXTERNAL_SESSION_TRANSCRIPT_READ_AFTER, RPC_METHODS.DAEMON_DIRECT_SESSION_TRANSCRIPT_READ_AFTER_LEGACY, 'sessions.external.readAfterTranscript', 'read', true],
@@ -2813,7 +2826,11 @@ describe('Action Spec Registry', () => {
     for (const [id, rpcMethod, legacyRpcMethod, sdkMethod, sideEffectClass, api] of expected) {
       const spec = getActionSpec(id);
       expect(spec.bindings?.rpcMethod).toBe(rpcMethod);
-      expect(spec.bindings?.rpcMethodAliases).toContain(legacyRpcMethod);
+      if (legacyRpcMethod) {
+        expect(spec.bindings?.rpcMethodAliases).toContain(legacyRpcMethod);
+      } else {
+        expect(spec.bindings?.rpcMethodAliases).toBeUndefined();
+      }
       expect(spec.bindings?.sdkMethod ?? null).toBe(sdkMethod);
       expect(spec.surfaces.rpc).toBe(true);
       expect(spec.surfaces.api).toBe(api);
@@ -3015,7 +3032,7 @@ describe('Action Spec Registry', () => {
     expect(getActionSpec('execution.run.stream.cancel').outputSchema).toBe(ExecutionRunTurnStreamCancelResponseSchema);
   });
 
-  it('uses strict Action-definition envelopes for Action discovery results', () => {
+  it('uses closed Action-definition DTOs for Action discovery results', () => {
     const summary = serializeActionSpec(getActionSpec('session.list'));
     const definition = actionSpecToActionDefinitionV1(getActionSpec('session.list'));
 
@@ -3026,6 +3043,32 @@ describe('Action Spec Registry', () => {
     expect(getActionSpec('action.spec.get').outputSchema.safeParse({
       actionSpec: definition,
       unexpected: true,
+    }).success).toBe(false);
+    expect(getActionSpec('action.spec.search').outputSchema.safeParse({
+      actionSpecs: [{ ...summary, unexpected: true }],
+    }).success).toBe(false);
+    expect(getActionSpec('action.spec.search').outputSchema.safeParse({
+      actionSpecs: [{ ...summary, slash: { tokens: ['/actions'], unexpected: true } }],
+    }).success).toBe(false);
+    expect(getActionSpec('action.spec.search').outputSchema.safeParse({
+      actionSpecs: [{ ...summary, bindings: { mcpToolName: 'actions_list', unexpected: true } }],
+    }).success).toBe(false);
+    expect(getActionSpec('action.spec.get').outputSchema.safeParse({
+      actionSpec: {
+        ...definition,
+        execution: {
+          handler: { target: 'host', unexpected: true },
+        },
+      },
+    }).success).toBe(false);
+    expect(getActionSpec('action.spec.get').outputSchema.safeParse({
+      actionSpec: {
+        ...definition,
+        execution: {
+          handler: 'actions.get',
+          unexpected: true,
+        },
+      },
     }).success).toBe(false);
   });
 
@@ -3869,10 +3912,13 @@ describe('Action Spec Registry', () => {
     expect((getActionSpec('voice_agent.start') as any).inputHints?.fields?.find((f: any) => f.path === 'backendTargetKeys')?.maxSelections).toBe(1);
   });
 
-  it('describes backendTargetKeys as provider/backend selection, not parallel capacity', () => {
+  it('describes executable backendTargetKeys as Agent selection, not Provider selection or parallel capacity', () => {
     const plan = getActionSpec('subagents.plan.start');
     const delegate = getActionSpec('subagents.delegate.start');
     const voiceAgent = getActionSpec('voice_agent.start');
+    expect(getActionSpec('agents.backends.list').description).toBe(
+      'List available Agent backends for spawning sessions.',
+    );
 
     const planText = [
       plan.inputHints?.description ?? '',
@@ -3888,7 +3934,9 @@ describe('Action Spec Registry', () => {
     ].join(' ');
 
     for (const text of [planText, delegateText, voiceText]) {
-      expect(text).toContain('provider/backend');
+      expect(text).toContain('Agent backend');
+      expect(text.toLowerCase()).not.toContain('provider/backend');
+      expect(text.toLowerCase()).not.toContain('provider choices');
       expect(text).toContain('not parallelism capacity');
       expect(text).not.toContain('Each backend runs as its own execution run');
     }
@@ -3930,7 +3978,7 @@ describe('Action Spec Registry', () => {
     expect(permissionModeHint?.description).toContain('read_only | default | workspace_write | yolo');
   });
 
-  it('projects subagent registry actions through ActionSpec RPC bindings', () => {
+  it('retains the raw subagent registry RPC bindings', () => {
     const expected = [
       'sessions.subagents.list',
       'sessions.subagents.get',
@@ -3939,19 +3987,10 @@ describe('Action Spec Registry', () => {
       'sessions.subagents.updateStatus',
       'sessions.subagents.complete',
     ] as const;
-    const publicSubagentActionIds = new Set([
-      'sessions.subagents.list',
-      'sessions.subagents.get',
-      'sessions.subagents.watch',
-    ]);
-
     for (const id of expected) {
       const spec = getActionSpec(id);
-      const publicProjection = publicSubagentActionIds.has(id);
       expect(spec.bindings?.rpcMethod).toBe(id);
       expect(spec.surfaces.rpc).toBe(true);
-      expect(spec.surfaces.api).toBe(publicProjection);
-      expect(spec.surfaces.plugin).toBe(publicProjection);
     }
 
     expect(getActionSpec('sessions.subagents.list').inputSchema.parse({

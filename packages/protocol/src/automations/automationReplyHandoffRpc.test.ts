@@ -26,6 +26,7 @@ const request = {
     handoffId: 'handoff-1',
     runId: 'run-1',
     automationId: 'automation-1',
+    occurrenceKey: 'A'.repeat(43),
     accountCurrentness: {
       mode: 'plain',
       version: 7,
@@ -49,19 +50,10 @@ const request = {
       v: {
         v: 1,
         correspondence: {
-          accountId: 'account-1',
           automationId: 'automation-1',
-          runId: 'run-1',
-          handoffId: 'handoff-1',
+          occurrenceKey: 'A'.repeat(43),
         },
-        source: {
-          kind: 'automationResult',
-          automationRunId: 'run-1',
-          resultId: 'handoff-1',
-          automationId: 'automation-1',
-          templateVersion: 1,
-          resultDelivery: 'finalResult',
-        },
+        templateVersion: 1,
         opaqueContext: { conversationId: 'conversation-1', messageId: 'message-1' },
       },
     },

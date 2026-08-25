@@ -15,6 +15,16 @@ export const ACCOUNT_SETTINGS_MAX_DOCUMENT_BYTES = 512 * 1024;
 export const ACCOUNT_SETTINGS_MAX_PROVIDER_SUBTREE_BYTES = 256 * 1024;
 
 /**
+ * The Account-owned persistence ceiling for the SavedSecret collection root.
+ * The canonical reader recovers this root to `[]` when the stored value exceeds
+ * it, so a writer that ignores the ceiling does not store a larger collection —
+ * it stores one that resolves to no secrets at all. The SavedSecret mutation
+ * owner advertises this same number so an owner-accepted write always survives
+ * the canonical parse.
+ */
+export const ACCOUNT_SETTINGS_MAX_SAVED_SECRETS_BYTES = 128 * 1024;
+
+/**
  * Who owns the *shape* inside an Account root.
  *
  * `accountGeneric` applies the Account document's own node/entry/depth policy,

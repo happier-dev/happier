@@ -11,11 +11,11 @@ export const PLUGIN_DEV_LOOP_ACTION_IDS_V1 = [
   'plugins.scaffold',
   'plugins.install',
   'plugins.uninstall',
-  'plugins.dev',
-  'plugins.author.install',
-  'plugins.author.typecheck',
-  'plugins.author.build',
-  'plugins.author.test',
+  'plugins.dev.submit',
+  'plugins.dev.install',
+  'plugins.dev.typecheck',
+  'plugins.dev.build',
+  'plugins.dev.test',
   'plugins.doctor',
   'plugins.pack',
   'plugins.reload',
@@ -57,6 +57,9 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
   ],
   inventory: [
     'paths.list_recent',
+    'projects.list',
+    'prompts.invocations.list',
+    'prompts.invocation.resolve',
     'machines.list',
     'servers.list',
     'review.engines.list',
@@ -111,6 +114,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
     'reviews.comments.setDisposition',
     'reviews.comments.attachEvidence',
     'reviews.comments.bulkTransition',
+    'reviews.comments.claimPublicationDispatch',
   ],
   subagent_registry: [
     'sessions.subagents.list',
@@ -156,6 +160,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
     'session.permission.respond',
     'session.permission.remote.pending.list',
     'session.permission.remote.respond',
+    'session.user_action.remote.answer',
     'session.permission.remote.grants.list',
     'session.permission.remote.grants.revoke',
     'session.user_action.answer',
@@ -217,8 +222,6 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
     'bugreport.uploadArtifact',
   ],
   browser_control: [
-    'browser.session.create',
-    'browser.session.close',
     'browser.view.open',
     'browser.view.close',
     'browser.view.focus',
@@ -501,8 +504,6 @@ export function isRuntimeActionIdV1(value: string): value is RuntimeActionIdV1 {
 const LEGACY_ACTION_ID_ALIASES: Readonly<Record<string, ActionId>> = Object.freeze({
   'plan.start': 'subagents.plan.start',
   'delegate.start': 'subagents.delegate.start',
-  'sessions.external.attach': 'sessions.external.follow',
-  'sessions.external.detach': 'sessions.external.unfollow',
 });
 
 export function normalizeLegacyActionId(value: string): string {

@@ -6,6 +6,11 @@ import {
   PluginJsonSchemaV2Schema,
 } from '../actions/v2.js';
 import {
+  rehydrateCanonicalProtocolComposableSchema,
+  type ProtocolComposableSchema,
+  type ProtocolJsonValue,
+} from '../actions/protocolComposableSchema.js';
+import {
   PluginContributionLocalIdSchema,
   PluginContributionOperationRoleV1Schema,
   PluginContributionProtocolIdV1Schema,
@@ -15,13 +20,13 @@ import {
   PluginUiRendererChainBindingV1Schema,
 } from './ui/rendererChainBinding.js';
 import {
+  PLUGIN_UI_TARGETED_CONTRIBUTION_PROTOCOLS_MAX_V1,
   PluginUiTargetedContributionSurfacePresentationV1Schema,
   type PluginUiTargetedContributionSurfacePresentationV1,
 } from '../ui/targetedContributions.js';
 import { PluginJsonValueV2Schema } from './publicTypes.js';
 import { asProtocolZod } from "../actions/internalProtocolZodAdapter.js";
 
-const TARGETED_CONTRIBUTION_MAX_PROTOCOLS_PER_POINT = 4;
 const TARGETED_CONTRIBUTION_MAX_ROLES_PER_PROTOCOL = 16;
 const TARGETED_CONTRIBUTION_MAX_POINTS_PER_PLUGIN = 16;
 const TARGETED_CONTRIBUTION_MAX_TARGET_PLUGINS_PER_CONTRIBUTOR = 16;
@@ -116,6 +121,76 @@ export const PluginContributionPointProtocolV1Schema = z.object({
 });
 export type PluginContributionPointProtocolV1 = z.infer<typeof PluginContributionPointProtocolV1Schema>;
 
+/**
+ * The executable facts Protocol can reconstruct from one exact canonical
+ * contribution-point manifest protocol. This deliberately excludes generic
+ * JSON Schema compilation: schemas that were not emitted by Protocol's
+ * composable-schema DSL return `null` from the rehydrator below.
+ */
+export type RehydratedPluginContributionPointOperationV1 = Readonly<{
+  role: string;
+  input: Readonly<{ kind: 'contributorDefined' }>
+    | Readonly<{
+      kind: 'protocolDefined';
+      schema: ProtocolComposableSchema<ProtocolJsonValue, ProtocolJsonValue>;
+    }>;
+  resultSchema: ProtocolComposableSchema<ProtocolJsonValue, ProtocolJsonValue>;
+}>;
+
+export type RehydratedPluginContributionPointSurfaceV1 = Readonly<{
+  role: string;
+  presentation: PluginTargetedContributionSurfacePresentationV1;
+}>;
+
+export type RehydratedPluginContributionPointSemanticsV1 = Readonly<{
+  descriptor?: ProtocolComposableSchema<ProtocolJsonValue, ProtocolJsonValue>;
+  operations: readonly RehydratedPluginContributionPointOperationV1[];
+  surfaces: readonly RehydratedPluginContributionPointSurfaceV1[];
+}>;
+
+/**
+ * Reconstructs target-owned semantic parsers from the parsed cold manifest.
+ * Both CLI admission and SDK test fixtures call this owner, so neither needs
+ * an executable point sidecar or a second JSON Schema decoder.
+ */
+export function rehydratePluginContributionPointSemanticsV1(
+  protocol: PluginContributionPointProtocolV1,
+): RehydratedPluginContributionPointSemanticsV1 | null {
+  const descriptor = protocol.descriptor === undefined
+    ? undefined
+    : rehydrateCanonicalProtocolComposableSchema(protocol.descriptor);
+  if (descriptor === null) return null;
+
+  const operations: RehydratedPluginContributionPointOperationV1[] = [];
+  for (const role of Object.keys(protocol.operations).sort()) {
+    const operation = protocol.operations[role]!;
+    const input = operation.input.kind === 'contributorDefined'
+      ? Object.freeze({ kind: 'contributorDefined' as const })
+      : (() => {
+        const schema = rehydrateCanonicalProtocolComposableSchema(operation.input.schema);
+        return schema === null
+          ? null
+          : Object.freeze({ kind: 'protocolDefined' as const, schema });
+      })();
+    const resultSchema = rehydrateCanonicalProtocolComposableSchema(operation.resultSchema);
+    if (input === null || resultSchema === null) return null;
+    operations.push(Object.freeze({ role, input, resultSchema }));
+  }
+
+  const surfaces: RehydratedPluginContributionPointSurfaceV1[] = [];
+  for (const role of Object.keys(protocol.surfaces ?? {}).sort()) {
+    const surface = protocol.surfaces?.[role];
+    if (!surface || rehydrateCanonicalProtocolComposableSchema(surface.inputSchema) === null) return null;
+    surfaces.push(Object.freeze({ role, presentation: surface.presentation }));
+  }
+
+  return Object.freeze({
+    ...(descriptor === undefined ? {} : { descriptor }),
+    operations: Object.freeze(operations),
+    surfaces: Object.freeze(surfaces),
+  });
+}
+
 export const PluginContributionPointV1Schema = z.object({
   id: asProtocolZod(PluginContributionLocalIdSchema),
   maxContributionsPerContributor: z.number().int().positive().safe()
@@ -123,7 +198,7 @@ export const PluginContributionPointV1Schema = z.object({
     .optional(),
   protocols: z.array(PluginContributionPointProtocolV1Schema)
     .min(1)
-    .max(TARGETED_CONTRIBUTION_MAX_PROTOCOLS_PER_POINT),
+    .max(PLUGIN_UI_TARGETED_CONTRIBUTION_PROTOCOLS_MAX_V1),
 }).strict().superRefine((point, ctx) => {
   const seen = new Set<string>();
   point.protocols.forEach((protocol, index) => {

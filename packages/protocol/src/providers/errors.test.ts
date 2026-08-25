@@ -71,6 +71,29 @@ describe('provider stable errors and compatibility envelopes', () => {
     });
   });
 
+  it('keeps machine transport and managed-daemon launch refusals distinct from endpoint failures', () => {
+    expect(createProviderErrorV1('provider_machine_unavailable', {
+      machineId: 'machine-a',
+    })).toEqual({
+      v: 1,
+      code: 'provider_machine_unavailable',
+      machineId: 'machine-a',
+      retryable: true,
+      action: 'retry',
+    });
+    expect(createProviderErrorV1('provider_managed_requires_daemon', {
+      connectionId: 'pc_managed',
+      machineId: 'machine-a',
+    })).toEqual({
+      v: 1,
+      code: 'provider_managed_requires_daemon',
+      connectionId: 'pc_managed',
+      machineId: 'machine-a',
+      retryable: false,
+      action: 'review_connection',
+    });
+  });
+
   it('represents Provider materialization failures without mislabeling them as binding continuity drift', () => {
     expect(createProviderErrorV1('provider_materialization_failed', {
       connectionId: 'pc_gateway',

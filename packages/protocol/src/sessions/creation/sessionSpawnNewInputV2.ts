@@ -16,12 +16,12 @@ import {
   SessionAuthoringCheckoutCreationDraftV1Schema,
   SessionAuthoringTerminalV1Schema,
 } from '../authoring/fieldCatalog.js';
+export { SessionAuthoringCheckoutCreationDraftV1Schema } from '../authoring/fieldCatalog.js';
+export type { SessionAuthoringCheckoutCreationDraftV1 } from '../authoring/index.js';
 import { SessionCreationKeyV1Schema } from './sessionCreationIdentityV1.js';
 import { SessionSpawnSourceContextV1Schema } from './sessionSpawnSourceContextV1.js';
-import {
-  SessionExecutionTargetV1Schema,
-  SessionOrganizationPlacementV1Schema,
-} from './sessionSpawnNewResultV1.js';
+import { SessionExecutionTargetV1Schema } from './sessionExecutionTargetV1.js';
+import { SessionOrganizationPlacementV1Schema } from './sessionSpawnNewResultV1.js';
 
 const SESSION_SPAWN_ENVIRONMENT_VARIABLE_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const SESSION_SPAWN_FORBIDDEN_ENVIRONMENT_VARIABLE_KEYS = new Set([

@@ -75,6 +75,9 @@ import {
   PluginTranscriptActivityContributionV1Schema,
 } from './ui/transcriptActivities.js';
 import {
+  PluginSessionInfoSectionContributionV1Schema,
+} from './ui/sessionInfoSections.js';
+import {
   PluginBrowserActionContributionV1Schema,
   PluginBrowserTargetContributionV1Schema,
 } from './browser/v1.js';
@@ -102,7 +105,7 @@ import {
 } from './publicTypes.js';
 import { ConnectedAccountPurposeDeclarationsV1Schema } from '../../connect/connectedAccountPurposes.js';
 import {
-  PluginConnectedAccountAuthenticationV2Schema,
+  PluginConnectedAccountDescriptorContributionV2Schema,
 } from '../../connect/pluginConnectedAccountAuthenticationV2.js';
 import {
   PluginComposerReferenceProviderContributionV1Schema,
@@ -226,10 +229,28 @@ export const PluginAgentCapabilitySurfacesV2Schema = z.array(PluginAgentCapabili
   .refine((values) => new Set(values).size === values.length, 'Entries must be unique.');
 export type PluginAgentCapabilitySurfacesV2 = z.infer<typeof PluginAgentCapabilitySurfacesV2Schema>;
 
+/**
+ * The one public declaration of how this Agent receives contributed Happier
+ * tools. Absence deliberately means no delivery: the host must not infer a
+ * channel from an Agent id, runtime kind, or the presence of tool declarations.
+ */
+export const PluginAgentToolsDeliveryV2Schema = z.enum([
+  'native_mcp',
+  'native_extension',
+  'shell_bridge',
+]);
+export type PluginAgentToolsDeliveryV2 = z.infer<typeof PluginAgentToolsDeliveryV2Schema>;
+
+export const PluginAgentToolsCapabilityV2Schema = z.object({
+  delivery: PluginAgentToolsDeliveryV2Schema,
+}).strict();
+export type PluginAgentToolsCapabilityV2 = z.infer<typeof PluginAgentToolsCapabilityV2Schema>;
+
 const PluginAgentCapabilitiesV2Shape = {
   surfaces: PluginAgentCapabilitySurfacesV2Schema.optional(),
   sessions: PluginAgentSessionCapabilitiesV2Schema.optional(),
   executionRuns: PluginAgentExecutionRunCapabilitiesV2Schema.optional(),
+  tools: PluginAgentToolsCapabilityV2Schema.optional(),
 };
 
 /**
@@ -239,7 +260,12 @@ const PluginAgentCapabilitiesV2Shape = {
  */
 export const PluginAgentCapabilitiesV2Schema = z.object(PluginAgentCapabilitiesV2Shape).strict()
   .refine(
-    (value) => value.surfaces !== undefined || value.sessions !== undefined || value.executionRuns !== undefined,
+    (value) => (
+      value.surfaces !== undefined
+      || value.sessions !== undefined
+      || value.executionRuns !== undefined
+      || value.tools !== undefined
+    ),
     'At least one Agent capability declaration is required.',
   );
 export type PluginAgentCapabilitiesV2 = z.infer<typeof PluginAgentCapabilitiesV2Schema>;
@@ -532,17 +558,6 @@ export const PluginHookContributionV2Schema = z.object({
 }).strict();
 export type PluginHookContributionV2 = z.infer<typeof PluginHookContributionV2Schema>;
 
-export const PluginConnectedAccountDescriptorContributionV2Schema = z.object({
-  id: asProtocolZod(PluginContributionLocalIdSchema),
-  title: PluginLocalizedStringV2Schema,
-  description: PluginLocalizedStringV2Schema.optional(),
-  authentication: PluginConnectedAccountAuthenticationV2Schema,
-  capabilities: z.array(z.string().trim().min(1)).optional(),
-  metadata: z.record(z.string(), PluginJsonValueV2Schema).optional(),
-}).strict();
-export type PluginConnectedAccountDescriptorContributionV2 =
-  z.infer<typeof PluginConnectedAccountDescriptorContributionV2Schema>;
-
 export const BackgroundServiceContributionSchema = z.object({
   id: asProtocolZod(PluginContributionLocalIdSchema),
   title: PluginLocalizedStringV2Schema.optional(),
@@ -554,10 +569,12 @@ export {
   PluginConnectedAccountAuthenticationV2Schema,
   PluginConnectedAccountConfigurationFieldV2Schema,
   PluginConnectedAccountConfigurationV2Schema,
+  PluginConnectedAccountDescriptorContributionV2Schema,
   type PluginConnectedAccountAuthenticationModeV2,
   type PluginConnectedAccountAuthenticationV2,
   type PluginConnectedAccountConfigurationFieldV2,
   type PluginConnectedAccountConfigurationV2,
+  type PluginConnectedAccountDescriptorContributionV2,
 } from '../../connect/pluginConnectedAccountAuthenticationV2.js';
 
 export const PLUGIN_CORE_CONTRIBUTION_FAMILIES_V2 = [
@@ -568,6 +585,7 @@ export const PLUGIN_CORE_CONTRIBUTION_FAMILIES_V2 = [
   definePluginContributionFamilyV2({ family: 'tools', schema: PluginToolContributionV2Schema }),
   definePluginContributionFamilyV2({ family: 'resources', schema: PluginResourceContributionV2Schema }),
   definePluginContributionFamilyV2({ family: 'transcriptActivities', schema: PluginTranscriptActivityContributionV1Schema }),
+  definePluginContributionFamilyV2({ family: 'sessionInfoSections', schema: PluginSessionInfoSectionContributionV1Schema }),
   definePluginContributionFamilyV2({ family: 'sessionHeaderActions', schema: PluginSessionHeaderActionDescriptorV1Schema }),
   definePluginContributionFamilyV2({ family: 'browserTargets', schema: PluginBrowserTargetContributionV1Schema }),
   definePluginContributionFamilyV2({ family: 'browserActions', schema: PluginBrowserActionContributionV1Schema }),
@@ -719,6 +737,7 @@ export {
   PluginTargetedContributionProtocolV1Schema,
   PluginTargetedContributionTargetV1Schema,
   PluginTargetedContributionV1Schema,
+  rehydratePluginContributionPointSemanticsV1,
   type PluginContributionPointProtocolV1,
   type PluginContributionPointV1,
   type PluginTargetedContributionOperationInputV1,
@@ -729,6 +748,9 @@ export {
   type PluginTargetedContributionProtocolV1,
   type PluginTargetedContributionTargetV1,
   type PluginTargetedContributionV1,
+  type RehydratedPluginContributionPointOperationV1,
+  type RehydratedPluginContributionPointSemanticsV1,
+  type RehydratedPluginContributionPointSurfaceV1,
 } from './targetedContributions.js';
 export {
   PLUGIN_UI_MAX_RENDERER_CHAIN_LENGTH,
@@ -793,6 +815,10 @@ export {
   PluginTranscriptActivityContributionV1Schema,
   type PluginTranscriptActivityContributionV1,
 } from './ui/transcriptActivities.js';
+export {
+  PluginSessionInfoSectionContributionV1Schema,
+  type PluginSessionInfoSectionContributionV1,
+} from './ui/sessionInfoSections.js';
 export {
   PluginBrowserActionContributionV1Schema,
   PluginBrowserTargetContributionV1Schema,

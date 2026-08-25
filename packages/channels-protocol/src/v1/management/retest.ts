@@ -44,11 +44,16 @@ export const ConversationConnectionRetestInputV1JsonSchema: PluginJsonSchema =
     ConversationConnectionRetestInputV1Schema.jsonSchema;
 
 /**
- * The retest reports exactly what the provider's own connection test returned.
- * A still-failing probe reuses the shared provider-failure vocabulary rather
- * than minting a second health verdict; only the ready arm settles Account
- * state, by clearing the retained readiness attention through its canonical
- * lifecycle owner.
+ * The retest reuses the shared provider-failure vocabulary rather than minting
+ * a second health verdict: a still-failing probe is reported verbatim and
+ * settles no Account state.
+ *
+ * A probe that answers `ready` is not automatically readiness. Core still
+ * compares the capability the probe restated against the promises its own
+ * enabled bindings already made, and a promise the provider can no longer
+ * deliver is reported through this same `permissionMissing` arm. Both the
+ * ready arm and that arm settle Account state through the one canonical
+ * lifecycle owner — clearing the retained readiness attention, or recording it.
  */
 export const ConversationConnectionRetestResultV1Schema = defineProtocolUnion([
     conversationConnectionRetestReadyV1,

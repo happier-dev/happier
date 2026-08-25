@@ -21,6 +21,7 @@ function createDeps(): ActionExecutorDeps {
     sessionSpawnNew: vi.fn(async () => ({})),
 
     pathsListRecent: vi.fn(async () => ({ items: [] })),
+    projectsList: vi.fn(async () => ({ items: [] })),
     machinesList: vi.fn(async () => ({ items: [] })),
     serversList: vi.fn(async () => ({ items: [] })),
     reviewEnginesList: vi.fn(async () => ({ items: [] })),
@@ -399,6 +400,32 @@ describe('createActionExecutor (inventory/discovery)', () => {
     expect(deps.pathsListRecent).toHaveBeenCalledWith({ machineId: 'm1', limit: 3 });
   });
 
+  it('routes projects.list to deps.projectsList', async () => {
+    const deps = createDeps();
+    const executor = createActionExecutor(deps);
+
+    // The spec surfaces this on `ui` alone: its only caller is a mounted
+    // client surface reading the registry that client already holds.
+    const res = await executor.execute('projects.list', { machineId: 'm1', limit: 5 }, { surface: 'ui' });
+    expect(res.ok).toBe(true);
+    expect(deps.projectsList).toHaveBeenCalledWith({ machineId: 'm1', limit: 5 });
+  });
+
+  /**
+   * A client that holds no project registry says so. Answering an empty list
+   * would tell a caller "you have no matching project" when the truth is "this
+   * client cannot answer that question", and those need different words in
+   * front of a reader.
+   */
+  it('reports projects.list unsupported when the host installs no dependency', async () => {
+    const deps = createDeps();
+    const { projectsList: _omitted, ...withoutProjectsList } = deps;
+    const executor = createActionExecutor(withoutProjectsList as typeof deps);
+
+    const res = await executor.execute('projects.list', {}, { surface: 'ui' });
+    expect(res).toMatchObject({ ok: false, errorCode: 'unsupported_action' });
+  });
+
   it('routes machines.list to deps.machinesList', async () => {
     const deps = createDeps();
     const executor = createActionExecutor(deps);
@@ -552,6 +579,38 @@ describe('createActionExecutor (inventory/discovery)', () => {
       limit: 5,
     });
     expect((res as any).result.items).toEqual([{ id: 'plan', label: 'Plan' }]);
+  });
+
+  it('lists spawn profiles with no agent scope, because a profile supplies the agent', async () => {
+    // A Triage action selects a profile FIRST and the profile then supplies the
+    // agent, so the profiles catalog is the one spawn-option source whose agent
+    // scope is a FILTER rather than a requirement. Requiring it here made an
+    // unscoped read fail validation, which every caller could only observe as
+    // "the catalog did not answer".
+    const deps = createDeps() as ActionExecutorDeps & {
+      spawnProfilesList: ReturnType<typeof vi.fn>;
+    };
+    deps.spawnProfilesList.mockResolvedValueOnce({
+      items: [{ id: 'profile-1', label: 'Focused' }],
+    });
+    const executor = createActionExecutor(deps);
+
+    await expect(executor.execute('sessions.spawn.profiles.list' as any, {}))
+      .resolves.toMatchObject({ ok: true });
+    expect(deps.spawnProfilesList).toHaveBeenCalledWith({});
+  });
+
+  it('still refuses a spawn profiles read whose agent scope contradicts itself', async () => {
+    const deps = createDeps() as ActionExecutorDeps & {
+      spawnProfilesList: ReturnType<typeof vi.fn>;
+    };
+    const executor = createActionExecutor(deps);
+
+    await expect(executor.execute('sessions.spawn.profiles.list' as any, {
+      agentId: 'codex',
+      backendTargetKey: 'backend:claude',
+    })).resolves.toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
+    expect(deps.spawnProfilesList).not.toHaveBeenCalled();
   });
 
   it('routes spawn option inventory actions through their matching deps', async () => {

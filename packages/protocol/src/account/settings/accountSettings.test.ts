@@ -6,6 +6,7 @@ import {
   ACCOUNT_SETTINGS_SUPPORTED_SCHEMA_VERSION,
   accountCatalogDefinition,
   accountSettingsParse,
+  DEFAULT_SESSION_HANDOFF_DEFAULTS_V1,
   isExpoPushNotificationChannelEnabled,
   SessionHandoffDefaultsV1Schema,
 } from './accountSettings.js';
@@ -144,6 +145,15 @@ describe('accountSettings', () => {
     });
   });
 
+  it('owns the account-synced ordinary New Session draft entry preference', () => {
+    expect(ACCOUNT_SETTING_DEFINITIONS.newSessionDraftEntryMode.default).toBe('resumePrevious');
+    expect(accountSettingsParse({}).newSessionDraftEntryMode).toBe('resumePrevious');
+    expect(accountSettingsParse({ newSessionDraftEntryMode: 'alwaysFresh' }).newSessionDraftEntryMode)
+      .toBe('alwaysFresh');
+    expect(accountSettingsParse({ newSessionDraftEntryMode: 'recentDraft' }).newSessionDraftEntryMode)
+      .toBe('resumePrevious');
+  });
+
   it('accepts bounded relative session-handoff glob defaults and rejects private path or credential material', () => {
     const relativeGlobs = Array.from({ length: 64 }, (_, index) => `ignored/${index}/**/*`);
     const valid = SessionHandoffDefaultsV1Schema.safeParse({
@@ -166,6 +176,41 @@ describe('accountSettings', () => {
       },
     });
     expect(invalidSecret.sessionHandoffDefaultsV1.ignoredIncludeGlobs).toEqual([]);
+  });
+
+  it('ratifies the session-handoff glob count, per-item, and aggregate ceilings independently', () => {
+    // Each vector below violates exactly one ceiling and satisfies the other two,
+    // so a ceiling that stopped being enforced cannot hide behind a sibling.
+    const glob = (bytes: number) => `ignored/${'x'.repeat(bytes - 'ignored/'.length)}`;
+    const parseGlobs = (ignoredIncludeGlobs: readonly string[]) =>
+      SessionHandoffDefaultsV1Schema.safeParse({ ignoredIncludeGlobs }).success;
+
+    const overCount = Array.from({ length: 65 }, (_, index) => `ignored/${index}`);
+    expect(overCount.every((entry) => entry.length <= 512)).toBe(true);
+    expect(overCount.reduce((total, entry) => total + entry.length, 0)).toBeLessThanOrEqual(16 * 1024);
+    expect(parseGlobs(overCount)).toBe(false);
+    expect(parseGlobs(overCount.slice(0, 64))).toBe(true);
+
+    expect(glob(513).length).toBe(513);
+    expect(parseGlobs([glob(513)])).toBe(false);
+    expect(parseGlobs([glob(512)])).toBe(true);
+
+    // 40 x 500 bytes exceeds the 16 KiB aggregate while staying inside both the
+    // 64-entry count and the 512-byte per-entry ceilings.
+    const overAggregate = Array.from({ length: 40 }, (_, index) => `${glob(494)}/${String(index).padStart(3, '0')}`);
+    expect(overAggregate.length).toBeLessThanOrEqual(64);
+    expect(Math.max(...overAggregate.map((entry) => entry.length))).toBeLessThanOrEqual(512);
+    expect(overAggregate.reduce((total, entry) => total + entry.length, 0)).toBeGreaterThan(16 * 1024);
+    expect(parseGlobs(overAggregate)).toBe(false);
+    expect(parseGlobs(overAggregate.slice(0, 32))).toBe(true);
+
+    // Every rejection recovers the whole root to its canonical default through
+    // the catalog rather than persisting a partially trimmed list.
+    for (const ignoredIncludeGlobs of [overCount, [glob(513)], overAggregate]) {
+      expect(accountSettingsParse({
+        sessionHandoffDefaultsV1: { ignoredIncludeGlobs, directTargetMode: 'convert_to_persisted' },
+      }).sessionHandoffDefaultsV1).toEqual(DEFAULT_SESSION_HANDOFF_DEFAULTS_V1);
+    }
   });
 
   it('defaults usage limit recovery to asking before auto-waiting', () => {

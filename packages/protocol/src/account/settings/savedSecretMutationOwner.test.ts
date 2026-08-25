@@ -12,6 +12,8 @@ import {
 } from './savedSecretMutationOwner.js';
 import { VoiceProviderContributionSchema } from '../../plugins/contributions/voiceProviders.js';
 import { SAVED_SECRET_COLLECTION_MAX_ENTRIES } from '../../profiles/backendProfileSchema.js';
+import { accountSettingsParse } from './accountSettings.js';
+import { ACCOUNT_SETTINGS_MAX_SAVED_SECRETS_BYTES } from './catalog/accountSettingBounds.js';
 
 const voiceContribution = Object.freeze({
   pluginId: 'happier.voice.openai',
@@ -885,6 +887,7 @@ describe('Account Settings SavedSecret mutation owner', () => {
       selection: { kind: 'connectedAccount', target: selectedTarget },
       binding: { purpose: voicePurpose, target: selectedTarget },
       savedSecret: null,
+      approvedRecipientContractDigest: null,
     });
 
     const result = applyVoiceCredentialSourceMutation(settings, {
@@ -902,6 +905,7 @@ describe('Account Settings SavedSecret mutation owner', () => {
       selection: { kind: 'savedSecret' },
       binding: null,
       savedSecret: { secretId: secret.id, source: 'account' },
+      approvedRecipientContractDigest: null,
     });
   });
 
@@ -956,6 +960,7 @@ describe('Account Settings SavedSecret mutation owner', () => {
       selection: { kind: 'savedSecret' },
       binding: null,
       savedSecret: { secretId: secret.id, source: 'account' },
+      approvedRecipientContractDigest: null,
     });
   });
 
@@ -991,6 +996,7 @@ describe('Account Settings SavedSecret mutation owner', () => {
       selection: { kind: 'savedSecret' },
       binding: null,
       savedSecret: { secretId: other.id, source: 'account' },
+      approvedRecipientContractDigest: null,
     });
   });
 
@@ -1028,6 +1034,7 @@ describe('Account Settings SavedSecret mutation owner', () => {
       selection: { kind: 'savedSecret' },
       binding: null,
       savedSecret: { secretId: secret.id, source: 'account' },
+      approvedRecipientContractDigest: null,
     });
 
     // The assertion is checked, not waived: the same call conflicts once the
@@ -1080,6 +1087,7 @@ describe('Account Settings SavedSecret mutation owner', () => {
       selection: { kind: 'savedSecret' },
       binding: null,
       savedSecret: { secretId: 'secret-reentered', source: 'account' },
+      approvedRecipientContractDigest: null,
     });
   });
 
@@ -1705,6 +1713,11 @@ describe('SavedSecret collection capacity', () => {
     )).toThrowError(expect.objectContaining({
       code: 'saved_secret_collection_full',
     }));
+    // The refusal is only correct while the canonical reader really does hide
+    // that entry. Measure the reader instead of restating the owner's constant.
+    const oversized = [...fullCollection, savedSecretAt(SAVED_SECRET_COLLECTION_MAX_ENTRIES)];
+    expect(accountSettingsParse({ secrets: oversized }).secrets.length)
+      .toBeLessThan(oversized.length);
   });
 
   it('accepts an add that exactly reaches the collection maximum', () => {
@@ -1712,8 +1725,13 @@ describe('SavedSecret collection capacity', () => {
       { secrets: fullCollection.slice(0, SAVED_SECRET_COLLECTION_MAX_ENTRIES - 1) },
       { kind: 'add', secret: savedSecretAt(SAVED_SECRET_COLLECTION_MAX_ENTRIES) },
     );
-    expect((result.settings.secrets as readonly unknown[]).length)
-      .toBe(SAVED_SECRET_COLLECTION_MAX_ENTRIES);
+    const written = result.settings.secrets as readonly unknown[];
+    expect(written.length).toBe(SAVED_SECRET_COLLECTION_MAX_ENTRIES);
+    // Every entry this owner accepts must survive the canonical Account
+    // Settings parse. Comparing the two ends of the contract catches a ceiling
+    // that drifts apart from the reader's; comparing either one to the shared
+    // constant it is built from cannot.
+    expect(accountSettingsParse(result.settings).secrets.length).toBe(written.length);
   });
 
   it('still allows a delete to recover an already oversized collection', () => {
@@ -1724,5 +1742,82 @@ describe('SavedSecret collection capacity', () => {
     );
     expect((result.settings.secrets as readonly unknown[]).length)
       .toBe(SAVED_SECRET_COLLECTION_MAX_ENTRIES);
+  });
+
+  function largeSavedSecretAt(index: number) {
+    return {
+      ...savedSecretAt(index),
+      encryptedValue: {
+        _isSecretValue: true as const,
+        encryptedValue: { t: 'enc-v1' as const, c: `${index}-${'c'.repeat(3000)}` },
+      },
+    };
+  }
+
+  function secretsRootBytes(secrets: readonly unknown[]): number {
+    return new TextEncoder().encode(JSON.stringify(secrets)).byteLength;
+  }
+
+  /**
+   * The largest collection whose serialized root still fits the Account
+   * ceiling, plus the entry that would push it past. Derived by measuring the
+   * real serialization rather than by assuming an entry size.
+   */
+  const nearByteCeiling = (() => {
+    const kept: ReturnType<typeof largeSavedSecretAt>[] = [];
+    for (let index = 0; index < SAVED_SECRET_COLLECTION_MAX_ENTRIES; index += 1) {
+      const candidate = largeSavedSecretAt(index);
+      if (secretsRootBytes([...kept, candidate]) > ACCOUNT_SETTINGS_MAX_SAVED_SECRETS_BYTES) {
+        return { kept, crossing: candidate };
+      }
+      kept.push(candidate);
+    }
+    throw new Error('Fixture never reached the SavedSecret byte ceiling');
+  })();
+
+  it('refuses an add that would push the collection past the byte ceiling the reader enforces', () => {
+    // Preconditions: the starting collection is well inside the cardinality
+    // limit and fully visible, so a refusal here cannot be the entry-count
+    // guard firing instead.
+    expect(nearByteCeiling.kept.length).toBeLessThan(SAVED_SECRET_COLLECTION_MAX_ENTRIES);
+    expect(accountSettingsParse({ secrets: nearByteCeiling.kept }).secrets.length)
+      .toBe(nearByteCeiling.kept.length);
+
+    expect(() => applyAccountSettingsSavedSecretMutation(
+      { secrets: nearByteCeiling.kept },
+      { kind: 'add', secret: nearByteCeiling.crossing },
+    )).toThrowError(expect.objectContaining({
+      code: 'saved_secret_collection_full',
+    }));
+
+    // The refusal is only correct while the canonical reader really does lose
+    // the whole root at that size. Measure the reader instead of restating the
+    // owner's ceiling: an oversized root recovers to its default, so the write
+    // would have hidden every already-working secret, not just the new one.
+    const oversized = [...nearByteCeiling.kept, nearByteCeiling.crossing];
+    expect(secretsRootBytes(oversized)).toBeGreaterThan(ACCOUNT_SETTINGS_MAX_SAVED_SECRETS_BYTES);
+    expect(accountSettingsParse({ secrets: oversized }).secrets.length).toBe(0);
+  });
+
+  it('accepts an add that keeps the collection inside the byte ceiling', () => {
+    const base = nearByteCeiling.kept.slice(0, nearByteCeiling.kept.length - 1);
+    const result = applyAccountSettingsSavedSecretMutation(
+      { secrets: base },
+      { kind: 'add', secret: savedSecretAt(SAVED_SECRET_COLLECTION_MAX_ENTRIES) },
+    );
+    const written = result.settings.secrets as readonly unknown[];
+    expect(written.length).toBe(base.length + 1);
+    expect(accountSettingsParse(result.settings).secrets.length).toBe(written.length);
+  });
+
+  it('still allows a delete to recover a collection that is already past the byte ceiling', () => {
+    const oversized = [...nearByteCeiling.kept, nearByteCeiling.crossing];
+    const result = applyAccountSettingsSavedSecretMutation(
+      { secrets: oversized },
+      { kind: 'delete', secretId: 'secret-0', expectedUpdatedAt: 1 },
+    );
+    const written = result.settings.secrets as readonly unknown[];
+    expect(written.length).toBe(oversized.length - 1);
+    expect(secretsRootBytes(written)).toBeLessThan(secretsRootBytes(oversized));
   });
 });

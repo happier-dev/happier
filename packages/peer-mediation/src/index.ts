@@ -14,15 +14,7 @@ export {
     fingerprintPeerEndpoints,
 } from './endpoints/fingerprint.js';
 export {
-    assertPeerLoopbackEndpointCandidate,
-    createPeerLoopbackEndpointFingerprint,
-    createPeerLoopbackRouteCandidate,
-    normalizePeerLoopbackEndpointUrl,
-} from './endpoints/loopbackEndpoint.js';
-export {
-    resolvePeerRouteKindForEndpointCandidate,
     resolvePeerRouteKindForEndpointMechanism,
-    resolvePeerRouteKindsForEndpointCandidates,
     type DirectPeerRouteKind,
 } from './endpoints/routeKind.js';
 export {
@@ -31,8 +23,11 @@ export {
 export {
     PEER_TCP_TUNNEL_DISABLED_REASONS,
     resolveTcpTunnelRouteDecision,
+    type PeerTcpTunnelDirectRouteOutcome,
     type PeerTcpTunnelDisabledReason,
+    type PeerTcpTunnelFlowKind,
     type PeerTcpTunnelRouteDecision,
+    type ResolveTcpTunnelRouteDecisionInput,
 } from './flows/tunnel/index.js';
 export {
     mapPeerDirectPolicyDenyReasonToLiveStreamDisabledReason,
@@ -64,11 +59,6 @@ export {
     type PeerDirectRoutePolicyDenyReason,
     type ResolveEffectivePeerDirectRoutePolicyInput,
 } from './policy/effectiveDirectRoutePolicy.js';
-export {
-    resolveDirectRouteGrantCachePolicy,
-    type DirectRouteGrantCachePolicy,
-    type ResolveDirectRouteGrantCachePolicyInput,
-} from './grants/cachePolicy.js';
 export type {
     PeerEndpointCandidate,
     PeerEndpointMechanism,

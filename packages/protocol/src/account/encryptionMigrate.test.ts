@@ -32,6 +32,7 @@ import {
   AccountEncryptionMigratePredecessorRequestSchema,
   AccountEncryptionMigratePredecessorSuccessResponseSchema,
   AccountEncryptionMigrateRequestSchema,
+  AccountEncryptionMigrateSessionDraftsDirectiveSchema,
   AccountEncryptionMigrateRequestBindingDigestV1Schema,
   AccountEncryptionMigrateExternalAuthBindingDigestV1Schema,
   AccountEncryptionMigrateSuccessResponseSchema,
@@ -114,6 +115,48 @@ describe('account/encryptionMigrate', () => {
       sessions: { action: 'assert_empty' },
       ...emptyRemainingAccountDomainDirectives,
     });
+
+  it('carries bounded new-session draft replacements on the incumbent Account migration wire', () => {
+    const address = {
+      kind: 'newSession' as const,
+      draftId: '00000000-0000-4000-8000-000000000001',
+    };
+    const directive = AccountEncryptionMigrateSessionDraftsDirectiveSchema.parse({
+      items: [{
+        address,
+        expectedRevision: 4,
+        content: { t: 'encrypted', c: 'draft-ciphertext' },
+      }],
+    });
+    expect(AccountEncryptionMigrateRequestSchema.parse({
+      ...createPlainRequest(),
+      toMode: 'e2ee',
+      settingsContent: { t: 'encrypted', c: 'settings-ciphertext' },
+      sessionDrafts: directive,
+      keyProof: {
+        v: 1,
+        publicKey: encodeBase64(new Uint8Array(32).fill(1)),
+        contentPublicKey: encodeBase64(new Uint8Array(32).fill(3)),
+        contentPublicKeySig: encodeBase64(new Uint8Array(64).fill(4)),
+        signature: encodeBase64(new Uint8Array(64).fill(5)),
+      },
+    }).sessionDrafts).toEqual(directive);
+    expect(AccountEncryptionMigrateSuccessResponseSchema.parse({
+      success: true,
+      mode: 'e2ee',
+      accountVersion: 14,
+      settingsVersion: 10,
+      sessionDrafts: {
+        records: [{
+          address,
+          revision: 5,
+          content: { t: 'encrypted', c: 'draft-ciphertext' },
+          createdAt: 1,
+          updatedAt: 2,
+        }],
+      },
+    }).sessionDrafts?.records[0]?.revision).toBe(5);
+  });
 
   it('requires the remaining Account-domain transition directives on the strict current wire', () => {
     const complete = {
@@ -469,6 +512,81 @@ describe('account/encryptionMigrate', () => {
         }],
       },
     }).success).toBe(false);
+  });
+
+  it('admits 501-item legacy and qualified Connected Account migration inventories', () => {
+    const inventorySize = 501;
+    const credentials = Array.from({ length: inventorySize }, (_, index) => ({
+      serviceId: 'openai-codex',
+      profileId: `retained-${index}`,
+      expectedCredentialRevision: 'csr_abcdefghijklmnopqrstuvwxyz',
+      kind: 'plain' as const,
+      record: {
+        v: 1 as const,
+        serviceId: 'openai-codex',
+        profileId: `retained-${index}`,
+        kind: 'token' as const,
+        createdAt: 1,
+        updatedAt: 2,
+        expiresAt: null,
+        oauth: null,
+        token: {
+          token: `token-${index}`,
+          providerAccountId: null,
+          providerEmail: null,
+          raw: null,
+        },
+      },
+    }));
+    const qualifiedCredentials = Array.from(
+      { length: inventorySize },
+      (_, index) => ({
+        ref: {
+          service: {
+            pluginId: 'example.connected-accounts',
+            localId: 'retained',
+          },
+          accountId: `provider-account-${index}`,
+        },
+        expectedCredentialRevision: 'csr_abcdefghijklmnopqrstuvwxyz',
+        expectedConfigurationRevision: null,
+        authenticationModeId: 'api-key',
+        replacementCredentialContentEnvelope: {
+          t: 'plain' as const,
+          v: { token: `token-${index}` },
+        },
+        metadata: {},
+      }),
+    );
+    const current = {
+      ...createPlainRequest(),
+      connectedServices: {
+        action: 'migrate' as const,
+        credentials,
+        qualifiedCredentials,
+      },
+    };
+    const predecessor = {
+      toMode: 'plain',
+      expectedSettingsVersion: 0,
+      settingsContent: { t: 'plain', v: {} },
+      connectedServices: {
+        action: 'migrate',
+        credentials: credentials.map(({
+          expectedCredentialRevision: _expectedCredentialRevision,
+          ...credential
+        }) => credential),
+        qualifiedCredentials,
+      },
+      automations: { action: 'assert_empty' },
+    };
+
+    expect(AccountEncryptionMigrateRequestSchema.safeParse(current).success)
+      .toBe(true);
+    expect(
+      AccountEncryptionMigratePredecessorRequestSchema.safeParse(predecessor)
+        .success,
+    ).toBe(true);
   });
 
   it('requires exact legacy credential and Automation revisions in current migration requests', () => {

@@ -21,8 +21,6 @@ const BrowserViewCommandBaseV1Schema = BrowserSessionCommandBaseV1Schema.extend(
 });
 
 export const BrowserCommandKindV1Schema = z.enum([
-  'createSession',
-  'closeSession',
   'openView',
   'closeView',
   'focusView',
@@ -34,15 +32,6 @@ export const BrowserCommandKindV1Schema = z.enum([
   'setTarget',
 ]);
 export type BrowserCommandKindV1 = z.infer<typeof BrowserCommandKindV1Schema>;
-
-export const BrowserCreateSessionCommandV1Schema = BrowserCommandBaseV1Schema.extend({
-  kind: z.literal('createSession'),
-  profileId: z.string().trim().min(1).max(256).optional(),
-});
-
-export const BrowserCloseSessionCommandV1Schema = BrowserSessionCommandBaseV1Schema.extend({
-  kind: z.literal('closeSession'),
-});
 
 export const BrowserOpenViewCommandV1Schema = BrowserViewCommandBaseV1Schema.extend({
   kind: z.literal('openView'),
@@ -90,8 +79,6 @@ export const BrowserSetTargetCommandV1Schema = BrowserViewCommandBaseV1Schema.ex
 });
 
 export const BrowserCommandV1Schema = z.discriminatedUnion('kind', [
-  BrowserCreateSessionCommandV1Schema,
-  BrowserCloseSessionCommandV1Schema,
   BrowserOpenViewCommandV1Schema,
   BrowserCloseViewCommandV1Schema,
   BrowserFocusViewCommandV1Schema,

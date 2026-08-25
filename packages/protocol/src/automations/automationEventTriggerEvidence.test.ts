@@ -6,9 +6,9 @@ import {
   type AccountScopedCryptoMaterial,
 } from '../crypto/accountScopedCipher.js';
 import {
-  deriveAutomationEventTriggerEvidenceEqualityTagV1,
-  isAutomationEventTriggerEvidenceCiphertextV1,
-  sealAutomationEventTriggerEvidenceEnvelopeV1,
+  deriveAutomationOccurrenceTriggerEvidenceEqualityTagV1,
+  isAutomationTriggerEvidenceCiphertextV1,
+  sealAutomationOccurrenceTriggerEvidenceEnvelopeV1,
 } from './automationEventTriggerEvidence.js';
 
 const material: AccountScopedCryptoMaterial = {
@@ -27,14 +27,14 @@ const evidence = {
 
 describe('Automation Event trigger evidence', () => {
   it('uses the dedicated byte-19 Account cipher domain and a purpose-separated equality tag', () => {
-    const triggerEvidence = sealAutomationEventTriggerEvidenceEnvelopeV1({
+    const triggerEvidence = sealAutomationOccurrenceTriggerEvidenceEnvelopeV1({
       material,
       evidence,
       randomBytes: (length) => Uint8Array.from({ length }, (_, index) => index + 1),
     });
     expect(triggerEvidence.t).toBe('encrypted');
     expect(readAccountScopedCiphertextKindByte(triggerEvidence.c)).toBe(19);
-    expect(isAutomationEventTriggerEvidenceCiphertextV1(triggerEvidence.c)).toBe(true);
+    expect(isAutomationTriggerEvidenceCiphertextV1(triggerEvidence.c)).toBe(true);
 
     const wrongDomain = sealAccountScopedBlobCiphertext({
       kind: 'automation_run_result',
@@ -42,21 +42,21 @@ describe('Automation Event trigger evidence', () => {
       payload: evidence,
       randomBytes: (length) => Uint8Array.from({ length }, (_, index) => index + 1),
     });
-    expect(isAutomationEventTriggerEvidenceCiphertextV1(wrongDomain)).toBe(false);
+    expect(isAutomationTriggerEvidenceCiphertextV1(wrongDomain)).toBe(false);
 
-    const first = deriveAutomationEventTriggerEvidenceEqualityTagV1({
+    const first = deriveAutomationOccurrenceTriggerEvidenceEqualityTagV1({
       material,
       accountId: 'account-1',
       automationId: 'automation-1',
       evidence,
     });
-    expect(deriveAutomationEventTriggerEvidenceEqualityTagV1({
+    expect(deriveAutomationOccurrenceTriggerEvidenceEqualityTagV1({
       material,
       accountId: 'account-1',
       automationId: 'automation-1',
       evidence,
     })).toBe(first);
-    expect(deriveAutomationEventTriggerEvidenceEqualityTagV1({
+    expect(deriveAutomationOccurrenceTriggerEvidenceEqualityTagV1({
       material,
       accountId: 'account-1',
       automationId: 'automation-2',

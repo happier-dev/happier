@@ -122,6 +122,7 @@ export {
 } from '../contributions/ui/compatibility.js';
 export {
   PLUGIN_UI_DESTINATION_BINDING_SLOTS_V1,
+  PLUGIN_UI_INLINE_SURFACE_SLOTS_V1,
   PluginUiContainerV1Schema,
   PluginUiDestinationBindingV1Schema,
   PluginUiDestinationBindingInputV1Schema,
@@ -129,12 +130,14 @@ export {
   PluginUiDestinationBindingSelectorV1Schema,
   PluginUiRightSidebarScopeV1Schema,
   PluginUiTargetKindV1Schema,
+  PluginUiInlineSurfaceRoleV1Schema,
   isPluginUiDestinationBindingAdmittedAtRuntimeV1,
   isPluginUiDestinationBindingPotentiallySupportedOnPlatformV1,
   matchesPluginUiDestinationBindingV1,
   normalizePluginUiDestinationBindingV1,
   normalizePluginUiSettingsPageBindingV1,
   resolvePluginUiDestinationBindingSlotV1,
+  resolvePluginUiInlineSurfaceSlotV1,
   selectPluginUiRendererChainMemberV1,
   selectPluginUiDestinationBindingRendererV1,
   type PluginUiContainerV1,
@@ -147,6 +150,8 @@ export {
   type PluginUiDestinationRuntimeFormFactorV1,
   type PluginUiRightSidebarScopeV1,
   type PluginUiTargetKindV1,
+  type PluginUiInlineSurfaceRoleV1,
+  type PluginUiInlineSurfacePresentationV1,
 } from '../contributions/ui/surfaceRegistry.js';
 export {
   RuntimeActionHostEffectClassSchema,

@@ -1,5 +1,5 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -36,8 +36,6 @@ import {
  *   - `surfaced`              — a real, live producer/renderer/host/executor exists
  *   - `runtime-owned`         — owned + executed through the runtime ActionExecutor front door
  *   - `plugin-host-owned`     — owned by the plugin-host projection/render substrate
- *   - `intentionally-internal`— declared in a canonical registry for completeness but
- *                               deliberately not exposed as an independent product seam
  *   - `unsurfaced`            — declared in the id VOCABULARY but makes NO product promise
  *                               (no producer in stock tooling, fail-closed at every surface).
  *                               This is the "deleted/unsurfaced" terminal disposition (completion
@@ -73,7 +71,6 @@ type CoverageStatus =
   | 'surfaced'
   | 'runtime-owned'
   | 'plugin-host-owned'
-  | 'intentionally-internal'
   | 'unsurfaced'
   | 'unimplemented';
 
@@ -81,7 +78,6 @@ const RECOGNIZED_STATUSES: ReadonlySet<CoverageStatus> = new Set<CoverageStatus>
   'surfaced',
   'runtime-owned',
   'plugin-host-owned',
-  'intentionally-internal',
   'unsurfaced',
   'unimplemented',
 ]);
@@ -141,25 +137,6 @@ const DEFERRAL_OWNER_LEDGER: Readonly<Record<string, Readonly<{ owner: string; e
       ]),
     ),
   );
-
-// ---------------------------------------------------------------------------
-// Runtime actions that have a REAL executor but are deliberately NOT exposed on
-// the action surface (`surfaces.ui === false`) because a dedicated canonical
-// owner already serves the capability live — so the runtime ActionSpec id is an
-// intentionally-internal route, not a user/agent-dispatchable action and not a
-// gap. Each entry names the live owner. (This distinguishes "real path, not
-// action-surfaced" from "no executor at all" — which the binary `surfaces.ui`
-// flag cannot express on its own.)
-// ---------------------------------------------------------------------------
-
-const INTENTIONALLY_INTERNAL_RUNTIME_ACTIONS: Readonly<Record<string, string>> = Object.freeze({
-  'localServices.inventory.list':
-    'live owner: useLocalServiceInventoryStateController 15s machine-RPC polling (snapshotClient), '
-      + 'not ActionExecutor-dispatched; daemon + UI runtime executors exist for the route.',
-  'localServices.inventory.refresh':
-    'live owner: useLocalServiceInventoryStateController poll/refresh, not ActionExecutor-dispatched; '
-      + 'daemon + UI runtime executors exist for the route.',
-});
 
 // ---------------------------------------------------------------------------
 // Item shape.
@@ -682,7 +659,7 @@ const REJECTED_APP_WHOLE_PANE_SLOT_KEYS = [
  * actually authors, pinned to the exact container/target tuple in its source.
  *
  * The `declaration` stage above proves only that the manifest GRAMMAR can
- * express a slot: `PluginUiViewV2Schema` backs thirteen of fifteen rows, so
+ * express a slot: `PluginUiViewV2Schema` backs fourteen of the fifteen rows, so
  * deleting the last real author of a container/target pair could not fail it.
  * This relation is the missing half — an authored declaration a reader can
  * delete and watch the closure go red.
@@ -728,6 +705,22 @@ const MAINTAINED_AUTHORED_DESTINATION_DECLARATIONS_V1 = [
     sourcePath: 'packages/plugin-sdk/examples/public-authoring/definition.ts',
     codeIdentifier: ["                container: 'bottomPane',", "                target: { kind: 'project' },"].join('\n'),
   },
+  {
+    slotKey: 'browserPanel:browser',
+    sourcePath: 'packages/plugins/inspector/src/manifest.ts',
+    codeIdentifier: [
+      "    container: 'browserPanel' as const,",
+      "    target: { kind: 'browser' as const, browserViewIdPath: '/browser/viewId' },",
+    ].join('\n'),
+  },
+  {
+    slotKey: 'servicesPanel:services',
+    sourcePath: 'packages/plugins/inspector/src/manifest.ts',
+    codeIdentifier: [
+      "    container: 'servicesPanel' as const,",
+      "    target: { kind: 'services' as const },",
+    ].join('\n'),
+  },
 ] as const satisfies readonly Readonly<{
   slotKey: DestinationSlotKey;
   sourcePath: string;
@@ -743,6 +736,14 @@ const MAINTAINED_AUTHORED_DESTINATION_DECLARATIONS_V1 = [
  * This list is a ceiling, not a permit. Authoring one of these — or dropping the
  * last author of a slot that is currently proven — moves the computed set and
  * fails the closure, which is the point.
+ *
+ * Both directions are enforced against REAL SOURCE, not against the pinned list
+ * alone. `readAuthoredDestinationSlotKeysFromSource` re-derives the authored set
+ * by reading every maintained producer manifest, so a plugin that starts
+ * authoring one of these slots fails the closure even though nobody edited the
+ * relation above. Comparing the pinned rows only to each other was the earlier
+ * shape, and it could not fail on a gain: a real `detailsPane:session` view
+ * added to the public-authoring example left this ceiling green and stale.
  */
 const DESTINATION_SLOTS_WITHOUT_MAINTAINED_AUTHORED_DECLARATION = [
   'rightSidebarTab:project',
@@ -750,9 +751,66 @@ const DESTINATION_SLOTS_WITHOUT_MAINTAINED_AUTHORED_DECLARATION = [
   'detailsTab:project',
   'detailsPane:session',
   'detailsPane:project',
-  'browserPanel:browser',
-  'servicesPanel:services',
 ] as const satisfies readonly DestinationSlotKey[];
+
+/**
+ * The container/target TUPLE an authored view declares. The tuple, not the
+ * container alone: `bottomPane` appears twice in one example for two different
+ * targets, and reading only the container name would credit both slots to one
+ * declaration.
+ *
+ * A target carries `kind` plus whatever else its own grammar requires — the
+ * `browser` target also carries `browserViewIdPath`. Requiring `kind` to be the
+ * target's ONLY member made this scanner structurally blind to every such slot:
+ * `browserPanel:browser` was authored in `packages/plugins/inspector` while the
+ * ceiling below still claimed nobody authored it, and the GAIN half could not
+ * fail. Anything after `kind` up to the target's own closing brace is skipped.
+ */
+const AUTHORED_DESTINATION_TUPLE_PATTERN =
+  /container:\s*'([A-Za-z]+)'(?:\s+as\s+const)?,\s*target:\s*\{\s*kind:\s*'([A-Za-z]+)'(?:\s+as\s+const)?(?:\s*,[^{}]*)?\s*\}/gu;
+
+/**
+ * Every destination slot a maintained producer AUTHORS TODAY, re-derived from
+ * source instead of from the pinned relation.
+ *
+ * The producer set is DISCOVERED rather than listed — every plugin manifest and
+ * every public SDK example — because a hand-listed producer set has the same
+ * blind spot this function exists to remove: a brand-new plugin authoring a
+ * slot nobody thought to scan. Settings pages are a separate grammar
+ * (`ui.settingsPages` carries no `target`), so they are matched on their own
+ * declaration.
+ */
+function readAuthoredDestinationSlotKeysFromSource(repoRoot: string): Set<string> {
+  const producerSources: string[] = [];
+  const pluginsDir = resolve(repoRoot, 'packages/plugins');
+  for (const entry of readdirSync(pluginsDir)) {
+    const manifest = join(pluginsDir, entry, 'src', 'manifest.ts');
+    if (existsSync(manifest)) producerSources.push(manifest);
+  }
+  const examplesDir = resolve(repoRoot, 'packages/plugin-sdk/examples');
+  for (const entry of readdirSync(examplesDir)) {
+    const definition = join(examplesDir, entry, 'definition.ts');
+    if (existsSync(definition)) producerSources.push(definition);
+  }
+  // A discovery that found nothing would make every assertion below vacuous.
+  expect(
+    producerSources.length,
+    'no maintained producer manifest or public example was discovered',
+  ).toBeGreaterThan(0);
+
+  const authored = new Set<string>();
+  for (const path of producerSources) {
+    const source = readFileSync(path, 'utf8');
+    AUTHORED_DESTINATION_TUPLE_PATTERN.lastIndex = 0;
+    let match = AUTHORED_DESTINATION_TUPLE_PATTERN.exec(source);
+    while (match) {
+      authored.add(`${match[1]}:${match[2]}`);
+      match = AUTHORED_DESTINATION_TUPLE_PATTERN.exec(source);
+    }
+    if (/\n\s*settingsPages:\s*\[\{/u.test(source)) authored.add('settingsPage:app');
+  }
+  return authored;
+}
 
 // ---------------------------------------------------------------------------
 // Historical placement-ID disposition. These strings are deliberately
@@ -874,7 +932,6 @@ function buildRuntimeActionItems(): readonly CoverageItem[] {
   return RUNTIME_ACTION_IDS_V1.map((id): CoverageItem => {
     const spec = getActionSpec(id);
     const surfacedOnUi = spec.surfaces.ui === true;
-    const internalOwner = INTENTIONALLY_INTERNAL_RUNTIME_ACTIONS[id];
     const isSimulator = isSimulatorRuntimeActionIdV1(id as RuntimeActionIdV1);
     const simulatorBacking = isSimulator
       ? classifySimulatorRuntimeActionBackingV1(id as never)
@@ -886,9 +943,6 @@ function buildRuntimeActionItems(): readonly CoverageItem[] {
     let status: CoverageStatus;
     if (surfacedOnUi) {
       status = 'runtime-owned';
-    } else if (internalOwner) {
-      status = 'intentionally-internal';
-      owner = internalOwner;
     } else if (simulatorBacking === 'statically-unbacked') {
       // UNSURFACED (DZ-2): no producer in stock tooling (e.g. absolute-orientation input — stock
       // scrcpy `rotate_device` is relative). It is fail-closed at every surface and makes NO
@@ -1215,6 +1269,18 @@ describe('coverage matrix — Stage B (enforcement)', () => {
       ).toContain(declaration.codeIdentifier);
     }
 
+    // The GAIN half. Everything above can only notice a pinned declaration that
+    // disappeared; a producer that STARTS authoring an admitted slot moves no
+    // pinned row, so without this the ceiling below stays green while going
+    // stale — and its own failure message promises to catch exactly that.
+    const observedAuthoredSlotKeys = [...readAuthoredDestinationSlotKeysFromSource(repoRoot)]
+      .filter((slotKey) => admittedSlotKeys.has(slotKey as DestinationSlotKey))
+      .sort();
+    expect(
+      observedAuthoredSlotKeys,
+      'a maintained producer authors an admitted destination slot the authored-declaration relation does not name',
+    ).toEqual([...authoredSlotKeys].sort());
+
     const unauthoredSlotKeys = [...admittedSlotKeys]
       .filter((slotKey) => !authoredSlotKeys.has(slotKey))
       .sort();
@@ -1479,7 +1545,6 @@ describe('coverage matrix — classification snapshot', () => {
       surfaced: 0,
       'runtime-owned': 0,
       'plugin-host-owned': 0,
-      'intentionally-internal': 0,
       unsurfaced: 0,
       unimplemented: 0,
     };
@@ -1502,6 +1567,5 @@ describe('coverage matrix — classification snapshot', () => {
       Object.keys(IN_SCOPE_FAMILY_OWNERS).length + PLUGIN_UI_DESTINATION_BINDING_SLOTS_V1.length,
     );
     expect(counts.surfaced).toBe(0);
-    expect(counts['intentionally-internal']).toBe(Object.keys(INTENTIONALLY_INTERNAL_RUNTIME_ACTIONS).length);
   });
 });

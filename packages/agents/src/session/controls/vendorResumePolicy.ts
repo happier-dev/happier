@@ -1,7 +1,5 @@
 import type { AgentNativeResumeIdentityV1 } from '@happier-dev/protocol';
-import {
-  buildBackendTargetKey,
-} from '@happier-dev/protocol/plugins/agents';
+import { isBackendTargetDisabledByAccountSettings } from '@happier-dev/protocol';
 import type {
   PluginContributionIdentity,
 } from '@happier-dev/protocol/plugins/manifest';
@@ -35,10 +33,13 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 }
 
 function isBackendDisabledByAccountSettings(agentId: AgentId, accountSettings: Record<string, unknown> | null): boolean {
-  const backendEnabledByTargetKey = accountSettings?.backendEnabledByTargetKey;
-  const backendEnabledByTargetKeyRecord = asRecord(backendEnabledByTargetKey);
-  if (!backendEnabledByTargetKeyRecord) return false;
-  return backendEnabledByTargetKeyRecord[buildBackendTargetKey({ kind: 'builtInAgent', agentId })] === false;
+  // The Account Settings catalog owns this key's vocabulary: the parsed
+  // projection stores the canonical V2 target key, so indexing it with a
+  // locally built legacy key would silently read every backend as enabled.
+  return isBackendTargetDisabledByAccountSettings(
+    accountSettings,
+    { kind: 'builtInAgent', agentId },
+  );
 }
 
 export function isLinkedVendorResumeIdentityCurrent(input: Readonly<{

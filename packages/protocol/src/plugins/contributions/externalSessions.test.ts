@@ -80,9 +80,9 @@ function agentWithInstances(count: number) {
 }
 
 describe('Agent External Sessions contribution limits', () => {
-  it('keeps an Agent contribution usable when a newer producer declares an unknown source instance kind', () => {
+  it('refuses an Agent contribution that declares an unimplemented source instance kind', () => {
     const agent = agentWithSources(1);
-    const parsed = PluginAgentContributionV2Schema.safeParse({
+    const withUnknownKind = PluginAgentContributionV2Schema.safeParse({
       ...agent,
       surfaces: {
         externalSession: {
@@ -96,10 +96,23 @@ describe('Agent External Sessions contribution limits', () => {
         },
       },
     });
+    const withKnownKinds = PluginAgentContributionV2Schema.safeParse({
+      ...agent,
+      surfaces: {
+        externalSession: {
+          sources: [{
+            ...source(0),
+            instances: [{ kind: 'default', constants: {} }],
+          }],
+        },
+      },
+    });
 
-    expect(parsed.success).toBe(true);
-    expect(parsed.success ? parsed.data.surfaces?.externalSession.sources[0]?.instances : null)
-      .toEqual([{ kind: 'default', constants: {} }]);
+    expect(withUnknownKind.success).toBe(false);
+    expect(withKnownKinds.success).toBe(true);
+    expect(withKnownKinds.success
+      ? withKnownKinds.data.surfaces?.externalSession.sources[0]?.instances
+      : null).toEqual([{ kind: 'default', constants: {} }]);
   });
 
   it('accepts only native prevention or unsupported external-linked takeover writer safety', () => {
@@ -207,7 +220,7 @@ describe('Agent External Sessions contribution limits', () => {
     }).success).toBe(false);
   });
 
-  it('rejects accessor, toJSON, symbol, and decorated-array carriers without invoking them', () => {
+  it('rejects accessors, non-JSON members, and non-ordinary arrays without invoking getters', () => {
     let getterCalls = 0;
     const accessor = {} as Record<string, unknown>;
     Object.defineProperty(accessor, 'workspace', {
@@ -233,6 +246,15 @@ describe('Agent External Sessions contribution limits', () => {
     class ExtendedArray extends Array<unknown> {}
     expect(PluginAgentExternalSessionLinkDataSchema.safeParse({ values: new ExtendedArray('demo') }).success)
       .toBe(false);
+    class NonPlainObject {
+      readonly workspace = 'demo';
+    }
+    expect(PluginAgentExternalSessionLinkDataSchema.safeParse(new NonPlainObject()).success).toBe(false);
+    const sparse = new Array<unknown>(1);
+    expect(PluginAgentExternalSessionLinkDataSchema.safeParse({ values: sparse }).success).toBe(false);
+    const cycle: Record<string, unknown> = {};
+    cycle.self = cycle;
+    expect(PluginAgentExternalSessionLinkDataSchema.safeParse(cycle).success).toBe(false);
     expect(PluginAgentExternalSessionLinkDataSchema.safeParse({ value: '\uD800' }).success).toBe(true);
   });
 

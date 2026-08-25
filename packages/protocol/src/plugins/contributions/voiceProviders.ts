@@ -4,6 +4,7 @@ import semver from 'semver';
 import {
   PluginContributionLocalIdSchema,
   PluginContributionIdentityV1Schema,
+  type PluginContributionIdentityV1,
 } from '../contributionIdentity.js';
 import { canonicalBoundedRecordKeySchema } from '../../common/canonicalRecordKey.js';
 import {
@@ -13,8 +14,10 @@ import {
   QualifiedConnectedAccountPurposeV1Schema,
 } from '../../connect/connectedAccountPurposes.js';
 import {
+  cloneStrictPluginJsonValue,
   compilePluginJsonSchema,
   isValidPluginJsonSchemaValue,
+  measureSerializedValidatedStrictPluginJsonUtf8Bytes,
 } from '../actions/jsonSchemaValidation.js';
 import { ConnectedServiceIdSchema } from '../../connect/connectedServiceBindings.js';
 import {
@@ -38,6 +41,7 @@ import {
 } from './clientExecution.js';
 
 const VoiceJsonScalarSchema = z.union([z.null(), z.boolean(), z.number().finite(), z.string()]);
+const MAX_VOICE_JSON_SETTINGS_BYTES = 64 * 1024;
 
 export const VoiceCredentialSlotIdSchema = canonicalBoundedRecordKeySchema(128)
   .regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/u)
@@ -288,50 +292,19 @@ export type VoiceProviderSettingsActionDeclaration = z.infer<
 >;
 
 function validateVoiceJsonBounds(value: unknown, context: z.RefinementCtx): void {
-  const encoder = new TextEncoder();
-  let entries = 0;
-  const seen = new Set<object>();
-  const visit = (current: unknown, depth: number, path: readonly (string | number)[]): void => {
-    if (depth > 8) {
-      context.addIssue({ code: 'custom', path: [...path], message: 'Voice JSON settings exceed depth 8.' });
-      return;
-    }
-    if (typeof current === 'string' && current.length > 10_000) {
-      context.addIssue({ code: 'custom', path: [...path], message: 'Voice JSON string values exceed 10,000 code units.' });
-      return;
-    }
-    if (!current || typeof current !== 'object') return;
-    if (seen.has(current)) {
-      context.addIssue({ code: 'custom', path: [...path], message: 'Voice JSON settings cannot contain cycles.' });
-      return;
-    }
-    seen.add(current);
-    if (Array.isArray(current)) {
-      entries += current.length;
-      current.forEach((item, index) => visit(item, depth + 1, [...path, index]));
-    } else {
-      const record = current as Readonly<Record<string, unknown>>;
-      const keys = Object.keys(record);
-      entries += keys.length;
-      keys.forEach((key) => {
-        if (key.length > 256) {
-          context.addIssue({ code: 'custom', path: [...path, key], message: 'Voice JSON keys exceed 256 code units.' });
-        }
-        visit(record[key], depth + 1, [...path, key]);
-      });
-    }
-    seen.delete(current);
-  };
-  visit(value, 1, []);
-  if (entries > 256) {
-    context.addIssue({ code: 'custom', message: 'Voice JSON settings exceed 256 entries.' });
-  }
+  let snapshot: unknown;
   try {
-    if (encoder.encode(JSON.stringify(value)).byteLength > 65_536) {
-      context.addIssue({ code: 'custom', message: 'Voice JSON settings exceed 65,536 bytes.' });
-    }
+    snapshot = cloneStrictPluginJsonValue(value, 'Voice JSON settings');
   } catch {
     context.addIssue({ code: 'custom', message: 'Voice JSON settings must be canonically serializable.' });
+    return;
+  }
+  if (measureSerializedValidatedStrictPluginJsonUtf8Bytes(
+    snapshot,
+    'Voice JSON settings',
+    MAX_VOICE_JSON_SETTINGS_BYTES,
+  ) > MAX_VOICE_JSON_SETTINGS_BYTES) {
+    context.addIssue({ code: 'custom', message: 'Voice JSON settings exceed 65,536 bytes.' });
   }
 }
 
@@ -586,7 +559,7 @@ const VoiceConversationProviderContributionSchema = z.object({
       1,
       16,
       'Voice Agent runtime versions',
-    ),
+    ).optional(),
   }).strict().optional(),
   settings: VoiceProviderSettingsSchema.optional(),
   client: PluginClientExecutionReferenceV1Schema.extend({
@@ -627,8 +600,8 @@ export const VoiceProviderContributionSchema = z.discriminatedUnion('kind', [
   credentials?.sources.forEach((source, sourceIndex) => {
     source.operationProjections?.forEach((projection, projectionIndex) => {
       const path = ['credentials', 'sources', sourceIndex, 'operationProjections', projectionIndex, 'phase'] as const;
-      if (contribution.kind === 'speech' && projection.phase !== 'speech') {
-        context.addIssue({ code: 'custom', path: [...path], message: 'Speech credential projections use the speech phase.' });
+      if (contribution.kind === 'speech' && projection.phase !== 'settings' && projection.phase !== 'speech') {
+        context.addIssue({ code: 'custom', path: [...path], message: 'Speech credential projections use the settings or speech phase.' });
       }
       if (contribution.kind === 'conversation' && projection.phase === 'speech') {
         context.addIssue({ code: 'custom', path: [...path], message: 'Conversation credential projections cannot use the speech phase.' });
@@ -636,8 +609,11 @@ export const VoiceProviderContributionSchema = z.discriminatedUnion('kind', [
     });
     source.rawGrants?.forEach((grant, grantIndex) => {
       const path = ['credentials', 'sources', sourceIndex, 'rawGrants', grantIndex] as const;
-      if (contribution.kind === 'speech' && (grant.realm !== 'daemon' || grant.phase !== 'speech')) {
-        context.addIssue({ code: 'custom', path: [...path], message: 'Speech raw credentials are daemon speech-phase grants.' });
+      if (
+        contribution.kind === 'speech'
+        && (grant.realm !== 'daemon' || (grant.phase !== 'settings' && grant.phase !== 'speech'))
+      ) {
+        context.addIssue({ code: 'custom', path: [...path], message: 'Speech raw credentials are daemon settings- or speech-phase grants.' });
       }
       if (contribution.kind === 'conversation' && grant.realm === 'daemon') {
         context.addIssue({ code: 'custom', path: [...path, 'realm'], message: 'Conversation raw credentials are limited to declared client platforms.' });
@@ -711,6 +687,99 @@ export const VoiceProviderContributionSchema = z.discriminatedUnion('kind', [
 });
 export type VoiceProviderContribution = z.infer<typeof VoiceProviderContributionSchema>;
 
+/**
+ * The Account-settings source selected for one exact host-mediated Voice
+ * operation. The Account Settings owner retains its richer persisted target;
+ * this boundary receives only the materialization-relevant identity.
+ */
+export type VoiceCredentialOperationSelectedSource =
+  | Readonly<{ kind: 'savedSecret' }>
+  | Readonly<{
+      kind: 'connectedAccount';
+      service: PluginContributionIdentityV1;
+    }>;
+
+/**
+ * One exact declaration projection authorized for the selected credential
+ * source, host-owned phase, and operation. The discriminated projection is
+ * the materialization contract: callers must use recipient credentials only
+ * for SavedSecret selections and materialized headers only for Connected
+ * Account selections.
+ */
+export type VoiceCredentialOperationAuthorization =
+  | Readonly<{
+      source: Extract<VoiceCredentialSource, Readonly<{ kind: 'savedSecret' }>>;
+      projection: Extract<VoiceCredentialOperationProjection, Readonly<{
+        kind: 'recipientCredential';
+      }>>;
+    }>
+  | Readonly<{
+      source: Extract<VoiceCredentialSource, Readonly<{ kind: 'connectedAccount' }>>;
+      projection: Extract<VoiceCredentialOperationProjection, Readonly<{
+        kind: 'materializedHttpHeaders';
+      }>>;
+    }>;
+
+function sameVoiceCredentialContribution(
+  left: PluginContributionIdentityV1,
+  right: PluginContributionIdentityV1,
+): boolean {
+  return left.pluginId === right.pluginId && left.localId === right.localId;
+}
+
+function qualifiesVoiceCredentialConnectedAccountSource(
+  pluginId: string,
+  source: Extract<VoiceCredentialSource, Readonly<{ kind: 'connectedAccount' }>>,
+): PluginContributionIdentityV1 {
+  return typeof source.service === 'string'
+    ? Object.freeze({ pluginId, localId: source.service })
+    : Object.freeze({ ...source.service });
+}
+
+/**
+ * Resolves the only materialization declaration a host may use for one
+ * selected Voice credential source. It is deliberately pure: lifecycle,
+ * persistence, decryption, and Connected Account materialization stay with
+ * their existing owners.
+ */
+export function resolveVoiceCredentialOperationAuthorization(input: Readonly<{
+  pluginId: string;
+  contributionId: string;
+  contribution: VoiceProviderContribution;
+  selectedSource: VoiceCredentialOperationSelectedSource;
+  phase: VoiceCredentialAccessPhase;
+  operationId: string;
+}>): VoiceCredentialOperationAuthorization | null {
+  if (input.contribution.id !== input.contributionId) return null;
+  const credentials = input.contribution.credentials;
+  if (!credentials?.hostMediated?.operations.some((operation) => (
+    operation.id === input.operationId
+  ))) return null;
+  const sources = credentials.sources.filter((candidate) => {
+    if (candidate.kind !== input.selectedSource.kind) return false;
+    if (candidate.kind === 'savedSecret') return true;
+    if (input.selectedSource.kind !== 'connectedAccount') return false;
+    return sameVoiceCredentialContribution(
+      qualifiesVoiceCredentialConnectedAccountSource(input.pluginId, candidate),
+      input.selectedSource.service,
+    );
+  });
+  if (sources.length !== 1) return null;
+  const source = sources[0]!;
+  const projection = source?.operationProjections?.find((candidate) => (
+    candidate.operation === input.operationId && candidate.phase === input.phase
+  ));
+  if (!source || !projection) return null;
+  if (source.kind === 'savedSecret') {
+    return projection.kind === 'recipientCredential'
+      ? Object.freeze({ source, projection })
+      : null;
+  }
+  return projection.kind === 'materializedHttpHeaders'
+    ? Object.freeze({ source, projection })
+    : null;
+}
+
 export type VoiceSpeechSettingsSnapshot = Readonly<
   Record<string, VoiceProviderSettingsJsonValueV1>
 >;
@@ -765,16 +834,11 @@ export function resolveVoiceSpeechEndpointPolicy(input: Readonly<{
 function cloneAndFreezeVoiceSpeechSettings(
   value: Readonly<Record<string, unknown>>,
 ): VoiceSpeechSettingsSnapshot {
-  const clone = JSON.parse(JSON.stringify(value)) as Record<string, VoiceProviderSettingsJsonValueV1>;
-  const freeze = (candidate: VoiceProviderSettingsJsonValueV1): VoiceProviderSettingsJsonValueV1 => {
-    if (candidate !== null && typeof candidate === 'object' && !Object.isFrozen(candidate)) {
-      for (const child of Object.values(candidate)) freeze(child);
-      Object.freeze(candidate);
-    }
-    return candidate;
-  };
-  for (const child of Object.values(clone)) freeze(child);
-  return Object.freeze(clone);
+  try {
+    return cloneStrictPluginJsonValue(value, 'Voice speech settings') as VoiceSpeechSettingsSnapshot;
+  } catch {
+    throw new TypeError('voice_speech_settings_invalid');
+  }
 }
 
 function readVoiceSpeechRequestString(

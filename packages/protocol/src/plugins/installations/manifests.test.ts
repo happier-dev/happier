@@ -57,4 +57,19 @@ describe('plugin installation manifest contracts', () => {
       },
     })).toBe('{"a":{"c":true,"d":null},"b":2}');
   });
+
+  it('admits an exact GET publisher proof for bodyless machine-owned reads', () => {
+    expect(PluginInstallationManifestPublisherProofV1Schema.parse({
+      v: 1,
+      alg: 'ed25519-machine-installation-v1',
+      machineId: 'machine_1',
+      installationId: 'install_1',
+      issuedAt: 1,
+      nonce: 'nonce_get_1',
+      method: 'GET',
+      path: '/v3/automations/worker/assignments',
+      bodySha256Base64Url: 'null-body-digest',
+      signatureBase64Url: 'signature',
+    })).toMatchObject({ method: 'GET' });
+  });
 });

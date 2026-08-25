@@ -18,6 +18,7 @@ export const PluginDeclarativeDocumentV1Schema: z.ZodType<PluginDeclarativeDocum
 
 /** The exact Resource media type and validator for the author-facing envelope. */
 export {
+  MAX_PLUGIN_DECLARATIVE_DOCUMENT_RESOURCE_BYTES_V1,
   PLUGIN_DECLARATIVE_DOCUMENT_CONTENT_TYPE_V1,
   PluginDeclarativeDocumentContentTypeV1Schema,
   isPluginDeclarativeDocumentContentTypeV1,

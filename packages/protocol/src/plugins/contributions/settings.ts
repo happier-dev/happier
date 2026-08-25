@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { asProtocolZod } from "../actions/internalProtocolZodAdapter.js";
 
 import { PluginContributionLocalIdSchema } from '../contributionIdentity.js';
+import { containsEquivalentPluginJsonValue } from './jsonSchemaValues.js';
 import {
   PluginAvailabilityDescriptorV2Schema,
   PluginContributionReferenceV2Schema,
@@ -254,7 +255,7 @@ function haveEquivalentSettingValueSchemas(
   left: PluginSettingFieldSchemaV2,
   right: PluginSettingFieldSchemaV2,
 ): boolean {
-  return containsJsonValue(
+  return containsEquivalentPluginJsonValue(
     [projectSettingSchemaValueSemantics(left)],
     projectSettingSchemaValueSemantics(right),
   );
@@ -372,26 +373,6 @@ export const PluginSettingsActionDeclarationV2Schema = z.object({
 }).strict();
 export type PluginSettingsActionDeclarationV2 = z.infer<typeof PluginSettingsActionDeclarationV2Schema>;
 
-function containsJsonValue(values: readonly unknown[], candidate: unknown): boolean {
-  return values.some((value) => {
-    if (Object.is(value, candidate)) return true;
-    if (value === null || candidate === null || typeof value !== typeof candidate) return false;
-    if (Array.isArray(value) || Array.isArray(candidate)) {
-      return Array.isArray(value)
-        && Array.isArray(candidate)
-        && value.length === candidate.length
-        && value.every((entry, index) => containsJsonValue([entry], candidate[index]));
-    }
-    if (typeof value !== 'object' || typeof candidate !== 'object') return false;
-    const left = value as Readonly<Record<string, unknown>>;
-    const right = candidate as Readonly<Record<string, unknown>>;
-    const leftKeys = Object.keys(left).sort();
-    const rightKeys = Object.keys(right).sort();
-    return leftKeys.length === rightKeys.length
-      && leftKeys.every((key, index) => key === rightKeys[index] && containsJsonValue([left[key]], right[key]));
-  });
-}
-
 export const PluginSettingsContributionV2Schema = z.object({
   id: asProtocolZod(PluginContributionLocalIdSchema),
   version: z.literal(1).default(1),
@@ -420,7 +401,7 @@ export const PluginSettingsContributionV2Schema = z.object({
         ? field.schema.items?.enum
         : field.schema.enum;
       options.forEach((option, optionIndex) => {
-        if (!schemaOptions || !containsJsonValue(schemaOptions, option.value)) {
+        if (!schemaOptions || !containsEquivalentPluginJsonValue(schemaOptions, option.value)) {
           ctx.addIssue({
             code: 'custom',
             path: ['fields', fieldIndex, 'presentation', 'options', optionIndex, 'value'],

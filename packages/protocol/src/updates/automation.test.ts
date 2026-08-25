@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { AutomationRunStateV3Schema } from '../automations/automationRunStateV3.js';
+import { AUTOMATION_RUN_CANCELLED_AFTER_DISPATCH_PERMITTED_CAUSE_V1 } from '../plugins/events/hostReferencesV1.js';
 import { UpdateBodySchema } from './index.js';
 
 describe('updates protocol automation payloads', () => {
@@ -96,6 +97,35 @@ describe('updates protocol automation payloads', () => {
         expect(UpdateBodySchema.safeParse({
             ...payload,
             currentState: 'running',
+        }).success).toBe(false);
+    });
+
+    it('carries the authoritative cancellation cause on the lifecycle carrier', () => {
+        const uncertain = {
+            t: 'automation-run-state-changed',
+            runId: 'run_1',
+            automationId: 'auto_1',
+            originKind: 'scheduled',
+            previousState: 'running',
+            currentState: 'outcome_uncertain',
+            transitionedAt: 1,
+            claimedByMachineId: 'machine_1',
+        } as const;
+        // The daemon can only treat a post-dispatch cancellation as
+        // authoritative if the cause survives the wire body, so the carrier
+        // must transport it rather than reject or drop it.
+        expect(UpdateBodySchema.parse({
+            ...uncertain,
+            cause: AUTOMATION_RUN_CANCELLED_AFTER_DISPATCH_PERMITTED_CAUSE_V1,
+        })).toEqual({
+            ...uncertain,
+            cause: AUTOMATION_RUN_CANCELLED_AFTER_DISPATCH_PERMITTED_CAUSE_V1,
+        });
+        // Ordinary uncertainty stays causeless, and the cause stays bounded.
+        expect(UpdateBodySchema.parse(uncertain)).toEqual(uncertain);
+        expect(UpdateBodySchema.safeParse({
+            ...uncertain,
+            cause: 'x'.repeat(65),
         }).success).toBe(false);
     });
 

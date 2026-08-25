@@ -235,7 +235,6 @@ describe('MachineRpcRoutePolicyV1', () => {
     for (const method of [
       RPC_METHODS.DAEMON_PLUGIN_UI_ARTIFACT_BYTES_READ,
       RPC_METHODS.DAEMON_PLUGIN_COMPOSER_REFERENCE_SEARCH,
-      RPC_METHODS.DAEMON_PLUGIN_COMPOSER_ATTACHMENT_PREPARE,
       RPC_METHODS.DAEMON_BROWSER_DIAGNOSTICS_SNAPSHOT,
       RPC_METHODS.DAEMON_BROWSER_RECORDING_START,
       RPC_METHODS.DAEMON_BROWSER_RECORDING_STOP,
@@ -607,8 +606,8 @@ describe('MachineRpcRoutePolicyV1', () => {
     for (const method of [
       RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_SNAPSHOT,
       RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_REFRESH,
+      RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH,
       RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_SNAPSHOT,
-      RPC_METHODS.DAEMON_LOCAL_SERVICES_MANAGED_SNAPSHOT,
       RPC_METHODS.DAEMON_LOCAL_SERVICES_PREVIEW_SNAPSHOT,
       RPC_METHODS.DAEMON_LOCAL_SERVICES_PUBLIC_PREVIEW_STATUS,
       RPC_METHODS.DAEMON_LOCAL_SERVICES_PUBLIC_PREVIEW_COPY_URL,
@@ -1144,5 +1143,21 @@ describe('MachineRpcRoutePolicyV1', () => {
       rpcClassification: 'action_spec_bound',
       actionSpecId: 'transcript.import',
     });
+    // The follow lease and its release are one lifecycle: whatever route class serves
+    // `transcript.follow` must also serve `transcript.unfollow`, or the lease is created on one
+    // route and released on another. `transcript.unfollow` is additionally a `write`
+    // (`actionSpecs.ts` `sideEffectClass`), so it is not eligible for a receipt-free direct class.
+    for (const [method, actionSpecId] of [
+      [RPC_METHODS.TRANSCRIPT_FOLLOW, 'transcript.follow'],
+      [RPC_METHODS.TRANSCRIPT_UNFOLLOW, 'transcript.unfollow'],
+    ] as const) {
+      expect(protocol.resolveMachineRpcRoutePolicy(method)).toMatchObject({
+        routeClass: 'server_required',
+        serverRequiredReason: 'ambiguous',
+        rpcClassification: 'action_spec_bound',
+        actionSpecId,
+        commandReceiptRequired: false,
+      });
+    }
   });
 });

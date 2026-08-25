@@ -1,0 +1,50 @@
+{
+  "v": 1,
+  "paths": {
+    "lookup": "/connected-accounts/request-auth/lookup",
+    "authFailure": "/connected-accounts/request-auth/auth-failure",
+    "quotaFailure": "/connected-accounts/request-auth/quota-failure"
+  },
+  "responses": [
+    {
+      "name": "failure-outcome-success",
+      "status": 200,
+      "body": {
+        "ok": true,
+        "value": { "status": "current_unchanged" }
+      }
+    },
+    {
+      "name": "unauthorized",
+      "status": 401,
+      "body": {
+        "ok": false,
+        "error": { "code": "request_auth_unauthorized" }
+      }
+    },
+    {
+      "name": "purpose-forbidden",
+      "status": 403,
+      "body": {
+        "ok": false,
+        "error": { "code": "request_auth_purpose_forbidden" }
+      }
+    },
+    {
+      "name": "not-active",
+      "status": 409,
+      "body": {
+        "ok": false,
+        "error": { "code": "request_auth_not_active" }
+      }
+    },
+    {
+      "name": "unavailable",
+      "status": 503,
+      "body": {
+        "ok": false,
+        "error": { "code": "request_auth_unavailable" }
+      }
+    }
+  ]
+}

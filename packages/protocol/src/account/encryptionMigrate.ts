@@ -62,6 +62,10 @@ import { AccountSettingsStoredContentEnvelopeSchema } from './settings/index.js'
 import { decodeBase64, encodeBase64 } from '../crypto/base64.js';
 import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
 import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
+import {
+  SessionDraftRecordV1Schema,
+  SessionDraftStoredContentEnvelopeV1Schema,
+} from '../drafts/sessionDrafts.js';
 
 const NonNegativeSafeIntegerSchema =
   z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
@@ -237,11 +241,9 @@ export const AccountEncryptionMigrateConnectedServicesDirectiveSchema =
         action: z.literal('migrate'),
         credentials:
           z.array(ConnectedServiceCredentialMigrationItemSchema)
-            .max(500)
             .default([]),
         qualifiedCredentials:
           z.array(QualifiedConnectedAccountCredentialMigrationItemSchema)
-            .max(500)
             .default([]),
       })
       .strict(),
@@ -261,11 +263,9 @@ const AccountEncryptionMigratePredecessorConnectedServicesDirectiveSchema =
           z.array(
             AccountEncryptionMigratePredecessorConnectedServiceCredentialMigrationItemSchema,
           )
-            .max(500)
             .default([]),
         qualifiedCredentials:
           z.array(QualifiedConnectedAccountCredentialMigrationItemSchema)
-            .max(500)
             .default([]),
       })
       .strict(),
@@ -1431,6 +1431,39 @@ export type AccountEncryptionMigrateTransitionActivateResponse = z.infer<
   typeof AccountEncryptionMigrateTransitionActivateResponseSchema
 >;
 
+/** One Account-owned new-session draft replacement in the atomic V4 migration. */
+export const AccountEncryptionMigrateSessionDraftItemSchema = z.object({
+  address: z.object({
+    kind: z.literal('newSession'),
+    draftId: z.string().uuid(),
+  }).strict(),
+  expectedRevision: NonNegativeSafeIntegerSchema,
+  content: SessionDraftStoredContentEnvelopeV1Schema,
+}).strict();
+export type AccountEncryptionMigrateSessionDraftItem = z.infer<
+  typeof AccountEncryptionMigrateSessionDraftItemSchema
+>;
+
+export const AccountEncryptionMigrateSessionDraftsDirectiveSchema = z.object({
+  items: z.array(AccountEncryptionMigrateSessionDraftItemSchema)
+    .max(ACCOUNT_ENCRYPTION_MIGRATE_TRANSITION_COLLECTION_PAGE_MAX_ITEMS),
+}).strict().superRefine((value, context) => {
+  const seen = new Set<string>();
+  value.items.forEach((item, index) => {
+    if (seen.has(item.address.draftId)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['items', index, 'address', 'draftId'],
+        message: 'Account migration cannot replace the same new-session draft twice',
+      });
+    }
+    seen.add(item.address.draftId);
+  });
+});
+export type AccountEncryptionMigrateSessionDraftsDirective = z.infer<
+  typeof AccountEncryptionMigrateSessionDraftsDirectiveSchema
+>;
+
 const AccountEncryptionMigrateCurrentRequestShape = {
   toMode: AccountEncryptionMigrateToModeSchema,
   expectedAccountVersion: NonNegativeSafeIntegerSchema,
@@ -1452,6 +1485,7 @@ const AccountEncryptionMigrateCurrentRequestShape = {
   sessionOrganization:
     AccountEncryptionMigrateSessionOrganizationDirectiveSchema,
   pets: AccountEncryptionMigratePetsDirectiveSchema,
+  sessionDrafts: AccountEncryptionMigrateSessionDraftsDirectiveSchema.optional(),
   externalAuthProof:
     AccountEncryptionMigrateExternalAuthProofSchema.optional(),
 } as const;
@@ -1834,6 +1868,10 @@ export const AccountEncryptionMigrateSuccessResponseSchema = z
     mode: AccountEncryptionMigrateToModeSchema,
     accountVersion: NonNegativeSafeIntegerSchema,
     settingsVersion: NonNegativeSafeIntegerSchema,
+    sessionDrafts: z.object({
+      records: z.array(SessionDraftRecordV1Schema)
+        .max(ACCOUNT_ENCRYPTION_MIGRATE_TRANSITION_COLLECTION_PAGE_MAX_ITEMS),
+    }).strict().optional(),
   })
   .strict();
 export type AccountEncryptionMigrateSuccessResponse = z.infer<

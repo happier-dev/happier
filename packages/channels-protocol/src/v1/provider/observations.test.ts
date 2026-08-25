@@ -39,4 +39,56 @@ describe('Channels V1 provider observations', () => {
             reason: 'applicationAdmissionLost',
         }).success).toBe(false);
     });
+
+    it('carries each checkpointed occurrence as the same observed-entry owner used by direct ingress', () => {
+        const result = {
+            kind: 'batch',
+            observations: [{
+                observation: {
+                    kind: 'fullText',
+                    observation: {
+                        v: 1,
+                        occurrenceId: 'update-42',
+                        occurredAt: 1_700_000_000_000,
+                        transport: { kind: 'poll' },
+                        endpoint: { kind: 'direct', audience: 'direct', id: 'chat-42' },
+                        actor: {
+                            principalId: 'user-42',
+                            kind: 'human',
+                            isIntegrationSelf: false,
+                        },
+                        message: {
+                            id: 'message-42',
+                            text: 'Run the deployment.',
+                            addressingEvidence: 'directIntegrationMention',
+                            contentProvenance: 'original',
+                            providerTimestamp: 1_700_000_000_000,
+                        },
+                    },
+                },
+                eventCandidate: {
+                    eventRef: {
+                        pluginId: 'happier.channel.telegram',
+                        localId: 'automation/chat-message-v1',
+                    },
+                    sourceInstanceId: 'telegram:chat:123:42',
+                    sourceContractVersion: 1,
+                    payload: { chatId: '42', messageId: 'message-42' },
+                },
+            }],
+            checkpointAfterBatch: { cursor: 'after' },
+        } as const;
+
+        expect(ConversationPollResultV1Schema.parse(result)).toEqual(result);
+        expect(ConversationPollResultV1Schema.safeParse({
+            ...result,
+            observations: [{
+                ...result.observations[0],
+                eventCandidate: {
+                    ...result.observations[0].eventCandidate,
+                    sourceInstanceId: '',
+                },
+            }],
+        }).success).toBe(false);
+    });
 });

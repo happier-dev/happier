@@ -20,10 +20,10 @@ function serializedUtf8Bytes(value: unknown): number {
 }
 
 describe('cloneStrictPluginJsonValue', () => {
-  it('accepts valid deep ordinary JSON without imposing a public traversal quota', () => {
-    const value = nested(12_000);
+  it('accepts valid deep JSON without imposing a traversal-depth quota', () => {
+    const deep = nested(12_000);
 
-    expect(() => cloneStrictPluginJsonValue(value, 'value')).not.toThrow();
+    expect(() => cloneStrictPluginJsonValue(deep, 'value')).not.toThrow();
   });
 
   it('measures the exact JSON.stringify UTF-8 spelling', () => {
@@ -40,24 +40,66 @@ describe('cloneStrictPluginJsonValue', () => {
     }
   });
 
-  it('rejects non-JSON data without invoking accessors and returns frozen snapshots', () => {
+  it('rejects accessors without reading them, rejects invalid values, and returns frozen snapshots', () => {
     const sparse = new Array<unknown>(1);
+    const extraArrayProperty = Object.assign([1], { extra: 'must-not-be-dropped' });
     const accessor = { stable: true } as Record<string, unknown>;
     let accessorReads = 0;
     Object.defineProperty(accessor, 'unsafe', {
       enumerable: true,
       get() {
         accessorReads += 1;
-        return 'must not run';
+        return 'read once';
+      },
+    });
+    let elementReads = 0;
+    const accessorElement: unknown[] = [];
+    Object.defineProperty(accessorElement, '0', {
+      enumerable: true,
+      configurable: true,
+      get() {
+        elementReads += 1;
+        return 'read once';
       },
     });
 
     const cyclic = { self: null as unknown };
     cyclic.self = cyclic;
-    for (const value of [sparse, accessor, new Date(), undefined, Number.NaN, Infinity, 1n, cyclic]) {
+    expect(() => cloneStrictPluginJsonValue(accessor, 'value')).toThrow();
+    expect(accessorReads).toBe(0);
+    // An array element is the other half of "validation must not run code":
+    // the owner reaches it through the array descriptor path, not the member
+    // path above, so a zero read count has to be proven on both.
+    expect(Array.isArray(accessorElement)).toBe(true);
+    expect(() => cloneStrictPluginJsonValue(accessorElement, 'value')).toThrow();
+    expect(elementReads).toBe(0);
+    let throwingAccessorReads = 0;
+    const throwingAccessor = Object.defineProperty({}, 'value', {
+      enumerable: true,
+      get() {
+        throwingAccessorReads += 1;
+        throw new Error('author getter failed');
+      },
+    });
+
+    // `extraArrayProperty` clones into a dense `[1]`, silently dropping the
+    // member the author wrote, unless the owner refuses it outright.
+    for (const value of [
+      sparse,
+      extraArrayProperty,
+      throwingAccessor,
+      undefined,
+      Number.NaN,
+      Infinity,
+      1n,
+      cyclic,
+    ]) {
       expect(() => cloneStrictPluginJsonValue(value, 'value')).toThrow();
     }
-    expect(accessorReads).toBe(0);
+    // The throwing accessor must be rejected from its descriptor. A zero read
+    // count is what separates "this owner refused an accessor" from "the
+    // author's getter ran and happened to throw".
+    expect(throwingAccessorReads).toBe(0);
 
     const authored = { nested: ['before'] };
     const cloned = cloneStrictPluginJsonValue(authored, 'value') as { nested: string[] };
@@ -82,7 +124,10 @@ describe('cloneStrictPluginJsonValue', () => {
     expect(() => cloneStrictPluginJsonValue(withNonEnumerable, 'value')).toThrow();
   });
 
-  it('rejects arrays with an inherited custom prototype rather than normalizing their identity away', () => {
+  it('rejects non-plain object and array prototypes', () => {
+    class AuthoredRecord {
+      readonly label = 'must-not-cross-the-boundary';
+    }
     const authored = [true];
     Object.setPrototypeOf(authored, {
       customArrayMethod() {
@@ -92,9 +137,28 @@ describe('cloneStrictPluginJsonValue', () => {
 
     expect(Array.isArray(authored)).toBe(true);
     expect(() => cloneStrictPluginJsonValue(authored, 'value')).toThrow();
+    expect(() => cloneStrictPluginJsonValue(
+      Object.assign(Object.create({ inherited: true }), { own: 'value' }),
+      'value',
+    )).toThrow();
+    // A `Date` carries no own keys at all, so an owner that inspected only own
+    // properties would accept it and silently normalize it into `{}` - the
+    // value would become different JSON than the author wrote.
+    expect(() => cloneStrictPluginJsonValue(new Date(0), 'value')).toThrow();
+    // A class prototype carries no enumerable own member, so an owner that
+    // rejected only prototypes with enumerable properties would accept this.
+    expect(() => cloneStrictPluginJsonValue(new AuthoredRecord(), 'value')).toThrow();
+    // The positive twin: this owner's own output is null-prototype, so
+    // re-admitting an already normalized value must keep working.
+    const nullPrototype = Object.assign(
+      Object.create(null) as Record<string, unknown>,
+      { own: 'value' },
+    );
+
+    expect(cloneStrictPluginJsonValue(nullPrototype, 'value')).toEqual({ own: 'value' });
   });
 
-  it('preserves lone UTF-16 surrogates for JSON.stringify while rejecting Array subclasses', () => {
+  it('preserves lone UTF-16 surrogates for JSON.stringify and rejects Array subclasses', () => {
     class ExtendedArray extends Array<unknown> {}
 
     const value = { '\uDC00': '\uD800' };

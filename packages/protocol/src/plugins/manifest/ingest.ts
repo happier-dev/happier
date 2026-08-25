@@ -3,11 +3,18 @@ import { PLUGIN_CONTRIBUTION_CATALOG_V2 } from '../contributions/catalog.js';
 import { isDynamicPluginResourceContributionV2 } from '../contributions/v2.js';
 import { createCanonicalJsonSigningInput } from '../../crypto/canonicalJson.js';
 import { PluginContributionLocalIdSchema } from '../contributionIdentity.js';
-import { isPluginDeclarativeDocumentContentTypeV1 } from '../contributions/ui/declarativeDocumentContentTypeV1.js';
+import {
+  isPluginDeclarativeDocumentContentTypeV1,
+  MAX_PLUGIN_DECLARATIVE_DOCUMENT_RESOURCE_BYTES_V1,
+} from '../contributions/ui/declarativeDocumentContentTypeV1.js';
 import {
   isPluginTranscriptActivityContentTypeV1,
   MAX_PLUGIN_TRANSCRIPT_ACTIVITY_RESOURCE_BYTES_V1,
 } from '../contributions/ui/transcriptActivities.js';
+import {
+  isComposerControlStateContentTypeV1,
+  MAX_COMPOSER_CONTROL_STATE_RESOURCE_BYTES_V1,
+} from '../ui/composer.js';
 import {
   PluginEventAutomationHistoryGapResetActionInputV1JsonSchema,
   PluginEventAutomationHistoryGapResetActionResultV1JsonSchema,
@@ -537,8 +544,10 @@ function readOpenableContentViewerDestinationDiagnostics(
 /**
  * A declarative document source is a live Resource binding, not merely a
  * generic Resource reference. The Resource contribution remains the sole
- * source/type authority; this manifest owner only rejects the packaged arm,
- * which cannot supply the document's required invalidation lifecycle.
+ * source/type authority; this manifest owner rejects the packaged arm, which
+ * cannot supply the document's required invalidation lifecycle, and requires
+ * the same declared per-read byte ceiling the other synchronous UI-thread
+ * Resource consumers already require.
  */
 function readDeclarativeDocumentSourceDiagnostics(
   manifest: ParsedPluginManifestV2,
@@ -565,6 +574,16 @@ function readDeclarativeDocumentSourceDiagnostics(
         code: 'plugin_manifest_invalid',
         path: ['contributes', 'ui', 'renderers', rendererIndex, 'documentSource', 'resourceId'],
         message: `Declarative document source '${renderer.documentSource.resourceId}' must declare the exact V1 document content type.`,
+      });
+    }
+    if (
+      resource.maxBytes === undefined
+      || resource.maxBytes > MAX_PLUGIN_DECLARATIVE_DOCUMENT_RESOURCE_BYTES_V1
+    ) {
+      diagnostics.push({
+        code: 'plugin_manifest_invalid',
+        path: ['contributes', 'ui', 'renderers', rendererIndex, 'documentSource', 'resourceId'],
+        message: `Declarative document source '${renderer.documentSource.resourceId}' Resource maxBytes must be declared and no greater than ${MAX_PLUGIN_DECLARATIVE_DOCUMENT_RESOURCE_BYTES_V1}.`,
       });
     }
   });
@@ -613,6 +632,90 @@ function readTranscriptActivityDiagnostics(
         code: 'plugin_manifest_invalid',
         path,
         message: `Transcript activity '${activity.id}' Resource maxBytes must be declared and no greater than ${MAX_PLUGIN_TRANSCRIPT_ACTIVITY_RESOURCE_BYTES_V1}.`,
+      });
+    }
+  });
+  return diagnostics;
+}
+
+/** Session-info sections reuse the whole-document Resource and Action owners. */
+function readSessionInfoSectionDiagnostics(
+  manifest: ParsedPluginManifestV2,
+): PluginManifestIngestionDiagnostic[] {
+  const resourcesById = new Map(manifest.contributes.resources.map((resource) => [resource.id, resource]));
+  const actionsById = new Map(manifest.contributes.actions.map((action) => [action.id, action]));
+  const diagnostics: PluginManifestIngestionDiagnostic[] = [];
+  manifest.contributes.sessionInfoSections.forEach((section, sectionIndex) => {
+    const resource = resourcesById.get(section.resourceId);
+    const resourcePath = ['contributes', 'sessionInfoSections', sectionIndex, 'resourceId'];
+    if (resource) {
+      if (!isDynamicPluginResourceContributionV2(resource)
+        || resource.scope !== 'session'
+        || !isPluginDeclarativeDocumentContentTypeV1(resource.contentType)
+        || resource.maxBytes === undefined
+        || resource.maxBytes > MAX_PLUGIN_DECLARATIVE_DOCUMENT_RESOURCE_BYTES_V1) {
+        diagnostics.push({
+          code: 'plugin_manifest_invalid',
+          path: resourcePath,
+          message: `Session-info section '${section.id}' must reference a session-scoped dynamic V1 declarative-document Resource with maxBytes no greater than ${MAX_PLUGIN_DECLARATIVE_DOCUMENT_RESOURCE_BYTES_V1}.`,
+        });
+      }
+    }
+    section.actions.forEach((actionId, actionIndex) => {
+      const action = actionsById.get(actionId);
+      if (action && !action.surfaces.includes('ui')) {
+        diagnostics.push({
+          code: 'plugin_manifest_invalid',
+          path: ['contributes', 'sessionInfoSections', sectionIndex, 'actions', actionIndex],
+          message: `Session-info section '${section.id}' Action '${actionId}' must reference a declared same-plugin UI Action.`,
+        });
+      }
+    });
+  });
+  return diagnostics;
+}
+
+/**
+ * A Composer control binds a narrowly typed, bounded same-plugin live Resource.
+ * The Composer decodes and parses that document on the UI thread, so an
+ * unbounded or generically typed Resource is not admissible here even though
+ * the generic Resource family allows both.
+ */
+function readComposerControlStateResourceDiagnostics(
+  manifest: ParsedPluginManifestV2,
+): PluginManifestIngestionDiagnostic[] {
+  const resourcesById = new Map(manifest.contributes.resources.map((resource) => [resource.id, resource]));
+  const diagnostics: PluginManifestIngestionDiagnostic[] = [];
+  manifest.contributes.composerControls.forEach((control, controlIndex) => {
+    const binding = control.state;
+    if (!binding) return;
+    const resource = resourcesById.get(binding.resource);
+    // The generic catalog diagnostics own dangling/wrong-family ids.
+    if (!resource) return;
+    const path = ['contributes', 'composerControls', controlIndex, 'state', 'resource'];
+    if (!isDynamicPluginResourceContributionV2(resource)) {
+      diagnostics.push({
+        code: 'plugin_manifest_invalid',
+        path,
+        message: `Composer control '${control.id}' state must reference a dynamic Resource.`,
+      });
+      return;
+    }
+    if (!isComposerControlStateContentTypeV1(resource.contentType)) {
+      diagnostics.push({
+        code: 'plugin_manifest_invalid',
+        path,
+        message: `Composer control '${control.id}' state must reference the exact V1 control-state Resource content type.`,
+      });
+    }
+    if (
+      resource.maxBytes === undefined
+      || resource.maxBytes > MAX_COMPOSER_CONTROL_STATE_RESOURCE_BYTES_V1
+    ) {
+      diagnostics.push({
+        code: 'plugin_manifest_invalid',
+        path,
+        message: `Composer control '${control.id}' state Resource maxBytes must be declared and no greater than ${MAX_COMPOSER_CONTROL_STATE_RESOURCE_BYTES_V1}.`,
       });
     }
   });
@@ -744,6 +847,8 @@ export function ingestPluginManifestV2(input: unknown): PluginManifestIngestionR
     ...readOpenableContentViewerDestinationDiagnostics(parsed.data),
     ...readDeclarativeDocumentSourceDiagnostics(parsed.data),
     ...readTranscriptActivityDiagnostics(parsed.data),
+    ...readSessionInfoSectionDiagnostics(parsed.data),
+    ...readComposerControlStateResourceDiagnostics(parsed.data),
     ...readBrandIconDiagnostics(parsed.data),
     ...readVoiceModelPackOriginDiagnostics(parsed.data),
   ];

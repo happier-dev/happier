@@ -101,6 +101,7 @@ export const FeatureGatesSchema = z.object({
         .default({ enabled: false }),
       agentSwitching: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
       folders: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
+      drafts: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
       usageLimitRecovery: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
     })
     .optional()
@@ -109,6 +110,7 @@ export const FeatureGatesSchema = z.object({
       handoff: { enabled: false },
       agentSwitching: DEFAULT_GATE_DISABLED,
       folders: DEFAULT_GATE_DISABLED,
+      drafts: DEFAULT_GATE_DISABLED,
       usageLimitRecovery: DEFAULT_GATE_DISABLED,
     }),
   machines: z

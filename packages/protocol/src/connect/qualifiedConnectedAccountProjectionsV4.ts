@@ -125,9 +125,10 @@ export const QualifiedConnectedAccountProfileV4Schema =
     QualifiedConnectedAccountProfileV4Shape,
   );
 
+/** Every account the Account holds for the service. */
 export const QualifiedConnectedAccountListResponseV4Schema = z.object({
   service: QualifiedConnectedAccountServiceRefZodSchema,
-  accounts: z.array(QualifiedConnectedAccountProfileV4Schema).max(500),
+  accounts: z.array(QualifiedConnectedAccountProfileV4Schema),
 }).strict();
 
 export const QualifiedConnectedAccountConfigurationTargetV4Schema = z.object({

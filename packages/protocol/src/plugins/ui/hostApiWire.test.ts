@@ -5,10 +5,12 @@ import {
   ComposerRefV1Schema as BrowserClientComposerRefV1Schema,
   PluginUiApplyComposerRequestV1Schema as BrowserClientApplyComposerRequestV1Schema,
   PluginUiDisposeHostResourceRequestV1Schema as BrowserClientDisposeHostResourceRequestV1Schema,
+  pluginUiHostApiWireIdentitiesEqual as browserClientPluginUiHostApiWireIdentitiesEqual,
 } from './client.js';
 import {
   PLUGIN_UI_HOST_API_WIRE_VERSION_V1,
   PluginUiHostApiWireEnvelopeV1Schema,
+  pluginUiHostApiWireIdentitiesEqual,
 } from './hostApiWire.js';
 
 const identity = {
@@ -50,6 +52,45 @@ const selectedActionInput = {
 } as const;
 
 describe('plugin UI host API wire envelope', () => {
+  it('addresses a mount by every wire-identity member, including an absent sessionId', () => {
+    // Positive twin: the same address stays equal. Without it the per-member
+    // cases below would also pass against a comparison that is always false.
+    expect(pluginUiHostApiWireIdentitiesEqual(identity, { ...identity })).toBe(true);
+
+    // Every member is load-bearing. Two mounts of one plugin share the daemon
+    // projection `generation` and can differ only by `viewId`, so dropping any
+    // single member would let one mount accept another mount's envelope.
+    const differingByOneMember = {
+      pluginId: { ...identity, pluginId: 'com.acme.other' },
+      pluginVersion: { ...identity, pluginVersion: '2.0.0' },
+      viewId: { ...identity, viewId: 'settings' },
+      generation: { ...identity, generation: 'generation-2' },
+      sessionId: { ...identity, sessionId: 'session-2' },
+    };
+    for (const [member, other] of Object.entries(differingByOneMember)) {
+      // The fixture must actually differ, or the case could not discriminate.
+      expect(other).not.toEqual(identity);
+      expect(pluginUiHostApiWireIdentitiesEqual(identity, other), member).toBe(false);
+    }
+
+    // An Account-scoped mount and a Session-scoped mount of the same
+    // plugin/view/generation are different addressees, not one address with a
+    // missing field.
+    const accountScoped = {
+      pluginId: identity.pluginId,
+      pluginVersion: identity.pluginVersion,
+      viewId: identity.viewId,
+      generation: identity.generation,
+    };
+    expect(pluginUiHostApiWireIdentitiesEqual(identity, accountScoped)).toBe(false);
+    expect(pluginUiHostApiWireIdentitiesEqual(accountScoped, identity)).toBe(false);
+    expect(pluginUiHostApiWireIdentitiesEqual(accountScoped, { ...accountScoped })).toBe(true);
+  });
+
+  it('exposes the one wire-identity equality operation through the browser-safe client seam', () => {
+    expect(browserClientPluginUiHostApiWireIdentitiesEqual).toBe(pluginUiHostApiWireIdentitiesEqual);
+  });
+
   it('exposes the canonical wire version through the browser-safe client seam', () => {
     expect(BROWSER_CLIENT_HOST_API_WIRE_VERSION_V1).toBe(PLUGIN_UI_HOST_API_WIRE_VERSION_V1);
   });

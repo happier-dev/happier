@@ -92,6 +92,44 @@ describe('providers plugin contribution family', () => {
     }).success).toBe(false);
   });
 
+  it('accepts only an explicit bounded tool-delivery declaration', () => {
+    const agent = {
+      id: 'tool-delivery-agent',
+      title: 'Tool delivery Agent',
+      runtime: { kind: 'custom' },
+      primary: 'sessions',
+      capabilities: {
+        sessions: {
+          open: ['create'],
+          delivery: ['newTurn'],
+          cancel: true,
+        },
+        tools: { delivery: 'native_mcp' },
+      },
+    } as const;
+
+    expect(PluginAgentContributionV2Schema.safeParse(agent).success).toBe(true);
+    expect(PluginAgentContributionV2Schema.safeParse({
+      ...agent,
+      capabilities: { ...agent.capabilities, tools: { delivery: 'native_extension' } },
+    }).success).toBe(true);
+    expect(PluginAgentContributionV2Schema.safeParse({
+      ...agent,
+      capabilities: { ...agent.capabilities, tools: { delivery: 'shell_bridge' } },
+    }).success).toBe(true);
+    expect(PluginAgentContributionV2Schema.safeParse({
+      ...agent,
+      capabilities: { ...agent.capabilities, tools: { delivery: 'unsupported' } },
+    }).success).toBe(false);
+    expect(PluginAgentContributionV2Schema.safeParse({
+      ...agent,
+      capabilities: {
+        ...agent.capabilities,
+        tools: { delivery: 'native_mcp', support: 'supported' },
+      },
+    }).success).toBe(false);
+  });
+
   it('rejects duplicate connected-account purposes within one Agent contribution', () => {
     const agent = {
       id: 'account-consuming-agent',

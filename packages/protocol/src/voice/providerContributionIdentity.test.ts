@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 
 import {
   normalizePredecessorVoiceProviderIdV1,
-  normalizePredecessorVoiceProviderContributionIdentityV1,
   resolvePredecessorVoiceProviderContributionIdentityV1,
 } from './providerContributionIdentity.js';
 
@@ -16,10 +15,6 @@ describe('Voice predecessor contribution identity', () => {
     (predecessorId, pluginId, localId) => {
       expect(resolvePredecessorVoiceProviderContributionIdentityV1(predecessorId))
         .toEqual({ pluginId, localId });
-      expect(normalizePredecessorVoiceProviderContributionIdentityV1({
-        pluginId,
-        localId: predecessorId,
-      })).toEqual({ pluginId, localId });
       expect(normalizePredecessorVoiceProviderIdV1(predecessorId))
         .toBe(`${pluginId}/${localId}`);
     },
@@ -33,14 +28,7 @@ describe('Voice predecessor contribution identity', () => {
     },
   );
 
-  it('preserves canonical and unknown identities and does not appropriate lookalike plugins', () => {
-    const canonical = { pluginId: 'happier.voice.openai', localId: 'realtime-openai' };
-    const unknown = { pluginId: 'acme.voice', localId: 'unknown-conversation' };
-    const lookalike = { pluginId: 'acme.voice', localId: 'realtime_openai' };
-
-    expect(normalizePredecessorVoiceProviderContributionIdentityV1(canonical)).toBe(canonical);
-    expect(normalizePredecessorVoiceProviderContributionIdentityV1(unknown)).toBe(unknown);
-    expect(normalizePredecessorVoiceProviderContributionIdentityV1(lookalike)).toBe(lookalike);
+  it('preserves unknown provider ids outside the released predecessor mapping', () => {
     expect(resolvePredecessorVoiceProviderContributionIdentityV1('openai_compat')).toBeNull();
     expect(resolvePredecessorVoiceProviderContributionIdentityV1('unknown')).toBeNull();
     expect(normalizePredecessorVoiceProviderIdV1('acme.voice/conversation')).toBe(

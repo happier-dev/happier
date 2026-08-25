@@ -29,8 +29,10 @@ export const RUNTIME_SIDE_EFFECT_DANGER_ACTION_IDS: ReadonlySet<RuntimeActionIdV
 // floor in `actionApprovalPolicy.ts`). It is the side-effect danger set UNIONED with the
 // mutating/navigating browser verbs that must reach human consent on the `agent` surface
 // (the agent-browser consent hole - CON-1/CON-2). Read-only browser verbs
-// (`status`/`snapshot`/`semanticSnapshot`/`queryElements`/`waitFor`/`timeline.get`/`cancelActive`/
+// (`status`/`snapshot`/`semanticSnapshot`/`queryElements`/`waitFor`/`timeline.get`/
 // `view.focus`/`target.set`/`elementPicker.*`) stay `safe` and agent-allowed without consent.
+// `cancelActive` is also safe for this danger floor, but requires a present user because it takes
+// control away from an in-flight requester.
 export const RUNTIME_DANGER_ACTION_IDS: ReadonlySet<RuntimeActionIdV1> = new Set<RuntimeActionIdV1>([
   ...RUNTIME_SIDE_EFFECT_DANGER_ACTION_IDS,
   'browser.navigate',
@@ -38,8 +40,6 @@ export const RUNTIME_DANGER_ACTION_IDS: ReadonlySet<RuntimeActionIdV1> = new Set
   'browser.goBack',
   'browser.goForward',
   'browser.stop',
-  'browser.session.create',
-  'browser.session.close',
   'browser.view.open',
   'browser.view.close',
   'browser.automation.navigate',

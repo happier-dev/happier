@@ -323,6 +323,62 @@ describe('AccountSettingMutationV1', () => {
     });
   });
 
+  it('classifies every size refusal as tooLarge instead of an unclassified invalid value', () => {
+    // A byte-ceiling refusal is a size refusal wherever it is observed. The
+    // `set` path already reports `tooLarge`; a preserved root, a stale present
+    // value, and a schema cardinality bound must not report a different reason
+    // for the same violation, because callers branch on it to tell an operator
+    // "reduce the payload" apart from "this value is malformed".
+    const oversizedProviderRoot = { oversized: 'x'.repeat((256 * 1024) + 1) };
+    expect(applyAccountSettingMutationV1({ providerSettingsV1: oversizedProviderRoot }, {
+      operations: [{
+        op: 'set',
+        key: 'sessionPendingQueueDeliveryTiming',
+        value: 'after_runtime_idle',
+      }],
+    })).toEqual({ status: 'invalid', reason: 'tooLarge' });
+
+    // Only the per-key serialized ceiling is exceeded here: no string, record
+    // width, or nesting depth breaks the Account document's generic policy, so
+    // the generic structural inspector cannot be the one reporting it.
+    const oversizedFeatureToggles = Object.fromEntries(
+      Array.from({ length: 256 }, (_, index) => [`feature-${String(index).padStart(3, '0')}-${'x'.repeat(180)}`, true]),
+    );
+    expect(JSON.stringify(oversizedFeatureToggles).length).toBeGreaterThan(16 * 1024);
+    expect(applyAccountSettingMutationV1({ featureToggles: oversizedFeatureToggles }, {
+      operations: [{
+        op: 'set',
+        key: 'sessionPendingQueueDeliveryTiming',
+        value: 'after_runtime_idle',
+      }],
+    })).toEqual({ status: 'invalid', reason: 'tooLarge' });
+
+    expect(applyAccountSettingMutationV1({ featureToggles: oversizedFeatureToggles }, {
+      operations: [{ op: 'set', key: 'featureToggles', value: { keep: true } }],
+    })).toEqual({ status: 'invalid', reason: 'tooLarge' });
+
+    // A domain schema's own cardinality bound is still a size refusal.
+    expect(applyAccountSettingMutationV1({}, {
+      operations: [{ op: 'set', key: 'preferredLanguage', value: 'l'.repeat(300) }],
+    })).toEqual({ status: 'invalid', reason: 'tooLarge' });
+
+    expect(applyAccountSettingMutationV1({}, {
+      operations: ACCOUNT_SETTING_KEYS.slice(0, 65).map((key) => ({ op: 'reset' as const, key })),
+    })).toEqual({ status: 'invalid', reason: 'tooLarge' });
+
+    // Positive twin: nothing above turns an ordinary malformed value into a
+    // size refusal, and a within-bounds document still applies.
+    expect(applyAccountSettingMutationV1({}, {
+      operations: [{ op: 'set', key: 'preferredLanguage', value: 42 }],
+    })).toEqual({ status: 'invalid', reason: 'invalidValue' });
+    expect(applyAccountSettingMutationV1({ providerSettingsV1: { small: true } }, {
+      operations: [{ op: 'set', key: 'preferredLanguage', value: 'fr' }],
+    })).toEqual({
+      status: 'applied',
+      raw: { providerSettingsV1: { small: true }, preferredLanguage: 'fr' },
+    });
+  });
+
   it('rejects structurally unsafe future roots while preserving bounded future roots exactly', () => {
     let overdeep: unknown = 'leaf';
     for (let depth = 0; depth < 14; depth += 1) overdeep = { child: overdeep };

@@ -71,6 +71,7 @@ export {
   getAgentToolsCapability,
   isAgentToolsUnsupported,
   usesNativeMcpTools,
+  usesNativeExtensionTools,
   usesShellBridgeTools,
   type AgentToolsCapability,
 } from './tools.js';

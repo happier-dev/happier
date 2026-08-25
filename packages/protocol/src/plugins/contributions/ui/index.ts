@@ -14,6 +14,7 @@ export * from './predicates.js';
 export * from './resources.js';
 export * from './sessionHeaderActions.js';
 export * from './transcriptActivities.js';
+export * from './sessionInfoSections.js';
 export * from './surfaceRegistry.js';
 export * from './surfaceTargets.js';
 export * from './tokens.js';

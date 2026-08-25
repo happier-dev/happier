@@ -5,10 +5,8 @@ import {
   PluginJsonValueV2Schema,
 } from '../plugins/contributions/publicTypes.js';
 import {
-  PluginConnectedAccountDescriptorContributionV2Schema,
-} from '../plugins/contributions/v2.js';
-import {
   PluginConnectedAccountAuthenticationModeV2Schema,
+  PluginConnectedAccountDescriptorContributionV2Schema,
 } from './pluginConnectedAccountAuthenticationV2.js';
 import {
   BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID,
@@ -373,7 +371,9 @@ export const ConnectedAccountDaemonControlResponseSchema =
       descriptor: PluginConnectedAccountDescriptorContributionV2Schema,
       generation: BoundedIdentitySchema,
       immutableGenerationId: z.string().min(1).max(512),
-      accounts: z.array(QualifiedConnectedAccountProfileV4Schema).max(500),
+      // Relayed from the same server list as the V4 accounts response, which is
+      // bounded at its writer rather than in the projection it produces.
+      accounts: z.array(QualifiedConnectedAccountProfileV4Schema),
       operationTransport:
         ConnectedAccountPeerOperationTransportSchema.optional(),
     }).strict(),

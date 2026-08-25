@@ -13,7 +13,7 @@ import {
     MAX_CONVERSATION_RECEIVE_WAIT_MS,
     MAX_CONVERSATION_RETRY_AFTER_MS,
 } from '../bounds.js';
-import { ConversationNormalizedIngressV1ProtocolSchema } from '../core/ingress.js';
+import { ConversationIngressObservedEntryV1ProtocolSchema } from '../core/ingress.js';
 import {
     ConversationProviderDiagnosticV1ProtocolSchema,
     ConversationProviderFailureV1ProtocolSchema,
@@ -54,7 +54,7 @@ const retryHintV1 = defineProtocolObject({
 }, { policy: 'closed' });
 
 const batchObservationsV1 = defineProtocolArray(
-    ConversationNormalizedIngressV1ProtocolSchema,
+    ConversationIngressObservedEntryV1ProtocolSchema,
     { maxItems: MAX_CONVERSATION_RECEIVE_BATCH_ENTRIES },
 );
 

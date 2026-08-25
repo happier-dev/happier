@@ -5,6 +5,10 @@ import {
 } from '../../profiles/backendProfileSchema.js';
 import type { SecretStringV1 } from '../../crypto/settingsSecretStringSchemasV1.js';
 import {
+  ACCOUNT_SETTINGS_MAX_SAVED_SECRETS_BYTES,
+  inspectAccountSettingValueBounds,
+} from './catalog/accountSettingBounds.js';
+import {
   QualifiedConnectedAccountPurposeBindingTargetV1Schema,
   QualifiedConnectedAccountPurposeBindingsV1Schema,
   qualifiedPurposeKey,
@@ -1781,6 +1785,15 @@ function assertVoiceCredentialSecretExpectation(
   }
 }
 
+function savedSecretsRootBytes(secrets: unknown): number {
+  try {
+    const serialized = JSON.stringify(secrets);
+    return serialized === undefined ? 0 : new TextEncoder().encode(serialized).byteLength;
+  } catch {
+    return Number.POSITIVE_INFINITY;
+  }
+}
+
 /**
  * Applies one SavedSecret mutation and enforces the collection's capacity in the
  * same step.
@@ -1792,6 +1805,12 @@ function assertVoiceCredentialSecretExpectation(
  * at spawn. The capacity is therefore refused at the write, not truncated at the
  * read. A collection that is ALREADY oversized (from a write this owner did not
  * make) can still shrink, so the only recovery path stays open.
+ *
+ * The same contract applies to the root's serialized size, which is the harsher
+ * half: the reader truncates an over-count collection to its first entries, but
+ * recovers an over-size root to `[]`, so one accepted large secret can hide
+ * every other credential the Account already had. Both arms therefore consult
+ * the canonical Account bound rather than a local copy of it.
  */
 export function applyAccountSettingsSavedSecretMutation(
   settings: Readonly<Record<string, unknown>>,
@@ -1808,6 +1827,16 @@ export function applyAccountSettingsSavedSecretMutation(
     throw new AccountSettingsSavedSecretMutationError(
       'saved_secret_collection_full',
       'Account Settings cannot hold another SavedSecret',
+    );
+  }
+  const nextBoundIssue = inspectAccountSettingValueBounds(
+    nextSecrets,
+    ACCOUNT_SETTINGS_MAX_SAVED_SECRETS_BYTES,
+  );
+  if (nextBoundIssue && savedSecretsRootBytes(nextSecrets) > savedSecretsRootBytes(currentSecrets)) {
+    throw new AccountSettingsSavedSecretMutationError(
+      'saved_secret_collection_full',
+      'Account Settings cannot hold a SavedSecret collection this large',
     );
   }
   return result;

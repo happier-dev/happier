@@ -5,7 +5,6 @@ import {
   SignedDirectRouteGrantV1Schema,
   createDirectRouteGrantSigningInputV1,
 } from './directRouteGrantV1';
-import { DirectRouteGrantRevocationV1Schema } from './directRouteGrantRevocationV1';
 
 const basePayload = {
   v: 1,
@@ -152,21 +151,5 @@ describe('DirectRouteGrantV1', () => {
     expect(createDirectRouteGrantSigningInputV1(basePayload)).toBe(
       '{"accountId":"account_1","aud":"happier-daemon-route-grant","endpointFingerprint":"endpoint_1","exp":601000,"flowKind":"bounded_transfer","grantFamilyId":"family_1","grantId":"grant_1","iat":1000,"machineId":"machine_1","routeKind":"loopback_direct","scope":{"kind":"bounded_transfer","maxBytes":1024,"mode":"single","transferId":"transfer_1"},"v":1}',
     );
-  });
-
-  it('parses grant revocation by grant or grant family', () => {
-    expect(DirectRouteGrantRevocationV1Schema.parse({
-      v: 1,
-      grantId: 'grant_1',
-      reason: 'manual',
-      revokedAt: 2_000,
-    }).grantId).toBe('grant_1');
-
-    expect(DirectRouteGrantRevocationV1Schema.parse({
-      v: 1,
-      grantFamilyId: 'family_1',
-      reason: 'policy_changed',
-      revokedAt: 2_000,
-    }).grantFamilyId).toBe('family_1');
   });
 });

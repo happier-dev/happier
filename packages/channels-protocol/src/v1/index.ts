@@ -35,6 +35,10 @@ export * from './text.js';
 export {
     ConversationAuthenticatedObservationShellV1JsonSchema,
     ConversationAuthenticatedObservationShellV1Schema,
+    ConversationIngressAutomationEventCandidateV1JsonSchema,
+    ConversationIngressAutomationEventCandidateV1Schema,
+    ConversationIngressObservedEntryV1JsonSchema,
+    ConversationIngressObservedEntryV1Schema,
     ConversationNormalizedIngressV1JsonSchema,
     ConversationNormalizedIngressV1Schema,
     ConversationObservationV1JsonSchema,
@@ -43,7 +47,10 @@ export {
     ConversationProviderObservationIngestInputV1Schema,
 } from './core/ingress.js';
 export type {
+    ConversationAutomationEventRefV1,
     ConversationAuthenticatedObservationShellV1,
+    ConversationIngressAutomationEventCandidateV1,
+    ConversationIngressObservedEntryV1,
     ConversationNormalizedIngressV1,
     ConversationObservationV1,
     ConversationProviderObservationIngestInputV1,

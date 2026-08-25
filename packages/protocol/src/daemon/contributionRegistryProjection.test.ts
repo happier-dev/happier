@@ -758,10 +758,6 @@ describe('daemon contribution registry projection (wire)', () => {
 
   it('accepts only the normalized present-user authorization projection for an Action', () => {
     const authorization = {
-      packageTrust: {
-        packageIdentity: 'package:acme.preview:generation-7',
-        reviewedPackageIdentity: 'package:acme.preview:generation-7',
-      },
       generation: {
         targetGeneration: 'generation-7',
         desiredGeneration: 'generation-7',
@@ -808,10 +804,7 @@ describe('daemon contribution registry projection (wire)', () => {
       ...projectedAction,
       authorization: {
         ...authorization,
-        packageTrust: {
-          ...authorization.packageTrust,
-          rawTrustRecord: { credential: 'must-not-project' },
-        },
+        rawAuthorizationRecord: { credential: 'must-not-project' },
       },
     }).success).toBe(false);
   });
@@ -1216,70 +1209,13 @@ describe('daemon contribution registry projection (wire)', () => {
     }).success).toBe(false);
   });
 
-  it('carries one generation-bound attachment preparation callback request without a terminal Message identity', async () => {
-    type Schema = Readonly<{
-      parse(value: unknown): unknown;
-      safeParse(value: unknown): Readonly<{ success: boolean }>;
-    }>;
+  it('does not publish the retired daemon-owned Composer attachment prepare RPC', async () => {
     const module = await import('./contributionRegistryProjection.js');
-    const requestSchema = Reflect.get(
-      module,
-      'DaemonPluginComposerAttachmentPrepareRequestSchema',
-    ) as Schema | undefined;
-    const responseSchema = Reflect.get(
-      module,
-      'DaemonPluginComposerAttachmentPrepareResponseSchema',
-    ) as Schema | undefined;
 
-    expect(requestSchema).toBeDefined();
-    expect(responseSchema).toBeDefined();
-    if (!requestSchema || !responseSchema) return;
-
-    const request = {
-      machineId: 'machine-1',
-      expectedGeneration: '7',
-      attachment: { pluginId: 'acme.issues', localId: 'issue' },
-      request: {
-        sessionId: 'session-1',
-        localId: 'local-1',
-        attachments: [{
-          instanceId: 'attachment-1',
-          key: 'issue:42',
-          value: { issueId: '42' },
-        }],
-      },
-    } as const;
-    expect(requestSchema.parse(request)).toEqual(request);
-    expect(requestSchema.safeParse({
-      ...request,
-      request: { ...request.request, messageId: 'terminal-message-1' },
-    }).success).toBe(false);
-    expect(requestSchema.safeParse({
-      ...request,
-      request: { ...request.request, messageLocalId: 'legacy-local-1' },
-    }).success).toBe(false);
-    expect(requestSchema.safeParse({ ...request, preparedAttachments: [] }).success).toBe(false);
-
-    const response = {
-      ok: true,
-      attachment: request.attachment,
-      result: {
-        attachments: [{
-          instanceId: 'attachment-1',
-          status: 'ready',
-          value: { issueId: '42', prepared: true },
-        }],
-      },
-    } as const;
-    expect(responseSchema.parse(response)).toEqual(response);
-    expect(responseSchema.safeParse({ ...response, messageId: 'terminal-message-1' }).success).toBe(false);
-    expect(responseSchema.safeParse({
-      ok: false,
-      code: 'composer_attachment_unavailable',
-      reason: 'unavailable',
-    }).success).toBe(true);
-    expect((RPC_METHODS as Readonly<Record<string, string>>).DAEMON_PLUGIN_COMPOSER_ATTACHMENT_PREPARE)
-      .toBe('daemon.plugins.composerAttachments.prepare');
+    expect(Reflect.has(module, 'DaemonPluginComposerAttachmentPrepareRequestSchema')).toBe(false);
+    expect(Reflect.has(module, 'DaemonPluginComposerAttachmentPrepareResponseSchema')).toBe(false);
+    expect(Reflect.has(RPC_METHODS, 'DAEMON_PLUGIN_COMPOSER_ATTACHMENT_PREPARE')).toBe(false);
+    expect(Object.values(RPC_METHODS)).not.toContain('daemon.plugins.composerAttachments.prepare');
   });
 
   it('rejects non-JSON structured-message action results at the wire boundary', () => {
@@ -2784,7 +2720,7 @@ describe('daemon contribution registry projection (wire)', () => {
               descriptorId: 'refresh',
               title: 'Refresh',
               icon: 'refresh',
-              action: headerSemanticAction,
+              command: headerSemanticAction,
             },
             'surfacePlacement:acme.ui:activity': {
               id: 'surfacePlacement:acme.ui:activity',
@@ -2802,7 +2738,7 @@ describe('daemon contribution registry projection (wire)', () => {
                 id: 'open-activity',
                 title: 'Open activity',
                 icon: 'action',
-                action: pageSemanticAction,
+                command: pageSemanticAction,
               }],
               availability: { state: 'available', reason: 'available', diagnostics: [] },
             },
@@ -2863,7 +2799,7 @@ describe('daemon contribution registry projection (wire)', () => {
             ...projection.familiesById.pluginUi.entriesById,
             'sessionHeaderAction:acme.ui:refresh': {
               ...projection.familiesById.pluginUi.entriesById['sessionHeaderAction:acme.ui:refresh'],
-              action: { kind: 'executeAction', action: 'refresh' },
+              command: { kind: 'executeAction', action: 'refresh' },
             },
           },
         },
@@ -2881,7 +2817,7 @@ describe('daemon contribution registry projection (wire)', () => {
               headerActions: [{
                 id: 'open-activity',
                 title: 'Open activity',
-                action: { kind: 'openSurface', destination: 'activity' },
+                command: { kind: 'openSurface', destination: 'activity' },
               }],
             },
           },

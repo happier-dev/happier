@@ -5,7 +5,6 @@ import {
     ConversationConnectionCreateResultV1Schema,
     ConversationConnectionDeleteInputV1Schema,
     ConversationConnectionDeleteResultV1Schema,
-    ConversationConnectionSetEnabledInputV1Schema,
     ConversationConnectionTransferInputV1Schema,
     ConversationConnectionTransferResultV1Schema,
     ConversationConnectionUpdateInputV1Schema,
@@ -152,15 +151,6 @@ describe('Channels V1 connection management contracts', () => {
 
         expect(ConversationConnectionUpdateInputV1Schema.parse(updateInput)).toEqual(updateInput);
         expect(ConversationConnectionUpdateResultV1Schema.parse(updateResult)).toEqual(updateResult);
-        expect(ConversationConnectionSetEnabledInputV1Schema.parse({
-            connectionId,
-            expectedRevision: 7,
-            enabled: false,
-        })).toEqual({
-            connectionId,
-            expectedRevision: 7,
-            enabled: false,
-        });
         expect(ConversationConnectionDeleteInputV1Schema.parse({
             connectionId,
             expectedRevision: 7,
@@ -201,10 +191,8 @@ describe('Channels V1 connection management contracts', () => {
             ...updateInput,
             maximumObservationAgeMs: 59_999,
         }).success).toBe(false);
-        expect(ConversationConnectionSetEnabledInputV1Schema.safeParse({
-            connectionId,
-            expectedRevision: 7,
-            enabled: true,
+        expect(ConversationConnectionUpdateInputV1Schema.safeParse({
+            ...updateInput,
             providerSetupAction: { localId: 'bypass' },
         }).success).toBe(false);
         expect(ConversationConnectionDeleteResultV1Schema.safeParse({

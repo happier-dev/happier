@@ -6,6 +6,36 @@ import {
 } from './hostedWebSecurity.js';
 
 describe('hostedWebSecurity', () => {
+  it('rejects CSP source alternatives that cannot change the emitted policy', () => {
+    for (const csp of [
+      { scriptSrc: 'selfAndDeclared' },
+      { styleSrc: 'selfAndDeclared' },
+      { imgSrc: 'selfDataBlobAndDeclared' },
+      { fontSrc: 'selfAndDeclared' },
+    ]) {
+      expect(PluginHostedWebSecurityPolicyV1Schema.safeParse({ csp }).success).toBe(false);
+    }
+  });
+
+  it('keeps declared connects and explicit data/blob booleans as the resource controls', () => {
+    const security = PluginHostedWebSecurityPolicyV1Schema.parse({
+      allowedConnectOrigins: ['https://api.happier.test'],
+      csp: {
+        connectSrc: 'declaredOrigins',
+        allowDataUrls: true,
+        allowBlobUrls: true,
+      },
+    });
+
+    const csp = buildPluginHostedWebStaticAssetContentSecurityPolicyV1(security);
+
+    expect(csp).toContain("script-src 'self'");
+    expect(csp).toContain("style-src 'self'");
+    expect(csp).toContain("img-src 'self' data: blob:");
+    expect(csp).toContain("font-src 'self' data: blob:");
+    expect(csp).toContain("connect-src 'self' https://api.happier.test");
+  });
+
   it('does not advertise unsupported CSP navigation enforcement', () => {
     const security = PluginHostedWebSecurityPolicyV1Schema.parse({});
 

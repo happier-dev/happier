@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { createHostPluginSettingsActionInvoker } from './settingsActionInvoker.js';
 import type { PluginSettingsActionDeclarationV2 } from './contributions/settings.js';
+import type { JsonValue } from '../json/strictJsonValue.js';
 
 function createError(code: string, message: string): Error {
   return Object.assign(new Error(message), { code });
@@ -19,6 +20,14 @@ const declaration: PluginSettingsActionDeclarationV2 = {
   },
   patchFieldIds: ['endpoint'],
 };
+
+function nestedJson(depth: number): JsonValue {
+  let value: JsonValue = 'leaf';
+  for (let index = 0; index < depth; index += 1) {
+    value = { next: value };
+  }
+  return value;
+}
 
 describe('host-internal plugin settings action invoker', () => {
   it('passes the invocation context to the confirmation owner before it can present', async () => {
@@ -105,6 +114,26 @@ describe('host-internal plugin settings action invoker', () => {
       signal: new AbortController().signal, isCurrent: () => true,
     })).rejects.toMatchObject({ code: 'plugin_settings_action_patch_bounded' });
     expect(applyPatch).not.toHaveBeenCalled();
+  });
+
+  it('accepts byte-small strict JSON patches beyond the retired generic depth limit', async () => {
+    const deepPatchValue = nestedJson(128);
+    const applyPatch = vi.fn(async ({ patch }: Readonly<{ patch: Readonly<Record<string, JsonValue>> }>) => patch);
+    const invoker = createHostPluginSettingsActionInvoker({
+      createError,
+      confirm: async () => true,
+      snapshot: async () => ({ values: {}, revision: '1' }),
+      execute: async () => ({ patch: { endpoint: deepPatchValue } }),
+      applyPatch,
+    });
+
+    await expect(invoker.invoke({
+      key: 'deep', declaration, userGesture: true,
+      signal: new AbortController().signal, isCurrent: () => true,
+    })).resolves.toEqual({ endpoint: deepPatchValue });
+    expect(applyPatch).toHaveBeenCalledWith(expect.objectContaining({
+      patch: { endpoint: deepPatchValue },
+    }));
   });
 
   it('does not apply a result after its generation becomes stale', async () => {
@@ -230,5 +259,29 @@ describe('host-internal plugin settings action invoker', () => {
       signal: new AbortController().signal, isCurrent: () => true,
     })).rejects.toMatchObject({ code: 'plugin_settings_action_result_invalid' });
     expect(getterObserved).toBe(false);
+  });
+
+  it('projects canonical strict-JSON rejections into the existing settings-action error', async () => {
+    const sparse: unknown[] = [];
+    sparse.length = 1;
+    const cycle: { self?: unknown } = {};
+    cycle.self = cycle;
+    class NonPlainJson {
+      readonly value = 'not-plain';
+    }
+
+    for (const value of [new NonPlainJson(), sparse, cycle, undefined]) {
+      const invoker = createHostPluginSettingsActionInvoker({
+        createError,
+        confirm: async () => true,
+        snapshot: async () => ({ values: {}, revision: '1' }),
+        execute: async () => ({ patch: { endpoint: value } } as never),
+        applyPatch: vi.fn(),
+      });
+      await expect(invoker.invoke({
+        key: `invalid-${typeof value}`, declaration, userGesture: true,
+        signal: new AbortController().signal, isCurrent: () => true,
+      })).rejects.toMatchObject({ code: 'plugin_settings_action_result_invalid' });
+    }
   });
 });

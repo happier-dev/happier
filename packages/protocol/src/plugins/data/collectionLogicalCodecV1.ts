@@ -22,11 +22,18 @@ import {
   PluginCollectionPrivatePayloadV1Schema,
   PluginCollectionProjectionV1Schema,
   PluginCollectionRowIdV1Schema,
+  PluginCollectionMutationOperationV1Schema,
+  PluginCollectionMutationRequestV1Schema,
   assertPluginCollectionContentEnvelopeForModeV1,
+  measurePluginCollectionMutationRequestDecompositionV1,
+  measurePluginCollectionMutationRequestEncodedBytesV1,
   openPluginCollectionPrivatePayloadV1,
   sealPluginCollectionPrivatePayloadV1,
   type NormalizedPluginAccountCollectionContractV1,
   type PluginCollectionContentEnvelopeV1,
+  type PluginCollectionMutationOperationV1,
+  type PluginCollectionMutationRequestMeasurementV1,
+  type PluginCollectionMutationRequestV1,
   type PluginCollectionProjectionV1,
   type PluginCollectionRowV1,
 } from './collectionsV1.js';
@@ -63,6 +70,24 @@ export type PluginCollectionLogicalEncodeOutcomeV1 =
     projection: PluginCollectionProjectionV1;
   }>
   | Readonly<{ status: 'failed'; reason: PluginCollectionLogicalEncodeFailureReasonV1 }>;
+
+export type PluginCollectionLogicalMutationV1<
+  TValue extends PluginCollectionLogicalValueV1 = PluginCollectionLogicalValueV1,
+> =
+  | Readonly<{ kind: 'put'; value: TValue; expectedRevision: number | 'absent' }>
+  | Readonly<{ kind: 'delete' | 'assert'; rowId: string; expectedRevision: number }>;
+
+export type PluginCollectionLogicalMutationRequestOutcomeV1 =
+  | Readonly<{
+    status: 'prepared';
+    request: PluginCollectionMutationRequestV1;
+    encodedBytes: number;
+    measurement: PluginCollectionMutationRequestMeasurementV1;
+  }>
+  | Readonly<{
+    status: 'failed';
+    reason: PluginCollectionLogicalEncodeFailureReasonV1 | 'mutation-request-invalid';
+  }>;
 
 export type PluginCollectionLogicalDecodeFailureReasonV1 =
   /** The stored envelope does not match the Account's current encryption mode. */
@@ -197,6 +222,67 @@ export function encodePluginCollectionLogicalValueV1(input: Readonly<{
   } catch {
     return { status: 'failed', reason: 'private-payload-invalid' };
   }
+}
+
+/**
+ * Prepares one closed wire mutation request from transport-neutral logical
+ * operations and measures the exact bytes that request will carry. Realm
+ * adapters supply lifecycle-bound crypto inputs, then map this typed outcome
+ * into their own availability/error vocabulary.
+ */
+export function preparePluginCollectionLogicalMutationRequestV1<
+  TValue extends PluginCollectionLogicalValueV1 = PluginCollectionLogicalValueV1,
+>(input: Readonly<{
+  contract: NormalizedPluginAccountCollectionContractV1;
+  isValidLogicalValue: PluginCollectionLogicalValueValidatorV1<TValue>;
+  operations: readonly PluginCollectionLogicalMutationV1<TValue>[];
+  encryptionMode: 'plain' | 'e2ee';
+  material: AccountScopedCryptoMaterial | null;
+  randomBytes: (length: number) => Uint8Array;
+}>): PluginCollectionLogicalMutationRequestOutcomeV1 {
+  const operations: PluginCollectionMutationOperationV1[] = [];
+  for (const operation of input.operations) {
+    if (operation.kind !== 'put') {
+      const parsed = PluginCollectionMutationOperationV1Schema.safeParse(operation);
+      if (!parsed.success || parsed.data.kind === 'put') {
+        return { status: 'failed', reason: 'mutation-request-invalid' };
+      }
+      operations.push(parsed.data);
+      continue;
+    }
+    const encoded = encodePluginCollectionLogicalValueV1({
+      contract: input.contract,
+      isValidLogicalValue: input.isValidLogicalValue,
+      value: operation.value,
+      encryptionMode: input.encryptionMode,
+      material: input.material,
+      randomBytes: input.randomBytes,
+    });
+    if (encoded.status === 'failed') return encoded;
+    operations.push({
+      kind: 'put',
+      rowId: encoded.rowId,
+      expectedRevision: operation.expectedRevision,
+      content: encoded.content,
+      projection: encoded.projection,
+    });
+  }
+  const request = PluginCollectionMutationRequestV1Schema.safeParse({
+    pluginId: input.contract.pluginId,
+    collectionId: input.contract.collectionId,
+    writerContext: {
+      schemaVersion: input.contract.schemaVersion,
+      contractDigest: input.contract.contractDigest,
+    },
+    operations,
+  });
+  if (!request.success) return { status: 'failed', reason: 'mutation-request-invalid' };
+  return Object.freeze({
+    status: 'prepared',
+    request: request.data,
+    encodedBytes: measurePluginCollectionMutationRequestEncodedBytesV1(request.data),
+    measurement: measurePluginCollectionMutationRequestDecompositionV1(request.data),
+  });
 }
 
 /**

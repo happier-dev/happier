@@ -39,6 +39,9 @@ import type {
 import type { PluginConnectedAccountConfigurationFieldV2 } from './index.js';
 import type { PluginConfigurationSettingFieldV2 } from './index.js';
 import type { PluginUiViewV2Input } from './plugins/contributions/ui/v2.js';
+import {
+    sameQualifiedConnectedAccountRef as canonicalSameQualifiedConnectedAccountRef,
+} from './connect/qualifiedConnectedAccountPersistence.js';
 
 // @ts-expect-error — retired author identity has no stable type export.
 type RetiredExtensionId = import('./index.js').ExtensionId;
@@ -119,6 +122,11 @@ if (false) {
 }
 
 describe('protocol package root exports', () => {
+    it('exports the canonical qualified connected-Account identity comparator', () => {
+        expect(protocol.sameQualifiedConnectedAccountRef)
+            .toBe(canonicalSameQualifiedConnectedAccountRef);
+    });
+
     it('exports the canonical Account Settings retirement lists through the package root', () => {
         expect(protocol.RETIRED_ACCOUNT_SETTINGS_SESSION_ONLY_KEYS)
             .toBe(canonicalRetiredAccountSettingsSessionOnlyKeys);

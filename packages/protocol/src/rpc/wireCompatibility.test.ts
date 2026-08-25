@@ -17,10 +17,6 @@ import {
   DaemonLocalServiceLauncherStartResponseV1Schema,
 } from '../local/services/launcher/v1.js';
 import {
-  DaemonLocalServiceManagedSnapshotRequestV1Schema,
-  DaemonLocalServiceManagedSnapshotResponseV1Schema,
-} from '../local/services/managed/v1.js';
-import {
   DaemonLocalServicePublicPreviewCopyUrlRequestV1Schema,
   DaemonLocalServicePublicPreviewCreateRequestV1Schema,
   DaemonLocalServicePublicPreviewRevokeRequestV1Schema,
@@ -100,9 +96,6 @@ describe('rpc wire compatibility', () => {
     expect(RPC_METHODS.DAEMON_LOCAL_SERVICES_ACTIONS_EXECUTE).toBe(
       'daemon.localServices.actions.execute',
     );
-    expect(RPC_METHODS.DAEMON_LOCAL_SERVICES_MANAGED_SNAPSHOT).toBe(
-      'daemon.localServices.managed.snapshot',
-    );
     expect(RPC_METHODS.DAEMON_LOCAL_SERVICES_PREVIEW_SNAPSHOT).toBe('daemon.localServices.preview.snapshot');
     expect(RPC_METHODS.DAEMON_LOCAL_SERVICES_PUBLIC_PREVIEW_STATUS).toBe(
       'daemon.localServices.publicPreview.status',
@@ -161,6 +154,12 @@ describe('rpc wire compatibility', () => {
     expect(resolveSocketRpcSessionWriteAuthorizationMethod(
       `machine-1:${RPC_METHODS.STOP_SESSION}`,
     )).toBe(RPC_METHODS.STOP_SESSION);
+    expect(resolveSocketRpcSessionWriteAuthorizationMethod(
+      'session-1:session.permission.remote.grants.list',
+    )).toBe('session.permission.remote.grants.list');
+    expect(resolveSocketRpcSessionWriteAuthorizationMethod(
+      'session-1:session.permission.remote.grants.revoke',
+    )).toBe('session.permission.remote.grants.revoke');
     expect(resolveSocketRpcSessionWriteAuthorizationMethod(
       RPC_METHODS.DAEMON_SESSION_RUNNER_RESTART_ALL,
     )).toBeNull();
@@ -405,42 +404,6 @@ describe('rpc wire compatibility', () => {
     }).success).toBe(false);
   });
 
-  it('parses Local Services managed runtime snapshot rpc envelopes', () => {
-    expect(DaemonLocalServiceManagedSnapshotRequestV1Schema.parse({
-      machineId: 'machine-a',
-    })).toEqual({
-      machineId: 'machine-a',
-    });
-
-    const response = DaemonLocalServiceManagedSnapshotResponseV1Schema.parse({
-      protocolVersion: 1,
-      snapshot: {
-        v: 1,
-        machineId: 'machine-a',
-        generatedAt: 4_000,
-        refreshState: 'idle',
-        rows: [{
-          v: 1,
-          id: 'managed-a',
-          owner: { kind: 'plugin', pluginId: 'plugin-a' },
-          phase: 'running',
-          launchMode: 'detectAfterLaunch',
-          process: { pid: 123, startedAt: 1_000 },
-          routeName: 'plugin-a-web',
-          supportedActions: ['restart_managed'],
-          diagnostics: [],
-        }],
-        diagnostics: [],
-      },
-    });
-
-    expect(response.snapshot.rows[0]?.supportedActions).toEqual(['restart_managed']);
-    expect(DaemonLocalServiceManagedSnapshotResponseV1Schema.safeParse({
-      protocolVersion: 1,
-      snapshot: response.snapshot,
-      launch: { kind: 'binary', executablePath: '/bin/sh' },
-    }).success).toBe(false);
-  });
 
   it('parses Local Services public preview rpc control envelopes', () => {
     expect(DaemonLocalServicePublicPreviewStatusRequestV1Schema.parse({

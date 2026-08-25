@@ -65,16 +65,19 @@ describe('browser sidecar protocol contracts', () => {
       errorCode: 'feature_disabled',
     });
 
-    expect(mod.BrowserSidecarLaunchResultV1Schema.parse({
+    // E2-F1 retired `browser_policy_denied`. Its only producer was the `browserUseAllowed`
+    // conjunct in `sidecar/productSource.ts`, deleted because it was a second decision-maker for a
+    // question the `browser.sidecar` feature bit already owns — that denial is now reported as
+    // `feature_disabled` above, from the single fail-close point in `createSidecarLaunchPlan`.
+    // The member is rejected rather than merely unused so re-adding a second policy authority
+    // cannot pass silently.
+    expect(mod.BrowserSidecarLaunchResultV1Schema.safeParse({
       v: 1,
       accepted: false,
       state: 'unavailable',
       errorCode: 'browser_policy_denied',
       disabledReason: 'browser use denied by policy',
-    })).toMatchObject({
-      accepted: false,
-      errorCode: 'browser_policy_denied',
-    });
+    }).success).toBe(false);
   });
 
   it('accepts a managed binary provenance with pinned version + verified sha256 digest', async () => {

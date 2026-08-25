@@ -1,9 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import {
-  AGENT_SESSION_RUNTIME_LIMITS_CANDIDATE_V1,
-} from '../../runtime/agentSessionLimitsV1.js';
-import {
   PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE,
   createPluginActionInvocation,
   createPluginActionPresentUserGate,
@@ -12,10 +9,6 @@ import {
 
 function currentIntentAuthorizationFacts(generation = '7') {
   return {
-    packageTrust: {
-      packageIdentity: 'acme.action/actions/commit',
-      reviewedPackageIdentity: 'acme.action/actions/commit',
-    },
     generation: {
       targetGeneration: generation,
       desiredGeneration: generation,
@@ -138,6 +131,105 @@ describe('createPluginActionInvocation', () => {
     })).resolves.toMatchObject({
       status: 'admitted',
       action: { generation: '7' },
+    });
+
+    expect(present).toHaveBeenCalledOnce();
+  });
+
+  it('returns an API Ask-first artifact without waiting for a target decision', async () => {
+    const present = vi.fn(async () => ({
+      status: 'deferred',
+      artifactId: 'approval-api-required-1',
+    } as never));
+    const resolve = vi.fn(() => ({
+      status: 'resolved' as const,
+      action: Object.freeze({ generation: '7' }),
+      policy: Object.freeze({
+        qualifiedId: 'acme.action/actions/commit',
+        generation: '7',
+        dangerLevel: 'safe' as const,
+        scopes: Object.freeze(['global']),
+        surfaces: Object.freeze(['api']),
+        approvalRequiredByActionSettings: true as const,
+        authorization: currentIntentAuthorizationFacts(),
+      }),
+    }));
+    const gate = createPluginActionPresentUserGate({ resolve, requestCurrentIntent: present });
+
+    await expect(gate.admit({
+      input: { title: 'ship it' },
+      surface: 'api',
+      invocationSurface: 'api',
+    })).resolves.toEqual({
+      status: 'deferred',
+      artifactId: 'approval-api-required-1',
+    });
+
+    expect(present).toHaveBeenCalledOnce();
+    expect(resolve).toHaveBeenCalledOnce();
+  });
+
+  it('fails closed when a non-API caller tries to defer an Ask-first target Action', async () => {
+    const gate = createPluginActionPresentUserGate({
+      resolve: () => ({
+        status: 'resolved' as const,
+        action: Object.freeze({ generation: '7' }),
+        policy: Object.freeze({
+          qualifiedId: 'acme.action/actions/commit',
+          generation: '7',
+          dangerLevel: 'safe' as const,
+          scopes: Object.freeze(['global']),
+          surfaces: Object.freeze(['plugin']),
+          approvalRequiredByActionSettings: true as const,
+          authorization: currentIntentAuthorizationFacts(),
+        }),
+      }),
+      requestCurrentIntent: async () => ({
+        status: 'deferred' as const,
+        artifactId: 'approval-plugin-required-1',
+      }),
+    });
+
+    await expect(gate.admit({
+      input: { title: 'ship it' },
+      surface: 'plugin',
+      invocationSurface: 'plugin',
+    })).resolves.toEqual({
+      status: 'unavailable',
+      code: 'plugin_action_current_intent_unavailable',
+      message: 'plugin_action_current_intent_unavailable',
+    });
+  });
+
+  it('does not bypass a host-stamped Ask-first policy for a plugin Action', async () => {
+    const present = vi.fn(async () => ({
+      status: 'rejected' as const,
+      code: 'plugin_action_current_intent_rejected',
+    }));
+    const gate = createPluginActionPresentUserGate({
+      resolve: () => ({
+        status: 'resolved' as const,
+        action: Object.freeze({ generation: '7' }),
+        policy: Object.freeze({
+          qualifiedId: 'acme.action/actions/commit',
+          generation: '7',
+          dangerLevel: 'safe' as const,
+          scopes: Object.freeze(['global']),
+          surfaces: Object.freeze(['plugin']),
+          approvalRequiredByActionSettings: true as const,
+          authorization: currentIntentAuthorizationFacts(),
+        }),
+      }),
+      requestCurrentIntent: present,
+    });
+
+    await expect(gate.admit({
+      input: { title: 'ship it' },
+      surface: 'plugin',
+      invocationSurface: 'plugin',
+    })).resolves.toMatchObject({
+      status: 'unavailable',
+      code: 'plugin_action_current_intent_rejected',
     });
 
     expect(present).toHaveBeenCalledOnce();
@@ -560,13 +652,38 @@ describe('createPluginActionInvocation', () => {
     expect(genericResult).not.toHaveProperty('data');
   });
 
-  it('omits action failure data that exceeds the shared Action JSON byte bound', async () => {
-    // The bound is the same one every Action input and result already passes;
-    // an oversized payload drops only `data`, never the proven failure code.
-    const oversized = 'x'.repeat(
-      AGENT_SESSION_RUNTIME_LIMITS_CANDIDATE_V1.p0MeasuredCandidates
-        .jsonValueMaxJsonBytes,
-    );
+  it('projects canonical PluginError code and multibyte message text through the stable public boundary', async () => {
+    const message = `ACTION_FAILURE_MARKER ${'🚫'.repeat(700)}`;
+    const unstableCode = 'Provider Failure';
+    const error = Object.assign(new Error(message), {
+      name: 'PluginError',
+      code: unstableCode,
+      retryable: false,
+      data: {
+        name: 'PluginError',
+        code: unstableCode,
+        message,
+      },
+    });
+
+    const result = await createInvocation().invoke(null, {
+      handler: () => {
+        throw error;
+      },
+    });
+
+    expect(result).toMatchObject({
+      status: 'failed',
+      code: 'plugin_action_execution_failed',
+    });
+    if (result.status !== 'failed') throw new Error('Expected a canonical Action failure');
+    expect(result.message.startsWith('ACTION_FAILURE_MARKER')).toBe(true);
+    expect(new TextEncoder().encode(result.message).byteLength).toBeLessThanOrEqual(2_048);
+    expect(result.message).not.toContain('\uFFFD');
+  });
+
+  it('preserves JSON-safe action failure data without an invented aggregate byte cap', async () => {
+    const aboveFormerAggregateLimit = 'x'.repeat(1_024 * 1_024);
     const error = Object.assign(new Error('provider failed'), {
       name: 'PluginError',
       code: 'fixture_provider_failed',
@@ -575,7 +692,7 @@ describe('createPluginActionInvocation', () => {
         name: 'PluginError',
         code: 'fixture_provider_failed',
         message: 'provider failed',
-        details: { blob: oversized },
+        details: { blob: aboveFormerAggregateLimit },
       },
     });
 
@@ -588,6 +705,12 @@ describe('createPluginActionInvocation', () => {
       code: 'fixture_provider_failed',
       message: 'provider failed',
       retryable: false,
+      data: {
+        name: 'PluginError',
+        code: 'fixture_provider_failed',
+        message: 'provider failed',
+        details: { blob: aboveFormerAggregateLimit },
+      },
     });
   });
 

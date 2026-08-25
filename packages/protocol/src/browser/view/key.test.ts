@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { browserViewKey } from './key.js';
+import { browserViewContextId, browserViewKey } from './key.js';
 import { BrowserViewV1Schema } from './v1.js';
 
 const NUL = '\u0000';
@@ -46,4 +46,37 @@ describe('browserViewKey', () => {
     expect(browserViewKey({ browserSessionId: 'a', viewId: 'b' }, 'c'))
       .not.toBe(browserViewKey({ browserSessionId: 'a', viewId: 'b c' }));
   });
+
+    /**
+     * F2. The daemon-derived context id is the primary map key of the browser context store
+     * (`itemsByContextId`). Both builders that composed it joined the three components with a plain
+     * space, so the two tuples below keyed the same entry: one capture silently overwrote the
+     * other's context item, and clearing one removed the wrong one.
+     */
+    it('never collides across distinct (browserSessionId, viewId, navigationGeneration) tuples', () => {
+        const compositeCollisionPairs = [
+            // The exact space-joined shape both context-id builders used.
+            [
+                { browserSessionId: 'a b', viewId: 'c', navigationGeneration: 1 },
+                { browserSessionId: 'a', viewId: 'b c', navigationGeneration: 1 },
+            ],
+            // The generation must not be absorbable into the adjacent component either.
+            [
+                { browserSessionId: 's', viewId: 'v 1', navigationGeneration: 2 },
+                { browserSessionId: 's', viewId: 'v', navigationGeneration: 12 },
+            ],
+        ] as const;
+
+        for (const [left, right] of compositeCollisionPairs) {
+            expect(browserViewContextId(left)).not.toBe(browserViewContextId(right));
+        }
+    });
+
+    it('scopes the context id by navigation generation and agrees with the view key', () => {
+        const view = { browserSessionId: 'session_1', viewId: 'view_1' };
+        expect(browserViewContextId({ ...view, navigationGeneration: 1 }))
+            .not.toBe(browserViewContextId({ ...view, navigationGeneration: 2 }));
+        expect(browserViewContextId({ ...view, navigationGeneration: 3 }))
+            .toBe(browserViewKey(view, 3));
+    });
 });

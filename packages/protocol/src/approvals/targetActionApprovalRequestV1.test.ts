@@ -11,6 +11,40 @@ describe('TargetActionApprovalRequestV1Schema', () => {
     expect(() => TargetActionApprovalRequestV1Schema.parse({ ...request, subjectFingerprint: 'short' })).toThrow();
   });
 
+  it('requires API-created approvals to bind the exact daemon replay placement', () => {
+    const request = {
+      v: 1,
+      kind: 'plugin_target_action',
+      status: 'open',
+      createdAtMs: 1,
+      updatedAtMs: 1,
+      createdBy: { surface: 'system' },
+      requestedSurface: 'api',
+      qualifiedActionId: 'acme.alpha/actions/run',
+      input: { value: 'x' },
+      generation: '7',
+      policyFingerprint: 'b'.repeat(64),
+      subjectFingerprint: 'a'.repeat(64),
+      summary: 'Run',
+    };
+
+    expect(() => TargetActionApprovalRequestV1Schema.parse(request)).toThrow();
+    expect(TargetActionApprovalRequestV1Schema.parse({
+      ...request,
+      replayPlacement: {
+        serverId: 'server-1',
+        machineId: 'machine-1',
+        defaultSessionId: 'session-1',
+      },
+    })).toMatchObject({
+      replayPlacement: {
+        serverId: 'server-1',
+        machineId: 'machine-1',
+        defaultSessionId: 'session-1',
+      },
+    });
+  });
+
   it('retains bounded host-rendered confirmation detail in the durable subject', () => {
     const request = { v: 1, kind: 'plugin_target_action', status: 'open', createdAtMs: 1, updatedAtMs: 1,
       createdBy: { surface: 'cli' }, requestedSurface: 'cli', qualifiedActionId: 'acme.alpha/actions/run',

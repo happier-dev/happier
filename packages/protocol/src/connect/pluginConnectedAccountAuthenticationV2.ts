@@ -6,7 +6,10 @@ import {
   PluginConfigurationSettingFieldV2Schema,
   PluginSettingFieldV2Schema,
 } from '../plugins/contributions/settings.js';
-import { PluginLocalizedStringV2Schema } from '../plugins/contributions/publicTypes.js';
+import {
+  PluginJsonValueV2Schema,
+  PluginLocalizedStringV2Schema,
+} from '../plugins/contributions/publicTypes.js';
 import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
 
 const PluginConnectedAccountAuthenticationFieldV2Schema =
@@ -238,3 +241,20 @@ export const PluginConnectedAccountAuthenticationV2Schema = z.object({
 });
 export type PluginConnectedAccountAuthenticationV2 =
   z.infer<typeof PluginConnectedAccountAuthenticationV2Schema>;
+
+/**
+ * One authored Connected Account descriptor contribution. It lives beside the
+ * authentication vocabulary it composes so the whole author-visible Connected
+ * Account family has a single narrow Protocol owner; the V2 contribution
+ * catalog re-exports it for family registration.
+ */
+export const PluginConnectedAccountDescriptorContributionV2Schema = z.object({
+  id: asProtocolZod(PluginContributionLocalIdSchema),
+  title: PluginLocalizedStringV2Schema,
+  description: PluginLocalizedStringV2Schema.optional(),
+  authentication: PluginConnectedAccountAuthenticationV2Schema,
+  capabilities: z.array(z.string().trim().min(1)).optional(),
+  metadata: z.record(z.string(), PluginJsonValueV2Schema).optional(),
+}).strict();
+export type PluginConnectedAccountDescriptorContributionV2 =
+  z.infer<typeof PluginConnectedAccountDescriptorContributionV2Schema>;

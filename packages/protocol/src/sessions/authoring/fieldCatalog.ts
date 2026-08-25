@@ -7,6 +7,11 @@ import { AcpConfigOptionOverridesV1Schema } from '../metadata/metadataOverridesV
 import { WindowsRemoteSessionLaunchModeSchema } from '../metadata/windowsRemoteSessionLaunchMode.js';
 import { WindowsTerminalWindowNameSchema } from '../metadata/windowsTerminalWindowName.js';
 import { SessionModelSelectionV1Schema } from '../../providers/selection/v1.js';
+import {
+  ConnectedServiceAuthGroupIdSchema,
+  ConnectedServiceIdSchema,
+  ConnectedServiceProfileIdSchema,
+} from '../../connect/connectedServiceBindings.js';
 import { defineSessionAuthoringFields } from './fieldDefinition.js';
 
 type SessionAuthoringJsonPrimitive = null | string | number | boolean;
@@ -53,6 +58,32 @@ export const SessionAuthoringTerminalV1Schema = z.object({
   windows: SessionAuthoringWindowsTerminalV1Schema.optional(),
 }).strict();
 
+export const SyncedSessionAuthoringTerminalV1Schema = z.object({
+  mode: z.enum(['integrated', 'plain', 'tmux', 'windows_terminal', 'windows_console']).optional(),
+  tmux: z.object({
+    sessionName: z.string().optional(),
+    isolated: z.boolean().optional(),
+  }).strict().optional(),
+}).strict();
+
+export const SyncedSessionAuthoringConnectedServicesV1Schema = z.object({
+  v: z.literal(1),
+  bindingsByServiceId: z.partialRecord(ConnectedServiceIdSchema, z.union([
+    z.object({ source: z.literal('native') }).strict(),
+    z.object({
+      source: z.literal('connected'),
+      selection: z.literal('profile').optional().default('profile'),
+      profileId: ConnectedServiceProfileIdSchema,
+    }).strict(),
+    z.object({
+      source: z.literal('connected'),
+      selection: z.literal('group'),
+      groupId: ConnectedServiceAuthGroupIdSchema,
+      profileId: ConnectedServiceProfileIdSchema.optional(),
+    }).strict(),
+  ])).default({}),
+}).strict();
+
 export const SessionAuthoringAutomationV1Schema = z.object({
   enabled: z.boolean(),
   name: z.string(),
@@ -84,10 +115,37 @@ const LIVE_ONLY_CONTEXTS = [
 ] as const;
 
 export const SESSION_AUTHORING_FIELD_CATALOG = defineSessionAuthoringFields({
+  machineId: {
+    schema: z.string().trim().min(1).nullable().optional(),
+    description: 'Selected execution machine for a not-yet-created session.',
+    storageClass: 'template',
+    draftStorage: 'sync',
+    contexts: ['newSession', 'automationNewSession'],
+    defaultSurface: 'section',
+    defaultEditabilityByContext: {
+      newSession: 'editable',
+      automationNewSession: 'editable',
+    },
+    default: null,
+  },
+  serverId: {
+    schema: z.string().trim().min(1).nullable().optional(),
+    description: 'Selected server scope for a not-yet-created session.',
+    storageClass: 'template',
+    draftStorage: 'sync',
+    contexts: ['newSession', 'automationNewSession'],
+    defaultSurface: 'hidden',
+    defaultEditabilityByContext: {
+      newSession: 'editable',
+      automationNewSession: 'editable',
+    },
+    default: null,
+  },
   targetType: {
     schema: z.enum(['new_session', 'existing_session']),
     description: 'Whether authored intent launches a new session or targets an existing session.',
     storageClass: 'template',
+    draftStorage: 'sync',
     contexts: [...TEMPLATE_CONTEXTS],
     defaultSurface: 'hidden',
     defaultEditabilityByContext: {
@@ -100,6 +158,7 @@ export const SESSION_AUTHORING_FIELD_CATALOG = defineSessionAuthoringFields({
     schema: z.string().trim().min(1),
     description: 'Primary working directory for the authored session.',
     storageClass: 'template',
+    draftStorage: 'sync',
     contexts: [...TEMPLATE_CONTEXTS],
     defaultSurface: 'section',
     defaultEditabilityByContext: {
@@ -112,6 +171,7 @@ export const SESSION_AUTHORING_FIELD_CATALOG = defineSessionAuthoringFields({
     schema: SessionAuthoringCheckoutCreationDraftV1Schema.nullable(),
     description: 'Worktree creation draft persisted in authoring state before session creation.',
     storageClass: 'template',
+    draftStorage: 'sync',
     contexts: [...TEMPLATE_CONTEXTS],
     defaultSurface: 'chip+section',
     defaultEditabilityByContext: {
@@ -125,6 +185,7 @@ export const SESSION_AUTHORING_FIELD_CATALOG = defineSessionAuthoringFields({
     schema: z.string(),
     description: 'Primary prompt/body authored for the session or automation.',
     storageClass: 'template',
+    draftStorage: 'composer',
     contexts: [...TEMPLATE_CONTEXTS, ...LIVE_ONLY_CONTEXTS],
     defaultSurface: 'section',
     defaultEditabilityByContext: {
@@ -139,6 +200,7 @@ export const SESSION_AUTHORING_FIELD_CATALOG = defineSessionAuthoringFields({
     schema: z.string(),
     description: 'Display-safe prompt text when the rendered message differs from raw prompt input.',
     storageClass: 'derived',
+    draftStorage: 'exclude',
     contexts: [...ALL_AUTHORING_CONTEXTS],
     defaultSurface: 'hidden',
     defaultEditabilityByContext: {
@@ -153,6 +215,7 @@ export const SESSION_AUTHORING_FIELD_CATALOG = defineSessionAuthoringFields({
     schema: z.string().trim().min(1).nullable(),
     description: 'Selected built-in agent id when targeting a built-in backend.',
     storageClass: 'template',
+    draftStorage: 'sync',
     contexts: [...ALL_AUTHORING_CONTEXTS],
     defaultSurface: 'chip',
     defaultEditabilityByContext: {
@@ -167,6 +230,7 @@ export const SESSION_AUTHORING_FIELD_CATALOG = defineSessionAuthoringFields({
     schema: BackendTargetRefSchema.nullable(),
     description: 'Canonical backend target reference for built-in and configured backends.',
     storageClass: 'template',
+    draftStorage: 'sync',
     contexts: [...ALL_AUTHORING_CONTEXTS],
     defaultSurface: 'chip',
     defaultEditabilityByContext: {
@@ -181,6 +245,7 @@ export const SESSION_AUTHORING_FIELD_CATALOG = defineSessionAuthoringFields({
     schema: z.enum(['persisted', 'direct']).nullable(),
     description: 'Requested transcript storage mode for the authored session.',
     storageClass: 'template',
+    draftStorage: 'sync',
     contexts: [...ALL_AUTHORING_CONTEXTS],
     defaultSurface: 'section',
     defaultEditabilityByContext: {
@@ -195,6 +260,7 @@ export const SESSION_AUTHORING_FIELD_CATALOG = defineSessionAuthoringFields({
     schema: z.string().nullable(),
     description: 'Selected profile id to apply when the authored session starts.',
     storageClass: 'template',
+    draftStorage: 'sync',
     contexts: [...ALL_AUTHORING_CONTEXTS],
     defaultSurface: 'chip',
     defaultEditabilityByContext: {
@@ -209,6 +275,7 @@ export const SESSION_AUTHORING_FIELD_CATALOG = defineSessionAuthoringFields({
     schema: z.record(z.string(), z.string()).nullable(),
     description: 'Explicit environment-variable overrides applied to the authored session.',
     storageClass: 'template',
+    draftStorage: 'exclude',
     contexts: [...ALL_AUTHORING_CONTEXTS],
     defaultSurface: 'section',
     defaultEditabilityByContext: {
@@ -223,6 +290,7 @@ export const SESSION_AUTHORING_FIELD_CATALOG = defineSessionAuthoringFields({
     schema: z.string().trim().min(1).nullable(),
     description: 'Requested resume session id when session start should attach/reuse an existing runner.',
     storageClass: 'template',
+    draftStorage: 'sync',
     contexts: ['newSession', 'automationNewSession'],
     defaultSurface: 'chip',
     defaultEditabilityByContext: {
@@ -235,6 +303,7 @@ export const SESSION_AUTHORING_FIELD_CATALOG = defineSessionAuthoringFields({
     schema: z.string().trim().min(1).nullable(),
     description: 'Selected permission mode persisted as authored session intent.',
     storageClass: 'template',
+    draftStorage: 'sync',
     contexts: [...ALL_AUTHORING_CONTEXTS],
     defaultSurface: 'chip',
     defaultEditabilityByContext: {
@@ -249,6 +318,7 @@ export const SESSION_AUTHORING_FIELD_CATALOG = defineSessionAuthoringFields({
     schema: z.number().int().nullable(),
     description: 'Timestamp for the last permission-mode change authored into the session configuration.',
     storageClass: 'derived',
+    draftStorage: 'exclude',
     contexts: [...ALL_AUTHORING_CONTEXTS],
     defaultSurface: 'hidden',
     defaultEditabilityByContext: {
@@ -263,6 +333,7 @@ export const SESSION_AUTHORING_FIELD_CATALOG = defineSessionAuthoringFields({
     schema: SessionModelSelectionV1Schema.nullable().default(null),
     description: 'Explicit target-bound model selection; null means the agent default/automatic model.',
     storageClass: 'template',
+    draftStorage: 'sync',
     contexts: [...ALL_AUTHORING_CONTEXTS],
     defaultSurface: 'chip',
     defaultEditabilityByContext: {
@@ -277,6 +348,7 @@ export const SESSION_AUTHORING_FIELD_CATALOG = defineSessionAuthoringFields({
     schema: z.string().trim().min(1).nullable().optional(),
     description: 'Read-only compatibility field for legacy authored model ids. New writers use modelSelection.',
     storageClass: 'derived',
+    draftStorage: 'exclude',
     contexts: [...ALL_AUTHORING_CONTEXTS],
     defaultSurface: 'hidden',
     defaultEditabilityByContext: {
@@ -290,6 +362,7 @@ export const SESSION_AUTHORING_FIELD_CATALOG = defineSessionAuthoringFields({
     schema: z.number().int().nullable().optional(),
     description: 'Read-only compatibility timestamp for legacy authored model ids.',
     storageClass: 'derived',
+    draftStorage: 'exclude',
     contexts: [...ALL_AUTHORING_CONTEXTS],
     defaultSurface: 'hidden',
     defaultEditabilityByContext: {
@@ -303,6 +376,7 @@ export const SESSION_AUTHORING_FIELD_CATALOG = defineSessionAuthoringFields({
     schema: SessionMcpSelectionV1Schema.nullable(),
     description: 'Managed/unmanaged MCP selection authored for the session.',
     storageClass: 'template',
+    draftStorage: 'sync',
     contexts: [...ALL_AUTHORING_CONTEXTS],
     defaultSurface: 'section',
     defaultEditabilityByContext: {
@@ -317,6 +391,8 @@ export const SESSION_AUTHORING_FIELD_CATALOG = defineSessionAuthoringFields({
     schema: SessionAuthoringJsonValueSchema.nullable(),
     description: 'Connected-services binding payload authored for the session runtime.',
     storageClass: 'template',
+    draftStorage: 'sync',
+    draftSchema: SyncedSessionAuthoringConnectedServicesV1Schema.nullable(),
     contexts: [...ALL_AUTHORING_CONTEXTS],
     defaultSurface: 'section',
     defaultEditabilityByContext: {
@@ -331,6 +407,8 @@ export const SESSION_AUTHORING_FIELD_CATALOG = defineSessionAuthoringFields({
     schema: SessionAuthoringTerminalV1Schema.nullable(),
     description: 'Terminal/runtime attach preferences authored for the session.',
     storageClass: 'template',
+    draftStorage: 'sync',
+    draftSchema: SyncedSessionAuthoringTerminalV1Schema.nullable(),
     contexts: [...ALL_AUTHORING_CONTEXTS],
     defaultSurface: 'section',
     defaultEditabilityByContext: {
@@ -345,6 +423,7 @@ export const SESSION_AUTHORING_FIELD_CATALOG = defineSessionAuthoringFields({
     schema: WindowsRemoteSessionLaunchModeSchema.nullable(),
     description: 'Windows remote-session launch mode for authored sessions on Windows.',
     storageClass: 'template',
+    draftStorage: 'sync',
     contexts: ['newSession', 'automationNewSession'],
     defaultSurface: 'section',
     defaultEditabilityByContext: {
@@ -357,6 +436,7 @@ export const SESSION_AUTHORING_FIELD_CATALOG = defineSessionAuthoringFields({
     schema: z.enum(['hidden', 'visible']).nullable(),
     description: 'Windows console visibility setting for authored sessions.',
     storageClass: 'template',
+    draftStorage: 'sync',
     contexts: ['newSession', 'automationNewSession'],
     defaultSurface: 'section',
     defaultEditabilityByContext: {
@@ -369,6 +449,7 @@ export const SESSION_AUTHORING_FIELD_CATALOG = defineSessionAuthoringFields({
     schema: WindowsTerminalWindowNameSchema.nullable(),
     description: 'Windows Terminal named window target for authored Windows remote sessions.',
     storageClass: 'template',
+    draftStorage: 'sync',
     contexts: ['newSession', 'automationNewSession'],
     defaultSurface: 'section',
     defaultEditabilityByContext: {
@@ -381,6 +462,7 @@ export const SESSION_AUTHORING_FIELD_CATALOG = defineSessionAuthoringFields({
     schema: SessionAuthoringCodexBackendModeSchema.nullable(),
     description: 'Transitional Codex-specific runtime mode. Keep in compatibility/adapters, not as a permanent generic runtime abstraction.',
     storageClass: 'template',
+    draftStorage: 'sync',
     contexts: [...ALL_AUTHORING_CONTEXTS],
     defaultSurface: 'hidden',
     defaultEditabilityByContext: {
@@ -395,6 +477,7 @@ export const SESSION_AUTHORING_FIELD_CATALOG = defineSessionAuthoringFields({
     schema: z.string().trim().min(1).nullable(),
     description: 'Selected ACP session mode id for providers/runtime kinds that expose session modes.',
     storageClass: 'template',
+    draftStorage: 'sync',
     contexts: [...ALL_AUTHORING_CONTEXTS],
     defaultSurface: 'chip',
     defaultEditabilityByContext: {
@@ -409,6 +492,7 @@ export const SESSION_AUTHORING_FIELD_CATALOG = defineSessionAuthoringFields({
     schema: AcpConfigOptionOverridesV1Schema.nullable(),
     description: 'Structured session configuration-option overrides authored for the session runtime.',
     storageClass: 'template',
+    draftStorage: 'exclude',
     contexts: [...ALL_AUTHORING_CONTEXTS],
     defaultSurface: 'section',
     defaultEditabilityByContext: {
@@ -423,6 +507,7 @@ export const SESSION_AUTHORING_FIELD_CATALOG = defineSessionAuthoringFields({
     schema: z.string().trim().min(1).nullable(),
     description: 'Bound existing-session target id for existing-session automations and related authoring contexts.',
     storageClass: 'inheritedOnly',
+    draftStorage: 'exclude',
     contexts: ['automationExistingSession'],
     defaultSurface: 'hidden',
     defaultEditabilityByContext: {
@@ -434,6 +519,7 @@ export const SESSION_AUTHORING_FIELD_CATALOG = defineSessionAuthoringFields({
     schema: z.enum(['e2ee', 'plain']).nullable(),
     description: 'Storage-encryption mode for authored existing-session automation targets.',
     storageClass: 'inheritedOnly',
+    draftStorage: 'exclude',
     contexts: ['automationExistingSession'],
     defaultSurface: 'section',
     defaultEditabilityByContext: {
@@ -445,6 +531,7 @@ export const SESSION_AUTHORING_FIELD_CATALOG = defineSessionAuthoringFields({
     schema: z.string().trim().min(1).nullable(),
     description: 'Optional data key required to re-open encrypted existing-session targets.',
     storageClass: 'inheritedOnly',
+    draftStorage: 'exclude',
     contexts: ['automationExistingSession'],
     defaultSurface: 'hidden',
     defaultEditabilityByContext: {
@@ -456,6 +543,7 @@ export const SESSION_AUTHORING_FIELD_CATALOG = defineSessionAuthoringFields({
     schema: z.literal('dataKey').nullable(),
     description: 'Encryption key variant for existing-session automation targets.',
     storageClass: 'inheritedOnly',
+    draftStorage: 'exclude',
     contexts: ['automationExistingSession'],
     defaultSurface: 'hidden',
     defaultEditabilityByContext: {
@@ -467,6 +555,7 @@ export const SESSION_AUTHORING_FIELD_CATALOG = defineSessionAuthoringFields({
     schema: SessionAuthoringAutomationV1Schema.nullable(),
     description: 'Inline automation metadata attached to the current authored session intent.',
     storageClass: 'template',
+    draftStorage: 'sync',
     contexts: ['newSession', 'automationNewSession', 'automationExistingSession'],
     defaultSurface: 'section',
     defaultEditabilityByContext: {

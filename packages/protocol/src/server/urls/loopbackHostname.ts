@@ -38,6 +38,21 @@ function isIpv4LoopbackAddress(host: string): boolean {
   return octets[0] === 127;
 }
 
+function isIpv4MappedIpv6LoopbackAddress(host: string): boolean {
+  const mapped = host.startsWith('::ffff:')
+    ? host.slice('::ffff:'.length)
+    : host.startsWith('0:0:0:0:0:ffff:')
+      ? host.slice('0:0:0:0:0:ffff:'.length)
+      : null;
+  if (mapped === null) return false;
+  if (isIpv4LoopbackAddress(mapped)) return true;
+  const words = mapped.split(':');
+  if (words.length !== 2 || !words.every((word) => /^[0-9a-f]{1,4}$/u.test(word))) {
+    return false;
+  }
+  return (Number.parseInt(words[0]!, 16) >>> 8) === 127;
+}
+
 export function normalizeHostnameForLoopbackCheck(hostname: string): string {
   return stripBrackets(String(hostname ?? '').trim().toLowerCase()).replace(/\.$/u, '');
 }
@@ -47,5 +62,5 @@ export function isLoopbackHostname(hostname: string): boolean {
   if (!host) return false;
   if (host === 'localhost' || host.endsWith('.localhost')) return true;
   if (host === '::1') return true;
-  return isIpv4LoopbackAddress(host);
+  return isIpv4LoopbackAddress(host) || isIpv4MappedIpv6LoopbackAddress(host);
 }

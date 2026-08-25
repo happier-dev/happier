@@ -42,6 +42,78 @@ describe('buildAgentRequestSemanticSummary', () => {
       questionCount: 1,
     });
   });
+
+  it('keeps the real AskUserQuestion choices at the semantic-summary owner', () => {
+    const summary = buildAgentRequestSemanticSummary({
+      kind: 'user_action',
+      toolName: 'AskUserQuestion',
+      toolInput: {
+        questions: [{
+          question: 'Which branch should I use?',
+          options: [
+            { label: 'main', description: 'The default branch' },
+            { label: 'release' },
+          ],
+        }],
+      },
+    });
+
+    expect(summary.questions).toEqual([{
+      answerKey: 'Which branch should I use?',
+      question: 'Which branch should I use?',
+      selection: 'single',
+      required: true,
+      allowCustom: false,
+      choices: [
+        { label: 'main', value: 'main' },
+        { label: 'release', value: 'release' },
+      ],
+    }]);
+  });
+
+  it('retains the live question answer semantics needed by a remote mediator', () => {
+    const summary = buildAgentRequestSemanticSummary({
+      kind: 'user_action',
+      toolName: 'AskUserQuestion',
+      toolInput: {
+        questions: [{
+          id: 'release-mode',
+          question: 'Which release mode should I use?',
+          selection: 'single',
+          required: true,
+          allowCustom: true,
+          options: [
+            { id: 'safe', label: 'Safe' },
+            { id: 'other', label: 'Other' },
+          ],
+        }, {
+          id: 'notes',
+          question: 'Any notes?',
+          selection: 'text',
+          required: false,
+        }],
+      },
+    });
+
+    expect(summary.questions).toEqual([{
+      answerKey: 'release-mode',
+      question: 'Which release mode should I use?',
+      selection: 'single',
+      required: true,
+      allowCustom: true,
+      choices: [
+        { label: 'Safe', value: 'safe' },
+        { label: 'Other', value: 'other' },
+      ],
+    }, {
+      answerKey: 'notes',
+      question: 'Any notes?',
+      selection: 'text',
+      required: false,
+      allowCustom: true,
+      choices: [],
+    }]);
+  });
 });
 
 describe('formatPermissionRequestSummary', () => {

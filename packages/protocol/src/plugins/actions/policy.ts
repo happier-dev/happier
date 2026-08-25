@@ -12,10 +12,6 @@ export type PluginFinalPolicyRequirementStatus = 'available' | 'denied' | 'unava
 export type PluginFinalPolicyTargetGenerationMode = 'current' | 'retained';
 
 export type PluginFinalPolicyInput = Readonly<{
-  packageTrust: Readonly<{
-    packageIdentity: string;
-    reviewedPackageIdentity: string | null;
-  }>;
   generation: Readonly<{
     targetGeneration: string;
     desiredGeneration: string | null;
@@ -82,12 +78,6 @@ function scopesMatch(required: PluginFinalPolicyScope, granted: PluginFinalPolic
 }
 
 export function evaluatePluginFinalPolicy(input: PluginFinalPolicyInput): PluginFinalPolicyDecision {
-  if (
-    input.packageTrust.reviewedPackageIdentity === null
-    || input.packageTrust.packageIdentity !== input.packageTrust.reviewedPackageIdentity
-  ) {
-    return decision(input, 'denied', 'plugin_final_package_untrusted');
-  }
   if (
     input.generation.desiredGeneration === null
     || (
@@ -170,7 +160,6 @@ export type PluginActionPolicyInput = Readonly<
 export type PluginActionPolicyDecision = PluginFinalPolicyDecision;
 
 const ACTION_POLICY_CODES: Readonly<Record<string, string>> = Object.freeze({
-  plugin_final_package_untrusted: 'plugin_action_package_untrusted',
   plugin_final_generation_retired: 'plugin_action_generation_retired',
   plugin_final_generation_not_applied: 'plugin_action_generation_not_applied',
   plugin_final_resource_not_selected: 'plugin_action_resource_not_selected',

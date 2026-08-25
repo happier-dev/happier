@@ -802,3 +802,63 @@ describe('ExternalSessionsCandidatesListResponseSchema', () => {
     }).success).toBe(false);
   });
 });
+
+describe('external-session cursor admission', () => {
+  it('admits one cursor spelling across the daemon request and Action input routes', () => {
+    const padded = '  happier_external_cursor_v1:abc-DEF_123  ';
+    const canonical = 'happier_external_cursor_v1:abc-DEF_123';
+
+    const request = daemonRpcV1.ExternalSessionAttachRequestSchema.safeParse({
+      machineId: 'machine-1',
+      sessionId: 'session-1',
+      agentId: 'claude',
+      remoteSessionId: 'remote-1',
+      source: { kind: 'claudeConfig', configDir: '/tmp/claude' },
+      acceptedTailCursor: padded,
+    });
+    expect(request.success).toBe(true);
+    expect(request.success && request.data.acceptedTailCursor).toBe(canonical);
+
+    const action = daemonRpcV1.ExternalSessionViewerFollowActionInputV1Schema.safeParse({
+      sessionId: 'session-1',
+      acceptedTailCursor: padded,
+    });
+    expect(action.success).toBe(true);
+    expect(action.success && action.data.acceptedTailCursor).toBe(canonical);
+
+    // Each route is rejected with its OWN minimal payload so the refusal is
+    // attributable to the cursor: the Action input is `.strict()`, so a shared
+    // daemon-shaped payload would be refused for `unrecognized_keys` whatever
+    // the cursor said.
+    const routes = [
+      {
+        schema: daemonRpcV1.ExternalSessionAttachRequestSchema,
+        payload: (acceptedTailCursor: string) => ({
+          machineId: 'machine-1',
+          sessionId: 'session-1',
+          agentId: 'claude',
+          remoteSessionId: 'remote-1',
+          source: { kind: 'claudeConfig', configDir: '/tmp/claude' },
+          acceptedTailCursor,
+        }),
+      },
+      {
+        schema: daemonRpcV1.ExternalSessionViewerFollowActionInputV1Schema,
+        payload: (acceptedTailCursor: string) => ({
+          sessionId: 'session-1',
+          acceptedTailCursor,
+        }),
+      },
+    ];
+    for (const route of routes) {
+      expect(route.schema.safeParse(route.payload(canonical)).success).toBe(true);
+      const rejected = route.schema.safeParse(route.payload('not-a-happier-cursor'));
+      expect(rejected.success).toBe(false);
+      expect(
+        rejected.success
+          ? []
+          : rejected.error.issues.map((issue) => issue.path.join('.')),
+      ).toEqual(['acceptedTailCursor']);
+    }
+  });
+});

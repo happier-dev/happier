@@ -36,6 +36,15 @@ describe('Channels public protocol atomic cutover', () => {
                         required: false,
                         action: { surface: 'plugin', dangerLevel: 'safe' },
                     },
+                    automationEventAdmit: {
+                        required: false,
+                        input: {
+                            kind: 'protocolDefined',
+                            schema: protocol.ConversationProviderAutomationEventAdmitInputV1JsonSchema,
+                        },
+                        resultSchema: protocol.ConversationProviderAutomationEventAdmitResultV1JsonSchema,
+                        action: { surface: 'plugin', dangerLevel: 'writesRemote' },
+                    },
                     messageDeliver: {
                         required: true,
                         action: { surface: 'plugin', dangerLevel: 'writesRemote' },
@@ -56,6 +65,7 @@ describe('Channels public protocol atomic cutover', () => {
         expect(declaredProtocol).not.toHaveProperty('descriptor');
         expect(protocol.ConversationProvidersContributionPointV1.maxContributionsPerContributor).toBe(1);
         expect(Object.keys(declaredProtocol?.operations ?? {}).sort()).toEqual([
+            'automationEventAdmit',
             'connectionStop',
             'connectionTest',
             'deliveryReconcile',

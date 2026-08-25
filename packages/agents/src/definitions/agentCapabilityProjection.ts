@@ -3,6 +3,7 @@ import type {
   PluginAgentCapabilitySurfaceV2,
   PluginAgentExecutionRunCapabilitiesV2,
   PluginAgentSessionCapabilitiesV2,
+  PluginAgentToolsCapabilityV2,
 } from '@happier-dev/protocol';
 
 /**
@@ -17,9 +18,9 @@ import type {
 /**
  * The capability facts a bundled Agent's own definition already owns.
  *
- * A bundled Agent declares fork, conversation rollback and terminal hosting
- * once, in `AGENT_DEFINITION.core`. Its plugin manifest used to restate the
- * same three facts in the V2 contribution vocabulary, which made the plugin
+ * A bundled Agent declares fork, conversation rollback, terminal hosting and
+ * tool delivery once, in `AGENT_DEFINITION.core`. Its plugin manifest used to
+ * restate the same facts in the V2 contribution vocabulary, which made the plugin
  * package hold two writers for one concept and left drift only a typo away.
  * This is the read side of the single writer.
  */
@@ -34,6 +35,9 @@ export type AgentDefinitionCapabilityFacts = Readonly<{
     }>;
   }>;
   localControl?: AgentLocalControlDeclaration | null;
+  tools?: Readonly<{
+    delivery?: string;
+  }> | null;
 }>;
 
 /**
@@ -62,7 +66,8 @@ export type AuthoredAgentCapabilitySurfaceV2 = Exclude<PluginAgentCapabilitySurf
  *
  * The definition-owned facts are absent from this type on purpose: the
  * compiler, not a review convention, is what stops a manifest from stating
- * `'fork'`, `conversationRollback` or the `'terminal'` surface a second time.
+ * `'fork'`, `conversationRollback`, tool delivery or the `'terminal'` surface
+ * a second time.
  */
 export type AuthoredAgentSessionCapabilitiesV2 =
   & Omit<PluginAgentSessionCapabilitiesV2, 'open' | 'conversationRollback'>
@@ -112,14 +117,28 @@ function hostsTerminal(facts: AgentDefinitionCapabilityFacts): boolean {
   return localControlDeclarationHostsTerminal(facts.localControl);
 }
 
+function projectToolsCapability(
+  facts: AgentDefinitionCapabilityFacts,
+): PluginAgentToolsCapabilityV2 | null {
+  const delivery = facts.tools?.delivery;
+  if (
+    delivery !== 'native_mcp'
+    && delivery !== 'native_extension'
+    && delivery !== 'shell_bridge'
+  ) {
+    return null;
+  }
+  return { delivery };
+}
+
 /**
  * Projects a bundled Agent's V2 capability contribution from its own definition.
  *
  * The definition is the strictly richer table — it distinguishes conversation
  * fork from from-message fork and refines every fact per runtime kind — so the
  * projection runs definition → manifest and never the reverse. Facts V2 owns
- * and the definition does not (delivery, cancel, goals, catalog, execution
- * runs, the external-sessions surface, …) stay authored in the manifest and are
+ * and the definition does not (cancel, goals, catalog, execution runs, the
+ * external-sessions surface, …) stay authored in the manifest and are
  * carried through untouched.
  */
 export function projectAgentCapabilitiesV2FromDefinition(
@@ -149,10 +168,12 @@ export function projectAgentCapabilitiesV2FromDefinition(
       ...(declaresConversationRollback(facts) ? { conversationRollback: true as const } : {}),
     }
     : null;
+  const tools = projectToolsCapability(facts);
 
   return {
     ...(surfaces.length > 0 ? { surfaces } : {}),
     ...(sessions ? { sessions } : {}),
     ...(authored.executionRuns ? { executionRuns: authored.executionRuns } : {}),
+    ...(tools ? { tools } : {}),
   };
 }

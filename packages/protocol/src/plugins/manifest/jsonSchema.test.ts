@@ -372,7 +372,7 @@ describe('createPluginManifestJsonSchemaV2', () => {
     const headerAction = {
       id: 'refresh',
       title: 'Refresh',
-      action: { kind: 'executeAction', action: 'refresh-activity' },
+      command: { kind: 'executeAction', action: 'refresh-activity' },
     };
     const manifestWithHeaderActions = (
       slot: typeof PLUGIN_UI_DESTINATION_BINDING_SLOTS_V1[number],

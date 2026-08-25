@@ -101,6 +101,54 @@ describe('createActionExecutor (session control)', () => {
     }));
   });
 
+  it('turns plugin subagent-launch intent into the canonical structured send and stamps immediate delivery', async () => {
+    const sessionSendMessage = vi.fn(async () => ({ status: 'accepted', localId: 'plugin-input-v1:launch' }));
+    const executor = createExecutor({ sessionSendMessage });
+    const actionCaller = {
+      kind: 'plugin' as const,
+      pluginId: 'acme.agent',
+      contributionLocalId: 'launch-teammate',
+    };
+
+    const result = await executor.execute(
+      'session.message.send' as any,
+      {
+        sessionId: 's1',
+        kind: 'sessionSubagentLaunch',
+        launch: {
+          kind: 'agent_team_create',
+          teamId: 'reviewers',
+          description: 'Review the current change.',
+        },
+        idempotencyKey: 'launch-reviewers',
+      },
+      { surface: 'plugin', actionCaller },
+    );
+
+    expect(result).toEqual({
+      ok: true,
+      result: { status: 'accepted', localId: 'plugin-input-v1:launch' },
+    });
+
+    expect(sessionSendMessage).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: 's1',
+      message: 'Create team reviewers',
+      displayText: 'Create team reviewers',
+      messageMeta: {
+        happier: {
+          kind: 'subagent_launch.v1',
+          payload: {
+            kind: 'agent_team_create',
+            teamId: 'reviewers',
+            description: 'Review the current change.',
+          },
+        },
+      },
+      requestedAction: { v: 1, kind: 'send_now' },
+      actionCaller,
+    }));
+  });
+
   it('forwards host-stamped plugin caller and bounded source intent without accepting caller identity fields', async () => {
     const sessionSendMessage = vi.fn(async () => ({ status: 'accepted', localId: 'plugin-input-v1:test' }));
     const executor = createExecutor({ sessionSendMessage });
@@ -175,6 +223,9 @@ describe('createActionExecutor (session control)', () => {
       attachments,
     }));
 
+    // Only a plugin caller has a declared attachment the host can qualify. A
+    // generic caller supplying the field is refused rather than silently
+    // dropped, so a mis-routed send never sends its text with no context.
     sessionSendMessage.mockClear();
     await expect(executor.execute(
       'session.message.send' as any,
@@ -210,6 +261,43 @@ describe('createActionExecutor (session control)', () => {
     );
     expect(sessionSendMessage).toHaveBeenCalledTimes(1);
     expect(sessionSendMessage.mock.calls[0]?.[0]).not.toHaveProperty('localId');
+  });
+
+  it('refuses a Provider connection selection that carries no model instead of discarding it', async () => {
+    const sessionSendMessage = vi.fn(async () => ({ status: 'accepted', localId: 'local-1' }));
+    const executor = createExecutor({ sessionSendMessage });
+
+    // `null` is the explicit Agent-native source. A connection is only ever
+    // applied together with the model it sources, so without a model id the
+    // send path has nothing to apply it to and would drop it silently.
+    await expect(executor.execute(
+      'session.message.send' as any,
+      { sessionId: 's1', message: 'Hello', providerConnectionId: null },
+      { surface: 'cli', defaultSessionId: null },
+    )).resolves.toEqual({ ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' });
+    expect(sessionSendMessage).not.toHaveBeenCalled();
+
+    // The same native source with a model id — concrete or the reset sentinel
+    // — is still accepted and still reaches the send path.
+    await executor.execute(
+      'session.message.send' as any,
+      { sessionId: 's1', message: 'Hello', providerConnectionId: null, modelOverride: 'sonnet' },
+      { surface: 'cli', defaultSessionId: null },
+    );
+    await executor.execute(
+      'session.message.send' as any,
+      { sessionId: 's1', message: 'Hello', providerConnectionId: null, modelOverride: null },
+      { surface: 'cli', defaultSessionId: null },
+    );
+    expect(sessionSendMessage).toHaveBeenCalledTimes(2);
+    expect(sessionSendMessage.mock.calls[0]?.[0]).toEqual(expect.objectContaining({
+      providerConnectionId: null,
+      modelOverride: 'sonnet',
+    }));
+    expect(sessionSendMessage.mock.calls[1]?.[0]).toEqual(expect.objectContaining({
+      providerConnectionId: null,
+      modelOverride: null,
+    }));
   });
 
   it('rejects plugin Session permission overrides before admission can persist them', async () => {
@@ -1445,6 +1533,42 @@ describe('createActionExecutor (session control)', () => {
       error: 'plugin_action_caller_required',
     });
     expect(sessionPermissionRemoteAction).toHaveBeenCalledTimes(1);
+  });
+
+  it('routes a host-stamped mediator plugin to the canonical remote user-action answer owner', async () => {
+    const sessionPermissionRemoteAction = vi.fn(async () => ({
+      status: 'applied' as const,
+      requestId: 'question-1',
+    }));
+    const executor = createExecutor({
+      sessionPermissionRemoteAction,
+      resolveServerIdForSessionId: (sessionId) => sessionId === 's1' ? 'server-a' : null,
+    } as Partial<ActionExecutorDeps>);
+    const input = {
+      sessionId: 's1',
+      turnId: 'turn-1',
+      requestId: 'question-1',
+      sourceRef: 'binding-1',
+      sourceRevisionOrEpoch: 'rev-1',
+      answers: [{ questionIndex: 0, values: ['release'] }],
+    };
+    const caller = {
+      kind: 'plugin' as const,
+      pluginId: 'happier.channels',
+      contributionLocalId: 'discord',
+    };
+
+    await expect(executor.execute(
+      'session.user_action.remote.answer' as any,
+      input,
+      { surface: 'plugin', actionCaller: caller },
+    )).resolves.toEqual({ ok: true, result: { status: 'applied', requestId: 'question-1' } });
+    expect(sessionPermissionRemoteAction).toHaveBeenCalledWith(expect.objectContaining({
+      actionId: 'session.user_action.remote.answer',
+      caller,
+      serverId: 'server-a',
+      input,
+    }));
   });
 
   it('lets a host-stamped mediator plugin revoke its own remote grant', async () => {

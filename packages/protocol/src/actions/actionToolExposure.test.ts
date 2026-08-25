@@ -2,6 +2,11 @@ import { describe, expect, it } from 'vitest';
 
 import { searchSerializedActionSpecsForSurface } from './actionCatalog.js';
 import { ActionsSettingsV1Schema } from './actionSettings.js';
+import { isRuntimeActionIdV1 } from './actionIds.js';
+import {
+  isRuntimeActionExecutorReal,
+  resolveRuntimeActionSurfaces,
+} from './surfaces.js';
 import {
   ActionSpecSchema,
   INTERNAL_ACTION_IDS,
@@ -223,16 +228,87 @@ describe('actionToolExposure', () => {
         expect(spec.surfaces.plugin).toBe(!pluginSurfaceExcludedActionIds.has(spec.id));
       }
     }
+
+    expect(getActionSpec('projects.list').surfaces).toEqual(expect.objectContaining({
+      api: true,
+      plugin: true,
+    }));
+  });
+
+  /**
+   * Each runtime Action on the internal list is internal because no executor
+   * routes it through the ActionExecutor front door. That reason is only worth
+   * having if the backing census agrees with it: an executor wired without
+   * clearing the internal entry would surface an Action that no public catalog
+   * lists, and an internal entry left behind after the executor lands would be
+   * a second decision-maker for the same Action.
+   */
+  it('keeps every internal runtime Action unbacked and unsurfaced in the executor census', () => {
+    const internalRuntimeActionIds = INTERNAL_ACTION_IDS.filter(isRuntimeActionIdV1);
+
+    expect(internalRuntimeActionIds).toEqual([
+      'devices.simulator.input.orientation',
+    ]);
+    for (const actionId of internalRuntimeActionIds) {
+      expect(isRuntimeActionExecutorReal(actionId), actionId).toBe(false);
+      expect(resolveRuntimeActionSurfaces(actionId), actionId).toEqual({
+        ui: false,
+        voice: false,
+        agent: false,
+        mcp: false,
+        cli: false,
+        rpc: false,
+      });
+    }
   });
 
   it('stamps action execution placement at the registry owner', () => {
     expect(getActionSpec('machines.list').executionPlacement).toBe('account');
     expect(getActionSpec('servers.list').executionPlacement).toBe('client');
+    expect(getActionSpec('projects.list').executionPlacement).toBe('client');
     expect(getActionSpec('session.spawn_new').executionPlacement).toBe('machine');
     expect(getActionSpec('approval.request.decide').executionPlacement).toBe('account');
     expect(getActionSpec('session.activity.get').executionPlacement).toBe('session');
     expect(getActionSpec('execution.run.start').executionPlacement).toBe('machine');
     expect(getActionSpec('ui.current_context.read').executionPlacement).toBe('client');
+  });
+
+  it('routes persisted transcript readers through a selected machine instead of a current Session publisher', () => {
+    for (const actionId of [
+      'session.history.get',
+      'session.transcript.get',
+      'session.events.get',
+      'session.messages.recent.get',
+      'transcript.page',
+      'transcript.readAfter',
+      'transcript.search',
+    ] as const) {
+      expect(getActionSpec(actionId).executionPlacement, actionId).toBe('machine');
+    }
+  });
+
+  it('keeps live transcript controls at the current Session publisher', () => {
+    for (const actionId of [
+      'session.log.tail',
+      'transcript.follow',
+      'transcript.unfollow',
+      'transcript.import',
+    ] as const) {
+      expect(getActionSpec(actionId).executionPlacement, actionId).toBe('session');
+    }
+  });
+
+  it('makes transcript follow lifecycle actions available to CLI history', () => {
+    for (const actionId of ['transcript.follow', 'transcript.unfollow'] as const) {
+      expect(resolveActionSurfaceAvailability({
+        actionId,
+        surface: 'cli',
+      }), actionId).toEqual(expect.objectContaining({
+        available: true,
+        reason: 'available',
+        surface: 'cli',
+      }));
+    }
   });
 
   it('keeps every final public projection valid after openness and caller-policy normalization', () => {

@@ -88,6 +88,17 @@ export type {
 } from './connection.js';
 
 export {
+    ConversationProviderAutomationEventAdmitInputV1JsonSchema,
+    ConversationProviderAutomationEventAdmitInputV1Schema,
+    ConversationProviderAutomationEventAdmitResultV1JsonSchema,
+    ConversationProviderAutomationEventAdmitResultV1Schema,
+} from './automationEvents.js';
+export type {
+    ConversationProviderAutomationEventAdmitInputV1,
+    ConversationProviderAutomationEventAdmitResultV1,
+} from './automationEvents.js';
+
+export {
     ConversationPollInputV1JsonSchema,
     ConversationPollInputV1Schema,
     ConversationPollResultV1JsonSchema,

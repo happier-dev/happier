@@ -564,6 +564,41 @@ describe('createActionExecutor (approvals)', () => {
     }));
   });
 
+  it('defers API policy approvals even when the Action normally has a blocking result', async () => {
+    const approvalsCreate = vi.fn(async () => ({ artifactId: 'api-approval-1' }));
+    const approvalsUpdate = vi.fn(async () => ({ ok: true as const }));
+    const approvalsWaitForDecision = vi.fn(async () => {
+      throw new Error('external API approvals must not wait for a decision');
+    });
+
+    const executor = createExecutor({
+      approvalsCreate,
+      approvalsUpdate,
+      approvalsWaitForDecision,
+      isActionApprovalRequired: (actionId, ctx) => actionId === 'action.spec.search' && ctx.surface === 'api',
+    } as any);
+
+    await expect(executor.execute(
+      'action.spec.search' as any,
+      { query: 'approval', limit: 1 },
+      { surface: 'api', authority: 'account_automation', actionCaller: { kind: 'host' } },
+    )).resolves.toEqual({
+      ok: true,
+      result: {
+        kind: 'approval_request_created',
+        artifactId: 'api-approval-1',
+        actionId: 'action.spec.search',
+      },
+    });
+    expect(approvalsWaitForDecision).not.toHaveBeenCalled();
+    expect(approvalsCreate).toHaveBeenCalledWith(expect.objectContaining({
+      request: expect.objectContaining({
+        actionId: 'action.spec.search',
+        approval: { flow: 'deferred', result: 'required' },
+      }),
+    }));
+  });
+
   it('waits for a blocking approval and returns the underlying action result when approved', async () => {
     const approvalsCreate = vi.fn(async () => ({ artifactId: 'a1' }));
     const approvalsUpdate = vi.fn(async () => ({ ok: true as const }));

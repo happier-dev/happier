@@ -34,6 +34,7 @@ export type {
 export {
   StrictJsonValueSchema,
   normalizeStrictJsonValue,
+  sameStrictJsonValue,
   type JsonValue,
 } from './json/strictJsonValue.js';
 export {
@@ -61,6 +62,9 @@ export {
   createPluginActionInvocation,
   createPluginActionPresentUserGate,
   fingerprintPluginActionCurrentIntent,
+  PLUGIN_ACTION_FAILURE_MESSAGE_MAX_UTF8_BYTES,
+  projectPluginActionFailureCode,
+  projectPluginActionFailureMessage,
   projectPluginActionUnavailableOutcomeCode,
   PluginActionPresentUserAuthorizationFactsSchema,
   type PluginActionCurrentIntentRequest,
@@ -81,6 +85,7 @@ export {
   isValidPluginJsonSchemaValue,
   normalizePluginJsonSchema,
   preparePluginJsonSchema,
+  rehydrateCanonicalProtocolComposableSchema,
   type PreparedPluginJsonSchema,
   type PluginJsonSchemaValidator,
 } from './plugins/actions/jsonSchemaValidation.js';
@@ -183,6 +188,7 @@ export {
   QualifiedConnectedAccountIdSchema,
   QualifiedConnectedAccountRefJsonSchema,
   QualifiedConnectedAccountRefSchema,
+  sameQualifiedConnectedAccountRef,
   type QualifiedConnectedAccountRef,
 } from './connect/qualifiedConnectedAccountPersistence.js';
 export {
@@ -193,6 +199,10 @@ export {
 } from './connect/generatedBuiltInLegacyConnectedAccountCompatibility.js';
 export * from './connect/qualifiedConnectedAccountsV4.js';
 export * from './connect/qualifiedConnectedAccountsV4QueryCodec.js';
+export {
+  CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1,
+  CLAUDE_SUBSCRIPTION_SETUP_TOKEN_ENVIRONMENT_REQUEST_V1,
+} from './connect/claudeSubscriptionMaterialization.js';
 export {
   ConnectedAccountHttpHeadersRequestSchema,
   ConnectedAccountMaterializationRequestSchema,
@@ -223,9 +233,15 @@ export {
   CONNECTED_ACCOUNT_REQUEST_AUTH_LOOKUP_PATH,
   CONNECTED_ACCOUNT_REQUEST_AUTH_FAILURE_PATH,
   CONNECTED_ACCOUNT_REQUEST_AUTH_QUOTA_FAILURE_PATH,
+  CONNECTED_ACCOUNT_REQUEST_AUTH_ERROR_HTTP_STATUS_V1,
   PI_REQUEST_AUTH_PINNED_TERMINAL_PRODUCER_VERSIONS_V1,
   PI_REQUEST_AUTH_PINNED_TERMINAL_SIGNATURE_IDS_V1,
   PI_REQUEST_AUTH_PINNED_TERMINAL_SIGNATURES_V1,
+  ConnectedAccountRequestAuthErrorCodeV1Schema,
+  ConnectedAccountRequestAuthErrorResponseV1Schema,
+  ConnectedAccountRequestAuthLookupSuccessResponseV1Schema,
+  ConnectedAccountRequestAuthFailureSuccessResponseV1Schema,
+  getConnectedAccountRequestAuthErrorHttpStatusV1,
   ConnectedAccountRequestAuthMaterializationV1Schema,
   ConnectedAccountRequestAuthUseV1Schema,
   ConnectedAccountRequestAuthUsesV1Schema,
@@ -247,6 +263,7 @@ export {
   type RequestAuthCredentialContextV1,
   type OAuthBearerLeaseV1,
   type ConnectedAccountRequestAuthLookupRequestV1,
+  type ConnectedAccountRequestAuthErrorCodeV1,
   type BoundedProviderFailureEvidenceV1,
   type ConnectedAccountConsumerFailureV1,
   type ConnectedAccountAuthFailureRequestV1,
@@ -297,23 +314,31 @@ export type {
   SessionAuthoringFieldArtifacts,
   SessionAuthoringFieldDefinition,
   SessionAuthoringFieldDefinitionMap,
+  SessionAuthoringDraftStorage,
   SessionAuthoringFieldEditability,
   SessionAuthoringFieldId,
   SessionAuthoringFieldStorageClass,
   SessionAuthoringFieldSurface,
   SessionAuthoringTerminalV1,
   SessionAuthoringValueV1,
+  SyncedSessionAuthoringFieldIdV1,
+  SyncedSessionAuthoringValueV1,
 } from './sessions/authoring/index.js';
 export {
   SESSION_AUTHORING_CONTEXT_KINDS,
   SESSION_AUTHORING_FIELD_CATALOG,
   SESSION_AUTHORING_FIELD_DESCRIPTORS,
   SESSION_AUTHORING_FIELD_IDS,
+  SYNCED_SESSION_AUTHORING_FIELD_IDS_V1,
   SessionAuthoringAutomationV1Schema,
   SessionAuthoringCheckoutCreationDraftV1Schema,
   SessionAuthoringCodexBackendModeSchema,
   SessionAuthoringTerminalV1Schema,
   SessionAuthoringValueV1Schema,
+  SyncedSessionAuthoringFieldIdV1Schema,
+  SyncedSessionAuthoringValueV1Schema,
+  SyncedSessionAuthoringConnectedServicesV1Schema,
+  SyncedSessionAuthoringTerminalV1Schema,
   buildSessionAuthoringFieldArtifacts,
   defineSessionAuthoringFields,
 } from './sessions/authoring/index.js';
@@ -683,6 +708,8 @@ export {
   PluginAgentCapabilitiesV2Schema,
   PluginAgentCapabilitySurfaceV2Schema,
   PluginAgentCapabilitySurfacesV2Schema,
+  PluginAgentToolsDeliveryV2Schema,
+  PluginAgentToolsCapabilityV2Schema,
   PluginAgentSessionCapabilitiesV2Schema,
   PluginAgentExecutionRunCapabilitiesV2Schema,
   PluginAgentRuntimeAcpV2Schema,
@@ -702,6 +729,7 @@ export {
   PluginTargetedContributionProtocolV1Schema,
   PluginTargetedContributionTargetV1Schema,
   PluginTargetedContributionV1Schema,
+  rehydratePluginContributionPointSemanticsV1,
   BackgroundServiceContributionSchema,
   PluginHookContributionV2Schema,
   PluginHostedWebContributionV1Schema,
@@ -735,6 +763,8 @@ export {
   type PluginAgentCapabilitiesV2,
   type PluginAgentCapabilitySurfaceV2,
   type PluginAgentCapabilitySurfacesV2,
+  type PluginAgentToolsDeliveryV2,
+  type PluginAgentToolsCapabilityV2,
   type PluginAgentSessionCapabilitiesV2,
   type PluginAgentExecutionRunCapabilitiesV2,
   type ParsedPluginAgentContributionV2,
@@ -754,6 +784,9 @@ export {
   type PluginTargetedContributionProtocolV1,
   type PluginTargetedContributionTargetV1,
   type PluginTargetedContributionV1,
+  type RehydratedPluginContributionPointOperationV1,
+  type RehydratedPluginContributionPointSemanticsV1,
+  type RehydratedPluginContributionPointSurfaceV1,
   type BackgroundServiceContribution,
   type PluginHookContributionV2,
   type PluginHostedWebContributionV1,
@@ -775,6 +808,8 @@ export {
   type PluginResourceKind,
   type PluginResourceKindV2,
   type PluginSessionHeaderActionDescriptorV1,
+  PluginSessionInfoSectionContributionV1Schema,
+  type PluginSessionInfoSectionContributionV1,
   type PluginSurfaceTargetV1,
   type PluginSystemToolContributionV1,
   type PluginTranscriptActivityContributionV1,
@@ -1094,6 +1129,7 @@ export {
   VoiceCredentialDeclarationSchema,
   VoiceCredentialBindingIdentityV1Schema,
   VoiceCredentialOperationProjectionSchema,
+  resolveVoiceCredentialOperationAuthorization,
   VoiceCredentialSourceSchema,
   VoiceCredentialSlotIdSchema,
   VoiceProviderContributionSchema,
@@ -1119,6 +1155,8 @@ export {
   type VoiceCredentialDeclaration,
   type VoiceCredentialBindingIdentityV1,
   type VoiceCredentialOperationProjection,
+  type VoiceCredentialOperationAuthorization,
+  type VoiceCredentialOperationSelectedSource,
   type VoiceCredentialSource,
   type VoiceCredentialSlotId,
   type VoiceProviderContribution,
@@ -1213,6 +1251,7 @@ export {
 export {
   PLUGIN_DECLARATIVE_DOCUMENT_CONTENT_TYPE_V1,
   MAX_PLUGIN_DECLARATIVE_DOCUMENT_NODES_V1,
+  MAX_PLUGIN_DECLARATIVE_DOCUMENT_RESOURCE_BYTES_V1,
   MAX_PLUGIN_DECLARATIVE_SELECT_OPTIONS_V1,
   PluginDeclarativeDocumentContentTypeV1Schema,
   PluginDeclarativeDocumentNormalizationErrorV1,
@@ -1221,6 +1260,7 @@ export {
   assertPluginDeclarativeDocumentResourceContentTypesV1,
   isPluginDeclarativeDocumentContentTypeV1,
   normalizePluginDeclarativeDocumentV1,
+  parsePluginDeclarativeDocumentResourceBytesV1,
   type NormalizePluginDeclarativeDocumentV1Input,
   type PluginDeclarativeDocumentContentTypeV1,
   type PluginDeclarativeDocumentNormalizationErrorCodeV1,
@@ -1469,6 +1509,7 @@ export {
   PluginContributionIdentityV1JsonSchema,
   PluginContributionIdentityV1Schema,
   PluginContributionLocalIdSchema,
+  agentRoutingIdAddressesContributionIdentityV1,
   buildQualifiedPluginContributionKey,
   createPluginContributionIdentity,
   readPersistedAgentContributionIdentityV1,
@@ -1618,7 +1659,6 @@ export {
   type AccountScopedCiphertextFormat,
   type AccountScopedCryptoMaterial,
   type AccountScopedCryptoMaterialSnapshotV1,
-  type AccountScopedHistoricalAliasResealResult,
   type AccountScopedKindTag,
   type AccountScopedOpenResult,
 } from './crypto/accountScopedCipher.js';
@@ -1686,9 +1726,11 @@ export {
 
 export {
   isExpoPushNotificationChannelEnabled,
+  NEW_SESSION_DRAFT_ENTRY_MODES,
   resolveNotificationChannelsV1FromAccountSettings,
   SessionPendingQueueDeliveryTimingSchema,
   SessionPendingQueueDrainModeSchema,
+  type NewSessionDraftEntryMode,
   UsageLimitRecoverySettingsV1Schema,
 } from './account/settings/accountSettings.js';
 export {
@@ -1732,7 +1774,6 @@ export {
   ProviderAccountUsageStateV1Schema,
   ProviderAccountUsageSubjectKindV1Schema,
   ProviderAccountUsageWriteStatusV1Schema,
-  resealProviderAccountUsageSnapshotCiphertextIfHistoricalAlias,
   sealProviderAccountUsageSnapshotCiphertext,
   SealedProviderAccountUsageSnapshotV1Schema,
   type ProviderAccountSubjectRefV1,
@@ -1951,7 +1992,6 @@ export {
 export {
   QualifiedConnectedAccountCredentialPayloadV1Schema,
   openQualifiedConnectedAccountContentEnvelope,
-  resealQualifiedConnectedAccountConfigurationContentEnvelopeIfHistoricalAlias,
   sealQualifiedConnectedAccountContentEnvelope,
   type QualifiedConnectedAccountContentKind,
   type QualifiedConnectedAccountCredentialPayloadV1,
@@ -2055,6 +2095,7 @@ export {
 export type {
   AgentPermissionRisk,
   AgentRequestKind,
+  AgentRequestQuestionSummary,
   AgentRequestSemanticSummary,
 } from './activity/agentRequestSummary.js';
 export {
@@ -2132,11 +2173,6 @@ export {
   WorkspaceManifestSchema,
   ProjectKeyV1Schema,
   WorkspaceRefV1Schema,
-  resolveProjectLaunchPlacementV1,
-  type ProjectLaunchCandidateV1,
-  type ProjectLaunchPlacementProjectV1,
-  type ProjectLaunchPlacementSnapshotV1,
-  type ProjectLaunchPlacementV1,
   type WorkspaceCheckoutKind,
   type WorkspaceLocationScm,
   type WorkspaceManifest,
@@ -2429,6 +2465,7 @@ export {
   isStoredJsonContentEnvelopeModeCompatible,
   type StoredJsonContentEnvelope,
 } from './storage/storedJsonContentEnvelope.js';
+export * from './drafts/index.js';
 export {
   ARTIFACT_PLAIN_DATA_KEY_MARKER,
   decodePlainArtifactStoredContent,
@@ -2967,7 +3004,6 @@ export type {
   VoiceSpeechTranscribeResult,
 } from './voice/speech.js';
 export {
-  normalizePredecessorVoiceProviderContributionIdentityV1,
   normalizePredecessorVoiceProviderIdV1,
   resolvePredecessorVoiceProviderContributionIdentityV1,
 } from './voice/providerContributionIdentity.js';
@@ -3268,11 +3304,15 @@ export {
   type PluginDomainWebhookChangeHint,
 } from './changes/index.js';
 export {
+  CodexPassiveRealtimeSetupResultV1Schema,
+  CodexPassiveRealtimeSetupStatusV1Schema,
   type CapabilitiesDescribeResponse,
   type CapabilitiesDetectRequest,
   type CapabilitiesDetectResponse,
   type CapabilitiesInvokeRequest,
   type CapabilitiesInvokeResponse,
+  type CodexPassiveRealtimeSetupResultV1,
+  type CodexPassiveRealtimeSetupStatusV1,
   type CapabilityDescriptor,
   type CapabilityDetectRequest,
   type CapabilityDetectResult,
@@ -3722,6 +3762,8 @@ export {
   ContentProvenanceV1Schema,
   ExternalActorV1Schema,
   PluginInvocationSurfaceV1Schema,
+  PluginSessionInputAttachmentV1Schema,
+  PluginSessionInputAttachmentsV1Schema,
   PluginSessionInputIdempotencyKeyV1Schema,
   PluginSessionInputRequestV1Schema,
   PluginSessionInputSourceV1Schema,
@@ -3747,6 +3789,8 @@ export {
   readSessionMessageProvenanceV1,
   readSessionPermissionSourceAuthorityV1,
   derivePluginSessionInputLocalIdV1,
+  hasSessionInputContentV1,
+  requireSessionInputContent,
   assertSessionInputAdmissionReceiptForRequestV1,
   assertSessionInputAdmissionReceiptForAuthorityV1,
   stripSessionInputProtectedMeta,
@@ -3755,6 +3799,7 @@ export {
   type ContentProvenanceV1,
   type ExternalActorV1,
   type PluginInvocationSurfaceV1,
+  type PluginSessionInputAttachmentV1,
   type PluginSessionInputRequestV1,
   type PluginSessionInputSourceV1,
   type SessionInputAdmissionReceiptV1,
@@ -4221,6 +4266,7 @@ export {
   normalizeScmRemoteName,
   normalizeScmRemoteRequest,
   normalizeScmRemoteUrl,
+  normalizeScmHostingRepositoryIdentity,
   parseScmPatchPaths,
   parseScmUpstreamRef,
   readScmHostingRepositoryIdentity,
@@ -4575,6 +4621,9 @@ export {
   SessionUserMessageSendMetaSchema,
   SessionUserMessageSendRequestSchema,
   SessionUserMessageSendResponseSchema,
+  SessionPendingMessageComposerAdmissionPrepareRequestV1Schema,
+  SessionPendingMessageComposerAdmissionPrepareResponseV1Schema,
+  SessionPendingMessageComposerAdmissionAcceptedRequestV1Schema,
   hasAdmittedComposerAttachmentSelectionV1,
   readAttachmentEnvelopeLocalImagePaths,
   readHappierStructuredInputV1FromMeta,
@@ -4584,6 +4633,9 @@ export {
   type SessionUserMessageSendMeta,
   type SessionUserMessageSendRequest,
   type SessionUserMessageSendResponse,
+  type SessionPendingMessageComposerAdmissionPrepareRequestV1,
+  type SessionPendingMessageComposerAdmissionPrepareResponseV1,
+  type SessionPendingMessageComposerAdmissionAcceptedRequestV1,
 } from './sessions/userMessageRpc.js';
 
 export {
@@ -4708,6 +4760,7 @@ export {
 } from './execution/runs/index.js';
 
 export {
+  ExecutionRunAgentContributionIdentityV1Schema,
   ExecutionRunConnectedServicesLaunchV1Schema,
   normalizePersistedExecutionRunConnectedServicesLaunchV1,
   isPersistedExecutionRunConnectedServicesLaunchIdentityExact,
@@ -4719,6 +4772,7 @@ export {
   DaemonExecutionRunListResponseSchema,
   type DaemonExecutionRunMarker,
   type DaemonExecutionRunMarkerPersistenceRead,
+  type ExecutionRunAgentContributionIdentityV1,
   type ExecutionRunConnectedServicesLaunchV1,
   type DaemonExecutionRunProcessInfo,
   type DaemonExecutionRunEntry,
@@ -4779,11 +4833,10 @@ export {
   DaemonPluginActionFormConnectedAccountOptionsResolveRequestSchema,
   DaemonPluginActionFormConnectedAccountOptionSchema,
   DaemonPluginActionFormConnectedAccountOptionsResolveResponseSchema,
-  DaemonPluginComposerAttachmentPrepareRequestSchema,
-  DaemonPluginComposerAttachmentPrepareResponseSchema,
   DaemonPluginComposerReferenceSearchRequestSchema,
   DaemonPluginComposerReferenceSearchResponseSchema,
   DaemonPluginReactNativeBundleCacheIdentityV1Schema,
+  deriveDaemonPluginReactNativeBundleCacheIdentityKeyV1,
   DaemonPluginHostedWebArtifactCacheIdentityV1Schema,
   DaemonPluginUiArtifactBytesCacheIdentityV1Schema,
   DaemonPluginUiArtifactBytesFamilyV1Schema,
@@ -4810,6 +4863,9 @@ export {
   readDaemonPluginUiTargetedSurfaceMountV1,
   DaemonPluginReactNativeCrashMountV1Schema,
   DaemonPluginReactNativeCrashBindingTokenV1Schema,
+  deriveDaemonPluginReactNativeCrashMountKeyV1,
+  deriveDaemonPluginReactNativeCrashBindingKeyV1,
+  deriveDaemonPluginReactNativeCrashBindingTokenKeyV1,
   isSameDaemonPluginReactNativeCrashBindingV1,
   isSameDaemonPluginReactNativeCrashBindingTokenV1,
   DaemonPluginReactNativeCrashStateV1Schema,
@@ -4882,8 +4938,6 @@ export {
   type DaemonPluginActionFormConnectedAccountOptionsResolveRequest,
   type DaemonPluginActionFormConnectedAccountOption,
   type DaemonPluginActionFormConnectedAccountOptionsResolveResponse,
-  type DaemonPluginComposerAttachmentPrepareRequest,
-  type DaemonPluginComposerAttachmentPrepareResponse,
   type DaemonPluginComposerReferenceSearchRequest,
   type DaemonPluginComposerReferenceSearchResponse,
   type DaemonPluginReactNativeBundleCacheIdentityV1,
@@ -5089,6 +5143,13 @@ export {
   EXTERNAL_SESSION_HISTORICAL_IMPORT_LOCAL_ID_PREFIX,
   makeExternalSessionHistoricalImportLocalId,
 } from './sessions/external/historicalImportIdentity.js';
+
+export {
+  ExternalSessionTranscriptItemIdV1Schema,
+  ExternalSessionTranscriptSourceTimestampV1Schema,
+  MAX_EXTERNAL_SESSION_TRANSCRIPT_ITEM_ID_CODE_UNITS,
+  type ExternalSessionTranscriptItemIdV1,
+} from './sessions/external/sourceTranscriptItemV1.js';
 
 export {
   ExternalSessionsAgentIdSchema,
@@ -5561,8 +5622,11 @@ export {
   ReviewCommentActionInputSchemasV1,
   ReviewCommentActionOutputSchemasV1,
   ReviewCommentAttachEvidenceResponseV1Schema,
+  ReviewCommentBulkTransitionFailureV1Schema,
   ReviewCommentBulkTransitionRequestV1Schema,
   ReviewCommentBulkTransitionResponseV1Schema,
+  ReviewCommentClaimPublicationDispatchRequestV1Schema,
+  ReviewCommentClaimPublicationDispatchResponseV1Schema,
   ReviewCommentCreateResponseV1Schema,
   ReviewCommentCurrentIntentV1Schema,
   ReviewCommentEditResponseV1Schema,
@@ -5573,6 +5637,7 @@ export {
   ReviewCommentOperationErrorCodeV1Schema,
   ReviewCommentPrincipalHeaderV1Schema,
   ReviewCommentPrincipalProofV1Schema,
+  ReviewCommentPublicationTargetV1Schema,
   ReviewCommentRedactResponseV1Schema,
   ReviewCommentReplyResponseV1Schema,
   ReviewCommentSetDispositionResponseV1Schema,
@@ -5580,8 +5645,11 @@ export {
   stringifyReviewCommentPrincipalCanonicalJsonV1,
   type ReviewCommentActionIdV1,
   type ReviewCommentAttachEvidenceResponseV1,
+  type ReviewCommentBulkTransitionFailureV1,
   type ReviewCommentBulkTransitionRequestV1,
   type ReviewCommentBulkTransitionResponseV1,
+  type ReviewCommentClaimPublicationDispatchRequestV1,
+  type ReviewCommentClaimPublicationDispatchResponseV1,
   type ReviewCommentCreateResponseV1,
   type ReviewCommentCurrentIntentV1,
   type ReviewCommentEditResponseV1,
@@ -5592,6 +5660,7 @@ export {
   type ReviewCommentOperationErrorCodeV1,
   type ReviewCommentPrincipalHeaderV1,
   type ReviewCommentPrincipalProofV1,
+  type ReviewCommentPublicationTargetV1,
   type ReviewCommentRedactResponseV1,
   type ReviewCommentReplyResponseV1,
   type ReviewCommentSetDispositionResponseV1,
@@ -5637,6 +5706,7 @@ export {
   ReviewCommentSensitiveMigrationSourceV1Schema,
   ReviewCommentSensitivePayloadV1Schema,
   ReviewCommentLegacySplitSensitiveSourceV1Schema,
+  ReviewCommentMutationActionIdV1Schema,
   ReviewCommentStructuralV1Schema,
   StoredReviewCommentV1Schema,
   reviewCommentEventSensitiveBindingMatchesV1,
@@ -5663,6 +5733,7 @@ export {
   type ReviewCommentSensitiveMigrationSourceV1,
   type ReviewCommentSensitivePayloadV1,
   type ReviewCommentLegacySplitSensitiveSourceV1,
+  type ReviewCommentMutationActionIdV1,
   type ReviewCommentSplitV1,
   type ReviewCommentStructuralV1,
   type StoredReviewCommentV1,
@@ -5824,6 +5895,7 @@ export {
 export {
   SubagentLaunchV1Schema,
   parseSubagentLaunchV1,
+  resolveSubagentLaunchStructuredSend,
   type SubagentLaunchV1,
 } from './messages/structured/subagentLaunchV1.js';
 
@@ -5937,7 +6009,9 @@ export {
   type ApprovalRequestV1,
 } from './approvals/approvalRequestV1.js';
 export {
+  TargetActionApprovalReplayPlacementV1Schema,
   TargetActionApprovalRequestV1Schema,
+  type TargetActionApprovalReplayPlacementV1,
   type TargetActionApprovalRequestV1,
 } from './approvals/targetActionApprovalRequestV1.js';
 export {
@@ -6531,6 +6605,8 @@ export {
   AccountEncryptionMigrateTransitionCancelResponseSchema,
   AccountEncryptionMigrateCollectionStageBatchResponseSchema,
   AccountEncryptionMigrateTransitionActivateResponseSchema,
+  AccountEncryptionMigrateSessionDraftItemSchema,
+  AccountEncryptionMigrateSessionDraftsDirectiveSchema,
   ACCOUNT_ENCRYPTION_MIGRATE_TRANSITION_COLLECTION_PAGE_MAX_ITEMS,
   ACCOUNT_ENCRYPTION_MIGRATE_TRANSITION_COLLECTION_STAGE_BATCH_MAX_UTF8_BYTES,
   AccountEncryptionMigrateConnectedServicesDirectiveSchema,
@@ -6591,6 +6667,8 @@ export {
   type AccountEncryptionMigrateTransitionCancelResponse,
   type AccountEncryptionMigrateCollectionStageBatchResponse,
   type AccountEncryptionMigrateTransitionActivateResponse,
+  type AccountEncryptionMigrateSessionDraftItem,
+  type AccountEncryptionMigrateSessionDraftsDirective,
   type AccountEncryptionMigrateConnectedServicesDirective,
   type AccountEncryptionMigrateAutomationsDirective,
   type AccountEncryptionMigrateAutomationsDirectiveInput,
@@ -6689,6 +6767,8 @@ export {
   resolveAccountSettingsVoiceCredentialSource,
   deriveAttentionDeliveryPolicyFromLegacySettings,
   getNotificationsSettingsV1FromAccountSettings,
+  isBackendTargetDisabledByAccountSettings,
+  readAccountSettingValueForBackendTarget,
   listAccountSettingsSavedSecretReferences,
   parseConnectedAccountServiceConfigurationsV1,
   resolveAttentionDeliveryPolicyDecision,
@@ -6776,6 +6856,10 @@ export {
   ACCOUNT_API_TOKENS_LIST_HTTP_PATH_V1,
   ACCOUNT_API_TOKENS_REVOKE_HTTP_PATH_V1,
   ACCOUNT_API_TOKENS_REVOKE_ALL_HTTP_PATH_V1,
+  ACCOUNT_API_TOKEN_INTROSPECTION_HTTP_PATH_V1,
+  AccountApiTokenIntrospectionRequestV1Schema,
+  AccountApiTokenIntrospectionSuccessV1Schema,
+  AccountApiTokenIntrospectionSubjectFailureV1Schema,
   AccountApiTokenSummaryV1Schema,
   AccountApiTokensCreateActionInputV1Schema,
   AccountApiTokensCreateActionOutputV1Schema,
@@ -6796,6 +6880,9 @@ export {
   type AccountApiTokensRevokeAllActionInputV1,
   type AccountApiTokensRevokeAllActionOutputV1,
   type AccountApiTokensServerErrorV1,
+  type AccountApiTokenIntrospectionRequestV1,
+  type AccountApiTokenIntrospectionSuccessV1,
+  type AccountApiTokenIntrospectionSubjectFailureV1,
 } from './auth/accountApiTokens.js';
 export {
   ExternalOAuthErrorResponseSchema,
@@ -6894,6 +6981,8 @@ export {
   isProfileCompatibleWithBackendTarget,
   isProfileCompatibleWithAgent,
   isLaunchProfileV2,
+  mapAiLaunchProfileToListItemV1,
+  projectLaunchProfileListV1,
   readAiLaunchProfileCollection,
   isHistoricalBuiltInAiLaunchProfileIdV1,
   shouldPreserveLegacyAiLaunchProfileBindingV1,
@@ -6912,6 +7001,8 @@ export {
   type BackendProfileRefCandidate,
   type EnvVarRequirement,
   type EnvironmentVariable,
+  type LaunchProfileListItemV1,
+  type LaunchProfileListProjectionV1,
   type LaunchProfileV2,
   type LaunchProfileCheckoutPreferenceV1,
   type LaunchProfilePlacementPreferenceV1,
@@ -6946,14 +7037,15 @@ export {
 } from './automations/automationTemplateEnvelope.js';
 export * from './automations/automationOccurrenceV1.js';
 export * from './automations/automationEventV1.js';
+export * from './automations/automationReplyHandoffStateV1.js';
 export * from './automations/automationRunExecutionRecipeV1.js';
 export {
   AUTOMATION_TRIGGER_EVIDENCE_ACCOUNT_SCOPED_BLOB_KIND_V1,
-  deriveAutomationEventTriggerEvidenceEqualityTagV1,
-  isAutomationEventTriggerEvidenceCiphertextV1,
-  sealAutomationEventTriggerEvidenceEnvelopeV1,
-  sealAutomationRunPluginEventTriggerEvidenceEnvelopeV1,
-  type AutomationEventTriggerEvidenceEnvelopeV1,
+  deriveAutomationOccurrenceTriggerEvidenceEqualityTagV1,
+  isAutomationTriggerEvidenceCiphertextV1,
+  sealAutomationOccurrenceTriggerEvidenceEnvelopeV1,
+  sealAutomationRunTriggerEvidenceEnvelopeV1,
+  type AutomationTriggerEvidenceEnvelopeV1,
 } from './automations/automationEventTriggerEvidence.js';
 export {
   AUTOMATION_SESSION_START_REQUEST_ACCOUNT_SCOPED_BLOB_KIND_V1,
@@ -7292,6 +7384,7 @@ export {
   ComposerTransactionV1Schema,
   ComposerUnavailableReasonV1Schema,
   isComposerControlStateContentTypeV1,
+  MAX_COMPOSER_CONTROL_STATE_RESOURCE_BYTES_V1,
   type ComposerCapabilitiesV1,
   type ComposerControlChoiceIdV1,
   type ComposerControlStateContentTypeV1,
@@ -7522,10 +7615,13 @@ export {
 export {
   decodePluginCollectionLogicalRowV1,
   encodePluginCollectionLogicalValueV1,
+  preparePluginCollectionLogicalMutationRequestV1,
   type PluginCollectionLogicalDecodeFailureReasonV1,
   type PluginCollectionLogicalDecodeOutcomeV1,
   type PluginCollectionLogicalEncodeFailureReasonV1,
   type PluginCollectionLogicalEncodeOutcomeV1,
+  type PluginCollectionLogicalMutationRequestOutcomeV1,
+  type PluginCollectionLogicalMutationV1,
   type PluginCollectionLogicalValueV1,
   type PluginCollectionLogicalValueValidatorV1,
 } from './plugins/data/collectionLogicalCodecV1.js';

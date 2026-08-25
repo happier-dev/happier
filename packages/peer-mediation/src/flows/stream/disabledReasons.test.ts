@@ -13,9 +13,8 @@ describe('mapPeerDirectPolicyDenyReasonToLiveStreamDisabledReason', () => {
         expect(mapPeerDirectPolicyDenyReasonToLiveStreamDisabledReason('disabled_by_account_preference')).toBe(
             'account_preference_disabled',
         );
-        expect(mapPeerDirectPolicyDenyReasonToLiveStreamDisabledReason('topology_unavailable')).toBe(
-            'topology_unavailable',
-        );
+        expect(mapPeerDirectPolicyDenyReasonToLiveStreamDisabledReason('grant_missing')).toBe('grant_rejected');
         expect(mapPeerDirectPolicyDenyReasonToLiveStreamDisabledReason('grant_expired')).toBe('grant_rejected');
+        expect(mapPeerDirectPolicyDenyReasonToLiveStreamDisabledReason('grant_scope_mismatch')).toBe('grant_rejected');
     });
 });

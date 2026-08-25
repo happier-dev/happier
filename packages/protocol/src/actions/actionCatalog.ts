@@ -13,6 +13,10 @@ import {
   type ActionInputOptionValue,
 } from './actionInputHints.js';
 import {
+  ActionDiscoveryDefinitionSummaryV1Schema,
+  ActionDiscoveryDefinitionV1Schema,
+  type ActionDiscoveryDefinitionSummaryV1,
+  type ActionDiscoveryDefinitionV1,
   type ActionDefinitionSummaryV1,
   type ActionDefinitionV1,
 } from './actionDefinitionV1.js';
@@ -175,6 +179,94 @@ export function actionSpecToActionDefinitionV1(
     ...serializeActionSpec(spec, params),
     inputSchema: zodSchemaToJsonSchemaObject(projection.inputSchema),
   };
+}
+
+function projectActionDiscoveryExamples(examples: ActionDefinitionSummaryV1['examples']) {
+  if (examples === null) return null;
+  return {
+    ...(examples.voice === undefined
+      ? {}
+      : { voice: examples.voice === null ? null : { argsExample: examples.voice.argsExample } }),
+    ...(examples.mcp === undefined
+      ? {}
+      : { mcp: examples.mcp === null ? null : { argsExample: examples.mcp.argsExample } }),
+    ...(examples.sdk === undefined
+      ? {}
+      : { sdk: examples.sdk === null ? null : { codeExample: examples.sdk.codeExample } }),
+  };
+}
+
+function projectActionDiscoveryExecution(execution: NonNullable<ActionDefinitionSummaryV1['execution']>) {
+  const handler = execution.handler;
+  return {
+    ...(handler === undefined
+      ? {}
+      : {
+          handler: typeof handler === 'string'
+            ? handler
+            : {
+                target: handler.target,
+                exportName: handler.exportName,
+                registrationId: handler.registrationId,
+              },
+        }),
+    transport: execution.transport,
+    routing: execution.routing,
+    approvalPolicy: execution.approvalPolicy,
+    resultSchema: execution.resultSchema,
+  };
+}
+
+/**
+ * External Action discovery is a closed current-version DTO. The serialized
+ * Action-definition readers remain compatibility-open and are normalized here
+ * so their extension fields cannot leak into the external SDK contract.
+ */
+export function projectActionDefinitionSummaryForExternalDiscovery(
+  definition: ActionDefinitionSummaryV1,
+): ActionDiscoveryDefinitionSummaryV1 {
+  return ActionDiscoveryDefinitionSummaryV1Schema.parse({
+    id: definition.id,
+    title: definition.title,
+    description: definition.description,
+    safety: definition.safety,
+    approval: definition.approval,
+    requiredAuthority: definition.requiredAuthority,
+    executionPlacement: definition.executionPlacement,
+    placements: definition.placements,
+    slash: definition.slash === null ? null : { tokens: definition.slash.tokens },
+    bindings: definition.bindings === null
+      ? null
+      : {
+          voiceClientToolName: definition.bindings.voiceClientToolName,
+          mcpToolName: definition.bindings.mcpToolName,
+          sdkMethod: definition.bindings.sdkMethod,
+          rpcMethod: definition.bindings.rpcMethod,
+          rpcMethodAliases: definition.bindings.rpcMethodAliases,
+        },
+    examples: projectActionDiscoveryExamples(definition.examples),
+    surfaces: definition.surfaces,
+    toolExposure: definition.toolExposure,
+    contextualDefaults: definition.contextualDefaults,
+    inputHints: definition.inputHints,
+    outputSchema: definition.outputSchema,
+    execution: definition.execution === undefined
+      ? undefined
+      : projectActionDiscoveryExecution(definition.execution),
+    sideEffectClass: definition.sideEffectClass,
+    operation: definition.operation,
+  });
+}
+
+export function projectActionDefinitionForExternalDiscovery(
+  definition: ActionDefinitionV1,
+): ActionDiscoveryDefinitionV1 {
+  return ActionDiscoveryDefinitionV1Schema.parse({
+    ...projectActionDefinitionSummaryForExternalDiscovery(definition),
+    kindVersion: definition.kindVersion,
+    inputSchema: definition.inputSchema,
+    compatibility: definition.compatibility,
+  });
 }
 
 export function searchSerializedActionSpecs(

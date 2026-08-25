@@ -4,8 +4,11 @@ import {
   ExternalSessionOperationRecordV1Schema,
   ExternalSessionOperationSharedPresentationV1Schema,
   ExternalSessionMaterializationPublicationV1Schema,
+  ExternalSessionOperationStatusV1Schema,
   classifyExternalSessionOperationIdempotencyV1,
   decideExternalSessionOperationUpdateV1,
+  externalSessionOperationRetainsDiscardRecoveryV1,
+  isExternalSessionOperationTerminalStatusV1,
   projectExternalSessionOperationProgressV1,
   projectExternalSessionOperationSharedPresentationV1,
   resolveExternalSessionOperationTimelineV1,
@@ -246,6 +249,15 @@ describe('External Sessions durable operation contract', () => {
       ...baseRecord('takeover_persisted'),
       authorIntent: takeoverAuthorIntent,
     }).success).toBe(true);
+    // An installed Agent is routed by its qualified `{pluginId, localId}` key,
+    // never by the bare local id, so its intent must stay coherent too.
+    expect(ExternalSessionOperationRecordV1Schema.safeParse({
+      ...baseRecord('takeover_persisted'),
+      authorIntent: {
+        ...takeoverAuthorIntent,
+        agentId: 'com.example.agent/example',
+      },
+    }).success).toBe(true);
 
     for (const incoherent of [
       {
@@ -260,6 +272,13 @@ describe('External Sessions durable operation contract', () => {
         authorIntent: {
           ...takeoverAuthorIntent,
           agentId: 'different-agent',
+        },
+      },
+      {
+        ...baseRecord('takeover_persisted'),
+        authorIntent: {
+          ...takeoverAuthorIntent,
+          agentId: 'other.plugin/example',
         },
       },
       {
@@ -829,6 +848,18 @@ describe('External Sessions durable operation contract', () => {
       cancellation: undefined,
       terminalResult: { kind: 'discarded' },
     });
+    const cancelledPersistedTakeover = ExternalSessionOperationRecordV1Schema.parse({
+      ...baseRecord('takeover_persisted'),
+      revision: 2,
+      status: 'cancelled',
+      phase: 'staging',
+      updatedAtMs: 1_700_000_000_001,
+      cancellation: {
+        requestedAtMs: 1_700_000_000_001,
+        requestedAtRevision: 1,
+      },
+      terminalResult: { kind: 'cancelled' },
+    });
 
     expect(decideExternalSessionOperationUpdateV1(
       cancelledLocal,
@@ -841,6 +872,22 @@ describe('External Sessions durable operation contract', () => {
         bindings: { operationClaimId: 'replacement-local-claim' },
       }),
     )).toEqual({ kind: 'terminal_operation' });
+
+    // The operation-store retention owner must preserve every cancelled state
+    // that materializeAction still admits to explicit Discard, not just the
+    // server-partial branch. A terminal discarded record has no such action.
+    expect(externalSessionOperationRetainsDiscardRecoveryV1(
+      cancelledInitialPartial,
+    )).toBe(true);
+    expect(externalSessionOperationRetainsDiscardRecoveryV1(
+      cancelledLocal,
+    )).toBe(true);
+    expect(externalSessionOperationRetainsDiscardRecoveryV1(
+      cancelledPersistedTakeover,
+    )).toBe(true);
+    expect(externalSessionOperationRetainsDiscardRecoveryV1(
+      discardedLocal,
+    )).toBe(false);
   });
 
   it('models cancellation, explicit resume targets, discard, and crash reconciliation without authority', () => {
@@ -1226,4 +1273,27 @@ describe('External Sessions durable operation contract', () => {
       }).success).toBe(false);
     },
   );
+});
+
+describe('external session operation terminal status', () => {
+  it('classifies every declared status through the one Protocol owner', () => {
+    // Independent literal expectation: adding a status to the schema without
+    // classifying it here fails, which is exactly what five private literal
+    // sets could not do.
+    const expected: Readonly<Record<string, boolean>> = {
+      running: false,
+      awaiting_user_resume: false,
+      cancel_requested: false,
+      cancelled: true,
+      failed: false,
+      reconciliation_required: false,
+      completed: true,
+      discarded: true,
+    };
+    const statuses = ExternalSessionOperationStatusV1Schema.options;
+    expect([...statuses].sort()).toEqual(Object.keys(expected).sort());
+    for (const status of statuses) {
+      expect(isExternalSessionOperationTerminalStatusV1(status)).toBe(expected[status]);
+    }
+  });
 });

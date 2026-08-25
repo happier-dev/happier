@@ -33,7 +33,7 @@ describe('plugin UI contribution families', () => {
       sessionHeaderActions: [{
         id: 'roundtrip-header',
         title: 'Run roundtrip',
-        action: { kind: 'executeAction', action: 'roundtrip' },
+        command: { kind: 'executeAction', action: 'roundtrip' },
         order: 10,
       }],
       ui: {
@@ -73,7 +73,7 @@ describe('plugin UI contribution families', () => {
     });
     expect(parsed.sessionHeaderActions[0]).toMatchObject({
       id: 'roundtrip-header',
-      action: { kind: 'executeAction', action: 'roundtrip' },
+      command: { kind: 'executeAction', action: 'roundtrip' },
     });
     expect(parsed.ui.renderers).toEqual([
       expect.objectContaining({

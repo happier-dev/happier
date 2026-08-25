@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
     ConversationPairingCancelInputV1Schema,
     ConversationPairingCancelResultV1Schema,
+    ConversationPairingCreateInputV1Schema,
     ConversationPairingCreateResultV1Schema,
     ConversationPairingFinalizeInputV1Schema,
     ConversationPairingFinalizeResultV1Schema,
@@ -154,6 +155,51 @@ describe('Channels V1 pairing cancellation management contract', () => {
         });
         expect(ConversationPairingCreateResultV1Schema.jsonSchema).toMatchObject({
             anyOf: expect.any(Array),
+        });
+    });
+
+    it('requires pairing creation to name the conversation the binding will address', () => {
+        // The `/pair` proof arrives in a private message. Without a selected
+        // destination there is nothing else for the binding to address, so the
+        // private message becomes the binding — which is never what the person
+        // chose when they picked a group.
+        const createInput = {
+            connectionId: 'connection-1',
+            expectedConnectionRevision: 7,
+            endpointSelection: {
+                query: 'Ops room',
+                selected: { kind: 'shared', audience: 'shared', id: 'room-1' },
+            },
+            target: {
+                kind: 'session',
+                sessionId: 'session-1',
+                policy: {
+                    deliveryMode: 'repliesOnly',
+                    permissionCeiling: 'read-only',
+                    approvals: { kind: 'off' },
+                    newSession: { kind: 'off' },
+                },
+            },
+        } as const;
+
+        expect(ConversationPairingCreateInputV1Schema.parse(createInput)).toEqual(createInput);
+
+        const { endpointSelection: _omitted, ...withoutDestination } = createInput;
+        expect(ConversationPairingCreateInputV1Schema.safeParse(withoutDestination).success).toBe(false);
+        expect(ConversationPairingCreateInputV1Schema.safeParse({
+            ...createInput,
+            // A resolved endpoint is a provider answer, never a caller claim.
+            endpointSelection: { ...createInput.endpointSelection, selected: { ...createInput.endpointSelection.selected, label: 'Ops room' } },
+        }).success).toBe(false);
+        expect(ConversationPairingCreateInputV1Schema.jsonSchema).toMatchObject({
+            type: 'object',
+            additionalProperties: false,
+            required: [
+                'connectionId',
+                'expectedConnectionRevision',
+                'endpointSelection',
+                'target',
+            ],
         });
     });
 

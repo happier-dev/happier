@@ -12,6 +12,19 @@ export const TARGET_ACTION_APPROVAL_LIMITS_V1 = Object.freeze({
 
 const boundedId = z.string().min(1).max(TARGET_ACTION_APPROVAL_LIMITS_V1.idUtf16Units);
 
+/**
+ * Host-stamped routing evidence for a deferred API Action approval. It is
+ * durable approval subject data, never caller-supplied Action input.
+ */
+export const TargetActionApprovalReplayPlacementV1Schema = z.object({
+  serverId: boundedId,
+  machineId: boundedId,
+  defaultSessionId: boundedId.optional(),
+}).strict();
+export type TargetActionApprovalReplayPlacementV1 = z.infer<
+  typeof TargetActionApprovalReplayPlacementV1Schema
+>;
+
 export const TargetActionApprovalRequestV1Schema = z.object({
   v: z.literal(1), kind: z.literal('plugin_target_action'), status: ApprovalRequestStatusSchema,
   createdAtMs: z.number().int().min(0), updatedAtMs: z.number().int().min(0),
@@ -21,6 +34,7 @@ export const TargetActionApprovalRequestV1Schema = z.object({
   input: AgentRuntimeJsonValueV1Schema, accountId: boundedId.optional(), resourceId: boundedId.optional(),
   generation: boundedId, policyFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
   subjectFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+  replayPlacement: TargetActionApprovalReplayPlacementV1Schema.optional(),
   summary: z.string().min(1).max(TARGET_ACTION_APPROVAL_LIMITS_V1.summaryUtf16Units),
   detail: z.string().min(1).max(TARGET_ACTION_APPROVAL_LIMITS_V1.detailUtf16Units).optional(),
   decision: ApprovalDecisionV1Schema.optional(), execution: ApprovalExecutionV1Schema.optional(),
@@ -30,6 +44,13 @@ export const TargetActionApprovalRequestV1Schema = z.object({
   if (value.status === 'rejected' && value.decision?.kind !== 'reject') ctx.addIssue({ code: 'custom', message: 'rejected target-action approval requires reject' });
   if (value.status === 'canceled' && value.decision) ctx.addIssue({ code: 'custom', message: 'canceled target-action approval cannot contain a decision' });
   if ((value.status === 'executed' || value.status === 'failed') !== Boolean(value.execution)) ctx.addIssue({ code: 'custom', message: 'target-action approval execution/status mismatch' });
+  if (value.requestedSurface === 'api' && value.replayPlacement === undefined) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['replayPlacement'],
+      message: 'API target-action approval requires an exact daemon replay placement',
+    });
+  }
   const strictJson = AgentRuntimeJsonValueV1Schema.safeParse(value);
   if (!strictJson.success) {
     ctx.addIssue({ code: 'custom', message: 'target-action approval artifact must be strict JSON' });

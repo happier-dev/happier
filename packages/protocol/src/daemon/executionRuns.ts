@@ -40,11 +40,35 @@ const EXECUTION_RUN_MARKER_RESULT_SIZE_MAX_BYTES =
  * if session processes crash or the machine reboots.
  */
 
+/**
+ * The immutable Agent contribution the runner was actually launched with.
+ *
+ * `agentId` is a host routing id and survives a reload; it says nothing about which build of the
+ * Agent a live runner is executing. Restart adoption reconstructs Connected Account purposes and
+ * request-auth uses from the daemon's CURRENT registry, so without this fact a runner still
+ * executing generation G1 could be handed authority derived from G2's declarations. Recording the
+ * exact contribution identity plus its immutable generation lets adoption demand correspondence
+ * instead of trusting run/PID liveness as generation proof.
+ */
+export const ExecutionRunAgentContributionIdentityV1Schema = z.object({
+  pluginId: z.string().trim().min(1).max(256),
+  localId: z.string().trim().min(1).max(256),
+  immutableGenerationId: z.string().trim().min(1).max(256),
+}).strict();
+export type ExecutionRunAgentContributionIdentityV1 = z.infer<
+  typeof ExecutionRunAgentContributionIdentityV1Schema
+>;
+
 export const ExecutionRunConnectedServicesLaunchV1Schema = z.object({
   v: z.literal(1),
   activationId: z.string().uuid().optional(),
   runKey: z.string().trim().min(1),
   agentId: z.string().trim().min(1),
+  /**
+   * Absent only for a record whose writer could not prove the Agent generation. Adoption treats
+   * that as unproven and refuses, rather than upgrading it into fresh request-auth authority.
+   */
+  agentContribution: ExecutionRunAgentContributionIdentityV1Schema.optional(),
   materializationKey: z.string().trim().min(1),
   connectedServicesBindings: ConnectedServiceBindingsV1Schema,
   connectedServiceSelectionsEnv: z.record(z.string(), z.string()),

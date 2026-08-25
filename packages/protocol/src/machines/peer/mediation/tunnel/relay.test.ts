@@ -79,13 +79,14 @@ describe('peer TCP tunnel relay protocol', () => {
     const mod = await loadTunnelRelayModule();
     const authorization = {
       payload: {
-        v: 1,
+        v: 2,
         grantId: 'relay_grant_1',
         accountId: 'user_1',
         targetMachineId: 'machine_1',
         flowKind: 'tcp_tunnel',
         routeKind: 'server_relay',
         tunnelId: 'tun_1',
+        relaySocketId: 'relay_socket_1',
         destination: { host: '127.0.0.1', port: 3000 },
         capProfileId: 'interactive',
         maxFrameBytes: 64 * 1024,
@@ -144,66 +145,6 @@ describe('peer TCP tunnel relay protocol', () => {
         },
       },
     }).success).toBe(false);
-  });
-
-  it('verifies TCP tunnel relay authorization signatures against configured trust roots', async () => {
-    const mod = await loadTunnelRelayModule();
-    expect(mod?.verifyPeerTcpTunnelRelayAuthorizationV1).toBeTypeOf('function');
-    if (!mod?.verifyPeerTcpTunnelRelayAuthorizationV1) return;
-
-    const keyPair = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(8));
-    const payload = {
-      v: 1,
-      grantId: 'relay_grant_1',
-      accountId: 'user_1',
-      targetMachineId: 'machine_1',
-      flowKind: 'tcp_tunnel',
-      routeKind: 'server_relay',
-      tunnelId: 'tun_1',
-      destination: { host: '127.0.0.1', port: 3000 },
-      capProfileId: 'interactive',
-      maxFrameBytes: 64 * 1024,
-      maxIdleMs: 30_000,
-      maxDurationMs: 300_000,
-      maxTotalBytes: 64 * 1024 * 1024,
-      iat: 1_000,
-      exp: 301_000,
-      aud: 'happier-tcp-tunnel-relay-authorization',
-    } as const;
-    const authorization = {
-      payload,
-      signature: {
-        keyId: 'relay_key_1',
-        alg: 'Ed25519',
-        valueBase64Url: Buffer.from(tweetnacl.sign.detached(
-          new TextEncoder().encode(mod.createPeerTcpTunnelRelayAuthorizationSigningInputV1(payload)),
-          keyPair.secretKey,
-        )).toString('base64url'),
-      },
-    } as const;
-
-    expect(mod.verifyPeerTcpTunnelRelayAuthorizationV1({
-      authorization,
-      nowMs: 2_000,
-      trustRoots: [{
-        keyId: 'relay_key_1',
-        publicKeyBase64Url: Buffer.from(keyPair.publicKey).toString('base64url'),
-      }],
-    })).toEqual({ valid: true, payload });
-    expect(mod.verifyPeerTcpTunnelRelayAuthorizationV1({
-      authorization: {
-        ...authorization,
-        signature: {
-          ...authorization.signature,
-          valueBase64Url: Buffer.from(new Uint8Array(64).fill(1)).toString('base64url'),
-        },
-      },
-      nowMs: 2_000,
-      trustRoots: [{
-        keyId: 'relay_key_1',
-        publicKeyBase64Url: Buffer.from(keyPair.publicKey).toString('base64url'),
-      }],
-    })).toEqual({ valid: false, reasonCode: 'bad_signature' });
   });
 
   it('strictly verifies V2 relay authorizations with the relay socket id inside the signature', async () => {
@@ -302,7 +243,7 @@ describe('peer TCP tunnel relay protocol', () => {
           destination: { host: '127.0.0.1', port: 3000 },
           relayAuthorization: {
             payload: {
-              v: 1,
+              v: 2,
               grantId: 'relay_grant_voice_1',
               accountId: 'user_1',
               targetMachineId: 'machine_1',
@@ -312,6 +253,7 @@ describe('peer TCP tunnel relay protocol', () => {
               applicationKind: 'speech_transcription',
               applicationAttemptId: 'request_1',
               applicationAuthorityDigest: `sha256:${'ab'.repeat(32)}`,
+              relaySocketId: 'relay_socket_1',
               destination: { host: '127.0.0.1', port: 3000 },
               capProfileId: 'machine_live_stream_relay_caps_v1',
               maxFrameBytes: 32_000,
@@ -333,7 +275,7 @@ describe('peer TCP tunnel relay protocol', () => {
     });
 
     expect(parsed?.success).toBe(true);
-    expect(mod?.PeerTcpTunnelRelayAuthorizationPayloadV1Schema.safeParse({
+    expect(mod?.PeerTcpTunnelRelayAuthorizationPayloadV2Schema.safeParse({
       ...(parsed?.success ? parsed.data.frame.kind === 'open'
         ? parsed.data.frame.open.relayAuthorization?.payload
         : {}

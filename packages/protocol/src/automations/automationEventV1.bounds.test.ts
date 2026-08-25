@@ -30,7 +30,6 @@ import {
   AutomationStoredContentEnvelopeV1Schema,
   MAX_AUTOMATION_CONVERSATION_ADMIT_TEXT_UTF8_BYTES,
   MAX_AUTOMATION_EVENT_FILTER_CLAUSES,
-  MAX_AUTOMATION_EVENT_ADMIT_DEFINITIONS_PER_ACTION,
   MAX_AUTOMATION_EVENT_ADMIT_DEFINITIONS_PER_CALL,
   MAX_AUTOMATION_EVENT_ADMIT_HTTP_REQUEST_UTF8_BYTES,
   MAX_AUTOMATION_EVENT_FILTER_IN_VALUES,
@@ -348,20 +347,27 @@ describe('Automation event V1 exact bounds', () => {
       nextCursor: null,
     }).success).toBe(false);
 
-    const admitDefinitionsAtActionMax = Array.from(
-      { length: MAX_AUTOMATION_EVENT_ADMIT_DEFINITIONS_PER_ACTION },
+    // The semantic Action is the complete adopted snapshot and deliberately
+    // has no aggregate definition ceiling. E3 partitions it into the bounded
+    // private calls below; retaining the former Account-level 10,000 cap here
+    // would reject a valid snapshot before that canonical partitioner runs.
+    const definitionsBeyondFormerUnapprovedAggregateLimit = Array.from(
+      { length: 10_001 },
       (_, index) => ({ automationId: `automation-${index}`, templateVersion: 1, sourceSelectorId }),
     );
     expect(AutomationEventAdmitInputV1Schema.safeParse({
       ...admitInput({}),
-      definitions: admitDefinitionsAtActionMax,
+      definitions: definitionsBeyondFormerUnapprovedAggregateLimit,
     }).success).toBe(true);
     expect(AutomationEventAdmitInputV1Schema.safeParse({
       ...admitInput({}),
-      definitions: [...admitDefinitionsAtActionMax, admitDefinitionsAtActionMax[0]],
-    }).success).toBe(false);
+      definitions: [
+        ...definitionsBeyondFormerUnapprovedAggregateLimit,
+        definitionsBeyondFormerUnapprovedAggregateLimit[0],
+      ],
+    }).success).toBe(true);
 
-    const admitDefinitionsAtCallMax = admitDefinitionsAtActionMax.slice(
+    const admitDefinitionsAtCallMax = definitionsBeyondFormerUnapprovedAggregateLimit.slice(
       0,
       MAX_AUTOMATION_EVENT_ADMIT_DEFINITIONS_PER_CALL,
     );
@@ -371,19 +377,19 @@ describe('Automation event V1 exact bounds', () => {
     }).success).toBe(true);
     expect(AutomationEventAdmitHttpInputV1Schema.safeParse({
       ...admitInput({}),
-      definitions: [...admitDefinitionsAtCallMax, admitDefinitionsAtActionMax[15]],
+      definitions: [...admitDefinitionsAtCallMax, definitionsBeyondFormerUnapprovedAggregateLimit[15]],
     }).success).toBe(false);
 
-    const actionResultsAtMax = Array.from(
-      { length: MAX_AUTOMATION_EVENT_ADMIT_DEFINITIONS_PER_ACTION },
+    const actionResultsBeyondFormerLimit = Array.from(
+      { length: 10_001 },
       () => ({ kind: 'skipped' as const, reason: 'filtered' as const, checkpointSafe: true as const }),
     );
-    expect(AutomationEventAdmitResultV1Schema.safeParse({ results: actionResultsAtMax }).success).toBe(true);
+    expect(AutomationEventAdmitResultV1Schema.safeParse({ results: actionResultsBeyondFormerLimit }).success).toBe(true);
     expect(AutomationEventAdmitResultV1Schema.safeParse({
-      results: [...actionResultsAtMax, actionResultsAtMax[0]],
-    }).success).toBe(false);
+      results: [...actionResultsBeyondFormerLimit, actionResultsBeyondFormerLimit[0]],
+    }).success).toBe(true);
 
-    const callResultsAtMax = actionResultsAtMax.slice(
+    const callResultsAtMax = actionResultsBeyondFormerLimit.slice(
       0,
       MAX_AUTOMATION_EVENT_ADMIT_DEFINITIONS_PER_CALL,
     );
@@ -409,7 +415,7 @@ describe('Automation event V1 exact bounds', () => {
       continuation: { kind: 'stopped', reason: 'unknown' },
     }).success).toBe(false);
     expect(AutomationEventAdmitHttpResultV1Schema.safeParse({
-      results: [...callResultsAtMax, actionResultsAtMax[15]],
+      results: [...callResultsAtMax, actionResultsBeyondFormerLimit[15]],
       continuation: readyContinuation,
     }).success).toBe(false);
   }, 30_000);
@@ -682,7 +688,11 @@ describe('Automation event V1 exact bounds', () => {
       }),
     );
     // This is deliberately well below the per-definition 512 KiB envelope
-    // ceiling. The approved Action cardinality is still 500 definitions.
+    // ceiling. The 500 below is the source-LIST page cardinality
+    // (MAX_AUTOMATION_EVENT_SOURCE_DEFINITIONS_PER_PAGE), not an Action
+    // cardinality. One private admission call remains capped at 15
+    // (MAX_AUTOMATION_EVENT_ADMIT_DEFINITIONS_PER_CALL), while E3 may
+    // partition a complete adopted Action snapshot without an aggregate cap.
     const executionRecipe = 'x'.repeat(34 * 1024);
     const request = {
       v: 1 as const,

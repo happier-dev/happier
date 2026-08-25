@@ -24,6 +24,7 @@ import {
     ConversationConnectionOverlapSafetyV1ProtocolSchema,
     ConversationConnectionReplayContinuityV1ProtocolSchema,
     ConversationOutboundTextLimitV1ProtocolSchema,
+    ConversationProviderSetupGuidanceV1ProtocolSchema,
     ConversationProviderSetupRemediationV1ProtocolSchema,
 } from '../provider/setup.js';
 import { ConversationJsonValueV1ProtocolSchema } from '../json.js';
@@ -71,6 +72,7 @@ const conversationConnectionPrepareReadyV1 = defineProtocolObject({
     // it here is how a surface ends up offering a policy the platform refuses.
     sharedEndpointInputModes: ConversationSharedEndpointInputModesV1ProtocolSchema.optional(),
     destinationLabel: ConversationEndpointDisplayLabelV1ProtocolSchema.optional(),
+    setupGuidance: ConversationProviderSetupGuidanceV1ProtocolSchema.optional(),
 }, { policy: 'closed' });
 
 /**

@@ -141,6 +141,12 @@ const FEATURE_CATALOG_DEFINITION = {
     dependencies: ['sessions'],
     representation: 'server',
   },
+  'sessions.drafts': {
+    description: 'Cross-device composer and new-session draft synchronization.',
+    defaultFailMode: 'fail_closed',
+    dependencies: ['sessions'],
+    representation: 'server',
+  },
   'sessions.usageLimitRecovery': {
     description: 'Session usage-limit recovery, wait/resume intents, and usage-limit retry controls.',
     defaultFailMode: 'fail_closed',

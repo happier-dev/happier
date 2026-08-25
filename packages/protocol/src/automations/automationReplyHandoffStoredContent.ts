@@ -15,9 +15,9 @@ import {
   AutomationRunResultStoredPayloadV1Schema,
   AutomationRunResultStoredV1Schema,
   validateAutomationReplyHandoffStoredEnvelopeOuterForModeV1,
+  type AutomationConversationReplyContextCorrespondenceV1,
   type AutomationReplyHandoffCorrespondenceV1,
   type AutomationReplyHandoffStoredContentOpenFailureV1,
-  type AutomationResultDeliverySourceV1,
   type AutomationResultDeliveryResultV1,
   type AutomationRunResultCorrespondenceV1,
   type AutomationRunResultV1,
@@ -143,14 +143,14 @@ export function openAutomationRunResultStoredEnvelopeV1(params: Readonly<{
 }
 
 export function sealAutomationConversationReplyContextStoredEnvelopeV1(params: Readonly<{
-  correspondence: AutomationReplyHandoffCorrespondenceV1;
-  source: AutomationResultDeliverySourceV1;
+  correspondence: AutomationConversationReplyContextCorrespondenceV1;
+  templateVersion: number;
   opaqueContext: AutomationEventReplyContextV1;
 }> & AutomationReplyHandoffStoredEnvelopeSealModeV1) {
   const payload = AutomationConversationReplyContextStoredPayloadV1Schema.parse({
     v: 1,
     correspondence: params.correspondence,
-    source: params.source,
+    templateVersion: params.templateVersion,
     opaqueContext: params.opaqueContext,
   });
   if (params.mode === 'plain') {
@@ -174,8 +174,8 @@ export function openAutomationConversationReplyContextStoredEnvelopeV1(params: R
 }>): (
   | Readonly<{
       kind: 'available';
-      correspondence: AutomationReplyHandoffCorrespondenceV1;
-      source: AutomationResultDeliverySourceV1;
+      correspondence: AutomationConversationReplyContextCorrespondenceV1;
+      templateVersion: number;
       opaqueContext: AutomationEventReplyContextV1;
     }>
   | AutomationReplyHandoffStoredContentOpenFailureV1
@@ -189,7 +189,7 @@ export function openAutomationConversationReplyContextStoredEnvelopeV1(params: R
   return {
     kind: 'available',
     correspondence: opened.payload.correspondence,
-    source: opened.payload.source,
+    templateVersion: opened.payload.templateVersion,
     opaqueContext: opened.payload.opaqueContext,
   };
 }

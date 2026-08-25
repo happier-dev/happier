@@ -23,6 +23,10 @@ describe('Channels V1 provider setup outcomes', () => {
             overlapSafety: 'safe',
             replayContinuity: 'none',
             outboundTextLimit: { maximum: 4_000, unit: 'unicodeCodePoints' },
+            setupGuidance: {
+                externalUrl: 'https://provider.example.test/install',
+                requiredPermissionsLabel: 'Read messages, Send messages',
+            },
             webhookContributionRef: { pluginId: 'happier.channel.example', localId: 'webhook' },
         } as const;
 
@@ -46,6 +50,20 @@ describe('Channels V1 provider setup outcomes', () => {
         expect(ConversationProviderSetupResultV1Schema.safeParse({
             ...durablePush,
             supportedTransports: ['checkpointedPull', 'checkpointedPull'],
+        }).success).toBe(false);
+        expect(ConversationProviderSetupResultV1Schema.safeParse({
+            ...durablePush,
+            setupGuidance: {
+                externalUrl: 'javascript:alert(1)',
+                requiredPermissionsLabel: 'Read messages',
+            },
+        }).success).toBe(false);
+        expect(ConversationProviderSetupResultV1Schema.safeParse({
+            ...durablePush,
+            setupGuidance: {
+                externalUrl: 'https://provider.example.test/install',
+                requiredPermissionsLabel: '',
+            },
         }).success).toBe(false);
         expect(ConversationProviderSetupResultV1Schema.jsonSchema).toMatchObject({
             properties: {

@@ -122,6 +122,49 @@ describe('Connected Account daemon RPC v1', () => {
         peerClass: 'exact_v0_2_1',
       },
     });
+    // The daemon relays whatever the Account holds for the service, including
+    // rows preserved past the capacity a current writer would admit. Rejecting
+    // them here would take the whole describe response, not one row, offline.
+    expect(ConnectedAccountDaemonControlResponseSchema.safeParse({
+      status: 'described',
+      service: {
+        pluginId: 'happier.agent.codex',
+        localId: 'openai-codex',
+      },
+      descriptor: {
+        id: 'openai-codex',
+        title: 'Codex',
+        authentication: {
+          defaultModeId: 'oauth',
+          modes: [{
+            id: 'oauth',
+            kind: 'oauthAuthorizationCode',
+            pkce: 'required',
+            outcomeReconciliation: 'none',
+          }],
+        },
+      },
+      generation: 'generation-1',
+      immutableGenerationId: 'artifact-1',
+      accounts: Array.from({ length: 501 }, (_unused, index) => ({
+        ref: {
+          service: {
+            pluginId: 'happier.agent.codex',
+            localId: 'openai-codex',
+          },
+          accountId: `retained/${index}`,
+        },
+        status: 'connected',
+        authenticationModeId: 'oauth',
+        revisionSemantics: 'revisioned',
+        credentialRevision: 'csr_abcdefghijklmnopqrstuvwxyz',
+        configurationReady: false,
+        configurationRevision: null,
+        kind: 'oauth',
+        expiresAt: null,
+        lastUsedAt: null,
+      })),
+    }).success).toBe(true);
     expect(ConnectedAccountControlCommandRequestSchema.parse({
       v: 1,
       machineId: 'machine-1',

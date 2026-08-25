@@ -3,7 +3,10 @@ import { z } from 'zod';
 import { SessionIdSchema } from '../idsV1.js';
 import { AgentExternalSessionTranscriptRawRecordSchema } from '../messages/agentExternalSessionTranscriptRawRecord.js';
 import { LinkedExternalSessionQualifiedIdentityV1Schema } from './linkedSessionMetadata.js';
-import { createExternalSessionTranscriptSourceItemV1Schema } from './sourceTranscriptItemV1.js';
+import {
+  createExternalSessionTranscriptSourceItemV1Schema,
+  ExternalSessionTranscriptItemIdV1Schema,
+} from './sourceTranscriptItemV1.js';
 import { asProtocolZod } from "../../plugins/actions/internalProtocolZodAdapter.js";
 
 export const EXTERNAL_SESSION_TRANSCRIPT_INVALIDATION_EVENT_V1 =
@@ -32,7 +35,6 @@ export type ExternalSessionRefreshCursorIdentityV1 = z.infer<
   typeof ExternalSessionRefreshCursorIdentityV1Schema
 >;
 const ExternalSessionRefreshBoundaryV1Schema = z.string().trim().min(1).max(2_000);
-const ExternalSessionRefreshItemIdV1Schema = z.string().trim().min(1).max(2_000);
 const ExternalSessionRefreshReadDiagnosticV1Schema = z.object({
   code: z.string().trim().min(1).max(128),
   count: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
@@ -97,7 +99,7 @@ export type ExternalSessionTranscriptRefreshReadAfterRequestV1 = z.infer<
 
 export const ExternalSessionTranscriptRefreshItemV1Schema =
   createExternalSessionTranscriptSourceItemV1Schema({
-    identifier: ExternalSessionRefreshItemIdV1Schema,
+    identifier: ExternalSessionTranscriptItemIdV1Schema,
     raw: AgentExternalSessionTranscriptRawRecordSchema,
   }).strict();
 export type ExternalSessionTranscriptRefreshItemV1 = z.infer<

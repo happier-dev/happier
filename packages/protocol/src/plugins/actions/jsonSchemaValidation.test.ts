@@ -22,7 +22,9 @@ import {
   isValidPluginJsonSchemaValue,
   normalizePluginJsonSchema,
   preparePluginJsonSchema,
+  rehydrateCanonicalProtocolComposableSchema,
   type ProtocolComposableSchema,
+  type ProtocolJsonValue,
 } from './jsonSchemaValidation';
 
 describe('plugin JSON Schema validation policy', () => {
@@ -355,6 +357,60 @@ describe('protocol composable schema kernel', () => {
       expect(schema.safeParse(value).success).toBe(false);
       expect(isValidPluginJsonSchemaValue(validates, value)).toBe(false);
     }
+  });
+
+  it('rehydrates optional object fields without making the enclosing schema optional', () => {
+    const authored = defineProtocolObject({
+      requiredLabel: defineProtocolString({ minLength: 1 }),
+      optionalLabel: defineProtocolString({ minLength: 1 }).optional(),
+    }, { policy: 'closed' });
+    const rehydrated = rehydrateCanonicalProtocolComposableSchema(authored.jsonSchema);
+
+    expect(rehydrated).not.toBeNull();
+    if (rehydrated === null) throw new Error('Expected the canonical object schema to rehydrate');
+    expectTypeOf(rehydrated).toEqualTypeOf<
+      ProtocolComposableSchema<ProtocolJsonValue, ProtocolJsonValue>
+    >();
+    expect(rehydrated.safeParse({ requiredLabel: 'ready' })).toEqual({
+      success: true,
+      data: { requiredLabel: 'ready' },
+    });
+    expect(rehydrated.safeParse({}).success).toBe(false);
+    expect(rehydrated.safeParse(undefined).success).toBe(false);
+  });
+
+  it('rehydrates exact nested unknown-key policies and declines merely valid JSON Schema', () => {
+    const authored = defineProtocolObject({
+      drop: defineProtocolObject({ label: defineProtocolString() }, { policy: 'additive-open/drop' }),
+      preserve: defineProtocolObject({ label: defineProtocolString() }, { policy: 'additive-open/preserve' }),
+      typed: defineProtocolObject({ label: defineProtocolString() }, {
+        policy: 'additive-open/preserve',
+        additionalProperties: defineProtocolString({ minLength: 1 }),
+      }),
+    }, { policy: 'closed' });
+    const rehydrated = rehydrateCanonicalProtocolComposableSchema(authored.jsonSchema);
+
+    expect(rehydrated?.safeParse({
+      drop: { label: 'drop', future: 'discarded' },
+      preserve: { label: 'preserve', future: 'retained' },
+      typed: { label: 'typed', future: 'also-retained' },
+    })).toEqual({
+      success: true,
+      data: {
+        drop: { label: 'drop' },
+        preserve: { label: 'preserve', future: 'retained' },
+        typed: { label: 'typed', future: 'also-retained' },
+      },
+    });
+    // The emitted DSL omits an empty required list. A hand-authored schema
+    // remains valid JSON Schema but is not an exact canonical projection.
+    expect(rehydrateCanonicalProtocolComposableSchema({
+      $schema: 'http://json-schema.org/draft-07/schema#',
+      type: 'object',
+      properties: {},
+      required: [],
+      additionalProperties: false,
+    })).toBeNull();
   });
 
   it('keeps unique-array input acceptance aligned with emitted JSON Schema before child normalization', () => {

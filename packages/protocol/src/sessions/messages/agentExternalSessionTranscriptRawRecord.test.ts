@@ -33,6 +33,25 @@ describe('AgentExternalSessionTranscriptRawRecordSchema', () => {
     }).success).toBe(true);
   });
 
+  it('normalizes accessor-backed and custom-prototype structural user envelopes', () => {
+    const accessor = { role: 'user' } as Record<string, unknown>;
+    Object.defineProperty(accessor, 'content', {
+      enumerable: true,
+      get: () => ({ type: 'text', text: 'hello' }),
+    });
+    const customPrototype = Object.assign(Object.create({ inherited: true }), {
+      role: 'user',
+      content: { type: 'text', text: 'hello' },
+    });
+
+    for (const value of [accessor, customPrototype]) {
+      expect(AgentExternalSessionTranscriptRawRecordSchema.safeParse(value)).toMatchObject({
+        success: true,
+        data: { role: 'user', content: { type: 'text', text: 'hello' } },
+      });
+    }
+  });
+
   it.each(['output', 'event', 'codex', 'acp'] as const)(
     'admits the canonical %s agent wrapper',
     (type) => {

@@ -28,9 +28,7 @@ const RUNTIME_ACTION_REAL_EXECUTOR_FAMILY_IDS: readonly RuntimeActionIdV1[] = [
   ...ACTION_ID_FAMILIES_V1.local_services_launcher,
   ...ACTION_ID_FAMILIES_V1.local_services_actions,
   ...ACTION_ID_FAMILIES_V1.local_services_public_preview,
-  ...ACTION_ID_FAMILIES_V1.browser_control.filter(
-    (actionId) => actionId !== 'browser.session.create' && actionId !== 'browser.session.close',
-  ),
+  ...ACTION_ID_FAMILIES_V1.browser_control,
   ...ACTION_ID_FAMILIES_V1.browser_automation,
   ...ACTION_ID_FAMILIES_V1.peer_mediation_observability,
 ];

@@ -623,7 +623,7 @@ export async function openReviewCommentSensitiveMigrationSourceV1(
     : { status: 'locked', reason: 'content_binding_mismatch', structural, source };
 }
 
-const ReviewCommentMutationActionIdV1Schema = z.enum([
+export const ReviewCommentMutationActionIdV1Schema = z.enum([
   'reviews.comments.create',
   'reviews.comments.transition',
   'reviews.comments.edit',
@@ -633,6 +633,7 @@ const ReviewCommentMutationActionIdV1Schema = z.enum([
   'reviews.comments.attachEvidence',
   'reviews.comments.bulkTransition',
 ]);
+export type ReviewCommentMutationActionIdV1 = z.infer<typeof ReviewCommentMutationActionIdV1Schema>;
 
 const ReviewCommentEventRequestTargetV1Schema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('create') }).strict(),

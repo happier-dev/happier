@@ -1,4 +1,5 @@
 import { definePlugin } from '@happier-dev/plugin-sdk';
+import type { PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
 import { describe, expect, it } from 'vitest';
 
 import { ConversationProvidersContributionProtocolV1 } from '../../v1/provider/contribution.js';
@@ -17,14 +18,14 @@ const EXTERNAL_ACTION_IDS = {
     connectionStop: 'author/close-socket',
 } as const;
 
-const contributorDefinedSetupInputSchema = {
+const contributorDefinedSetupInputSchema: PluginJsonSchema = {
     type: 'object',
     additionalProperties: false,
     properties: {
         installationToken: { type: 'string', minLength: 1 },
     },
     required: ['installationToken'],
-} as const;
+};
 
 type MutableProviderManifest = {
     contributes: {
@@ -170,7 +171,7 @@ describe('Channels V1 provider-contribution conformance', () => {
 
     it('accepts an arbitrary external remediation Action with host confirmation metadata', () => {
         const manifest = createExternalProviderManifest();
-        const remediation = manifest.contributes.actions.find((action) => (
+        const remediation = manifest.contributes.actions?.find((action) => (
             action.id === EXTERNAL_ACTION_IDS.setupRemediation
         ));
 

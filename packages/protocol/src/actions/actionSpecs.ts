@@ -34,6 +34,10 @@ import {
   type ConversationTurnOriginV1,
 } from '../messages/structured/conversationTurnOriginV1.js';
 import {
+  resolveSubagentLaunchStructuredSend,
+  SubagentLaunchV1Schema,
+} from '../messages/structured/subagentLaunchV1.js';
+import {
   ACTION_IDS,
   ACTION_ID_FAMILIES_V1,
   ActionIdSchema,
@@ -161,8 +165,8 @@ import {
   ExecutionRunTurnStreamStartResponseSchema,
 } from '../execution/runs/index.js';
 import {
-  ActionDefinitionSummaryV1Schema,
-  ActionDefinitionV1Schema,
+  ActionDiscoveryDefinitionSummaryV1Schema,
+  ActionDiscoveryDefinitionV1Schema,
 } from './actionDefinitionV1.js';
 import {
   ExecutionRunStartRequestBaseSchema,
@@ -196,6 +200,8 @@ import {
   SessionPermissionRemotePendingListOutputV1Schema,
   SessionPermissionRemoteRespondInputV1Schema,
   SessionPermissionRemoteRespondOutputV1Schema,
+  SessionUserActionRemoteAnswerInputV1Schema,
+  SessionUserActionRemoteAnswerOutputV1Schema,
 } from '../sessions/permissions/v1.js';
 import { ProviderConnectionIdSchema } from '../providers/ids.js';
 import {
@@ -1400,6 +1406,46 @@ const PathsListRecentInputSchema = z.object({
   limit: z.number().int().min(1).max(50).optional(),
 }).passthrough();
 
+/**
+ * The persisted project registry read.
+ *
+ * It narrows by machine and count only. It deliberately does NOT filter by
+ * hosting provider or repository name: matching a repository to a checkout is
+ * one decision with one owner, and a filter here would make this a second place
+ * that rule lives — silently disagreeing with the caller's own matcher the day
+ * either one changes. The registry is a bounded local read, so the caller
+ * receives it and decides.
+ */
+const ProjectsListInputSchema = z.object({
+  machineId: z.string().min(1).optional(),
+  limit: z.number().int().min(1).max(200).optional(),
+}).passthrough();
+
+/**
+ * The Prompt Library invocation inventory read.
+ *
+ * It returns the invocation entries themselves — stable `id`, user-facing
+ * `token`, title, behavior — and never a prompt body: an inventory that
+ * expanded every referenced document would fetch every artifact in the Library
+ * to answer "which prompts exist".
+ */
+const PromptInvocationsListInputSchema = z.object({
+  limit: z.number().int().min(1).max(500).optional(),
+}).passthrough();
+
+/**
+ * Resolve ONE Prompt Library invocation to the text it produces.
+ *
+ * `invocationId` is the entry's stable id, never the renameable slash token:
+ * renaming a command must not break a stored reference to it. Rendering the
+ * body is the Library's own job, so this is a projection of the incumbent
+ * expansion owner rather than a second template renderer.
+ */
+const PromptInvocationResolveInputSchema = z.object({
+  invocationId: z.string().min(1),
+  argsText: z.string().optional(),
+}).passthrough();
+
 const MachinesListInputSchema = z.object({
   limit: z.number().int().min(1).max(200).optional(),
 }).passthrough();
@@ -1451,6 +1497,29 @@ const AgentSpawnOptionsListInputSchema = AgentSpawnOptionsListInputBaseSchema.pa
   }
   validateAgentIdAndBackendTargetKeySelection(value, ctx);
 });
+
+/**
+ * `sessions.spawn.profiles.list` is the one spawn-option source whose agent
+ * scope is a FILTER, not a requirement.
+ *
+ * Models, config options and session modes cannot be enumerated without knowing
+ * whose they are, so the shared schema demands an agent. A Launch Profile is the
+ * other way round: `LaunchProfileListItemV1.supportedAgentIds` rides every row,
+ * so an unscoped list loses no information, and a caller that selects a profile
+ * FIRST — a Triage action does exactly that, and the profile then supplies the
+ * agent — has no agent to scope by. Requiring one made that read fail input
+ * validation, which the caller could only observe as "the catalog did not
+ * answer": the selector stayed empty and every profile-configured press refused
+ * forever.
+ *
+ * A contradictory pair is still refused, because half an agent scope is not a
+ * weaker filter.
+ */
+const SpawnProfilesListInputSchema = AgentSpawnOptionsListInputBaseSchema
+  .passthrough()
+  .superRefine((value, ctx) => {
+    validateAgentIdAndBackendTargetKeySelection(value, ctx);
+  });
 
 const AgentsConfigOptionsListInputSchema = AgentSpawnOptionsListInputBaseSchema.extend({
   modelId: z.string().min(1).optional(),
@@ -1507,11 +1576,11 @@ const ActionSpecGetInputSchema = z.object({
 }).passthrough();
 
 const ActionSpecSearchResultSchema = z.object({
-  actionSpecs: z.array(ActionDefinitionSummaryV1Schema),
+  actionSpecs: z.array(ActionDiscoveryDefinitionSummaryV1Schema),
 }).strict();
 
 const ActionSpecGetResultSchema = z.object({
-  actionSpec: ActionDefinitionV1Schema,
+  actionSpec: ActionDiscoveryDefinitionV1Schema,
 }).strict();
 
 const ActionOptionsResolveInputSchema = z.object({
@@ -1547,6 +1616,10 @@ const CurrentUiContextCommandInvokeInputSchema = z.object({
 
 const SessionSendMessageInputSchema = z.object({
   sessionId: z.string().min(1).optional(),
+  // The executor re-admits a plugin-bound input through this canonical shape
+  // before dispatch. Keep the content rule here too: attachment-only is valid,
+  // while the executor still rejects authored attachments from non-plugin
+  // callers before the writer.
   message: z.string(),
   requestedAction: PendingRequestedActionV1Schema.optional(),
   /**
@@ -1565,9 +1638,20 @@ const SessionSendMessageInputSchema = z.object({
   wait: z.boolean().optional(),
   timeoutSeconds: z.number().int().min(1).max(3600).optional(),
 }).passthrough().superRefine(requireSessionInputContent).superRefine((value, ctx) => {
-  if (value.providerConnectionId !== undefined
-    && value.providerConnectionId !== null
-    && typeof value.modelOverride !== 'string') {
+  if (value.providerConnectionId === undefined) return;
+  // A Provider connection is only ever applied together with the model
+  // selection it sources. Without a `modelOverride` the send path composes no
+  // selection at all, so the connection — including the explicit native `null`
+  // — would be accepted and then silently discarded.
+  if (value.modelOverride === undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['modelOverride'],
+      message: 'modelOverride must be provided when providerConnectionId is set',
+    });
+    return;
+  }
+  if (value.providerConnectionId !== null && typeof value.modelOverride !== 'string') {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ['modelOverride'],
@@ -1577,13 +1661,43 @@ const SessionSendMessageInputSchema = z.object({
 });
 
 /** Plugin Session messages carry only host-attributed admission intent. */
-const SessionSendMessagePluginInputV1Schema = z.object({
+const SessionSendUserTextPluginInputV1Schema = z.object({
   sessionId: z.string().min(1),
+  // Blank only when an attachment carries the input, decided by the one
+  // `requireSessionInputContent` owner this binding shares with
+  // `PluginSessionInputRequestV1Schema`. A `.min(1)` here would let the Action
+  // surface refuse an attachment-only input the seam beneath it admits.
   message: z.string(),
   idempotencyKey: PluginSessionInputIdempotencyKeyV1Schema,
   source: PluginSessionInputSourceV1Schema.optional(),
+  // Declared Composer attachment drafts admitted alongside the text. The same
+  // author half the Composer's `attachment.add` carries; the host qualifies the
+  // caller's plugin id and stamps instance identity and type label.
   attachments: PluginSessionInputAttachmentsV1Schema.optional(),
 }).strict().superRefine(requireSessionInputContent);
+
+const SessionSendSubagentLaunchPluginInputV1Schema = z.object({
+  sessionId: z.string().min(1),
+  kind: z.literal('sessionSubagentLaunch'),
+  launch: SubagentLaunchV1Schema,
+  idempotencyKey: PluginSessionInputIdempotencyKeyV1Schema,
+}).strict();
+
+const SessionSendMessagePluginInputV1Schema = z.union([
+  SessionSendUserTextPluginInputV1Schema,
+  SessionSendSubagentLaunchPluginInputV1Schema,
+]);
+
+function bindPluginSessionSendInput(value: unknown): unknown {
+  const input = SessionSendMessagePluginInputV1Schema.parse(value);
+  if ('kind' in input && input.kind === 'sessionSubagentLaunch') {
+    return {
+      ...input,
+      message: resolveSubagentLaunchStructuredSend(input.launch).text,
+    };
+  }
+  return input;
+}
 
 const SessionPermissionRespondInputSchema = z.object({
   sessionId: z.string().min(1).optional(),
@@ -1983,6 +2097,9 @@ const RESULT_REQUIRED_APPROVAL_ACTION_IDS = [
   'session.handoff.prepare_target_result.get',
   'session.handoff.status.get',
   'paths.list_recent',
+  'projects.list',
+  'prompts.invocations.list',
+  'prompts.invocation.resolve',
   'machines.list',
   'servers.list',
   'review.engines.list',
@@ -2047,8 +2164,6 @@ const RESULT_REQUIRED_APPROVAL_ACTION_IDS = [
   'scm.pullRequest.openCompose',
   'scm.hostingRepository.describePublishTargets',
   'scm.diffSummary.generate',
-  'browser.session.create',
-  'browser.session.close',
   'browser.view.open',
   'browser.view.close',
   'browser.view.focus',
@@ -2197,6 +2312,7 @@ const RESULT_NONE_APPROVAL_ACTION_IDS = [
   'automation.conversation.admit',
   'session.permission.remote.pending.list',
   'session.permission.remote.respond',
+  'session.user_action.remote.answer',
   'session.permission.remote.grants.list',
   'session.permission.remote.grants.revoke',
   ...REVIEW_COMMENT_ACTION_IDS_V1,
@@ -2266,11 +2382,11 @@ const RESULT_OPTIONAL_DEFERRED_APPROVAL_ACTION_IDS = [
   'plugins.scaffold',
   'plugins.install',
   'plugins.uninstall',
-  'plugins.dev',
-  'plugins.author.install',
-  'plugins.author.typecheck',
-  'plugins.author.build',
-  'plugins.author.test',
+  'plugins.dev.submit',
+  'plugins.dev.install',
+  'plugins.dev.typecheck',
+  'plugins.dev.build',
+  'plugins.dev.test',
   'plugins.doctor',
   'plugins.pack',
   'plugins.reload',
@@ -2307,6 +2423,7 @@ const REVIEW_COMMENT_ACTION_TITLES: Readonly<Record<ReviewCommentActionIdV1, str
   'reviews.comments.setDisposition': 'Set review comment disposition',
   'reviews.comments.attachEvidence': 'Attach review comment evidence',
   'reviews.comments.bulkTransition': 'Bulk transition review comments',
+  'reviews.comments.claimPublicationDispatch': 'Claim review comment publication dispatch',
 });
 
 const REVIEW_COMMENT_ACTION_SDK_METHODS: Readonly<Record<ReviewCommentActionIdV1, string>> = Object.freeze({
@@ -2320,6 +2437,7 @@ const REVIEW_COMMENT_ACTION_SDK_METHODS: Readonly<Record<ReviewCommentActionIdV1
   'reviews.comments.setDisposition': 'reviews.comments.setDisposition',
   'reviews.comments.attachEvidence': 'reviews.comments.attachEvidence',
   'reviews.comments.bulkTransition': 'reviews.comments.bulkTransition',
+  'reviews.comments.claimPublicationDispatch': 'reviews.comments.claimPublicationDispatch',
 });
 
 const REVIEW_COMMENT_ACTION_RPC_METHODS: Readonly<Record<ReviewCommentActionIdV1, string>> = Object.freeze({
@@ -2333,6 +2451,7 @@ const REVIEW_COMMENT_ACTION_RPC_METHODS: Readonly<Record<ReviewCommentActionIdV1
   'reviews.comments.setDisposition': RPC_METHODS.REVIEW_COMMENTS_SET_DISPOSITION,
   'reviews.comments.attachEvidence': RPC_METHODS.REVIEW_COMMENTS_ATTACH_EVIDENCE,
   'reviews.comments.bulkTransition': RPC_METHODS.REVIEW_COMMENTS_BULK_TRANSITION,
+  'reviews.comments.claimPublicationDispatch': RPC_METHODS.REVIEW_COMMENTS_CLAIM_PUBLICATION_DISPATCH,
 });
 
 const PluginSessionHookAgentPluginInputSchema = z.object({
@@ -2550,11 +2669,11 @@ const PluginDevLoopActionInputSchemas = {
   'plugins.scaffold': PluginScaffoldActionInputSchema,
   'plugins.install': PluginInstallActionInputSchema,
   'plugins.uninstall': PluginUninstallActionInputSchema,
-  'plugins.dev': PluginDevActionInputSchema,
-  'plugins.author.install': PluginAuthorActionInputSchema,
-  'plugins.author.typecheck': PluginAuthorActionInputSchema,
-  'plugins.author.build': PluginAuthorActionInputSchema,
-  'plugins.author.test': PluginAuthorActionInputSchema,
+  'plugins.dev.submit': PluginDevActionInputSchema,
+  'plugins.dev.install': PluginAuthorActionInputSchema,
+  'plugins.dev.typecheck': PluginAuthorActionInputSchema,
+  'plugins.dev.build': PluginAuthorActionInputSchema,
+  'plugins.dev.test': PluginAuthorActionInputSchema,
   'plugins.doctor': PluginDoctorActionInputSchema,
   'plugins.pack': PluginPackActionInputSchema,
   'plugins.reload': PluginReloadActionInputSchema,
@@ -2566,11 +2685,11 @@ const PluginDevLoopActionResultKindSchema = z.enum([
   'plugins_scaffold',
   'plugins_install',
   'plugins_uninstall',
-  'plugins_dev',
-  'plugins_author_install',
-  'plugins_author_typecheck',
-  'plugins_author_build',
-  'plugins_author_test',
+  'plugins_dev_submit',
+  'plugins_dev_install',
+  'plugins_dev_typecheck',
+  'plugins_dev_build',
+  'plugins_dev_test',
   'plugins_doctor',
   'plugins_pack',
   'plugins_reload',
@@ -2596,7 +2715,7 @@ const PluginDevLoopPendingReviewSchema = z.discriminatedUnion('kind', [
 
 const PluginDevLoopReviewRequiredActionOutputSchema = z.object({
   ok: z.literal(false),
-  kind: z.enum(['plugins_install', 'plugins_dev', 'plugins_reload']),
+  kind: z.enum(['plugins_install', 'plugins_dev_submit', 'plugins_reload']),
   outcome: z.literal('reviewRequired'),
   // A pending daemon candidate is one nested value. An Action may report it,
   // but never decides it or supplies authenticated user interaction evidence.
@@ -2634,11 +2753,11 @@ const PLUGIN_DEV_LOOP_ACTION_TITLES: Readonly<Record<PluginDevLoopActionIdV1, st
   'plugins.scaffold': 'Scaffold plugin',
   'plugins.install': 'Install plugin',
   'plugins.uninstall': 'Uninstall plugin',
-  'plugins.dev': 'Submit plugin development snapshot',
-  'plugins.author.install': 'Prepare plugin author dependencies',
-  'plugins.author.typecheck': 'Typecheck plugin author source',
-  'plugins.author.build': 'Build plugin author source',
-  'plugins.author.test': 'Test plugin author source',
+  'plugins.dev.submit': 'Submit plugin development snapshot',
+  'plugins.dev.install': 'Prepare plugin author dependencies',
+  'plugins.dev.typecheck': 'Typecheck plugin author source',
+  'plugins.dev.build': 'Build plugin author source',
+  'plugins.dev.test': 'Test plugin author source',
   'plugins.doctor': 'Diagnose plugin author source',
   'plugins.pack': 'Pack plugin',
   'plugins.reload': 'Reload plugin',
@@ -2650,11 +2769,11 @@ const PLUGIN_DEV_LOOP_ACTION_DESCRIPTIONS: Readonly<Record<PluginDevLoopActionId
   'plugins.scaffold': 'Create a local plugin scaffold from the first-party template.',
   'plugins.install': 'Install a local plugin source and optionally enable the dev reload loop.',
   'plugins.uninstall': 'Remove a local installed plugin through the daemon-owned plugin lifecycle.',
-  'plugins.dev': 'Inspect a local plugin source and submit its current snapshot to the daemon-owned development cycle without starting a watcher.',
-  'plugins.author.install': 'Prepare external plugin-author dependencies through the managed runtime.',
-  'plugins.author.typecheck': 'Run the managed TypeScript check for an external plugin-author source.',
-  'plugins.author.build': 'Build an external plugin-author source through the managed runtime.',
-  'plugins.author.test': 'Run the external plugin-author test command through the managed runtime.',
+  'plugins.dev.submit': 'Inspect a local plugin source and submit its current snapshot to the daemon-owned development cycle without starting a watcher.',
+  'plugins.dev.install': 'Prepare external plugin-author dependencies through the managed runtime.',
+  'plugins.dev.typecheck': 'Run the managed TypeScript check for an external plugin-author source.',
+  'plugins.dev.build': 'Build an external plugin-author source through the managed runtime.',
+  'plugins.dev.test': 'Run the external plugin-author test command through the managed runtime.',
   'plugins.doctor': 'Evaluate and diagnose an external plugin-author source.',
   'plugins.pack': 'Validate and package a local plugin into an installable archive.',
   'plugins.reload': 'Reload one local development plugin through the daemon-owned plugin lifecycle.',
@@ -3872,12 +3991,12 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
     bindings: { voiceClientToolName: 'startPlan', mcpToolName: 'subagents_plan_start' },
     inputHints: {
       title: 'Start a planning run',
-      description: 'Start one or more Happier-managed planning runs using selected provider/backend targets; targets are provider choices, not parallelism capacity.',
+      description: 'Start one or more Happier-managed planning runs using selected Agent backend targets; targets are Agent choices, not parallelism capacity.',
       fields: [
         {
           path: 'backendTargetKeys',
-          title: 'Provider/backend targets',
-          description: 'Select provider/backend targets for Happier-managed runs; use repeated launches or provider-native subagents for homogeneous parallelism capacity.',
+          title: 'Agent backend targets',
+          description: 'Select Agent backend targets for Happier-managed runs; use repeated launches or Agent-native subagents for homogeneous parallelism capacity, not parallelism capacity in this field.',
           widget: 'multiselect',
           required: true,
           optionsSourceId: 'execution.backends.enabled',
@@ -3938,12 +4057,12 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
     bindings: { voiceClientToolName: 'startDelegate', mcpToolName: 'subagents_delegate_start' },
     inputHints: {
       title: 'Start a delegation run',
-      description: 'Start one or more Happier-managed delegation runs using selected provider/backend targets; targets are provider choices, not parallelism capacity.',
+      description: 'Start one or more Happier-managed delegation runs using selected Agent backend targets; targets are Agent choices, not parallelism capacity.',
       fields: [
         {
           path: 'backendTargetKeys',
-          title: 'Provider/backend targets',
-          description: 'Select provider/backend targets for Happier-managed runs; use repeated launches or provider-native subagents for homogeneous parallelism capacity.',
+          title: 'Agent backend targets',
+          description: 'Select Agent backend targets for Happier-managed runs; use repeated launches or Agent-native subagents for homogeneous parallelism capacity, not parallelism capacity in this field.',
           widget: 'multiselect',
           required: true,
           optionsSourceId: 'execution.backends.enabled',
@@ -4014,8 +4133,8 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       fields: [
         {
           path: 'backendTargetKeys',
-          title: 'Provider/backend targets',
-          description: 'Select provider/backend targets for the Happier-managed voice agent run; this is not parallelism capacity.',
+          title: 'Agent backend targets',
+          description: 'Select Agent backend targets for the Happier-managed voice agent run; this is not parallelism capacity.',
           widget: 'multiselect',
           required: true,
           optionsSourceId: 'execution.backends.enabled',
@@ -5020,6 +5139,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       presentation: { onStart: 'current' },
     },
     title: 'Create session',
+    description: 'Create a new coding session in a directory on the requested machine, using the selected Agent.',
     sideEffectClass: 'write',
     safety: 'safe',
     placements: ['command_palette', 'session_info', 'voice_panel'],
@@ -5085,6 +5205,83 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
     },
     outputSchema: StrictJsonValueSchema,
     inputSchema: PathsListRecentInputSchema,
+  },
+  {
+    id: 'projects.list',
+    title: 'List projects',
+    sideEffectClass: 'read',
+    description:
+      'List the account\'s persisted projects with each one\'s resolved hosting provider and worktrees.',
+    safety: 'safe',
+    placements: [],
+    surfaces: {
+      ui: true,
+      voice: false,
+      agent: false,
+      mcp: false,
+      cli: false,
+      rpc: false,
+    },
+    inputHints: {
+      title: 'List projects',
+      fields: [
+        { path: 'machineId', title: 'Machine id', widget: 'text' },
+        { path: 'limit', title: 'Limit', widget: 'text' },
+      ],
+    },
+    outputSchema: StrictJsonValueSchema,
+    inputSchema: ProjectsListInputSchema,
+  },
+  {
+    id: 'prompts.invocations.list',
+    title: 'List prompt invocations',
+    sideEffectClass: 'read',
+    description:
+      "List the account's Prompt Library invocations by stable id, without expanding any prompt body.",
+    safety: 'safe',
+    placements: [],
+    surfaces: {
+      ui: true,
+      voice: false,
+      agent: false,
+      mcp: false,
+      cli: false,
+      rpc: false,
+    },
+    inputHints: {
+      title: 'List prompt invocations',
+      fields: [
+        { path: 'limit', title: 'Limit', widget: 'text' },
+      ],
+    },
+    outputSchema: StrictJsonValueSchema,
+    inputSchema: PromptInvocationsListInputSchema,
+  },
+  {
+    id: 'prompts.invocation.resolve',
+    title: 'Resolve a prompt invocation',
+    sideEffectClass: 'read',
+    description:
+      'Resolve one Prompt Library invocation, by its stable id, to the prompt text it produces.',
+    safety: 'safe',
+    placements: [],
+    surfaces: {
+      ui: true,
+      voice: false,
+      agent: false,
+      mcp: false,
+      cli: false,
+      rpc: false,
+    },
+    inputHints: {
+      title: 'Resolve a prompt invocation',
+      fields: [
+        { path: 'invocationId', title: 'Invocation id', widget: 'text', required: true },
+        { path: 'argsText', title: 'Arguments', widget: 'text' },
+      ],
+    },
+    outputSchema: StrictJsonValueSchema,
+    inputSchema: PromptInvocationResolveInputSchema,
   },
   {
     id: 'machines.list',
@@ -5171,7 +5368,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
     id: 'agents.backends.list',
     title: 'List agent backends',
     sideEffectClass: 'read',
-    description: 'List available agent backends (providers) for spawning sessions.',
+    description: 'List available Agent backends for spawning sessions.',
     safety: 'safe',
     placements: ['voice_panel'],
     prompting: { voiceHotPath: true },
@@ -5318,13 +5515,13 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
     inputHints: {
       title: 'List spawn profiles',
       fields: [
-        { path: 'agentId', title: 'Runtime agent id', widget: 'text' },
-        { path: 'backendTargetKey', title: 'Backend target key', widget: 'text' },
+        { path: 'agentId', title: 'Runtime agent id (optional filter)', widget: 'text' },
+        { path: 'backendTargetKey', title: 'Backend target key (optional filter)', widget: 'text' },
         { path: 'limit', title: 'Max results', widget: 'text' },
       ],
     },
     outputSchema: StrictJsonValueSchema,
-    inputSchema: AgentSpawnOptionsListInputSchema,
+    inputSchema: SpawnProfilesListInputSchema,
   },
   {
     id: 'sessions.spawn.connected_services.list',
@@ -5429,6 +5626,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
     surfaceBindings: {
       plugin: {
         inputSchema: SessionSendMessagePluginInputV1Schema,
+        bindInput: bindPluginSessionSendInput,
         outputSchema: SessionInputAdmissionResultV1Schema,
       },
     } satisfies ActionSpecSurfaceBindings,
@@ -6215,6 +6413,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
         { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
         { path: 'sourceRef', title: 'Source reference', widget: 'text', required: true },
         { path: 'sourceRevisionOrEpoch', title: 'Source revision', widget: 'text', required: true },
+        { path: 'cursor', title: 'Continuation cursor', widget: 'text' },
       ],
     },
     outputSchema: SessionPermissionRemotePendingListOutputV1Schema,
@@ -6270,6 +6469,35 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
     },
     outputSchema: SessionPermissionRemoteRespondOutputV1Schema,
     inputSchema: SessionPermissionRemoteRespondInputV1Schema,
+  },
+  {
+    id: 'session.user_action.remote.answer',
+    title: 'Answer a remotely mediated user-action request',
+    sideEffectClass: 'write',
+    description: 'Submit bounded indexed answers for one current source-bound AskUserQuestion request.',
+    safety: 'safe',
+    placements: [],
+    surfaces: {
+      ui: false,
+      voice: false,
+      agent: false,
+      mcp: false,
+      cli: false,
+      rpc: false,
+    },
+    inputHints: {
+      title: 'Answer a remotely mediated user-action request',
+      fields: [
+        { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
+        { path: 'turnId', title: 'Turn id', widget: 'text', required: true },
+        { path: 'requestId', title: 'Request id', widget: 'text', required: true },
+        { path: 'sourceRef', title: 'Source reference', widget: 'text', required: true },
+        { path: 'sourceRevisionOrEpoch', title: 'Source revision', widget: 'text', required: true },
+        { path: 'answers', title: 'Indexed answers', widget: 'json', required: true },
+      ],
+    },
+    outputSchema: SessionUserActionRemoteAnswerOutputV1Schema,
+    inputSchema: SessionUserActionRemoteAnswerInputV1Schema,
   },
   {
     id: 'session.permission.remote.grants.list',
@@ -7366,7 +7594,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       voice: false,
       agent: false,
       mcp: false,
-      cli: false,
+      cli: true,
       rpc: true,
     },
     sideEffectClass: 'read',
@@ -7396,7 +7624,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       voice: false,
       agent: false,
       mcp: false,
-      cli: false,
+      cli: true,
       rpc: true,
     },
     sideEffectClass: 'write',
@@ -7543,7 +7771,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
     placements: [],
     bindings: {
       rpcMethod: RPC_METHODS.DAEMON_EXTERNAL_SESSION_ATTACH,
-      rpcMethodAliases: [RPC_METHODS.DAEMON_DIRECT_SESSION_ATTACH_LEGACY],
     },
     surfaceBindings: {
       rpc: {
@@ -7585,7 +7812,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
     placements: [],
     bindings: {
       rpcMethod: RPC_METHODS.DAEMON_EXTERNAL_SESSION_DETACH,
-      rpcMethodAliases: [RPC_METHODS.DAEMON_DIRECT_SESSION_DETACH_LEGACY],
     },
     surfaceBindings: {
       rpc: {
@@ -8409,8 +8635,6 @@ export const INTERNAL_ACTION_REASONS = Object.freeze({
   'sessions.subagents.complete': 'Host lifecycle projection maintenance; user operations use the planning/delegation Actions.',
   'sessions.external.takeover': 'Released direct-session compatibility stub; current clients use sessions.external.takeover.start.',
   'plugin.webhook.delivery.movePending': 'Private webhook delivery plumbing owned by the webhook worker.',
-  'browser.session.create': 'No browser session creator is wired through the ActionExecutor; the runtime owner keeps this fail-closed.',
-  'browser.session.close': 'No browser session closer is wired through the ActionExecutor; the runtime owner keeps this fail-closed.',
   'devices.simulator.input.orientation': 'Stock scrcpy has no absolute-orientation producer; the simulator backing owner marks this Action statically unbacked.',
 } as const satisfies Readonly<Partial<Record<ActionId, string>>>);
 
@@ -8442,6 +8666,7 @@ export const PLUGIN_PROVENANCE_ONLY_API_EXCLUSION_REASONS = Object.freeze({
   'automation.conversation.admit': 'Automation conversation admission persists host-stamped plugin provenance.',
   'session.permission.remote.pending.list': 'The remote-permission mediator identity comes only from the host-stamped plugin caller.',
   'session.permission.remote.respond': 'The remote-permission mediator identity comes only from the host-stamped plugin caller.',
+  'session.user_action.remote.answer': 'The remote user-action mediator identity comes only from the host-stamped plugin caller.',
   'plugins.permissions.grants.revoke': 'Plugin self-revocation resolves the grant owner from the host-stamped plugin caller.',
   'sessions.external.materialize.start': 'External-session materialization persists plugin-authored intent from the host-stamped caller.',
   'scm.reviewWorkspace.materializePrepared': 'Prepared review-workspace materialization is invoked only by the host-stamped source plugin.',
@@ -8482,6 +8707,9 @@ export function isPluginProvenanceOnlyActionId(actionId: string): actionId is Pl
  * serves these only for a host caller.
  */
 export const PLUGIN_SURFACE_EXCLUSION_REASONS = Object.freeze({
+  'sessions.subagents.list': 'Host lifecycle projection read; user operations use the planning/delegation Actions.',
+  'sessions.subagents.get': 'Host lifecycle projection read; user operations use the planning/delegation Actions.',
+  'sessions.subagents.watch': 'Host lifecycle projection read; user operations use the planning/delegation Actions.',
   'sessions.external.candidates.list': 'Machine/source-scoped discovery seam; authors use SessionsService.external.list, which delegates to this same candidate-query owner.',
   'sessions.external.link.ensure': 'Machine/source-scoped linking seam; authors use SessionsService.external.attach, which delegates to this same idempotent link operation.',
   'sessions.external.transcript.page': 'Machine/source-scoped transcript seam; authors use SessionsService.external.readTranscript.',
@@ -8518,10 +8746,16 @@ const PRESENT_USER_REQUIRED_ACTION_IDS = new Set<ActionId>([
   'plugins.settings.secret.unbind',
   'plugins.settings.secret.delete',
   'plugins.install',
-  'plugins.dev',
-  'plugins.author.install',
+  'plugins.uninstall',
+  'plugins.dev.submit',
+  'plugins.dev.install',
+  'plugins.sessionHooks.install',
+  'plugins.sessionHooks.disable',
+  'plugins.sessionHooks.enable',
+  'plugins.sessionHooks.uninstall',
   'plugins.permissions.grants.grant',
   'plugins.permissions.grants.dismissRequest',
+  'browser.automation.cancelActive',
   ...(Object.keys(PluginWebhookActionHttpPathsV1) as PluginWebhookPresentUserActionIdV1[]),
 ]);
 
@@ -8532,14 +8766,26 @@ const PRESENT_USER_REQUIRED_ACTION_IDS = new Set<ActionId>([
  * inherit a machine route merely because it was added to a neighboring family.
  */
 const RUNTIME_ACTION_IDS_WITHOUT_MACHINE_PLACEMENT = new Set<RuntimeActionIdV1>([
-  // These are intentionally host-internal/fail-closed, so client placement is
-  // retained only to keep the registry total while no external owner exists.
-  'browser.session.create',
-  'browser.session.close',
+  // Intentionally host-internal/fail-closed, so client placement is retained
+  // only to keep the registry total while no external owner exists.
   'devices.simulator.input.orientation',
   // Composer attachment is a Session-media operation, not a machine command.
   'browser.recording.attachToComposer',
 ]);
+
+// These readers resolve a Session id only to load persisted transcript data.
+// They can run through any selected available daemon and must not require the
+// Session's original publisher to still be present.
+const PERSISTED_TRANSCRIPT_READ_ACTION_IDS: readonly ActionId[] = [
+  'session.history.get',
+  'session.transcript.get',
+  'session.events.get',
+  'session.messages.recent.get',
+  'transcript.page',
+  'transcript.readAfter',
+  'transcript.search',
+];
+const PERSISTED_TRANSCRIPT_READ_ACTION_ID_SET = new Set<ActionId>(PERSISTED_TRANSCRIPT_READ_ACTION_IDS);
 
 const ACTION_EXECUTION_PLACEMENT_BY_ID: ReadonlyMap<ActionId, ActionExecutionPlacement> = (() => {
   const placements = new Map<ActionId, ActionExecutionPlacement>();
@@ -8574,10 +8820,11 @@ const ACTION_EXECUTION_PLACEMENT_BY_ID: ReadonlyMap<ActionId, ActionExecutionPla
   // forwarded by the public API, even when their input happens to name a Session.
   register('client', [
     'servers.list',
+    'projects.list',
+    'prompts.invocations.list',
+    'prompts.invocation.resolve',
     'session.target.primary.set',
     'session.target.tracked.set',
-    'browser.session.create',
-    'browser.session.close',
     'devices.simulator.input.orientation',
     ...ACTION_ID_FAMILIES_V1.voice_controls,
     ...ACTION_ID_FAMILIES_V1.current_ui_context,
@@ -8590,13 +8837,14 @@ const ACTION_EXECUTION_PLACEMENT_BY_ID: ReadonlyMap<ActionId, ActionExecutionPla
     ...ACTION_ID_FAMILIES_V1.session_lifecycle.filter((actionId) => actionId !== 'session.spawn_new'),
     'review.engines.list',
     ...ACTION_ID_FAMILIES_V1.messaging,
-    ...ACTION_ID_FAMILIES_V1.session_control,
+    ...ACTION_ID_FAMILIES_V1.session_control.filter((actionId) => actionId !== 'session.history.get'),
     ...ACTION_ID_FAMILIES_V1.intent_start,
     ...ACTION_ID_FAMILIES_V1.review_comments,
     ...ACTION_ID_FAMILIES_V1.subagent_registry,
     'session.activity.get',
-    'session.messages.recent.get',
-    ...ACTION_ID_FAMILIES_V1.session_transcripts,
+    ...ACTION_ID_FAMILIES_V1.session_transcripts.filter(
+      (actionId) => !PERSISTED_TRANSCRIPT_READ_ACTION_ID_SET.has(actionId),
+    ),
     ...ACTION_ID_FAMILIES_V1.session_permissions,
     'browser.recording.attachToComposer',
     'sessions.external.follow',
@@ -8614,6 +8862,7 @@ const ACTION_EXECUTION_PLACEMENT_BY_ID: ReadonlyMap<ActionId, ActionExecutionPla
     'action.options.resolve',
     'action.invoke',
     'session.spawn_new',
+    ...PERSISTED_TRANSCRIPT_READ_ACTION_IDS,
     'paths.list_recent',
     'agents.backends.list',
     'agents.models.list',
@@ -9270,6 +9519,7 @@ const ACTION_PLUGIN_CALLER_POLICY_BY_ID: Readonly<
   'reviews.comments.setDisposition': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
   'reviews.comments.attachEvidence': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
   'reviews.comments.bulkTransition': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
+  'reviews.comments.claimPublicationDispatch': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
   'browser.navigate': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
   'plugins.sessionHooks.install': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
   'plugins.sessionHooks.disable': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
@@ -9402,6 +9652,7 @@ const CURRENT_SESSION_CONTEXT_ACTION_IDS = new Set<ActionId>([
   'session.permission.respond',
   'session.permission.remote.pending.list',
   'session.permission.remote.respond',
+  'session.user_action.remote.answer',
   'session.permission.remote.grants.list',
   'session.permission.remote.grants.revoke',
   'session.user_action.answer',

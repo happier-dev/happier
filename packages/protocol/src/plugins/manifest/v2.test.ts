@@ -6,6 +6,7 @@ import {
   type PluginManifestV2,
 } from '../../index.js';
 import { MAX_PLUGIN_COMPOSER_ATTACHMENTS_V1 } from '../contributions/composerAttachments.js';
+import { PLUGIN_UI_TARGETED_CONTRIBUTION_PROTOCOLS_MAX_V1 } from '../ui/targetedContributions.js';
 
 function manifest(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -605,6 +606,38 @@ describe('plugin manifest v2 root contract', () => {
       protocol: { id: 'happier.channels/providers', version: 1 },
       operations: { connectionTest: 'arbitrary-setup-action' },
     }]);
+  });
+
+  it('admits exactly the Protocol-owned number of target protocol epochs per point', () => {
+    const protocol = (version: number) => ({
+      id: 'happier.channels/providers',
+      version,
+      operations: {
+        connectionTest: {
+          required: true,
+          input: { kind: 'contributorDefined' },
+          resultSchema: { type: 'object' },
+          action: { surface: 'plugin', dangerLevel: 'safe' },
+        },
+      },
+    });
+    const epochs = Array.from(
+      { length: PLUGIN_UI_TARGETED_CONTRIBUTION_PROTOCOLS_MAX_V1 },
+      (_, index) => protocol(index + 1),
+    );
+    const point = { id: 'providers', protocols: epochs };
+
+    expect(PluginManifestV2Schema.safeParse(manifest({
+      contributes: { pluginContributionPoints: [point] },
+    })).success).toBe(true);
+    expect(PluginManifestV2Schema.safeParse(manifest({
+      contributes: {
+        pluginContributionPoints: [{
+          ...point,
+          protocols: [...epochs, protocol(PLUGIN_UI_TARGETED_CONTRIBUTION_PROTOCOLS_MAX_V1 + 1)],
+        }],
+      },
+    })).success).toBe(false);
   });
 
   it('carries target-owned descriptors and renderer surface bindings without creating a renderer family', () => {

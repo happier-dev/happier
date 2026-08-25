@@ -1,14 +1,14 @@
-export type PeerFlowKind =
-    | 'bounded_transfer'
-    | 'tcp_tunnel'
-    | 'live_stream'
-    | 'machine_rpc';
+import type { PeerFlowKindV1, PeerRouteKindV1 } from '@happier-dev/protocol';
 
-export type PeerRouteKind =
-    | 'loopback_direct'
-    | 'lan_direct'
-    | 'tailscale_serve_direct'
-    | 'server_relay';
+/**
+ * One flow-kind and one route-kind vocabulary across the whole substrate. These were re-declared
+ * here and had already drifted: the protocol declares five flow kinds and this copy declared four,
+ * omitting `voice_media` — the substrate's most-used flow (§7.5). Aliasing the protocol types makes
+ * a future divergence impossible rather than merely unlikely.
+ */
+export type PeerFlowKind = PeerFlowKindV1;
+
+export type PeerRouteKind = PeerRouteKindV1;
 
 export type PeerEndpointTransport =
     | 'http'

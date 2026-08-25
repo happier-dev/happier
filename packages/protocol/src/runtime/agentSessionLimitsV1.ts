@@ -33,7 +33,6 @@ export const AGENT_SESSION_RUNTIME_LIMITS_CANDIDATE_V1 = Object.freeze({
   p0MeasuredCandidates: Object.freeze({
     inputTextMaxCodeUnits: 512 * 1_024,
     transcriptTextMaxCodeUnits: 512 * 1_024,
-    jsonValueMaxJsonBytes: 1_024 * 1_024,
     sendRequestMaxJsonBytes: 2_500_000,
     eventMaxJsonBytes: 2_500_000,
     fileEditMemberMaxCodeUnits: 1_000_000,

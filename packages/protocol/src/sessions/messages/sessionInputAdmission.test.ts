@@ -370,6 +370,34 @@ describe('session input admission metadata', () => {
     }).success).toBe(false);
   });
 
+  it('admits the exact semantic subagent-launch intent without exposing message metadata', () => {
+    const request = {
+      kind: 'sessionSubagentLaunch',
+      launch: {
+        kind: 'agent_team_member_create',
+        teamId: 'reviewers',
+        memberLabel: 'security',
+        instructions: 'Review the authentication changes.',
+        runInBackground: true,
+      },
+      idempotencyKey: 'launch-security-reviewer',
+    } as const;
+
+    expect(protocol.PluginSessionInputRequestV1Schema.parse(request)).toEqual(request);
+    expect(protocol.PluginSessionInputRequestV1Schema.safeParse({
+      ...request,
+      metaOverrides: { happier: { kind: 'forged' } },
+    }).success).toBe(false);
+    expect(protocol.PluginSessionInputRequestV1Schema.safeParse({
+      ...request,
+      callerSurface: 'subagent_command',
+    }).success).toBe(false);
+    expect(protocol.PluginSessionInputRequestV1Schema.safeParse({
+      ...request,
+      forceImmediate: true,
+    }).success).toBe(false);
+  });
+
   it('admits an attachment-only plugin Session input and refuses one carrying neither', () => {
     // The canonical composer submission rule is `text.trim().length === 0 &&
     // attachments.length === 0` (`apps/ui/sources/components/sessions/composer/

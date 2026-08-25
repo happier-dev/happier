@@ -113,6 +113,27 @@ describe('Automation occurrence V1', () => {
     })).toEqual(eventOccurrence);
   });
 
+  it('preserves surrounding whitespace in publicly distinct occurrence identities', () => {
+    const plain = buildAutomationPluginEventOccurrenceEvidenceV1({
+      eventRef: eventOccurrence.eventRef,
+      sourceSelectorId: eventOccurrence.sourceSelectorId,
+      occurrenceId: 'provider-occurrence-1',
+      occurredAt: eventOccurrence.occurredAt,
+      payload: eventOccurrence.payload,
+    });
+    const spaced = buildAutomationPluginEventOccurrenceEvidenceV1({
+      eventRef: eventOccurrence.eventRef,
+      sourceSelectorId: eventOccurrence.sourceSelectorId,
+      occurrenceId: ' provider-occurrence-1 ',
+      occurredAt: eventOccurrence.occurredAt,
+      payload: eventOccurrence.payload,
+    });
+
+    expect(spaced.occurrenceId).toBe(' provider-occurrence-1 ');
+    expect(deriveAutomationOccurrenceKeyV1(spaced))
+      .not.toBe(deriveAutomationOccurrenceKeyV1(plain));
+  });
+
   it('uses one length-delimited, domain-separated occurrence identity while preserving payload equality evidence', () => {
     const sameIdentityDifferentPayload = {
       ...eventOccurrence,

@@ -323,57 +323,14 @@ describe('provider account usage protocol', () => {
         expect(typeof (protocol as Record<string, unknown>).openConnectedServiceQuotaSnapshotCiphertext).toBe('function');
     });
 
-    it('reseals the frozen Dev-5 PAU alias once without changing the logical snapshot', () => {
-        const reseal = requireExport<(...args: readonly unknown[]) => unknown>(
-            'resealProviderAccountUsageSnapshotCiphertextIfHistoricalAlias',
-            isFunction,
-        );
-        const open = requireExport<(...args: readonly unknown[]) => unknown>(
+    it('publishes only the canonical PAU ciphertext reader and writer', () => {
+        expect(
+            Object.keys(protocol)
+                .filter((key) => key.includes('ProviderAccountUsageSnapshotCiphertext'))
+                .sort(),
+        ).toEqual([
             'openProviderAccountUsageSnapshotCiphertext',
-            isFunction,
-        );
-        const material = {
-            type: 'dataKey' as const,
-            machineKey: Uint8Array.from({ length: 32 }, (_, index) => index + 1),
-        };
-        const frozenDev5Ciphertext =
-            'oQUhIiMkJSYnKCkqKywtLi8wMTIzNDU2Nzi6SehvXZ/yz94+M9Vq66Qzu1J0HRw6SZDLxYn3bzyTRESOkGZ0HXs8b6QF9PbRtY6tfWVDhnUrAds7ZUS17itP0ugnzxZH6pplVZRLXQagmgXC2jnWHNdOy3EiXUbRllvb+KVToW8pH9OWTuJ13c+QSMXG9SZFrG4+AySORX5xh9rpmZyfYdvNUU/6gMcZxRowrgYOzB2vWcwbT3N7z4pNj2wA5ciPIvdadMmb3C/RlRsdbH3K3IQ/CxyDaJ7VHOm6l11sSmFihk5ecDivoAkQgu89mWgXVHivhDzCqmnE23p/sfawKFuiXMXbceIDt8k5huaw9yv3edvJ+ISX0LKzYzpqSCxlfqVTUI8ePARx/S7HZCgox7VrOCmwR1kmgGsiuM+ERcVaAqwxLkC4QfW6bKtM7Ml/TRs9BdoG0Masxeyl/bnXXTN9FEAxaKbQB9Uc6yz3DmvgzldLHeC68S2iGWaDORAx1Hrftrv4UPfpadtu2my5uBk9mypyilA8P0+RmKFXSxTClhpVm/K0VOd6QqvQObbXd7ew7mlIbYsgpOPO43PKFUk4lq4=';
-
-        const first = reseal({
-            material,
-            ciphertext: frozenDev5Ciphertext,
-            randomBytes: (length: number) => new Uint8Array(length).fill(7),
-        }) as {
-            ciphertext: string;
-            resealed: boolean;
-            snapshot: ProviderAccountUsageSnapshotV1;
-        } | null;
-
-        expect(first).not.toBeNull();
-        expect(first?.resealed).toBe(true);
-        expect(first?.ciphertext).not.toBe(frozenDev5Ciphertext);
-        expect(first?.snapshot.recordId).toBe(
-            'paug_v1_D2ZqLYLAeVljfsjZqAF45dBhrB9Dkihcs1x1QuJJZxE',
-        );
-        expect(open({
-            material,
-            ciphertext: first?.ciphertext,
-        })).toMatchObject({
-            kindTag: 'canonical',
-            value: first?.snapshot,
-        });
-
-        const second = reseal({
-            material,
-            ciphertext: first?.ciphertext,
-            randomBytes: () => {
-                throw new Error('canonical ciphertext must not be resealed');
-            },
-        }) as { ciphertext: string; resealed: boolean } | null;
-
-        expect(second).toEqual(expect.objectContaining({
-            ciphertext: first?.ciphertext,
-            resealed: false,
-        }));
+            'sealProviderAccountUsageSnapshotCiphertext',
+        ]);
     });
 });

@@ -3,7 +3,10 @@ import { describe, expect, it } from 'vitest';
 import { sha512 } from '@noble/hashes/sha512';
 import tweetnacl from 'tweetnacl';
 
-import { openBoxBundle, sealBoxBundle } from './boxBundle.js';
+import {
+  openBoxBundle,
+  sealBoxBundle,
+} from './boxBundle.js';
 
 function deterministicRandomBytesFactory(): (length: number) => Uint8Array {
   let counter = 1;
@@ -75,4 +78,3 @@ describe('boxBundle', () => {
     expect(openBoxBundle({ bundle, recipientSecretKeyOrSeed: new Uint8Array(10) })).toBeNull();
   });
 });
-

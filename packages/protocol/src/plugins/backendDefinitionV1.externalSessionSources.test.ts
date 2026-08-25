@@ -203,8 +203,8 @@ describe('PluginBackendExternalSessionSourceDeclarationV1Schema', () => {
     expect(constantCollision.success).toBe(false);
   });
 
-  it('ignores instance kinds a newer producer declared while keeping known kinds strict', () => {
-    const forwardCompatible = PluginBackendExternalSessionSourceDeclarationV1Schema.safeParse({
+  it('refuses an instance kind the declaration reader does not implement', () => {
+    const mixedWithUnknownKind = PluginBackendExternalSessionSourceDeclarationV1Schema.safeParse({
       ...validSourceDeclaration,
       instances: [
         { kind: 'default', constants: { home: 'user' } },
@@ -219,14 +219,18 @@ describe('PluginBackendExternalSessionSourceDeclarationV1Schema', () => {
       ...validSourceDeclaration,
       instances: [{ kind: 'connectedServiceProfiles', serviceId: 'openai-codex', constants: {} }],
     });
+    const knownKinds = PluginBackendExternalSessionSourceDeclarationV1Schema.safeParse({
+      ...validSourceDeclaration,
+      instances: [{ kind: 'default', constants: { home: 'user' } }],
+    });
 
-    expect(forwardCompatible.success).toBe(true);
-    expect(forwardCompatible.success ? forwardCompatible.data.instances : null).toEqual([
+    expect(mixedWithUnknownKind.success).toBe(false);
+    expect(onlyUnknownKinds.success).toBe(false);
+    expect(malformedKnownKind.success).toBe(false);
+    expect(knownKinds.success).toBe(true);
+    expect(knownKinds.success ? knownKinds.data.instances : null).toEqual([
       { kind: 'default', constants: { home: 'user' } },
     ]);
-    expect(onlyUnknownKinds.success).toBe(true);
-    expect(onlyUnknownKinds.success ? onlyUnknownKinds.data.instances : null).toEqual([]);
-    expect(malformedKnownKind.success).toBe(false);
   });
 
   it('rejects instance constants and identity mappings that reference undeclared fields', () => {

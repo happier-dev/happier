@@ -3,12 +3,44 @@ import { describe, expect, expectTypeOf, it } from 'vitest';
 import {
   SESSION_AUTHORING_FIELD_IDS,
   SESSION_AUTHORING_FIELD_DESCRIPTORS,
+  SYNCED_SESSION_AUTHORING_FIELD_IDS_V1,
+  SyncedSessionAuthoringFieldIdV1Schema,
+  SyncedSessionAuthoringValueV1Schema,
   SessionAuthoringValueV1Schema,
   type SessionAuthoringFieldId,
   type SessionAuthoringValueV1,
 } from './index.js';
 
 describe('sessionAuthoring field artifacts', () => {
+  it('derives synchronized draft fields from explicit safe catalog dispositions', () => {
+    expect(SYNCED_SESSION_AUTHORING_FIELD_IDS_V1).toEqual(
+      SESSION_AUTHORING_FIELD_IDS.filter((fieldId) => (
+        SESSION_AUTHORING_FIELD_DESCRIPTORS[fieldId].draftStorage === 'sync'
+      )),
+    );
+    expect(SYNCED_SESSION_AUTHORING_FIELD_IDS_V1).toEqual(expect.arrayContaining([
+      'machineId',
+      'serverId',
+      'directory',
+      'checkoutCreationDraft',
+      'backendTarget',
+      'modelSelection',
+      'connectedServices',
+      'terminal',
+      'automation',
+    ]));
+    expect(SYNCED_SESSION_AUTHORING_FIELD_IDS_V1).not.toEqual(expect.arrayContaining([
+      'prompt',
+      'environmentVariables',
+      'sessionConfigOptionOverrides',
+      'sessionEncryptionKeyBase64',
+    ]));
+    expect(SyncedSessionAuthoringFieldIdV1Schema.safeParse('environmentVariables').success).toBe(false);
+    expect(SyncedSessionAuthoringValueV1Schema.shape.terminal.safeParse({
+      mode: 'tmux',
+      tmux: { sessionName: 'safe', tmpDir: '/private/local/path' },
+    }).success).toBe(false);
+  });
   it('derives stable field ids and descriptors from one catalog', () => {
     expect(SESSION_AUTHORING_FIELD_IDS).toContain('targetType');
     expect(SESSION_AUTHORING_FIELD_IDS).toContain('directory');

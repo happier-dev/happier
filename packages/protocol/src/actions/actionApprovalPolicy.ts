@@ -231,10 +231,19 @@ export function resolveActionApprovalRouting(args: ResolveActionApprovalRoutingA
     : args.settings
       ? isApprovalRequiredByActionsSettings(args.actionId, args.settings, args.context)
       : resolveUnwiredApprovalDefault(args.actionId, args.context);
+  const required = !isApprovalAction(args.actionId) && requiredByPolicy;
+
+  // The public Action API reports a created approval artifact to its caller;
+  // it cannot retain an HTTP or server-relay request as the blocking waiter.
+  // Keep the action's required-result metadata for artifact/replay semantics,
+  // while the API surface owns the asynchronous handoff to a present user.
+  const flow = required && args.context?.surface === 'api'
+    ? 'deferred'
+    : resolveActionApprovalFlow(args.spec.approval);
 
   return {
-    required: isApprovalAction(args.actionId) ? false : requiredByPolicy,
-    flow: resolveActionApprovalFlow(args.spec.approval),
+    required,
+    flow,
     result: args.spec.approval.result,
   };
 }

@@ -219,6 +219,20 @@ describe('public voice executable contribution boundary', () => {
         },
       });
     }
+    expect(PluginContributesV2Schema.parse({
+      voiceProviders: [{
+        ...base,
+        execution: {
+          kind: 'experimental_agent_session_realtime',
+          agent: 'codex',
+        },
+      }],
+    }).voiceProviders[0]).toMatchObject({
+      execution: {
+        kind: 'experimental_agent_session_realtime',
+        agent: 'codex',
+      },
+    });
     for (const supportedRuntimeVersions of [
       [],
       ['1.2.x'],

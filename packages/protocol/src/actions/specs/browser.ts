@@ -12,7 +12,6 @@ import type { BrowserAutomationActionKindV1 } from '../../browser/automation/v1.
 import {
   BrowserCloseViewCommandV1Schema,
   BrowserCommandDispatchResultV1Schema,
-  BrowserCommandV1Schema,
   BrowserFocusViewCommandV1Schema,
   BrowserGoBackCommandV1Schema,
   BrowserGoForwardCommandV1Schema,
@@ -112,8 +111,6 @@ const RuntimeBrowserRecordingAttachInputSchema = z
   .passthrough();
 
 export const BROWSER_RUNTIME_ACTION_TITLES: Readonly<Partial<Record<RuntimeActionIdV1, string>>> = Object.freeze({
-  'browser.session.create': 'Create browser session',
-  'browser.session.close': 'Close browser session',
   'browser.view.open': 'Open browser view',
   'browser.view.close': 'Close browser view',
   'browser.view.focus': 'Focus browser view',
@@ -180,8 +177,6 @@ export const BROWSER_RUNTIME_ACTION_TITLES: Readonly<Partial<Record<RuntimeActio
 });
 
 export const BROWSER_RUNTIME_ACTION_DESCRIPTIONS: Readonly<Partial<Record<RuntimeActionIdV1, string>>> = Object.freeze({
-  'browser.session.create': 'Create a managed browser session for the current workspace.',
-  'browser.session.close': 'Close a managed browser session and release its resources.',
   'browser.view.open': 'Open a browser view inside an existing browser session.',
   'browser.view.close': 'Close a browser view and detach it from its session.',
   'browser.view.focus': 'Bring a browser view to the foreground of its session.',
@@ -234,8 +229,6 @@ export const BROWSER_RUNTIME_ACTION_DESCRIPTIONS: Readonly<Partial<Record<Runtim
  * its exact Zod input/output carrier in generated API and Plugin maps.
  */
 export const BROWSER_RUNTIME_ACTION_INPUT_SCHEMAS = Object.freeze({
-  'browser.session.create': BrowserCommandV1Schema,
-  'browser.session.close': BrowserCommandV1Schema,
   'browser.view.open': BrowserOpenViewCommandV1Schema,
   'browser.view.close': BrowserCloseViewCommandV1Schema,
   'browser.view.focus': BrowserFocusViewCommandV1Schema,
@@ -302,8 +295,6 @@ export const BROWSER_RUNTIME_ACTION_INPUT_SCHEMAS = Object.freeze({
 } as const satisfies Readonly<Record<BrowserRuntimeActionId, z.ZodTypeAny>>);
 
 export const BROWSER_RUNTIME_ACTION_OUTPUT_SCHEMAS = Object.freeze({
-  'browser.session.create': BrowserCommandDispatchResultV1Schema,
-  'browser.session.close': BrowserCommandDispatchResultV1Schema,
   'browser.view.open': BrowserCommandDispatchResultV1Schema,
   'browser.view.close': BrowserCommandDispatchResultV1Schema,
   'browser.view.focus': BrowserCommandDispatchResultV1Schema,

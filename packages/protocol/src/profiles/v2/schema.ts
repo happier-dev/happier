@@ -6,7 +6,7 @@ import {
 } from '../../backends/targets/backendTargetRefV2.js';
 import { CodingPromptBehaviorOverridesV1Schema } from '../../prompts/codingPromptBehaviorV1.js';
 import { SessionModelSelectionV1Schema } from '../../providers/selection/v1.js';
-import { SessionExecutionTargetV1Schema } from '../../sessions/creation/sessionSpawnNewResultV1.js';
+import { SessionExecutionTargetV1Schema } from '../../sessions/creation/sessionExecutionTargetV1.js';
 import { SESSION_PERMISSION_MODES } from '../../sessions/metadata/sessionPermissionModes.js';
 import { EnvironmentVariableSchema, EnvVarRequirementSchema } from '../environmentVariables.js';
 

@@ -2,7 +2,6 @@ import { z } from 'zod';
 
 import {
     openAccountScopedBlobCiphertext,
-    resealAccountScopedHistoricalAliasCiphertext,
     sealAccountScopedBlobCiphertext,
     type AccountScopedCryptoMaterial,
     type AccountScopedOpenResult,
@@ -208,36 +207,4 @@ export function openProviderAccountUsageSnapshotCiphertext(params: Readonly<{
         material: params.material,
         ciphertext: params.ciphertext,
     });
-}
-
-export function resealProviderAccountUsageSnapshotCiphertextIfHistoricalAlias(
-    params: Readonly<{
-        material: AccountScopedCryptoMaterial;
-        ciphertext: string;
-        randomBytes: (length: number) => Uint8Array;
-    }>,
-): Readonly<{
-    ciphertext: string;
-    snapshot: ProviderAccountUsageSnapshotV1;
-    resealed: boolean;
-}> | null {
-    const result = resealAccountScopedHistoricalAliasCiphertext({
-        kind: 'provider_account_usage_snapshot',
-        material: params.material,
-        ciphertext: params.ciphertext,
-        randomBytes: params.randomBytes,
-        validatePayload: (value) => {
-            const parsed =
-                ProviderAccountUsageSnapshotV1Schema.safeParse(value);
-            return parsed.success ? parsed.data : null;
-        },
-    });
-    if (!result) return null;
-    return {
-        ciphertext: result.ciphertext,
-        snapshot: ProviderAccountUsageSnapshotV1Schema.parse(
-            result.opened.value,
-        ),
-        resealed: result.resealed,
-    };
 }

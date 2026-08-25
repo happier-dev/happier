@@ -35,15 +35,12 @@ export type AccountScopedCryptoMaterialSnapshotV1 = Readonly<{
 
 export type AccountScopedCiphertextFormat = 'account_scoped_v1' | 'legacy_secretbox';
 
-export type AccountScopedKindTag =
-  | 'canonical'
-  | 'historical_alias'
-  | 'untagged_legacy';
+export type AccountScopedKindTag = 'canonical' | 'untagged_legacy';
 
 export type AccountScopedOpenResult =
   | Readonly<{
       format: 'account_scoped_v1';
-      kindTag: 'canonical' | 'historical_alias';
+      kindTag: 'canonical';
       value: unknown;
     }>
   | Readonly<{
@@ -52,19 +49,6 @@ export type AccountScopedOpenResult =
       value: unknown;
     }>
   | null;
-
-export type AccountScopedHistoricalAliasResealResult = Readonly<{
-  ciphertext: string;
-  opened: Exclude<AccountScopedOpenResult, null>;
-  resealed: boolean;
-}>;
-
-const HISTORICAL_ACCOUNT_SCOPED_KIND_BYTE_ALIASES:
-  Partial<Record<AccountScopedBlobKind, readonly number[]>> = {
-    provider_account_usage_snapshot: [5],
-    session_respawn_environment: [6],
-    qualified_connected_account_configuration: [8],
-  };
 
 const LEGACY_READ_ONLY_ACCOUNT_SCOPED_BLOB_KINDS = new Set<AccountScopedBlobKind>([
   'connected_service_quota_snapshot',
@@ -348,15 +332,7 @@ export function openAccountScopedBlobCiphertext(params: {
     )
     && bytes[0] === ACCOUNT_SCOPED_BLOB_V1_MAGIC
   ) {
-    const kindTag =
-      bytes[1] === kindByte
-        ? 'canonical'
-        : HISTORICAL_ACCOUNT_SCOPED_KIND_BYTE_ALIASES[params.kind]?.includes(
-            bytes[1]!,
-          ) === true
-          ? 'historical_alias'
-          : null;
-    if (!kindTag) {
+    if (bytes[1] !== kindByte) {
       return null;
     }
     const nonce = bytes.slice(
@@ -370,7 +346,7 @@ export function openAccountScopedBlobCiphertext(params: {
     const opened = tweetnacl.secretbox.open(boxed, nonce, key);
     const parsed = opened ? tryParseJson(new Uint8Array(opened)) : null;
     if (parsed !== null) {
-      return { format: 'account_scoped_v1', kindTag, value: parsed };
+      return { format: 'account_scoped_v1', kindTag: 'canonical', value: parsed };
     }
   }
 
@@ -380,41 +356,4 @@ export function openAccountScopedBlobCiphertext(params: {
   // cross-domain substitution. Reject them here; any future recovery mechanism
   // requires an explicit, independently authenticated owner discriminator.
   return null;
-}
-
-export function resealAccountScopedHistoricalAliasCiphertext(params: {
-  kind: Exclude<AccountScopedBlobKind, 'connected_service_quota_snapshot'>;
-  material: AccountScopedCryptoMaterial;
-  ciphertext: string;
-  randomBytes: (length: number) => Uint8Array;
-  validatePayload: (value: unknown) => unknown | null;
-}): AccountScopedHistoricalAliasResealResult | null {
-  const opened = openAccountScopedBlobCiphertext(params);
-  if (!opened) return null;
-  const validatedPayload = params.validatePayload(opened.value);
-  if (validatedPayload === null) return null;
-  const validatedOpened = {
-    ...opened,
-    value: validatedPayload,
-  };
-  if (
-    opened.format !== 'account_scoped_v1'
-    || opened.kindTag !== 'historical_alias'
-  ) {
-    return {
-      ciphertext: params.ciphertext,
-      opened: validatedOpened,
-      resealed: false,
-    };
-  }
-  return {
-    ciphertext: sealAccountScopedBlobCiphertext({
-      kind: params.kind,
-      material: params.material,
-      payload: validatedPayload,
-      randomBytes: params.randomBytes,
-    }),
-    opened: validatedOpened,
-    resealed: true,
-  };
 }

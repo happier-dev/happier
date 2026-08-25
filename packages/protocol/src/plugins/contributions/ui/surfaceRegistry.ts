@@ -40,6 +40,9 @@ export const PluginUiContainerV1Schema = z.enum([
   'bottomPane',
   'browserPanel',
   'servicesPanel',
+  'sessionSubagentLaunch',
+  'sessionSubagentDetails',
+  'sessionInfoSection',
 ]);
 export type PluginUiContainerV1 = z.infer<typeof PluginUiContainerV1Schema>;
 
@@ -51,8 +54,55 @@ export type PluginUiContainerV1 = z.infer<typeof PluginUiContainerV1Schema>;
  */
 export const PluginUiViewContainerV1Schema = PluginUiContainerV1Schema.exclude([
   'settingsPage',
+  'sessionInfoSection',
 ]);
 export type PluginUiViewContainerV1 = z.infer<typeof PluginUiViewContainerV1Schema>;
+
+export const PluginUiInlineSurfaceRoleV1Schema = z.enum([
+  'sessionSubagentLaunch',
+  'sessionSubagentDetails',
+  'sessionInfoSection',
+]);
+export type PluginUiInlineSurfaceRoleV1 = z.infer<typeof PluginUiInlineSurfaceRoleV1Schema>;
+export type PluginUiInlineSurfacePresentationV1 = 'content' | 'fill';
+
+/** Exact host-owned inline roles. This is admission, not a generic author slot. */
+export const PLUGIN_UI_INLINE_SURFACE_SLOTS_V1 = Object.freeze({
+  sessionSubagentLaunch: Object.freeze({
+    container: 'sessionSubagentLaunch' as const,
+    targetKind: 'session' as const,
+    presentations: Object.freeze(['content'] as const),
+  }),
+  sessionSubagentDetails: Object.freeze({
+    container: 'sessionSubagentDetails' as const,
+    targetKind: 'session' as const,
+    presentations: Object.freeze(['content', 'fill'] as const),
+  }),
+  sessionInfoSection: Object.freeze({
+    container: 'sessionInfoSection' as const,
+    targetKind: 'session' as const,
+    presentations: Object.freeze(['content'] as const),
+  }),
+});
+
+export function resolvePluginUiInlineSurfaceSlotV1(
+  role: unknown,
+  presentation: unknown,
+): Readonly<{
+  container: 'sessionSubagentLaunch' | 'sessionSubagentDetails' | 'sessionInfoSection';
+  targetKind: 'session';
+  presentation: PluginUiInlineSurfacePresentationV1;
+}> | null {
+  const parsedRole = PluginUiInlineSurfaceRoleV1Schema.safeParse(role);
+  if (!parsedRole.success || (presentation !== 'content' && presentation !== 'fill')) return null;
+  const slot = PLUGIN_UI_INLINE_SURFACE_SLOTS_V1[parsedRole.data];
+  if (!(slot.presentations as readonly string[]).includes(presentation)) return null;
+  return Object.freeze({
+    container: slot.container,
+    targetKind: slot.targetKind,
+    presentation,
+  });
+}
 
 export const PluginUiDestinationInstancePolicyV1Schema = z.enum([
   'singleton',
@@ -284,6 +334,21 @@ export const PLUGIN_UI_DESTINATION_BINDING_SLOTS_V1 = Object.freeze([
     defineDestinationBindingSlot(
       'servicesPanel',
       'services',
+      ALL_DESTINATION_PLATFORMS,
+    ),
+    defineDestinationBindingSlot(
+      'sessionSubagentLaunch',
+      'session',
+      ALL_DESTINATION_PLATFORMS,
+    ),
+    defineDestinationBindingSlot(
+      'sessionSubagentDetails',
+      'session',
+      ALL_DESTINATION_PLATFORMS,
+    ),
+    defineDestinationBindingSlot(
+      'sessionInfoSection',
+      'session',
       ALL_DESTINATION_PLATFORMS,
     ),
   ] as const satisfies readonly PluginUiDestinationBindingSlotV1[]);

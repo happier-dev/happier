@@ -1,9 +1,15 @@
 import { z } from 'zod';
+
+import {
+  AutomationReplyHandoffStateV1Schema,
+  type AutomationReplyHandoffStateV1,
+} from './automationReplyHandoffStateV1.js';
 import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
 
 import {
   AutomationConversationTargetVerifyInputV1Schema,
   AutomationConversationTargetsListInputV1Schema,
+  AutomationEventCheckpointRetirementsV1Schema,
   AutomationEventAdmitHttpInputV1Schema,
   AutomationEventAdmitInputV1Schema,
   AutomationEventFilterV1Schema,
@@ -19,6 +25,7 @@ import {
   UNSIGNED_DECIMAL_BIGINT_SCHEMA,
   type AutomationConversationActionIdV1,
   type AutomationEventActionIdV1,
+  type AutomationEventCheckpointRetirementsV1,
   type AutomationEventFilterV1,
   type AutomationEventSourceObservationTransportV1,
   type AutomationJsonPointerV1,
@@ -159,6 +166,8 @@ export {
   AutomationEventAdmitItemResultV1Schema,
   AutomationEventAdmitHttpResultV1Schema,
   AutomationEventAdmitResultV1Schema,
+  AutomationEventCheckpointRetirementCandidateV1Schema,
+  AutomationEventCheckpointRetirementsV1Schema,
   AutomationEventFilterV1Schema,
   AutomationEventSourceCatalogScopeV1Schema,
   AutomationEventSourceCatalogStatusStateV1Schema,
@@ -175,9 +184,7 @@ export {
   MAX_AUTOMATION_EVENT_FILTER_CLAUSES,
   MAX_AUTOMATION_EVENT_FILTER_IN_VALUES,
   MAX_AUTOMATION_EVENT_FILTER_VALUE_CODE_POINTS,
-  MAX_AUTOMATION_EVENT_ADMIT_DEFINITIONS_PER_ACTION,
   MAX_AUTOMATION_EVENT_ADMIT_DEFINITIONS_PER_CALL,
-  MAX_ENABLED_AUTOMATION_EVENT_SOURCE_DEFINITIONS_PER_ACCOUNT,
   MAX_AUTOMATION_EVENT_SOURCE_DEFINITIONS_PER_PAGE,
 } from './automationActionSpecsV1.js';
 export type {
@@ -195,6 +202,8 @@ export type {
   AutomationEventAdmitItemResultV1,
   AutomationEventAdmitHttpResultV1,
   AutomationEventAdmitResultV1,
+  AutomationEventCheckpointRetirementCandidateV1,
+  AutomationEventCheckpointRetirementsV1,
   AutomationEventFilterClauseV1,
   AutomationEventFilterV1,
   AutomationEventSourceCatalogScopeV1,
@@ -811,6 +820,7 @@ export const AutomationEventStoredDefinitionsReadResultV1Schema = z.discriminate
     revision: UNSIGNED_DECIMAL_BIGINT_SCHEMA,
     eventDeclarationRelease: AutomationEventDeclarationReleaseV1Schema,
     scope: PRIVATE_STORED_DEFINITION_SCOPE_SCHEMA.optional(),
+    checkpointRetirements: AutomationEventCheckpointRetirementsV1Schema.optional(),
   }).strict(),
   z.object({ kind: z.literal('cursorStale'), currentRevision: UNSIGNED_DECIMAL_BIGINT_SCHEMA }).strict(),
 ]).superRefine((value, context) => {
@@ -829,12 +839,18 @@ export type AutomationEventStoredDefinitionsReadResultV1 = z.infer<
   typeof AutomationEventStoredDefinitionsReadResultV1Schema
 >;
 
-const AutomationEventAdmitEncryptedEnvelopeV1Schema = ENCRYPTED_STORED_CONTENT_SCHEMA.superRefine(
+/**
+ * The one admission-wire shape for an Account-sealed occurrence-evidence
+ * envelope. Both origin arms — Event and Conversation — carry their opaque
+ * evidence through this schema so the ciphertext-blind server applies one
+ * cipher-domain and framing rule.
+ */
+const AutomationAdmitEncryptedTriggerEvidenceEnvelopeV1Schema = ENCRYPTED_STORED_CONTENT_SCHEMA.superRefine(
   (value, context) => {
     addAutomationStoredEnvelopeUtf8LimitIssue(
       value,
       context,
-      'Encrypted Event admission envelope exceeds its UTF-8 byte limit',
+      'Encrypted admission envelope exceeds its UTF-8 byte limit',
     );
     if (readCanonicalPaddedBase64DecodedLength(value.c) === null || !isAccountScopedBlobCiphertextForKind({
       kind: 'automation_trigger_evidence',
@@ -843,7 +859,7 @@ const AutomationEventAdmitEncryptedEnvelopeV1Schema = ENCRYPTED_STORED_CONTENT_S
       context.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['c'],
-        message: 'Encrypted Event admission evidence must use the trigger-evidence cipher kind',
+        message: 'Encrypted admission evidence must use the trigger-evidence cipher kind',
       });
     }
   },
@@ -877,7 +893,7 @@ export const AutomationEventAdmitEncryptedDefinitionEvidenceV1Schema = z.object(
   // The server can classify this fixed envelope kind but never opens the
   // Account-scoped contents.  It is common to both outcome arms so a replay
   // can rejoin before a later filter/currentness decision is considered.
-  triggerEvidenceEnvelope: AutomationEventAdmitEncryptedEnvelopeV1Schema,
+  triggerEvidenceEnvelope: AutomationAdmitEncryptedTriggerEvidenceEnvelopeV1Schema,
   occurrenceEvidenceEqualityTag: AutomationOccurrenceEvidenceEqualityTagV1Schema,
   outcome: AutomationEventAdmitEncryptedDefinitionOutcomeV1Schema,
 }).strict();
@@ -974,6 +990,20 @@ export type AutomationRunResultCorrespondenceV1 = z.infer<
   typeof AutomationRunResultCorrespondenceV1Schema
 >;
 
+/**
+ * Immutable correspondence the admitting host can seal before the server has
+ * created the unique Conversation Run. Account authority comes from the
+ * authenticated target/envelope mode; the server later resolves the actual
+ * Run through this occurrence identity before releasing the handoff.
+ */
+export const AutomationConversationReplyContextCorrespondenceV1Schema = z.object({
+  automationId: asProtocolZod(AutomationIdV1Schema),
+  occurrenceKey: AutomationOccurrenceKeyV1Schema,
+}).strict();
+export type AutomationConversationReplyContextCorrespondenceV1 = z.infer<
+  typeof AutomationConversationReplyContextCorrespondenceV1Schema
+>;
+
 export const AutomationRunResultStoredPayloadV1Schema = z.object({
   v: z.literal(1),
   correspondence: AutomationRunResultCorrespondenceV1Schema,
@@ -985,8 +1015,11 @@ export type AutomationRunResultStoredPayloadV1 = z.infer<
 
 export const AutomationConversationReplyContextStoredPayloadV1Schema = z.object({
   v: z.literal(1),
-  correspondence: AutomationReplyHandoffCorrespondenceV1Schema,
-  source: AutomationResultDeliverySourceV1Schema,
+  correspondence: AutomationConversationReplyContextCorrespondenceV1Schema,
+  // The admitted template version is frozen before the Run exists. The
+  // receiving daemon adds the server-owned Run/handoff ids only after it has
+  // verified this occurrence correspondence against its claim.
+  templateVersion: NONNEGATIVE_SAFE_INTEGER_SCHEMA,
   opaqueContext: asProtocolZod(AutomationEventReplyContextV1Schema),
 }).strict();
 export type AutomationConversationReplyContextStoredPayloadV1 = z.infer<
@@ -1016,16 +1049,21 @@ export type AutomationConversationReplyContextStoredV1 = z.infer<
   typeof AutomationConversationReplyContextStoredV1Schema
 >;
 
-export const AutomationRunReplyHandoffStateV1Schema = z.enum([
-  'none',
-  'awaitingResult',
-  'ready',
-  'handingOff',
-  'accepted',
-  'suppressed',
-  'blocked',
-]);
-export type AutomationRunReplyHandoffStateV1 = z.infer<typeof AutomationRunReplyHandoffStateV1Schema>;
+/**
+ * The host-sealed, mode-correct reply context that admission freezes beside a
+ * final-result target. It intentionally names no Run or handoff: those ids do
+ * not exist until the canonical occurrence writer commits.
+ */
+export const AutomationConversationAdmitReplyHandoffV1Schema = z.object({
+  actionRef: AutomationResultDeliveryActionRefV1Schema,
+  replyContextEnvelope: AutomationConversationReplyContextStoredV1Schema,
+}).strict();
+export type AutomationConversationAdmitReplyHandoffV1 = z.infer<
+  typeof AutomationConversationAdmitReplyHandoffV1Schema
+>;
+
+export const AutomationRunReplyHandoffStateV1Schema = AutomationReplyHandoffStateV1Schema;
+export type AutomationRunReplyHandoffStateV1 = AutomationReplyHandoffStateV1;
 
 /**
  * The private Action outcome is retained for the receipt owner only. The
@@ -1178,6 +1216,7 @@ export const AutomationReplyHandoffClaimV1Schema = z.object({
   handoffId: asProtocolZod(HostIdentifierV1Schema),
   runId: asProtocolZod(HostIdentifierV1Schema),
   automationId: asProtocolZod(AutomationIdV1Schema),
+  occurrenceKey: AutomationOccurrenceKeyV1Schema,
   accountCurrentness: AutomationAccountCurrentnessWitnessV1Schema,
   resultEnvelope: AutomationReplyHandoffResultEnvelopeTransportV1Schema,
   replyContextEnvelope: AutomationStoredContentEnvelopeV1Schema,
@@ -1344,6 +1383,126 @@ export type AutomationConversationActionHttpCallerV1 = z.infer<
   typeof AutomationConversationActionHttpCallerV1Schema
 >;
 
+/**
+ * Private host evidence constructed by the authenticated Conversation
+ * admission host. A plain Account keeps its semantic Action input on the wire;
+ * an E2EE Account replaces it entirely with this sealed, Account-current
+ * package so no sender, message text, or reply context reaches the server.
+ *
+ * An optional final-result handoff carries a host-sealed reply context bound to
+ * the same `(automationId, occurrenceKey)` as the encrypted evidence. The
+ * server stores/routs only the outer envelope and resolves actual Run/handoff
+ * facts later through the unique occurrence owner.
+ */
+export const AutomationConversationAdmitEncryptedHostEvidenceV1Schema = z.object({
+  v: z.literal(1),
+  t: z.literal('encrypted'),
+  accountCurrentness: AutomationAccountCurrentnessWitnessV1Schema,
+  automationId: asProtocolZod(AutomationIdV1Schema),
+  templateVersion: NONNEGATIVE_SAFE_INTEGER_SCHEMA,
+  // Host-derived from the same occurrence evidence the envelopes seal. The
+  // server retains and compares it but cannot derive or interpret it.
+  occurrenceKey: AutomationOccurrenceKeyV1Schema,
+  occurredAt: AutomationOriginOccurredAtV1Schema,
+  /** Sealed `AutomationConversationOccurrenceEvidenceV1` retained on the Run. */
+  triggerEvidenceEnvelope: AutomationAdmitEncryptedTriggerEvidenceEnvelopeV1Schema,
+  /** Sealed `AutomationRunConversationTriggerEvidenceV1` frozen into the recipe. */
+  executionTriggerEvidenceEnvelope: AutomationAdmitEncryptedTriggerEvidenceEnvelopeV1Schema,
+  occurrenceEvidenceEqualityTag: AutomationOccurrenceEvidenceEqualityTagV1Schema,
+  replyHandoff: AutomationConversationAdmitReplyHandoffV1Schema.optional(),
+}).strict().superRefine((value, context) => {
+  if (value.accountCurrentness.mode !== 'e2ee') {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['accountCurrentness', 'mode'],
+      message: 'Encrypted Conversation evidence requires E2EE Account currentness',
+    });
+  }
+});
+export type AutomationConversationAdmitEncryptedHostEvidenceV1 = z.infer<
+  typeof AutomationConversationAdmitEncryptedHostEvidenceV1Schema
+>;
+
+export const AutomationConversationAdmitPlainHttpRequestV1Schema = z.object({
+  v: z.literal(1),
+  caller: AutomationConversationActionHttpCallerV1Schema,
+  input: AutomationConversationAdmitInputV1Schema,
+  replyHandoff: AutomationConversationAdmitReplyHandoffV1Schema.optional(),
+}).strict().superRefine((request, context) => {
+  // Any plugin may admit a Conversation and receive its own reply. The frozen
+  // delivery target must stay inside the admitting plugin: naming another
+  // plugin's contribution would misroute a user's reply out of its owner.
+  if (!isAutomationConversationResultDeliveryOwnedByCallerV1({
+    callerPluginId: request.caller.pluginId,
+    resultDelivery: request.input.resultDelivery,
+  })) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['input', 'resultDelivery', 'actionRef', 'pluginId'],
+      message: 'Result delivery must target the admitting plugin\'s own Action contribution',
+    });
+  }
+  if (request.input.resultDelivery.kind === 'none') {
+    if (request.replyHandoff !== undefined) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['replyHandoff'],
+        message: 'A reply handoff is only valid for final-result delivery',
+      });
+    }
+    return;
+  }
+  if (request.replyHandoff === undefined) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['replyHandoff'],
+      message: 'Final-result delivery requires a host-sealed reply handoff',
+    });
+    return;
+  }
+  if (
+    request.replyHandoff.actionRef.pluginId !== request.input.resultDelivery.actionRef.pluginId
+    || request.replyHandoff.actionRef.localId !== request.input.resultDelivery.actionRef.localId
+  ) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['replyHandoff', 'actionRef'],
+      message: 'Reply handoff action must match final-result delivery',
+    });
+  }
+});
+export type AutomationConversationAdmitPlainHttpRequestV1 = z.infer<
+  typeof AutomationConversationAdmitPlainHttpRequestV1Schema
+>;
+
+/**
+ * The E2EE arm deliberately has no `input`: this strict shape is the only body
+ * an encrypted Account's admission host can produce, so no plugin sender,
+ * message text, or reply context can enter the server path.
+ */
+export const AutomationConversationAdmitEncryptedHttpRequestV1Schema = z.object({
+  v: z.literal(1),
+  caller: AutomationConversationActionHttpCallerV1Schema,
+  hostEvidence: AutomationConversationAdmitEncryptedHostEvidenceV1Schema,
+}).strict().superRefine((request, context) => {
+  const handoff = request.hostEvidence.replyHandoff;
+  if (handoff !== undefined && handoff.actionRef.pluginId !== request.caller.pluginId) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['hostEvidence', 'replyHandoff', 'actionRef', 'pluginId'],
+      message: 'Reply handoff must target the admitting plugin\'s own Action contribution',
+    });
+  }
+});
+export type AutomationConversationAdmitEncryptedHttpRequestV1 = z.infer<
+  typeof AutomationConversationAdmitEncryptedHttpRequestV1Schema
+>;
+
+export const AutomationConversationAdmitHttpRequestV1Schema = z.union([
+  AutomationConversationAdmitPlainHttpRequestV1Schema,
+  AutomationConversationAdmitEncryptedHttpRequestV1Schema,
+]);
+
 export const AutomationConversationActionHttpRequestSchemasV1 = Object.freeze({
   'automation.conversation.targets.list': z.object({
     v: z.literal(1),
@@ -1355,25 +1514,7 @@ export const AutomationConversationActionHttpRequestSchemasV1 = Object.freeze({
     caller: AutomationConversationActionHttpCallerV1Schema,
     input: AutomationConversationTargetVerifyInputV1Schema,
   }).strict(),
-  'automation.conversation.admit': z.object({
-    v: z.literal(1),
-    caller: AutomationConversationActionHttpCallerV1Schema,
-    input: AutomationConversationAdmitInputV1Schema,
-  }).strict().superRefine((request, context) => {
-    // Any plugin may admit a Conversation and receive its own reply. The frozen
-    // delivery target must stay inside the admitting plugin: naming another
-    // plugin's contribution would misroute a user's reply out of its owner.
-    if (!isAutomationConversationResultDeliveryOwnedByCallerV1({
-      callerPluginId: request.caller.pluginId,
-      resultDelivery: request.input.resultDelivery,
-    })) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['input', 'resultDelivery', 'actionRef', 'pluginId'],
-        message: 'Result delivery must target the admitting plugin\'s own Action contribution',
-      });
-    }
-  }),
+  'automation.conversation.admit': AutomationConversationAdmitHttpRequestV1Schema,
 } as const satisfies Readonly<Record<AutomationConversationActionIdV1, z.ZodTypeAny>>);
 export type AutomationConversationTargetsListHttpRequestV1 = z.infer<
   typeof AutomationConversationActionHttpRequestSchemasV1['automation.conversation.targets.list']
@@ -1388,6 +1529,17 @@ export type AutomationConversationActionHttpRequestV1 =
   | AutomationConversationTargetsListHttpRequestV1
   | AutomationConversationTargetVerifyHttpRequestV1
   | AutomationConversationAdmitHttpRequestV1;
+
+/**
+ * The one normalized host request shape for each Conversation action. Transport
+ * implementations receive this boundary value, never raw plugin Action input
+ * plus a parallel caller/evidence tuple.
+ */
+export type AutomationConversationActionHttpRequestByIdV1 = {
+  [TActionId in AutomationConversationActionIdV1]: z.infer<
+    (typeof AutomationConversationActionHttpRequestSchemasV1)[TActionId]
+  >;
+};
 
 export const AutomationEventActionHttpPathsV1 = Object.freeze({
   'automation.event.sources.list': '/v1/automations/events/sources/list',

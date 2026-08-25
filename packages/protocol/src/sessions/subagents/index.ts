@@ -43,6 +43,7 @@ export {
 } from '../../messages/structured/subagentCommandV1.js';
 export {
   parseSubagentLaunchV1,
+  resolveSubagentLaunchStructuredSend,
   type SubagentLaunchV1,
 } from '../../messages/structured/subagentLaunchV1.js';
 export type {

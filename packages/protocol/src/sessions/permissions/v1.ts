@@ -15,6 +15,13 @@ function boundedNfcIdentifier(maxBytes: number, label: string) {
     .refine((value) => UTF8_ENCODER.encode(value).byteLength <= maxBytes, `${label} exceeds its UTF-8 byte limit`);
 }
 
+function boundedNfcText(maxBytes: number, label: string) {
+  return z.string()
+    .refine((value) => value === value.normalize('NFC'), `${label} must be NFC-normalized`)
+    .refine((value) => value.trim().length > 0, `${label} must be nonempty`)
+    .refine((value) => UTF8_ENCODER.encode(value).byteLength <= maxBytes, `${label} exceeds its UTF-8 byte limit`);
+}
+
 export const SessionPermissionRequestIdV1Schema = boundedNfcIdentifier(256, 'Permission request ids');
 export const SessionPermissionSettlementIdV1Schema = boundedNfcIdentifier(256, 'Permission settlement ids');
 export const SessionPermissionGrantIdV1Schema = boundedNfcIdentifier(256, 'Permission grant ids');
@@ -67,30 +74,119 @@ const SessionPermissionRemoteAllowedScopesV1Schema = z.union([
   z.tuple([z.literal('request'), z.literal('session')]),
 ]);
 
+/**
+ * The remote pending projection is deliberately a bounded reviewer surface,
+ * not a copy of the internal tool-input payload.  The host owns derivation
+ * and truncation before this Action boundary; mediators only render these
+ * semantic facts and send indexed answers back to the current Session owner.
+ */
+export const SESSION_PERMISSION_REMOTE_SUMMARY_TOOL_LABEL_UTF8_BYTES = 256;
+export const SESSION_PERMISSION_REMOTE_SUMMARY_TITLE_UTF8_BYTES = 1_024;
+export const SESSION_PERMISSION_REMOTE_SUMMARY_DETAIL_UTF8_BYTES = 1_024;
+export const SESSION_PERMISSION_REMOTE_QUESTION_TEXT_UTF8_BYTES = 1_024;
+export const SESSION_PERMISSION_REMOTE_QUESTION_CHOICE_UTF8_BYTES = 256;
+export const SESSION_PERMISSION_REMOTE_SUMMARY_MAX_QUESTIONS = 4;
+export const SESSION_PERMISSION_REMOTE_SUMMARY_MAX_CHOICES_PER_QUESTION = 8;
+
+const SessionPermissionRemoteQuestionSummaryV1Schema = z.object({
+  question: boundedNfcText(
+    SESSION_PERMISSION_REMOTE_QUESTION_TEXT_UTF8_BYTES,
+    'Remote question text',
+  ),
+  selection: z.enum(['text', 'single', 'multiple']),
+  required: z.boolean(),
+  allowCustom: z.boolean(),
+  choices: z.array(boundedNfcText(
+    SESSION_PERMISSION_REMOTE_QUESTION_CHOICE_UTF8_BYTES,
+    'Remote question choices',
+  )).max(SESSION_PERMISSION_REMOTE_SUMMARY_MAX_CHOICES_PER_QUESTION),
+}).strict();
+
+const SessionPermissionRemotePermissionSummaryV1Schema = z.object({
+  kind: z.literal('permission'),
+  toolLabel: boundedNfcText(
+    SESSION_PERMISSION_REMOTE_SUMMARY_TOOL_LABEL_UTF8_BYTES,
+    'Remote permission tool labels',
+  ),
+  title: boundedNfcText(
+    SESSION_PERMISSION_REMOTE_SUMMARY_TITLE_UTF8_BYTES,
+    'Remote permission titles',
+  ),
+  detail: boundedNfcText(
+    SESSION_PERMISSION_REMOTE_SUMMARY_DETAIL_UTF8_BYTES,
+    'Remote permission details',
+  ),
+}).strict();
+
+const SessionPermissionRemoteUserActionSummaryV1Schema = z.object({
+  kind: z.literal('user_action'),
+  questions: z.array(SessionPermissionRemoteQuestionSummaryV1Schema)
+    .min(1)
+    .max(SESSION_PERMISSION_REMOTE_SUMMARY_MAX_QUESTIONS),
+}).strict();
+
+const SessionPermissionRemoteAgentRequestSummaryV1Schema = z.discriminatedUnion('kind', [
+  SessionPermissionRemotePermissionSummaryV1Schema,
+  SessionPermissionRemoteUserActionSummaryV1Schema,
+]);
+export type SessionPermissionRemoteAgentRequestSummaryV1 = z.infer<
+  typeof SessionPermissionRemoteAgentRequestSummaryV1Schema
+>;
+
 export const SessionPermissionRemotePendingListInputV1Schema = z.object({
   sessionId: asProtocolZod(SessionIdSchema),
   sourceRef: SessionPermissionSourceRefV1Schema,
   sourceRevisionOrEpoch: SessionPermissionSourceRevisionOrEpochV1Schema,
+  /**
+   * Keyset continuation from a prior page's `nextCursor`. Omit it to read from
+   * the oldest request. The bounded page is not the whole projection, so a
+   * mediator holding custody for a request beyond the first page continues
+   * here rather than waiting for older requests to settle.
+   */
+  cursor: SessionPermissionCursorV1Schema.nullable().optional(),
 }).strict();
 export type SessionPermissionRemotePendingListInputV1 = z.infer<typeof SessionPermissionRemotePendingListInputV1Schema>;
 
-export const SessionPermissionRemotePendingListOutputV1Schema = z.object({
-  requests: z.array(z.object({
-    requestId: SessionPermissionRequestIdV1Schema,
-    /**
-     * Host-stamped turn custody. Remote mediators correlate a pending
-     * permission by (sessionId, turnId, requestId), never by requestId alone.
-     */
-    turnId: TurnIdSchema,
-    createdAtMs: z.number().int().nonnegative(),
-    allowedScopes: SessionPermissionRemoteAllowedScopesV1Schema,
-  }).strict()).max(32),
+const SessionPermissionRemotePendingPermissionRequestV1Schema = z.object({
+  kind: z.literal('permission'),
+  requestId: SessionPermissionRequestIdV1Schema,
   /**
-   * `true` means this bounded projection is not exhaustive. Callers must not
-   * infer that a missing request is absent: the host can withhold a durable
-   * source-matched request until its live permission waiter has reattached.
+   * Host-stamped turn custody. Remote mediators correlate a pending
+   * permission by (sessionId, turnId, requestId), never by requestId alone.
+   */
+  turnId: TurnIdSchema,
+  createdAtMs: z.number().int().nonnegative(),
+  allowedScopes: SessionPermissionRemoteAllowedScopesV1Schema,
+  agentRequestSummary: SessionPermissionRemotePermissionSummaryV1Schema,
+}).strict();
+
+const SessionPermissionRemotePendingUserActionRequestV1Schema = z.object({
+  kind: z.literal('user_action'),
+  requestId: SessionPermissionRequestIdV1Schema,
+  turnId: TurnIdSchema,
+  createdAtMs: z.number().int().nonnegative(),
+  agentRequestSummary: SessionPermissionRemoteUserActionSummaryV1Schema,
+}).strict();
+
+export const SessionPermissionRemotePendingListOutputV1Schema = z.object({
+  requests: z.array(z.discriminatedUnion('kind', [
+    SessionPermissionRemotePendingPermissionRequestV1Schema,
+    SessionPermissionRemotePendingUserActionRequestV1Schema,
+  ])).max(32),
+  /**
+   * `true` means the host is withholding a durable source-matched request
+   * until its live permission waiter has reattached. Callers must not infer
+   * that a missing request is absent while this is set, and it is a whole-
+   * projection fact rather than a per-page one. Further *pages* are reported
+   * by `nextCursor`, never by this flag.
    */
   truncated: z.boolean(),
+  /**
+   * Keyset continuation for the next bounded page, or `null` at the end of the
+   * projection. An undecodable continuation returns an empty `truncated` page
+   * so a caller can never read it as a proof of absence.
+   */
+  nextCursor: SessionPermissionCursorV1Schema.nullable(),
 }).strict();
 export type SessionPermissionRemotePendingListOutputV1 = z.infer<typeof SessionPermissionRemotePendingListOutputV1Schema>;
 
@@ -106,6 +202,60 @@ export const SessionPermissionRemoteRespondInputV1Schema = z.object({
   scope: z.enum(['request', 'session']),
 }).strict();
 export type SessionPermissionRemoteRespondInputV1 = z.infer<typeof SessionPermissionRemoteRespondInputV1Schema>;
+
+const SessionUserActionRemoteAnswerValueV1Schema = boundedNfcText(
+  SESSION_PERMISSION_REMOTE_QUESTION_TEXT_UTF8_BYTES,
+  'Remote user-action answer values',
+);
+
+export const SessionUserActionRemoteAnswerInputV1Schema = z.object({
+  sessionId: asProtocolZod(SessionIdSchema),
+  turnId: TurnIdSchema,
+  requestId: SessionPermissionRequestIdV1Schema,
+  sourceRef: SessionPermissionSourceRefV1Schema,
+  sourceRevisionOrEpoch: SessionPermissionSourceRevisionOrEpochV1Schema,
+  /**
+   * Questions are identified by their bounded projection index rather than a
+   * client-supplied prompt string. The Session owner resolves these indices
+   * against its live request before delegating completion to the incumbent
+   * `session.user_action.answer` path.
+   */
+  answers: z.array(z.object({
+    questionIndex: z.number().int().min(0).max(SESSION_PERMISSION_REMOTE_SUMMARY_MAX_QUESTIONS - 1),
+    values: z.array(SessionUserActionRemoteAnswerValueV1Schema).min(1).max(32),
+  }).strict()).min(1).max(SESSION_PERMISSION_REMOTE_SUMMARY_MAX_QUESTIONS)
+    .superRefine((answers, context) => {
+      const indexes = new Set<number>();
+      for (const [index, answer] of answers.entries()) {
+        if (indexes.has(answer.questionIndex)) {
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [index, 'questionIndex'],
+            message: 'Remote user-action answers must not repeat a question index',
+          });
+        }
+        indexes.add(answer.questionIndex);
+      }
+    }),
+}).strict();
+export type SessionUserActionRemoteAnswerInputV1 = z.infer<typeof SessionUserActionRemoteAnswerInputV1Schema>;
+
+export const SessionUserActionRemoteAnswerOutputV1Schema = z.union([
+  z.object({ status: z.literal('applied'), requestId: SessionPermissionRequestIdV1Schema }).strict(),
+  z.object({
+    status: z.literal('rejected'),
+    code: z.enum([
+      'requestNotFound',
+      'requestNotPending',
+      'answerInvalid',
+      'mediationStateUnavailable',
+      'sessionUnavailable',
+      'ownerMachineUnavailable',
+      'canceled',
+    ]),
+  }).strict(),
+]);
+export type SessionUserActionRemoteAnswerOutputV1 = z.infer<typeof SessionUserActionRemoteAnswerOutputV1Schema>;
 
 const SessionPermissionRemoteRespondSuccessV1Schema = z.discriminatedUnion('decision', [
   z.object({

@@ -25,14 +25,14 @@ export const PluginUiHeaderActionPresentationV1Schema = z.object({
 
 /** A static app-page header action; dynamic status remains host-owned. */
 export const PluginUiPageHeaderActionV1Schema = PluginUiHeaderActionPresentationV1Schema.extend({
-  action: PluginUiSemanticActionDeclarationV1Schema,
+  command: PluginUiSemanticActionDeclarationV1Schema,
 }).strict();
 export type PluginUiPageHeaderActionV1 = z.infer<typeof PluginUiPageHeaderActionV1Schema>;
-/** Author input: `action` also admits the bare same-plugin Action local id. */
+/** Author input: `command` also admits the bare same-plugin Action local id. */
 export type PluginUiPageHeaderActionV1Input = z.input<typeof PluginUiPageHeaderActionV1Schema>;
 
 export const PluginSessionHeaderActionDescriptorV1Schema = PluginUiHeaderActionPresentationV1Schema.extend({
-  action: PluginUiSemanticActionDeclarationV1Schema,
+  command: PluginUiSemanticActionDeclarationV1Schema,
   availability: PluginAvailabilityDescriptorV2Schema.optional(),
 }).strict();
 export type PluginSessionHeaderActionDescriptorV1 = z.infer<typeof PluginSessionHeaderActionDescriptorV1Schema>;
@@ -41,8 +41,8 @@ export type PluginSessionHeaderActionDescriptorInput = z.input<typeof PluginSess
 
 /** The compiled Session-header descriptor never grants cross-plugin surface navigation. */
 export type NormalizedPluginSessionHeaderActionDescriptorV1 = Readonly<
-  Omit<PluginSessionHeaderActionDescriptorV1, 'action'> & Readonly<{
-    action: PluginUiResolvedSemanticCommandV1;
+  Omit<PluginSessionHeaderActionDescriptorV1, 'command'> & Readonly<{
+    command: PluginUiResolvedSemanticCommandV1;
   }>
 >;
 
@@ -60,13 +60,13 @@ export function normalizePluginSessionHeaderActionDescriptorV1(
     descriptor: PluginSessionHeaderActionDescriptorV1Schema,
   }).strict().safeParse(input);
   if (!parsed.success) return null;
-  const action = normalizePluginUiSemanticCommandV1({
+  const command = normalizePluginUiSemanticCommandV1({
     pluginId: parsed.data.pluginId,
-    command: parsed.data.descriptor.action,
+    command: parsed.data.descriptor.command,
   });
-  if (!action) return null;
-  if (action.kind === 'openSurface' && action.destination.pluginId !== parsed.data.pluginId) {
+  if (!command) return null;
+  if (command.kind === 'openSurface' && command.destination.pluginId !== parsed.data.pluginId) {
     return null;
   }
-  return Object.freeze({ ...parsed.data.descriptor, action });
+  return Object.freeze({ ...parsed.data.descriptor, command });
 }

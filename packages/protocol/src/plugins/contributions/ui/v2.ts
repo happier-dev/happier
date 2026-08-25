@@ -25,9 +25,11 @@ import {
 } from '../publicTypes.js';
 import {
   PluginUiDestinationInstancePolicyV1Schema,
+  PluginUiViewContainerV1Schema,
   PLUGIN_UI_DESTINATION_BINDING_SLOTS_V1,
   type PluginUiDestinationInstancePolicyV1,
 } from './surfaceRegistry.js';
+import { preflightPluginDeclarativeDocumentV1 } from './declarativeDocumentPreflightV1.js';
 import {
   PluginUiPageHeaderActionV1Schema,
   type PluginUiPageHeaderActionV1,
@@ -210,6 +212,8 @@ export type PluginCollectionRowCommandV1 = z.infer<typeof PluginCollectionRowCom
 export const MAX_PLUGIN_DECLARATIVE_COLLECTION_ROW_SECONDARY_COMMANDS_V1 = 16;
 const DeclarativeCollectionListNodeSchema = z.object({
   kind: z.literal('collectionList'),
+  /** Optional accessible collection name; the renderer resolves it at its mounted localization owner. */
+  label: PluginLocalizedStringV2Schema.optional(),
   source: z.object({
     collectionId: asProtocolZod(PluginContributionLocalIdSchema),
     uiQueryId: PluginCollectionMemberNameV1Schema,
@@ -280,6 +284,21 @@ export const PluginDeclarativeNodeV2Schema: z.ZodType<PluginDeclarativeNodeV2> =
   DeclarativeActionPanelNodeSchema,
   DeclarativeCollectionListNodeSchema,
 ]));
+
+/**
+ * Static roots go through the same iterative document preflight as Resource
+ * documents before this recursive grammar descends into their children.
+ */
+const PluginDeclarativeRendererRootV2Schema: z.ZodType<PluginDeclarativeNodeV2> = z.unknown()
+  .superRefine((root, context) => {
+    const preflight = preflightPluginDeclarativeDocumentV1({ version: 1, root });
+    if (preflight.ok) return;
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: preflight.message,
+    });
+  })
+  .pipe(PluginDeclarativeNodeV2Schema);
 // The sole initial tuple contains only producer-backed methods, so a renderer
 // can require exactly the same vocabulary every adapter negotiates.
 const RequiredMethodsSchema = z.array(PluginUiHostMethodV1Schema).optional();
@@ -298,7 +317,7 @@ export type PluginDeclarativeDocumentSourceV1 = z.infer<typeof PluginDeclarative
 export const PluginUiRendererV2Schema = z.discriminatedUnion('kind', [
   z.object({ id: asProtocolZod(PluginContributionLocalIdSchema), kind: z.literal('reactNative'), artifact: asProtocolZod(PluginContributionLocalIdSchema), requiredHostMethods: RequiredMethodsSchema }).strict(),
   z.object({ id: asProtocolZod(PluginContributionLocalIdSchema), kind: z.literal('hostedWeb'), source: z.object({ kind: z.literal('artifact'), artifact: asProtocolZod(PluginContributionLocalIdSchema) }).strict(), requiredHostMethods: RequiredMethodsSchema }).strict(),
-  z.object({ id: asProtocolZod(PluginContributionLocalIdSchema), kind: z.literal('declarative'), root: PluginDeclarativeNodeV2Schema, documentSource: PluginDeclarativeDocumentSourceV1Schema.optional() }).strict(),
+  z.object({ id: asProtocolZod(PluginContributionLocalIdSchema), kind: z.literal('declarative'), root: PluginDeclarativeRendererRootV2Schema, documentSource: PluginDeclarativeDocumentSourceV1Schema.optional() }).strict(),
 ]);
 export type PluginUiRendererV2 = z.infer<typeof PluginUiRendererV2Schema>;
 export const MAX_PLUGIN_UI_PAGE_HEADER_ACTIONS_V1 = 16;
@@ -389,7 +408,7 @@ const PluginUiViewHeaderActionsSchemaV2 = Object.freeze({
  */
 function createPluginUiViewDestinationBindingSchemaV2() {
   const variants = PLUGIN_UI_DESTINATION_BINDING_SLOTS_V1
-    .filter((slot) => slot.container !== 'settingsPage')
+    .filter((slot) => PluginUiViewContainerV1Schema.safeParse(slot.container).success)
     .map((slot) => z.object({
       ...PluginUiViewCommonShapeV2,
       // The generated authoring schema derives its policy from the same
@@ -439,7 +458,7 @@ const PluginUiViewV2SchemaRaw = createPluginUiViewDestinationBindingSchemaV2().s
 export type PluginUiViewDestinationBindingInputV2 = {
   [TSlot in Exclude<
     typeof PLUGIN_UI_DESTINATION_BINDING_SLOTS_V1[number],
-    Readonly<{ container: 'settingsPage'; targetKind: 'app' }>
+    Readonly<{ container: 'settingsPage' | 'sessionInfoSection' }>
   > as `${TSlot['container']}:${TSlot['targetKind']}`]: Readonly<{
     container: TSlot['container'];
     target: z.input<typeof PluginUiViewTargetSchemaByKindV1[TSlot['targetKind']]>;
@@ -451,7 +470,7 @@ export type PluginUiViewDestinationBindingInputV2 = {
 }[keyof {
   [TSlot in Exclude<
     typeof PLUGIN_UI_DESTINATION_BINDING_SLOTS_V1[number],
-    Readonly<{ container: 'settingsPage'; targetKind: 'app' }>
+    Readonly<{ container: 'settingsPage' | 'sessionInfoSection' }>
   > as `${TSlot['container']}:${TSlot['targetKind']}`]: TSlot;
 }];
 export type PluginUiViewV2Input = z.input<typeof PluginUiViewV2SchemaRaw>
@@ -459,7 +478,7 @@ export type PluginUiViewV2Input = z.input<typeof PluginUiViewV2SchemaRaw>
 export type PluginUiViewV2 = z.output<typeof PluginUiViewV2SchemaRaw> & {
   [TSlot in Exclude<
     typeof PLUGIN_UI_DESTINATION_BINDING_SLOTS_V1[number],
-    Readonly<{ container: 'settingsPage'; targetKind: 'app' }>
+    Readonly<{ container: 'settingsPage' | 'sessionInfoSection' }>
   > as `${TSlot['container']}:${TSlot['targetKind']}`]: Readonly<{
     container: TSlot['container'];
     target: z.output<typeof PluginUiViewTargetSchemaByKindV1[TSlot['targetKind']]>;
@@ -471,7 +490,7 @@ export type PluginUiViewV2 = z.output<typeof PluginUiViewV2SchemaRaw> & {
 }[keyof {
   [TSlot in Exclude<
     typeof PLUGIN_UI_DESTINATION_BINDING_SLOTS_V1[number],
-    Readonly<{ container: 'settingsPage'; targetKind: 'app' }>
+    Readonly<{ container: 'settingsPage' | 'sessionInfoSection' }>
   > as `${TSlot['container']}:${TSlot['targetKind']}`]: TSlot;
 }];
 export const PluginUiViewV2Schema: z.ZodType<PluginUiViewV2, PluginUiViewV2Input> =

@@ -10,8 +10,6 @@ import {
     ConversationBindingResolveInputV1Schema,
     ConversationBindingResolveResultV1Schema,
     ConversationBindingSetEnabledInputV1Schema,
-    ConversationBindingTargetMutationResultV1Schema,
-    ConversationBindingTargetRotateInputV1Schema,
     ConversationBindingUpdateInputV1Schema,
     ConversationBindingUpdateResultV1Schema,
 } from './bindings.js';
@@ -20,7 +18,6 @@ import {
     ConversationConnectionCreateResultV1Schema,
     ConversationConnectionDeleteInputV1Schema,
     ConversationConnectionDeleteResultV1Schema,
-    ConversationConnectionSetEnabledInputV1Schema,
     ConversationConnectionTransferInputV1Schema,
     ConversationConnectionTransferResultV1Schema,
     ConversationConnectionUpdateInputV1Schema,
@@ -58,6 +55,7 @@ import type {
 export {
     conversationBindingInputModesForEndpointV1,
     conversationBindingPolicyForOmittedFieldsV1,
+    conversationSessionBindingDeliveryModeForOmittedFieldV1,
     isConversationBindingInputModeDeliverableV1,
     ConversationAutomationTargetNotVerifiedResultV1JsonSchema,
     ConversationAutomationTargetNotVerifiedResultV1Schema,
@@ -83,10 +81,6 @@ export {
     ConversationBindingResolutionUnavailableV1Schema,
     ConversationBindingSetEnabledInputV1JsonSchema,
     ConversationBindingSetEnabledInputV1Schema,
-    ConversationBindingTargetMutationResultV1JsonSchema,
-    ConversationBindingTargetMutationResultV1Schema,
-    ConversationBindingTargetRotateInputV1JsonSchema,
-    ConversationBindingTargetRotateInputV1Schema,
     ConversationBindingUpdateInputV1JsonSchema,
     ConversationBindingUpdateInputV1Schema,
     ConversationBindingUpdateResultV1JsonSchema,
@@ -105,8 +99,6 @@ export type {
     ConversationBindingResolveResultV1,
     ConversationBindingResolutionUnavailableV1,
     ConversationBindingSetEnabledInputV1,
-    ConversationBindingTargetMutationResultV1,
-    ConversationBindingTargetRotateInputV1,
     ConversationBindingUpdateInputV1,
     ConversationBindingUpdateResultV1,
 } from './bindings.js';
@@ -120,8 +112,6 @@ export {
     ConversationConnectionDeleteInputV1Schema,
     ConversationConnectionDeleteResultV1JsonSchema,
     ConversationConnectionDeleteResultV1Schema,
-    ConversationConnectionSetEnabledInputV1JsonSchema,
-    ConversationConnectionSetEnabledInputV1Schema,
     ConversationConnectionTransferInputV1JsonSchema,
     ConversationConnectionTransferInputV1Schema,
     ConversationConnectionTransferResultV1JsonSchema,
@@ -137,7 +127,6 @@ export type {
     ConversationConnectionCreateResultV1,
     ConversationConnectionDeleteInputV1,
     ConversationConnectionDeleteResultV1,
-    ConversationConnectionSetEnabledInputV1,
     ConversationConnectionTransferInputV1,
     ConversationConnectionTransferResultV1,
     ConversationConnectionUpdateInputV1,
@@ -263,12 +252,6 @@ export const ConversationConnectionUpdateManagementActionDeclarationV1: Conversa
     resultSchema: ConversationConnectionUpdateResultV1Schema.jsonSchema,
 });
 
-/** The exact manifest-facing declaration for guarded connection enablement. */
-export const ConversationConnectionSetEnabledManagementActionDeclarationV1: ConversationActionDeclarationV1 = Object.freeze({
-    inputSchema: ConversationConnectionSetEnabledInputV1Schema.jsonSchema,
-    resultSchema: ConversationConnectionUpdateResultV1Schema.jsonSchema,
-});
-
 /** The exact manifest-facing declaration for guarded connection deletion. */
 export const ConversationConnectionDeleteManagementActionDeclarationV1: ConversationActionDeclarationV1 = Object.freeze({
     inputSchema: ConversationConnectionDeleteInputV1Schema.jsonSchema,
@@ -341,12 +324,6 @@ export const ConversationBindingDeleteManagementActionDeclarationV1: Conversatio
     resultSchema: ConversationBindingDeleteResultV1Schema.jsonSchema,
 });
 
-/** The exact manifest-facing declaration for narrow binding target rotation. */
-export const ConversationBindingTargetRotateManagementActionDeclarationV1: ConversationActionDeclarationV1 = Object.freeze({
-    inputSchema: ConversationBindingTargetRotateInputV1Schema.jsonSchema,
-    resultSchema: ConversationBindingTargetMutationResultV1Schema.jsonSchema,
-});
-
 /** The exact manifest-facing declaration for one ingress-obligation retry. */
 export const ConversationIngressRetryManagementActionDeclarationV1: ConversationActionDeclarationV1 = Object.freeze({
     inputSchema: ConversationIngressRetryInputV1Schema.jsonSchema,
@@ -371,7 +348,6 @@ export const CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1: ConversationManagem
     connectionPrepare: ConversationConnectionPrepareManagementActionDeclarationV1,
     connectionRetest: ConversationConnectionRetestManagementActionDeclarationV1,
     connectionUpdate: ConversationConnectionUpdateManagementActionDeclarationV1,
-    connectionSetEnabled: ConversationConnectionSetEnabledManagementActionDeclarationV1,
     connectionDelete: ConversationConnectionDeleteManagementActionDeclarationV1,
     connectionAbandon: ConversationConnectionAbandonManagementActionDeclarationV1,
     streamBaselineAccept: ConversationStreamBaselineAcceptManagementActionDeclarationV1,
@@ -384,7 +360,6 @@ export const CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1: ConversationManagem
     bindingUpdate: ConversationBindingUpdateManagementActionDeclarationV1,
     bindingSetEnabled: ConversationBindingSetEnabledManagementActionDeclarationV1,
     bindingDelete: ConversationBindingDeleteManagementActionDeclarationV1,
-    bindingTargetRotate: ConversationBindingTargetRotateManagementActionDeclarationV1,
     ingressRetry: ConversationIngressRetryManagementActionDeclarationV1,
     deliveryResolve: ConversationDeliveryResolveManagementActionDeclarationV1,
     connectionPollRetry: ConversationConnectionPollRetryManagementActionDeclarationV1,

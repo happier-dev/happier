@@ -4,7 +4,7 @@ import {
   CONNECTED_ACCOUNT_REQUEST_AUTH_QUOTA_FAILURE_PATH,
   PI_REQUEST_AUTH_PINNED_TERMINAL_PRODUCER_VERSIONS_V1,
   PI_REQUEST_AUTH_PINNED_TERMINAL_SIGNATURES_V1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/connect/connected-account-request-auth';
 
 import {
   CONNECTED_ACCOUNT_REQUEST_AUTH_MATERIALIZATION_ID_MAX_LENGTH,

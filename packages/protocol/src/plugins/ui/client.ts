@@ -73,6 +73,7 @@ export {
   ComposerMediaContentCapabilityV1Schema,
   ComposerSessionMediaContentV1Schema,
   ComposerStagedMediaContentV1Schema,
+  MAX_COMPOSER_CONTENT_INSPECT_BYTES_V1,
 } from '../../runtime/input/composerContentV1.js';
 export type {
   ComposerContentDisplayNameV1,
@@ -86,6 +87,33 @@ export type {
   ComposerSessionMediaContentV1,
   ComposerStagedMediaContentV1,
 } from '../../runtime/input/composerContentV1.js';
+/** Composer control-state Resources are decoded by mounted plugin UI. */
+export {
+  COMPOSER_CONTROL_STATE_CONTENT_TYPE_V1,
+  ComposerControlStateContentTypeV1Schema,
+  ComposerControlStateV1Schema,
+  isComposerControlStateContentTypeV1,
+  MAX_COMPOSER_CONTROL_STATE_RESOURCE_BYTES_V1,
+} from './composer.js';
+export type {
+  ComposerControlStateContentTypeV1,
+  ComposerControlStateV1,
+} from './composer.js';
+/** Transcript activity Resources are browser-decoded host payloads. */
+export {
+  MAX_PLUGIN_TRANSCRIPT_ACTIVITIES_PER_RESOURCE_V1,
+  MAX_PLUGIN_TRANSCRIPT_ACTIVITY_RESOURCE_BYTES_V1,
+  PLUGIN_TRANSCRIPT_ACTIVITY_CONTENT_TYPE_V1,
+  PluginTranscriptActivityContentTypeV1Schema,
+  PluginTranscriptActivityResourceSnapshotV1Schema,
+  PluginTranscriptActivitySnapshotV1Schema,
+  isPluginTranscriptActivityContentTypeV1,
+} from '../contributions/ui/transcriptActivities.js';
+export type {
+  PluginTranscriptActivityContentTypeV1,
+  PluginTranscriptActivityResourceSnapshotV1,
+  PluginTranscriptActivitySnapshotV1,
+} from '../contributions/ui/transcriptActivities.js';
 export {
   ComposerDecorationResultV1Schema,
   ComposerDecorationSetV1Schema,
@@ -212,9 +240,13 @@ export {
   PluginUiTargetedContributionSurfaceV1Schema,
   PluginUiTargetedContributionV1Schema,
   PluginUiTargetedContributionsV1Schema,
+  selectPluginUiTargetedContributionOperationV1,
+  selectPluginUiTargetedContributionSurfaceV1,
+  selectPluginUiTargetedContributionV1,
 } from './targetedContributions.js';
 export type {
   PluginTargetedContributionSelectionV1,
+  PluginUiTargetedContributionSelectorV1,
   PluginUiTargetedContributionOperationV1,
   PluginUiTargetedContributionPointRefV1,
   PluginUiTargetedContributionPointSnapshotV1,
@@ -260,10 +292,12 @@ export type { PluginHostedWebContributionV1 } from '../contributions/ui/hostedWe
 export type { PluginUiContainerV1 } from '../contributions/ui/surfaceRegistry.js';
 export {
   PluginUiHostApiSurfaceContextV1Schema,
+  PluginUiHostApiRenderContextSnapshotV1Schema,
   PluginUiMountContextV1Schema,
 } from './surfaceContext.js';
 export type {
   PluginUiHostApiSurfaceContextV1,
+  PluginUiHostApiRenderContextSnapshotV1,
   PluginUiHostApiSurfaceTargetV1,
   PluginUiHostApiSurfaceThemeV1,
   PluginUiMountContextV1,

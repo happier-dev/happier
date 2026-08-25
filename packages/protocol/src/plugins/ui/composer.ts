@@ -269,6 +269,18 @@ export type ComposerControlStateContentTypeV1 = z.infer<
   typeof ComposerControlStateContentTypeV1Schema
 >;
 
+/**
+ * Per-read ceiling for the one Composer-control state Resource.
+ *
+ * The Composer control decodes and parses this document synchronously on the
+ * UI thread, so its bound is a frame budget rather than a transport quota. It
+ * matches the incumbent live-Resource document bound
+ * (`MAX_PLUGIN_TRANSCRIPT_ACTIVITY_RESOURCE_BYTES_V1`) and comfortably exceeds
+ * the largest natural `ComposerControlStateV1` document — roughly 36 KB with
+ * every optional field at its schema maximum in 4-byte UTF-8 text.
+ */
+export const MAX_COMPOSER_CONTROL_STATE_RESOURCE_BYTES_V1 = 64 * 1024;
+
 /** Whether Resource metadata is exactly the V1 Composer control-state media type. */
 export function isComposerControlStateContentTypeV1(
   contentType: unknown,

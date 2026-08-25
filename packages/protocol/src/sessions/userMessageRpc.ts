@@ -3,6 +3,9 @@ import { z } from 'zod';
 import {
   HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1,
   HappierStructuredInputV1Schema as HappierStructuredInputV1EnvelopeSchema,
+  RawIngressStructuredInputV1Schema,
+  ComposerContentHandleV1Schema,
+  MAX_COMPOSER_ATTACHMENT_INSTANCES_V1,
   SESSION_ATTACHMENT_UPLOAD_STRUCTURED_INPUT_PROVENANCE_KIND,
   hasAdmittedComposerAttachmentSelectionV1,
   readAttachmentEnvelopeLocalImagePaths,
@@ -10,8 +13,11 @@ import {
   readIngressComposerAttachmentSelectionV1,
   sanitizeHappierStructuredInputV1,
   sanitizeSessionStructuredInputMeta,
+  type ComposerContentHandleV1,
   type HappierStructuredInputV1 as HappierStructuredInputV1Envelope,
 } from '../runtime/input/index.js';
+import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
+import { SessionIdSchema } from './idsV1.js';
 import { PendingLocalIdSchema } from './pending/pendingLocalId.js';
 
 type MetadataRecord = Record<string, unknown>;
@@ -78,6 +84,47 @@ export const SessionUserMessageSendRequestSchema = z.object({
   });
 });
 export type SessionUserMessageSendRequest = z.infer<typeof SessionUserMessageSendRequestSchema>;
+
+/** Invocation-scoped Pending edit preparation through the canonical Session admission lifecycle. */
+export const SessionPendingMessageComposerAdmissionPrepareRequestV1Schema = z.object({
+  localId: PendingLocalIdSchema,
+  text: z.string(),
+  structuredInput: RawIngressStructuredInputV1Schema,
+}).strict();
+export type SessionPendingMessageComposerAdmissionPrepareRequestV1 = z.infer<
+  typeof SessionPendingMessageComposerAdmissionPrepareRequestV1Schema
+>;
+
+export const SessionPendingMessageComposerAdmissionPrepareResponseV1Schema = z.union([
+  z.object({
+    ok: z.literal(true),
+    text: z.string(),
+    structuredInput: HappierStructuredInputV1EnvelopeSchema,
+    stagedMediaHandles: z.array(ComposerContentHandleV1Schema).max(MAX_COMPOSER_ATTACHMENT_INSTANCES_V1),
+  }).strict(),
+  z.object({
+    ok: z.literal(false),
+    error: z.string().min(1),
+    errorCode: z.string().min(1),
+  }).strict(),
+]);
+export type SessionPendingMessageComposerAdmissionPrepareResponseV1 = z.infer<
+  typeof SessionPendingMessageComposerAdmissionPrepareResponseV1Schema
+>;
+
+/** The exact post-PATCH fact; the Pending writer, not the UI, owns its structured input. */
+export const SessionPendingMessageComposerAdmissionAcceptedRequestV1Schema = z.object({
+  sessionId: asProtocolZod(SessionIdSchema),
+  localId: PendingLocalIdSchema,
+  structuredInput: HappierStructuredInputV1EnvelopeSchema,
+  stagedMediaHandles: z.array(ComposerContentHandleV1Schema).max(MAX_COMPOSER_ATTACHMENT_INSTANCES_V1),
+}).strict();
+export type SessionPendingMessageComposerAdmissionAcceptedRequestV1 = Readonly<{
+  sessionId: string;
+  localId: z.infer<typeof PendingLocalIdSchema>;
+  structuredInput: HappierStructuredInputV1Envelope;
+  stagedMediaHandles: readonly ComposerContentHandleV1[];
+}>;
 
 const SessionUserMessageSendSuccessResponseSchema = z.object({
   ok: z.literal(true),

@@ -1,3 +1,4 @@
+export * from './sessionExecutionTargetV1.js';
 export * from './sessionSpawnNewResultV1.js';
 export * from './sessionSpawnNewInputV2.js';
 export * from './sessionCreationIdentityV1.js';

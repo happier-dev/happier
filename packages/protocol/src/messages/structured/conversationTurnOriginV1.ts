@@ -3,9 +3,6 @@ import { asProtocolZod } from "../../plugins/actions/internalProtocolZodAdapter.
 
 import { PluginContributionLocalIdSchema } from '../../plugins/contributionIdentity.js';
 import { PluginIdSchema } from '../../plugins/pluginId.js';
-import {
-  normalizePredecessorVoiceProviderContributionIdentityV1,
-} from '../../voice/providerContributionIdentity.js';
 
 export const CONVERSATION_TURN_ORIGIN_META_FIELD_V1 = 'conversationTurnOriginV1';
 
@@ -56,36 +53,6 @@ function readRecord(value: unknown): Readonly<Record<string, unknown>> | null {
     : null;
 }
 
-function normalizeHistoricalVoiceSource(value: unknown): unknown {
-  const origin = readRecord(value);
-  if (
-    !origin
-    || origin.channel !== 'realtime_conversation'
-    || origin.modality !== 'voice'
-  ) {
-    return value;
-  }
-  const source = readRecord(origin.source);
-  if (!source) return value;
-  const pluginId = source.pluginId;
-  const contributionId = source.contributionId;
-  if (typeof pluginId !== 'string' || typeof contributionId !== 'string') return value;
-
-  const canonical = normalizePredecessorVoiceProviderContributionIdentityV1({
-    pluginId,
-    localId: contributionId,
-  });
-  if (canonical.localId === contributionId) return value;
-
-  return {
-    ...origin,
-    source: {
-      ...source,
-      contributionId: canonical.localId,
-    },
-  };
-}
-
 /**
  * Reads the additive provenance field from stored message metadata.
  *
@@ -102,9 +69,7 @@ export function readConversationTurnOriginV1FromMessageMeta(
     return AGENT_THREAD_TEXT_CONVERSATION_TURN_ORIGIN_V1;
   }
   const parsed = ConversationTurnOriginV1Schema.safeParse(
-    normalizeHistoricalVoiceSource(
-      happier[CONVERSATION_TURN_ORIGIN_META_FIELD_V1],
-    ),
+    happier[CONVERSATION_TURN_ORIGIN_META_FIELD_V1],
   );
   return parsed.success ? parsed.data : null;
 }

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   projectProviderBindingCompatibilityForConnectionV1,
   resolveProviderBindingCompatibilityWithFingerprintV1,
+  selectProviderRuntimeCredentialTransportV1,
 } from './resolve.js';
 
 const baseEndpoint = {
@@ -41,6 +42,55 @@ const evidence = {
 
 const resolve = (input: Parameters<typeof resolveProviderBindingCompatibilityWithFingerprintV1>[0]) =>
   resolveProviderBindingCompatibilityWithFingerprintV1(input).result;
+
+describe('selectProviderRuntimeCredentialTransportV1', () => {
+  const transport = (overrides: Record<string, unknown> = {}) => ({
+    id: 'runtime-bearer',
+    protocols: ['openai-responses'],
+    uses: ['runtime'],
+    destination: { kind: 'httpHeader', name: 'authorization', format: 'bearer' },
+    ...overrides,
+  } as const);
+  const select = (transports: readonly ReturnType<typeof transport>[]) =>
+    selectProviderRuntimeCredentialTransportV1({
+      transports,
+      agent: baseRequirements,
+      protocol: 'openai-responses',
+    });
+
+  it('is the one owner of the exact transport the Agent will bind at launch', () => {
+    // Declared support says `Authorization`; the Provider declares
+    // `authorization`. Header names are case-insensitive, so this is the match
+    // spawn must bind — not a second predicate's opinion of it.
+    expect(select([transport()])?.id).toBe('runtime-bearer');
+    expect(select([transport({ uses: ['probe'] })])).toBeNull();
+    expect(select([transport({
+      destination: { kind: 'httpHeader', name: 'authorization', format: 'raw' },
+    })])).toBeNull();
+    expect(select([transport({ protocols: ['openai-chat'] })])).toBeNull();
+    expect(() => select([transport(), transport({ id: 'second' })]))
+      .toThrowError(/Multiple runtime credential transports/u);
+  });
+
+  it('accepts any validated destination name when the Agent declares anyValidated', () => {
+    expect(selectProviderRuntimeCredentialTransportV1({
+      transports: [transport({
+        destination: { kind: 'httpHeader', name: 'x-api-key', format: 'raw' },
+      })],
+      agent: {
+        ...baseRequirements,
+        credentialSupport: {
+          supportsNoAuth: true,
+          apiKeyTransports: [{
+            protocol: 'openai-responses',
+            destination: { kind: 'httpHeader', names: 'anyValidated', formats: ['raw'] },
+          }],
+        },
+      },
+      protocol: 'openai-responses',
+    })?.id).toBe('runtime-bearer');
+  });
+});
 
 describe('resolveProviderBindingCompatibilityWithFingerprintV1', () => {
   it('returns experimental for unknown required model capability and scopes confirmation to the model', () => {

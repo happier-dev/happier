@@ -95,6 +95,22 @@ describe('resolveLiveStreamRouteDecision', () => {
         });
     });
 
+    it('denies direct on unprobed topology here, not in the direct-route policy', () => {
+        // Sole owner of the topology denial. `resolveEffectivePeerDirectRoutePolicy` no longer
+        // models topology at all: this branch returns before the policy is consulted, so the
+        // policy could never observe an unavailable topology. Deleting this case would silently
+        // admit an unprobed route, which the policy will not catch.
+        expect(resolveLiveStreamRouteDecision({
+            ...baseInput,
+            directRouteViability: { status: 'unknown' },
+            preferredRouteKinds: ['loopback_direct'],
+        })).toEqual({
+            kind: 'unavailable',
+            reasonCode: 'topology_unavailable',
+            disabledReasons: ['topology_unavailable'],
+        });
+    });
+
     it('uses server relay only when server-routed gate is enabled and caps are present', () => {
         expect(resolveLiveStreamRouteDecision({
             ...baseInput,

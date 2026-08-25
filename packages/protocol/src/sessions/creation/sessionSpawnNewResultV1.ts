@@ -3,34 +3,22 @@ import { z } from 'zod';
 import { SessionInputAdmissionRejectionCodeV1Schema } from '../messages/sessionInputAdmission.js';
 import {
   SESSION_ORGANIZATION_MAX_ASSIGNMENTS_PER_MUTATION,
-  SESSION_ORGANIZATION_MAX_ID_LENGTH,
 } from '../organization/constants.js';
 import { PendingLocalIdSchema } from '../pending/pendingLocalId.js';
 import { SessionIdSchema } from '../idsV1.js';
 import { asProtocolZod } from "../../plugins/actions/internalProtocolZodAdapter.js";
-
-const OpaqueSessionCreationIdSchema = z.string()
-  .trim()
-  .min(1)
-  .max(SESSION_ORGANIZATION_MAX_ID_LENGTH);
-
-/**
- * The server-qualified daemon target selected before Session creation. Display
- * labels and host names are intentionally not part of this identity.
- */
-export const SessionExecutionTargetV1Schema = z.object({
-  serverId: OpaqueSessionCreationIdSchema,
-  machineId: OpaqueSessionCreationIdSchema,
-}).strict();
-export type SessionExecutionTargetV1 = z.infer<typeof SessionExecutionTargetV1Schema>;
+import {
+  SessionCreationOpaqueIdV1Schema,
+  SessionExecutionTargetV1Schema,
+} from './sessionExecutionTargetV1.js';
 
 /**
  * Creation-time Account organization intent. Existing Session organization
  * edits are a separate domain and must not be inferred from this snapshot.
  */
 export const SessionOrganizationPlacementV1Schema = z.object({
-  folderId: OpaqueSessionCreationIdSchema.nullable(),
-  tagIds: z.array(OpaqueSessionCreationIdSchema)
+  folderId: SessionCreationOpaqueIdV1Schema.nullable(),
+  tagIds: z.array(SessionCreationOpaqueIdV1Schema)
     .max(SESSION_ORGANIZATION_MAX_ASSIGNMENTS_PER_MUTATION),
 }).strict().superRefine((value, context) => {
   const seen = new Set<string>();

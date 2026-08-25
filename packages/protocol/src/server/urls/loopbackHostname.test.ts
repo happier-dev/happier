@@ -10,6 +10,14 @@ describe('isLoopbackHostname', () => {
     expect(isLoopbackHostname('::1')).toBe(true);
   });
 
+  it('recognises dotted and browser-normalized IPv4-mapped IPv6 loopback literals', () => {
+    expect(isLoopbackHostname('[::ffff:127.0.0.1]')).toBe(true);
+    expect(isLoopbackHostname('[::ffff:7f00:1]')).toBe(true);
+    expect(isLoopbackHostname('0:0:0:0:0:ffff:7f00:2')).toBe(true);
+    expect(isLoopbackHostname('[::ffff:192.168.1.1]')).toBe(false);
+    expect(isLoopbackHostname('[::ffff:c0a8:101]')).toBe(false);
+  });
+
   it('recognises the whole 127.0.0.0/8 range', () => {
     expect(isLoopbackHostname('127.0.0.1')).toBe(true);
     expect(isLoopbackHostname('127.0.0.2')).toBe(true);

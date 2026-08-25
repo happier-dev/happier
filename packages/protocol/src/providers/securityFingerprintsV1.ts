@@ -81,6 +81,27 @@ type ProviderSecurityEndpointV1 = Readonly<{
   publicHeaders?: Readonly<Record<string, string>>;
 }>;
 
+/**
+ * A managed connection has no durable realized URL, but its declared endpoint
+ * identity — protocol and immutable public headers — still decides what the
+ * host sends on the user's behalf. Those facts belong to the same machine grant
+ * as every other effect-relevant declaration fact; only the realized loopback
+ * port is excluded.
+ */
+export type ProviderManagedSecurityEndpointV1 = Readonly<{
+  endpointTemplateId: string;
+  protocol: ProviderWireProtocol;
+  publicHeaders?: Readonly<Record<string, string>>;
+}>;
+
+function normalizeManagedEndpoint(endpoint: ProviderManagedSecurityEndpointV1) {
+  return {
+    endpointTemplateId: ProviderLocalIdSchema.parse(endpoint.endpointTemplateId),
+    protocol: ProviderWireProtocolSchema.parse(endpoint.protocol),
+    publicHeaders: normalizeProviderPublicHeaders(endpoint.publicHeaders ?? {}),
+  };
+}
+
 function canonicalManagedConnectedAccountsV1(
   connectedAccounts: ResolvedProviderManagedRuntimeDeclarationV1['connectedAccounts'],
 ): ResolvedProviderManagedRuntimeDeclarationV1['connectedAccounts'] {
@@ -160,6 +181,12 @@ export function createProviderConnectionSecurityFingerprintV1(input: Readonly<{
     managedRuntime:
       | ProviderManagedRuntimeDeclarationV1
       | ResolvedProviderManagedRuntimeDeclarationV1;
+    /**
+     * The URL-free declared endpoint facts selected by
+     * `managedRuntime.endpointTemplateIds`. Required so a managed grant tracks
+     * the protocol and public headers the host will actually send.
+     */
+    logicalEndpoints: readonly ProviderManagedSecurityEndpointV1[];
   }>;
 }>): string {
   const credentialTransports = input.credentialTransports.map(normalizeTransport).sort((a, b) => {
@@ -205,6 +232,12 @@ export function createProviderConnectionSecurityFingerprintV1(input: Readonly<{
     deployment: {
       kind: 'managedLocal',
       implementationIdentity,
+      logicalEndpoints: input.managedDeployment.logicalEndpoints
+        .map(normalizeManagedEndpoint)
+        .sort((left, right) => compareProviderCanonicalStringsV1(
+          left.endpointTemplateId,
+          right.endpointTemplateId,
+        )),
       managedRuntime: {
         kind: 'managed',
         dependencies: [...managedRuntime.dependencies].sort(

@@ -150,6 +150,10 @@ const REFERENCE_RULES: Readonly<Record<string, readonly PluginContributionRefere
     { field: 'resourceId', targetFamily: 'resources' },
     { field: 'actions', targetFamily: 'actions', many: true },
   ],
+  sessionInfoSections: [
+    { field: 'resourceId', targetFamily: 'resources' },
+    { field: 'actions', targetFamily: 'actions', many: true },
+  ],
   browserActions: [
     { field: 'action', targetFamily: 'actions' },
     { field: 'target', targetFamily: 'browserTargets' },
@@ -184,6 +188,7 @@ const FAMILY_POLICIES = {
   tools: { identityField: 'id', disposition: 'reshaped', activationDemand: 'none', projectionFamily: null, allowedRuntimeRegistration: null, consumer: 'agent-tools', platforms: CLI_PLATFORMS },
   resources: { identityField: 'id', disposition: 'reshaped', activationDemand: 'conditional', projectionFamily: null, allowedRuntimeRegistration: 'resources', registrationHost: 'daemon', consumer: 'resource-service', platforms: ALL_PLATFORMS },
   transcriptActivities: { identityField: 'id', disposition: 'reshaped', activationDemand: 'none', projectionFamily: 'pluginUi', allowedRuntimeRegistration: null, consumer: 'transcript-tail-host', platforms: ALL_PLATFORMS },
+  sessionInfoSections: { identityField: 'id', disposition: 'reshaped', activationDemand: 'none', projectionFamily: 'pluginUi', allowedRuntimeRegistration: null, consumer: 'session-info-host', platforms: ALL_PLATFORMS },
   sessionHeaderActions: { identityField: 'id', disposition: 'reshaped', activationDemand: 'none', projectionFamily: 'pluginUi', allowedRuntimeRegistration: null, consumer: 'session-header-host', platforms: ALL_PLATFORMS },
   browserTargets: { identityField: 'id', disposition: 'reshaped', activationDemand: 'none', projectionFamily: 'pluginBrowser', allowedRuntimeRegistration: null, consumer: 'browser-host', platforms: ALL_PLATFORMS },
   browserActions: { identityField: 'id', disposition: 'reshaped', activationDemand: 'none', projectionFamily: 'pluginBrowser', allowedRuntimeRegistration: null, consumer: 'browser-host', platforms: ALL_PLATFORMS },
@@ -409,15 +414,15 @@ function extractNestedReferences(family: string, value: Readonly<Record<string, 
     return rendererChainReferences(value.renderer, ['renderer']);
   }
   if (family === 'sessionHeaderActions') {
-    return semanticActionReferences(value.action, ['action']);
+    return semanticActionReferences(value.command, ['command']);
   }
   if (family === 'ui.views') {
     const headerActions = Array.isArray(value.headerActions) ? value.headerActions : [];
     return headerActions.flatMap((headerAction, index) => (
       headerAction && typeof headerAction === 'object'
         ? semanticActionReferences(
-            (headerAction as Readonly<Record<string, unknown>>).action,
-            ['headerActions', index, 'action'],
+            (headerAction as Readonly<Record<string, unknown>>).command,
+            ['headerActions', index, 'command'],
           )
         : []
     ));

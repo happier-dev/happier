@@ -600,7 +600,7 @@ export type V2SessionByIdResponse = z.infer<typeof V2SessionByIdResponseSchema>;
 
 export const V2SessionByIdNotFoundSchema = z.object({
   error: z.literal('Session not found'),
-});
+}).strict();
 export type V2SessionByIdNotFound = z.infer<typeof V2SessionByIdNotFoundSchema>;
 
 export const V2SessionMessageResponseSchema = z

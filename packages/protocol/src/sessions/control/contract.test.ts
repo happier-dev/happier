@@ -4,10 +4,24 @@ import * as protocol from '../../index.js';
 import {
   SessionLookupByTagsRequestV2Schema,
   SessionLookupByTagsResponseV2Schema,
+  V2SessionByIdNotFoundSchema,
   V2SessionResourceAccessResponseSchema,
 } from './contract.js';
 
 describe('sessionControl contract exports', () => {
+  it('accepts only the exact v2 session-by-id not-found body', () => {
+    expect(protocol.V2SessionByIdNotFoundSchema).toBe(V2SessionByIdNotFoundSchema);
+
+    expect(V2SessionByIdNotFoundSchema.safeParse({
+      error: 'Session not found',
+    }).success).toBe(true);
+    expect(V2SessionByIdNotFoundSchema.safeParse({
+      error: 'Session not found',
+      path: '/v2/sessions/s_current_text_extra_404',
+      method: 'GET',
+    }).success).toBe(false);
+  });
+
   it('validates the strict exact Session Resource access proof', () => {
     expect(protocol.V2SessionResourceAccessResponseSchema).toBe(V2SessionResourceAccessResponseSchema);
 

@@ -87,6 +87,11 @@ describe('daemon Voice raw credential authorization wire', () => {
           installedGenerationId: 'generation-1',
           installReviewPrincipalDigest: PluginInstallReviewPrincipalDigestSchema.parse('a'.repeat(64)),
         },
+        authoritySource: {
+          kind: 'machine_installation',
+          machineId: 'machine-a',
+          installationId: 'installation-a',
+        },
         disclosures: [{
           sourceClass: { kind: 'savedSecret', secretKinds: ['apiKey'] },
           realm: 'web',

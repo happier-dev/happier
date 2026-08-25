@@ -5,6 +5,7 @@ import {
   type PluginDiagnosticDataV1,
   type PluginDiagnosticRemediationV1,
 } from '../../daemon/pluginContributionIntrospection.js';
+import { trimBugReportTextHeadToMaxBytes } from '../../bugs/reports/redaction.js';
 import { createCanonicalJsonSigningInput } from '../../crypto/canonicalJson.js';
 import { computeCanonicalDomainSeparatedHexDigest } from '../../crypto/canonicalDigest.js';
 import { z } from 'zod';
@@ -33,6 +34,43 @@ type StrictJsonValue =
   | string
   | readonly StrictJsonValue[]
   | { readonly [key: string]: StrictJsonValue };
+
+const PLUGIN_ACTION_FAILURE_FALLBACK_CODE = 'plugin_action_execution_failed';
+const PLUGIN_ACTION_FAILURE_FALLBACK_MESSAGE = 'Plugin operation failed';
+export const PLUGIN_ACTION_FAILURE_MESSAGE_MAX_UTF8_BYTES = 2_048;
+
+/**
+ * Stable, non-secret Action failure projection shared by every realm that
+ * reconstructs a plugin handler error. Hosts apply credential and local-path
+ * redaction before calling this message projector; that privacy work remains
+ * host-owned rather than becoming an SDK behavior.
+ */
+export function projectPluginActionFailureCode(value: unknown): string {
+  return typeof value === 'string'
+    && /^[a-z][a-z0-9_.:-]{0,119}$/iu.test(value)
+    ? value
+    : PLUGIN_ACTION_FAILURE_FALLBACK_CODE;
+}
+
+export function projectPluginActionFailureMessage(
+  value: unknown,
+  options: Readonly<{ maxUtf8Bytes?: number }> = {},
+): string {
+  try {
+    if (typeof value !== 'string') return PLUGIN_ACTION_FAILURE_FALLBACK_MESSAGE;
+    const trimmed = value.trim();
+    if (!trimmed) return PLUGIN_ACTION_FAILURE_FALLBACK_MESSAGE;
+    const maxUtf8Bytes = typeof options.maxUtf8Bytes === 'number'
+      && Number.isFinite(options.maxUtf8Bytes)
+      && options.maxUtf8Bytes > 0
+      ? Math.trunc(options.maxUtf8Bytes)
+      : PLUGIN_ACTION_FAILURE_MESSAGE_MAX_UTF8_BYTES;
+    const bounded = trimBugReportTextHeadToMaxBytes(trimmed, maxUtf8Bytes).trim();
+    return bounded || PLUGIN_ACTION_FAILURE_FALLBACK_MESSAGE;
+  } catch {
+    return PLUGIN_ACTION_FAILURE_FALLBACK_MESSAGE;
+  }
+}
 
 /** Canonical durable/settings key for one contributed Action. */
 export type QualifiedPluginActionId = `${string}/actions/${string}`;
@@ -87,7 +125,7 @@ export type PluginActionInvocationResult = Readonly<
      * The target's own published PluginError contract payload. Plugins are
      * trusted code, so an author's structured failure detail reaches the
      * caller instead of being reduced to a bare code. It is absent when the
-     * payload is not JSON-safe or exceeds the shared Action JSON byte bound.
+     * payload is not JSON-safe.
      */
     data?: StrictJsonValue;
   }
@@ -331,9 +369,9 @@ function awaitPluginActionHandlerSettlementOrAbort(
  *
  * `data` is the SDK-published contract representation, so it is the one thing
  * projected: `cause` is an Error rather than contract data and never becomes a
- * JSON payload. The payload passes the same JSON-safety and aggregate byte
- * bound every Action input and result already passes - no second bound exists
- * for this path - and only that field is dropped when it does not.
+ * JSON payload. The payload passes the same JSON-safety admission as every
+ * Action input and result; invalid JSON data is omitted without suppressing
+ * the proven failure code.
  */
 function readPluginError(error: unknown): Readonly<{
   code: string;
@@ -343,9 +381,13 @@ function readPluginError(error: unknown): Readonly<{
 }> | null {
   if (!isPluginError(error)) return null;
   const data = AgentRuntimeJsonValueV1Schema.safeParse(error.data);
+  const failure = Object.freeze({
+    code: projectPluginActionFailureCode(error.code),
+    message: projectPluginActionFailureMessage(error.message),
+  });
   return Object.freeze({
-    code: error.code,
-    message: error.message,
+    code: failure.code,
+    message: failure.message,
     retryable: error.retryable,
     ...(data.success ? { data: data.data } : {}),
   });
@@ -412,10 +454,6 @@ const PluginActionPresentUserAuthorizationRequirementSchema = z.object({
  * those remain Action-present-user gate inputs rather than authorization facts.
  */
 export const PluginActionPresentUserAuthorizationFactsSchema = z.object({
-  packageTrust: z.object({
-    packageIdentity: z.string(),
-    reviewedPackageIdentity: z.string().nullable(),
-  }).strict(),
   generation: z.object({
     targetGeneration: z.string(),
     desiredGeneration: z.string().nullable(),
@@ -492,11 +530,13 @@ export type PluginActionCurrentIntentRequest<TAction> = Readonly<{
 
 export type PluginActionCurrentIntentResult = Readonly<
   | { status: 'approved'; fingerprint: string }
+  | { status: 'deferred'; artifactId: string }
   | { status: 'rejected' | 'unavailable'; code: string }
 >;
 
 export type PluginActionPresentUserGateResult<TAction> = Readonly<
   | { status: 'admitted'; action: TAction }
+  | { status: 'deferred'; artifactId: string }
   | { status: 'unavailable' | 'failed'; code: string; message: string }
 >;
 
@@ -506,6 +546,10 @@ function presentUserUnavailable(code: string, message = code): PluginActionPrese
 
 function presentUserFailed(code: string, message: string): PluginActionPresentUserGateResult<never> {
   return Object.freeze({ status: 'failed', code, message });
+}
+
+function presentUserDeferred(artifactId: string): PluginActionPresentUserGateResult<never> {
+  return Object.freeze({ status: 'deferred', artifactId });
 }
 
 function isPresentUserResolutionCurrent<TAction>(
@@ -522,14 +566,18 @@ function requiresPresentUserIntent(
   policy: PluginActionPresentUserGatePolicy,
   invocationSurface: string,
 ): boolean {
-  // Plugin/background execution has no present user to ask. Every other
-  // execution realm must bind a non-safe Action to one live decision.
+  // A host-stamped Ask-first setting is explicit user policy and must not be
+  // bypassed merely because the caller is a Plugin. If no current-intent
+  // requester is available, the gate fails closed rather than executing.
+  if (policy.approvalRequiredByActionSettings === true) return true;
+
+  // Plugin/background execution otherwise has no present user to ask. Every
+  // other execution realm must bind a non-safe Action to one live decision.
   return invocationSurface !== 'plugin'
     && invocationSurface !== 'background'
     && (
       policy.dangerLevel !== 'safe'
       || policy.confirmation !== undefined
-      || policy.approvalRequiredByActionSettings === true
     );
 }
 
@@ -612,6 +660,8 @@ export function createPluginActionPresentUserGate<TAction>(deps: Readonly<{
     invocationSurface: string;
     sessionId?: string;
     signal?: AbortSignal;
+    /** Host-only replay fence for an already-approved durable intent. */
+    requireCurrentIntent?: true;
   }>): Promise<PluginActionPresentUserGateResult<TAction>>;
 }> {
   const resolve = async (): Promise<PluginActionPresentUserGateResolution<TAction>> => {
@@ -641,7 +691,9 @@ export function createPluginActionPresentUserGate<TAction>(deps: Readonly<{
       if ('status' in initial && initial.status !== 'resolved') return initial;
       const initialPolicy = evaluatePresentUserPolicy(initial.policy, args);
       if (initialPolicy.outcome !== 'visible') return presentUserUnavailable(initialPolicy.code);
-      if (!initialPolicy.requiresCurrentIntent) {
+      const requiresCurrentIntent = args.requireCurrentIntent === true
+        || initialPolicy.requiresCurrentIntent;
+      if (!requiresCurrentIntent) {
         return Object.freeze({ status: 'admitted' as const, action: initial.action });
       }
 
@@ -676,6 +728,12 @@ export function createPluginActionPresentUserGate<TAction>(deps: Readonly<{
       if (args.signal?.aborted) return presentUserUnavailable('plugin_action_aborted');
       if (!isPresentUserResolutionCurrent(initial)) {
         return presentUserUnavailable('plugin_action_generation_retired');
+      }
+      if (intent.status === 'deferred') {
+        const artifactId = intent.artifactId.trim();
+        return args.invocationSurface === 'api' && artifactId.length > 0
+          ? presentUserDeferred(artifactId)
+          : presentUserUnavailable('plugin_action_current_intent_unavailable');
       }
       if (intent.status !== 'approved') return presentUserUnavailable(intent.code);
       if (intent.fingerprint !== fingerprint) {
@@ -829,8 +887,10 @@ export function createPluginActionInvocation(params: Readonly<{
           }
           return Object.freeze({
             status: 'failed',
-            code: 'plugin_action_execution_failed',
-            message: error instanceof Error ? error.message : 'Plugin action execution failed',
+            code: PLUGIN_ACTION_FAILURE_FALLBACK_CODE,
+            message: projectPluginActionFailureMessage(
+              error instanceof Error ? error.message : 'Plugin action execution failed',
+            ),
           });
         }
         const value = settlement.value;

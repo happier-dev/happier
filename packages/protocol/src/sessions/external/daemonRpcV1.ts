@@ -412,12 +412,6 @@ const ExternalSessionActionLeaseIdSchema = z.string()
   .min(1)
   .max(2_000)
   .refine((value) => value === value.trim(), 'Lease id must already be trimmed.');
-const ExternalSessionActionCursorSchema = z.string()
-  .min(1)
-  .max(4_096)
-  .regex(/^happier_external_cursor_v1:[A-Za-z0-9_-]+$/)
-  .refine((value) => value === value.trim(), 'Cursor must already be trimmed.');
-
 export const ExternalSessionStatusActionInputV1Schema = z.object({
   sessionId: ExternalSessionActionSessionIdSchema,
   takeoverReadiness: z.literal('fresh').optional(),
@@ -427,7 +421,7 @@ export const ExternalSessionViewerFollowActionInputV1Schema = z.object({
   sessionId: ExternalSessionActionSessionIdSchema,
   leaseId: ExternalSessionActionLeaseIdSchema.optional(),
   ttlMs: z.number().int().min(1_000).max(15 * 60_000).optional(),
-  acceptedTailCursor: ExternalSessionActionCursorSchema.optional(),
+  acceptedTailCursor: ExternalSessionRefreshCursorV1Schema.optional(),
 }).strict();
 
 export const ExternalSessionViewerUnfollowActionInputV1Schema = z.object({
@@ -479,7 +473,7 @@ export const ExternalSessionViewerFollowActionResultV1Schema = z.discriminatedUn
     leaseId: ExternalSessionActionLeaseIdSchema,
     expiresAtMs: z.number().int().min(0),
     renewed: z.boolean(),
-    acceptedTailCursor: ExternalSessionActionCursorSchema.optional(),
+    acceptedTailCursor: ExternalSessionRefreshCursorV1Schema.optional(),
   }).strict(),
   ExternalSessionViewerFollowActionFailureV1Schema,
 ]);

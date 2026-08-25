@@ -194,8 +194,8 @@ export type ExternalActionResponseEnvelopeV1 = Readonly<{
 
 /**
  * The one strict JSON response projection prepared after external Action
- * execution. Same-process HTTP adapters send these bytes directly; a process
- * boundary carries only `response` and prepares it again after receipt.
+ * execution. Same-process HTTP adapters send these bytes directly; the
+ * reserved daemon relay carries a binary projection of these exact bytes.
  */
 export type PreparedExternalActionResponseEnvelopeV1 = Readonly<{
   response: ExternalActionResponseEnvelopeV1;
@@ -256,15 +256,26 @@ const ExternalActionDaemonDispatchInvalidRequestV1Schema = z.object({
 }).strict();
 
 /**
+ * Socket.IO carries the already-prepared public response as a binary
+ * attachment. A JSON string would need another escaping pass in the Socket.IO
+ * frame and could exceed the one-megabyte response-carrier reserve.
+ */
+const ExternalActionDaemonDispatchPreparedBodyV1Schema = z.instanceof(Uint8Array)
+  .refine(
+    (value) => value.byteLength <= EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES,
+    `external Action relay response must not exceed ${EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES} bytes`,
+  );
+
+/**
  * Closed result of the reserved server-to-daemon Action relay. Admission
  * failures remain transport failures; only a completed/admitted Action may
- * use the public response envelope and its domain result union.
+ * carry the already-serialized strict public response bytes.
  */
 export const ExternalActionDaemonDispatchResultV1Schema = z.discriminatedUnion('kind', [
   ExternalActionDaemonDispatchInvalidRequestV1Schema,
   z.object({
     kind: z.literal('response'),
-    response: ExternalActionResponseEnvelopeV1Schema,
+    body: ExternalActionDaemonDispatchPreparedBodyV1Schema,
   }).strict(),
 ]);
 export type ExternalActionDaemonDispatchResultV1 = Readonly<
@@ -274,22 +285,63 @@ export type ExternalActionDaemonDispatchResultV1 = Readonly<
   }
   | {
     kind: 'response';
-    response: ExternalActionResponseEnvelopeV1;
+    body: Uint8Array;
   }
 >;
 
-const ExternalActionDaemonDispatchResultV1ProjectionInputSchema = z.discriminatedUnion('kind', [
-  ExternalActionDaemonDispatchInvalidRequestV1Schema,
-  z.object({
-    kind: z.literal('response'),
-    response: ExternalActionResponseEnvelopeV1ProjectionInputSchema,
-  }).strict(),
-]);
+/** Parsed relay result; the prepared body is never re-projected or remeasured. */
+export type ParsedExternalActionDaemonDispatchResultV1 = Readonly<
+  | {
+    kind: 'invalid_request';
+    errorCode: ExternalActionDaemonDispatchInvalidRequestCodeV1;
+  }
+  | {
+    kind: 'response';
+    prepared: PreparedExternalActionResponseEnvelopeV1;
+  }
+>;
+
+/**
+ * Projects the canonical prepared body onto the existing closed reserved-RPC
+ * response wrapper. The payload is binary so Socket.IO does not quote/escape
+ * the already-serialized JSON a second time.
+ */
+export function createExternalActionDaemonDispatchResponseV1(
+  prepared: PreparedExternalActionResponseEnvelopeV1,
+): Extract<ExternalActionDaemonDispatchResultV1, Readonly<{ kind: 'response' }>> {
+  const body = new TextEncoder().encode(prepared.body);
+  if (body.byteLength !== prepared.byteLength) {
+    throw new TypeError('External Action prepared response byte length mismatch');
+  }
+  return { kind: 'response', body };
+}
+
+function parsePreparedExternalActionResponseBodyV1(
+  value: Uint8Array,
+): PreparedExternalActionResponseEnvelopeV1 | null {
+  let body: string;
+  try {
+    body = new TextDecoder('utf-8', { fatal: true }).decode(value);
+  } catch {
+    return null;
+  }
+
+  let raw: unknown;
+  try {
+    raw = JSON.parse(body);
+  } catch {
+    return null;
+  }
+  const response = parseExternalActionResponseEnvelopeV1(raw);
+  return response
+    ? { response, body, byteLength: value.byteLength }
+    : null;
+}
 
 /** Reads a strict reserved relay result without retaining daemon-private fields. */
 export function parseExternalActionDaemonDispatchResultV1(
   value: unknown,
-): ExternalActionDaemonDispatchResultV1 | null {
+): ParsedExternalActionDaemonDispatchResultV1 | null {
   const parsed = ExternalActionDaemonDispatchResultV1Schema.safeParse(value);
   if (!parsed.success) return null;
   if (parsed.data.kind === 'invalid_request') {
@@ -298,28 +350,8 @@ export function parseExternalActionDaemonDispatchResultV1(
       errorCode: parsed.data.errorCode,
     };
   }
-  const response = parseExternalActionResponseEnvelopeV1(parsed.data.response);
-  return response ? { kind: 'response', response } : null;
-}
-
-/**
- * Projects a relay result at the server boundary. The outer result stays
- * closed, while existing daemon-private execution metadata is removed before
- * its admitted response crosses the public HTTP boundary.
- */
-export function projectExternalActionDaemonDispatchResultV1(
-  value: unknown,
-): ExternalActionDaemonDispatchResultV1 | null {
-  const parsed = ExternalActionDaemonDispatchResultV1ProjectionInputSchema.safeParse(value);
-  if (!parsed.success) return null;
-  if (parsed.data.kind === 'invalid_request') {
-    return {
-      kind: 'invalid_request',
-      errorCode: parsed.data.errorCode,
-    };
-  }
-  const response = projectExternalActionResponseEnvelopeV1(parsed.data.response);
-  return response ? { kind: 'response', response } : null;
+  const prepared = parsePreparedExternalActionResponseBodyV1(parsed.data.body);
+  return prepared ? { kind: 'response', prepared } : null;
 }
 
 function measureSerializedUtf8Bytes(

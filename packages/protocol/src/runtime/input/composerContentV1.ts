@@ -4,7 +4,7 @@ import {
   PluginContributionIdentityV1Schema,
   type PluginContributionIdentityV1,
 } from '../../plugins/contributionIdentity.js';
-import { SessionExecutionTargetV1Schema } from '../../sessions/creation/sessionSpawnNewResultV1.js';
+import { SessionExecutionTargetV1Schema } from '../../sessions/creation/sessionExecutionTargetV1.js';
 import {
   SESSION_MEDIA_IMAGE_MIME_TYPES_V1,
   SESSION_MEDIA_MIME_TYPES_V1,

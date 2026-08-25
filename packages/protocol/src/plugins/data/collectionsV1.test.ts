@@ -136,11 +136,14 @@ describe('Plugin Account Collection contracts', () => {
     // private-envelope ceiling, so admission is the only thing under test.
     //
     // The size precondition deliberately uses Protocol's iterative serialized-byte
-    // owner rather than `JSON.stringify`, which is recursive in V8 and throws
-    // `RangeError: Maximum call stack size exceeded` well before this depth
-    // (measured: 6,082 levels on a fresh Node 22 stack, 3,747 at 3,000 frames
-    // deep). Measuring the precondition with the host serializer would make this
-    // test fail for a reason that has nothing to do with envelope admission.
+    // owner rather than `JSON.stringify`, whose depth limit is engine-specific and
+    // is not a constant: Hermes refuses past 511 nesting levels, Firefox 146 past
+    // 3,899, Node 24.14.0 past 6,173 (only 1,972 with 6,000 frames already on the
+    // stack) and the macOS 26.3.1 system JavaScriptCore past 40,000, while Node 26
+    // is iterative and refused nothing measurable. Measuring the precondition with
+    // the host serializer would make this test's verdict depend on which engine
+    // ran it instead of on envelope admission. The measured spread is recorded
+    // with the Protocol strict-JSON owner.
     let nested: unknown = 1;
     for (let depth = 0; depth < 6_000; depth += 1) nested = { n: nested };
     const payload = { field: nested };

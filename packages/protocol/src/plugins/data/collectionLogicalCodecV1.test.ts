@@ -3,9 +3,12 @@ import { describe, expect, it } from 'vitest';
 import {
   decodePluginCollectionLogicalRowV1,
   encodePluginCollectionLogicalValueV1,
+  preparePluginCollectionLogicalMutationRequestV1,
   type PluginCollectionLogicalValueV1,
 } from './collectionLogicalCodecV1.js';
 import {
+  measurePluginCollectionMutationRequestDecompositionV1,
+  measurePluginCollectionMutationRequestEncodedBytesV1,
   normalizePluginAccountCollectionContractV1,
   openPluginCollectionPrivatePayloadV1,
   sealPluginCollectionPrivatePayloadV1,
@@ -61,6 +64,60 @@ const material = { type: 'legacy' as const, secret: new Uint8Array(32).fill(5) }
 const randomBytes = (length: number): Uint8Array => new Uint8Array(length).fill(3);
 
 describe('plugin Collection logical row codec', () => {
+  it('constructs and measures the exact closed mutation request from logical operations', () => {
+    const prepared = preparePluginCollectionLogicalMutationRequestV1({
+      contract,
+      isValidLogicalValue,
+      operations: [
+        {
+          kind: 'put',
+          expectedRevision: 'absent',
+          value: {
+            id: 'delivery-batch-1',
+            connectionId: 'connection-1',
+            attention: true,
+          },
+        },
+        { kind: 'assert', rowId: 'delivery-batch-2', expectedRevision: 4 },
+      ],
+      encryptionMode: 'plain',
+      material: null,
+      randomBytes,
+    });
+
+    expect(prepared).toMatchObject({
+      status: 'prepared',
+      request: {
+        pluginId: 'example.channels',
+        collectionId: 'channel-deliveries',
+        writerContext: {
+          schemaVersion: 1,
+          contractDigest: contract.contractDigest,
+        },
+        operations: [
+          {
+            kind: 'put',
+            rowId: 'delivery-batch-1',
+            expectedRevision: 'absent',
+            projection: {
+              connectionId: 'connection-1',
+              bindingId: null,
+              attention: true,
+            },
+          },
+          { kind: 'assert', rowId: 'delivery-batch-2', expectedRevision: 4 },
+        ],
+      },
+    });
+    if (prepared.status !== 'prepared') return;
+    expect(prepared.encodedBytes).toBe(
+      measurePluginCollectionMutationRequestEncodedBytesV1(prepared.request),
+    );
+    expect(prepared.measurement).toEqual(
+      measurePluginCollectionMutationRequestDecompositionV1(prepared.request),
+    );
+  });
+
   it('projects an absent optional server-readable field as null and restores it as absent', () => {
     const encoded = encodePluginCollectionLogicalValueV1({
       contract,

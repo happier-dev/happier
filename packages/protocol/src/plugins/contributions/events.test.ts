@@ -115,4 +115,32 @@ describe('plugin event contributions', () => {
       },
     }).success).toBe(false);
   });
+
+  it('refuses Automation eligibility for an Event that publishes no payload contract', () => {
+    const payloadless = PluginEventContributionV1Schema.safeParse({
+      id: 'repository-event',
+      kind: 'event',
+      title: 'Repository event',
+      automation: {
+        v: 1,
+        eligible: true,
+        source: {
+          sourceContractVersion: 1,
+          supportedObservationTransports: ['checkpointedPull'],
+          sourceConfigSchema: { type: 'object', additionalProperties: false },
+        },
+      },
+    });
+    expect(payloadless.success).toBe(false);
+    expect(payloadless.error?.issues.map((issue) => issue.path.join('.')))
+      .toContain('payloadSchema');
+
+    // The same Event without the Automation extension is still publishable
+    // without a payload contract, so the rule cannot be a blanket requirement.
+    expect(PluginEventContributionV1Schema.safeParse({
+      id: 'repository-event',
+      kind: 'event',
+      title: 'Repository event',
+    }).success).toBe(true);
+  });
 });

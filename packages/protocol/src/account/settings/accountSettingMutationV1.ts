@@ -32,7 +32,17 @@ export type AccountSettingsMutationResult =
     reason: 'encryptionMaterialUnavailable' | 'modeMismatch' | 'contentUnreadable';
   }>
   | Readonly<{ status: 'invalid'; reason: AccountSettingsMutationInvalidReason }>
-  | Readonly<{ status: 'unavailable'; retryable: boolean }>;
+  | Readonly<{
+    status: 'unavailable';
+    retryable: boolean;
+    /**
+     * The boundary's own stable refusal code when it supplied one, so a caller
+     * that degrades instead of failing can still name the cause. `locked` and
+     * `invalid` already report their cause this way; `unavailable` used to drop
+     * it, which left an operator with an unexplained outage.
+     */
+    reason?: string;
+  }>;
 
 const AccountSettingMutationOperationInputV1Schema = z.discriminatedUnion('op', [
   z.object({
@@ -112,25 +122,16 @@ export type AccountSettingMutationApplicationV1 =
     reason: AccountSettingsMutationInvalidReason;
   }>;
 
-function classifySettingValueIssues(messages: readonly string[]): AccountSettingsMutationInvalidReason {
-  const normalizedMessages = messages.map((message) => message.toLowerCase());
-  if (normalizedMessages.some((message) => (
-    message.includes('nesting depth')
-    || message.includes('depth limit')
-  ))) return 'tooDeep';
-  if (normalizedMessages.some((message) => (
-    message.includes('serialized UTF-8 bytes')
-    || message.includes('string larger')
-    || message.includes('more than')
-    || message.includes('too_big')
-    || message.includes('string limit')
-    || message.includes('key limit')
-    || message.includes('node limit')
-    || message.includes('aggregate byte limit')
-  ))) {
-    return 'tooLarge';
-  }
-  return 'invalidValue';
+/**
+ * The mutation envelope itself (operation count, shape) is refused by Zod, which
+ * reports a typed issue code. Classifying it by code keeps an oversized
+ * operation list a size refusal without depending on Zod's message wording.
+ * Per-key value refusals are already classified by the catalog definition.
+ */
+function classifyMutationEnvelopeIssues(
+  issues: readonly Readonly<{ code: string }>[],
+): AccountSettingsMutationInvalidReason {
+  return issues.some((issue) => issue.code === 'too_big') ? 'tooLarge' : 'invalidValue';
 }
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
@@ -171,7 +172,7 @@ function inspectResultingRoots(
     }
     if (definition) {
       const parsed = definition.parseMutationValue(value);
-      if (!parsed.success) return classifySettingValueIssues(parsed.issues);
+      if (!parsed.success) return parsed.reason;
     }
   }
   return null;
@@ -187,7 +188,7 @@ export function applyAccountSettingMutationV1(
 ): AccountSettingMutationApplicationV1 {
   const mutation = AccountSettingMutationInputV1Schema.safeParse(mutationValue);
   if (!mutation.success) {
-    return invalid(classifySettingValueIssues(mutation.error.issues.map((issue) => issue.message)));
+    return invalid(classifyMutationEnvelopeIssues(mutation.error.issues));
   }
 
   const seen = new Set<string>();
@@ -205,7 +206,7 @@ export function applyAccountSettingMutationV1(
     if (Object.hasOwn(raw, operation.key)) {
       const current = ACCOUNT_SETTING_DEFINITIONS[operation.key].parseMutationValue(raw[operation.key]);
       if (!current.success) {
-        return invalid(classifySettingValueIssues(current.issues));
+        return invalid(current.reason);
       }
     }
 
@@ -218,7 +219,7 @@ export function applyAccountSettingMutationV1(
     if (boundIssue) return invalid(boundIssue.reason);
     const parsedValue = definition.parseMutationValue(operation.value);
     if (!parsedValue.success) {
-      return invalid(classifySettingValueIssues(parsedValue.issues));
+      return invalid(parsedValue.reason);
     }
     next[operation.key] = parsedValue.data;
   }

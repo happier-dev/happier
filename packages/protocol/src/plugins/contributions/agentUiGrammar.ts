@@ -13,11 +13,11 @@ import { z } from 'zod';
  *
  * - Rich, arbitrary UI is authored through the public TARGETED SURFACES, not
  *   here. This block is declarative facts and host-owned controls only.
- * - `components.slots[].componentId` is absent. Those ids name components
- *   compiled into the app; they are an approved build-time first-party
- *   exception, not something a manifest can reach. Admitting the field here
- *   would promise a capability whose only outcome is an unknown-component
- *   refusal.
+ * - `components.slots[]` admits host-owned controls and exact semantic inline
+ *   surface roles. `componentId` remains absent: it names code compiled into
+ *   the app, while `surfaceId` names the declaring plugin's ordinary
+ *   daemon-admitted UI view and therefore works identically for installed and
+ *   bundled Agents.
  * - `payload.spawnSessionExtras` admits only the `static` form, and
  *   `message.metaDescriptorIds` is absent, for the same reason: the interpreter
  *   answers both compiled-adapter forms with a refusal diagnostic, so a loose
@@ -99,8 +99,18 @@ const AgentUiPermissionFooterSchema = z.object({
   stopHandling: z.enum(['denyOnly', 'denyAndAbortRun']).optional(),
 }).strict();
 
+/**
+ * Which permission-prompt conversation this Agent speaks.
+ *
+ * It selects the footer's whole semantic action model — button set, handlers
+ * and terminal-decision reading — not just its wording, so an Agent that
+ * answers Codex-style decisions cannot reach the right controls without
+ * declaring it. Absent means the neutral Claude-shaped default, which is what
+ * an Agent that declares nothing has always received.
+ */
+const AgentUiPermissionPromptProtocolSchema = z.enum(['claude', 'codexDecision']);
+
 const AgentUiEditableGoalsSchema = z.object({
-  providerId: AgentUiIdSchema.optional(),
   capabilityDriven: z.boolean().optional(),
   modeValues: AgentUiIdArraySchema.optional(),
   activeModeValues: AgentUiIdArraySchema.optional(),
@@ -151,7 +161,6 @@ const AgentUiNewSessionSchema = z.object({
 }).strict();
 
 const AgentUiEnvironmentVariablesSchema = z.object({
-  providerId: AgentUiIdSchema,
   backendMode: z.object({
     envKey: AgentUiIdSchema,
     settingKey: AgentUiSettingKeySchema,
@@ -177,7 +186,6 @@ const AgentUiEnvironmentVariablesSchema = z.object({
 }).strict();
 
 const AgentUiBackendTransportSchema = z.object({
-  providerId: AgentUiIdSchema,
   runtimeDescriptorOutputKey: AgentUiIdSchema.optional(),
   legacyModeOutputKey: AgentUiIdSchema.optional(),
   backendMode: z.object({
@@ -198,17 +206,26 @@ const AgentUiPayloadSchema = z.object({
     kind: z.literal('static'),
     value: z.record(z.string(), z.unknown()),
   }).strict().optional(),
+  /**
+   * A backend-mode fact this Agent contributes to the spawn/resume envelope.
+   *
+   * The mode is read from the account setting named here and, for an existing
+   * Session, from the canonical `runtimeDescriptorV1` envelope carrying this
+   * Agent's id — both facts an installed Agent can occupy, so the block is not
+   * a bundled-only capability.
+   */
   sessionExtras: z.object({
-    providerId: AgentUiIdSchema,
     outputKey: AgentUiIdSchema,
     values: AgentUiIdArraySchema.min(1),
+    settingKey: AgentUiSettingKeySchema.optional(),
+    aliases: AgentUiStringRecordSchema.optional(),
+    defaultValue: AgentUiIdSchema.optional(),
   }).strict().optional(),
   environmentVariables: AgentUiEnvironmentVariablesSchema.optional(),
   backendTransport: AgentUiBackendTransportSchema.optional(),
 }).strict();
 
 const AgentUiRuntimeDescriptorLinkExtrasSchema = z.object({
-  providerId: AgentUiIdSchema,
   runtimeDescriptorOutputKey: AgentUiIdSchema.optional(),
   legacyModeOutputKey: AgentUiIdSchema.optional(),
   backendMode: z.object({ values: AgentUiIdArraySchema.min(1) }).strict(),
@@ -274,8 +291,10 @@ export const AgentUiBehaviorDeclarationV1Schema = z.object({
   guidance: z.object({
     includeInSessionGettingStartedCliExamples: z.boolean().optional(),
   }).strict().optional(),
-  mcpServers: z.object({ supportsDetectedConfigScan: z.boolean().optional() }).strict().optional(),
-  permissions: z.object({ footer: AgentUiPermissionFooterSchema.optional() }).strict().optional(),
+  permissions: z.object({
+    promptProtocol: AgentUiPermissionPromptProtocolSchema.optional(),
+    footer: AgentUiPermissionFooterSchema.optional(),
+  }).strict().optional(),
   workState: z.object({ editableGoals: AgentUiEditableGoalsSchema.optional() }).strict().optional(),
   resume: z.object({
     experimentSwitches: z.array(z.object({
@@ -327,13 +346,20 @@ export type AgentUiMessageDeclarationV1 = z.infer<typeof AgentUiMessageDeclarati
 /* -------------------------------------------------------------------------- */
 
 /**
- * Host-owned controls an Agent may place in a named slot.
+ * Host-owned controls and public inline surfaces an Agent may place in a named
+ * slot.
  *
  * The Agent declares what the control edits and what it is called; the host
  * owns the control itself. That is what keeps the slot language the same for a
  * bundled and an installed Agent.
+ *
+ * A boolean-option `chip` selects the host-owned control. Session-subagent
+ * slots instead name a `surfaceId` from the same plugin and provide only the
+ * host-owned placement/resource metadata needed to mount that ordinary public
+ * UI view. `componentId` remains absent because it names code compiled into the
+ * app rather than a public plugin contribution.
  */
-const AgentUiComponentSlotSchema = z.object({
+const AgentUiBooleanOptionComponentSlotSchema = z.object({
   id: AgentUiIdSchema,
   slot: AgentUiIdSchema,
   chip: z.object({
@@ -342,22 +368,39 @@ const AgentUiComponentSlotSchema = z.object({
     iconName: AgentUiIdSchema,
     onLabelKey: AgentUiTranslationKeySchema,
     offLabelKey: AgentUiTranslationKeySchema,
-  }).strict().optional(),
+  }).strict(),
+}).strict();
+
+const AgentUiSubagentLaunchComponentSlotSchema = z.object({
+  id: AgentUiIdSchema,
+  slot: z.literal('sessionSubagents.launchCards'),
+  surfaceId: AgentUiIdSchema,
   props: z.object({
     teamIds: z.object({
       kind: z.literal('subagentGroupKeys'),
       subagentKinds: AgentUiIdArraySchema.optional(),
     }).strict().optional(),
-    optionStateKey: AgentUiIdSchema.optional(),
   }).strict().optional(),
-  resourceKind: AgentUiIdSchema.optional(),
-  iconName: AgentUiIdSchema.optional(),
+}).strict();
+
+const AgentUiSubagentDetailsComponentSlotSchema = z.object({
+  id: AgentUiIdSchema,
+  slot: z.literal('sessionSubagents.teammateDetailsTab'),
+  surfaceId: AgentUiIdSchema,
+  resourceKind: AgentUiIdSchema,
+  iconName: AgentUiIdSchema,
   tab: z.object({
     keyPrefix: AgentUiIdSchema,
     titleKey: AgentUiTranslationKeySchema,
     subtitleKey: AgentUiTranslationKeySchema.optional(),
-  }).strict().optional(),
+  }).strict(),
 }).strict();
+
+const AgentUiComponentSlotSchema = z.union([
+  AgentUiBooleanOptionComponentSlotSchema,
+  AgentUiSubagentLaunchComponentSlotSchema,
+  AgentUiSubagentDetailsComponentSlotSchema,
+]);
 
 export const AgentUiComponentsDeclarationV1Schema = z.object({
   slots: z.array(AgentUiComponentSlotSchema).optional(),

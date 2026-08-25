@@ -69,23 +69,6 @@ describe('RPC_METHODS (daemon direct sessions)', () => {
     );
   });
 
-  it('does not give new operation methods legacy direct-session aliases', async () => {
-    const { DIRECT_SESSION_LEGACY_RPC_ALIASES } = await import('./aliases.js');
-    const operationMethods = new Set([
-      RPC_METHODS.DAEMON_EXTERNAL_SESSION_MATERIALIZE_START,
-      RPC_METHODS.DAEMON_EXTERNAL_SESSION_TAKEOVER_START,
-      RPC_METHODS.DAEMON_EXTERNAL_SESSION_OPERATION_STATUS_GET,
-      RPC_METHODS.DAEMON_EXTERNAL_SESSION_OPERATION_CANCEL,
-      RPC_METHODS.DAEMON_EXTERNAL_SESSION_OPERATION_RESUME,
-      RPC_METHODS.DAEMON_EXTERNAL_SESSION_OPERATION_RETRY,
-      RPC_METHODS.DAEMON_EXTERNAL_SESSION_OPERATION_DISCARD,
-    ]);
-
-    expect(DIRECT_SESSION_LEGACY_RPC_ALIASES.some(
-      ({ canonicalMethod }) => operationMethods.has(canonicalMethod),
-    )).toBe(false);
-  });
-
   it('includes legacy daemon.directSessions.* methods', () => {
     expect((RPC_METHODS as Record<string, string>).DAEMON_DIRECT_SESSIONS_CANDIDATES_LIST_LEGACY).toBe(
       'daemon.directSessions.candidates.list',
@@ -117,26 +100,5 @@ describe('RPC_METHODS (daemon direct sessions)', () => {
     expect((RPC_METHODS as Record<string, string>).DAEMON_DIRECT_SESSION_TAKEOVER_PERSIST_LEGACY).toBe(
       'daemon.directSessions.takeoverPersist',
     );
-  });
-
-  it('maps legacy daemon.directSessions.* aliases to canonical external-session methods', async () => {
-    const aliasesModule = await import('./aliases.js').catch(() => null);
-
-    expect(aliasesModule).not.toBeNull();
-    expect(aliasesModule?.DIRECT_SESSION_LEGACY_RPC_ALIASES).toContainEqual({
-      legacyMethod: 'daemon.directSessions.candidates.list',
-      canonicalMethod: 'daemon.externalSessions.candidates.list',
-      classification: 'legacy_direct_session_rpc_alias',
-    });
-    expect(aliasesModule?.DIRECT_SESSION_LEGACY_RPC_ALIASES).toContainEqual({
-      legacyMethod: 'daemon.directSessions.takeoverPersist',
-      canonicalMethod: 'daemon.externalSessions.takeover',
-      classification: 'legacy_direct_session_rpc_alias',
-    });
-    expect(aliasesModule?.DIRECT_SESSION_LEGACY_RPC_ALIASES).toContainEqual({
-      legacyMethod: 'daemon.directSessions.followPolicy.set',
-      canonicalMethod: 'daemon.externalSessions.backgroundFollow.set',
-      classification: 'legacy_direct_session_rpc_alias',
-    });
   });
 });

@@ -74,6 +74,7 @@ export const RPC_METHODS = {
   DAEMON_VOICE_SPEECH_DOWNLOAD_FINALIZE: 'daemon.voice.speech.download.finalize',
   DAEMON_VOICE_SPEECH_DOWNLOAD_ABORT: 'daemon.voice.speech.download.abort',
   DAEMON_VOICE_SPEECH_CATALOG: 'daemon.voice.speech.catalog',
+  DAEMON_VOICE_SPEECH_SETTINGS_ACTION_EXECUTE: 'daemon.voice.speech.settingsAction.execute',
   DAEMON_VOICE_CLIENT_RAW_CREDENTIAL_MATERIALIZE: 'daemon.voice.client.rawCredential.materialize',
   DAEMON_VOICE_CLIENT_MEDIATED_CREDENTIAL_MATERIALIZE: 'daemon.voice.client.mediatedCredential.materialize',
   DAEMON_VOICE_CLIENT_RAW_CREDENTIAL_AUTHORIZATION_INSPECT: 'daemon.voice.client.rawCredential.authorization.inspect',
@@ -108,7 +109,6 @@ export const RPC_METHODS = {
   DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE: 'daemon.plugins.structuredMessages.actions.execute',
   DAEMON_PLUGIN_ACTION_FORM_CONNECTED_ACCOUNT_OPTIONS_RESOLVE:
     'daemon.plugins.actionForms.connectedAccountOptions.resolve',
-  DAEMON_PLUGIN_COMPOSER_ATTACHMENT_PREPARE: 'daemon.plugins.composerAttachments.prepare',
   DAEMON_PLUGIN_COMPOSER_REFERENCE_SEARCH: 'daemon.plugins.composerReferences.search',
   DAEMON_PLUGIN_UI_ARTIFACT_BYTES_READ: 'daemon.plugins.uiArtifacts.bytes.read',
   DAEMON_PLUGIN_UI_RESOURCE_READ: 'daemon.plugins.ui.resources.read',
@@ -130,7 +130,6 @@ export const RPC_METHODS = {
   DAEMON_LOCAL_SERVICES_LAUNCHER_REGISTER_PREVIEW: 'daemon.localServices.launcher.registerPreview',
   DAEMON_LOCAL_SERVICES_LAUNCHER_HISTORY_CLEAR: 'daemon.localServices.launcher.history.clear',
   DAEMON_LOCAL_SERVICES_ACTIONS_EXECUTE: 'daemon.localServices.actions.execute',
-  DAEMON_LOCAL_SERVICES_MANAGED_SNAPSHOT: 'daemon.localServices.managed.snapshot',
   DAEMON_LOCAL_SERVICES_PREVIEW_SNAPSHOT: 'daemon.localServices.preview.snapshot',
   DAEMON_LOCAL_SERVICES_PREVIEW_OPEN_OR_CREATE: 'daemon.localServices.preview.openOrCreate',
   DAEMON_LOCAL_SERVICES_PREVIEW_REVOKE: 'daemon.localServices.preview.revoke',
@@ -294,6 +293,7 @@ export const RPC_METHODS = {
   REVIEW_COMMENTS_SET_DISPOSITION: 'reviews.comments.setDisposition',
   REVIEW_COMMENTS_ATTACH_EVIDENCE: 'reviews.comments.attachEvidence',
   REVIEW_COMMENTS_BULK_TRANSITION: 'reviews.comments.bulkTransition',
+  REVIEW_COMMENTS_CLAIM_PUBLICATION_DISPATCH: 'reviews.comments.claimPublicationDispatch',
   SESSIONS_SUBAGENTS_LIST: 'sessions.subagents.list',
   SESSIONS_SUBAGENTS_GET: 'sessions.subagents.get',
   SESSIONS_SUBAGENTS_WATCH: 'sessions.subagents.watch',
@@ -380,6 +380,8 @@ export const RPC_METHODS = {
 
 export const SESSION_RPC_METHODS = {
   SESSION_USER_MESSAGE_SEND: 'session.userMessage.send',
+  SESSION_PENDING_MESSAGE_COMPOSER_ADMISSION_PREPARE_V1: 'session.pendingMessage.composerAdmission.prepare.v1',
+  SESSION_PENDING_MESSAGE_COMPOSER_ADMISSION_ACCEPTED_V1: 'session.pendingMessage.composerAdmission.accepted.v1',
   SESSION_WORK_STATE_GET: 'session.workState.get',
   SESSION_GOAL_GET: 'session.goal.get',
   SESSION_GOAL_SET: 'session.goal.set',

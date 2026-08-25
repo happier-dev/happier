@@ -99,6 +99,7 @@ import type {
   SessionPermissionRemoteGrantsListInputV1,
   SessionPermissionRemotePendingListInputV1,
   SessionPermissionRemoteRespondInputV1,
+  SessionUserActionRemoteAnswerInputV1,
 } from '../../sessions/permissions/v1.js';
 import type {
   SessionSpawnNewInputV2,
@@ -275,6 +276,7 @@ export type AutomationConversationActionArgs = Readonly<{
 export type SessionPermissionRemoteActionId =
   | 'session.permission.remote.pending.list'
   | 'session.permission.remote.respond'
+  | 'session.user_action.remote.answer'
   | 'session.permission.remote.grants.list'
   | 'session.permission.remote.grants.revoke';
 
@@ -289,6 +291,13 @@ export type SessionPermissionRemoteActionArgs =
   | Readonly<{
       actionId: 'session.permission.remote.respond';
       input: SessionPermissionRemoteRespondInputV1;
+      caller: ActionCaller;
+      serverId?: string | null;
+      signal?: AbortSignal;
+    }>
+  | Readonly<{
+      actionId: 'session.user_action.remote.answer';
+      input: SessionUserActionRemoteAnswerInputV1;
       caller: ActionCaller;
       serverId?: string | null;
       signal?: AbortSignal;
@@ -349,6 +358,9 @@ export type ActionExecutorContext = Readonly<{
    * wants to default to a current/active session.
    */
   defaultSessionId?: string | null;
+
+  /** Exact machine associated with the current session for declared contextual Action inputs. */
+  defaultSessionMachineId?: string | null;
 
   /**
    * Exact machine admitted by a mounted host for a detached execution run.
@@ -763,6 +775,28 @@ export type ActionExecutorDeps = Readonly<{
       }>
   >;
   /**
+   * Portable host transport for a deferred Session-spawn directory approval.
+   * It forwards the approval decision to the exact target daemon before this
+   * executor mutates the artifact, so the daemon that stamped the persisted
+   * proof also rehydrates and consumes it. Public Action input never carries
+   * the directory proof.
+   */
+  sessionSpawnNewDirectoryApprovalReplay?: (args: Readonly<{
+    artifactId: string;
+    executionTarget: SessionCreationDirectoryApprovalV1['executionTarget'];
+    signal?: AbortSignal;
+  }>) => Promise<unknown>;
+  /**
+   * Host-owned replay for a contributed Action's durable API approval. It
+   * claims only artifacts whose strict target subject it can re-read; null
+   * leaves ordinary ApprovalRequestV1 handling on the existing path.
+   */
+  targetActionApprovalReplay?: (args: Readonly<{
+    artifactId: string;
+    decision: 'approve' | 'reject';
+    signal?: AbortSignal;
+  }>) => Promise<ActionExecuteResult | null>;
+  /**
    * Host-only persistence compatibility seam. It is called exclusively while
    * executing an existing approved `session.spawn_new` artifact whose args do
    * not satisfy the current strict V2 schema; live Action ingress never uses
@@ -779,6 +813,20 @@ export type ActionExecutorDeps = Readonly<{
   }> | null>;
   // Local inventory + discovery (voice)
   pathsListRecent: (args: Readonly<{ machineId?: string; limit?: number }>) => Promise<unknown>;
+  /**
+   * The Account's persisted project registry, each row carrying the resolved
+   * hosting provider and worktrees its SCM working snapshot already holds.
+   *
+   * It is a projection of two incumbent owners — `workspaceRefsV1` in Account
+   * Settings and the `projectKey`-keyed working snapshot — and builds no index
+   * of its own. A host that holds neither installs no dependency at all and
+   * the Action reports `unsupported_action`, so a caller can tell "this client
+   * cannot list projects" from "you have no matching project" — the two need
+   * different words in front of a reader.
+   */
+  projectsList?: (args: Readonly<{ machineId?: string; limit?: number }>) => Promise<unknown>;
+  promptInvocationsList?: (args: Readonly<{ limit?: number }>) => Promise<unknown>;
+  promptInvocationResolve?: (args: Readonly<{ invocationId: string; argsText?: string }>) => Promise<unknown>;
   machinesList: (args: Readonly<{ limit?: number }>) => Promise<unknown>;
   serversList: (args: Readonly<{ limit?: number }>) => Promise<unknown>;
   reviewEnginesList: (args: Readonly<{ sessionId: string; includeDisabled?: boolean }>) => Promise<unknown>;
@@ -813,12 +861,21 @@ export type ActionExecutorDeps = Readonly<{
   sessionSendMessage: (args: Readonly<{
     sessionId: string;
     message: string;
+    /** Host-authored display text for an exact semantic Session operation. */
+    displayText?: string;
+    /** Host-authored structured metadata; never accepted from plugin input. */
+    messageMeta?: Readonly<Record<string, unknown>>;
     requestedAction: PendingRequestedActionV1;
     actionCaller?: ActionCaller;
     idempotencyKey?: string;
     /** Caller-retained durable input identity; plugin inputs derive their own. */
     localId?: string;
     source?: PluginSessionInputSourceV1;
+    /**
+     * Declared Composer attachment drafts authored by the plugin caller. The
+     * host qualifies their plugin id from `actionCaller` and stamps identity
+     * before they reach the Session-input writer.
+     */
     attachments?: readonly PluginSessionInputAttachmentV1[];
     permissionModeOverride?: string;
     modelOverride?: string | null;

@@ -169,17 +169,6 @@ export type ConversationConnectionUpdateResultV1 = ReturnType<
 export const ConversationConnectionUpdateResultV1JsonSchema: PluginJsonSchema =
     ConversationConnectionUpdateResultV1Schema.jsonSchema;
 
-export const ConversationConnectionSetEnabledInputV1Schema = defineProtocolObject({
-    connectionId: ConversationConnectionIdV1ProtocolSchema,
-    expectedRevision: positiveSafeInteger,
-    enabled: protocolBoolean,
-}, { policy: 'closed' });
-export type ConversationConnectionSetEnabledInputV1 = ReturnType<
-    typeof ConversationConnectionSetEnabledInputV1Schema.parse
->;
-export const ConversationConnectionSetEnabledInputV1JsonSchema: PluginJsonSchema =
-    ConversationConnectionSetEnabledInputV1Schema.jsonSchema;
-
 export const ConversationConnectionDeleteInputV1Schema = defineProtocolObject({
     connectionId: ConversationConnectionIdV1ProtocolSchema,
     expectedRevision: positiveSafeInteger,

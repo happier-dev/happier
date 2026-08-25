@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { SessionSpawnNewInputV2Schema } from './sessionSpawnNewInputV2.js';
+import {
+  SessionAuthoringCheckoutCreationDraftV1Schema as canonicalCheckoutCreationDraftSchema,
+} from '../authoring/fieldCatalog.js';
+import * as sessionSpawnInput from './sessionSpawnNewInputV2.js';
+
+const { SessionSpawnNewInputV2Schema } = sessionSpawnInput;
 
 const input = {
   executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
@@ -12,6 +17,27 @@ const input = {
 } as const;
 
 describe('SessionSpawnNewInputV2Schema', () => {
+  it('publishes the one bounded checkout authoring draft used by spawn', () => {
+    expect('SessionAuthoringCheckoutCreationDraftV1Schema' in sessionSpawnInput).toBe(true);
+    expect(sessionSpawnInput.SessionAuthoringCheckoutCreationDraftV1Schema)
+      .toBe(canonicalCheckoutCreationDraftSchema);
+
+    const checkoutCreationDraft = {
+      kind: 'git_worktree',
+      displayName: 'feature/session-create',
+      baseRef: 'main',
+      branchMode: 'new',
+    } as const;
+    expect(SessionSpawnNewInputV2Schema.parse({
+      ...input,
+      checkoutCreationDraft,
+    }).checkoutCreationDraft).toEqual(checkoutCreationDraft);
+    expect(sessionSpawnInput.SessionAuthoringCheckoutCreationDraftV1Schema.safeParse({
+      ...checkoutCreationDraft,
+      unexpected: true,
+    }).success).toBe(false);
+  });
+
   it('accepts bounded daemon-compatible launch environment variables', () => {
     expect(SessionSpawnNewInputV2Schema.parse({
       ...input,

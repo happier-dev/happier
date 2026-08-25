@@ -1,6 +1,11 @@
 import { z } from 'zod';
 
-import { PluginContributionIdentityV1Schema } from '../plugins/contributionIdentity.js';
+import {
+  PluginContributionIdentityV1Schema,
+  PluginContributionLocalIdSchema,
+} from '../plugins/contributionIdentity.js';
+import { PluginJsonValueV2Schema } from '../plugins/contributions/publicTypes.js';
+import { PluginSettingFieldIdV2Schema } from '../plugins/contributions/settings.js';
 import { VoiceSpeechInputMimeTypeSchema } from '../plugins/contributions/voiceProviders.js';
 import { TransferSessionIdSchema } from '../transfers/sessions/index.js';
 import { VoiceProviderOperationErrorCodeSchema } from '../voice/providerOperations.js';
@@ -44,6 +49,30 @@ export const DaemonVoiceSpeechCatalogRequestSchema = z.object({
 }).strict();
 export type DaemonVoiceSpeechCatalogRequest = z.infer<
   typeof DaemonVoiceSpeechCatalogRequestSchema
+>;
+
+/**
+ * The settings themselves stay daemon-owned: callers name only a declared
+ * action and its contribution target, then the daemon re-reads the current
+ * Account Settings snapshot before invoking the runtime.
+ */
+export const DaemonVoiceSpeechSettingsActionRequestSchema = z.object({
+  target: asProtocolZod(PluginContributionIdentityV1Schema),
+  actionId: asProtocolZod(PluginContributionLocalIdSchema),
+}).strict();
+export type DaemonVoiceSpeechSettingsActionRequest = z.infer<
+  typeof DaemonVoiceSpeechSettingsActionRequestSchema
+>;
+
+export const DaemonVoiceSpeechSettingsActionResponseSchema = z.union([
+  z.object({
+    ok: z.literal(true),
+    patch: z.record(PluginSettingFieldIdV2Schema, PluginJsonValueV2Schema),
+  }).strict(),
+  VoiceSpeechOperationErrorSchema,
+]);
+export type DaemonVoiceSpeechSettingsActionResponse = z.infer<
+  typeof DaemonVoiceSpeechSettingsActionResponseSchema
 >;
 
 export const DaemonVoiceSpeechTranscribeUploadInitRequestSchema = z.object({

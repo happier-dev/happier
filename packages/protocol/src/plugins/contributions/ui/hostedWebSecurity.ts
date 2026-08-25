@@ -42,10 +42,10 @@ function createDefaultPluginHostedWebCspPolicyV1() {
 }
 
 export const PluginHostedWebCspPolicyV1Schema = z.object({
-  scriptSrc: z.enum(['selfOnly', 'selfAndDeclared']).default('selfOnly'),
-  styleSrc: z.enum(['selfOnly', 'selfAndDeclared']).default('selfOnly'),
-  imgSrc: z.enum(['selfOnly', 'selfDataBlobAndDeclared']).default('selfOnly'),
-  fontSrc: z.enum(['selfOnly', 'selfAndDeclared']).default('selfOnly'),
+  scriptSrc: z.literal('selfOnly').default('selfOnly'),
+  styleSrc: z.literal('selfOnly').default('selfOnly'),
+  imgSrc: z.literal('selfOnly').default('selfOnly'),
+  fontSrc: z.literal('selfOnly').default('selfOnly'),
   connectSrc: z.enum(['selfOnly', 'declaredOrigins']).default('selfOnly'),
   allowDataUrls: z.boolean().default(false),
   allowBlobUrls: z.boolean().default(false),
@@ -117,8 +117,7 @@ export function buildPluginHostedWebStaticAssetContentSecurityPolicyV1(
   const styleSrc = csp.allowInlineStyles
     ? directiveValues(["'self'", "'unsafe-inline'"])
     : "'self'";
-  const imgSrc = csp.imgSrc === 'selfDataBlobAndDeclared'
-    || csp.allowDataUrls
+  const imgSrc = csp.allowDataUrls
     || csp.allowBlobUrls
       ? directiveValues(withOptionalSchemes(["'self'"], csp))
       : "'self'";

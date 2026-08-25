@@ -5,7 +5,6 @@ import {
   encodePeerTcpTunnelBinaryFrameV2,
   negotiatePeerTcpTunnelEncoding,
   PeerTcpTunnelBinaryFrameHeaderV2Schema,
-  PeerTcpTunnelSubstreamFrameV2Schema,
 } from './index';
 
 describe('Peer TCP tunnel V2 encoding', () => {
@@ -119,44 +118,5 @@ describe('Peer TCP tunnel V2 encoding', () => {
       reasonCode: 'relay_cap_exceeded',
       payloadLength: 0,
     }).reasonCode).toBe('relay_cap_exceeded');
-  });
-});
-
-describe('Peer TCP tunnel V2 substream protocol', () => {
-  it('accepts session-bound substream lifecycle frames with per-substream ids', () => {
-    expect(PeerTcpTunnelSubstreamFrameV2Schema.parse({
-      version: 2,
-      kind: 'open',
-      tunnelId: 'tun_1',
-      substreamId: 'sub_1',
-    }).substreamId).toBe('sub_1');
-    expect(PeerTcpTunnelSubstreamFrameV2Schema.parse({
-      version: 2,
-      kind: 'data',
-      tunnelId: 'tun_1',
-      substreamId: 'sub_1',
-      direction: 'client_to_daemon',
-      sequence: 0,
-      payloadLength: 5,
-    }).payloadLength).toBe(5);
-    expect(PeerTcpTunnelSubstreamFrameV2Schema.parse({
-      version: 2,
-      kind: 'close',
-      tunnelId: 'tun_1',
-      substreamId: 'sub_1',
-      direction: 'client_to_daemon',
-      halfClose: true,
-      reasonCode: 'done',
-    }).halfClose).toBe(true);
-  });
-
-  it('rejects per-substream destinations because the parent tunnel owns destination policy', () => {
-    expect(PeerTcpTunnelSubstreamFrameV2Schema.safeParse({
-      version: 2,
-      kind: 'open',
-      tunnelId: 'tun_1',
-      substreamId: 'sub_1',
-      destination: { host: '127.0.0.1', port: 3000 },
-    }).success).toBe(false);
   });
 });

@@ -181,23 +181,23 @@ const FROZEN_CANONICAL_ACCOUNT_SCOPED_VECTORS = [
     ciphertext: 'oRYhIiMkJSYnKCkqKywtLi8wMTIzNDU2NziMVajdy0ZlI0WjIwuxNEXBpz0FDw2fphFfTOGaMFwoEJiq4TzFnr19XleUKOulAVa2988hjvK0ZZ2A/ujUFleX+4AREhVS2SpXAweNUQ==',
     payload: { slot: 22, source: 'event-automations-r0.38-failure-detail' },
   },
-] as const;
-
-const FROZEN_HISTORICAL_ACCOUNT_SCOPED_ALIAS_VECTORS = [
   {
-    kind: 'provider_account_usage_snapshot',
-    ciphertext: 'oQUhIiMkJSYnKCkqKywtLi8wMTIzNDU2NziBJ/3OYHQgvc/8sPig5WoVu1JjU09qFpCDgpr5aG34XQ==',
-    payload: { alias: 'pau5' },
+    kind: 'action_operation_snapshot',
+    kindByte: 23,
+    ciphertext: 'oRchIiMkJSYnKCkqKywtLi8wMTIzNDU2NzglKGUzf+PL1kl1Crp6UwGrb7oShRbPXLZCS6qgb44jzUR3ntKi5/2uhXO8oSJec2qknc4ciI6N3l8O',
+    payload: { slot: 23, source: 'action-operation-v1' },
   },
   {
-    kind: 'session_respawn_environment',
-    ciphertext: 'oQYhIiMkJSYnKCkqKywtLi8wMTIzNDU2Nzg4WFEkTnogRv0Z2DoTzy+WDJTQ6xql9jSUSLQaBnFEqS2XI7w=',
-    payload: { alias: 'respawn6' },
+    kind: 'qualified_connected_account_attempt_transaction',
+    kindByte: 24,
+    ciphertext: 'oRghIiMkJSYnKCkqKywtLi8wMTIzNDU2NzhLdaQoDiZNIXLEyEccaUNkVJ8WvSF1odpR05tYM2xVYmuKHQH04D/gRqKEsrRdhUXTbaOkCy+J5AmOyrkg5TzDoeHfR2DbAEJATNIYcA==',
+    payload: { slot: 24, source: 'qualified-connected-account-attempt-v1' },
   },
   {
-    kind: 'qualified_connected_account_configuration',
-    ciphertext: 'oQghIiMkJSYnKCkqKywtLi8wMTIzNDU2Nzhi7NCmuVdFpB4TqAoHOHCWiUF1bGD8/dCIBKtm+EdHWXig7w==',
-    payload: { alias: 'config8' },
+    kind: 'account_session_draft_private_payload',
+    kindByte: 25,
+    ciphertext: 'oRkhIiMkJSYnKCkqKywtLi8wMTIzNDU2Nzj6YCLJPQRfP2Fj1AYTdAVYvTvN2OvQ8BVcXutUYtFgwwkUWKcsngmfktmYCEP52Ldn9s6FbUWVuA==',
+    payload: { slot: 25, source: 'session-drafts-v1' },
   },
 ] as const;
 
@@ -461,6 +461,18 @@ const CURRENT_ACCOUNT_SCOPED_KIND_ROLLBACK_DISPOSITIONS = {
     productionOwner: 'Automation Run failure-detail envelope',
     remoteDev165A: 'rollback_blocking',
   },
+  action_operation_snapshot: {
+    productionOwner: 'Action operation snapshot owner',
+    remoteDev165A: 'rollback_blocking',
+  },
+  qualified_connected_account_attempt_transaction: {
+    productionOwner: 'Qualified Connected Account attempt transaction owner',
+    remoteDev165A: 'rollback_blocking',
+  },
+  account_session_draft_private_payload: {
+    productionOwner: 'Account-scoped new-session draft private-payload owner',
+    remoteDev165A: 'rollback_blocking',
+  },
 } as const satisfies Record<AccountScopedBlobKind, AccountScopedKindRollbackDisposition>;
 
 describe('accountScopedCipher', () => {
@@ -593,7 +605,7 @@ describe('accountScopedCipher', () => {
    * Session-start request domain. Slot 22 freezes the r0.38 Run failure-detail
    * domain.
    */
-  it('opens the provenance-pinned canonical vectors for slots 1 through 22', () => {
+  it('opens the provenance-pinned canonical vectors for every allocated slot', () => {
     const material: AccountScopedCryptoMaterial = {
       type: 'dataKey',
       machineKey: FROZEN_ACCOUNT_SCOPED_VECTOR_MACHINE_KEY,
@@ -616,7 +628,7 @@ describe('accountScopedCipher', () => {
 
   });
 
-  it('freezes canonical kinds 10 through 22 with no alias or cross-domain admission', () => {
+  it('freezes canonical kinds 10 and above with no alias or cross-domain admission', () => {
     const material: AccountScopedCryptoMaterial = {
       type: 'dataKey',
       machineKey: FROZEN_ACCOUNT_SCOPED_VECTOR_MACHINE_KEY,
@@ -669,54 +681,33 @@ describe('accountScopedCipher', () => {
         })).toBeNull();
       }
 
-      for (const aliasVector of FROZEN_HISTORICAL_ACCOUNT_SCOPED_ALIAS_VECTORS) {
-        expect(openAccountScopedBlobCiphertext({
-          kind: noAliasVector.kind,
-          material,
-          ciphertext: aliasVector.ciphertext,
-        })).toBeNull();
-      }
     }
   });
 
-  it('opens only the bounded historical Dev tag aliases under their requested domains', () => {
+  it('rejects unpublished Dev cipher tags under their current domains', () => {
     const material: AccountScopedCryptoMaterial = {
       type: 'dataKey',
       machineKey: FROZEN_ACCOUNT_SCOPED_VECTOR_MACHINE_KEY,
     };
-    for (const vector of FROZEN_HISTORICAL_ACCOUNT_SCOPED_ALIAS_VECTORS) {
-      expect(openAccountScopedBlobCiphertext({
-        kind: vector.kind,
-        material,
-        ciphertext: vector.ciphertext,
-      })).toMatchObject({
-        format: 'account_scoped_v1',
-        kindTag: 'historical_alias',
-        value: vector.payload,
-      });
-    }
+    const unpublishedTags = [
+      ['provider_account_usage_snapshot', 5],
+      ['session_respawn_environment', 6],
+      ['qualified_connected_account_configuration', 8],
+    ] as const satisfies ReadonlyArray<readonly [AccountScopedBlobKind, number]>;
 
-    expect(openAccountScopedBlobCiphertext({
-      kind: 'session_respawn_environment',
-      material,
-      ciphertext:
-        FROZEN_HISTORICAL_ACCOUNT_SCOPED_ALIAS_VECTORS[0]
-          .ciphertext,
-    })).toBeNull();
-    expect(openAccountScopedBlobCiphertext({
-      kind: 'provider_account_usage_snapshot',
-      material,
-      ciphertext:
-        FROZEN_HISTORICAL_ACCOUNT_SCOPED_ALIAS_VECTORS[1]
-          .ciphertext,
-    })).toBeNull();
-    expect(openAccountScopedBlobCiphertext({
-      kind: 'session_first_intent' as AccountScopedBlobKind,
-      material,
-      ciphertext:
-        FROZEN_HISTORICAL_ACCOUNT_SCOPED_ALIAS_VECTORS[2]
-          .ciphertext,
-    })).toBeNull();
+    for (const [kind, unpublishedKindByte] of unpublishedTags) {
+      const canonical = FROZEN_CANONICAL_ACCOUNT_SCOPED_VECTORS.find(
+        (vector) => vector.kind === kind,
+      );
+      expect(canonical).toBeDefined();
+      const retagged = decodeBase64(canonical!.ciphertext, 'base64');
+      retagged[1] = unpublishedKindByte;
+      expect(openAccountScopedBlobCiphertext({
+        kind,
+        material,
+        ciphertext: encodeBase64(retagged, 'base64'),
+      })).toBeNull();
+    }
   });
 
   it('makes the remote-dev rollback boundary explicit for every current kind', () => {
@@ -912,6 +903,11 @@ describe('accountScopedCipher', () => {
       ['plugin_account_kv_private_payload', 18],
       ['automation_trigger_evidence', 19],
       ['automation_trigger_definition', 20],
+      ['automation_session_start_request', 21],
+      ['automation_run_failure_detail', 22],
+      ['action_operation_snapshot', 23],
+      ['qualified_connected_account_attempt_transaction', 24],
+      ['account_session_draft_private_payload', 25],
     ];
 
     for (const [kind, expectedKindByte] of cases) {

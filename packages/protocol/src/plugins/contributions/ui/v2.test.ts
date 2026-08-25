@@ -9,7 +9,10 @@ import {
   PluginUiViewV2Schema,
 } from './v2.js';
 import { PluginUiIconTokenV1Schema } from './tokens.js';
-import { PLUGIN_DECLARATIVE_DOCUMENT_CONTENT_TYPE_V1 } from './declarativeDocument.js';
+import {
+  MAX_PLUGIN_DECLARATIVE_DOCUMENT_RESOURCE_BYTES_V1,
+  PLUGIN_DECLARATIVE_DOCUMENT_CONTENT_TYPE_V1,
+} from './declarativeDocument.js';
 
 /**
  * The declarative vocabulary is a bounded host-rendered document language
@@ -244,9 +247,37 @@ describe('declarative node vocabulary v2', () => {
     expect(parsed.success).toBe(true);
   });
 
+  it('rejects a bounded declarative root before recursive parser descent', () => {
+    let root: Record<string, unknown> = { kind: 'text', text: 'leaf' };
+    for (let index = 0; index < 10_000; index += 1) {
+      root = { kind: 'stack', children: [root] };
+    }
+
+    expect(() => PluginUiRendererV2Schema.safeParse({
+      id: 'deep-panel',
+      kind: 'declarative',
+      root,
+    })).not.toThrow();
+    expect(PluginUiRendererV2Schema.safeParse({
+      id: 'deep-panel',
+      kind: 'declarative',
+      root,
+    }).success).toBe(false);
+
+    expect(PluginUiRendererV2Schema.safeParse({
+      id: 'wide-panel',
+      kind: 'declarative',
+      root: {
+        kind: 'text',
+        text: 'x'.repeat(MAX_PLUGIN_DECLARATIVE_DOCUMENT_RESOURCE_BYTES_V1),
+      },
+    }).success).toBe(false);
+  });
+
   it('uses the canonical Collection-member grammar for declarative collection lists', () => {
     const collectionList = {
       kind: 'collectionList',
+      label: { key: 'tasks.open.label', fallback: 'Open tasks' },
       source: {
         collectionId: 'tasks',
         uiQueryId: 'openByProject',
@@ -383,11 +414,11 @@ describe('app-page header action declarations', () => {
         title: 'Refresh',
         icon: 'settings',
         order: 10,
-        action: { kind: 'executeAction', action: 'refresh-activity' },
+        command: { kind: 'executeAction', action: 'refresh-activity' },
       }, {
         id: 'open-settings',
         title: 'Open settings',
-        action: { kind: 'openSurface', destination: 'settings' },
+        command: { kind: 'openSurface', destination: 'settings' },
       }],
     }).success).toBe(true);
   });
@@ -400,7 +431,7 @@ describe('app-page header action declarations', () => {
       headerActions: [{
         id: 'refresh',
         title: 'Refresh',
-        action: { kind: 'executeAction', action: 'refresh-activity' },
+        command: { kind: 'executeAction', action: 'refresh-activity' },
       }],
     }).success).toBe(false);
     expect(PluginUiViewV2Schema.safeParse({
@@ -408,7 +439,7 @@ describe('app-page header action declarations', () => {
       headerActions: [{
         id: 'refresh',
         title: 'Refresh',
-        action: { kind: 'executeAction', action: 'refresh-activity' },
+        command: { kind: 'executeAction', action: 'refresh-activity' },
         availability: { when: { kind: 'literal', value: true } },
       }],
     }).success).toBe(false);

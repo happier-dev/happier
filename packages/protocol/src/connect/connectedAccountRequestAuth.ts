@@ -20,6 +20,44 @@ export const CONNECTED_ACCOUNT_REQUEST_AUTH_FAILURE_PATH =
 export const CONNECTED_ACCOUNT_REQUEST_AUTH_QUOTA_FAILURE_PATH =
   '/connected-accounts/request-auth/quota-failure' as const;
 
+/**
+ * The closed error vocabulary of the local request-auth HTTP transport. The
+ * daemon may classify internal service failures more finely, but none of that
+ * internal detail crosses this capability-scoped boundary.
+ */
+export const ConnectedAccountRequestAuthErrorCodeV1Schema = z.enum([
+  'request_auth_unauthorized',
+  'request_auth_purpose_forbidden',
+  'request_auth_not_active',
+  'request_auth_unavailable',
+]);
+export type ConnectedAccountRequestAuthErrorCodeV1 = z.infer<
+  typeof ConnectedAccountRequestAuthErrorCodeV1Schema
+>;
+
+export const CONNECTED_ACCOUNT_REQUEST_AUTH_ERROR_HTTP_STATUS_V1: Readonly<Record<
+  ConnectedAccountRequestAuthErrorCodeV1,
+  401 | 403 | 409 | 503
+>> = Object.freeze({
+  request_auth_unauthorized: 401,
+  request_auth_purpose_forbidden: 403,
+  request_auth_not_active: 409,
+  request_auth_unavailable: 503,
+} as const);
+
+export function getConnectedAccountRequestAuthErrorHttpStatusV1(
+  code: ConnectedAccountRequestAuthErrorCodeV1,
+): 401 | 403 | 409 | 503 {
+  return CONNECTED_ACCOUNT_REQUEST_AUTH_ERROR_HTTP_STATUS_V1[code];
+}
+
+export const ConnectedAccountRequestAuthErrorResponseV1Schema = z.object({
+  ok: z.literal(false),
+  error: z.object({
+    code: ConnectedAccountRequestAuthErrorCodeV1Schema,
+  }).strict(),
+}).strict();
+
 export const PI_REQUEST_AUTH_PINNED_TERMINAL_PRODUCER_VERSIONS_V1 = [
   '0.81.0',
   '0.81.1',
@@ -387,6 +425,16 @@ export const RequestAuthFailureOutcomeV1Schema = z.object({
     'current_changed',
     'denied',
   ]),
+}).strict();
+
+export const ConnectedAccountRequestAuthLookupSuccessResponseV1Schema = z.object({
+  ok: z.literal(true),
+  value: OAuthBearerLeaseV1Schema,
+}).strict();
+
+export const ConnectedAccountRequestAuthFailureSuccessResponseV1Schema = z.object({
+  ok: z.literal(true),
+  value: RequestAuthFailureOutcomeV1Schema,
 }).strict();
 
 export type RequestAuthRequiredHeadersV1 = z.infer<typeof RequestAuthRequiredHeadersV1Schema>;

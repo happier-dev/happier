@@ -1,4 +1,7 @@
-import type { PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
+import type {
+    PluginJsonSchema,
+    ProtocolComposableSchema,
+} from '@happier-dev/plugin-sdk/protocol';
 
 import {
     defineProtocolLiteral,
@@ -7,18 +10,21 @@ import {
     defineProtocolUnion,
     defineProtocolUtf8String,
 } from '@happier-dev/plugin-sdk/protocol';
+import { PluginContributionIdentityV1Schema } from '@happier-dev/plugin-sdk/manifest';
 
 import {
     CONVERSATION_MESSAGE_CONTENT_PROVENANCE_V1,
     CONVERSATION_OBSERVATION_ACTOR_KINDS_V1,
     CONVERSATION_OBSERVATION_ADDRESSING_EVIDENCE_V1,
     CONVERSATION_OBSERVATION_TRANSPORT_KINDS_V1,
+    MAX_CONVERSATION_AUTOMATION_EVENT_SOURCE_INSTANCE_ID_UTF8_BYTES,
     MAX_CONVERSATION_ACTOR_PRINCIPAL_ID_UTF8_BYTES,
     MAX_CONVERSATION_INGRESS_TEXT_UTF8_BYTES,
     MAX_CONVERSATION_OCCURRENCE_ID_UTF8_BYTES,
     MAX_CONVERSATION_PROVIDER_MESSAGE_ID_UTF8_BYTES,
 } from '../bounds.js';
 import { ConversationConnectionIdV1ProtocolSchema } from '../identity.js';
+import { ConversationJsonValueV1ProtocolSchema } from '../json.js';
 import {
     ConversationEndpointDisplayLabelV1ProtocolSchema,
     ConversationResolvedEndpointV1ProtocolSchema,
@@ -40,6 +46,49 @@ const conversationIngressTextV1 = defineProtocolUtf8String({
     maxUtf8Bytes: MAX_CONVERSATION_INGRESS_TEXT_UTF8_BYTES,
     minLength: 1,
 });
+
+/**
+ * The Event owner identifies its own declaration through this qualified
+ * contribution reference. Channels preserves it as provider evidence, then
+ * verifies it against the selected connection provider before persistence.
+ */
+export type ConversationAutomationEventRefV1 = Readonly<{
+    pluginId: string;
+    localId: string;
+}>;
+
+const conversationAutomationEventRefV1: ProtocolComposableSchema<ConversationAutomationEventRefV1> =
+    PluginContributionIdentityV1Schema;
+
+const conversationAutomationEventSourceInstanceIdV1 = defineProtocolUtf8String({
+    maxUtf8Bytes: MAX_CONVERSATION_AUTOMATION_EVENT_SOURCE_INSTANCE_ID_UTF8_BYTES,
+    minLength: 1,
+});
+
+/** @internal Relative-only Event evidence supplied with one normalized ingress. */
+export const ConversationIngressAutomationEventCandidateV1ProtocolSchema = defineProtocolObject({
+    eventRef: conversationAutomationEventRefV1,
+    sourceInstanceId: conversationAutomationEventSourceInstanceIdV1,
+    sourceContractVersion: defineProtocolNumber({
+        integer: true,
+        minimum: 1,
+        maximum: Number.MAX_SAFE_INTEGER,
+    }),
+    payload: ConversationJsonValueV1ProtocolSchema,
+}, { policy: 'closed' });
+
+/**
+ * One provider-derived Event candidate. Channels owns its durable retry and
+ * checkpoint lifecycle; the provider later uses this immutable evidence only
+ * to select and admit its own Automation definitions.
+ */
+export const ConversationIngressAutomationEventCandidateV1Schema =
+    ConversationIngressAutomationEventCandidateV1ProtocolSchema;
+export type ConversationIngressAutomationEventCandidateV1 = ReturnType<
+    typeof ConversationIngressAutomationEventCandidateV1Schema.parse
+>;
+export const ConversationIngressAutomationEventCandidateV1JsonSchema: PluginJsonSchema =
+    ConversationIngressAutomationEventCandidateV1Schema.jsonSchema;
 
 const conversationObservationTransportV1 = defineProtocolObject({
     kind: defineProtocolUnion([
@@ -210,10 +259,28 @@ export type ConversationNormalizedIngressV1 = ReturnType<
 >;
 export const ConversationNormalizedIngressV1JsonSchema: PluginJsonSchema = ConversationNormalizedIngressV1Schema.jsonSchema;
 
+/** @internal Relative-only one-occurrence envelope shared by direct and poll ingress. */
+export const ConversationIngressObservedEntryV1ProtocolSchema = defineProtocolObject({
+    observation: ConversationNormalizedIngressV1ProtocolSchema,
+    eventCandidate: ConversationIngressAutomationEventCandidateV1ProtocolSchema.nullable(),
+}, { policy: 'closed' });
+
+/**
+ * The sole normalized provider ingress unit. Event candidate evidence travels
+ * through the same durable Channels census as its Chat observation, never a
+ * second provider-local replay path.
+ */
+export const ConversationIngressObservedEntryV1Schema = ConversationIngressObservedEntryV1ProtocolSchema;
+export type ConversationIngressObservedEntryV1 = ReturnType<
+    typeof ConversationIngressObservedEntryV1Schema.parse
+>;
+export const ConversationIngressObservedEntryV1JsonSchema: PluginJsonSchema =
+    ConversationIngressObservedEntryV1Schema.jsonSchema;
+
 /** @internal Relative-only input for composed Channels protocol schemas. */
 export const ConversationProviderObservationIngestInputV1ProtocolSchema = defineProtocolObject({
     connectionId: ConversationConnectionIdV1ProtocolSchema,
-    observation: ConversationNormalizedIngressV1ProtocolSchema,
+    entry: ConversationIngressObservedEntryV1ProtocolSchema,
 }, { policy: 'closed' });
 
 /** Provider-to-core ingest input; host caller authority and checkpoints stay outside this value. */

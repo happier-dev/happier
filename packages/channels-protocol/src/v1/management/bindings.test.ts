@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import * as bindingContracts from './bindings.js';
 import {
     conversationBindingPolicyForOmittedFieldsV1,
+    conversationSessionBindingDeliveryModeForOmittedFieldV1,
     ConversationAutomationTargetNotVerifiedResultV1Schema,
     ConversationBindingCreateInputV1JsonSchema,
     ConversationBindingCreateInputV1Schema,
@@ -12,7 +13,7 @@ import {
     ConversationBindingResolveInputV1Schema,
     ConversationBindingResolveResultV1Schema,
     ConversationBindingSetEnabledInputV1Schema,
-    ConversationBindingTargetMutationResultV1Schema,
+    ConversationBindingMutationResultV1Schema,
     ConversationBindingUpdateInputV1Schema,
     ConversationBindingUpdateResultV1Schema,
 } from './bindings.js';
@@ -113,7 +114,7 @@ describe('Channels V1 binding management mutation contracts', () => {
             kind: 'notVerified',
             reason: 'resultDeliveryUnsupported',
         })).toEqual({ kind: 'notVerified', reason: 'resultDeliveryUnsupported' });
-        expect(ConversationBindingTargetMutationResultV1Schema.parse(updateResult)).toEqual(updateResult);
+        expect(ConversationBindingMutationResultV1Schema.parse(updateResult)).toEqual(updateResult);
 
         expect(ConversationBindingSetEnabledInputV1Schema.safeParse({
             bindingId: 'binding id',
@@ -135,7 +136,7 @@ describe('Channels V1 binding management mutation contracts', () => {
             kind: 'notVerified',
             reason: 'providerUnavailable',
         }).success).toBe(false);
-        expect(ConversationBindingTargetMutationResultV1Schema.safeParse({
+        expect(ConversationBindingMutationResultV1Schema.safeParse({
             kind: 'notVerified',
             reason: 'notFound',
             bindingId,
@@ -146,7 +147,7 @@ describe('Channels V1 binding management mutation contracts', () => {
             additionalProperties: false,
             required: ['bindingId', 'expectedRevision', 'enabled'],
         });
-        expect(ConversationBindingTargetMutationResultV1Schema.jsonSchema).toMatchObject({
+        expect(ConversationBindingMutationResultV1Schema.jsonSchema).toMatchObject({
             anyOf: expect.any(Array),
         });
     });
@@ -307,7 +308,7 @@ describe('Channels V1 binding management mutation contracts', () => {
             kind: 'notVerified',
             reason: 'templateVersionMismatch',
         })).toEqual({ kind: 'notVerified', reason: 'templateVersionMismatch' });
-        expect(ConversationBindingTargetMutationResultV1Schema.safeParse({ kind: 'stale' }).success).toBe(false);
+        expect(ConversationBindingMutationResultV1Schema.safeParse({ kind: 'stale' }).success).toBe(true);
         expect(mutationResultSchema.safeParse({
             kind: 'stale',
             bindingId: 'binding-1',
@@ -377,6 +378,15 @@ describe('Channels V1 binding policy defaults', () => {
             senderFeedback: 'off',
             enabled: false,
         });
+    });
+
+    it('derives the Session delivery mode from the endpoint audience', () => {
+        // A direct conversation has exactly one person in it, so mirroring the
+        // Session is what connecting it asked for; the same choice in a shared
+        // room is unsolicited traffic for everyone else. An audience-blind
+        // implementation fails exactly one of these two.
+        expect(conversationSessionBindingDeliveryModeForOmittedFieldV1('direct')).toBe('mirrorSession');
+        expect(conversationSessionBindingDeliveryModeForOmittedFieldV1('shared')).toBe('repliesOnly');
     });
 
     it('produces a policy the create contract admits verbatim', () => {

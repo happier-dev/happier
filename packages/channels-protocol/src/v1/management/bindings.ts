@@ -36,6 +36,7 @@ import {
     ConversationBindingV1ProtocolSchema,
     ConversationPrincipalIdV1ProtocolSchema,
 } from './targets.js';
+import type { ConversationSessionBindingTargetV1 } from './targets.js';
 
 const positiveSafeInteger = defineProtocolNumber({
     integer: true,
@@ -105,6 +106,23 @@ export function conversationBindingPolicyForOmittedFieldsV1(
 }
 
 /**
+ * What an omitted Session-target delivery mode means at create time.
+ *
+ * `deliveryMode` is required by the persisted target contract, so no writer
+ * can default it; the create surface and the binding editor both have to name
+ * one before the person has expressed a preference. That answer is derived
+ * from the same endpoint audience as the policy defaults above and belongs
+ * with them: a direct conversation has exactly one person in it, so mirroring
+ * the Session is what connecting it asked for, while the same choice in a
+ * shared room is unsolicited traffic for everyone else present.
+ */
+export function conversationSessionBindingDeliveryModeForOmittedFieldV1(
+    audience: ConversationEndpointAudienceV1,
+): ConversationSessionBindingTargetV1['policy']['deliveryMode'] {
+    return audience === 'direct' ? 'mirrorSession' : 'repliesOnly';
+}
+
+/**
  * The input modes a binding on this endpoint can actually promise.
  *
  * One owner for the surface that offers the choice and the writer that
@@ -136,7 +154,17 @@ export function isConversationBindingInputModeDeliverableV1(input: Readonly<{
     return conversationBindingInputModesForEndpointV1(input).includes(input.inputMode);
 }
 
-const conversationBindingEndpointSelectionV1 = defineProtocolObject({
+/**
+ * @internal Relative-only endpoint selection.
+ *
+ * Binding create, binding update, and pairing create all name their
+ * destination this way instead of asserting an already-resolved endpoint, so
+ * the caller's choice is re-proven against the exact current provider
+ * candidates before that owner acts on it. Create and update resolve
+ * immediately before their write; pairing resolves once when the challenge is
+ * issued and persists that frozen destination at finalization.
+ */
+export const ConversationBindingEndpointSelectionV1ProtocolSchema = defineProtocolObject({
     query: ConversationResolutionQueryV1ProtocolSchema,
     kinds: ConversationEndpointResolveKindsV1ProtocolSchema.optional(),
     selected: ConversationEndpointIdentityV1ProtocolSchema,
@@ -171,13 +199,13 @@ const conversationBindingHumanPrincipalSelectionV1 = defineProtocolObject({
 
 const conversationBindingAudienceSelectionV1 = defineProtocolObject({
     expectedConnectionRevision: positiveSafeInteger,
-    endpointSelection: conversationBindingEndpointSelectionV1,
+    endpointSelection: ConversationBindingEndpointSelectionV1ProtocolSchema,
     principalSelection: conversationBindingPrincipalSelectionV1,
 }, { policy: 'closed' });
 
 const conversationBindingHumanAudienceSelectionV1 = defineProtocolObject({
     expectedConnectionRevision: positiveSafeInteger,
-    endpointSelection: conversationBindingEndpointSelectionV1,
+    endpointSelection: ConversationBindingEndpointSelectionV1ProtocolSchema,
     principalSelection: conversationBindingHumanPrincipalSelectionV1,
 }, { policy: 'closed' });
 
@@ -194,7 +222,7 @@ export const ConversationBindingResolveInputV1ProtocolSchema = defineProtocolUni
         kind: defineProtocolLiteral('principal'),
         connectionId: ConversationConnectionIdV1ProtocolSchema,
         expectedConnectionRevision: positiveSafeInteger,
-        endpointSelection: conversationBindingEndpointSelectionV1,
+        endpointSelection: ConversationBindingEndpointSelectionV1ProtocolSchema,
         query: ConversationResolutionQueryV1ProtocolSchema,
     }, { policy: 'closed' }),
 ]);
@@ -255,7 +283,7 @@ export const ConversationBindingResolveResultV1JsonSchema: PluginJsonSchema =
 const conversationBindingCreateFieldsV1 = {
     connectionId: ConversationConnectionIdV1ProtocolSchema,
     expectedConnectionRevision: positiveSafeInteger,
-    endpointSelection: conversationBindingEndpointSelectionV1,
+    endpointSelection: ConversationBindingEndpointSelectionV1ProtocolSchema,
     target: mutableBindingPolicyFieldsV1.target,
     inputMode: mutableBindingPolicyFieldsV1.inputMode.optional(),
     inboundDebounceMs: mutableBindingPolicyFieldsV1.inboundDebounceMs.optional(),
@@ -337,20 +365,6 @@ export type ConversationBindingUpdateInputV1 = ReturnType<
     typeof ConversationBindingUpdateInputV1Schema.parse
 >;
 export const ConversationBindingUpdateInputV1JsonSchema: PluginJsonSchema = ConversationBindingUpdateInputV1Schema.jsonSchema;
-
-/** @internal Relative-only narrow target rotation input. */
-export const ConversationBindingTargetRotateInputV1ProtocolSchema = defineProtocolObject({
-    bindingId: ConversationBindingIdV1ProtocolSchema,
-    expectedRevision: positiveSafeInteger,
-    target: ConversationBindingTargetMutationV1ProtocolSchema,
-}, { policy: 'closed' });
-
-export const ConversationBindingTargetRotateInputV1Schema = ConversationBindingTargetRotateInputV1ProtocolSchema;
-export type ConversationBindingTargetRotateInputV1 = ReturnType<
-    typeof ConversationBindingTargetRotateInputV1Schema.parse
->;
-export const ConversationBindingTargetRotateInputV1JsonSchema: PluginJsonSchema =
-    ConversationBindingTargetRotateInputV1Schema.jsonSchema;
 
 const conversationBindingUpdateResultV1 = defineProtocolObject({
     kind: defineProtocolUnion([
@@ -434,16 +448,6 @@ export type ConversationBindingMutationResultV1 = ReturnType<
 >;
 export const ConversationBindingMutationResultV1JsonSchema: PluginJsonSchema =
     ConversationBindingMutationResultV1Schema.jsonSchema;
-
-export const ConversationBindingTargetMutationResultV1Schema = defineProtocolUnion([
-    conversationBindingUpdateResultV1,
-    ConversationAutomationTargetNotVerifiedResultV1ProtocolSchema,
-]);
-export type ConversationBindingTargetMutationResultV1 = ReturnType<
-    typeof ConversationBindingTargetMutationResultV1Schema.parse
->;
-export const ConversationBindingTargetMutationResultV1JsonSchema: PluginJsonSchema =
-    ConversationBindingTargetMutationResultV1Schema.jsonSchema;
 
 export const ConversationBindingCreateResultV1Schema = defineProtocolUnion([
     defineProtocolObject({

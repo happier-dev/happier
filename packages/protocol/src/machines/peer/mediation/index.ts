@@ -73,12 +73,6 @@ export {
   type PeerRouteNonceProofV1,
 } from './directRouteGrantNonceV1.js';
 export {
-  DirectRouteGrantRevocationReasonV1Schema,
-  DirectRouteGrantRevocationV1Schema,
-  type DirectRouteGrantRevocationReasonV1,
-  type DirectRouteGrantRevocationV1,
-} from './directRouteGrantRevocationV1.js';
-export {
   DIRECT_ROUTE_GRANT_TTL_MS,
   DirectRouteGrantCachePolicyV1Schema,
   clampDirectRouteGrantTtlMs,

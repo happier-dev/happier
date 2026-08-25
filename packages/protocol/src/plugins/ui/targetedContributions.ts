@@ -386,3 +386,103 @@ export const PluginUiTargetedContributionsV1Schema = z.object({
 export type PluginUiTargetedContributionsV1 = z.infer<
   typeof PluginUiTargetedContributionsV1Schema
 >;
+
+/**
+ * The identity a target already knows about one contribution it can consume:
+ * its own point, the protocol epoch it declared, and the contributor its own
+ * domain selected. Generation is not an input — the mounted snapshot is
+ * already exactly one target-filtered current generation.
+ */
+export type PluginUiTargetedContributionSelectorV1 = Readonly<{
+  pointId: string;
+  protocol: Readonly<{ id: string; version: number }>;
+  contributor: Readonly<{ pluginId: string; contributionId: string }>;
+}>;
+
+function sameTargetedProtocol(
+  left: Readonly<{ id: string; version: number }>,
+  right: Readonly<{ id: string; version: number }>,
+): boolean {
+  return left.id === right.id && left.version === right.version;
+}
+
+function exactlyOne<TValue>(values: readonly TValue[]): TValue | undefined {
+  return values.length === 1 ? values[0] : undefined;
+}
+
+/**
+ * Selects the one admitted contribution a target-local snapshot exposes for an
+ * exact point/protocol-epoch/contributor identity, returning the original
+ * admitted object so it can be handed straight back to the host.
+ *
+ * This is a pure lookup: it performs no IO, owns no currentness, creates no
+ * service, and re-parses nothing — the snapshot schema above already rejects
+ * duplicate or drifting identities before an author sees it. Ambiguity still
+ * fails closed rather than picking a first entry, because "some contributor at
+ * that point" is never the answer a domain-selected lookup wanted.
+ */
+export function selectPluginUiTargetedContributionV1(
+  targetedContributions: PluginUiTargetedContributionsV1,
+  selector: PluginUiTargetedContributionSelectorV1,
+): PluginUiTargetedContributionV1 | undefined {
+  return exactlyOne(targetedContributions.points.flatMap((point) => (
+    point.pointId !== selector.pointId
+      ? []
+      : point.protocols.flatMap((protocolSnapshot) => (
+        !sameTargetedProtocol(protocolSnapshot.protocol, selector.protocol)
+          ? []
+          : protocolSnapshot.contributions.filter((contribution) => (
+            sameTargetedProtocol(contribution.protocol, selector.protocol)
+            && contribution.contributor.pluginId === selector.contributor.pluginId
+            && contribution.contributor.contributionId === selector.contributor.contributionId
+          ))
+      ))
+  )));
+}
+
+function selectAdmittedRoleEntry<
+  TEntry extends Readonly<{
+    point: PluginUiTargetedContributionPointRefV1;
+    contributor: Readonly<{
+      pluginId: string;
+      contributionId: string;
+      immutableGenerationId: string;
+    }>;
+    role: string;
+  }>,
+>(
+  entries: readonly TEntry[],
+  contribution: PluginUiTargetedContributionV1,
+  selector: PluginUiTargetedContributionSelectorV1 & Readonly<{ role: string }>,
+): TEntry | undefined {
+  return exactlyOne(entries.filter((entry) => (
+    entry.role === selector.role
+    && entry.point.pointId === selector.pointId
+    && sameTargetedProtocol(entry.point.protocol, selector.protocol)
+    && entry.contributor.pluginId === contribution.contributor.pluginId
+    && entry.contributor.contributionId === contribution.contributor.contributionId
+    && entry.contributor.immutableGenerationId === contribution.contributor.immutableGenerationId
+  )));
+}
+
+/** The admitted surface an exact contributor binds to one target-owned surface role. */
+export function selectPluginUiTargetedContributionSurfaceV1(
+  targetedContributions: PluginUiTargetedContributionsV1,
+  selector: PluginUiTargetedContributionSelectorV1 & Readonly<{ role: string }>,
+): PluginUiTargetedContributionSurfaceV1 | undefined {
+  const contribution = selectPluginUiTargetedContributionV1(targetedContributions, selector);
+  return contribution === undefined
+    ? undefined
+    : selectAdmittedRoleEntry(contribution.surfaces, contribution, selector);
+}
+
+/** The admitted operation an exact contributor binds to one target-owned operation role. */
+export function selectPluginUiTargetedContributionOperationV1(
+  targetedContributions: PluginUiTargetedContributionsV1,
+  selector: PluginUiTargetedContributionSelectorV1 & Readonly<{ role: string }>,
+): PluginUiTargetedContributionOperationV1 | undefined {
+  const contribution = selectPluginUiTargetedContributionV1(targetedContributions, selector);
+  return contribution === undefined
+    ? undefined
+    : selectAdmittedRoleEntry(contribution.operations, contribution, selector);
+}

@@ -1,13 +1,14 @@
 import type { JsonValue } from '../json/strictJsonValue.js';
+import {
+  cloneStrictPluginJsonValue,
+  measureSerializedValidatedStrictPluginJsonUtf8Bytes,
+} from './contributions/strictJsonValue.js';
 import type {
   PluginSettingFieldIdV2,
   PluginSettingsActionDeclarationV2,
 } from './contributions/settings.js';
 
-const MAX_PATCH_FIELDS = 16;
 const MAX_PATCH_BYTES = 64 * 1024;
-const MAX_JSON_DEPTH = 64;
-const MAX_JSON_NODES = 32_768;
 
 type SettingsSnapshot = Readonly<{
   values: Readonly<Record<string, JsonValue>>;
@@ -27,63 +28,15 @@ function assertCurrent(
   }
 }
 
-function cloneCanonicalJson(
+function clonePatchJsonValue(
   value: unknown,
   createError: (code: string, message: string) => Error,
 ): JsonValue {
-  const ancestors = new Set<object>();
-  let nodes = 0;
-  const visit = (candidate: unknown, depth: number): JsonValue => {
-    nodes += 1;
-    if (nodes > MAX_JSON_NODES || depth > MAX_JSON_DEPTH) {
-      throw createError('plugin_settings_action_patch_bounded', 'Plugin settings action patch exceeds structural limits');
-    }
-    if (candidate === null || typeof candidate === 'string' || typeof candidate === 'boolean') return candidate;
-    if (typeof candidate === 'number') {
-      if (Number.isFinite(candidate)) return candidate;
-      throw createError('plugin_settings_action_result_invalid', 'Plugin settings action returned a non-JSON patch value');
-    }
-    if (typeof candidate !== 'object' || ancestors.has(candidate)) {
-      throw createError('plugin_settings_action_result_invalid', 'Plugin settings action returned a non-JSON patch value');
-    }
-    ancestors.add(candidate);
-    try {
-      if (Array.isArray(candidate)) {
-        const ownKeys = Reflect.ownKeys(candidate);
-        if (ownKeys.some((key) => typeof key !== 'string' || (key !== 'length' && !/^(0|[1-9][0-9]*)$/u.test(key)))) {
-          throw createError('plugin_settings_action_result_invalid', 'Plugin settings action returned a non-canonical JSON array');
-        }
-        const output: JsonValue[] = [];
-        for (let index = 0; index < candidate.length; index += 1) {
-          const descriptor = Object.getOwnPropertyDescriptor(candidate, String(index));
-          if (!descriptor || !descriptor.enumerable || !('value' in descriptor)) {
-            throw createError('plugin_settings_action_result_invalid', 'Plugin settings action returned a non-canonical JSON array');
-          }
-          output.push(visit(descriptor.value, depth + 1));
-        }
-        return output;
-      }
-      const prototype = Object.getPrototypeOf(candidate);
-      if (prototype !== Object.prototype && prototype !== null) {
-        throw createError('plugin_settings_action_result_invalid', 'Plugin settings action returned a non-canonical JSON object');
-      }
-      const output: Record<string, JsonValue> = Object.create(null) as Record<string, JsonValue>;
-      for (const key of Reflect.ownKeys(candidate)) {
-        if (typeof key !== 'string') {
-          throw createError('plugin_settings_action_result_invalid', 'Plugin settings action returned a non-canonical JSON object');
-        }
-        const descriptor = Object.getOwnPropertyDescriptor(candidate, key);
-        if (!descriptor || !descriptor.enumerable || !('value' in descriptor)) {
-          throw createError('plugin_settings_action_result_invalid', 'Plugin settings action returned a non-canonical JSON object');
-        }
-        output[key] = visit(descriptor.value, depth + 1);
-      }
-      return output;
-    } finally {
-      ancestors.delete(candidate);
-    }
-  };
-  return visit(value, 0);
+  try {
+    return cloneStrictPluginJsonValue(value, 'Plugin settings action patch') as JsonValue;
+  } catch {
+    throw createError('plugin_settings_action_result_invalid', 'Plugin settings action returned a non-JSON patch value');
+  }
 }
 
 function plainDataProperty(
@@ -127,8 +80,8 @@ function normalizePatch(
     throw createError('plugin_settings_action_result_invalid', 'Plugin settings action returned an invalid patch result');
   }
   const fieldIds = patchKeys as string[];
-  if (fieldIds.length === 0 || fieldIds.length > MAX_PATCH_FIELDS) {
-    throw createError('plugin_settings_action_patch_bounded', 'Plugin settings action patch exceeds the field limit');
+  if (fieldIds.length === 0) {
+    throw createError('plugin_settings_action_patch_bounded', 'Plugin settings action patch must not be empty');
   }
   const allowed = new Set(declaration.patchFieldIds);
   const normalized: Record<string, JsonValue> = Object.create(null) as Record<string, JsonValue>;
@@ -139,12 +92,17 @@ function normalizePatch(
         `Plugin settings action cannot patch undeclared field '${fieldId}'`,
       );
     }
-    normalized[fieldId] = cloneCanonicalJson(plainDataProperty(patch, fieldId, createError), createError);
+    normalized[fieldId] = clonePatchJsonValue(plainDataProperty(patch, fieldId, createError), createError);
   }
-  if (new TextEncoder().encode(JSON.stringify(normalized)).byteLength > MAX_PATCH_BYTES) {
+  const snapshot = Object.freeze(normalized);
+  if (measureSerializedValidatedStrictPluginJsonUtf8Bytes(
+    snapshot,
+    'Plugin settings action patch',
+    MAX_PATCH_BYTES,
+  ) > MAX_PATCH_BYTES) {
     throw createError('plugin_settings_action_patch_bounded', 'Plugin settings action patch exceeds the JSON byte limit');
   }
-  return Object.freeze(normalized);
+  return snapshot;
 }
 
 /** Host-only lifecycle coordinator. Persistence/schema authority stays in the host adapter. */
