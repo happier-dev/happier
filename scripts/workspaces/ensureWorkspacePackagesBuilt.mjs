@@ -764,7 +764,15 @@ async function ensureWorkspacePackageNamesBuilt(monorepoRoot, packageNames, {
   const packageDirsByName = packageDirsByNameIn
     ?? await collectWorkspacePackageDirsByName(monorepoRoot);
   const workspacePackageNames = new Set(packageDirsByName.keys());
-  const schedulePackageBuild = createAsyncConcurrencyLimiter(maxConcurrentBuilds);
+  const scheduleConcurrentPackageBuild = createAsyncConcurrencyLimiter(maxConcurrentBuilds);
+  const scheduleBundledWorkspacePackageBuild = createAsyncConcurrencyLimiter(1);
+  const schedulePackageBuild = (packageJson, operation) => (
+    hasBundledWorkspaceDependencies(packageJson)
+      // Queue before taking general build capacity: a sibling otherwise starts
+      // waiting on the shared publication lease held by this same invocation.
+      ? scheduleBundledWorkspacePackageBuild(() => scheduleConcurrentPackageBuild(operation))
+      : scheduleConcurrentPackageBuild(operation)
+  );
 
   const buildWorkspaceClosure = (packageDir, ancestors = new Set()) => {
     const resolvedPackageDir = resolve(packageDir);
@@ -796,7 +804,7 @@ async function ensureWorkspacePackageNamesBuilt(monorepoRoot, packageNames, {
       }));
       const dependencyChanged = dependencyResults.some(Boolean);
 
-      const result = await schedulePackageBuild(async () => (
+      const result = await schedulePackageBuild(packageJson, async () => (
         await ensureWorkspacePackageBuilt(resolvedPackageDir, {
           monorepoRoot,
           quiet,

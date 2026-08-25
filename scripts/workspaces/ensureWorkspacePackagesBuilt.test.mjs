@@ -357,6 +357,131 @@ test('workspace build admission overlaps independent packages within a bounded s
   assert.equal(maximumActive, 2);
 });
 
+test('workspace build admission queues bundled siblings before they enter the shared publication lock', async (t) => {
+  const repoRoot = mkdtempSync(join(tmpdir(), 'happier-workspace-build-bundled-siblings-'));
+  t.after(() => {
+    rmSync(repoRoot, { recursive: true, force: true });
+  });
+
+  writeFileSync(
+    join(repoRoot, 'package.json'),
+    JSON.stringify({ private: true, workspaces: ['packages/*'] }),
+    'utf8',
+  );
+  writeFileSync(join(repoRoot, 'yarn.lock'), '# fixture\n', 'utf8');
+  for (const appName of ['ui', 'cli', 'server']) {
+    const appDir = join(repoRoot, 'apps', appName);
+    mkdirSync(appDir, { recursive: true });
+    writeFileSync(
+      join(appDir, 'package.json'),
+      JSON.stringify({ name: `@fixture/${appName}`, private: true }),
+      'utf8',
+    );
+  }
+
+  const dependencyDir = join(repoRoot, 'packages', 'dependency');
+  const hostPackageNames = ['@happier-dev/bundled-a', '@happier-dev/bundled-b'];
+  const hostPackageDirs = hostPackageNames.map((packageName) => (
+    join(repoRoot, 'packages', packageName.split('/').at(-1))
+  ));
+  const workspaceBundleLockPath = resolveWorkspaceBundleLockPath(repoRoot);
+  const bundledDependencyName = '@happier-dev/dependency';
+  const dependencySourcePath = join(dependencyDir, 'src', 'index.ts');
+  const dependencyDistPath = join(dependencyDir, 'dist', 'index.js');
+
+  mkdirSync(join(dependencyDir, 'src'), { recursive: true });
+  mkdirSync(join(dependencyDir, 'dist'), { recursive: true });
+  writeFileSync(dependencySourcePath, 'export const value = true;\n', 'utf8');
+  writeFileSync(dependencyDistPath, 'export const value = true;\n', 'utf8');
+  writeFileSync(
+    join(dependencyDir, 'package.json'),
+    JSON.stringify({
+      name: bundledDependencyName,
+      main: './dist/index.js',
+      scripts: { build: 'fixture-build' },
+    }),
+    'utf8',
+  );
+  const oldTime = new Date(Date.now() - 10_000);
+  const currentTime = new Date();
+  utimesSync(dependencySourcePath, oldTime, oldTime);
+  utimesSync(dependencyDistPath, currentTime, currentTime);
+
+  for (const [index, packageDir] of hostPackageDirs.entries()) {
+    mkdirSync(join(packageDir, 'src'), { recursive: true });
+    writeFileSync(join(packageDir, 'src', 'index.ts'), `export const host${index} = true;\n`, 'utf8');
+    writeFileSync(
+      join(packageDir, 'package.json'),
+      JSON.stringify({
+        name: hostPackageNames[index],
+        main: './dist/index.js',
+        dependencies: { [bundledDependencyName]: '0.0.0' },
+        bundledDependencies: [bundledDependencyName],
+        scripts: { build: 'fixture-build' },
+      }),
+      'utf8',
+    );
+  }
+
+  let releaseFirstBuild;
+  const firstBuildRelease = new Promise((resolveRelease) => {
+    releaseFirstBuild = resolveRelease;
+  });
+  let notifyFirstBuildStarted;
+  const firstBuildStarted = new Promise((resolveStarted) => {
+    notifyFirstBuildStarted = resolveStarted;
+  });
+  let hostBuildCount = 0;
+  const build = ensureWorkspacePackagesBuiltByName(repoRoot, hostPackageNames, {
+    force: true,
+    quiet: true,
+    maxConcurrentBuilds: 2,
+    workspaceBuildBoundary: {
+      async prepareEnv(_packageDir, env) {
+        return { ...env };
+      },
+      async runPackageBuild(packageDir, { env }) {
+        if (hostPackageDirs.includes(packageDir)) {
+          hostBuildCount += 1;
+          if (hostBuildCount === 1) {
+            notifyFirstBuildStarted();
+            await firstBuildRelease;
+          }
+        }
+        await writeFile(
+          join(env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR, 'index.js'),
+          'export const value = true;\n',
+        );
+      },
+    },
+  });
+
+  const started = await Promise.race([
+    firstBuildStarted.then(() => true),
+    new Promise((resolveTimeout) => setTimeout(() => resolveTimeout(false), 2_000)),
+  ]);
+  let siblingEnteredBundleLockWait = false;
+  if (started) {
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      if (existsSync(`${workspaceBundleLockPath}.priority-claim`)) {
+        siblingEnteredBundleLockWait = true;
+        break;
+      }
+      await new Promise((resolveWait) => setTimeout(resolveWait, 10));
+    }
+  }
+  releaseFirstBuild();
+  await build;
+
+  assert.equal(started, true, 'expected the first bundled package build to start');
+  assert.equal(hostBuildCount, 2, 'expected both bundled siblings to build');
+  assert.equal(
+    siblingEnteredBundleLockWait,
+    false,
+    'a bundled sibling must queue before it attempts the shared publication lock',
+  );
+});
+
 test('unchanged workspace package admission preserves the published dist directory', async (t) => {
   const repoRoot = mkdtempSync(join(tmpdir(), 'happier-workspace-build-unchanged-admission-'));
   t.after(() => {
