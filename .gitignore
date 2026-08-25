@@ -173,6 +173,12 @@ _.env.pipeline.production.local
 **/*.tmp.[0-9]*.[0-9a-f]*
 **/*.q2bak
 /undefined/
+/apps/cli/apps/
+/apps/cli/packages/
+/packages/brand/brand
+/apps/ui/tsconfig.h4audit.json
+/apps/ui/vitest.x1.config.ts
+/.cx19-report.tmp.md
 
 # Reproducible fixture compiler output and one-off migration tooling
 /packages/plugin-ui/fixtures/external-authoring/dist-node/
@@ -233,3 +239,9 @@ _.env.pipeline.production.local
 /.clawpatch
 /apply_fix.py
 /.reviews
+
+# Publication-staged first-party runtime assets. The CLIProxyAPI managed wrapper
+# is built by the pinned Go toolchain at release time and materialized by the CLI
+# postinstall; its bytes and generated checksum inventory are never committed.
+/apps/cli/tools/archives/happier-cliproxyapi-managed-*.tar.gz
+/apps/cli/tools/archives/checksums.runtime-assets.sha256
