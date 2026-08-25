@@ -11,7 +11,21 @@ import {
   resolveSignalExitCode,
   runManagedChildCommand,
 } from '../../../scripts/testing/process/managedChildLifecycle.mjs';
+import {
+  parseVitestListJson,
+  shouldVitestShardRunProceedWithoutFiles,
+} from '../../../scripts/testing/vitestShardCollection.mjs';
+import {
+  classifyVitestShardTermination,
+  summarizeVitestShardOutcomes,
+} from '../../../scripts/testing/vitestShardOutcomes.mjs';
 import { resolveMaxOldSpaceSizeMb, upsertMaxOldSpaceSize } from './withNodeHeapLimit.mjs';
+
+export {
+  classifyVitestShardTermination,
+  shouldVitestShardRunProceedWithoutFiles,
+  summarizeVitestShardOutcomes,
+};
 
 const require = createRequire(import.meta.url);
 const scriptsDir = path.dirname(fileURLToPath(import.meta.url));
@@ -44,6 +58,21 @@ export function resolveVitestShardCount(env) {
   // Running too many files in a single Vitest process can cause heap growth over time,
   // even with `isolate: true`. More shards keeps each process smaller and avoids OOMs.
   return override ?? 24;
+}
+
+export function resolveVitestShardRange(env, shardCount) {
+  const part = parsePositiveInt(env?.HAPPIER_UI_VITEST_PART);
+  const parts = parsePositiveInt(env?.HAPPIER_UI_VITEST_PARTS);
+  if (part === null || parts === null || part > parts || parts > shardCount) {
+    return { start: 1, end: shardCount, part: 1, parts: 1 };
+  }
+  const start = Math.floor(((part - 1) * shardCount) / parts) + 1;
+  const end = Math.floor((part * shardCount) / parts);
+  return { start, end, part, parts };
+}
+
+export function resolveVitestShardTimeoutMs(env) {
+  return parsePositiveInt(env?.HAPPIER_UI_VITEST_SHARD_TIMEOUT_MS) ?? 900_000;
 }
 
 export function resolveVitestShardConcurrency(env, argv) {
@@ -129,17 +158,6 @@ export function buildVitestShardRunArgs({ configPath, passthroughArgs, positiona
   ];
 }
 
-function parseVitestListJson(raw) {
-  const parsed = JSON.parse(String(raw ?? 'null'));
-  if (!Array.isArray(parsed)) {
-    throw new Error('[runVitestShards] vitest list --json output must be an array');
-  }
-
-  return parsed
-    .map((entry) => (entry && typeof entry.file === 'string' ? entry.file : null))
-    .filter((file) => typeof file === 'string' && file.trim().length > 0);
-}
-
 export function partitionVitestFilesIntoShards(files, shardCount) {
   const count = Number.isFinite(shardCount) && shardCount > 0 ? Math.floor(shardCount) : 1;
   const buckets = Array.from({ length: count }, () => []);
@@ -158,76 +176,17 @@ export function partitionVitestFilesIntoShards(files, shardCount) {
   return buckets;
 }
 
-/**
- * How a finished shard terminated.
- *
- * `aborted` is reserved for an OPERATOR interrupt (Ctrl-C, `kill`, a hung-up terminal): the
- * remaining shards would be spawned straight into the same interrupt, so the run stops and
- * says so. Every other termination — a non-zero exit, or a crash signal such as SIGSEGV /
- * SIGABRT / an OOM-killer SIGKILL, which are exactly the failures sharding exists to contain —
- * is that shard's own failure and must NOT hide the shards after it. Stopping there is how a
- * sharded run reported "green" while later shards never executed.
- */
-export function classifyVitestShardTermination({ code, signal }) {
-  if (signal) {
-    const interrupted = signal === 'SIGINT' || signal === 'SIGTERM' || signal === 'SIGHUP';
-    return {
-      outcome: interrupted ? 'aborted' : 'failed',
-      exitCode: resolveSignalExitCode(signal),
-      signal,
-    };
-  }
-  if (typeof code === 'number' && code !== 0) {
-    return { outcome: 'failed', exitCode: code, signal: null };
-  }
-  return { outcome: 'passed', exitCode: 0, signal: null };
-}
-
-export function shouldVitestShardRunProceedWithoutFiles({ fileCount, passthroughArgs }) {
-  if (fileCount > 0) return true;
-  return Array.from(passthroughArgs ?? []).some((arg) => (
-    arg === '--passWithNoTests' || arg === '--passWithNoTests=true'
-  ));
-}
-
-/**
- * Truthful aggregate for a whole sharded run: what actually ran, what failed, and what never
- * got the chance. The exit code is non-zero whenever any shard failed or the run was aborted.
- */
-export function summarizeVitestShardOutcomes({ shardCount, outcomes }) {
-  const executed = Array.from(outcomes ?? []);
-  const failedShards = executed.filter((entry) => entry.outcome === 'failed');
-  const abortedShard = executed.find((entry) => entry.outcome === 'aborted') ?? null;
-  const passedCount = executed.filter((entry) => entry.outcome === 'passed').length;
-
-  const lines = [];
-  if (abortedShard) {
-    lines.push(
-      `[vitest] run ABORTED by ${abortedShard.signal} at shard ${abortedShard.shardSpec};`
-      + ' shards after it did not run',
-    );
-  }
-  lines.push(
-    `[vitest] ${executed.length} shard(s) ran of ${shardCount}:`
-    + ` ${passedCount} passed, ${failedShards.length} failed`,
-  );
-  for (const entry of failedShards) {
-    lines.push(
-      `[vitest]   shard ${entry.shardSpec} FAILED`
-      + (entry.signal ? ` (signal ${entry.signal})` : ` (exit ${entry.exitCode})`),
-    );
-  }
-
-  const exitCode = abortedShard?.exitCode ?? failedShards[0]?.exitCode ?? 0;
-  return { exitCode, failedShards, abortedShard, passedCount, executedCount: executed.length, lines };
-}
-
-export function createVitestShardRunPlan({ shardFiles, shardCount }) {
+export function createVitestShardRunPlan({
+  shardFiles,
+  shardCount,
+  startShard = 1,
+  endShard = shardCount,
+}) {
   const count = Number.isFinite(shardCount) && shardCount > 0 ? Math.floor(shardCount) : 1;
   const buckets = Array.isArray(shardFiles) ? shardFiles : [];
 
   const plan = [];
-  for (let shardIndex = 1; shardIndex <= count; shardIndex += 1) {
+  for (let shardIndex = startShard; shardIndex <= endShard; shardIndex += 1) {
     const files = buckets[shardIndex - 1] ?? [];
     if (!Array.isArray(files) || files.length === 0) continue;
     plan.push({
@@ -302,7 +261,7 @@ async function resolveVitestTestFiles({ vitestCommand, configPath, nodeOptions, 
   }
 }
 
-function spawnVitestRun({ vitestCommand, configPath, nodeOptions, passthroughArgs, positionalFilters, files }) {
+function spawnVitestRun({ vitestCommand, configPath, nodeOptions, passthroughArgs, positionalFilters, files, timeoutMs }) {
   return runManagedChildCommand({
     command: vitestCommand.command,
     args: [
@@ -320,10 +279,11 @@ function spawnVitestRun({ vitestCommand, configPath, nodeOptions, passthroughArg
     signalCleanupGraceMs: 0,
     exitCleanupGraceMs: 1_000,
     parentWatchdogPollMs: Number.parseInt(process.env.HAPPIER_TEST_PARENT_WATCHDOG_MS ?? '1000', 10),
+    maxRuntimeMs: timeoutMs,
   });
 }
 
-function startVitestRun({ vitestCommand, configPath, nodeOptions, passthroughArgs, positionalFilters, files }) {
+function startVitestRun({ vitestCommand, configPath, nodeOptions, passthroughArgs, positionalFilters, files, timeoutMs }) {
   const child = spawn(
     vitestCommand.command,
     [
@@ -346,18 +306,27 @@ function startVitestRun({ vitestCommand, configPath, nodeOptions, passthroughArg
     exitCleanupGraceMs: 1_000,
     parentWatchdogPollMs: Number.parseInt(process.env.HAPPIER_TEST_PARENT_WATCHDOG_MS ?? '1000', 10),
   });
+  let timedOut = false;
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    void lifecycle.cleanupChild('SIGTERM');
+  }, timeoutMs);
+  timeout.unref?.();
 
   const promise = new Promise((resolve) => {
     child.once('error', (error) => {
+      clearTimeout(timeout);
       lifecycle.dispose();
       resolve({
         child,
         ok: false,
         error,
+        timedOut,
       });
     });
 
     child.once('exit', async (code, signal) => {
+      clearTimeout(timeout);
       await lifecycle.finalizeChildExit({
         graceMs: 1_000,
         pollMs: 25,
@@ -368,6 +337,7 @@ function startVitestRun({ vitestCommand, configPath, nodeOptions, passthroughArg
         ok: true,
         code,
         signal,
+        timedOut,
       });
     });
   });
@@ -375,6 +345,7 @@ function startVitestRun({ vitestCommand, configPath, nodeOptions, passthroughArg
   return {
     promise,
     cancel: async () => {
+      clearTimeout(timeout);
       await lifecycle.cleanupChild('SIGTERM');
     },
   };
@@ -444,7 +415,9 @@ async function main(argv) {
   }
 
   const shardCount = resolveVitestShardCount(process.env);
+  const shardRange = resolveVitestShardRange(process.env, shardCount);
   const shardConcurrency = resolveVitestShardConcurrency(process.env, argv);
+  const shardTimeoutMs = resolveVitestShardTimeoutMs(process.env);
   const sizeMb = resolveMaxOldSpaceSizeMb(process.env);
   const nodeOptions = upsertMaxOldSpaceSize(process.env.NODE_OPTIONS, sizeMb);
   const passthroughArgs = resolveVitestPassthroughArgs(argv);
@@ -464,7 +437,12 @@ async function main(argv) {
     return;
   }
   const shardFiles = partitionVitestFilesIntoShards(allFiles, shardCount);
-  const plan = createVitestShardRunPlan({ shardFiles, shardCount });
+  const plan = createVitestShardRunPlan({
+    shardFiles,
+    shardCount,
+    startShard: shardRange.start,
+    endShard: shardRange.end,
+  });
 
   const startShard = (entry) => {
     // eslint-disable-next-line no-console
@@ -478,6 +456,7 @@ async function main(argv) {
           passthroughArgs,
           positionalFilters,
           files: entry.files,
+          timeoutMs: shardTimeoutMs,
         }),
         cancel: async () => {},
       };
@@ -490,6 +469,7 @@ async function main(argv) {
       passthroughArgs,
       positionalFilters,
       files: entry.files,
+      timeoutMs: shardTimeoutMs,
     });
   };
 
