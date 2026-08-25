@@ -524,12 +524,24 @@ describe('Sentry event projection — what may leave this source', () => {
     expect(projected.projectionTruncated).toBe(true);
   });
 
-  it('reports an event body it cannot read at all as an empty projection, not a throw', () => {
-    const projected = projectSentryEventForDisplay('not an event');
-
-    expect(projected.eventId).toBe('');
-    expect(projected.sections).toEqual([]);
-    expect(projected.user).toBeNull();
+  /**
+   * `null` is the projector saying *this is not an event*, and it is the only place
+   * that decision is made. It replaces the empty projection this function used to
+   * return: an empty projection is indistinguishable from an event Sentry genuinely
+   * recorded as empty, and its caller published it as a settled read.
+   *
+   * A body carrying no event id is in the same class rather than a separate rule. The
+   * events LIST already omits a row without one, and §8.4a's exact-dispatch reread
+   * addresses by that id, so a projection whose id is `''` cannot be reread.
+   */
+  it.each([
+    ['a string', 'not an event'],
+    ['an array', [{ eventID: 'a'.repeat(32) }]],
+    ['null', null],
+    ['an object carrying no event id', { title: 'ChargeDeclined' }],
+    ['an object whose event id is empty', { eventID: '   ', title: 'ChargeDeclined' }],
+  ])('refuses %s as unreadable rather than projecting an empty event', (_label, body) => {
+    expect(projectSentryEventForDisplay(body)).toBeNull();
   });
 
   it('clears the byte gate with every collection saturated at once', () => {

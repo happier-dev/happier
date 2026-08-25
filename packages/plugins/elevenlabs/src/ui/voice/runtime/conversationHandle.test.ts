@@ -18,6 +18,7 @@ type TestConversation = Readonly<{
   sendUserMessage: (message: string) => void;
   sendContextualUpdate: (message: string) => void;
   setMicMuted: (muted: boolean) => void;
+  setVolume: (input: Readonly<{ volume: number }>) => void;
 }>;
 
 describe('createElevenLabsConversationHandle event surface', () => {
@@ -30,6 +31,7 @@ describe('createElevenLabsConversationHandle event surface', () => {
       sendUserMessage: vi.fn(),
       sendContextualUpdate: vi.fn(),
       setMicMuted: vi.fn(),
+      setVolume: vi.fn(),
     };
     startSession.mockResolvedValue(conversation);
     const handle = createHandle();
@@ -82,6 +84,26 @@ describe('createElevenLabsConversationHandle event surface', () => {
     expect(events).toHaveLength(1);
   });
 
+  it('retains a focus volume until a late SDK conversation becomes active', async () => {
+    const conversation = {
+      getId: vi.fn(() => 'conversation-focus'),
+      endSession: vi.fn(async () => undefined),
+      sendUserMessage: vi.fn(),
+      sendContextualUpdate: vi.fn(),
+      setMicMuted: vi.fn(),
+      setVolume: vi.fn(),
+    };
+    startSession.mockResolvedValue(conversation);
+    const handle = createHandle();
+
+    handle.setOutputVolume(0);
+    await expect(handle.startSession({})).resolves.toBe('conversation-focus');
+    expect(conversation.setVolume).toHaveBeenCalledWith({ volume: 0 });
+
+    handle.setOutputVolume(0.18);
+    expect(conversation.setVolume).toHaveBeenLastCalledWith({ volume: 0.18 });
+  });
+
   it('ends a superseded late SDK conversation and suppresses all callbacks from the stale start', async () => {
     let resolveFirst!: (conversation: TestConversation) => void;
     let resolveSecond!: (conversation: TestConversation) => void;
@@ -93,6 +115,7 @@ describe('createElevenLabsConversationHandle event surface', () => {
       sendUserMessage: vi.fn(),
       sendContextualUpdate: vi.fn(),
       setMicMuted: vi.fn(),
+      setVolume: vi.fn(),
     };
     const second = {
       getId: vi.fn(() => 'second'),
@@ -100,6 +123,7 @@ describe('createElevenLabsConversationHandle event surface', () => {
       sendUserMessage: vi.fn(),
       sendContextualUpdate: vi.fn(),
       setMicMuted: vi.fn(),
+      setVolume: vi.fn(),
     };
     startSession.mockImplementationOnce(async () => await firstStart).mockImplementationOnce(async () => await secondStart);
     const handle = createHandle();
@@ -128,6 +152,7 @@ describe('createElevenLabsConversationHandle event surface', () => {
       sendUserMessage: vi.fn(),
       sendContextualUpdate: vi.fn(),
       setMicMuted: vi.fn(),
+      setVolume: vi.fn(),
     };
     startSession.mockImplementationOnce(async () => await pendingStart);
     const handle = createHandle();
@@ -147,6 +172,7 @@ describe('createElevenLabsConversationHandle event surface', () => {
       sendUserMessage: vi.fn(),
       sendContextualUpdate: vi.fn(),
       setMicMuted: vi.fn(),
+      setVolume: vi.fn(),
     };
     startSession.mockResolvedValue(conversation);
     const handle = createHandle();
@@ -155,22 +181,4 @@ describe('createElevenLabsConversationHandle event surface', () => {
     expect(conversation.endSession).toHaveBeenCalledTimes(1);
   });
 
-  it('projects outbound audio progress from the active SDK connection for liveness checks', async () => {
-    const conversation = {
-      getId: vi.fn(() => 'conversation-with-stats'),
-      getStats: vi.fn(async () => new Map([
-        ['audio', { type: 'outbound-rtp', kind: 'audio', bytesSent: 42 }],
-        ['video', { type: 'outbound-rtp', kind: 'video', bytesSent: 999 }],
-      ])),
-      endSession: vi.fn(async () => undefined),
-      sendUserMessage: vi.fn(),
-      sendContextualUpdate: vi.fn(),
-      setMicMuted: vi.fn(),
-    };
-    startSession.mockResolvedValue(conversation);
-    const handle = createHandle();
-    await handle.startSession({});
-
-    await expect(handle.readOutboundAudioBytes()).resolves.toBe(42);
-  });
 });

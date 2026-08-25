@@ -167,10 +167,12 @@ function hasPolicyPrincipalOutsideAllowlist(
 }
 
 /**
- * The one predicate for "this binding's owner enabled chat approval". The
- * persisted policy is the sole approval control, so both the outward
- * permission-wait eligibility reader and the inbound command policy answer
- * this question here rather than re-deriving it.
+ * The outward permission-wait eligibility reader's predicate for "this
+ * binding's owner enabled chat approval". The persisted
+ * `target.policy.approvals` is the sole approval control and there is no
+ * second enablement authority; the inbound admission owner reads that same
+ * field directly (`ingressAdmissionDecision`) because it must also apply the
+ * approver-principal subset, which this boolean deliberately does not carry.
  */
 export function hasConversationApprovalPolicyEnabled(
   target: ConversationBindingTargetV1 | ConversationBindingTargetMutationV1,

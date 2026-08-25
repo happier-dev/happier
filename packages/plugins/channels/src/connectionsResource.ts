@@ -1,11 +1,8 @@
-import {
-  PluginError,
-} from '@happier-dev/plugin-sdk';
+import { PluginError } from '@happier-dev/plugin-sdk';
 import type {
   PluginDynamicResourceInvocationOptionsV1,
   PluginDynamicResourceRuntime,
 } from '@happier-dev/plugin-sdk/resources';
-import type { PluginAccountStorageScope } from '@happier-dev/plugin-sdk/storage';
 
 import {
   CHANNEL_DELIVERIES_COLLECTION,
@@ -17,23 +14,12 @@ import { readConversationConnectionManagementRows } from './accountLocalBindingP
 import {
   readConversationOutwardDeliveryConnectionAttention,
 } from './outwardDelivery.js';
-
-function accountStorageForResource(
-  options: PluginDynamicResourceInvocationOptionsV1,
-): PluginAccountStorageScope {
-  if (options.accountStorage === undefined) {
-    throw new PluginError({
-      code: 'channels_connections_resource_account_storage_unavailable',
-      message: 'The Channels connections Resource requires admitted Account storage.',
-    });
-  }
-  return options.accountStorage;
-}
+import { requireChannelsResourceAccountStorage } from './requiredAccountStorage.js';
 
 async function readConnectionsResource(
   options: PluginDynamicResourceInvocationOptionsV1,
 ): Promise<string> {
-  const accountStorage = accountStorageForResource(options);
+  const accountStorage = requireChannelsResourceAccountStorage(options, 'connections');
   const connectionRows = await readConversationConnectionManagementRows({
     collection: accountStorage.collection(CHANNEL_STATE_COLLECTION),
     signal: options.signal,
@@ -78,7 +64,7 @@ async function readConnectionsResource(
 export const CONNECTIONS_RESOURCE_RUNTIME: PluginDynamicResourceRuntime = {
   read: readConnectionsResource,
   observe(invalidate, options) {
-    const accountStorage = accountStorageForResource(options);
+    const accountStorage = requireChannelsResourceAccountStorage(options, 'connections');
     const stateObservation = accountStorage.collection(CHANNEL_STATE_COLLECTION).watch({
       index: CHANNEL_STATE_INDEX_ID.byKind,
       prefix: [CHANNEL_STATE_RECORD_KIND.connection],

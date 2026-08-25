@@ -4,6 +4,12 @@ import {
 } from '@happier-dev/channels-protocol/v1';
 
 import type { ConversationConnectionPollFailureV1 } from './connectionLifecycle.js';
+import {
+  isConversationPollFailureAttemptCount,
+  isConversationPollRetryAttemptCount,
+  type ConversationPollFailureAttemptCountV1,
+  type ConversationPollRetryAttemptCountV1,
+} from './connectionPollFailureBounds.js';
 
 type JsonRecord = Readonly<Record<string, unknown>>;
 
@@ -19,13 +25,13 @@ type ConversationConnectionPollFailureAttentionEvidenceV1 =
 export type ConversationConnectionPollFailureAttentionV1 =
   | Readonly<{
     phase: 'retryDue';
-    attemptCount: 1 | 2 | 3 | 4;
+    attemptCount: ConversationPollRetryAttemptCountV1;
     retryNotBeforeMs: number;
     evidence: ConversationConnectionPollFailureAttentionEvidenceV1;
   }>
   | Readonly<{
     phase: 'blocked';
-    attemptCount: 1 | 2 | 3 | 4 | 5;
+    attemptCount: ConversationPollFailureAttemptCountV1;
     retryNotBeforeMs: null;
     evidence: ConversationConnectionPollFailureAttentionEvidenceV1;
   }>;
@@ -59,10 +65,6 @@ export function projectConversationConnectionPollFailureAttention(
       retryNotBeforeMs: null,
       evidence,
     };
-}
-
-function isPositiveSafeInteger(value: unknown): value is number {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 1;
 }
 
 function isNonNegativeSafeInteger(value: unknown): value is number {
@@ -104,23 +106,21 @@ export function readConversationConnectionPollFailureAttention(
   const attemptCount = own(value, 'attemptCount');
   const retryNotBeforeMs = own(value, 'retryNotBeforeMs');
   if (phase === 'retryDue'
-    && isPositiveSafeInteger(attemptCount)
-    && attemptCount <= 4
+    && isConversationPollRetryAttemptCount(attemptCount)
     && isNonNegativeSafeInteger(retryNotBeforeMs)) {
     return {
       phase,
-      attemptCount: attemptCount as 1 | 2 | 3 | 4,
+      attemptCount,
       retryNotBeforeMs,
       evidence: parsedEvidence,
     };
   }
   if (phase === 'blocked'
-    && isPositiveSafeInteger(attemptCount)
-    && attemptCount <= 5
+    && isConversationPollFailureAttemptCount(attemptCount)
     && retryNotBeforeMs === null) {
     return {
       phase,
-      attemptCount: attemptCount as 1 | 2 | 3 | 4 | 5,
+      attemptCount,
       retryNotBeforeMs: null,
       evidence: parsedEvidence,
     };

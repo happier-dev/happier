@@ -3,16 +3,68 @@ import {
   type PluginAccountStorageConsumerContext,
   type PluginAccountStorageScope,
 } from '@happier-dev/plugin-sdk/storage';
+import { PluginError } from '@happier-dev/plugin-sdk';
+import type { PluginDynamicResourceInvocationOptionsV1 } from '@happier-dev/plugin-sdk/resources';
+
+const CHANNELS_RESOURCE_ACCOUNT_STORAGE_ERRORS = {
+  connections: {
+    code: 'channels_connections_resource_account_storage_unavailable',
+    message: 'The Channels connections Resource requires admitted Account storage.',
+  },
+  bindings: {
+    code: 'channels_bindings_resource_account_storage_unavailable',
+    message: 'The Channels bindings Resource requires admitted Account storage.',
+  },
+  pairing: {
+    code: 'channels_pairing_resource_account_storage_unavailable',
+    message: 'The Channels pairing Resource requires admitted Account storage.',
+  },
+  transcriptActivities: {
+    code: 'channels_transcript_activities_resource_account_storage_unavailable',
+    message: 'The Channels transcript Activity Resource requires admitted Account storage.',
+  },
+  sessionConversations: {
+    code: 'channels_session_conversations_resource_account_storage_unavailable',
+    message: 'The Channels Session conversations Resource requires admitted Account storage.',
+  },
+} as const;
+
+const CHANNELS_RESOURCE_SESSION_CONTEXT_ERRORS = {
+  transcriptActivities: {
+    code: 'channels_transcript_activities_resource_session_context_required',
+    message: 'The Channels transcript Activity Resource requires a host-stamped Session context.',
+  },
+  sessionConversations: {
+    code: 'channels_session_conversations_resource_session_context_required',
+    message: 'The Channels Session conversations Resource requires a host-stamped Session context.',
+  },
+} as const;
+
+export function requireChannelsResourceAccountStorage(
+  options: PluginDynamicResourceInvocationOptionsV1,
+  resource: keyof typeof CHANNELS_RESOURCE_ACCOUNT_STORAGE_ERRORS,
+): PluginAccountStorageScope {
+  if (options.accountStorage === undefined) {
+    throw new PluginError(CHANNELS_RESOURCE_ACCOUNT_STORAGE_ERRORS[resource]);
+  }
+  return options.accountStorage;
+}
 
 /**
- * The largest page one Account Collection query may request.
- *
- * The wire contract caps a query `limit` at 200 rows, and unlike the
- * mutation-batch dimensions it is not published through `collection.limits()`,
- * so a plugin cannot read the in-force value and every Channels reader that
- * pages a partition plans against this one number instead of restating it.
+ * The one Channels reader of the host-stamped Session identity a Session-scoped
+ * dynamic Resource is invoked with. The generic Resource host owns scope
+ * admission; this guard only keeps a malformed direct invocation typed and
+ * fail-closed under the invoking Resource's own error identity.
  */
-export const MAX_CHANNEL_ACCOUNT_COLLECTION_QUERY_PAGE_SIZE = 200;
+export function requireChannelsResourceSessionId(
+  options: PluginDynamicResourceInvocationOptionsV1,
+  resource: keyof typeof CHANNELS_RESOURCE_SESSION_CONTEXT_ERRORS,
+): string {
+  if (options.context.kind !== 'session') {
+    throw new PluginError(CHANNELS_RESOURCE_SESSION_CONTEXT_ERRORS[resource]);
+  }
+  return options.context.sessionId;
+}
 
 /**
  * Channels declares Account storage as required. The host normally refuses an invocation
@@ -20,7 +72,7 @@ export const MAX_CHANNEL_ACCOUNT_COLLECTION_QUERY_PAGE_SIZE = 200;
  * explicit guard keeps a malformed direct invocation typed and fail-closed.
  *
  * The check itself belongs to the SDK owner (`requireAccountStorage`), which is
- * where the three identical copies of it were consolidated. Only this plugin's
+ * where the repeated checks are consolidated. Only this plugin's
  * error identity is local, because that is the only part that was ever
  * different — and callers assert on it.
  */

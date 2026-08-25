@@ -29,7 +29,9 @@ import {
   ConversationResolvedEndpointV1JsonSchema,
   ConversationBindingTargetV1JsonSchema,
   ConversationAuthenticatedObservationShellV1JsonSchema,
+  ConversationIngressAutomationEventCandidateV1JsonSchema,
   ConversationNormalizedIngressV1JsonSchema,
+  MAX_CONVERSATION_APPROVAL_REQUEST_ID_UTF8_BYTES,
   MAX_CONVERSATION_BINDINGS_PER_ACCOUNT,
   MAX_CONVERSATION_CONNECTIONS_PER_ACCOUNT,
   MAX_CONVERSATION_DELIVERY_ATTEMPTS,
@@ -50,6 +52,7 @@ import {
 import { CONVERSATION_DELIVERY_CUSTODY_STATES } from './deliveryCustody.js';
 import { createConversationNewSessionCreationKey } from './commands.js';
 import { CONVERSATION_NON_ADMISSION_REASONS } from './commandPolicy.js';
+import { MAX_CONVERSATION_POLL_FAILURE_ATTEMPTS } from './connectionPollFailureBounds.js';
 
 /** Canonical Data contribution identifiers; never publish camelCase aliases. */
 export const CHANNEL_STATE_COLLECTION_ID = 'channel-state';
@@ -460,7 +463,11 @@ export const ConversationConnectionPollFailureJsonSchema = nullable({
       type: 'object',
       properties: {
         phase: { type: 'string', const: 'retryDue' },
-        attemptCount: { type: 'integer', minimum: 1, maximum: 4 },
+        attemptCount: {
+          type: 'integer',
+          minimum: 1,
+          maximum: MAX_CONVERSATION_POLL_FAILURE_ATTEMPTS - 1,
+        },
         retryNotBeforeMs: NON_NEGATIVE_SAFE_INTEGER_SCHEMA,
         evidence: POLL_FAILURE_EVIDENCE_SCHEMA,
       },
@@ -471,7 +478,11 @@ export const ConversationConnectionPollFailureJsonSchema = nullable({
       type: 'object',
       properties: {
         phase: { type: 'string', const: 'blocked' },
-        attemptCount: { type: 'integer', minimum: 1, maximum: 5 },
+        attemptCount: {
+          type: 'integer',
+          minimum: 1,
+          maximum: MAX_CONVERSATION_POLL_FAILURE_ATTEMPTS,
+        },
         retryNotBeforeMs: NULL_SCHEMA,
         evidence: POLL_FAILURE_EVIDENCE_SCHEMA,
       },
@@ -711,11 +722,48 @@ const FROZEN_SESSION_INGRESS_TARGET_SCHEMA: PluginJsonSchema = {
         {
           type: 'object',
           properties: {
-            requestId: boundedString(MAX_PLUGIN_ID_LENGTH),
+            // One owner for the admitted approval identifier: the command
+            // classifier refuses anything past this many UTF-8 bytes, and a
+            // string never has more code points than UTF-8 bytes, so every
+            // identifier that classifier admits is persistable here.
+            requestId: boundedString(MAX_CONVERSATION_APPROVAL_REQUEST_ID_UTF8_BYTES),
             decision: { type: 'string', enum: ['allow', 'deny'] },
             scope: { type: 'string', enum: ['request', 'session'] },
           },
           required: ['requestId', 'decision', 'scope'],
+          additionalProperties: false,
+        },
+      ],
+    },
+    // `/answer` freezes only the admitted indexed transport tuple. The
+    // canonical Session Action remains the owner of live-question membership,
+    // choice labels, requiredness, and answer semantics.
+    userActionAnswer: {
+      oneOf: [
+        { type: 'null' },
+        {
+          type: 'object',
+          properties: {
+            requestId: boundedString(MAX_CONVERSATION_APPROVAL_REQUEST_ID_UTF8_BYTES),
+            answers: {
+              type: 'array',
+              minItems: 1,
+              items: {
+                type: 'object',
+                properties: {
+                  questionIndex: { type: 'integer' },
+                  values: {
+                    type: 'array',
+                    minItems: 1,
+                    items: { type: 'string' },
+                  },
+                },
+                required: ['questionIndex', 'values'],
+                additionalProperties: false,
+              },
+            },
+          },
+          required: ['requestId', 'answers'],
           additionalProperties: false,
         },
       ],
@@ -798,6 +846,30 @@ const FROZEN_AUTOMATION_INGRESS_TARGET_SCHEMA: PluginJsonSchema = {
 };
 
 /**
+ * A provider Event is not a binding-owned Automation admission. The selected
+ * provider contribution receives this immutable candidate through its own
+ * Action, while Channels retains the one durable ingress lifecycle around it.
+ */
+const FROZEN_EVENT_INGRESS_TARGET_SCHEMA: PluginJsonSchema = {
+  type: 'object',
+  properties: {
+    kind: { type: 'string', const: 'event' },
+    candidate: ConversationIngressAutomationEventCandidateV1JsonSchema,
+    providerPluginId: PluginIdJsonSchema,
+    providerContributionSelection: ConversationProviderContributionSelectionJsonSchema,
+    executionOrigin: PluginMachineExecutionOriginV1JsonSchema,
+  },
+  required: [
+    'kind',
+    'candidate',
+    'providerPluginId',
+    'providerContributionSelection',
+    'executionOrigin',
+  ],
+  additionalProperties: false,
+};
+
+/**
  * The frozen target is an existing collection-schema owner boundary: force
  * both closed discriminated branches through that shared schema type before
  * composing the obligation payload. This prevents TypeScript from preserving
@@ -807,6 +879,7 @@ const FROZEN_INGRESS_TARGET_SCHEMA: PluginJsonSchema = {
   oneOf: [
     FROZEN_SESSION_INGRESS_TARGET_SCHEMA,
     FROZEN_AUTOMATION_INGRESS_TARGET_SCHEMA,
+    FROZEN_EVENT_INGRESS_TARGET_SCHEMA,
   ],
 };
 
@@ -818,6 +891,7 @@ const INGRESS_TERMINAL_DISPOSITION_SCHEMA = {
     'suppressed',
     'pairingConsumed',
     'approvalConsumed',
+    'userActionConsumed',
     'rotationBusy',
     'rotationSuperseded',
     'rotated',
@@ -851,8 +925,10 @@ const INGRESS_OBLIGATION_PAYLOAD_SCHEMA = {
       type: 'object',
       properties: {
         connectionAuthorityEpoch: POSITIVE_SAFE_INTEGER_SCHEMA,
-        bindingRevision: POSITIVE_SAFE_INTEGER_SCHEMA,
-        bindingAuthorityEpoch: POSITIVE_SAFE_INTEGER_SCHEMA,
+        // Provider Event obligations are connection-owned. Binding-owned
+        // Session/Automation obligations retain their existing exact fence.
+        bindingRevision: nullable(POSITIVE_SAFE_INTEGER_SCHEMA),
+        bindingAuthorityEpoch: nullable(POSITIVE_SAFE_INTEGER_SCHEMA),
       },
       required: ['connectionAuthorityEpoch', 'bindingRevision', 'bindingAuthorityEpoch'],
       additionalProperties: false,
@@ -872,6 +948,15 @@ const INGRESS_OBLIGATION_PAYLOAD_SCHEMA = {
           })),
       ],
     },
+    // The host-stamped turn resolved for a frozen chat approval, written
+    // before the irreversible mediation effect so replay re-answers the exact
+    // idempotent owner tuple. Absence deliberately means unresolved; the rest
+    // of that tuple is already immutable in the frozen target.
+    approvalTurnId: nullable(boundedString(MAX_PLUGIN_ID_LENGTH)),
+    // This is the host-stamped turn needed to retry the exact canonical
+    // user-action Action. It is not an answer-result cache; absence means the
+    // pending projection has not yet supplied the live turn.
+    userActionAnswerTurnId: nullable(boundedString(MAX_PLUGIN_ID_LENGTH)),
     disposition: nullable(INGRESS_TERMINAL_DISPOSITION_SCHEMA),
     nonAdmission: INGRESS_NON_ADMISSION_SCHEMA,
   },
@@ -938,6 +1023,21 @@ const INGRESS_CENSUS_MATCHED_BINDING_SCHEMA = {
  */
 const INGRESS_CENSUS_NORMALIZED_INGRESS_SCHEMA = ConversationNormalizedIngressV1JsonSchema;
 
+/**
+ * The body-free replay identity a settled census keeps: the authenticated
+ * envelope the protocol already publishes without a body, plus one full
+ * base64url HMAC-SHA256 digest of the admitted text.
+ */
+const INGRESS_CENSUS_COMPACTED_SCHEMA = {
+  type: 'object',
+  properties: {
+    shell: ConversationAuthenticatedObservationShellV1JsonSchema,
+    textDigest: { type: 'string', pattern: '^[A-Za-z0-9_-]{43}$' },
+  },
+  required: ['shell', 'textDigest'],
+  additionalProperties: false,
+} satisfies PluginJsonSchema;
+
 /** A monotonic, redacted occurrence-evidence mismatch fact. */
 const INGRESS_CENSUS_CONFLICT_FACT_SCHEMA = {
   type: 'object',
@@ -956,7 +1056,11 @@ const INGRESS_CENSUS_CONFLICT_FACT_SCHEMA = {
 const INGRESS_CENSUS_PAYLOAD_SCHEMA = {
   type: 'object',
   properties: {
-    normalizedIngress: INGRESS_CENSUS_NORMALIZED_INGRESS_SCHEMA,
+    // Exactly one of the two carries the occurrence. The full ingress is
+    // retained while any obligation can still consume its body; a settled unit
+    // keeps only the body-free replay identity for the rest of its window.
+    normalizedIngress: nullable(INGRESS_CENSUS_NORMALIZED_INGRESS_SCHEMA),
+    compacted: nullable(INGRESS_CENSUS_COMPACTED_SCHEMA),
     phase: { type: 'string', enum: ['preparing', 'prepared'] },
     connectionAuthorityEpoch: POSITIVE_SAFE_INTEGER_SCHEMA,
     maximumObservationAgeMs: {
@@ -968,6 +1072,9 @@ const INGRESS_CENSUS_PAYLOAD_SCHEMA = {
     // readable as uncovered; new census rows write an explicit null.
     checkpointCoveredAt: nullable(NON_NEGATIVE_SAFE_INTEGER_SCHEMA),
     conflict: nullable(INGRESS_CENSUS_CONFLICT_FACT_SCHEMA),
+    // Existing retained censuses predate Event candidates. Omission reads as
+    // no candidate; current writers always persist the explicit nullable arm.
+    eventCandidate: nullable(ConversationIngressAutomationEventCandidateV1JsonSchema),
     matchedBindings: {
       type: 'array',
       minItems: 0,
@@ -977,6 +1084,7 @@ const INGRESS_CENSUS_PAYLOAD_SCHEMA = {
   },
   required: [
     'normalizedIngress',
+    'compacted',
     'phase',
     'connectionAuthorityEpoch',
     'maximumObservationAgeMs',
@@ -1172,7 +1280,7 @@ export function isCanonicalChannelStateRecordIdentity(input: Readonly<{
   bindingId?: string;
   commandOccurrenceId?: string;
   creationKey?: string;
-  ingressTargetKind?: 'session' | 'automation';
+  ingressTargetKind?: 'session' | 'automation' | 'event';
   sessionIdempotencyKey?: string;
 }>): boolean {
   if (input.recordKind === CHANNEL_STATE_RECORD_KIND.connection) {
@@ -1198,7 +1306,7 @@ export function isCanonicalChannelStateRecordIdentity(input: Readonly<{
     if (input.ingressTargetKind === 'session') {
       return input.sessionIdempotencyKey === `channels:input:v1:${input.rowId}`;
     }
-    return input.ingressTargetKind === 'automation';
+    return input.ingressTargetKind === 'automation' || input.ingressTargetKind === 'event';
   }
   return true;
 }
@@ -1241,7 +1349,6 @@ const STATE_RECORDS: readonly StateRecordDefinition[] = [
     rowIdSchema: OPAQUE_ROUTING_ROW_ID_SCHEMA,
     requiredProjectionFields: [
       CHANNEL_STATE_FIELD.connectionId,
-      CHANNEL_STATE_FIELD.bindingId,
       CHANNEL_STATE_FIELD.terminal,
       CHANNEL_STATE_FIELD.attention,
     ],
@@ -1299,7 +1406,7 @@ export function migrateChannelStateV1ToV2(
   return {
     ...value,
     [CHANNEL_STATE_FIELD.attention]: false,
-    payload: { ...payload, conflict: null },
+    payload: { ...payload, conflict: null, compacted: null },
   };
 }
 
@@ -1478,7 +1585,7 @@ const DELIVERY_SOURCE_SCHEMA: PluginJsonSchema = {
         controlId: boundedString(MAX_PLUGIN_ID_LENGTH),
         controlKind: {
           type: 'string',
-          enum: ['pairing', 'newSession', 'approval', 'refusal', 'recovery'],
+          enum: ['pairing', 'newSession', 'approval', 'userAction', 'refusal', 'recovery'],
         },
       },
       required: ['kind', 'controlId', 'controlKind'],

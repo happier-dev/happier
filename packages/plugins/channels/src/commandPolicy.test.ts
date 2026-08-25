@@ -84,7 +84,38 @@ describe('Channels command policy', () => {
     })).toEqual({ kind: 'ordinaryText' });
 
     expect(decideConversationCommandPolicy({
+      command: classifyConversationCommand('/answer input-1 [{"questionIndex":0,"values":["Safe"]}]'),
+      actor: { principalId: 'person-1', kind: 'human', isIntegrationSelf: false },
+      contentProvenance: 'forwarded',
+      actorAllowed: true,
+      allowBotSenders: false,
+      targetKind: 'session',
+      // This only admits the binding's external mediator. It is deliberately
+      // unrelated to the permission maximum scope; AskUserQuestion has no
+      // permission grant scope.
+      approvalCommandsEnabled: true,
+      newSessionEnabled: true,
+      senderFeedback: 'eligibleRefusals',
+    })).toEqual({ kind: 'ordinaryText' });
+
+    expect(decideConversationCommandPolicy({
       command: classifyConversationCommand('/pair ABCD2345'),
+      actor: { principalId: 'bot-1', kind: 'bot', isIntegrationSelf: false },
+      contentProvenance: 'original',
+      actorAllowed: true,
+      allowBotSenders: true,
+      targetKind: 'session',
+      approvalCommandsEnabled: true,
+      newSessionEnabled: true,
+      senderFeedback: 'eligibleRefusals',
+    })).toEqual({
+      kind: 'terminal',
+      disposition: 'rejected',
+      reason: 'commandNotAuthorized',
+      senderFeedbackEligible: false,
+    });
+    expect(decideConversationCommandPolicy({
+      command: classifyConversationCommand('/answer input-1 [{"questionIndex":0,"values":["Safe"]}]'),
       actor: { principalId: 'bot-1', kind: 'bot', isIntegrationSelf: false },
       contentProvenance: 'original',
       actorAllowed: true,

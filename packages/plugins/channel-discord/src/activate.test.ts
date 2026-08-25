@@ -8,7 +8,10 @@ import {
   DISCORD_BOT_CREDENTIAL_PURPOSE,
   DISCORD_GATEWAY_WORKER_ATTEMPT_ACTION_ID,
 } from './discordPluginConstants.js';
-import { DISCORD_AUTOMATION_MESSAGE_SETUP_ACTION_ID } from './discordAutomationEvent.js';
+import {
+  DISCORD_AUTOMATION_MESSAGE_ADMIT_ACTION_ID,
+  DISCORD_AUTOMATION_MESSAGE_SETUP_ACTION_ID,
+} from './discordAutomationEvent.js';
 import { DISCORD_BOT_CONNECTED_ACCOUNT_ID, PLUGIN_MANIFEST } from './manifest.js';
 
 const DISCORD_CHANNEL_ACTION_IDS = Object.freeze({
@@ -23,6 +26,7 @@ const DISCORD_CHANNEL_PROVIDER_OPERATIONS = Object.freeze({
   setup: DISCORD_CHANNEL_ACTION_IDS.setup,
   connectionTest: DISCORD_CHANNEL_ACTION_IDS.connectionTest,
   endpointResolve: DISCORD_CHANNEL_ACTION_IDS.endpointResolve,
+  automationEventAdmit: DISCORD_AUTOMATION_MESSAGE_ADMIT_ACTION_ID,
   messageDeliver: DISCORD_CHANNEL_ACTION_IDS.messageDeliver,
   connectionStop: DISCORD_CHANNEL_ACTION_IDS.connectionStop,
 });
@@ -98,12 +102,13 @@ describe('Discord Channel plugin activation', () => {
       expect(testkit.registrations()).toEqual([
         { family: 'actions', localId: DISCORD_GATEWAY_WORKER_ATTEMPT_ACTION_ID },
         { family: 'actions', localId: DISCORD_AUTOMATION_MESSAGE_SETUP_ACTION_ID },
+        { family: 'actions', localId: DISCORD_AUTOMATION_MESSAGE_ADMIT_ACTION_ID },
         ...Object.values(DISCORD_CHANNEL_ACTION_IDS).map((localId) => ({ family: 'actions' as const, localId })),
         { family: 'backgroundServices', localId: 'gateway-supervisor' },
         { family: 'connectedAccountDescriptors', localId: DISCORD_BOT_CONNECTED_ACCOUNT_ID },
       ]);
 
-      const actions = new Map(PLUGIN_MANIFEST.contributes.actions.map((action) => [action.id, action]));
+      const actions = new Map((PLUGIN_MANIFEST.contributes.actions ?? []).map((action) => [action.id, action]));
       for (const localId of Object.values(DISCORD_CHANNEL_ACTION_IDS).filter(
         (localId) => localId !== DISCORD_CHANNEL_ACTION_IDS.messageDeliver
           && localId !== DISCORD_CHANNEL_ACTION_IDS.connectionStop,
@@ -140,6 +145,7 @@ describe('Discord Channel plugin activation', () => {
       expect(testkit.registrations()).toEqual([
         { family: 'actions', localId: DISCORD_GATEWAY_WORKER_ATTEMPT_ACTION_ID },
         { family: 'actions', localId: DISCORD_AUTOMATION_MESSAGE_SETUP_ACTION_ID },
+        { family: 'actions', localId: DISCORD_AUTOMATION_MESSAGE_ADMIT_ACTION_ID },
         { family: 'actions', localId: DISCORD_CHANNEL_ACTION_IDS.setup },
         { family: 'actions', localId: DISCORD_CHANNEL_ACTION_IDS.connectionTest },
         { family: 'actions', localId: DISCORD_CHANNEL_ACTION_IDS.endpointResolve },
@@ -149,7 +155,7 @@ describe('Discord Channel plugin activation', () => {
         { family: 'connectedAccountDescriptors', localId: DISCORD_BOT_CONNECTED_ACCOUNT_ID },
       ]);
 
-      const setup = PLUGIN_MANIFEST.contributes.actions.find(
+      const setup = PLUGIN_MANIFEST.contributes.actions?.find(
         ({ id }) => id === DISCORD_CHANNEL_ACTION_IDS.setup,
       );
       expect(setup).toMatchObject({
@@ -164,8 +170,13 @@ describe('Discord Channel plugin activation', () => {
           }],
         },
       });
-      expect(setup?.inputHints?.fields).not.toContainEqual(expect.objectContaining({ widget: 'secret' }));
-      expect(PLUGIN_MANIFEST.hostAccess.required.filter(({ capability }) => capability === 'connectedAccounts'))
+      // The cold Action projection widens `inputHints` to an opaque object, so
+      // the declared field list is read through its published hint shape.
+      const setupInputHintFields = (setup?.inputHints as
+        | Readonly<{ fields?: readonly Readonly<{ widget?: string }>[] }>
+        | undefined)?.fields;
+      expect(setupInputHintFields).not.toContainEqual(expect.objectContaining({ widget: 'secret' }));
+      expect((PLUGIN_MANIFEST.hostAccess?.required ?? []).filter(({ capability }) => capability === 'connectedAccounts'))
         .toEqual([expect.objectContaining({
           id: DISCORD_BOT_CREDENTIAL_PURPOSE,
           scope: {

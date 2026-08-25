@@ -1,16 +1,14 @@
 import {
   HAPPIER_VOICE_BINDING_NONCE_DYNAMIC_VARIABLE,
   HAPPIER_VOICE_LEASE_ID_DYNAMIC_VARIABLE,
-  VoiceRealtimeJsonValueSchema } from '@happier-dev/plugin-sdk/voice/client';
-import {
+  VoiceRealtimeJsonValueSchema,
   type VoiceRealtimeJsonValue,
-} from '@happier-dev/plugin-sdk/voice';
+  type VoiceHostedConversationService,
+  type VoiceRuntimePlatform,
+} from '@happier-dev/plugin-sdk/voice/client';
 import type {
   VoiceCredentialAccess,
 } from '@happier-dev/plugin-sdk/voice';
-import type {
-  VoiceHostedConversationService,
-} from '@happier-dev/plugin-sdk/voice/client';
 
 import { ElevenLabsVoiceProviderSettingsSchema } from '../../../protocol/voice/index.js';
 import { mintElevenLabsConversationAuthWithAccountOperations } from '../operations.js';
@@ -62,6 +60,7 @@ export function createElevenLabsSessionPreparationService(deps: Readonly<{
     credentials: VoiceCredentialAccess<'prepare'>;
     hostedConversation: VoiceHostedConversationService | null;
     signal: AbortSignal;
+    platform: VoiceRuntimePlatform;
     textOnly: boolean;
   }>): Promise<ElevenLabsSessionPreparation> => {
     const voiceSettings = deps.projectVoiceSettings(input.settings, deps.providerId);
@@ -97,7 +96,7 @@ export function createElevenLabsSessionPreparationService(deps: Readonly<{
       const auth = await mintElevenLabsConversationAuthWithAccountOperations({
         accountOperations: input.credentials.mediated,
         agentId,
-        textOnly: input.textOnly,
+        connectionType: input.textOnly && input.platform === 'web' ? 'websocket' : 'webrtc',
         signal: input.signal,
       });
       if (input.signal.aborted) return { kind: 'aborted' };

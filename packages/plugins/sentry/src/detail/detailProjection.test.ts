@@ -246,7 +246,7 @@ describe('Sentry release association projection', () => {
 describe('Sentry detail bounds', () => {
   it('collapses provider text through the contract’s own normalizer', () => {
     const rows = projectSentryEventRows([
-      { eventID: 'abc', title: 'Cart\nfailed hard' },
+      { eventID: 'abc', title: 'Cart\nfailed\0hard' },
     ], SENTRY_DETAIL_BOUNDS_V1);
     // Collapsing is the shared owner's rule, not a Sentry-local one, and it is
     // not truncation: nothing was lost.

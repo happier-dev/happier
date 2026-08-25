@@ -1,8 +1,8 @@
 import type {
-  VoiceRealtimeConnection } from '@happier-dev/plugin-sdk/voice/client';
-import type {
+  VoiceOutputFocusState,
+  VoiceRealtimeConnection,
   VoiceRealtimeJsonValue,
-} from '@happier-dev/plugin-sdk/voice';
+} from '@happier-dev/plugin-sdk/voice/client';
 
 import type {
   ElevenLabsConversationHandle,
@@ -29,11 +29,13 @@ export function createElevenLabsSdkConnection(input: Readonly<{
       onRemoteClose: (reason: string) => void;
     }>): Promise<void>;
     sendControl(event: VoiceRealtimeJsonValue): Promise<void>;
+    setOutputFocusState?(state: VoiceOutputFocusState): void;
     close(): Promise<void>;
   }> }>) => VoiceRealtimeConnection;
   handle: ElevenLabsConversationHandle;
   startConfig: unknown;
   initialMuted?: boolean;
+  duckGain: number;
   onSessionIdentity?(conversationId: string): void;
   onSessionEnded?(): Promise<void> | void;
 }>): VoiceRealtimeConnection {
@@ -43,6 +45,17 @@ export function createElevenLabsSdkConnection(input: Readonly<{
   let endLifecyclePromise: Promise<void> | null = null;
   let closed = false;
   const lifecycleController = new AbortController();
+  const duckGain = Math.max(0, Math.min(1, Number.isFinite(input.duckGain) ? input.duckGain : 0));
+
+  const setOutputFocusState = (state: VoiceOutputFocusState): void => {
+    input.handle.setOutputVolume(
+      state === 'suspended'
+        ? 0
+        : state === 'ducked'
+          ? duckGain
+          : 1,
+    );
+  };
 
   const endActiveSession = async (): Promise<void> => {
     const handle = activeHandle;
@@ -158,6 +171,7 @@ export function createElevenLabsSdkConnection(input: Readonly<{
             throw new Error('elevenlabs_control_unsupported');
         }
       },
+      setOutputFocusState,
       async close(): Promise<void> {
         closed = true;
         lifecycleController.abort();

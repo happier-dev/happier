@@ -1,9 +1,11 @@
 /** ElevenLabs Voice account operations with bounded response parsing. */
 import {
-  VoiceRealtimeJsonValueSchema } from '@happier-dev/plugin-sdk/voice/client';
+  VoiceRealtimeJsonValueSchema,
+  type VoiceRealtimeJsonValue,
+} from '@happier-dev/plugin-sdk/voice/client';
+import { pluginJsonValuesEqual } from '@happier-dev/plugin-sdk/protocol';
 import {
   classifyVoiceProviderHttpFailure,
-  type VoiceRealtimeJsonValue,
   type VoiceAccountOperationService,
 } from '@happier-dev/plugin-sdk/voice';
 import type { VoiceProviderCatalogItem } from '@happier-dev/plugin-sdk/voice/speech';
@@ -22,6 +24,12 @@ function providerError(
   stage?: ElevenLabsProvisionStage,
 ): Error {
   return Object.assign(new Error(code), { code, ...(stage ? { stage } : {}) });
+}
+
+function isVoiceAccountOperationCancelled(error: unknown): boolean {
+  return error !== null
+    && typeof error === 'object'
+    && (error as Readonly<{ code?: unknown }>).code === 'voice_account_operation_cancelled';
 }
 
 function assertProviderHttpSuccess(status: number): void {
@@ -109,10 +117,11 @@ function parseConversationAuthJson(
 export async function mintElevenLabsConversationAuthWithAccountOperations(input: Readonly<{
   accountOperations: VoiceAccountOperationService;
   agentId: string;
-  textOnly: boolean;
+  connectionType: 'websocket' | 'webrtc';
   signal: AbortSignal;
 }>): Promise<Readonly<{ kind: 'token' | 'signed_url'; value: string }>> {
-  const operationId = input.textOnly ? 'signed-url' : 'conversation-token';
+  const useSignedWebsocket = input.connectionType === 'websocket';
+  const operationId = useSignedWebsocket ? 'signed-url' : 'conversation-token';
   const response = await input.accountOperations.request({
     operationId,
     parameters: { agentId: input.agentId },
@@ -125,7 +134,7 @@ export async function mintElevenLabsConversationAuthWithAccountOperations(input:
   } catch {
     throw providerError('provider_response_invalid');
   }
-  return parseConversationAuthJson(input.textOnly ? 'signed_url' : 'token', json);
+  return parseConversationAuthJson(useSignedWebsocket ? 'signed_url' : 'token', json);
 }
 
 export async function listElevenLabsVoicesWithAccountOperations(input: Readonly<{
@@ -152,21 +161,68 @@ function normalizeToolParameters(value: Record<string, unknown>): VoiceRealtimeJ
   return VoiceRealtimeJsonValueSchema.parse(result);
 }
 
+function desiredElevenLabsToolConfig(tool: Readonly<{
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>;
+}>): VoiceRealtimeJsonValue {
+  return VoiceRealtimeJsonValueSchema.parse({
+    type: 'client',
+    name: tool.name,
+    description: tool.description,
+    parameters: normalizeToolParameters(tool.parameters),
+    expects_response: true,
+    execution_mode: 'immediate',
+    response_timeout_secs: tool.name === 'spawnSession' ? 120 : 60,
+    interruption_mode: 'allow',
+    pre_tool_speech: 'auto',
+    tool_call_sound_behavior: 'auto',
+    tool_error_handling_mode: 'passthrough',
+  });
+}
+
+function findExactSelectedElevenLabsToolId(
+  existingTools: readonly unknown[],
+  name: string,
+  desiredConfig: VoiceRealtimeJsonValue,
+): string | null {
+  for (const entry of existingTools) {
+    if (!entry || typeof entry !== 'object') continue;
+    const record = entry as Readonly<Record<string, unknown>>;
+    const id = stringValue(record.id, 256);
+    const toolConfig = record.tool_config;
+    if (!id || !toolConfig || typeof toolConfig !== 'object' || Array.isArray(toolConfig)) continue;
+    const candidate = VoiceRealtimeJsonValueSchema.safeParse(toolConfig);
+    const candidateRecord = candidate.success && !Array.isArray(candidate.data)
+      && candidate.data !== null && typeof candidate.data === 'object'
+      ? candidate.data as Readonly<Record<string, unknown>>
+      : null;
+    if (candidateRecord?.type === 'client'
+      && candidateRecord.name === name
+      && pluginJsonValuesEqual(candidateRecord, desiredConfig)) {
+      return id;
+    }
+  }
+  return null;
+}
+
 type ElevenLabsProvisionOperationId =
   | 'voices'
   | 'agents'
+  | 'agent'
   | 'tools'
   | 'create-tool'
-  | 'update-tool'
+  | 'delete-tool'
   | 'create-agent'
   | 'update-agent';
 
 type ElevenLabsProvisionStage =
   | 'validate_voice'
   | 'list_agents'
+  | 'read_agent'
   | 'list_tools'
   | 'create_tool'
-  | 'update_tool'
+  | 'delete_tool'
   | 'create_agent'
   | 'update_agent';
 
@@ -220,6 +276,7 @@ async function assertProvisionVoiceOwnedByAccount(
 async function listElevenLabsProvisionTools(
   call: ElevenLabsProvisionCall,
   desiredNames: ReadonlySet<string>,
+  selectedAgentToolIds: ReadonlySet<string>,
 ): Promise<readonly unknown[]> {
   const tools: unknown[] = [];
   const seenCursors = new Set<string>();
@@ -236,10 +293,15 @@ async function listElevenLabsProvisionTools(
     }
     for (const entry of json.tools) {
       if (!entry || typeof entry !== 'object') continue;
+      const id = stringValue((entry as Record<string, unknown>).id, 256);
       const toolConfig = (entry as { tool_config?: unknown }).tool_config;
       if (!toolConfig || typeof toolConfig !== 'object') continue;
       const record = toolConfig as Readonly<Record<string, unknown>>;
-      if (record.type === 'client' && typeof record.name === 'string' && desiredNames.has(record.name)) {
+      if (id
+        && selectedAgentToolIds.has(id)
+        && record.type === 'client'
+        && typeof record.name === 'string'
+        && desiredNames.has(record.name)) {
         tools.push(entry);
       }
     }
@@ -294,10 +356,61 @@ async function listElevenLabsProvisionAgents(
   throw providerError('provider_response_invalid', 'list_agents');
 }
 
+/**
+ * Workspace tools are shareable resources. The selected agent's published
+ * `tool_ids` are the only provider-owned proof that a tool is eligible for
+ * semantic reuse by this request; a matching workspace name is never evidence.
+ */
+async function readElevenLabsSelectedAgentToolIds(
+  call: ElevenLabsProvisionCall,
+  agentId: string,
+): Promise<ReadonlySet<string>> {
+  const agent = await callElevenLabsProvisionStage(
+    call,
+    'read_agent',
+    'agent',
+    { agentId },
+  );
+  if (stringValue(agent.agent_id, 256) !== agentId) {
+    throw providerError('provider_response_invalid', 'read_agent');
+  }
+  const conversationConfig = agent.conversation_config;
+  if (conversationConfig === undefined) return new Set();
+  if (!conversationConfig || typeof conversationConfig !== 'object' || Array.isArray(conversationConfig)) {
+    throw providerError('provider_response_invalid', 'read_agent');
+  }
+  const agentConfig = (conversationConfig as Readonly<Record<string, unknown>>).agent;
+  if (agentConfig === undefined) return new Set();
+  if (!agentConfig || typeof agentConfig !== 'object' || Array.isArray(agentConfig)) {
+    throw providerError('provider_response_invalid', 'read_agent');
+  }
+  const prompt = (agentConfig as Readonly<Record<string, unknown>>).prompt;
+  if (prompt === undefined) return new Set();
+  if (!prompt || typeof prompt !== 'object' || Array.isArray(prompt)) {
+    throw providerError('provider_response_invalid', 'read_agent');
+  }
+  const toolIds = (prompt as Readonly<Record<string, unknown>>).tool_ids;
+  if (toolIds === undefined) return new Set();
+  if (!Array.isArray(toolIds)) throw providerError('provider_response_invalid', 'read_agent');
+
+  const result = new Set<string>();
+  for (const toolId of toolIds) {
+    const normalized = stringValue(toolId, 256);
+    if (!normalized) throw providerError('provider_response_invalid', 'read_agent');
+    result.add(normalized);
+  }
+  return result;
+}
+
 async function runElevenLabsProvision(
   raw: unknown,
   call: ElevenLabsProvisionCall,
+  isCleanupAuthorityCurrent: () => boolean,
 ): Promise<Readonly<Record<string, unknown>>> {
+  const createdToolIds: string[] = [];
+  let mayHaveCreatedToolWithoutId = false;
+  let finalAgentWriteStarted = false;
+  try {
     const parsed = ElevenLabsProvisionRequestSchema.safeParse(raw);
     if (!parsed.success) throw providerError('invalid_parameters');
     const request = parsed.data;
@@ -312,34 +425,18 @@ async function runElevenLabsProvision(
       };
     }
     await assertProvisionVoiceOwnedByAccount(call, request.tts.voiceId);
-    const existingTools = await listElevenLabsProvisionTools(
-      call,
-      new Set(request.tools.map((tool) => tool.name)),
-    );
+    const existingTools = request.kind === 'update'
+      ? await listElevenLabsProvisionTools(
+        call,
+        new Set(request.tools.map((tool) => tool.name)),
+        await readElevenLabsSelectedAgentToolIds(call, request.agentId),
+      )
+      : [];
     const toolIds: string[] = [];
     for (const tool of request.tools) {
-      const existing = existingTools.find((entry) => {
-        if (!entry || typeof entry !== 'object') return false;
-        const toolConfig = (entry as { tool_config?: unknown }).tool_config;
-        if (!toolConfig || typeof toolConfig !== 'object') return false;
-        const record = toolConfig as Record<string, unknown>;
-        return record.type === 'client' && record.name === tool.name;
-      }) as Record<string, unknown> | undefined;
-      const toolConfig = {
-        type: 'client', name: tool.name, description: tool.description,
-        parameters: normalizeToolParameters(tool.parameters), expects_response: true,
-        execution_mode: 'immediate', response_timeout_secs: tool.name === 'spawnSession' ? 120 : 60,
-        interruption_mode: 'allow', pre_tool_speech: 'auto',
-        tool_call_sound_behavior: 'auto', tool_error_handling_mode: 'passthrough',
-      };
-      const existingId = stringValue(existing?.id, 256);
+      const toolConfig = desiredElevenLabsToolConfig(tool);
+      const existingId = findExactSelectedElevenLabsToolId(existingTools, tool.name, toolConfig);
       if (existingId) {
-        await callElevenLabsProvisionStage(
-          call,
-          'update_tool',
-          'update-tool',
-          { toolId: existingId, body: { tool_config: toolConfig } },
-        );
         toolIds.push(existingId);
       } else {
         const created = await callElevenLabsProvisionStage(
@@ -349,8 +446,12 @@ async function runElevenLabsProvision(
           { body: { tool_config: toolConfig } },
         );
         const id = stringValue(created.id, 256);
-        if (!id) throw providerError('provider_response_invalid', 'create_tool');
+        if (!id) {
+          mayHaveCreatedToolWithoutId = true;
+          throw providerError('provider_response_invalid', 'create_tool');
+        }
         toolIds.push(id);
+        createdToolIds.push(id);
       }
     }
     const conversationConfig = {
@@ -371,6 +472,7 @@ async function runElevenLabsProvision(
       agent: { prompt: { prompt: request.prompt, tool_ids: toolIds } },
     };
     if (request.kind === 'create') {
+      finalAgentWriteStarted = true;
       const created = await callElevenLabsProvisionStage(
         call,
         'create_agent',
@@ -381,6 +483,7 @@ async function runElevenLabsProvision(
       if (!agentId) throw providerError('provider_response_invalid', 'create_agent');
       return { ok: true, agentId };
     }
+    finalAgentWriteStarted = true;
     await callElevenLabsProvisionStage(
       call,
       'update_agent',
@@ -391,6 +494,40 @@ async function runElevenLabsProvision(
       },
     );
     return { ok: true, updated: true };
+  } catch (error) {
+    const hasCreatedTools = createdToolIds.length > 0;
+    const authorityCancelled = isVoiceAccountOperationCancelled(error);
+    let cleanupIncomplete = mayHaveCreatedToolWithoutId
+      || (hasCreatedTools && finalAgentWriteStarted)
+      || (hasCreatedTools && (authorityCancelled || !isCleanupAuthorityCurrent()));
+    if (hasCreatedTools && !cleanupIncomplete) {
+      for (let index = createdToolIds.length - 1; index >= 0; index -= 1) {
+        if (!isCleanupAuthorityCurrent()) {
+          cleanupIncomplete = true;
+          break;
+        }
+        try {
+          await callElevenLabsProvisionStage(
+            call,
+            'delete_tool',
+            'delete-tool',
+            { toolId: createdToolIds[index]! },
+          );
+        } catch (cleanupError) {
+          cleanupIncomplete = true;
+          if (isVoiceAccountOperationCancelled(cleanupError)) break;
+        }
+      }
+    }
+    if (cleanupIncomplete && error && typeof error === 'object') {
+      try {
+        Object.assign(error, { cleanupIncomplete: true });
+      } catch {
+        // Existing provisioning errors remain the primary failure when immutable.
+      }
+    }
+    throw error;
+  }
 }
 
 export async function provisionElevenLabsWithAccountOperations(input: Readonly<{
@@ -398,22 +535,26 @@ export async function provisionElevenLabsWithAccountOperations(input: Readonly<{
   request: unknown;
   signal: AbortSignal;
 }>): Promise<Readonly<Record<string, unknown>>> {
-  return await runElevenLabsProvision(input.request, async (operationId, parameters) => {
-    const response = await input.accountOperations.request({
-      operationId,
-      parameters,
-      signal: input.signal,
-    });
-    assertProviderHttpSuccess(response.status);
-    try {
-      const value = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(response.body));
-      if (!value || typeof value !== 'object' || Array.isArray(value)) {
+  return await runElevenLabsProvision(
+    input.request,
+    async (operationId, parameters) => {
+      const response = await input.accountOperations.request({
+        operationId,
+        parameters,
+        signal: input.signal,
+      });
+      assertProviderHttpSuccess(response.status);
+      try {
+        const value = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(response.body));
+        if (!value || typeof value !== 'object' || Array.isArray(value)) {
+          throw providerError('provider_response_invalid');
+        }
+        return value as Record<string, unknown>;
+      } catch (error) {
+        if ((error as Readonly<{ code?: unknown }>).code === 'provider_response_invalid') throw error;
         throw providerError('provider_response_invalid');
       }
-      return value as Record<string, unknown>;
-    } catch (error) {
-      if ((error as Readonly<{ code?: unknown }>).code === 'provider_response_invalid') throw error;
-      throw providerError('provider_response_invalid');
-    }
-  });
+    },
+    () => !input.signal.aborted,
+  );
 }

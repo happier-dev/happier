@@ -17,7 +17,7 @@
  * by the caller.
  */
 
-import type { PosthogIssueRow } from '../../api/types/issues.js';
+import type { PosthogIssueQueryDetail, PosthogIssueRow, PosthogTopFrame } from '../../api/types/issues.js';
 import { projectTriageDisplayTextV1 } from '@happier-dev/triage-protocol/v1';
 
 import type { PosthogProjectionBounds } from './bounds.js';
@@ -28,6 +28,9 @@ export type PosthogFactId =
     | 'sessions'
     | 'library'
     | 'source'
+    | 'function'
+    | 'topFrame'
+    | 'release'
     | 'firstSeen'
     | 'lastSeen';
 
@@ -41,7 +44,12 @@ export type PosthogFact =
         scope: 'configuredWindowIngested';
     }>
     | Readonly<{ id: 'users' | 'sessions'; kind: 'count'; value: number; approximate: true }>
-    | Readonly<{ id: 'library' | 'source'; kind: 'text'; value: string; truncated: boolean }>
+    | Readonly<{
+        id: 'library' | 'source' | 'function' | 'topFrame' | 'release';
+        kind: 'text';
+        value: string;
+        truncated: boolean;
+    }>
     | Readonly<{ id: 'firstSeen' | 'lastSeen'; kind: 'timestamp'; atMs: number }>;
 
 /**
@@ -50,6 +58,9 @@ export type PosthogFact =
  */
 export const POSTHOG_FACT_PRIORITY: readonly PosthogFactId[] = [
     'occurrences',
+    'function',
+    'topFrame',
+    'release',
     'lastSeen',
     'users',
     'sessions',
@@ -71,6 +82,7 @@ export type PosthogProjectedFacts = Readonly<{
 export function projectPosthogFacts(
     row: PosthogIssueRow,
     bounds: PosthogProjectionBounds,
+    enrichment?: PosthogIssueQueryDetail,
 ): PosthogProjectedFacts {
     const candidates: PosthogFact[] = [];
     let truncated = false;
@@ -123,6 +135,36 @@ export function projectPosthogFacts(
     if (row.lastSeenMs !== undefined) {
         candidates.push({ id: 'lastSeen', kind: 'timestamp', atMs: row.lastSeenMs });
     }
+
+    const pushText = (
+        id: 'function' | 'topFrame' | 'release',
+        value: string | null,
+    ): void => {
+        if (value === null || value.length === 0) return;
+        const projected = projectTriageDisplayTextV1(value, bounds.factValueUtf8Bytes);
+        truncated = truncated || projected.truncated;
+        if (projected.value.length > 0) {
+            candidates.push({ id, kind: 'text', value: projected.value, truncated: projected.truncated });
+        }
+    };
+    const frameLocation = (frame: PosthogTopFrame): string | null => {
+        const label = frame.function ?? frame.source;
+        if (label === undefined) return null;
+        if (frame.source === undefined || frame.source === label) return label;
+        if (frame.line === undefined) return `${label} — ${frame.source}`;
+        const location = frame.column === undefined
+            ? `${frame.source}:${String(frame.line)}`
+            : `${frame.source}:${String(frame.line)}:${String(frame.column)}`;
+        return `${label} — ${location}`;
+    };
+    pushText('function', enrichment?.function ?? null);
+    pushText('topFrame', enrichment?.topInAppFrame === null || enrichment?.topInAppFrame === undefined
+        ? null
+        : frameLocation(enrichment.topInAppFrame));
+    const release = enrichment?.latestRelease;
+    pushText('release', release === null || release === undefined
+        ? null
+        : release.version ?? release.commitId ?? release.branch ?? release.repoName ?? release.project ?? null);
 
     candidates.sort((left, right) => factOrder(left.id) - factOrder(right.id));
     if (candidates.length > bounds.maxFacts) {

@@ -178,5 +178,11 @@ export function createDiscordSetupResult(
     overlapSafety: 'safe',
     replayContinuity: 'sessionBound',
     outboundTextLimit: { maximum: DISCORD_MESSAGE_MAXIMUM_CODE_POINTS, unit: 'unicodeCodePoints' },
+    setupGuidance: {
+      externalUrl: buildDiscordInviteUrl(applicationId),
+      requiredPermissionsLabel: DISCORD_REQUIRED_PERMISSIONS
+        .map((permission) => permission.label)
+        .join(', '),
+    },
   };
 }

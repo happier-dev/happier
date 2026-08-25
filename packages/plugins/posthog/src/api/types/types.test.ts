@@ -242,4 +242,41 @@ describe('parsePosthogDirectoryPage', () => {
     it('rejects an envelope with no results array at all', () => {
         expect(parsePosthogDirectoryPage({ count: 1 }, parsePosthogOrganizationRow)).toBeNull();
     });
+
+    /**
+     * `next` is the only thing that says whether more pages exist, and DRF spells its
+     * absence as `null`. Anything else is a shape this parser does not understand — and
+     * reading it as `null` said the exact opposite of what it does not know: that the
+     * walk finished. Discovery then reported COMPLETE while the provider was still
+     * offering pages, so environments the user has simply never appeared and nothing
+     * said so.
+     *
+     * The rows are still published, because a malformed pagination field is not a reason
+     * to throw away the valid rows on the same page. Only the completeness claim is
+     * withdrawn.
+     */
+    it.each([
+        ['a number', 42],
+        ['an object', { url: 'https://eu.posthog.com/api/organizations/?limit=1&offset=1' }],
+        ['a boolean', true],
+    ])('withdraws the completeness claim when `next` is %s rather than reading it as the last page', (_label, next) => {
+        const page = parsePosthogDirectoryPage(
+            { ...organizationsPage, next },
+            parsePosthogOrganizationRow,
+        );
+
+        expect(page?.rows).toHaveLength(1);
+        expect(page?.next).toBeNull();
+        expect(page?.nextUnreadable).toBe(true);
+    });
+
+    it('states a genuinely absent `next` as a readable last page', () => {
+        const page = parsePosthogDirectoryPage(
+            { ...organizationsPage, next: null },
+            parsePosthogOrganizationRow,
+        );
+
+        expect(page?.next).toBeNull();
+        expect(page?.nextUnreadable).toBe(false);
+    });
 });

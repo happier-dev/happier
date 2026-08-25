@@ -1,9 +1,8 @@
 import { Conversation } from '@elevenlabs/client';
 import {
-  VoiceRealtimeJsonValueSchema } from '@happier-dev/plugin-sdk/voice/client';
-import {
+  VoiceRealtimeJsonValueSchema,
   type VoiceRealtimeJsonValue,
-} from '@happier-dev/plugin-sdk/voice';
+} from '@happier-dev/plugin-sdk/voice/client';
 import type {
   Callbacks,
   Conversation as ElevenLabsConversation,
@@ -31,66 +30,12 @@ export type ElevenLabsConversationHandle = Readonly<{
     endSession: () => Promise<void>;
     getId: () => string | null;
     setMicMuted: (muted: boolean) => void;
+    setOutputVolume: (volume: number) => void;
     sendUserMessage: (message: string) => void;
     sendContextualUpdate: (update: string) => void;
-    readOutboundAudioBytes: () => Promise<number | null>;
     subscribe: (listener: (event: ElevenLabsConversationHandleEvent) => void) => () => void;
     dispose: () => void;
 }>;
-
-function extractStatsEntries(report: unknown): unknown[] {
-    if (Array.isArray(report)) return report;
-    if (report && typeof report === 'object' && Symbol.iterator in report) {
-        return Array.from(report as Iterable<unknown>).map((entry) =>
-            Array.isArray(entry) && entry.length >= 2 ? entry[1] : entry,
-        );
-    }
-    const forEach = report && typeof report === 'object'
-        ? (report as { forEach?: unknown }).forEach
-        : null;
-    if (typeof forEach !== 'function') return [];
-    const entries: unknown[] = [];
-    forEach.call(report, (value: unknown) => entries.push(value));
-    return entries;
-}
-
-function resolveStatsReader(conversation: ElevenLabsConversation): (() => Promise<unknown>) | null {
-    const root = conversation as unknown as Record<string, unknown>;
-    const connection = root.connection as Record<string, unknown> | undefined;
-    const publisher = connection?.publisher as Record<string, unknown> | undefined;
-    const candidates: unknown[] = [
-        root,
-        connection,
-        connection?.peerConnection,
-        connection?.pc,
-        publisher?.pc,
-    ];
-    for (const candidate of candidates) {
-        if (!candidate || typeof candidate !== 'object') continue;
-        const getStats = (candidate as { getStats?: unknown }).getStats;
-        if (typeof getStats === 'function') {
-            return async () => await Promise.resolve(getStats.call(candidate));
-        }
-    }
-    return null;
-}
-
-async function readOutboundAudioBytes(conversation: ElevenLabsConversation | null): Promise<number | null> {
-    if (!conversation) return null;
-    const readStats = resolveStatsReader(conversation);
-    if (!readStats) return null;
-    const entries = extractStatsEntries(await readStats());
-    let bytesSent: number | null = null;
-    for (const entry of entries) {
-        if (!entry || typeof entry !== 'object') continue;
-        const stat = entry as Record<string, unknown>;
-        if (stat.type !== 'outbound-rtp') continue;
-        const mediaKind = typeof stat.kind === 'string' ? stat.kind : stat.mediaType;
-        if (mediaKind !== 'audio' || typeof stat.bytesSent !== 'number' || !Number.isFinite(stat.bytesSent)) continue;
-        bytesSent = bytesSent === null ? stat.bytesSent : Math.max(bytesSent, stat.bytesSent);
-    }
-    return bytesSent;
-}
 
 function readRecord(value: unknown): Record<string, unknown> {
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -116,6 +61,10 @@ async function endConversationQuietly(conversation: ElevenLabsConversation): Pro
     }
 }
 
+function normalizeOutputVolume(volume: number): number {
+    return Math.max(0, Math.min(1, Number.isFinite(volume) ? volume : 0));
+}
+
 export function createElevenLabsConversationHandle(params: Readonly<{
     tools: readonly Readonly<{
         name: string;
@@ -125,6 +74,7 @@ export function createElevenLabsConversationHandle(params: Readonly<{
     let activeConversation: ElevenLabsConversation | null = null;
     let latestStartSequence = 0;
     let disposed = false;
+    let outputVolume = 1;
     const listeners = new Set<(event: ElevenLabsConversationHandleEvent) => void>();
 
     const emit = (event: ElevenLabsConversationHandleEvent): void => {
@@ -215,6 +165,16 @@ export function createElevenLabsConversationHandle(params: Readonly<{
                 return null;
             }
 
+            try {
+                // A focus change can precede the SDK session resolving. Retain
+                // it above and apply it before exposing this conversation as
+                // active, so a late provider output cannot briefly play.
+                if (outputVolume !== 1) conversation.setVolume({ volume: outputVolume });
+            } catch (error) {
+                await endConversationQuietly(conversation);
+                throw error;
+            }
+
             activeConversation = conversation;
             return conversationId;
         },
@@ -231,18 +191,15 @@ export function createElevenLabsConversationHandle(params: Readonly<{
         setMicMuted(muted: boolean): void {
             activeConversation?.setMicMuted(muted);
         },
+        setOutputVolume(volume: number): void {
+            outputVolume = normalizeOutputVolume(volume);
+            activeConversation?.setVolume({ volume: outputVolume });
+        },
         sendUserMessage(message: string): void {
             activeConversation?.sendUserMessage(message);
         },
         sendContextualUpdate(update: string): void {
             activeConversation?.sendContextualUpdate(update);
-        },
-        async readOutboundAudioBytes(): Promise<number | null> {
-            try {
-                return await readOutboundAudioBytes(activeConversation);
-            } catch {
-                return null;
-            }
         },
         subscribe(listener): () => void {
             if (disposed) return () => {};

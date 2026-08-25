@@ -2,6 +2,7 @@ import { PluginEventAutomationSetupResultV1Schema } from '@happier-dev/plugin-sd
 import { describe, expect, it } from 'vitest';
 
 import {
+  DISCORD_AUTOMATION_MESSAGE_ADMIT_ACTION_ID,
   DISCORD_AUTOMATION_MESSAGE_SETUP_INPUT_HINTS,
   DISCORD_AUTOMATION_MESSAGE_EVENT_ID,
   DISCORD_AUTOMATION_MESSAGE_SETUP_ACTION_ID,
@@ -21,24 +22,29 @@ function readManifestEvent() {
 }
 
 describe('Discord Automation Event contribution', () => {
-  it('withholds the Event, because this observer persists no cursor for either transport', () => {
-    // The provider stores no Gateway position (the session id and last dispatch
-    // sequence are locals of one socket run), so `checkpointedPull` has nothing
-    // to resume from after process loss or a plugin reload, and `durablePush`
-    // is unrepresentable without a webhook endpoint id. Until a real
-    // history-capable observer exists, the plugin must offer no Automation
-    // trigger that would silently drop Runs. See the withheld-declaration note
-    // in `discordAutomationEvent.ts`.
-    expect(readManifestEvent()).toBeUndefined();
-    const events = PLUGIN_MANIFEST.contributes.events ?? [];
-    expect(events.filter((event) => event.kind === 'event' && event.automation?.eligible === true))
-      .toEqual([]);
-    // The observer's own setup Action stays declared and registered so the
-    // retained work keeps one entry point; the contract version it reports is
-    // still this module's.
+  it('declares the Event once Channels durably owns its obligation lifecycle', () => {
+    expect(readManifestEvent()).toMatchObject({
+      id: DISCORD_AUTOMATION_MESSAGE_EVENT_ID,
+      kind: 'event',
+      automation: {
+        eligible: true,
+        source: {
+          sourceContractVersion: DISCORD_AUTOMATION_MESSAGE_SOURCE_CONTRACT_VERSION,
+          supportedObservationTransports: ['checkpointedPull'],
+          setupActionRef: {
+            pluginId: DISCORD_PLUGIN_ID,
+            localId: DISCORD_AUTOMATION_MESSAGE_SETUP_ACTION_ID,
+          },
+        },
+      },
+    });
     const actions = PLUGIN_MANIFEST.contributes.actions ?? [];
     expect(actions.map((action) => action.id))
       .toContain(DISCORD_AUTOMATION_MESSAGE_SETUP_ACTION_ID);
+    expect(actions.find((action) => action.id === DISCORD_AUTOMATION_MESSAGE_ADMIT_ACTION_ID))
+      .toMatchObject({ surfaces: ['plugin'], dangerLevel: 'writesRemote' });
+    expect(PLUGIN_MANIFEST.contributes.targetedPluginContributions?.[0]?.operations)
+      .toMatchObject({ automationEventAdmit: DISCORD_AUTOMATION_MESSAGE_ADMIT_ACTION_ID });
     expect(DISCORD_AUTOMATION_MESSAGE_SOURCE_CONTRACT_VERSION).toBe(1);
     expect(DISCORD_PLUGIN_ID).toBe(PLUGIN_MANIFEST.id);
   });
@@ -82,6 +88,7 @@ describe('Discord Automation Event contribution', () => {
       channelId: '4242',
     });
     expect(config).toEqual({ v: 1, applicationId: '123', channelId: '4242' });
+    if (!config) throw new Error('Expected the parsed Discord Automation message source config');
     expect(createDiscordAutomationMessageSourceInstanceId(config))
       .toBe('discord:application:123:channel:4242');
     expect(parseDiscordAutomationMessageSourceConfig({ v: 2, applicationId: '1', channelId: '2' }))

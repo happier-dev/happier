@@ -43,6 +43,17 @@ export type PosthogEnvironmentRow = Readonly<{
 export type PosthogPaginatedEnvelope = Readonly<{
     count: number | null;
     next: string | null;
+    /**
+     * The provider sent a `next` that is neither a URL string nor DRF's `null`.
+     *
+     * `next` is the ONLY field that says whether more pages exist, so folding an
+     * unreadable one into `null` is the single reading that must never happen: it turns
+     * *this parser does not know* into *this is the last page*, and the caller then
+     * reports finished discovery over a walk the provider was still offering pages for.
+     * The rows on the same page stay published — a malformed pagination field is not a
+     * reason to discard rows this parser read perfectly well.
+     */
+    nextUnreadable: boolean;
     rawResults: readonly unknown[];
 }>;
 
@@ -67,9 +78,12 @@ export function parsePosthogPaginatedEnvelope(value: unknown): PosthogPaginatedE
         return null;
     }
     const count = readSafeInteger(raw['count']);
+    const rawNext = raw['next'];
+    const next = readNullableString(rawNext);
     return {
         count,
-        next: readNullableString(raw['next']),
+        next,
+        nextUnreadable: next === null && rawNext !== null && rawNext !== undefined,
         rawResults,
     };
 }
@@ -122,6 +136,8 @@ export type PosthogDirectoryPage<T> = Readonly<{
     skippedRowCount: number;
     count: number | null;
     next: string | null;
+    /** See `PosthogPaginatedEnvelope.nextUnreadable`. */
+    nextUnreadable: boolean;
 }>;
 
 /**
@@ -151,5 +167,6 @@ export function parsePosthogDirectoryPage<T>(
         skippedRowCount,
         count: envelope.count,
         next: envelope.next,
+        nextUnreadable: envelope.nextUnreadable,
     };
 }

@@ -200,6 +200,93 @@ describe('Sentry Triage source operations', () => {
       .toBe(`https://us.sentry.io${SENTRY_SCOPE_SEPARATOR}${ORGANIZATION_ID}`);
   });
 
+  it('keeps valid organization siblings but never reports a skipped malformed sibling as complete discovery', async () => {
+    const recorded = onOrigin(organizationsCloudPage, 'https://de.sentry.io');
+    const harness = host({
+      origins: ['https://de.sentry.io'],
+      responses: [{
+        ...recorded,
+        body: [
+          ...(recorded.body as readonly unknown[]),
+          { id: 'not-a-numeric-organization-id', name: 'Unreadable sibling' },
+        ],
+      }],
+    });
+
+    const result = await listSentryInstances({ v: 1 }, harness.context);
+
+    expect(() => TriageListInstancesResultV1Schema.parse(result)).not.toThrow();
+    expect(result.kind).toBe('incomplete');
+    if (result.kind !== 'incomplete') return;
+    expect(result.candidates).toHaveLength(1);
+    expect(result.failure).toEqual({
+      class: 'unsupportedContract',
+      code: SENTRY_FAILURE_CODES.malformedOrganizationRow,
+    });
+    expect(result.failures).toContainEqual({
+      binding: { purpose: SENTRY_CONNECTED_ACCOUNT_PURPOSE, account: ACCOUNT },
+      failure: {
+        class: 'unsupportedContract',
+        code: SENTRY_FAILURE_CODES.malformedOrganizationRow,
+      },
+    });
+  });
+
+  /**
+   * Sentry's organization cursor is an OFFSET triple (`value:offset:is_prev`), so a
+   * concurrent create, delete or rename shifts the window between two pages and hands
+   * back an organization the walk already recorded. Each copy became its own candidate:
+   * the same organization was offered twice in Settings, and — because the walk stops at
+   * `MAX_TRIAGE_INSTANCE_DRAFTS_V1` — each duplicate spent a slot a DISTINCT organization
+   * could have taken, so an account near the ceiling silently lost real organizations to
+   * copies of one it already had.
+   *
+   * A candidate is identified by its match tuple, which the draft already carries: the
+   * exact account binding plus `localInstanceKey`. Two rows resolving to that same tuple
+   * are one candidate, not two.
+   */
+  it('records one candidate per organization when offset paging returns the same row twice', async () => {
+    const page = (
+      organizationIds: readonly string[],
+      nextResults: boolean,
+      cursor: string,
+    ): RecordedResponse => ({
+      status: 200,
+      headers: {
+        'content-type': 'application/json',
+        link: `<https://de.sentry.io/api/0/organizations/?&cursor=${cursor}>; rel="next"; results="${String(nextResults)}"; cursor="${cursor}"`,
+      },
+      body: organizationIds.map((id) => ({
+        id,
+        slug: `org-${id}`,
+        name: `Org ${id}`,
+        links: { organizationUrl: `https://org-${id}.sentry.io`, regionUrl: 'https://de.sentry.io' },
+      })),
+    });
+
+    const harness = host({
+      origins: ['https://de.sentry.io'],
+      responses: [
+        page(['7701', '7702'], true, '1:0:0'),
+        // The window shifted: `7702` is repeated, and `7703` is genuinely new.
+        page(['7702', '7703'], false, '1:100:0'),
+      ],
+    });
+
+    const result = await listSentryInstances({ v: 1 }, harness.context);
+
+    expect(() => TriageListInstancesResultV1Schema.parse(result)).not.toThrow();
+    if (result.kind === 'failed') return;
+    // Every DISTINCT organization survives; only the repeat is dropped.
+    expect(result.candidates.map((candidate) => candidate.localInstanceKey)).toEqual([
+      `https://de.sentry.io${SENTRY_SCOPE_SEPARATOR}7701`,
+      `https://de.sentry.io${SENTRY_SCOPE_SEPARATOR}7702`,
+      `https://de.sentry.io${SENTRY_SCOPE_SEPARATOR}7703`,
+    ]);
+    // A repeat is not a provider contract failure either: nothing is reported as broken.
+    expect(result.failures).toEqual([]);
+  });
+
   it('never guesses a deployment for an account whose route the host did not project', async () => {
     const harness = host({ origins: [], responses: [] });
 

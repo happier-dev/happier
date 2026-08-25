@@ -7,7 +7,10 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { activate } from './activate.js';
 import {
+  TELEGRAM_AUTOMATION_MESSAGE_ADMIT_ACTION_ID,
+  TELEGRAM_AUTOMATION_MESSAGE_EVENT_ID,
   TELEGRAM_AUTOMATION_MESSAGE_SETUP_ACTION_ID,
+  TELEGRAM_AUTOMATION_MESSAGE_SOURCE_CONTRACT_VERSION,
   TELEGRAM_BOT_CREDENTIAL_PURPOSE,
   TELEGRAM_CHANNEL_ACTION_IDS,
 } from './constants.js';
@@ -26,6 +29,7 @@ const TELEGRAM_CHANNEL_PROVIDER_OPERATIONS = Object.freeze({
   connectionTest: TELEGRAM_CHANNEL_ACTION_IDS.connectionTest,
   endpointResolve: TELEGRAM_CHANNEL_ACTION_IDS.endpointResolve,
   observationsPoll: TELEGRAM_CHANNEL_ACTION_IDS.observationsPoll,
+  automationEventAdmit: TELEGRAM_AUTOMATION_MESSAGE_ADMIT_ACTION_ID,
   messageDeliver: TELEGRAM_CHANNEL_ACTION_IDS.messageDeliver,
 });
 
@@ -43,7 +47,10 @@ function response(value: unknown): Readonly<{
   };
 }
 
-function coreContext(services: Pick<PluginInvocationContext['services'], 'connectedAccounts' | 'http'>): PluginInvocationContext {
+function coreContext(services: Readonly<{
+  connectedAccounts: Partial<PluginInvocationContext['services']['connectedAccounts']>;
+  http: Partial<PluginInvocationContext['services']['http']>;
+}>): PluginInvocationContext {
   return {
     plugin: { id: 'happier.channel.telegram', version: '0.0.0' },
     contribution: {
@@ -58,6 +65,11 @@ function coreContext(services: Pick<PluginInvocationContext['services'], 'connec
         id: 'connection-setup-v1',
         qualifiedId: 'happier.channels/actions/connection-setup-v1',
       },
+      materialization: {
+        machineId: 'telegram-activation-fixture-machine',
+        materializationId: 'telegram-activation-fixture-materialization',
+        pluginId: 'happier.channels',
+      },
     },
     signal: new AbortController().signal,
     // This fixture only supplies the two genuine system boundaries consumed by
@@ -67,27 +79,32 @@ function coreContext(services: Pick<PluginInvocationContext['services'], 'connec
 }
 
 describe('Telegram Channel plugin activation', () => {
-  it('withholds the Automation Event declaration while its occurrence has no durable obligation', () => {
-    // Telegram `getUpdates` is single-consumer: one `offset` confirms and
-    // discards every earlier update for every reader of the bot. The admission
-    // in `automationEvents.ts` runs inline inside that shared cycle and holds
-    // no durable obligation, so declaring the Event would force a catalog or
-    // admission outage to choose between losing occurrences and stalling
-    // Channel delivery for every user of the bot. Nothing may arm a Telegram
-    // chat source until the occurrence is persisted in the canonical Channels
-    // ingress store before the shared offset advances.
-    expect(PLUGIN_MANIFEST.contributes.events ?? []).toEqual([]);
-    // Withholding the declaration is not deleting the work: the setup Action
-    // stays declared so the retained admission keeps its one registered entry
-    // point, and it is reachable only from the `plugin` surface, so nothing
-    // user-facing can offer an Automation that cannot exist.
-    expect(PLUGIN_MANIFEST.contributes.actions.find(
+  it('declares the Event after Channels durably owns its shared-offset obligation', () => {
+    expect(PLUGIN_MANIFEST.contributes.events).toEqual([expect.objectContaining({
+      id: TELEGRAM_AUTOMATION_MESSAGE_EVENT_ID,
+      kind: 'event',
+      automation: expect.objectContaining({
+        eligible: true,
+        source: expect.objectContaining({
+          sourceContractVersion: TELEGRAM_AUTOMATION_MESSAGE_SOURCE_CONTRACT_VERSION,
+          supportedObservationTransports: ['checkpointedPull'],
+          setupActionRef: {
+            pluginId: 'happier.channel.telegram',
+            localId: TELEGRAM_AUTOMATION_MESSAGE_SETUP_ACTION_ID,
+          },
+        }),
+      }),
+    })]);
+    expect(PLUGIN_MANIFEST.contributes.actions?.find(
       ({ id }) => id === TELEGRAM_AUTOMATION_MESSAGE_SETUP_ACTION_ID,
     )).toMatchObject({ surfaces: ['plugin'] });
+    expect(PLUGIN_MANIFEST.contributes.actions?.find(
+      ({ id }) => id === TELEGRAM_AUTOMATION_MESSAGE_ADMIT_ACTION_ID,
+    )).toMatchObject({ surfaces: ['plugin'], dangerLevel: 'writesRemote' });
   });
 
   it('publishes the complete plugin-owned UI translation bundles', () => {
-    expect(PLUGIN_MANIFEST.contributes.ui.translations).toEqual(TELEGRAM_UI_TRANSLATION_BUNDLES);
+    expect(PLUGIN_MANIFEST.contributes.ui?.translations).toEqual(TELEGRAM_UI_TRANSLATION_BUNDLES);
   });
 
   it('serializes one checkpointed-pull provider contribution through arbitrary local Actions', async () => {
@@ -103,6 +120,7 @@ describe('Telegram Channel plugin activation', () => {
       expect(testkit.registrations()).toEqual([
         ...Object.values(TELEGRAM_CHANNEL_ACTION_IDS).map((localId) => ({ family: 'actions' as const, localId })),
         { family: 'actions' as const, localId: TELEGRAM_AUTOMATION_MESSAGE_SETUP_ACTION_ID },
+        { family: 'actions' as const, localId: TELEGRAM_AUTOMATION_MESSAGE_ADMIT_ACTION_ID },
         { family: 'connectedAccountDescriptors', localId: 'telegram-bot' },
       ]);
 
@@ -118,7 +136,7 @@ describe('Telegram Channel plugin activation', () => {
   });
 
   it('declares remote Telegram delivery and setup remediation as writesRemote', () => {
-    const action = (id: string) => PLUGIN_MANIFEST.contributes.actions.find((candidate) => candidate.id === id);
+    const action = (id: string) => PLUGIN_MANIFEST.contributes.actions?.find((candidate) => candidate.id === id);
 
     for (const id of [
       TELEGRAM_CHANNEL_ACTION_IDS.setup,
@@ -149,10 +167,11 @@ describe('Telegram Channel plugin activation', () => {
         { family: 'actions', localId: TELEGRAM_CHANNEL_ACTION_IDS.observationsPoll },
         { family: 'actions', localId: TELEGRAM_CHANNEL_ACTION_IDS.messageDeliver },
         { family: 'actions', localId: TELEGRAM_AUTOMATION_MESSAGE_SETUP_ACTION_ID },
+        { family: 'actions', localId: TELEGRAM_AUTOMATION_MESSAGE_ADMIT_ACTION_ID },
         { family: 'connectedAccountDescriptors', localId: 'telegram-bot' },
       ]);
 
-      const setup = PLUGIN_MANIFEST.contributes.actions.find(
+      const setup = PLUGIN_MANIFEST.contributes.actions?.find(
         ({ id }) => id === TELEGRAM_CHANNEL_ACTION_IDS.setup,
       );
       expect(setup?.resultSchema).toEqual(
@@ -184,8 +203,13 @@ describe('Telegram Channel plugin activation', () => {
           ],
         },
       });
-      expect(setup?.inputHints?.fields).not.toContainEqual(expect.objectContaining({ widget: 'secret' }));
-      expect(PLUGIN_MANIFEST.hostAccess.required.filter(({ capability }) => capability === 'connectedAccounts'))
+      // The cold Action projection widens `inputHints` to an opaque object, so
+      // the declared field list is read through its published hint shape.
+      const setupInputHintFields = (setup?.inputHints as
+        | Readonly<{ fields?: readonly Readonly<{ widget?: string }>[] }>
+        | undefined)?.fields;
+      expect(setupInputHintFields).not.toContainEqual(expect.objectContaining({ widget: 'secret' }));
+      expect((PLUGIN_MANIFEST.hostAccess?.required ?? []).filter(({ capability }) => capability === 'connectedAccounts'))
         .toEqual([expect.objectContaining({
           id: TELEGRAM_BOT_CREDENTIAL_PURPOSE,
           scope: {
@@ -194,7 +218,7 @@ describe('Telegram Channel plugin activation', () => {
             materializationKinds: ['environment'],
           },
         })]);
-      expect(PLUGIN_MANIFEST.contributes.actions.map(({ id }) => id)).toEqual([
+      expect((PLUGIN_MANIFEST.contributes.actions ?? []).map(({ id }) => id)).toEqual([
         TELEGRAM_CHANNEL_ACTION_IDS.setup,
         TELEGRAM_CHANNEL_ACTION_IDS.setupRemediation,
         TELEGRAM_CHANNEL_ACTION_IDS.connectionTest,
@@ -202,11 +226,12 @@ describe('Telegram Channel plugin activation', () => {
         TELEGRAM_CHANNEL_ACTION_IDS.observationsPoll,
         TELEGRAM_CHANNEL_ACTION_IDS.messageDeliver,
         TELEGRAM_AUTOMATION_MESSAGE_SETUP_ACTION_ID,
+        TELEGRAM_AUTOMATION_MESSAGE_ADMIT_ACTION_ID,
       ]);
-      for (const action of PLUGIN_MANIFEST.contributes.actions) {
+      for (const action of PLUGIN_MANIFEST.contributes.actions ?? []) {
         expect(action.execution).toEqual({ target: 'daemon' });
       }
-      const setupRemediation = PLUGIN_MANIFEST.contributes.actions.find(
+      const setupRemediation = PLUGIN_MANIFEST.contributes.actions?.find(
         ({ id }) => id === TELEGRAM_CHANNEL_ACTION_IDS.setupRemediation,
       );
       expect(setupRemediation).toMatchObject({
@@ -230,7 +255,7 @@ describe('Telegram Channel plugin activation', () => {
         [TELEGRAM_CHANNEL_ACTION_IDS.observationsPoll, ConversationProvidersContributionProtocolV1.operations.observationsPoll],
         [TELEGRAM_CHANNEL_ACTION_IDS.messageDeliver, ConversationProvidersContributionProtocolV1.operations.messageDeliver],
       ] as const) {
-        const action = PLUGIN_MANIFEST.contributes.actions.find((candidate) => candidate.id === id);
+        const action = PLUGIN_MANIFEST.contributes.actions?.find((candidate) => candidate.id === id);
         expect(action?.inputSchema).toEqual(role.declaration.input.schema.jsonSchema);
         expect(action?.resultSchema).toEqual(role.declaration.resultSchema.jsonSchema);
         expect(action?.surfaces).toEqual(role.declaration.surfaces);

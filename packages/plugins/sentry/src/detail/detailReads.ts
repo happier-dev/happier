@@ -475,8 +475,14 @@ export async function readSentryEventProjection(
   const decoded = decodeBody(outcome.response, 'event', input.nowMs);
   if (!decoded.ok) return failed(decoded.failure);
 
-  return Object.freeze({
-    ok: true as const,
-    value: projectSentryEventForDisplay(decoded.body),
-  });
+  // The projector is the only reader of this body, so it is also the only thing that can
+  // say the body is not an event. `null` settles here the same way the events LIST
+  // settles a body that is not its declared array: as a refused read, never as a
+  // successful occurrence with nothing in it.
+  const projection = projectSentryEventForDisplay(decoded.body);
+  if (projection === null) {
+    return failed(classifySentryFailure({ kind: 'unparseable', operation: 'event' }));
+  }
+
+  return Object.freeze({ ok: true as const, value: projection });
 }

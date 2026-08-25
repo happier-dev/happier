@@ -14,7 +14,11 @@
  * contract is a separate, mechanical step.
  */
 
-import type { PosthogIssueCrudRead, PosthogIssueRow } from '../../api/types/issues.js';
+import type {
+    PosthogIssueCrudRead,
+    PosthogIssueQueryDetail,
+    PosthogIssueRow,
+} from '../../api/types/issues.js';
 import type { PosthogEntryLocator } from '../identity.js';
 import { projectTriageDisplayTextV1 } from '@happier-dev/triage-protocol/v1';
 
@@ -71,6 +75,8 @@ export type PosthogSnapshotInput = Readonly<{
     scope: PosthogScopeLabelInput;
     /** Present only on a detail read, where the CRUD plane supplied severity. */
     crud?: PosthogIssueCrudRead;
+    /** Query-only detail fields that a paid enrichment request already returned. */
+    enrichment?: PosthogIssueQueryDetail;
     /** Localized fallback used when the provider supplied neither name nor description. */
     untitledLabel: string;
     /** Shared contract limits, supplied by the caller. */
@@ -108,7 +114,7 @@ export function buildPosthogEntrySnapshot(input: PosthogSnapshotInput): PosthogE
     const scopeLabel = buildPosthogScopeLabel(input.scope, bounds);
     projectionTruncated = projectionTruncated || scopeLabel.truncated;
 
-    const projectedFacts = projectPosthogFacts(input.row, bounds);
+    const projectedFacts = projectPosthogFacts(input.row, bounds, input.enrichment);
     projectionTruncated = projectionTruncated || projectedFacts.truncated;
 
     const severity = input.crud?.severity ?? null;

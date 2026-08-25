@@ -1,5 +1,6 @@
 import type { BackgroundServiceContext } from '@happier-dev/plugin-sdk/background-services';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
+import { PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1 } from '@happier-dev/plugin-sdk/collections';
 import {
   MAX_CONVERSATION_CONNECTIONS_PER_ACCOUNT,
   MIN_CONVERSATION_OBSERVATION_AGE_MS,
@@ -10,8 +11,11 @@ import {
   CHANNEL_STATE_INDEX_ID,
   CHANNEL_STATE_RECORD_KIND,
 } from './collections.js';
-import { MAX_CHANNEL_ACCOUNT_COLLECTION_QUERY_PAGE_SIZE } from './requiredAccountStorage.js';
 import { requireChannelsAccountStorage } from './requiredAccountStorage.js';
+import {
+  classifySupervisorFailure,
+  isInactiveSupervisorCollectionFailure,
+} from './supervisorFailure.js';
 import {
   runConversationCheckpointedPollForInvocation,
   runConversationIngressDueWorkForInvocation,
@@ -107,8 +111,13 @@ function connectionIdFromRow(value: JsonValue): string | undefined {
 function logIngressSupervisorFailure(
   context: BackgroundServiceContext,
   boundary: 'due-work' | 'retention' | 'connection-discovery' | 'poll',
+  error: unknown,
 ): void {
-  context.services.logger.warn('[Channels] ingress supervisor work failed', { boundary });
+  if (isInactiveSupervisorCollectionFailure(error)) return;
+  context.services.logger.warn('[Channels] ingress supervisor work failed', {
+    boundary,
+    ...(classifySupervisorFailure(error) ?? {}),
+  });
 }
 
 async function readCurrentConnectionIds(context: BackgroundServiceContext): Promise<readonly string[]> {
@@ -120,7 +129,7 @@ async function readCurrentConnectionIds(context: BackgroundServiceContext): Prom
       index: CHANNEL_STATE_INDEX_ID.byKind,
       prefix: [CHANNEL_STATE_RECORD_KIND.connection],
       order: 'asc',
-      limit: Math.min(MAX_CONVERSATION_CONNECTIONS_PER_ACCOUNT - result.length, MAX_CHANNEL_ACCOUNT_COLLECTION_QUERY_PAGE_SIZE),
+      limit: Math.min(MAX_CONVERSATION_CONNECTIONS_PER_ACCOUNT - result.length, PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1),
       ...(cursor === undefined ? {} : { cursor }),
     }, { signal: context.signal });
     for (const row of page.rows) {
@@ -178,6 +187,17 @@ export function createIngressSupervisor(
     let retentionCursor: string | undefined;
     // The first wake owns the startup pass: there is no earlier sweep to pace.
     let nextRetentionSweepAt = 0;
+    // The polls this generation started and has not yet seen settle, keyed by
+    // connection. It is the whole of the concurrency contract: a key that is
+    // still present is a connection whose provider round trip is outstanding,
+    // so this wake does not start a second one for it and per-connection order
+    // survives without serializing the sweep. It is generation-local — no
+    // durable queue, no retained connection cache, no second scheduler — and
+    // the generation is not retired until every entry has drained.
+    const inFlightPollsByConnectionId = new Map<string, Promise<void>>();
+    // The single outstanding retention pass, for exactly the same reason and
+    // with exactly the same lifetime as the poll map above.
+    let retentionPass: Promise<void> | null = null;
     running = (async () => {
       try {
         while (!supervisorController.signal.aborted) {
@@ -186,41 +206,55 @@ export function createIngressSupervisor(
             signal: supervisorController.signal,
           } satisfies BackgroundServiceContext;
           const now = clock.now();
-          if (now >= nextRetentionSweepAt) {
-            try {
-              const retention = await runRetention({
-                now,
-                limit: MAX_CONVERSATION_CONNECTIONS_PER_ACCOUNT,
-                ...(retentionCursor === undefined ? {} : { cursor: retentionCursor }),
-              }, workerContext);
-              retentionCursor = retention.nextCursor;
-              // A live cursor means this sweep is still mid-collection, so the
-              // next wake takes its next page. A finished sweep has nothing to
-              // do until the next coarse deadline.
-              nextRetentionSweepAt = retentionCursor === undefined
-                ? now + RETENTION_SWEEP_INTERVAL_MS
-                : now;
-            } catch {
-              if (supervisorController.signal.aborted) break;
-              logIngressSupervisorFailure(workerContext, 'retention');
-              // A failed page keeps its cursor but loses its urgency: retrying
-              // it on the next wake would re-fail and re-log once a second for
-              // the whole generation.
-              nextRetentionSweepAt = now + RETENTION_SWEEP_INTERVAL_MS;
-            }
+          // Retention is coarse maintenance and one page of it walks a whole
+          // census unit per row — up to a connection read plus one read per
+          // matched binding. Awaiting it inline put thousands of serial storage
+          // round trips in front of every connection poll on the sweeping
+          // wakes, so live ingress stalled behind cleanup of rows that are
+          // already past a horizon measured in minutes. The pass runs as this
+          // generation's own work instead, and the wake that finds one still
+          // outstanding simply does not start a second pass over the cursor it
+          // is already advancing.
+          if (retentionPass === null && now >= nextRetentionSweepAt) {
+            const pass = (async () => {
+              try {
+                const retention = await runRetention({
+                  now,
+                  limit: MAX_CONVERSATION_CONNECTIONS_PER_ACCOUNT,
+                  ...(retentionCursor === undefined ? {} : { cursor: retentionCursor }),
+                }, workerContext);
+                retentionCursor = retention.nextCursor;
+                // A live cursor means this sweep is still mid-collection, so the
+                // next wake takes its next page. A finished sweep has nothing to
+                // do until the next coarse deadline.
+                nextRetentionSweepAt = retentionCursor === undefined
+                  ? now + RETENTION_SWEEP_INTERVAL_MS
+                  : now;
+              } catch (error) {
+                if (supervisorController.signal.aborted) return;
+                logIngressSupervisorFailure(workerContext, 'retention', error);
+                // A failed page keeps its cursor but loses its urgency: retrying
+                // it on the next wake would re-fail and re-log once a second for
+                // the whole generation.
+                nextRetentionSweepAt = now + RETENTION_SWEEP_INTERVAL_MS;
+              }
+            })();
+            retentionPass = pass;
+            // Cleared the same way, and for the same reason, as a poll key.
+            void pass.finally(() => { retentionPass = null; });
           }
           try {
             await runDueWork({ now, limit: MAX_CONVERSATION_CONNECTIONS_PER_ACCOUNT }, workerContext);
-          } catch {
+          } catch (error) {
             if (supervisorController.signal.aborted) break;
-            logIngressSupervisorFailure(workerContext, 'due-work');
+            logIngressSupervisorFailure(workerContext, 'due-work', error);
           }
           let connectionIds: readonly string[];
           try {
             connectionIds = await readCurrentConnectionIds(workerContext);
-          } catch {
+          } catch (error) {
             if (supervisorController.signal.aborted) break;
-            logIngressSupervisorFailure(workerContext, 'connection-discovery');
+            logIngressSupervisorFailure(workerContext, 'connection-discovery', error);
             try {
               await clock.sleep(reconciliationIntervalMs, supervisorController.signal);
             } catch {
@@ -232,12 +266,27 @@ export function createIngressSupervisor(
           }
           for (const connectionId of connectionIds) {
             if (supervisorController.signal.aborted) break;
-            try {
-              await runPoll({ connectionId, waitMs: reconciliationIntervalMs }, workerContext);
-            } catch {
-              if (supervisorController.signal.aborted) break;
-              logIngressSupervisorFailure(workerContext, 'poll');
-            }
+            // A provider long poll blocks for its own wait, not for the other
+            // connections': awaiting each one in turn made the supported 32
+            // connections share a single serial sweep, so the last connection
+            // waited for all 31 provider round trips ahead of it before it was
+            // polled again, and due work and retention below waited with it.
+            if (inFlightPollsByConnectionId.has(connectionId)) continue;
+            const poll = (async () => {
+              try {
+                await runPoll({ connectionId, waitMs: reconciliationIntervalMs }, workerContext);
+              } catch (error) {
+                if (supervisorController.signal.aborted) return;
+                logIngressSupervisorFailure(workerContext, 'poll', error);
+              }
+            })();
+            inFlightPollsByConnectionId.set(connectionId, poll);
+            // Released through `finally` on the settled promise rather than
+            // inside the body: a poll that fails before its first suspension
+            // point would otherwise release the key before it was recorded,
+            // and the record written afterwards would mark that connection
+            // permanently in flight for the rest of the generation.
+            void poll.finally(() => { inFlightPollsByConnectionId.delete(connectionId); });
           }
           if (supervisorController.signal.aborted) break;
           try {
@@ -249,6 +298,14 @@ export function createIngressSupervisor(
           }
         }
       } finally {
+        // Provider I/O this generation started still belongs to it. Resolving
+        // while a poll is outstanding would let the replacement generation
+        // admitted by `run` poll the same connection concurrently, and would
+        // let `dispose` report a stopped service that is still calling out.
+        await Promise.allSettled([
+          ...inFlightPollsByConnectionId.values(),
+          ...(retentionPass === null ? [] : [retentionPass]),
+        ]);
         context.signal.removeEventListener('abort', abortFromContext);
         controller = null;
       }

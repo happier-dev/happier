@@ -332,31 +332,67 @@ describe('Discord Gateway worker', () => {
     expect(admitObservation).toHaveBeenCalledWith(
       expect.objectContaining({
         connectionId: 'connection-1',
-        observation: expect.objectContaining({
-          kind: 'fullText',
+        entry: expect.objectContaining({
+          eventCandidate: {
+            eventRef: {
+              pluginId: 'happier.channel.discord',
+              localId: 'automation/channel-message-observed-v1',
+            },
+            sourceInstanceId: 'discord:application:application-1:channel:channel-1',
+            sourceContractVersion: 1,
+            payload: {
+              v: 1,
+              channelId: 'channel-1',
+              channelKind: 'shared',
+              messageId: 'message-1',
+              text: 'hello through a role mention',
+              textTruncated: false,
+              addressingEvidence: 'integrationRoleMention',
+              contentProvenance: 'original',
+              actorKind: 'human',
+              actorPrincipalId: 'discord:user:human-1',
+            },
+          },
           observation: expect.objectContaining({
-            occurrenceId: 'discord:message:message-1',
-            transport: { kind: 'socket' },
-            endpoint: expect.objectContaining({
-              kind: 'shared',
-              audience: 'shared',
-              id: 'discord:channel:channel-1',
+            kind: 'fullText',
+            observation: expect.objectContaining({
+              occurrenceId: 'discord:message:message-1',
+              transport: { kind: 'socket' },
+              endpoint: expect.objectContaining({
+                kind: 'shared',
+                audience: 'shared',
+                id: 'discord:channel:channel-1',
+              }),
+              message: expect.objectContaining({ addressingEvidence: 'integrationRoleMention' }),
             }),
-            message: expect.objectContaining({ addressingEvidence: 'integrationRoleMention' }),
           }),
         }),
       }),
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
     const admissionInput = admitObservation.mock.calls[0]?.[0];
-    expect(admissionInput).not.toHaveProperty('observation.observation.streamKey');
+    expect(admissionInput).not.toHaveProperty('entry.observation.observation.streamKey');
     expect(admissionInput).not.toHaveProperty('checkpointTransition');
     expect(admitObservation.mock.calls[1]?.[0]).toMatchObject({
-      observation: {
-        kind: 'fullText',
+      entry: {
+        eventCandidate: {
+          eventRef: {
+            pluginId: 'happier.channel.discord',
+            localId: 'automation/channel-message-observed-v1',
+          },
+          sourceInstanceId: 'discord:application:application-1:channel:channel-1',
+          sourceContractVersion: 1,
+          payload: {
+            messageId: 'message-role-revoked-1',
+            addressingEvidence: 'none',
+          },
+        },
         observation: {
-          occurrenceId: 'discord:message:message-role-revoked-1',
-          message: { addressingEvidence: 'none' },
+          kind: 'fullText',
+          observation: {
+            occurrenceId: 'discord:message:message-role-revoked-1',
+            message: { addressingEvidence: 'none' },
+          },
         },
       },
     });
@@ -437,15 +473,29 @@ describe('Discord Gateway worker', () => {
     );
     expect(admitObservation).toHaveBeenCalledWith(
       expect.objectContaining({
-        observation: {
-          kind: 'fullText',
-          observation: expect.objectContaining({
-            occurrenceId: 'discord:message:message-before-resumed',
-            message: expect.objectContaining({
+        entry: {
+          eventCandidate: expect.objectContaining({
+            eventRef: {
+              pluginId: 'happier.channel.discord',
+              localId: 'automation/channel-message-observed-v1',
+            },
+            sourceInstanceId: 'discord:application:application-1:channel:channel-replay-content',
+            sourceContractVersion: 1,
+            payload: expect.objectContaining({
+              messageId: 'message-before-resumed',
               text: 'the retained intent makes this replayed shared body available',
-              addressingEvidence: 'none',
             }),
           }),
+          observation: {
+            kind: 'fullText',
+            observation: expect.objectContaining({
+              occurrenceId: 'discord:message:message-before-resumed',
+              message: expect.objectContaining({
+                text: 'the retained intent makes this replayed shared body available',
+                addressingEvidence: 'none',
+              }),
+            }),
+          },
         },
       }),
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
@@ -526,10 +576,10 @@ describe('Discord Gateway worker', () => {
       return { channelId, kind: 'direct' as const };
     });
     const admitObservation = vi.fn(async (input: unknown) => {
-      const occurrenceId = (input as Readonly<{ observation: Readonly<{
-        kind: string;
-        observation?: Readonly<{ occurrenceId: string }>;
-      }> }>).observation.observation?.occurrenceId;
+      const admission = ConversationProviderObservationIngestInputV1Schema.parse(input);
+      const occurrenceId = admission.entry.observation.kind === 'fullText'
+        ? admission.entry.observation.observation.occurrenceId
+        : admission.entry.observation.shell.occurrenceId;
       if (occurrenceId === 'discord:message:message-incumbent-a') {
         markIncumbentAdmissionStarted();
         await incumbentAdmission;
@@ -877,28 +927,31 @@ describe('Discord Gateway worker', () => {
     expect(admitObservation).toHaveBeenCalledWith(
       expect.objectContaining({
         connectionId: 'connection-edit-1',
-        observation: {
-          kind: 'routableNonAdmission',
-          reason: 'unsupportedEdit',
-          shell: expect.objectContaining({
-            occurrenceId: 'discord:message:message-edit-1:edit:2024-01-01T00:01:00.000Z',
-            transport: { kind: 'socket' },
-            endpoint: expect.objectContaining({ id: 'discord:channel:channel-edit-1' }),
-            actor: expect.objectContaining({ principalId: 'discord:user:human-edit-1' }),
-            message: {
-              id: 'message-edit-1',
-              revision: '2024-01-01T00:01:00.000Z',
-              addressingEvidence: 'directIntegrationMention',
-              contentProvenance: 'original',
-              providerTimestamp: Date.parse('2024-01-01T00:00:00.000Z'),
-            },
-          }),
+        entry: {
+          eventCandidate: null,
+          observation: {
+            kind: 'routableNonAdmission',
+            reason: 'unsupportedEdit',
+            shell: expect.objectContaining({
+              occurrenceId: 'discord:message:message-edit-1:edit:2024-01-01T00:01:00.000Z',
+              transport: { kind: 'socket' },
+              endpoint: expect.objectContaining({ id: 'discord:channel:channel-edit-1' }),
+              actor: expect.objectContaining({ principalId: 'discord:user:human-edit-1' }),
+              message: {
+                id: 'message-edit-1',
+                revision: '2024-01-01T00:01:00.000Z',
+                addressingEvidence: 'directIntegrationMention',
+                contentProvenance: 'original',
+                providerTimestamp: Date.parse('2024-01-01T00:00:00.000Z'),
+              },
+            }),
+          },
         },
       }),
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
     const admissionInput = admitObservation.mock.calls[0]?.[0];
-    expect(admissionInput).not.toHaveProperty('observation.shell.streamKey');
+    expect(admissionInput).not.toHaveProperty('entry.observation.shell.streamKey');
     expect(admissionInput).not.toHaveProperty('checkpointTransition');
   });
 

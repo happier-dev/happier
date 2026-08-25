@@ -2,7 +2,7 @@
 
 import { Buffer } from 'node:buffer';
 import { cloneElement, type ReactElement } from 'react';
-import { PluginError, type JsonValue, type PluginReference } from '@happier-dev/plugin-sdk';
+import { PluginError, type JsonValue } from '@happier-dev/plugin-sdk';
 import type { RenderContext, ResourceContent } from '@happier-dev/plugin-sdk/ui';
 import {
   CONVERSATION_MANAGEMENT_ACTION_IDS_V1,
@@ -500,7 +500,10 @@ const emptyDataClient: PluginUiDataClient = {
     get: async () => null,
     put: async () => { throw new Error('This mounted provider-setup test does not write Account data.'); },
     delete: async () => { throw new Error('This mounted provider-setup test does not delete Account data.'); },
-    query: async () => ({ rows: [], nextCursor: undefined, changeCursor: 0 }),
+    query: async (request?: Readonly<{ limit?: number }>) => {
+      assertChannelsTestCollectionQueryLimit(request?.limit);
+      return { rows: [], nextCursor: undefined, changeCursor: 0 };
+    },
     batch: async () => { throw new Error('This mounted provider-setup test does not batch Account data.'); },
     // The Data boundary is generic over the caller's definition; this fixture
     // supplies the one Channel state Collection the surface reads.
@@ -1074,7 +1077,7 @@ describe('Channels mounted provider setup recovery', () => {
       selectionCount += 1;
       return selectionCount === 1 ? submittedProviderSetup : { kind: 'cancelled' as const };
     });
-    const executeAction = vi.fn(async ({ action }: Readonly<{ action: PluginReference }>) => {
+    const executeAction = vi.fn(async ({ action }: PluginUiTestkitExecuteActionInput) => {
       if (action === CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionPrepare) {
         return { kind: 'requiresRemediation' };
       }
@@ -1143,7 +1146,7 @@ describe('Channels mounted provider setup recovery', () => {
       selectionCount += 1;
       return selectionCount === 1 ? submittedProviderSetup : submittedRemediation;
     });
-    const executeAction = vi.fn(async ({ action }: Readonly<{ action: PluginReference }>) => {
+    const executeAction = vi.fn(async ({ action }: PluginUiTestkitExecuteActionInput) => {
       if (action === CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionPrepare) {
         return { kind: 'requiresRemediation' };
       }
@@ -1210,8 +1213,9 @@ describe('Channels mounted provider setup recovery', () => {
       selectionCount += 1;
       return selectionCount === 1 ? submittedProviderSetup : { kind: 'cancelled' as const };
     });
-    const executeAction = vi.fn(async ({ action }: Readonly<{ action: PluginReference }>) => {
-      expect(action).toBe(CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionPrepare);
+    // The surface catches a rejected Action, so an assertion inside this mock could
+    // never fail the test. The dispatched Action is asserted from the recorded call.
+    const executeAction = vi.fn(async (_request: PluginUiTestkitExecuteActionInput) => {
       // This is a definite malformed response, not a transport ambiguity. The
       // safe generic form input should still be available for correction.
       return { kind: 'unsupported-provider-prepare-result' };
@@ -1253,12 +1257,16 @@ describe('Channels mounted provider setup recovery', () => {
         draft: safeProviderSetupInput,
       });
       expect(executeAction).toHaveBeenCalledTimes(1);
+      expect(executeAction.mock.calls[0]?.[0].action)
+        .toBe(CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionPrepare);
     } finally {
       await fixture.dispose();
     }
   });
 
   it('relays one exact selected provider settlement through prepare and create without adding it to either outer Action input', async () => {
+    const setupGuidanceUrl = 'https://provider.example.test/install';
+    const openedLinks: string[] = [];
     const credentialRef = {
       service: {
         pluginId: 'com.example.conversation-provider',
@@ -1301,21 +1309,13 @@ describe('Channels mounted provider setup recovery', () => {
           overlapSafety: 'safe',
           replayContinuity: 'none',
           outboundTextLimit: { maximum: 4_000, unit: 'unicodeCodePoints' },
+          setupGuidance: {
+            externalUrl: setupGuidanceUrl,
+            requiredPermissionsLabel: 'Read messages, Send messages',
+          },
         };
       }
       if (request.action === CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionCreate) {
-        expect(request.input).toEqual({
-          providerSelection: submittedProviderSetup.selection,
-          providerSetupInput: submittedProviderSetup.input,
-          credentialRef,
-          selectedTransport: 'socket',
-          maximumObservationAgeMs: 60_000,
-        });
-        expect(request.selectedActionInput).toEqual(selectedActionInput);
-        // Prepare may reuse the exact selected settlement. Create is the one
-        // terminal mounted dispatch, so only it consumes the host retention.
-        expect((request as unknown as Readonly<{ consumeSelectedActionInput?: unknown }>)
-          .consumeSelectedActionInput).toBe(true);
         return { kind: 'created', connectionId: 'connection-from-selected-account' };
       }
       throw new Error(`Unexpected mounted Action: ${String(request.action)}`);
@@ -1335,11 +1335,15 @@ describe('Channels mounted provider setup recovery', () => {
         selectActionInput: async () => submittedProviderSetup,
         executeAction,
         readResource: bindingResourceReader(),
+        openExternalLink: async ({ url }) => { openedLinks.push(url); },
       },
     });
 
     try {
       await fixture.press(await fixture.getByRole('button', { name: 'Set up Integration provider' }));
+      await expect(fixture.getByText('Read messages, Send messages')).resolves.toBeDefined();
+      await fixture.press(await fixture.getByRole('link', { name: 'Resolve provider setup' }));
+      expect(openedLinks).toEqual([setupGuidanceUrl]);
       await expect(fixture.getByRole('button', { name: 'Create connection' })).resolves.toBeDefined();
       await fixture.press(await fixture.getByRole('button', { name: 'Create connection' }));
       await vi.waitFor(() => {
@@ -1351,6 +1355,26 @@ describe('Channels mounted provider setup recovery', () => {
       expect(executeAction.mock.calls.every(([request]) => (
         !Object.hasOwn(request.input as object, 'selectedActionInput')
       ))).toBe(true);
+      // Asserted here rather than inside the mock: the surface catches an
+      // Action rejection and only renders setup feedback, so an expectation
+      // that throws inside `executeAction` cannot fail this test.
+      const createRequest = executeAction.mock.calls
+        .map(([request]) => request)
+        .find((request) => request.action === CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionCreate);
+      expect(createRequest?.input).toEqual({
+        providerSelection: submittedProviderSetup.selection,
+        providerSetupInput: submittedProviderSetup.input,
+        credentialRef,
+        selectedTransport: 'socket',
+        // Setup seeds the Channels domain freshness default, not the smallest
+        // value an owner is allowed to configure.
+        maximumObservationAgeMs: 86_400_000,
+      });
+      expect(createRequest?.selectedActionInput).toEqual(selectedActionInput);
+      // Prepare may reuse the exact selected settlement. Create is the one
+      // terminal mounted dispatch, so only it consumes the host retention.
+      expect((createRequest as unknown as Readonly<{ consumeSelectedActionInput?: unknown }>)
+        .consumeSelectedActionInput).toBe(true);
     } finally {
       await fixture.dispose();
     }
@@ -1495,7 +1519,7 @@ describe('Channels mounted provider setup recovery', () => {
       if (selectionCount === 1) return selectedProviderSetup;
       return { kind: 'cancelled' as const };
     });
-    const executeAction = vi.fn(async ({ action }: Readonly<{ action: unknown }>): Promise<JsonValue> => {
+    const executeAction = vi.fn(async ({ action }: PluginUiTestkitExecuteActionInput): Promise<JsonValue> => {
       if (action === CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionPrepare) {
         return {
           kind: 'ready',
@@ -1579,7 +1603,7 @@ describe('Channels mounted provider setup recovery', () => {
       },
       connectedAccount: { kind: 'none' as const },
     }));
-    const executeAction = vi.fn(async ({ action }: Readonly<{ action: PluginReference }>) => {
+    const executeAction = vi.fn(async ({ action }: PluginUiTestkitExecuteActionInput) => {
       if (action === CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionPrepare) {
         throw new PluginError({ code: 'timeout', message: 'The setup request timed out.' });
       }
@@ -1816,7 +1840,7 @@ describe('Channels mounted ingress attention recovery', () => {
       accountKv: createUnavailablePluginUiAccountKv(),
       accountSettings: createUnavailablePluginUiAccountSettings(),
     };
-    const executeAction = vi.fn(async ({ action }: Readonly<{ action: PluginReference }>) => {
+    const executeAction = vi.fn(async ({ action }: PluginUiTestkitExecuteActionInput) => {
       if (action !== CONVERSATION_MANAGEMENT_ACTION_IDS_V1.ingressRetry) {
         throw new Error(`Unexpected mounted Action: ${String(action)}`);
       }
@@ -1885,7 +1909,7 @@ describe('Channels mounted binding creation', () => {
     },
     {
       accountEncryptionMode: 'e2ee' as const,
-      expected: 'private fields remain inside canonical encrypted envelopes; only the bounded routing/index projection is server-readable.',
+      expected: 'in persisted Happier Account data, private fields remain inside canonical encrypted envelopes and only the bounded routing/index projection is server-readable.',
       unexpected: 'server, database, and backup visibility',
     },
   ])('states the $accountEncryptionMode Account storage boundary before confirmation', async ({
@@ -1893,10 +1917,7 @@ describe('Channels mounted binding creation', () => {
     expected,
     unexpected,
   }) => {
-    const executeAction = vi.fn(async ({ action, input }: Readonly<{
-      action: unknown;
-      input: unknown;
-    }>): Promise<JsonValue> => {
+    const executeAction = vi.fn(async ({ action, input }: PluginUiTestkitExecuteActionInput): Promise<JsonValue> => {
       if (action === CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingResolve) {
         return (input as Readonly<{ kind?: unknown }>).kind === 'endpoint'
           ? { kind: 'endpointCandidates', candidates: [bindingEndpointCandidate] }
@@ -1937,6 +1958,16 @@ describe('Channels mounted binding creation', () => {
       expect(disclosure?.textContent).toContain('Storage and privacy');
       expect(disclosure?.textContent).toContain(expected);
       expect(disclosure?.textContent).not.toContain(unexpected);
+      // Neither Account mode may present Happier storage encryption as
+      // provider or hosted-webhook transit blindness.
+      expect(
+        disclosure?.textContent,
+        'Expected the confirmation to disclose that the connected provider sees this conversation.',
+      ).toContain('The connected provider always sees this conversation');
+      expect(
+        disclosure?.textContent,
+        'Expected the confirmation to disclose hosted-webhook server transit custody.',
+      ).toContain('pass through the Happier server, which reads and verifies the raw provider request before sealing it');
     } finally {
       await fixture.dispose();
     }
@@ -1945,10 +1976,7 @@ describe('Channels mounted binding creation', () => {
   it('offers only the incoming message policies the integration can deliver in a shared conversation', async () => {
     // The create writer rejects a policy the platform will not honour, so the
     // policies step must not offer one either.
-    const executeAction = vi.fn(async ({ action, input }: Readonly<{
-      action: unknown;
-      input: unknown;
-    }>): Promise<JsonValue> => {
+    const executeAction = vi.fn(async ({ action, input }: PluginUiTestkitExecuteActionInput): Promise<JsonValue> => {
       if (action === CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingResolve) {
         return (input as Readonly<{ kind?: unknown }>).kind === 'endpoint'
           ? { kind: 'endpointCandidates', candidates: [bindingEndpointCandidate] }
@@ -2005,10 +2033,7 @@ describe('Channels mounted binding creation', () => {
   });
 
   it('keeps the binding draft on Back, announces each step, and discards it only on Cancel', async () => {
-    const executeAction = vi.fn(async ({ action, input }: Readonly<{
-      action: unknown;
-      input: unknown;
-    }>): Promise<JsonValue> => {
+    const executeAction = vi.fn(async ({ action, input }: PluginUiTestkitExecuteActionInput): Promise<JsonValue> => {
       if (action === CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingResolve) {
         return (input as Readonly<{ kind?: unknown }>).kind === 'endpoint'
           ? { kind: 'endpointCandidates', candidates: [bindingEndpointCandidate] }
@@ -2095,10 +2120,7 @@ describe('Channels mounted binding creation', () => {
   });
 
   it('moves logical focus to the current wizard step through the mounted presentation host', async () => {
-    const executeAction = vi.fn(async ({ action, input }: Readonly<{
-      action: unknown;
-      input: unknown;
-    }>) => {
+    const executeAction = vi.fn(async ({ action, input }: PluginUiTestkitExecuteActionInput) => {
       if (action === CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingResolve) {
         return (input as Readonly<{ kind?: unknown }>).kind === 'endpoint'
           ? { kind: 'endpointCandidates', candidates: [bindingEndpointCandidate] }
@@ -2211,7 +2233,7 @@ describe('Channels mounted binding creation', () => {
         kind: 'session' as const,
         sessionId: 'session-1',
         policy: {
-          deliveryMode: 'repliesOnly' as const,
+          deliveryMode: 'mirrorSession' as const,
           permissionCeiling: 'read-only',
           approvals: { kind: 'off' as const },
           newSession: { kind: 'off' as const },
@@ -2229,10 +2251,7 @@ describe('Channels mounted binding creation', () => {
       createdAt: 1,
       updatedAt: 1,
     };
-    const executeAction = vi.fn(async ({ action, input }: Readonly<{
-      action: unknown;
-      input: unknown;
-    }>): Promise<JsonValue> => {
+    const executeAction = vi.fn(async ({ action, input }: PluginUiTestkitExecuteActionInput): Promise<JsonValue> => {
       if (action === 'binding/resolve-v1') {
         if ((input as { kind?: unknown }).kind === 'endpoint') {
           return { kind: 'endpointCandidates', candidates: [endpointCandidate] };
@@ -2354,7 +2373,9 @@ describe('Channels mounted binding creation', () => {
       expect(summary?.textContent).toContain('Ada');
       expect(summary?.textContent).toContain('principal-ada');
       expect(summary?.textContent).toContain('All allowed messages');
-      expect(summary?.textContent).toContain('Replies only');
+      // A direct conversation defaults to mirroring the Session; the shared-room
+      // create paths in this file keep proving the opposite default.
+      expect(summary?.textContent).toContain('Mirror Session');
       expect(summary?.textContent).toContain('Read only');
       expect(summary?.textContent).toContain('Do not create a new Session');
       expect(summary?.textContent).toContain('Durable push');
@@ -2374,7 +2395,7 @@ describe('Channels mounted binding creation', () => {
               kind: 'session',
               sessionId: 'session-1',
               policy: {
-                deliveryMode: 'repliesOnly',
+                deliveryMode: 'mirrorSession',
                 permissionCeiling: 'read-only',
                 approvals: { kind: 'off' },
                 newSession: { kind: 'off' },
@@ -2434,10 +2455,7 @@ describe('Channels mounted binding creation', () => {
       }],
       proposals: [],
     }, 'e');
-    const executeAction = vi.fn(async ({ action, input }: Readonly<{
-      action: unknown;
-      input: unknown;
-    }>): Promise<JsonValue> => {
+    const executeAction = vi.fn(async ({ action, input }: PluginUiTestkitExecuteActionInput): Promise<JsonValue> => {
       if (action === CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingResolve) {
         return (input as Readonly<{ kind?: unknown }>).kind === 'endpoint'
           ? { kind: 'endpointCandidates', candidates: [bindingEndpointCandidate] }
@@ -2495,8 +2513,12 @@ describe('Channels mounted binding creation', () => {
       await fixture.press(await fixture.getByRole('button', { name: 'Review binding' }));
       await fixture.press(await fixture.getByRole('button', { name: 'Create pairing challenge' }));
       await vi.waitFor(() => {
+        // The person chose a shared conversation and then proves themselves in
+        // a private message. The challenge must carry the conversation they
+        // chose, or pairing silently binds the private message instead.
         expect(executeAction).toHaveBeenCalledWith(expect.objectContaining({
           action: CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionPairingCreate,
+          input: expect.objectContaining({ endpointSelection: bindingEndpointSelection }),
         }));
       });
 
@@ -2572,10 +2594,7 @@ describe('Channels mounted binding creation', () => {
         state: 'proposed',
       }],
     }, 'a');
-    const executeAction = vi.fn(async ({ action, input }: Readonly<{
-      action: unknown;
-      input: unknown;
-    }>): Promise<JsonValue> => {
+    const executeAction = vi.fn(async ({ action, input }: PluginUiTestkitExecuteActionInput): Promise<JsonValue> => {
       if (action === CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingResolve) {
         return (input as Readonly<{ kind?: unknown }>).kind === 'endpoint'
           ? { kind: 'endpointCandidates', candidates: [bindingEndpointCandidate] }
@@ -2646,7 +2665,15 @@ describe('Channels mounted binding creation', () => {
         sessionId: 'session-1',
       },
       surface: renderSurface,
-      surfaceContext: createChannelsSurfaceContext(),
+      // The countdown's unit abbreviations must come from the catalog. A
+      // locale that spells them differently is what discriminates a
+      // translated pattern from a hardcoded `${minutes}m ${seconds}s`.
+      surfaceContext: {
+        ...createChannelsSurfaceContext(),
+        translations: {
+          'plugins.channels.surface.bindingCreatePairingCountdown': '{minutes} хв {seconds} с',
+        },
+      },
       adapter: createChannelsSemanticAdapter(),
       handlers: {
         selectActionInput: async () => ({ kind: 'cancelled' as const }),
@@ -2695,6 +2722,7 @@ describe('Channels mounted binding creation', () => {
           input: {
             connectionId: 'connection-1',
             expectedConnectionRevision: 1,
+            endpointSelection: bindingEndpointSelection,
             target: {
               kind: 'session',
               sessionId: 'session-pairing',
@@ -2717,6 +2745,9 @@ describe('Channels mounted binding creation', () => {
       });
       const countdown = document.querySelector<HTMLElement>('[data-testid="channels-binding-create-pairing-countdown"]');
       expect(countdown).not.toBeNull();
+      expect(countdown?.textContent).toContain(' хв ');
+      expect(countdown?.textContent).toMatch(/\d+ хв \d{2} с/);
+      expect(countdown?.textContent).not.toContain('m ');
       expect(countdown?.getAttribute('role')).not.toBe('status');
       expect(countdown?.getAttribute('aria-live')).toBeNull();
       await fixture.press(await fixture.getByRole('button', { name: 'Copy pairing token' }));
@@ -2783,10 +2814,7 @@ describe('Channels mounted binding creation', () => {
       }],
       proposals: [],
     }, '7');
-    const executeAction = vi.fn(async ({ action, input }: Readonly<{
-      action: unknown;
-      input: unknown;
-    }>): Promise<JsonValue> => {
+    const executeAction = vi.fn(async ({ action, input }: PluginUiTestkitExecuteActionInput): Promise<JsonValue> => {
       if (action === CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingResolve) {
         return (input as Readonly<{ kind?: unknown }>).kind === 'endpoint'
           ? { kind: 'endpointCandidates', candidates: [bindingEndpointCandidate] }
@@ -2898,10 +2926,7 @@ describe('Channels mounted binding creation', () => {
         expectedInput: { generationId: 'pairing-generation', proposalId: 'pairing-proposal' },
       },
     ] as const) {
-      const executeAction = vi.fn(async ({ action, input }: Readonly<{
-        action: unknown;
-        input: unknown;
-      }>): Promise<JsonValue> => {
+      const executeAction = vi.fn(async ({ action, input }: PluginUiTestkitExecuteActionInput): Promise<JsonValue> => {
         if (action === CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingResolve) {
           return (input as Readonly<{ kind?: unknown }>).kind === 'endpoint'
             ? { kind: 'endpointCandidates', candidates: [bindingEndpointCandidate] }
@@ -2985,10 +3010,7 @@ describe('Channels mounted binding creation', () => {
     ] as const;
 
     for (const settlement of settlements) {
-      const executeAction = vi.fn(async ({ action, input }: Readonly<{
-        action: unknown;
-        input: unknown;
-      }>) => {
+      const executeAction = vi.fn(async ({ action, input }: PluginUiTestkitExecuteActionInput) => {
         if (action !== CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingResolve) {
           throw new Error(`Unexpected mounted Action: ${String(action)}`);
         }
@@ -3031,10 +3053,7 @@ describe('Channels mounted binding creation', () => {
 
   it('uses only the no-invoke new-Session selector and leaves cancellation without a create', async () => {
     const selectActionInput = vi.fn(async (_input: PluginUiTestkitSelectActionInputInput) => ({ kind: 'cancelled' as const }));
-    const executeAction = vi.fn(async ({ action, input }: Readonly<{
-      action: unknown;
-      input: unknown;
-    }>): Promise<JsonValue> => {
+    const executeAction = vi.fn(async ({ action, input }: PluginUiTestkitExecuteActionInput): Promise<JsonValue> => {
       if (action === CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingResolve) {
         return (input as Readonly<{ kind?: unknown }>).kind === 'endpoint'
           ? { kind: 'endpointCandidates', candidates: [bindingEndpointCandidate] }
@@ -3095,10 +3114,7 @@ describe('Channels mounted binding creation', () => {
   });
 
   it('submits the selected generic result delivery for an Automation target without a client-side verifier', async () => {
-    const executeAction = vi.fn(async ({ action, input }: Readonly<{
-      action: unknown;
-      input: unknown;
-    }>): Promise<JsonValue> => {
+    const executeAction = vi.fn(async ({ action, input }: PluginUiTestkitExecuteActionInput): Promise<JsonValue> => {
       if (action === CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingResolve) {
         return (input as Readonly<{ kind?: unknown }>).kind === 'endpoint'
           ? { kind: 'endpointCandidates', candidates: [bindingEndpointCandidate] }
@@ -3110,13 +3126,23 @@ describe('Channels mounted binding creation', () => {
       if (action === 'automation.conversation.targets.list') {
         if ((input as Readonly<{ cursor?: unknown }>).cursor === undefined) {
           return {
-            items: [{ automationId: 'automation-1', templateVersion: 7, label: 'Initial report' }],
+            items: [{
+              automationId: 'automation-1',
+              templateVersion: 7,
+              label: 'Initial report',
+              execution: { targetType: 'new_session', enabled: true },
+            }],
             nextCursor: 'automation-1',
           };
         }
         if ((input as Readonly<{ cursor?: unknown }>).cursor === 'automation-1') {
           return {
-            items: [{ automationId: 'automation-2', templateVersion: 8, label: 'Build report' }],
+            items: [{
+              automationId: 'automation-2',
+              templateVersion: 8,
+              label: 'Build report',
+              execution: { targetType: 'existing_session', enabled: true },
+            }],
             nextCursor: null,
           };
         }
@@ -3181,6 +3207,20 @@ describe('Channels mounted binding creation', () => {
         state: { checked: false },
       }));
       await fixture.press(await fixture.getByRole('button', { name: 'Review binding' }));
+
+      // Binding an Automation delegates unattended execution to an external
+      // sender; the final confirmation must name that effect, not only the
+      // Automation label and the reply choice.
+      const summary = document.querySelector<HTMLElement>('[data-testid="channels-binding-create-summary"]');
+      expect(summary?.textContent).toContain('What an allowed sender starts');
+      expect(summary?.textContent).toContain(
+        'A message from the allowed sender starts this Automation, which sends work into the existing Session it targets.',
+      );
+      expect(summary?.textContent).toContain('Delegated authority');
+      expect(summary?.textContent).toContain(
+        'The Automation runs unattended with the permissions, tools, and outward effects its own definition grants.',
+      );
+
       await fixture.press(await fixture.getByRole('button', { name: 'Create binding' }));
 
       await vi.waitFor(() => {
@@ -3247,10 +3287,7 @@ describe('Channels mounted binding creation', () => {
     };
     let bindingReadCount = 0;
     const updateInputs: unknown[] = [];
-    const executeAction = vi.fn(async ({ action, input }: Readonly<{
-      action: unknown;
-      input: unknown;
-    }>): Promise<JsonValue> => {
+    const executeAction = vi.fn(async ({ action, input }: PluginUiTestkitExecuteActionInput): Promise<JsonValue> => {
       if (action === CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingRead) {
         bindingReadCount += 1;
         return bindingReadCount === 1
@@ -3262,7 +3299,12 @@ describe('Channels mounted binding creation', () => {
       }
       if (action === 'automation.conversation.targets.list') {
         return {
-          items: [{ automationId: 'automation-2', templateVersion: 8, label: 'Build report' }],
+          items: [{
+            automationId: 'automation-2',
+            templateVersion: 8,
+            label: 'Build report',
+            execution: { targetType: 'existing_session', enabled: true },
+          }],
           nextCursor: null,
         };
       }
@@ -3332,6 +3374,126 @@ describe('Channels mounted binding creation', () => {
       expect(executeAction.mock.calls.map(([request]) => request.action)).not.toContain(
         'automation.conversation.target.verify',
       );
+      expect(executeAction.mock.calls.map(([request]) => request.action)).not.toContain(
+        'binding/target-rotate-v1',
+      );
+    } finally {
+      await fixture.dispose();
+    }
+  });
+
+  it('retargets a direct binding onto a Session with the audience-derived delivery default', async () => {
+    // Retargeting an Automation binding onto a Session has to name a delivery
+    // mode before the owner has chosen one. A direct conversation asks for the
+    // mirrored Session; the shared-room paths in this file keep proving the
+    // opposite default, so a constant here fails one of the two.
+    const initialBinding = {
+      v: 1,
+      id: 'binding-1',
+      connectionId: 'connection-1',
+      endpoint: {
+        kind: 'direct' as const,
+        audience: 'direct' as const,
+        id: 'provider-direct-ada',
+        label: 'Ada direct',
+      },
+      target: {
+        kind: 'automation' as const,
+        automationId: 'automation-1',
+        templateVersion: 7,
+        policy: { resultDelivery: 'none' as const },
+      },
+      allowedPrincipalIds: ['provider-principal-private-4'],
+      allowBotSenders: false,
+      inputMode: 'allAllowedMessages' as const,
+      inboundDebounceMs: 0,
+      linkPreviewPolicy: 'suppress' as const,
+      senderFeedback: 'off' as const,
+      authorityEpoch: 4,
+      enabled: true,
+      deletionState: 'none' as const,
+      createdAt: 1,
+      updatedAt: 1,
+    };
+    const savedBinding = {
+      ...initialBinding,
+      target: {
+        kind: 'session' as const,
+        sessionId: 'session-1',
+        policy: {
+          deliveryMode: 'mirrorSession' as const,
+          permissionCeiling: 'read-only',
+          approvals: { kind: 'off' as const },
+          newSession: { kind: 'off' as const },
+        },
+      },
+      updatedAt: 2,
+    };
+    let bindingReadCount = 0;
+    const updateInputs: unknown[] = [];
+    const executeAction = vi.fn(async ({ action, input }: PluginUiTestkitExecuteActionInput): Promise<JsonValue> => {
+      if (action === CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingRead) {
+        bindingReadCount += 1;
+        return bindingReadCount === 1
+          ? { kind: 'ready', revision: 1, binding: initialBinding }
+          : { kind: 'ready', revision: 2, binding: savedBinding };
+      }
+      if (action === 'session.list') {
+        return { sessions: [{ id: 'session-1', title: 'Project review' }], nextCursor: null };
+      }
+      if (action === CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingUpdate) {
+        updateInputs.push(input);
+        return { kind: 'updated', bindingId: 'binding-1', revision: 2, authorityEpoch: 4 };
+      }
+      throw new Error(`Unexpected mounted Action: ${String(action)}`);
+    });
+    const fixture = await createPluginUiTestkit({
+      identity: {
+        pluginId: 'happier.channels',
+        pluginVersion: '0.0.0',
+        viewId: 'channels-account',
+        generation: 'channels-binding-editor-direct-session-retarget',
+        sessionId: 'session-1',
+      },
+      surface: renderSurface,
+      surfaceContext: createChannelsSurfaceContext(),
+      adapter: createChannelsSemanticAdapter(),
+      handlers: {
+        selectActionInput: async () => ({ kind: 'cancelled' as const }),
+        executeAction,
+        readResource: bindingResourceReader(),
+      },
+    });
+
+    try {
+      await fixture.press(await fixture.getByRole('button', { name: 'Edit binding' }));
+      await expect(fixture.getByRole('heading', { name: 'Edit binding' })).resolves.toBeDefined();
+      await fixture.press(await fixture.getByRole('button', { name: 'Change target' }));
+      await vi.waitFor(() => {
+        expect(executeAction).toHaveBeenCalledWith(expect.objectContaining({
+          action: 'session.list',
+        }));
+      });
+      await fixture.press(await fixture.getByRole('button', { name: 'Project review' }));
+      await fixture.press(await fixture.getByRole('button', { name: 'Review changes' }));
+      await fixture.press(await fixture.getByRole('button', { name: 'Save binding' }));
+
+      await vi.waitFor(() => {
+        expect(updateInputs).toEqual([expect.objectContaining({
+          bindingId: 'binding-1',
+          expectedRevision: 1,
+          target: {
+            kind: 'session',
+            sessionId: 'session-1',
+            policy: {
+              deliveryMode: 'mirrorSession',
+              permissionCeiling: 'read-only',
+              approvals: { kind: 'off' },
+              newSession: { kind: 'off' },
+            },
+          },
+        })]);
+      });
     } finally {
       await fixture.dispose();
     }
@@ -3340,10 +3502,7 @@ describe('Channels mounted binding creation', () => {
   it('locks an unknown create outcome until an authoritative bindings Resource reread makes a new decision possible', async () => {
     let bindingsReadCount = 0;
     let resolveBindingsRefresh: ((value: ResourceContent) => void) | undefined;
-    const executeAction = vi.fn(async ({ action, input }: Readonly<{
-      action: unknown;
-      input: unknown;
-    }>): Promise<JsonValue> => {
+    const executeAction = vi.fn(async ({ action, input }: PluginUiTestkitExecuteActionInput): Promise<JsonValue> => {
       if (action === CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingResolve) {
         return (input as Readonly<{ kind?: unknown }>).kind === 'endpoint'
           ? { kind: 'endpointCandidates', candidates: [bindingEndpointCandidate] }
@@ -3461,10 +3620,7 @@ describe('Channels mounted binding editor', () => {
     let bindingReadCount = 0;
     let resolvePostSaveRead: ((value: JsonValue) => void) | undefined;
     const updateInputs: unknown[] = [];
-    const executeAction = vi.fn(async ({ action, input }: Readonly<{
-      action: unknown;
-      input: unknown;
-    }>): Promise<JsonValue> => {
+    const executeAction = vi.fn(async ({ action, input }: PluginUiTestkitExecuteActionInput): Promise<JsonValue> => {
       if (action === CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingRead) {
         expect(input).toEqual({ bindingId: 'binding-1' });
         bindingReadCount += 1;
@@ -3632,10 +3788,7 @@ describe('Channels mounted binding editor', () => {
     };
     const updateInputs: unknown[] = [];
     let bindingReadCount = 0;
-    const executeAction = vi.fn(async ({ action, input }: Readonly<{
-      action: unknown;
-      input: unknown;
-    }>): Promise<JsonValue> => {
+    const executeAction = vi.fn(async ({ action, input }: PluginUiTestkitExecuteActionInput): Promise<JsonValue> => {
       if (action === CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingRead) {
         bindingReadCount += 1;
         return {
@@ -3737,6 +3890,246 @@ describe('Channels mounted binding editor', () => {
     }
   });
 
+  it('saves one complete endpoint, allowlist, target and policy change under the guarded CAS, refuses to confirm a stale result, and confirms only after the post-save reread', async () => {
+    const privateBinding = {
+      v: 1,
+      id: 'binding-1',
+      connectionId: 'connection-1',
+      endpoint: {
+        kind: 'shared' as const,
+        audience: 'shared' as const,
+        id: 'provider-private-room-9',
+        label: 'Private project room',
+      },
+      target: {
+        kind: 'session' as const,
+        sessionId: 'session-private-7',
+        policy: {
+          deliveryMode: 'repliesOnly' as const,
+          permissionCeiling: 'read-only',
+          approvals: { kind: 'off' as const },
+          newSession: { kind: 'off' as const },
+        },
+      },
+      allowedPrincipalIds: ['provider-principal-private-4'],
+      allowBotSenders: false,
+      inputMode: 'directMentionsOnly' as const,
+      inboundDebounceMs: 0,
+      linkPreviewPolicy: 'suppress' as const,
+      senderFeedback: 'off' as const,
+      authorityEpoch: 4,
+      enabled: true,
+      deletionState: 'none' as const,
+      createdAt: 1,
+      updatedAt: 1,
+    };
+    const externalEndpoint = {
+      kind: 'githubPullRequest' as const,
+      audience: 'shared' as const,
+      id: 'external-provider/fork#72',
+      label: 'External pull request #72',
+    };
+    const externalPrincipal = {
+      id: 'external-reviewer-7',
+      kind: 'human' as const,
+      label: 'External reviewer',
+    };
+    /**
+     * Endpoint, allowlist, target and policy in ONE guarded write. Splitting
+     * this into per-facet saves is what the mounted editor must never do: each
+     * extra write would consume the CAS revision and make the next facet
+     * conflict against the caller's own earlier write.
+     */
+    const completeUpdateInput = {
+      bindingId: 'binding-1',
+      expectedRevision: 1,
+      target: {
+        kind: 'session',
+        sessionId: 'session-current-8',
+        policy: {
+          deliveryMode: 'mirrorSession',
+          permissionCeiling: 'read-only',
+          approvals: { kind: 'off' },
+          newSession: { kind: 'off' },
+        },
+      },
+      audienceSelection: {
+        expectedConnectionRevision: 1,
+        endpointSelection: {
+          query: 'fork pull request',
+          selected: {
+            kind: 'githubPullRequest',
+            audience: 'shared',
+            id: 'external-provider/fork#72',
+          },
+        },
+        principalSelection: {
+          query: 'reviewer',
+          selected: [{ id: 'external-reviewer-7', kind: 'human' }],
+        },
+      },
+      allowBotSenders: false,
+      inputMode: 'allAllowedMessages',
+      inboundDebounceMs: 750,
+      linkPreviewPolicy: 'providerDefault',
+      senderFeedback: 'eligibleRefusals',
+      enabled: true,
+    };
+    const updateInputs: unknown[] = [];
+    let bindingReadCount = 0;
+    let resolvePostSaveRead: ((value: JsonValue) => void) | undefined;
+    const executeAction = vi.fn(async ({ action, input }: PluginUiTestkitExecuteActionInput): Promise<JsonValue> => {
+      if (action === CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingRead) {
+        bindingReadCount += 1;
+        if (bindingReadCount === 1) return { kind: 'ready', revision: 1, binding: privateBinding };
+        return await new Promise<JsonValue>((resolve) => {
+          resolvePostSaveRead = resolve;
+        });
+      }
+      if (action === CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingResolve) {
+        return (input as Readonly<{ kind: unknown }>).kind === 'endpoint'
+          ? { kind: 'endpointCandidates', candidates: [externalEndpoint] }
+          : { kind: 'principalCandidates', candidates: [externalPrincipal] };
+      }
+      if (action === 'session.list') {
+        return { sessions: [{ id: 'session-current-8', title: 'Current session' }], nextCursor: null };
+      }
+      if (action === CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingUpdate) {
+        updateInputs.push(input);
+        return updateInputs.length === 1
+          ? { kind: 'stale' }
+          : { kind: 'updated', bindingId: 'binding-1', revision: 2, authorityEpoch: 4 };
+      }
+      throw new Error(`Unexpected mounted Action: ${String(action)}`);
+    });
+    const fixture = await createPluginUiTestkit({
+      identity: {
+        pluginId: 'happier.channels',
+        pluginVersion: '0.0.0',
+        viewId: 'channels-account',
+        generation: 'channels-binding-editor-complete-guarded-save',
+        sessionId: 'session-1',
+      },
+      surface: renderSurface,
+      surfaceContext: createChannelsSurfaceContext(),
+      adapter: createChannelsSemanticAdapter(),
+      handlers: {
+        selectActionInput: async () => ({ kind: 'cancelled' as const }),
+        executeAction,
+        readResource: bindingResourceReader(),
+      },
+    });
+
+    const reresolveAudience = async (): Promise<void> => {
+      await fixture.press(await fixture.getByRole('button', {
+        name: 'Re-resolve conversation and allowed senders',
+      }));
+      await enterTextByAccessibleLabel('Conversation search', 'fork pull request');
+      await fixture.press(await fixture.getByRole('button', { name: 'Search endpoints' }));
+      await fixture.press(await fixture.getByRole('button', { name: externalEndpoint.label }));
+      await enterTextByAccessibleLabel('People search', 'reviewer');
+      await fixture.press(await fixture.getByRole('button', { name: 'Search people' }));
+      await fixture.press(await fixture.getByRole('switch', {
+        name: externalPrincipal.label,
+        state: { checked: false },
+      }));
+      await fixture.press(await fixture.getByRole('button', {
+        name: 'Use selected conversation and senders',
+      }));
+    };
+
+    try {
+      await fixture.press(await fixture.getByRole('button', { name: 'Edit binding' }));
+      await expect(fixture.getByRole('heading', { name: 'Edit binding' })).resolves.toBeDefined();
+
+      // Target first: re-resolving the audience afterwards must not discard it.
+      await fixture.press(await fixture.getByRole('button', { name: 'Change target' }));
+      await vi.waitFor(() => {
+        expect(executeAction).toHaveBeenCalledWith(expect.objectContaining({
+          action: 'session.list',
+          input: { limit: 100, includeLastMessagePreview: false },
+        }));
+      });
+      await fixture.press(await fixture.getByRole('button', { name: 'Current session' }));
+      await reresolveAudience();
+      await fixture.press(await fixture.getByRole('radio', {
+        name: 'Mirror Session',
+        state: { checked: false },
+      }));
+      await fixture.press(await fixture.getByRole('radio', {
+        name: 'All allowed messages',
+        state: { checked: false },
+      }));
+      await enterTextByAccessibleLabel('Inbound debounce (ms)', '750');
+      await fixture.press(await fixture.getByRole('radio', {
+        name: 'Provider default',
+        state: { checked: false },
+      }));
+      await fixture.press(await fixture.getByRole('radio', {
+        name: 'Eligible refusals',
+        state: { checked: false },
+      }));
+
+      await fixture.press(await fixture.getByRole('button', { name: 'Review changes' }));
+      await fixture.press(await fixture.getByRole('button', { name: 'Save binding' }));
+
+      await vi.waitFor(() => {
+        expect(updateInputs).toEqual([completeUpdateInput]);
+      });
+      // A stale resolver verdict is not a save: no reread, no confirmation, and
+      // Save stays locked until the audience is resolved against current facts.
+      await expect(fixture.getByText('The provider connection changed')).resolves.toBeDefined();
+      expect(bindingReadCount).toBe(1);
+      await expect(fixture.queryByText('Binding updated')).resolves.toBeUndefined();
+      await expect(fixture.findByRole('button', {
+        name: 'Save binding',
+        state: { disabled: true },
+      })).resolves.toBeDefined();
+
+      await fixture.press(await fixture.getByRole('button', { name: 'Back' }));
+      await reresolveAudience();
+      await fixture.press(await fixture.getByRole('button', { name: 'Review changes' }));
+      await fixture.press(await fixture.getByRole('button', { name: 'Save binding' }));
+
+      // The second write repeats the SAME complete draft against the SAME
+      // expected revision: the stale round trip retained every facet.
+      await vi.waitFor(() => {
+        expect(updateInputs).toEqual([completeUpdateInput, completeUpdateInput]);
+        expect(bindingReadCount).toBe(2);
+        expect(resolvePostSaveRead).toBeTypeOf('function');
+      });
+      await expect(fixture.queryByText('Binding updated')).resolves.toBeUndefined();
+
+      await act(async () => {
+        resolvePostSaveRead?.({
+          kind: 'ready',
+          revision: 2,
+          binding: {
+            ...privateBinding,
+            endpoint: { ...externalEndpoint },
+            target: {
+              kind: 'session' as const,
+              sessionId: 'session-current-8',
+              policy: { ...privateBinding.target.policy, deliveryMode: 'mirrorSession' as const },
+            },
+            allowedPrincipalIds: [externalPrincipal.id],
+            inputMode: 'allAllowedMessages' as const,
+            inboundDebounceMs: 750,
+            linkPreviewPolicy: 'providerDefault' as const,
+            senderFeedback: 'eligibleRefusals' as const,
+            updatedAt: 2,
+          },
+        });
+      });
+      await expect(fixture.getByText('Binding updated')).resolves.toBeDefined();
+      expect(executeAction.mock.calls.filter(([request]) => (
+        request.action === CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingUpdate
+      ))).toHaveLength(2);
+    } finally {
+      await fixture.dispose();
+    }
+  });
+
   it('persists an owner-enabled chat-approval policy from the binding editor', async () => {
     const approvalOffBinding = {
       v: 1,
@@ -3771,10 +4164,7 @@ describe('Channels mounted binding editor', () => {
       updatedAt: 1,
     };
     const updateInputs: unknown[] = [];
-    const executeAction = vi.fn(async ({ action, input }: Readonly<{
-      action: unknown;
-      input: unknown;
-    }>): Promise<JsonValue> => {
+    const executeAction = vi.fn(async ({ action, input }: PluginUiTestkitExecuteActionInput): Promise<JsonValue> => {
       if (action === CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingRead) {
         return { kind: 'ready', revision: 1, binding: approvalOffBinding };
       }
@@ -3887,10 +4277,7 @@ describe('Channels mounted binding editor', () => {
     };
     let bindingReadCount = 0;
     const updateInputs: unknown[] = [];
-    const executeAction = vi.fn(async ({ action, input }: Readonly<{
-      action: unknown;
-      input: unknown;
-    }>): Promise<JsonValue> => {
+    const executeAction = vi.fn(async ({ action, input }: PluginUiTestkitExecuteActionInput): Promise<JsonValue> => {
       if (action === CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingRead) {
         bindingReadCount += 1;
         return bindingReadCount === 1
@@ -3987,7 +4374,7 @@ describe('Channels mounted binding editor', () => {
       createdAt: 1,
       updatedAt: 1,
     };
-    const executeAction = vi.fn(async ({ action }: Readonly<{ action: PluginReference }>) => {
+    const executeAction = vi.fn(async ({ action }: PluginUiTestkitExecuteActionInput) => {
       if (action === CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingRead) {
         return { kind: 'ready', revision: 1, binding: privateBinding };
       }
@@ -4084,7 +4471,7 @@ describe('Channels mounted binding editor', () => {
     }, 'd');
     let bindingsReadCount = 0;
     let bindingDetailReads = 0;
-    const executeAction = vi.fn(async ({ action }: Readonly<{ action: PluginReference }>) => {
+    const executeAction = vi.fn(async ({ action }: PluginUiTestkitExecuteActionInput) => {
       if (action !== CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingRead) {
         throw new Error(`Unexpected mounted Action: ${String(action)}`);
       }
@@ -4183,7 +4570,7 @@ describe('Channels mounted binding editor', () => {
     let bindingsReadCount = 0;
     let resolveBindingsRefresh: ((value: ResourceContent) => void) | undefined;
     let bindingDetailReads = 0;
-    const executeAction = vi.fn(async ({ action }: Readonly<{ action: PluginReference }>) => {
+    const executeAction = vi.fn(async ({ action }: PluginUiTestkitExecuteActionInput) => {
       if (action === CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingRead) {
         bindingDetailReads += 1;
         return { kind: 'ready', revision: 1, binding: privateBinding };
@@ -4346,7 +4733,7 @@ describe('Channels mounted binding editor', () => {
 describe('Channels binding enablement presentation', () => {
   it('retains actionable collection-quota incompatibility feedback after the authoritative reread', async () => {
     let bindingsReadCount = 0;
-    const executeAction = vi.fn(async ({ action }: Readonly<{ action: PluginReference }>) => {
+    const executeAction = vi.fn(async ({ action }: PluginUiTestkitExecuteActionInput) => {
       if (action === CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingSetEnabled) {
         throw new PluginError({
           code: 'collection_quota_incompatible',
@@ -4408,7 +4795,7 @@ describe('Channels binding enablement presentation', () => {
 describe('Channels binding deletion presentation', () => {
   it('deletes a current binding through the canonical mounted Action', async () => {
     let bindingsReadCount = 0;
-    const executeAction = vi.fn(async ({ action }: Readonly<{ action: PluginReference }>) => {
+    const executeAction = vi.fn(async ({ action }: PluginUiTestkitExecuteActionInput) => {
       if (action === CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingDelete) {
         return { kind: 'deletionPending' };
       }
@@ -4459,7 +4846,7 @@ describe('Channels binding deletion presentation', () => {
   it('locks an unknown binding-delete outcome until an authoritative bindings Resource reread completes', async () => {
     let bindingsReadCount = 0;
     let resolveBindingsRefresh: ((value: ResourceContent) => void) | undefined;
-    const executeAction = vi.fn(async ({ action }: Readonly<{ action: PluginReference }>) => {
+    const executeAction = vi.fn(async ({ action }: PluginUiTestkitExecuteActionInput) => {
       if (action === CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingDelete) {
         throw new PluginError({ code: 'timeout', message: 'The binding delete request timed out.' });
       }
@@ -4710,6 +5097,80 @@ describe('Channels connection lifecycle actions', () => {
     }
   });
 
+  it('keeps retest and delivery-resolution siblings separately identified when both are offered', async () => {
+    // Both controls sit in the SAME expanded-connection child list, so keying
+    // both by the connection id made them one identity: React warned that a
+    // child could be duplicated or omitted, and a status transition could hand
+    // one control's mounted state to the other in a recovery surface.
+    const ambiguousDelivery = jsonResource({
+      connections: [{
+        connectionId: 'connection-1',
+        revision: 1,
+        authorityEpoch: 1,
+        providerPluginId: providerSetupOperation.contributor.pluginId,
+        selectedMachineId: 'machine-1',
+        selectedTransport: 'checkpointedPull',
+        integrationPrincipalLabel: 'Example conversation',
+        enabled: true,
+        deletionState: 'none',
+        maximumObservationAgeMs: 60_000,
+        attention: {
+          historyGap: null,
+          pollFailure: null,
+          bestEffortBeforeDurableAdmission: false,
+          oldTransportStopUnconfirmed: false,
+          acceptedPossibleLoss: false,
+          outwardDelivery: {
+            retryDue: false,
+            notDelivered: false,
+            partial: false,
+            outcomeUnknown: true,
+          },
+        },
+      }],
+    }, '5');
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const fixture = await createPluginUiTestkit({
+      identity: {
+        pluginId: 'happier.channels',
+        pluginVersion: '0.0.0',
+        viewId: 'channels-account',
+        generation: 'channels-connection-sibling-identity',
+        sessionId: 'session-1',
+      },
+      surface: renderSurface,
+      surfaceContext: createChannelsSurfaceContext(),
+      adapter: createChannelsSemanticAdapter(),
+      handlers: {
+        selectActionInput: async () => ({ kind: 'cancelled' as const }),
+        executeAction: async () => {
+          throw new Error('Rendering both recovery controls must not invoke an Action.');
+        },
+        readResource: async ({ resource }) => {
+          const localId = typeof resource === 'string' ? resource : resource.localId;
+          if (localId === BINDINGS_RESOURCE.localId) return bindingsResource;
+          if (localId === CONNECTIONS_RESOURCE.localId) return ambiguousDelivery;
+          throw new Error(`Unexpected Resource: ${localId}`);
+        },
+      },
+    });
+
+    try {
+      await pressByTestId('channels-connection-connection-1');
+      await vi.waitFor(() => {
+        expect(document.querySelector('[data-testid="channels-connection-retest-controls"]')).not.toBeNull();
+      });
+      expect(document.querySelector('[data-testid="channels-delivery-resolution-controls"]')).not.toBeNull();
+      const duplicateKeyReports = consoleError.mock.calls.filter((call) => (
+        call.some((argument) => typeof argument === 'string' && argument.includes('two children with the same key'))
+      ));
+      expect(duplicateKeyReports).toEqual([]);
+    } finally {
+      await fixture.dispose();
+      consoleError.mockRestore();
+    }
+  });
+
   it('transfers a current connection through the selected provider setup and canonical mounted Action', async () => {
     let connectionsReadCount = 0;
     const credentialRef = {
@@ -4871,7 +5332,7 @@ describe('Channels connection lifecycle actions', () => {
   });
 
   it('deletes a current connection through the canonical mounted Action', async () => {
-    const executeAction = vi.fn(async ({ action }: Readonly<{ action: PluginReference }>) => {
+    const executeAction = vi.fn(async ({ action }: PluginUiTestkitExecuteActionInput) => {
       if (action === CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionDelete) {
         return {
           kind: 'deletePending',
@@ -5024,11 +5485,11 @@ describe('Channels connection lifecycle actions', () => {
       reason: 'providerHistoryUnavailable',
       digestDigit: 'e',
     });
-    const executeAction = vi.fn(async (request: PluginUiTestkitExecuteActionInput) => {
-      expect(request.action).toBe(CONVERSATION_MANAGEMENT_ACTION_IDS_V1.streamBaselineAccept);
-      expect(request.input).toEqual({ connectionId: 'connection-1', expectedRevision: 5 });
-      return { kind: 'updated', connectionId: 'connection-1', revision: 6, authorityEpoch: 3 };
-    });
+    // The surface catches a rejected Action, so an assertion inside this mock could
+    // never fail the test. The dispatched revision is asserted from the recorded call.
+    const executeAction = vi.fn(async (_request: PluginUiTestkitExecuteActionInput) => (
+      { kind: 'updated', connectionId: 'connection-1', revision: 6, authorityEpoch: 3 }
+    ));
     const fixture = await createPluginUiTestkit({
       identity: {
         pluginId: 'happier.channels',
@@ -5070,6 +5531,10 @@ describe('Channels connection lifecycle actions', () => {
       await fixture.press(await fixture.getByRole('button', { name: 'Accept new history baseline' }));
       await fixture.press(await fixture.getByRole('button', { name: 'Confirm new history baseline' }));
       await vi.waitFor(() => expect(executeAction).toHaveBeenCalledTimes(1));
+      expect(executeAction.mock.calls[0]?.[0].action)
+        .toBe(CONVERSATION_MANAGEMENT_ACTION_IDS_V1.streamBaselineAccept);
+      expect(executeAction.mock.calls[0]?.[0].input)
+        .toEqual({ connectionId: 'connection-1', expectedRevision: 5 });
     } finally {
       await fixture.dispose();
     }
@@ -5149,7 +5614,7 @@ describe('Channels connection lifecycle actions', () => {
   });
 
   it('offers explicit accept-loss abandonment while an old transport stop is unconfirmed', async () => {
-    const executeAction = vi.fn(async ({ action }: Readonly<{ action: PluginReference }>) => {
+    const executeAction = vi.fn(async ({ action }: PluginUiTestkitExecuteActionInput) => {
       if (action === CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionAbandon) {
         return {
           kind: 'rejoined',
@@ -5209,7 +5674,7 @@ describe('Channels connection lifecycle actions', () => {
   });
 
   it('keeps accepted-loss disclosure, hides repeat abandonment, and permits the next delete operation', async () => {
-    const executeAction = vi.fn(async ({ action }: Readonly<{ action: PluginReference }>) => {
+    const executeAction = vi.fn(async ({ action }: PluginUiTestkitExecuteActionInput) => {
       if (action === CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionDelete) {
         return {
           kind: 'deletePending',
@@ -5272,7 +5737,7 @@ describe('Channels connection lifecycle actions', () => {
 
 describe('Channels destructive confirmation focus', () => {
   it('moves focus into the binding delete confirmation and returns it to the opener on Cancel', async () => {
-    const executeAction = vi.fn(async ({ action }: Readonly<{ action: PluginReference }>) => {
+    const executeAction = vi.fn(async ({ action }: PluginUiTestkitExecuteActionInput) => {
       throw new Error(`Unexpected mounted Action: ${String(action)}`);
     });
     const fixture = await createPluginUiTestkit({
@@ -5310,7 +5775,7 @@ describe('Channels destructive confirmation focus', () => {
   });
 
   it('moves focus into the connection delete confirmation and returns it to the opener on Cancel', async () => {
-    const executeAction = vi.fn(async ({ action }: Readonly<{ action: PluginReference }>) => {
+    const executeAction = vi.fn(async ({ action }: PluginUiTestkitExecuteActionInput) => {
       throw new Error(`Unexpected mounted Action: ${String(action)}`);
     });
     const fixture = await createPluginUiTestkit({
@@ -5729,6 +6194,198 @@ describe('Channels offline Account-local sender revocation', () => {
       });
     } finally {
       await fixture.dispose();
+    }
+  });
+});
+
+describe('Channels Session destination', () => {
+  function createSessionConversationsContext(sessionId: string) {
+    return createSurfaceContextFixture({
+      mount: {
+        kind: 'destination',
+        destination: { pluginId: 'happier.channels', localId: 'session-conversations' },
+        container: 'rightSidebarTab',
+      },
+      target: { kind: 'session', sessionId },
+    });
+  }
+
+  const sessionConversationsResource = jsonResource({
+    bindings: [{
+      bindingId: 'binding-session-1',
+      revision: 1,
+      connectionId: 'connection-1',
+      endpoint: { audience: 'direct', label: 'Example conversation' },
+      target: { kind: 'session', summary: 'session-under-test' },
+      inputMode: 'directMentionsOnly',
+      deliveryMode: 'mirrorSession',
+      approval: { kind: 'off' },
+      enabled: true,
+      deletionState: 'none',
+    }],
+  }, '9');
+
+  async function mountSessionDestination(
+    sessionConversations: ResourceContent | 'unavailable',
+    openSurface?: (view: unknown) => Promise<void>,
+  ) {
+    const surface = createSessionConversationsContext('session-under-test');
+    const baseHostApi = createHostApiStub(surface);
+    const hostApi = createHostApiStub(surface, {
+      version: () => ({
+        ...baseHostApi.version(),
+        methods: ['readResource', 'openSurface'],
+      }),
+      ...(openSurface === undefined ? {} : { openSurface: openSurface as never }),
+      readResource: async (resource) => {
+        const localId = typeof resource === 'string' ? resource : resource.localId;
+        if (localId === 'session-conversations-v1') {
+          if (sessionConversations === 'unavailable') {
+            throw new PluginError({
+              code: 'channels_session_conversations_resource_delivery_status_unavailable',
+              message: 'unavailable',
+            });
+          }
+          return sessionConversations;
+        }
+        if (localId === CONNECTIONS_RESOURCE.localId) return connectionsResource;
+        throw new Error(`Unexpected Resource: ${localId}`);
+      },
+    });
+    const context = Object.freeze({
+      plugin: Object.freeze({ id: 'happier.channels', version: '0.0.0' }),
+      surface,
+      hostApi,
+      signal: new AbortController().signal,
+    } satisfies RenderContext);
+    const entry = renderSurface(context) as ReactElement<{ dataClient?: PluginUiDataClient }>;
+    return await mountThroughReactNativeWebAsync(cloneElement(entry, { dataClient: emptyDataClient }));
+  }
+
+  it('renders this Session\'s external conversations instead of the Account settings vertical', async () => {
+    const mount = await mountSessionDestination(sessionConversationsResource);
+    try {
+      await vi.waitFor(() => {
+        expect(mount.container.textContent).toContain('Example conversation');
+      });
+      expect(mount.container.textContent).toContain('Mirror Session');
+      expect(mount.container.textContent).toContain('Direct mentions only');
+      // The Settings vertical is a different destination of the same artifact.
+      // Mounting it here would offer Account-wide binding mutation on a Session.
+      expect(mount.container.textContent).not.toContain('Conversation connections');
+      expect(mount.container.querySelector('[data-testid="channels-session-conversations"]')).not.toBeNull();
+    } finally {
+      mount.unmount();
+    }
+  });
+
+  it('names the affected conversation, its reason, and the one Settings owner that can repair it', async () => {
+    // Before this the Composer warning opened an ordinary metadata list: the
+    // person could see that something was wrong and had no way to learn what
+    // or to reach the control that fixes it.
+    const attentionResource = jsonResource({
+      bindings: [{
+        bindingId: 'binding-session-1',
+        revision: 1,
+        connectionId: 'connection-1',
+        endpoint: { audience: 'direct', label: 'Example conversation' },
+        target: { kind: 'session', summary: 'session-under-test' },
+        inputMode: 'directMentionsOnly',
+        deliveryMode: 'mirrorSession',
+        approval: { kind: 'off' },
+        enabled: true,
+        deletionState: 'none',
+      }],
+      attention: [{ bindingId: 'binding-session-1', reason: 'providerCredentialInvalid' }],
+    }, '6');
+    const openSurface = vi.fn(async () => undefined);
+    const mount = await mountSessionDestination(attentionResource, openSurface);
+    try {
+      await vi.waitFor(() => {
+        expect(mount.container.textContent).toContain('Connected Account credential needs attention');
+      });
+      expect(mount.container.querySelector(
+        '[data-testid="channels-session-conversation-attention:binding-session-1"]',
+      )).not.toBeNull();
+      const manage = mount.container.querySelector<HTMLElement>(
+        '[data-testid="channels-session-conversations-manage"]',
+      );
+      expect(manage).not.toBeNull();
+      await act(async () => { manage?.click(); });
+      // Recovery keeps exactly one owner: this routes to the Settings page and
+      // performs no Account mutation of its own.
+      expect(openSurface).toHaveBeenCalledWith({
+        pluginId: 'happier.channels',
+        localId: 'connections',
+      });
+    } finally {
+      mount.unmount();
+    }
+  });
+
+  it('decodes one Session conversation Resource once while preserving both its bindings and attention', async () => {
+    const attentionResource = jsonResource({
+      bindings: [{
+        bindingId: 'binding-session-1',
+        revision: 1,
+        connectionId: 'connection-1',
+        endpoint: { audience: 'direct', label: 'Example conversation' },
+        target: { kind: 'session', summary: 'session-under-test' },
+        inputMode: 'directMentionsOnly',
+        deliveryMode: 'mirrorSession',
+        approval: { kind: 'off' },
+        enabled: true,
+        deletionState: 'none',
+      }],
+      attention: [{ bindingId: 'binding-session-1', reason: 'providerCredentialInvalid' }],
+    }, '7');
+    const serialized = new TextDecoder().decode(attentionResource.bytes);
+    const parse = vi.spyOn(JSON, 'parse');
+    const mount = await mountSessionDestination(attentionResource);
+    try {
+      await vi.waitFor(() => {
+        expect(mount.container.textContent).toContain('Example conversation');
+        expect(mount.container.textContent).toContain('Connected Account credential needs attention');
+      });
+
+      // The surface needs both the visible binding and its attention reason.
+      // A split parser decoded the same Resource once for each, so this counts
+      // the observable boundary work rather than a helper implementation.
+      expect(parse.mock.calls.filter(([value]) => value === serialized)).toHaveLength(1);
+    } finally {
+      mount.unmount();
+      parse.mockRestore();
+    }
+  });
+
+  it('shows no attention affordance for a healthy Session conversation', async () => {
+    const openSurface = vi.fn(async () => undefined);
+    const mount = await mountSessionDestination(sessionConversationsResource, openSurface);
+    try {
+      await vi.waitFor(() => {
+        expect(mount.container.textContent).toContain('Example conversation');
+      });
+      expect(mount.container.querySelector(
+        '[data-testid="channels-session-conversation-attention:binding-session-1"]',
+      )).toBeNull();
+      expect(mount.container.querySelector(
+        '[data-testid="channels-session-conversations-manage"]',
+      )).toBeNull();
+      expect(openSurface).not.toHaveBeenCalled();
+    } finally {
+      mount.unmount();
+    }
+  });
+
+  it('reports the Session list as unavailable rather than falling back to the Account-local settings surface', async () => {
+    const mount = await mountSessionDestination('unavailable');
+    try {
+      await vi.waitFor(() => {
+        expect(mount.container.textContent).toContain('External conversations are unavailable');
+      });
+      expect(mount.container.textContent).not.toContain('Conversation connections');
+    } finally {
+      mount.unmount();
     }
   });
 });

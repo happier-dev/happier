@@ -3,7 +3,7 @@
  * in-memory Collections the Channels tests use as their storage boundary.
  *
  * The number is deliberately an independent literal rather than an import of
- * `MAX_CHANNEL_ACCOUNT_COLLECTION_QUERY_PAGE_SIZE`: a fake built from the
+ * `PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1`: a fake built from the
  * constant the production reader plans against can never fail when that
  * constant is the thing that drifted. It mirrors
  * `PluginCollectionQueryRequestV1Schema.limit`

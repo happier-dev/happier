@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
+import { MAX_CONVERSATION_APPROVAL_REQUEST_ID_UTF8_BYTES } from '@happier-dev/channels-protocol';
+
 import {
   classifyConversationCommand,
   createConversationNewSessionCreationKey,
@@ -34,6 +36,20 @@ describe('Channels command evidence', () => {
       decision: 'deny',
       scope: 'request',
     });
+    // Preserve the JSON answer values exactly. The canonical Session owner
+    // resolves these displayed labels/custom values against its live request;
+    // normalizing this payload would silently change a legitimate free-text
+    // answer before that owner sees it.
+    expect(classifyConversationCommand(
+      '/answer input-1 [{"questionIndex":0,"values":["Other"]},{"questionIndex":1,"values":["A custom  note"]}]',
+    )).toEqual({
+      kind: 'userActionAnswer',
+      requestId: 'input-1',
+      answers: [
+        { questionIndex: 0, values: ['Other'] },
+        { questionIndex: 1, values: ['A custom  note'] },
+      ],
+    });
     expect(classifyConversationCommand('/new  investigate   this')).toEqual({
       kind: 'newSession',
       initialPrompt: 'investigate this',
@@ -55,7 +71,43 @@ describe('Channels command evidence', () => {
       kind: 'malformedCommand',
       command: 'approve',
     });
+    expect(classifyConversationCommand('/answer input-1 not-json')).toEqual({
+      kind: 'malformedCommand',
+      command: 'answer',
+    });
+    expect(classifyConversationCommand('/answer input-1 [{"questionIndex":0}]')).toEqual({
+      kind: 'malformedCommand',
+      command: 'answer',
+    });
     expect(normalizeConversationPairingToken('ABCDU234')).toBeNull();
+  });
+
+  it('refuses an approval request id the frozen ingress obligation could not persist', () => {
+    // Ingress text is bounded at 64 KiB, so an admitted `/allow` could freeze a
+    // request id far past the persisted approval bound and the canonical
+    // Permission contract. That row is unwritable, and the ingest that writes
+    // it has no settlement for an invalid value, so the bound belongs here at
+    // the one command classifier rather than at the storage write.
+    const atBound = 'r'.repeat(MAX_CONVERSATION_APPROVAL_REQUEST_ID_UTF8_BYTES);
+    expect(classifyConversationCommand(`/allow ${atBound}`)).toEqual({
+      kind: 'approve',
+      requestId: atBound,
+      decision: 'allow',
+      scope: 'request',
+    });
+    expect(classifyConversationCommand(`/allow ${atBound}r`)).toEqual({
+      kind: 'malformedCommand',
+      command: 'approve',
+    });
+    expect(classifyConversationCommand(`/deny ${atBound}r`)).toEqual({
+      kind: 'malformedCommand',
+      command: 'approve',
+    });
+    // The bound is UTF-8 bytes, not code points: a multibyte identifier that
+    // fits the code-point count still exceeds the byte contract.
+    expect(classifyConversationCommand(`/allow ${'\u00e9'.repeat(
+      MAX_CONVERSATION_APPROVAL_REQUEST_ID_UTF8_BYTES / 2 + 1,
+    )}`)).toEqual({ kind: 'malformedCommand', command: 'approve' });
   });
 
   it('uses the approved deterministic /new creation key literal', () => {

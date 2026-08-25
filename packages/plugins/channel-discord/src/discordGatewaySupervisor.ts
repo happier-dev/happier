@@ -1,5 +1,6 @@
 import {
   CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1,
+  ConversationProviderConnectionReadResultV1Schema,
   ConversationProviderConnectionStopInputV1Schema,
   ConversationProviderConnectionStopResultV1Schema,
   ConversationProviderConnectionsSnapshotV1Schema,
@@ -199,7 +200,9 @@ function providerReadinessFactFromFailure(
     ? 'providerPermissionMissing'
     : failure.reason === 'invalidConfiguration'
       ? 'providerConfigurationInvalid'
-      : undefined;
+      : failure.reason === 'credentialInvalid'
+        ? 'providerCredentialInvalid'
+        : undefined;
   if (code === undefined) return undefined;
   return {
     kind: 'providerReadiness',
@@ -212,6 +215,29 @@ function providerReadinessFactFromFailure(
 function providerReadinessFactFromWorkerResult(
   result: DiscordGatewayWorkerResult,
 ): PendingTransportFact | undefined {
+  if (result.kind === 'terminal') {
+    // Each terminal reason names the repair that can actually retire it. Close
+    // 4004 rejects the selected bot token, and only replacing or resyncing the
+    // Connected Account credential releases the no-retry memo below, so it must
+    // not be presented as a Gateway configuration problem.
+    if (result.reason === 'authenticationFailed') {
+      return {
+        kind: 'providerReadiness',
+        status: 'attention',
+        code: 'providerCredentialInvalid',
+        diagnostic: 'Discord rejected the selected bot token and stopped the connection. Replace or resynchronize the Connected Account credential.',
+      };
+    }
+    const permissionFailure = result.reason === 'disallowedIntents';
+    return {
+      kind: 'providerReadiness',
+      status: 'attention',
+      code: permissionFailure ? 'providerPermissionMissing' : 'providerConfigurationInvalid',
+      diagnostic: permissionFailure
+        ? 'Discord refused the configured Gateway intents and stopped the connection.'
+        : 'Discord rejected the Gateway connection configuration and stopped the connection.',
+    };
+  }
   if (result.kind === 'messageContentIntentRecoveryRequired') {
     return providerReadinessFactFromFailure(result.failure);
   }
@@ -260,14 +286,9 @@ export function createDiscordGatewaySupervisor(options: DiscordGatewaySupervisor
     throw new Error('Discord Gateway stop wait must be a positive safe integer.');
   }
 
-  // This supervisor reaches no Automation authority. The Discord Automation
-  // Event is WITHHELD from the manifest (see `discordAutomationEvent.ts`), so
-  // the host builds no adopted-definition owner for this plugin and every
-  // `automation.event.sources.list` call would fail with
-  // `automation_event_adopted_definitions_unavailable` — once per tick, for
-  // every Machine, forever. The observer capability is retained whole in
-  // `discordAutomationEventAdmission.ts`; re-declaring the Event restores its
-  // two call sites here, exactly as that module's resume note describes.
+  // Gateway reconciliation owns only workers and transport facts. Event
+  // candidates pass to Channels through observation ingress; this loop never
+  // scans or admits Automation sources directly.
   const workers = new Map<string, WorkerEntry>();
   const pendingFacts = new Map<string, PendingTransportFact[]>();
   // A connection fingerprint is built from the core reconciliation snapshot,
@@ -316,9 +337,10 @@ export function createDiscordGatewaySupervisor(options: DiscordGatewaySupervisor
         authorityEpoch: entry.explicitStopAuthorityEpoch ?? entry.snapshot.authorityEpoch,
       }, { kind: 'stopConfirmed', reason: 'explicitStop' });
     }
-    if (result.kind === 'terminal') {
-      terminalReasonByFingerprint.set(entry.fingerprint, result.reason);
-    }
+    // Queue truthful current attention before retaining the no-retry memo. The
+    // next reconciliation publishes the fact through core's existing owner,
+    // then the unchanged fingerprint remains terminal.
+    if (result.kind === 'terminal') terminalReasonByFingerprint.set(entry.fingerprint, result.reason);
     if (result.kind === 'blocked') blockedUntilByFingerprint.set(entry.fingerprint, result.retryAtMs);
     if (result.kind === 'messageContentIntentRecoveryRequired' && result.source === 'gateway4014') {
       blockedUntilByFingerprint.set(
@@ -502,6 +524,39 @@ export function createDiscordGatewaySupervisor(options: DiscordGatewaySupervisor
     return true;
   };
 
+  /**
+   * A list is discovery only: before a Gateway worker or a transport fact can
+   * act on a connection, re-read that exact caller-filtered id from Channels'
+   * Account authority. The empty or malformed result is intentionally treated
+   * as no current connection, never as permission to use the list snapshot.
+   */
+  const readCurrentConnection = async (
+    listed: ConversationProviderConnectionReconciliationSnapshotV1,
+    context: BackgroundServiceContext,
+  ): Promise<ConversationProviderConnectionReconciliationSnapshotV1 | null> => {
+    let result: unknown;
+    try {
+      result = await context.services.actions.execute(
+        {
+          pluginId: CHANNELS_CORE_PLUGIN_ID,
+          localId: CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.connectionRead,
+        },
+        { connectionId: listed.connectionId },
+        { signal: context.signal },
+      );
+    } catch {
+      return null;
+    }
+    const parsed = ConversationProviderConnectionReadResultV1Schema.safeParse(result);
+    if (!parsed.success) return null;
+    const entries = Object.entries(parsed.data);
+    if (entries.length !== 1) return null;
+    const [connectionId, snapshot] = entries[0]!;
+    return connectionId === listed.connectionId && snapshot.connectionId === listed.connectionId
+      ? snapshot
+      : null;
+  };
+
   const reconcile = async (context: BackgroundServiceContext): Promise<void> => {
     let source: unknown;
     try {
@@ -523,8 +578,34 @@ export function createDiscordGatewaySupervisor(options: DiscordGatewaySupervisor
       return;
     }
 
+    const snapshots: ConversationProviderConnectionReconciliationSnapshotV1[] = [];
+    for (const listed of Object.values(parsed.data)) {
+      const current = await readCurrentConnection(listed, context);
+      if (current !== null) snapshots.push(current);
+    }
+    const retainedFingerprints = new Set(snapshots.map(connectionFingerprint));
+    for (const entry of workers.values()) retainedFingerprints.add(entry.fingerprint);
+    for (const fingerprint of terminalReasonByFingerprint.keys()) {
+      if (!retainedFingerprints.has(fingerprint)) terminalReasonByFingerprint.delete(fingerprint);
+    }
+    for (const fingerprint of blockedUntilByFingerprint.keys()) {
+      if (!retainedFingerprints.has(fingerprint)) blockedUntilByFingerprint.delete(fingerprint);
+    }
+    const retainedFactKeys = new Set(snapshots.map(connectionFactKey));
+    for (const entry of workers.values()) retainedFactKeys.add(connectionFactKey(entry.snapshot));
+    for (const factKey of reportedNotRunning) {
+      if (!retainedFactKeys.has(factKey)) reportedNotRunning.delete(factKey);
+    }
+    // A queued fact is only ever published against a reconciled connection and
+    // authority epoch. Once that pair leaves reconciliation nothing can select
+    // it again, so retaining the payload for the rest of the daemon generation
+    // only accumulates unreachable evidence under connection churn.
+    for (const factKey of pendingFacts.keys()) {
+      if (!retainedFactKeys.has(factKey)) pendingFacts.delete(factKey);
+    }
+
     const currentIds = new Set<string>();
-    for (const snapshot of Object.values(parsed.data)) {
+    for (const snapshot of snapshots) {
       currentIds.add(snapshot.connectionId);
       const factKey = connectionFactKey(snapshot);
       const fingerprint = connectionFingerprint(snapshot);

@@ -170,7 +170,9 @@ describe('projectPosthogFacts', () => {
 
         const { facts, truncated } = projectPosthogFacts(first, { ...LOOSE_BOUNDS, maxFacts: 3 });
 
-        expect(facts.map((fact) => fact.id)).toEqual(POSTHOG_FACT_PRIORITY.slice(0, 3));
+        // This scan row has no detail enrichment, so priority is applied among the
+        // candidates actually present rather than requiring detail-only facts.
+        expect(facts.map((fact) => fact.id)).toEqual(['occurrences', 'lastSeen', 'users']);
         expect(truncated).toBe(true);
     });
 });

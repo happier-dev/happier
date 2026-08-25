@@ -493,16 +493,12 @@ function StackTracePanel({
 
 function AffectedSessionsPanel({
     controller,
-    input,
 }: Readonly<{
     controller: PosthogOccurrenceControllerV1;
-    input: TriageDetailSurfaceInputV1;
 }>): React.ReactElement {
     const rows = useActiveDerivation(
-        () => posthogAffectedSessionRows(controller.state.rows, {
-            issueWebUrl: input.observation.locator.webUrl ?? null,
-        }),
-        [controller.state.rows, input.observation.locator.webUrl],
+        () => posthogAffectedSessionRows(controller.state.rows),
+        [controller.state.rows],
     );
 
     if (controller.state.kind === 'loading') {
@@ -536,9 +532,6 @@ function AffectedSessionsPanel({
                     title={row.sessionId}
                     {...(row.url === null ? {} : { subtitle: row.url })}
                     detail={`${String(row.occurrenceCount)} sampled occurrence(s)`}
-                    accessory={row.replay.kind === 'candidate'
-                        ? <Badge value="Replay link" tone="info" />
-                        : <Badge value="No replay link" />}
                 />
             )}
         />
@@ -763,7 +756,7 @@ function PosthogDetailBody({
             <OccurrencesPanel controller={controller} locale={locale} nowMs={nowMs} />
         ),
         'stack-trace': <StackTracePanel controller={controller} />,
-        'affected-sessions': <AffectedSessionsPanel controller={controller} input={input} />,
+        'affected-sessions': <AffectedSessionsPanel controller={controller} />,
         // The Activity controller is created inside its own panel: its lifetime is the
         // panel's active interval, so hoisting it here would outlive the leave the
         // declaration promises.

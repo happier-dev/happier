@@ -4,6 +4,7 @@ import {
   type PluginInvocationCaller,
   type PluginInvocationContext,
 } from '@happier-dev/plugin-sdk';
+import { PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1 } from '@happier-dev/plugin-sdk/collections';
 import type {
   ConversationEndpointAudienceV1,
   ConversationProviderConnectionReadInputV1,
@@ -26,10 +27,7 @@ import {
   CHANNEL_STATE_INDEX_ID,
   CHANNEL_STATE_RECORD_KIND,
 } from './collections.js';
-import {
-  MAX_CHANNEL_ACCOUNT_COLLECTION_QUERY_PAGE_SIZE,
-  requireChannelsAccountStorage,
-} from './requiredAccountStorage.js';
+import { requireChannelsAccountStorage } from './requiredAccountStorage.js';
 import {
   areConversationMaterializationRefsEqual,
   hasUnsettledDestructiveOldTransportStop,
@@ -346,7 +344,7 @@ async function readCollectionValuesByKind(input: Readonly<{
       index: CHANNEL_STATE_INDEX_ID.byKind,
       prefix: [input.kind],
       order: 'asc',
-      limit: Math.min(remaining, MAX_CHANNEL_ACCOUNT_COLLECTION_QUERY_PAGE_SIZE),
+      limit: Math.min(remaining, PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1),
       ...(cursor === undefined ? {} : { cursor }),
     }, { signal: input.context.signal });
     if (changeCursor !== undefined && page.changeCursor !== changeCursor) {

@@ -1,6 +1,6 @@
 import type { BackgroundServiceContext } from '@happier-dev/plugin-sdk/background-services';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
-import type { PluginActionResultById } from '@happier-dev/plugin-sdk/actions';
+import { PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1 } from '@happier-dev/plugin-sdk/collections';
 import {
   MAX_CONVERSATION_BINDINGS_PER_ACCOUNT,
 } from '@happier-dev/channels-protocol/v1';
@@ -12,8 +12,11 @@ import {
   CHANNEL_STATE_INDEX_ID,
   CHANNEL_STATE_RECORD_KIND,
 } from './collections.js';
-import { MAX_CHANNEL_ACCOUNT_COLLECTION_QUERY_PAGE_SIZE } from './requiredAccountStorage.js';
 import { requireChannelsAccountStorage } from './requiredAccountStorage.js';
+import {
+  classifySupervisorFailure,
+  isInactiveSupervisorCollectionFailure,
+} from './supervisorFailure.js';
 import {
   acceptConversationPermissionWaitOutwardDelivery,
   createConversationOutwardDeliveryCollectionScanner,
@@ -27,6 +30,10 @@ import {
   type ConversationPermissionWaitMediationSource,
 } from './outwardDelivery.js';
 import { finalizeConversationConnectionDeletesForInvocation } from './management.js';
+import {
+  readConversationPendingPermissions,
+  type ConversationPendingPermissionProjection,
+} from './permissionMediation.js';
 import {
   createConversationSessionProjectionCollectionStore,
   projectConversationSessionTranscriptPage,
@@ -46,7 +53,7 @@ const OUTWARD_DELIVERY_RETENTION_MS = 30 * 24 * 60 * 60 * 1_000;
  * this page did not cover into the next wake, so no second scan loop, worker,
  * or queue is needed to drain a backlog.
  */
-const MAX_DELIVERIES_PER_WAKE = MAX_CHANNEL_ACCOUNT_COLLECTION_QUERY_PAGE_SIZE;
+const MAX_DELIVERIES_PER_WAKE = PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1;
 
 type Clock = Readonly<{
   now(): number;
@@ -61,20 +68,42 @@ type PermissionWaitMediationSnapshot = Readonly<{
   truncated: boolean;
 }>;
 
-type PermissionWaitPendingList = PluginActionResultById['session.permission.remote.pending.list'];
+
+/**
+ * The one generation-local retention pass, carried between wakes.
+ *
+ * `updatedAt` is not part of the terminal custody index, so a pass has to walk
+ * every terminal row to find the ones past the window. That is fine while a
+ * pass is running — `cursor` carries it — but an exhausted pass used to be
+ * restarted by the very next one-second wake, so an Account with a long
+ * delivery history paged its whole terminal index over the network forever to
+ * keep discovering that nothing had aged yet.
+ *
+ * `notBefore` is the exact wall clock at which that answer can first change:
+ * the earliest terminal-entry `updatedAt` the finished pass retained plus the
+ * recovery window, or one whole window from now when it retained nothing,
+ * because a row that terminalizes after the pass cannot become eligible sooner
+ * than that. It is a derived deadline rather than a polling interval, so it
+ * delays no reclamation and needs no chosen number.
+ */
+export type ConversationOutwardRetentionSweepState = Readonly<{
+  cursor?: string;
+  notBefore?: number;
+  earliestRetainedAt?: number;
+}>;
 
 export type ConversationOutwardDeliveryCycleOptions = Readonly<{
   context: BackgroundServiceContext;
   now?: () => number;
   staleAttemptAfterMs?: number;
   deliveryCursor?: string;
-  retentionCursor?: string;
+  retentionSweep?: ConversationOutwardRetentionSweepState;
   createAttemptId?: () => string;
 }>;
 
 export type ConversationOutwardDeliveryCycleResult = Readonly<{
   nextDeliveryCursor?: string;
-  nextRetentionCursor?: string;
+  nextRetentionSweep?: ConversationOutwardRetentionSweepState;
 }>;
 
 export type ConversationOutwardDeliverySupervisorOptions = Readonly<{
@@ -122,6 +151,35 @@ function positiveDelay(value: number | undefined, fallback: number, label: strin
   return resolved;
 }
 
+function earliestRetentionDeadlineAnchor(
+  carried: number | undefined,
+  candidate: number | undefined,
+): number | undefined {
+  if (candidate === undefined) return carried;
+  return carried === undefined ? candidate : Math.min(carried, candidate);
+}
+
+/**
+ * A page that carried the pass to its end turns the earliest anchor it saw
+ * into the wall clock at which the next page could first reclaim anything;
+ * any other page just carries its keyset position and that anchor forward.
+ */
+function advanceRetentionSweep(input: Readonly<{
+  scanned: Readonly<{ nextCursor?: string }>;
+  earliestRetainedAt: number | undefined;
+  retentionAt: number;
+}>): ConversationOutwardRetentionSweepState {
+  if (input.scanned.nextCursor !== undefined) {
+    return {
+      cursor: input.scanned.nextCursor,
+      ...(input.earliestRetainedAt === undefined ? {} : { earliestRetainedAt: input.earliestRetainedAt }),
+    };
+  }
+  return {
+    notBefore: (input.earliestRetainedAt ?? input.retentionAt) + OUTWARD_DELIVERY_RETENTION_MS,
+  };
+}
+
 function isJsonRecord(value: JsonValue): value is JsonRecord {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
@@ -143,8 +201,15 @@ function bindingConnectionIdFromRow(value: JsonValue, rowId: string): string | u
   return typeof connectionId === 'string' ? connectionId : undefined;
 }
 
-function logOutwardDeliverySupervisorCycleFailure(context: BackgroundServiceContext): void {
-  context.services.logger.warn('[Channels] outward delivery supervisor cycle failed', { boundary: 'cycle' });
+function logOutwardDeliverySupervisorCycleFailure(
+  context: BackgroundServiceContext,
+  error: unknown,
+): void {
+  if (isInactiveSupervisorCollectionFailure(error)) return;
+  context.services.logger.warn('[Channels] outward delivery supervisor cycle failed', {
+    boundary: 'cycle',
+    ...(classifySupervisorFailure(error) ?? {}),
+  });
 }
 
 type OutwardDeliveryWorkFailureBoundary =
@@ -159,11 +224,13 @@ type OutwardDeliveryWorkFailureBoundary =
 function logOutwardDeliverySupervisorWorkFailure(
   context: BackgroundServiceContext,
   boundary: OutwardDeliveryWorkFailureBoundary,
-  identifiers?: Readonly<{ connectionId?: string; bindingId?: string }>,
+  identifiers?: Readonly<{ connectionId?: string; bindingId?: string; error?: unknown }>,
 ): void {
   if (context.signal.aborted) return;
+  if (isInactiveSupervisorCollectionFailure(identifiers?.error)) return;
   context.services.logger.warn('[Channels] outward delivery supervisor work failed', {
     boundary,
+    ...(classifySupervisorFailure(identifiers?.error) ?? {}),
     ...(identifiers?.connectionId === undefined ? {} : { connectionId: identifiers.connectionId }),
     ...(identifiers?.bindingId === undefined ? {} : { bindingId: identifiers.bindingId }),
   });
@@ -249,7 +316,7 @@ async function readCurrentBindingIds(context: BackgroundServiceContext): Promise
       index: CHANNEL_STATE_INDEX_ID.byKind,
       prefix: [CHANNEL_STATE_RECORD_KIND.binding],
       order: 'asc',
-      limit: Math.min(MAX_CONVERSATION_BINDINGS_PER_ACCOUNT - bindingIds.length, MAX_CHANNEL_ACCOUNT_COLLECTION_QUERY_PAGE_SIZE),
+      limit: Math.min(MAX_CONVERSATION_BINDINGS_PER_ACCOUNT - bindingIds.length, PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1),
       ...(cursor === undefined ? {} : { cursor }),
     }, { signal: context.signal });
     for (const row of page.rows) {
@@ -293,9 +360,9 @@ export async function runConversationOutwardDeliveryCycle(
     // Delete custody is settled before generic redrive so a retained ready row
     // cannot race into a provider effect after connection authority is gone.
     await finalizeConversationConnectionDeletesForInvocation(context);
-  } catch {
+  } catch (error) {
     // The retained finalizing row remains the recovery source for the next wake.
-    logOutwardDeliverySupervisorWorkFailure(context, 'delete-finalization');
+    logOutwardDeliverySupervisorWorkFailure(context, 'delete-finalization', { error });
   }
   if (context.signal.aborted) return {};
   const deliveryStore = createConversationOutwardDeliveryCollectionStore({
@@ -339,10 +406,10 @@ export async function runConversationOutwardDeliveryCycle(
   };
 
   let nextDeliveryCursor = input.deliveryCursor;
-  let nextRetentionCursor = input.retentionCursor;
+  let nextRetentionSweep = input.retentionSweep;
   const cycleResult = (): ConversationOutwardDeliveryCycleResult => ({
     ...(nextDeliveryCursor === undefined ? {} : { nextDeliveryCursor }),
-    ...(nextRetentionCursor === undefined ? {} : { nextRetentionCursor }),
+    ...(nextRetentionSweep === undefined ? {} : { nextRetentionSweep }),
   });
   const retainedPermissionWaits: ConversationOutwardDeliveryRecord[] = [];
   try {
@@ -367,19 +434,20 @@ export async function runConversationOutwardDeliveryCycle(
         }
         try {
           await redriveRetainedDelivery(record);
-        } catch {
+        } catch (error) {
           // The durable row stays eligible for a later wake. A failed owner
           // operation never authorizes a synthetic resend or cursor advance.
           logOutwardDeliverySupervisorWorkFailure(context, 'delivery-operation', {
+            error,
             connectionId: record.obligation.connectionId,
             ...(record.obligation.bindingId === undefined ? {} : { bindingId: record.obligation.bindingId }),
           });
         }
       }
     }
-  } catch {
+  } catch (error) {
     // Storage/action availability is re-evaluated next wake from durable rows.
-    logOutwardDeliverySupervisorWorkFailure(context, 'delivery-scan');
+    logOutwardDeliverySupervisorWorkFailure(context, 'delivery-scan', { error });
   }
 
   if (context.signal.aborted) return cycleResult();
@@ -387,8 +455,8 @@ export async function runConversationOutwardDeliveryCycle(
   let bindingIds: readonly string[];
   try {
     bindingIds = await readCurrentBindingIds(context);
-  } catch {
-    logOutwardDeliverySupervisorWorkFailure(context, 'binding-discovery');
+  } catch (error) {
+    logOutwardDeliverySupervisorWorkFailure(context, 'binding-discovery', { error });
     return cycleResult();
   }
 
@@ -407,20 +475,23 @@ export async function runConversationOutwardDeliveryCycle(
       }
       continue;
     }
-    let pending: PermissionWaitPendingList;
+    let pending: ConversationPendingPermissionProjection;
     try {
-      pending = await context.services.actions.execute(
-        'session.permission.remote.pending.list',
-        {
+      // The complete projection, not its first bounded page: a permission wait
+      // beyond that page is still pending, and suppressing its custody as
+      // absent would retract a prompt the person still has to answer.
+      pending = await readConversationPendingPermissions({
+        actions: context.services.actions,
+        source: {
           sessionId: source.source.sessionId,
           sourceRef: source.source.sourceRef,
           sourceRevisionOrEpoch: source.source.sourceRevisionOrEpoch,
         },
-        { signal: context.signal },
-      );
-    } catch {
+        signal: context.signal,
+      });
+    } catch (error) {
       if (!context.signal.aborted) {
-        logOutwardDeliverySupervisorWorkFailure(context, 'permission-mediation', { bindingId });
+        logOutwardDeliverySupervisorWorkFailure(context, 'permission-mediation', { error, bindingId });
       }
       continue;
     }
@@ -436,8 +507,7 @@ export async function runConversationOutwardDeliveryCycle(
         stateCollection,
         store: deliveryStore,
         source: source.source,
-        turnId: request.turnId,
-        requestId: request.requestId,
+        request,
         signal: context.signal,
       });
       if ((accepted.kind === 'unavailable' || accepted.kind === 'invalid')
@@ -467,8 +537,9 @@ export async function runConversationOutwardDeliveryCycle(
     if (stillPending) {
       try {
         await redriveRetainedDelivery(record);
-      } catch {
+      } catch (error) {
         logOutwardDeliverySupervisorWorkFailure(context, 'delivery-operation', {
+          error,
           connectionId: record.obligation.connectionId,
           ...(record.obligation.bindingId === undefined ? {} : { bindingId: record.obligation.bindingId }),
         });
@@ -495,8 +566,9 @@ export async function runConversationOutwardDeliveryCycle(
           throw new Error('A non-pending permission wait must not reach provider delivery.');
         },
       });
-    } catch {
+    } catch (error) {
       logOutwardDeliverySupervisorWorkFailure(context, 'permission-mediation', {
+        error,
         connectionId: record.obligation.connectionId,
         ...(record.obligation.bindingId === undefined ? {} : { bindingId: record.obligation.bindingId }),
       });
@@ -532,10 +604,10 @@ export async function runConversationOutwardDeliveryCycle(
       if (projected.kind === 'historyGap') {
         logConversationSessionProjectionHistoryGap(context, { bindingId, reason: projected.reason });
       }
-    } catch {
+    } catch (error) {
       // Projection never receives a local replacement owner; its unchanged
       // frontier causes the canonical page to be re-read on the next wake.
-      logOutwardDeliverySupervisorWorkFailure(context, 'transcript-projection', { bindingId });
+      logOutwardDeliverySupervisorWorkFailure(context, 'transcript-projection', { error, bindingId });
     }
   }
 
@@ -547,37 +619,59 @@ export async function runConversationOutwardDeliveryCycle(
   // that only reclaims rows already past their thirty-day window, so nothing it
   // does is worth delaying an approval prompt by. Its own keyset cursor carries
   // the remainder to the next wake either way.
-  const retentionNow = now();
-  if (retentionNow >= OUTWARD_DELIVERY_RETENTION_MS) {
-    try {
-      const scanned = await scanner.scanRetention({
-        cutoff: retentionNow - OUTWARD_DELIVERY_RETENTION_MS,
-        limit: MAX_DELIVERIES_PER_WAKE,
-        ...(input.retentionCursor === undefined ? {} : { cursor: input.retentionCursor }),
-      });
-      if (scanned.kind === 'unavailable') {
-        if (scanned.reason !== 'cancelled') {
-          logOutwardDeliverySupervisorWorkFailure(context, 'delivery-retention');
+  // Cutoff validity belongs to the scanner, which already answers a cutoff
+  // before the epoch with an empty page. Repeating that decision here compared
+  // an absolute wall-clock reading against a thirty-day DURATION, so the branch
+  // was true for every wake after 1970-01-31 and could not refuse anything.
+  const retentionAt = now();
+  if (input.retentionSweep?.notBefore !== undefined && retentionAt < input.retentionSweep.notBefore) {
+    return cycleResult();
+  }
+  try {
+    const scanned = await scanner.scanRetention({
+      cutoff: retentionAt - OUTWARD_DELIVERY_RETENTION_MS,
+      limit: MAX_DELIVERIES_PER_WAKE,
+      ...(input.retentionSweep?.cursor === undefined ? {} : { cursor: input.retentionSweep.cursor }),
+    });
+    if (scanned.kind === 'unavailable') {
+      if (scanned.reason !== 'cancelled') {
+        logOutwardDeliverySupervisorWorkFailure(context, 'delivery-retention');
+      }
+    } else {
+      let earliestRetainedAt = earliestRetentionDeadlineAnchor(
+        input.retentionSweep?.earliestRetainedAt,
+        scanned.earliestRetainedUpdatedAt,
+      );
+      for (const record of scanned.records) {
+        if (context.signal.aborted) {
+          nextRetentionSweep = advanceRetentionSweep({ scanned, earliestRetainedAt, retentionAt });
+          return cycleResult();
         }
-      } else {
-        nextRetentionCursor = scanned.nextCursor;
-        for (const record of scanned.records) {
-          if (context.signal.aborted) return cycleResult();
-          const retired = await deliveryStore.retire({
-            custodyId: record.custodyId,
-            expectedRevision: record.revision,
+        const retired = await deliveryStore.retire({
+          custodyId: record.custodyId,
+          expectedRevision: record.revision,
+        });
+        if (retired.kind === 'unavailable' && retired.reason !== 'cancelled') {
+          logOutwardDeliverySupervisorWorkFailure(context, 'delivery-retention', {
+            connectionId: record.obligation.connectionId,
+            ...(record.obligation.bindingId === undefined ? {} : { bindingId: record.obligation.bindingId }),
           });
-          if (retired.kind === 'unavailable' && retired.reason !== 'cancelled') {
-            logOutwardDeliverySupervisorWorkFailure(context, 'delivery-retention', {
-              connectionId: record.obligation.connectionId,
-              ...(record.obligation.bindingId === undefined ? {} : { bindingId: record.obligation.bindingId }),
-            });
-          }
+        }
+        if (retired.kind !== 'retired') {
+          // A row this pass selected but did not retire — lost CAS or refused
+          // storage — is already past the window, so the pass is not exhausted.
+          // Anchoring at the cutoff resolves the deadline to this wake, and the
+          // next one rescans exactly as it did before a pass carried one.
+          earliestRetainedAt = earliestRetentionDeadlineAnchor(
+            earliestRetainedAt,
+            retentionAt - OUTWARD_DELIVERY_RETENTION_MS,
+          );
         }
       }
-    } catch {
-      logOutwardDeliverySupervisorWorkFailure(context, 'delivery-retention');
+      nextRetentionSweep = advanceRetentionSweep({ scanned, earliestRetainedAt, retentionAt });
     }
+  } catch (error) {
+    logOutwardDeliverySupervisorWorkFailure(context, 'delivery-retention', { error });
   }
   return cycleResult();
 }
@@ -616,7 +710,7 @@ export function createConversationOutwardDeliverySupervisor(
     if (context.signal.aborted) abortFromContext();
     else context.signal.addEventListener('abort', abortFromContext, { once: true });
     let deliveryCursor: string | undefined;
-    let retentionCursor: string | undefined;
+    let retentionSweep: ConversationOutwardRetentionSweepState | undefined;
     running = (async () => {
       try {
         while (!supervisorController.signal.aborted) {
@@ -630,15 +724,15 @@ export function createConversationOutwardDeliverySupervisor(
               now: clock.now,
               staleAttemptAfterMs,
               ...(deliveryCursor === undefined ? {} : { deliveryCursor }),
-              ...(retentionCursor === undefined ? {} : { retentionCursor }),
+              ...(retentionSweep === undefined ? {} : { retentionSweep }),
             });
             deliveryCursor = cycle.nextDeliveryCursor;
-            retentionCursor = cycle.nextRetentionCursor;
-          } catch {
+            retentionSweep = cycle.nextRetentionSweep;
+          } catch (error) {
             // Leave the cursor unchanged so a transient failure cannot skip
             // a durable row. The next wake repeats canonical discovery.
             if (!supervisorController.signal.aborted) {
-              logOutwardDeliverySupervisorCycleFailure(workerContext);
+              logOutwardDeliverySupervisorCycleFailure(workerContext, error);
             }
           }
           if (supervisorController.signal.aborted) break;

@@ -84,7 +84,7 @@ describe('createElevenLabsSessionPreparationService', () => {
     await expect(service.prepare({
       controlSessionId: 'disabled', requestedTargetSessionId: null, retryAfterPaywall: false,
       settings: {}, credentials: credentials(), hostedConversation: null,
-      signal: new AbortController().signal, textOnly: false,
+      signal: new AbortController().signal, platform: 'web', textOnly: false,
     })).resolves.toMatchObject({ kind: 'declined', failure: { reason: 'voice_provider_settings_unavailable' } });
     expect(mocks.startHostedConversation).not.toHaveBeenCalled();
     expect(mocks.requestAccountOperation).not.toHaveBeenCalled();
@@ -98,7 +98,7 @@ describe('createElevenLabsSessionPreparationService', () => {
     await expect(service.prepare({
       controlSessionId: 'invalid', requestedTargetSessionId: null, retryAfterPaywall: false,
       settings: {}, credentials: credentials(), hostedConversation: null,
-      signal: new AbortController().signal, textOnly: false,
+      signal: new AbortController().signal, platform: 'web', textOnly: false,
     })).resolves.toMatchObject({ kind: 'declined', failure: { reason: 'voice_provider_settings_unavailable' } });
     expect(mocks.startHostedConversation).not.toHaveBeenCalled();
     expect(mocks.requestAccountOperation).not.toHaveBeenCalled();
@@ -109,7 +109,7 @@ describe('createElevenLabsSessionPreparationService', () => {
     await expect(service.prepare({
       controlSessionId: 'byo', requestedTargetSessionId: null, retryAfterPaywall: false,
       settings: {}, credentials: credentials(), hostedConversation: null,
-      signal: new AbortController().signal, textOnly: false,
+      signal: new AbortController().signal, platform: 'web', textOnly: false,
     })).resolves.toMatchObject({
       kind: 'declined',
       failure: {
@@ -132,6 +132,7 @@ describe('createElevenLabsSessionPreparationService', () => {
       credentials: Object.freeze({ phase: 'prepare', mediated: null, raw: null }),
       hostedConversation: null,
       signal: new AbortController().signal,
+      platform: 'web',
       textOnly: false,
     })).resolves.toMatchObject({
       kind: 'declined',
@@ -148,7 +149,7 @@ describe('createElevenLabsSessionPreparationService', () => {
     const prepared = await service.prepare({
       controlSessionId: 'control-byo', initialContext: 'context', requestedTargetSessionId: null,
       retryAfterPaywall: false, settings: {}, credentials: credentials(), hostedConversation: null,
-      signal: new AbortController().signal, textOnly: false,
+      signal: new AbortController().signal, platform: 'web', textOnly: false,
     });
     expect(prepared).toMatchObject({ kind: 'prepared', session: { sessionConfig: { token: 'ephemeral-token' } } });
     if (prepared.kind !== 'prepared') throw new Error('expected prepared');
@@ -176,11 +177,53 @@ describe('createElevenLabsSessionPreparationService', () => {
     const prepared = await service.prepare({
       controlSessionId: 'control-text', initialContext: 'base', requestedTargetSessionId: null,
       retryAfterPaywall: false, settings: {}, credentials: credentials(), hostedConversation: null,
-      signal: new AbortController().signal, textOnly: true,
+      signal: new AbortController().signal, platform: 'web', textOnly: true,
     });
     if (prepared.kind !== 'prepared') throw new Error('expected prepared');
     expect(prepared.session.sessionConfig).toMatchObject({ signedUrl: 'wss://provider.test/session', textOnly: true });
     expect(String((prepared.session.sessionConfig as Record<string, unknown>).initialContext)).toContain('friendly greeting');
+    expect(service.buildStartConfig({ prepared: prepared.session, settings: projected })).toMatchObject({
+      connectionType: 'websocket', signedUrl: 'wss://provider.test/session', textOnly: true,
+    });
+    expect(mocks.requestAccountOperation).toHaveBeenCalledWith(expect.objectContaining({
+      operationId: 'signed-url',
+    }));
+  });
+
+  it('uses a WebRTC conversation token for native text-only BYO sessions', async () => {
+    mocks.requestAccountOperation.mockImplementationOnce(async (request: Readonly<{
+      operationId: string;
+    }>) => (
+      request.operationId === 'conversation-token'
+        ? {
+            status: 200,
+            finalUrl: 'https://api.elevenlabs.io/v1/convai/conversation/token?agent_id=agent-native',
+            headers: { 'content-type': 'application/json' },
+            body: new TextEncoder().encode(JSON.stringify({ token: 'native-token' })),
+          }
+        : {
+            status: 200,
+            finalUrl: 'https://api.elevenlabs.io/v1/convai/conversation/get-signed-url?agent_id=agent-native',
+            headers: { 'content-type': 'application/json' },
+            body: new TextEncoder().encode(JSON.stringify({ signed_url: 'wss://provider.test/native' })),
+          }
+    ));
+    const projected = settings({ billingMode: 'byo', agentId: 'agent-native' });
+    const service = createService(vi.fn(() => projected));
+    const prepared = await service.prepare({
+      controlSessionId: 'control-native', requestedTargetSessionId: null, retryAfterPaywall: false,
+      settings: {}, credentials: credentials(), hostedConversation: null,
+      signal: new AbortController().signal, platform: 'ios', textOnly: true,
+    });
+    if (prepared.kind !== 'prepared') throw new Error('expected prepared');
+    expect(prepared.session.sessionConfig).toMatchObject({ token: 'native-token', textOnly: true });
+    expect(prepared.session.sessionConfig).not.toHaveProperty('signedUrl');
+    expect(service.buildStartConfig({ prepared: prepared.session, settings: projected })).toMatchObject({
+      connectionType: 'webrtc', conversationToken: 'native-token', textOnly: true,
+    });
+    expect(mocks.requestAccountOperation).toHaveBeenCalledWith(expect.objectContaining({
+      operationId: 'conversation-token',
+    }));
   });
 
   it('reports selection without provider work', () => {
@@ -200,7 +243,7 @@ describe('createElevenLabsSessionPreparationService', () => {
     await expect(service.prepare({
       controlSessionId: 'hosted', requestedTargetSessionId: 'target', retryAfterPaywall: false,
       settings: {}, credentials: Object.freeze({ phase: 'prepare', mediated: null, raw: null }), hostedConversation: hostedConversation(),
-      signal: new AbortController().signal, textOnly: false,
+      signal: new AbortController().signal, platform: 'web', textOnly: false,
     })).resolves.toMatchObject({
       kind: 'prepared', session: {
         sessionConfig: { token: 'hosted-token', leaseId: 'lease-hosted', bindingNonce: 'nonce-hosted' },
@@ -215,7 +258,7 @@ describe('createElevenLabsSessionPreparationService', () => {
     await expect(service.prepare({
       controlSessionId: 'hosted-unavailable', requestedTargetSessionId: null, retryAfterPaywall: false,
       settings: {}, credentials: Object.freeze({ phase: 'prepare', mediated: null, raw: null }), hostedConversation: null,
-      signal: new AbortController().signal, textOnly: false,
+      signal: new AbortController().signal, platform: 'web', textOnly: false,
     })).resolves.toMatchObject({
       kind: 'declined',
       failure: { reason: 'realtime_hosted_conversation_unavailable' },

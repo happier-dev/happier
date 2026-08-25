@@ -6,16 +6,20 @@ import {
   type PluginInvocationCaller,
   type PluginInvocationContext,
 } from '@happier-dev/plugin-sdk';
-import type {
-  PluginCollectionBatchMeasurement,
-  PluginCollectionLimits,
-  PluginCollectionRow,
+import {
+  PLUGIN_COLLECTION_MUTATION_BATCH_MAX_ROWS_V1,
+  PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1,
+  type PluginCollectionBatchMeasurement,
+  type PluginCollectionLimits,
+  type PluginCollectionMutation,
+  type PluginCollectionRow,
 } from '@happier-dev/plugin-sdk/collections';
 import { pluginJsonValuesEqual } from '@happier-dev/plugin-sdk/protocol';
 import type {
   PluginActionResultById,
   PluginMachineExecutionOriginV1,
 } from '@happier-dev/plugin-sdk/actions';
+import { PluginMachineExecutionOriginV1Schema } from '@happier-dev/plugin-sdk/actions';
 import {
   AutomationConversationResultDeliveryV1Schema,
   type AutomationConversationAdmitInputV1,
@@ -29,6 +33,7 @@ import {
   type ChannelSessionSpawnRecipeV1,
   type ConversationBindingInputModeV1,
   ConversationAuthenticatedObservationShellV1Schema,
+  ConversationIngressAutomationEventCandidateV1Schema,
   ConversationBindingIdV1Schema,
   ConversationConnectionIdV1Schema,
   type ConversationAuthenticatedObservationShellV1,
@@ -45,6 +50,9 @@ import {
   MAX_CONVERSATION_RECEIVE_WAIT_MS,
   MIN_CONVERSATION_OBSERVATION_AGE_MS,
   type ConversationObservationV1,
+  type ConversationIngressAutomationEventCandidateV1,
+  type ConversationIngressObservedEntryV1,
+  ConversationProviderAutomationEventAdmitResultV1Schema,
   type ConversationProviderObservationIngestInputV1,
   ConversationProviderObservationIngestInputV1Schema,
 } from '@happier-dev/channels-protocol/v1';
@@ -66,6 +74,10 @@ import {
   type ConversationCheckpointedPollInvocationBasisV1,
   type ConversationPendingOldTransportStopV1,
 } from './connectionLifecycle.js';
+import {
+  isConversationPollFailureAttemptCount,
+  isConversationPollRetryAttemptCount,
+} from './connectionPollFailureBounds.js';
 import { readPersistedConversationConnectionPollFailure } from './connectionPollFailurePersistence.js';
 import { hasCurrentConversationTransportCaller } from './reconciliation.js';
 import {
@@ -84,17 +96,19 @@ import {
   isCanonicalChannelStateRecordIdentity,
   type PersistedConversationProviderContributionSelection,
 } from './collections.js';
-import {
-  MAX_CHANNEL_ACCOUNT_COLLECTION_QUERY_PAGE_SIZE,
-  requireChannelsAccountStorage,
-} from './requiredAccountStorage.js';
+import { requireChannelsAccountStorage } from './requiredAccountStorage.js';
 import { conversationRetryDelayMs } from './retryBackoff.js';
 import {
   acceptConversationOutwardDeliveryReady,
   createConversationOutwardDeliveryCollectionStore,
   prepareConversationOutwardDeliveryReady,
+  type ConversationControlResponseKind,
   type ConversationControlResponseObligation,
 } from './outwardDelivery.js';
+import {
+  readConversationPendingPermissions,
+  type ConversationPendingPermissionProjection,
+} from './permissionMediation.js';
 import {
   readConversationBindingUpdateRow,
   readConversationConnectionUpdateRow,
@@ -152,7 +166,8 @@ function readConversationPollResultForAdmission(
   }
 
   const occurrenceIds = new Set<string>();
-  for (const observation of result.observations) {
+  for (const entry of result.observations) {
+    const observation = entry.observation;
     const occurrenceId = observation.kind === 'fullText'
       ? observation.observation.occurrenceId
       : observation.shell.occurrenceId;
@@ -245,6 +260,18 @@ type FrozenSessionTarget = Readonly<{
     decision: 'allow' | 'deny';
     scope: 'request' | 'session';
   }> | null;
+  /**
+   * The one frozen `/answer` payload this obligation may pass unchanged to
+   * the canonical AskUserQuestion owner. Choice membership, required answers,
+   * and answer shape remain Session-owned.
+   */
+  userActionAnswer: Readonly<{
+    requestId: string;
+    answers: readonly Readonly<{
+      questionIndex: number;
+      values: readonly string[];
+    }>[];
+  }> | null;
 }>;
 
 type FrozenAutomationTarget = Readonly<{
@@ -255,7 +282,21 @@ type FrozenAutomationTarget = Readonly<{
   resultDelivery: AutomationConversationResultDeliveryV1;
 }>;
 
-type FrozenIngressTarget = FrozenSessionTarget | FrozenAutomationTarget;
+/**
+ * A provider-owned Automation Event candidate under the selected provider
+ * contribution. This is intentionally not a binding target: the provider
+ * Action owns definition selection/admission, while Channels owns its one
+ * ingress retry/checkpoint lifecycle.
+ */
+type FrozenEventTarget = Readonly<{
+  kind: 'event';
+  candidate: ConversationIngressAutomationEventCandidateV1;
+  providerPluginId: string;
+  providerContributionSelection: PersistedConversationProviderContributionSelection;
+  executionOrigin: PluginMachineExecutionOriginV1;
+}>;
+
+type FrozenIngressTarget = FrozenSessionTarget | FrozenAutomationTarget | FrozenEventTarget;
 
 type IngressCheckpointOutcome = 'checkpointSafe' | 'unsettled';
 type IngressObservationOutcome = 'checkpointSafe' | 'checkpointSafeNoCensus' | 'unsettled';
@@ -266,6 +307,7 @@ type IngressDisposition =
   | 'suppressed'
   | 'pairingConsumed'
   | 'approvalConsumed'
+  | 'userActionConsumed'
   | 'rotationBusy'
   | 'rotationSuperseded'
   | 'rotated'
@@ -283,14 +325,29 @@ type IngressObligationPayload = Readonly<{
   target: FrozenIngressTarget | null;
   sourceAuthority: Readonly<{
     connectionAuthorityEpoch: number;
-    bindingRevision: number;
-    bindingAuthorityEpoch: number;
+    bindingRevision: number | null;
+    bindingAuthorityEpoch: number | null;
   }>;
   lifecycle: Readonly<{
     phase: 'debounceDue' | 'ready' | 'attempting' | 'retryDue' | 'blocked' | 'terminal';
     attemptCount: number;
     dueAt: number | null;
   }>;
+  /**
+   * The host-stamped turn resolved for this obligation's frozen chat approval,
+   * persisted before the irreversible mediation effect. `sessionId`,
+   * `requestId`, `decision`, and `scope` are already immutable in the frozen
+   * target and the idempotency key is derived from this row's id, so the turn
+   * is the one member of the canonical owner's replay tuple that a projection
+   * would otherwise have to re-supply after the answer stopped being pending.
+   */
+  approvalTurnId: string | null;
+  /**
+   * The exact host-stamped turn for the frozen user-action answer. This lives
+   * on the incumbent ingress obligation before the irreversible Action call;
+   * it is not a second request/result store.
+   */
+  userActionAnswerTurnId: string | null;
   disposition: IngressDisposition | null;
   nonAdmission: IngressNonAdmission | null;
 }>;
@@ -300,7 +357,8 @@ type IngressObligationRecord = Readonly<{
   'record-kind': typeof CHANNEL_STATE_RECORD_KIND.ingressObligation;
   v: 1;
   'connection-id': string;
-  'binding-id': string;
+  /** Omitted for connection-owned provider Event obligations. */
+  'binding-id'?: string;
   terminal: boolean;
   attention: boolean;
   'due-at': number | null;
@@ -315,17 +373,55 @@ type IngressCensusMatchedBinding = Readonly<{
   bindingAuthorityEpoch: number;
 }>;
 
-type IngressCensusPayload = Readonly<{
-  normalizedIngress: ConversationNormalizedIngressV1;
+/** The one census has binding fanout plus at most one provider Event member. */
+type IngressCensusObligationMember =
+  | Readonly<{ kind: 'binding'; binding: IngressCensusMatchedBinding }>
+  | Readonly<{ kind: 'event'; candidate: ConversationIngressAutomationEventCandidateV1 }>;
+
+/**
+ * The body-free replay identity a settled census keeps in place of the full
+ * admitted ingress: the authenticated envelope it was already able to publish
+ * without a body, plus one connection-keyed digest of the admitted text. Both
+ * halves of replay equality — exact re-delivery and a later unsupported edit
+ * of the same message revision — still decide from it, while the message text
+ * itself stops being duplicated outside the Session transcript.
+ */
+type IngressCensusCompacted = Readonly<{
+  shell: ConversationAuthenticatedObservationShellV1;
+  textDigest: string;
+}>;
+
+type IngressCensusCommonPayload = Readonly<{
   phase: 'preparing' | 'prepared';
   connectionAuthorityEpoch: number;
   maximumObservationAgeMs: number;
-  /** Set only in the checkpoint CAS that proves every member was terminal and non-attention. */
+  /**
+   * Set only in the checkpoint CAS that carries this occurrence, and only for
+   * a prepared, conflict-free census. It records that the provider cursor has
+   * moved past the occurrence, not that its members finished: a member the
+   * retry ladder has exhausted keeps durable Account custody plus its manual
+   * retry, and requiring member custody here stranded exactly those units,
+   * because the provider never presents them again and the coverage they had
+   * already earned could then never be written. Member custody is re-derived
+   * from the live rows by retention, which is the owner that needs it.
+   */
   checkpointCoveredAt: number | null;
   /** Strict terminal fact for contradictory immutable occurrence evidence. */
   conflict: Readonly<{ kind: 'occurrenceEvidenceMismatch' }> | null;
+  /** One optional provider Event candidate, never a binding fanout. */
+  eventCandidate: ConversationIngressAutomationEventCandidateV1 | null;
   matchedBindings: readonly IngressCensusMatchedBinding[];
 }>;
+
+type IngressCensusPayload =
+  | (IngressCensusCommonPayload & Readonly<{
+    normalizedIngress: ConversationNormalizedIngressV1;
+    compacted: null;
+  }>)
+  | (IngressCensusCommonPayload & Readonly<{
+    normalizedIngress: null;
+    compacted: IngressCensusCompacted;
+  }>);
 
 type IngressCensusRecord = Readonly<{
   id: string;
@@ -337,6 +433,17 @@ type IngressCensusRecord = Readonly<{
   'updated-at': number;
   payload: IngressCensusPayload;
 }>;
+
+function ingressCensusObligationMembers(
+  payload: IngressCensusPayload,
+): readonly IngressCensusObligationMember[] {
+  return [
+    ...payload.matchedBindings.map((binding) => ({ kind: 'binding' as const, binding })),
+    ...(payload.eventCandidate === null
+      ? []
+      : [{ kind: 'event' as const, candidate: payload.eventCandidate }]),
+  ];
+}
 
 type CheckpointRecord = Readonly<{
   id: string;
@@ -368,7 +475,8 @@ type IngressAuthorityFence = Readonly<{
  * One connection fence plus one checkpoint leave the remaining slots for census
  * coverage.
  */
-const MAX_CHECKPOINTED_POLL_COVERAGE_OBSERVATIONS = 100 - 2;
+const MAX_CHECKPOINTED_POLL_COVERAGE_OBSERVATIONS =
+  PLUGIN_COLLECTION_MUTATION_BATCH_MAX_ROWS_V1 - 2;
 const INGRESS_RECOVERY_DELAY_MS = 0;
 const NEW_SESSION_CONTROL_RESPONSE_TEXT = {
   started: 'Started a new Session.',
@@ -611,6 +719,40 @@ function readFrozenIngressTarget(value: JsonValue | undefined): FrozenIngressTar
     } else {
       return undefined;
     }
+    const frozenUserActionAnswer = own(value, 'userActionAnswer');
+    let userActionAnswer: FrozenSessionTarget['userActionAnswer'];
+    if (frozenUserActionAnswer === undefined || frozenUserActionAnswer === null) {
+      userActionAnswer = null;
+    } else if (isJsonRecord(frozenUserActionAnswer)) {
+      const requestId = own(frozenUserActionAnswer, 'requestId');
+      const frozenAnswers = own(frozenUserActionAnswer, 'answers');
+      if (typeof requestId !== 'string' || !Array.isArray(frozenAnswers) || frozenAnswers.length === 0) {
+        return undefined;
+      }
+      const answers: Array<Readonly<{ questionIndex: number; values: readonly string[] }>> = [];
+      for (const frozenAnswer of frozenAnswers) {
+        if (!isJsonRecord(frozenAnswer)) return undefined;
+        const questionIndex = own(frozenAnswer, 'questionIndex');
+        const frozenValues = own(frozenAnswer, 'values');
+        if (
+          typeof questionIndex !== 'number'
+          || !Number.isSafeInteger(questionIndex)
+          || !Array.isArray(frozenValues)
+          || frozenValues.length === 0
+        ) {
+          return undefined;
+        }
+        const values: string[] = [];
+        for (const value of frozenValues) {
+          if (typeof value !== 'string') return undefined;
+          values.push(value);
+        }
+        answers.push({ questionIndex, values });
+      }
+      userActionAnswer = { requestId, answers };
+    } else {
+      return undefined;
+    }
     return {
       kind,
       sessionId,
@@ -619,6 +761,30 @@ function readFrozenIngressTarget(value: JsonValue | undefined): FrozenIngressTar
       remoteApprovalMaxScope,
       newSession,
       approval,
+      userActionAnswer,
+    };
+  }
+  if (kind === 'event') {
+    const candidate = ConversationIngressAutomationEventCandidateV1Schema.safeParse(own(value, 'candidate'));
+    const providerPluginId = own(value, 'providerPluginId');
+    const selection = own(value, 'providerContributionSelection');
+    const executionOrigin = PluginMachineExecutionOriginV1Schema.safeParse(own(value, 'executionOrigin'));
+    if (!isJsonRecord(selection)) return undefined;
+    const contributionId = own(selection, 'contributionId');
+    const immutableGenerationId = own(selection, 'immutableGenerationId');
+    if (
+      !candidate.success
+      || typeof providerPluginId !== 'string'
+      || typeof contributionId !== 'string'
+      || typeof immutableGenerationId !== 'string'
+      || !executionOrigin.success
+    ) return undefined;
+    return {
+      kind,
+      candidate: candidate.data,
+      providerPluginId,
+      providerContributionSelection: { contributionId, immutableGenerationId },
+      executionOrigin: executionOrigin.data,
     };
   }
   if (kind !== 'automation') return undefined;
@@ -647,6 +813,7 @@ const INGRESS_DISPOSITIONS = [
   'suppressed',
   'pairingConsumed',
   'approvalConsumed',
+  'userActionConsumed',
   'rotationBusy',
   'rotationSuperseded',
   'rotated',
@@ -684,7 +851,7 @@ function asIngressObligation(row: StateRow | null):
     id !== row.rowId
     || version !== 1
     || typeof connectionId !== 'string'
-    || typeof bindingId !== 'string'
+    || (bindingId !== undefined && typeof bindingId !== 'string')
     || typeof terminal !== 'boolean'
     || typeof attention !== 'boolean'
     || (dueAtProjection !== null && !isNonNegativeSafeInteger(dueAtProjection))
@@ -698,6 +865,14 @@ function asIngressObligation(row: StateRow | null):
   const censusId = own(payload, 'censusId');
   const sourceAuthority = own(payload, 'sourceAuthority');
   const lifecycle = own(payload, 'lifecycle');
+  const approvalTurnIdValue = own(payload, 'approvalTurnId');
+  const approvalTurnId = approvalTurnIdValue === undefined || approvalTurnIdValue === null
+    ? null
+    : approvalTurnIdValue;
+  const userActionAnswerTurnIdValue = own(payload, 'userActionAnswerTurnId');
+  const userActionAnswerTurnId = userActionAnswerTurnIdValue === undefined || userActionAnswerTurnIdValue === null
+    ? null
+    : userActionAnswerTurnIdValue;
   const disposition = own(payload, 'disposition') === null
     ? null
     : stringMember(own(payload, 'disposition'), INGRESS_DISPOSITIONS);
@@ -710,6 +885,8 @@ function asIngressObligation(row: StateRow | null):
     || typeof censusId !== 'string'
     || !isJsonRecord(sourceAuthority)
     || !isJsonRecord(lifecycle)
+    || (approvalTurnId !== null && typeof approvalTurnId !== 'string')
+    || (userActionAnswerTurnId !== null && typeof userActionAnswerTurnId !== 'string')
     || disposition === undefined
     || nonAdmission === undefined
   ) return undefined;
@@ -728,11 +905,22 @@ function asIngressObligation(row: StateRow | null):
   const connectionAuthorityEpoch = own(sourceAuthority, 'connectionAuthorityEpoch');
   const bindingRevision = own(sourceAuthority, 'bindingRevision');
   const bindingAuthorityEpoch = own(sourceAuthority, 'bindingAuthorityEpoch');
-  if (
-    !isPositiveSafeInteger(connectionAuthorityEpoch)
+  // A terminal stale Event has no live target, but remains connection-owned
+  // (no invented binding id) so baseline/recovery can still retain its fact.
+  const isConnectionOwned = target?.kind === 'event' || (target === null && bindingId === undefined);
+  if (!isPositiveSafeInteger(connectionAuthorityEpoch)) return undefined;
+  let parsedSourceAuthority: IngressObligationPayload['sourceAuthority'];
+  if (isConnectionOwned) {
+    if (bindingId !== undefined || bindingRevision !== null || bindingAuthorityEpoch !== null) return undefined;
+    parsedSourceAuthority = { connectionAuthorityEpoch, bindingRevision: null, bindingAuthorityEpoch: null };
+  } else if (
+    typeof bindingId !== 'string'
     || !isPositiveSafeInteger(bindingRevision)
     || !isPositiveSafeInteger(bindingAuthorityEpoch)
   ) return undefined;
+  else {
+    parsedSourceAuthority = { connectionAuthorityEpoch, bindingRevision, bindingAuthorityEpoch };
+  }
   return {
     row,
     value: {
@@ -740,7 +928,7 @@ function asIngressObligation(row: StateRow | null):
       'record-kind': CHANNEL_STATE_RECORD_KIND.ingressObligation,
       v: 1,
       'connection-id': connectionId,
-      'binding-id': bindingId,
+      ...(bindingId === undefined ? {} : { 'binding-id': bindingId }),
       terminal,
       attention,
       'due-at': dueAtProjection,
@@ -750,8 +938,10 @@ function asIngressObligation(row: StateRow | null):
         occurrenceIds,
         censusId,
         target,
-        sourceAuthority: { connectionAuthorityEpoch, bindingRevision, bindingAuthorityEpoch },
+        sourceAuthority: parsedSourceAuthority,
         lifecycle: { phase, attemptCount, dueAt },
+        approvalTurnId,
+        userActionAnswerTurnId,
         disposition,
         nonAdmission,
       },
@@ -780,7 +970,11 @@ function asIngressCensus(row: StateRow | null):
     || !isNonNegativeSafeInteger(updatedAt)
     || !isJsonRecord(payload)
   ) return undefined;
-  const normalizedIngress = ConversationNormalizedIngressV1Schema.safeParse(own(payload, 'normalizedIngress'));
+  const normalizedIngressValue = own(payload, 'normalizedIngress');
+  const normalizedIngress = normalizedIngressValue === null
+    ? null
+    : ConversationNormalizedIngressV1Schema.safeParse(normalizedIngressValue);
+  const compacted = readIngressCensusCompacted(own(payload, 'compacted'));
   const phase = stringMember(own(payload, 'phase'), ['preparing', 'prepared'] as const);
   const connectionAuthorityEpoch = own(payload, 'connectionAuthorityEpoch');
   const maximumObservationAgeMs = own(payload, 'maximumObservationAgeMs');
@@ -795,15 +989,27 @@ function asIngressCensus(row: StateRow | null):
       && Object.keys(conflictValue).length === 1
       ? { kind: 'occurrenceEvidenceMismatch' } as const
       : undefined;
+  // Censuses written before provider Event ingress deliberately have no field;
+  // their only compatible meaning is no frozen Event candidate.
+  const eventCandidateValue = own(payload, 'eventCandidate');
+  const eventCandidate = eventCandidateValue === undefined || eventCandidateValue === null
+    ? null
+    : ConversationIngressAutomationEventCandidateV1Schema.safeParse(eventCandidateValue);
   const matchedBindings = own(payload, 'matchedBindings');
   if (
-    !normalizedIngress.success
+    (normalizedIngress !== null && !normalizedIngress.success)
+    // Exactly one of the two carries the occurrence: a census with neither has
+    // no replay identity at all, and one with both has two.
+    || compacted === undefined
+    || (normalizedIngress === null) !== (compacted !== null)
+    || (normalizedIngress === null && eventCandidate !== null)
     || phase === undefined
     || !isPositiveSafeInteger(connectionAuthorityEpoch)
     || !isValidMaximumObservationAge(maximumObservationAgeMs)
     || (checkpointCoveredAt !== null && !isNonNegativeSafeInteger(checkpointCoveredAt))
     || typeof attention !== 'boolean'
     || conflict === undefined
+    || (eventCandidate !== null && !eventCandidate.success)
     || (attention !== (conflict !== null))
     || !Array.isArray(matchedBindings)
   ) return undefined;
@@ -837,36 +1043,67 @@ function asIngressCensus(row: StateRow | null):
       'created-at': createdAt,
       'updated-at': updatedAt,
       payload: {
-        normalizedIngress: normalizedIngress.data,
+        ...(normalizedIngress === null
+          ? { normalizedIngress: null, compacted: compacted as IngressCensusCompacted }
+          : { normalizedIngress: normalizedIngress.data, compacted: null }),
         phase,
         connectionAuthorityEpoch,
         maximumObservationAgeMs,
         checkpointCoveredAt,
         conflict,
+        eventCandidate: eventCandidate === null ? null : eventCandidate.data,
         matchedBindings: normalizedBindings,
       },
     },
   };
 }
 
-async function readPreparedIngressForObligation(input: Readonly<{
+/**
+ * `undefined` is the parse rejection; `null` is the ordinary uncompacted
+ * census. The digest is the full base64url HMAC-SHA256 every private Channels
+ * identity already uses.
+ */
+function readIngressCensusCompacted(value: JsonValue | undefined): IngressCensusCompacted | null | undefined {
+  if (value === null) return null;
+  if (!isJsonRecord(value)) return undefined;
+  const textDigest = own(value, 'textDigest');
+  const shell = ConversationAuthenticatedObservationShellV1Schema.safeParse(own(value, 'shell'));
+  if (
+    Object.keys(value).length !== 2
+    || typeof textDigest !== 'string'
+    || !/^[A-Za-z0-9_-]{43}$/u.test(textDigest)
+    || !shell.success
+  ) return undefined;
+  return { shell: shell.data, textDigest };
+}
+
+async function readPreparedIngressCensusForObligation(input: Readonly<{
   context: PluginInvocationContext;
   obligation: IngressObligationRecord;
-}>): Promise<ConversationNormalizedIngressV1> {
+}>): Promise<IngressCensusPayload> {
   const collection = requireChannelsAccountStorage(input.context).collection(CHANNEL_STATE_COLLECTION);
   const census = asIngressCensus(readStateRow(await collection.get(
     input.obligation.payload.censusId,
     { signal: input.context.signal },
   )) ?? null);
+  const target = input.obligation.payload.target;
+  const matchingPreparedMember = target?.kind === 'event'
+    ? census?.value.payload.eventCandidate !== null
+      && census?.value.payload.eventCandidate !== undefined
+      && pluginJsonValuesEqual(census.value.payload.eventCandidate, target.candidate)
+    : input.obligation['binding-id'] !== undefined
+      && input.obligation.payload.sourceAuthority.bindingRevision !== null
+      && input.obligation.payload.sourceAuthority.bindingAuthorityEpoch !== null
+      && census?.value.payload.matchedBindings.some((member) => (
+        member.bindingId === input.obligation['binding-id']
+        && member.bindingRevision === input.obligation.payload.sourceAuthority.bindingRevision
+        && member.bindingAuthorityEpoch === input.obligation.payload.sourceAuthority.bindingAuthorityEpoch
+      ));
   if (
     census === undefined
     || census.value.payload.phase !== 'prepared'
     || census.value['connection-id'] !== input.obligation['connection-id']
-    || !census.value.payload.matchedBindings.some((member) => (
-      member.bindingId === input.obligation['binding-id']
-      && member.bindingRevision === input.obligation.payload.sourceAuthority.bindingRevision
-      && member.bindingAuthorityEpoch === input.obligation.payload.sourceAuthority.bindingAuthorityEpoch
-    ))
+    || !matchingPreparedMember
   ) {
     throw pluginError(
       'channels_ingress_census_unprepared',
@@ -874,7 +1111,27 @@ async function readPreparedIngressForObligation(input: Readonly<{
       true,
     );
   }
-  return census.value.payload.normalizedIngress;
+  return census.value.payload;
+}
+
+/**
+ * Dispatch needs the admitted body, so it may only read a census that still
+ * carries one. Compaction requires every member to have settled terminally
+ * and terminal is monotonic, so a non-terminal obligation over a compacted
+ * census is corrupt state rather than an ordinary retention outcome.
+ */
+async function readPreparedIngressForObligation(input: Readonly<{
+  context: PluginInvocationContext;
+  obligation: IngressObligationRecord;
+}>): Promise<ConversationNormalizedIngressV1> {
+  const payload = await readPreparedIngressCensusForObligation(input);
+  if (payload.normalizedIngress === null) {
+    throw pluginError(
+      'channels_ingress_census_compacted',
+      'The ingress obligation references a settled census that no longer retains its input.',
+    );
+  }
+  return payload.normalizedIngress;
 }
 
 function asCheckpoint(row: StateRow | null): Readonly<{ row: StateRow; value: CheckpointRecord }> | undefined {
@@ -1014,24 +1271,58 @@ function fullTextObservation(input: ConversationNormalizedIngressV1): Conversati
   return input.kind === 'fullText' ? input.observation : undefined;
 }
 
+/**
+ * The one census reader for occurrence identity, endpoint, and the frozen
+ * retention anchor. A compacted census keeps exactly this envelope, so every
+ * consumer of those facts survives the loss of the message body.
+ */
+function censusIngressShell(
+  payload: IngressCensusPayload,
+): ConversationAuthenticatedObservationShellV1 {
+  return payload.normalizedIngress === null
+    ? payload.compacted.shell
+    : ingressShell(payload.normalizedIngress);
+}
+
 function normalizedIngressDiscriminant(
   input: ConversationNormalizedIngressV1,
 ): ConversationNormalizedIngressV1 {
   return ConversationNormalizedIngressV1Schema.parse(input);
 }
 
-function immutableIngressMatches(
+/**
+ * A compacted census answers both arms from the retained envelope: exact
+ * re-delivery adds the keyed text digest to the structural shell comparison,
+ * and a later unsupported edit never depended on the body at all.
+ */
+async function immutableIngressMatches(
   census: IngressCensusPayload,
-  input: ConversationNormalizedIngressV1,
-): boolean {
-  const normalized = normalizedIngressDiscriminant(input);
-  if (pluginJsonValuesEqual(census.normalizedIngress, normalized)) return true;
+  routingIdentityKey: string,
+  input: ConversationIngressObservedEntryV1,
+): Promise<boolean> {
+  const normalized = normalizedIngressDiscriminant(input.observation);
+  const compacted = census.compacted;
+  if (compacted === null) {
+    if (
+      pluginJsonValuesEqual(census.normalizedIngress, normalized)
+      && pluginJsonValuesEqual(census.eventCandidate, input.eventCandidate)
+    ) return true;
+  } else if (
+    normalized.kind === 'fullText'
+    && pluginJsonValuesEqual(compacted.shell, ingressShell(normalized))
+    && await deriveIngressCensusTextDigest({
+      routingIdentityKey,
+      text: normalized.observation.message.text,
+    }) === compacted.textDigest
+  ) return true;
+  // Only a full-text admission can be superseded by an unsupported edit, and
+  // only a full-text admission is ever compacted.
   if (
-    census.normalizedIngress.kind !== 'fullText'
+    (compacted === null && census.normalizedIngress.kind !== 'fullText')
     || normalized.kind !== 'routableNonAdmission'
     || normalized.reason !== 'unsupportedEdit'
   ) return false;
-  const admittedShell = ingressShell(census.normalizedIngress);
+  const admittedShell = censusIngressShell(census);
   const incomingShell = normalized.shell;
   if (admittedShell.message.revision === incomingShell.message.revision) return false;
   const { revision: _admittedRevision, providerTimestamp: _admittedTimestamp, ...admittedMessage } = admittedShell.message;
@@ -1090,6 +1381,7 @@ type IngressAdmissionDecision = Readonly<{
   terminalOutcome: Readonly<{ disposition: IngressDisposition; nonAdmission: IngressNonAdmission }> | undefined;
   newSession: FrozenSessionTarget['newSession'];
   approval: FrozenSessionTarget['approval'];
+  userActionAnswer: FrozenSessionTarget['userActionAnswer'];
 }>;
 
 /**
@@ -1146,6 +1438,7 @@ function ingressAdmissionDecision(input: Readonly<{
       },
       newSession: null,
       approval: null,
+      userActionAnswer: null,
     };
   }
   if (policy.kind === 'approve') {
@@ -1156,6 +1449,18 @@ function ingressAdmissionDecision(input: Readonly<{
         requestId: policy.requestId,
         decision: policy.decision,
         scope: policy.scope,
+      },
+      userActionAnswer: null,
+    };
+  }
+  if (policy.kind === 'userActionAnswer') {
+    return {
+      terminalOutcome: undefined,
+      newSession: null,
+      approval: null,
+      userActionAnswer: {
+        requestId: policy.requestId,
+        answers: policy.answers,
       },
     };
   }
@@ -1173,6 +1478,7 @@ function ingressAdmissionDecision(input: Readonly<{
         ...(policy.initialPrompt === undefined ? {} : { initialPrompt: policy.initialPrompt }),
       },
       approval: null,
+      userActionAnswer: null,
     };
   }
   if (ingress.kind === 'routableNonAdmission') {
@@ -1192,6 +1498,7 @@ function ingressAdmissionDecision(input: Readonly<{
       },
       newSession: null,
       approval: null,
+      userActionAnswer: null,
     };
   }
   if (!isAddressedForBinding(binding, shell)) {
@@ -1210,9 +1517,10 @@ function ingressAdmissionDecision(input: Readonly<{
       },
       newSession: null,
       approval: null,
+      userActionAnswer: null,
     };
   }
-  return { terminalOutcome: undefined, newSession: null, approval: null };
+  return { terminalOutcome: undefined, newSession: null, approval: null, userActionAnswer: null };
 }
 
 function decodeBase64Url(value: string): Uint8Array {
@@ -1228,7 +1536,12 @@ function decodeBase64Url(value: string): Uint8Array {
 
 async function opaqueHmacRowId(input: Readonly<{
   routingIdentityKey: string;
-  domain: 'ingress-obligation' | 'ingress-census' | 'checkpoint' | 'session-rotation';
+  domain:
+    | 'ingress-obligation'
+    | 'ingress-event-obligation'
+    | 'ingress-census'
+    | 'checkpoint'
+    | 'session-rotation';
   parts: readonly string[];
 }>): Promise<string> {
   const subtle = globalThis.crypto?.subtle;
@@ -1272,6 +1585,31 @@ export async function deriveConversationSessionRotationRowId(input: Readonly<{
   });
 }
 
+/**
+ * The one keyed digest that survives census compaction. It stays in the same
+ * connection-keyed private namespace as the row identities, so a retained
+ * digest is neither correlatable across Accounts nor reversible to the text.
+ */
+async function deriveIngressCensusTextDigest(input: Readonly<{
+  routingIdentityKey: string;
+  text: string;
+}>): Promise<string> {
+  const subtle = globalThis.crypto?.subtle;
+  if (subtle === undefined) {
+    throw pluginError(
+      'channels_ingress_crypto_unavailable',
+      'The runtime cannot derive a durable Channel routing identity.',
+      true,
+    );
+  }
+  const key = await importHmacSha256Key(subtle, decodeBase64Url(input.routingIdentityKey));
+  return await signLengthPrefixedUtf8HmacSha256Base64Url({
+    subtle,
+    key,
+    parts: ['channels:ingress:v1', 'ingress-census-text', input.text],
+  });
+}
+
 /** The ingress census remains in the established private connection-keyed HMAC namespace. */
 export async function deriveIngressCensusRowId(input: Readonly<{
   routingIdentityKey: string;
@@ -1283,6 +1621,73 @@ export async function deriveIngressCensusRowId(input: Readonly<{
     domain: 'ingress-census',
     parts: [input.connectionId, input.occurrenceId],
   });
+}
+
+/**
+ * A normalized ingress has at most one provider Event candidate. Its durable
+ * obligation consequently belongs to the connection/occurrence pair, rather
+ * than inventing a binding or a second provider-local cursor.
+ */
+async function deriveIngressEventObligationRowId(input: Readonly<{
+  routingIdentityKey: string;
+  connectionId: string;
+  occurrenceId: string;
+}>): Promise<string> {
+  return await opaqueHmacRowId({
+    routingIdentityKey: input.routingIdentityKey,
+    domain: 'ingress-event-obligation',
+    parts: [input.connectionId, input.occurrenceId],
+  });
+}
+
+async function deriveIngressObligationRowIdForCensusMember(input: Readonly<{
+  routingIdentityKey: string;
+  connectionId: string;
+  occurrenceId: string;
+  member: IngressCensusObligationMember;
+}>): Promise<string> {
+  if (input.member.kind === 'event') {
+    return await deriveIngressEventObligationRowId({
+      routingIdentityKey: input.routingIdentityKey,
+      connectionId: input.connectionId,
+      occurrenceId: input.occurrenceId,
+    });
+  }
+  return await opaqueHmacRowId({
+    routingIdentityKey: input.routingIdentityKey,
+    domain: 'ingress-obligation',
+    parts: [input.connectionId, input.member.binding.bindingId, input.occurrenceId],
+  });
+}
+
+/**
+ * The census is the one writer of the frozen member set. Every lifecycle
+ * reader reuses this correspondence check instead of independently deciding
+ * whether a binding or connection-owned Event row belongs to that census.
+ */
+function ingressObligationMatchesCensusMember(input: Readonly<{
+  censusId: string;
+  member: IngressCensusObligationMember;
+  obligation: IngressObligationRecord;
+}>): boolean {
+  const { obligation, member } = input;
+  if (obligation.payload.censusId !== input.censusId) return false;
+  if (member.kind === 'event') {
+    return obligation['binding-id'] === undefined
+      && obligation.payload.sourceAuthority.bindingRevision === null
+      && obligation.payload.sourceAuthority.bindingAuthorityEpoch === null
+      && (
+        (obligation.payload.target?.kind === 'event'
+          && pluginJsonValuesEqual(obligation.payload.target.candidate, member.candidate))
+        // A stale connection can terminalize the Event before a current
+        // provider Action exists. Its empty target is the incumbent terminal
+        // Event shape, not an unowned binding row.
+        || (obligation.payload.target === null && obligation.terminal)
+      );
+  }
+  return obligation['binding-id'] === member.binding.bindingId
+    && obligation.payload.sourceAuthority.bindingRevision === member.binding.bindingRevision
+    && obligation.payload.sourceAuthority.bindingAuthorityEpoch === member.binding.bindingAuthorityEpoch;
 }
 
 function compareCanonicalBindingId(left: string, right: string): number {
@@ -1335,6 +1740,7 @@ export function createIngressCensusValue(input: Readonly<{
   ingress: ConversationNormalizedIngressV1;
   connectionAuthorityEpoch: number;
   maximumObservationAgeMs: number;
+  eventCandidate?: ConversationIngressAutomationEventCandidateV1 | null;
   matchedBindings: readonly IngressCensusMatchedBinding[];
   now: number;
 }>): JsonRecord {
@@ -1360,11 +1766,13 @@ export function createIngressCensusValue(input: Readonly<{
     [CHANNEL_STATE_FIELD.updatedAt]: input.now,
     payload: {
       normalizedIngress: normalizedIngressDiscriminant(input.ingress),
+      compacted: null,
       phase: 'preparing',
       connectionAuthorityEpoch: input.connectionAuthorityEpoch,
       maximumObservationAgeMs: input.maximumObservationAgeMs,
       checkpointCoveredAt: null,
       conflict: null,
+      eventCandidate: input.eventCandidate ?? null,
       matchedBindings: normalizeIngressCensusMatchedBindings(input.matchedBindings),
     },
   };
@@ -1389,7 +1797,7 @@ async function readBindingsForConnection(input: Readonly<{
       index: CHANNEL_STATE_INDEX_ID.byKind,
       prefix: [CHANNEL_STATE_RECORD_KIND.binding],
       order: 'asc',
-      limit: Math.min(remaining, MAX_CHANNEL_ACCOUNT_COLLECTION_QUERY_PAGE_SIZE),
+      limit: Math.min(remaining, PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1),
       ...(cursor === undefined ? {} : { cursor }),
     }, { signal: input.context.signal });
     for (const candidate of page.rows) {
@@ -1413,6 +1821,7 @@ function frozenTargetForBinding(input: Readonly<{
   ingress: ConversationNormalizedIngressV1;
   newSession: FrozenSessionTarget['newSession'];
   approval: FrozenSessionTarget['approval'];
+  userActionAnswer: FrozenSessionTarget['userActionAnswer'];
 }>): FrozenIngressTarget {
   const { binding } = input;
   if (binding.payload.target.kind === 'session') {
@@ -1425,6 +1834,7 @@ function frozenTargetForBinding(input: Readonly<{
       remoteApprovalMaxScope: approvals.kind === 'enabled' ? approvals.maximumScope : 'off',
       newSession: input.newSession,
       approval: input.approval,
+      userActionAnswer: input.userActionAnswer,
     };
     if (!isCanonicalChannelStateRecordIdentity({
       rowId: input.obligationId,
@@ -1483,6 +1893,37 @@ function frozenTargetForBinding(input: Readonly<{
     throw pluginError(
       'channels_ingress_identity_invalid',
       'The derived Automation ingress obligation identity is not canonical.',
+    );
+  }
+  return target;
+}
+
+function frozenTargetForEvent(input: Readonly<{
+  obligationId: string;
+  connection: ChannelConnectionRecord;
+  candidate: ConversationIngressAutomationEventCandidateV1;
+}>): FrozenEventTarget {
+  if (input.candidate.eventRef.pluginId !== input.connection.payload.providerPluginId) {
+    throw pluginError(
+      'channels_ingress_event_provider_mismatch',
+      'The provider Event candidate does not belong to the selected connection provider.',
+    );
+  }
+  const target: FrozenEventTarget = {
+    kind: 'event',
+    candidate: input.candidate,
+    providerPluginId: input.connection.payload.providerPluginId,
+    providerContributionSelection: input.connection.payload.providerContributionSelection,
+    executionOrigin: input.connection.payload.transportOrigin,
+  };
+  if (!isCanonicalChannelStateRecordIdentity({
+    rowId: input.obligationId,
+    recordKind: CHANNEL_STATE_RECORD_KIND.ingressObligation,
+    ingressTargetKind: target.kind,
+  })) {
+    throw pluginError(
+      'channels_ingress_identity_invalid',
+      'The derived provider Event ingress obligation identity is not canonical.',
     );
   }
   return target;
@@ -1547,8 +1988,51 @@ function createIngressObligationValue(input: Readonly<{
         attemptCount: 0,
         dueAt,
       },
+      approvalTurnId: null,
+      userActionAnswerTurnId: null,
       disposition: input.terminalOutcome?.disposition ?? null,
       nonAdmission: input.terminalOutcome?.nonAdmission ?? null,
+    },
+  };
+}
+
+function createEventIngressObligationValue(input: Readonly<{
+  censusId: string;
+  obligationId: string;
+  connection: ChannelConnectionRecord;
+  ingress: ConversationNormalizedIngressV1;
+  candidate: ConversationIngressAutomationEventCandidateV1;
+  now: number;
+}>): JsonRecord {
+  const shell = ingressShell(input.ingress);
+  return {
+    id: input.obligationId,
+    [CHANNEL_STATE_FIELD.recordKind]: CHANNEL_STATE_RECORD_KIND.ingressObligation,
+    v: 1,
+    [CHANNEL_STATE_FIELD.connectionId]: input.connection.id,
+    [CHANNEL_STATE_FIELD.terminal]: false,
+    [CHANNEL_STATE_FIELD.attention]: false,
+    [CHANNEL_STATE_FIELD.dueAt]: input.now,
+    [CHANNEL_STATE_FIELD.createdAt]: input.now,
+    [CHANNEL_STATE_FIELD.updatedAt]: input.now,
+    payload: {
+      occurrenceIds: [shell.occurrenceId],
+      censusId: input.censusId,
+      target: frozenTargetForEvent({
+        obligationId: input.obligationId,
+        connection: input.connection,
+        candidate: input.candidate,
+      }),
+      sourceAuthority: {
+        connectionAuthorityEpoch: input.connection.payload.authorityEpoch,
+        bindingRevision: null,
+        bindingAuthorityEpoch: null,
+      },
+      lifecycle: { phase: 'ready', attemptCount: 0, dueAt: input.now },
+      approvalTurnId: null,
+      userActionAnswerTurnId: null,
+      disposition: null,
+      nonAdmission: null,
     },
   };
 }
@@ -1582,6 +2066,43 @@ function createStaleIngressObligationValue(input: Readonly<{
         bindingAuthorityEpoch: input.member.bindingAuthorityEpoch,
       },
       lifecycle: { phase: 'terminal', attemptCount: 0, dueAt: null },
+      approvalTurnId: null,
+      userActionAnswerTurnId: null,
+      disposition: 'staleAuthority',
+      nonAdmission: { reason: 'staleAuthority', senderFeedbackEligible: false },
+    },
+  };
+}
+
+function createStaleEventIngressObligationValue(input: Readonly<{
+  obligationId: string;
+  censusId: string;
+  connectionId: string;
+  connectionAuthorityEpoch: number;
+  occurrenceId: string;
+  now: number;
+}>): JsonRecord {
+  return {
+    id: input.obligationId,
+    [CHANNEL_STATE_FIELD.recordKind]: CHANNEL_STATE_RECORD_KIND.ingressObligation,
+    v: 1,
+    [CHANNEL_STATE_FIELD.connectionId]: input.connectionId,
+    [CHANNEL_STATE_FIELD.terminal]: true,
+    [CHANNEL_STATE_FIELD.attention]: true,
+    [CHANNEL_STATE_FIELD.createdAt]: input.now,
+    [CHANNEL_STATE_FIELD.updatedAt]: input.now,
+    payload: {
+      occurrenceIds: [input.occurrenceId],
+      censusId: input.censusId,
+      target: null,
+      sourceAuthority: {
+        connectionAuthorityEpoch: input.connectionAuthorityEpoch,
+        bindingRevision: null,
+        bindingAuthorityEpoch: null,
+      },
+      lifecycle: { phase: 'terminal', attemptCount: 0, dueAt: null },
+      approvalTurnId: null,
+      userActionAnswerTurnId: null,
       disposition: 'staleAuthority',
       nonAdmission: { reason: 'staleAuthority', senderFeedbackEligible: false },
     },
@@ -1607,6 +2128,7 @@ function preparedIngressCensusValue(input: Readonly<{
 function checkpointCoveredIngressCensusValue(input: Readonly<{
   census: IngressCensusRecord;
   now: number;
+  prepare?: boolean;
 }>): JsonRecord {
   if (input.census.attention || input.census.payload.conflict !== null) {
     throw pluginError(
@@ -1614,10 +2136,24 @@ function checkpointCoveredIngressCensusValue(input: Readonly<{
       'A conflicting ingress census can never receive checkpoint coverage.',
     );
   }
+  if (
+    (input.prepare === true && input.census.payload.phase !== 'preparing')
+    || (input.prepare !== true && input.census.payload.phase !== 'prepared')
+  ) {
+    throw pluginError(
+      'channels_checkpointed_poll_coverage_invalid',
+      'Checkpoint coverage requires a prepared ingress census or its one baseline preparation transition.',
+      true,
+    );
+  }
   return {
     ...input.census,
     [CHANNEL_STATE_FIELD.updatedAt]: input.now,
-    payload: { ...input.census.payload, checkpointCoveredAt: input.now },
+    payload: {
+      ...input.census.payload,
+      ...(input.prepare === true ? { phase: 'prepared' as const } : {}),
+      checkpointCoveredAt: input.now,
+    },
   };
 }
 
@@ -1651,12 +2187,12 @@ function occurrenceConflictIngressCensusValue(input: Readonly<{
 async function markIngressCensusOccurrenceConflict(input: Readonly<{
   context: PluginInvocationContext;
   source: IngressExecutionSource;
-  observation: ConversationNormalizedIngressV1;
+  entry: ConversationIngressObservedEntryV1;
   connection: Readonly<{ row: StateRow; value: ChannelConnectionRecord }>;
   census: Readonly<{ row: StateRow; value: IngressCensusRecord }>;
 }>): Promise<void> {
   const collection = requireChannelsAccountStorage(input.context).collection(CHANNEL_STATE_COLLECTION);
-  const shell = ingressShell(input.observation);
+  const shell = ingressShell(input.entry.observation);
   let connection = input.connection;
   let census = input.census;
   while (true) {
@@ -1703,7 +2239,11 @@ async function markIngressCensusOccurrenceConflict(input: Readonly<{
     if (rereadCensus.value.attention && rereadCensus.value.payload.conflict?.kind === 'occurrenceEvidenceMismatch') {
       return;
     }
-    if (matchesIngressCensus({ census: rereadCensus.value.payload, ingress: input.observation })) {
+    if (await matchesIngressCensus({
+      census: rereadCensus.value.payload,
+      routingIdentityKey: rereadConnection.value.payload.routingIdentityKey,
+      entry: input.entry,
+    })) {
       throw pluginError(
         'channels_ingress_stale_authority',
         'The immutable ingress evidence changed before its conflict fact could commit.',
@@ -1812,18 +2352,18 @@ export type ConversationIngressConnectionDeletionSettlement =
   | Readonly<{
     kind: 'readyToSettle';
     connectionId: string;
-    bindingId: string;
+    bindingId?: string;
     value: JsonRecord;
   }>
   | Readonly<{
     kind: 'terminal';
     connectionId: string;
-    bindingId: string;
+    bindingId?: string;
   }>
   | Readonly<{
     kind: 'blocked';
     connectionId: string;
-    bindingId: string;
+    bindingId?: string;
   }>
   | Readonly<{ kind: 'invalid' }>;
 
@@ -1894,6 +2434,51 @@ export function prepareConversationIngressObligationForBindingDeletion(input: Re
     disposition: 'staleAuthority',
     nonAdmission: { reason: 'staleAuthority', senderFeedbackEligible: false },
   });
+}
+
+/**
+ * Freezes the resolved mediation turn onto the incumbent obligation row before
+ * the irreversible remote effect. This is the same row and the same CAS the
+ * lifecycle already uses; it is not a second custody store, ledger, or
+ * approval queue.
+ */
+function approvalTurnIngressObligationValue(input: Readonly<{
+  obligation: IngressObligationRecord;
+  turnId: string;
+  now: number;
+}>): JsonRecord {
+  const { [CHANNEL_STATE_FIELD.dueAt]: dueAt, ...obligationWithoutDueAt } = input.obligation;
+  return {
+    ...obligationWithoutDueAt,
+    ...(dueAt === null ? {} : { [CHANNEL_STATE_FIELD.dueAt]: dueAt }),
+    [CHANNEL_STATE_FIELD.updatedAt]: input.now,
+    payload: {
+      ...input.obligation.payload,
+      approvalTurnId: input.turnId,
+    },
+  };
+}
+
+/**
+ * Persists the host-stamped turn for a frozen `/answer` before the canonical
+ * Session Action runs. The incumbent ingress obligation remains the only
+ * retry/currentness owner; this stores no answer result.
+ */
+function userActionAnswerTurnIngressObligationValue(input: Readonly<{
+  obligation: IngressObligationRecord;
+  turnId: string;
+  now: number;
+}>): JsonRecord {
+  const { [CHANNEL_STATE_FIELD.dueAt]: dueAt, ...obligationWithoutDueAt } = input.obligation;
+  return {
+    ...obligationWithoutDueAt,
+    ...(dueAt === null ? {} : { [CHANNEL_STATE_FIELD.dueAt]: dueAt }),
+    [CHANNEL_STATE_FIELD.updatedAt]: input.now,
+    payload: {
+      ...input.obligation.payload,
+      userActionAnswerTurnId: input.turnId,
+    },
+  };
 }
 
 function attemptingIngressObligationValue(input: Readonly<{
@@ -2026,11 +2611,19 @@ async function hasCurrentProviderContributionSelection(input: Readonly<{
   }
 }
 
+function arePersistedProviderContributionSelectionsEqual(
+  left: PersistedConversationProviderContributionSelection,
+  right: PersistedConversationProviderContributionSelection,
+): boolean {
+  return left.contributionId === right.contributionId
+    && left.immutableGenerationId === right.immutableGenerationId;
+}
+
 async function revalidateFirstDispatchAuthority(input: Readonly<{
   context: PluginInvocationContext;
   source: IngressExecutionSource;
   connectionId: string;
-  bindingId: string;
+  bindingId: string | undefined;
   obligation: IngressObligationRecord;
   ingress: ConversationNormalizedIngressV1;
 }>): Promise<IngressAuthorityFence | undefined> {
@@ -2055,6 +2648,29 @@ async function revalidateFirstDispatchAuthority(input: Readonly<{
   if (!await hasCurrentProviderContributionSelection({ context: input.context, connection })) {
     return undefined;
   }
+  const target = input.obligation.payload.target;
+  if (target?.kind === 'event') {
+    if (
+      input.bindingId !== undefined
+      || input.obligation.payload.sourceAuthority.bindingRevision !== null
+      || input.obligation.payload.sourceAuthority.bindingAuthorityEpoch !== null
+      || connection.value.payload.providerPluginId !== target.providerPluginId
+      || !arePersistedProviderContributionSelectionsEqual(
+        connection.value.payload.providerContributionSelection,
+        target.providerContributionSelection,
+      )
+      || !arePluginMachineExecutionOriginsEqual(
+        connection.value.payload.transportOrigin,
+        target.executionOrigin,
+      )
+    ) return undefined;
+    return { connection, bindings: [] };
+  }
+  if (
+    input.bindingId === undefined
+    || input.obligation.payload.sourceAuthority.bindingRevision === null
+    || input.obligation.payload.sourceAuthority.bindingAuthorityEpoch === null
+  ) return undefined;
   const binding = asBinding(readStateRow(await collection.get(
     input.bindingId,
     { signal: input.context.signal },
@@ -2518,7 +3134,7 @@ async function writeNewSessionControlResponseCustody(input: Readonly<{
   }));
   const outward: ConversationControlResponseObligation = {
     connectionId: input.obligation.value['connection-id'],
-    bindingId: input.obligation.value['binding-id'],
+    bindingId: binding.value.id,
     routeAuthority: {
       connectionAuthorityEpoch: input.authority.connection.value.payload.authorityEpoch,
       bindingRevision: binding.row.revision,
@@ -2915,6 +3531,55 @@ async function acceptIngressControlResponseCustody(input: Readonly<{
 }
 
 /**
+ * The one durable answer a successful `/pair` gives the external person.
+ *
+ * It says only that the request arrived and where the rest of it happens: the
+ * paused binding does not exist until its owner finalizes the proposal, and an
+ * unmatched, expired, or consumed token stays silent so a stranger learns
+ * nothing about this Account's pairing state.
+ */
+const PAIRING_CONTROL_RESPONSE_TEXT =
+  'Pairing request received. Finish it in Happier to connect this conversation.';
+
+/**
+ * Enqueues that answer through the one outward custody owner.
+ *
+ * The route is connection-owned because a pairing proposal has no binding yet,
+ * and the immutable census row ID is this occurrence's identity — so an equal
+ * replay, a lost response, or a restarted daemon rejoins exactly one custody
+ * row rather than sending a second message.
+ */
+async function writePairingControlResponseCustody(input: Readonly<{
+  context: PluginInvocationContext;
+  connectionId: string;
+  connectionAuthorityEpoch: number;
+  censusId: string;
+  shell: ConversationAuthenticatedObservationShellV1;
+}>): Promise<IngressCheckpointOutcome> {
+  const outward: ConversationControlResponseObligation = {
+    connectionId: input.connectionId,
+    routeAuthority: { connectionAuthorityEpoch: input.connectionAuthorityEpoch },
+    source: {
+      kind: 'controlResponse',
+      controlId: input.censusId,
+      controlKind: 'pairing',
+    },
+    endpoint: input.shell.endpoint,
+    content: PAIRING_CONTROL_RESPONSE_TEXT,
+    deliveryKey: `ingress-pairing:${input.censusId}`,
+    replyContext: { replyToMessageId: input.shell.message.id },
+    mentionPolicy: 'suppress',
+    linkPreviewPolicy: 'suppress',
+  };
+  return await acceptIngressControlResponseCustody({
+    context: input.context,
+    outward,
+    invalidCode: 'channels_ingress_pairing_custody_invalid',
+    invalidMessage: 'The pairing control-response custody obligation is invalid.',
+  });
+}
+
+/**
  * The one sender-visible acknowledgement vocabulary for a mediated chat
  * approval. It states only whether the decision was recorded; PERM-14 keeps
  * the rule, prompt, tool, and grant detail inside owner-encrypted Session
@@ -2930,31 +3595,61 @@ const APPROVAL_CONTROL_RESPONSE_TEXT = {
 type ApprovalControlResponseText =
   (typeof APPROVAL_CONTROL_RESPONSE_TEXT)[keyof typeof APPROVAL_CONTROL_RESPONSE_TEXT];
 
-async function writeApprovalControlResponseCustody(input: Readonly<{
+const USER_ACTION_CONTROL_RESPONSE_TEXT = {
+  settled: 'That question is no longer pending.',
+  refused: 'That answer could not be accepted.',
+} as const;
+
+type UserActionControlResponseText =
+  (typeof USER_ACTION_CONTROL_RESPONSE_TEXT)[keyof typeof USER_ACTION_CONTROL_RESPONSE_TEXT];
+
+type MediatedControlResponseKind = Extract<ConversationControlResponseKind, 'approval' | 'userAction'>;
+type MediatedControlResponseText = ApprovalControlResponseText | UserActionControlResponseText;
+
+/**
+ * Both mediated command families write their acknowledgement through this one
+ * custody owner. Their Session effects remain distinct Actions, but neither
+ * receives a local delivery row, retry loop, or result cache.
+ */
+async function writeMediatedControlResponseCustody(input: Readonly<{
   context: PluginInvocationContext;
   obligation: Readonly<{ row: StateRow; value: IngressObligationRecord }>;
-  content: ApprovalControlResponseText;
+  controlKind: MediatedControlResponseKind;
+  content: MediatedControlResponseText;
 }>): Promise<IngressCheckpointOutcome> {
+  const bindingId = input.obligation.value['binding-id'];
+  const bindingRevision = input.obligation.value.payload.sourceAuthority.bindingRevision;
+  const bindingAuthorityEpoch = input.obligation.value.payload.sourceAuthority.bindingAuthorityEpoch;
+  if (
+    bindingId === undefined
+    || bindingRevision === null
+    || bindingAuthorityEpoch === null
+  ) {
+    throw pluginError(
+      'channels_ingress_mediation_custody_invalid',
+      'A binding-owned mediated-command obligation lost its frozen route authority.',
+    );
+  }
   const shell = ingressShell(await readPreparedIngressForObligation({
     context: input.context,
     obligation: input.obligation.value,
   }));
   const outward: ConversationControlResponseObligation = {
     connectionId: input.obligation.value['connection-id'],
-    bindingId: input.obligation.value['binding-id'],
+    bindingId,
     routeAuthority: {
       connectionAuthorityEpoch: input.obligation.value.payload.sourceAuthority.connectionAuthorityEpoch,
-      bindingRevision: input.obligation.value.payload.sourceAuthority.bindingRevision,
-      bindingAuthorityEpoch: input.obligation.value.payload.sourceAuthority.bindingAuthorityEpoch,
+      bindingRevision,
+      bindingAuthorityEpoch,
     },
     source: {
       kind: 'controlResponse',
       controlId: input.obligation.value.id,
-      controlKind: 'approval',
+      controlKind: input.controlKind,
     },
     endpoint: shell.endpoint,
     content: input.content,
-    deliveryKey: `ingress-approval:${input.obligation.value.id}`,
+    deliveryKey: `ingress-${input.controlKind}:${input.obligation.value.id}`,
     replyContext: { replyToMessageId: shell.message.id },
     mentionPolicy: 'suppress',
     linkPreviewPolicy: 'suppress',
@@ -2962,8 +3657,8 @@ async function writeApprovalControlResponseCustody(input: Readonly<{
   return await acceptIngressControlResponseCustody({
     context: input.context,
     outward,
-    invalidCode: 'channels_ingress_approval_custody_invalid',
-    invalidMessage: 'The chat-approval control-response custody obligation is invalid.',
+    invalidCode: 'channels_ingress_mediation_custody_invalid',
+    invalidMessage: 'The mediated-command control-response custody obligation is invalid.',
   });
 }
 
@@ -2972,7 +3667,7 @@ async function writeApprovalControlResponseCustody(input: Readonly<{
  * the incumbent bounded attempt/backoff ladder instead of a mediation-local
  * timer, queue, or retry ledger.
  */
-async function retryApprovalMediation(input: Readonly<{
+async function retryMediatedIngressControl(input: Readonly<{
   context: PluginInvocationContext;
   obligation: Readonly<{ row: StateRow; value: IngressObligationRecord }>;
 }>): Promise<IngressCheckpointOutcome> {
@@ -2989,16 +3684,18 @@ async function retryApprovalMediation(input: Readonly<{
   return exhausted ? 'checkpointSafe' : 'unsettled';
 }
 
-async function settleApprovalMediationTerminal(input: Readonly<{
+async function settleMediatedIngressControlTerminal(input: Readonly<{
   context: PluginInvocationContext;
   authority: IngressAuthorityFence | undefined;
   obligation: Readonly<{ row: StateRow; value: IngressObligationRecord }>;
-  disposition: Extract<IngressDisposition, 'approvalConsumed' | 'rejected'>;
-  content: ApprovalControlResponseText;
+  disposition: Extract<IngressDisposition, 'approvalConsumed' | 'userActionConsumed' | 'rejected'>;
+  controlKind: MediatedControlResponseKind;
+  content: MediatedControlResponseText;
 }>): Promise<IngressCheckpointOutcome> {
-  const custody = await writeApprovalControlResponseCustody({
+  const custody = await writeMediatedControlResponseCustody({
     context: input.context,
     obligation: input.obligation,
+    controlKind: input.controlKind,
     content: input.content,
   });
   if (custody !== 'checkpointSafe') return custody;
@@ -3053,53 +3750,79 @@ async function dispatchApprovalMediation(input: Readonly<{
       .get(input.connectionId, { signal: input.context.signal }),
   ) ?? null);
   if (connection === undefined) {
-    return await retryApprovalMediation({ context: input.context, obligation: input.obligation });
+    return await retryMediatedIngressControl({ context: input.context, obligation: input.obligation });
   }
-  const sourceAuthority = input.obligation.value.payload.sourceAuthority;
+  let obligation = input.obligation;
+  const sourceAuthority = obligation.value.payload.sourceAuthority;
   const source = {
     sessionId: target.sessionId,
     sourceRef: `channels:binding:${input.bindingId}`,
     sourceRevisionOrEpoch: `${sourceAuthority.connectionAuthorityEpoch}:${sourceAuthority.bindingAuthorityEpoch}`,
   } as const;
 
-  let pending: PluginActionResultById['session.permission.remote.pending.list'];
-  try {
-    pending = await input.context.services.actions.execute(
-      'session.permission.remote.pending.list',
-      source,
-      { signal: input.context.signal },
+  // A resolved turn is durable evidence that this obligation already reached
+  // the canonical owner. The projection is a discovery step, not the custody
+  // record: once the tuple is frozen, replay must re-ask the idempotent owner,
+  // which answers `alreadyApplied` for a committed effect whose response was
+  // lost. Re-listing instead would report an applied decision as no longer
+  // pending.
+  let turnId = obligation.value.payload.approvalTurnId;
+  if (turnId === null) {
+    let pending: ConversationPendingPermissionProjection;
+    try {
+      pending = await readConversationPendingPermissions({
+        actions: input.context.services.actions,
+        source,
+        signal: input.context.signal,
+      });
+    } catch (error) {
+      assertNotAborted(input.context.signal);
+      // A definite refusal from the canonical owner cannot become a permanent
+      // ingest throw: that would re-observe the same message forever and hold
+      // the connection checkpoint. Settle it truthfully instead.
+      if (isPluginError(error) && error.retryable === false) {
+        return await settleMediatedIngressControlTerminal({
+          context: input.context,
+          authority: input.authority,
+          obligation,
+          disposition: 'rejected',
+          controlKind: 'approval',
+          content: APPROVAL_CONTROL_RESPONSE_TEXT.refused,
+        });
+      }
+      return await retryMediatedIngressControl({ context: input.context, obligation });
+    }
+    const match = pending.requests.find(
+      (request) => request.kind !== 'user_action' && request.requestId === approval.requestId,
     );
-  } catch (error) {
-    assertNotAborted(input.context.signal);
-    // A definite refusal from the canonical owner cannot become a permanent
-    // ingest throw: that would re-observe the same message forever and hold
-    // the connection checkpoint. Settle it truthfully instead.
-    if (isPluginError(error) && error.retryable === false) {
-      return await settleApprovalMediationTerminal({
+    if (match === undefined) {
+      // A truncated projection cannot prove absence, so the obligation stays on
+      // its bounded retry ladder rather than settling a request the owner is
+      // still withholding from its projection.
+      if (pending.truncated) {
+        return await retryMediatedIngressControl({ context: input.context, obligation });
+      }
+      return await settleMediatedIngressControlTerminal({
         context: input.context,
         authority: input.authority,
-        obligation: input.obligation,
+        obligation,
         disposition: 'rejected',
-        content: APPROVAL_CONTROL_RESPONSE_TEXT.refused,
+        controlKind: 'approval',
+        content: APPROVAL_CONTROL_RESPONSE_TEXT.notPending,
       });
     }
-    return await retryApprovalMediation({ context: input.context, obligation: input.obligation });
-  }
-  const match = pending.requests.find((request) => request.requestId === approval.requestId);
-  if (match === undefined) {
-    // A truncated projection cannot prove absence, so the obligation stays on
-    // its bounded retry ladder rather than settling a request that may still
-    // be pending behind the host's bound.
-    if (pending.truncated) {
-      return await retryApprovalMediation({ context: input.context, obligation: input.obligation });
-    }
-    return await settleApprovalMediationTerminal({
+    // Persisted before the effect: a conflict here is a lifecycle race that has
+    // performed no mediation, and the incumbent recovery owner reclaims it.
+    obligation = await putIngressObligationLifecycle({
       context: input.context,
-      authority: input.authority,
-      obligation: input.obligation,
-      disposition: 'rejected',
-      content: APPROVAL_CONTROL_RESPONSE_TEXT.notPending,
+      obligation,
+      value: approvalTurnIngressObligationValue({
+        obligation: obligation.value,
+        turnId: match.turnId,
+        now: Date.now(),
+      }),
     });
+    turnId = match.turnId;
   }
 
   let responded: PluginActionResultById['session.permission.remote.respond'];
@@ -3108,9 +3831,9 @@ async function dispatchApprovalMediation(input: Readonly<{
       'session.permission.remote.respond',
       {
         ...source,
-        turnId: match.turnId,
+        turnId,
         requestId: approval.requestId,
-        idempotencyKey: `channels:approval:v1:${input.obligation.value.id}`,
+        idempotencyKey: `channels:approval:v1:${obligation.value.id}`,
         actor: {
           namespace: connection.value.payload.providerPluginId,
           principalId: input.actorPrincipalId,
@@ -3123,15 +3846,16 @@ async function dispatchApprovalMediation(input: Readonly<{
   } catch (error) {
     assertNotAborted(input.context.signal);
     if (isPluginError(error) && error.retryable === false) {
-      return await settleApprovalMediationTerminal({
+      return await settleMediatedIngressControlTerminal({
         context: input.context,
         authority: input.authority,
-        obligation: input.obligation,
+        obligation,
         disposition: 'rejected',
+        controlKind: 'approval',
         content: APPROVAL_CONTROL_RESPONSE_TEXT.refused,
       });
     }
-    return await retryApprovalMediation({ context: input.context, obligation: input.obligation });
+    return await retryMediatedIngressControl({ context: input.context, obligation });
   }
 
   if (responded.status === 'rejected') {
@@ -3141,26 +3865,167 @@ async function dispatchApprovalMediation(input: Readonly<{
       || responded.code === 'ownerMachineUnavailable'
       || responded.code === 'canceled'
     ) {
-      return await retryApprovalMediation({ context: input.context, obligation: input.obligation });
+      return await retryMediatedIngressControl({ context: input.context, obligation });
     }
-    return await settleApprovalMediationTerminal({
+    return await settleMediatedIngressControlTerminal({
       context: input.context,
       authority: input.authority,
-      obligation: input.obligation,
+      obligation,
       disposition: 'rejected',
+      controlKind: 'approval',
       content: responded.code === 'requestNotFound' || responded.code === 'requestNotPending'
         ? APPROVAL_CONTROL_RESPONSE_TEXT.notPending
         : APPROVAL_CONTROL_RESPONSE_TEXT.refused,
     });
   }
-  return await settleApprovalMediationTerminal({
+  return await settleMediatedIngressControlTerminal({
     context: input.context,
     authority: input.authority,
-    obligation: input.obligation,
+    obligation,
     disposition: 'approvalConsumed',
+    controlKind: 'approval',
     content: responded.decision === 'allow'
       ? APPROVAL_CONTROL_RESPONSE_TEXT.allowed
       : APPROVAL_CONTROL_RESPONSE_TEXT.denied,
+  });
+}
+
+/**
+ * Settles one frozen `/answer` through the canonical AskUserQuestion owner.
+ *
+ * The pending projection supplies the host-stamped turn only once. After that
+ * the incumbent ingress row retries the same Action tuple; this owner has no
+ * answer-result lookup, so a post-effect retry that finds the request no
+ * longer pending receives the deliberately neutral acknowledgement below.
+ */
+async function dispatchUserActionAnswerMediation(input: Readonly<{
+  context: PluginInvocationContext;
+  bindingId: string;
+  obligation: Readonly<{ row: StateRow; value: IngressObligationRecord }>;
+  authority: IngressAuthorityFence | undefined;
+  target: FrozenSessionTarget;
+  userActionAnswer: NonNullable<FrozenSessionTarget['userActionAnswer']>;
+}>): Promise<IngressCheckpointOutcome> {
+  const { target, userActionAnswer } = input;
+  let obligation = input.obligation;
+  const sourceAuthority = obligation.value.payload.sourceAuthority;
+  const source = {
+    sessionId: target.sessionId,
+    sourceRef: `channels:binding:${input.bindingId}`,
+    sourceRevisionOrEpoch: `${sourceAuthority.connectionAuthorityEpoch}:${sourceAuthority.bindingAuthorityEpoch}`,
+  } as const;
+
+  let turnId = obligation.value.payload.userActionAnswerTurnId;
+  if (turnId === null) {
+    let pending: ConversationPendingPermissionProjection;
+    try {
+      pending = await readConversationPendingPermissions({
+        actions: input.context.services.actions,
+        source,
+        signal: input.context.signal,
+      });
+    } catch (error) {
+      assertNotAborted(input.context.signal);
+      if (isPluginError(error) && error.retryable === false) {
+        return await settleMediatedIngressControlTerminal({
+          context: input.context,
+          authority: input.authority,
+          obligation,
+          disposition: 'rejected',
+          controlKind: 'userAction',
+          content: USER_ACTION_CONTROL_RESPONSE_TEXT.refused,
+        });
+      }
+      return await retryMediatedIngressControl({ context: input.context, obligation });
+    }
+    const match = pending.requests.find(
+      (request) => request.kind === 'user_action' && request.requestId === userActionAnswer.requestId,
+    );
+    if (match === undefined) {
+      // A truncated owner projection cannot prove that this question is gone.
+      if (pending.truncated) {
+        return await retryMediatedIngressControl({ context: input.context, obligation });
+      }
+      return await settleMediatedIngressControlTerminal({
+        context: input.context,
+        authority: input.authority,
+        obligation,
+        disposition: 'rejected',
+        controlKind: 'userAction',
+        content: USER_ACTION_CONTROL_RESPONSE_TEXT.settled,
+      });
+    }
+    // Persisted before the Session effect. A lifecycle conflict has not sent an
+    // answer and remains on the incumbent retry/currentness path.
+    obligation = await putIngressObligationLifecycle({
+      context: input.context,
+      obligation,
+      value: userActionAnswerTurnIngressObligationValue({
+        obligation: obligation.value,
+        turnId: match.turnId,
+        now: Date.now(),
+      }),
+    });
+    turnId = match.turnId;
+  }
+
+  let responded: PluginActionResultById['session.user_action.remote.answer'];
+  try {
+    responded = await input.context.services.actions.execute(
+      'session.user_action.remote.answer',
+      {
+        ...source,
+        turnId,
+        requestId: userActionAnswer.requestId,
+        answers: userActionAnswer.answers.map((answer) => ({
+          questionIndex: answer.questionIndex,
+          values: [...answer.values],
+        })),
+      },
+      { signal: input.context.signal },
+    );
+  } catch (error) {
+    assertNotAborted(input.context.signal);
+    if (isPluginError(error) && error.retryable === false) {
+      return await settleMediatedIngressControlTerminal({
+        context: input.context,
+        authority: input.authority,
+        obligation,
+        disposition: 'rejected',
+        controlKind: 'userAction',
+        content: USER_ACTION_CONTROL_RESPONSE_TEXT.refused,
+      });
+    }
+    return await retryMediatedIngressControl({ context: input.context, obligation });
+  }
+
+  if (responded.status === 'rejected') {
+    if (
+      responded.code === 'mediationStateUnavailable'
+      || responded.code === 'sessionUnavailable'
+      || responded.code === 'ownerMachineUnavailable'
+      || responded.code === 'canceled'
+    ) {
+      return await retryMediatedIngressControl({ context: input.context, obligation });
+    }
+    return await settleMediatedIngressControlTerminal({
+      context: input.context,
+      authority: input.authority,
+      obligation,
+      disposition: 'rejected',
+      controlKind: 'userAction',
+      content: responded.code === 'requestNotFound' || responded.code === 'requestNotPending'
+        ? USER_ACTION_CONTROL_RESPONSE_TEXT.settled
+        : USER_ACTION_CONTROL_RESPONSE_TEXT.refused,
+    });
+  }
+  return await settleMediatedIngressControlTerminal({
+    context: input.context,
+    authority: input.authority,
+    obligation,
+    disposition: 'userActionConsumed',
+    controlKind: 'userAction',
+    content: USER_ACTION_CONTROL_RESPONSE_TEXT.settled,
   });
 }
 
@@ -3171,18 +4036,33 @@ async function settleTerminalRefusalCustody(input: Readonly<{
   const { obligation } = input;
   const nonAdmission = obligation.value.payload.nonAdmission;
   if (nonAdmission === null || !nonAdmission.senderFeedbackEligible) return 'checkpointSafe';
+  const bindingId = obligation.value['binding-id'];
+  const bindingRevision = obligation.value.payload.sourceAuthority.bindingRevision;
+  const bindingAuthorityEpoch = obligation.value.payload.sourceAuthority.bindingAuthorityEpoch;
+  if (
+    bindingId === undefined
+    || bindingRevision === null
+    || bindingAuthorityEpoch === null
+  ) {
+    throw pluginError(
+      'channels_ingress_refusal_custody_invalid',
+      'A sender-refusal obligation lost its frozen binding route authority.',
+    );
+  }
 
-  const shell = ingressShell(await readPreparedIngressForObligation({
+  // Sender refusal needs the envelope, never the body, so it keeps working
+  // across a compacted census.
+  const shell = censusIngressShell(await readPreparedIngressCensusForObligation({
     context: input.context,
     obligation: obligation.value,
   }));
   const outward: ConversationControlResponseObligation = {
     connectionId: obligation.value['connection-id'],
-    bindingId: obligation.value['binding-id'],
+    bindingId,
     routeAuthority: {
       connectionAuthorityEpoch: obligation.value.payload.sourceAuthority.connectionAuthorityEpoch,
-      bindingRevision: obligation.value.payload.sourceAuthority.bindingRevision,
-      bindingAuthorityEpoch: obligation.value.payload.sourceAuthority.bindingAuthorityEpoch,
+      bindingRevision,
+      bindingAuthorityEpoch,
     },
     source: {
       kind: 'controlResponse',
@@ -3243,9 +4123,10 @@ async function dispatchIngressObligation(input: Readonly<{
   context: PluginInvocationContext;
   source: IngressExecutionSource;
   connectionId: string;
-  bindingId: string;
+  bindingId: string | undefined;
   obligation: Readonly<{ row: StateRow; value: IngressObligationRecord }>;
-  ingress: ConversationNormalizedIngressV1;
+  /** `null` once the census settled and dropped its body; see below. */
+  ingress: ConversationNormalizedIngressV1 | null;
 }>): Promise<IngressCheckpointOutcome> {
   let obligation = input.obligation;
   let authority: IngressAuthorityFence | undefined;
@@ -3253,6 +4134,16 @@ async function dispatchIngressObligation(input: Readonly<{
     return settleTerminalRefusalCustody({ context: input.context, obligation });
   }
   if (obligation.value.payload.lifecycle.phase === 'blocked') return 'checkpointSafe';
+  // Compaction proves every member already settled terminally, and both
+  // terminal states returned above. Reaching here means the unit lost its
+  // input while work was still outstanding.
+  const ingress = input.ingress;
+  if (ingress === null) {
+    throw pluginError(
+      'channels_ingress_census_compacted',
+      'A settled ingress census cannot dispatch an obligation that never terminalized.',
+    );
+  }
   if (
     obligation.value.payload.lifecycle.dueAt !== null
     && obligation.value.payload.lifecycle.dueAt > Date.now()
@@ -3279,7 +4170,7 @@ async function dispatchIngressObligation(input: Readonly<{
       connectionId: input.connectionId,
       bindingId: input.bindingId,
       obligation: obligation.value,
-      ingress: input.ingress,
+      ingress,
     });
     if (authority === undefined) {
       return terminalizeReadyAsStaleAuthority({ context: input.context, obligation });
@@ -3305,7 +4196,7 @@ async function dispatchIngressObligation(input: Readonly<{
     obligation = attempting;
   }
   assertNotAborted(input.context.signal);
-  const fullText = fullTextObservation(input.ingress);
+  const fullText = fullTextObservation(ingress);
   if (fullText === undefined) {
     throw pluginError(
       'channels_ingress_input_invalid',
@@ -3314,6 +4205,75 @@ async function dispatchIngressObligation(input: Readonly<{
   }
   if (obligation.value.payload.target === null) {
     throw pluginError('channels_ingress_target_missing', 'An active ingress obligation has no frozen target.');
+  }
+  if (obligation.value.payload.target.kind === 'event') {
+    const target = obligation.value.payload.target;
+    const provider = await readCurrentProviderContributionForPersistedSelection({
+      context: {
+        targetedContributions: input.context.services.targetedContributions,
+        signal: input.context.signal,
+      },
+      providerPluginId: target.providerPluginId,
+      providerContributionSelection: target.providerContributionSelection,
+    });
+    const operation = provider.operations.automationEventAdmit;
+    if (operation === undefined) {
+      const exhausted = obligation.value.payload.lifecycle.attemptCount >= MAX_CONVERSATION_DELIVERY_ATTEMPTS;
+      await putIngressObligationLifecycle({
+        context: input.context,
+        obligation,
+        value: exhausted
+          ? blockedIngressObligationValue({ obligation: obligation.value, now: Date.now() })
+          : retryDueIngressObligationValue({ obligation: obligation.value, now: Date.now() }),
+      });
+      return exhausted ? 'checkpointSafe' : 'unsettled';
+    }
+    const execution = await input.context.services.actions.executeAdmittedTargetedOperationWithExecutionOrigin(
+      operation,
+      {
+        connectionId: input.connectionId,
+        candidate: target.candidate,
+        occurrenceId: ingressShell(ingress).occurrenceId,
+        occurredAt: ingressShell(ingress).occurredAt,
+        observationReceivedAt: obligation.value['created-at'],
+      },
+      {
+        signal: input.context.signal,
+        expectedExecutionOrigin: target.executionOrigin,
+      },
+    );
+    if (!arePluginMachineExecutionOriginsEqual(execution.executionOrigin, target.executionOrigin)) {
+      throw pluginError(
+        'channels_ingress_event_execution_origin_changed',
+        'The provider Event action settled from an origin that is no longer frozen for this ingress obligation.',
+        true,
+      );
+    }
+    const admission = ConversationProviderAutomationEventAdmitResultV1Schema.parse(execution.result);
+    if (admission.kind === 'unsettled') {
+      const exhausted = obligation.value.payload.lifecycle.attemptCount >= MAX_CONVERSATION_DELIVERY_ATTEMPTS;
+      await putIngressObligationLifecycle({
+        context: input.context,
+        obligation,
+        value: exhausted
+          ? blockedIngressObligationValue({ obligation: obligation.value, now: Date.now() })
+          : retryDueIngressObligationValue({ obligation: obligation.value, now: Date.now() }),
+      });
+      return exhausted ? 'checkpointSafe' : 'unsettled';
+    }
+    await settleIngressEffectTerminal({
+      context: input.context,
+      authority,
+      obligation,
+      disposition: 'admitted',
+    });
+    return 'checkpointSafe';
+  }
+  if (input.bindingId === undefined) {
+    throw pluginError(
+      'channels_ingress_binding_missing',
+      'A binding-owned ingress obligation has no frozen binding identity.',
+    );
   }
   if (obligation.value.payload.target.kind === 'session') {
     const target = obligation.value.payload.target;
@@ -3337,6 +4297,16 @@ async function dispatchIngressObligation(input: Readonly<{
         target,
         approval: target.approval,
         actorPrincipalId: fullText.actor.principalId,
+      });
+    }
+    if (target.userActionAnswer !== null) {
+      return await dispatchUserActionAnswerMediation({
+        context: input.context,
+        bindingId: input.bindingId,
+        obligation,
+        authority,
+        target,
+        userActionAnswer: target.userActionAnswer,
       });
     }
     const displayNameSnapshot = sessionDisplayNameSnapshot(fullText.actor.label);
@@ -3462,15 +4432,16 @@ async function dispatchIngressObligation(input: Readonly<{
   return 'checkpointSafe';
 }
 
-function matchesIngressCensus(input: Readonly<{
+async function matchesIngressCensus(input: Readonly<{
   census: IngressCensusPayload;
-  ingress: ConversationNormalizedIngressV1;
-}>): boolean {
+  routingIdentityKey: string;
+  entry: ConversationIngressObservedEntryV1;
+}>): Promise<boolean> {
   // The frozen census names the authority that admitted its first effect, but
   // authority epoch is a currentness fence rather than occurrence identity.
   // A compatible E→E+1 transfer must rejoin the same immutable occurrence
   // without allowing an old poller to settle a new effect.
-  return immutableIngressMatches(input.census, input.ingress);
+  return await immutableIngressMatches(input.census, input.routingIdentityKey, input.entry);
 }
 
 /**
@@ -3487,6 +4458,8 @@ async function ingestConversationObservationForInvocation(
 ): Promise<IngressObservationOutcome> {
   assertNotAborted(context.signal);
   const input = ConversationProviderObservationIngestInputV1Schema.parse(unparsedInput);
+  const entry = input.entry;
+  const ingress = entry.observation;
   const collection = requireChannelsAccountStorage(context).collection(CHANNEL_STATE_COLLECTION);
   const connectionState = asConnection(readStateRow(await collection.get(
     input.connectionId,
@@ -3495,12 +4468,24 @@ async function ingestConversationObservationForInvocation(
   if (connectionState === undefined) {
     throw pluginError('channels_ingress_connection_unavailable', 'The requested Channel connection is unavailable.', true);
   }
-  const shell = ingressShell(input.observation);
+  const shell = ingressShell(ingress);
   assertCurrentConnection({
     connection: connectionState.value,
     source,
     observation: shell,
   });
+  if (
+    entry.eventCandidate !== null
+    && (
+      fullTextObservation(ingress) === undefined
+      || entry.eventCandidate.eventRef.pluginId !== connectionState.value.payload.providerPluginId
+    )
+  ) {
+    throw pluginError(
+      'channels_ingress_event_candidate_invalid',
+      'A provider Event candidate must accompany full text from the selected connection provider.',
+    );
+  }
 
   const censusId = await deriveIngressCensusRowId({
     routingIdentityKey: connectionState.value.payload.routingIdentityKey,
@@ -3553,14 +4538,15 @@ async function ingestConversationObservationForInvocation(
     );
   }
 
-  if (census !== undefined && !matchesIngressCensus({
+  if (census !== undefined && !await matchesIngressCensus({
     census: census.value.payload,
-    ingress: input.observation,
+    routingIdentityKey: connectionState.value.payload.routingIdentityKey,
+    entry,
   })) {
     await markIngressCensusOccurrenceConflict({
       context,
       source,
-      observation: input.observation,
+      entry,
       connection: connectionState,
       census,
     });
@@ -3570,7 +4556,7 @@ async function ingestConversationObservationForInvocation(
     );
   }
 
-  const fullText = fullTextObservation(input.observation);
+  const fullText = fullTextObservation(ingress);
   if (pairing !== undefined && fullText !== undefined) {
     const materialization = source.kind === 'providerObservation'
       ? source.caller?.materialization
@@ -3605,9 +4591,10 @@ async function ingestConversationObservationForInvocation(
     const censusValue = createIngressCensusValue({
       censusId,
       connectionId: connectionState.value.id,
-      ingress: input.observation,
+      ingress,
       connectionAuthorityEpoch: connectionState.value.payload.authorityEpoch,
       maximumObservationAgeMs: connectionState.value.payload.maximumObservationAgeMs,
+      eventCandidate: entry.eventCandidate,
       matchedBindings: bindings.map((binding) => ({
         bindingId: binding.value.id,
         bindingRevision: binding.row.revision,
@@ -3635,14 +4622,15 @@ async function ingestConversationObservationForInvocation(
           true,
         );
       }
-      if (!matchesIngressCensus({
+      if (!await matchesIngressCensus({
         census: census.value.payload,
-        ingress: input.observation,
+        routingIdentityKey: connectionState.value.payload.routingIdentityKey,
+        entry,
       })) {
         await markIngressCensusOccurrenceConflict({
           context,
           source,
-          observation: input.observation,
+          entry,
           connection: connectionState,
           census,
         });
@@ -3663,15 +4651,18 @@ async function ingestConversationObservationForInvocation(
     throw pluginError('channels_ingress_census_invalid', 'The ingress census was not persisted or rejoined.', true);
   }
 
-  const pairingConsumed = pairingReservation !== undefined;
-  if (pairingReservation !== undefined) {
-    // A valid reservation is terminal for this occurrence even if a later
-    // manager-local race consumes/cancels its challenge. It must never fall
-    // through to ordinary binding routing after the census exists.
-    pairingReservation.pairing.commitPreBindingMessage(pairingReservation.reservation);
-  }
+  // A valid reservation is terminal for this occurrence even if a later
+  // manager-local race consumes/cancels its challenge. It must never fall
+  // through to ordinary binding routing after the census exists.
+  const pairingSettlement = pairingReservation === undefined
+    ? undefined
+    : pairingReservation.pairing.commitPreBindingMessage(pairingReservation.reservation);
 
-  if (census.value.payload.phase === 'preparing') {
+  // A `preparing` census is never compacted: compaction requires a prepared
+  // unit whose every member settled. A row claiming both falls through to the
+  // unprepared refusal below rather than preparing obligations without a body.
+  const admittedIngress = census.value.payload.normalizedIngress;
+  if (census.value.payload.phase === 'preparing' && admittedIngress !== null) {
     const frozenConnection = frozenConnectionForIngressCensus({
       connection: connectionState.value,
       census: census.value.payload,
@@ -3681,38 +4672,62 @@ async function ingestConversationObservationForInvocation(
       connectionId: connectionState.value.id,
     })).map((binding) => [binding.value.id, binding]));
     const missingValues: JsonRecord[] = [];
-    for (const member of census.value.payload.matchedBindings) {
-      const obligationId = await opaqueHmacRowId({
+    for (const member of ingressCensusObligationMembers(census.value.payload)) {
+      const obligationId = await deriveIngressObligationRowIdForCensusMember({
         routingIdentityKey: connectionState.value.payload.routingIdentityKey,
-        domain: 'ingress-obligation',
-        parts: [connectionState.value.id, member.bindingId, shell.occurrenceId],
+        connectionId: connectionState.value.id,
+        occurrenceId: shell.occurrenceId,
+        member,
       });
       const existing = asIngressObligation(readStateRow(await collection.get(
         obligationId,
         { signal: context.signal },
       )) ?? null);
       if (existing !== undefined) {
-        if (
-          existing.value.payload.censusId !== census.value.id
-          || existing.value.payload.sourceAuthority.bindingRevision !== member.bindingRevision
-          || existing.value.payload.sourceAuthority.bindingAuthorityEpoch !== member.bindingAuthorityEpoch
-        ) {
+        if (!ingressObligationMatchesCensusMember({
+          censusId: census.value.id,
+          member,
+          obligation: existing.value,
+        })) {
           throw pluginError('channels_ingress_obligation_conflict', 'An ingress census member conflicts with its durable obligation.');
         }
         continue;
       }
-      const binding = currentBindings.get(member.bindingId);
+      if (member.kind === 'event') {
+        if (connectionState.value.payload.authorityEpoch !== census.value.payload.connectionAuthorityEpoch) {
+          missingValues.push(createStaleEventIngressObligationValue({
+            obligationId,
+            censusId: census.value.id,
+            connectionId: connectionState.value.id,
+            connectionAuthorityEpoch: census.value.payload.connectionAuthorityEpoch,
+            occurrenceId: shell.occurrenceId,
+            now: Date.now(),
+          }));
+        } else {
+          missingValues.push(createEventIngressObligationValue({
+            censusId: census.value.id,
+            obligationId,
+            connection: frozenConnection,
+            ingress: admittedIngress,
+            candidate: member.candidate,
+            now: Date.now(),
+          }));
+        }
+        continue;
+      }
+      const bindingMember = member.binding;
+      const binding = currentBindings.get(bindingMember.bindingId);
       if (
         binding === undefined
-        || binding.row.revision !== member.bindingRevision
-        || binding.value.payload.authorityEpoch !== member.bindingAuthorityEpoch
+        || binding.row.revision !== bindingMember.bindingRevision
+        || binding.value.payload.authorityEpoch !== bindingMember.bindingAuthorityEpoch
       ) {
         missingValues.push(createStaleIngressObligationValue({
           obligationId,
           censusId: census.value.id,
           connectionId: connectionState.value.id,
           connectionAuthorityEpoch: census.value.payload.connectionAuthorityEpoch,
-          member,
+          member: bindingMember,
           occurrenceId: shell.occurrenceId,
           now: Date.now(),
         }));
@@ -3721,7 +4736,7 @@ async function ingestConversationObservationForInvocation(
       const decision = ingressAdmissionDecision({
         binding: binding.value,
         bindingRevision: binding.row.revision,
-        ingress: census.value.payload.normalizedIngress,
+        ingress: admittedIngress,
       });
       missingValues.push(createIngressObligationValue({
         censusId: census.value.id,
@@ -3729,15 +4744,16 @@ async function ingestConversationObservationForInvocation(
         connection: frozenConnection,
         binding: binding.value,
         bindingRevision: binding.row.revision,
-        ingress: census.value.payload.normalizedIngress,
+        ingress: admittedIngress,
         target: frozenTargetForBinding({
           obligationId,
           connection: frozenConnection,
           binding: binding.value,
           bindingRevision: binding.row.revision,
-          ingress: census.value.payload.normalizedIngress,
+          ingress: admittedIngress,
           newSession: decision.newSession,
           approval: decision.approval,
+          userActionAnswer: decision.userActionAnswer,
         }),
         terminalOutcome: decision.terminalOutcome,
         now: Date.now(),
@@ -3788,15 +4804,28 @@ async function ingestConversationObservationForInvocation(
     throw pluginError('channels_ingress_census_unprepared', 'Ingress admission cannot begin before its census is prepared.', true);
   }
 
-  if (pairingConsumed) return 'checkpointSafe';
-
   let checkpointOutcome: IngressCheckpointOutcome = 'checkpointSafe';
-  for (const member of census.value.payload.matchedBindings) {
+  if (pairingSettlement !== undefined) {
+    // A pairing reservation prevents ordinary binding routing, but it never
+    // owns or bypasses the same observation's provider Event obligation.
+    const pairingOutcome = pairingSettlement.kind === 'matched'
+      ? await writePairingControlResponseCustody({
+        context,
+        connectionId: connectionState.value.id,
+        connectionAuthorityEpoch: connectionState.value.payload.authorityEpoch,
+        censusId: census.value.id,
+        shell,
+      })
+      : 'checkpointSafe';
+    checkpointOutcome = combineIngressCheckpointOutcomes(checkpointOutcome, pairingOutcome);
+  }
+  for (const member of ingressCensusObligationMembers(census.value.payload)) {
     assertNotAborted(context.signal);
-    const obligationId = await opaqueHmacRowId({
+    const obligationId = await deriveIngressObligationRowIdForCensusMember({
       routingIdentityKey: connectionState.value.payload.routingIdentityKey,
-      domain: 'ingress-obligation',
-      parts: [connectionState.value.id, member.bindingId, shell.occurrenceId],
+      connectionId: connectionState.value.id,
+      occurrenceId: shell.occurrenceId,
+      member,
     });
     const obligation = asIngressObligation(readStateRow(await collection.get(
       obligationId,
@@ -3815,13 +4844,24 @@ async function ingestConversationObservationForInvocation(
         'The provider occurrence conflicts with its first immutable ingress evidence.',
       );
     }
+    const bindingId = member.kind === 'binding' ? member.binding.bindingId : undefined;
+    if (!ingressObligationMatchesCensusMember({
+      censusId: census.value.id,
+      member,
+      obligation: obligation.value,
+    })) {
+      throw pluginError(
+        'channels_ingress_obligation_conflict',
+        'The ingress obligation no longer matches its immutable census member.',
+      );
+    }
     let outcome: IngressCheckpointOutcome;
     try {
       outcome = await dispatchIngressObligation({
         context,
         source,
         connectionId: connectionState.value.id,
-        bindingId: member.bindingId,
+        bindingId,
         obligation,
         ingress: census.value.payload.normalizedIngress,
       });
@@ -3960,6 +5000,7 @@ export async function runConversationIngressDueWorkForInvocation(input: Readonly
 
 type IngressRetentionCandidate = Readonly<{
   census: Readonly<{ row: StateRow; value: IngressCensusRecord }>;
+  connection: Readonly<{ row: StateRow; value: ChannelConnectionRecord }>;
   obligations: readonly Readonly<{ row: StateRow; value: IngressObligationRecord }>[];
 }>;
 
@@ -3974,50 +5015,53 @@ type IngressRetentionCandidate = Readonly<{
  * complete inbound message bodies indefinitely.
  */
 function requiresIngressCensusCheckpointCoverage(census: IngressCensusRecord): boolean {
-  return ingressShell(census.payload.normalizedIngress).transport.kind === 'poll';
+  return censusIngressShell(census.payload).transport.kind === 'poll';
 }
 
 function isIngressCensusPastFrozenRetentionHorizon(input: Readonly<{
   census: IngressCensusRecord;
   now: number;
 }>): boolean {
-  const occurredAt = ingressShell(input.census.payload.normalizedIngress).occurredAt;
+  const occurredAt = censusIngressShell(input.census.payload).occurredAt;
   return input.now > occurredAt
     && input.now - occurredAt > input.census.payload.maximumObservationAgeMs;
 }
 
 /**
- * A census becomes retirable only when replay is impossible and every member
- * has settled terminally. A checkpointed pull proves the replay half with its
- * coverage fact; direct ingress has no replay source to prove. A member row
- * that disappears afterward is a completed deletion, not a retry obligation.
+ * A census unit is settled when replay is impossible and every member has
+ * settled terminally. A checkpointed pull proves the replay half with its
+ * coverage fact; direct ingress has no replay source to prove. A contradictory
+ * immutable-evidence fact also closes replay: it is retained as attention
+ * evidence, but must not keep duplicating a body after its members settle. A
+ * member row that disappears afterward is a completed deletion, not a retry
+ * obligation.
  *
  * A terminal member's `attention` is an owner-visible diagnostic with no
  * recovery action attached, so it expires with the row exactly as c0.56's
  * outward `notDelivered` does. What still pins a census is unfinished work an
- * owner can act on: a non-terminal `blocked` member awaiting its retry, and
- * contradictory occurrence evidence on the census itself.
+ * owner can act on: a non-terminal `blocked` member awaiting its retry.
+ * Contradictory occurrence evidence remains indefinitely, but its terminal
+ * shape is the compact census itself rather than every historical fanout row.
+ *
+ * Settlement is what makes the retained body redundant, and the horizon is
+ * what makes the whole unit expendable, so this one predicate serves both the
+ * in-place compaction and the delete.
  */
-async function readIngressRetentionCandidate(input: Readonly<{
+async function readSettledIngressUnit(input: Readonly<{
   context: PluginInvocationContext;
   census: Readonly<{ row: StateRow; value: IngressCensusRecord }>;
-  now: number;
 }>): Promise<IngressRetentionCandidate | undefined> {
   const { census } = input;
+  const hasConflict = census.value.payload.conflict !== null;
   if (
-    // Contradictory occurrence evidence is the ingress analogue of unresolved
-    // outward ambiguity: it names a fact an owner still has to reconcile, so it
-    // is retained indefinitely rather than expiring with the horizon.
-    census.value.attention
-    || census.value.payload.conflict !== null
     // A `preparing` census is unfinished admitted work, not expired evidence.
     // Its members may not all exist yet and it still holds the only copy of the
     // captured inbound message, so the horizon may never reclaim it: a replay
     // rejoins the census and finishes preparation instead.
-    || census.value.payload.phase !== 'prepared'
-    || (requiresIngressCensusCheckpointCoverage(census.value)
+    census.value.payload.phase !== 'prepared'
+    || (!hasConflict
+      && requiresIngressCensusCheckpointCoverage(census.value)
       && census.value.payload.checkpointCoveredAt === null)
-    || !isIngressCensusPastFrozenRetentionHorizon({ census: census.value, now: input.now })
   ) return undefined;
 
   const collection = requireChannelsAccountStorage(input.context).collection(CHANNEL_STATE_COLLECTION);
@@ -4026,13 +5070,14 @@ async function readIngressRetentionCandidate(input: Readonly<{
     { signal: input.context.signal },
   )) ?? null);
   if (connection === undefined) return undefined;
-  const shell = ingressShell(census.value.payload.normalizedIngress);
+  const shell = censusIngressShell(census.value.payload);
   const obligations: Array<Readonly<{ row: StateRow; value: IngressObligationRecord }>> = [];
-  for (const member of census.value.payload.matchedBindings) {
-    const obligationId = await opaqueHmacRowId({
+  for (const member of ingressCensusObligationMembers(census.value.payload)) {
+    const obligationId = await deriveIngressObligationRowIdForCensusMember({
       routingIdentityKey: connection.value.payload.routingIdentityKey,
-      domain: 'ingress-obligation',
-      parts: [census.value['connection-id'], member.bindingId, shell.occurrenceId],
+      connectionId: census.value['connection-id'],
+      occurrenceId: shell.occurrenceId,
+      member,
     });
     const obligation = asIngressObligation(readStateRow(await collection.get(
       obligationId,
@@ -4043,13 +5088,17 @@ async function readIngressRetentionCandidate(input: Readonly<{
     // row must still satisfy the monotonic terminal invariant itself: a member
     // that has not settled is unfinished work, never expired evidence.
     if (obligation === undefined) continue;
-    if (obligation.value.payload.censusId !== census.value.id) return undefined;
+    if (!ingressObligationMatchesCensusMember({
+      censusId: census.value.id,
+      member,
+      obligation: obligation.value,
+    })) return undefined;
     if (!obligation.value.terminal || obligation.value.payload.lifecycle.phase !== 'terminal') {
       return undefined;
     }
     obligations.push(obligation);
   }
-  return { census, obligations };
+  return { census, connection, obligations };
 }
 
 async function deleteIngressRetentionCandidate(input: Readonly<{
@@ -4084,7 +5133,112 @@ async function deleteIngressRetentionCandidate(input: Readonly<{
   return result.status === 'updated';
 }
 
+/**
+ * In-place compaction of a settled unit. The full admitted ingress is replaced
+ * by the envelope the protocol already publishes without a body plus one
+ * connection-keyed digest of the admitted text, so the message text stops
+ * being duplicated outside the Session transcript for the rest of the frozen
+ * window while replay equality, the retention anchor, and sender-refusal
+ * custody all keep deciding from the retained envelope.
+ */
+function compactedIngressCensusValue(input: Readonly<{
+  census: IngressCensusRecord;
+  compacted: IngressCensusCompacted;
+  now: number;
+}>): JsonRecord {
+  const {
+    phase,
+    connectionAuthorityEpoch,
+    maximumObservationAgeMs,
+    checkpointCoveredAt,
+    conflict,
+  } = input.census.payload;
+  return {
+    ...input.census,
+    [CHANNEL_STATE_FIELD.updatedAt]: input.now,
+    payload: {
+      normalizedIngress: null,
+      compacted: { shell: input.compacted.shell, textDigest: input.compacted.textDigest },
+      phase,
+      connectionAuthorityEpoch,
+      maximumObservationAgeMs,
+      checkpointCoveredAt,
+      conflict,
+      // The compact shell/digest is now the complete replay witness. Retaining
+      // either mutable fanout fact would leave a second consumer path after
+      // every member has reached its terminal outcome.
+      eventCandidate: null,
+      matchedBindings: [],
+    },
+  };
+}
+
+/**
+ * Only an admitted body is duplicated content: a `routableNonAdmission`
+ * census already retains nothing but its envelope, so it has nothing to
+ * compact and stays exactly as written.
+ */
+async function compactSettledIngressCensus(input: Readonly<{
+  context: PluginInvocationContext;
+  candidate: IngressRetentionCandidate;
+  now: number;
+}>): Promise<boolean> {
+  const { census, connection } = input.candidate;
+  const normalizedIngress = census.value.payload.normalizedIngress;
+  if (normalizedIngress === null || normalizedIngress.kind !== 'fullText') return false;
+  // An ordinary terminal-attention obligation still expires with its census at
+  // the frozen horizon. It has no independent retention cursor, so clearing
+  // the census fanout before that sweep would orphan the row. A census
+  // conflict is different: the census itself is the permanent attention fact,
+  // and it must compact as soon as its members become terminal.
+  if (
+    census.value.payload.conflict === null
+    && input.candidate.obligations.some((obligation) => obligation.value.attention)
+  ) return false;
+  const collection = requireChannelsAccountStorage(input.context).collection(CHANNEL_STATE_COLLECTION);
+  // Attention rows remain independently inspectable until their ordinary
+  // retention decision. Every non-attention row is terminal by the settled
+  // predicate, so it has no recovery consumer once the compact witness wins.
+  const prunableObligations = input.candidate.obligations.filter(
+    (obligation) => !obligation.value.attention,
+  );
+  const { maxBatchRows } = await collection.limits({ signal: input.context.signal });
+  for (let offset = 0; offset < prunableObligations.length; offset += maxBatchRows) {
+    assertNotAborted(input.context.signal);
+    const result = await collection.batch(prunableObligations.slice(
+      offset,
+      offset + maxBatchRows,
+    ).map((obligation) => ({
+      kind: 'delete' as const,
+      rowId: obligation.row.rowId,
+      expectedRevision: obligation.row.revision,
+    })), { signal: input.context.signal });
+    // A later sweep rereads the member set. Already deleted terminal rows are
+    // a completed prefix, while a conflicting live row keeps the full census
+    // intact for its own recovery owner.
+    if (result.status === 'conflict') return false;
+  }
+  assertNotAborted(input.context.signal);
+  const result = await collection.batch([{
+    kind: 'put',
+    value: compactedIngressCensusValue({
+      census: census.value,
+      compacted: {
+        shell: ingressShell(normalizedIngress),
+        textDigest: await deriveIngressCensusTextDigest({
+          routingIdentityKey: connection.value.payload.routingIdentityKey,
+          text: normalizedIngress.observation.message.text,
+        }),
+      },
+      now: input.now,
+    }),
+    expectedRevision: census.row.revision,
+  }], { signal: input.context.signal });
+  return result.status === 'updated';
+}
+
 export type ConversationIngressRetentionRunResult = Readonly<{
+  compactedCensuses: number;
   deletedCensuses: number;
   nextCursor?: string;
 }>;
@@ -4100,12 +5254,12 @@ export async function runConversationIngressRetentionForInvocation(input: Readon
   cursor?: string;
 }>, context: PluginInvocationContext): Promise<ConversationIngressRetentionRunResult> {
   const now = input.now ?? Date.now();
-  const limit = input.limit ?? MAX_CHANNEL_ACCOUNT_COLLECTION_QUERY_PAGE_SIZE;
+  const limit = input.limit ?? PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1;
   if (
     !isNonNegativeSafeInteger(now)
     || !Number.isSafeInteger(limit)
     || limit < 1
-    || limit > MAX_CHANNEL_ACCOUNT_COLLECTION_QUERY_PAGE_SIZE
+    || limit > PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1
   ) {
     throw new Error('Ingress retention bounds are invalid.');
   }
@@ -4118,16 +5272,25 @@ export async function runConversationIngressRetentionForInvocation(input: Readon
     limit,
     ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
   }, { signal: context.signal });
+  let compactedCensuses = 0;
   let deletedCensuses = 0;
   for (const raw of page.rows) {
     assertNotAborted(context.signal);
     const census = asIngressCensus(readStateRow(raw) ?? null);
     if (census === undefined) continue;
-    const candidate = await readIngressRetentionCandidate({ context, census, now });
+    const candidate = await readSettledIngressUnit({ context, census });
     if (candidate === undefined) continue;
-    if (await deleteIngressRetentionCandidate({ context, candidate })) deletedCensuses += 1;
+    if (
+      census.value.payload.conflict === null
+      && isIngressCensusPastFrozenRetentionHorizon({ census: census.value, now })
+    ) {
+      if (await deleteIngressRetentionCandidate({ context, candidate })) deletedCensuses += 1;
+      continue;
+    }
+    if (await compactSettledIngressCensus({ context, candidate, now })) compactedCensuses += 1;
   }
   return {
+    compactedCensuses,
     deletedCensuses,
     ...(page.nextCursor === undefined ? {} : { nextCursor: page.nextCursor }),
   };
@@ -4491,10 +5654,127 @@ export async function prepareConversationCheckpointTransferFence(input: Readonly
   };
 }
 
+/**
+ * Finishes one census that preparation never completed, as the ordinary
+ * stale-authority terminal outcome its members already have for a revoked
+ * authority. Members that are already terminal, or that hold `attempting` or
+ * `blocked` custody a downstream effect may depend on, keep their incumbent
+ * recovery owner and their retained input.
+ */
+async function abandonPreparingIngressCensus(input: Readonly<{
+  context: PluginInvocationContext;
+  connection: Readonly<{ row: StateRow; value: ChannelConnectionRecord }>;
+  census: Readonly<{ row: StateRow; value: IngressCensusRecord }>;
+}>): Promise<void> {
+  const collection = requireChannelsAccountStorage(input.context).collection(CHANNEL_STATE_COLLECTION);
+  const shell = censusIngressShell(input.census.value.payload);
+  const fence = {
+    kind: 'assert' as const,
+    rowId: input.census.row.rowId,
+    expectedRevision: input.census.row.revision,
+  };
+  const settlements: Array<Readonly<{ value: JsonRecord; expectedRevision: number }>> = [];
+  for (const member of ingressCensusObligationMembers(input.census.value.payload)) {
+    assertNotAborted(input.context.signal);
+    const obligationId = await deriveIngressObligationRowIdForCensusMember({
+      routingIdentityKey: input.connection.value.payload.routingIdentityKey,
+      connectionId: input.connection.value.id,
+      occurrenceId: shell.occurrenceId,
+      member,
+    });
+    const row = readStateRow(await collection.get(obligationId, { signal: input.context.signal })) ?? null;
+    if (row === null) continue;
+    const obligation = asIngressObligation(row);
+    if (
+      obligation === undefined
+      || !ingressObligationMatchesCensusMember({
+        censusId: input.census.value.id,
+        member,
+        obligation: obligation.value,
+      })
+    ) return;
+    const settlement = prepareConversationIngressObligationForDeletion({
+      rowId: row.rowId,
+      revision: row.revision,
+      value: row.value,
+      now: Date.now(),
+      disposition: 'staleAuthority',
+      nonAdmission: { reason: 'staleAuthority', senderFeedbackEligible: false },
+    });
+    // An unreadable member or one belonging to another connection is corrupt
+    // state an owner still has to see; it must not be swept by this transition.
+    if (settlement.kind === 'invalid' || settlement.connectionId !== input.connection.value.id) return;
+    if (settlement.kind !== 'readyToSettle') continue;
+    settlements.push({ value: settlement.value, expectedRevision: row.revision });
+  }
+  const { maxBatchRows } = await collection.limits({ signal: input.context.signal });
+  const perBatch = Math.max(maxBatchRows - 1, 1);
+  for (let offset = 0; offset < settlements.length; offset += perBatch) {
+    assertNotAborted(input.context.signal);
+    const result = await collection.batch([
+      fence,
+      ...settlements.slice(offset, offset + perBatch).map((settlement) => ({
+        kind: 'put' as const,
+        value: settlement.value,
+        expectedRevision: settlement.expectedRevision,
+      })),
+    ], { signal: input.context.signal });
+    if (result.status === 'conflict') return;
+  }
+  assertNotAborted(input.context.signal);
+  await collection.batch([{
+    kind: 'put',
+    value: preparedIngressCensusValue({ census: input.census.value, now: Date.now() }),
+    expectedRevision: input.census.row.revision,
+  }], { signal: input.context.signal });
+}
+
+/**
+ * A `preparing` census is admitted work only a replay of its occurrence can
+ * finish, and preparation is reachable only from the ingress path. A
+ * checkpointed pull keeps that producer, so its unfinished units are left
+ * alone. Socket and durable-push ingress has no cursor to re-present the
+ * occurrence, and accepting the history gap is the owner's decision that the
+ * lost window is gone: nothing will ever reach `prepared`, so the members
+ * would keep refilling the first due page ahead of valid work while retention
+ * — which reclaims only prepared units — could never expire the row.
+ */
+async function abandonUnreplayablePreparingIngressCensuses(input: Readonly<{
+  context: PluginInvocationContext;
+  connection: Readonly<{ row: StateRow; value: ChannelConnectionRecord }>;
+}>): Promise<void> {
+  const collection = requireChannelsAccountStorage(input.context).collection(CHANNEL_STATE_COLLECTION);
+  let cursor: string | undefined;
+  do {
+    assertNotAborted(input.context.signal);
+    const page = await collection.query({
+      index: CHANNEL_STATE_INDEX_ID.byConnectionBindingV2,
+      prefix: [
+        input.connection.value.id,
+        null,
+        CHANNEL_STATE_RECORD_KIND.ingressCensus,
+        false,
+      ],
+      order: 'asc',
+      limit: PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1,
+      ...(cursor === undefined ? {} : { cursor }),
+    }, { signal: input.context.signal });
+    for (const raw of page.rows) {
+      const census = asIngressCensus(readStateRow(raw) ?? null);
+      if (census === undefined || census.value.payload.phase !== 'preparing') continue;
+      await abandonPreparingIngressCensus({ ...input, census });
+    }
+    cursor = page.nextCursor;
+  } while (cursor !== undefined);
+}
+
 async function clearCurrentHistoryGapWithoutCheckpoint(input: Readonly<{
   context: PluginInvocationContext;
   connection: Readonly<{ row: StateRow; value: ChannelConnectionRecord }>;
 }>): Promise<ConversationConnectionUpdateResult> {
+  // Abandonment precedes the gap clear so an interrupted acceptance repeats it
+  // rather than leaving the stranded units behind a cleared gap.
+  await abandonUnreplayablePreparingIngressCensuses(input);
   const collection = requireChannelsAccountStorage(input.context).collection(CHANNEL_STATE_COLLECTION);
   const result = await collection.batch([
     {
@@ -4531,7 +5811,204 @@ type CheckpointedPollCommitMode = 'baseline' | 'normal';
 type IngressCensusCheckpointSettlement = Readonly<{
   kind: 'cover' | 'assert';
   census: Readonly<{ row: StateRow; value: IngressCensusRecord }>;
+  /** Only a replacement baseline may prepare-and-cover its stranded census. */
+  prepare?: true;
 }>;
+
+type IngressObligationCheckpointSettlement =
+  | Readonly<{
+    kind: 'terminalize';
+    obligation: Readonly<{ row: StateRow; value: IngressObligationRecord }>;
+    value: JsonRecord;
+  }>
+  | Readonly<{
+    kind: 'assertBlocked';
+    obligation: Readonly<{ row: StateRow; value: IngressObligationRecord }>;
+  }>;
+
+type CheckpointedBaselineIngressSettlements = Readonly<{
+  censusSettlements: readonly IngressCensusCheckpointSettlement[];
+  obligationSettlements: readonly IngressObligationCheckpointSettlement[];
+}>;
+
+/**
+ * A replacement checkpoint makes this connection's earlier provider window
+ * unreachable. Before it can clear that history gap, this same ingress owner
+ * converts every replayable, unattempted member from that window into its
+ * minimal stale-authority terminal fact and includes every census in the one
+ * checkpoint batch. A blocked member keeps its explicit recovery custody, but
+ * the final batch asserts its exact row so a concurrent retry claim prevents
+ * the cursor from advancing. An already-attempting member has an external
+ * effect in flight and therefore rejects this baseline before it can commit.
+ *
+ * Provider ingress is already rejected while `historyGap` is set, which is the
+ * connection-level admission fence that makes this census scan current until
+ * the final CAS clears the gap. The final batch fences each mutable blocked row,
+ * so its recovery owner cannot be silently bypassed by this replacement.
+ */
+async function readCheckpointedBaselineIngressSettlements(input: Readonly<{
+  context: PluginInvocationContext;
+  connection: Readonly<{ row: StateRow; value: ChannelConnectionRecord }>;
+}>): Promise<CheckpointedBaselineIngressSettlements> {
+  const collection = requireChannelsAccountStorage(input.context).collection(CHANNEL_STATE_COLLECTION);
+  const censusSettlements = new Map<string, IngressCensusCheckpointSettlement>();
+  const obligationSettlements = new Map<string, IngressObligationCheckpointSettlement>();
+  for (const attention of [false, true] as const) {
+    let cursor: string | undefined;
+    do {
+      assertNotAborted(input.context.signal);
+      const page = await collection.query({
+        index: CHANNEL_STATE_INDEX_ID.byConnectionBindingV2,
+        prefix: [
+          input.connection.value.id,
+          null,
+          CHANNEL_STATE_RECORD_KIND.ingressCensus,
+          attention,
+        ],
+        order: 'asc',
+        limit: PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1,
+        ...(cursor === undefined ? {} : { cursor }),
+      }, { signal: input.context.signal });
+      for (const raw of page.rows) {
+        assertNotAborted(input.context.signal);
+        const census = asIngressCensus(readStateRow(raw) ?? null);
+        if (census === undefined || census.value['connection-id'] !== input.connection.value.id) {
+          continue;
+        }
+        if (census.value.attention || census.value.payload.conflict !== null) {
+          throw pluginError(
+            'channels_stream_baseline_unsettled_ingress',
+            'A conflicting ingress census requires owner attention before this replacement checkpoint can advance.',
+            true,
+          );
+        }
+        if (
+          census.value.payload.phase === 'preparing'
+          && census.value.payload.checkpointCoveredAt !== null
+        ) {
+          throw pluginError(
+            'channels_stream_baseline_unsettled_ingress',
+            'A preparing ingress census cannot already be covered by a replacement checkpoint.',
+            true,
+          );
+        }
+        const shell = censusIngressShell(census.value.payload);
+        for (const member of ingressCensusObligationMembers(census.value.payload)) {
+          const obligationId = await deriveIngressObligationRowIdForCensusMember({
+            routingIdentityKey: input.connection.value.payload.routingIdentityKey,
+            connectionId: input.connection.value.id,
+            occurrenceId: shell.occurrenceId,
+            member,
+          });
+          const obligation = asIngressObligation(readStateRow(await collection.get(
+            obligationId,
+            { signal: input.context.signal },
+          )) ?? null);
+          // An absent member was already terminally reclaimed by this owner's
+          // retention path. A retained member must be exactly the frozen
+          // census member, or the replacement cannot safely decide it.
+          if (obligation === undefined) continue;
+          if (
+            obligation.value['connection-id'] !== input.connection.value.id
+            || !ingressObligationMatchesCensusMember({
+              censusId: census.value.id,
+              member,
+              obligation: obligation.value,
+            })
+          ) {
+            throw pluginError(
+              'channels_stream_baseline_unsettled_ingress',
+              'A retained ingress member no longer matches the immutable census it belongs to.',
+              true,
+            );
+          }
+          const settlement = prepareConversationIngressObligationForDeletion({
+            rowId: obligation.row.rowId,
+            revision: obligation.row.revision,
+            value: obligation.row.value,
+            now: Date.now(),
+            disposition: 'staleAuthority',
+            nonAdmission: { reason: 'staleAuthority', senderFeedbackEligible: false },
+          });
+          if (settlement.kind === 'invalid' || settlement.connectionId !== input.connection.value.id) {
+            throw pluginError(
+              'channels_stream_baseline_unsettled_ingress',
+              'The replacement checkpoint found an unreadable ingress member.',
+              true,
+            );
+          }
+          let planned: IngressObligationCheckpointSettlement | undefined;
+          if (settlement.kind === 'readyToSettle') {
+            planned = { kind: 'terminalize', obligation, value: settlement.value };
+          } else if (settlement.kind === 'blocked') {
+            if (obligation.value.payload.lifecycle.phase === 'attempting') {
+              throw pluginError(
+                'channels_stream_baseline_unsettled_ingress',
+                'An in-flight ingress member must settle before checkpoint replacement.',
+                true,
+              );
+            }
+            if (
+              obligation.value.payload.lifecycle.phase !== 'blocked'
+              || !obligation.value.attention
+            ) {
+              throw pluginError(
+                'channels_stream_baseline_unsettled_ingress',
+                'The replacement checkpoint found an invalid retained ingress recovery state.',
+                true,
+              );
+            }
+            planned = { kind: 'assertBlocked', obligation };
+          }
+          if (planned !== undefined) {
+            const existing = obligationSettlements.get(obligation.row.rowId);
+            if (
+              existing !== undefined
+              && (
+                existing.obligation.row.revision !== obligation.row.revision
+                || existing.kind !== planned.kind
+              )
+            ) {
+              throw pluginError(
+                'channels_stream_baseline_unsettled_ingress',
+                'The replacement checkpoint found two revisions of one ingress member.',
+                true,
+              );
+            }
+            obligationSettlements.set(obligation.row.rowId, planned);
+          }
+        }
+        const prepare = census.value.payload.phase === 'preparing';
+        const kind = census.value.payload.checkpointCoveredAt === null ? 'cover' : 'assert';
+        if (prepare && kind !== 'cover') {
+          throw pluginError(
+            'channels_stream_baseline_unsettled_ingress',
+            'A preparing ingress census cannot be asserted as already checkpoint-covered.',
+            true,
+          );
+        }
+        const existing = censusSettlements.get(census.value.id);
+        if (existing !== undefined && existing.census.row.revision !== census.row.revision) {
+          throw pluginError(
+            'channels_stream_baseline_unsettled_ingress',
+            'The replacement checkpoint found two revisions of one ingress census.',
+            true,
+          );
+        }
+        censusSettlements.set(census.value.id, {
+          kind,
+          census,
+          ...(prepare ? { prepare: true as const } : {}),
+        });
+      }
+      cursor = page.nextCursor;
+    } while (cursor !== undefined);
+  }
+  return {
+    censusSettlements: [...censusSettlements.values()],
+    obligationSettlements: [...obligationSettlements.values()],
+  };
+}
 
 async function commitCurrentCheckpointedPoll(input: Readonly<{
   context: PluginInvocationContext;
@@ -4545,6 +6022,7 @@ async function commitCurrentCheckpointedPoll(input: Readonly<{
   lastOccurrenceId: string | null;
   nextPollNotBeforeMs: number | null;
   censusSettlements?: readonly IngressCensusCheckpointSettlement[];
+  obligationSettlements?: readonly IngressObligationCheckpointSettlement[];
   mode: CheckpointedPollCommitMode;
 }>): Promise<ConversationConnectionUpdateResult> {
   const connection = await readCurrentBaselineConnection({
@@ -4584,6 +6062,7 @@ async function commitCurrentCheckpointedPoll(input: Readonly<{
       && (
         existing.census.row.revision !== settlement.census.row.revision
         || existing.kind !== settlement.kind
+        || existing.prepare !== settlement.prepare
       )
     ) {
       throw pluginError(
@@ -4596,6 +6075,13 @@ async function commitCurrentCheckpointedPoll(input: Readonly<{
       settlement.census.value.attention
       || settlement.census.value.payload.conflict !== null
       || (settlement.kind === 'cover') !== (settlement.census.value.payload.checkpointCoveredAt === null)
+      || (settlement.prepare === true && (
+        input.mode !== 'baseline'
+        || settlement.kind !== 'cover'
+        || settlement.census.value.payload.phase !== 'preparing'
+      ))
+      || (settlement.prepare !== true && settlement.kind === 'cover'
+        && settlement.census.value.payload.phase !== 'prepared')
     ) {
       throw pluginError(
         'channels_checkpointed_poll_coverage_invalid',
@@ -4606,17 +6092,75 @@ async function commitCurrentCheckpointedPoll(input: Readonly<{
     settlementById.set(settlement.census.value.id, settlement);
   }
   const censusSettlements = [...settlementById.values()];
-  if (censusSettlements.length > MAX_CHECKPOINTED_POLL_COVERAGE_OBSERVATIONS) {
+  const obligationSettlementById = new Map<string, IngressObligationCheckpointSettlement>();
+  for (const settlement of input.obligationSettlements ?? []) {
+    const existing = obligationSettlementById.get(settlement.obligation.value.id);
+    if (
+      existing !== undefined
+      && (
+        existing.obligation.row.revision !== settlement.obligation.row.revision
+        || existing.kind !== settlement.kind
+      )
+    ) {
+      throw pluginError(
+        'channels_checkpointed_poll_coverage_invalid',
+        'The same ingress obligation cannot have two checkpoint settlement revisions.',
+        true,
+      );
+    }
+    if (settlement.kind === 'terminalize') {
+      const terminal = asIngressObligation({
+        rowId: settlement.obligation.row.rowId,
+        revision: settlement.obligation.row.revision,
+        value: settlement.value,
+      });
+      if (
+        terminal === undefined
+        || !terminal.value.terminal
+        || !terminal.value.attention
+        || terminal.value.payload.lifecycle.phase !== 'terminal'
+        || terminal.value.payload.disposition !== 'staleAuthority'
+        || terminal.value.payload.nonAdmission?.reason !== 'staleAuthority'
+        || terminal.value.payload.nonAdmission.senderFeedbackEligible !== false
+      ) {
+        throw pluginError(
+          'channels_checkpointed_poll_coverage_invalid',
+          'A replacement checkpoint may only write the canonical stale-authority ingress terminalization.',
+          true,
+        );
+      }
+    } else if (
+      settlement.obligation.value.terminal
+      || !settlement.obligation.value.attention
+      || settlement.obligation.value.payload.lifecycle.phase !== 'blocked'
+    ) {
+      throw pluginError(
+        'channels_checkpointed_poll_coverage_invalid',
+        'A replacement checkpoint may only retain its exact blocked ingress recovery custody.',
+        true,
+      );
+    }
+    obligationSettlementById.set(settlement.obligation.value.id, settlement);
+  }
+  const obligationSettlements = [...obligationSettlementById.values()];
+  if (
+    censusSettlements.length + obligationSettlements.length
+    > MAX_CHECKPOINTED_POLL_COVERAGE_OBSERVATIONS
+  ) {
     throw pluginError(
-      'channels_checkpointed_poll_coverage_invalid',
-      'The checkpointed poll has more census coverage writes than its atomic Account Collection batch permits.',
+      input.mode === 'baseline'
+        ? 'channels_stream_baseline_unsettled_ingress'
+        : 'channels_checkpointed_poll_coverage_invalid',
+      input.mode === 'baseline'
+        ? 'The replacement baseline has more ingress settlements than its atomic Account Collection batch permits.'
+        : 'The checkpointed poll has more census coverage writes than its atomic Account Collection batch permits.',
       true,
     );
   }
   const writesConnection = input.mode === 'baseline' || connection.value.payload.pollFailure !== null;
   const now = Date.now();
   const collection = requireChannelsAccountStorage(input.context).collection(CHANNEL_STATE_COLLECTION);
-  const result = await collection.batch([
+  const operations: readonly PluginCollectionMutation<JsonRecord>[] = [
     ...(input.mode === 'baseline'
       ? [{
           kind: 'put' as const,
@@ -4647,11 +6191,28 @@ async function commitCurrentCheckpointedPoll(input: Readonly<{
       }),
       expectedRevision: input.checkpoint?.row.revision ?? 'absent',
     },
+    ...obligationSettlements.map((settlement) => (
+      settlement.kind === 'terminalize'
+        ? {
+            kind: 'put' as const,
+            value: settlement.value,
+            expectedRevision: settlement.obligation.row.revision,
+          }
+        : {
+            kind: 'assert' as const,
+            rowId: settlement.obligation.row.rowId,
+            expectedRevision: settlement.obligation.row.revision,
+          }
+    )),
     ...censusSettlements.map((settlement) => (
       settlement.kind === 'cover'
         ? {
             kind: 'put' as const,
-            value: checkpointCoveredIngressCensusValue({ census: settlement.census.value, now }),
+            value: checkpointCoveredIngressCensusValue({
+              census: settlement.census.value,
+              now,
+              ...(settlement.prepare === true ? { prepare: true } : {}),
+            }),
             expectedRevision: settlement.census.row.revision,
           }
         : {
@@ -4660,7 +6221,27 @@ async function commitCurrentCheckpointedPoll(input: Readonly<{
             expectedRevision: settlement.census.row.revision,
           }
     )),
-  ], { signal: input.context.signal });
+  ];
+  if (input.mode === 'baseline') {
+    const [limits, measurement] = await Promise.all([
+      collection.limits({ signal: input.context.signal }),
+      collection.measureBatch(operations, { signal: input.context.signal }),
+    ]);
+    const measuredBytes = measurement.overheadEncodedBytes
+      + measurement.operationEncodedBytes.reduce((total, bytes) => total + bytes, 0);
+    if (
+      operations.length > limits.maxBatchRows
+      || measurement.operationEncodedBytes.length !== operations.length
+      || measuredBytes > limits.maxBatchBytes
+    ) {
+      throw pluginError(
+        'channels_stream_baseline_unsettled_ingress',
+        'The replacement baseline cannot atomically settle every retained ingress row within the Account Collection limits.',
+        true,
+      );
+    }
+  }
+  const result = await collection.batch(operations, { signal: input.context.signal });
   if (result.status === 'conflict') {
     throw pluginError(
       input.mode === 'baseline'
@@ -4715,6 +6296,8 @@ async function commitCurrentCheckpointedBaseline(input: Readonly<{
   checkpointAfter: JsonValue;
   lastOccurrenceId: string | null;
   nextPollNotBeforeMs: number | null;
+  censusSettlements: readonly IngressCensusCheckpointSettlement[];
+  obligationSettlements: readonly IngressObligationCheckpointSettlement[];
 }>): Promise<ConversationConnectionUpdateResult> {
   return await commitCurrentCheckpointedPoll({
     ...input,
@@ -4942,6 +6525,7 @@ export async function acceptConversationStreamBaselineForInvocation(
       checkpointAfter: result.checkpointAfterBatch,
       lastOccurrenceId: null,
       nextPollNotBeforeMs: result.retryHint === undefined ? null : Date.now() + result.retryHint.retryAfterMs,
+      ...await readCheckpointedBaselineIngressSettlements({ context, connection }),
     });
   } catch (cause) {
     if (!context.signal.aborted) {
@@ -5039,19 +6623,26 @@ async function settleCurrentCheckpointedPollFailure(input: Readonly<{
     return { kind: 'ineligible' };
   }
   const nextAttemptCount = (current.value.payload.pollFailure?.attemptCount ?? 0) + 1;
-  const retryable = input.retryableProviderResult && nextAttemptCount < 5;
+  if (!isConversationPollFailureAttemptCount(nextAttemptCount)) {
+    throw pluginError(
+      'channels_checkpointed_poll_connection_corrupt',
+      'The current Channel connection cannot advance its bounded poll-failure lifecycle.',
+    );
+  }
   const now = Date.now();
   const retryAfterMs = input.retryAfterMs ?? conversationRetryDelayMs(nextAttemptCount);
-  const pollFailure: ConversationConnectionPollFailureV1 = retryable
+  const pollFailure: ConversationConnectionPollFailureV1 = (
+    input.retryableProviderResult && isConversationPollRetryAttemptCount(nextAttemptCount)
+  )
     ? {
         phase: 'retryDue',
-        attemptCount: nextAttemptCount as 1 | 2 | 3 | 4,
+        attemptCount: nextAttemptCount,
         retryNotBeforeMs: now + retryAfterMs,
         evidence: input.evidence,
       }
     : {
         phase: 'blocked',
-        attemptCount: nextAttemptCount as 1 | 2 | 3 | 4 | 5,
+        attemptCount: nextAttemptCount,
         retryNotBeforeMs: null,
         evidence: input.evidence,
       };
@@ -5072,7 +6663,7 @@ async function settleCurrentCheckpointedPollFailure(input: Readonly<{
       || reread.value.payload.pollFailure.attemptCount !== pollFailure.attemptCount
     ) return { kind: 'ineligible' };
   }
-  return retryable
+  return pollFailure.phase === 'retryDue'
     ? (input.retryAfterMs === undefined ? { kind: 'retry' } : { kind: 'retry', retryAfterMs: input.retryAfterMs })
     : { kind: 'blocked' };
 }
@@ -5259,7 +6850,7 @@ async function routeCheckpointedPollBatch(input: Readonly<{
   connectionId: string;
   pairing?: ConversationPairingManager;
   source: Extract<IngressExecutionSource, Readonly<{ kind: 'checkpointedPoll' }>>;
-  observations: readonly ConversationNormalizedIngressV1[];
+  observations: readonly ConversationIngressObservedEntryV1[];
 }>): Promise<
   | Readonly<{
     kind: 'checkpointSafe';
@@ -5269,10 +6860,10 @@ async function routeCheckpointedPollBatch(input: Readonly<{
 > {
   let outcome: 'checkpointSafe' | 'unsettled' = 'checkpointSafe';
   const censusSettlements = new Map<string, IngressCensusCheckpointSettlement>();
-  for (const observation of input.observations) {
+  for (const entry of input.observations) {
     assertNotAborted(input.context.signal);
     const observationOutcome = await ingestConversationObservationForInvocation(
-      { connectionId: input.connectionId, observation },
+      { connectionId: input.connectionId, entry },
       input.context,
       input.source,
       input.pairing,
@@ -5285,7 +6876,7 @@ async function routeCheckpointedPollBatch(input: Readonly<{
     const settlement = await readIngressCensusCheckpointCoverageCandidate({
       context: input.context,
       connectionId: input.connectionId,
-      observation,
+      observation: entry.observation,
     });
     if (settlement !== undefined) censusSettlements.set(settlement.census.value.id, settlement);
   }
@@ -5574,7 +7165,9 @@ export async function runConversationCheckpointedPollForInvocation(input: Readon
       checkpoint,
       checkpointAfter: result.checkpointAfterBatch,
       lastOccurrenceId: result.kind === 'batch'
-        ? (result.observations.at(-1) === undefined ? null : ingressShell(result.observations.at(-1)!).occurrenceId)
+        ? (result.observations.at(-1) === undefined
+          ? null
+          : ingressShell(result.observations.at(-1)!.observation).occurrenceId)
         : null,
       nextPollNotBeforeMs: result.retryHint === undefined ? null : Date.now() + result.retryHint.retryAfterMs,
       censusSettlements,

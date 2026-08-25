@@ -7,6 +7,23 @@ import {
   ElevenLabsVoiceProviderSettingsSchema,
 } from './protocol/voice/index.js';
 
+const ELEVENLABS_PROCESSING_DISCLOSURE_KEY = 'settingsVoice.realtimeProviders.elevenLabs.privacyDisclosure';
+const ELEVENLABS_PROCESSING_DISCLOSURE_FALLBACK = 'Audio and conversation content are sent from this device to ElevenLabs through the ElevenLabs client connection. Depending on the selected setup, Happier may also send ElevenLabs bounded agent instructions, client-tool definitions and results, and authentication or provisioning requests needed for the feature. Happier’s server may participate in hosted authentication and usage accounting, but neither Happier’s server nor relay carries the live conversation audio. ElevenLabs may process and retain received data under your ElevenLabs account settings and its terms. Voice context-sharing controls are separate from this provider processing.';
+const SUPPORTED_UI_LOCALES = [
+  'en',
+  'ru',
+  'pl',
+  'es',
+  'fr',
+  'it',
+  'pt',
+  'ca',
+  'de',
+  'zh-Hans',
+  'zh-Hant',
+  'ja',
+] as const;
+
 describe('ElevenLabs public Voice settings declaration', () => {
   it('keeps the published manifest output identical to the final source declaration', async () => {
     const builtManifestUrl = new URL('../dist/manifest.js', import.meta.url);
@@ -37,9 +54,10 @@ describe('ElevenLabs public Voice settings declaration', () => {
     const settings = declaration.settings;
     expect(ingestPluginManifestV2(PLUGIN_MANIFEST)).toMatchObject({ ok: true });
     expect(settings?.schemaVersion).toBe(2);
-    expect(settings?.privacyDisclosure).toBe(
-      'Audio and conversation content are sent from this device to ElevenLabs through the ElevenLabs client connection. Depending on the selected setup, Happier may also send ElevenLabs bounded agent instructions, client-tool definitions and results, and authentication or provisioning requests needed for the feature. Happier’s server may participate in hosted authentication and usage accounting, but neither Happier’s server nor relay carries the live conversation audio. ElevenLabs may process and retain received data under your ElevenLabs account settings and its terms. Voice context-sharing controls are separate from this provider processing.',
-    );
+    expect(settings?.privacyDisclosure).toEqual({
+      key: ELEVENLABS_PROCESSING_DISCLOSURE_KEY,
+      fallback: ELEVENLABS_PROCESSING_DISCLOSURE_FALLBACK,
+    });
     expect(settings?.fields.map((field) => field.id)).toEqual([
       'billingMode',
       'tts',
@@ -56,8 +74,10 @@ describe('ElevenLabs public Voice settings declaration', () => {
         kind: 'savedSecret',
         operationProjections: expect.arrayContaining([
           expect.objectContaining({ operation: 'conversation-token', phase: 'prepare' }),
+          expect.objectContaining({ operation: 'agent', phase: 'settings' }),
           expect.objectContaining({ operation: 'create-agent', phase: 'settings' }),
           expect.objectContaining({ operation: 'update-agent', phase: 'settings' }),
+          expect.objectContaining({ operation: 'delete-tool', phase: 'settings' }),
         ]),
       }],
     });
@@ -81,6 +101,24 @@ describe('ElevenLabs public Voice settings declaration', () => {
       ...defaults,
       extra: true,
     }).success).toBe(false);
+  });
+
+  it('owns its Voice processing disclosure as a complete localized UI contract', () => {
+    const translations = PLUGIN_MANIFEST.contributes.ui?.translations ?? [];
+    expect(translations.map((translation) => translation.locale).sort())
+      .toEqual([...SUPPORTED_UI_LOCALES].sort());
+
+    const missing = translations.flatMap((translation) => {
+      const value = translation.messages[ELEVENLABS_PROCESSING_DISCLOSURE_KEY];
+      return typeof value === 'string' && value.trim().length > 0
+        ? []
+        : [`${translation.locale}: ${ELEVENLABS_PROCESSING_DISCLOSURE_KEY}`];
+    });
+    expect(missing).toEqual([]);
+
+    const english = translations.find((translation) => translation.locale === 'en');
+    expect(english?.messages[ELEVENLABS_PROCESSING_DISCLOSURE_KEY])
+      .toBe(ELEVENLABS_PROCESSING_DISCLOSURE_FALLBACK);
   });
 
   it('declares bounded cursor pagination for provisioning tool discovery', () => {
@@ -143,6 +181,79 @@ describe('ElevenLabs public Voice settings declaration', () => {
           target: { kind: 'query', name: 'cursor' },
         }],
       },
+    });
+  });
+
+  it('declares a bounded selected-agent read before reconciling its client tools', () => {
+    const declaration = PLUGIN_MANIFEST.contributes.voiceProviders[0];
+    const agentOperation = declaration.credentials?.hostMediated?.operations.find(
+      (operation) => operation.id === 'agent',
+    );
+
+    expect(agentOperation).toMatchObject({
+      purpose: 'voice.provision.agent.get',
+      effect: 'read',
+      request: {
+        method: 'GET',
+        pathTemplate: '/v1/convai/agents/{agentId}',
+      },
+      parameters: {
+        schema: {
+          type: 'object',
+          properties: {
+            agentId: {
+              type: 'string',
+              minLength: 1,
+              maxLength: 256,
+            },
+          },
+          required: ['agentId'],
+          additionalProperties: false,
+        },
+        mapping: [{
+          parameter: 'agentId',
+          target: { kind: 'path', placeholder: 'agentId', encoding: 'uri_component' },
+        }],
+      },
+    });
+  });
+
+  it('declares a bounded force-false delete only for current provisioning compensation', () => {
+    const declaration = PLUGIN_MANIFEST.contributes.voiceProviders[0];
+    const deleteToolOperation = declaration.credentials?.hostMediated?.operations.find(
+      (operation) => operation.id === 'delete-tool',
+    );
+
+    expect(deleteToolOperation).toMatchObject({
+      purpose: 'voice.provision.tool.delete',
+      effect: 'mutation',
+      request: {
+        origin: 'https://api.elevenlabs.io',
+        pathTemplate: '/v1/convai/tools/{toolId}',
+        queryTemplate: [{ name: 'force', value: 'false' }],
+        headerTemplate: [{ name: 'accept', value: 'application/json' }],
+        bodyTemplate: { kind: 'none' },
+        method: 'DELETE',
+        credential: { kind: 'httpHeader', name: 'xi-api-key', format: 'raw' },
+        redirect: 'error',
+        maxBodyBytes: 0,
+        contentTypes: [],
+      },
+      parameters: {
+        schema: {
+          type: 'object',
+          properties: {
+            toolId: { type: 'string', minLength: 1, maxLength: 256 },
+          },
+          required: ['toolId'],
+          additionalProperties: false,
+        },
+        mapping: [{
+          parameter: 'toolId',
+          target: { kind: 'path', placeholder: 'toolId', encoding: 'uri_component' },
+        }],
+      },
+      response: { maxBytes: 2097152, contentTypes: ['application/json'] },
     });
   });
 });

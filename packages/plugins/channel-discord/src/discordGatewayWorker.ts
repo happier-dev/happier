@@ -30,6 +30,7 @@ import type {
 } from './discordGatewayIdentifyConcurrency.js';
 import { parseDiscordMessageDispatch } from './discordMessage.js';
 import { mapDiscordMessageToSocketIngress } from './discordObservation.js';
+import { createDiscordAutomationEventCandidate } from './discordAutomationEvent.js';
 import { createDiscordChannelEndpointId } from './discordPluginConstants.js';
 import { calculateDiscordGatewayIntents } from './discordSetup.js';
 
@@ -443,7 +444,13 @@ export function startDiscordGatewayWorker(input: DiscordGatewayWorkerInput): Dis
           if (!observation) return;
           await input.admitObservation({
             connectionId: input.connection.connectionId,
-            observation,
+            entry: {
+              observation,
+              eventCandidate: createDiscordAutomationEventCandidate({
+                applicationId: input.connection.applicationId,
+                observation,
+              }),
+            },
           }, { signal: admissionSignal });
         },
       });

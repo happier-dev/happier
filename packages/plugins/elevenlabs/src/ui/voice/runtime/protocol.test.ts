@@ -73,6 +73,7 @@ describe('createElevenLabsProtocolAdapter', () => {
       initialContext: 'context',
       requestedTargetSessionId: 'target-1',
       retryAfterPaywall: false,
+      platform: 'web',
       textOnly: false,
     }));
 
@@ -143,6 +144,8 @@ describe('createElevenLabsProtocolAdapter', () => {
       .toEqual([{ type: 'assistant_output_started' }]);
     expect(runtime.adapter.decodeControl({ type: 'elevenlabs.mode', mode: 'listening' }))
       .toEqual([{ type: 'assistant_output_stopped' }]);
+    expect(runtime.adapter.decodeControl({ type: 'elevenlabs.output_audio' }))
+      .toEqual([]);
     expect(runtime.adapter.decodeControl({
       type: 'future.provider.event',
       token: 'sentinel-secret-token',

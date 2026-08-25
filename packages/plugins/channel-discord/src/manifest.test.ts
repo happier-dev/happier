@@ -26,6 +26,7 @@ import {
   DISCORD_CHANNEL_ACTION_IDS,
   DISCORD_GATEWAY_WORKER_ATTEMPT_ACTION_ID,
 } from './discordPluginConstants.js';
+import { DISCORD_AUTOMATION_MESSAGE_ADMIT_ACTION_ID } from './discordAutomationEvent.js';
 import { PLUGIN_MANIFEST } from './manifest.js';
 import { DISCORD_UI_TRANSLATION_BUNDLES } from './ui/translations.js';
 
@@ -43,6 +44,14 @@ const DISCORD_BRAND_ASSET_PROVENANCE = {
 
 const BRAND_ASSET_ARCHIVE_PATH = 'assets/brand.png';
 const NPM_PACK_TIMEOUT_MS = 60_000;
+/**
+ * The package-wide per-test budget (`--testTimeout 15000`) is shorter than the
+ * subprocess cap this one test permits, so vitest would abort it while `npm
+ * pack` is still legitimately running. Its budget is therefore the subprocess
+ * cap it allows plus the ordinary package budget for the surrounding local
+ * temp-directory, extraction and read work.
+ */
+const PACKED_BRAND_ASSET_TEST_TIMEOUT_MS = NPM_PACK_TIMEOUT_MS + 15_000;
 
 function readDiscordBrandAsset(): Buffer {
   const asset = readFileSync(new URL('../assets/brand.png', import.meta.url));
@@ -90,7 +99,7 @@ async function readPackedDiscordBrandAsset(): Promise<Buffer> {
 
 describe('Discord Channels manifest', () => {
   it('publishes the complete plugin-owned UI translation bundles', () => {
-    expect(PLUGIN_MANIFEST.contributes.ui.translations).toEqual(DISCORD_UI_TRANSLATION_BUNDLES);
+    expect(PLUGIN_MANIFEST.contributes.ui?.translations).toEqual(DISCORD_UI_TRANSLATION_BUNDLES);
   });
 
   it('declares and packages the official Discord brand mark through the generic Resource owner', async () => {
@@ -110,10 +119,10 @@ describe('Discord Channels manifest', () => {
 
     const packedAsset = await readPackedDiscordBrandAsset();
     expect(packedAsset).toEqual(asset);
-  });
+  }, PACKED_BRAND_ASSET_TEST_TIMEOUT_MS);
 
   it('publishes the canonical action schemas instead of provider-local lookalikes', () => {
-    const actions = new Map(PLUGIN_MANIFEST.contributes.actions.map((action) => [action.id, action]));
+    const actions = new Map((PLUGIN_MANIFEST.contributes.actions ?? []).map((action) => [action.id, action]));
     const providers = ConversationProvidersContributionProtocolV1.operations;
 
     const expectProtocolDefinedRole = (
@@ -140,6 +149,7 @@ describe('Discord Channels manifest', () => {
     });
     expectProtocolDefinedRole(DISCORD_CHANNEL_ACTION_IDS.connectionTest, providers.connectionTest);
     expectProtocolDefinedRole(DISCORD_CHANNEL_ACTION_IDS.endpointResolve, providers.endpointResolve);
+    expectProtocolDefinedRole(DISCORD_AUTOMATION_MESSAGE_ADMIT_ACTION_ID, providers.automationEventAdmit);
     expectProtocolDefinedRole(DISCORD_CHANNEL_ACTION_IDS.messageDeliver, providers.messageDeliver);
     expectProtocolDefinedRole(DISCORD_CHANNEL_ACTION_IDS.connectionStop, providers.connectionStop);
     // Discord cannot truthfully resolve a selected endpoint's participant: its
@@ -149,11 +159,11 @@ describe('Discord Channels manifest', () => {
     expect(actions.get(DISCORD_GATEWAY_WORKER_ATTEMPT_ACTION_ID)).toMatchObject({
       execution: { target: 'daemon' },
     });
-    expect(actions.size).toBe(7);
+    expect(actions.size).toBe(8);
   });
 
   it('keeps the Gateway worker Account binding on an object-root wrapper without widening the core reconciliation union', () => {
-    const gatewayWorker = PLUGIN_MANIFEST.contributes.actions.find(
+    const gatewayWorker = PLUGIN_MANIFEST.contributes.actions?.find(
       ({ id }) => id === DISCORD_GATEWAY_WORKER_ATTEMPT_ACTION_ID,
     );
     if (!gatewayWorker?.inputSchema) {

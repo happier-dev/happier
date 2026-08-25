@@ -10,6 +10,7 @@ import type {
   TargetedContributionsService,
 } from '@happier-dev/plugin-sdk';
 import type { PluginMachineExecutionOriginV1 } from '@happier-dev/plugin-sdk/actions';
+import { MAX_PLUGIN_TRANSCRIPT_ACTIVITIES_PER_RESOURCE_V1 } from '@happier-dev/plugin-sdk/resources';
 import { describe, expect, it, vi } from 'vitest';
 
 import { CHANNEL_DELIVERIES_COLLECTION } from './collections.js';
@@ -422,6 +423,41 @@ describe('Channels control-response outward custody', () => {
     expect(JSON.stringify(snapshot)).not.toContain('provider-private');
   });
 
+  it('bounds the transcript Resource at the canonical public activity count', async () => {
+    const state = new MemoryAccountCollection();
+    const deliveries = new BindingIndexedAccountCollection();
+    await state.put(providerConnectionRow(), { expectedRevision: 'absent' });
+    const signal = new AbortController().signal;
+    const store = createConversationOutwardDeliveryCollectionStore({
+      stateCollection: state as never,
+      deliveriesCollection: deliveries as never,
+      signal,
+      now: () => 100,
+    });
+
+    for (let index = 0; index <= MAX_PLUGIN_TRANSCRIPT_ACTIVITIES_PER_RESOURCE_V1; index += 1) {
+      const created = await store.ensure({
+        ...obligation(),
+        source: {
+          kind: 'controlResponse',
+          controlId: `transcript-bound-${index}`,
+          controlKind: 'recovery',
+        },
+        deliveryKey: `transcript-bound-${index}`,
+      });
+      if (created.kind !== 'created') throw new Error('Expected canonical retained custody row.');
+    }
+
+    const snapshot = await readConversationOutwardDeliveryTranscriptActivities({
+      deliveriesCollection: deliveries,
+      signal,
+      bindingTargets: [{ connectionId: 'connection-1', bindingId: 'binding-1' }],
+    });
+
+    if (snapshot.kind !== 'ready') throw new Error('Expected transcript Activities Resource snapshot.');
+    expect(snapshot.activities).toHaveLength(MAX_PLUGIN_TRANSCRIPT_ACTIVITIES_PER_RESOURCE_V1);
+  });
+
   it('keeps every readable delivery when one custody row in the same page cannot be parsed', async () => {
     const state = new MemoryAccountCollection();
     const deliveries = new BindingIndexedAccountCollection();
@@ -723,6 +759,63 @@ describe('Channels control-response outward custody', () => {
       }),
       expect.objectContaining({ expectedExecutionOrigin: providerTransportOrigin }),
     );
+  });
+
+  it('settles retained custody before provider I/O when the current provider limit has narrowed', async () => {
+    const state = new MemoryAccountCollection();
+    const connection = providerConnectionRow();
+    await state.put({
+      ...connection,
+      payload: {
+        ...connection.payload,
+        outboundTextLimit: { maximum: 2, unit: 'unicodeCodePoints' },
+      },
+    }, { expectedRevision: 'absent' });
+    await state.put({
+      id: 'binding-1',
+      'record-kind': 'binding',
+      'connection-id': 'connection-1',
+      'binding-id': 'binding-1',
+      payload: {
+        authorityEpoch: 7,
+        enabled: true,
+        deletionState: 'none',
+        endpoint,
+        target: sessionTarget,
+        linkPreviewPolicy: 'suppress',
+      },
+    }, { expectedRevision: 'absent' });
+    const store = new MemoryDeliveryStore();
+    const existing = sessionProjectionRecord();
+    const record: ConversationOutwardDeliveryRecord = {
+      ...existing,
+      obligation: {
+        ...existing.obligation,
+        content: 'x'.repeat(65),
+      },
+    };
+    store.rows.set(record.custodyId, record);
+    const executeAdmittedTargetedOperationWithExecutionOrigin = vi.fn();
+
+    await expect(redriveConversationOutwardDeliveryThroughProviderAction({
+      stateCollection: state as never,
+      targetedContributions: targetedProviderDeliveryContributions(),
+      store,
+      record,
+      attemptId: 'redrive-attempt-narrowed-limit',
+      now: () => 100,
+      signal: new AbortController().signal,
+      actions: { executeAdmittedTargetedOperationWithExecutionOrigin } as never,
+    })).resolves.toEqual({
+      kind: 'settled',
+      custody: {
+        state: 'notDelivered',
+        attemptCount: 0,
+        providerMessageIds: [],
+      },
+    });
+
+    expect(executeAdmittedTargetedOperationWithExecutionOrigin).not.toHaveBeenCalled();
   });
 
   it('constructs new Session projection custody from the canonical binding and its opaque delivery identity', async () => {
@@ -1346,6 +1439,8 @@ describe('Channels control-response outward custody', () => {
     // next wake derives the same semantic source under a new binding revision.
     const afterBindingEdit: ConversationOutwardDeliveryObligation = {
       ...projected,
+      endpoint: { ...projected.endpoint, id: 'retargeted-provider-destination' },
+      linkPreviewPolicy: 'providerDefault',
       routeAuthority: {
         connectionAuthorityEpoch: projected.routeAuthority.connectionAuthorityEpoch,
         bindingRevision: projected.routeAuthority.bindingRevision + 1,
@@ -1382,6 +1477,8 @@ describe('Channels control-response outward custody', () => {
     // by; only a settled row may rejoin across changed route metadata.
     await expect(store.ensure({
       ...live,
+      endpoint: { ...live.endpoint, id: 'different-live-provider-destination' },
+      linkPreviewPolicy: 'providerDefault',
       routeAuthority: {
         connectionAuthorityEpoch: live.routeAuthority.connectionAuthorityEpoch,
         bindingRevision: live.routeAuthority.bindingRevision + 1,
@@ -1979,6 +2076,77 @@ describe('Channels control-response outward custody', () => {
     await expect(acceptConversationOutwardDeliveryReady({ store, prepared: blocked, signal }))
       .resolves.toEqual({ kind: 'suppressed', reason: 'bindingDisabled' });
     expect(deliveries.rows.size).toBe(1);
+  });
+
+  it('records provider-bound oversized ready admission as terminal no-effect custody before a provider can run', async () => {
+    const state = new MemoryAccountCollection();
+    const deliveries = new MemoryAccountCollection();
+    const connection = providerConnectionRow();
+    await state.put({
+      ...connection,
+      payload: {
+        ...connection.payload,
+        outboundTextLimit: { maximum: 2, unit: 'unicodeCodePoints' },
+      },
+    }, { expectedRevision: 'absent' });
+    await state.put({
+      id: 'binding-1',
+      'record-kind': 'binding',
+      'connection-id': 'connection-1',
+      'binding-id': 'binding-1',
+      payload: {
+        authorityEpoch: 7,
+        enabled: true,
+        deletionState: 'none',
+        endpoint,
+        target: sessionTarget,
+        linkPreviewPolicy: 'suppress',
+      },
+    }, { expectedRevision: 'absent' });
+    const signal = new AbortController().signal;
+    const store = createConversationOutwardDeliveryCollectionStore({
+      stateCollection: state as never,
+      deliveriesCollection: deliveries as never,
+      signal,
+      now: () => 100,
+    });
+    const projected: ConversationOutwardDeliveryObligation = {
+      ...obligation(),
+      content: 'x'.repeat(65),
+      deliveryKey: 'channels:delivery:v1:oversized-ready-custody',
+      source: {
+        kind: 'sessionProjection',
+        sessionId: 'session-1',
+        semanticItemId: 'oversized-ready-custody',
+      },
+    };
+
+    const prepared = await prepareConversationOutwardDeliveryReady({
+      stateCollection: state as never,
+      signal,
+      obligation: projected,
+    });
+
+    expect(prepared).toEqual({
+      kind: 'ready',
+      obligation: projected,
+      outboundTextLimit: { maximum: 2, unit: 'unicodeCodePoints' },
+      knownNoEffect: 'providerChunkLimitExceeded',
+    });
+    await expect(acceptConversationOutwardDeliveryReady({ store, prepared, signal }))
+      .resolves.toMatchObject({
+        kind: 'accepted',
+        custody: { state: 'notDelivered', attemptCount: 0, providerMessageIds: [] },
+      });
+    expect([...deliveries.rows.values()][0]?.value).toMatchObject({
+      terminal: true,
+      attention: true,
+      payload: {
+        state: 'notDelivered',
+        content: null,
+        contentFingerprint: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/u),
+      },
+    });
   });
 
   it('rechecks the mandatory connection-only route authority before ready custody', async () => {

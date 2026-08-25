@@ -124,7 +124,7 @@ describe('Plugin Inspector manifest', () => {
     ]);
   });
 
-  it('retains one React Native renderer across direct app-tab and full-page destinations', () => {
+  it('retains one React Native renderer across maintained app, Browser, and Services destinations', () => {
     expect(INSPECTOR_UI).toEqual({
       // Two DESTINATIONS, ONE renderer (EU-5b dogfood). A second renderer here
       // would be a duplicate surface implementation, not a second destination.
@@ -138,6 +138,18 @@ describe('Plugin Inspector manifest', () => {
         id: 'inspector-page',
         container: 'appPage',
         target: { kind: 'app' },
+        renderer: 'inspector-renderer',
+        title: { key: 'plugins.inspector.title', fallback: 'Plugin Inspector' },
+      }, {
+        id: 'inspector-browser-panel',
+        container: 'browserPanel',
+        target: { kind: 'browser', browserViewIdPath: '/browser/viewId' },
+        renderer: 'inspector-renderer',
+        title: { key: 'plugins.inspector.title', fallback: 'Plugin Inspector' },
+      }, {
+        id: 'inspector-services-panel',
+        container: 'servicesPanel',
+        target: { kind: 'services' },
         renderer: 'inspector-renderer',
         title: { key: 'plugins.inspector.title', fallback: 'Plugin Inspector' },
       }],

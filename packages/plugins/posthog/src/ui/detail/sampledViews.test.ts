@@ -84,7 +84,7 @@ describe('posthogAffectedSessionRows', () => {
         const rows = posthogAffectedSessionRows([
             ...sample(),
             { uuid: 'e-again', sessionId: '00000000-0000-4000-8000-0000000000c1', exceptions: [] },
-        ], { issueWebUrl: null });
+        ]);
 
         expect(rows.map((row) => row.sessionId)).toEqual([
             '00000000-0000-4000-8000-0000000000c1',
@@ -96,35 +96,10 @@ describe('posthogAffectedSessionRows', () => {
         expect(rows).toHaveLength(2);
     });
 
-    it('renders an unavailable replay rather than claiming a recording exists', () => {
-        const rows = posthogAffectedSessionRows(sample(), { issueWebUrl: null });
+    it('projects affected sessions without a dormant replay claim', () => {
+        const rows = posthogAffectedSessionRows(sample());
 
-        for (const row of rows) {
-            expect(row.replay).toEqual({ kind: 'unavailable', reason: 'noVerifiedPermalink' });
-        }
-    });
-
-    it('offers a same-origin replay candidate only when the issue link proves the base', () => {
-        const rows = posthogAffectedSessionRows(sample(), {
-            issueWebUrl: 'https://eu.posthog.com/project/4821/error_tracking/issue-1',
-        });
-
-        expect(rows[0]?.replay).toEqual({
-            kind: 'candidate',
-            href: 'https://eu.posthog.com/project/4821/replay/00000000-0000-4000-8000-0000000000c1',
-        });
-
-        // A link this source cannot read as a PostHog project link proves no base, and a
-        // guessed one would send a reader to a URL nothing verified.
-        for (const foreign of [
-            'https://eu.posthog.com/insights',
-            'http://eu.posthog.com/project/4821/error_tracking/issue-1',
-            'https://eu.posthog.com/project//error_tracking/issue-1',
-            'not a url',
-        ]) {
-            const guessed = posthogAffectedSessionRows(sample(), { issueWebUrl: foreign });
-            expect(guessed[0]?.replay)
-                .toEqual({ kind: 'unavailable', reason: 'noVerifiedPermalink' });
-        }
+        expect(rows[0]).toMatchObject({ sessionId: expect.any(String), occurrenceCount: 1 });
+        expect(JSON.stringify(rows)).not.toContain('replay');
     });
 });

@@ -13,6 +13,7 @@ function createTestConnection(input: Readonly<{ driver: Readonly<{
     onRemoteClose: (reason: string) => void;
   }>): Promise<void>;
   sendControl(event: never): Promise<void>;
+  setOutputFocusState?(state: 'active' | 'ducked' | 'suspended'): void;
   close(): Promise<void>;
 }> }>): VoiceRealtimeConnection {
   let state: 'idle' | 'connecting' | 'open' | 'closed' = 'idle';
@@ -54,6 +55,18 @@ function createTestConnection(input: Readonly<{ driver: Readonly<{
     close: async () => await close(),
     state: () => state,
     currentProviderSessionId: () => sessionId,
+    playbackCursorMs: () => null,
+    beginOutputInterruptionCandidate: () => 'unsupported' as const,
+    resolveOutputInterruptionCandidate: () => {},
+    setOutputFocusState(state) {
+      if (!input.driver.setOutputFocusState) return 'unsupported';
+      try {
+        input.driver.setOutputFocusState(state);
+        return 'applied';
+      } catch {
+        return 'unsupported';
+      }
+    },
   };
 }
 
@@ -66,7 +79,7 @@ describe('createElevenLabsSdkConnection', () => {
       sendUserMessage: vi.fn(),
       sendContextualUpdate: vi.fn(),
       setMicMuted: vi.fn(),
-      readOutboundAudioBytes: vi.fn(async () => null),
+      setOutputVolume: vi.fn(),
       getId: vi.fn(() => 'conversation-1'),
       dispose: vi.fn(),
       subscribe: (listener: typeof publish) => {
@@ -78,6 +91,7 @@ describe('createElevenLabsSdkConnection', () => {
       createSdkHandleConnection: createTestConnection,
       handle,
       startConfig: { signedUrl: 'wss://example.test/session' },
+      duckGain: 0.18,
     });
     const signal = new AbortController().signal;
 
@@ -142,7 +156,7 @@ describe('createElevenLabsSdkConnection', () => {
       sendUserMessage: vi.fn(),
       sendContextualUpdate: vi.fn(),
       setMicMuted,
-      readOutboundAudioBytes: vi.fn(async () => null),
+      setOutputVolume: vi.fn(),
       getId: vi.fn(() => 'conversation-text-only'),
       dispose: vi.fn(),
       subscribe: vi.fn(() => () => {}),
@@ -152,12 +166,39 @@ describe('createElevenLabsSdkConnection', () => {
       handle,
       startConfig: { textOnly: true },
       initialMuted: false,
+      duckGain: 0.18,
     });
 
     await expect(connection.connect(new AbortController().signal)).resolves.toBeUndefined();
     expect(connection.currentProviderSessionId()).toBe('conversation-text-only');
     expect(connection.state()).toBe('open');
     expect(setMicMuted).not.toHaveBeenCalled();
+  });
+
+  it('maps provider-neutral focus states to the SDK output-volume handle', () => {
+    const setOutputVolume = vi.fn();
+    const handle = {
+      startSession: vi.fn(async () => 'conversation-focus'),
+      endSession: vi.fn(async () => {}),
+      sendUserMessage: vi.fn(),
+      sendContextualUpdate: vi.fn(),
+      setMicMuted: vi.fn(),
+      setOutputVolume,
+      getId: vi.fn(() => 'conversation-focus'),
+      dispose: vi.fn(),
+      subscribe: vi.fn(() => () => {}),
+    };
+    const connection = createElevenLabsSdkConnection({
+      createSdkHandleConnection: createTestConnection,
+      handle,
+      startConfig: {},
+      duckGain: 0.18,
+    });
+
+    expect(connection.setOutputFocusState?.('suspended')).toBe('applied');
+    expect(connection.setOutputFocusState?.('ducked')).toBe('applied');
+    expect(connection.setOutputFocusState?.('active')).toBe('applied');
+    expect(setOutputVolume.mock.calls).toEqual([[0], [0.18], [1]]);
   });
 
   it('translates canonical SDK commands and turns disconnects into remote close', async () => {
@@ -169,7 +210,7 @@ describe('createElevenLabsSdkConnection', () => {
       sendUserMessage: vi.fn(),
       sendContextualUpdate: vi.fn(),
       setMicMuted: vi.fn(),
-      readOutboundAudioBytes: vi.fn(async () => null),
+      setOutputVolume: vi.fn(),
       getId: vi.fn(() => 'conversation-2'),
       dispose: vi.fn(),
       subscribe: (listener: typeof publish) => {
@@ -181,6 +222,7 @@ describe('createElevenLabsSdkConnection', () => {
       createSdkHandleConnection: createTestConnection,
       handle,
       startConfig: {},
+      duckGain: 0.18,
     });
     await connection.connect(new AbortController().signal);
 
@@ -209,7 +251,7 @@ describe('createElevenLabsSdkConnection', () => {
       sendUserMessage: vi.fn(),
       sendContextualUpdate: vi.fn(),
       setMicMuted: vi.fn(),
-      readOutboundAudioBytes: vi.fn(async () => null),
+      setOutputVolume: vi.fn(),
       getId: vi.fn(() => 'racing-session'),
       dispose: vi.fn(),
       subscribe: (listener: typeof publish) => {
@@ -217,7 +259,12 @@ describe('createElevenLabsSdkConnection', () => {
         return () => {};
       },
     };
-    const connection = createElevenLabsSdkConnection({ createSdkHandleConnection: createTestConnection, handle, startConfig: {} });
+    const connection = createElevenLabsSdkConnection({
+      createSdkHandleConnection: createTestConnection,
+      handle,
+      startConfig: {},
+      duckGain: 0.18,
+    });
 
     await expect(connection.connect(new AbortController().signal)).rejects.toMatchObject({ name: 'AbortError' });
     await vi.waitFor(() => expect(handle.endSession).toHaveBeenCalled());
@@ -232,12 +279,17 @@ describe('createElevenLabsSdkConnection', () => {
       sendUserMessage: vi.fn(),
       sendContextualUpdate: vi.fn(),
       setMicMuted: vi.fn(),
-      readOutboundAudioBytes: vi.fn(async () => null),
+      setOutputVolume: vi.fn(),
       getId: vi.fn(() => null),
       dispose: vi.fn(),
       subscribe: vi.fn(() => () => undefined),
     };
-    const connection = createElevenLabsSdkConnection({ createSdkHandleConnection: createTestConnection, handle, startConfig: {} });
+    const connection = createElevenLabsSdkConnection({
+      createSdkHandleConnection: createTestConnection,
+      handle,
+      startConfig: {},
+      duckGain: 0.18,
+    });
     const controller = new AbortController();
     const connecting = connection.connect(controller.signal);
     await vi.waitFor(() => expect(handle.startSession).toHaveBeenCalledTimes(1));
@@ -257,7 +309,7 @@ describe('createElevenLabsSdkConnection', () => {
       sendUserMessage: vi.fn(),
       sendContextualUpdate: vi.fn(),
       setMicMuted: vi.fn(),
-      readOutboundAudioBytes: vi.fn(async () => null),
+      setOutputVolume: vi.fn(),
       getId: vi.fn(() => null),
       dispose: vi.fn(),
       subscribe: vi.fn(() => () => undefined),
@@ -266,6 +318,7 @@ describe('createElevenLabsSdkConnection', () => {
       createSdkHandleConnection: createTestConnection,
       handle,
       startConfig: {},
+      duckGain: 0.18,
     });
     const controller = new AbortController();
     const connecting = connection.connect(controller.signal);
@@ -289,7 +342,7 @@ describe('createElevenLabsSdkConnection', () => {
       sendUserMessage: vi.fn(),
       sendContextualUpdate: vi.fn(),
       setMicMuted: vi.fn(),
-      readOutboundAudioBytes: vi.fn(async () => null),
+      setOutputVolume: vi.fn(),
       getId: vi.fn(() => null),
       dispose: vi.fn(),
       subscribe: vi.fn(() => () => undefined),
@@ -298,6 +351,7 @@ describe('createElevenLabsSdkConnection', () => {
       createSdkHandleConnection: createTestConnection,
       handle,
       startConfig: {},
+      duckGain: 0.18,
     });
     const controller = new AbortController();
     const connecting = connection.connect(controller.signal);
@@ -321,12 +375,17 @@ describe('createElevenLabsSdkConnection', () => {
       sendUserMessage: vi.fn(),
       sendContextualUpdate: vi.fn(),
       setMicMuted: vi.fn(),
-      readOutboundAudioBytes: vi.fn(async () => null),
+      setOutputVolume: vi.fn(),
       getId: vi.fn(() => null),
       dispose: vi.fn(),
       subscribe: vi.fn(() => () => undefined),
     };
-    const connection = createElevenLabsSdkConnection({ createSdkHandleConnection: createTestConnection, handle, startConfig: {} });
+    const connection = createElevenLabsSdkConnection({
+      createSdkHandleConnection: createTestConnection,
+      handle,
+      startConfig: {},
+      duckGain: 0.18,
+    });
 
     await expect(connection.connect(new AbortController().signal)).rejects.toThrow(
       'elevenlabs_missing_conversation_id',

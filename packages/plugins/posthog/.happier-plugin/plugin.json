@@ -3,6 +3,689 @@
     "accountCollections": [],
     "actions": [
       {
+        "connectedAccountPurposeBindings": [
+          {
+            "path": "binding.account",
+            "purpose": "posthog-api"
+          }
+        ],
+        "dangerLevel": "safe",
+        "description": "Reads one user-requested page of PostHog organizations or environments.",
+        "execution": {
+          "target": "daemon"
+        },
+        "hostAccess": [
+          "posthog-api",
+          "posthog-network"
+        ],
+        "id": "posthog/configuration",
+        "inputSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "binding": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "account": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "accountId": {
+                          "maxLength": 256,
+                          "minLength": 1,
+                          "pattern": "^(?!\\s)[\\s\\S]*\\S$",
+                          "type": "string"
+                        },
+                        "service": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "localId": {
+                              "maxLength": 256,
+                              "minLength": 1,
+                              "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$",
+                              "type": "string"
+                            },
+                            "pluginId": {
+                              "maxLength": 256,
+                              "minLength": 3,
+                              "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "pluginId",
+                            "localId"
+                          ],
+                          "type": "object"
+                        }
+                      },
+                      "required": [
+                        "service",
+                        "accountId"
+                      ],
+                      "type": "object"
+                    },
+                    "purpose": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
+                    }
+                  },
+                  "required": [
+                    "purpose",
+                    "account"
+                  ],
+                  "type": "object"
+                },
+                "kind": {
+                  "const": "organizations"
+                },
+                "page": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "kind": {
+                          "const": "initial"
+                        }
+                      },
+                      "required": [
+                        "kind"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "kind": {
+                          "const": "continuation"
+                        },
+                        "next": {
+                          "minLength": 1,
+                          "type": "string",
+                          "x-happier-max-utf8-bytes": 8192
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "next"
+                      ],
+                      "type": "object"
+                    }
+                  ]
+                },
+                "v": {
+                  "const": 1
+                }
+              },
+              "required": [
+                "v",
+                "kind",
+                "binding",
+                "page"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "binding": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "account": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "accountId": {
+                          "maxLength": 256,
+                          "minLength": 1,
+                          "pattern": "^(?!\\s)[\\s\\S]*\\S$",
+                          "type": "string"
+                        },
+                        "service": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "localId": {
+                              "maxLength": 256,
+                              "minLength": 1,
+                              "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$",
+                              "type": "string"
+                            },
+                            "pluginId": {
+                              "maxLength": 256,
+                              "minLength": 3,
+                              "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "pluginId",
+                            "localId"
+                          ],
+                          "type": "object"
+                        }
+                      },
+                      "required": [
+                        "service",
+                        "accountId"
+                      ],
+                      "type": "object"
+                    },
+                    "purpose": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
+                    }
+                  },
+                  "required": [
+                    "purpose",
+                    "account"
+                  ],
+                  "type": "object"
+                },
+                "kind": {
+                  "const": "environments"
+                },
+                "organizationUuid": {
+                  "minLength": 36,
+                  "type": "string",
+                  "x-happier-max-utf8-bytes": 36
+                },
+                "page": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "kind": {
+                          "const": "initial"
+                        }
+                      },
+                      "required": [
+                        "kind"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "kind": {
+                          "const": "continuation"
+                        },
+                        "next": {
+                          "minLength": 1,
+                          "type": "string",
+                          "x-happier-max-utf8-bytes": 8192
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "next"
+                      ],
+                      "type": "object"
+                    }
+                  ]
+                },
+                "v": {
+                  "const": 1
+                }
+              },
+              "required": [
+                "v",
+                "kind",
+                "binding",
+                "organizationUuid",
+                "page"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "resultSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "incomplete": {
+                  "const": true
+                },
+                "kind": {
+                  "const": "organizations"
+                },
+                "next": {
+                  "minLength": 1,
+                  "type": "string",
+                  "x-happier-max-utf8-bytes": 8192
+                },
+                "rows": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "displayName": {
+                        "minLength": 1,
+                        "type": "string",
+                        "x-happier-max-utf8-bytes": 512
+                      },
+                      "localInstanceKey": {
+                        "minLength": 1,
+                        "type": "string",
+                        "x-happier-max-utf8-bytes": 128
+                      },
+                      "organizationUuid": {
+                        "minLength": 36,
+                        "type": "string",
+                        "x-happier-max-utf8-bytes": 36
+                      }
+                    },
+                    "required": [
+                      "organizationUuid",
+                      "displayName",
+                      "localInstanceKey"
+                    ],
+                    "type": "object"
+                  },
+                  "maxItems": 754,
+                  "type": "array"
+                }
+              },
+              "required": [
+                "kind",
+                "rows"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "incomplete": {
+                  "const": true
+                },
+                "kind": {
+                  "const": "environments"
+                },
+                "next": {
+                  "minLength": 1,
+                  "type": "string",
+                  "x-happier-max-utf8-bytes": 8192
+                },
+                "organizationUuid": {
+                  "minLength": 36,
+                  "type": "string",
+                  "x-happier-max-utf8-bytes": 36
+                },
+                "rows": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "displayName": {
+                        "minLength": 1,
+                        "type": "string",
+                        "x-happier-max-utf8-bytes": 512
+                      },
+                      "parentProjectId": {
+                        "maximum": 9007199254740991,
+                        "minimum": 1,
+                        "type": "integer"
+                      },
+                      "teamPathId": {
+                        "maximum": 9007199254740991,
+                        "minimum": 1,
+                        "type": "integer"
+                      },
+                      "teamUuid": {
+                        "minLength": 36,
+                        "type": "string",
+                        "x-happier-max-utf8-bytes": 36
+                      }
+                    },
+                    "required": [
+                      "teamPathId",
+                      "teamUuid",
+                      "displayName"
+                    ],
+                    "type": "object"
+                  },
+                  "maxItems": 754,
+                  "type": "array"
+                }
+              },
+              "required": [
+                "kind",
+                "organizationUuid",
+                "rows"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "failure": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "class": {
+                      "anyOf": [
+                        {
+                          "const": "authentication"
+                        },
+                        {
+                          "const": "permission"
+                        },
+                        {
+                          "const": "rateLimit"
+                        },
+                        {
+                          "const": "transient"
+                        },
+                        {
+                          "const": "unsupportedContract"
+                        },
+                        {
+                          "const": "unknown"
+                        }
+                      ]
+                    },
+                    "code": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
+                    },
+                    "detail": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 256
+                    },
+                    "retryNotBeforeMs": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "class",
+                    "code"
+                  ],
+                  "type": "object"
+                },
+                "kind": {
+                  "const": "unavailable"
+                }
+              },
+              "required": [
+                "kind",
+                "failure"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "scopes": [
+          "global"
+        ],
+        "surfaces": [
+          "plugin"
+        ],
+        "title": "Configure PostHog error issues"
+      },
+      {
+        "connectedAccountPurposeBindings": [
+          {
+            "path": "draft.binding.account",
+            "purpose": "posthog-api"
+          }
+        ],
+        "dangerLevel": "safe",
+        "description": "Checks whether the selected PostHog account can access Error Tracking.",
+        "execution": {
+          "target": "daemon"
+        },
+        "hostAccess": [
+          "posthog-api",
+          "posthog-network"
+        ],
+        "id": "posthog/capability",
+        "inputSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "additionalProperties": false,
+          "properties": {
+            "draft": {
+              "additionalProperties": false,
+              "properties": {
+                "binding": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "account": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "accountId": {
+                          "maxLength": 256,
+                          "minLength": 1,
+                          "pattern": "^(?!\\s)[\\s\\S]*\\S$",
+                          "type": "string"
+                        },
+                        "service": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "localId": {
+                              "maxLength": 256,
+                              "minLength": 1,
+                              "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$",
+                              "type": "string"
+                            },
+                            "pluginId": {
+                              "maxLength": 256,
+                              "minLength": 3,
+                              "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "pluginId",
+                            "localId"
+                          ],
+                          "type": "object"
+                        }
+                      },
+                      "required": [
+                        "service",
+                        "accountId"
+                      ],
+                      "type": "object"
+                    },
+                    "purpose": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
+                    }
+                  },
+                  "required": [
+                    "purpose",
+                    "account"
+                  ],
+                  "type": "object"
+                },
+                "configuration": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "token": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 1024
+                    },
+                    "v": {
+                      "const": 1
+                    }
+                  },
+                  "required": [
+                    "v",
+                    "token"
+                  ],
+                  "type": "object"
+                },
+                "keyStability": {
+                  "anyOf": [
+                    {
+                      "const": "stable"
+                    },
+                    {
+                      "const": "locatorDerived"
+                    }
+                  ]
+                },
+                "localInstanceKey": {
+                  "minLength": 1,
+                  "pattern": "^[^\\u0000-\\u001f\\u007f]+(?:\\u001f[^\\u0000-\\u001f\\u007f]+)?$",
+                  "type": "string",
+                  "x-happier-max-utf8-bytes": 128
+                },
+                "locator": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "displayLabel": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 512
+                    },
+                    "displayPath": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 512
+                    },
+                    "v": {
+                      "const": 1
+                    },
+                    "webUrl": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 384
+                    }
+                  },
+                  "required": [
+                    "v",
+                    "displayLabel"
+                  ],
+                  "type": "object"
+                },
+                "v": {
+                  "const": 1
+                }
+              },
+              "required": [
+                "v",
+                "binding",
+                "localInstanceKey",
+                "keyStability",
+                "configuration",
+                "locator"
+              ],
+              "type": "object"
+            },
+            "v": {
+              "const": 1
+            }
+          },
+          "required": [
+            "v",
+            "draft"
+          ],
+          "type": "object"
+        },
+        "resultSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "available"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "failure": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "class": {
+                      "anyOf": [
+                        {
+                          "const": "authentication"
+                        },
+                        {
+                          "const": "permission"
+                        },
+                        {
+                          "const": "rateLimit"
+                        },
+                        {
+                          "const": "transient"
+                        },
+                        {
+                          "const": "unsupportedContract"
+                        },
+                        {
+                          "const": "unknown"
+                        }
+                      ]
+                    },
+                    "code": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
+                    },
+                    "detail": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 256
+                    },
+                    "retryNotBeforeMs": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "class",
+                    "code"
+                  ],
+                  "type": "object"
+                },
+                "kind": {
+                  "const": "unavailable"
+                }
+              },
+              "required": [
+                "kind",
+                "failure"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "scopes": [
+          "global"
+        ],
+        "surfaces": [
+          "plugin"
+        ],
+        "title": "Check PostHog Error Tracking access"
+      },
+      {
         "dangerLevel": "safe",
         "description": "Lists the PostHog organizations each connected PostHog account can reach.",
         "execution": {
@@ -1295,6 +1978,45 @@
                             "type": "string",
                             "x-happier-max-utf8-bytes": 128
                           },
+                          "repository": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "deployment": {
+                                "minLength": 1,
+                                "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                "type": "string",
+                                "x-happier-max-utf8-bytes": 128
+                              },
+                              "kind": {
+                                "anyOf": [
+                                  {
+                                    "const": "github"
+                                  },
+                                  {
+                                    "const": "gitlab"
+                                  },
+                                  {
+                                    "const": "bitbucket"
+                                  },
+                                  {
+                                    "const": "azure-devops"
+                                  }
+                                ]
+                              },
+                              "repository": {
+                                "minLength": 1,
+                                "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                "type": "string",
+                                "x-happier-max-utf8-bytes": 255
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "deployment",
+                              "repository"
+                            ],
+                            "type": "object"
+                          },
                           "snapshot": {
                             "additionalProperties": true,
                             "properties": {
@@ -1979,6 +2701,45 @@
                             "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                             "type": "string",
                             "x-happier-max-utf8-bytes": 128
+                          },
+                          "repository": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "deployment": {
+                                "minLength": 1,
+                                "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                "type": "string",
+                                "x-happier-max-utf8-bytes": 128
+                              },
+                              "kind": {
+                                "anyOf": [
+                                  {
+                                    "const": "github"
+                                  },
+                                  {
+                                    "const": "gitlab"
+                                  },
+                                  {
+                                    "const": "bitbucket"
+                                  },
+                                  {
+                                    "const": "azure-devops"
+                                  }
+                                ]
+                              },
+                              "repository": {
+                                "minLength": 1,
+                                "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                "type": "string",
+                                "x-happier-max-utf8-bytes": 255
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "deployment",
+                              "repository"
+                            ],
+                            "type": "object"
                           },
                           "snapshot": {
                             "additionalProperties": true,
@@ -3770,6 +4531,45 @@
                   "type": "string",
                   "x-happier-max-utf8-bytes": 128
                 },
+                "repository": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "deployment": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
+                    },
+                    "kind": {
+                      "anyOf": [
+                        {
+                          "const": "github"
+                        },
+                        {
+                          "const": "gitlab"
+                        },
+                        {
+                          "const": "bitbucket"
+                        },
+                        {
+                          "const": "azure-devops"
+                        }
+                      ]
+                    },
+                    "repository": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 255
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "deployment",
+                    "repository"
+                  ],
+                  "type": "object"
+                },
                 "snapshot": {
                   "additionalProperties": true,
                   "properties": {
@@ -4454,6 +5254,7 @@
     "scmBackends": [],
     "scmHostingProviders": [],
     "sessionHeaderActions": [],
+    "sessionInfoSections": [],
     "settings": [],
     "systemTools": [],
     "targetedPluginContributions": [

@@ -4,6 +4,7 @@ import type { ConversationBindingTargetMutationV1 } from '@happier-dev/channels-
 import { classifyConversationCommand } from './commands.js';
 import {
   createConversationPairingManager,
+  MAX_CONVERSATION_PAIRING_TOMBSTONES,
   type ConversationPairingBinding,
   type ConversationPairingBindingWriter,
 } from './pairing.js';
@@ -89,6 +90,7 @@ function createMatchedProposal(manager: ReturnType<typeof createConversationPair
     expectedConnectionRevision: 1,
     materialization,
     destinationLabel: 'Telegram bot',
+    endpoint: directEndpoint,
     target: sessionTarget,
   });
   const proposal = completePreBindingMessage(manager, {
@@ -121,6 +123,7 @@ describe('Channels pre-binding pairing', () => {
       expectedConnectionRevision: 1,
       materialization,
       destinationLabel: 'Telegram bot',
+      endpoint: directEndpoint,
       target: sessionTarget,
     });
     const input = {
@@ -161,6 +164,7 @@ describe('Channels pre-binding pairing', () => {
       expectedConnectionRevision: 1,
       materialization,
       destinationLabel: 'Telegram bot',
+      endpoint: directEndpoint,
       pairingDeepLinkTemplate: 'https://t.me/happier_bot?start={{token}}',
       target: sessionTarget,
     });
@@ -218,6 +222,7 @@ describe('Channels pre-binding pairing', () => {
       expectedConnectionRevision: 1,
       materialization,
       destinationLabel: 'Telegram bot',
+      endpoint: directEndpoint,
       pairingDeepLinkTemplate: 'https://t.me/happier_bot?start={{token}}',
       target: sessionTarget,
     });
@@ -270,6 +275,62 @@ describe('Channels pre-binding pairing', () => {
     })).toEqual({ kind: 'consumed' });
   });
 
+  it('evicts the oldest consumed pairing token once the single tombstone budget is exceeded', () => {
+    const now = { value: 1_000 };
+    // Distinct randomness per challenge: supersession retires the previous
+    // token and a repeated one would exhaust the unique-token allocator.
+    let nextTokenSeed = 0;
+    const manager = createConversationPairingManager({
+      generationId: 'generation-1',
+      now: () => now.value,
+      randomBytes: () => {
+        nextTokenSeed += 1;
+        return Uint8Array.from([
+          (nextTokenSeed >>> 32) & 0xff,
+          (nextTokenSeed >>> 24) & 0xff,
+          (nextTokenSeed >>> 16) & 0xff,
+          (nextTokenSeed >>> 8) & 0xff,
+          nextTokenSeed & 0xff,
+        ]);
+      },
+      createId: sequenceIds(),
+    });
+    const supersede = () => manager.createChallenge({
+      connectionId: 'connection-1',
+      expectedConnectionRevision: 1,
+      materialization,
+      destinationLabel: 'Telegram bot',
+      endpoint: directEndpoint,
+      target: sessionTarget,
+    });
+
+    const evicted = supersede();
+    const retained = supersede();
+    // One more supersession than the declared budget, all inside the single
+    // ten-minute window, so nothing can be reclaimed by lazy expiry.
+    for (let index = 0; index < MAX_CONVERSATION_PAIRING_TOMBSTONES; index += 1) supersede();
+
+    const probe = (token: string, principalId: string) => completePreBindingMessage(manager, {
+      connectionId: 'connection-1',
+      materialization,
+      endpoint: directEndpoint,
+      actor: { principalId, kind: 'human', isIntegrationSelf: false },
+      contentProvenance: 'original',
+      command: classifyConversationCommand(`/pair ${token}`),
+    });
+
+    expect(probe(evicted.manualToken, 'person-1')).toMatchObject({
+      kind: 'silent',
+      ownerReason: 'tokenMismatch',
+    });
+    // The budget evicts in arrival order only: the next-oldest consumed token
+    // is still a tombstone, so this is an eviction bound and not a wipe.
+    expect(probe(retained.manualToken, 'person-2')).toMatchObject({
+      kind: 'silent',
+      ownerReason: 'challengeConsumed',
+    });
+  });
+
   it('charges only syntactically valid misses to the immutable requester and locks the sixth attempt', () => {
     const now = { value: 1_000 };
     const manager = createManager(now);
@@ -278,6 +339,7 @@ describe('Channels pre-binding pairing', () => {
       expectedConnectionRevision: 1,
       materialization,
       destinationLabel: 'Telegram bot',
+      endpoint: directEndpoint,
       target: sessionTarget,
     });
 
@@ -317,6 +379,7 @@ describe('Channels pre-binding pairing', () => {
       expectedConnectionRevision: 1,
       materialization,
       destinationLabel: 'Telegram bot',
+      endpoint: directEndpoint,
       target: sessionTarget,
     });
     const typo = {
@@ -350,6 +413,7 @@ describe('Channels pre-binding pairing', () => {
       expectedConnectionRevision: 1,
       materialization,
       destinationLabel: 'Telegram bot',
+      endpoint: directEndpoint,
       target: sessionTarget,
     });
 
@@ -382,6 +446,7 @@ describe('Channels pre-binding pairing', () => {
       expectedConnectionRevision: 1,
       materialization,
       destinationLabel: 'Telegram bot',
+      endpoint: directEndpoint,
       target: sessionTarget,
     });
 
@@ -417,6 +482,7 @@ describe('Channels pre-binding pairing', () => {
       expectedConnectionRevision: 1,
       materialization,
       destinationLabel: 'Telegram bot',
+      endpoint: directEndpoint,
       target: sessionTarget,
     });
     // Each field is varied independently below, so the parameter is the
@@ -456,6 +522,7 @@ describe('Channels pre-binding pairing', () => {
       expectedConnectionRevision: 1,
       materialization,
       destinationLabel: 'Telegram bot',
+      endpoint: directEndpoint,
       target: sessionTarget,
     });
     now.value = challenge.expiresAt;
@@ -487,6 +554,7 @@ describe('Channels pre-binding pairing', () => {
       expectedConnectionRevision: 1,
       materialization,
       destinationLabel: 'Telegram bot',
+      endpoint: directEndpoint,
       target,
     });
     const match = completePreBindingMessage(manager, {
@@ -523,6 +591,7 @@ describe('Channels pre-binding pairing', () => {
       expectedConnectionRevision: 1,
       materialization,
       destinationLabel: 'Telegram bot',
+      endpoint: directEndpoint,
       target: sessionTarget,
     });
     const match = completePreBindingMessage(manager, {
@@ -605,6 +674,7 @@ describe('Channels pre-binding pairing', () => {
       expectedConnectionRevision: 1,
       materialization,
       destinationLabel: 'Telegram bot',
+      endpoint: directEndpoint,
       target: sessionTarget,
     });
     now.value = challenge.expiresAt;
@@ -643,6 +713,7 @@ describe('Channels pre-binding pairing', () => {
       expectedConnectionRevision: 1,
       materialization,
       destinationLabel: 'Telegram bot',
+      endpoint: directEndpoint,
       target: sessionTarget,
     });
     const match = completePreBindingMessage(manager, {
@@ -694,6 +765,7 @@ describe('Channels pre-binding pairing', () => {
         expectedConnectionRevision,
         materialization,
         destinationLabel: 'Telegram bot',
+        endpoint: directEndpoint,
         target: sessionTarget,
       });
       const match = completePreBindingMessage(manager, {

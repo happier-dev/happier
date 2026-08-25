@@ -6,6 +6,10 @@ import {
 import type { ConversationProviderFailureReasonV1 } from '@happier-dev/channels-protocol/v1';
 
 import { ConversationConnectionPollFailureJsonSchema } from './collections.js';
+import {
+  isConversationPollFailureAttemptCount,
+  isConversationPollRetryAttemptCount,
+} from './connectionPollFailureBounds.js';
 import type {
   ConversationConnectionPollFailureEvidenceV1,
   ConversationConnectionPollFailureV1,
@@ -63,18 +67,26 @@ function decodeValidatedConversationConnectionPollFailure(
   }
   if (decodedEvidence === undefined) return undefined;
 
-  if (phase === 'retryDue' && typeof retryNotBeforeMs === 'number') {
+  if (
+    phase === 'retryDue'
+    && typeof retryNotBeforeMs === 'number'
+    && isConversationPollRetryAttemptCount(attemptCount)
+  ) {
     return {
       phase,
-      attemptCount: attemptCount as 1 | 2 | 3 | 4,
+      attemptCount,
       retryNotBeforeMs,
       evidence: decodedEvidence,
     };
   }
-  if (phase === 'blocked' && retryNotBeforeMs === null) {
+  if (
+    phase === 'blocked'
+    && retryNotBeforeMs === null
+    && isConversationPollFailureAttemptCount(attemptCount)
+  ) {
     return {
       phase,
-      attemptCount: attemptCount as 1 | 2 | 3 | 4 | 5,
+      attemptCount,
       retryNotBeforeMs: null,
       evidence: decodedEvidence,
     };

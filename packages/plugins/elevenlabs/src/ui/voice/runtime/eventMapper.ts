@@ -1,5 +1,5 @@
 import { createVoiceTranscriptLadderMapper } from '@happier-dev/plugin-sdk/voice/client';
-import type { VoiceTranscriptCanonicalEvent } from '@happier-dev/plugin-sdk/voice';
+import type { VoiceTranscriptCanonicalEvent } from '@happier-dev/plugin-sdk/voice/client';
 
 /**
  * The canonical transcript id contract is 256 characters. The leaf composes

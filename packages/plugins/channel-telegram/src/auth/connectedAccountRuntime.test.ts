@@ -1,6 +1,35 @@
+import type {
+  ConnectedAccountAuthenticationContext,
+  ConnectedAccountCredentialStore,
+} from '@happier-dev/plugin-sdk/connected-accounts';
+import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { describe, expect, it } from 'vitest';
 
 import { telegramConnectedAccountRuntime } from './connectedAccountRuntime.js';
+
+/**
+ * The manual mode consumes exactly two boundaries: the HTTP client and the
+ * attempt credential store. The host stamps the rest of the authentication
+ * context (`service`, `attempt`, `configuration`) and this unit never reads it,
+ * so those members are supplied by one documented cast rather than restated as
+ * a second fixture of the host contract.
+ */
+function authenticationContext(input: Readonly<{
+  http: Partial<PluginInvocationContext['services']['http']>;
+  attemptCredentials: ConnectedAccountCredentialStore;
+}>): ConnectedAccountAuthenticationContext {
+  return {
+    plugin: { id: 'happier.channel.telegram', version: '0.0.0' },
+    contribution: {
+      id: 'telegram-bot',
+      qualifiedId: 'happier.channel.telegram/connectedAccountDescriptors/telegram-bot',
+    },
+    surface: 'plugin',
+    signal: new AbortController().signal,
+    services: { http: input.http },
+    attemptCredentials: input.attemptCredentials,
+  } as unknown as ConnectedAccountAuthenticationContext;
+}
 
 function jsonResponse(value: unknown, status = 200): Readonly<{
   status: number;
@@ -22,22 +51,19 @@ describe('Telegram connected account runtime', () => {
     if (!mode || mode.kind !== 'manual') throw new Error('Expected the Telegram manual authentication mode');
     const stored = new Map<string, string>();
 
-    await expect(mode.complete({ fields: { token: '123:bot-token' } }, {
-      signal: new AbortController().signal,
-      services: {
-        http: {
-          async request() {
-            return jsonResponse({
-              ok: true,
-              result: {
-                id: 123,
-                is_bot: true,
-                first_name: 'Happier Bot',
-                username: 'HappierBot',
-                can_read_all_group_messages: false,
-              },
-            });
-          },
+    await expect(mode.complete({ fields: { token: '123:bot-token' } }, authenticationContext({
+      http: {
+        async request() {
+          return jsonResponse({
+            ok: true,
+            result: {
+              id: 123,
+              is_bot: true,
+              first_name: 'Happier Bot',
+              username: 'HappierBot',
+              can_read_all_group_messages: false,
+            },
+          });
         },
       },
       attemptCredentials: {
@@ -45,7 +71,7 @@ describe('Telegram connected account runtime', () => {
         async set(key: string, value: string) { stored.set(key, value); },
         async delete(key: string) { stored.delete(key); },
       },
-    } as Parameters<typeof mode.complete>[1])).resolves.toEqual({
+    }))).resolves.toEqual({
       status: 'connected',
       accountId: 'bot:123',
       providerIdentity: { accountId: '123' },
@@ -60,17 +86,14 @@ describe('Telegram connected account runtime', () => {
     if (!mode || mode.kind !== 'manual') throw new Error('Expected the Telegram manual authentication mode');
     const stored = new Map<string, string>();
 
-    await expect(mode.complete({ fields: { token: 'invalid-token' } }, {
-      signal: new AbortController().signal,
-      services: {
-        http: {
-          async request() {
-            return jsonResponse({
-              ok: false,
-              error_code: 401,
-              description: 'Unauthorized',
-            }, 401);
-          },
+    await expect(mode.complete({ fields: { token: 'invalid-token' } }, authenticationContext({
+      http: {
+        async request() {
+          return jsonResponse({
+            ok: false,
+            error_code: 401,
+            description: 'Unauthorized',
+          }, 401);
         },
       },
       attemptCredentials: {
@@ -78,7 +101,7 @@ describe('Telegram connected account runtime', () => {
         async set(key: string, value: string) { stored.set(key, value); },
         async delete(key: string) { stored.delete(key); },
       },
-    } as Parameters<typeof mode.complete>[1])).resolves.toMatchObject({
+    }))).resolves.toMatchObject({
       status: 'rejected',
       diagnostic: { code: 'telegram_bot_token_rejected' },
     });

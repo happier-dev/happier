@@ -126,6 +126,16 @@ function createWatchableCollection() {
 }
 
 describe('Channels connections Resource invalidation', () => {
+  it('uses the shared Resource storage guard with the connections error identity', async () => {
+    await expect(CONNECTIONS_RESOURCE_RUNTIME.read({
+      accountStorage: undefined,
+      signal: new AbortController().signal,
+    } as never)).rejects.toMatchObject({
+      code: 'channels_connections_resource_account_storage_unavailable',
+      message: 'The Channels connections Resource requires admitted Account storage.',
+    });
+  });
+
   it('projects retained delivery retry, partial, and unknown custody from the canonical rows without persisting connection health', async () => {
     const state = new MemoryAccountCollection();
     const deliveries = new MemoryAccountCollection();

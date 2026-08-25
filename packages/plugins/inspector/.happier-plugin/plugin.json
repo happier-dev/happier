@@ -85,6 +85,7 @@
     "scmBackends": [],
     "scmHostingProviders": [],
     "sessionHeaderActions": [],
+    "sessionInfoSections": [],
     "settings": [
       {
         "actions": [],
@@ -604,6 +605,35 @@
           "renderer": "inspector-renderer",
           "target": {
             "kind": "app"
+          },
+          "title": {
+            "fallback": "Plugin Inspector",
+            "key": "plugins.inspector.title"
+          }
+        },
+        {
+          "container": "browserPanel",
+          "headerActions": [],
+          "id": "inspector-browser-panel",
+          "instancePolicy": "singleton",
+          "renderer": "inspector-renderer",
+          "target": {
+            "browserViewIdPath": "/browser/viewId",
+            "kind": "browser"
+          },
+          "title": {
+            "fallback": "Plugin Inspector",
+            "key": "plugins.inspector.title"
+          }
+        },
+        {
+          "container": "servicesPanel",
+          "headerActions": [],
+          "id": "inspector-services-panel",
+          "instancePolicy": "singleton",
+          "renderer": "inspector-renderer",
+          "target": {
+            "kind": "services"
           },
           "title": {
             "fallback": "Plugin Inspector",

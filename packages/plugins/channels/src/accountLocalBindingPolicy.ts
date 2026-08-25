@@ -3,8 +3,9 @@ import {
   type JsonValue,
 } from '@happier-dev/plugin-sdk';
 import type { PluginMachineExecutionOriginV1 } from '@happier-dev/plugin-sdk/actions';
-import type {
-  PluginAccountCollectionForDefinition,
+import {
+  PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1,
+  type PluginAccountCollectionForDefinition,
 } from '@happier-dev/plugin-sdk/collections';
 import {
   CONVERSATION_BINDING_INPUT_MODES_V1,
@@ -15,6 +16,8 @@ import {
   MAX_CONVERSATION_CONNECTIONS_PER_ACCOUNT,
   MAX_CONVERSATION_OBSERVATION_AGE_MS,
   MIN_CONVERSATION_OBSERVATION_AGE_MS,
+  conversationBindingInputModesForEndpointV1,
+  isConversationBindingInputModeDeliverableV1,
   type ConversationBindingInputModeV1,
   type ConversationBindingTargetMutationV1,
   type ConversationBindingTargetV1,
@@ -30,7 +33,6 @@ import {
   isCanonicalChannelStateRecordIdentity,
   type PersistedConversationProviderContributionSelection,
 } from './collections.js';
-import { MAX_CHANNEL_ACCOUNT_COLLECTION_QUERY_PAGE_SIZE } from './requiredAccountStorage.js';
 import {
   freezeConversationPendingOldTransportStop,
   transitionConversationConnection,
@@ -523,6 +525,46 @@ export function readConversationConnectionSharedEndpointInputModes(
   return modes;
 }
 
+/** One writer-side capability gate for every resulting enabled binding policy. */
+export function assertConversationBindingInputModeIsDeliverable(input: Readonly<{
+  audience: ConversationBindingV1['endpoint']['audience'];
+  inputMode: ConversationBindingInputModeV1;
+  sharedEndpointInputModes: readonly ConversationBindingInputModeV1[] | undefined;
+  operation: 'channels_binding_create' | 'channels_binding_update' | 'channels_binding_set_enabled';
+}>): void {
+  if (isConversationBindingInputModeDeliverableV1({
+    audience: input.audience,
+    inputMode: input.inputMode,
+    ...(input.sharedEndpointInputModes === undefined
+      ? {}
+      : { sharedEndpointInputModes: input.sharedEndpointInputModes }),
+  })) return;
+  throw new PluginError({
+    code: `${input.operation}_input_mode_unsupported`,
+    message: 'The selected integration cannot deliver this incoming message policy for a shared conversation.',
+    details: {
+      inputMode: input.inputMode,
+      deliverableInputModes: [...conversationBindingInputModesForEndpointV1({
+        audience: input.audience,
+        ...(input.sharedEndpointInputModes === undefined
+          ? {}
+          : { sharedEndpointInputModes: input.sharedEndpointInputModes }),
+      })],
+    },
+  });
+}
+
+/** The connection revision serializes only changes to enabled delivery demand. */
+export function hasConversationBindingDeliveryDemandChanged(
+  current: ConversationBindingStateV1,
+  next: ConversationBindingStateV1,
+): boolean {
+  if (current.enabled !== next.enabled) return true;
+  if (!next.enabled) return false;
+  return current.endpoint.audience !== next.endpoint.audience
+    || current.inputMode !== next.inputMode;
+}
+
 function projectConversationConnectionManagementRow(
   row: ChannelStateRow,
 ): ConversationConnectionManagementRow {
@@ -826,16 +868,25 @@ function boundedSummary(value: string): string {
   return `${codePoints.slice(0, MANAGEMENT_SUMMARY_MAX_CODE_POINTS - 1).join('')}…`;
 }
 
-function projectConversationBindingManagementRow(row: ChannelStateRow): ConversationBindingManagementRow {
-  let current: ConversationBindingUpdateRow;
+function readConversationBindingManagementCurrentRow(
+  row: ChannelStateRow,
+): ConversationBindingUpdateRow {
   try {
-    current = readConversationBindingUpdateRow({ row, bindingId: row.rowId });
+    return readConversationBindingUpdateRow({ row, bindingId: row.rowId });
   } catch (cause) {
     throw new PluginError({
       code: 'channels_binding_management_row_invalid',
       message: 'The Channels binding index received an invalid binding row.',
     }, { cause });
   }
+}
+
+function projectConversationBindingManagementRow(
+  row: ChannelStateRow,
+  currentRow?: ConversationBindingUpdateRow,
+): ConversationBindingManagementRow {
+  const current: ConversationBindingUpdateRow = currentRow
+    ?? readConversationBindingManagementCurrentRow(row);
   const endpointLabel = current.binding.endpoint.label ?? current.binding.endpoint.parentLabel;
   const targetSummary = current.binding.target.kind === 'session'
     ? boundedSummary(current.binding.target.sessionId)
@@ -880,8 +931,19 @@ export async function readConversationBindingManagementRows(input: Readonly<{
   collection: ChannelStateBindingCollection;
   signal?: AbortSignal;
   assertCurrent?: () => void;
+  /**
+   * Restricts the projection to the bindings whose canonical target is exactly
+   * this Session. The comparison is against the persisted `target.sessionId`,
+   * never `target.summary`: the summary is a 28-code-point display projection,
+   * so matching on it would both miss a longer Session identity and collide
+   * two Sessions that share a prefix.
+   */
+  sessionId?: string;
 }>): Promise<Readonly<{ bindings: readonly ConversationBindingManagementRow[] }>> {
   const bindings: ConversationBindingManagementRow[] = [];
+  // Scanned rows, not admitted rows: a Session filter must still bound the
+  // Account-wide index it pages through.
+  let scannedCount = 0;
   let cursor: string | undefined;
   do {
     assertCurrent(input);
@@ -889,21 +951,28 @@ export async function readConversationBindingManagementRows(input: Readonly<{
       index: CHANNEL_STATE_INDEX_ID.byKind,
       prefix: [CHANNEL_STATE_RECORD_KIND.binding],
       order: 'asc',
-      limit: Math.min(MAX_CONVERSATION_BINDINGS_PER_ACCOUNT - bindings.length, MAX_CHANNEL_ACCOUNT_COLLECTION_QUERY_PAGE_SIZE),
+      limit: Math.min(MAX_CONVERSATION_BINDINGS_PER_ACCOUNT - scannedCount, PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1),
       ...(cursor === undefined ? {} : { cursor }),
     }, input.signal === undefined ? undefined : { signal: input.signal });
     assertCurrent(input);
     for (const row of page.rows) {
-      bindings.push(projectConversationBindingManagementRow(row));
-      if (bindings.length > MAX_CONVERSATION_BINDINGS_PER_ACCOUNT) {
+      scannedCount += 1;
+      if (scannedCount > MAX_CONVERSATION_BINDINGS_PER_ACCOUNT) {
         throw policyError(
           'channels_binding_management_page_invalid',
           'The Channels binding index exceeded the canonical binding bound.',
         );
       }
+      const current = readConversationBindingManagementCurrentRow(row);
+      if (input.sessionId !== undefined
+        && (current.binding.target.kind !== 'session'
+          || current.binding.target.sessionId !== input.sessionId)) {
+        continue;
+      }
+      bindings.push(projectConversationBindingManagementRow(row, current));
     }
     if (page.nextCursor === undefined) return { bindings };
-    if (bindings.length >= MAX_CONVERSATION_BINDINGS_PER_ACCOUNT) {
+    if (scannedCount >= MAX_CONVERSATION_BINDINGS_PER_ACCOUNT) {
       throw policyError(
         'channels_binding_management_page_invalid',
         'The Channels binding index exceeded the canonical binding bound.',
@@ -942,7 +1011,7 @@ export async function readConversationSessionBindingDeliveryTargets(input: Reado
       order: 'asc',
       limit: Math.min(
         MAX_CONVERSATION_BINDINGS_PER_ACCOUNT - bindingCount,
-        MAX_CHANNEL_ACCOUNT_COLLECTION_QUERY_PAGE_SIZE,
+        PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1,
       ),
       ...(cursor === undefined ? {} : { cursor }),
     }, input.signal === undefined ? undefined : { signal: input.signal });
@@ -1002,7 +1071,7 @@ export async function readConversationIngressAttentionPage(input: Readonly<{
   obligations: readonly ConversationIngressAttentionRow[];
   nextCursor?: string;
 }>> {
-  const limit = Math.min(input.limit ?? MAX_CHANNEL_ACCOUNT_COLLECTION_QUERY_PAGE_SIZE, MAX_CHANNEL_ACCOUNT_COLLECTION_QUERY_PAGE_SIZE);
+  const limit = Math.min(input.limit ?? PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1, PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1);
   if (!Number.isSafeInteger(limit) || limit < 1) {
     throw policyError(
       'channels_ingress_attention_page_invalid',
@@ -1428,6 +1497,14 @@ async function mutateConversationBindingPolicyInAccountCollection(input: Convers
     }
     throw policyError(`${input.operation}_corrupt`, 'Binding mutation could not preserve the canonical binding relation.');
   }
+  if (transition.binding.enabled) {
+    assertConversationBindingInputModeIsDeliverable({
+      audience: transition.binding.endpoint.audience,
+      inputMode: transition.binding.inputMode,
+      sharedEndpointInputModes: readConversationConnectionSharedEndpointInputModes(connection.payload),
+      operation: input.operation,
+    });
+  }
   if (transition.kind === 'unchanged') {
     return {
       kind: 'unchanged',
@@ -1437,12 +1514,22 @@ async function mutateConversationBindingPolicyInAccountCollection(input: Convers
     };
   }
 
+  const demandChanged = hasConversationBindingDeliveryDemandChanged(
+    current.binding,
+    transition.binding,
+  );
   const result = await input.collection.batch([
-    {
-      kind: 'assert',
-      rowId: current.binding.connectionId,
-      expectedRevision: connectionRow.revision,
-    },
+    demandChanged
+      ? {
+        kind: 'put' as const,
+        value: connectionRow.value,
+        expectedRevision: connectionRow.revision,
+      }
+      : {
+        kind: 'assert' as const,
+        rowId: current.binding.connectionId,
+        expectedRevision: connectionRow.revision,
+      },
     {
       kind: 'put',
       value: withConversationBindingPolicy({

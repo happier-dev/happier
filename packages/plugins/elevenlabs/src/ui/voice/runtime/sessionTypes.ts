@@ -1,6 +1,6 @@
 import type {
   VoiceRealtimeJsonValue,
-} from '@happier-dev/plugin-sdk/voice';
+} from '@happier-dev/plugin-sdk/voice/client';
 
 export type ElevenLabsSessionState = Readonly<{
   billingMode: 'happier' | 'byo';

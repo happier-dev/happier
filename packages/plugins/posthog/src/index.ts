@@ -47,6 +47,7 @@ export {
     createPosthogSampledEventsReader,
     getPosthogSourceEntry,
     listPosthogInstances,
+    probePosthogCapability,
     readPosthogSampledEvents,
     scanPosthogSource,
     toTriageSourceFailure,
@@ -263,7 +264,6 @@ export {
 export type {
     PosthogAffectedSessionRowV1,
     PosthogOccurrenceRowV1,
-    PosthogSessionReplayV1,
     PosthogStackFrameRowV1,
     PosthogStackTraceV1,
 } from './ui/detail/sampledViews.js';

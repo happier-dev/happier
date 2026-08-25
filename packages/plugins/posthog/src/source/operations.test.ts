@@ -20,6 +20,7 @@ import queryIssueEventsPage from '../api/__fixtures__/queryIssueEventsPage.json'
 import queryIssueDetail from '../api/__fixtures__/queryIssueDetail.json' with { type: 'json' };
 import issueActivityPage from '../api/__fixtures__/issueActivityPage.json' with { type: 'json' };
 import { POSTHOG_CONNECTED_ACCOUNT_PURPOSE } from '../posthogContracts.js';
+import { PosthogConfigurationDirectoryResultV1Schema } from '../connect/configurationContract.js';
 import {
     POSTHOG_SAMPLE_WALK_STOPPED_SHORT_V1,
     PosthogSampledEventsResultV1Schema,
@@ -30,10 +31,15 @@ import {
 } from './detail/issueActivityContract.js';
 import {
     POSTHOG_FAILURE_CODES,
+    createPosthogCapabilityProbe,
+    createPosthogConfigurationDirectoryReader,
     createPosthogIssueActivityReader,
     createPosthogSampledEventsReader,
+    createPosthogSourceEntryReader,
     getPosthogSourceEntry,
     listPosthogInstances,
+    probePosthogCapability,
+    readPosthogConfigurationDirectory,
     readPosthogSampledEvents,
     scanPosthogSource,
     toTriageSourceFailure,
@@ -173,6 +179,177 @@ describe('PostHog Triage source operations', () => {
         }), { signal: expect.any(AbortSignal) });
     });
 
+    /**
+     * `next` is the only field that says whether more pages exist, and this walk reads
+     * one page per route. A `next` the parser cannot read used to fold into "absent",
+     * which is the one reading it must never take: it turns *I do not know* into *this
+     * is the last page*, and discovery then reports COMPLETE while the provider is still
+     * offering organizations and environments the user never sees.
+     *
+     * Both pages below are otherwise finished walks — `next: null`, no skipped rows — so
+     * the only thing that can move this result off `complete` is the malformed field.
+     */
+    it('never reports discovery complete on a pagination field it could not read', async () => {
+        const host = context([
+            { ...organizationsPage, next: { url: 'https://eu.posthog.com/api/organizations/?offset=1' } },
+            { ...projectsPage, next: null },
+        ]);
+
+        const result = await listPosthogInstances({ v: 1 }, host.value);
+
+        expect(() => TriageListInstancesResultV1Schema.parse(result)).not.toThrow();
+        expect(result.kind).toBe('incomplete');
+        if (result.kind !== 'incomplete') return;
+        expect(result.failure).toEqual({
+            class: 'unknown',
+            code: POSTHOG_FAILURE_CODES.discoveryPageBounded,
+        });
+        // The valid rows on that page are still published: a pagination field this
+        // parser could not read is not a reason to discard an organization it could.
+        expect(result.candidates).toHaveLength(1);
+    });
+
+    it('reads only the requested organization directory page and exposes the next page', async () => {
+        const secondOrganization = {
+            ...organizationsPage.results[0],
+            id: '00000000-0000-4000-8000-0000000000b2',
+            name: 'Second organization',
+        };
+        const host = context([organizationsPage, {
+            count: 2,
+            next: null,
+            previous: organizationsPage.next,
+            results: [secondOrganization],
+        }]);
+        const binding = { purpose: POSTHOG_CONNECTED_ACCOUNT_PURPOSE, account: ACCOUNT };
+
+        const first = await readPosthogConfigurationDirectory({
+            v: 1,
+            kind: 'organizations',
+            binding,
+            page: { kind: 'initial' },
+        }, host.value);
+        expect(() => PosthogConfigurationDirectoryResultV1Schema.parse(first)).not.toThrow();
+        expect(first).toMatchObject({
+            kind: 'organizations',
+            rows: [{ organizationUuid: organizationsPage.results[0]?.id }],
+            next: organizationsPage.next,
+        });
+        expect(host.request).toHaveBeenCalledTimes(1);
+        if (first.kind !== 'organizations' || first.next === undefined) return;
+
+        const second = await readPosthogConfigurationDirectory({
+            v: 1,
+            kind: 'organizations',
+            binding,
+            page: { kind: 'continuation', next: first.next },
+        }, host.value);
+        expect(second).toMatchObject({
+            kind: 'organizations',
+            rows: [{ organizationUuid: secondOrganization.id }],
+        });
+        expect(second.kind === 'organizations' ? second.next : undefined).toBeUndefined();
+        expect(host.request).toHaveBeenCalledTimes(2);
+    });
+
+    it('reads a later environment page only through its explicit continuation', async () => {
+        const laterEnvironment = {
+            ...projectsPage.results[0],
+            id: 4822,
+            uuid: '00000000-0000-4000-8000-0000000000d2',
+            name: 'Storefront staging',
+        };
+        const host = context([projectsPage, {
+            count: 2,
+            next: null,
+            previous: projectsPage.next,
+            results: [laterEnvironment],
+        }]);
+        const input = {
+            v: 1 as const,
+            kind: 'environments' as const,
+            binding: { purpose: POSTHOG_CONNECTED_ACCOUNT_PURPOSE, account: ACCOUNT },
+            organizationUuid: organizationsPage.results[0]?.id,
+        };
+
+        const first = await readPosthogConfigurationDirectory({
+            ...input,
+            page: { kind: 'initial' },
+        }, host.value);
+        if (first.kind !== 'environments' || first.next === undefined) {
+            throw new Error('fixture first environment page must expose a continuation');
+        }
+        expect(host.request).toHaveBeenCalledTimes(1);
+
+        const second = await readPosthogConfigurationDirectory({
+            ...input,
+            page: { kind: 'continuation', next: first.next },
+        }, host.value);
+
+        expect(second).toMatchObject({
+            kind: 'environments',
+            rows: [{ teamPathId: laterEnvironment.id, teamUuid: laterEnvironment.uuid }],
+        });
+        expect(second.kind === 'environments' ? second.next : undefined).toBeUndefined();
+        expect(host.request).toHaveBeenCalledTimes(2);
+    });
+
+    it('keeps valid environment rows but reports an unsafe provider next as incomplete', async () => {
+        const host = context([{ ...projectsPage, next: 'https://attacker.invalid/projects/?offset=2' }]);
+        const result = await readPosthogConfigurationDirectory({
+            v: 1,
+            kind: 'environments',
+            binding: { purpose: POSTHOG_CONNECTED_ACCOUNT_PURPOSE, account: ACCOUNT },
+            organizationUuid: organizationsPage.results[0]?.id,
+            page: { kind: 'initial' },
+        }, host.value);
+
+        expect(() => PosthogConfigurationDirectoryResultV1Schema.parse(result)).not.toThrow();
+        expect(result).toMatchObject({ kind: 'environments', incomplete: true });
+        expect(result.kind === 'environments'
+            ? result.rows.map((row) => row.teamUuid)
+            : []).toContain(projectsPage.results[0]?.uuid);
+        expect(result.kind === 'environments' ? result.next : undefined).toBeUndefined();
+        expect(host.request).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not publish a directory continuation whose offset does not advance', async () => {
+        const host = context([{
+            ...organizationsPage,
+            next: 'https://eu.posthog.com/api/organizations/?limit=754&offset=0',
+        }]);
+        const result = await readPosthogConfigurationDirectory({
+            v: 1,
+            kind: 'organizations',
+            binding: { purpose: POSTHOG_CONNECTED_ACCOUNT_PURPOSE, account: ACCOUNT },
+            page: { kind: 'initial' },
+        }, host.value);
+
+        expect(result).toMatchObject({ kind: 'organizations', incomplete: true });
+        expect(result.kind === 'organizations' ? result.next : undefined).toBeUndefined();
+        expect(host.request).toHaveBeenCalledTimes(1);
+    });
+
+    it('probes the selected draft through one authenticated Error Tracking page', async () => {
+        const instance = configuredInstance();
+        const host = context([queryIssuesPage1]);
+        const result = await probePosthogCapability({
+            v: 1,
+            draft: {
+                v: 1,
+                binding: instance.binding,
+                localInstanceKey: instance.localInstanceKey,
+                keyStability: 'locatorDerived',
+                configuration: instance.configuration,
+                locator: { v: 1, displayLabel: 'Storefront' },
+            },
+        }, host.value);
+
+        expect(result).toEqual({ kind: 'available' });
+        expect(host.request).toHaveBeenCalledTimes(1);
+        expect(host.request.mock.calls[0]?.[0]).toMatchObject({ method: 'POST' });
+    });
+
     it('returns a bounded scan page and carries frozen geometry only in its continuation', async () => {
         const host = context([queryIssuesPage1, queryIssuesPage2]);
         const instance = configuredInstance();
@@ -213,6 +390,9 @@ describe('PostHog Triage source operations', () => {
             from: `2026-07-01T00:00:00.000Z${'x'.repeat(pad)}`,
             to: null,
             nativeLimit: 3,
+            // The walk's carried caveats travel in the token, so they are part of
+            // the geometry whose width decides whether the NEXT one still fits.
+            walkHealth: [],
         });
         const pad = MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1
             - encoder.encode(geometry(9, 0)).byteLength;
@@ -240,6 +420,58 @@ describe('PostHog Triage source operations', () => {
         });
     });
 
+    /**
+     * A walk's pages are separate invocations of this source, so a caveat one
+     * page established has nowhere to live but the continuation it mints.
+     *
+     * Without that, page one skipping an undecodable row and page two running
+     * clean out of `hasMore` settled the whole pass as `walkFinished` — and the
+     * aggregate reads exactly that member to claim lane exhaustion, whose
+     * exhausted-replaces branch then deletes every retained row the truncated
+     * walk did not name. The falsifier is any later page that can erase an
+     * earlier page's caveat.
+     */
+    it('never finishes a walk clean when an earlier page skipped a row', async () => {
+        const malformed = { id: 'not-a-uuid', status: 'active' };
+        const host = context([
+            { ...queryIssuesPage1, results: [...queryIssuesPage1.results, malformed] },
+            { ...queryIssuesPage2, hasMore: false, nextOffset: null },
+        ]);
+        const instance = configuredInstance();
+
+        const first = await scanPosthogSource({
+            v: 1,
+            instance,
+            page: { kind: 'initial', limit: 4 },
+        }, host.value);
+        expect(() => TriageScanResultV1Schema.parse(first)).not.toThrow();
+        expect(first.kind).toBe('page');
+        if (first.kind !== 'page') return;
+        expect(first.evidence).toEqual({
+            kind: 'partial',
+            reason: POSTHOG_FAILURE_CODES.malformedRows,
+            omittedItemCount: 1,
+        });
+
+        const second = await scanPosthogSource({
+            v: 1,
+            instance,
+            page: { kind: 'continuation', continuation: first.continuation },
+        }, host.value);
+        expect(() => TriageScanResultV1Schema.parse(second)).not.toThrow();
+        expect(second.kind).toBe('complete');
+        if (second.kind !== 'complete') return;
+        // Names only: the omitted count belongs to the call that omitted the row,
+        // so the aggregate's per-page `observations + omittedItemCount <= limit`
+        // check stays exact.
+        expect(second.evidence).toEqual({
+            kind: 'partial',
+            reason: POSTHOG_FAILURE_CODES.malformedRows,
+        });
+        // The clean page's own rows are untouched by the caveat it carries.
+        expect(second.observations.length).toBeGreaterThan(0);
+    });
+
     it('performs CRUD-first get and returns one strict present observation', async () => {
         const host = context([crudIssueRead, queryIssueDetail]);
         const instance = configuredInstance();
@@ -259,6 +491,18 @@ describe('PostHog Triage source operations', () => {
             localRef: { kindId: 'error-issue' },
             snapshot: { title: 'TypeError', scopeLabel: 'Storefront production' },
         });
+        if (result.kind !== 'present') return;
+        expect(result.snapshot.facts.map((fact) => fact.id)).toEqual([
+            'posthog/occurrences',
+            'posthog/function',
+            'posthog/top-frame',
+            'posthog/severity',
+        ]);
+        expect(result.snapshot.facts[0]?.value).toMatchObject({ kind: 'number', value: 1842 });
+        // Release is a valid fourth native candidate, but the protocol leaves only
+        // three native slots beside detail-only severity. It is bounded projection,
+        // not a reason to reject or hide the issue.
+        expect(result.snapshot.projectionTruncated).toBe(true);
         expect(host.request.mock.calls.map(([input]) => input.method)).toEqual(['GET', 'POST']);
     });
 
@@ -520,6 +764,51 @@ describe('PostHog invocation boundaries', () => {
         expect(observed).toBeDefined();
         expect(observed).not.toBe(host.value.signal);
         expect(observed?.aborted).toBe(true);
+    });
+
+    it('applies the shared private request deadline to settings browsing, capability checks, and mounted live get', async () => {
+        const neverMaterializes = () => context([], [], {
+            materialize: async () => await new Promise(() => undefined),
+        });
+        const instance = configuredInstance();
+        const draft = {
+            v: 1 as const,
+            binding: instance.binding,
+            localInstanceKey: instance.localInstanceKey,
+            keyStability: 'locatorDerived' as const,
+            configuration: instance.configuration,
+            locator: { v: 1 as const, displayLabel: 'Storefront' },
+        };
+
+        const directoryHost = neverMaterializes();
+        await expect(createPosthogConfigurationDirectoryReader(5)({
+            v: 1,
+            kind: 'organizations',
+            binding: instance.binding,
+            page: { kind: 'initial' },
+        }, directoryHost.value)).resolves.toEqual({
+            kind: 'unavailable',
+            failure: { class: 'transient', code: POSTHOG_FAILURE_CODES.timedOut },
+        });
+
+        const capabilityHost = neverMaterializes();
+        await expect(createPosthogCapabilityProbe(5)({ v: 1, draft }, capabilityHost.value))
+            .resolves.toEqual({
+                kind: 'unavailable',
+                failure: { class: 'transient', code: POSTHOG_FAILURE_CODES.timedOut },
+            });
+
+        const getHost = neverMaterializes();
+        const get = await createPosthogSourceEntryReader(5)({
+            v: 1,
+            instance,
+            localRef: LOCAL_REF,
+        }, getHost.value);
+        expect(get).toEqual({
+            kind: 'unresolved',
+            localRef: LOCAL_REF,
+            failure: { class: 'transient', code: POSTHOG_FAILURE_CODES.timedOut },
+        });
     });
 
     it('admits the materialized account through the shared authorization owner', async () => {

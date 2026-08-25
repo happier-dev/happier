@@ -16,9 +16,26 @@ import { renderConversationPairingDeepLink } from './pairingLink.js';
 export const CONVERSATION_PAIRING_EXPIRY_MS = 10 * 60 * 1_000;
 export const MAX_CONVERSATION_PAIRING_FAILED_ATTEMPTS_PER_REQUESTER = 5;
 export const MAX_CONVERSATION_PAIRING_TRACKED_REQUESTERS = 128;
-const MAX_CONVERSATION_PAIRING_TOMBSTONES = MAX_CONVERSATION_BINDINGS_PER_ACCOUNT * 2;
+export const MAX_CONVERSATION_PAIRING_TOMBSTONES = MAX_CONVERSATION_BINDINGS_PER_ACCOUNT * 2;
 
 type PairingIdKind = 'challenge' | 'proposal' | 'binding';
+
+/**
+ * The single eviction rule for every bounded terminal-pairing record, whether
+ * it is a bare tombstone set or a tombstone carrying its own expiry. Insertion
+ * order is arrival order, so the oldest entry is the one that leaves once the
+ * one declared budget is exceeded.
+ */
+function evictOldestBeyondTombstoneBudget(target: Readonly<{
+  size: number;
+  keys(): IterableIterator<string>;
+  delete(key: string): boolean;
+}>): void {
+  if (target.size <= MAX_CONVERSATION_PAIRING_TOMBSTONES) return;
+  const oldest = target.keys().next().value;
+  if (oldest !== undefined) target.delete(oldest);
+}
+
 export type ConversationPairingBinding = ConversationBindingV1;
 /** Exact bounded feedback from the Automation-owned target verifier. */
 export type ConversationAutomationTargetNotVerifiedResult = Extract<
@@ -58,6 +75,13 @@ type Challenge = Readonly<{
   materialization: PluginMachineMaterializationRefV1;
   destinationLabel: string;
   expiresAt: number;
+  /**
+   * The conversation the owner chose to bind, resolved from the exact current
+   * provider candidates before this challenge existed. It is deliberately not
+   * the endpoint the proof arrives on: the token must travel privately, while
+   * the destination may be a group nobody can prove identity in.
+   */
+  endpoint: ConversationResolvedEndpointV1;
   target: ConversationBindingTargetMutationV1;
   deepLinkUrl: string | null;
 }>;
@@ -69,7 +93,10 @@ type Proposal = Readonly<{
   bindingId: string;
   connectionId: string;
   materialization: PluginMachineMaterializationRefV1;
+  /** The owner-selected destination frozen by the challenge. */
   endpoint: ConversationResolvedEndpointV1;
+  /** The private conversation the `/pair` proof actually arrived on. */
+  proofEndpoint: ConversationResolvedEndpointV1;
   principalId: string;
   target: ConversationBindingTargetMutationV1;
   expectedConnectionRevision: number;
@@ -147,8 +174,14 @@ export function createConversationPairingManager(dependencies: Readonly<{
   const challengesById = new Map<string, Challenge>();
   const challengeIdsByToken = new Map<string, string>();
   const challengeIdByConnection = new Map<string, string>();
-  const expiredChallengeIds = new Set<string>();
-  const consumedChallengeIds = new Set<string>();
+  /**
+   * One terminal-challenge record, not two mutually exclusive sets. A
+   * challenge becomes terminal exactly once, and a superseded challenge is
+   * consumed rather than expired; keeping two sets meant a manual cross-set
+   * delete on every supersession and two independent eviction budgets, so the
+   * effective tombstone bound was silently twice the declared one.
+   */
+  const terminalChallengeReasonById = new Map<string, 'expired' | 'consumed'>();
   const expiredProposalIds = new Set<string>();
   const consumedTokens = new Map<string, number>();
   const proposals = new Map<string, Proposal>();
@@ -169,9 +202,31 @@ export function createConversationPairingManager(dependencies: Readonly<{
 
   function addBoundedTombstone(target: Set<string>, id: string): void {
     target.add(id);
-    if (target.size <= MAX_CONVERSATION_PAIRING_TOMBSTONES) return;
-    const oldest = target.values().next().value;
-    if (oldest !== undefined) target.delete(oldest);
+    evictOldestBeyondTombstoneBudget(target);
+  }
+
+  /**
+   * Records the one terminal reason for a challenge under the single bounded
+   * tombstone budget. A later reason replaces an earlier one in place, so a
+   * superseded (consumed) challenge can never still read as expired.
+   */
+  function recordTerminalChallenge(challengeId: string, reason: 'expired' | 'consumed'): void {
+    terminalChallengeReasonById.set(challengeId, reason);
+    evictOldestBeyondTombstoneBudget(terminalChallengeReasonById);
+  }
+
+  /**
+   * A consumed token is a terminal-challenge tombstone like any other: it only
+   * has to outlive its own challenge window so a replayed `/pair` reads
+   * `challengeConsumed` instead of `tokenMismatch`. Lazy expiry alone left it
+   * bounded by pairing-operation rate rather than by a contract, so an owner
+   * create/cancel loop grew daemon memory without limit inside one window.
+   * It therefore shares the single tombstone budget rather than owning a
+   * second eviction rule.
+   */
+  function recordConsumedToken(token: string, expiresAt: number): void {
+    consumedTokens.set(token, expiresAt);
+    evictOldestBeyondTombstoneBudget(consumedTokens);
   }
 
   function expireChallenge(challenge: Challenge): void {
@@ -180,7 +235,7 @@ export function createConversationPairingManager(dependencies: Readonly<{
     if (challengeIdByConnection.get(challenge.connectionId) === challenge.challengeId) {
       challengeIdByConnection.delete(challenge.connectionId);
     }
-    addBoundedTombstone(expiredChallengeIds, challenge.challengeId);
+    recordTerminalChallenge(challenge.challengeId, 'expired');
   }
 
   function pruneExpired(now: number): boolean {
@@ -262,6 +317,7 @@ export function createConversationPairingManager(dependencies: Readonly<{
       materialization: PluginMachineMaterializationRefV1;
       destinationLabel: string;
       pairingDeepLinkTemplate?: string;
+      endpoint: ConversationResolvedEndpointV1;
       target: ConversationBindingTargetMutationV1;
     }>) {
       if (!Number.isSafeInteger(input.expectedConnectionRevision) || input.expectedConnectionRevision < 1) {
@@ -274,9 +330,8 @@ export function createConversationPairingManager(dependencies: Readonly<{
         const previousChallenge = challengesById.get(previousChallengeId);
         if (previousChallenge !== undefined) {
           expireChallenge(previousChallenge);
-          expiredChallengeIds.delete(previousChallenge.challengeId);
-          addBoundedTombstone(consumedChallengeIds, previousChallenge.challengeId);
-          consumedTokens.set(previousChallenge.token, previousChallenge.expiresAt);
+          recordTerminalChallenge(previousChallenge.challengeId, 'consumed');
+          recordConsumedToken(previousChallenge.token, previousChallenge.expiresAt);
         }
       }
       if (challengesById.size >= MAX_CONVERSATION_CONNECTIONS_PER_ACCOUNT) {
@@ -293,6 +348,7 @@ export function createConversationPairingManager(dependencies: Readonly<{
         materialization: input.materialization,
         destinationLabel: input.destinationLabel,
         expiresAt: now + CONVERSATION_PAIRING_EXPIRY_MS,
+        endpoint: input.endpoint,
         target: input.target,
         deepLinkUrl: input.pairingDeepLinkTemplate === undefined
           ? null
@@ -332,11 +388,10 @@ export function createConversationPairingManager(dependencies: Readonly<{
           deepLinkUrl: challenge.deepLinkUrl,
         } as const;
       }
-      return expiredChallengeIds.has(input.challengeId)
-        ? { kind: 'expired' } as const
-        : consumedChallengeIds.has(input.challengeId)
-          ? { kind: 'consumed' } as const
-          : { kind: 'unavailable' } as const;
+      const terminalReason = terminalChallengeReasonById.get(input.challengeId);
+      if (terminalReason === 'expired') return { kind: 'expired' } as const;
+      if (terminalReason === 'consumed') return { kind: 'consumed' } as const;
+      return { kind: 'unavailable' } as const;
     },
 
     /**
@@ -469,8 +524,8 @@ export function createConversationPairingManager(dependencies: Readonly<{
       if (challengeIdByConnection.get(challenge.connectionId) === challenge.challengeId) {
         challengeIdByConnection.delete(challenge.connectionId);
       }
-      addBoundedTombstone(consumedChallengeIds, challenge.challengeId);
-      consumedTokens.set(challenge.token, challenge.expiresAt);
+      recordTerminalChallenge(challenge.challengeId, 'consumed');
+      recordConsumedToken(challenge.token, challenge.expiresAt);
       const proposalId = dependencies.createId('proposal');
       const proposal: Proposal = {
         censusId: reservation.censusId,
@@ -479,7 +534,8 @@ export function createConversationPairingManager(dependencies: Readonly<{
         bindingId: dependencies.createId('binding'),
         connectionId: challenge.connectionId,
         materialization: challenge.materialization,
-        endpoint: reservation.endpoint,
+        endpoint: challenge.endpoint,
+        proofEndpoint: reservation.endpoint,
         principalId: reservation.principalId,
         target: challenge.target,
         expectedConnectionRevision: challenge.expectedConnectionRevision,
@@ -492,6 +548,38 @@ export function createConversationPairingManager(dependencies: Readonly<{
       return { kind: 'matched', proposalId, expiresAt: proposal.expiresAt } as const;
     },
 
+    /**
+     * The connection an unfinished pairing item is attached to, so the caller
+     * that holds the current Account's storage can prove Account ownership
+     * before asking for a mutation. Every other pairing entry already
+     * establishes that correspondence for free — create and finalize read the
+     * connection row under the current Account, and ingress arrives with a
+     * connection the current Account resolved — but cancellation carried only
+     * an opaque item ID, so possession of a retired Account's identifier was
+     * sufficient authority over its in-memory state.
+     *
+     * A pairing item's connection never changes, so the caller may authorize
+     * against this answer and then call cancel: the only transitions the gap
+     * admits are the finalize/expiry ones cancellation already refuses.
+     */
+    readPendingConnectionId(input: Readonly<{
+      generationId: string;
+      challengeId?: string;
+      proposalId?: string;
+    }>):
+      | Readonly<{ kind: 'pending'; connectionId: string }>
+      | Readonly<{ kind: 'restarted' }>
+      | Readonly<{ kind: 'unavailable' }> {
+      if (input.generationId !== dependencies.generationId) return { kind: 'restarted' } as const;
+      pruneExpiredAndPublish(dependencies.now());
+      const pending = input.challengeId === undefined
+        ? (input.proposalId === undefined ? undefined : proposals.get(input.proposalId))
+        : challengesById.get(input.challengeId);
+      return pending === undefined
+        ? { kind: 'unavailable' } as const
+        : { kind: 'pending', connectionId: pending.connectionId } as const;
+    },
+
     cancelChallenge(input: Readonly<{ generationId: string; challengeId: string }>): ConversationPairingCancelResult {
       if (input.generationId !== dependencies.generationId) return { kind: 'notCancelled', reason: 'restarted' } as const;
       pruneExpiredAndPublish(dependencies.now());
@@ -502,7 +590,7 @@ export function createConversationPairingManager(dependencies: Readonly<{
       if (challengeIdByConnection.get(challenge.connectionId) === challenge.challengeId) {
         challengeIdByConnection.delete(challenge.connectionId);
       }
-      consumedTokens.set(challenge.token, challenge.expiresAt);
+      recordConsumedToken(challenge.token, challenge.expiresAt);
       publishChange();
       return { kind: 'cancelled' } as const;
     },
@@ -604,13 +692,30 @@ export function createConversationPairingManager(dependencies: Readonly<{
       proposal.finalizePromise = operation;
       return operation;
     },
-    readManagementProjection(): ConversationPairingResourceV1 {
+    /**
+     * The reader supplies the current Account's connection index and receives
+     * only that Account's partition of the manager's state. Filtering used to
+     * happen in the Resource after the manager had already answered with every
+     * Account's rows, which made the consumer a second decision-maker over a
+     * partition the producer is the only one able to enforce on mutation.
+     *
+     * An absent partition is a whole-state read for a caller that has no
+     * Account scope at all — the manager's own tests and direct owners.
+     */
+    readManagementProjection(
+      accountConnectionIds?: ReadonlySet<string>,
+    ): ConversationPairingResourceV1 {
       const observedAt = dependencies.now();
       pruneExpiredAndPublish(observedAt);
+      const inPartition = (connectionId: string): boolean => (
+        accountConnectionIds === undefined || accountConnectionIds.has(connectionId)
+      );
       return {
         generationId: dependencies.generationId,
         observedAt,
-        challenges: [...challengesById.values()].map((challenge) => ({
+        challenges: [...challengesById.values()].filter((challenge) => (
+          inPartition(challenge.connectionId)
+        )).map((challenge) => ({
           challengeId: challenge.challengeId,
           connectionId: challenge.connectionId,
           expectedConnectionRevision: challenge.expectedConnectionRevision,
@@ -620,13 +725,17 @@ export function createConversationPairingManager(dependencies: Readonly<{
           manualToken: challenge.token,
           deepLinkUrl: challenge.deepLinkUrl,
         })),
-        proposals: [...proposals.values()].map((proposal) => ({
+        proposals: [...proposals.values()].filter((proposal) => (
+          inPartition(proposal.connectionId)
+        )).map((proposal) => ({
           challengeId: proposal.challengeId,
           proposalId: proposal.proposalId,
           connectionId: proposal.connectionId,
           expectedConnectionRevision: proposal.expectedConnectionRevision,
           expiresAt: proposal.expiresAt,
-          endpointLabel: proposal.endpoint.label ?? null,
+          // The owner already chose the destination; the new fact this
+          // projection carries is which private conversation proved the human.
+          endpointLabel: proposal.proofEndpoint.label ?? null,
           state: proposal.state,
         })),
       };

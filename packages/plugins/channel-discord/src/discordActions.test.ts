@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { PluginError } from '@happier-dev/plugin-sdk';
+import { PluginError, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { MAX_CONVERSATION_RETRY_AFTER_MS } from '@happier-dev/channels-protocol/v1';
 
 import {
@@ -63,8 +63,15 @@ function channelsCallerContext(input: Readonly<{
       kind: 'plugin' as const,
       pluginId: 'happier.channels',
       contribution: { id: 'provider-setup', qualifiedId: 'happier.channels/actions/provider-setup' },
+      materialization: {
+        machineId: 'discord-actions-fixture-machine',
+        materializationId: 'discord-actions-fixture-materialization',
+        pluginId: 'happier.channels',
+      },
     },
     signal: input.signal ?? controller.signal,
+    // These Actions consume exactly two host boundaries; the remaining host
+    // services are stamped by the runtime and never read here.
     services: {
       connectedAccounts: { materialize },
       http: {
@@ -72,8 +79,8 @@ function channelsCallerContext(input: Readonly<{
           return await input.request(request);
         },
       },
-    },
-  };
+    } as unknown as PluginInvocationContext['services'],
+  } satisfies PluginInvocationContext;
   return { context, materialize };
 }
 

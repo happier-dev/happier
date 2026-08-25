@@ -37,6 +37,7 @@ const sdk = vi.hoisted(() => ({
   startSession: vi.fn(),
   endSession: vi.fn(async () => undefined),
   setMicMuted: vi.fn(),
+  setVolume: vi.fn(),
   sendUserMessage: vi.fn(),
   sendContextualUpdate: vi.fn(),
   getId: vi.fn(() => 'conversation-1'),
@@ -54,6 +55,7 @@ function createSdkHandleConnection(input: Readonly<{ driver: Readonly<{
     onRemoteClose(reason: string): void;
   }>): Promise<void>;
   sendControl(event: never): Promise<void>;
+  setOutputFocusState?(state: 'active' | 'ducked' | 'suspended'): void;
   close(): Promise<void>;
 }> }>, observations?: Readonly<{
   onControl?(event: unknown): void;
@@ -107,8 +109,17 @@ function createSdkHandleConnection(input: Readonly<{ driver: Readonly<{
     state: () => state,
     currentProviderSessionId: () => providerSessionId,
     playbackCursorMs: () => null,
-    beginOutputInterruptionCandidate: () => 'unsupported',
-    resolveOutputInterruptionCandidate() {},
+    beginOutputInterruptionCandidate: () => 'unsupported' as const,
+    resolveOutputInterruptionCandidate: () => {},
+    setOutputFocusState(state) {
+      if (!input.driver.setOutputFocusState) return 'unsupported';
+      try {
+        input.driver.setOutputFocusState(state);
+        return 'applied';
+      } catch {
+        return 'unsupported';
+      }
+    },
   };
 }
 
@@ -207,7 +218,7 @@ describe('ElevenLabs public Voice provider leaf', () => {
     expect(createAgentPrompt).not.toContain('SETTINGS_ACTION_CONTEXT_SENTINEL');
     const provisionedTools = request.mock.calls
       .map(([call]) => call)
-      .filter((call) => call.operationId === 'create-tool' || call.operationId === 'update-tool');
+      .filter((call) => call.operationId === 'create-tool');
     expect(provisionedTools).toEqual([expect.objectContaining({
       operationId: 'create-tool',
       parameters: {
@@ -238,13 +249,20 @@ describe('ElevenLabs public Voice provider leaf', () => {
     }>) => {
       const body = call.operationId === 'voices'
         ? ACCOUNT_VOICE_CATALOG
-        : call.operationId === 'agents'
+          : call.operationId === 'agents'
           ? {
               agents: [
                 { agent_id: 'agent-first', name: 'Happier Voice' },
                 { agent_id: 'agent-second', name: 'Happier Voice' },
               ],
             }
+          : call.operationId === 'agent'
+            ? {
+                agent_id: 'agent-second',
+                conversation_config: {
+                  agent: { prompt: { tool_ids: [] } },
+                },
+              }
           : call.operationId === 'tools'
             ? { tools: [], has_more: false }
             : call.operationId === 'create-tool'
@@ -403,6 +421,13 @@ describe('ElevenLabs public Voice provider leaf', () => {
     const request = vi.fn(async (call: Readonly<{ operationId: string }>) => {
       const body = call.operationId === 'voices'
         ? ACCOUNT_VOICE_CATALOG
+        : call.operationId === 'agent'
+          ? {
+              agent_id: 'agent-direct',
+              conversation_config: {
+                agent: { prompt: { tool_ids: [] } },
+              },
+            }
         : call.operationId === 'tools'
           ? { tools: [], has_more: false }
           : call.operationId === 'create-tool'
@@ -435,10 +460,127 @@ describe('ElevenLabs public Voice provider leaf', () => {
     }));
   });
 
+  it('releases an unconsumed hosted lease before a replacement prepare', async () => {
+    const events: string[] = [];
+    let activeLeaseId = '';
+    let startCount = 0;
+    const hostedConversation = {
+      start: vi.fn(async () => {
+        startCount += 1;
+        activeLeaseId = `lease-${startCount}`;
+        events.push(`start:${activeLeaseId}`);
+        return {
+          allowed: true as const,
+          token: `token-${startCount}`,
+          leaseId: activeLeaseId,
+          bindingNonce: `nonce-${startCount}`,
+          expiresAtMs: Date.now() + 60_000,
+        };
+      }),
+      complete: vi.fn(async () => undefined),
+      abort: vi.fn(async () => {
+        events.push(`abort:${activeLeaseId}`);
+      }),
+    };
+    const runtime = createElevenLabsVoiceProviderRuntime();
+    const prepare = async (attemptId: number) => await runtime.protocol.prepare({
+      controlSessionId: 'control-replacement',
+      attemptId,
+      reason: 'initial',
+      request: {},
+      platform: 'web',
+      providerConfig: {
+        ...ELEVENLABS_VOICE_PROVIDER_DEFAULT_SETTINGS,
+        billingMode: 'happier',
+      },
+      credentials: { phase: 'prepare', mediated: null, raw: null },
+      providerConversation: null,
+      hostedConversation,
+      signal: new AbortController().signal,
+    });
+
+    await expect(prepare(1)).resolves.toMatchObject({ kind: 'prepared' });
+    await expect(prepare(2)).resolves.toMatchObject({ kind: 'prepared' });
+
+    expect(events).toEqual([
+      'start:lease-1',
+      'abort:lease-1',
+      'start:lease-2',
+    ]);
+    await runtime.protocol.releasePrepared?.({
+      controlSessionId: 'control-replacement',
+      attemptId: 2,
+      reason: { code: 'replaced' },
+    });
+    expect(hostedConversation.abort).toHaveBeenCalledTimes(2);
+    await runtime.dispose?.();
+  });
+
+  it('releases an unconsumed hosted lease before a replacement prepare fails', async () => {
+    const events: string[] = [];
+    const firstHostedConversation = {
+      start: vi.fn(async () => {
+        events.push('first:start');
+        return {
+          allowed: true as const,
+          token: 'token-first',
+          leaseId: 'lease-first',
+          bindingNonce: 'nonce-first',
+          expiresAtMs: Date.now() + 60_000,
+        };
+      }),
+      complete: vi.fn(async () => undefined),
+      abort: vi.fn(async () => {
+        events.push('first:abort');
+      }),
+    };
+    const failingReplacementConversation = {
+      start: vi.fn(async () => {
+        events.push('replacement:start');
+        throw new Error('replacement_prepare_failed');
+      }),
+      complete: vi.fn(async () => undefined),
+      abort: vi.fn(async () => {
+        events.push('replacement:abort');
+      }),
+    };
+    const runtime = createElevenLabsVoiceProviderRuntime();
+    const prepare = async (
+      attemptId: number,
+      hostedConversation: typeof firstHostedConversation,
+    ) => await runtime.protocol.prepare({
+      controlSessionId: 'control-replacement-failure',
+      attemptId,
+      reason: 'initial',
+      request: {},
+      platform: 'web',
+      providerConfig: {
+        ...ELEVENLABS_VOICE_PROVIDER_DEFAULT_SETTINGS,
+        billingMode: 'happier',
+      },
+      credentials: { phase: 'prepare', mediated: null, raw: null },
+      providerConversation: null,
+      hostedConversation,
+      signal: new AbortController().signal,
+    });
+
+    await expect(prepare(1, firstHostedConversation)).resolves.toMatchObject({ kind: 'prepared' });
+    await expect(prepare(2, failingReplacementConversation)).rejects.toThrow('replacement_prepare_failed');
+
+    expect(events).toEqual([
+      'first:start',
+      'first:abort',
+      'replacement:start',
+    ]);
+    expect(failingReplacementConversation.abort).not.toHaveBeenCalled();
+    await runtime.dispose?.();
+  });
+
   it('keeps auth bounded, delegates SDK media, and closes hosted bookkeeping with the connection', async () => {
     sdk.startSession.mockResolvedValueOnce({
       endSession: sdk.endSession,
       setMicMuted: sdk.setMicMuted,
+      setVolume: sdk.setVolume,
       sendUserMessage: sdk.sendUserMessage,
       sendContextualUpdate: sdk.sendContextualUpdate,
       getId: sdk.getId,
@@ -525,6 +667,7 @@ describe('ElevenLabs public Voice provider leaf', () => {
     let resolveSdkStart!: (conversation: Readonly<{
       endSession: () => Promise<void>;
       setMicMuted: (muted: boolean) => void;
+      setVolume: (input: Readonly<{ volume: number }>) => void;
       sendUserMessage: (message: string) => void;
       sendContextualUpdate: (update: string) => void;
       getId: () => string;
@@ -536,6 +679,7 @@ describe('ElevenLabs public Voice provider leaf', () => {
     const lateConversation = {
       endSession: vi.fn(async () => undefined),
       setMicMuted: vi.fn(),
+      setVolume: vi.fn(),
       sendUserMessage: vi.fn(),
       sendContextualUpdate: vi.fn(),
       getId: vi.fn(() => 'late-conversation'),

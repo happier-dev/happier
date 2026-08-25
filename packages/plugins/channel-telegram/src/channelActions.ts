@@ -19,6 +19,7 @@ import {
   type ConversationEndpointResolveInputV1,
   type ConversationEndpointResolveResultV1,
   type ConversationNormalizedIngressV1,
+  type ConversationIngressObservedEntryV1,
   type ConversationPollInputV1,
   type ConversationPollResultV1,
   type ConversationProviderConnectionInputV1,
@@ -50,15 +51,16 @@ import {
 } from './telegramBotApi.js';
 import {
   buildTelegramChatEventSourceSetupResult,
+  createTelegramAutomationEventCandidate,
   throwTelegramAutomationSetupInvalid,
 } from './automationEvents.js';
+import { assertTelegramChannelsCoreCaller } from './channelsCoreCaller.js';
 import {
   TELEGRAM_BOT_CONNECTED_ACCOUNT_ID,
   TELEGRAM_BOT_CREDENTIAL_PURPOSE,
   TELEGRAM_BOT_TOKEN_ENVIRONMENT_KEY,
 } from './constants.js';
 
-const CHANNELS_CORE_PLUGIN_ID = 'happier.channels';
 const TELEGRAM_CHANNEL_PLUGIN_ID = 'happier.channel.telegram';
 const TELEGRAM_CONNECTION_KEY_PREFIX = 'telegram-bot:';
 // Telegram documents getUpdates retention as no more than 24 hours. This only
@@ -85,19 +87,6 @@ type ConversationUnsupportedEditIngressV1 = Extract<ConversationNormalizedIngres
   kind: 'routableNonAdmission';
   reason: 'unsupportedEdit';
 }>;
-
-function assertChannelsCoreCaller(context: PluginInvocationContext): void {
-  if (
-    context.surface !== 'plugin'
-    || context.caller?.kind !== 'plugin'
-    || context.caller.pluginId !== CHANNELS_CORE_PLUGIN_ID
-  ) {
-    throw new PluginError({
-      code: 'telegram_channels_core_caller_required',
-      message: 'Telegram Channel provider operations must be invoked by the Channels core plugin.',
-    });
-  }
-}
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -455,7 +444,7 @@ export async function setupTelegramChannels(
   input: unknown,
   context: PluginInvocationContext,
 ): Promise<ConversationProviderSetupOutcomeV1> {
-  assertChannelsCoreCaller(context);
+  assertTelegramChannelsCoreCaller(context);
   const setupInput = readSetupInput(input);
   if (!isTelegramCredential(setupInput.credentialRef)) {
     throw new PluginError({
@@ -516,7 +505,7 @@ export async function remediateTelegramWebhook(
   input: unknown,
   context: PluginInvocationContext,
 ): Promise<ConversationProviderSetupRemediationResultV1> {
-  assertChannelsCoreCaller(context);
+  assertTelegramChannelsCoreCaller(context);
   // A retired host invocation must not even materialize credentials, let alone
   // dispatch a remote delete. The host also carries cancellation through the
   // request itself once it has admitted this Action.
@@ -543,7 +532,7 @@ export async function remediateTelegramWebhook(
 }
 
 export async function testTelegramConnection(input: unknown, context: PluginInvocationContext): Promise<ConversationConnectionTestResultV1> {
-  assertChannelsCoreCaller(context);
+  assertTelegramChannelsCoreCaller(context);
   const connection = ConversationConnectionTestInputV1Schema.parse(input);
   if (connection.selectedTransport !== 'checkpointedPull') {
     return ConversationConnectionTestResultV1Schema.parse({
@@ -566,7 +555,7 @@ export async function testTelegramConnection(input: unknown, context: PluginInvo
 }
 
 export async function resolveTelegramEndpoint(input: unknown, context: PluginInvocationContext): Promise<ConversationEndpointResolveResultV1> {
-  assertChannelsCoreCaller(context);
+  assertTelegramChannelsCoreCaller(context);
   const request = ConversationEndpointResolveInputV1Schema.parse(input);
   const ready = await readyConnection(context, request);
   if ('kind' in ready) return ready;
@@ -624,7 +613,7 @@ export async function setupTelegramChatEventSource(
 }
 
 export async function pollTelegramObservations(input: unknown, context: PluginInvocationContext): Promise<ConversationPollResultV1> {
-  assertChannelsCoreCaller(context);
+  assertTelegramChannelsCoreCaller(context);
   const request = ConversationPollInputV1Schema.parse(input);
   throwIfAborted(context.signal);
   const invalid = readConnectionConfig(request);
@@ -647,27 +636,26 @@ export async function pollTelegramObservations(input: unknown, context: PluginIn
   }, { signal: context.signal });
   throwIfAborted(context.signal);
   if (poll.kind !== 'updates') return readFailure(poll);
-  // This poll reaches no Automation authority. The Telegram Automation Event
-  // is WITHHELD from the manifest (see `automationEvents.ts`), so the host
-  // builds no adopted-definition owner for this plugin and every
-  // `automation.event.sources.list` call fails with
-  // `automation_event_adopted_definitions_unavailable` — once per observed
-  // batch, on every Machine, forever. The admission capability is retained
-  // whole in `automationEvents.ts`; re-declaring the Event restores its one
-  // call site here, exactly as that module's resume note describes. This
-  // matches the canonical treatment the Discord provider already applies to
-  // its own withheld Event (`discordGatewaySupervisor.ts`).
   // An underfull page proves Telegram had no further update at this point. A
   // full page proves only forward progress, so it must retain the prior proof
   // until a later underfull page catches up.
   const caughtUpAtMs = checkpoint === null || poll.updates.length < request.limit
     ? Date.now()
     : checkpoint.caughtUpAtMs;
-  const observations: ConversationNormalizedIngressV1[] = [];
+  const observations: ConversationIngressObservedEntryV1[] = [];
   if (checkpoint !== null) {
     for (const update of poll.updates) {
       const observation = normalizedIngressFromUpdate(update, ready.identity);
-      if (observation !== null) observations.push(observation);
+      if (observation !== null) {
+        observations.push({
+          observation,
+          eventCandidate: createTelegramAutomationEventCandidate({
+            identity: ready.identity,
+            update,
+            observation,
+          }),
+        });
+      }
     }
   }
   const checkpointAfterBatch = {
@@ -689,7 +677,7 @@ export async function pollTelegramObservations(input: unknown, context: PluginIn
 }
 
 export async function deliverTelegramMessage(input: unknown, context: PluginInvocationContext): Promise<ConversationDeliveryResultV1> {
-  assertChannelsCoreCaller(context);
+  assertTelegramChannelsCoreCaller(context);
   const request = ConversationDeliveryInputV1Schema.parse(input);
   const ready = await readyConnection(context, request);
   if ('kind' in ready) return preSendFailureResult(ready);

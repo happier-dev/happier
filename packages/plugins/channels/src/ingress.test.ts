@@ -24,6 +24,7 @@ import type {
 import {
   ConversationProviderObservationIngestInputV1JsonSchema,
   ConversationProviderObservationIngestInputV1Schema,
+  MAX_CONVERSATION_APPROVAL_REQUEST_ID_UTF8_BYTES,
   MAX_CONVERSATION_OBSERVATION_CLOCK_SKEW_MS,
 } from '@happier-dev/channels-protocol/v1';
 import { describe, expect, it, vi } from 'vitest';
@@ -52,6 +53,7 @@ import {
 } from './collections.js';
 import { isChannelStateJsonRecord, readConversationConnectionUpdateRow } from './accountLocalBindingPolicy.js';
 import { startConversationConnectionTransfer } from './connectionLifecycle.js';
+import { MAX_CONVERSATION_POLL_FAILURE_ATTEMPTS } from './connectionPollFailureBounds.js';
 import { pollTelegramObservations } from '../../channel-telegram/src/channelActions.js';
 import { createConversationPairingManager } from './pairing.js';
 
@@ -66,6 +68,15 @@ function payloadNumber(payload: Readonly<Record<string, unknown>>, field: string
     throw new Error(`Expected the retained connection payload to carry a numeric ${field}.`);
   }
   return value;
+}
+
+function sentUserTextRequest(
+  request: SessionSendRequest | undefined,
+): Extract<SessionSendRequest, Readonly<{ kind: 'userText' }>> {
+  if (request?.kind !== 'userText') {
+    throw new Error('Expected Channels ingress to send a user-text request.');
+  }
+  return request;
 }
 
 function payloadTransportOrigin(
@@ -102,6 +113,22 @@ const telegramPollAction = Object.freeze({
   }),
 });
 
+const telegramAutomationEventAdmitAction = Object.freeze({
+  identity: Object.freeze({
+    target: Object.freeze({ pluginId: 'happier.channels' }),
+    point: Object.freeze({
+      pointId: 'providers',
+      protocol: Object.freeze({ id: 'happier.channels/providers', version: 1 }),
+    }),
+    contributor: Object.freeze({
+      pluginId: telegramProviderPluginId,
+      contributionId: 'telegram-test-provider',
+      immutableGenerationId: 'telegram-test-generation',
+    }),
+    role: 'automationEventAdmit',
+  }),
+});
+
 const telegramConnectionAuthority = {
   providerPluginId: telegramProviderPluginId,
   providerContributionSelection: {
@@ -135,7 +162,10 @@ const admittedTelegramProviderContribution = Object.freeze({
     immutableGenerationId: 'telegram-test-generation',
   },
   protocol: { id: 'happier.channels/providers', version: 1 },
-  operations: { observationsPoll: telegramPollAction },
+  operations: {
+    observationsPoll: telegramPollAction,
+    automationEventAdmit: telegramAutomationEventAdmitAction,
+  },
 });
 
 /** The generic host has already admitted this provider contribution. */
@@ -248,6 +278,13 @@ function channelBinding() {
   } as const;
 }
 
+/** The owner-selected pairing destination frozen by these challenges. */
+const pairingDestinationEndpoint = {
+  kind: 'direct',
+  audience: 'direct',
+  id: 'telegram:chat:100',
+} as const;
+
 function observation(input: Readonly<{
   messageRevision: string;
   messageText?: string;
@@ -262,40 +299,60 @@ function observation(input: Readonly<{
   const now = input.occurredAt ?? Date.now();
   return {
     connectionId: 'connection-1',
-    observation: {
-      kind: 'fullText',
+    entry: {
       observation: {
-        v: 1,
-        occurrenceId: input.occurrenceId ?? 'telegram:update:9001',
-        occurredAt: now,
-        transport: { kind: input.transport ?? 'poll' },
-        endpoint: {
-          kind: 'direct',
-          audience: 'direct',
-          id: input.endpointId ?? 'telegram:chat:100',
-        },
-        actor: {
-          principalId: 'telegram:user:42',
-          label: input.actorLabel ?? 'Ada',
-          kind: 'human',
-          isIntegrationSelf: false,
-        },
-        message: {
-          id: 'telegram:message:5',
-          revision: input.messageRevision,
-          text: input.messageText ?? 'Hello from Telegram',
-          addressingEvidence: 'none',
-          contentProvenance: input.contentProvenance ?? 'original',
-          providerTimestamp: input.providerTimestamp ?? now,
+        kind: 'fullText',
+        observation: {
+          v: 1,
+          occurrenceId: input.occurrenceId ?? 'telegram:update:9001',
+          occurredAt: now,
+          transport: { kind: input.transport ?? 'poll' },
+          endpoint: {
+            kind: 'direct',
+            audience: 'direct',
+            id: input.endpointId ?? 'telegram:chat:100',
+          },
+          actor: {
+            principalId: 'telegram:user:42',
+            label: input.actorLabel ?? 'Ada',
+            kind: 'human',
+            isIntegrationSelf: false,
+          },
+          message: {
+            id: 'telegram:message:5',
+            revision: input.messageRevision,
+            text: input.messageText ?? 'Hello from Telegram',
+            addressingEvidence: 'none',
+            contentProvenance: input.contentProvenance ?? 'original',
+            providerTimestamp: input.providerTimestamp ?? now,
+          },
         },
       },
+      eventCandidate: null,
     },
   };
 }
 
 function fullTextIngress(input: ConversationProviderObservationIngestInputV1) {
-  if (input.observation.kind !== 'fullText') throw new Error('Expected full-text test ingress.');
-  return input.observation.observation;
+  if (input.entry.observation.kind !== 'fullText') throw new Error('Expected full-text test ingress.');
+  return input.entry.observation.observation;
+}
+
+function withTelegramAutomationEventCandidate(
+  input: ConversationProviderObservationIngestInputV1,
+): ConversationProviderObservationIngestInputV1 {
+  return {
+    connectionId: input.connectionId,
+    entry: {
+      observation: input.entry.observation,
+      eventCandidate: {
+        eventRef: { pluginId: telegramProviderPluginId, localId: 'automation/chat-message-v1' },
+        sourceInstanceId: 'telegram:chat:100',
+        sourceContractVersion: 1,
+        payload: { chatId: '100', messageId: 'telegram:message:5' },
+      },
+    },
+  };
 }
 
 function routableNonAdmission(input: Parameters<typeof observation>[0] & Readonly<{
@@ -311,10 +368,13 @@ function routableNonAdmission(input: Parameters<typeof observation>[0] & Readonl
   }
   return {
     connectionId: fullText.connectionId,
-    observation: {
-      kind: 'routableNonAdmission',
-      shell: { ...fullObservation, message: { ...message, revision } },
-      reason: input.reason ?? 'messageTooLarge',
+    entry: {
+      observation: {
+        kind: 'routableNonAdmission',
+        shell: { ...fullObservation, message: { ...message, revision } },
+        reason: input.reason ?? 'messageTooLarge',
+      },
+      eventCandidate: null,
     },
   };
 }
@@ -341,9 +401,13 @@ type IngressHarnessOptions = Readonly<{
   getPollResult?: () => JsonValue | Promise<JsonValue>;
   pollExecution?: (input: JsonValue, signal: AbortSignal) => JsonValue | Promise<JsonValue>;
   pollExecutionError?: unknown;
+  automationEventAdmitResults?: readonly JsonValue[];
+  automationEventAdmitResult?: JsonValue;
+  getAutomationEventAdmitResult?: (input: JsonValue) => JsonValue | Promise<JsonValue>;
   pollExecutionOrigin?: ReturnType<typeof channelConnection>['payload']['transportOrigin'];
   getPollExecutionOrigin?: () => ReturnType<typeof channelConnection>['payload']['transportOrigin'];
   beforeCollectionGet?: (input: Readonly<{ rowId: string }>) => void;
+  beforeCollectionPut?: (input: Readonly<{ value: Readonly<Record<string, unknown>> }>) => void;
   collectionLimits?: PluginCollectionLimits;
   readAdmittedProviderContributions?: () => readonly unknown[];
 }>;
@@ -552,12 +616,15 @@ function sharedGroupObservation(input: Parameters<typeof observation>[0]): Conve
   const fullText = fullTextIngress(base);
   return {
     connectionId: base.connectionId,
-    observation: {
-      kind: 'fullText',
+    entry: {
       observation: {
-        ...fullText,
-        endpoint: { kind: 'shared', audience: 'shared', id: 'telegram:chat:200' },
+        kind: 'fullText',
+        observation: {
+          ...fullText,
+          endpoint: { kind: 'shared', audience: 'shared', id: 'telegram:chat:200' },
+        },
       },
+      eventCandidate: null,
     },
   };
 }
@@ -832,13 +899,24 @@ function createIngressHarness(options: IngressHarnessOptions = {}) {
       ?? ({ status: 'accepted' as const, localId: 'pending-1' })
   ));
   const executeAdmittedTargetedOperationWithExecutionOrigin = vi.fn(async (
-    _operation: unknown,
+    operation: unknown,
     input: JsonValue,
     executionOptions: Readonly<{ signal: AbortSignal }>,
   ) => {
     const executionOrigin = options.getPollExecutionOrigin?.()
       ?? options.pollExecutionOrigin
       ?? initialConnection.payload.transportOrigin;
+    if (operation === telegramAutomationEventAdmitAction) {
+      const callIndex = executeAdmittedTargetedOperationWithExecutionOrigin.mock.calls
+        .filter(([calledOperation]) => calledOperation === telegramAutomationEventAdmitAction).length - 1;
+      return {
+        result: await options.getAutomationEventAdmitResult?.(input)
+          ?? options.automationEventAdmitResults?.[callIndex]
+          ?? options.automationEventAdmitResult
+          ?? { kind: 'checkpointSafe' },
+        executionOrigin,
+      };
+    }
     if (options.pollExecutionError !== undefined) throw options.pollExecutionError;
     const scriptedPollResult = options.pollExecution === undefined
       ? await options.getPollResult?.()
@@ -859,15 +937,16 @@ function createIngressHarness(options: IngressHarnessOptions = {}) {
 
   const put = async (
     value: Readonly<Record<string, unknown>>,
-    options: Readonly<{ expectedRevision: number | 'absent' }>,
+    putOptions: Readonly<{ expectedRevision: number | 'absent' }>,
   ): Promise<StoredStateRow> => {
+    options.beforeCollectionPut?.({ value });
     const id = value.id;
     if (typeof id !== 'string') throw new Error('State writes require a canonical id.');
     const existing = rows.get(id);
     if (
-      (options.expectedRevision === 'absent' && existing !== undefined)
-      || (typeof options.expectedRevision === 'number'
-        && (existing === undefined || existing.revision !== options.expectedRevision))
+      (putOptions.expectedRevision === 'absent' && existing !== undefined)
+      || (typeof putOptions.expectedRevision === 'number'
+        && (existing === undefined || existing.revision !== putOptions.expectedRevision))
     ) {
       throw new Error(`Collection CAS conflict for ${id}.`);
     }
@@ -1133,7 +1212,7 @@ describe('Conversation provider observation ingress', () => {
       connectionId: 'connection-1',
       ingress: observation({
         messageRevision: 'edit:1',
-      }).observation,
+      }).entry.observation,
       connectionAuthorityEpoch: 4,
       maximumObservationAgeMs: 120_000,
       now: 1,
@@ -1169,11 +1248,13 @@ describe('Conversation provider observation ingress', () => {
       }],
     }).payload).toEqual({
       normalizedIngress: expect.any(Object),
+      compacted: null,
       phase: 'preparing',
       connectionAuthorityEpoch: 4,
       maximumObservationAgeMs: 120_000,
       checkpointCoveredAt: null,
       conflict: null,
+      eventCandidate: null,
       matchedBindings: [{
         bindingId: 'binding-1',
         bindingRevision: 3,
@@ -1199,11 +1280,13 @@ describe('Conversation provider observation ingress', () => {
     expect(replay).toEqual(first);
     expect(first.payload).toEqual({
       normalizedIngress: expect.any(Object),
+      compacted: null,
       phase: 'preparing',
       connectionAuthorityEpoch: 4,
       maximumObservationAgeMs: 120_000,
       checkpointCoveredAt: null,
       conflict: null,
+      eventCandidate: null,
       matchedBindings: [
         { bindingId: 'binding-a', bindingRevision: 2, bindingAuthorityEpoch: 5 },
         { bindingId: 'binding-z', bindingRevision: 9, bindingAuthorityEpoch: 11 },
@@ -1465,7 +1548,7 @@ describe('Conversation provider observation ingress', () => {
     const winningCensus = createIngressCensusValue({
       censusId,
       connectionId: connection.id,
-      ingress: winner.observation,
+      ingress: winner.entry.observation,
       connectionAuthorityEpoch: connection.payload.authorityEpoch,
       maximumObservationAgeMs: connection.payload.maximumObservationAgeMs,
       matchedBindings: [{
@@ -1738,10 +1821,13 @@ describe('Conversation provider observation ingress', () => {
       },
     });
     setBindingApprovalEnabled(harness.rows, { maximumScope: 'session' });
+    // Exactly the largest identifier the command classifier admits, so the
+    // admitted and persisted approval bounds cannot drift apart silently.
+    const maximalRequestId = 'r'.repeat(MAX_CONVERSATION_APPROVAL_REQUEST_ID_UTF8_BYTES);
 
     await ingestConversationProviderObservationForInvocation(observation({
       messageRevision: 'approval-schema:1',
-      messageText: '/allow permission-request-1 session',
+      messageText: `/allow ${maximalRequestId} session`,
     }), harness.context);
 
     const obligation = [...harness.rows.values()].find(
@@ -1749,8 +1835,40 @@ describe('Conversation provider observation ingress', () => {
     );
     expect(record(record(obligation?.value.payload).target)).toMatchObject({
       remoteApprovalMaxScope: 'session',
-      approval: { requestId: 'permission-request-1', decision: 'allow', scope: 'session' },
+      approval: { requestId: maximalRequestId, decision: 'allow', scope: 'session' },
     });
+    expect(isValidPluginJsonSchemaValue(validateChannelState, obligation?.value)).toBe(true);
+  });
+
+  it('refuses an approval request id past the bound the frozen obligation can persist', async () => {
+    // Ingress text is bounded at 64 KiB while the frozen approval the writer
+    // persists is bounded at the canonical Permission request-id contract. An
+    // admitted oversized `/allow` would make the whole census batch fail its
+    // admitted Collection schema, and that write has no settlement: the
+    // observation would be re-ingested forever and hold the poll checkpoint.
+    const validateChannelState = compilePluginJsonSchema(CHANNEL_STATE_COLLECTION.schema);
+    const harness = createIngressHarness({
+      execute: async (actionId): Promise<JsonValue> => {
+        throw new Error(`An unpersistable approval request must not reach ${actionId}.`);
+      },
+    });
+    setBindingApprovalEnabled(harness.rows, { maximumScope: 'session' });
+
+    await expect(ingestConversationProviderObservationForInvocation(observation({
+      messageRevision: 'approval-oversized:1',
+      messageText: `/allow ${'r'.repeat(MAX_CONVERSATION_APPROVAL_REQUEST_ID_UTF8_BYTES + 1)} session`,
+    }), harness.context)).resolves.toBeUndefined();
+
+    expect(harness.execute).not.toHaveBeenCalled();
+    const obligation = [...harness.rows.values()].find(
+      (row) => row.value['record-kind'] === 'ingress-obligation',
+    );
+    expect(obligation?.value.payload).toMatchObject({
+      lifecycle: { phase: 'terminal' },
+      disposition: 'rejected',
+      nonAdmission: { reason: 'malformedCommand' },
+    });
+    expect(record(record(obligation?.value.payload).target).approval).toBeNull();
     expect(isValidPluginJsonSchemaValue(validateChannelState, obligation?.value)).toBe(true);
   });
 
@@ -1912,6 +2030,170 @@ describe('Conversation provider observation ingress', () => {
     });
   });
 
+  it('mediates an admitted /answer through the canonical exact-turn user-action Action', async () => {
+    const actionCalls: Array<Readonly<{ actionId: string; input: JsonValue }>> = [];
+    const harness = createIngressHarness({
+      execute: async (actionId, input): Promise<JsonValue> => {
+        actionCalls.push({ actionId, input });
+        if (actionId === 'session.permission.remote.pending.list') {
+          return {
+            requests: [{
+              kind: 'user_action',
+              requestId: 'question-request-1',
+              turnId: 'turn-question-9',
+              createdAtMs: 2,
+              agentRequestSummary: {
+                kind: 'user_action',
+                questions: [{
+                  question: 'Select the release mode',
+                  selection: 'single',
+                  required: true,
+                  allowCustom: false,
+                  choices: ['safe', 'fast'],
+                }],
+              },
+            }],
+            truncated: false,
+          };
+        }
+        if (actionId === 'session.user_action.remote.answer') {
+          return { status: 'applied', requestId: 'question-request-1' };
+        }
+        throw new Error(`Unexpected Action '${actionId}'.`);
+      },
+    });
+    setBindingApprovalEnabled(harness.rows, { maximumScope: 'request' });
+
+    await expect(ingestConversationProviderObservationForInvocation(observation({
+      messageRevision: 'user-action-command:1',
+      messageText: '/answer question-request-1 [{"questionIndex":0,"values":["fast"]}]',
+    }), harness.context)).resolves.toBeUndefined();
+
+    // A user-action answer is mediated control, never ordinary Session text.
+    expect(harness.send).not.toHaveBeenCalled();
+    expect(actionCalls.map((call) => call.actionId)).toEqual([
+      'session.permission.remote.pending.list',
+      'session.user_action.remote.answer',
+    ]);
+    expect(actionCalls[0]?.input).toEqual({
+      sessionId: 'session-1',
+      sourceRef: 'channels:binding:binding-1',
+      sourceRevisionOrEpoch: '4:7',
+    });
+    expect(actionCalls[1]?.input).toEqual({
+      sessionId: 'session-1',
+      sourceRef: 'channels:binding:binding-1',
+      sourceRevisionOrEpoch: '4:7',
+      turnId: 'turn-question-9',
+      requestId: 'question-request-1',
+      answers: [{ questionIndex: 0, values: ['fast'] }],
+    });
+    const obligation = [...harness.rows.values()].find(
+      (row) => row.value['record-kind'] === 'ingress-obligation',
+    );
+    expect(obligation?.value.payload).toMatchObject({
+      lifecycle: { phase: 'terminal' },
+      disposition: 'userActionConsumed',
+      approvalTurnId: null,
+      userActionAnswerTurnId: 'turn-question-9',
+      nonAdmission: null,
+    });
+    const acknowledgement = [...harness.rows.values()].find(
+      (row) => row.value['record-kind'] === 'outward-delivery',
+    );
+    expect(acknowledgement?.value).toMatchObject({
+      'binding-id': 'binding-1',
+      payload: {
+        source: { kind: 'controlResponse', controlKind: 'userAction' },
+        state: 'ready',
+        content: 'That question is no longer pending.',
+      },
+    });
+  });
+
+  it('replays a lost /answer result through its frozen exact user-action tuple', async () => {
+    const actionCalls: Array<Readonly<{ actionId: string; input: JsonValue }>> = [];
+    let questionStillPending = true;
+    let loseAnswerResponse = true;
+    const harness = createIngressHarness({
+      execute: async (actionId, input): Promise<JsonValue> => {
+        actionCalls.push({ actionId, input });
+        if (actionId === 'session.permission.remote.pending.list') {
+          return questionStillPending
+            ? {
+              requests: [{
+                kind: 'user_action',
+                requestId: 'question-request-1',
+                turnId: 'turn-question-9',
+                createdAtMs: 2,
+                agentRequestSummary: {
+                  kind: 'user_action',
+                  questions: [{
+                    question: 'Select the release mode',
+                    selection: 'single',
+                    required: true,
+                    allowCustom: false,
+                    choices: ['safe', 'fast'],
+                  }],
+                },
+              }],
+              truncated: false,
+            }
+            : { requests: [], truncated: false };
+        }
+        if (actionId !== 'session.user_action.remote.answer') {
+          throw new Error(`Unexpected Action '${actionId}'.`);
+        }
+        // The owner accepted the answer, then its response was lost before
+        // Channels could write sender-visible custody.
+        questionStillPending = false;
+        if (loseAnswerResponse) {
+          loseAnswerResponse = false;
+          throw new Error('Simulated answer response loss after the accepted effect.');
+        }
+        return { status: 'rejected', code: 'requestNotPending' };
+      },
+    });
+    setBindingApprovalEnabled(harness.rows);
+    const command = observation({
+      messageRevision: 'user-action-lost-response:1',
+      messageText: '/answer question-request-1 [{"questionIndex":0,"values":["fast"]}]',
+    });
+
+    await expect(ingestConversationProviderObservationForInvocation(command, harness.context))
+      .rejects.toThrow();
+    markIngressObligationAttempting(harness.rows);
+
+    await expect(ingestConversationProviderObservationForInvocation(command, harness.context))
+      .resolves.toBeUndefined();
+
+    // The retained host turn bypasses a now-empty projection and re-enters the
+    // one canonical Action. `requestNotPending` is intentionally neutral: it
+    // may mean our accepted answer or a concurrent completion, never a lookup.
+    expect(actionCalls.map((call) => call.actionId)).toEqual([
+      'session.permission.remote.pending.list',
+      'session.user_action.remote.answer',
+      'session.user_action.remote.answer',
+    ]);
+    expect(actionCalls[2]?.input).toEqual(actionCalls[1]?.input);
+    expect(harness.send).not.toHaveBeenCalled();
+    const obligation = [...harness.rows.values()].find(
+      (row) => row.value['record-kind'] === 'ingress-obligation',
+    );
+    expect(obligation?.value.payload).toMatchObject({
+      lifecycle: { phase: 'terminal' },
+      disposition: 'rejected',
+      userActionAnswerTurnId: 'turn-question-9',
+      nonAdmission: { reason: 'targetUnavailable' },
+    });
+    const acknowledgements = [...harness.rows.values()].filter(
+      (row) => row.value['record-kind'] === 'outward-delivery',
+    );
+    expect(acknowledgements).toHaveLength(1);
+    expect(record(acknowledgements[0]?.value.payload).content)
+      .toBe('That question is no longer pending.');
+  });
+
   it('does not re-answer a consumed approval when the same observation replays after restart', async () => {
     const actionIds: string[] = [];
     const harness = createIngressHarness({
@@ -2011,6 +2293,205 @@ describe('Conversation provider observation ingress', () => {
     );
     expect(record(acknowledgement?.value.payload).content)
       .toBe('That permission decision was not accepted.');
+  });
+
+  it('re-answers the exact stored turn when the mediated decision committed but its acknowledgement was lost', async () => {
+    // The remote effect is the irreversible half of a chat approval. If the
+    // canonical owner commits it and the response never reaches Channels, the
+    // replay must reach that same idempotent owner tuple instead of asking a
+    // projection that can no longer see the answered request.
+    const actionCalls: Array<Readonly<{ actionId: string; input: JsonValue }>> = [];
+    let requestStillPending = true;
+    let loseRespondResponse = true;
+    const harness = createIngressHarness({
+      execute: async (actionId, input): Promise<JsonValue> => {
+        actionCalls.push({ actionId, input });
+        if (actionId === 'session.permission.remote.pending.list') {
+          return requestStillPending
+            ? {
+              requests: [{
+                requestId: 'permission-request-1',
+                turnId: 'turn-9',
+                createdAtMs: 2,
+                allowedScopes: ['request'],
+              }],
+              truncated: false,
+            }
+            : { requests: [], truncated: false };
+        }
+        if (actionId !== 'session.permission.remote.respond') {
+          throw new Error(`Unexpected Action '${actionId}'.`);
+        }
+        // The canonical owner applies and durably records the decision.
+        requestStillPending = false;
+        if (loseRespondResponse) {
+          loseRespondResponse = false;
+          throw new Error('Simulated mediation response loss after the committed effect.');
+        }
+        return {
+          status: 'alreadyApplied',
+          settlementId: 'settlement-1',
+          requestId: 'permission-request-1',
+          decision: 'allow',
+          effect: { kind: 'allowOnce' },
+        };
+      },
+    });
+    setBindingApprovalEnabled(harness.rows);
+    const command = observation({
+      messageRevision: 'approval-lost-response:1',
+      messageText: '/allow permission-request-1',
+    });
+
+    await expect(ingestConversationProviderObservationForInvocation(command, harness.context))
+      .rejects.toThrow();
+    expect(actionCalls.map((call) => call.actionId)).toEqual([
+      'session.permission.remote.pending.list',
+      'session.permission.remote.respond',
+    ]);
+    expect([...harness.rows.values()].some(
+      (row) => row.value['record-kind'] === 'outward-delivery',
+    )).toBe(false);
+
+    // The daemon dies mid-attempt and restarts against the same durable rows.
+    markIngressObligationAttempting(harness.rows);
+
+    await expect(ingestConversationProviderObservationForInvocation(command, harness.context))
+      .resolves.toBeUndefined();
+
+    expect(actionCalls.map((call) => call.actionId)).toEqual([
+      'session.permission.remote.pending.list',
+      'session.permission.remote.respond',
+      'session.permission.remote.respond',
+    ]);
+    expect(actionCalls[2]?.input).toEqual(actionCalls[1]?.input);
+    const obligation = [...harness.rows.values()].find(
+      (row) => row.value['record-kind'] === 'ingress-obligation',
+    );
+    expect(obligation?.value.payload).toMatchObject({
+      lifecycle: { phase: 'terminal' },
+      disposition: 'approvalConsumed',
+      nonAdmission: null,
+    });
+    const acknowledgements = [...harness.rows.values()].filter(
+      (row) => row.value['record-kind'] === 'outward-delivery',
+    );
+    expect(acknowledgements).toHaveLength(1);
+    expect(record(acknowledgements[0]?.value.payload).content)
+      .toBe('Approved the pending permission request.');
+  });
+
+  it('continues the bounded pending projection until it reaches the admitted request', async () => {
+    // The canonical projection answers in bounded keyset pages. A person whose
+    // request sorts behind the first page must still be able to approve it
+    // instead of waiting for every older request in the session to settle.
+    const cursors: Array<string | null> = [];
+    const respondInputs: JsonValue[] = [];
+    const harness = createIngressHarness({
+      execute: async (actionId, input): Promise<JsonValue> => {
+        if (actionId === 'session.permission.remote.pending.list') {
+          const cursor = record(input).cursor;
+          cursors.push(typeof cursor === 'string' ? cursor : null);
+          if (cursor === undefined) {
+            return {
+              requests: Array.from({ length: 32 }, (_unused, index) => ({
+                requestId: `older-request-${index}`,
+                turnId: `turn-${index}`,
+                createdAtMs: index + 1,
+                allowedScopes: ['request'],
+              })),
+              truncated: false,
+              nextCursor: 'page-2',
+            };
+          }
+          return {
+            requests: [{
+              requestId: 'permission-request-1',
+              turnId: 'turn-9',
+              createdAtMs: 64,
+              allowedScopes: ['request'],
+            }],
+            truncated: false,
+            nextCursor: null,
+          };
+        }
+        respondInputs.push(input);
+        return {
+          status: 'applied',
+          settlementId: 'settlement-1',
+          requestId: 'permission-request-1',
+          decision: 'allow',
+          effect: { kind: 'allowOnce' },
+        };
+      },
+    });
+    setBindingApprovalEnabled(harness.rows);
+
+    await expect(ingestConversationProviderObservationForInvocation(observation({
+      messageRevision: 'approval-paged:1',
+      messageText: '/allow permission-request-1',
+    }), harness.context)).resolves.toBeUndefined();
+
+    expect(cursors).toEqual([null, 'page-2']);
+    expect(respondInputs).toEqual([expect.objectContaining({
+      turnId: 'turn-9',
+      requestId: 'permission-request-1',
+    })]);
+    const obligation = [...harness.rows.values()].find(
+      (row) => row.value['record-kind'] === 'ingress-obligation',
+    );
+    expect(obligation?.value.payload).toMatchObject({
+      lifecycle: { phase: 'terminal' },
+      disposition: 'approvalConsumed',
+    });
+    const acknowledgement = [...harness.rows.values()].find(
+      (row) => row.value['record-kind'] === 'outward-delivery',
+    );
+    expect(record(acknowledgement?.value.payload).content)
+      .toBe('Approved the pending permission request.');
+  });
+
+  it('keeps custody when the pending projection cannot advance its own continuation', async () => {
+    // A continuation that repeats itself is a broken owner response. Channels
+    // must not loop on it, and must not read the incomplete walk as proof the
+    // admitted request is gone.
+    let listCalls = 0;
+    const harness = createIngressHarness({
+      execute: async (actionId): Promise<JsonValue> => {
+        if (actionId !== 'session.permission.remote.pending.list') {
+          throw new Error(`An unfinished projection must not reach ${actionId}.`);
+        }
+        listCalls += 1;
+        return {
+          requests: [{
+            requestId: 'older-request',
+            turnId: 'turn-1',
+            createdAtMs: 1,
+            allowedScopes: ['request'],
+          }],
+          truncated: false,
+          nextCursor: 'stuck',
+        };
+      },
+    });
+    setBindingApprovalEnabled(harness.rows);
+
+    await expect(ingestConversationProviderObservationForInvocation(observation({
+      messageRevision: 'approval-stuck-cursor:1',
+      messageText: '/allow permission-request-1',
+    }), harness.context)).rejects.toThrow();
+
+    expect(listCalls).toBe(2);
+    const obligation = [...harness.rows.values()].find(
+      (row) => row.value['record-kind'] === 'ingress-obligation',
+    );
+    expect(obligation?.value.payload).toMatchObject({
+      lifecycle: { phase: 'retryDue' },
+      disposition: null,
+    });
+    expect([...harness.rows.values()].some(
+      (row) => row.value['record-kind'] === 'outward-delivery',
+    )).toBe(false);
   });
 
   it('retries an approval whose request is absent from a truncated pending projection', async () => {
@@ -2307,6 +2788,7 @@ describe('Conversation provider observation ingress', () => {
       expectedConnectionRevision: 1,
       materialization: socketConnection.payload.transportOrigin.materializationRef,
       destinationLabel: 'Telegram bot',
+      endpoint: pairingDestinationEndpoint,
       target: channelBinding().payload.target,
     });
     let challengeWasActiveAtCensusWrite = false;
@@ -2381,6 +2863,7 @@ describe('Conversation provider observation ingress', () => {
       expectedConnectionRevision: 1,
       materialization: socketConnection.payload.transportOrigin.materializationRef,
       destinationLabel: 'Telegram bot',
+      endpoint: pairingDestinationEndpoint,
       target: channelBinding().payload.target,
     });
     const harness = createIngressHarness({ connection: socketConnection });
@@ -2429,6 +2912,7 @@ describe('Conversation provider observation ingress', () => {
       expectedConnectionRevision: 1,
       materialization: socketConnection.payload.transportOrigin.materializationRef,
       destinationLabel: 'Telegram bot',
+      endpoint: pairingDestinationEndpoint,
       target: channelBinding().payload.target,
     });
     const harness = createIngressHarness({
@@ -3131,9 +3615,9 @@ describe('Conversation provider observation ingress', () => {
       expect.stringMatching(/^channels:new:v1:[A-Za-z0-9_-]{43}$/),
       expect.stringMatching(/^channels:new:v1:[A-Za-z0-9_-]{43}$/),
     ]);
-    expect(harness.send.mock.calls[1]?.[0].idempotencyKey)
-      .toBe(harness.send.mock.calls[0]?.[0].idempotencyKey);
-    expect(harness.send.mock.calls.map(([request]) => request.source)).toEqual([
+    const requests = harness.send.mock.calls.map(([request]) => sentUserTextRequest(request));
+    expect(requests[1]?.idempotencyKey).toBe(requests[0]?.idempotencyKey);
+    expect(requests.map((request) => request.source)).toEqual([
       expect.objectContaining({
         sourceRevisionOrEpoch: '4:7',
         requestedPermissionCeiling: 'read-only',
@@ -3721,7 +4205,7 @@ describe('Conversation provider observation ingress', () => {
     }
   });
 
-  it('retains checkpoint-covered ingress through its frozen replay horizon, then deletes its completed census and obligations', async () => {
+  it('retains checkpoint-covered ingress through its frozen replay horizon while pruning its completed non-attention obligation', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(1_000);
     try {
@@ -3739,12 +4223,261 @@ describe('Conversation provider observation ingress', () => {
       await expect(runConversationIngressRetentionForInvocation({ now: 61_000, limit: 1 }, harness.context))
         .resolves.toMatchObject({ deletedCensuses: 0 });
       expect(harness.rows.get(census.rowId)?.deleted).not.toBe(true);
-      expect(harness.rows.get(obligation.rowId)?.deleted).not.toBe(true);
+      expect(harness.rows.get(obligation.rowId)?.deleted).toBe(true);
 
       await expect(runConversationIngressRetentionForInvocation({ now: 61_001, limit: 1 }, harness.context))
         .resolves.toMatchObject({ deletedCensuses: 1 });
       expect(harness.rows.get(census.rowId)?.deleted).toBe(true);
       expect(harness.rows.get(obligation.rowId)?.deleted).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('compacts a settled census in place, then still decides replay equality without its message body', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    try {
+      const harness = createIngressHarness();
+      const admitted = withTelegramAutomationEventCandidate(observation({
+        messageRevision: 'retention:compaction',
+        messageText: 'Compaction secret body',
+        occurredAt: 1_000,
+      }));
+      await ingestConversationProviderObservationForInvocation(admitted, harness.context);
+      const census = markIngressCensusCheckpointCovered(harness.rows, 1_000);
+      expect(harness.send).toHaveBeenCalledOnce();
+      expect(harness.executeAdmittedTargetedOperationWithExecutionOrigin).toHaveBeenCalledTimes(1);
+      expect(JSON.stringify(harness.rows.get(census.rowId)?.value)).toContain('Compaction secret body');
+
+      await expect(runConversationIngressRetentionForInvocation({ now: 2_000, limit: 1 }, harness.context))
+        .resolves.toMatchObject({ compactedCensuses: 1, deletedCensuses: 0 });
+
+      const compacted = harness.rows.get(census.rowId);
+      expect(JSON.stringify(compacted?.value)).not.toContain('Compaction secret body');
+      const compactedPayload = record(record(compacted?.value ?? {}).payload);
+      expect(compactedPayload.normalizedIngress).toBeNull();
+      expect(record(compactedPayload.compacted)).toMatchObject({
+        shell: expect.any(Object),
+        textDigest: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/u),
+      });
+      // Settlement has no remaining consumer for either the binding fanout or
+      // the provider Event candidate. The compact replay witness is the sole
+      // retained ingress identity, and non-attention terminal rows are gone.
+      expect(compactedPayload.eventCandidate).toBeNull();
+      expect(compactedPayload.matchedBindings).toEqual([]);
+      expect([...harness.rows.values()].filter((row) => (
+        row.deleted !== true && row.value['record-kind'] === 'ingress-obligation'
+      ))).toEqual([]);
+
+      // Settlement is proven once; a later pass rewrites nothing.
+      await expect(runConversationIngressRetentionForInvocation({ now: 2_001, limit: 1 }, harness.context))
+        .resolves.toMatchObject({ compactedCensuses: 0, deletedCensuses: 0 });
+
+      // Exact replay still rejoins the same occurrence from the digest: no
+      // second Session admission and no contradictory-evidence conflict.
+      vi.setSystemTime(2_002);
+      await expect(ingestConversationProviderObservationForInvocation(admitted, harness.context))
+        .resolves.toBeUndefined();
+      expect(harness.send).toHaveBeenCalledOnce();
+      expect(harness.executeAdmittedTargetedOperationWithExecutionOrigin).toHaveBeenCalledTimes(1);
+      expect(harness.rows.get(census.rowId)?.value.attention).toBe(false);
+
+      // A different body under the same occurrence identity is still
+      // contradictory evidence, so the digest is a discriminating fact.
+      await expect(ingestConversationProviderObservationForInvocation(
+        observation({
+          messageRevision: 'retention:compaction',
+          messageText: 'A different body entirely',
+          occurredAt: 1_000,
+        }),
+        harness.context,
+      )).rejects.toMatchObject({ code: 'channels_ingress_occurrence_conflict' });
+      expect(harness.rows.get(census.rowId)?.value.attention).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('ignores a census row that carries neither its admitted ingress nor a replay shell', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    try {
+      const harness = createIngressHarness();
+      await ingestConversationProviderObservationForInvocation(
+        observation({ messageRevision: 'retention:no-occurrence', occurredAt: 1_000 }),
+        harness.context,
+      );
+      const census = markIngressCensusCheckpointCovered(harness.rows, 1_000);
+      const value = record(census.value);
+      // The Collection schema permits both halves to be null; only the census
+      // reader knows a row with no occurrence at all has no replay identity,
+      // no retention anchor, and no envelope to project.
+      harness.rows.set(census.rowId, stateRow({
+        ...value,
+        payload: { ...record(value.payload), normalizedIngress: null, compacted: null },
+      }, census.revision + 1));
+
+      await expect(runConversationIngressRetentionForInvocation({ now: 61_001, limit: 1 }, harness.context))
+        .resolves.toMatchObject({ compactedCensuses: 0, deletedCensuses: 0 });
+      expect(harness.rows.get(census.rowId)?.deleted).not.toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('sweeps a settled routable non-admission census without compacting a body it never held', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    try {
+      const harness = createIngressHarness();
+      await ingestConversationProviderObservationForInvocation(
+        routableNonAdmission({ messageRevision: 'retention:non-admission', occurredAt: 1_000 }),
+        harness.context,
+      );
+      const census = markIngressCensusCheckpointCovered(harness.rows, 1_000);
+
+      // A refused occurrence persists only its envelope, so the settled sweep
+      // has no duplicated body to reclaim and must not fault reaching for the
+      // admitted observation a non-admission census does not carry.
+      await expect(runConversationIngressRetentionForInvocation({ now: 2_000, limit: 1 }, harness.context))
+        .resolves.toMatchObject({ compactedCensuses: 0, deletedCensuses: 0 });
+      const swept = record(record(harness.rows.get(census.rowId)?.value ?? {}).payload);
+      expect(swept.compacted).toBeNull();
+      expect(record(swept.normalizedIngress).kind).toBe('routableNonAdmission');
+
+      await expect(runConversationIngressRetentionForInvocation({ now: 61_001, limit: 1 }, harness.context))
+        .resolves.toMatchObject({ deletedCensuses: 1 });
+      expect(harness.rows.get(census.rowId)?.deleted).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('recognizes a later unsupported edit of a compacted occurrence from its retained envelope', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    try {
+      const harness = createIngressHarness();
+      await ingestConversationProviderObservationForInvocation(
+        observation({
+          messageRevision: 'retention:compaction-edit',
+          messageText: 'Edited away',
+          occurredAt: 1_000,
+        }),
+        harness.context,
+      );
+      const census = markIngressCensusCheckpointCovered(harness.rows, 1_000);
+      await expect(runConversationIngressRetentionForInvocation({ now: 2_000, limit: 1 }, harness.context))
+        .resolves.toMatchObject({ compactedCensuses: 1 });
+      expect(JSON.stringify(harness.rows.get(census.rowId)?.value)).not.toContain('Edited away');
+
+      vi.setSystemTime(2_002);
+      await expect(ingestConversationProviderObservationForInvocation(
+        routableNonAdmission({
+          messageRevision: 'retention:compaction-edit:v2',
+          occurredAt: 1_000,
+          reason: 'unsupportedEdit',
+        }),
+        harness.context,
+      )).resolves.toBeUndefined();
+      expect(harness.rows.get(census.rowId)?.value.attention).toBe(false);
+      expect(harness.send).toHaveBeenCalledOnce();
+
+      // The compact replay shell still anchors the frozen horizon.
+      await expect(runConversationIngressRetentionForInvocation({ now: 61_000, limit: 1 }, harness.context))
+        .resolves.toMatchObject({ deletedCensuses: 0 });
+      await expect(runConversationIngressRetentionForInvocation({ now: 61_001, limit: 1 }, harness.context))
+        .resolves.toMatchObject({ deletedCensuses: 1 });
+      expect(harness.rows.get(census.rowId)?.deleted).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps the retained input of a census whose member is still blocked, so its exact retry stays possible', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    try {
+      const occurrenceId = 'telegram:update:blocked-keeps-body';
+      const blockedIngress = observation({
+        messageRevision: 'retention:blocked-keeps-body',
+        messageText: 'Blocked member body',
+        occurrenceId,
+        occurredAt: 1_000,
+      });
+      const harness = createIngressHarness({
+        sessionSendResults: [
+          ...Array.from({ length: 5 }, () => ({
+            status: 'outcomeUnknown' as const,
+            localId: 'pending-1',
+            code: 'transport_unknown',
+          })),
+          { status: 'accepted' as const, localId: 'pending-2' },
+        ],
+        getPollResult: (): JsonValue => (currentCheckpoint(harness.rows) === undefined
+          ? { kind: 'checkpointOnly', checkpointAfterBatch: { cursor: 'baseline' } }
+          : {
+            kind: 'batch',
+            observations: [blockedIngress.entry],
+            checkpointAfterBatch: { cursor: 'past-blocked-occurrence' },
+          }),
+      });
+
+      await expect(runConversationCheckpointedPollForInvocation({
+        connectionId: 'connection-1',
+        waitMs: 0,
+      }, harness.context)).resolves.toMatchObject({ kind: 'committed' });
+      for (let attempt = 1; attempt <= 5; attempt += 1) {
+        await runConversationCheckpointedPollForInvocation({
+          connectionId: 'connection-1',
+          waitMs: 0,
+        }, harness.context);
+        const pending = [...harness.rows.values()].find(
+          (row) => row.deleted !== true && row.value['record-kind'] === 'ingress-obligation',
+        );
+        if (pending === undefined) throw new Error('Expected a retained ingress obligation row.');
+        const dueAt = record(record(record(pending.value).payload).lifecycle).dueAt;
+        if (typeof dueAt === 'number') vi.setSystemTime(dueAt);
+      }
+      const censusId = await deriveIngressCensusRowId({
+        routingIdentityKey: telegramConnectionAuthority.routingIdentityKey,
+        connectionId: 'connection-1',
+        occurrenceId,
+      });
+      const blocked = [...harness.rows.values()].find(
+        (row) => row.deleted !== true && row.value['record-kind'] === 'ingress-obligation',
+      );
+      if (blocked === undefined) throw new Error('Expected the blocked ingress obligation.');
+      expect(record(record(blocked.value).payload).lifecycle).toMatchObject({ phase: 'blocked' });
+      expect(record(record(harness.rows.get(censusId)?.value ?? {}).payload).checkpointCoveredAt)
+        .toEqual(expect.any(Number));
+
+      // Checkpoint coverage makes replay unnecessary, but the owner's retry
+      // still needs the exact admitted input, so nothing is compacted.
+      const retryAt = 30_000;
+      vi.setSystemTime(retryAt);
+      await expect(runConversationIngressRetentionForInvocation({ now: retryAt, limit: 1 }, harness.context))
+        .resolves.toMatchObject({ compactedCensuses: 0, deletedCensuses: 0 });
+      expect(JSON.stringify(harness.rows.get(censusId)?.value)).toContain('Blocked member body');
+
+      const blockedRevision = harness.rows.get(blocked.rowId)?.revision;
+      if (blockedRevision === undefined) throw new Error('Expected the blocked obligation revision.');
+      await expect(retryConversationIngressForInvocation({
+        obligationId: blocked.rowId,
+        expectedRevision: blockedRevision,
+      }, harness.context)).resolves.toMatchObject({ kind: 'retryScheduled' });
+      await expect(runConversationIngressDueWorkForInvocation({ now: retryAt }, harness.context))
+        .resolves.toBe(1);
+      expect(harness.rows.get(blocked.rowId)?.value).toMatchObject({
+        terminal: true,
+        payload: { lifecycle: { phase: 'terminal' }, disposition: 'admitted' },
+      });
+
+      // Only now that the last member settled does the body become redundant.
+      await expect(runConversationIngressRetentionForInvocation({ now: retryAt + 1, limit: 1 }, harness.context))
+        .resolves.toMatchObject({ compactedCensuses: 1, deletedCensuses: 0 });
+      expect(JSON.stringify(harness.rows.get(censusId)?.value)).not.toContain('Blocked member body');
     } finally {
       vi.useRealTimers();
     }
@@ -4007,7 +4740,7 @@ describe('Conversation provider observation ingress', () => {
           ? { kind: 'checkpointOnly', checkpointAfterBatch: { cursor: 'baseline' } }
           : {
             kind: 'batch',
-            observations: [blockedIngress.observation],
+            observations: [blockedIngress.entry],
             checkpointAfterBatch: { cursor: 'past-blocked-occurrence' },
           }),
       });
@@ -4105,12 +4838,12 @@ describe('Conversation provider observation ingress', () => {
         { kind: 'checkpointOnly', checkpointAfterBatch: { cursor: 'baseline' } },
         {
           kind: 'batch',
-          observations: [original.observation],
+          observations: [original.entry],
           checkpointAfterBatch: { cursor: 'first-delivery' },
         },
         {
           kind: 'batch',
-          observations: [original.observation],
+          observations: [original.entry],
           checkpointAfterBatch: { cursor: 'replay-after-expansion' },
         },
       ];
@@ -4181,12 +4914,12 @@ describe('Conversation provider observation ingress', () => {
         { kind: 'checkpointOnly', checkpointAfterBatch: { cursor: 'baseline' } },
         {
           kind: 'batch',
-          observations: [original.observation],
+          observations: [original.entry],
           checkpointAfterBatch: { cursor: 'first-automation' },
         },
         {
           kind: 'batch',
-          observations: [original.observation],
+          observations: [original.entry],
           checkpointAfterBatch: { cursor: 'automation-replay-after-expansion' },
         },
       ];
@@ -4260,12 +4993,12 @@ describe('Conversation provider observation ingress', () => {
         { kind: 'checkpointOnly', checkpointAfterBatch: { cursor: 'baseline' } },
         {
           kind: 'batch',
-          observations: [pair.observation],
+          observations: [pair.entry],
           checkpointAfterBatch: { cursor: 'first-pairing' },
         },
         {
           kind: 'batch',
-          observations: [pair.observation],
+          observations: [pair.entry],
           checkpointAfterBatch: { cursor: 'pairing-replay-after-expansion' },
         },
       ];
@@ -4287,6 +5020,7 @@ describe('Conversation provider observation ingress', () => {
         expectedConnectionRevision: 1,
         materialization: channelConnection().payload.transportOrigin.materializationRef,
         destinationLabel: 'Telegram bot',
+        endpoint: pairingDestinationEndpoint,
         target: channelBinding().payload.target,
       });
 
@@ -4333,6 +5067,7 @@ describe('Conversation provider observation ingress', () => {
         expectedConnectionRevision: updatedConnection.revision,
         materialization: channelConnection().payload.transportOrigin.materializationRef,
         destinationLabel: 'Telegram bot',
+        endpoint: pairingDestinationEndpoint,
         target: channelBinding().payload.target,
       });
 
@@ -4404,7 +5139,7 @@ describe('Conversation provider observation ingress', () => {
     }
   });
 
-  it('never prunes a census whose occurrence evidence is contradictory, even past its horizon', async () => {
+  it('compacts settled contradictory evidence before its horizon and retains only attention evidence afterward', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(1_000);
     try {
@@ -4420,12 +5155,31 @@ describe('Conversation provider observation ingress', () => {
       // Every member settled cleanly; only the census carries the ambiguity.
       expect(obligation.value).toMatchObject({ terminal: true, attention: false });
       const conflicted = markIngressCensusOccurrenceConflict(harness.rows);
+      expect(record(record(conflicted.value).payload).checkpointCoveredAt).toBeNull();
+
+      await expect(runConversationIngressRetentionForInvocation({ now: 2_000, limit: 1 }, harness.context))
+        .resolves.toMatchObject({ compactedCensuses: 1, deletedCensuses: 0 });
+
+      const compacted = harness.rows.get(conflicted.rowId);
+      const compactedPayload = record(record(compacted?.value ?? {}).payload);
+      expect(compacted?.value).toMatchObject({
+        attention: true,
+        payload: { conflict: { kind: 'occurrenceEvidenceMismatch' } },
+      });
+      expect(compactedPayload.normalizedIngress).toBeNull();
+      expect(record(compactedPayload.compacted)).toMatchObject({
+        shell: expect.any(Object),
+        textDigest: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/u),
+      });
+      expect(compactedPayload.eventCandidate).toBeNull();
+      expect(compactedPayload.matchedBindings).toEqual([]);
+      expect(harness.rows.get(obligation.rowId)?.deleted).toBe(true);
 
       await expect(runConversationIngressRetentionForInvocation({ now: 61_001, limit: 1 }, harness.context))
         .resolves.toMatchObject({ deletedCensuses: 0 });
 
       expect(harness.rows.get(conflicted.rowId)?.deleted).not.toBe(true);
-      expect(harness.rows.get(obligation.rowId)?.deleted).not.toBe(true);
+      expect(harness.rows.get(obligation.rowId)?.deleted).toBe(true);
     } finally {
       vi.useRealTimers();
     }
@@ -4644,14 +5398,14 @@ describe('Conversation provider observation ingress', () => {
 
     await ingestConversationProviderObservationForInvocation(input, harness.context);
 
-    const request = harness.send.mock.calls[0]?.[0];
+    const request = sentUserTextRequest(harness.send.mock.calls[0]?.[0]);
     expect(request).toMatchObject({
       source: {
         externalActor: { kind: 'human' },
         contentProvenance: 'forwarded',
       },
     });
-    expect(request?.source?.externalActor).not.toHaveProperty('displayNameSnapshot');
+    expect(request.source?.externalActor).not.toHaveProperty('displayNameSnapshot');
   });
 });
 
@@ -4678,7 +5432,7 @@ describe('Conversation checkpointed-poll ingress', () => {
                 messageRevision: 'checkpoint-coverage',
                 occurrenceId,
                 occurredAt: 1_000,
-              }).observation],
+              }).entry],
               checkpointAfterBatch: { cursor: 'covered' },
             };
         },
@@ -4794,7 +5548,7 @@ describe('Conversation checkpointed-poll ingress', () => {
           ? { kind: 'checkpointOnly', checkpointAfterBatch: { cursor: 'baseline' } }
           : {
             kind: 'batch',
-            observations: [original.observation],
+            observations: [original.entry],
             checkpointAfterBatch: { cursor: 'must-not-commit' },
           };
       },
@@ -4866,7 +5620,7 @@ describe('Conversation checkpointed-poll ingress', () => {
           ? { kind: 'checkpointOnly', checkpointAfterBatch: { cursor: 'baseline' } }
           : {
             kind: 'batch',
-            observations: [original.observation],
+            observations: [original.entry],
             checkpointAfterBatch: { cursor: 'checkpoint-first' },
           };
       },
@@ -4929,7 +5683,7 @@ describe('Conversation checkpointed-poll ingress', () => {
       messageRevision: `overflow:${index}`,
       occurrenceId: `telegram:update:overflow:${index}`,
       occurredAt: 1_000,
-    }).observation);
+    }).entry);
     const harness = createIngressHarness({
       pollExecution: async (input): Promise<JsonValue> => {
         const limit = record(input).limit;
@@ -5133,7 +5887,7 @@ describe('Conversation checkpointed-poll ingress', () => {
     });
   });
 
-  it('persists bounded retry due states before blocking the fifth retryable provider failure', async () => {
+  it('persists bounded retry due states before blocking the terminal retryable provider failure', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(1_000);
     try {
@@ -5141,17 +5895,17 @@ describe('Conversation checkpointed-poll ingress', () => {
         pollResult: { kind: 'notReady', reason: 'network', retryAfterMs: 2_000 },
       });
 
-      for (let attemptCount = 1; attemptCount <= 5; attemptCount += 1) {
+      for (let attemptCount = 1; attemptCount <= MAX_CONVERSATION_POLL_FAILURE_ATTEMPTS; attemptCount += 1) {
         await expect(runConversationCheckpointedPollForInvocation({
           connectionId: 'connection-1',
           waitMs: 0,
         }, harness.context)).resolves.toEqual(
-          attemptCount === 5
+          attemptCount === MAX_CONVERSATION_POLL_FAILURE_ATTEMPTS
             ? { kind: 'blocked' }
             : { kind: 'retry', retryAfterMs: 2_000 },
         );
         const pollFailure = record(record(harness.rows.get('connection-1')?.value).payload).pollFailure;
-        if (attemptCount === 5) {
+        if (attemptCount === MAX_CONVERSATION_POLL_FAILURE_ATTEMPTS) {
           expect(pollFailure).toEqual({
             phase: 'blocked',
             attemptCount,
@@ -5169,7 +5923,8 @@ describe('Conversation checkpointed-poll ingress', () => {
         }
       }
 
-      expect(harness.executeAdmittedTargetedOperationWithExecutionOrigin).toHaveBeenCalledTimes(5);
+      expect(harness.executeAdmittedTargetedOperationWithExecutionOrigin)
+        .toHaveBeenCalledTimes(MAX_CONVERSATION_POLL_FAILURE_ATTEMPTS);
     } finally {
       vi.useRealTimers();
     }
@@ -5305,7 +6060,7 @@ describe('Conversation checkpointed-poll ingress', () => {
           ? { kind: 'checkpointOnly', checkpointAfterBatch: { cursor: 'baseline' } }
           : {
             kind: 'batch',
-            observations: [fullText.observation, nonAdmission.observation],
+            observations: [fullText.entry, nonAdmission.entry],
             checkpointAfterBatch: { cursor: 'duplicate-batch' },
           };
       },
@@ -5350,17 +6105,17 @@ describe('Conversation checkpointed-poll ingress', () => {
         { kind: 'checkpointOnly', checkpointAfterBatch: { cursor: 'baseline' } },
         {
           kind: 'batch',
-          observations: [original.observation],
+          observations: [original.entry],
           checkpointAfterBatch: { cursor: 'fresh' },
         },
         {
           kind: 'batch',
-          observations: [original.observation],
+          observations: [original.entry],
           checkpointAfterBatch: { cursor: 'expired-equal' },
         },
         {
           kind: 'batch',
-          observations: [contradictory.observation],
+          observations: [contradictory.entry],
           checkpointAfterBatch: { cursor: 'expired-contradictory' },
         },
       ];
@@ -5609,7 +6364,7 @@ describe('Conversation checkpointed-poll ingress', () => {
     const harness = createIngressHarness({
       pollResult: {
         kind: 'batch',
-        observations: [input.observation],
+        observations: [input.entry],
         checkpointAfterBatch: { cursor: 'first-batch' },
       },
     });
@@ -6235,7 +6990,7 @@ describe('Conversation checkpointed-poll ingress', () => {
           ? { kind: 'checkpointOnly', checkpointAfterBatch: { cursor: 'baseline' } }
           : {
             kind: 'batch',
-            observations: [pairingObservation.observation],
+            observations: [pairingObservation.entry],
             checkpointAfterBatch: { cursor: 'after-pair' },
           };
       },
@@ -6260,6 +7015,7 @@ describe('Conversation checkpointed-poll ingress', () => {
       expectedConnectionRevision: currentConnection.revision,
       materialization: channelConnection().payload.transportOrigin.materializationRef,
       destinationLabel: 'Telegram bot',
+      endpoint: pairingDestinationEndpoint,
       target: channelBinding().payload.target,
     });
 
@@ -6291,6 +7047,199 @@ describe('Conversation checkpointed-poll ingress', () => {
     expect(currentCheckpoint(harness.rows)?.value).toMatchObject({
       payload: { opaqueToken: { cursor: 'after-pair' } },
     });
+
+    // The external person gets one durable answer, owned by the connection
+    // because no binding exists yet, and addressed to the private conversation
+    // the proof arrived in.
+    const pairingCustody = [...harness.rows.values()].filter(
+      (row) => row.deleted !== true && row.value['record-kind'] === 'outward-delivery',
+    );
+    expect(pairingCustody).toHaveLength(1);
+    expect(pairingCustody[0]?.value).toMatchObject({
+      'connection-id': 'connection-1',
+      terminal: false,
+      payload: {
+        source: {
+          kind: 'controlResponse',
+          controlId: census?.value.id,
+          controlKind: 'pairing',
+        },
+        routeAuthority: {
+          connectionAuthorityEpoch: record(currentConnection.value.payload).authorityEpoch,
+        },
+        endpoint: { kind: 'direct', audience: 'direct', id: 'telegram:chat:100' },
+        deliveryKey: `ingress-pairing:${String(census?.value.id)}`,
+        replyContext: { replyToMessageId: 'telegram:message:5' },
+        state: 'ready',
+      },
+    });
+    expect(pairingCustody[0]?.value['binding-id']).toBeUndefined();
+
+    // An equal replay rejoins that exact row instead of promising a second
+    // provider effect.
+    await expect(runConversationCheckpointedPollForInvocation({
+      connectionId: 'connection-1',
+      waitMs: 0,
+    }, harness.context, manager)).resolves.toMatchObject({ kind: 'committed' });
+    expect([...harness.rows.values()].filter(
+      (row) => row.deleted !== true && row.value['record-kind'] === 'outward-delivery',
+    )).toHaveLength(1);
+  });
+
+  it('withholds the /pair checkpoint until its answer reaches durable outward custody', async () => {
+    const pairingObservation = observation({
+      messageRevision: 'edit:pair-custody',
+      occurrenceId: 'telegram:update:pair-custody',
+      messageText: '/pair 00000001',
+    });
+    let pollCount = 0;
+    let refusePairingCustody = true;
+    let lastPairCursor = '';
+    const harness = createIngressHarness({
+      beforeCollectionPut: ({ value }) => {
+        if (refusePairingCustody && value['record-kind'] === 'outward-delivery') {
+          throw new Error('Simulated outward custody storage failure.');
+        }
+      },
+      getPollResult: (): JsonValue => {
+        pollCount += 1;
+        if (pollCount === 1) {
+          return { kind: 'checkpointOnly', checkpointAfterBatch: { cursor: 'baseline' } };
+        }
+        lastPairCursor = `after-pair-${pollCount}`;
+        return {
+          kind: 'batch',
+          observations: [pairingObservation.entry],
+          checkpointAfterBatch: { cursor: lastPairCursor },
+        };
+      },
+    });
+
+    await expect(runConversationCheckpointedPollForInvocation({
+      connectionId: 'connection-1',
+      waitMs: 0,
+    }, harness.context)).resolves.toMatchObject({ kind: 'committed' });
+    const currentConnection = harness.rows.get('connection-1');
+    if (currentConnection === undefined) throw new Error('Expected the baseline-ready Channel connection.');
+    const manager = createConversationPairingManager({
+      generationId: 'pairing-generation-1',
+      now: () => 1_000,
+      randomBytes: () => Uint8Array.from([0, 0, 0, 0, 1]),
+      createId: (kind) => `${kind}-1`,
+    });
+    manager.createChallenge({
+      connectionId: 'connection-1',
+      expectedConnectionRevision: currentConnection.revision,
+      materialization: channelConnection().payload.transportOrigin.materializationRef,
+      destinationLabel: 'Telegram bot',
+      endpoint: pairingDestinationEndpoint,
+      target: channelBinding().payload.target,
+    });
+
+    // The unsettled outward custody is the only reason this poll cannot settle.
+    await expect(runConversationCheckpointedPollForInvocation({
+      connectionId: 'connection-1',
+      waitMs: 0,
+    }, harness.context, manager)).resolves.toMatchObject({ kind: 'retry' });
+
+    // The proposal exists, but the person has not been answered, so the
+    // checkpoint stays behind the occurrence that owes them that answer.
+    expect(manager.readManagementProjection().proposals).toHaveLength(1);
+    expect([...harness.rows.values()].some(
+      (row) => row.deleted !== true && row.value['record-kind'] === 'outward-delivery',
+    )).toBe(false);
+    expect(currentCheckpoint(harness.rows)?.value).toMatchObject({
+      payload: { opaqueToken: { cursor: 'baseline' } },
+    });
+
+    refusePairingCustody = false;
+    await expect(runConversationCheckpointedPollForInvocation({
+      connectionId: 'connection-1',
+      waitMs: 0,
+    }, harness.context, manager)).resolves.toMatchObject({ kind: 'committed' });
+
+    expect([...harness.rows.values()].filter(
+      (row) => row.deleted !== true && row.value['record-kind'] === 'outward-delivery',
+    )).toHaveLength(1);
+    expect(currentCheckpoint(harness.rows)?.value).toMatchObject({
+      payload: { opaqueToken: { cursor: lastPairCursor } },
+    });
+    expect(lastPairCursor).not.toBe('baseline');
+    expect(manager.readManagementProjection().proposals).toHaveLength(1);
+  });
+
+  it('answers no one when a losing race consumes the pairing challenge before its census commits', async () => {
+    const pairingObservation = observation({
+      messageRevision: 'edit:pair-race',
+      occurrenceId: 'telegram:update:pair-race',
+      messageText: '/pair 00000001',
+    });
+    let pollCount = 0;
+    let racedManager: ReturnType<typeof createConversationPairingManager> | undefined;
+    let racedChallenge: Readonly<{ generationId: string; challengeId: string }> | undefined;
+    const harness = createIngressHarness({
+      // The owner cancels between the reservation and its census commit, so the
+      // settlement below is `silent` rather than `matched`.
+      beforeBatch: ({ operations }) => {
+        if (racedChallenge === undefined || !operations.some(isIngressCensusPut)) return;
+        racedManager?.cancelChallenge(racedChallenge);
+        racedChallenge = undefined;
+      },
+      getPollResult: (): JsonValue => {
+        pollCount += 1;
+        return pollCount === 1
+          ? { kind: 'checkpointOnly', checkpointAfterBatch: { cursor: 'baseline' } }
+          : {
+            kind: 'batch',
+            observations: [pairingObservation.entry],
+            checkpointAfterBatch: { cursor: 'after-pair-race' },
+          };
+      },
+    });
+
+    await expect(runConversationCheckpointedPollForInvocation({
+      connectionId: 'connection-1',
+      waitMs: 0,
+    }, harness.context)).resolves.toMatchObject({ kind: 'committed' });
+    const currentConnection = harness.rows.get('connection-1');
+    if (currentConnection === undefined) throw new Error('Expected the baseline-ready Channel connection.');
+    racedManager = createConversationPairingManager({
+      generationId: 'pairing-generation-1',
+      now: () => 1_000,
+      randomBytes: () => Uint8Array.from([0, 0, 0, 0, 1]),
+      createId: (kind) => `${kind}-1`,
+    });
+    const created = racedManager.createChallenge({
+      connectionId: 'connection-1',
+      expectedConnectionRevision: currentConnection.revision,
+      materialization: channelConnection().payload.transportOrigin.materializationRef,
+      destinationLabel: 'Telegram bot',
+      endpoint: pairingDestinationEndpoint,
+      target: channelBinding().payload.target,
+    });
+    racedChallenge = { generationId: created.generationId, challengeId: created.challengeId };
+
+    await expect(runConversationCheckpointedPollForInvocation({
+      connectionId: 'connection-1',
+      waitMs: 0,
+    }, harness.context, racedManager)).resolves.toMatchObject({ kind: 'committed' });
+
+    // No proposal exists, so nothing may be promised to the external sender:
+    // a durable answer here would tell a stranger a challenge had existed and
+    // would announce a pairing that will never appear in the owner's list.
+    expect(racedManager.readManagementProjection().proposals).toHaveLength(0);
+    expect([...harness.rows.values()].some(
+      (row) => row.deleted !== true && row.value['record-kind'] === 'outward-delivery',
+    )).toBe(false);
+    expect(harness.send).not.toHaveBeenCalled();
+    // The occurrence is still terminal for pairing: it never falls through to
+    // ordinary binding routing, and its checkpoint still advances.
+    expect([...harness.rows.values()].some(
+      (row) => row.deleted !== true && row.value['record-kind'] === 'ingress-obligation',
+    )).toBe(false);
+    expect(currentCheckpoint(harness.rows)?.value).toMatchObject({
+      payload: { opaqueToken: { cursor: 'after-pair-race' } },
+    });
   });
 
   it('checkpoint-advances a retained selected-poll /pair census silently after pairing manager restart', async () => {
@@ -6307,7 +7256,7 @@ describe('Conversation checkpointed-poll ingress', () => {
           ? { kind: 'checkpointOnly', checkpointAfterBatch: { cursor: 'baseline' } }
           : {
             kind: 'batch',
-            observations: [pairingObservation.observation],
+            observations: [pairingObservation.entry],
             checkpointAfterBatch: { cursor: pollCount === 2 ? 'after-pair' : 'after-restart-replay' },
           };
       },
@@ -6331,6 +7280,7 @@ describe('Conversation checkpointed-poll ingress', () => {
       expectedConnectionRevision: connection.revision,
       materialization: channelConnection().payload.transportOrigin.materializationRef,
       destinationLabel: 'Telegram bot',
+      endpoint: pairingDestinationEndpoint,
       target: channelBinding().payload.target,
     });
 
@@ -6388,7 +7338,7 @@ describe('Conversation checkpointed-poll ingress', () => {
             ? { kind: 'checkpointOnly', checkpointAfterBatch: { cursor: 'baseline' } }
             : {
               kind: 'batch',
-              observations: [pairingObservation.observation],
+              observations: [pairingObservation.entry],
               checkpointAfterBatch: { cursor: 'after-expired-pair' },
             };
         },
@@ -6412,6 +7362,7 @@ describe('Conversation checkpointed-poll ingress', () => {
         expectedConnectionRevision: currentConnection.revision,
         materialization: channelConnection().payload.transportOrigin.materializationRef,
         destinationLabel: 'Telegram bot',
+        endpoint: pairingDestinationEndpoint,
         target: channelBinding().payload.target,
       });
 
@@ -6470,7 +7421,7 @@ describe('Conversation checkpointed-poll ingress', () => {
           ? { kind: 'checkpointOnly', checkpointAfterBatch: { cursor: 'baseline' } }
           : {
             kind: 'batch',
-            observations: [firstEndpoint.observation, secondEndpoint.observation],
+            observations: [firstEndpoint.entry, secondEndpoint.entry],
             checkpointAfterBatch: { cursor: 'after-mixed-batch' },
           };
       },
@@ -6545,7 +7496,7 @@ describe('Conversation checkpointed-poll ingress', () => {
           ? { kind: 'checkpointOnly', checkpointAfterBatch: { cursor: 'baseline' } }
           : {
             kind: 'batch',
-            observations: [firstObservation.observation, secondObservation.observation],
+            observations: [firstObservation.entry, secondObservation.entry],
             checkpointAfterBatch: { cursor: 'after-unsettled-page' },
           };
       },
@@ -6582,6 +7533,115 @@ describe('Conversation checkpointed-poll ingress', () => {
     expect(record(record(harness.rows.get('connection-1')?.value).payload).pollFailure).toBeNull();
   });
 
+  it('durably retries one provider Event candidate before checkpointing its replay-safe settlement', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    try {
+      const eventIngress = withTelegramAutomationEventCandidate(observation({
+        messageRevision: 'event:retry',
+        occurrenceId: 'telegram:update:event-retry',
+        endpointId: 'telegram:chat:event',
+      }));
+      const candidate = eventIngress.entry.eventCandidate;
+      if (candidate === null) throw new Error('Expected a provider Event candidate.');
+      let pollCount = 0;
+      const harness = createIngressHarness({
+        automationEventAdmitResults: [
+          { kind: 'unsettled' },
+          { kind: 'checkpointSafe' },
+        ],
+        getPollResult: (): JsonValue => {
+          pollCount += 1;
+          return pollCount === 1
+            ? { kind: 'checkpointOnly', checkpointAfterBatch: { cursor: 'baseline' } }
+            : {
+              kind: 'batch',
+              observations: [eventIngress.entry],
+              checkpointAfterBatch: { cursor: 'after-event' },
+            };
+        },
+      });
+      const gapConnection = setConnectionHistoryGap(harness.rows);
+      await expect(acceptConversationStreamBaselineForInvocation({
+        connectionId: 'connection-1',
+        expectedRevision: gapConnection.revision,
+      }, harness.context)).resolves.toMatchObject({ kind: 'updated' });
+
+      await expect(runConversationCheckpointedPollForInvocation({
+        connectionId: 'connection-1',
+        waitMs: 0,
+      }, harness.context)).resolves.toEqual({ kind: 'retry' });
+
+      const eventObligation = [...harness.rows.values()].find((row) => (
+        row.deleted !== true
+          && row.value['record-kind'] === 'ingress-obligation'
+          && record(record(row.value.payload).target).kind === 'event'
+      ));
+      if (eventObligation === undefined) throw new Error('Expected a durable Event obligation.');
+      expect(eventObligation.value).not.toHaveProperty('binding-id');
+      expect(record(eventObligation.value.payload)).toMatchObject({
+        censusId: expect.any(String),
+        sourceAuthority: {
+          connectionAuthorityEpoch: telegramConnectionAuthority.authorityEpoch,
+          bindingRevision: null,
+          bindingAuthorityEpoch: null,
+        },
+        lifecycle: { phase: 'retryDue', attemptCount: 1 },
+        target: {
+          kind: 'event',
+          candidate,
+          providerPluginId: telegramProviderPluginId,
+          providerContributionSelection: telegramConnectionAuthority.providerContributionSelection,
+          executionOrigin: telegramConnectionAuthority.transportOrigin,
+        },
+      });
+      const census = [...harness.rows.values()].find((row) => (
+        row.deleted !== true
+          && row.value['record-kind'] === 'ingress-census'
+          && record(record(row.value.payload).eventCandidate).sourceInstanceId === 'telegram:chat:100'
+      ));
+      expect(census?.value.payload).toMatchObject({ eventCandidate: candidate });
+      expect(currentCheckpoint(harness.rows)?.value.payload).toMatchObject({
+        opaqueToken: { cursor: 'baseline' },
+        lastOccurrenceId: null,
+      });
+      expect(harness.send).not.toHaveBeenCalled();
+      expect(harness.execute).not.toHaveBeenCalled();
+
+      vi.setSystemTime(2_000);
+      await expect(runConversationCheckpointedPollForInvocation({
+        connectionId: 'connection-1',
+        waitMs: 0,
+      }, harness.context)).resolves.toMatchObject({ kind: 'committed' });
+
+      const eventCalls = harness.executeAdmittedTargetedOperationWithExecutionOrigin.mock.calls
+        .filter(([operation]) => operation === telegramAutomationEventAdmitAction);
+      expect(eventCalls).toHaveLength(2);
+      expect(eventCalls.map(([, input]) => input)).toEqual([
+        {
+          connectionId: 'connection-1',
+          candidate,
+          occurrenceId: 'telegram:update:event-retry',
+          occurredAt: 1_000,
+          observationReceivedAt: 1_000,
+        },
+        {
+          connectionId: 'connection-1',
+          candidate,
+          occurrenceId: 'telegram:update:event-retry',
+          occurredAt: 1_000,
+          observationReceivedAt: 1_000,
+        },
+      ]);
+      expect(currentCheckpoint(harness.rows)?.value.payload).toMatchObject({
+        opaqueToken: { cursor: 'after-event' },
+        lastOccurrenceId: 'telegram:update:event-retry',
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('checkpoints a healthy poll page past a retained blocked ingress obligation without clearing attention', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(1_000);
@@ -6614,7 +7674,7 @@ describe('Conversation checkpointed-poll ingress', () => {
             ? { kind: 'checkpointOnly', checkpointAfterBatch: { cursor: 'baseline' } }
             : {
               kind: 'batch',
-              observations: [blockedObservation.observation, healthyObservation.observation],
+              observations: [blockedObservation.entry, healthyObservation.entry],
               checkpointAfterBatch: { cursor: 'after-blocked-obligation' },
             };
         },
@@ -6682,6 +7742,72 @@ describe('Conversation checkpointed-poll ingress', () => {
     }
   });
 
+  it('does not clear a replacement baseline when blocked ingress becomes attempting before its final batch', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    try {
+      let raceAttemptingClaim = false;
+      const harness = createIngressHarness({
+        sessionSend: async () => ({
+          status: 'outcomeUnknown',
+          localId: 'pending-blocked-baseline-race',
+          code: 'session_admission_outcome_unknown',
+        }),
+        pollResult: { kind: 'checkpointOnly', checkpointAfterBatch: { cursor: 'baseline-race' } },
+        beforeBatch: ({ rows, operations }) => {
+          if (!raceAttemptingClaim || !operations.some(isCheckpointPut)) return;
+          raceAttemptingClaim = false;
+          markIngressObligationAttempting(rows);
+        },
+      });
+      const blockedObservation = observation({
+        messageRevision: 'edit:blocked-baseline-race',
+        occurrenceId: 'telegram:update:blocked-baseline-race',
+      });
+
+      await expect(ingestConversationProviderObservationForInvocation(
+        blockedObservation,
+        harness.context,
+      )).rejects.toMatchObject({ code: 'channels_ingress_admission_unsettled', retryable: true });
+
+      const retryDue = [...harness.rows.values()].find(
+        (row) => row.value['record-kind'] === 'ingress-obligation',
+      );
+      if (retryDue === undefined) throw new Error('Expected the blocked ingress obligation.');
+      const retryDueValue = record(retryDue.value);
+      const retryDuePayload = record(retryDueValue.payload);
+      const { ['due-at']: _dueAt, ...blockedWithoutDueAt } = retryDueValue;
+      harness.rows.set(retryDue.rowId, stateRow({
+        ...blockedWithoutDueAt,
+        terminal: false,
+        attention: true,
+        payload: {
+          ...retryDuePayload,
+          lifecycle: { phase: 'blocked', attemptCount: 5, dueAt: null },
+          disposition: null,
+          nonAdmission: null,
+        },
+      }, retryDue.revision + 1));
+
+      const gapConnection = setConnectionHistoryGap(harness.rows);
+      raceAttemptingClaim = true;
+      await expect(acceptConversationStreamBaselineForInvocation({
+        connectionId: 'connection-1',
+        expectedRevision: gapConnection.revision,
+      }, harness.context)).rejects.toMatchObject({
+        code: 'channels_stream_baseline_conflict',
+        retryable: true,
+      });
+
+      expect(currentCheckpoint(harness.rows)).toBeUndefined();
+      expect(record(record(harness.rows.get('connection-1')?.value ?? {}).payload).historyGap).not.toBeNull();
+      expect(record(record(harness.rows.get(retryDue.rowId)?.value ?? {}).payload).lifecycle)
+        .toMatchObject({ phase: 'attempting' });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('settles a thrown obligation boundary failure locally and continues the same poll page without checkpointing it', async () => {
     const firstObservation = observation({
       messageRevision: 'edit:throwing',
@@ -6710,7 +7836,7 @@ describe('Conversation checkpointed-poll ingress', () => {
           ? { kind: 'checkpointOnly', checkpointAfterBatch: { cursor: 'baseline' } }
           : {
             kind: 'batch',
-            observations: [firstObservation.observation, secondObservation.observation],
+            observations: [firstObservation.entry, secondObservation.entry],
             checkpointAfterBatch: { cursor: 'after-thrown-boundary-page' },
           };
       },
@@ -6764,7 +7890,7 @@ describe('Conversation checkpointed-poll ingress', () => {
             observations: [observation({
               messageRevision: 'edit:stale-terminal-settlement',
               occurrenceId: 'telegram:update:stale-terminal-settlement',
-            }).observation],
+            }).entry],
             checkpointAfterBatch: { cursor: 'after-stale-terminal-settlement' },
           };
       },
@@ -6813,13 +7939,13 @@ describe('Conversation checkpointed-poll ingress', () => {
         if (pollCount === 2) {
           return {
             kind: 'batch',
-            observations: [admitted.observation],
+            observations: [admitted.entry],
             checkpointAfterBatch: { cursor: 'after-admission' },
           };
         }
         return {
           kind: 'batch',
-          observations: [laterUnsupportedEdit.observation],
+          observations: [laterUnsupportedEdit.entry],
           checkpointAfterBatch: { cursor: 'after-edit' },
         };
       },
@@ -7071,7 +8197,7 @@ describe('Conversation history baseline acceptance', () => {
     const harness = createIngressHarness({
       pollResult: {
         kind: 'batch',
-        observations: [fullText.observation, nonAdmission.observation],
+        observations: [fullText.entry, nonAdmission.entry],
         checkpointAfterBatch: { cursor: 'duplicate-baseline' },
       },
     });
@@ -7091,7 +8217,7 @@ describe('Conversation history baseline acceptance', () => {
     const harness = createIngressHarness({
       pollResult: {
         kind: 'batch',
-        observations: [observation({ messageRevision: 'edit:1' }).observation],
+        observations: [observation({ messageRevision: 'edit:1' }).entry],
         checkpointAfterBatch: { cursor: 'historical-batch' },
       },
     });
@@ -7193,6 +8319,208 @@ describe('Conversation history baseline acceptance', () => {
       expect(record(record(harness.rows.get('connection-1')?.value).payload).historyGap).toBeNull();
     },
   );
+
+  it('abandons a stranded preparing census when a socket gap acceptance proves no replay can finish it', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    try {
+      let armed = true;
+      const harness = createIngressHarness({
+        connection: socketChannelConnection(),
+        beforeBatch: ({ operations }) => {
+          const preparesCensus = operations.some((operation) => (
+            operation.kind === 'put'
+            && record(record(operation.value).payload).phase === 'prepared'
+          ));
+          if (armed && preparesCensus) {
+            armed = false;
+            throw new Error('Simulated Account Collection failure on the prepared census write.');
+          }
+        },
+      });
+
+      await expect(ingestConversationProviderObservationForInvocation(
+        observation({
+          messageRevision: 'abandon:preparing',
+          occurredAt: 1_000,
+          transport: 'socket',
+        }),
+        harness.context,
+      )).rejects.toThrow();
+      const census = [...harness.rows.values()].find((row) => (
+        row.deleted !== true && row.value['record-kind'] === 'ingress-census'
+      ));
+      const obligation = [...harness.rows.values()].find((row) => (
+        row.deleted !== true && row.value['record-kind'] === 'ingress-obligation'
+      ));
+      if (census === undefined || obligation === undefined) {
+        throw new Error('Expected the stranded ingress census and its member.');
+      }
+      expect(record(census.value.payload).phase).toBe('preparing');
+      expect(record(record(obligation.value).payload).lifecycle).toMatchObject({ phase: 'ready' });
+
+      // The stranded member is durably due and no socket producer can ever
+      // re-present the occurrence that would finish its census.
+      vi.setSystemTime(1_001);
+      await expect(runConversationIngressDueWorkForInvocation({ now: 1_001 }, harness.context))
+        .resolves.toBe(1);
+      expect(record(record(harness.rows.get(obligation.rowId)?.value ?? {}).payload).lifecycle)
+        .toMatchObject({ phase: 'ready' });
+
+      setConnectionHistoryGap(harness.rows);
+      const current = harness.rows.get('connection-1');
+      if (current === undefined) throw new Error('Expected the Channel connection state row.');
+      await expect(acceptConversationStreamBaselineForInvocation({
+        connectionId: 'connection-1',
+        expectedRevision: current.revision,
+      }, harness.context)).resolves.toMatchObject({ kind: 'updated' });
+
+      const abandoned = harness.rows.get(obligation.rowId);
+      expect(record(record(abandoned?.value ?? {}).payload)).toMatchObject({
+        lifecycle: { phase: 'terminal', dueAt: null },
+        disposition: 'staleAuthority',
+      });
+      expect(record(abandoned?.value ?? {})['due-at']).toBeUndefined();
+      expect(record(record(harness.rows.get(census.rowId)?.value ?? {}).payload).phase)
+        .toBe('prepared');
+
+      // The abandoned unit no longer refills the first due page, and the
+      // incumbent retention path reclaims it at the ordinary horizon.
+      vi.setSystemTime(1_002);
+      await expect(runConversationIngressDueWorkForInvocation({ now: 1_002 }, harness.context))
+        .resolves.toBe(0);
+      await expect(runConversationIngressRetentionForInvocation({ now: 61_000, limit: 1 }, harness.context))
+        .resolves.toMatchObject({ deletedCensuses: 0 });
+      await expect(runConversationIngressRetentionForInvocation({ now: 61_001, limit: 1 }, harness.context))
+        .resolves.toMatchObject({ deletedCensuses: 1 });
+      expect(harness.rows.get(census.rowId)?.deleted).toBe(true);
+      expect(harness.rows.get(obligation.rowId)?.deleted).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('settles replayable preparing and prepared census members atomically before advancing a replacement checkpoint', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    try {
+      let armed = true;
+      let baselineBatch: readonly CollectionMutation[] | undefined;
+      const harness = createIngressHarness({
+        beforeBatch: ({ operations }) => {
+          const preparesCensus = operations.some((operation) => (
+            operation.kind === 'put'
+            && record(record(operation.value).payload).phase === 'prepared'
+          ));
+          if (armed && preparesCensus) {
+            armed = false;
+            throw new Error('Simulated Account Collection failure on the prepared census write.');
+          }
+          if (operations.some(isCheckpointPut)) baselineBatch = operations;
+        },
+        pollResult: { kind: 'checkpointOnly', checkpointAfterBatch: { cursor: 'baseline' } },
+      });
+
+      await expect(ingestConversationProviderObservationForInvocation(
+        observation({
+          messageRevision: 'baseline:preparing',
+          occurrenceId: 'telegram:update:baseline-preparing',
+          occurredAt: 1_000,
+        }),
+        harness.context,
+      )).rejects.toThrow();
+      const preparingCensus = [...harness.rows.values()].find((row) => (
+        row.deleted !== true && row.value['record-kind'] === 'ingress-census'
+      ));
+      const preparingObligation = [...harness.rows.values()].find((row) => (
+        row.deleted !== true && row.value['record-kind'] === 'ingress-obligation'
+      ));
+      if (preparingCensus === undefined || preparingObligation === undefined) {
+        throw new Error('Expected the stranded ingress census and its member.');
+      }
+
+      // A fully terminal prepared row is already safe to cover, while a
+      // ready prepared member still needs the same stale-authority resolution
+      // as the stranded preparation before this replacement cursor can pass.
+      await ingestConversationProviderObservationForInvocation(
+        observation({
+          messageRevision: 'baseline:terminal',
+          occurrenceId: 'telegram:update:baseline-terminal',
+          occurredAt: 1_000,
+        }),
+        harness.context,
+      );
+      await ingestConversationProviderObservationForInvocation(
+        observation({
+          messageRevision: 'baseline:prepared-ready',
+          occurrenceId: 'telegram:update:baseline-prepared-ready',
+          occurredAt: 1_000,
+        }),
+        harness.context,
+      );
+      const preparedReadyObligation = [...harness.rows.values()].find((row) => (
+        row.deleted !== true
+        && row.value['record-kind'] === 'ingress-obligation'
+        && obligationOccurrenceId(harness.rows, row) === 'telegram:update:baseline-prepared-ready'
+      ));
+      if (preparedReadyObligation === undefined) {
+        throw new Error('Expected the prepared ingress obligation.');
+      }
+      const preparedReadyValue = record(preparedReadyObligation.value);
+      const preparedReadyPayload = record(preparedReadyValue.payload);
+      harness.rows.set(preparedReadyObligation.rowId, stateRow({
+        ...preparedReadyValue,
+        terminal: false,
+        attention: false,
+        'due-at': 1_000,
+        payload: {
+          ...preparedReadyPayload,
+          lifecycle: { phase: 'ready', attemptCount: 0, dueAt: 1_000 },
+          disposition: null,
+          nonAdmission: null,
+        },
+      }, preparedReadyObligation.revision + 1));
+
+      const gapConnection = setConnectionHistoryGap(harness.rows);
+      await expect(acceptConversationStreamBaselineForInvocation({
+        connectionId: 'connection-1',
+        expectedRevision: gapConnection.revision,
+      }, harness.context)).resolves.toMatchObject({ kind: 'updated' });
+
+      const censuses = [...harness.rows.values()].filter((row) => (
+        row.deleted !== true && row.value['record-kind'] === 'ingress-census'
+      ));
+      expect(censuses).toHaveLength(3);
+      for (const census of censuses) {
+        expect(record(record(census.value).payload)).toMatchObject({
+          phase: 'prepared',
+          checkpointCoveredAt: 1_000,
+        });
+      }
+      for (const obligationId of [preparingObligation.rowId, preparedReadyObligation.rowId]) {
+        expect(record(record(harness.rows.get(obligationId)?.value ?? {}).payload)).toMatchObject({
+          lifecycle: { phase: 'terminal', dueAt: null },
+          disposition: 'staleAuthority',
+          nonAdmission: { reason: 'staleAuthority', senderFeedbackEligible: false },
+        });
+        expect(record(harness.rows.get(obligationId)?.value ?? {}).attention).toBe(true);
+      }
+      expect(currentCheckpoint(harness.rows)).toMatchObject({
+        value: { payload: { opaqueToken: { cursor: 'baseline' } } },
+      });
+      expect(record(record(harness.rows.get('connection-1')?.value ?? {}).payload).historyGap).toBeNull();
+
+      const terminalizations = baselineBatch?.filter((operation) => (
+        operation.kind === 'put'
+        && operation.value['record-kind'] === 'ingress-obligation'
+        && record(operation.value.payload).disposition === 'staleAuthority'
+      ));
+      expect(terminalizations).toHaveLength(2);
+      expect(baselineBatch?.filter(isIngressCensusPut)).toHaveLength(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 
   it('rejects a provider result from a different execution origin without clearing the gap', async () => {
     const expectedOrigin = channelConnection().payload.transportOrigin;

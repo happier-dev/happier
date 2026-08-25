@@ -214,6 +214,15 @@ describe('Channels first-party provider composition', () => {
         replayContinuity: 'sessionBound',
         outboundTextLimit: { maximum: 2_000, unit: 'unicodeCodePoints' },
         destinationLabel: 'Happier',
+        // The provider-neutral setup guidance is the only way the generated
+        // invite URL and the permissions it asks for reach the person doing
+        // the setup, so preparation must carry it verbatim.
+        setupGuidance: {
+          externalUrl: 'https://discord.com/oauth2/authorize'
+            + '?client_id=application-1&scope=bot&permissions=274877975552',
+          requiredPermissionsLabel:
+            'View Channels, Send Messages, Send Messages in Threads, Read Message History',
+        },
       });
       expect(discordAccounts.materialize).toHaveBeenCalledWith(
         'discord-bot-credential',

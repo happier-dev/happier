@@ -1,18 +1,25 @@
 import {
   ConversationProvidersContributionProtocolV1,
+  CONVERSATION_CORE_PLUGIN_ID_V1,
 } from '@happier-dev/channels-protocol/v1';
 import { definePlugin } from '@happier-dev/plugin-sdk';
 import type { PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
 
 import { telegramConnectedAccountRuntime } from './auth/connectedAccountRuntime.js';
 import {
+  TELEGRAM_AUTOMATION_MESSAGE_ADMIT_ACTION_ID,
+  TELEGRAM_AUTOMATION_MESSAGE_EVENT_ID,
   TELEGRAM_AUTOMATION_MESSAGE_SETUP_ACTION_ID,
+  TELEGRAM_AUTOMATION_MESSAGE_SOURCE_CONTRACT_VERSION,
   TELEGRAM_BOT_CONNECTED_ACCOUNT_ID,
   TELEGRAM_BOT_CREDENTIAL_PURPOSE,
   TELEGRAM_CHANNEL_ACTION_IDS,
   TELEGRAM_CHANNEL_PROVIDER_CONTRIBUTION_ID,
 } from './constants.js';
 import {
+  admitTelegramAutomationEvent,
+  TELEGRAM_AUTOMATION_MESSAGE_PAYLOAD_SCHEMA,
+  TELEGRAM_AUTOMATION_MESSAGE_SOURCE_CONFIG_SCHEMA,
   TELEGRAM_AUTOMATION_MESSAGE_SETUP_INPUT_SCHEMA,
   TELEGRAM_AUTOMATION_MESSAGE_SETUP_RESULT_SCHEMA,
 } from './automationEvents.js';
@@ -107,6 +114,7 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
   actions: {
     [TELEGRAM_CHANNEL_ACTION_IDS.setup]: {
       title: 'Set up Telegram Channels',
+      description: 'Verifies the selected Telegram bot for Channels setup.',
       execution: { target: 'daemon' },
       inputSchema: TELEGRAM_CREDENTIAL_REF_INPUT_SCHEMA,
       resultSchema: providers.operations.setup.declaration.resultSchema.jsonSchema,
@@ -187,6 +195,7 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
     },
     [TELEGRAM_CHANNEL_ACTION_IDS.connectionTest]: {
       title: 'Test Telegram Channel connection',
+      description: 'Tests the selected Telegram Channel connection.',
       execution: { target: 'daemon' },
       inputSchema: providers.operations.connectionTest.declaration.input.schema.jsonSchema,
       resultSchema: providers.operations.connectionTest.declaration.resultSchema.jsonSchema,
@@ -202,6 +211,7 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
     },
     [TELEGRAM_CHANNEL_ACTION_IDS.endpointResolve]: {
       title: 'Resolve Telegram Channel destination',
+      description: 'Resolves a Telegram chat or channel destination for delivery.',
       execution: { target: 'daemon' },
       inputSchema: providers.operations.endpointResolve.declaration.input.schema.jsonSchema,
       resultSchema: providers.operations.endpointResolve.declaration.resultSchema.jsonSchema,
@@ -217,6 +227,7 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
     },
     [TELEGRAM_CHANNEL_ACTION_IDS.observationsPoll]: {
       title: 'Poll Telegram Channel observations',
+      description: 'Polls the selected Telegram bot for new Channel observations.',
       execution: { target: 'daemon' },
       inputSchema: providers.operations.observationsPoll.declaration.input.schema.jsonSchema,
       resultSchema: providers.operations.observationsPoll.declaration.resultSchema.jsonSchema,
@@ -232,6 +243,7 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
     },
     [TELEGRAM_CHANNEL_ACTION_IDS.messageDeliver]: {
       title: 'Deliver a Telegram Channel message',
+      description: 'Delivers a message to the selected Telegram Channel destination.',
       execution: { target: 'daemon' },
       inputSchema: providers.operations.messageDeliver.declaration.input.schema.jsonSchema,
       resultSchema: providers.operations.messageDeliver.declaration.resultSchema.jsonSchema,
@@ -245,13 +257,6 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
       dangerLevel: providers.operations.messageDeliver.declaration.dangerLevel,
       run: deliverTelegramMessage,
     },
-    // The Automation Event this Action resolves a source for is WITHHELD from
-    // this manifest; the withheld-declaration note below owns why and what a
-    // durable observation needs. The Action stays declared so the retained
-    // admission work keeps its one registered entry point, and it is reachable
-    // only from the `plugin` surface — the composer reaches a setup Action only
-    // through an eligible Event, so nothing user-facing offers an Automation
-    // that cannot exist.
     [TELEGRAM_AUTOMATION_MESSAGE_SETUP_ACTION_ID]: {
       title: 'Choose a Telegram chat to watch',
       description: 'Resolves a Telegram chat to immutable source facts for an Automation Event.',
@@ -295,30 +300,43 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
       },
       run: setupTelegramChatEventSource,
     },
+    [TELEGRAM_AUTOMATION_MESSAGE_ADMIT_ACTION_ID]: {
+      title: 'Admit Telegram Automation Event',
+      description: 'Admits one frozen Telegram Automation Event obligation through the current source definitions.',
+      execution: { target: 'daemon' },
+      scopes: ['global'],
+      surfaces: providers.operations.automationEventAdmit.declaration.surfaces,
+      dangerLevel: providers.operations.automationEventAdmit.declaration.dangerLevel,
+      inputSchema: providers.operations.automationEventAdmit.declaration.input.schema.jsonSchema,
+      resultSchema: providers.operations.automationEventAdmit.declaration.resultSchema.jsonSchema,
+      run: admitTelegramAutomationEvent,
+    },
   },
-  // This provider declares no Event. Its `automation/chat-message-v1` Automation
-  // Event declaration is WITHHELD (product decision, 2026-08-20), so no
-  // Automation can arm a Telegram chat source.
-  //
-  // Telegram `getUpdates` is single-consumer: one `offset` confirms and
-  // discards every earlier update for every reader of the bot. The admission in
-  // `automationEvents.ts` would run inline inside that shared cycle with no
-  // durable obligation, so a catalog or admission outage could only choose
-  // between losing occurrences and stalling Channel delivery for every user of
-  // the bot. `pollTelegramObservations` therefore reaches no Automation
-  // authority at all while this Event is withheld.
-  //
-  // Before this is declared, the occurrence must become a durable obligation in
-  // the SAME ingress store the canonical Channels owner already uses
-  // (`packages/plugins/channels/src/ingress.ts`: `retryDueIngressObligationValue`,
-  // `blockedIngressObligationValue`, `MAX_CONVERSATION_DELIVERY_ATTEMPTS`,
-  // `unsettled`/`checkpointSafe`), persisted BEFORE the shared offset advances —
-  // one shared single-consumer lifecycle, no second `getUpdates` consumer, no
-  // provider-local replay ledger, no new store. The implementation stays whole
-  // on disk in `automationEvents.ts`; re-declaring the Event restores its one
-  // call site in `pollTelegramObservations`.
+  events: {
+    [TELEGRAM_AUTOMATION_MESSAGE_EVENT_ID]: {
+      declaration: {
+        kind: 'event',
+        title: 'Telegram chat message',
+        description: 'A Telegram chat message observed through the selected Channels poll.',
+        payloadSchema: TELEGRAM_AUTOMATION_MESSAGE_PAYLOAD_SCHEMA,
+        automation: {
+          v: 1,
+          eligible: true,
+          source: {
+            sourceContractVersion: TELEGRAM_AUTOMATION_MESSAGE_SOURCE_CONTRACT_VERSION,
+            supportedObservationTransports: ['checkpointedPull'],
+            sourceConfigSchema: TELEGRAM_AUTOMATION_MESSAGE_SOURCE_CONFIG_SCHEMA,
+            setupActionRef: {
+              pluginId: 'happier.channel.telegram',
+              localId: TELEGRAM_AUTOMATION_MESSAGE_SETUP_ACTION_ID,
+            },
+          },
+        },
+      },
+    },
+  },
   contributesTo: {
-    'happier.channels': {
+    [CONVERSATION_CORE_PLUGIN_ID_V1]: {
       providers: {
         [TELEGRAM_CHANNEL_PROVIDER_CONTRIBUTION_ID]: providers.contribute({
           operations: {
@@ -329,6 +347,9 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
             connectionTest: providers.operations.connectionTest.bind(TELEGRAM_CHANNEL_ACTION_IDS.connectionTest),
             endpointResolve: providers.operations.endpointResolve.bind(TELEGRAM_CHANNEL_ACTION_IDS.endpointResolve),
             observationsPoll: providers.operations.observationsPoll.bind(TELEGRAM_CHANNEL_ACTION_IDS.observationsPoll),
+            automationEventAdmit: providers.operations.automationEventAdmit.bind(
+              TELEGRAM_AUTOMATION_MESSAGE_ADMIT_ACTION_ID,
+            ),
             messageDeliver: providers.operations.messageDeliver.bind(TELEGRAM_CHANNEL_ACTION_IDS.messageDeliver),
           },
         }),

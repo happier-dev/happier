@@ -21,6 +21,10 @@ const workspacePackages: readonly WorkspacePackageSpec[] = [
     packageSourceRoot: resolve(repoRoot, 'packages/plugin-sdk/src'),
   },
   {
+    packageName: '@happier-dev/protocol',
+    packageSourceRoot: resolve(repoRoot, 'packages/protocol/src'),
+  },
+  {
     packageName: '@happier-dev/plugin-ui',
     packageSourceRoot: resolve(repoRoot, 'packages/plugin-ui/src'),
   },
@@ -56,5 +60,15 @@ export default defineConfig({
     environment: 'node',
     include: ['src/**/*.test.ts'],
     exclude: ['node_modules/**', 'dist/**'],
+    server: {
+      deps: {
+        // Source-level Channels checks must transform the current SDK and
+        // Protocol leaves rather than a stale copied package dependency.
+        inline: [
+          /^@happier-dev\/plugin-sdk(?:\/|$)/,
+          /^@happier-dev\/protocol(?:\/|$)/,
+        ],
+      },
+    },
   },
 });

@@ -2,6 +2,10 @@ import { MAX_CONVERSATION_INGRESS_TEXT_UTF8_BYTES } from '@happier-dev/channels-
 import { PluginError, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { describe, expect, it, vi } from 'vitest';
 
+/** The exact published request input, so recorded calls keep their real shape. */
+type TelegramHttpRequestInput =
+  Parameters<PluginInvocationContext['services']['http']['request']>[0];
+
 import {
   deliverTelegramMessage,
   pollTelegramObservations,
@@ -55,6 +59,11 @@ function coreContext(
       kind: 'plugin',
       pluginId: 'happier.channels',
       contribution: { id: 'test', qualifiedId: 'happier.channels/actions/test' },
+      materialization: {
+        machineId: 'telegram-channel-actions-fixture-machine',
+        materializationId: 'telegram-channel-actions-fixture-materialization',
+        pluginId: 'happier.channels',
+      },
     },
     signal: options.signal ?? new AbortController().signal,
     services: {
@@ -96,7 +105,9 @@ describe('Telegram Channel provider actions', () => {
       kind: 'environment' as const,
       env: { TELEGRAM_BOT_TOKEN: '123:bot-token' },
     }));
-    const http = { request: vi.fn(async () => response({ ok: true, result: true })) };
+    const http = {
+      request: vi.fn(async (_input: TelegramHttpRequestInput) => response({ ok: true, result: true })),
+    };
 
     await expect(remediateTelegramWebhook({ credentialRef: telegramAccount }, coreContext(http, { materialize })))
       .resolves.toEqual({ kind: 'remediated' });
@@ -106,11 +117,11 @@ describe('Telegram Channel provider actions', () => {
       expect.objectContaining({ expectedAccount: telegramAccount }),
     );
     expect(http.request).toHaveBeenCalledOnce();
-    const request = http.request.mock.calls[0]?.[0] as Readonly<{ url: string; body?: Uint8Array }>;
-    expect(request.url).toMatch(/\/deleteWebhook$/u);
+    const request = http.request.mock.calls[0]?.[0];
+    expect(request?.url).toMatch(/\/deleteWebhook$/u);
     // Telegram defaults `drop_pending_updates` to false when omitted. The
     // confirmed remediation must not discard valid user messages.
-    expect(request.body).toBeUndefined();
+    expect(request?.body).toBeUndefined();
   });
 
   it('does not begin a webhook remediation after its host lifetime is cancelled', async () => {
@@ -160,15 +171,21 @@ describe('Telegram Channel provider actions', () => {
 
   it('restates the CURRENT shared-endpoint delivery capability on every connection test', async () => {
     // BotFather group privacy is re-enabled after setup: identity is unchanged,
-    // but ordinary supergroup messages stop arriving. Core can only refuse a
-    // stranded `allAllowedMessages` binding if this probe restates the current
-    // truth rather than only proving who the bot is.
+    // but ordinary supergroup messages stop arriving. The RETAINED connection
+    // config still carries the wider capability setup observed, so a probe that
+    // echoed it would report the stale truth and leave the stranded
+    // `allAllowedMessages` binding apparently ready. Only a re-authenticated
+    // `getMe` can answer this, so the two sources are deliberately opposed here.
     const http = {
       request: vi.fn(async () => response(botIdentity())),
     };
 
     await expect(testTelegramConnection(
-      { ...connection, selectedTransport: 'checkpointedPull' },
+      {
+        ...connection,
+        providerConfig: { botUsername: 'HappierBot', canReadAllGroupMessages: true },
+        selectedTransport: 'checkpointedPull',
+      },
       coreContext(http),
     )).resolves.toEqual({
       kind: 'ready',
@@ -179,6 +196,10 @@ describe('Telegram Channel provider actions', () => {
   });
 
   it('restates the widened capability when Telegram group privacy is off', async () => {
+    // The positive twin of the narrowing case, opposed the other way: the
+    // retained config still says privacy was ON at setup while the current bot
+    // may read every group message. A probe that echoed the retained value
+    // would keep withholding `allAllowedMessages` the platform now delivers.
     const http = {
       request: vi.fn(async () => response({
         ok: true,
@@ -187,7 +208,7 @@ describe('Telegram Channel provider actions', () => {
     };
 
     await expect(testTelegramConnection(
-      { ...connection, providerConfig: { botUsername: 'HappierBot', canReadAllGroupMessages: true }, selectedTransport: 'checkpointedPull' },
+      { ...connection, selectedTransport: 'checkpointedPull' },
       coreContext(http),
     )).resolves.toMatchObject({
       kind: 'ready',
@@ -197,7 +218,7 @@ describe('Telegram Channel provider actions', () => {
 
   it('establishes a no-history baseline without admitting the retained Telegram update', async () => {
     const http = {
-      request: vi.fn(async (input: Readonly<{ url: string }>) => response(
+      request: vi.fn(async (input: TelegramHttpRequestInput) => response(
         input.url.endsWith('/getMe')
           ? botIdentity()
           : {
@@ -241,7 +262,7 @@ describe('Telegram Channel provider actions', () => {
 
   it('normalizes routable Telegram refusals without their body and checkpoints only genuinely unroutable updates', async () => {
     const http = {
-      request: vi.fn(async (input: Readonly<{ url: string }>) => response(
+      request: vi.fn(async (input: TelegramHttpRequestInput) => response(
         input.url.endsWith('/getMe')
           ? botIdentity()
           : {
@@ -316,43 +337,53 @@ describe('Telegram Channel provider actions', () => {
       kind: 'batch',
       observations: [
         {
-          kind: 'routableNonAdmission',
-          reason: 'unsupportedEdit',
-          shell: {
-            occurrenceId: 'telegram:update:42',
-            endpoint: { kind: 'direct', audience: 'direct', id: '456' },
-            actor: { principalId: '789', kind: 'human', isIntegrationSelf: false },
-            message: { id: '1', revision: '1700000100000' },
-          },
-        },
-        {
-          kind: 'routableNonAdmission',
-          reason: 'unsupportedContent',
-          shell: { occurrenceId: 'telegram:update:43', message: { id: '2' } },
-        },
-        {
-          kind: 'routableNonAdmission',
-          reason: 'unsupportedContent',
-          shell: { occurrenceId: 'telegram:update:44', message: { id: '3' } },
-        },
-        {
-          kind: 'fullText',
           observation: {
-            occurrenceId: 'telegram:update:46',
-            endpoint: { kind: 'direct', audience: 'direct', id: '456' },
-            actor: { principalId: '123', kind: 'bot', isIntegrationSelf: true },
-            message: {
-              id: '4',
-              text: 'eligible',
-              addressingEvidence: 'none',
-              contentProvenance: 'forwarded',
+            kind: 'routableNonAdmission',
+            reason: 'unsupportedEdit',
+            shell: {
+              occurrenceId: 'telegram:update:42',
+              endpoint: { kind: 'direct', audience: 'direct', id: '456' },
+              actor: { principalId: '789', kind: 'human', isIntegrationSelf: false },
+              message: { id: '1', revision: '1700000100000' },
             },
           },
         },
         {
-          kind: 'routableNonAdmission',
-          reason: 'messageTooLarge',
-          shell: { occurrenceId: 'telegram:update:47', message: { id: '5' } },
+          observation: {
+            kind: 'routableNonAdmission',
+            reason: 'unsupportedContent',
+            shell: { occurrenceId: 'telegram:update:43', message: { id: '2' } },
+          },
+        },
+        {
+          observation: {
+            kind: 'routableNonAdmission',
+            reason: 'unsupportedContent',
+            shell: { occurrenceId: 'telegram:update:44', message: { id: '3' } },
+          },
+        },
+        {
+          observation: {
+            kind: 'fullText',
+            observation: {
+              occurrenceId: 'telegram:update:46',
+              endpoint: { kind: 'direct', audience: 'direct', id: '456' },
+              actor: { principalId: '123', kind: 'bot', isIntegrationSelf: true },
+              message: {
+                id: '4',
+                text: 'eligible',
+                addressingEvidence: 'none',
+                contentProvenance: 'forwarded',
+              },
+            },
+          },
+        },
+        {
+          observation: {
+            kind: 'routableNonAdmission',
+            reason: 'messageTooLarge',
+            shell: { occurrenceId: 'telegram:update:47', message: { id: '5' } },
+          },
         },
       ],
       checkpointAfterBatch: {
@@ -362,7 +393,8 @@ describe('Telegram Channel provider actions', () => {
       },
     });
     if (result.kind !== 'batch') throw new Error('Expected a Telegram poll batch.');
-    for (const ingress of result.observations) {
+    for (const entry of result.observations) {
+      const ingress = entry.observation;
       if (ingress.kind === 'routableNonAdmission') {
         expect(ingress.shell.message).not.toHaveProperty('text');
       }
@@ -371,7 +403,7 @@ describe('Telegram Channel provider actions', () => {
 
   it('does not invent an immutable revision for an edited Telegram update without edit_date', async () => {
     const http = {
-      request: vi.fn(async (input: Readonly<{ url: string }>) => response(
+      request: vi.fn(async (input: TelegramHttpRequestInput) => response(
         input.url.endsWith('/getMe')
           ? botIdentity()
           : {
@@ -403,7 +435,7 @@ describe('Telegram Channel provider actions', () => {
 
   it('normalizes a private-chat topic as a thread endpoint instead of its parent DM', async () => {
     const http = {
-      request: vi.fn(async (input: Readonly<{ url: string }>) => {
+      request: vi.fn(async (input: TelegramHttpRequestInput) => {
         if (input.url.endsWith('/getMe')) return response(botIdentity());
         if (input.url.endsWith('/getUpdates')) {
           return response({
@@ -432,15 +464,17 @@ describe('Telegram Channel provider actions', () => {
       waitMs: 0,
     }, coreContext(http))).resolves.toMatchObject({
       observations: [{
-        kind: 'fullText',
-        observation: { endpoint: { kind: 'thread', audience: 'direct', id: '456:17', parentId: '456' } },
+        observation: {
+          kind: 'fullText',
+          observation: { endpoint: { kind: 'thread', audience: 'direct', id: '456:17', parentId: '456' } },
+        },
       }],
     });
   });
 
   it('keeps one bot-wide checkpoint across routed Telegram endpoints without an observation cursor identity', async () => {
     const http = {
-      request: vi.fn(async (input: Readonly<{ url: string }>) => {
+      request: vi.fn(async (input: TelegramHttpRequestInput) => {
         if (input.url.endsWith('/getMe')) return response(botIdentity());
         if (input.url.endsWith('/getUpdates')) {
           return response({
@@ -484,13 +518,14 @@ describe('Telegram Channel provider actions', () => {
     expect(result).toMatchObject({
       kind: 'batch',
       observations: [
-        { kind: 'fullText', observation: { endpoint: { kind: 'direct', id: '456' } } },
-        { kind: 'fullText', observation: { endpoint: { kind: 'thread', id: '-100456:17', parentId: '-100456' } } },
+        { observation: { kind: 'fullText', observation: { endpoint: { kind: 'direct', id: '456' } } } },
+        { observation: { kind: 'fullText', observation: { endpoint: { kind: 'thread', id: '-100456:17', parentId: '-100456' } } } },
       ],
       checkpointAfterBatch: { v: 1, offset: '44', caughtUpAtMs: expect.any(Number) },
     });
     if (result.kind !== 'batch') throw new Error('Expected a Telegram poll batch.');
-    for (const ingress of result.observations) {
+    for (const entry of result.observations) {
+      const ingress = entry.observation;
       const evidence = ingress.kind === 'fullText' ? ingress.observation : ingress.shell;
       expect(evidence).not.toHaveProperty('streamKey');
     }
@@ -499,7 +534,7 @@ describe('Telegram Channel provider actions', () => {
 
   it('uses the immutable bot queue key to reject a poll for another Telegram bot before reading updates', async () => {
     const http = {
-      request: vi.fn(async (input: Readonly<{ url: string }>) => {
+      request: vi.fn(async (input: TelegramHttpRequestInput) => {
         if (input.url.endsWith('/getMe')) return response(botIdentity());
         throw new Error(`Unexpected Telegram request: ${input.url}`);
       }),
@@ -521,7 +556,7 @@ describe('Telegram Channel provider actions', () => {
 
   it('projects only authenticated Telegram entity and reply facts as addressing evidence', async () => {
     const http = {
-      request: vi.fn(async (input: Readonly<{ url: string }>) => response(
+      request: vi.fn(async (input: TelegramHttpRequestInput) => response(
         input.url.endsWith('/getMe')
           ? botIdentity()
           : {
@@ -640,7 +675,7 @@ describe('Telegram Channel provider actions', () => {
 
     expect(result).toMatchObject({ kind: 'batch' });
     if (result.kind !== 'batch') throw new Error('Expected a Telegram poll batch.');
-    const observations = new Map(result.observations.flatMap((ingress) => (
+    const observations = new Map(result.observations.flatMap(({ observation: ingress }) => (
       ingress.kind === 'fullText'
         ? [[ingress.observation.occurrenceId, ingress.observation] as const]
         : []
@@ -668,7 +703,7 @@ describe('Telegram Channel provider actions', () => {
 
   it('delivers a private-chat thread endpoint with its Telegram message thread ID', async () => {
     const http = {
-      request: vi.fn(async (input: Readonly<{ url: string }>) => {
+      request: vi.fn(async (input: TelegramHttpRequestInput) => {
         if (input.url.endsWith('/getMe')) return response(botIdentity());
         if (input.url.endsWith('/getChat')) {
           return response({ ok: true, result: { id: 456, type: 'private', first_name: 'Ada' } });
@@ -706,7 +741,7 @@ describe('Telegram Channel provider actions', () => {
       },
     ]) {
       const http = {
-        request: vi.fn(async (input: Readonly<{ url: string }>) => {
+        request: vi.fn(async (input: TelegramHttpRequestInput) => {
           if (input.url.endsWith('/getMe')) return response(botIdentity());
           if (input.url.endsWith('/getChat')) return response({ ok: true, result: chat });
           if (input.url.endsWith('/sendMessage')) return response({ ok: true, result: { message_id: 88 } });
@@ -729,7 +764,7 @@ describe('Telegram Channel provider actions', () => {
 
   it('refuses a malformed thread endpoint identity instead of truncating it into a different Telegram topic', async () => {
     const http = {
-      request: vi.fn(async (input: Readonly<{ url: string }>) => {
+      request: vi.fn(async (input: TelegramHttpRequestInput) => {
         if (input.url.endsWith('/getMe')) return response(botIdentity());
         if (input.url.endsWith('/getChat')) {
           return response({ ok: true, result: { id: 456, type: 'private', first_name: 'Ada' } });
@@ -757,7 +792,7 @@ describe('Telegram Channel provider actions', () => {
     for (const scenario of [
       {
         name: 'getMe rate limit',
-        request: async (input: Readonly<{ url: string }>) => {
+        request: async (input: TelegramHttpRequestInput) => {
           if (input.url.endsWith('/getMe')) {
             return response({
               ok: false,
@@ -772,7 +807,7 @@ describe('Telegram Channel provider actions', () => {
       },
       {
         name: 'getMe transport failure',
-        request: async (input: Readonly<{ url: string }>) => {
+        request: async (input: TelegramHttpRequestInput) => {
           if (input.url.endsWith('/getMe')) throw new Error('connection reset');
           throw new Error(`Unexpected Telegram request: ${input.url}`);
         },
@@ -780,7 +815,7 @@ describe('Telegram Channel provider actions', () => {
       },
       {
         name: 'getChat rate limit',
-        request: async (input: Readonly<{ url: string }>) => {
+        request: async (input: TelegramHttpRequestInput) => {
           if (input.url.endsWith('/getMe')) return response(botIdentity());
           if (input.url.endsWith('/getChat')) {
             return response({
@@ -796,7 +831,7 @@ describe('Telegram Channel provider actions', () => {
       },
       {
         name: 'getChat rate limit without a retry hint',
-        request: async (input: Readonly<{ url: string }>) => {
+        request: async (input: TelegramHttpRequestInput) => {
           if (input.url.endsWith('/getMe')) return response(botIdentity());
           if (input.url.endsWith('/getChat')) {
             return response({
@@ -811,7 +846,7 @@ describe('Telegram Channel provider actions', () => {
       },
       {
         name: 'getChat transport failure',
-        request: async (input: Readonly<{ url: string }>) => {
+        request: async (input: TelegramHttpRequestInput) => {
           if (input.url.endsWith('/getMe')) return response(botIdentity());
           if (input.url.endsWith('/getChat')) throw new Error('connection reset');
           throw new Error(`Unexpected Telegram request: ${input.url}`);
@@ -820,7 +855,7 @@ describe('Telegram Channel provider actions', () => {
       },
       {
         name: 'getChat invalid target',
-        request: async (input: Readonly<{ url: string }>) => {
+        request: async (input: TelegramHttpRequestInput) => {
           if (input.url.endsWith('/getMe')) return response(botIdentity());
           if (input.url.endsWith('/getChat')) {
             return response({
@@ -835,7 +870,7 @@ describe('Telegram Channel provider actions', () => {
       },
       {
         name: 'getChat permission denial',
-        request: async (input: Readonly<{ url: string }>) => {
+        request: async (input: TelegramHttpRequestInput) => {
           if (input.url.endsWith('/getMe')) return response(botIdentity());
           if (input.url.endsWith('/getChat')) {
             return response({ ok: false, error_code: 403, description: 'Forbidden' });
@@ -947,7 +982,7 @@ describe('Telegram Channel provider actions', () => {
 
   it('preserves sender-chat text with an unattributable actor instead of inventing a sender identity', async () => {
     const http = {
-      request: vi.fn(async (input: Readonly<{ url: string }>) => response(
+      request: vi.fn(async (input: TelegramHttpRequestInput) => response(
         input.url.endsWith('/getMe')
           ? botIdentity()
           : {
@@ -988,19 +1023,23 @@ describe('Telegram Channel provider actions', () => {
       kind: 'batch',
       observations: [
         {
-          kind: 'fullText',
           observation: {
-            occurrenceId: 'telegram:update:42',
-            actor: { principalId: null, kind: 'unknown', isIntegrationSelf: false },
-            message: { text: 'compatibility fake sender' },
+            kind: 'fullText',
+            observation: {
+              occurrenceId: 'telegram:update:42',
+              actor: { principalId: null, kind: 'unknown', isIntegrationSelf: false },
+              message: { text: 'compatibility fake sender' },
+            },
           },
         },
         {
-          kind: 'fullText',
           observation: {
-            occurrenceId: 'telegram:update:43',
-            actor: { principalId: null, kind: 'unknown', isIntegrationSelf: false },
-            message: { text: 'sender chat only' },
+            kind: 'fullText',
+            observation: {
+              occurrenceId: 'telegram:update:43',
+              actor: { principalId: null, kind: 'unknown', isIntegrationSelf: false },
+              message: { text: 'sender chat only' },
+            },
           },
         },
       ],
@@ -1009,7 +1048,7 @@ describe('Telegram Channel provider actions', () => {
 
   it('fails closed to unknown actors when Telegram from.is_bot is missing or malformed', async () => {
     const http = {
-      request: vi.fn(async (input: Readonly<{ url: string }>) => response(
+      request: vi.fn(async (input: TelegramHttpRequestInput) => response(
         input.url.endsWith('/getMe')
           ? botIdentity()
           : {
@@ -1049,17 +1088,21 @@ describe('Telegram Channel provider actions', () => {
       kind: 'batch',
       observations: [
         {
-          kind: 'fullText',
           observation: {
-            occurrenceId: 'telegram:update:42',
-            actor: { principalId: null, kind: 'unknown', isIntegrationSelf: false },
+            kind: 'fullText',
+            observation: {
+              occurrenceId: 'telegram:update:42',
+              actor: { principalId: null, kind: 'unknown', isIntegrationSelf: false },
+            },
           },
         },
         {
-          kind: 'fullText',
           observation: {
-            occurrenceId: 'telegram:update:43',
-            actor: { principalId: null, kind: 'unknown', isIntegrationSelf: false },
+            kind: 'fullText',
+            observation: {
+              occurrenceId: 'telegram:update:43',
+              actor: { principalId: null, kind: 'unknown', isIntegrationSelf: false },
+            },
           },
         },
       ],
@@ -1068,7 +1111,7 @@ describe('Telegram Channel provider actions', () => {
 
   it('preserves automatic-forward provenance without trusting Telegram’s compatibility sender', async () => {
     const http = {
-      request: vi.fn(async (input: Readonly<{ url: string }>) => response(
+      request: vi.fn(async (input: TelegramHttpRequestInput) => response(
         input.url.endsWith('/getMe')
           ? botIdentity()
           : {
@@ -1097,11 +1140,13 @@ describe('Telegram Channel provider actions', () => {
     }, coreContext(http))).resolves.toMatchObject({
       kind: 'batch',
       observations: [{
-        kind: 'fullText',
         observation: {
-          occurrenceId: 'telegram:update:42',
-          actor: { principalId: null, kind: 'unknown', isIntegrationSelf: false },
-          message: { contentProvenance: 'forwarded', text: 'linked channel post' },
+          kind: 'fullText',
+          observation: {
+            occurrenceId: 'telegram:update:42',
+            actor: { principalId: null, kind: 'unknown', isIntegrationSelf: false },
+            message: { contentProvenance: 'forwarded', text: 'linked channel post' },
+          },
         },
       }],
     });
@@ -1109,7 +1154,7 @@ describe('Telegram Channel provider actions', () => {
 
   it('uses the caller-supplied committed checkpoint instead of remembering an uncommitted returned offset', async () => {
     const http = {
-      request: vi.fn(async (input: Readonly<{ url: string }>) => response(
+      request: vi.fn(async (input: TelegramHttpRequestInput) => response(
         input.url.endsWith('/getMe')
           ? botIdentity()
           : {
@@ -1160,7 +1205,7 @@ describe('Telegram Channel provider actions', () => {
     try {
       const caughtUpAtMs = Date.now() - 86_399_000;
       const http = {
-        request: vi.fn(async (input: Readonly<{ url: string }>) => response(
+        request: vi.fn(async (input: TelegramHttpRequestInput) => response(
           input.url.endsWith('/getMe')
             ? botIdentity()
             : {
@@ -1213,7 +1258,7 @@ describe('Telegram Channel provider actions', () => {
     vi.setSystemTime(new Date('2026-08-10T12:00:00.000Z'));
     try {
       const http = {
-        request: vi.fn(async (input: Readonly<{ url: string }>) => response(
+        request: vi.fn(async (input: TelegramHttpRequestInput) => response(
           input.url.endsWith('/getMe')
             ? botIdentity()
             : {
@@ -1275,11 +1320,7 @@ describe('Telegram Channel provider actions', () => {
     }
   });
 
-  it('reaches no Automation authority from the live poll while the Telegram Event is withheld', async () => {
-    // The Event is WITHHELD from `plugin.ts`, so the host builds no adopted-
-    // definition owner for this plugin and every `automation.event.sources.list`
-    // fails with `automation_event_adopted_definitions_unavailable` — once per
-    // observed batch, on every Machine, forever.
+  it('emits one Event candidate with the observed ingress without reaching Automation directly', async () => {
     const executeAction = vi.fn(async (actionId: string) => {
       throw new PluginError({
         code: 'automation_event_adopted_definitions_unavailable',
@@ -1287,7 +1328,7 @@ describe('Telegram Channel provider actions', () => {
       });
     });
     const http = {
-      request: vi.fn(async (input: Readonly<{ url: string }>) => response(
+      request: vi.fn(async (input: TelegramHttpRequestInput) => response(
         input.url.endsWith('/getMe') ? botIdentity() : {
           ok: true,
           result: [{
@@ -1313,6 +1354,28 @@ describe('Telegram Channel provider actions', () => {
 
     expect(result).toMatchObject({
       kind: 'batch',
+      observations: [{
+        observation: {
+          kind: 'fullText',
+          observation: { occurrenceId: 'telegram:update:42' },
+        },
+        eventCandidate: {
+          eventRef: {
+            pluginId: 'happier.channel.telegram',
+            localId: 'automation/chat-message-v1',
+          },
+          sourceInstanceId: 'telegram:chat:123:456',
+          sourceContractVersion: 1,
+          payload: {
+            chatId: '456',
+            chatType: 'private',
+            messageId: '1',
+            text: 'hello',
+            senderId: '789',
+            senderIsBot: false,
+          },
+        },
+      }],
       checkpointAfterBatch: { v: 1, offset: '43' },
     });
     expect(executeAction).not.toHaveBeenCalled();
@@ -1320,7 +1383,7 @@ describe('Telegram Channel provider actions', () => {
 
   it('bounds a core maximum wait to Telegram’s long-poll limit while preserving a longer HTTP deadline', async () => {
     const http = {
-      request: vi.fn(async (input: Readonly<{ url: string }>) => response(
+      request: vi.fn(async (input: TelegramHttpRequestInput) => response(
         input.url.endsWith('/getMe') ? botIdentity() : { ok: true, result: [] },
       )),
     };
@@ -1341,7 +1404,7 @@ describe('Telegram Channel provider actions', () => {
 
   it('retains accepted chunk evidence when a later Telegram delivery cannot be safely retried', async () => {
     const http = {
-      request: vi.fn(async (input: Readonly<{ url: string }>) => {
+      request: vi.fn(async (input: TelegramHttpRequestInput) => {
         if (input.url.endsWith('/getMe')) return response(botIdentity());
         if (input.url.endsWith('/getChat')) {
           return response({ ok: true, result: { id: 456, type: 'private', first_name: 'Ada' } });
@@ -1376,7 +1439,7 @@ describe('Telegram Channel provider actions', () => {
   it('does not rewrite an aborted outbound Telegram call as a safe retry', async () => {
     const controller = new AbortController();
     const http = {
-      request: vi.fn(async (input: Readonly<{ url: string }>) => {
+      request: vi.fn(async (input: TelegramHttpRequestInput) => {
         if (input.url.endsWith('/getMe')) return response(botIdentity());
         if (input.url.endsWith('/getChat')) {
           return response({ ok: true, result: { id: 456, type: 'private', first_name: 'Ada' } });

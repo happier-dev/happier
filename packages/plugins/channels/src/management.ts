@@ -7,6 +7,7 @@ import {
 } from '@happier-dev/plugin-sdk';
 import { pluginJsonValuesEqual } from '@happier-dev/plugin-sdk/protocol';
 import type { PluginAccountStorageScope } from '@happier-dev/plugin-sdk/storage';
+import { PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1 } from '@happier-dev/plugin-sdk/collections';
 import type {
   AdmittedTargetedOperationExecutionHandle,
   PluginActionResultById,
@@ -19,7 +20,6 @@ import {
   ConversationBindingReadResultV1Schema,
   ConversationBindingResolveInputV1Schema,
   ConversationBindingSetEnabledInputV1Schema,
-  ConversationBindingTargetRotateInputV1Schema,
   ConversationBindingUpdateInputV1Schema,
   ConversationConnectionCreateInputV1Schema,
   ConversationConnectionDeleteInputV1Schema,
@@ -27,7 +27,6 @@ import {
   ConversationConnectionRetestInputV1Schema,
   ConversationConnectionPrepareInputV1Schema,
   isConversationConnectionSelectableTransportV1,
-  ConversationConnectionSetEnabledInputV1Schema,
   ConversationConnectionTestInputV1Schema,
   ConversationConnectionTestResultV1Schema,
   ConversationConnectionTransferInputV1Schema,
@@ -47,9 +46,7 @@ import {
   MAX_CONVERSATION_BINDINGS_PER_ACCOUNT,
   MAX_CONVERSATION_CONNECTIONS_PER_ACCOUNT,
   areConversationEndpointIdentitiesEqual,
-  conversationBindingInputModesForEndpointV1,
   conversationBindingPolicyForOmittedFieldsV1,
-  isConversationBindingInputModeDeliverableV1,
   hasCanonicalConversationResolutionCandidateOrderV1,
   type ConversationBindingCreateResultV1,
   type ConversationBindingCreateInputV1,
@@ -61,7 +58,6 @@ import {
   type ConversationBindingResolveInputV1,
   type ConversationBindingResolveResultV1,
   type ConversationBindingSetEnabledInputV1,
-  type ConversationBindingTargetRotateInputV1,
   type ConversationBindingUpdateInputV1,
   type ConversationBindingUpdateResultV1,
   type ConversationConnectionCreateInputV1,
@@ -75,7 +71,6 @@ import {
   type ConversationProviderConnectionStopInputV1,
   type ConversationConnectionPrepareInputV1,
   type ConversationConnectionPrepareResultV1,
-  type ConversationConnectionSetEnabledInputV1,
   type ConversationConnectionUpdateInputV1,
   type ConversationDeliveryResolveInputV1,
   type ConversationPairingCancelInputV1,
@@ -103,17 +98,13 @@ import {
   CHANNEL_STATE_RECORD_KIND,
   isCanonicalChannelStateRecordIdentity,
 } from './collections.js';
-import {
-  MAX_CHANNEL_ACCOUNT_COLLECTION_QUERY_PAGE_SIZE,
-  requireChannelsAccountStorage,
-} from './requiredAccountStorage.js';
+import { requireChannelsAccountStorage } from './requiredAccountStorage.js';
 import {
   abandonConversationConnectionStop,
   confirmConversationConnectionStop,
   hasAcceptedConversationTransferLoss,
   recordConversationConnectionHistoryGap,
   recordConversationConnectionProviderReadiness,
-  setConversationConnectionEnabled,
   startConversationConnectionDelete,
   startConversationConnectionTransfer,
   transitionConversationConnection,
@@ -143,6 +134,8 @@ import {
   readConversationBindingUpdateRow,
   readConversationConnectionSharedEndpointInputModes,
   readConversationConnectionUpdateRow,
+  assertConversationBindingInputModeIsDeliverable,
+  hasConversationBindingDeliveryDemandChanged,
   mutateConversationConnectionLifecycleInAccountCollection,
   setConversationBindingEnabledInAccountCollection,
   updateConversationBindingPolicyInAccountCollection,
@@ -248,9 +241,6 @@ type ConversationConnectionDeleteResult = Readonly<{
 }>;
 type ConversationBindingUpdateResult = ConversationBindingUpdateResultV1;
 type ConversationBindingCreateResult = ConversationBindingCreateResultV1;
-type ConversationBindingTargetMutationResult =
-  | ConversationBindingUpdateResult
-  | ConversationAutomationTargetNotVerifiedResult;
 export type ConversationPairingManager = ReturnType<typeof createConversationPairingManager>;
 type ProviderConnectionPreparation =
   | Extract<ReturnType<typeof ConversationConnectionTestResultV1Schema.parse>, Readonly<{ kind: 'notReady' }>>
@@ -278,6 +268,7 @@ type ConversationBindingResolutionStale = Extract<
 type BindingResolutionConnection = Readonly<{
   kind: 'current';
   connection: ConversationConnectionUpdateRow;
+  row: StateRow;
 }>;
 type BindingResolutionConnectionRead =
   | BindingResolutionConnection
@@ -302,6 +293,13 @@ type BindingPrincipalCandidates = Readonly<{
 type BindingPrincipalResolution = BindingResolutionTerminal | BindingPrincipalCandidates;
 type BindingResolutionCurrent = BindingResolutionConnection & Readonly<{
   provider: BindingResolutionProvider;
+}>;
+type BindingEndpointSelectionResolution = BindingResolutionTerminal | Readonly<{
+  kind: 'endpointSelected';
+  endpoint: ConversationResolvedEndpointV1;
+  witness: BindingResolutionProvider;
+  /** The provider-authenticated shared-endpoint delivery truth for this connection. */
+  sharedEndpointInputModes?: readonly ConversationBindingInputModeV1[];
 }>;
 type BindingAudienceResolution = BindingResolutionTerminal | Readonly<{
   kind: 'ready';
@@ -383,15 +381,6 @@ function readAdmittedConnectionUpdateInput(input: JsonValue): ConversationConnec
     ConversationConnectionUpdateInputV1Schema,
     'channels_connection_update_input_invalid',
     'Connection update input was not admitted by its strict contract.',
-  );
-}
-
-function readAdmittedConnectionSetEnabledInput(input: JsonValue): ConversationConnectionSetEnabledInputV1 {
-  return readAdmittedActionInput(
-    input,
-    ConversationConnectionSetEnabledInputV1Schema,
-    'channels_connection_set_enabled_input_invalid',
-    'Connection enablement input was not admitted by its strict contract.',
   );
 }
 
@@ -503,15 +492,6 @@ function readAdmittedBindingUpdateInput(input: JsonValue): ConversationBindingUp
   );
 }
 
-function readAdmittedBindingTargetRotateInput(input: JsonValue): ConversationBindingTargetRotateInputV1 {
-  return readAdmittedActionInput(
-    input,
-    ConversationBindingTargetRotateInputV1Schema,
-    'channels_binding_target_rotate_input_invalid',
-    'Binding target rotation input was not admitted by its strict contract.',
-  );
-}
-
 function readAdmittedPairingCreateInput(input: JsonValue): ConversationPairingCreateInputV1 {
   return readAdmittedActionInput(
     input,
@@ -568,7 +548,7 @@ async function readCurrentBindingResolutionConnection(input: Readonly<{
   if (connection.lifecycle.deletionState !== 'none') {
     return bindingResolutionUnavailable('connectionDeleting');
   }
-  return { kind: 'current', connection };
+  return { kind: 'current', connection, row };
 }
 
 /** The provider is sourced only from the current admission snapshot, never a stored Action handle. */
@@ -619,11 +599,7 @@ function isSameBindingResolutionProvider(input: Readonly<{
   before: BindingResolutionProvider;
   after: BindingResolutionProvider;
 }>): boolean {
-  return input.before.targetGeneration === input.after.targetGeneration
-    && input.before.contribution.contributor.pluginId === input.after.contribution.contributor.pluginId
-    && input.before.contribution.contributor.contributionId === input.after.contribution.contributor.contributionId
-    && input.before.contribution.contributor.immutableGenerationId
-      === input.after.contribution.contributor.immutableGenerationId
+  return isSameCurrentProviderContributionWitnessIdentity(input)
     && areAdmittedTargetedOperationIdentitiesEqual(
       readBindingResolutionAction(input.before, 'endpointResolve'),
       readBindingResolutionAction(input.after, 'endpointResolve'),
@@ -632,6 +608,17 @@ function isSameBindingResolutionProvider(input: Readonly<{
       readBindingResolutionAction(input.before, 'principalResolve'),
       readBindingResolutionAction(input.after, 'principalResolve'),
     );
+}
+
+function isSameCurrentProviderContributionWitnessIdentity(input: Readonly<{
+  before: CurrentProviderContributionWitness;
+  after: CurrentProviderContributionWitness;
+}>): boolean {
+  return input.before.targetGeneration === input.after.targetGeneration
+    && input.before.contribution.contributor.pluginId === input.after.contribution.contributor.pluginId
+    && input.before.contribution.contributor.contributionId === input.after.contribution.contributor.contributionId
+    && input.before.contribution.contributor.immutableGenerationId
+      === input.after.contribution.contributor.immutableGenerationId;
 }
 
 function readEndpointResolveRequest(input: Readonly<{
@@ -816,23 +803,18 @@ async function resolveBindingPrincipalCandidates(input: Readonly<{
   query: string;
   context: PluginInvocationContext;
 }>): Promise<BindingPrincipalResolution> {
-  const endpointResolution = await resolveBindingEndpointCandidates({
+  const endpointResolution = await resolveBindingEndpointSelection({
     connectionId: input.connectionId,
     expectedConnectionRevision: input.expectedConnectionRevision,
-    query: input.endpointSelection.query,
-    kinds: input.endpointSelection.kinds,
+    endpointSelection: input.endpointSelection,
     context: input.context,
   });
-  if (endpointResolution.kind !== 'endpointCandidates') return endpointResolution;
-  const endpoint = endpointResolution.candidates.find((candidate) => (
-    areConversationEndpointIdentitiesEqual(candidate, input.endpointSelection.selected)
-  ));
-  if (endpoint === undefined) return bindingResolutionStale();
+  if (endpointResolution.kind !== 'endpointSelected') return endpointResolution;
 
   return await resolveBindingPrincipalCandidatesForEndpoint({
     connectionId: input.connectionId,
     expectedConnectionRevision: input.expectedConnectionRevision,
-    endpoint,
+    endpoint: endpointResolution.endpoint,
     witness: endpointResolution.witness,
     query: input.query,
     context: input.context,
@@ -901,10 +883,39 @@ async function resolveBindingPrincipalCandidatesForEndpoint(input: Readonly<{
  * One persisted audience must be selected from the exact current provider
  * candidates. The selection is never treated as a durable provider identity.
  *
- * Binding create and binding update both reach the audience through this one
- * resolver; the operation only names which error domain a rejected selection
- * belongs to.
+ * Every caller that needs the caller's chosen endpoint — binding create,
+ * binding update, principal resolution, and pairing create — reaches it
+ * through this one resolver; the operation only names which error domain a
+ * rejected selection belongs to.
  */
+async function resolveBindingEndpointSelection(input: Readonly<{
+  connectionId: string;
+  expectedConnectionRevision: number;
+  endpointSelection: ConversationBindingEndpointSelection;
+  context: PluginInvocationContext;
+}>): Promise<BindingEndpointSelectionResolution> {
+  const endpointResolution = await resolveBindingEndpointCandidates({
+    connectionId: input.connectionId,
+    expectedConnectionRevision: input.expectedConnectionRevision,
+    query: input.endpointSelection.query,
+    kinds: input.endpointSelection.kinds,
+    context: input.context,
+  });
+  if (endpointResolution.kind !== 'endpointCandidates') return endpointResolution;
+  const endpoint = endpointResolution.candidates.find((candidate) => (
+    areConversationEndpointIdentitiesEqual(candidate, input.endpointSelection.selected)
+  ));
+  if (endpoint === undefined) return bindingResolutionStale();
+  return {
+    kind: 'endpointSelected',
+    endpoint,
+    witness: endpointResolution.witness,
+    ...(endpointResolution.sharedEndpointInputModes === undefined
+      ? {}
+      : { sharedEndpointInputModes: endpointResolution.sharedEndpointInputModes }),
+  };
+}
+
 async function resolveBindingAudienceSelection(input: Readonly<{
   connectionId: string;
   expectedConnectionRevision: number;
@@ -918,18 +929,14 @@ async function resolveBindingAudienceSelection(input: Readonly<{
   context: PluginInvocationContext;
 }>): Promise<BindingAudienceResolution> {
   assertBindingPrincipalSelectionIdsAreUnique(input.principalSelection, input.operation);
-  const endpointResolution = await resolveBindingEndpointCandidates({
+  const endpointResolution = await resolveBindingEndpointSelection({
     connectionId: input.connectionId,
     expectedConnectionRevision: input.expectedConnectionRevision,
-    query: input.endpointSelection.query,
-    kinds: input.endpointSelection.kinds,
+    endpointSelection: input.endpointSelection,
     context: input.context,
   });
-  if (endpointResolution.kind !== 'endpointCandidates') return endpointResolution;
-  const endpoint = endpointResolution.candidates.find((candidate) => (
-    areConversationEndpointIdentitiesEqual(candidate, input.endpointSelection.selected)
-  ));
-  if (endpoint === undefined) return bindingResolutionStale();
+  if (endpointResolution.kind !== 'endpointSelected') return endpointResolution;
+  const endpoint = endpointResolution.endpoint;
 
   const principalResolution = await resolveBindingPrincipalCandidatesForEndpoint({
     connectionId: input.connectionId,
@@ -1665,6 +1672,22 @@ export function createConversationPairingManagementHandlers(pairing: Conversatio
         connection,
       });
       const facts = readPairingConnectionFacts(connection);
+      // The destination is proven through the same resolver every other
+      // persisting owner uses, so the challenge freezes a provider-
+      // authenticated endpoint instead of a caller-asserted identity.
+      const destination = await resolveBindingEndpointSelection({
+        connectionId: createInput.connectionId,
+        expectedConnectionRevision: createInput.expectedConnectionRevision,
+        endpointSelection: createInput.endpointSelection,
+        context,
+      });
+      if (destination.kind !== 'endpointSelected') {
+        throw pluginError(
+          'channels_pairing_endpoint_unavailable',
+          'The selected conversation is not a current provider destination for this connection.',
+          destination.kind === 'notReady',
+        );
+      }
       return pairing.createChallenge({
         connectionId: createInput.connectionId,
         expectedConnectionRevision: createInput.expectedConnectionRevision,
@@ -1673,6 +1696,7 @@ export function createConversationPairingManagementHandlers(pairing: Conversatio
         ...(facts.pairingDeepLinkTemplate === undefined
           ? {}
           : { pairingDeepLinkTemplate: facts.pairingDeepLinkTemplate }),
+        endpoint: destination.endpoint,
         target: createInput.target,
       });
     },
@@ -1685,8 +1709,21 @@ export function createConversationPairingManagementHandlers(pairing: Conversatio
       );
     },
 
-    async cancel(input: JsonValue, _context: PluginInvocationContext): Promise<ConversationPairingCancelResult> {
+    async cancel(input: JsonValue, context: PluginInvocationContext): Promise<ConversationPairingCancelResult> {
       const cancelInput = readAdmittedPairingCancelInput(input);
+      // Pairing memory outlives an Account change, so an opaque item ID is not
+      // by itself authority over it. The connection the item is attached to is
+      // the Account partition every other pairing entry already proves; resolve
+      // it and require the current Account's Collection to still own that row
+      // before the one mutation owner may act. A retired Account's item is
+      // reported exactly like an unknown one so cancellation stays non-oracular.
+      const pending = pairing.readPendingConnectionId(cancelInput);
+      if (pending.kind !== 'pending') return { kind: 'notCancelled', reason: pending.kind };
+      const collection = requireChannelsAccountStorage(context).collection(CHANNEL_STATE_COLLECTION);
+      assertNotAborted(context.signal);
+      const connectionRow = await collection.get(pending.connectionId, { signal: context.signal });
+      assertNotAborted(context.signal);
+      if (connectionRow === null) return { kind: 'notCancelled', reason: 'unavailable' };
       return 'challengeId' in cancelInput
         ? pairing.cancelChallenge(cancelInput)
         : pairing.cancelProposal(cancelInput);
@@ -2359,6 +2396,9 @@ export async function prepareConversationConnectionForInvocation(
     ...(prepared.setup.sharedEndpointInputModes === undefined
       ? {}
       : { sharedEndpointInputModes: prepared.setup.sharedEndpointInputModes }),
+    ...(prepared.setup.setupGuidance === undefined
+      ? {}
+      : { setupGuidance: prepared.setup.setupGuidance }),
     ...(prepared.setup.integrationPrincipal.label === undefined
       ? {}
       : { destinationLabel: prepared.setup.integrationPrincipal.label }),
@@ -2477,31 +2517,6 @@ export async function updateConversationConnectionForInvocation(
   if (updateInput.enabled) return result;
   return await stopDisabledConversationConnectionTransport({
     connectionId: updateInput.connectionId,
-    result,
-  }, context);
-}
-
-/**
- * The narrow enable/disable Action uses the same lifecycle CAS as ordinary
- * policy edits but cannot carry a freshness-policy or provider mutation.
- */
-export async function setConversationConnectionEnabledForInvocation(
-  input: JsonValue,
-  context: PluginInvocationContext,
-): Promise<ConversationConnectionUpdateResult> {
-  const setEnabledInput = readAdmittedConnectionSetEnabledInput(input);
-  const result = await mutateConversationConnectionLifecycle({
-    connectionId: setEnabledInput.connectionId,
-    expectedRevision: setEnabledInput.expectedRevision,
-    operation: 'channels_connection_set_enabled',
-    transition: (current) => setConversationConnectionEnabled({
-      current,
-      enabled: setEnabledInput.enabled,
-    }),
-  }, context);
-  if (setEnabledInput.enabled) return result;
-  return await stopDisabledConversationConnectionTransport({
-    connectionId: setEnabledInput.connectionId,
     result,
   }, context);
 }
@@ -2637,7 +2652,7 @@ export async function retestConversationConnectionForInvocation(
       'Connection retest target has an invalid persisted transport.',
     );
   }
-  const provider = await readCurrentProviderContributionForPersistedSelection({
+  const providerWitness = await readCurrentProviderContributionWitnessForPersistedSelection({
     context: {
       targetedContributions: context.services.targetedContributions,
       signal: context.signal,
@@ -2645,6 +2660,7 @@ export async function retestConversationConnectionForInvocation(
     providerPluginId: current.providerPluginId,
     providerContributionSelection: current.providerContributionSelection,
   });
+  const provider = providerWitness.contribution;
   // `connectionTest` is a `required: true` role on the Channels provider point,
   // so an admitted contribution always carries it; there is no absent case to
   // branch on here.
@@ -2683,7 +2699,15 @@ export async function retestConversationConnectionForInvocation(
   }
   // A transient provider refusal is the answer, not a new retained verdict.
   // Only the connection's transport may supersede retained attention.
-  if (testResult.kind === 'notReady') return testResult;
+  if (testResult.kind === 'notReady') {
+    await rereadConversationConnectionRetestAuthority({
+      collection,
+      request,
+      context,
+      providerBefore: providerWitness,
+    });
+    return testResult;
+  }
   // Immutable connection identity is the whole tuple, exactly as create and
   // transfer compare it. A credential that still answers for the saved provider
   // connection key but now resolves to a different integration principal is a
@@ -2695,6 +2719,12 @@ export async function retestConversationConnectionForInvocation(
   });
   if (testResult.providerConnectionKey !== retainedIdentity.providerConnectionKey
     || testResult.integrationPrincipal.id !== retainedIdentity.integrationPrincipalId) {
+    await rereadConversationConnectionRetestAuthority({
+      collection,
+      request,
+      context,
+      providerBefore: providerWitness,
+    });
     throw pluginError(
       'channels_connection_test_identity_mismatch',
       'Provider connection test disagreed about immutable connection identity.',
@@ -2712,6 +2742,12 @@ export async function retestConversationConnectionForInvocation(
     sharedEndpointInputModes: testResult.sharedEndpointInputModes,
   });
   assertNotAborted(context.signal);
+  const reread = await rereadConversationConnectionRetestAuthority({
+    collection,
+    request,
+    context,
+    providerBefore: providerWitness,
+  });
   const readinessFact: Parameters<
     typeof recordConversationConnectionProviderReadiness
   >[0]['fact'] = unsatisfiable.length === 0
@@ -2723,7 +2759,7 @@ export async function retestConversationConnectionForInvocation(
       diagnostic: `This integration can no longer deliver ${unsatisfiable.join(', ')} for shared conversations, so saved bindings that use it receive nothing.`,
     };
   const transition = recordConversationConnectionProviderReadiness({
-    current: current.lifecycle,
+    current: reread.current.lifecycle,
     reportedAuthorityEpoch: request.authorityEpoch,
     fact: readinessFact,
   });
@@ -2732,8 +2768,8 @@ export async function retestConversationConnectionForInvocation(
     if (transition.kind === 'recorded') {
       await persistConversationConnectionLifecycle({
         collection,
-        row,
-        current,
+        row: reread.row,
+        current: reread.current,
         lifecycle: transition.connection,
         operation: 'channels_connection_retest',
       }, context);
@@ -2745,11 +2781,11 @@ export async function retestConversationConnectionForInvocation(
     };
   }
   const revision = transition.kind === 'rejoined'
-    ? row.revision
+    ? reread.row.revision
     : await persistConversationConnectionLifecycle({
       collection,
-      row,
-      current,
+      row: reread.row,
+      current: reread.current,
       lifecycle: transition.connection,
       operation: 'channels_connection_retest',
     }, context);
@@ -2759,6 +2795,58 @@ export async function retestConversationConnectionForInvocation(
     revision,
     authorityEpoch: request.authorityEpoch,
   };
+}
+
+async function rereadConversationConnectionRetestAuthority(input: Readonly<{
+  collection: ChannelStateCollection;
+  request: ReturnType<typeof readAdmittedConnectionRetestInput>;
+  context: PluginInvocationContext;
+  providerBefore: CurrentProviderContributionWitness;
+}>): Promise<Readonly<{
+  row: StateRow;
+  current: ConversationConnectionUpdateRow;
+}>> {
+  const row = await input.collection.get(input.request.connectionId, {
+    signal: input.context.signal,
+  });
+  assertNotAborted(input.context.signal);
+  if (row === null || row.revision !== input.request.expectedRevision) {
+    throw conversationConnectionRetestConflict();
+  }
+  const current = readConversationConnectionUpdateRow({
+    row,
+    connectionId: input.request.connectionId,
+  });
+  if (current.lifecycle.authorityEpoch !== input.request.authorityEpoch
+    || current.lifecycle.deletionState !== 'none'
+    || current.lifecycle.pendingOldTransportStop !== null
+    || !current.lifecycle.enabled) {
+    throw conversationConnectionRetestConflict();
+  }
+  let providerAfter: CurrentProviderContributionWitness;
+  try {
+    providerAfter = await readCurrentProviderContributionWitnessForPersistedSelection({
+      context: {
+        targetedContributions: input.context.services.targetedContributions,
+        signal: input.context.signal,
+      },
+      providerPluginId: current.providerPluginId,
+      providerContributionSelection: current.providerContributionSelection,
+    });
+  } catch (cause) {
+    if (input.context.signal.aborted) throw cause;
+    throw conversationConnectionRetestConflict();
+  }
+  if (!isSameCurrentProviderContributionWitnessIdentity({
+    before: input.providerBefore,
+    after: providerAfter,
+  }) || !areAdmittedTargetedOperationIdentitiesEqual(
+    input.providerBefore.contribution.operations.connectionTest,
+    providerAfter.contribution.operations.connectionTest,
+  )) {
+    throw conversationConnectionRetestConflict();
+  }
+  return { row, current };
 }
 
 function conversationConnectionRetestConflict(): PluginError {
@@ -3985,6 +4073,13 @@ export async function finalizeConversationConnectionDeletesForInvocation(
   if (context.signal.aborted) return;
   const collection = requireChannelsAccountStorage(context).collection(CHANNEL_STATE_COLLECTION);
   let finalizationFailed = false;
+  let finalizationPluginFailure: unknown;
+  const recordFinalizationFailure = (error: unknown): void => {
+    finalizationFailed = true;
+    if (finalizationPluginFailure === undefined && isPluginError(error)) {
+      finalizationPluginFailure = error;
+    }
+  };
   let connectionPage: Awaited<ReturnType<ChannelStateCollection['query']>> | undefined;
   try {
     connectionPage = await collection.query({
@@ -3995,14 +4090,14 @@ export async function finalizeConversationConnectionDeletesForInvocation(
       // happens to share its current value but answers a different question.
       limit: Math.min(
         MAX_CONVERSATION_CONNECTIONS_PER_ACCOUNT,
-        MAX_CHANNEL_ACCOUNT_COLLECTION_QUERY_PAGE_SIZE,
+        PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1,
       ),
     }, { signal: context.signal });
-  } catch {
+  } catch (error) {
     // Binding finalization is independently enumerable from the same existing
     // bounded census, so an unavailable connection page must not manufacture
     // a second recovery mechanism or starve already-finalizing bindings.
-    finalizationFailed = true;
+    recordFinalizationFailure(error);
   }
   if (connectionPage !== undefined) {
     for (const stored of connectionPage.rows) {
@@ -4017,10 +4112,10 @@ export async function finalizeConversationConnectionDeletesForInvocation(
         const current = readConversationConnectionUpdateRow({ row, connectionId });
         if (!finalizingDeleteIsAuthorized(current)) continue;
         await finalizeConversationConnectionDelete({ connectionId, context });
-      } catch {
+      } catch (error) {
         // Retain the canonical rows untouched; the next existing wake re-reads
         // them rather than treating an unavailable or malformed row as deleted.
-        finalizationFailed = true;
+        recordFinalizationFailure(error);
       }
     }
   }
@@ -4041,11 +4136,11 @@ export async function finalizeConversationConnectionDeletesForInvocation(
         index: CHANNEL_STATE_INDEX_ID.byKind,
         prefix: [CHANNEL_STATE_RECORD_KIND.binding],
         order: 'asc',
-        limit: Math.min(remainingBindings, MAX_CHANNEL_ACCOUNT_COLLECTION_QUERY_PAGE_SIZE),
+        limit: Math.min(remainingBindings, PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1),
         ...(bindingCursor === undefined ? {} : { cursor: bindingCursor }),
       }, { signal: context.signal });
-    } catch {
-      finalizationFailed = true;
+    } catch (error) {
+      recordFinalizationFailure(error);
     }
     if (bindingPage === undefined) break;
     for (const stored of bindingPage.rows) {
@@ -4061,16 +4156,17 @@ export async function finalizeConversationConnectionDeletesForInvocation(
         const current = readConversationBindingUpdateRow({ row, bindingId });
         if (!finalizingBindingDeleteIsAuthorized(current)) continue;
         await finalizeConversationBindingDelete({ bindingId, context });
-      } catch {
+      } catch (error) {
         // Retain the canonical rows untouched; the next existing wake re-reads
         // them rather than treating an unavailable or malformed row as deleted.
-        finalizationFailed = true;
+        recordFinalizationFailure(error);
       }
     }
     bindingCursor = bindingPage.nextCursor;
     if (bindingCursor === undefined) break;
   }
   if (context.signal.aborted) return;
+  if (finalizationPluginFailure !== undefined) throw finalizationPluginFailure;
   if (finalizationFailed) throw new Error('Channels delete finalization failed.');
 }
 
@@ -4118,6 +4214,7 @@ export async function createConversationBindingForInvocation(
   });
 
   let candidate: ReturnType<typeof createCandidate>;
+  let connectionRowForPersistence: StateRow;
   let projectionFrontier: Awaited<ReturnType<typeof createSessionProjectionFrontierForBinding>> = null;
   if (createInput.target.kind === 'automation') {
     const target = await resolveBindingTargetForPersistence(createInput.target, context);
@@ -4133,6 +4230,7 @@ export async function createConversationBindingForInvocation(
       providerBefore: audience.witness,
     });
     if (finalCurrent.kind !== 'current') return finalCurrent;
+    connectionRowForPersistence = finalCurrent.row;
     candidate = createCandidate(target);
   } else {
     const target = await resolveBindingTargetForPersistence(createInput.target, context);
@@ -4151,10 +4249,21 @@ export async function createConversationBindingForInvocation(
       providerBefore: audience.witness,
     });
     if (finalCurrent.kind !== 'current') return finalCurrent;
+    connectionRowForPersistence = finalCurrent.row;
   }
   assertNewConversationBindingCanPersist(candidate.binding);
   const result = await collection.batch([
-    { kind: 'assert', rowId: createInput.connectionId, expectedRevision: createInput.expectedConnectionRevision },
+    candidate.binding.enabled
+      ? {
+        kind: 'put' as const,
+        value: connectionRowForPersistence.value,
+        expectedRevision: createInput.expectedConnectionRevision,
+      }
+      : {
+        kind: 'assert' as const,
+        rowId: createInput.connectionId,
+        expectedRevision: createInput.expectedConnectionRevision,
+      },
     { kind: 'put', value: candidate.row, expectedRevision: 'absent' },
     ...(projectionFrontier === null
       ? []
@@ -4171,63 +4280,12 @@ export async function createConversationBindingForInvocation(
   return { kind: 'created', binding: candidate.binding };
 }
 
-/**
- * A binding may only promise an incoming-message policy the connection's
- * provider proved it can deliver.
- *
- * The provider authenticates that truth once during setup; this is the single
- * writer-side gate that keeps an impossible promise — a shared conversation
- * whose platform withholds ordinary messages, bound to `allAllowedMessages` —
- * out of the retained Account policy. The surface offers the same set from the
- * same protocol owner, so the two can never disagree.
- */
-function assertConversationBindingInputModeIsDeliverable(input: Readonly<{
-  audience: ConversationResolvedEndpointV1['audience'];
-  inputMode: ConversationBindingInputModeV1;
-  sharedEndpointInputModes: readonly ConversationBindingInputModeV1[] | undefined;
-  operation: 'channels_binding_create' | 'channels_binding_update';
-}>): void {
-  if (isConversationBindingInputModeDeliverableV1({
-    audience: input.audience,
-    inputMode: input.inputMode,
-    ...(input.sharedEndpointInputModes === undefined
-      ? {}
-      : { sharedEndpointInputModes: input.sharedEndpointInputModes }),
-  })) return;
-  throw new PluginError({
-    code: `${input.operation}_input_mode_unsupported`,
-    message: 'The selected integration cannot deliver this incoming message policy for a shared conversation.',
-    details: {
-      inputMode: input.inputMode,
-      deliverableInputModes: [...conversationBindingInputModesForEndpointV1({
-        audience: input.audience,
-        ...(input.sharedEndpointInputModes === undefined
-          ? {}
-          : { sharedEndpointInputModes: input.sharedEndpointInputModes }),
-      })],
-    },
-  });
-}
-
 /** All existing-binding writes share one transition, verifier, and atomic persistence owner. */
-async function mutateConversationBinding(
-  updateInput: ConversationBindingTargetRotateInputV1,
-  context: PluginInvocationContext,
-  operation: 'channels_binding_target_rotate',
-): Promise<ConversationBindingTargetMutationResult>;
 async function mutateConversationBinding(
   updateInput: ConversationBindingUpdateInputV1,
   context: PluginInvocationContext,
-  operation: 'channels_binding_update',
-): Promise<ConversationBindingMutationResultV1>;
-async function mutateConversationBinding(
-  updateInput: ConversationBindingUpdateInputV1 | ConversationBindingTargetRotateInputV1,
-  context: PluginInvocationContext,
-  operation: 'channels_binding_update' | 'channels_binding_target_rotate',
 ): Promise<ConversationBindingMutationResultV1> {
-  const policyUpdate = operation === 'channels_binding_update'
-    ? updateInput as ConversationBindingUpdateInputV1
-    : undefined;
+  const operation = 'channels_binding_update';
   const collection = requireChannelsAccountStorage(context).collection(CHANNEL_STATE_COLLECTION);
   assertNotAborted(context.signal);
   const row = await collection.get(updateInput.bindingId, { signal: context.signal });
@@ -4264,7 +4322,7 @@ async function mutateConversationBinding(
   }
 
   let audience: BindingAudienceResolution | null = null;
-  const audienceSelection = policyUpdate?.audienceSelection;
+  const audienceSelection = updateInput.audienceSelection;
   if (audienceSelection !== undefined) {
     if (connectionRow.revision !== audienceSelection.expectedConnectionRevision) {
       return bindingResolutionStale();
@@ -4280,17 +4338,8 @@ async function mutateConversationBinding(
     if (audience.kind !== 'ready') return audience;
   }
 
-  const requestedInputMode = policyUpdate?.inputMode ?? current.binding.inputMode;
+  const requestedInputMode = updateInput.inputMode ?? current.binding.inputMode;
   const requestedEndpoint = audience?.endpoint ?? current.binding.endpoint;
-  if (policyUpdate?.inputMode !== undefined || audience !== null) {
-    assertConversationBindingInputModeIsDeliverable({
-      audience: requestedEndpoint.audience,
-      inputMode: requestedInputMode,
-      sharedEndpointInputModes: readConversationConnectionSharedEndpointInputModes(connection.payload),
-      operation: 'channels_binding_update',
-    });
-  }
-
   let target = current.binding.target;
   if (updateInput.target !== undefined) {
     const verifiedTarget = await resolveBindingTargetForPersistence(updateInput.target, context);
@@ -4304,12 +4353,12 @@ async function mutateConversationBinding(
       endpoint: requestedEndpoint,
       target,
       allowedPrincipalIds: audience?.allowedPrincipalIds ?? current.binding.allowedPrincipalIds,
-      allowBotSenders: policyUpdate?.allowBotSenders ?? current.binding.allowBotSenders,
+      allowBotSenders: updateInput.allowBotSenders ?? current.binding.allowBotSenders,
       inputMode: requestedInputMode,
-      inboundDebounceMs: policyUpdate?.inboundDebounceMs ?? current.binding.inboundDebounceMs,
-      linkPreviewPolicy: policyUpdate?.linkPreviewPolicy ?? current.binding.linkPreviewPolicy,
-      senderFeedback: policyUpdate?.senderFeedback ?? current.binding.senderFeedback,
-      enabled: policyUpdate?.enabled ?? current.binding.enabled,
+      inboundDebounceMs: updateInput.inboundDebounceMs ?? current.binding.inboundDebounceMs,
+      linkPreviewPolicy: updateInput.linkPreviewPolicy ?? current.binding.linkPreviewPolicy,
+      senderFeedback: updateInput.senderFeedback ?? current.binding.senderFeedback,
+      enabled: updateInput.enabled ?? current.binding.enabled,
     },
   });
   if (transition.kind === 'rejected') {
@@ -4317,6 +4366,14 @@ async function mutateConversationBinding(
       throw pluginError(`${operation}_authority_epoch_exhausted`, 'Binding authority cannot advance further.');
     }
     throw pluginError(`${operation}_corrupt`, 'Binding mutation could not preserve the canonical binding relation.');
+  }
+  if (transition.binding.enabled) {
+    assertConversationBindingInputModeIsDeliverable({
+      audience: transition.binding.endpoint.audience,
+      inputMode: transition.binding.inputMode,
+      sharedEndpointInputModes: readConversationConnectionSharedEndpointInputModes(connection.payload),
+      operation,
+    });
   }
   if (transition.kind === 'unchanged') {
     return {
@@ -4365,12 +4422,22 @@ async function mutateConversationBinding(
     });
     if (finalCurrent.kind !== 'current') return finalCurrent;
   }
+  const demandChanged = hasConversationBindingDeliveryDemandChanged(
+    current.binding,
+    transition.binding,
+  );
   const result = await collection.batch([
-    {
-      kind: 'assert',
-      rowId: current.binding.connectionId,
-      expectedRevision: connectionRow.revision,
-    },
+    demandChanged
+      ? {
+        kind: 'put' as const,
+        value: connectionRow.value,
+        expectedRevision: connectionRow.revision,
+      }
+      : {
+        kind: 'assert' as const,
+        rowId: current.binding.connectionId,
+        expectedRevision: connectionRow.revision,
+      },
     { kind: 'put', value: next, expectedRevision: row.revision },
     ...(projectionFrontier === null
       ? []
@@ -4413,17 +4480,7 @@ export async function updateConversationBindingForInvocation(
   return await mutateConversationBinding(
     readAdmittedBindingUpdateInput(input),
     context,
-    'channels_binding_update',
   );
-}
-
-/** A narrow target-only mutation shares the same currentness and persistence owner. */
-export async function rotateConversationBindingTargetForInvocation(
-  input: JsonValue,
-  context: PluginInvocationContext,
-): Promise<ConversationBindingTargetMutationResult> {
-  const rotateInput = readAdmittedBindingTargetRotateInput(input);
-  return await mutateConversationBinding(rotateInput, context, 'channels_binding_target_rotate');
 }
 
 /** The narrow enable/disable Action uses the same canonical binding mutation owner. */
@@ -4474,20 +4531,55 @@ export async function deleteConversationBindingForInvocation(
     );
   }
 
-  const result = await collection.batch([{
-    kind: 'put',
-    value: {
-      ...row.value,
-      [CHANNEL_STATE_FIELD.updatedAt]: Date.now(),
-      payload: {
-        ...current.payload,
-        enabled: false,
-        authorityEpoch: current.binding.authorityEpoch + 1,
-        deletionState: 'finalizingDelete',
+  let demandConnectionRow: StateRow | undefined;
+  if (current.binding.enabled) {
+    const storedConnection = await collection.get(
+      current.binding.connectionId,
+      { signal: context.signal },
+    );
+    assertNotAborted(context.signal);
+    if (storedConnection === null) {
+      throw pluginError(
+        'channels_binding_delete_connection_not_found',
+        'Binding deletion owner connection does not exist.',
+      );
+    }
+    demandConnectionRow = stateRowFromCollectionRow(storedConnection);
+    if (demandConnectionRow === undefined) {
+      throw pluginError(
+        'channels_binding_delete_connection_corrupt',
+        'Binding deletion owner connection is not canonical.',
+      );
+    }
+    readConversationConnectionUpdateRow({
+      row: demandConnectionRow,
+      connectionId: current.binding.connectionId,
+    });
+  }
+
+  const result = await collection.batch([
+    ...(demandConnectionRow === undefined
+      ? []
+      : [{
+        kind: 'put' as const,
+        value: demandConnectionRow.value,
+        expectedRevision: demandConnectionRow.revision,
+      }]),
+    {
+      kind: 'put',
+      value: {
+        ...row.value,
+        [CHANNEL_STATE_FIELD.updatedAt]: Date.now(),
+        payload: {
+          ...current.payload,
+          enabled: false,
+          authorityEpoch: current.binding.authorityEpoch + 1,
+          deletionState: 'finalizingDelete',
+        },
       },
+      expectedRevision: row.revision,
     },
-    expectedRevision: row.revision,
-  }], { signal: context.signal });
+  ], { signal: context.signal });
   assertNotAborted(context.signal);
   if (result.status === 'conflict') {
     throw pluginError(

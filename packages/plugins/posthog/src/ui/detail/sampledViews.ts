@@ -7,11 +7,9 @@
  * cache, or hold anything, so a panel that wants different rows has to ask the
  * controller rather than quietly opening its own read.
  *
- * Affected Sessions is deliberately the most conservative of the three. PostHog's
- * session-replay permalink template is not characterized for a self-hosted deployment,
- * and a session id is not evidence that a recording exists. A row therefore offers a
- * replay link only when the issue's own verified link proves the same-origin project
- * base, and otherwise says the link is unavailable rather than guessing one.
+ * Affected Sessions is deliberately conservative: a sampled session id is not evidence
+ * that a recording exists, and this source has no characterized replay permalink
+ * producer. It therefore publishes the sampled session evidence and no replay claim.
  */
 
 import type { PosthogProjectedIssueEvent } from './issueEventProjection.js';
@@ -42,17 +40,12 @@ export type PosthogStackTraceV1 = Readonly<{
     truncated: boolean;
 }>;
 
-export type PosthogSessionReplayV1 =
-    | Readonly<{ kind: 'candidate'; href: string }>
-    | Readonly<{ kind: 'unavailable'; reason: 'noVerifiedPermalink' }>;
-
 export type PosthogAffectedSessionRowV1 = Readonly<{
     sessionId: string;
     occurrenceCount: number;
     firstAtMs: number | null;
     lastAtMs: number | null;
     url: string | null;
-    replay: PosthogSessionReplayV1;
 }>;
 
 const NO_EXCEPTION_LABEL = 'Exception details unavailable';
@@ -133,46 +126,9 @@ export function posthogStackTrace(
     };
 }
 
-/**
- * Reads the same-origin project base out of the issue's own verified link.
- *
- * Only an HTTPS PostHog Error Tracking issue link proves a base. Anything else — another
- * path shape, a cleartext scheme, an empty project segment, an unparsable value — proves
- * nothing, and this source does not construct a link it has not seen the provider use.
- */
-function projectReplayBase(issueWebUrl: string | null): string | null {
-    if (issueWebUrl === null) {
-        return null;
-    }
-    let url: URL;
-    try {
-        url = new URL(issueWebUrl);
-    } catch {
-        return null;
-    }
-    if (url.protocol !== 'https:') {
-        return null;
-    }
-    // Positions are read exactly, not compacted: compacting `/project//error_tracking`
-    // would read the next segment as a project id and build a link to nowhere.
-    const segments = url.pathname.split('/');
-    const projectId = segments[2];
-    if (
-        segments[1] !== 'project'
-        || projectId === undefined
-        || projectId.length === 0
-        || segments[3] !== 'error_tracking'
-    ) {
-        return null;
-    }
-    return `${url.origin}/project/${encodeURIComponent(projectId)}/replay`;
-}
-
 export function posthogAffectedSessionRows(
     events: readonly PosthogProjectedIssueEvent[],
-    options: Readonly<{ issueWebUrl: string | null }>,
 ): readonly PosthogAffectedSessionRowV1[] {
-    const replayBase = projectReplayBase(options.issueWebUrl);
     const bySession = new Map<string, {
         occurrenceCount: number;
         firstAtMs: number | null;
@@ -216,8 +172,5 @@ export function posthogAffectedSessionRows(
         firstAtMs: aggregate.firstAtMs,
         lastAtMs: aggregate.lastAtMs,
         url: aggregate.url,
-        replay: replayBase === null
-            ? { kind: 'unavailable' as const, reason: 'noVerifiedPermalink' as const }
-            : { kind: 'candidate' as const, href: `${replayBase}/${encodeURIComponent(sessionId)}` },
     }));
 }

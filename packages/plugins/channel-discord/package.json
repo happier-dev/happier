@@ -29,7 +29,9 @@
     "test": "../../../apps/stack/bin/hstack-exec --script=test:local",
     "test:local": "vitest run --config vitest.config.ts --testTimeout 15000",
     "typecheck": "../../../apps/stack/bin/hstack-exec --script=typecheck:local",
-    "typecheck:local": "node ../../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json"
+    "typecheck:local": "yarn -s typecheck:source && yarn -s typecheck:tests",
+    "typecheck:source": "node ../../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json",
+    "typecheck:tests": "node ../../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.tests.json"
   },
   "dependencies": {
     "@happier-dev/channels-protocol": "0.0.0",

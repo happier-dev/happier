@@ -31,6 +31,7 @@ import {
 } from '@happier-dev/plugin-sdk/automations';
 import {
   arePluginMachineExecutionOriginsEqual,
+  isPluginError,
   PluginError,
   type TargetedContributionsService,
 } from '@happier-dev/plugin-sdk';
@@ -44,7 +45,14 @@ import {
   type ActionsService,
   type PluginMachineExecutionOriginV1,
 } from '@happier-dev/plugin-sdk/actions';
-import type { PluginAccountCollectionForDefinition } from '@happier-dev/plugin-sdk/collections';
+import {
+  PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1,
+  type PluginAccountCollectionForDefinition,
+} from '@happier-dev/plugin-sdk/collections';
+import {
+  MAX_PLUGIN_TRANSCRIPT_ACTIVITIES_PER_RESOURCE_V1,
+  type PluginTranscriptActivitySnapshotV1,
+} from '@happier-dev/plugin-sdk/resources';
 
 import {
   CONVERSATION_DELIVERY_CUSTODY_STATES,
@@ -72,11 +80,11 @@ import {
 } from './privateRowIdentity.js';
 import { readCurrentProviderContributionForPersistedSelection } from './providerContributions.js';
 import type { PersistedConversationProviderContributionSelection } from './collections.js';
-import { MAX_CHANNEL_ACCOUNT_COLLECTION_QUERY_PAGE_SIZE } from './requiredAccountStorage.js';
 import type {
   ConversationSessionProjectionBinding,
   ConversationSessionProjectionSource,
 } from './sessionProjection.js';
+import type { ConversationPendingPermissionRequest } from './permissionMediation.js';
 
 /**
  * Loading the collection definition during generic delivery-module evaluation
@@ -103,6 +111,7 @@ export type ConversationControlResponseKind =
   | 'pairing'
   | 'newSession'
   | 'approval'
+  | 'userAction'
   | 'refusal'
   | 'recovery';
 
@@ -241,6 +250,17 @@ export type ConversationOutwardDeliveryPreCustodyRejection =
   | 'contentUtf8LimitExceeded'
   | 'providerChunkLimitExceeded';
 
+type ConversationOutwardDeliveryKnownNoEffect = Extract<
+  ConversationOutwardDeliveryPreCustodyRejection,
+  'contentUtf8LimitExceeded' | 'providerChunkLimitExceeded'
+>;
+
+function isConversationOutwardDeliveryKnownNoEffect(
+  rejection: ConversationOutwardDeliveryPreCustodyRejection,
+): rejection is ConversationOutwardDeliveryKnownNoEffect {
+  return rejection === 'contentUtf8LimitExceeded' || rejection === 'providerChunkLimitExceeded';
+}
+
 function hasBoundedSourceId(value: unknown): value is string {
   return typeof value === 'string'
     && value.length > 0
@@ -367,10 +387,6 @@ type ChannelDeliveriesCollection = Pick<
   'delete' | 'get' | 'put' | 'query'
 >;
 
-// Mirrors the strict transcript-activity Resource contract without importing
-// the Protocol implementation into this first-party plugin leaf.
-const MAX_CHANNELS_TRANSCRIPT_ACTIVITIES_PER_SNAPSHOT = 16;
-
 /**
  * The privacy-safe projection used by mounted management UI. It deliberately
  * keeps endpoint, content, provider evidence, and delivery identity inside the
@@ -472,6 +488,16 @@ export interface ConversationOutwardDeliveryCollectionScanner {
       kind: 'ready';
       records: readonly ConversationOutwardDeliveryRecord[];
       nextCursor?: string;
+      /**
+       * The smallest terminal-entry `updatedAt` this page retained only
+       * because it has not reached the cutoff yet. Its owner adds the
+       * recovery window to learn the exact wall clock at which the page can
+       * first reclaim anything, so an exhausted sweep does not have to walk
+       * the whole terminal index again to discover that nothing changed.
+       * Custody that never expires by time — unresolved ambiguity — is not a
+       * candidate and deliberately contributes nothing.
+       */
+      earliestRetainedUpdatedAt?: number;
     }>
     | Readonly<{ kind: 'unavailable'; reason: 'cancelled' | 'storageUnavailable' }>
   >;
@@ -508,21 +534,6 @@ export type ConversationOutwardDeliveryConnectionAttentionReadResult =
   }>
   | Readonly<{ kind: 'unavailable'; reason: 'cancelled' | 'storageUnavailable' }>;
 
-/**
- * A deliberately generic, safe transcript-tail view of one existing custody
- * row. All route, content, endpoint, and provider-native evidence stays in
- * the canonical Account Collection parser.
- */
-export type ConversationOutwardDeliveryTranscriptActivity = Readonly<{
-  localActivityId: string;
-  title: string;
-  phase: 'running' | 'failed';
-  status: string;
-  checklist: readonly [];
-  dismissible: boolean;
-  actions: readonly [];
-}>;
-
 export type ConversationOutwardDeliveryTranscriptActivitiesReaderInput = Readonly<{
   deliveriesCollection: Pick<ChannelDeliveriesCollection, 'query'>;
   signal: AbortSignal;
@@ -535,7 +546,7 @@ export type ConversationOutwardDeliveryTranscriptActivitiesReaderInput = Readonl
 export type ConversationOutwardDeliveryTranscriptActivitiesReadResult =
   | Readonly<{
     kind: 'ready';
-    activities: readonly ConversationOutwardDeliveryTranscriptActivity[];
+    activities: readonly PluginTranscriptActivitySnapshotV1[];
   }>
   | Readonly<{ kind: 'invalid'; reason: 'invalidRow' }>
   | Readonly<{ kind: 'unavailable'; reason: 'cancelled' | 'storageUnavailable' }>;
@@ -623,24 +634,28 @@ async function deriveConversationOutwardDeliveryContentFingerprint(input: Readon
   }
 }
 
-/**
- * What a custody row permanently answers for: the connection, binding, semantic
- * source, delivery key, endpoint, reply context, and caller-chosen presentation
- * policies. Route authority is deliberately excluded — it is a mutable
- * currentness fence, not identity.
- */
-function sameConversationOutwardDeliveryObligationIdentity(
+/** Immutable semantic identity already addressed by the deterministic custody ID. */
+function sameConversationOutwardDeliveryCustodyIdentity(
   left: ConversationStoredOutwardDeliveryObligation,
   right: ConversationOutwardDeliveryObligation,
 ): boolean {
   return left.connectionId === right.connectionId
     && left.bindingId === right.bindingId
+    && pluginJsonValuesEqual(left.source, right.source);
+}
+
+/** Mutable route and presentation facts remain exact until the effect is terminal. */
+function sameConversationOutwardDeliveryLiveObligation(
+  left: ConversationStoredOutwardDeliveryObligation,
+  right: ConversationOutwardDeliveryObligation,
+): boolean {
+  return sameConversationOutwardDeliveryCustodyIdentity(left, right)
     && left.deliveryKey === right.deliveryKey
     && left.mentionPolicy === right.mentionPolicy
     && left.linkPreviewPolicy === right.linkPreviewPolicy
-    && pluginJsonValuesEqual(left.source, right.source)
     && pluginJsonValuesEqual(left.endpoint, right.endpoint)
-    && pluginJsonValuesEqual(left.replyContext ?? null, right.replyContext ?? null);
+    && pluginJsonValuesEqual(left.replyContext ?? null, right.replyContext ?? null)
+    && pluginJsonValuesEqual(left.routeAuthority, right.routeAuthority);
 }
 
 async function matchesConversationOutwardDeliveryObligation(input: Readonly<{
@@ -649,17 +664,10 @@ async function matchesConversationOutwardDeliveryObligation(input: Readonly<{
   incoming: ConversationOutwardDeliveryObligation;
   routingIdentityKey: string;
 }>): Promise<boolean> {
-  if (!sameConversationOutwardDeliveryObligationIdentity(input.stored, input.incoming)) return false;
-  // Route authority fences a live attempt: a non-terminal row must still hold
-  // the exact connection/binding authority its attempt was admitted under. A
-  // terminal row has no attempt left to fence, so an ordinary binding edit
-  // landing between provider success and frontier advancement must not turn an
-  // already-delivered item into a permanent custody conflict that blocks the
-  // whole projection until retention removes the row.
-  if (
-    !isConversationDeliveryAutomaticTerminal(input.storedCustody)
-    && !pluginJsonValuesEqual(input.stored.routeAuthority, input.incoming.routeAuthority)
-  ) return false;
+  const terminal = isConversationDeliveryAutomaticTerminal(input.storedCustody);
+  if (terminal
+    ? !sameConversationOutwardDeliveryCustodyIdentity(input.stored, input.incoming)
+    : !sameConversationOutwardDeliveryLiveObligation(input.stored, input.incoming)) return false;
   if (hasRetainedConversationOutwardDeliveryContent(input.stored)) {
     return input.stored.content === input.incoming.content;
   }
@@ -672,7 +680,7 @@ async function matchesConversationOutwardDeliveryObligation(input: Readonly<{
 
 function shouldCompactConversationOutwardDeliveryContent(custody: ConversationDeliveryCustody): boolean {
   return isConversationDeliveryRetentionEligible(custody)
-    && !deriveConversationDeliveryProjection(custody).attention;
+    && retryConversationDeliveryAfterArchiveRecovery({ custody }).kind !== 'retryReady';
 }
 
 function readConversationDeliveryCustody(input: Readonly<{
@@ -908,7 +916,7 @@ export async function readConversationOutwardDeliveryResolutionPage(input: Reado
       'Delivery resolution page requires a canonical connection identity.',
     );
   }
-  const limit = Math.min(input.limit ?? MAX_CHANNEL_ACCOUNT_COLLECTION_QUERY_PAGE_SIZE, MAX_CHANNEL_ACCOUNT_COLLECTION_QUERY_PAGE_SIZE);
+  const limit = Math.min(input.limit ?? PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1, PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1);
   if (!Number.isSafeInteger(limit) || limit < 1) {
     throw resolutionError(
       'channels_delivery_resolution_page_input_invalid',
@@ -1218,7 +1226,7 @@ export function createConversationOutwardDeliveryCollectionStore(
           obligation.connectionId,
           { signal: input.signal },
         ) as unknown as StoredCollectionRow | null;
-      } catch {
+      } catch (error) {
         return {
           kind: 'unavailable',
           reason: input.signal.aborted ? 'cancelled' : 'storageUnavailable',
@@ -1428,7 +1436,8 @@ export function createConversationOutwardDeliveryCollectionScanner(
           records,
           ...(page.nextCursor === undefined ? {} : { nextCursor: page.nextCursor }),
         };
-      } catch {
+      } catch (error) {
+        if (isPluginError(error)) throw error;
         return {
           kind: 'unavailable',
           reason: input.signal.aborted ? 'cancelled' : 'storageUnavailable',
@@ -1458,23 +1467,31 @@ export function createConversationOutwardDeliveryCollectionScanner(
           ...(scanInput.cursor === undefined ? {} : { cursor: scanInput.cursor }),
         }, { signal: input.signal });
         const records: ConversationOutwardDeliveryRecord[] = [];
+        let earliestRetainedUpdatedAt: number | undefined;
         for (const row of page.rows) {
           const storedRow = row as unknown as StoredCollectionRow;
           const updatedAt = isJsonRecord(storedRow.value)
             ? storedRow.value[collections.CHANNEL_DELIVERIES_FIELD.updatedAt]
             : undefined;
-          if (!isNonNegativeSafeInteger(updatedAt) || updatedAt > scanInput.cutoff) continue;
+          if (!isNonNegativeSafeInteger(updatedAt)) continue;
           const record = readConversationOutwardDeliveryRecord({ collections, row: storedRow });
-          if (record !== null && isConversationDeliveryRetentionEligible(record.custody)) {
-            records.push(record);
+          if (record === null || !isConversationDeliveryRetentionEligible(record.custody)) continue;
+          if (updatedAt > scanInput.cutoff) {
+            earliestRetainedUpdatedAt = earliestRetainedUpdatedAt === undefined
+              ? updatedAt
+              : Math.min(earliestRetainedUpdatedAt, updatedAt);
+            continue;
           }
+          records.push(record);
         }
         return {
           kind: 'ready',
           records,
           ...(page.nextCursor === undefined ? {} : { nextCursor: page.nextCursor }),
+          ...(earliestRetainedUpdatedAt === undefined ? {} : { earliestRetainedUpdatedAt }),
         };
-      } catch {
+      } catch (error) {
+        if (isPluginError(error)) throw error;
         return {
           kind: 'unavailable',
           reason: input.signal.aborted ? 'cancelled' : 'storageUnavailable',
@@ -1553,7 +1570,7 @@ async function settleConversationOutwardDeliveriesForDeletion(input: Readonly<{
         index: collections.CHANNEL_DELIVERIES_INDEX_ID.byOwnerAttention,
         prefix,
         order: 'asc',
-        limit: MAX_CHANNEL_ACCOUNT_COLLECTION_QUERY_PAGE_SIZE,
+        limit: PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1,
         ...(cursor === undefined ? {} : { cursor }),
       }, { signal: input.signal });
     } catch {
@@ -1584,7 +1601,7 @@ async function settleConversationOutwardDeliveriesForDeletion(input: Readonly<{
         index: collections.CHANNEL_DELIVERIES_INDEX_ID.byOwnerAttention,
         prefix,
         order: 'asc',
-        limit: MAX_CHANNEL_ACCOUNT_COLLECTION_QUERY_PAGE_SIZE,
+        limit: PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1,
         ...(cursor === undefined ? {} : { cursor }),
       }, { signal: input.signal });
     } catch {
@@ -1712,7 +1729,7 @@ export async function readConversationOutwardDeliveryConnectionAttention(
           index: collections.CHANNEL_DELIVERIES_INDEX_ID.byOwnerAttention,
           prefix: [connectionId],
           order: 'asc',
-          limit: MAX_CHANNEL_ACCOUNT_COLLECTION_QUERY_PAGE_SIZE,
+          limit: PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1,
           ...(cursor === undefined ? {} : { cursor }),
         }, { signal: input.signal });
       } catch {
@@ -1776,14 +1793,14 @@ function deriveConversationOutwardDeliveryTranscriptActivityId(custodyId: string
  */
 function projectUnreadableConversationOutwardDeliveryTranscriptActivity(
   rowId: string,
-): ConversationOutwardDeliveryTranscriptActivity | null {
+): PluginTranscriptActivitySnapshotV1 | null {
   const localActivityId = deriveConversationOutwardDeliveryTranscriptActivityId(rowId);
   if (localActivityId === null) return null;
   return Object.freeze({
     localActivityId,
     title: 'External delivery',
-    checklist: [] as const,
-    actions: [] as const,
+    checklist: [],
+    actions: [],
     phase: 'failed' as const,
     status: 'Delivery details could not be read',
     dismissible: true,
@@ -1792,14 +1809,14 @@ function projectUnreadableConversationOutwardDeliveryTranscriptActivity(
 
 function projectConversationOutwardDeliveryTranscriptActivity(
   record: ConversationOutwardDeliveryRecord,
-): ConversationOutwardDeliveryTranscriptActivity | null {
+): PluginTranscriptActivitySnapshotV1 | null {
   const localActivityId = deriveConversationOutwardDeliveryTranscriptActivityId(record.custodyId);
   if (localActivityId === null) return null;
   const base = {
     localActivityId,
     title: 'External delivery',
-    checklist: [] as const,
-    actions: [] as const,
+    checklist: [],
+    actions: [],
   };
   switch (record.custody.state) {
     case 'ready':
@@ -1886,7 +1903,7 @@ export async function readConversationOutwardDeliveryTranscriptActivities(
     compareCanonicalChannelRelationId(left.connectionId, right.connectionId)
     || compareCanonicalChannelRelationId(left.bindingId, right.bindingId)
   ));
-  const activities: ConversationOutwardDeliveryTranscriptActivity[] = [];
+  const activities: PluginTranscriptActivitySnapshotV1[] = [];
   const activityIds = new Set<string>();
 
   for (const target of targets) {
@@ -1899,7 +1916,7 @@ export async function readConversationOutwardDeliveryTranscriptActivities(
           index: collections.CHANNEL_DELIVERIES_INDEX_ID.byOwnerAttention,
           prefix: [target.connectionId, target.bindingId],
           order: 'asc',
-          limit: MAX_CHANNEL_ACCOUNT_COLLECTION_QUERY_PAGE_SIZE,
+          limit: PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1,
           ...(cursor === undefined ? {} : { cursor }),
         }, { signal: input.signal });
       } catch {
@@ -1925,7 +1942,7 @@ export async function readConversationOutwardDeliveryTranscriptActivities(
         }
         activityIds.add(activity.localActivityId);
         activities.push(activity);
-        if (activities.length === MAX_CHANNELS_TRANSCRIPT_ACTIVITIES_PER_SNAPSHOT) {
+        if (activities.length === MAX_PLUGIN_TRANSCRIPT_ACTIVITIES_PER_RESOURCE_V1) {
           return { kind: 'ready', activities: Object.freeze(activities) };
         }
       }
@@ -1941,6 +1958,12 @@ export type ConversationOutwardDeliveryReadyPreparation =
     kind: 'ready';
     obligation: ConversationOutwardDeliveryObligation;
     outboundTextLimit: ConversationOutboundTextLimit;
+    /**
+     * The provider limit was read from the current route and proves that this
+     * custody can never cross a provider boundary. It remains a custody fact,
+     * rather than making the source caller keep retrying an invalid request.
+     */
+    knownNoEffect?: ConversationOutwardDeliveryKnownNoEffect;
   }>
   | Readonly<{
     kind: 'suppressed';
@@ -2307,8 +2330,9 @@ async function checkConversationOutwardDeliveryRouteCurrentness(input: Readonly<
 /**
  * The public projection of a current source binding that is eligible to ask
  * the generic Permission owner for pending mediation. It intentionally
- * contains only source authority and the exact Session identity, never a
- * permission body, rule, prompt, or provider credential.
+ * contains only source authority and the exact Session identity. The caller
+ * supplies a separately bounded semantic summary from the canonical Session
+ * owner; raw tool payloads, rules, and provider credentials never enter here.
  */
 export type ConversationPermissionWaitMediationSource = Readonly<{
   connectionId: string;
@@ -2463,11 +2487,51 @@ function isSameConversationPermissionWaitMediationSource(
     && left.bindingAuthorityEpoch === right.bindingAuthorityEpoch;
 }
 
+/**
+ * The chat surface is a renderer only: it receives bounded summaries from the
+ * canonical Session permission owner and carries the existing opaque request
+ * identity back to the canonical Action. It neither parses a raw tool input
+ * nor owns an approval/answer decision.
+ */
+function renderConversationPendingPermissionRequest(
+  request: ConversationPendingPermissionRequest,
+): string {
+  if (request.kind === 'legacy_permission') {
+    // The predecessor projection did not publish a semantic summary. Keep its
+    // released, opaque permission wording rather than treating it as a
+    // user-action or fabricating details Channels never received.
+    return 'This Session is waiting for an approval in Happier. '
+      + `Reply /allow ${request.requestId} or /deny ${request.requestId}.`;
+  }
+  if (request.kind === 'permission') {
+    const summary = request.agentRequestSummary;
+    return `${summary.title}\n${summary.detail}\n`
+      + `Reply /allow ${request.requestId} or /deny ${request.requestId}.`;
+  }
+
+  const questions = request.agentRequestSummary.questions.map((question, index) => {
+    const selection = question.selection === 'text'
+      ? 'write text'
+      : question.selection === 'multiple'
+        ? 'select one or more'
+        : 'select one';
+    const qualifier = `${question.required ? 'required' : 'optional'}; ${selection}`
+      + (question.allowCustom && question.selection !== 'text' ? '; custom text allowed' : '');
+    const choices = question.choices.length === 0
+      ? ''
+      : `\n${question.choices.map((choice, choiceIndex) => `  ${choiceIndex + 1}. ${choice}`).join('\n')}`;
+    return `${index + 1}. ${question.question} (${qualifier})${choices}`;
+  });
+  return `This Session needs your input:\n${questions.join('\n')}\n`
+    + `Reply /answer ${request.requestId} [{"questionIndex":0,"values":["<answer>"]}] in one message. `
+    + 'Use displayed choice labels, or free text only where allowed; include every required question.';
+}
+
 async function createConversationPermissionWaitOutwardDeliveryObligation(input: Readonly<{
   current: CurrentConversationPermissionWaitMediationSource;
-  turnId: string;
-  requestId: string;
+  request: ConversationPendingPermissionRequest;
 }>): Promise<ConversationOutwardDeliveryObligation | null> {
+  const { request } = input;
   const provisional: ConversationOutwardDeliveryObligation = {
     connectionId: input.current.source.connectionId,
     bindingId: input.current.source.bindingId,
@@ -2479,16 +2543,11 @@ async function createConversationPermissionWaitOutwardDeliveryObligation(input: 
     source: {
       kind: 'permissionWait',
       sessionId: input.current.source.sessionId,
-      turnId: input.turnId,
-      requestId: input.requestId,
+      turnId: request.turnId,
+      requestId: request.requestId,
     },
     endpoint: input.current.endpoint,
-    // The exact request identity is the only thing an admitted approver needs
-    // to answer, and the inbound `/allow`/`/deny` grammar requires it. It is
-    // the same opaque identifier the host's own pending projection handed this
-    // mediator; no rule, tool, prompt, or decision detail is disclosed.
-    content: 'This Session is waiting for an approval in Happier. '
-      + `Reply /allow ${input.requestId} or /deny ${input.requestId}.`,
+    content: renderConversationPendingPermissionRequest(request),
     // The existing custody HMAC is length-prefixed over the exact source
     // tuple. Reusing it makes the provider key bounded, opaque, and immune to
     // delimiter collisions in provider-native request identifiers.
@@ -2521,8 +2580,7 @@ export async function acceptConversationPermissionWaitOutwardDelivery(input: Rea
   stateCollection: ChannelStateCollection;
   store: ConversationOutwardDeliveryStore;
   source: ConversationPermissionWaitMediationSource;
-  turnId: string;
-  requestId: string;
+  request: ConversationPendingPermissionRequest;
   signal: AbortSignal;
 }>): Promise<ConversationPermissionWaitOutwardDeliveryAcceptance> {
   const current = await readCurrentConversationPermissionWaitMediationSource({
@@ -2536,8 +2594,7 @@ export async function acceptConversationPermissionWaitOutwardDelivery(input: Rea
   }
   const obligation = await createConversationPermissionWaitOutwardDeliveryObligation({
     current,
-    turnId: input.turnId,
-    requestId: input.requestId,
+    request: input.request,
   });
   if (obligation === null) return { kind: 'unavailable', reason: 'stateCorrupt' };
   return await acceptConversationOutwardDeliveryReady({
@@ -2572,11 +2629,14 @@ export async function prepareConversationOutwardDeliveryReady(input: Readonly<{
     obligation: input.obligation,
     outboundTextLimit: currentness.outboundTextLimit,
   });
-  if (rejection !== null) return { kind: 'invalid', reason: rejection };
+  if (rejection !== null && !isConversationOutwardDeliveryKnownNoEffect(rejection)) {
+    return { kind: 'invalid', reason: rejection };
+  }
   return {
     kind: 'ready',
     obligation: input.obligation,
     outboundTextLimit: currentness.outboundTextLimit,
+    ...(rejection === null ? {} : { knownNoEffect: rejection }),
   };
 }
 
@@ -2608,6 +2668,30 @@ export async function acceptConversationOutwardDeliveryReady(input: Readonly<{
     if (ensured.kind === 'invalid') return { kind: 'invalid', reason: ensured.reason };
     if (ensured.kind === 'conflict') return { kind: 'invalid', reason: 'routeMismatch' };
     if (ensured.kind === 'retired') return ensured;
+    if (input.prepared.knownNoEffect !== undefined) {
+      const custody = settleConversationDeliveryKnownNoEffectBeforeProvider(ensured.record.custody);
+      if (custody !== null) {
+        const settled = await input.store.compareAndSwap({
+          custodyId: ensured.record.custodyId,
+          expectedRevision: ensured.record.revision,
+          custody,
+        });
+        if (settled.kind === 'updated') {
+          return {
+            kind: 'accepted',
+            custodyId: settled.record.custodyId,
+            custody: settled.record.custody,
+          };
+        }
+        if (settled.kind === 'invalid') return { kind: 'invalid', reason: settled.reason };
+        if (settled.kind === 'unavailable') {
+          return {
+            kind: 'unavailable',
+            reason: settled.reason === 'cancelled' ? 'cancelled' : 'storageUnavailable',
+          };
+        }
+      }
+    }
     return {
       kind: 'accepted',
       custodyId: ensured.record.custodyId,
@@ -2625,6 +2709,7 @@ const CONVERSATION_CONTROL_RESPONSE_KINDS = new Set<ConversationControlResponseK
   'pairing',
   'newSession',
   'approval',
+  'userAction',
   'refusal',
   'recovery',
 ]);
@@ -2824,6 +2909,47 @@ async function persistConversationOutwardDeliverySuppression(input: Readonly<{
   };
 }
 
+/**
+ * The durable counterpart of a current provider-bound size rejection. It may
+ * run only before an attempt exists, so a crash can never erase ambiguity
+ * about an already-started provider effect.
+ */
+async function settleConversationOutwardDeliveryKnownNoEffectBeforeProvider(input: Readonly<{
+  store: ConversationOutwardDeliveryStore;
+  record: ConversationOutwardDeliveryRecord;
+  signal: AbortSignal;
+}>): Promise<ConversationOutwardDeliveryResult | null> {
+  if (input.signal.aborted) return { kind: 'notAttempted', reason: 'cancelled' };
+  const custody = settleConversationDeliveryKnownNoEffectBeforeProvider(input.record.custody);
+  if (custody === null) return null;
+  let persisted: Awaited<ReturnType<ConversationOutwardDeliveryStore['compareAndSwap']>>;
+  try {
+    persisted = await input.store.compareAndSwap({
+      custodyId: input.record.custodyId,
+      expectedRevision: input.record.revision,
+      custody,
+    });
+  } catch {
+    return {
+      kind: 'notAttempted',
+      reason: input.signal.aborted ? 'cancelled' : 'custodyUnavailable',
+    };
+  }
+  if (persisted.kind === 'unavailable') {
+    return {
+      kind: 'notAttempted',
+      reason: persisted.reason === 'storageUnavailable' ? 'custodyUnavailable' : persisted.reason,
+    };
+  }
+  if (persisted.kind === 'conflict') {
+    return { kind: 'notAttempted', reason: 'custodyChangedBeforeAttempt' };
+  }
+  if (persisted.kind === 'invalid') {
+    return { kind: 'notAttempted', reason: persisted.reason };
+  }
+  return { kind: 'settled', custody: persisted.record.custody };
+}
+
 /** The only outward delivery path: persist known no-effect or win custody, invoke, then settle. */
 export async function deliverConversationOutwardDelivery(input: Readonly<{
   store: ConversationOutwardDeliveryStore;
@@ -2894,40 +3020,16 @@ export async function deliverConversationOutwardDelivery(input: Readonly<{
   }
 
   if (permanentPreProviderNoEffect) {
-    if (input.signal.aborted) return { kind: 'notAttempted', reason: 'cancelled' };
-    const custody = settleConversationDeliveryKnownNoEffectBeforeProvider(ensured.record.custody);
-    if (custody === null) {
-      return {
-        kind: 'notAttempted',
-        reason: ensured.record.custody.state === 'attempting' ? 'attemptInProgress' : 'notDue',
-      };
-    }
-    let persisted: Awaited<ReturnType<ConversationOutwardDeliveryStore['compareAndSwap']>>;
-    try {
-      persisted = await input.store.compareAndSwap({
-        custodyId: ensured.record.custodyId,
-        expectedRevision: ensured.record.revision,
-        custody,
-      });
-    } catch {
-      return {
-        kind: 'notAttempted',
-        reason: input.signal.aborted ? 'cancelled' : 'custodyUnavailable',
-      };
-    }
-    if (persisted.kind === 'unavailable') {
-      return {
-        kind: 'notAttempted',
-        reason: persisted.reason === 'storageUnavailable' ? 'custodyUnavailable' : persisted.reason,
-      };
-    }
-    if (persisted.kind === 'conflict') {
-      return { kind: 'notAttempted', reason: 'custodyChangedBeforeAttempt' };
-    }
-    if (persisted.kind === 'invalid') {
-      return { kind: 'notAttempted', reason: persisted.reason };
-    }
-    return { kind: 'settled', custody: persisted.record.custody };
+    const settled = await settleConversationOutwardDeliveryKnownNoEffectBeforeProvider({
+      store: input.store,
+      record: ensured.record,
+      signal: input.signal,
+    });
+    if (settled !== null) return settled;
+    return {
+      kind: 'notAttempted',
+      reason: ensured.record.custody.state === 'attempting' ? 'attemptInProgress' : 'notDue',
+    };
   }
 
   const started = startConversationDeliveryAttempt({
@@ -3240,6 +3342,31 @@ export async function redriveConversationOutwardDeliveryThroughProviderAction(in
   now: () => number;
   signal: AbortSignal;
 }>): Promise<ConversationOutwardDeliveryResult> {
+  if (!hasRetainedConversationOutwardDeliveryContent(input.record.obligation)) {
+    return isConversationDeliveryAutomaticTerminal(input.record.custody)
+      ? { kind: 'settled', custody: input.record.custody }
+      : { kind: 'notAttempted', reason: 'invalidRow' };
+  }
+  const currentness = await checkConversationOutwardDeliveryRouteCurrentness({
+    stateCollection: input.stateCollection,
+    signal: input.signal,
+    obligation: input.record.obligation,
+    requireBindingRevision: false,
+  });
+  if (currentness.kind === 'current') {
+    const rejection = validateConversationOutwardDeliveryBeforeCustody({
+      obligation: input.record.obligation,
+      outboundTextLimit: currentness.outboundTextLimit,
+    });
+    if (rejection !== null && isConversationOutwardDeliveryKnownNoEffect(rejection)) {
+      const settled = await settleConversationOutwardDeliveryKnownNoEffectBeforeProvider({
+        store: input.store,
+        record: input.record,
+        signal: input.signal,
+      });
+      if (settled !== null) return settled;
+    }
+  }
   const boundary = createConversationOutwardDeliveryProviderActionBoundary({
     stateCollection: input.stateCollection,
     targetedContributions: input.targetedContributions,

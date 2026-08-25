@@ -14,10 +14,9 @@ import {
   type RealtimeVoiceProviderRuntime,
   type RealtimeVoiceProviderSettingsOperations,
   type VoiceHostedConversationService,
-  type VoiceRealtimeConnection } from '@happier-dev/plugin-sdk/voice/client';
-import {
   type VoiceRealtimeJsonValue,
-} from '@happier-dev/plugin-sdk/voice';
+  type VoiceRealtimeConnection,
+} from '@happier-dev/plugin-sdk/voice/client';
 
 import { ELEVENLABS_VOICE_PROVIDER_CONTRIBUTION_ID } from '../../constants.js';
 import {
@@ -234,7 +233,7 @@ RealtimeVoiceProviderRuntime & Readonly<{
     // owns the canonical audio-mode lease and the only Voice session lifecycle.
     microphoneMode: 'provider_managed',
     outputLevelMeter: 'unavailable',
-    async createConnection({ session, mic, media, tools, execution }) {
+    async createConnection({ session, mic, media, tools, execution, interruption }) {
       if (disposed) throw new Error('elevenlabs_runtime_disposed');
       if (execution.kind !== 'direct_media') {
         throw new Error('elevenlabs_direct_media_authority_required');
@@ -257,6 +256,7 @@ RealtimeVoiceProviderRuntime & Readonly<{
         handle,
         startConfig: session.config,
         initialMuted: mic.isMuted(),
+        duckGain: interruption.duckGain,
         onSessionIdentity(conversationId) {
           if (controlSessionId) provider.handleSessionIdentity({ controlSessionId, conversationId });
         },

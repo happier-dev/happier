@@ -9,7 +9,6 @@ import {
   confirmConversationConnectionStop,
   recordConversationConnectionHistoryGap,
   recordConversationConnectionProviderReadiness,
-  setConversationConnectionEnabled,
   startConversationConnectionDelete,
   startConversationConnectionTransfer,
   transitionConversationConnection,
@@ -676,36 +675,6 @@ describe('Conversation connection lifecycle', () => {
       kind: 'rejected',
       code: 'stopRequestInvalid',
     });
-  });
-
-  it('uses the same epoch-owning transition for offline enablement without manufacturing delete intent', () => {
-    const disabled = setConversationConnectionEnabled({
-      current: connection({
-        historyGap: { reportedAt: 1_700_000_000_000, reason: 'applicationAdmissionLost' },
-      }),
-      enabled: false,
-    });
-
-    expect(disabled).toEqual({
-      kind: 'updated',
-      connection: {
-        authorityEpoch: 8,
-        enabled: false,
-        deletionState: 'none',
-        overlapSafety: 'safe',
-        pendingOldTransportStop: null,
-        historyGap: null,
-        providerReadiness: null,
-        pollFailure: null,
-        maximumObservationAgeMs: 60_000,
-        observationAgeExpansionFloorOccurredAt: null,
-      },
-    });
-    if (disabled.kind !== 'updated') throw new Error('Expected enabled-state update');
-    expect(setConversationConnectionEnabled({
-      current: disabled.connection,
-      enabled: false,
-    })).toEqual({ kind: 'unchanged', connection: disabled.connection });
   });
 
   it('updates Account-local connection policy in place while preserving pairing and transport authority', () => {

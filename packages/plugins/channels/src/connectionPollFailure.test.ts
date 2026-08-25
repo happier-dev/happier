@@ -10,6 +10,11 @@ import {
   projectConversationConnectionPollFailureAttention,
   readConversationConnectionPollFailureAttention,
 } from './connectionPollFailure.js';
+import {
+  MAX_CONVERSATION_POLL_FAILURE_ATTEMPTS,
+  isConversationPollFailureAttemptCount,
+  isConversationPollRetryAttemptCount,
+} from './connectionPollFailureBounds.js';
 import { readPersistedConversationConnectionPollFailure } from './connectionPollFailurePersistence.js';
 
 const validatesPersistedPollFailure = compilePluginJsonSchema(
@@ -17,18 +22,28 @@ const validatesPersistedPollFailure = compilePluginJsonSchema(
 );
 
 describe('Conversation connection poll-failure codec', () => {
+  it('derives retry eligibility and terminal validity from one exhaustion ceiling', () => {
+    const lastRetryAttempt = MAX_CONVERSATION_POLL_FAILURE_ATTEMPTS - 1;
+
+    expect(isConversationPollFailureAttemptCount(lastRetryAttempt)).toBe(true);
+    expect(isConversationPollRetryAttemptCount(lastRetryAttempt)).toBe(true);
+    expect(isConversationPollFailureAttemptCount(MAX_CONVERSATION_POLL_FAILURE_ATTEMPTS)).toBe(true);
+    expect(isConversationPollRetryAttemptCount(MAX_CONVERSATION_POLL_FAILURE_ATTEMPTS)).toBe(false);
+    expect(isConversationPollFailureAttemptCount(MAX_CONVERSATION_POLL_FAILURE_ATTEMPTS + 1)).toBe(false);
+  });
+
   it('accepts exactly the Collection manifest union at the persisted-value seam', () => {
     const accepted = [
       null,
       {
         phase: 'retryDue',
-        attemptCount: 4,
+        attemptCount: MAX_CONVERSATION_POLL_FAILURE_ATTEMPTS - 1,
         retryNotBeforeMs: 0,
         evidence: { kind: 'provider', reason: 'network', diagnostic: 'provider unavailable' },
       },
       {
         phase: 'blocked',
-        attemptCount: 5,
+        attemptCount: MAX_CONVERSATION_POLL_FAILURE_ATTEMPTS,
         retryNotBeforeMs: null,
         evidence: { kind: 'action', code: 'poll_failed', message: 'Provider poll failed.' },
       },
@@ -37,8 +52,14 @@ describe('Conversation connection poll-failure codec', () => {
       undefined,
       {
         phase: 'retryDue',
-        attemptCount: 5,
+        attemptCount: MAX_CONVERSATION_POLL_FAILURE_ATTEMPTS,
         retryNotBeforeMs: 0,
+        evidence: { kind: 'provider', reason: 'network' },
+      },
+      {
+        phase: 'blocked',
+        attemptCount: MAX_CONVERSATION_POLL_FAILURE_ATTEMPTS + 1,
+        retryNotBeforeMs: null,
         evidence: { kind: 'provider', reason: 'network' },
       },
       {
@@ -96,8 +117,12 @@ describe('Conversation connection poll-failure codec', () => {
     expect(readConversationConnectionPollFailureAttention({
       ...attention,
       phase: 'retryDue',
-      attemptCount: 5,
+      attemptCount: MAX_CONVERSATION_POLL_FAILURE_ATTEMPTS,
       retryNotBeforeMs: 0,
+    })).toBeUndefined();
+    expect(readConversationConnectionPollFailureAttention({
+      ...attention,
+      attemptCount: MAX_CONVERSATION_POLL_FAILURE_ATTEMPTS + 1,
     })).toBeUndefined();
   });
 });

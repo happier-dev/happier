@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 
 import { definePlugin } from '@happier-dev/plugin-sdk';
+import { parsePluginManifest } from '@happier-dev/plugin-sdk/manifest';
 import { TriageSourcesContributionProtocolV1 } from '@happier-dev/triage-protocol/v1';
 import { assertTriageSourceContributionV1 } from '@happier-dev/triage-protocol/testing/v1';
 import { describe, expect, it } from 'vitest';
@@ -184,7 +185,7 @@ describe('Sentry plugin manifest', () => {
 
   it('has its scan purpose binding enforced, not merely tolerated', () => {
     const sources = TriageSourcesContributionProtocolV1;
-    const declare = (path: string): unknown => definePlugin({
+    const declare = (path: string) => definePlugin({
       id: 'happier.sentry',
       version: '0.0.0',
       displayName: 'Sentry',
@@ -212,15 +213,26 @@ describe('Sentry plugin manifest', () => {
       },
     });
 
+    // The walker runs at manifest ingest, which is what a host puts every
+    // manifest through before it may contribute anything. `definePlugin` is an
+    // authoring projector that validates no contribution schema, so probing it
+    // for a throw observed nothing and could not fail.
+    const bindingRejections = (path: string): readonly string[] => {
+      const parsed = parsePluginManifest(declare(path).manifest);
+      if (parsed.ok) return [];
+      return parsed.diagnostics
+        .filter((diagnostic) => diagnostic.message.includes('Connected Account purpose bindings'))
+        .map((diagnostic) => diagnostic.path.join('.'));
+    };
+
     // The published scan input is a two-arm union. The account path both arms
     // carry is accepted...
-    expect(() => declare('instance.binding.account')).not.toThrow();
+    expect(parsePluginManifest(declare('instance.binding.account').manifest).ok).toBe(true);
     // ...and a path that is not an exact credential ref in every arm is
     // refused, which is what makes the accepted declaration meaningful rather
     // than a field the parser walked past.
-    expect(() => declare('page.continuation.token')).toThrow(
-      /Connected Account purpose bindings/u,
-    );
+    expect(bindingRejections('page.continuation.token'))
+      .toEqual(['contributes.actions.0.connectedAccountPurposeBindings.0.path']);
   });
 
   it('declares the four source-native detail reads the detail body invokes', () => {

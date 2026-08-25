@@ -13,6 +13,7 @@
           }
         ],
         "dangerLevel": "safe",
+        "description": "Runs one Discord Gateway worker attempt.",
         "execution": {
           "target": "daemon"
         },
@@ -497,6 +498,130 @@
         "title": "Watch a Discord channel for Automations"
       },
       {
+        "dangerLevel": "writesRemote",
+        "description": "Admits one frozen Discord Automation Event obligation through the current source definitions.",
+        "execution": {
+          "target": "daemon"
+        },
+        "id": "discord/admit-automation-event",
+        "inputSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "additionalProperties": false,
+          "properties": {
+            "candidate": {
+              "additionalProperties": false,
+              "properties": {
+                "eventRef": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "localId": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$",
+                      "type": "string"
+                    },
+                    "pluginId": {
+                      "maxLength": 256,
+                      "minLength": 3,
+                      "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "pluginId",
+                    "localId"
+                  ],
+                  "type": "object"
+                },
+                "payload": {},
+                "sourceContractVersion": {
+                  "maximum": 9007199254740991,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "sourceInstanceId": {
+                  "minLength": 1,
+                  "type": "string",
+                  "x-happier-max-utf8-bytes": 512
+                }
+              },
+              "required": [
+                "eventRef",
+                "sourceInstanceId",
+                "sourceContractVersion",
+                "payload"
+              ],
+              "type": "object"
+            },
+            "connectionId": {
+              "maxLength": 96,
+              "minLength": 1,
+              "pattern": "^[\\x21-\\x7E]+$",
+              "type": "string"
+            },
+            "observationReceivedAt": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "occurredAt": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "occurrenceId": {
+              "minLength": 1,
+              "type": "string",
+              "x-happier-max-utf8-bytes": 128
+            }
+          },
+          "required": [
+            "connectionId",
+            "candidate",
+            "occurrenceId",
+            "occurredAt",
+            "observationReceivedAt"
+          ],
+          "type": "object"
+        },
+        "resultSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "checkpointSafe"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "unsettled"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "scopes": [
+          "global"
+        ],
+        "surfaces": [
+          "plugin"
+        ],
+        "title": "Admit Discord Automation Event"
+      },
+      {
         "connectedAccountPurposeBindings": [
           {
             "path": "credentialRef",
@@ -504,6 +629,7 @@
           }
         ],
         "dangerLevel": "safe",
+        "description": "Verifies the selected Discord bot for Channels setup.",
         "execution": {
           "target": "daemon"
         },
@@ -744,6 +870,27 @@
                     }
                   ]
                 },
+                "setupGuidance": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "externalUrl": {
+                      "minLength": 1,
+                      "pattern": "^https://[^\\s]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 2048
+                    },
+                    "requiredPermissionsLabel": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "externalUrl",
+                    "requiredPermissionsLabel"
+                  ],
+                  "type": "object"
+                },
                 "sharedEndpointInputModes": {
                   "items": {
                     "anyOf": [
@@ -853,6 +1000,7 @@
           }
         ],
         "dangerLevel": "safe",
+        "description": "Tests the selected Discord Channel connection.",
         "execution": {
           "target": "daemon"
         },
@@ -987,6 +1135,25 @@
                   "minLength": 1,
                   "type": "string",
                   "x-happier-max-utf8-bytes": 512
+                },
+                "sharedEndpointInputModes": {
+                  "items": {
+                    "anyOf": [
+                      {
+                        "const": "directMentionsOnly"
+                      },
+                      {
+                        "const": "addressedMessages"
+                      },
+                      {
+                        "const": "allAllowedMessages"
+                      }
+                    ]
+                  },
+                  "maxItems": 3,
+                  "minItems": 1,
+                  "type": "array",
+                  "uniqueItems": true
                 }
               },
               "required": [
@@ -1062,6 +1229,7 @@
           }
         ],
         "dangerLevel": "safe",
+        "description": "Resolves a Discord channel destination for delivery.",
         "execution": {
           "target": "daemon"
         },
@@ -1464,6 +1632,7 @@
           }
         ],
         "dangerLevel": "writesRemote",
+        "description": "Delivers a message to the selected Discord destination.",
         "execution": {
           "target": "daemon"
         },
@@ -1972,6 +2141,7 @@
       },
       {
         "dangerLevel": "writesRemote",
+        "description": "Stops the selected Discord Gateway connection.",
         "execution": {
           "target": "daemon"
         },
@@ -2219,7 +2389,146 @@
       }
     ],
     "daemonDatabases": [],
-    "events": [],
+    "events": [
+      {
+        "automation": {
+          "eligible": true,
+          "source": {
+            "setupActionRef": {
+              "localId": "automation/setup-channel-message-source-v1",
+              "pluginId": "happier.channel.discord"
+            },
+            "sourceConfigSchema": {
+              "additionalProperties": false,
+              "properties": {
+                "applicationId": {
+                  "maxLength": 64,
+                  "minLength": 1,
+                  "pattern": "^[0-9]+$",
+                  "type": "string"
+                },
+                "channelId": {
+                  "maxLength": 64,
+                  "minLength": 1,
+                  "pattern": "^[0-9]+$",
+                  "type": "string"
+                },
+                "v": {
+                  "const": 1,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "v",
+                "applicationId",
+                "channelId"
+              ],
+              "type": "object"
+            },
+            "sourceContractVersion": 1,
+            "supportedObservationTransports": [
+              "checkpointedPull"
+            ]
+          },
+          "v": 1
+        },
+        "description": "A Discord channel message observed through the selected Channels Gateway.",
+        "id": "automation/channel-message-observed-v1",
+        "kind": "event",
+        "payloadSchema": {
+          "additionalProperties": false,
+          "properties": {
+            "actorKind": {
+              "enum": [
+                "human",
+                "integration",
+                "bot",
+                "unknown"
+              ],
+              "type": "string"
+            },
+            "actorPrincipalId": {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            "addressingEvidence": {
+              "enum": [
+                "directIntegrationMention",
+                "integrationRoleMention",
+                "replyToIntegration",
+                "none"
+              ],
+              "type": "string"
+            },
+            "channelId": {
+              "maxLength": 64,
+              "minLength": 1,
+              "pattern": "^[0-9]+$",
+              "type": "string"
+            },
+            "channelKind": {
+              "enum": [
+                "direct",
+                "shared",
+                "thread"
+              ],
+              "type": "string"
+            },
+            "contentProvenance": {
+              "enum": [
+                "original",
+                "forwarded",
+                "viaBot"
+              ],
+              "type": "string"
+            },
+            "messageId": {
+              "maxLength": 64,
+              "minLength": 1,
+              "pattern": "^[0-9]+$",
+              "type": "string"
+            },
+            "parentChannelId": {
+              "maxLength": 64,
+              "minLength": 1,
+              "pattern": "^[0-9]+$",
+              "type": "string"
+            },
+            "replyToMessageId": {
+              "maxLength": 64,
+              "minLength": 1,
+              "pattern": "^[0-9]+$",
+              "type": "string"
+            },
+            "text": {
+              "maxLength": 4000,
+              "type": "string"
+            },
+            "textTruncated": {
+              "type": "boolean"
+            },
+            "v": {
+              "const": 1,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "v",
+            "channelId",
+            "channelKind",
+            "messageId",
+            "text",
+            "textTruncated",
+            "addressingEvidence",
+            "contentProvenance",
+            "actorKind"
+          ],
+          "type": "object"
+        },
+        "title": "Discord channel message"
+      }
+    ],
     "executionRunProfiles": [],
     "hooks": [],
     "managedDependencies": [],
@@ -2245,12 +2554,14 @@
     "scmBackends": [],
     "scmHostingProviders": [],
     "sessionHeaderActions": [],
+    "sessionInfoSections": [],
     "settings": [],
     "systemTools": [],
     "targetedPluginContributions": [
       {
         "id": "discord-provider",
         "operations": {
+          "automationEventAdmit": "discord/admit-automation-event",
           "connectionStop": "discord/halt-gateway",
           "connectionTest": "discord/inspect-connection",
           "endpointResolve": "discord/choose-channel",

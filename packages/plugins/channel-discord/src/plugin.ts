@@ -29,13 +29,19 @@ import {
   type DiscordGatewaySupervisor,
 } from './discordGatewaySupervisor.js';
 import {
+  DISCORD_AUTOMATION_MESSAGE_ADMIT_ACTION_ID,
+  DISCORD_AUTOMATION_MESSAGE_EVENT_ID,
+  DISCORD_AUTOMATION_MESSAGE_PAYLOAD_SCHEMA,
+  DISCORD_AUTOMATION_MESSAGE_SOURCE_CONFIG_SCHEMA,
   DISCORD_AUTOMATION_MESSAGE_SETUP_ACTION_ID,
   DISCORD_AUTOMATION_MESSAGE_SETUP_HOST_ACCESS,
   DISCORD_AUTOMATION_MESSAGE_SETUP_INPUT_HINTS,
   DISCORD_AUTOMATION_MESSAGE_SETUP_INPUT_SCHEMA,
   DISCORD_AUTOMATION_MESSAGE_SETUP_RESULT_SCHEMA,
+  DISCORD_AUTOMATION_MESSAGE_SOURCE_CONTRACT_VERSION,
   setupDiscordAutomationMessageSource,
 } from './discordAutomationEvent.js';
+import { admitDiscordAutomationEvent } from './discordAutomationEventAdmission.js';
 import { DISCORD_UI_TRANSLATION_BUNDLES } from './ui/translations.js';
 
 const discordProviderProtocol = ConversationProvidersContributionProtocolV1;
@@ -45,6 +51,7 @@ const connectionTestOperation = discordProviderOperations.connectionTest;
 const endpointResolveOperation = discordProviderOperations.endpointResolve;
 const messageDeliverOperation = discordProviderOperations.messageDeliver;
 const connectionStopOperation = discordProviderOperations.connectionStop;
+const automationEventAdmitOperation = discordProviderOperations.automationEventAdmit;
 
 /**
  * The setup handler reads the same declaration, so the manifest the host
@@ -210,6 +217,7 @@ function createDiscordPlugin() {
   actions: {
     [DISCORD_GATEWAY_WORKER_ATTEMPT_ACTION_ID]: {
       title: 'Run Discord Gateway worker attempt',
+      description: 'Runs one Discord Gateway worker attempt.',
       execution: { target: 'daemon' },
       scopes: ['global'],
       surfaces: ['plugin'],
@@ -222,12 +230,6 @@ function createDiscordPlugin() {
       }],
       run: gatewayActivationBindings.runWorkerAttempt,
     },
-    // The Automation Event this Action resolves a source for is WITHHELD from
-    // this manifest; the withheld-declaration note in
-    // `discordAutomationEvent.ts` owns why and what a real observer needs. The
-    // Action stays declared so the retained observer work keeps its one
-    // registered entry point, and it is reachable only from the `plugin`
-    // surface, so nothing user-facing offers an Automation that cannot exist.
     [DISCORD_AUTOMATION_MESSAGE_SETUP_ACTION_ID]: {
       title: 'Watch a Discord channel for Automations',
       description: 'Resolves a Discord channel to immutable source facts for an Automation Event.',
@@ -245,8 +247,20 @@ function createDiscordPlugin() {
       }],
       run: setupDiscordAutomationMessageSource,
     },
+    [DISCORD_AUTOMATION_MESSAGE_ADMIT_ACTION_ID]: {
+      title: 'Admit Discord Automation Event',
+      description: 'Admits one frozen Discord Automation Event obligation through the current source definitions.',
+      execution: { target: 'daemon' },
+      scopes: ['global'],
+      surfaces: automationEventAdmitOperation.declaration.surfaces,
+      dangerLevel: automationEventAdmitOperation.declaration.dangerLevel,
+      inputSchema: automationEventAdmitOperation.declaration.input.schema.jsonSchema,
+      resultSchema: automationEventAdmitOperation.declaration.resultSchema.jsonSchema,
+      run: admitDiscordAutomationEvent,
+    },
     [DISCORD_CHANNEL_ACTION_IDS.setup]: {
       title: 'Set up Discord Channels',
+      description: 'Verifies the selected Discord bot for Channels setup.',
       execution: { target: 'daemon' },
       scopes: ['global'],
       surfaces: discordProviderOperations.setup.declaration.surfaces,
@@ -281,6 +295,7 @@ function createDiscordPlugin() {
     },
     [DISCORD_CHANNEL_ACTION_IDS.connectionTest]: {
       title: 'Test Discord connection',
+      description: 'Tests the selected Discord Channel connection.',
       execution: { target: 'daemon' },
       scopes: ['global'],
       surfaces: connectionTestOperation.declaration.surfaces,
@@ -296,6 +311,7 @@ function createDiscordPlugin() {
     },
     [DISCORD_CHANNEL_ACTION_IDS.endpointResolve]: {
       title: 'Resolve Discord destination',
+      description: 'Resolves a Discord channel destination for delivery.',
       execution: { target: 'daemon' },
       scopes: ['global'],
       surfaces: endpointResolveOperation.declaration.surfaces,
@@ -311,6 +327,7 @@ function createDiscordPlugin() {
     },
     [DISCORD_CHANNEL_ACTION_IDS.messageDeliver]: {
       title: 'Deliver Discord message',
+      description: 'Delivers a message to the selected Discord destination.',
       execution: { target: 'daemon' },
       scopes: ['global'],
       surfaces: messageDeliverOperation.declaration.surfaces,
@@ -326,6 +343,7 @@ function createDiscordPlugin() {
     },
     [DISCORD_CHANNEL_ACTION_IDS.connectionStop]: {
       title: 'Stop Discord Gateway connection',
+      description: 'Stops the selected Discord Gateway connection.',
       execution: { target: 'daemon' },
       scopes: ['global'],
       surfaces: connectionStopOperation.declaration.surfaces,
@@ -336,9 +354,29 @@ function createDiscordPlugin() {
       run: gatewayActivationBindings.stop,
     },
   },
-  // This provider declares no Event. Its Automation Event declaration is
-  // WITHHELD; `discordAutomationEvent.ts` owns the note that says why and what
-  // a real history-capable observer needs before it can be declared again.
+  events: {
+    [DISCORD_AUTOMATION_MESSAGE_EVENT_ID]: {
+      declaration: {
+        kind: 'event',
+        title: 'Discord channel message',
+        description: 'A Discord channel message observed through the selected Channels Gateway.',
+        payloadSchema: DISCORD_AUTOMATION_MESSAGE_PAYLOAD_SCHEMA,
+        automation: {
+          v: 1,
+          eligible: true,
+          source: {
+            sourceContractVersion: DISCORD_AUTOMATION_MESSAGE_SOURCE_CONTRACT_VERSION,
+            supportedObservationTransports: ['checkpointedPull'],
+            sourceConfigSchema: DISCORD_AUTOMATION_MESSAGE_SOURCE_CONFIG_SCHEMA,
+            setupActionRef: {
+              pluginId: DISCORD_PLUGIN_ID,
+              localId: DISCORD_AUTOMATION_MESSAGE_SETUP_ACTION_ID,
+            },
+          },
+        },
+      },
+    },
+  },
   backgroundServices: [{
     declaration: {
       id: 'gateway-supervisor',
@@ -354,6 +392,9 @@ function createDiscordPlugin() {
             setup: discordProviderOperations.setup.bind(DISCORD_CHANNEL_ACTION_IDS.setup),
             connectionTest: discordProviderOperations.connectionTest.bind(DISCORD_CHANNEL_ACTION_IDS.connectionTest),
             endpointResolve: discordProviderOperations.endpointResolve.bind(DISCORD_CHANNEL_ACTION_IDS.endpointResolve),
+            automationEventAdmit: discordProviderOperations.automationEventAdmit.bind(
+              DISCORD_AUTOMATION_MESSAGE_ADMIT_ACTION_ID,
+            ),
             messageDeliver: discordProviderOperations.messageDeliver.bind(DISCORD_CHANNEL_ACTION_IDS.messageDeliver),
             connectionStop: discordProviderOperations.connectionStop.bind(DISCORD_CHANNEL_ACTION_IDS.connectionStop),
           },

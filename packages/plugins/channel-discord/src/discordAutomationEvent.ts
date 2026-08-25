@@ -1,4 +1,7 @@
-import type { ConversationNormalizedIngressV1 } from '@happier-dev/channels-protocol/v1';
+import type {
+  ConversationIngressAutomationEventCandidateV1,
+  ConversationNormalizedIngressV1,
+} from '@happier-dev/channels-protocol/v1';
 import { PluginError, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { QualifiedConnectedAccountRefJsonSchema } from '@happier-dev/plugin-sdk/connected-accounts';
 import type { ConnectedAccountRef } from '@happier-dev/plugin-sdk/connected-accounts';
@@ -17,70 +20,13 @@ import {
 export { DISCORD_PLUGIN_ID } from './discordPluginConstants.js';
 
 /**
- * WITHHELD DECLARATION — this module's Event is deliberately absent from
- * `plugin.ts`, so the plugin projects no automation-eligible Event. Everything
- * below stays as the observer's work in progress.
- *
- * Why it was withheld. This provider persists nothing: the Gateway session id
- * and last dispatch sequence live in one `startDiscordGatewaySocket` local
- * (`discordGateway.ts`), and neither the supervisor nor the worker writes any
- * storage. So a `checkpointedPull` observer here has no position to resume
- * from, and an admission that fails after process loss or a plugin reload
- * silently loses the Automation Run. `durablePush` is not merely unimplemented
- * but structurally unrepresentable: the `Automation_trigger_arm_check`
- * constraint added by migration `20260816231000_add_event_automations_v1`
- * requires `triggerObservationTransport = 'durablePush' AND
- * triggerWebhookEndpointId IS NOT NULL`, and a Gateway socket has no webhook
- * endpoint. Neither declared transport honestly describes this observer.
- *
- * Stated precisely: `checkpointedPull` carries no written durable-cursor
- * obligation — the term appears nowhere in `docs/` or `apps/docs/content/`, so
- * the declaration broke no written contract. What was actually false was a
- * code comment that promised Gateway replay would cover a failed admission.
- *
- * The funded follow-up is a real history-capable observer, and Discord already
- * supports one: `GET /channels/{id}/messages?after=` returns history, and
- * `createDiscordBotApi` (`discordApi.ts`) is the existing REST owner to extend.
- * Such an observer needs, at minimum:
- *   - a durable checkpoint keyed by the DEFINITION-scoped identity approved as
- *     `r0.39` — (automationId, eventRef, sourceSelectorId) — exactly as
- *     `createGithubAutomationEventCheckpointRowId`
- *     (`packages/plugins/scm-github/src/observations/githubAutomationEventCheckpoint.ts`)
- *     already forms it. NOT a cursor per (applicationId, channelId): the
- *     source-instance identity that
- *     `createDiscordAutomationMessageSourceInstanceId` forms is shared by every
- *     Automation watching the same channel, so one shared cursor would let each
- *     of them advance past the others' unobserved messages;
- *   - REST-verifiable history as the sole checkpoint authority. Gateway
- *     dispatches are low-latency HINTS ONLY: a live event may advance nothing
- *     the REST read has not confirmed, because the socket's session id and last
- *     dispatch sequence are process-local and unrecoverable after a reload;
- *   - reconnect backfill from that checkpoint, since Gateway RESUME covers only
- *     the in-process window;
- *   - dedupe between backfilled and live messages (the stable `occurrenceId`
- *     the host already keys occurrences by is the join);
- *   - Discord REST rate-limit handling for the backfill reads;
- *   - explicit history-gap semantics when the checkpoint falls outside what
- *     Discord will still return, reported through the Event's history-gap reset
- *     Action.
- *
- * To resume: re-add the `events` entry to `plugin.ts` using the ids and schemas
- * exported here, once that observer exists, then restore the two call sites
- * `discordGatewaySupervisor.ts` gives up while the Event is withheld — the
- * per-tick `createDiscordAutomationEventSourceIndex().refresh(...)` in `run`
- * and the full-text `admit(...)` fan-out inside `admitObservation`. They are
- * withdrawn rather than left dormant because the host builds an
- * adopted-definition owner only for a manifest-declared automation-eligible
- * Event (`resolveExecutablePluginRuntimeRegistry.ts`), so while this Event is
- * withheld every `automation.event.sources.list` fails with
- * `automation_event_adopted_definitions_unavailable` — once per reconciliation
- * tick, on every Machine. `discordAutomationEventAdmission.ts` and its tests
- * keep the index itself intact, and `automationEventDiscordSource.fixture.test.ts`
- * in `apps/cli` still drives the whole vertical end to end and is the harness
- * that proves the re-declared Event.
+ * Gateway messages enter the one Channels ingress census with this Event
+ * candidate. Channels owns the durable obligation and checkpoint; this plugin
+ * only matches an already-armed source through its stateless admit action.
  */
 export const DISCORD_AUTOMATION_MESSAGE_EVENT_ID = 'automation/channel-message-observed-v1';
 export const DISCORD_AUTOMATION_MESSAGE_SETUP_ACTION_ID = 'automation/setup-channel-message-source-v1';
+export const DISCORD_AUTOMATION_MESSAGE_ADMIT_ACTION_ID = 'discord/admit-automation-event';
 export const DISCORD_AUTOMATION_MESSAGE_SOURCE_CONTRACT_VERSION = 1;
 
 /**
@@ -319,6 +265,33 @@ export function createDiscordAutomationMessagePayload(input: Readonly<{
       ? {}
       : { replyToMessageId: observation.message.replyToMessageId }),
   });
+}
+
+/**
+ * One Event candidate bound to the same Gateway ingress passed to Channels.
+ * It is evidence only: the Channels core owns durable admission, retry, and
+ * checkpoint settlement before this provider's stateless bridge is invoked.
+ */
+export function createDiscordAutomationEventCandidate(input: Readonly<{
+  applicationId: string;
+  observation: ConversationNormalizedIngressV1;
+}>): ConversationIngressAutomationEventCandidateV1 | null {
+  if (input.observation.kind !== 'fullText') return null;
+  const payload = createDiscordAutomationMessagePayload({ observation: input.observation.observation });
+  if (payload === null) return null;
+  return {
+    eventRef: {
+      pluginId: DISCORD_PLUGIN_ID,
+      localId: DISCORD_AUTOMATION_MESSAGE_EVENT_ID,
+    },
+    sourceInstanceId: createDiscordAutomationMessageSourceInstanceId({
+      v: 1,
+      applicationId: input.applicationId,
+      channelId: payload.channelId,
+    }),
+    sourceContractVersion: DISCORD_AUTOMATION_MESSAGE_SOURCE_CONTRACT_VERSION,
+    payload,
+  };
 }
 
 function isDiscordCredentialRef(value: unknown): value is ConnectedAccountRef {

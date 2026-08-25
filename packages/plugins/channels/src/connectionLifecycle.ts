@@ -18,6 +18,10 @@ import {
 import type { PluginMachineExecutionOriginV1 } from '@happier-dev/plugin-sdk/actions';
 
 import type { PersistedConversationProviderContributionSelection } from './collections.js';
+import type {
+  ConversationPollFailureAttemptCountV1,
+  ConversationPollRetryAttemptCountV1,
+} from './connectionPollFailureBounds.js';
 
 /**
  * Exact identity of one host-stamped plugin materialization.
@@ -109,13 +113,13 @@ export type ConversationConnectionPollFailureEvidenceV1 =
 export type ConversationConnectionPollFailureV1 =
   | Readonly<{
     phase: 'retryDue';
-    attemptCount: 1 | 2 | 3 | 4;
+    attemptCount: ConversationPollRetryAttemptCountV1;
     retryNotBeforeMs: number;
     evidence: ConversationConnectionPollFailureEvidenceV1;
   }>
   | Readonly<{
     phase: 'blocked';
-    attemptCount: 1 | 2 | 3 | 4 | 5;
+    attemptCount: ConversationPollFailureAttemptCountV1;
     retryNotBeforeMs: null;
     evidence: ConversationConnectionPollFailureEvidenceV1;
   }>;
@@ -757,24 +761,6 @@ export function abandonConversationConnectionStop(input: Readonly<{
       pollFailure: null,
     },
   };
-}
-
-/**
- * The offline-eligible desired-state operation. It never turns a disable into
- * delete cleanup, and every accepted enabled-state change fences older work by
- * advancing the sole connection authority epoch.
- */
-export function setConversationConnectionEnabled(input: Readonly<{
-  current: ConversationConnectionLifecycleStateV1;
-  enabled: boolean;
-}>): ConversationConnectionEnabledResultV1 {
-  return transitionConversationConnection({
-    current: input.current,
-    requested: {
-      enabled: input.enabled,
-      maximumObservationAgeMs: input.current.maximumObservationAgeMs,
-    },
-  });
 }
 
 /**

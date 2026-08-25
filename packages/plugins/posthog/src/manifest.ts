@@ -22,6 +22,14 @@ import {
 
 import { posthogConnectedAccountRuntime } from './connect/account.js';
 import {
+    PosthogConfigurationDirectoryInputV1Schema,
+    PosthogConfigurationDirectoryResultV1Schema,
+} from './connect/configurationContract.js';
+import {
+    PosthogCapabilityProbeInputV1Schema,
+    PosthogCapabilityProbeResultV1Schema,
+} from './connect/capabilityProbe.js';
+import {
     POSTHOG_ACTION_IDS,
     POSTHOG_API_ORIGIN_FIELD_ID,
     POSTHOG_CONNECTED_ACCOUNT_PURPOSE,
@@ -53,6 +61,8 @@ import {
     getPosthogSourceEntry,
     listPosthogInstances,
     readPosthogActivity,
+    readPosthogConfigurationDirectory,
+    probePosthogCapability,
     readPosthogSampledEvents,
     scanPosthogSource,
 } from './source/operations.js';
@@ -88,6 +98,7 @@ const API_ORIGIN_FIELD = {
     semantic: 'connectedAccountOrigin' as const,
     schema: { type: 'string' as const, minLength: 8, maxLength: 2048 },
     required: true as const,
+    secret: false as const,
 };
 
 const PERSONAL_API_KEY_FIELD = {
@@ -268,6 +279,38 @@ export const POSTHOG_PLUGIN = definePlugin({
         }],
     },
     actions: {
+        [POSTHOG_ACTION_IDS.configuration]: {
+            title: 'Configure PostHog error issues',
+            execution: { target: 'daemon' },
+            description: 'Reads one user-requested page of PostHog organizations or environments.',
+            scopes: ['global'],
+            surfaces: ['plugin'],
+            dangerLevel: 'safe',
+            inputSchema: PosthogConfigurationDirectoryInputV1Schema.jsonSchema,
+            resultSchema: PosthogConfigurationDirectoryResultV1Schema.jsonSchema,
+            hostAccess: READ_HOST_ACCESS,
+            connectedAccountPurposeBindings: [{
+                path: 'binding.account',
+                purpose: POSTHOG_CONNECTED_ACCOUNT_PURPOSE,
+            }],
+            run: readPosthogConfigurationDirectory,
+        },
+        [POSTHOG_ACTION_IDS.capability]: {
+            title: 'Check PostHog Error Tracking access',
+            description: 'Checks whether the selected PostHog account can access Error Tracking.',
+            execution: { target: 'daemon' },
+            scopes: ['global'],
+            surfaces: ['plugin'],
+            dangerLevel: 'safe',
+            inputSchema: PosthogCapabilityProbeInputV1Schema.jsonSchema,
+            resultSchema: PosthogCapabilityProbeResultV1Schema.jsonSchema,
+            hostAccess: [POSTHOG_CONNECTED_ACCOUNT_PURPOSE, POSTHOG_NETWORK_HOST_ACCESS_ID],
+            connectedAccountPurposeBindings: [{
+                path: 'draft.binding.account',
+                purpose: POSTHOG_CONNECTED_ACCOUNT_PURPOSE,
+            }],
+            run: probePosthogCapability,
+        },
         [POSTHOG_ACTION_IDS.listInstances]: {
             title: 'Discover PostHog organizations',
             execution: { target: 'daemon' },

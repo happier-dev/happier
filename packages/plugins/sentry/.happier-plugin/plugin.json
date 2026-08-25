@@ -1297,6 +1297,45 @@
                             "type": "string",
                             "x-happier-max-utf8-bytes": 128
                           },
+                          "repository": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "deployment": {
+                                "minLength": 1,
+                                "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                "type": "string",
+                                "x-happier-max-utf8-bytes": 128
+                              },
+                              "kind": {
+                                "anyOf": [
+                                  {
+                                    "const": "github"
+                                  },
+                                  {
+                                    "const": "gitlab"
+                                  },
+                                  {
+                                    "const": "bitbucket"
+                                  },
+                                  {
+                                    "const": "azure-devops"
+                                  }
+                                ]
+                              },
+                              "repository": {
+                                "minLength": 1,
+                                "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                "type": "string",
+                                "x-happier-max-utf8-bytes": 255
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "deployment",
+                              "repository"
+                            ],
+                            "type": "object"
+                          },
                           "snapshot": {
                             "additionalProperties": true,
                             "properties": {
@@ -1981,6 +2020,45 @@
                             "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                             "type": "string",
                             "x-happier-max-utf8-bytes": 128
+                          },
+                          "repository": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "deployment": {
+                                "minLength": 1,
+                                "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                "type": "string",
+                                "x-happier-max-utf8-bytes": 128
+                              },
+                              "kind": {
+                                "anyOf": [
+                                  {
+                                    "const": "github"
+                                  },
+                                  {
+                                    "const": "gitlab"
+                                  },
+                                  {
+                                    "const": "bitbucket"
+                                  },
+                                  {
+                                    "const": "azure-devops"
+                                  }
+                                ]
+                              },
+                              "repository": {
+                                "minLength": 1,
+                                "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                "type": "string",
+                                "x-happier-max-utf8-bytes": 255
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "deployment",
+                              "repository"
+                            ],
+                            "type": "object"
                           },
                           "snapshot": {
                             "additionalProperties": true,
@@ -5340,6 +5418,45 @@
                   "type": "string",
                   "x-happier-max-utf8-bytes": 128
                 },
+                "repository": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "deployment": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
+                    },
+                    "kind": {
+                      "anyOf": [
+                        {
+                          "const": "github"
+                        },
+                        {
+                          "const": "gitlab"
+                        },
+                        {
+                          "const": "bitbucket"
+                        },
+                        {
+                          "const": "azure-devops"
+                        }
+                      ]
+                    },
+                    "repository": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 255
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "deployment",
+                    "repository"
+                  ],
+                  "type": "object"
+                },
                 "snapshot": {
                   "additionalProperties": true,
                   "properties": {
@@ -6082,6 +6199,7 @@
     "scmBackends": [],
     "scmHostingProviders": [],
     "sessionHeaderActions": [],
+    "sessionInfoSections": [],
     "settings": [],
     "systemTools": [],
     "targetedPluginContributions": [

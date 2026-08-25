@@ -104,6 +104,7 @@ const CLOUD_REGION_FIELD = {
   schema: { type: 'string' as const, enum: [...SENTRY_CLOUD_REGIONS] },
   originByValue: { ...SENTRY_CLOUD_REGION_ORIGINS },
   required: true as const,
+  secret: false as const,
 };
 
 const SELF_HOSTED_ORIGIN_FIELD = {
@@ -116,6 +117,7 @@ const SELF_HOSTED_ORIGIN_FIELD = {
   semantic: 'connectedAccountOrigin' as const,
   schema: { type: 'string' as const, minLength: 8, maxLength: 2048 },
   required: true as const,
+  secret: false as const,
 };
 
 const TOKEN_FIELD = {
@@ -204,10 +206,9 @@ export const SENTRY_PLUGIN = definePlugin({
         // own deployment private reach. The flag is scope-level, so a separate
         // grant is the only way to hold that line.
         //
-        // It does NOT refuse a public name that RESOLVES to a private address —
-        // the check reads the host as written and never resolves it. See
-        // `sentryContracts.ts` for the full residual; this separation is about
-        // which origins may be private, not about DNS.
+        // Final HTTP admission resolves and pins the selected Cloud hostname,
+        // so a private answer is refused under this non-private grant. This
+        // separate scope still decides which declared origins may be private.
       },
     }, {
       id: SENTRY_ACCOUNT_NETWORK_HOST_ACCESS_ID,

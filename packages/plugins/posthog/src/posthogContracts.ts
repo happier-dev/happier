@@ -66,6 +66,8 @@ export const POSTHOG_TRIAGE_SETTINGS_ARTIFACT_ID = 'posthog-triage-sources-nativ
 
 /** The Action ids that carry the three source read roles. */
 export const POSTHOG_ACTION_IDS = {
+    configuration: 'posthog/configuration',
+    capability: 'posthog/capability',
     listInstances: 'posthog/list-instances',
     scan: 'posthog/scan',
     get: 'posthog/get',

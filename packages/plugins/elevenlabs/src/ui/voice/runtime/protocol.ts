@@ -1,9 +1,6 @@
 import {
-  VoiceRealtimeJsonValueSchema } from '@happier-dev/plugin-sdk/voice/client';
-import {
+  VoiceRealtimeJsonValueSchema,
   type VoiceRealtimeJsonValue,
-} from '@happier-dev/plugin-sdk/voice';
-import type {
   RealtimeVoiceProviderProtocol,
   VoiceHostedConversationService,
 } from '@happier-dev/plugin-sdk/voice/client';
@@ -47,16 +44,34 @@ export function createElevenLabsProtocolAdapter(input: Readonly<{
   }>>();
   const currentAttemptIdByControlSessionId = new Map<string, number>();
 
+  const releasePreparedAttempt = async (
+    controlSessionId: string,
+    attemptId: number,
+  ): Promise<void> => {
+    const prepared = preparedByAttemptId.get(attemptId);
+    if (prepared?.controlSessionId !== controlSessionId) return;
+    preparedByAttemptId.delete(attemptId);
+    if (currentAttemptIdByControlSessionId.get(controlSessionId) === attemptId) {
+      currentAttemptIdByControlSessionId.delete(controlSessionId);
+    }
+    await input.lifecycle.releasePrepared(attemptId, prepared.session);
+  };
+
   const adapter: RealtimeVoiceProviderProtocol = {
     async prepare({
       controlSessionId,
       attemptId,
       request,
+      platform,
       providerConfig,
       credentials,
       hostedConversation,
       signal,
     }) {
+      const priorAttemptId = currentAttemptIdByControlSessionId.get(controlSessionId);
+      if (priorAttemptId !== undefined) {
+        await releasePreparedAttempt(controlSessionId, priorAttemptId);
+      }
       const requestRecord = readObject(request);
       const preparation = await input.preparation.prepare({
         controlSessionId,
@@ -67,6 +82,7 @@ export function createElevenLabsProtocolAdapter(input: Readonly<{
         credentials,
         hostedConversation,
         signal,
+        platform,
         textOnly: requestRecord.textOnly === true,
       });
       if (preparation.kind === 'aborted') return preparation;
@@ -136,13 +152,7 @@ export function createElevenLabsProtocolAdapter(input: Readonly<{
         ? { type: 'voice.user_text' }
         : null,
     async releasePrepared({ controlSessionId, attemptId }) {
-      const prepared = preparedByAttemptId.get(attemptId);
-      if (prepared?.controlSessionId !== controlSessionId) return;
-      preparedByAttemptId.delete(attemptId);
-      if (currentAttemptIdByControlSessionId.get(controlSessionId) === attemptId) {
-        currentAttemptIdByControlSessionId.delete(controlSessionId);
-      }
-      await input.lifecycle.releasePrepared(attemptId, prepared.session);
+      await releasePreparedAttempt(controlSessionId, attemptId);
     },
   };
 

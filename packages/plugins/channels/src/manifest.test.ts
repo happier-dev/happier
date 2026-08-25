@@ -7,9 +7,16 @@ import {
   type PluginManifest,
 } from '@happier-dev/plugin-sdk/manifest';
 import {
-  decodeTargetedContributionPointSemantics,
-  readTargetedContributionPointSemanticRefs,
-} from '@happier-dev/plugin-sdk/host/targeted-contributions';
+  MAX_PLUGIN_TRANSCRIPT_ACTIVITIES_PER_RESOURCE_V1,
+  MAX_PLUGIN_TRANSCRIPT_ACTIVITY_RESOURCE_BYTES_V1,
+  PLUGIN_TRANSCRIPT_ACTIVITY_CONTENT_TYPE_V1,
+  PluginTranscriptActivityResourceSnapshotV1Schema,
+} from '@happier-dev/plugin-sdk/resources';
+import {
+  COMPOSER_CONTROL_STATE_CONTENT_TYPE_V1,
+  ComposerControlStateV1Schema,
+  MAX_COMPOSER_CONTROL_STATE_RESOURCE_BYTES_V1,
+} from '@happier-dev/plugin-sdk/ui';
 import { describe, expect, it } from 'vitest';
 import {
   CONVERSATION_CORE_PROVIDER_ACTION_DECLARATIONS_V1,
@@ -62,6 +69,13 @@ import {
   CHANNELS_PLUGIN_ID,
   CHANNELS_PROVIDER_POINT_ID,
   CHANNELS_PROVIDER_POINT_REF,
+  CHANNELS_SESSION_COMPOSER_ATTENTION_CONTROL_ID,
+  CHANNELS_SESSION_COMPOSER_ATTENTION_STATE_RESOURCE_ID,
+  CHANNELS_SESSION_COMPOSER_CONTROL_ID,
+  CHANNELS_SESSION_COMPOSER_STATE_RESOURCE_ID,
+  CHANNELS_SESSION_CONVERSATIONS_HEADER_ACTION_ID,
+  CHANNELS_SESSION_CONVERSATIONS_RESOURCE_ID,
+  CHANNELS_SESSION_CONVERSATIONS_VIEW_ID,
   PLUGIN_MANIFEST,
 } from './manifest.js';
 import {
@@ -102,9 +116,43 @@ const C1_PUBLIC_BOUNDARY_SOURCE_FILES = [
   'manifest.ts',
   'manifest.test.ts',
   'reconciliation.ts',
+  'sessionInfoResource.ts',
 ] as const;
 
 describe('Channels core manifest', () => {
+  it('consumes the canonical Composer control-state Resource contract through public SDK UI', () => {
+    const resources = PLUGIN_MANIFEST.contributes.resources ?? [];
+
+    for (const id of [
+      'session-conversations-state-v1',
+      'session-conversations-attention-state-v1',
+    ]) {
+      expect(resources.find((resource) => resource.id === id)).toMatchObject({
+        scope: 'session',
+        contentType: COMPOSER_CONTROL_STATE_CONTENT_TYPE_V1,
+        maxBytes: MAX_COMPOSER_CONTROL_STATE_RESOURCE_BYTES_V1,
+      });
+    }
+    expect(ComposerControlStateV1Schema.safeParse({ visible: true, count: 1 }).success).toBe(true);
+  });
+
+  it('consumes the canonical transcript-activity Resource contract through public SDK resources', () => {
+    const declaredResource = PLUGIN_MANIFEST.contributes?.resources?.find(
+      (resource) => resource.id === 'outward-delivery-activities-v1',
+    );
+
+    expect(declaredResource).toMatchObject({
+      scope: 'session',
+      contentType: PLUGIN_TRANSCRIPT_ACTIVITY_CONTENT_TYPE_V1,
+      maxBytes: MAX_PLUGIN_TRANSCRIPT_ACTIVITY_RESOURCE_BYTES_V1,
+    });
+    expect(MAX_PLUGIN_TRANSCRIPT_ACTIVITIES_PER_RESOURCE_V1).toBe(16);
+    expect(PluginTranscriptActivityResourceSnapshotV1Schema.safeParse({
+      version: 1,
+      activities: [],
+    }).success).toBe(true);
+  });
+
   it('projects its prior cold identity and declared contribution families through one definePlugin value', () => {
     const normalized = parsePluginManifest(CHANNELS_PLUGIN.manifest);
 
@@ -126,8 +174,11 @@ describe('Channels core manifest', () => {
       'accountCollections',
       'actions',
       'backgroundServices',
+      'composerControls',
       'pluginContributionPoints',
       'resources',
+      'sessionHeaderActions',
+      'sessionInfoSections',
       'transcriptActivities',
       'ui',
     ]);
@@ -179,8 +230,6 @@ describe('Channels core manifest', () => {
     const point = PLUGIN_MANIFEST.contributes?.pluginContributionPoints?.[0];
 
     expect(PLUGIN_MANIFEST.contributes?.pluginContributionPoints).toHaveLength(1);
-    expect(readTargetedContributionPointSemanticRefs(PLUGIN_MANIFEST)[0])
-      .toBe(CHANNELS_PROVIDER_POINT_REF);
     expect(point).toMatchObject({
       id: CHANNELS_PROVIDER_POINT_ID,
       maxContributionsPerContributor: 1,
@@ -189,30 +238,12 @@ describe('Channels core manifest', () => {
         version: CHANNELS_PROVIDER_POINT_REF.protocol.version,
       }],
     });
-    // The public target reference also carries the Protocol-owned semantic
-    // decoder, which the decode assertion below owns. This assertion owns only
-    // the stable routing identity, so it must not also claim the reference has
-    // nothing else on it.
-    expect(CHANNELS_PROVIDER_POINT_REF).toMatchObject({
+    expect(CHANNELS_PROVIDER_POINT_REF).toEqual({
       targetPluginId: CHANNELS_PLUGIN_ID,
       id: CHANNELS_PROVIDER_POINT_ID,
       protocol: {
         id: declaredPointProtocols(point)[0]?.id,
         version: declaredPointProtocols(point)[0]?.version,
-      },
-    });
-    const operations = Object.keys(declaredPointProtocols(point)[0]?.operations ?? {})
-      .sort()
-      .map((role) => ({ role }));
-    expect(decodeTargetedContributionPointSemantics(CHANNELS_PROVIDER_POINT_REF, {
-      protocol: CHANNELS_PROVIDER_POINT_REF.protocol,
-      operations,
-      surfaces: [],
-    })).toEqual({
-      ok: true,
-      projection: {
-        operations: operations.map(({ role }) => expect.objectContaining({ role })),
-        surfaces: [],
       },
     });
   });
@@ -234,7 +265,12 @@ describe('Channels core manifest', () => {
     const ui = PLUGIN_MANIFEST.contributes?.ui;
 
     expect(ui).toMatchObject({
-      views: [],
+      views: [{
+        id: 'session-conversations',
+        container: 'rightSidebarTab',
+        target: { kind: 'session' },
+        renderer: 'channels-renderer',
+      }],
       renderers: [{
         id: 'channels-renderer',
         kind: 'reactNative',
@@ -420,6 +456,7 @@ describe('Channels core manifest', () => {
         id: CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionPairingCreate,
         ...CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1.connectionPairingCreate,
         title: 'Create conversation pairing challenge',
+        description: 'Creates a short-lived pairing challenge for a conversation connection.',
         scopes: ['global'],
         surfaces: ['cli', 'ui'],
         placementBindings: ['primary'],
@@ -436,6 +473,7 @@ describe('Channels core manifest', () => {
         id: CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionPairingFinalize,
         ...CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1.connectionPairingFinalize,
         title: 'Finalize conversation pairing',
+        description: 'Saves an authenticated pairing proposal as a paused conversation binding.',
         scopes: ['global'],
         surfaces: ['cli', 'ui'],
         placementBindings: ['primary'],
@@ -452,6 +490,7 @@ describe('Channels core manifest', () => {
         id: CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionPairingCancel,
         ...CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1.connectionPairingCancel,
         title: 'Cancel conversation pairing',
+        description: 'Cancels an unfinished conversation pairing challenge or proposal.',
         scopes: ['global'],
         surfaces: ['cli', 'ui'],
         placementBindings: ['secondary'],
@@ -468,6 +507,7 @@ describe('Channels core manifest', () => {
         id: CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionCreate,
         ...CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1.connectionCreate,
         title: 'Create conversation connection',
+        description: 'Saves a conversation connection and its transport configuration to the Account.',
         scopes: ['global'],
         surfaces: ['cli', 'ui'],
         placementBindings: ['primary'],
@@ -484,6 +524,7 @@ describe('Channels core manifest', () => {
         id: CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionTransfer,
         ...CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1.connectionTransfer,
         title: 'Transfer conversation connection',
+        description: 'Replaces a conversation connection’s provider setup and transport.',
         scopes: ['global'],
         surfaces: ['cli', 'ui'],
         placementBindings: ['primary'],
@@ -500,6 +541,7 @@ describe('Channels core manifest', () => {
         id: CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionPrepare,
         ...CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1.connectionPrepare,
         title: 'Prepare conversation connection',
+        description: 'Prepares the selected conversation provider connection for setup.',
         scopes: ['global'],
         surfaces: ['cli', 'ui'],
         placementBindings: ['primary'],
@@ -510,6 +552,7 @@ describe('Channels core manifest', () => {
         id: CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionRetest,
         ...CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1.connectionRetest,
         title: 'Retest conversation connection',
+        description: 'Re-probes a conversation connection and reconciles its readiness.',
         scopes: ['global'],
         surfaces: ['cli', 'ui'],
         placementBindings: ['secondary'],
@@ -521,6 +564,7 @@ describe('Channels core manifest', () => {
         id: CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionUpdate,
         ...CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1.connectionUpdate,
         title: 'Update conversation connection',
+        description: 'Saves an edited conversation connection policy to the Account.',
         scopes: ['global'],
         surfaces: ['cli', 'ui'],
         placementBindings: ['primary'],
@@ -534,25 +578,10 @@ describe('Channels core manifest', () => {
         hostAccess: ['account-storage'],
       },
       {
-        id: CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionSetEnabled,
-        ...CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1.connectionSetEnabled,
-        title: 'Set conversation connection enabled state',
-        scopes: ['global'],
-        surfaces: ['cli', 'ui'],
-        placementBindings: ['primary'],
-        dangerLevel: 'writesLocal',
-        execution: { target: 'daemon' },
-        confirmation: {
-          title: 'Change conversation connection enabled state?',
-          body: 'This changes whether the connection may accept or deliver under its saved Account policy.',
-          confirmLabel: 'Save connection state',
-        },
-        hostAccess: ['account-storage'],
-      },
-      {
         id: CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionDelete,
         ...CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1.connectionDelete,
         title: 'Delete conversation connection',
+        description: 'Disables and removes a conversation connection after transport cleanup.',
         scopes: ['global'],
         surfaces: ['cli', 'ui'],
         placementBindings: ['primary'],
@@ -569,6 +598,7 @@ describe('Channels core manifest', () => {
         id: CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionAbandon,
         ...CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1.connectionAbandon,
         title: 'Abandon pending conversation connection stop',
+        description: 'Accepts possible message loss so a pending connection stop can proceed.',
         scopes: ['global'],
         surfaces: ['cli', 'ui'],
         placementBindings: ['secondary'],
@@ -585,6 +615,7 @@ describe('Channels core manifest', () => {
         id: CONVERSATION_MANAGEMENT_ACTION_IDS_V1.streamBaselineAccept,
         ...CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1.streamBaselineAccept,
         title: 'Accept conversation history baseline',
+        description: 'Accepts the provider’s current replay baseline without replaying unavailable history.',
         scopes: ['global'],
         surfaces: ['cli', 'ui'],
         placementBindings: ['primary'],
@@ -601,6 +632,7 @@ describe('Channels core manifest', () => {
         id: CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionPollRetry,
         ...CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1.connectionPollRetry,
         title: 'Retry blocked conversation poll',
+        description: 'Clears blocked poll state so the conversation connection can retry.',
         scopes: ['global'],
         surfaces: ['cli', 'ui'],
         placementBindings: ['primary'],
@@ -617,6 +649,7 @@ describe('Channels core manifest', () => {
         id: CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingRead,
         ...CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1.bindingRead,
         title: 'Read conversation binding',
+        description: 'Reads the saved conversation binding policy and details.',
         scopes: ['global'],
         surfaces: ['cli', 'ui'],
         placementBindings: ['secondary'],
@@ -628,6 +661,7 @@ describe('Channels core manifest', () => {
         id: CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingResolve,
         ...CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1.bindingResolve,
         title: 'Resolve conversation binding candidates',
+        description: 'Resolves candidate conversations and principals for a binding.',
         scopes: ['global'],
         surfaces: ['cli', 'ui'],
         placementBindings: ['secondary'],
@@ -639,6 +673,7 @@ describe('Channels core manifest', () => {
         id: CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingCreate,
         ...CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1.bindingCreate,
         title: 'Create conversation binding',
+        description: 'Saves an external conversation binding and its target policy to the Account.',
         scopes: ['global'],
         surfaces: ['cli', 'ui'],
         placementBindings: ['primary'],
@@ -655,6 +690,7 @@ describe('Channels core manifest', () => {
         id: CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingUpdate,
         ...CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1.bindingUpdate,
         title: 'Update conversation binding',
+        description: 'Saves an edited external conversation binding policy to the Account.',
         scopes: ['global'],
         surfaces: ['cli', 'ui'],
         placementBindings: ['primary'],
@@ -671,6 +707,7 @@ describe('Channels core manifest', () => {
         id: CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingSetEnabled,
         ...CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1.bindingSetEnabled,
         title: 'Set conversation binding enabled state',
+        description: 'Changes whether a conversation binding may route eligible messages.',
         scopes: ['global'],
         surfaces: ['cli', 'ui'],
         placementBindings: ['primary'],
@@ -687,6 +724,7 @@ describe('Channels core manifest', () => {
         id: CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingDelete,
         ...CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1.bindingDelete,
         title: 'Delete conversation binding',
+        description: 'Disables a conversation binding while retained delivery custody finishes safely.',
         scopes: ['global'],
         surfaces: ['cli', 'ui'],
         placementBindings: ['primary'],
@@ -700,25 +738,10 @@ describe('Channels core manifest', () => {
         hostAccess: ['account-storage'],
       },
       {
-        id: CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingTargetRotate,
-        ...CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1.bindingTargetRotate,
-        title: 'Rotate conversation binding target',
-        scopes: ['global'],
-        surfaces: ['cli', 'ui'],
-        placementBindings: ['primary'],
-        dangerLevel: 'writesLocal',
-        execution: { target: 'daemon' },
-        confirmation: {
-          title: 'Rotate conversation binding target?',
-          body: 'This changes the external conversation target and verifies the current Automation template when applicable.',
-          confirmLabel: 'Rotate target',
-        },
-        hostAccess: ['account-storage'],
-      },
-      {
         id: CONVERSATION_MANAGEMENT_ACTION_IDS_V1.ingressRetry,
         ...CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1.ingressRetry,
         title: 'Retry blocked conversation ingress',
+        description: 'Re-enables a blocked conversation input for bounded retry.',
         scopes: ['global'],
         surfaces: ['cli', 'ui'],
         placementBindings: ['primary'],
@@ -735,6 +758,7 @@ describe('Channels core manifest', () => {
         id: CONVERSATION_MANAGEMENT_ACTION_IDS_V1.deliveryResolve,
         ...CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1.deliveryResolve,
         title: 'Resolve ambiguous conversation delivery',
+        description: 'Records whether to accept or discard an ambiguous delivery outcome without resending.',
         scopes: ['global'],
         surfaces: ['cli', 'ui'],
         placementBindings: ['primary'],
@@ -751,6 +775,7 @@ describe('Channels core manifest', () => {
         id: CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.observationIngest,
         ...CONVERSATION_CORE_PROVIDER_ACTION_DECLARATIONS_V1.observationIngest,
         title: 'Ingest authenticated provider observation',
+        description: 'Ingests one authenticated observation from a conversation provider.',
         scopes: ['global'],
         surfaces: ['plugin'],
         dangerLevel: 'safe',
@@ -761,6 +786,7 @@ describe('Channels core manifest', () => {
         id: CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.connectionsList,
         ...CONVERSATION_CORE_PROVIDER_ACTION_DECLARATIONS_V1.connectionsList,
         title: 'List current provider connections',
+        description: 'Lists the current provider connections available to the Channels runtime.',
         scopes: ['global'],
         surfaces: ['plugin'],
         dangerLevel: 'safe',
@@ -771,6 +797,7 @@ describe('Channels core manifest', () => {
         id: CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.connectionRead,
         ...CONVERSATION_CORE_PROVIDER_ACTION_DECLARATIONS_V1.connectionRead,
         title: 'Read current provider connection',
+        description: 'Reads one current provider connection for the Channels runtime.',
         scopes: ['global'],
         surfaces: ['plugin'],
         dangerLevel: 'safe',
@@ -781,6 +808,7 @@ describe('Channels core manifest', () => {
         id: CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.transportFactReport,
         ...CONVERSATION_CORE_PROVIDER_ACTION_DECLARATIONS_V1.transportFactReport,
         title: 'Report current transport fact',
+        description: 'Reports the current transport fact for a provider connection.',
         scopes: ['global'],
         surfaces: ['plugin'],
         dangerLevel: 'safe',
@@ -791,6 +819,7 @@ describe('Channels core manifest', () => {
         id: CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.automationResultDeliver,
         ...CONVERSATION_CORE_PROVIDER_ACTION_DECLARATIONS_V1.automationResultDeliver,
         title: 'Accept Automation result delivery custody',
+        description: 'Accepts custody of one Automation result for conversation delivery.',
         scopes: ['global'],
         surfaces: ['plugin'],
         dangerLevel: 'writesLocal',
@@ -844,11 +873,57 @@ describe('Channels core manifest', () => {
         maxBytes: 65_536,
         hostAccess: ['account-storage'],
       },
+      {
+        id: 'session-conversations-v1',
+        source: 'dynamic',
+        kind: 'config',
+        scope: 'session',
+        contentType: 'application/json',
+        // The Account-wide bindings ceiling plus the one attention entry each
+        // of the 256 bindings can carry: 212_992 + (256 * 160).
+        maxBytes: 253_952,
+        hostAccess: ['account-storage'],
+      },
+      {
+        id: 'session-info-v1',
+        source: 'dynamic',
+        kind: 'config',
+        scope: 'session',
+        contentType: 'application/vnd.happier.declarative-document+json;version=1',
+        maxBytes: 65_536,
+        hostAccess: ['account-storage'],
+      },
+      {
+        id: 'session-conversations-state-v1',
+        source: 'dynamic',
+        kind: 'config',
+        scope: 'session',
+        contentType: 'application/vnd.happier.composer-control-state+json;v=1',
+        maxBytes: 65_536,
+        hostAccess: ['account-storage'],
+      },
+      {
+        id: 'session-conversations-attention-state-v1',
+        source: 'dynamic',
+        kind: 'config',
+        scope: 'session',
+        contentType: 'application/vnd.happier.composer-control-state+json;v=1',
+        maxBytes: 65_536,
+        hostAccess: ['account-storage'],
+      },
     ]);
     expect(manifest.contributes?.transcriptActivities).toEqual([
       {
         id: 'outward-delivery',
         resourceId: 'outward-delivery-activities-v1',
+        actions: [],
+      },
+    ]);
+    expect(manifest.contributes?.sessionInfoSections).toEqual([
+      {
+        id: 'external-conversations',
+        resourceId: 'session-info-v1',
+        order: 50,
         actions: [],
       },
     ]);
@@ -1229,6 +1304,7 @@ describe('Channels core manifest', () => {
             },
           },
         },
+        compacted: null,
         phase: 'prepared',
         connectionAuthorityEpoch: 1,
         maximumObservationAgeMs: 60_000,
@@ -1352,6 +1428,51 @@ describe('Channels core manifest', () => {
     expect(isValidPluginJsonSchemaValue(validate, {
       ...ingressCensus,
       payload: { ...ingressCensus.payload, phase: 'active' },
+    })).toBe(false);
+    // A settled census keeps only the body-free replay identity.
+    const compactedCensusPayload = {
+      ...ingressCensus.payload,
+      normalizedIngress: null,
+      compacted: {
+        shell: {
+          ...ingressCensus.payload.normalizedIngress.observation,
+          message: {
+            id: 'message-1',
+            revision: '1',
+            addressingEvidence: 'none',
+            contentProvenance: 'original',
+            providerTimestamp: 1,
+          },
+        },
+        textDigest: 'E'.repeat(43),
+      },
+    };
+    expect(isValidPluginJsonSchemaValue(validate, {
+      ...ingressCensus,
+      payload: compactedCensusPayload,
+    })).toBe(true);
+    expect(isValidPluginJsonSchemaValue(validate, {
+      ...ingressCensus,
+      payload: {
+        ...compactedCensusPayload,
+        compacted: { ...compactedCensusPayload.compacted, textDigest: 'not-a-digest' },
+      },
+    })).toBe(false);
+    expect(isValidPluginJsonSchemaValue(validate, {
+      ...ingressCensus,
+      payload: {
+        ...compactedCensusPayload,
+        compacted: {
+          ...compactedCensusPayload.compacted,
+          shell: {
+            ...compactedCensusPayload.compacted.shell,
+            message: {
+              ...compactedCensusPayload.compacted.shell.message,
+              text: 'must not become a prompt store',
+            },
+          },
+        },
+      },
     })).toBe(false);
     const {
       maximumObservationAgeMs: _maximumObservationAgeMs,
@@ -1831,5 +1952,121 @@ describe('Channels core manifest', () => {
         [CHANNEL_DELIVERIES_FIELD.attention]: true,
       })).toBe(false);
     }
+  });
+});
+
+describe('Channels Session-facing surfaces (CU-03)', () => {
+  // Contribution local ids are the persisted routing identity, and the manifest
+  // parser rejects the SAME local id in two families. They are asserted as
+  // literals rather than through the exported constants: a guard built from the
+  // constant it asserts cannot fail when the constant changes.
+  it('exports the exact persisted local ids its Session destinations route on', () => {
+    expect({
+      view: CHANNELS_SESSION_CONVERSATIONS_VIEW_ID,
+      headerAction: CHANNELS_SESSION_CONVERSATIONS_HEADER_ACTION_ID,
+      control: CHANNELS_SESSION_COMPOSER_CONTROL_ID,
+      attentionControl: CHANNELS_SESSION_COMPOSER_ATTENTION_CONTROL_ID,
+      listResource: CHANNELS_SESSION_CONVERSATIONS_RESOURCE_ID,
+      stateResource: CHANNELS_SESSION_COMPOSER_STATE_RESOURCE_ID,
+      attentionStateResource: CHANNELS_SESSION_COMPOSER_ATTENTION_STATE_RESOURCE_ID,
+    }).toEqual({
+      view: 'session-conversations',
+      headerAction: 'open-session-conversations',
+      control: 'session-conversations-chip',
+      attentionControl: 'session-conversations-attention-chip',
+      listResource: 'session-conversations-v1',
+      stateResource: 'session-conversations-state-v1',
+      attentionStateResource: 'session-conversations-attention-state-v1',
+    });
+  });
+
+  it('mounts one Session destination, one Session-header entry, and the Composer chips through the generic families', () => {
+    const ui = PLUGIN_MANIFEST.contributes?.ui;
+
+    expect(ui?.views).toEqual([{
+      id: 'session-conversations',
+      container: 'rightSidebarTab',
+      target: { kind: 'session' },
+      renderer: 'channels-renderer',
+      title: {
+        key: 'plugins.channels.session.title',
+        fallback: 'External conversations',
+      },
+      icon: 'globe',
+    }]);
+
+    expect(PLUGIN_MANIFEST.contributes?.sessionHeaderActions).toEqual([{
+      id: 'open-session-conversations',
+      title: {
+        key: 'plugins.channels.session.title',
+        fallback: 'External conversations',
+      },
+      icon: 'globe',
+      command: {
+        kind: 'openSurface',
+        destination: 'session-conversations',
+      },
+    }]);
+
+    // Both chips open the SAME Session destination the header entry opens, so
+    // the Composer never becomes a second navigation owner, and both are scoped
+    // to the only Composer that can carry a Session binding.
+    expect(PLUGIN_MANIFEST.contributes?.composerControls).toEqual([{
+      id: 'session-conversations-chip',
+      label: {
+        key: 'plugins.channels.session.composerChip',
+        fallback: 'External conversations',
+      },
+      icon: 'globe',
+      scopes: ['session'],
+      state: { resource: 'session-conversations-state-v1' },
+      interaction: {
+        kind: 'destination',
+        destination: 'session-conversations',
+      },
+    }, {
+      id: 'session-conversations-attention-chip',
+      label: {
+        key: 'plugins.channels.session.composerChipAttention',
+        fallback: 'External delivery needs attention',
+      },
+      icon: 'warning',
+      scopes: ['session'],
+      state: { resource: 'session-conversations-attention-state-v1' },
+      interaction: {
+        kind: 'destination',
+        destination: 'session-conversations',
+      },
+    }]);
+  });
+
+  it('declares both Composer control-state Resources as Session-scoped producers of the canonical control-state media type', () => {
+    const resources = (PLUGIN_MANIFEST.contributes?.resources ?? []) as readonly Readonly<{
+      id: string;
+      scope?: string;
+      contentType?: string;
+      maxBytes?: number;
+      hostAccess?: readonly string[];
+    }>[];
+
+    for (const id of [
+      'session-conversations-state-v1',
+      'session-conversations-attention-state-v1',
+    ]) {
+      expect(resources.find((resource) => resource.id === id)).toMatchObject({
+        id,
+        scope: 'session',
+        contentType: 'application/vnd.happier.composer-control-state+json;v=1',
+        hostAccess: ['account-storage'],
+      });
+    }
+  });
+
+  it('localizes every Session-facing string it contributes', () => {
+    expect(PLUGIN_MANIFEST.contributes?.ui?.translations?.[0]?.messages).toMatchObject({
+      'plugins.channels.session.title': 'External conversations',
+      'plugins.channels.session.composerChip': 'External conversations',
+      'plugins.channels.session.composerChipAttention': 'External delivery needs attention',
+    });
   });
 });

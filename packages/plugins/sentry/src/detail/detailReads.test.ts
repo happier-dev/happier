@@ -437,6 +437,34 @@ describe('Sentry selected-event read', () => {
     expect(harness.request).not.toHaveBeenCalled();
   });
 
+  /**
+   * The events LIST already refuses a body that is not the array it declares. The
+   * single-event read did not: it handed any body to the projector, which answered an
+   * empty projection for one it could not read at all, and `ok: true` published that as
+   * a real occurrence with no id, no message and no frames. Nothing downstream can tell
+   * that apart from an event Sentry genuinely recorded as empty, so the reader is shown
+   * a blank Stack Trace instead of a stated failure — and §8.4a's exact-dispatch reread
+   * has no id to reread.
+   */
+  it.each([
+    ['a body that is not an object at all', 'not an event'],
+    ['a body that is an array', [{ eventID: 'e'.repeat(32) }]],
+    ['an object carrying no event id', { title: 'ChargeDeclined' }],
+    ['an object whose event id is empty', { eventID: '', title: 'ChargeDeclined' }],
+  ])('settles %s as an unreadable response, never as an empty occurrence', async (_label, body) => {
+    const harness = client(respond(body));
+    const result = await readSentryEventProjection(harness.client, {
+      instance: INSTANCE,
+      entryId: '1234',
+      selector: { kind: 'representative' },
+      nowMs: 0,
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.failure.class).toBe('unsupportedContract');
+  });
+
   it('reports a refused read as a failure rather than an event with no trace', async () => {
     const harness = client(respond({ detail: 'nope' }, {}, 403));
     const result = await readSentryEventProjection(harness.client, {

@@ -933,6 +933,79 @@ describe('Channels outward-delivery supervisor', () => {
     ))).toEqual(expect.arrayContaining(['partial', 'outcomeUnknown']));
   });
 
+  it('does not restart an exhausted retention sweep before the earliest retained row can age out', async () => {
+    const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1_000;
+    // A wall clock already past one whole window: the scanner answers a cutoff
+    // before the epoch with an empty page and never reaches the index at all.
+    const terminalAt = THIRTY_DAYS_MS + 100;
+    let persistedAt = THIRTY_DAYS_MS;
+    const state = new MemoryCollection();
+    const deliveries = new MemoryCollection();
+    await state.put(connectionRow(), { expectedRevision: 'absent' });
+    const context = backgroundContext({
+      state,
+      deliveries,
+      execute: vi.fn(async () => { throw new Error('Unexpected Action.'); }),
+      executeAdmittedTargetedOperationWithExecutionOrigin: vi.fn(),
+    });
+    const store = createConversationOutwardDeliveryCollectionStore({
+      stateCollection: state as never,
+      deliveriesCollection: deliveries as never,
+      signal: context.signal,
+      now: () => persistedAt,
+    });
+    const created = await store.ensure(outwardObligation());
+    if (created.kind !== 'created') throw new Error('Expected retained custody fixture.');
+    persistedAt = terminalAt;
+    const settled = await store.compareAndSwap({
+      custodyId: created.record.custodyId,
+      expectedRevision: created.record.revision,
+      custody: { state: 'delivered', attemptCount: 1, providerMessageIds: ['provider-1'] },
+    });
+    if (settled.kind !== 'updated') throw new Error('Expected terminal custody fixture.');
+
+    // Only the retention arm of the shared terminal index is counted; live
+    // redrive scans the same index under the non-terminal prefix every wake.
+    const query = deliveries.query.bind(deliveries);
+    let retentionScans = 0;
+    deliveries.query = (async (request: Parameters<typeof query>[0]) => {
+      if (request.index === CHANNEL_DELIVERIES_INDEX_ID.byRetryDue && request.prefix?.[0] === true) {
+        retentionScans += 1;
+      }
+      return await query(request);
+    }) as typeof query;
+
+    const exhausted = await runConversationOutwardDeliveryCycle({
+      context,
+      now: () => terminalAt + 1,
+    });
+    expect(retentionScans).toBe(1);
+    expect(await deliveries.get(settled.record.custodyId)).not.toBeNull();
+
+    // Nothing in the Account can have crossed the window one wake later, so the
+    // exhausted pass must not walk the whole terminal index again.
+    const paced = await runConversationOutwardDeliveryCycle({
+      context,
+      now: () => terminalAt + 1_000,
+      ...(exhausted.nextRetentionSweep === undefined
+        ? {}
+        : { retentionSweep: exhausted.nextRetentionSweep }),
+    });
+    expect(retentionScans).toBe(1);
+
+    // Positive twin: the deadline is the retained row's own eligibility, so
+    // reclamation still happens on the first wake at that exact cutoff.
+    await runConversationOutwardDeliveryCycle({
+      context,
+      now: () => terminalAt + THIRTY_DAYS_MS,
+      ...(paced.nextRetentionSweep === undefined
+        ? {}
+        : { retentionSweep: paced.nextRetentionSweep }),
+    });
+    expect(retentionScans).toBe(2);
+    expect(await deliveries.get(settled.record.custodyId)).toBeNull();
+  });
+
   it('retains a terminal row after a retention CAS loss and retries it on the next cycle', async () => {
     const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1_000;
     let persistedAt = 0;
@@ -961,10 +1034,19 @@ describe('Channels outward-delivery supervisor', () => {
     });
     if (settled.kind !== 'updated') throw new Error('Expected terminal custody fixture.');
 
-    await runConversationOutwardDeliveryCycle({ context, now: () => 100 + THIRTY_DAYS_MS });
+    // The runner carries the retention pass between wakes, so a pass that
+    // could not retire the row it selected must not also pace the next one.
+    const lost = await runConversationOutwardDeliveryCycle({
+      context,
+      now: () => 100 + THIRTY_DAYS_MS,
+    });
     expect(await deliveries.get(settled.record.custodyId)).not.toBeNull();
 
-    await runConversationOutwardDeliveryCycle({ context, now: () => 101 + THIRTY_DAYS_MS });
+    await runConversationOutwardDeliveryCycle({
+      context,
+      now: () => 101 + THIRTY_DAYS_MS,
+      ...(lost.nextRetentionSweep === undefined ? {} : { retentionSweep: lost.nextRetentionSweep }),
+    });
     expect(await deliveries.get(settled.record.custodyId)).toBeNull();
   });
 
@@ -1010,7 +1092,7 @@ describe('Channels outward-delivery supervisor', () => {
     expect(await accountB.deliveries.get(accountB.custodyId)).not.toBeNull();
   });
 
-  it('C5 RED lists the exact binding source and writes permission-wait custody before provider I/O', async () => {
+  it('renders the canonical bounded permission summary before writing custody or provider I/O', async () => {
     const state = new MemoryCollection();
     const deliveries = new MemoryCollection();
     await state.put(connectionRow(), { expectedRevision: 'absent' });
@@ -1019,10 +1101,17 @@ describe('Channels outward-delivery supervisor', () => {
       if (action === 'session.permission.remote.pending.list') {
         return {
           requests: [{
+            kind: 'permission',
             requestId: 'permission-request-1',
             turnId: 'turn-1',
             createdAtMs: 100,
             allowedScopes: ['request', 'session'],
+            agentRequestSummary: {
+              kind: 'permission',
+              toolLabel: 'Bash',
+              title: 'Run: git status --short',
+              detail: 'Command: git',
+            },
           }],
           truncated: false,
         };
@@ -1078,12 +1167,88 @@ describe('Channels outward-delivery supervisor', () => {
               bindingRevision: 1,
               bindingAuthorityEpoch: 7,
             },
-            // The inbound grammar is `/allow <requestId>`, so a notice that
-            // withheld the exact request identity would be an approval
-            // request nobody in the conversation could actually answer.
-            content: 'This Session is waiting for an approval in Happier. '
+            // The summary came from the canonical Session owner; Channels
+            // renders it but does not parse raw tool input or decide scope.
+            content: 'Run: git status --short\nCommand: git\n'
               + 'Reply /allow permission-request-1 or /deny permission-request-1.',
             state: 'ready',
+          }),
+        }),
+      }),
+    ]);
+  });
+
+  it('renders every bounded AskUserQuestion semantic fact and one atomic answer syntax', async () => {
+    const state = new MemoryCollection();
+    const deliveries = new MemoryCollection();
+    await state.put(connectionRow(), { expectedRevision: 'absent' });
+    await state.put(approvalBindingRow(), { expectedRevision: 'absent' });
+    const execute = vi.fn(async (action: string) => {
+      if (action === 'session.permission.remote.pending.list') {
+        return {
+          requests: [{
+            kind: 'user_action',
+            requestId: 'user-action-request-1',
+            turnId: 'turn-user-action-1',
+            createdAtMs: 100,
+            agentRequestSummary: {
+              kind: 'user_action',
+              questions: [{
+                question: 'Choose a release mode',
+                selection: 'single',
+                required: true,
+                allowCustom: true,
+                choices: ['Safe', 'Other'],
+              }, {
+                question: 'Any notes?',
+                selection: 'text',
+                required: false,
+                allowCustom: true,
+                choices: [],
+              }],
+            },
+          }],
+          truncated: false,
+        };
+      }
+      if (action === 'session.transcript.get') {
+        return {
+          ok: true,
+          projection: 'externalShareableV1',
+          sessionId: 'session-1',
+          scannedThroughSeq: 0,
+          hasMore: false,
+          items: [],
+        };
+      }
+      throw new Error(`Unexpected Action ${action}`);
+    });
+    const context = backgroundContext({
+      state,
+      deliveries,
+      execute,
+      executeAdmittedTargetedOperationWithExecutionOrigin: vi.fn(),
+    });
+
+    await runConversationOutwardDeliveryCycle({ context, now: () => 100 });
+
+    expect([...deliveries.rows.values()]).toEqual([
+      expect.objectContaining({
+        value: expect.objectContaining({
+          payload: expect.objectContaining({
+            source: {
+              kind: 'permissionWait',
+              sessionId: 'session-1',
+              turnId: 'turn-user-action-1',
+              requestId: 'user-action-request-1',
+            },
+            content: 'This Session needs your input:\n'
+              + '1. Choose a release mode (required; select one; custom text allowed)\n'
+              + '  1. Safe\n'
+              + '  2. Other\n'
+              + '2. Any notes? (optional; write text)\n'
+              + 'Reply /answer user-action-request-1 [{"questionIndex":0,"values":["<answer>"]}] in one message. '
+              + 'Use displayed choice labels, or free text only where allowed; include every required question.',
           }),
         }),
       }),
@@ -1255,6 +1420,82 @@ describe('Channels outward-delivery supervisor', () => {
       payload: { state: 'ready', attemptCount: 0 },
     });
     expect(executeAdmittedTargetedOperationWithExecutionOrigin).not.toHaveBeenCalled();
+  });
+
+  it('does not suppress an unattempted permission wait that the pending projection reaches on a later page', async () => {
+    // The canonical projection answers in bounded keyset pages. Reading only
+    // the first page and calling the wait absent would retract a prompt the
+    // person still has to answer.
+    const state = new MemoryCollection();
+    const deliveries = new MemoryCollection();
+    await state.put(connectionRow(), { expectedRevision: 'absent' });
+    await state.put(approvalBindingRow(), { expectedRevision: 'absent' });
+    const cursors: Array<string | null> = [];
+    const execute = vi.fn(async (action: string, input: unknown) => {
+      if (action === 'session.permission.remote.pending.list') {
+        const cursor = (input as Readonly<{ cursor?: unknown }>).cursor;
+        cursors.push(typeof cursor === 'string' ? cursor : null);
+        if (cursor === undefined) {
+          return {
+            requests: [{
+              requestId: 'older-request',
+              turnId: 'turn-0',
+              createdAtMs: 1,
+              allowedScopes: ['request'],
+            }],
+            truncated: false,
+            nextCursor: 'page-2',
+          };
+        }
+        return {
+          requests: [{
+            requestId: 'permission-request-1',
+            turnId: 'turn-1',
+            createdAtMs: 2,
+            allowedScopes: ['request'],
+          }],
+          truncated: false,
+          nextCursor: null,
+        };
+      }
+      if (action === 'session.transcript.get') {
+        return {
+          ok: true,
+          projection: 'externalShareableV1',
+          sessionId: 'session-1',
+          scannedThroughSeq: 0,
+          hasMore: false,
+          items: [],
+        };
+      }
+      throw new Error(`Unexpected Action ${action}`);
+    });
+    const executeAdmittedTargetedOperationWithExecutionOrigin = vi.fn();
+    const context = backgroundContext({
+      state,
+      deliveries,
+      execute,
+      executeAdmittedTargetedOperationWithExecutionOrigin,
+    });
+    const store = createConversationOutwardDeliveryCollectionStore({
+      stateCollection: state as never,
+      deliveriesCollection: deliveries as never,
+      signal: context.signal,
+      now: () => 0,
+    });
+    const admitted = await store.ensure(permissionWaitOutwardObligation());
+    if (admitted.kind !== 'created') throw new Error('expected permission-wait custody fixture');
+
+    await runConversationOutwardDeliveryCycle({ context, now: () => 100 });
+
+    expect(cursors).toEqual([null, 'page-2']);
+    // The wait is still pending, so it is redriven rather than suppressed. A
+    // first-page-only read would find no match, read the complete-looking
+    // negative as absence, and retire the prompt without a provider attempt.
+    expect(executeAdmittedTargetedOperationWithExecutionOrigin).toHaveBeenCalledTimes(1);
+    expect(deliveries.rows.get(admitted.record.custodyId)?.value).toMatchObject({
+      payload: { state: 'outcomeUnknown' },
+    });
   });
 
   it('retains attempted permission-wait custody after a complete exact negative pending list', async () => {
@@ -1918,6 +2159,34 @@ describe('Channels outward-delivery supervisor', () => {
     expect(logger.warn).toHaveBeenCalledTimes(1);
   });
 
+  it('treats unavailable fresh-Account collections as inactive across the whole outward cycle', async () => {
+    const state = new MemoryCollection();
+    const deliveries = new MemoryCollection();
+    const logger = { warn: vi.fn() };
+    const execute = vi.fn(async () => ({ items: [] }));
+    const executeAdmittedTargetedOperationWithExecutionOrigin = vi.fn();
+    const refusal = new PluginError({
+      code: 'collection_unavailable',
+      message: 'secret Account Collection rejection detail',
+      retryable: false,
+    });
+    vi.spyOn(state, 'query').mockRejectedValue(refusal);
+    vi.spyOn(deliveries, 'query').mockRejectedValue(refusal);
+    const context = backgroundContext({
+      state,
+      deliveries,
+      execute,
+      executeAdmittedTargetedOperationWithExecutionOrigin,
+      logger,
+    });
+
+    await runConversationOutwardDeliveryCycle({ context, now: () => 100 });
+
+    expect(logger.warn).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
+    expect(JSON.stringify(logger.warn.mock.calls)).not.toContain('secret');
+  });
+
   it('C3 RED logs an internal delete-finalization census query failure once and retries it next wake', async () => {
     const state = new MemoryCollection();
     const deliveries = new MemoryCollection();
@@ -2536,6 +2805,21 @@ describe('Channels outward-delivery supervisor', () => {
     expect(state.rows.get('projection-frontier:binding-1')?.value.payload).toMatchObject({
       transcriptCursor: null,
       lastScannedSeq: 0,
+    });
+
+    const currentBinding = state.rows.get('binding-1');
+    if (currentBinding === undefined) throw new Error('Expected current projection binding.');
+    state.rows.set('binding-1', {
+      ...currentBinding,
+      revision: currentBinding.revision + 1,
+      value: {
+        ...currentBinding.value,
+        payload: {
+          ...currentBinding.value.payload as Record<string, unknown>,
+          endpoint: { ...endpoint, id: 'retargeted-provider-destination' },
+          linkPreviewPolicy: 'providerDefault',
+        },
+      },
     });
 
     await runConversationOutwardDeliveryCycle({

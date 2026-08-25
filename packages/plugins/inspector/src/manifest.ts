@@ -12,6 +12,8 @@ export const INSPECTOR_APP_SURFACE_ID = 'inspector-app';
  * remainder as `subPath`; the plugin never names a route.
  */
 export const INSPECTOR_PAGE_SURFACE_ID = 'inspector-page';
+export const INSPECTOR_BROWSER_PANEL_SURFACE_ID = 'inspector-browser-panel';
+export const INSPECTOR_SERVICES_PANEL_SURFACE_ID = 'inspector-services-panel';
 export const INSPECTOR_RENDERER_ID = 'inspector-renderer';
 export const INSPECTOR_SETTINGS_ID = 'settings';
 export const INSPECTOR_SHOW_DIAGNOSTICS_SETTING_ID = 'show-diagnostics';
@@ -70,6 +72,24 @@ export const INSPECTOR_UI = {
     id: INSPECTOR_PAGE_SURFACE_ID,
     container: 'appPage' as const,
     target: { kind: 'app' as const },
+    renderer: INSPECTOR_RENDERER_ID,
+    title: {
+      key: 'plugins.inspector.title',
+      fallback: 'Plugin Inspector',
+    },
+  }, {
+    id: INSPECTOR_BROWSER_PANEL_SURFACE_ID,
+    container: 'browserPanel' as const,
+    target: { kind: 'browser' as const, browserViewIdPath: '/browser/viewId' },
+    renderer: INSPECTOR_RENDERER_ID,
+    title: {
+      key: 'plugins.inspector.title',
+      fallback: 'Plugin Inspector',
+    },
+  }, {
+    id: INSPECTOR_SERVICES_PANEL_SURFACE_ID,
+    container: 'servicesPanel' as const,
+    target: { kind: 'services' as const },
     renderer: INSPECTOR_RENDERER_ID,
     title: {
       key: 'plugins.inspector.title',

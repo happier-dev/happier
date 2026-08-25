@@ -2,8 +2,8 @@ import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
 import type {
   PluginDynamicResourceInvocationOptionsV1,
   PluginDynamicResourceRuntime,
+  PluginTranscriptActivityResourceSnapshotV1,
 } from '@happier-dev/plugin-sdk/resources';
-import type { PluginAccountStorageScope } from '@happier-dev/plugin-sdk/storage';
 
 import {
   CHANNEL_DELIVERIES_COLLECTION,
@@ -13,36 +13,18 @@ import {
 } from './collections.js';
 import { readConversationSessionBindingDeliveryTargets } from './accountLocalBindingPolicy.js';
 import { readConversationOutwardDeliveryTranscriptActivities } from './outwardDelivery.js';
+import {
+  requireChannelsResourceAccountStorage,
+  requireChannelsResourceSessionId,
+} from './requiredAccountStorage.js';
 
 export const CHANNELS_TRANSCRIPT_ACTIVITIES_RESOURCE_ID = 'outward-delivery-activities-v1';
-
-function accountStorageForResource(
-  options: PluginDynamicResourceInvocationOptionsV1,
-): PluginAccountStorageScope {
-  if (options.accountStorage === undefined) {
-    throw new PluginError({
-      code: 'channels_transcript_activities_resource_account_storage_unavailable',
-      message: 'The Channels transcript Activity Resource requires admitted Account storage.',
-    });
-  }
-  return options.accountStorage;
-}
-
-function sessionIdForResource(options: PluginDynamicResourceInvocationOptionsV1): string {
-  if (options.context.kind !== 'session') {
-    throw new PluginError({
-      code: 'channels_transcript_activities_resource_session_context_required',
-      message: 'The Channels transcript Activity Resource requires a host-stamped Session context.',
-    });
-  }
-  return options.context.sessionId;
-}
 
 async function readTranscriptActivitiesResource(
   options: PluginDynamicResourceInvocationOptionsV1,
 ): Promise<string> {
-  const accountStorage = accountStorageForResource(options);
-  const sessionId = sessionIdForResource(options);
+  const accountStorage = requireChannelsResourceAccountStorage(options, 'transcriptActivities');
+  const sessionId = requireChannelsResourceSessionId(options, 'transcriptActivities');
   let bindingTargets;
   try {
     bindingTargets = await readConversationSessionBindingDeliveryTargets({
@@ -85,7 +67,11 @@ async function readTranscriptActivitiesResource(
       retryable: deliveryActivities.reason !== 'cancelled',
     });
   }
-  return JSON.stringify({ version: 1, activities: deliveryActivities.activities });
+  const snapshot: PluginTranscriptActivityResourceSnapshotV1 = {
+    version: 1,
+    activities: [...deliveryActivities.activities],
+  };
+  return JSON.stringify(snapshot);
 }
 
 /**
@@ -97,8 +83,8 @@ async function readTranscriptActivitiesResource(
 export const TRANSCRIPT_ACTIVITIES_RESOURCE_RUNTIME: PluginDynamicResourceRuntime = {
   read: readTranscriptActivitiesResource,
   observe(invalidate, options) {
-    const accountStorage = accountStorageForResource(options);
-    sessionIdForResource(options);
+    const accountStorage = requireChannelsResourceAccountStorage(options, 'transcriptActivities');
+    requireChannelsResourceSessionId(options, 'transcriptActivities');
     const bindingObservation = accountStorage.collection(CHANNEL_STATE_COLLECTION).watch({
       index: CHANNEL_STATE_INDEX_ID.byKind,
       prefix: [CHANNEL_STATE_RECORD_KIND.binding],

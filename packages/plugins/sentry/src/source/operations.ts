@@ -229,12 +229,26 @@ async function collectAccountCandidates(input: Readonly<{
   candidates: readonly TriageSourceInstanceDraftV1[];
   failures: readonly SentryInstanceFailureV1[];
   capReached: boolean;
+  skippedSiblingFailure: TriageSourceFailureV1 | null;
 }>> {
   const candidates: TriageSourceInstanceDraftV1[] = [];
   const failures: SentryInstanceFailureV1[] = [];
   const requestedCursors = new Set<string>();
+  /**
+   * The organizations already recorded by this walk, keyed the way a candidate is
+   * actually identified — `localInstanceKey`, under this one account binding.
+   *
+   * A Sentry cursor is an OFFSET triple, so a concurrent create, delete or rename
+   * shifts the window and the next page repeats a row this walk already has. Both
+   * copies used to become candidates: Settings offered the same organization twice,
+   * and each duplicate spent one of the draft slots a DISTINCT organization needed.
+   * A repeat is provider paging, not a contract failure, so it is dropped silently
+   * rather than reported.
+   */
+  const recordedInstanceKeys = new Set<string>();
   let cursor: string | undefined;
   let capReached = false;
+  let skippedSiblingFailure: TriageSourceFailureV1 | null = null;
 
   const fail = (failure: TriageSourceFailureV1): void => {
     failures.push(Object.freeze({ binding: input.binding, failure }));
@@ -270,20 +284,30 @@ async function collectAccountCandidates(input: Readonly<{
     }
 
     const page = parseSentryOrganizationsPage({ deployment: input.deployment, body });
+    if (Array.isArray(body) && page.organizations.length < body.length && page.failure !== null) {
+      skippedSiblingFailure ??= toTriageFailure(page.failure);
+    }
     for (const organization of page.organizations) {
-      if (candidates.length >= input.remainingCapacity) {
-        capReached = true;
-        break;
-      }
       const draft = buildDraft({
         binding: input.binding,
         deployment: input.deployment,
         organization,
       });
       if (draft === null) {
-        fail(sourceFailure(SENTRY_FAILURE_CODES.malformedOrganizationRow));
+        const failure = sourceFailure(SENTRY_FAILURE_CODES.malformedOrganizationRow);
+        skippedSiblingFailure ??= failure;
+        fail(failure);
         continue;
       }
+      // Deduped BEFORE the capacity test, because a repeat is not a candidate: charging
+      // it would both spend a slot and, at the ceiling, report a finished walk as
+      // `instanceCapReached` on the strength of a row already recorded.
+      if (recordedInstanceKeys.has(draft.localInstanceKey)) continue;
+      if (candidates.length >= input.remainingCapacity) {
+        capReached = true;
+        break;
+      }
+      recordedInstanceKeys.add(draft.localInstanceKey);
       candidates.push(draft);
     }
     if (page.failure !== null) fail(toTriageFailure(page.failure));
@@ -312,12 +336,21 @@ async function collectAccountCandidates(input: Readonly<{
     candidates: Object.freeze(candidates),
     failures: Object.freeze(failures),
     capReached,
+    skippedSiblingFailure,
   });
 }
 
+/**
+ * Orders accounts by a separator no component can contain.
+ *
+ * The separator is written as the ESCAPE `\u0000`, not as a literal NUL byte. Two raw
+ * NUL bytes made this file `data` rather than text, and `rg` reports such a file as
+ * "binary file matches" WITHOUT printing the line — so every repository-absence proof
+ * that greps this package silently skipped this module. The runtime value is identical.
+ */
 function compareAccounts(left: ConnectedAccountRef, right: ConnectedAccountRef): number {
-  const leftKey = `${left.service.pluginId} ${left.service.localId} ${left.accountId}`;
-  const rightKey = `${right.service.pluginId} ${right.service.localId} ${right.accountId}`;
+  const leftKey = `${left.service.pluginId}\u0000${left.service.localId}\u0000${left.accountId}`;
+  const rightKey = `${right.service.pluginId}\u0000${right.service.localId}\u0000${right.accountId}`;
   return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
 }
 
@@ -352,6 +385,7 @@ export async function listSentryInstances(
   const candidates: TriageSourceInstanceDraftV1[] = [];
   const failures: SentryInstanceFailureV1[] = [];
   let capReached = false;
+  let skippedSiblingFailure: TriageSourceFailureV1 | null = null;
 
   const accounts = [...listed.accounts]
     .sort((left, right) => compareAccounts(left.account, right.account));
@@ -382,6 +416,7 @@ export async function listSentryInstances(
     candidates.push(...walked.candidates);
     failures.push(...walked.failures);
     capReached = walked.capReached;
+    skippedSiblingFailure ??= walked.skippedSiblingFailure;
   }
 
   const bounded = Object.freeze(failures.slice(0, MAX_TRIAGE_INSTANCE_DRAFTS_V1));
@@ -402,6 +437,14 @@ export async function listSentryInstances(
       candidates: Object.freeze(candidates),
       failures: bounded,
       failure: sourceFailure(SENTRY_FAILURE_CODES.accountListTruncated),
+    });
+  }
+  if (skippedSiblingFailure !== null) {
+    return Object.freeze({
+      kind: 'incomplete' as const,
+      candidates: Object.freeze(candidates),
+      failures: bounded,
+      failure: skippedSiblingFailure,
     });
   }
   return Object.freeze({

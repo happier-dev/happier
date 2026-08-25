@@ -681,12 +681,20 @@ describe('Channels target-persisting binding management', () => {
     if (typeof remove !== 'function') return;
 
     const execute = vi.fn();
-    const active = createCollection([connectionRow(), bindingRow(sessionTarget)]);
+    const active = createCollection([
+      connectionRow(),
+      bindingRow(sessionTarget, 5, { enabled: true }),
+    ]);
     await expect(remove({
       bindingId: 'binding-1',
       expectedRevision: 5,
     }, context(active, execute))).resolves.toEqual({ kind: 'deletionPending' });
     expect(active.batches).toEqual([[
+      expect.objectContaining({
+        kind: 'put',
+        expectedRevision: 4,
+        value: expect.objectContaining({ id: 'connection-1' }),
+      }),
       expect.objectContaining({
         kind: 'put',
         expectedRevision: 5,
@@ -752,7 +760,7 @@ describe('Channels target-persisting binding management', () => {
     }));
 
     await expect(create(
-      bindingCreateInput(approvalEnabledSessionTarget),
+      { ...bindingCreateInput(approvalEnabledSessionTarget), enabled: true },
       context(collection, execute),
     )).resolves.toMatchObject({ kind: 'created' });
 
@@ -767,6 +775,8 @@ describe('Channels target-persisting binding management', () => {
         policy: { approvals: { kind: 'enabled', maximumScope: 'request' } },
       },
     });
+    expect(created?.value.payload).toMatchObject({ enabled: true });
+    expect(collection.rows.get('connection-1')?.revision).toBe(5);
   });
 
   it('refuses to persist an incoming message policy the integration cannot deliver in a shared conversation', async () => {
@@ -1068,6 +1078,37 @@ describe('Channels target-persisting binding management', () => {
     expect(collection.batches).toHaveLength(1);
   });
 
+  it('rejects an execution-run final-result target before saving a binding', async () => {
+    const create = Reflect.get(management, 'createConversationBindingForInvocation');
+    expect(create).toEqual(expect.any(Function));
+    if (typeof create !== 'function') return;
+
+    const collection = createCollection([connectionRow()]);
+    // The verifier owns the Automation target type. This is its typed result
+    // for an execution_run target that cannot produce a final result.
+    const execute = vi.fn(async () => ({
+      kind: 'notVerified' as const,
+      reason: 'resultDeliveryUnsupported' as const,
+    }));
+
+    await expect(create(
+      bindingCreateInput(finalResultAutomationTarget),
+      context(collection, execute),
+    )).resolves.toEqual({ kind: 'notVerified', reason: 'resultDeliveryUnsupported' });
+
+    expect(execute).toHaveBeenCalledWith(
+      'automation.conversation.target.verify',
+      {
+        automationId: 'automation-1',
+        expectedTemplateVersion: 3,
+        resultDelivery: 'finalResult',
+      },
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+    expect(collection.batches).toEqual([]);
+    expect([...collection.rows.keys()]).toEqual(['connection-1']);
+  });
+
   it('rejects a repeated immutable principal ID across structurally distinct create selections before any Channel write', async () => {
     const create = Reflect.get(management, 'createConversationBindingForInvocation');
     expect(create).toEqual(expect.any(Function));
@@ -1142,11 +1183,8 @@ describe('Channels target-persisting binding management', () => {
     });
   });
 
-  it.each([
-    ['updateConversationBindingForInvocation', 'binding update'],
-    ['rotateConversationBindingTargetForInvocation', 'target rotation'],
-  ] as const)('persists final-result delivery through the Automation verifier before %s persistence', async (exportName, _label) => {
-    const mutate = Reflect.get(management, exportName);
+  it('persists final-result delivery through the Automation verifier before the canonical binding update', async () => {
+    const mutate = Reflect.get(management, 'updateConversationBindingForInvocation');
     expect(mutate).toEqual(expect.any(Function));
     if (typeof mutate !== 'function') return;
 
@@ -1201,11 +1239,8 @@ describe('Channels target-persisting binding management', () => {
     });
   });
 
-  it.each([
-    ['updateConversationBindingForInvocation', 'binding update'],
-    ['rotateConversationBindingTargetForInvocation', 'target rotation'],
-  ] as const)('persists an owner-enabled approval policy through %s', async (exportName, _label) => {
-    const mutate = Reflect.get(management, exportName);
+  it('persists an owner-enabled approval policy through the canonical binding update', async () => {
+    const mutate = Reflect.get(management, 'updateConversationBindingForInvocation');
     expect(mutate).toEqual(expect.any(Function));
     if (typeof mutate !== 'function') return;
 
@@ -1296,14 +1331,14 @@ describe('Channels target-persisting binding management', () => {
     expect(collection.rows.get('binding-1')?.value.payload).toMatchObject({ target: sessionTarget });
   });
 
-  it('leaves target rotation entirely unwritten when the verifier rejects it', async () => {
-    const rotate = Reflect.get(management, 'rotateConversationBindingTargetForInvocation');
-    expect(rotate).toEqual(expect.any(Function));
-    if (typeof rotate !== 'function') return;
+  it('leaves a target-bearing update entirely unwritten when the verifier rejects it', async () => {
+    const update = Reflect.get(management, 'updateConversationBindingForInvocation');
+    expect(update).toEqual(expect.any(Function));
+    if (typeof update !== 'function') return;
 
     const collection = createCollection([connectionRow(), bindingRow(sessionTarget)]);
     const execute = vi.fn(async () => ({ kind: 'notVerified' as const, reason: 'templateVersionMismatch' as const }));
-    await expect(rotate({
+    await expect(update({
       bindingId: 'binding-1',
       expectedRevision: 5,
       target: automationTarget,
@@ -1515,11 +1550,11 @@ describe('Channels target-persisting binding management', () => {
       authorityEpoch: 2,
     });
     expect(collection.batches).toEqual([[
-      {
-        kind: 'assert',
-        rowId: 'connection-1',
+      expect.objectContaining({
+        kind: 'put',
         expectedRevision: 4,
-      },
+        value: expect.objectContaining({ id: 'connection-1' }),
+      }),
       expect.objectContaining({
         kind: 'put',
         expectedRevision: 5,
@@ -1533,6 +1568,60 @@ describe('Channels target-persisting binding management', () => {
         }),
       }),
     ]]);
+  });
+
+  it('refuses to enable a retained shared binding whose resulting policy exceeds the connection capability', async () => {
+    const setEnabled = Reflect.get(management, 'setConversationBindingEnabledInAccountCollection');
+    expect(setEnabled).toEqual(expect.any(Function));
+    if (typeof setEnabled !== 'function') return;
+
+    const collection = createCollection([
+      connectionRow({
+        sharedEndpointInputModes: ['directMentionsOnly', 'addressedMessages'],
+      }),
+      bindingRow(sessionTarget, 5, {
+        endpoint: { kind: 'shared', audience: 'shared', id: 'room-1', label: 'Project room' },
+        inputMode: 'allAllowedMessages',
+        enabled: false,
+      }),
+    ]);
+
+    await expect(setEnabled({
+      collection,
+      bindingId: 'binding-1',
+      expectedRevision: 5,
+      enabled: true,
+      signal: new AbortController().signal,
+    })).rejects.toMatchObject({
+      code: 'channels_binding_set_enabled_input_mode_unsupported',
+    });
+    expect(collection.batches).toEqual([]);
+  });
+
+  it('validates the complete resulting enabled policy through the online binding update owner', async () => {
+    const update = Reflect.get(management, 'updateConversationBindingForInvocation');
+    expect(update).toEqual(expect.any(Function));
+    if (typeof update !== 'function') return;
+
+    const collection = createCollection([
+      connectionRow({
+        sharedEndpointInputModes: ['directMentionsOnly', 'addressedMessages'],
+      }),
+      bindingRow(sessionTarget, 5, {
+        endpoint: { kind: 'shared', audience: 'shared', id: 'room-1', label: 'Project room' },
+        inputMode: 'allAllowedMessages',
+        enabled: false,
+      }),
+    ]);
+
+    await expect(update({
+      bindingId: 'binding-1',
+      expectedRevision: 5,
+      enabled: true,
+    }, context(collection, vi.fn()))).rejects.toMatchObject({
+      code: 'channels_binding_update_input_mode_unsupported',
+    });
+    expect(collection.batches).toEqual([]);
   });
 
   it('generalizes the offline Account-local writer only across locally decidable binding policy', async () => {
@@ -1560,7 +1649,11 @@ describe('Channels target-persisting binding management', () => {
     });
 
     expect(collection.batches).toEqual([[
-      { kind: 'assert', rowId: 'connection-1', expectedRevision: 4 },
+      expect.objectContaining({
+        kind: 'put',
+        expectedRevision: 4,
+        value: expect.objectContaining({ id: 'connection-1' }),
+      }),
       expect.objectContaining({
         kind: 'put',
         expectedRevision: 5,

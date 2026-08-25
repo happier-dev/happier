@@ -20,6 +20,7 @@ import type {
     ConnectedAccountRef,
 } from '@happier-dev/plugin-sdk/connected-accounts';
 import {
+    admitForgeRequestUrl,
     materializeTriageSourceAuthorizationV1,
     readTriageSourceAccountListingV1,
     type TriageSourceAuthorizationOutcomeV1,
@@ -29,6 +30,7 @@ import {
     MAX_TRIAGE_ROW_FACTS_V1,
     MAX_TRIAGE_ROW_FACT_VALUE_UTF8_BYTES_V1,
     MAX_TRIAGE_TEXT_UTF8_BYTES_V1,
+    projectTriageDisplayTextV1,
     TriageGetInputV1Schema,
     TriageListInstancesInputV1Schema,
     TriageScanInputV1Schema,
@@ -43,6 +45,16 @@ import {
     encodeTriagePagingTokenV1,
 } from '@happier-dev/triage-protocol/v1';
 
+import {
+    MAX_POSTHOG_DIRECTORY_NEXT_URL_UTF8_BYTES_V1,
+    MAX_POSTHOG_DIRECTORY_ROWS_PER_PAGE_V1,
+    PosthogConfigurationDirectoryInputV1Schema,
+    type PosthogConfigurationDirectoryResultV1,
+} from '../connect/configurationContract.js';
+import {
+    PosthogCapabilityProbeInputV1Schema,
+    type PosthogCapabilityProbeResultV1,
+} from '../connect/capabilityProbe.js';
 import {
     createPosthogApiClient,
     type PosthogApiClient,
@@ -64,6 +76,7 @@ import {
     type PosthogApiOrigin,
 } from '../connect/origin.js';
 import { POSTHOG_CONNECTED_ACCOUNT_PURPOSE } from '../posthogContracts.js';
+import { POSTHOG_PLUGIN_ID } from '../posthogContracts.js';
 import {
     POSTHOG_SAMPLE_WALK_STOPPED_SHORT_V1,
     PosthogSampledEventsInputV1Schema,
@@ -329,6 +342,184 @@ function toConfiguredEnvironment(row: PosthogEnvironmentRow): PosthogConfiguredE
     };
 }
 
+function sameAccount(left: ConnectedAccountRef, right: ConnectedAccountRef): boolean {
+    return left.accountId === right.accountId
+        && left.service.pluginId === right.service.pluginId
+        && left.service.localId === right.service.localId;
+}
+
+function readDirectoryOffset(url: URL): number | null {
+    const raw = url.searchParams.get('offset');
+    if (raw === null) return 0;
+    if (!/^\d+$/.test(raw)) return null;
+    const offset = Number(raw);
+    return Number.isSafeInteger(offset) ? offset : null;
+}
+
+/** PostHog directory continuations are offset pages and must move that frontier forward. */
+function isForwardDirectoryContinuation(requestedUrl: string, nextUrl: string): boolean {
+    try {
+        const requested = new URL(requestedUrl);
+        const next = new URL(nextUrl);
+        const requestedOffset = readDirectoryOffset(requested);
+        const nextOffset = readDirectoryOffset(next);
+        return requested.origin === next.origin
+            && requested.pathname === next.pathname
+            && requestedOffset !== null
+            && nextOffset !== null
+            && nextOffset > requestedOffset;
+    } catch {
+        return false;
+    }
+}
+
+/** One source-owned deadline for independently mounted UI reads. */
+export const POSTHOG_INTERACTIVE_READ_DEADLINE_MS = 20_000;
+
+export type PosthogConfigurationDirectoryReader = (
+    input: unknown,
+    context: PluginInvocationContext,
+) => Promise<PosthogConfigurationDirectoryResultV1>;
+
+/** One explicitly requested page of the mounted PostHog configuration browser. */
+export function createPosthogConfigurationDirectoryReader(
+    privateDeadlineMs: number,
+): PosthogConfigurationDirectoryReader {
+  return async function readConfigurationDirectory(
+    input: unknown,
+    context: PluginInvocationContext,
+  ): Promise<PosthogConfigurationDirectoryResultV1> {
+    const parsed = PosthogConfigurationDirectoryInputV1Schema.parse(input);
+    const unavailable = (failure: TriageSourceFailureV1): PosthogConfigurationDirectoryResultV1 => ({
+        kind: 'unavailable',
+        failure,
+    });
+    if (parsed.binding.purpose !== POSTHOG_CONNECTED_ACCOUNT_PURPOSE) {
+        return unavailable(sourceFailure('unsupportedContract', POSTHOG_FAILURE_CODES.requestInvalid));
+    }
+    const accountListing = await readTriageSourceAccountListingV1({
+        connectedAccounts: context.services.connectedAccounts,
+        purpose: POSTHOG_CONNECTED_ACCOUNT_PURPOSE,
+        signal: context.signal,
+    });
+    if (accountListing.kind === 'failed') throw accountListing.error;
+    if (accountListing.kind === 'unbound') {
+        return unavailable(sourceFailure('authentication', POSTHOG_FAILURE_CODES.unauthorized));
+    }
+    const listed = accountListing.listing.accounts.find((entry) => (
+        sameAccount(entry.account, parsed.binding.account)
+    ));
+    if (listed === undefined) {
+        return unavailable(sourceFailure('authentication', POSTHOG_FAILURE_CODES.unauthorized));
+    }
+    const selected = selectPosthogApiOrigin(listed.connectedAccountOrigins);
+    if (!selected.ok) {
+        return unavailable(sourceFailure('unsupportedContract', originFailureCode(selected.reason)));
+    }
+    const { origin } = selected;
+    const client = createInvocationClient(context, listed.account, origin);
+    const readPage = async <T>(
+        initialPath: string,
+        parseRow: (value: unknown) => T | null,
+    ) => {
+        const initialUrl = new URL(initialPath, origin as string);
+        initialUrl.searchParams.set('limit', String(MAX_POSTHOG_DIRECTORY_ROWS_PER_PAGE_V1));
+        const requestedUrl = parsed.page.kind === 'initial' ? initialUrl.toString() : parsed.page.next;
+        const result = parsed.page.kind === 'initial'
+            ? await client.requestJson(
+                {
+                    method: 'GET',
+                    path: initialPath,
+                    query: { limit: String(MAX_POSTHOG_DIRECTORY_ROWS_PER_PAGE_V1) },
+                },
+                (body) => parsePosthogDirectoryPage(body, parseRow),
+                { signal: context.signal, privateDeadlineMs },
+            )
+            : await client.followJson(
+                parsed.page.next,
+                (body) => parsePosthogDirectoryPage(body, parseRow),
+                { signal: context.signal, privateDeadlineMs },
+            );
+        return { result, requestedUrl };
+    };
+
+    const pageState = <T>(
+        page: Readonly<{
+            next: string | null;
+            nextUnreadable: boolean;
+            skippedRowCount: number;
+            rows: readonly T[];
+        }>,
+        requestedUrl: string,
+    ) => {
+        const admittedNext = page.next === null
+            ? null
+            : admitForgeRequestUrl(page.next, origin as string);
+        const next = admittedNext !== null
+            && isForwardDirectoryContinuation(requestedUrl, admittedNext)
+            && new TextEncoder().encode(admittedNext).byteLength
+                <= MAX_POSTHOG_DIRECTORY_NEXT_URL_UTF8_BYTES_V1
+            ? admittedNext
+            : null;
+        return {
+            next,
+            incomplete: page.nextUnreadable
+                || page.skippedRowCount > 0
+                || (page.next !== null && next === null),
+        };
+    };
+
+    if (parsed.kind === 'organizations') {
+        const read = await readPage(organizationsListPath(), parsePosthogOrganizationRow);
+        if (!read.result.ok) return unavailable(toTriageSourceFailure(read.result.failure));
+        const page = read.result.value;
+        const { next, incomplete } = pageState(page, read.requestedUrl);
+        const rows = page.rows.flatMap((row) => {
+            const key = buildPosthogLocalInstanceKey(origin, row.organizationUuid);
+            const displayName = projectTriageDisplayTextV1(row.name, MAX_TRIAGE_TEXT_UTF8_BYTES_V1);
+            return !key.ok || displayName.value.length === 0 ? [] : [{
+                organizationUuid: row.organizationUuid,
+                displayName: displayName.value,
+                localInstanceKey: key.value,
+            }];
+        });
+        return {
+            kind: 'organizations',
+            rows,
+            ...(next === null ? {} : { next }),
+            ...(incomplete || rows.length !== page.rows.length ? { incomplete: true as const } : {}),
+        };
+    }
+    const read = await readPage(
+        organizationProjectsPath(parsed.organizationUuid),
+        parsePosthogEnvironmentRow,
+    );
+    if (!read.result.ok) return unavailable(toTriageSourceFailure(read.result.failure));
+    const page = read.result.value;
+    const { next, incomplete } = pageState(page, read.requestedUrl);
+    const rows = page.rows.flatMap((row) => {
+        if (row.organizationUuid !== parsed.organizationUuid) return [];
+        const displayName = projectTriageDisplayTextV1(row.displayName, MAX_TRIAGE_TEXT_UTF8_BYTES_V1);
+        return displayName.value.length === 0 ? [] : [{
+            teamPathId: row.teamRouteId,
+            teamUuid: row.teamUuid,
+            ...(row.parentProjectId === undefined ? {} : { parentProjectId: row.parentProjectId }),
+            displayName: displayName.value,
+        }];
+    });
+    return {
+        kind: 'environments',
+        organizationUuid: parsed.organizationUuid,
+        rows,
+        ...(next === null ? {} : { next }),
+        ...(incomplete || rows.length !== page.rows.length ? { incomplete: true as const } : {}),
+    };
+  };
+}
+
+export const readPosthogConfigurationDirectory: PosthogConfigurationDirectoryReader
+    = createPosthogConfigurationDirectoryReader(POSTHOG_INTERACTIVE_READ_DEADLINE_MS);
+
 /**
  * Automatic discovery of non-durable Settings candidates.
  *
@@ -399,7 +590,11 @@ export async function listPosthogInstances(
             }));
             continue;
         }
-        if (organizations.value.next !== null || organizations.value.skippedRowCount > 0) {
+        if (
+            organizations.value.next !== null
+            || organizations.value.nextUnreadable
+            || organizations.value.skippedRowCount > 0
+        ) {
             bounded = true;
         }
 
@@ -436,7 +631,11 @@ export async function listPosthogInstances(
                 }));
                 continue;
             }
-            if (projects.value.next !== null || projects.value.skippedRowCount > 0) {
+            if (
+                projects.value.next !== null
+                || projects.value.nextUnreadable
+                || projects.value.skippedRowCount > 0
+            ) {
                 bounded = true;
             }
 
@@ -860,13 +1059,78 @@ function resolveInvokedInstance(
     });
 }
 
+/** One ephemeral authenticated Error Tracking read for the active Settings draft. */
+export type PosthogCapabilityProbe = (
+    input: unknown,
+    context: PluginInvocationContext,
+) => Promise<PosthogCapabilityProbeResultV1>;
+
+export function createPosthogCapabilityProbe(
+    privateDeadlineMs: number,
+): PosthogCapabilityProbe {
+  return async function probeCapability(
+    input: unknown,
+    context: PluginInvocationContext,
+  ): Promise<PosthogCapabilityProbeResultV1> {
+    const parsed = PosthogCapabilityProbeInputV1Schema.parse(input);
+    const routed = resolveInvokedInstance(parsed.draft);
+    if (!routed.ok) return { kind: 'unavailable', failure: routed.failure };
+    const environment = routed.configuration.environments[0];
+    if (environment === undefined) {
+        return {
+            kind: 'unavailable',
+            failure: sourceFailure(
+                'unsupportedContract',
+                POSTHOG_FAILURE_CODES.environmentNotConfigured,
+            ),
+        };
+    }
+    const client = createInvocationClient(
+        context,
+        parsed.draft.binding.account,
+        routed.origin,
+    );
+    const page = await scanPosthogIssuePage(
+        client,
+        {
+            origin: routed.origin,
+            environment: {
+                teamRouteId: environment.teamPathId,
+                teamUuid: environment.teamUuid,
+            },
+            window: resolvePosthogWindowPolicy(
+                routed.configuration.scanWindowPolicy,
+                Date.now(),
+            ),
+            nativeLimit: 1,
+            offset: 0,
+        },
+        { signal: context.signal, privateDeadlineMs },
+    );
+    return page.ok
+        ? { kind: 'available' }
+        : { kind: 'unavailable', failure: toTriageSourceFailure(page.failure) };
+  };
+}
+
+export const probePosthogCapability: PosthogCapabilityProbe
+    = createPosthogCapabilityProbe(POSTHOG_INTERACTIVE_READ_DEADLINE_MS);
+
 const UUID_PATTERN
     = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
 
+function isMountedPosthogUiRead(context: PluginInvocationContext): boolean {
+    return context.surface === 'plugin'
+        && context.caller?.kind === 'plugin'
+        && context.caller.pluginId === POSTHOG_PLUGIN_ID
+        && context.caller.originSurface === 'ui';
+}
+
 /** One authoritative read of one local ref through one exact configured instance. */
-export async function getPosthogSourceEntry(
+async function readPosthogSourceEntry(
     input: unknown,
     context: PluginInvocationContext,
+    privateDeadlineMs?: number,
 ): Promise<TriageGetResultV1> {
     const parsed = TriageGetInputV1Schema.parse(input);
     const localRef = Object.freeze({
@@ -921,7 +1185,9 @@ export async function getPosthogSourceEntry(
             issueId: parsed.localRef.entryId,
             detailWindow: resolvePosthogWindowPolicy(configuration.detailWindowPolicy, Date.now()),
         },
-        { signal: context.signal },
+        privateDeadlineMs === undefined
+            ? { signal: context.signal }
+            : { signal: context.signal, privateDeadlineMs },
     );
 
     if (outcome.kind === 'unresolved') {
@@ -938,7 +1204,7 @@ export async function getPosthogSourceEntry(
 
     // The query plane supplies the richer row when it answered; a failed enrichment
     // degrades the snapshot rather than downgrading a present entry.
-    const row: PosthogIssueRow = outcome.queryDetail ?? {
+    const row: PosthogIssueRow = outcome.queryDetail === undefined ? {
         id: outcome.crud.id,
         name: outcome.crud.name,
         description: outcome.crud.description,
@@ -950,6 +1216,11 @@ export async function getPosthogSourceEntry(
         source: null,
         assignee: outcome.crud.assignee,
         aggregations: null,
+    } : {
+        ...outcome.queryDetail,
+        // `impact` is the detail route's named impact aggregate. Prefer it when the
+        // provider supplies it instead of paying for that plane and discarding it.
+        aggregations: outcome.queryDetail.impact ?? outcome.queryDetail.aggregations,
     };
 
     return buildPosthogPresentObservation({
@@ -964,6 +1235,7 @@ export async function getPosthogSourceEntry(
                 teamRouteId: environment.teamPathId,
             },
             crud: outcome.crud,
+            ...(outcome.queryDetail === undefined ? {} : { enrichment: outcome.queryDetail }),
             untitledLabel: UNTITLED_ISSUE_LABEL,
             bounds: PROJECTION_BOUNDS,
         }),
@@ -971,12 +1243,36 @@ export async function getPosthogSourceEntry(
     });
 }
 
+export type PosthogSourceEntryReader = (
+    input: unknown,
+    context: PluginInvocationContext,
+) => Promise<TriageGetResultV1>;
+
+export function createPosthogSourceEntryReader(
+    privateDeadlineMs: number,
+): PosthogSourceEntryReader {
+    return async (input, context) => await readPosthogSourceEntry(
+        input,
+        context,
+        privateDeadlineMs,
+    );
+}
+
+export const getPosthogSourceEntry: PosthogSourceEntryReader = async (input, context) => (
+    await readPosthogSourceEntry(
+        input,
+        context,
+        isMountedPosthogUiRead(context) ? POSTHOG_INTERACTIVE_READ_DEADLINE_MS : undefined,
+    )
+);
+
 /**
  * The private deadline for a mounted-detail sampled read.
  *
- * `listInstances`, `scan`, and `get` are aggregate-driven and use the caller's deadline
+ * `listInstances`, `scan`, and aggregate-owned `get` calls use the caller's deadline
  * unchanged; a second timer over them would make two owners of one cancellation. A
- * mounted detail read has no aggregate deadline of its own, so this path supplies one —
+ * mounted source-detail read has no aggregate deadline of its own, so that invocation
+ * and the sampled-detail paths below supply one —
  * and it is injected rather than read from a module constant at the request site, so a
  * test can prove the timeout without waiting for it.
  */

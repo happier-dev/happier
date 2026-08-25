@@ -94,7 +94,10 @@ function targetedCheckpointedPollContribution(): TargetedContributionsService {
                 immutableGenerationId: 'checkpointed-poll-test-generation',
               },
               protocol: { id: 'happier.channels/providers', version: 1 },
-              operations: { observationsPoll: checkpointedPollAction },
+              operations: {
+                observationsPoll: checkpointedPollAction,
+                endpointResolve: checkpointedPollEndpointResolve,
+              },
             }] as unknown as readonly TContribution[],
           };
         },
@@ -162,6 +165,109 @@ function completePreBindingMessage(
 }
 
 /**
+ * The direct conversation these cases pair into by default. Pairing proves the
+ * human through a private message, but the destination it binds is whichever
+ * endpoint the owner selected, so both are named separately here.
+ */
+const directDestinationEndpoint = {
+  kind: 'direct',
+  audience: 'direct',
+  id: 'chat-1',
+  label: 'Alice',
+} as const;
+
+const sharedDestinationEndpoint = {
+  kind: 'shared',
+  audience: 'shared',
+  id: 'group-9',
+  label: 'Ops room',
+} as const;
+
+function endpointSelectionFor(
+  endpoint: typeof directDestinationEndpoint | typeof sharedDestinationEndpoint,
+) {
+  return {
+    query: endpoint.label,
+    selected: { kind: endpoint.kind, audience: endpoint.audience, id: endpoint.id },
+  } as const;
+}
+
+const directEndpointSelection = endpointSelectionFor(directDestinationEndpoint);
+
+function pairingEndpointResolveAction(contributionId: string, immutableGenerationId: string) {
+  return Object.freeze({
+    identity: Object.freeze({
+      target: Object.freeze({ pluginId: 'happier.channels' }),
+      point: Object.freeze({
+        pointId: 'providers',
+        protocol: Object.freeze({ id: 'happier.channels/providers', version: 1 }),
+      }),
+      contributor: Object.freeze({
+        pluginId: materialization.pluginId,
+        contributionId,
+        immutableGenerationId,
+      }),
+      role: 'endpointResolve',
+    }),
+  });
+}
+
+const pairingEndpointResolve = pairingEndpointResolveAction(
+  pairingConnectionAuthority.providerContributionSelection.contributionId,
+  pairingConnectionAuthority.providerContributionSelection.immutableGenerationId,
+);
+const checkpointedPollEndpointResolve = pairingEndpointResolveAction(
+  checkpointedPollConnectionAuthority.providerContributionSelection.contributionId,
+  checkpointedPollConnectionAuthority.providerContributionSelection.immutableGenerationId,
+);
+
+/** The pairing connection's own admitted provider, exposing endpoint resolution. */
+function targetedPairingContribution(): TargetedContributionsService {
+  return Object.freeze({
+    observeForSelf<TContribution>(
+      _point: TargetedContributionPointRef<TContribution>,
+      _options: Readonly<{ onInvalidated: () => void }>,
+    ) {
+      return Object.freeze({
+        dispose() {},
+        async readCurrent(): Promise<TargetedContributionSnapshot<TContribution>> {
+          return {
+            generation: 'channels-test-generation',
+            contributions: [{
+              contributor: {
+                pluginId: materialization.pluginId,
+                ...pairingConnectionAuthority.providerContributionSelection,
+              },
+              protocol: { id: 'happier.channels/providers', version: 1 },
+              operations: { endpointResolve: pairingEndpointResolve },
+            }] as unknown as readonly TContribution[],
+          };
+        },
+      });
+    },
+  });
+}
+
+/** Resolves whichever destination endpoints a case declares as current. */
+function endpointResolutionExecutor(
+  candidates: readonly (typeof directDestinationEndpoint | typeof sharedDestinationEndpoint)[],
+) {
+  return vi.fn(async (
+    action: unknown,
+    _input: JsonValue,
+    _executionOptions: Readonly<{ signal: AbortSignal }>,
+  ) => {
+    if (action !== pairingEndpointResolve && action !== checkpointedPollEndpointResolve) {
+      throw new Error('Unexpected provider resolution Action.');
+    }
+    return {
+      result: { kind: 'resolved' as const, candidates: [...candidates] },
+      executionOrigin: pairingConnectionAuthority.transportOrigin,
+    };
+  });
+}
+
+/**
  * The one mounted invocation context these pairing-management cases execute
  * against. Building it here keeps every case on the complete
  * `PluginInvocationContext` the host actually supplies, rather than a
@@ -171,6 +277,7 @@ function pairingManagementContext(input: Readonly<{
   collection: ReturnType<typeof createCollection>;
   actions?: Readonly<Record<string, unknown>>;
   targetedContributions?: TargetedContributionsService;
+  endpointCandidates?: readonly (typeof directDestinationEndpoint | typeof sharedDestinationEndpoint)[];
 }>): PluginInvocationContext {
   return {
     plugin: { id: 'happier.channels', version: '0.0.0' },
@@ -183,11 +290,14 @@ function pairingManagementContext(input: Readonly<{
     // This fixture crosses only the Account-storage, Action-execution, and
     // targeted-contribution host boundaries.
     services: {
-      actions: input.actions ?? {},
+      actions: {
+        executeAdmittedTargetedOperationWithExecutionOrigin: endpointResolutionExecutor(
+          input.endpointCandidates ?? [directDestinationEndpoint],
+        ),
+        ...input.actions,
+      },
       storage: { account: { collection: () => input.collection } },
-      ...(input.targetedContributions === undefined
-        ? {}
-        : { targetedContributions: input.targetedContributions }),
+      targetedContributions: input.targetedContributions ?? targetedPairingContribution(),
     } as unknown as PluginServices,
   };
 }
@@ -310,6 +420,7 @@ describe('Channels pairing management writer', () => {
     const result = await handlers.create({
       connectionId: 'connection-1',
       expectedConnectionRevision: 4,
+      endpointSelection: directEndpointSelection,
       target,
     }, context);
 
@@ -343,6 +454,7 @@ describe('Channels pairing management writer', () => {
     const challenge = await handlers.create({
       connectionId: 'connection-1',
       expectedConnectionRevision: 4,
+      endpointSelection: directEndpointSelection,
       target: finalResultAutomationTarget,
     }, context);
     if (!('manualToken' in challenge)) throw new Error('Expected a verified pairing challenge.');
@@ -519,6 +631,7 @@ describe('Channels pairing management writer', () => {
     const challenge = await handlers.create({
       connectionId: 'connection-1',
       expectedConnectionRevision: 4,
+      endpointSelection: directEndpointSelection,
       target: newSessionPrincipalOutsidePairingAllowlistTarget,
     }, context);
     if (challenge.kind !== 'created') throw new Error('Expected a created pairing challenge.');
@@ -549,6 +662,44 @@ describe('Channels pairing management writer', () => {
     }, context)).resolves.toEqual({ kind: 'cancelled' });
   });
 
+  it('refuses to cancel a pairing item whose connection the current Account no longer owns', async () => {
+    const createHandlers = Reflect.get(management, 'createConversationPairingManagementHandlers');
+    expect(createHandlers).toEqual(expect.any(Function));
+    if (typeof createHandlers !== 'function') return;
+
+    const ownerCollection = createCollection([connectionRow()]);
+    const ownerContext = pairingManagementContext({ collection: ownerCollection });
+    const manager = createConversationPairingManager({
+      generationId: 'generation-1',
+      now: () => 1_000,
+      randomBytes: () => Uint8Array.from([0, 0, 0, 0, 1]),
+      createId: (kind) => `${kind}-1`,
+    });
+    const handlers = createHandlers(manager);
+    const challenge = await handlers.create({
+      connectionId: 'connection-1',
+      expectedConnectionRevision: 4,
+      endpointSelection: directEndpointSelection,
+      target,
+    }, ownerContext);
+    if (challenge.kind !== 'created') throw new Error('Expected a created pairing challenge.');
+
+    // The pairing manager belongs to the plugin generation, which outlives an
+    // Account change; this is the same manager reached through another
+    // Account's storage scope, which does not own that connection row.
+    const otherAccountContext = pairingManagementContext({ collection: createCollection([]) });
+    await expect(handlers.cancel({
+      generationId: challenge.generationId,
+      challengeId: challenge.challengeId,
+    }, otherAccountContext)).resolves.toEqual({ kind: 'notCancelled', reason: 'unavailable' });
+
+    // Positive twin: the owning Account can still cancel the very same item.
+    await expect(handlers.cancel({
+      generationId: challenge.generationId,
+      challengeId: challenge.challengeId,
+    }, ownerContext)).resolves.toEqual({ kind: 'cancelled' });
+  });
+
   it('persists the owner-chosen enabled approval policy through pairing finalization', async () => {
     const createHandlers = Reflect.get(management, 'createConversationPairingManagementHandlers');
     expect(createHandlers).toEqual(expect.any(Function));
@@ -575,6 +726,7 @@ describe('Channels pairing management writer', () => {
     const challenge = await handlers.create({
       connectionId: 'connection-1',
       expectedConnectionRevision: 4,
+      endpointSelection: directEndpointSelection,
       target: approvalEnabledTarget,
     }, context);
     if (challenge.kind !== 'created') throw new Error('Expected a created pairing challenge.');
@@ -613,14 +765,19 @@ describe('Channels pairing management writer', () => {
 
     const connection = checkpointedPullConnectionRow();
     const collection = createCollection([connection]);
+    const resolveEndpoint = endpointResolutionExecutor([directDestinationEndpoint]);
     const executeAdmittedTargetedOperationWithExecutionOrigin = vi.fn(async (
-      _operation: unknown,
-      _input: JsonValue,
-      _executionOptions: Readonly<{ signal: AbortSignal }>,
-    ) => ({
-      result: { kind: 'checkpointOnly', checkpointAfterBatch: { offset: '43' } },
-      executionOrigin: { serverIdentityId: 'server-1', materializationRef: materialization },
-    }));
+      operation: unknown,
+      input: JsonValue,
+      executionOptions: Readonly<{ signal: AbortSignal }>,
+    ) => (
+      operation === checkpointedPollEndpointResolve
+        ? await resolveEndpoint(operation, input, executionOptions)
+        : {
+          result: { kind: 'checkpointOnly', checkpointAfterBatch: { offset: '43' } },
+          executionOrigin: { serverIdentityId: 'server-1', materializationRef: materialization },
+        }
+    ));
     const context = pairingManagementContext({
       collection,
       actions: { execute: vi.fn(), executeAdmittedTargetedOperationWithExecutionOrigin },
@@ -636,6 +793,7 @@ describe('Channels pairing management writer', () => {
     const createInput = {
       connectionId: 'connection-1',
       expectedConnectionRevision: 4,
+      endpointSelection: directEndpointSelection,
       target,
     } as const;
 
@@ -669,6 +827,92 @@ describe('Channels pairing management writer', () => {
     });
   });
 
+  it('binds the selected shared destination while proving the human through a private message', async () => {
+    const createHandlers = Reflect.get(management, 'createConversationPairingManagementHandlers');
+    expect(createHandlers).toEqual(expect.any(Function));
+    if (typeof createHandlers !== 'function') return;
+
+    const collection = createCollection([connectionRow()]);
+    const context = pairingManagementContext({
+      collection,
+      endpointCandidates: [directDestinationEndpoint, sharedDestinationEndpoint],
+      actions: {
+        execute: vi.fn(async () => ({
+          ok: true,
+          projection: 'externalShareableV1' as const,
+          sessionId: 'session-1',
+          scannedThroughSeq: 12,
+          nextCursor: 'cursor-12',
+          hasMore: false,
+          items: [],
+        })),
+      },
+    });
+    const manager = createConversationPairingManager({
+      generationId: 'generation-1',
+      now: () => 1_000,
+      randomBytes: () => Uint8Array.from([0, 0, 0, 0, 1]),
+      createId: (kind) => `${kind}-1`,
+    });
+    const handlers = createHandlers(manager);
+    const challenge = await handlers.create({
+      connectionId: 'connection-1',
+      expectedConnectionRevision: 4,
+      endpointSelection: endpointSelectionFor(sharedDestinationEndpoint),
+      target,
+    }, context);
+    if (challenge.kind !== 'created') throw new Error('Expected a created pairing challenge.');
+
+    // The proof itself must remain a private message: a shared endpoint can
+    // never carry the token, so the group is bound only by owner selection.
+    expect(manager.preparePreBindingMessage({
+      censusId: 'shared-proof-census',
+      connectionId: 'connection-1',
+      materialization,
+      endpoint: sharedDestinationEndpoint,
+      actor: { principalId: 'person-1', kind: 'human', isIntegrationSelf: false },
+      contentProvenance: 'original',
+      command: classifyConversationCommand(`/pair ${challenge.manualToken}`),
+    })).toEqual({ kind: 'silent', ownerReason: 'ineligibleCaller' });
+
+    const proposal = completePreBindingMessage(manager, {
+      connectionId: 'connection-1',
+      materialization,
+      endpoint: directDestinationEndpoint,
+      actor: { principalId: 'person-1', kind: 'human', isIntegrationSelf: false },
+      contentProvenance: 'original',
+      command: classifyConversationCommand(`/pair ${challenge.manualToken}`),
+    });
+    if (proposal.kind !== 'matched') throw new Error('Expected a pairing proposal.');
+
+    // The owner still sees which private conversation proved the person.
+    expect(manager.readManagementProjection().proposals).toEqual([
+      expect.objectContaining({ endpointLabel: 'Alice' }),
+    ]);
+
+    await expect(handlers.finalize({
+      generationId: challenge.generationId,
+      proposalId: proposal.proposalId,
+      connectionId: 'connection-1',
+      expectedConnectionRevision: 4,
+      finalizeIdempotencyKey: 'finalize-1',
+    }, context)).resolves.toMatchObject({
+      kind: 'created',
+      binding: {
+        endpoint: sharedDestinationEndpoint,
+        allowedPrincipalIds: ['person-1'],
+        // A shared destination cannot promise every message; the canonical
+        // omitted-field owner already answers that for a shared audience.
+        inputMode: 'directMentionsOnly',
+        enabled: false,
+      },
+    });
+    expect(collection.rows.get('binding-1')?.value.payload).toMatchObject({
+      endpoint: sharedDestinationEndpoint,
+      allowedPrincipalIds: ['person-1'],
+    });
+  });
+
   it('creates one paused Session binding from the authenticated proposal facts', async () => {
     const createHandlers = Reflect.get(management, 'createConversationPairingManagementHandlers');
     expect(createHandlers).toEqual(expect.any(Function));
@@ -695,6 +939,7 @@ describe('Channels pairing management writer', () => {
     const challenge = await handlers.create({
       connectionId: 'connection-1',
       expectedConnectionRevision: 4,
+      endpointSelection: directEndpointSelection,
       target,
     }, context);
     if (challenge.kind !== 'created') throw new Error('Expected a created pairing challenge.');
@@ -784,6 +1029,7 @@ describe('Channels pairing management writer', () => {
     const challenge = await handlers.create({
       connectionId: 'connection-1',
       expectedConnectionRevision: 4,
+      endpointSelection: directEndpointSelection,
       target: automationTarget,
     }, context);
     if (!('manualToken' in challenge)) throw new Error('Expected a verified pairing challenge.');
@@ -849,6 +1095,7 @@ describe('Channels pairing management writer', () => {
     const challenge = await handlers.create({
       connectionId: 'connection-1',
       expectedConnectionRevision: 4,
+      endpointSelection: directEndpointSelection,
       target: automationTarget,
     }, context);
     if (!('manualToken' in challenge)) throw new Error('Expected a verified pairing challenge.');

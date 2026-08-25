@@ -7,6 +7,7 @@ import { PluginContributionIdentityV1JsonSchema } from '@happier-dev/plugin-sdk/
 import { PluginWebhookEndpointIdV1JsonSchema } from '@happier-dev/plugin-sdk/webhooks';
 import type { PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
 import {
+  ConversationAuthenticatedObservationShellV1JsonSchema,
   ConversationBindingTargetV1JsonSchema,
   ConversationNormalizedIngressV1JsonSchema,
 } from '@happier-dev/channels-protocol/v1';
@@ -22,6 +23,7 @@ import {
   ConversationProviderContributionSelectionJsonSchema,
   isCanonicalChannelStateRecordIdentity,
 } from './collections.js';
+import { MAX_CONVERSATION_POLL_FAILURE_ATTEMPTS } from './connectionPollFailureBounds.js';
 import { collectionMigrations, PLUGIN_MANIFEST } from './manifest.js';
 
 /**
@@ -188,8 +190,17 @@ describe('Channels collection declarations', () => {
       'connectionAuthorityEpoch',
       'maximumObservationAgeMs',
     ]));
-    expect(censusPayload?.properties?.normalizedIngress)
+    // The admitted arm stays the exact protocol schema object rather than a
+    // drifting hand-rolled copy; only its settled-census null arm is added.
+    expect(censusPayload?.properties?.normalizedIngress).toEqual({
+      anyOf: [ConversationNormalizedIngressV1JsonSchema, { type: 'null' }],
+    });
+    expect((censusPayload?.properties?.normalizedIngress as { anyOf: readonly unknown[] }).anyOf[0])
       .toBe(ConversationNormalizedIngressV1JsonSchema);
+    expect((censusPayload?.properties?.compacted as unknown as
+      Readonly<{ anyOf: readonly [Readonly<{ properties: Record<string, unknown> }>, unknown] }>)
+      .anyOf[0].properties.shell)
+      .toBe(ConversationAuthenticatedObservationShellV1JsonSchema);
     expect(ingressPayload?.properties?.text).toBeUndefined();
     expect(CHANNEL_STATE_COLLECTION.serverReadable).toContain('due-at');
     expect(CHANNEL_STATE_COLLECTION.serverReadable).toContain('attention');
@@ -265,6 +276,7 @@ describe('Channels collection declarations', () => {
     }]);
     expect(staticDeclaration).not.toHaveProperty('migrations.0.migrate');
     expect(censusPayload?.required).toContain('conflict');
+    expect(censusPayload?.required).toContain('compacted');
     expect(migration).toMatchObject({
       id: 'channel-state-v1-to-v2',
       fromSchemaVersion: 1,
@@ -273,7 +285,7 @@ describe('Channels collection declarations', () => {
     expect(migration?.migrate(source)).toEqual({
       ...source,
       attention: false,
-      payload: { ...source.payload, conflict: null },
+      payload: { ...source.payload, conflict: null, compacted: null },
     });
     expect(findChannelStateRecordBranch(CHANNEL_STATE_RECORD_KIND.ingressCensus)?.allOf)
       .toEqual(expect.arrayContaining([
@@ -388,14 +400,22 @@ describe('Channels collection declarations', () => {
     }))).toEqual([
       {
         phase: 'retryDue',
-        attemptCount: { type: 'integer', minimum: 1, maximum: 4 },
+        attemptCount: {
+          type: 'integer',
+          minimum: 1,
+          maximum: MAX_CONVERSATION_POLL_FAILURE_ATTEMPTS - 1,
+        },
         retryNotBeforeMs: { type: 'integer', minimum: 0, maximum: 9_007_199_254_740_991 },
         required: ['phase', 'attemptCount', 'retryNotBeforeMs', 'evidence'],
         additionalProperties: false,
       },
       {
         phase: 'blocked',
-        attemptCount: { type: 'integer', minimum: 1, maximum: 5 },
+        attemptCount: {
+          type: 'integer',
+          minimum: 1,
+          maximum: MAX_CONVERSATION_POLL_FAILURE_ATTEMPTS,
+        },
         retryNotBeforeMs: { type: 'null' },
         required: ['phase', 'attemptCount', 'retryNotBeforeMs', 'evidence'],
         additionalProperties: false,
@@ -412,7 +432,7 @@ describe('Channels collection declarations', () => {
     ]);
   });
 
-  it('declares closed frozen session and Automation target branches for ingress obligations', () => {
+  it('declares closed frozen Session, Automation, and Event target branches for ingress obligations', () => {
     const ingressTarget = findChannelStateRecordPayload(
       CHANNEL_STATE_RECORD_KIND.ingressObligation,
     )?.properties?.target;
@@ -438,6 +458,7 @@ describe('Channels collection declarations', () => {
           'requestedPermissionCeiling',
           'remoteApprovalMaxScope',
           'approval',
+          'userActionAnswer',
           'newSession',
         ],
         required: [
@@ -459,6 +480,24 @@ describe('Channels collection declarations', () => {
           'resultDelivery',
         ],
         required: ['kind', 'automationId', 'templateVersion', 'occurrenceKey', 'resultDelivery'],
+        additionalProperties: false,
+      },
+      {
+        kind: 'event',
+        properties: [
+          'kind',
+          'candidate',
+          'providerPluginId',
+          'providerContributionSelection',
+          'executionOrigin',
+        ],
+        required: [
+          'kind',
+          'candidate',
+          'providerPluginId',
+          'providerContributionSelection',
+          'executionOrigin',
+        ],
         additionalProperties: false,
       },
     ]);

@@ -19,6 +19,13 @@ const materialization = {
   materializationId: 'materialization-1',
 } as const;
 
+const endpoint = {
+  kind: 'direct',
+  audience: 'direct',
+  id: 'chat-1',
+  label: 'Alice',
+} as const;
+
 const target = {
   kind: 'session',
   sessionId: 'session-1',
@@ -131,6 +138,7 @@ describe('Channels pairing Resource', () => {
       expectedConnectionRevision: 1,
       materialization,
       destinationLabel: 'Account A bot',
+      endpoint,
       target,
     });
     pairing.createChallenge({
@@ -138,6 +146,7 @@ describe('Channels pairing Resource', () => {
       expectedConnectionRevision: 1,
       materialization,
       destinationLabel: 'Account B bot',
+      endpoint,
       target,
     });
     const prepared = pairing.preparePreBindingMessage({
@@ -199,6 +208,7 @@ describe('Channels pairing Resource', () => {
       expectedConnectionRevision: 1,
       materialization,
       destinationLabel: 'Account A bot',
+      endpoint,
       target,
     });
     connectionListener?.();
@@ -217,6 +227,7 @@ describe('Channels pairing Resource', () => {
       expectedConnectionRevision: 1,
       materialization,
       destinationLabel: 'Account B bot',
+      endpoint,
       target,
     });
     expect(invalidate).toHaveBeenCalledTimes(2);

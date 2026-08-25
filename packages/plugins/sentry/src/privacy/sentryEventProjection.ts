@@ -728,32 +728,26 @@ const WITHHELD_TOP_LEVEL = Object.freeze([
   'context',
 ] as const);
 
-const EMPTY_PROJECTION: SentryEventProjectionV1 = Object.freeze({
-  eventId: '',
-  dateCreatedMs: null,
-  title: '',
-  message: '',
-  location: null,
-  culprit: null,
-  platform: null,
-  sections: Object.freeze([]),
-  tags: Object.freeze([]),
-  user: null,
-  redactions: Object.freeze([]),
-  sensitivePaths: Object.freeze([]),
-  projectionTruncated: false,
-  omitted: Object.freeze({ sections: 0, frames: 0, breadcrumbs: 0, tags: 0 }),
-});
-
 /**
- * The one path by which a Sentry event body becomes renderable.
+ * The one path by which a Sentry event body becomes renderable, and the one place that
+ * decides whether a body IS an event.
  *
- * A body this source cannot read at all is an empty projection rather than a throw: the
- * caller already distinguishes a failed read from a settled one, and turning an
- * unreadable body into an exception would make an unfamiliar shape look like an outage.
+ * `null` means unreadable, and the caller settles it as a refused read. It replaces an
+ * empty projection, which was indistinguishable from an occurrence Sentry genuinely
+ * recorded as empty and was published as a successful read: the reader saw a blank
+ * Stack Trace where a stated failure belonged. A throw is still wrong for the reason it
+ * always was — an unfamiliar body is not an outage — so the answer is a value, not an
+ * exception.
+ *
+ * A body carrying no usable event id is unreadable for the same reason rather than by a
+ * second rule. `projectSentryEventRows` already omits a list row without one, and
+ * §8.4a's exact-dispatch reread addresses by that id, so a projection whose id is empty
+ * names no occurrence anything could return to.
  */
-export function projectSentryEventForDisplay(rawEventBody: unknown): SentryEventProjectionV1 {
-  if (!isRecord(rawEventBody)) return EMPTY_PROJECTION;
+export function projectSentryEventForDisplay(
+  rawEventBody: unknown,
+): SentryEventProjectionV1 | null {
+  if (!isRecord(rawEventBody)) return null;
   const body = rawEventBody;
   const ledger: Ledger = {
     meta: body['_meta'],
@@ -776,6 +770,7 @@ export function projectSentryEventForDisplay(rawEventBody: unknown): SentryEvent
     SENTRY_EVENT_BOUNDS_V1.identifierUtf8Bytes,
     ledger,
   );
+  if (eventId === null || eventId.trim() === '') return null;
   const topLevel = (
     name: string,
     maxUtf8Bytes: number,
@@ -798,7 +793,7 @@ export function projectSentryEventForDisplay(rawEventBody: unknown): SentryEvent
   const user = projectUser(body['user'], ledger);
 
   return Object.freeze({
-    eventId: eventId ?? '',
+    eventId,
     dateCreatedMs: readTimestampMs(body['dateCreated']),
     title: title ?? message ?? '',
     message: message ?? '',

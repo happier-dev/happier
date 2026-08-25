@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { pluginUiTargetedContributionOperationKey } from '@happier-dev/plugin-sdk/ui';
+import type { AgentPermissionIntentV1 } from '@happier-dev/plugin-sdk/sessions';
 import type {
   PluginUiActionExecutionOptions,
   PluginUiTargetedContributionsV1,
@@ -19,6 +20,7 @@ import {
   Form,
   Heading,
   ItemGroup,
+  Link,
   List,
   LoadingState,
   Metadata,
@@ -40,6 +42,7 @@ import {
   usePluginTranslation,
   usePluginUiFocusTarget,
   useSurfaceContext,
+  type PluginUiResourceSnapshot,
 } from '@happier-dev/plugin-ui';
 import {
   usePluginUiDataClient,
@@ -75,6 +78,9 @@ import {
   ConversationPairingResourceV1Schema,
   conversationBindingInputModesForEndpointV1,
   conversationBindingPolicyForOmittedFieldsV1,
+  conversationSessionBindingDeliveryModeForOmittedFieldV1,
+  CONVERSATION_CORE_PLUGIN_ID_V1,
+  CONVERSATION_OBSERVATION_AGE_MS_FOR_OMITTED_FIELD_V1,
   MAX_CONVERSATION_BINDINGS_PER_ACCOUNT,
   MAX_CONVERSATION_INBOUND_DEBOUNCE_MS,
   MAX_CONVERSATION_OBSERVATION_AGE_MS,
@@ -98,7 +104,9 @@ import {
   updateConversationBindingPolicyInAccountCollection,
   updateConversationConnectionInAccountCollection,
   type ConversationBindingEnablementResult,
+  type ConversationBindingManagementRow,
   type ConversationBindingPolicyReadResult,
+  type ConversationConnectionManagementRow,
   type ConversationConnectionLifecycleMutationResult,
   type ConversationIngressAttentionRow,
 } from '../accountLocalBindingPolicy.js';
@@ -113,20 +121,40 @@ import {
   type ConversationDeliveryResolutionDecision,
   type ConversationOutwardDeliveryResolutionRow,
 } from '../outwardDelivery.js';
+import {
+  CHANNELS_SESSION_CONVERSATIONS_RESOURCE_ID,
+  CHANNELS_SESSION_CONVERSATIONS_VIEW_ID,
+  CHANNELS_SETTINGS_PAGE_ID,
+} from '../sessionSurfaceIds.js';
+import {
+  isConversationSessionBindingAttentionReason,
+  type ConversationSessionBindingAttentionReasonV1,
+  type ConversationSessionBindingAttentionV1,
+} from '../sessionBindingAttention.js';
+import {
+  bindingPermissionIntentLabel,
+  bindingPermissionIntentOptions,
+  parseBindingPermissionIntent,
+} from './permissionIntentOptions.js';
 
 const CHANNELS_CONNECTIONS_RESOURCE = {
-  pluginId: 'happier.channels',
+  pluginId: CONVERSATION_CORE_PLUGIN_ID_V1,
   localId: 'connections-v1',
 } as const;
 
 const CHANNELS_BINDINGS_RESOURCE = {
-  pluginId: 'happier.channels',
+  pluginId: CONVERSATION_CORE_PLUGIN_ID_V1,
   localId: 'bindings-v1',
 } as const;
 
 const CHANNELS_PAIRING_RESOURCE = {
-  pluginId: 'happier.channels',
+  pluginId: CONVERSATION_CORE_PLUGIN_ID_V1,
   localId: 'pairing-v1',
+} as const;
+
+const CHANNELS_SESSION_CONVERSATIONS_RESOURCE = {
+  pluginId: CONVERSATION_CORE_PLUGIN_ID_V1,
+  localId: CHANNELS_SESSION_CONVERSATIONS_RESOURCE_ID,
 } as const;
 
 const MILLISECONDS_PER_SECOND = 1_000;
@@ -134,16 +162,13 @@ const MILLISECONDS_PER_MINUTE = 60 * MILLISECONDS_PER_SECOND;
 const MILLISECONDS_PER_HOUR = 60 * MILLISECONDS_PER_MINUTE;
 const MILLISECONDS_PER_DAY = 24 * MILLISECONDS_PER_HOUR;
 
-type ConnectionTransport = 'checkpointedPull' | 'socket' | 'durablePush';
-type ConnectionDeletionState = 'none' | 'pendingStopReconciliation' | 'finalizingDelete';
-type ConnectionHistoryGapReason = 'providerHistoryUnavailable' | 'applicationAdmissionLost';
-type ConnectionProviderReadiness = Readonly<{
-  code: 'providerPermissionMissing' | 'providerConfigurationInvalid';
-  diagnostic?: string;
-}> | null;
-type ConnectionIngressConflict = Readonly<{
-  kind: 'occurrenceEvidenceMismatch';
-}> | null;
+type ConnectionTransport = ConversationConnectionManagementRow['selectedTransport'];
+type ConnectionDeletionState = ConversationConnectionManagementRow['deletionState'];
+type ConnectionHistoryGapReason = NonNullable<
+  ConversationConnectionManagementRow['attention']['historyGap']
+>['reason'];
+type ConnectionProviderReadiness = ConversationConnectionManagementRow['attention']['providerReadiness'];
+type ConnectionIngressConflict = ConversationConnectionManagementRow['attention']['ingressConflict'];
 type ConnectionPollFailure = ConversationConnectionPollFailureAttentionV1;
 type ConnectionOutwardDeliveryAttention = Readonly<{
   retryDue: boolean;
@@ -153,65 +178,25 @@ type ConnectionOutwardDeliveryAttention = Readonly<{
   archiveRecovery: boolean;
 }>;
 
-type ChannelsConnection = Readonly<{
-  connectionId: string;
-  revision: number;
-  authorityEpoch: number;
-  providerPluginId: string;
-  selectedMachineId: string;
-  selectedTransport: ConnectionTransport;
-  integrationPrincipalLabel?: string;
-  /**
-   * The incoming message policies this connection's provider proved it can
-   * deliver on a shared conversation. Absent means no declared restriction.
-   */
-  sharedEndpointInputModes?: readonly BindingInputMode[];
-  enabled: boolean;
-  deletionState: ConnectionDeletionState;
-  maximumObservationAgeMs: number;
-  attention: Readonly<{
-    historyGap: Readonly<{
-      reportedAt: number;
-      reason: ConnectionHistoryGapReason;
-    }> | null;
-    providerReadiness: ConnectionProviderReadiness;
-    ingressConflict: ConnectionIngressConflict;
-    pollFailure: ConnectionPollFailure | null;
-    bestEffortBeforeDurableAdmission: boolean;
-    oldTransportStopUnconfirmed: boolean;
-    acceptedPossibleLoss: boolean;
-    outwardDelivery: ConnectionOutwardDeliveryAttention;
-  }>;
-}>;
+type ChannelsConnection = Readonly<
+  Omit<ConversationConnectionManagementRow, 'attention'>
+  & Readonly<{
+    attention: ConversationConnectionManagementRow['attention'] & Readonly<{
+      outwardDelivery: ConnectionOutwardDeliveryAttention;
+    }>;
+  }>
+>;
 
-type BindingEndpointAudience = 'direct' | 'shared';
-type BindingTargetKind = 'session' | 'automation';
-type BindingInputMode = 'directMentionsOnly' | 'addressedMessages' | 'allAllowedMessages';
-type BindingDeliveryMode = 'repliesOnly' | 'mirrorSession' | 'finalResult' | 'none';
-type BindingDeletionState = 'none' | 'finalizingDelete';
-type BindingApproval =
-  | Readonly<{ kind: 'notApplicable' }>
-  | Readonly<{ kind: 'off' }>
-  | Readonly<{ kind: 'enabled'; maximumScope: 'request' | 'session' }>;
+type BindingEndpointAudience = ConversationBindingManagementRow['endpoint']['audience'];
+type BindingTargetKind = ConversationBindingManagementRow['target']['kind'];
+type BindingInputMode = ConversationBindingManagementRow['inputMode'];
+type BindingDeliveryMode = ConversationBindingManagementRow['deliveryMode'];
+/** The delivery modes a Session target can actually carry, as the target contract declares them. */
+type BindingSessionDeliveryMode = ReturnType<typeof conversationSessionBindingDeliveryModeForOmittedFieldV1>;
+type BindingDeletionState = ConversationBindingManagementRow['deletionState'];
+type BindingApproval = ConversationBindingManagementRow['approval'];
 
-type ChannelsBinding = Readonly<{
-  bindingId: string;
-  revision: number;
-  connectionId: string;
-  endpoint: Readonly<{
-    audience: BindingEndpointAudience;
-    label?: string;
-  }>;
-  target: Readonly<{
-    kind: BindingTargetKind;
-    summary: string;
-  }>;
-  inputMode: BindingInputMode;
-  deliveryMode: BindingDeliveryMode;
-  approval: BindingApproval;
-  enabled: boolean;
-  deletionState: BindingDeletionState;
-}>;
+type ChannelsBinding = ConversationBindingManagementRow;
 
 type ParsedConnections =
   | Readonly<{ kind: 'ready'; connections: readonly ChannelsConnection[] }>
@@ -227,11 +212,27 @@ type ParsedBindings =
     reason: 'contentType' | 'invalidJson' | 'shape' | 'binding';
   }>;
 
+/** One decoded Session-conversation Resource, consumed by both visible rows and attention. */
+type ParsedSessionConversations = Readonly<{
+  bindings: ParsedBindings;
+  attention: readonly ConversationSessionBindingAttentionV1[];
+}>;
+
 type ParsedPairing =
   | Readonly<{ kind: 'ready'; pairing: ConversationPairingResourceV1 }>
   | Readonly<{ kind: 'invalid'; reason: 'contentType' | 'invalidJson' | 'shape' }>;
 
-type Translate = (key: string, fallback: string) => string;
+/**
+ * The mounted host's resolver, narrowed to the two arguments this surface
+ * always supplies plus the canonical interpolation values. Unit words, order
+ * and spacing therefore stay inside the translated message instead of being
+ * concatenated here.
+ */
+type Translate = (
+  key: string,
+  fallback: string,
+  values?: Readonly<Record<string, string | number>>,
+) => string;
 type ResourcePresentation = Readonly<{
   pending: 'idle' | 'initial' | 'refresh';
   freshness: 'unknown' | 'fresh' | 'stale';
@@ -261,6 +262,10 @@ type PreparedConnectionSetup = Readonly<{
   supportedTransports: readonly ConnectionCreateTransport[];
   selectedTransport: ConnectionCreateTransport;
   maximumObservationAgeMs: string;
+  setupGuidance?: Readonly<{
+    externalUrl: string;
+    requiredPermissionsLabel: string;
+  }>;
 }>;
 type ProviderSetupFormDraft = Readonly<{
   operationKey: string;
@@ -528,7 +533,9 @@ function parseProviderReadiness(value: unknown): ConnectionProviderReadiness | u
   if (!isRecord(value)) return undefined;
   const code = value.code;
   const diagnostic = value.diagnostic;
-  if ((code !== 'providerPermissionMissing' && code !== 'providerConfigurationInvalid')
+  if ((code !== 'providerPermissionMissing'
+    && code !== 'providerConfigurationInvalid'
+    && code !== 'providerCredentialInvalid')
     || (diagnostic !== undefined && !isNonEmptyString(diagnostic))) {
     return undefined;
   }
@@ -694,6 +701,10 @@ function isBindingDeliveryMode(value: unknown): value is BindingDeliveryMode {
     || value === 'none';
 }
 
+function isBindingSessionDeliveryMode(value: unknown): value is BindingSessionDeliveryMode {
+  return value === 'repliesOnly' || value === 'mirrorSession';
+}
+
 function isBindingDeletionState(value: unknown): value is BindingDeletionState {
   return value === 'none' || value === 'finalizingDelete';
 }
@@ -768,18 +779,7 @@ function parseBinding(value: unknown): ChannelsBinding | undefined {
   };
 }
 
-/** The Resource producer owns its row schema; this is a fail-closed UI boundary parser. */
-function parseBindingsResource(resource: ResourceContent): ParsedBindings {
-  if (resource.contentType !== 'application/json') {
-    return { kind: 'invalid', reason: 'contentType' };
-  }
-
-  let decoded: unknown;
-  try {
-    decoded = JSON.parse(new TextDecoder().decode(resource.bytes));
-  } catch {
-    return { kind: 'invalid', reason: 'invalidJson' };
-  }
+function parseBindingsValue(decoded: unknown): ParsedBindings {
   if (!isRecord(decoded) || !Array.isArray(decoded.bindings)) {
     return { kind: 'invalid', reason: 'shape' };
   }
@@ -794,6 +794,60 @@ function parseBindingsResource(resource: ResourceContent): ParsedBindings {
     bindings.push(binding);
   }
   return { kind: 'ready', bindings };
+}
+
+/** The Resource producer owns its row schema; this is a fail-closed UI boundary parser. */
+function parseBindingsResource(resource: ResourceContent): ParsedBindings {
+  if (resource.contentType !== 'application/json') {
+    return { kind: 'invalid', reason: 'contentType' };
+  }
+
+  let decoded: unknown;
+  try {
+    decoded = JSON.parse(new TextDecoder().decode(resource.bytes));
+  } catch {
+    return { kind: 'invalid', reason: 'invalidJson' };
+  }
+  return parseBindingsValue(decoded);
+}
+
+function parseSessionConversationAttention(
+  decoded: unknown,
+): readonly ConversationSessionBindingAttentionV1[] {
+  if (!isRecord(decoded) || !Array.isArray(decoded.attention)) return [];
+  const entries: ConversationSessionBindingAttentionV1[] = [];
+  for (const candidate of decoded.attention) {
+    if (!isRecord(candidate)) continue;
+    const bindingId = candidate.bindingId;
+    const reason = candidate.reason;
+    if (!isNonEmptyString(bindingId) || !isConversationSessionBindingAttentionReason(reason)) continue;
+    entries.push({ bindingId, reason });
+  }
+  return entries;
+}
+
+/**
+ * The one Session-conversation boundary parse.
+ *
+ * Rows and attention are two consumers of the same Resource snapshot, so they
+ * must share its one UTF-8 decode and JSON parse. Their validation remains
+ * independently fail-closed: malformed attention is omitted exactly as before,
+ * while malformed bindings still refuse the whole visible list.
+ */
+function parseSessionConversationsResource(resource: ResourceContent): ParsedSessionConversations {
+  if (resource.contentType !== 'application/json') {
+    return { bindings: { kind: 'invalid', reason: 'contentType' }, attention: [] };
+  }
+  let decoded: unknown;
+  try {
+    decoded = JSON.parse(new TextDecoder().decode(resource.bytes));
+  } catch {
+    return { bindings: { kind: 'invalid', reason: 'invalidJson' }, attention: [] };
+  }
+  return {
+    bindings: parseBindingsValue(decoded),
+    attention: parseSessionConversationAttention(decoded),
+  };
 }
 
 /** The strict protocol schema is the sole parser for the pairing owner projection. */
@@ -1533,9 +1587,13 @@ function providerReadinessLabel(
   providerReadiness: NonNullable<ConnectionProviderReadiness>,
   t: Translate,
 ): string {
-  return providerReadiness.code === 'providerPermissionMissing'
-    ? t('plugins.channels.surface.providerPermissionMissing', 'Provider permission needs attention')
-    : t('plugins.channels.surface.providerConfigurationInvalid', 'Provider configuration needs attention');
+  if (providerReadiness.code === 'providerPermissionMissing') {
+    return t('plugins.channels.surface.providerPermissionMissing', 'Provider permission needs attention');
+  }
+  if (providerReadiness.code === 'providerCredentialInvalid') {
+    return t('plugins.channels.surface.providerCredentialInvalid', 'Connected Account credential needs attention');
+  }
+  return t('plugins.channels.surface.providerConfigurationInvalid', 'Provider configuration needs attention');
 }
 
 function connectionStatus(connection: ChannelsConnection, t: Translate) {
@@ -1659,14 +1717,6 @@ function bindingDeliveryModeLabel(mode: BindingDeliveryMode, t: Translate): stri
     return t('plugins.channels.surface.bindingDeliveryFinalResult', 'Final result');
   }
   return t('plugins.channels.surface.bindingDeliveryNone', 'No external result');
-}
-
-function bindingCreatePermissionCeilingLabel(value: string, t: Translate): string {
-  if (value === 'default') return t('plugins.channels.surface.bindingCreatePermissionDefault', 'Default');
-  if (value === 'safe-yolo') return t('plugins.channels.surface.bindingCreatePermissionSafeYolo', 'Safe yolo');
-  if (value === 'yolo') return t('plugins.channels.surface.bindingCreatePermissionYolo', 'Yolo');
-  if (value === 'plan') return t('plugins.channels.surface.bindingCreatePermissionPlan', 'Plan');
-  return t('plugins.channels.surface.bindingCreatePermissionReadOnly', 'Read only');
 }
 
 function bindingCreateLinkPreviewPolicyLabel(value: string, t: Translate): string {
@@ -1857,15 +1907,22 @@ function providerReadinessDescription(
   t: Translate,
 ): string {
   if (providerReadiness.diagnostic !== undefined) return providerReadiness.diagnostic;
-  return providerReadiness.code === 'providerPermissionMissing'
-    ? t(
+  if (providerReadiness.code === 'providerPermissionMissing') {
+    return t(
       'plugins.channels.surface.providerPermissionMissingDescription',
       'The provider reports that a required remote permission is unavailable for this connection.',
-    )
-    : t(
-      'plugins.channels.surface.providerConfigurationInvalidDescription',
-      'The provider reports that its remote configuration is not valid for this connection.',
     );
+  }
+  if (providerReadiness.code === 'providerCredentialInvalid') {
+    return t(
+      'plugins.channels.surface.providerCredentialInvalidDescription',
+      'The provider rejected the Connected Account credential this connection uses. Replace or resynchronize it to restore the connection.',
+    );
+  }
+  return t(
+    'plugins.channels.surface.providerConfigurationInvalidDescription',
+    'The provider reports that its remote configuration is not valid for this connection.',
+  );
 }
 
 function ingressOccurrenceConflictDescription(t: Translate): string {
@@ -2483,6 +2540,16 @@ type BindingCreateEndpointSelection = Extract<
 type BindingCreatePrincipalSelection = ReturnType<
   typeof ConversationBindingCreateInputV1Schema.parse
 >['principalSelection'];
+/**
+ * Nonsecret Automation execution consequences projected by the canonical
+ * `automation.conversation.targets.list` owner. Parsed at this boundary like
+ * every other Action result the surface consumes; the Automation owner remains
+ * the only authority over these facts.
+ */
+type BindingCreateAutomationExecution = Readonly<{
+  targetType: 'new_session' | 'existing_session' | 'execution_run';
+  enabled: boolean;
+}>;
 type BindingCreateStage = 'closed' | 'endpoint' | 'principal' | 'target' | 'policies' | 'review';
 type BindingCreateActiveStage = Exclude<BindingCreateStage, 'closed'>;
 type BindingCreateTarget =
@@ -2492,12 +2559,14 @@ type BindingCreateTarget =
     automationId: string;
     expectedTemplateVersion: number;
     label: string;
+    execution: BindingCreateAutomationExecution;
   }>;
 type BindingCreateSessionCandidate = Readonly<{ id: string; label: string }>;
 type BindingCreateAutomationCandidate = Readonly<{
   automationId: string;
   templateVersion: number;
   label: string;
+  execution: BindingCreateAutomationExecution;
 }>;
 type BindingCreateAutomationPage = Readonly<{
   candidates: readonly BindingCreateAutomationCandidate[];
@@ -2520,6 +2589,7 @@ type BindingCreateFeedback =
   | 'automationUnavailable'
   | 'newSessionUnavailable'
   | 'targetNotVerified'
+  | 'targetResultDeliveryUnavailable'
   | 'createUnavailable'
   | 'pairingUnavailable'
   | 'created';
@@ -2540,6 +2610,7 @@ type BindingEditorFeedback =
   | 'automationUnavailable'
   | 'newSessionUnavailable'
   | 'targetNotVerified'
+  | 'targetResultDeliveryUnavailable'
   | 'updateUnavailable'
   | 'quotaIncompatible'
   | 'updated';
@@ -2561,9 +2632,8 @@ type BindingEditorSessionTarget = Readonly<{
   sessionId: string;
   policy: Readonly<{
     deliveryMode: 'repliesOnly' | 'mirrorSession';
-    // The protocol parser is the authority for this value. Keeping the draft
-    // as boundary data avoids coupling this mounted UI to a second SDK copy.
-    permissionCeiling: string;
+    // The public Agent permission-intent vocabulary owns both editor drafts.
+    permissionCeiling: AgentPermissionIntentV1;
     approvals: Readonly<
       | { kind: 'off' }
       | { kind: 'enabled'; maximumScope: 'request' | 'session'; principalIds?: readonly string[] }
@@ -2723,17 +2793,12 @@ function BindingSessionTargetPolicyControls(props: Readonly<{
       <Form.Select
         testID="channels-binding-target-permission-ceiling"
         label={props.t('plugins.channels.surface.bindingCreatePermissionCeiling', 'Permission ceiling')}
-        options={[
-          { value: 'default', label: props.t('plugins.channels.surface.bindingCreatePermissionDefault', 'Default') },
-          { value: 'read-only', label: props.t('plugins.channels.surface.bindingCreatePermissionReadOnly', 'Read only') },
-          { value: 'safe-yolo', label: props.t('plugins.channels.surface.bindingCreatePermissionSafeYolo', 'Safe yolo') },
-          { value: 'yolo', label: props.t('plugins.channels.surface.bindingCreatePermissionYolo', 'Yolo') },
-          { value: 'plan', label: props.t('plugins.channels.surface.bindingCreatePermissionPlan', 'Plan') },
-        ]}
+        options={bindingPermissionIntentOptions(props.t)}
         value={props.target.policy.permissionCeiling}
         disabled={props.disabled}
-        onChange={(permissionCeiling) => {
-          if (typeof permissionCeiling !== 'string') return;
+        onChange={(value) => {
+          const permissionCeiling = parseBindingPermissionIntent(value);
+          if (permissionCeiling === null) return;
           props.onChange((target) => ({
             ...target,
             policy: { ...target.policy, permissionCeiling },
@@ -2916,6 +2981,38 @@ function parseBindingCreateSessionCandidates(value: unknown): readonly BindingCr
   return candidates;
 }
 
+function parseBindingCreateAutomationExecution(value: unknown): BindingCreateAutomationExecution | undefined {
+  if (!isRecord(value) || typeof value.enabled !== 'boolean') return undefined;
+  if (value.targetType !== 'new_session'
+    && value.targetType !== 'existing_session'
+    && value.targetType !== 'execution_run') {
+    return undefined;
+  }
+  return { targetType: value.targetType, enabled: value.enabled };
+}
+
+function bindingCreateAutomationEffectLabel(
+  execution: BindingCreateAutomationExecution,
+  t: Translate,
+): string {
+  if (execution.targetType === 'new_session') {
+    return t(
+      'plugins.channels.surface.bindingCreateAutomationEffectNewSession',
+      'A message from the allowed sender starts this Automation, which creates a new Session on its assigned machine.',
+    );
+  }
+  if (execution.targetType === 'existing_session') {
+    return t(
+      'plugins.channels.surface.bindingCreateAutomationEffectExistingSession',
+      'A message from the allowed sender starts this Automation, which sends work into the existing Session it targets.',
+    );
+  }
+  return t(
+    'plugins.channels.surface.bindingCreateAutomationEffectExecutionRun',
+    'A message from the allowed sender starts this Automation, which runs its configured execution run on its assigned machine.',
+  );
+}
+
 function parseBindingCreateAutomationPage(value: unknown): BindingCreateAutomationPage | undefined {
   if (!isRecord(value) || !Array.isArray(value.items) || value.items.length > 100) return undefined;
   if (value.nextCursor !== null && !isNonEmptyString(value.nextCursor)) return undefined;
@@ -2929,11 +3026,16 @@ function parseBindingCreateAutomationPage(value: unknown): BindingCreateAutomati
       || seen.has(entry.automationId)) {
       continue;
     }
+    // The delegated-authority disclosure is part of the target contract, so a
+    // candidate without it is not offered rather than shown without it.
+    const execution = parseBindingCreateAutomationExecution(entry.execution);
+    if (execution === undefined) continue;
     seen.add(entry.automationId);
     candidates.push({
       automationId: entry.automationId,
       templateVersion: entry.templateVersion,
       label: entry.label,
+      execution,
     });
   }
   return {
@@ -2984,11 +3086,18 @@ function BindingCreateStepActions(props: Readonly<{
   );
 }
 
-function formatPairingCountdown(remainingMs: number): string {
-  const totalSeconds = Math.max(0, Math.ceil(remainingMs / 1_000));
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  return `${minutes}m ${String(seconds).padStart(2, '0')}s`;
+/**
+ * The remaining minutes and zero-padded seconds are facts; `m` and `s` are
+ * English words. One bounded pattern key hands the abbreviations, their order
+ * and their spacing to the locale, so a non-English reader is not shown
+ * English units inside an otherwise translated pairing step.
+ */
+function formatPairingCountdown(remainingMs: number, t: Translate): string {
+  const totalSeconds = Math.max(0, Math.ceil(remainingMs / MILLISECONDS_PER_SECOND));
+  return t('plugins.channels.surface.bindingCreatePairingCountdown', '{minutes}m {seconds}s', {
+    minutes: Math.floor(totalSeconds / 60),
+    seconds: String(totalSeconds % 60).padStart(2, '0'),
+  });
 }
 
 /**
@@ -3006,6 +3115,7 @@ function usePairingExpiryCountdown(input: Readonly<{
   expiresAt?: number;
   observedAt?: number;
   active: boolean;
+  t: Translate;
 }>): Readonly<{ countdown?: string; expired: boolean }> {
   const [remainingMs, setRemainingMs] = React.useState<number | undefined>();
 
@@ -3030,7 +3140,7 @@ function usePairingExpiryCountdown(input: Readonly<{
 
   if (remainingMs === undefined) return { expired: false };
   if (remainingMs <= 0) return { expired: true };
-  return { countdown: formatPairingCountdown(remainingMs), expired: false };
+  return { countdown: formatPairingCountdown(remainingMs, input.t), expired: false };
 }
 
 /**
@@ -3167,6 +3277,7 @@ function BindingCreatePairingHandoff(props: Readonly<{
     expiresAt: challenge?.expiresAt,
     observedAt: pairing?.observedAt,
     active: challenge !== undefined && feedback !== 'completed',
+    t: props.t,
   });
 
   React.useEffect(() => {
@@ -3559,9 +3670,9 @@ function BindingCreateJourney(props: Readonly<{
   const [newSessionDraft, setNewSessionDraft] = React.useState<unknown>();
   const [allowBotSenders, setAllowBotSenders] = React.useState(false);
   const [inputModeOverride, setInputModeOverride] = React.useState<BindingInputMode | undefined>();
-  const [deliveryMode, setDeliveryMode] = React.useState('repliesOnly');
+  const [deliveryModeOverride, setDeliveryModeOverride] = React.useState<BindingSessionDeliveryMode | undefined>();
   const [automationResultDelivery, setAutomationResultDelivery] = React.useState<'finalResult' | 'none'>('none');
-  const [permissionCeiling, setPermissionCeiling] = React.useState('read-only');
+  const [permissionCeiling, setPermissionCeiling] = React.useState<AgentPermissionIntentV1>('read-only');
   const [linkPreviewPolicy, setLinkPreviewPolicy] = React.useState('suppress');
   const [senderFeedback, setSenderFeedback] = React.useState('off');
   const [feedback, setFeedback] = React.useState<BindingCreateFeedback | undefined>();
@@ -3581,6 +3692,11 @@ function BindingCreateJourney(props: Readonly<{
   const defaultInputMode: BindingInputMode = conversationBindingPolicyForOmittedFieldsV1(
     endpointAudience,
   ).inputMode;
+  // Session delivery has the same shape: the create contract requires a value,
+  // so the audience-derived answer comes from the one protocol owner instead of
+  // a literal that would silently mirror a whole Session into a group room.
+  const defaultDeliveryMode = conversationSessionBindingDeliveryModeForOmittedFieldV1(endpointAudience);
+  const deliveryMode = deliveryModeOverride ?? defaultDeliveryMode;
   // The create writer rejects an incoming message policy the connection's
   // integration cannot deliver, so the same protocol owner decides what this
   // step is allowed to offer.
@@ -3664,7 +3780,7 @@ function BindingCreateJourney(props: Readonly<{
     setNewSessionDraft(undefined);
     setAllowBotSenders(false);
     setInputModeOverride(undefined);
-    setDeliveryMode('repliesOnly');
+    setDeliveryModeOverride(undefined);
     setPermissionCeiling('read-only');
     setLinkPreviewPolicy('suppress');
     setSenderFeedback('off');
@@ -3981,10 +4097,19 @@ function BindingCreateJourney(props: Readonly<{
   ]);
 
   const createPairing = React.useCallback(async () => {
-    if (currentConnection === undefined || createTarget === undefined || actionLocked || props.signal.aborted) return;
+    if (currentConnection === undefined
+      || endpointSelection === undefined
+      || createTarget === undefined
+      || actionLocked
+      || props.signal.aborted) {
+      return;
+    }
     const parsedInput = ConversationPairingCreateInputV1Schema.safeParse({
       connectionId: currentConnection.connectionId,
       expectedConnectionRevision: currentConnection.revision,
+      // Pairing proves the person through a private message, but it binds the
+      // conversation this person chose here.
+      endpointSelection,
       target: createTarget,
     });
     if (!parsedInput.success) {
@@ -4017,7 +4142,7 @@ function BindingCreateJourney(props: Readonly<{
       challengeId: result.data.challengeId,
       expiresAt: result.data.expiresAt,
     });
-  }, [actionLocked, createTarget, currentConnection, pairingAction, props.signal]);
+  }, [actionLocked, createTarget, currentConnection, endpointSelection, pairingAction, props.signal]);
 
   const feedbackContent = (() => {
     if (bindingCreateOutcomeUnknown) {
@@ -4072,6 +4197,16 @@ function BindingCreateJourney(props: Readonly<{
       targetNotVerified: [
         props.t('plugins.channels.surface.bindingCreateTargetNotVerifiedTitle', 'The selected target is no longer available'),
         props.t('plugins.channels.surface.bindingCreateTargetNotVerifiedDescription', 'Choose a current target before trying again.'),
+      ],
+      targetResultDeliveryUnavailable: [
+        props.t(
+          'plugins.channels.surface.bindingCreateResultDeliveryUnavailableTitle',
+          'Returning the Automation result is not available on an end-to-end encrypted Account yet',
+        ),
+        props.t(
+          'plugins.channels.surface.bindingCreateResultDeliveryUnavailableDescription',
+          'Choose "Do not reply" to save this binding. The Automation still runs; only the reply back to the conversation is unavailable.',
+        ),
       ],
       createUnavailable: [
         props.t('plugins.channels.surface.bindingCreateUnavailableTitle', 'Could not create the binding'),
@@ -4308,6 +4443,7 @@ function BindingCreateJourney(props: Readonly<{
                         automationId: candidate.automationId,
                         expectedTemplateVersion: candidate.templateVersion,
                         label: candidate.label,
+                        execution: candidate.execution,
                       });
                       setNewSessionDraft(undefined);
                       setStage('policies');
@@ -4367,21 +4503,21 @@ function BindingCreateJourney(props: Readonly<{
                     ]}
                     value={deliveryMode}
                     disabled={actionLocked}
-                    onChange={(next) => { if (typeof next === 'string') setDeliveryMode(next); }}
+                    onChange={(next) => {
+                      if (!isBindingSessionDeliveryMode(next)) return;
+                      setDeliveryModeOverride(next === defaultDeliveryMode ? undefined : next);
+                    }}
                   />
                   <Form.Select
                     testID="channels-binding-create-permission-ceiling"
                     label={props.t('plugins.channels.surface.bindingCreatePermissionCeiling', 'Permission ceiling')}
-                    options={[
-                      { value: 'default', label: props.t('plugins.channels.surface.bindingCreatePermissionDefault', 'Default') },
-                      { value: 'read-only', label: props.t('plugins.channels.surface.bindingCreatePermissionReadOnly', 'Read only') },
-                      { value: 'safe-yolo', label: props.t('plugins.channels.surface.bindingCreatePermissionSafeYolo', 'Safe yolo') },
-                      { value: 'yolo', label: props.t('plugins.channels.surface.bindingCreatePermissionYolo', 'Yolo') },
-                      { value: 'plan', label: props.t('plugins.channels.surface.bindingCreatePermissionPlan', 'Plan') },
-                    ]}
+                    options={bindingPermissionIntentOptions(props.t)}
                     value={permissionCeiling}
                     disabled={actionLocked}
-                    onChange={(next) => { if (typeof next === 'string') setPermissionCeiling(next); }}
+                    onChange={(next) => {
+                      const parsed = parseBindingPermissionIntent(next);
+                      if (parsed !== null) setPermissionCeiling(parsed);
+                    }}
                   />
                   <Form.Toggle
                     testID="channels-binding-create-new-session"
@@ -4504,8 +4640,12 @@ function BindingCreateJourney(props: Readonly<{
                   )
                   : props.t(
                     'plugins.channels.surface.bindingCreatePrivacyE2ee',
-                    'Storage and privacy: private fields remain inside canonical encrypted envelopes; only the bounded routing/index projection is server-readable.',
+                    'Storage and privacy: in persisted Happier Account data, private fields remain inside canonical encrypted envelopes and only the bounded routing/index projection is server-readable.',
                   )}
+                description={props.t(
+                  'plugins.channels.surface.bindingCreatePrivacyTransit',
+                  'The connected provider always sees this conversation. Deliveries that arrive through a Happier-hosted webhook endpoint also pass through the Happier server, which reads and verifies the raw provider request before sealing it.',
+                )}
               />
               <Stack gap="medium" testID="channels-binding-create-summary">
                 <Metadata
@@ -4550,14 +4690,11 @@ function BindingCreateJourney(props: Readonly<{
                     ...(target.kind === 'session' ? [
                       {
                         label: props.t('plugins.channels.surface.bindingCreateDeliveryMode', 'Session delivery'),
-                        value: bindingDeliveryModeLabel(
-                          deliveryMode === 'mirrorSession' ? 'mirrorSession' : 'repliesOnly',
-                          props.t,
-                        ),
+                        value: bindingDeliveryModeLabel(deliveryMode, props.t),
                       },
                       {
                         label: props.t('plugins.channels.surface.bindingCreatePermissionCeiling', 'Permission ceiling'),
-                        value: bindingCreatePermissionCeilingLabel(permissionCeiling, props.t),
+                        value: bindingPermissionIntentLabel(permissionCeiling, props.t),
                       },
                       {
                         label: props.t('plugins.channels.surface.bindingCreateApprovals', 'Approvals'),
@@ -4569,13 +4706,38 @@ function BindingCreateJourney(props: Readonly<{
                           ? props.t('plugins.channels.surface.bindingCreateNewSessionDisabled', 'Do not create a new Session')
                           : props.t('plugins.channels.surface.bindingCreateNewSessionEnabled', 'Create a new Session'),
                       },
-                    ] : [{
-                      label: props.t('plugins.channels.surface.bindingCreateAutomationDelivery', 'Automation result delivery'),
-                      value: bindingDeliveryModeLabel(
-                        automationResultDelivery,
-                        props.t,
-                      ),
-                    }]),
+                    ] : [
+                      {
+                        label: props.t('plugins.channels.surface.bindingCreateAutomationDelivery', 'Automation result delivery'),
+                        value: bindingDeliveryModeLabel(
+                          automationResultDelivery,
+                          props.t,
+                        ),
+                      },
+                      // Binding an Automation delegates unattended execution to
+                      // an external sender. Name that consequence and the
+                      // Automation's own effect before the binding is created.
+                      {
+                        label: props.t('plugins.channels.surface.bindingCreateAutomationEffect', 'What an allowed sender starts'),
+                        value: bindingCreateAutomationEffectLabel(target.execution, props.t),
+                      },
+                      {
+                        label: props.t('plugins.channels.surface.bindingCreateAutomationState', 'Automation state'),
+                        value: target.execution.enabled
+                          ? props.t('plugins.channels.surface.bindingCreateAutomationEnabled', 'Enabled')
+                          : props.t(
+                            'plugins.channels.surface.bindingCreateAutomationDisabled',
+                            'Disabled — messages will not run it until it is enabled',
+                          ),
+                      },
+                      {
+                        label: props.t('plugins.channels.surface.bindingCreateAutomationAuthority', 'Delegated authority'),
+                        value: props.t(
+                          'plugins.channels.surface.bindingCreateAutomationAuthorityValue',
+                          'The Automation runs unattended with the permissions, tools, and outward effects its own definition grants. This binding does not narrow them.',
+                        ),
+                      },
+                    ]),
                     {
                       label: props.t('plugins.channels.surface.bindingCreateAllowBots', 'Allow bot senders'),
                       value: allowBotSenders
@@ -4594,7 +4756,7 @@ function BindingCreateJourney(props: Readonly<{
                       label: props.t('plugins.channels.surface.bindingCreateWebhookBoundary', 'Webhook trust boundary'),
                       value: props.t(
                         'plugins.channels.surface.bindingCreateWebhookBoundaryDurablePush',
-                        'Uses this connection’s host-verified webhook endpoint.',
+                        'Uses this connection’s host-verified webhook endpoint. The Happier server receives and verifies each raw provider delivery before it is sealed.',
                       ),
                     }] : []),
                   ]}
@@ -4847,6 +5009,13 @@ function BindingEditJourney(props: Readonly<{
   const selectedAudienceIncludesBot = draft?.audienceSelection?.principalSelection.selected.some((principal) => (
     principal.kind === 'bot'
   )) === true;
+  // The edited binding's current destination decides every audience-derived
+  // default this editor offers, including the delivery mode a retarget to a
+  // Session has to name before the owner has expressed one.
+  const editorEndpointAudience: BindingEndpointAudience = draft?.audienceSelection?.endpointSelection.selected.audience
+    ?? detail?.binding.endpoint.audience
+    ?? props.presentation?.binding.endpoint.audience
+    ?? 'shared';
   const newSessionRecipeSelection = useBindingNewSessionRecipeSelection({
     signal: props.signal,
     isLocked: () => actionLocked || draft?.target.kind !== 'session',
@@ -5358,6 +5527,16 @@ function BindingEditJourney(props: Readonly<{
         props.t('plugins.channels.surface.bindingEditTargetNotVerifiedTitle', 'The selected target is no longer available'),
         props.t('plugins.channels.surface.bindingEditTargetNotVerifiedDescription', 'Keep this draft and select a current target before saving.'),
       ],
+      targetResultDeliveryUnavailable: [
+        props.t(
+          'plugins.channels.surface.bindingEditResultDeliveryUnavailableTitle',
+          'Returning the Automation result is not available on an end-to-end encrypted Account yet',
+        ),
+        props.t(
+          'plugins.channels.surface.bindingEditResultDeliveryUnavailableDescription',
+          'Keep this draft and choose "Do not reply" before saving. The Automation still runs; only the reply back to the conversation is unavailable.',
+        ),
+      ],
       updateUnavailable: [
         props.t('plugins.channels.surface.bindingEditUnavailableTitle', 'Could not save the binding'),
         props.t('plugins.channels.surface.bindingEditUnavailableDescription', 'Your draft is still here. Reload current details before trying again.'),
@@ -5500,10 +5679,7 @@ function BindingEditJourney(props: Readonly<{
             botSendersLocked={selectedAudienceIncludesBot}
             debounceValid={debounceMs !== undefined}
             deliverableInputModes={deliverableBindingInputModes({
-              audience: draft.audienceSelection?.endpointSelection.selected.audience
-                ?? detail?.binding.endpoint.audience
-                ?? props.presentation?.binding.endpoint.audience
-                ?? 'shared',
+              audience: editorEndpointAudience,
               ...(currentConnection === undefined ? {} : { connection: currentConnection }),
             })}
             onChange={(update) => setDraft((current) => (
@@ -5665,10 +5841,12 @@ function BindingEditJourney(props: Readonly<{
               onPress={() => {
                 setDraft((current) => {
                   if (current === undefined) return current;
-                  const policy = current.target.kind === 'session'
+                  const policy: BindingEditorSessionTarget['policy'] = current.target.kind === 'session'
                     ? current.target.policy
                     : {
-                      deliveryMode: 'repliesOnly' as const,
+                      deliveryMode: conversationSessionBindingDeliveryModeForOmittedFieldV1(
+                        editorEndpointAudience,
+                      ),
                       permissionCeiling: 'read-only',
                       approvals: { kind: 'off' as const },
                       newSession: { kind: 'off' as const },
@@ -6591,8 +6769,11 @@ function AccountLocalBindingPolicyEditor(props: Readonly<{
           <Button
             key={principalId}
             testID={`channels-account-local-binding-revoke-${principalId}`}
-            title={props.t('plugins.channels.surface.bindingEditRevokeSender', 'Revoke {principal}')
-              .replace('{principal}', principalId)}
+            title={props.t(
+              'plugins.channels.surface.bindingEditRevokeSender',
+              'Revoke {principal}',
+              { principal: principalId },
+            )}
             variant="secondary"
             disabled={actionLocked || finalizingDelete || draft.allowedPrincipalIds.length <= 1}
             onPress={() => setDraft((current) => (current === undefined ? current : {
@@ -7110,7 +7291,6 @@ function ConnectionRow(props: Readonly<{
           */}
           {providerDependentOperationsAvailable ? (
             <ConnectionRetestControls
-              key={props.connection.connectionId}
               connection={props.connection}
               resource={props.resource}
               onRefresh={requestRefresh}
@@ -7127,7 +7307,6 @@ function ConnectionRow(props: Readonly<{
             || props.connection.attention.outwardDelivery.outcomeUnknown
             || props.connection.attention.outwardDelivery.archiveRecovery ? (
               <ConnectionDeliveryResolutionControls
-                key={props.connection.connectionId}
                 connection={props.connection}
                 signal={props.signal}
                 resolveOperation={props.resolveOperation}
@@ -9222,7 +9401,11 @@ function ProviderSetupPicker(props: Readonly<{
         setRemediationSetupOperation(operation);
         setFeedback('requiresRemediation');
       } else {
-        const { supportedTransports, recommendedTransport: selectedTransport } = prepared.data;
+        const {
+          supportedTransports,
+          recommendedTransport: selectedTransport,
+          setupGuidance,
+        } = prepared.data;
         setRemediationSetupOperation(undefined);
         if (selectedTransport === undefined) {
           setFeedback('creationUnavailable');
@@ -9236,7 +9419,8 @@ function ProviderSetupPicker(props: Readonly<{
               : null,
             supportedTransports,
             selectedTransport,
-            maximumObservationAgeMs: String(MIN_CONVERSATION_OBSERVATION_AGE_MS),
+            maximumObservationAgeMs: String(CONVERSATION_OBSERVATION_AGE_MS_FOR_OMITTED_FIELD_V1),
+            ...(setupGuidance === undefined ? {} : { setupGuidance }),
           });
           setFeedback('ready');
         }
@@ -9594,8 +9778,17 @@ function ProviderSetupPicker(props: Readonly<{
         />
       ) : null}
       {feedback === 'requiresRemediation' || feedback === 'remediationFailed' ? (
-        <Stack gap="small" testID="channels-provider-setup-remediation">
+        <Stack gap="small">
+          {/*
+            The identity belongs to the element that carries the announcement,
+            not to the layout wrapper around it. `Banner` is the one owner of
+            this surface's alert semantics, so naming the wrapper instead left
+            the remediation disclosure identifiable but not verifiably
+            announced — and put this region out of step with every sibling
+            banner below, which is named on the Banner itself.
+          */}
           <Banner
+            testID="channels-provider-setup-remediation"
             tone="warning"
             title={props.t('plugins.channels.surface.providerSetupRemediationTitle', 'Finish provider setup')}
             description={props.t(
@@ -9681,6 +9874,27 @@ function ProviderSetupPicker(props: Readonly<{
       ) : null}
       {preparedConnection !== undefined ? (
         <Stack gap="small" testID="channels-provider-setup-connection-form">
+          {preparedConnection.setupGuidance === undefined ? null : (
+            <Stack gap="small" testID="channels-provider-setup-guidance">
+              <Heading
+                level={4}
+                value={props.t(
+                  'plugins.channels.surface.providerSetupRemediationTitle',
+                  'Finish provider setup',
+                )}
+              />
+              <Text value={preparedConnection.setupGuidance.requiredPermissionsLabel} />
+              <Link
+                testID="channels-provider-setup-guidance-link"
+                title={props.t(
+                  'plugins.channels.surface.providerSetupRemediationAction',
+                  'Resolve provider setup',
+                )}
+                url={preparedConnection.setupGuidance.externalUrl}
+                disabled={actionUnavailable}
+              />
+            </Stack>
+          )}
           <Form.Field
             label={props.t('plugins.channels.surface.transport', 'Transport')}
             description={props.t(
@@ -10047,17 +10261,298 @@ function DaemonChannelsSurface(props: Readonly<{
   );
 }
 
+function sessionBindingAttentionTitle(
+  reason: ConversationSessionBindingAttentionReasonV1,
+  t: Translate,
+): string {
+  switch (reason) {
+    case 'connectionUnavailable':
+      return t(
+        'plugins.channels.session.attentionConnectionUnavailable',
+        'This conversation has no current integration connection',
+      );
+    case 'providerCredentialInvalid':
+      return t(
+        'plugins.channels.surface.providerCredentialInvalid',
+        'Connected Account credential needs attention',
+      );
+    case 'providerPermissionMissing':
+      return t(
+        'plugins.channels.surface.providerPermissionMissing',
+        'Provider permission needs attention',
+      );
+    case 'providerConfigurationInvalid':
+      return t(
+        'plugins.channels.surface.providerConfigurationInvalid',
+        'Provider configuration needs attention',
+      );
+    case 'connectionDeleting':
+      return t(
+        'plugins.channels.session.attentionConnectionDeleting',
+        'This conversation’s connection is being deleted',
+      );
+    case 'connectionDisabled':
+      return t(
+        'plugins.channels.session.attentionConnectionDisabled',
+        'This conversation’s connection is turned off',
+      );
+    case 'bindingDisabled':
+      return t(
+        'plugins.channels.session.attentionBindingDisabled',
+        'This conversation is paused',
+      );
+  }
+}
+
 /**
- * Resource availability is a factual daemon capability, not an Account Data
- * fallback signal. An advertised Resource therefore stays on the online path
- * even when it later fails; only a mount with no Resource method consumes the
- * direct, Account-local policy vertical.
+ * The one exit from Session attention. Recovery controls have exactly one
+ * owner — the Channels Settings page — so this routes to that destination
+ * through the host's Surface Registry instead of making the read-only Session
+ * list a second writer of the same Account rows.
+ */
+function SessionConversationsRecoveryAction(props: Readonly<{
+  t: Translate;
+}>): React.ReactElement {
+  const hostApi = usePluginHostApi();
+  const [unavailable, setUnavailable] = React.useState(false);
+  const open = React.useCallback(() => {
+    setUnavailable(false);
+    void hostApi.openSurface({
+      pluginId: CONVERSATION_CORE_PLUGIN_ID_V1,
+      localId: CHANNELS_SETTINGS_PAGE_ID,
+    }).catch(() => { setUnavailable(true); });
+  }, [hostApi]);
+  return (
+    <Stack gap="small">
+      <Button
+        testID="channels-session-conversations-manage"
+        title={props.t('plugins.channels.session.manage', 'Manage in Settings')}
+        onPress={open}
+      />
+      {unavailable ? (
+        <Status
+          testID="channels-session-conversations-manage-unavailable"
+          tone="warning"
+          label={props.t(
+            'plugins.channels.session.manageUnavailable',
+            'Conversation settings could not be opened here. Open Settings to review this conversation.',
+          )}
+        />
+      ) : null}
+    </Stack>
+  );
+}
+
+/**
+ * The Session destination: a read-only list of the external conversations bound
+ * to THIS Session.
+ *
+ * It is deliberately read-only. Binding creation, editing, enablement, delete
+ * and custody resolution stay with the Settings surface, which is their single
+ * owner; duplicating them here would put a second mutation path on the same
+ * Account rows. Navigation into this list is contributed through the generic
+ * Session-header catalog and the two Composer chips, not through a Channels
+ * navigation of its own.
+ */
+function SessionConversationsSurface(props: Readonly<{
+  sessionId: string;
+}>): React.ReactElement {
+  const t = usePluginTranslation();
+  const theme = usePluginTheme();
+  const resolveProviderDisplayName = usePluginBrandDisplayNameResolver();
+  const { resource, refresh } = useLivePluginResource(CHANNELS_SESSION_CONVERSATIONS_RESOURCE);
+  const { resource: connectionsResource } = useLivePluginResource(CHANNELS_CONNECTIONS_RESOURCE);
+  const sessionConversations = React.useMemo(
+    () => (resource.value === undefined ? undefined : parseSessionConversationsResource(resource.value)),
+    [resource.value],
+  );
+  const parsed = sessionConversations?.bindings;
+  const parsedConnections = React.useMemo(
+    () => (connectionsResource.value === undefined
+      ? undefined
+      : parseConnectionsResource(connectionsResource.value)),
+    [connectionsResource.value],
+  );
+  const presentations = React.useMemo(() => buildBindingPresentations(
+    parsed?.kind === 'ready' ? parsed.bindings : [],
+    parsedConnections?.kind === 'ready' ? parsedConnections.connections : [],
+    t,
+  ), [parsed, parsedConnections, t]);
+  const attentionByBindingId = React.useMemo(() => new Map(
+    (sessionConversations?.attention ?? []).map((entry) => [entry.bindingId, entry.reason] as const),
+  ), [sessionConversations]);
+
+  if (parsed === undefined && resource.pending === 'initial') {
+    return (
+      <LoadingState
+        testID="channels-session-conversations-loading"
+        title={t('plugins.channels.session.loadingTitle', 'Loading external conversations')}
+      />
+    );
+  }
+  if (parsed === undefined || parsed.kind === 'invalid') {
+    return (
+      <ErrorState
+        testID="channels-session-conversations-error"
+        title={t('plugins.channels.session.errorTitle', 'External conversations are unavailable')}
+        description={parsed === undefined
+          ? undefined
+          : parseResourceErrorMessage(parsed.reason, t, 'binding')}
+        action={(
+          <Action.Refresh
+            title={t('plugins.channels.surface.tryAgain', 'Try again')}
+            onRefresh={refresh}
+          />
+        )}
+      />
+    );
+  }
+
+  return (
+    <Screen testID="channels-session-conversations" safeArea>
+      <List
+        items={presentations}
+        keyForItem={bindingPresentationKey}
+        accessibilityLabel={t('plugins.channels.session.title', 'External conversations')}
+        testID="channels-session-conversations-list"
+        style={{ flex: 1 }}
+        contentContainerStyle={{ paddingBottom: theme.spacing.large }}
+        renderItem={(presentation) => (
+          <Stack
+            gap="small"
+            testID={`channels-session-conversation:${presentation.binding.bindingId}`}
+            style={{ paddingHorizontal: theme.spacing.large, paddingVertical: theme.spacing.small }}
+          >
+            {(() => {
+              const reason = attentionByBindingId.get(presentation.binding.bindingId);
+              return reason === undefined ? null : (
+                <Stack gap="small" testID={`channels-session-conversation-attention:${presentation.binding.bindingId}`}>
+                  <Banner
+                    tone="danger"
+                    title={sessionBindingAttentionTitle(reason, t)}
+                    description={t(
+                      'plugins.channels.session.attentionDescription',
+                      'Messages for this conversation will not be delivered until it is repaired in conversation settings.',
+                    )}
+                  />
+                  <SessionConversationsRecoveryAction t={t} />
+                </Stack>
+              );
+            })()}
+            <Metadata
+              title={bindingEndpointLabel(presentation.binding, t)}
+              entries={[
+                {
+                  label: t('plugins.channels.surface.provider', 'Integration'),
+                  value: resolveProviderDisplayName(presentation.connection?.providerPluginId)
+                    ?? t('plugins.channels.surface.providerFallback', 'Integration provider'),
+                },
+                {
+                  label: t('plugins.channels.surface.bindingCreateConversation', 'Conversation'),
+                  value: bindingAudienceLabel(presentation.binding.endpoint.audience, t),
+                },
+                {
+                  label: t('plugins.channels.surface.bindingCreateDeliveryMode', 'Session delivery'),
+                  value: bindingDeliveryModeLabel(presentation.binding.deliveryMode, t),
+                },
+                {
+                  label: t('plugins.channels.surface.bindingCreateInputMode', 'Incoming messages'),
+                  value: bindingInputModeLabel(presentation.binding.inputMode, t),
+                },
+              ]}
+            />
+          </Stack>
+        )}
+        empty={(
+          <EmptyState
+            testID="channels-session-conversations-empty"
+            title={t('plugins.channels.session.emptyTitle', 'No external conversations')}
+            description={t(
+              'plugins.channels.session.emptyDescription',
+              'Conversations bound to this Session will appear here.',
+            )}
+          />
+        )}
+      />
+    </Screen>
+  );
+}
+
+/**
+ * The host refuses a structurally installed but currently unreachable method
+ * with this exact diagnostic (`hostApi.ts` `assertInstalled`). It is the ONE
+ * current-availability fact a plugin can observe: `version().methods` is the
+ * mount's stable structural contract by design, so a daemon that goes away
+ * after mount is only ever reported per call.
+ *
+ * A generic `unavailable` is deliberately NOT enough. The same public code also
+ * carries an undeclared Resource and other daemon-side refusals, and treating
+ * those as an outage would silently demote a reachable mount to the offline
+ * editor instead of reporting the real failure.
+ */
+const HOST_METHOD_UNAVAILABLE_DIAGNOSTIC_PREFIX = 'host_api_method_unavailable:';
+
+function isHostMethodCurrentlyUnavailable(
+  error: PluginUiResourceSnapshot['error'],
+): boolean {
+  return error?.diagnostics?.some((diagnostic) => (
+    diagnostic.startsWith(HOST_METHOD_UNAVAILABLE_DIAGNOSTIC_PREFIX)
+  )) === true;
+}
+
+/**
+ * Settings presentation for a mount that CAN serve daemon Resources.
+ *
+ * Structural capability answers “could this mount ever read a Resource”;
+ * it cannot answer “can it right now”. This component consumes the second,
+ * current fact from the canonical Resource owner — the same shared entry the
+ * daemon surface below reads, so observing it costs no extra read — and hands
+ * an actual outage the direct Account-Collection editor the offline vertical
+ * exists for. Keeping the subscription HERE is what preserves recovery: the
+ * store's own watch retry re-establishes and re-reads when the daemon returns,
+ * which would stop if the only subscriber unmounted with the daemon surface.
+ */
+function ChannelsAccountSettingsSurface(props: Readonly<{
+  signal: AbortSignal;
+  targetPluginId: string;
+}>): React.ReactElement {
+  const { resource } = useLivePluginResource(CHANNELS_BINDINGS_RESOURCE);
+  if (isHostMethodCurrentlyUnavailable(resource.error)) {
+    return <AccountLocalBindingsSurface signal={props.signal} />;
+  }
+  return <DaemonChannelsSurface signal={props.signal} targetPluginId={props.targetPluginId} />;
+}
+
+/**
+ * Resource availability has two distinct facts and this branch reads both.
+ * `version().methods` is the mount's permanent structural contract, so a mount
+ * that never installs `readResource` consumes the direct Account-local policy
+ * vertical immediately. A mount that does install it may still be unable to
+ * serve it right now; that current fact belongs to the call, and
+ * `ChannelsAccountSettingsSurface` owns it.
+ *
+ * The mount is read BEFORE that capability branch: the Session destination and
+ * the Settings page are two destinations of one artifact, and the Account-local
+ * settings vertical is not a truthful fallback for a Session mount.
  */
 export function ChannelsSurface(context: RenderContext): React.ReactElement {
+  const target = context.surface.target;
+  if (
+    context.surface.mount.kind === 'destination'
+    && context.surface.mount.destination.localId === CHANNELS_SESSION_CONVERSATIONS_VIEW_ID
+    && target.kind === 'session'
+  ) {
+    return <SessionConversationsSurface sessionId={target.sessionId} />;
+  }
   if (!context.hostApi.version().methods.includes('readResource')) {
     return <AccountLocalBindingsSurface signal={context.signal} />;
   }
-  return <DaemonChannelsSurface signal={context.signal} targetPluginId={context.plugin.id} />;
+  return (
+    <ChannelsAccountSettingsSurface
+      signal={context.signal}
+      targetPluginId={context.plugin.id}
+    />
+  );
 }
 
 export const renderSurface = defineUiSurface(ChannelsSurface);

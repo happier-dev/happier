@@ -712,11 +712,13 @@ describe('Channels core activation', () => {
 
     const activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
     try {
-      // The four Resources and two supervisors are the ones this package owns;
+      // The eight Resources and two supervisors are the ones this package owns;
       // asserting the counts keeps the derived list from passing vacuously if a
-      // whole family disappeared from the manifest.
-      expect(expected.filter((entry) => entry.family === 'actions')).toHaveLength(27);
-      expect(expected.filter((entry) => entry.family === 'resources')).toHaveLength(4);
+      // whole family disappeared from the manifest. Five are Session-scoped:
+      // transcript activity plus the four producers behind the Session
+      // destination, Session info, and its two Composer chips.
+      expect(expected.filter((entry) => entry.family === 'actions')).toHaveLength(25);
+      expect(expected.filter((entry) => entry.family === 'resources')).toHaveLength(8);
       expect(expected.filter((entry) => entry.family === 'backgroundServices')).toHaveLength(2);
       expect(activation.registrations()).toEqual(expected);
       expect(activation.registration('actions', CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.connectionsList))
@@ -2440,7 +2442,7 @@ describe('Channels core activation', () => {
       await core.dispose();
     }
   });
-  it('sets connection enablement through the lifecycle owner without reopening freshness policy', async () => {
+  it('changes connection enablement through the canonical policy update Action', async () => {
     const connectionId = 'connection-set-enabled-1';
     const updatedBatches: Array<readonly MutableChannelStateMutation[]> = [];
     const collection = createMutableChannelStateCollection({
@@ -2471,10 +2473,11 @@ describe('Channels core activation', () => {
     });
 
     try {
-      await expect(core.invokeAction(CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionSetEnabled, {
+      await expect(core.invokeAction(CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionUpdate, {
         connectionId,
         expectedRevision: 4,
         enabled: false,
+        maximumObservationAgeMs: 120_000,
       })).resolves.toEqual({
         kind: 'updated',
         connectionId,
@@ -2509,29 +2512,30 @@ describe('Channels core activation', () => {
           },
         },
       });
-      await expect(core.invokeAction(CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionSetEnabled, {
+      await expect(core.invokeAction(CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionUpdate, {
         connectionId,
         expectedRevision: 5,
         enabled: false,
+        maximumObservationAgeMs: 120_000,
       })).resolves.toEqual({
         kind: 'unchanged',
         connectionId,
         revision: 5,
         authorityEpoch: 5,
       });
-      await expect(core.invokeAction(CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionSetEnabled, {
+      await expect(core.invokeAction(CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionUpdate, {
         connectionId,
         expectedRevision: 4,
         enabled: true,
+        maximumObservationAgeMs: 120_000,
       })).rejects.toMatchObject({
-        code: 'channels_connection_set_enabled_conflict',
+        code: 'channels_connection_update_conflict',
         retryable: true,
       });
-      await expect(core.invokeAction(CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionSetEnabled, {
+      await expect(core.invokeAction(CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionUpdate, {
         connectionId,
         expectedRevision: 5,
         enabled: true,
-        maximumObservationAgeMs: 60_000,
       })).rejects.toMatchObject({ code: 'plugin_action_input_schema_invalid' });
     } finally {
       await core.dispose();
@@ -2578,12 +2582,13 @@ describe('Channels core activation', () => {
     });
 
     try {
-      await expect(core.invokeAction(CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionSetEnabled, {
+      await expect(core.invokeAction(CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionUpdate, {
         connectionId,
         expectedRevision: 5,
         enabled: false,
+        maximumObservationAgeMs: 120_000,
       })).rejects.toMatchObject({
-        code: 'channels_connection_set_enabled_old_transport_stop_pending',
+        code: 'channels_connection_update_old_transport_stop_pending',
       });
       await expect(core.invokeAction(CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionUpdate, {
         connectionId,
@@ -2699,9 +2704,13 @@ describe('Channels core activation', () => {
         authorityEpoch: 7,
       });
       expect(updatedBatches).toEqual([[
+        // A binding mutation that changes delivery demand rewrites the owning
+        // connection row unchanged, so its revision advances and a concurrent
+        // transfer that already scanned the old demand loses its final CAS.
+        // The value must stay byte-equal: the revision is the only token.
         {
-          kind: 'assert',
-          rowId: connectionId,
+          kind: 'put',
+          value: connection,
           expectedRevision: 4,
         },
         {
@@ -2755,7 +2764,10 @@ describe('Channels core activation', () => {
         retryable: true,
       });
       expect(collection.rows.get(bindingId)?.revision).toBe(7);
-      expect(collection.rows.get(connectionId)?.revision).toBe(5);
+      // 4 -> 5 came from the first demand-changing enablement; 5 -> 6 is the
+      // interleaved supersede, whose revision is exactly what made the last
+      // batch lose its connection compare-and-swap.
+      expect(collection.rows.get(connectionId)?.revision).toBe(6);
       await expect(core.invokeAction(CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingSetEnabled, {
         bindingId,
         expectedRevision: 7,

@@ -60,7 +60,9 @@ export type ConversationCommandPolicyInput = Readonly<{
 
 export type ConversationCommandPolicyResult =
   | Readonly<{ kind: 'ordinaryText' }>
-  | Extract<ConversationCommandClassification, Readonly<{ kind: 'approve' | 'newSession' }>>
+  | Extract<ConversationCommandClassification, Readonly<{
+    kind: 'approve' | 'userActionAnswer' | 'newSession';
+  }>>
   | Readonly<{
     kind: 'terminal';
     disposition: 'rejected';
@@ -101,18 +103,20 @@ export function decideConversationCommandPolicy(
   if (input.contentProvenance !== 'original'
     && (command.kind === 'pair'
       || command.kind === 'approve'
+      || command.kind === 'userActionAnswer'
       || (command.kind === 'malformedCommand' && command.command !== 'newSession'))) {
     return { kind: 'ordinaryText' };
   }
   if (input.actor.kind === 'bot'
     && (command.kind === 'pair'
       || command.kind === 'approve'
+      || command.kind === 'userActionAnswer'
       || (command.kind === 'malformedCommand' && command.command !== 'newSession'))) {
     return terminal(input, 'commandNotAuthorized');
   }
   if (command.kind === 'ordinaryText') return command;
   if (command.kind === 'malformedCommand') {
-    const commandEligible = command.command === 'approve'
+    const commandEligible = command.command === 'approve' || command.command === 'answer'
       ? input.approvalCommandsEnabled
       : command.command === 'newSession'
         ? input.targetKind === 'session' && input.newSessionEnabled
@@ -121,6 +125,13 @@ export function decideConversationCommandPolicy(
   }
   if (command.kind === 'pair') return terminal(input, 'commandNotAuthorized');
   if (command.kind === 'approve') {
+    return input.approvalCommandsEnabled
+      ? command
+      : terminal(input, 'commandNotAuthorized');
+  }
+  if (command.kind === 'userActionAnswer') {
+    // This authorizes the binding-scoped external mediator only. It does not
+    // consult a permission scope because a user action creates no grant.
     return input.approvalCommandsEnabled
       ? command
       : terminal(input, 'commandNotAuthorized');

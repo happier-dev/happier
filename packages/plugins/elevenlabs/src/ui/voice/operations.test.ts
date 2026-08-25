@@ -35,6 +35,20 @@ const ACCOUNT_VOICE_CATALOG = Object.freeze({
   voices: [{ voice_id: 'voice_1', name: 'Voice One' }],
 });
 
+const EXACT_SEND_MESSAGE_TOOL_CONFIG = Object.freeze({
+  tool_error_handling_mode: 'passthrough',
+  tool_call_sound_behavior: 'auto',
+  pre_tool_speech: 'auto',
+  interruption_mode: 'allow',
+  response_timeout_secs: 60,
+  execution_mode: 'immediate',
+  expects_response: true,
+  parameters: { properties: {}, type: 'object' },
+  description: 'Send a message.',
+  name: 'sendMessage',
+  type: 'client',
+});
+
 /**
  * Obviously synthetic: a voice the bound account cannot resolve. It must never
  * coincide with the shipped default, or "the default provisions cleanly" and
@@ -203,12 +217,11 @@ describe('ElevenLabs public account operations', () => {
     })).resolves.toEqual({ ok: true, agentId: 'agent_1' });
     expect(calls.map((call) => call.operationId)).toEqual([
       'voices',
-      'tools',
       'create-tool',
       'create-tool',
       'create-agent',
     ]);
-    expect(calls[2]?.parameters).toMatchObject({
+    expect(calls[1]?.parameters).toMatchObject({
       body: {
         tool_config: {
           name: 'spawnSession',
@@ -216,7 +229,7 @@ describe('ElevenLabs public account operations', () => {
         },
       },
     });
-    expect(calls[3]?.parameters).toMatchObject({
+    expect(calls[2]?.parameters).toMatchObject({
       body: {
         tool_config: {
           name: 'sendMessage',
@@ -224,7 +237,7 @@ describe('ElevenLabs public account operations', () => {
         },
       },
     });
-    expect(calls[4]?.parameters).toMatchObject({
+    expect(calls[3]?.parameters).toMatchObject({
       body: {
         name: 'Happier Voice',
         conversation_config: {
@@ -237,7 +250,7 @@ describe('ElevenLabs public account operations', () => {
         },
       },
     });
-    const createAgentParameters = calls[4]?.parameters as Readonly<{
+    const createAgentParameters = calls[3]?.parameters as Readonly<{
       body?: Readonly<{
         conversation_config?: Readonly<{
           turn?: unknown;
@@ -259,7 +272,132 @@ describe('ElevenLabs public account operations', () => {
     ))).toBe(false);
   });
 
-  it('updates existing tools and the agent only through the declared PATCH operations', async () => {
+  it('creates isolated tools instead of patching matching workspace tools for a new agent', async () => {
+    const calls: Array<Readonly<{ operationId: string; parameters: unknown }>> = [];
+    const request = vi.fn(async (input: Readonly<{
+      operationId: string;
+      parameters: unknown;
+    }>) => {
+      calls.push(input);
+      const bodies: Readonly<Record<string, unknown>> = {
+        voices: ACCOUNT_VOICE_CATALOG,
+        tools: {
+          tools: [{
+            id: 'tool_shared',
+            tool_config: { type: 'client', name: 'sendMessage' },
+          }],
+        },
+        'create-tool': { id: 'tool_created' },
+        'create-agent': { agent_id: 'agent_created' },
+      };
+      return Object.freeze({
+        status: 200,
+        finalUrl: `https://api.elevenlabs.io/${input.operationId}`,
+        headers: Object.freeze({ 'content-type': 'application/json' }),
+        body: new TextEncoder().encode(JSON.stringify(bodies[input.operationId] ?? {})),
+      });
+    });
+
+    await expect(provisionElevenLabsWithAccountOperations({
+      accountOperations: Object.freeze({ request }),
+      request: {
+        kind: 'create',
+        prompt: 'Create a separate Happier Voice agent.',
+        tools: [{
+          name: 'sendMessage',
+          description: 'Send a message.',
+          parameters: { type: 'object', properties: {} },
+        }],
+        tts: migrateLegacyProvisionTts(),
+      },
+      signal: new AbortController().signal,
+    })).resolves.toEqual({ ok: true, agentId: 'agent_created' });
+
+    expect(calls.map((call) => call.operationId)).toEqual([
+      'voices',
+      'create-tool',
+      'create-agent',
+    ]);
+    expect(calls[2]?.parameters).toMatchObject({
+      body: {
+        conversation_config: {
+          agent: { prompt: { tool_ids: ['tool_created'] } },
+        },
+      },
+    });
+  });
+
+  it('copy-on-writes a changed selected-agent dependency without mutating either shared tool', async () => {
+    const calls: Array<Readonly<{ operationId: string; parameters: unknown }>> = [];
+    const request = vi.fn(async (input: Readonly<{
+      operationId: string;
+      parameters: unknown;
+    }>) => {
+      calls.push(input);
+      const bodies: Readonly<Record<string, unknown>> = {
+        voices: ACCOUNT_VOICE_CATALOG,
+        agent: {
+          agent_id: 'agent_selected',
+          conversation_config: {
+            agent: { prompt: { tool_ids: ['tool_selected'] } },
+          },
+        },
+        tools: {
+          tools: [
+            {
+              id: 'tool_other_agent',
+              tool_config: { type: 'client', name: 'sendMessage' },
+            },
+            {
+              id: 'tool_selected',
+              tool_config: { type: 'client', name: 'sendMessage' },
+            },
+          ],
+        },
+        'create-tool': { id: 'tool_replacement' },
+        'update-agent': {},
+      };
+      return Object.freeze({
+        status: 200,
+        finalUrl: `https://api.elevenlabs.io/${input.operationId}`,
+        headers: Object.freeze({ 'content-type': 'application/json' }),
+        body: new TextEncoder().encode(JSON.stringify(bodies[input.operationId] ?? {})),
+      });
+    });
+
+    await expect(provisionElevenLabsWithAccountOperations({
+      accountOperations: Object.freeze({ request }),
+      request: {
+        kind: 'update',
+        agentId: 'agent_selected',
+        prompt: 'Keep helping.',
+        tools: [{
+          name: 'sendMessage',
+          description: 'Send a message.',
+          parameters: { type: 'object', properties: {} },
+        }],
+        tts: migrateLegacyProvisionTts(),
+      },
+      signal: new AbortController().signal,
+    })).resolves.toEqual({ ok: true, updated: true });
+
+    expect(calls.map((call) => call.operationId)).toEqual([
+      'voices',
+      'agent',
+      'tools',
+      'create-tool',
+      'update-agent',
+    ]);
+    expect(calls[3]?.parameters).toMatchObject({
+      body: { tool_config: { name: 'sendMessage', description: 'Send a message.' } },
+    });
+    expect(calls[4]?.parameters).toMatchObject({
+      agentId: 'agent_selected',
+      body: { conversation_config: { agent: { prompt: { tool_ids: ['tool_replacement'] } } } },
+    });
+  });
+
+  it('reuses an exact selected-agent dependency and only updates the agent', async () => {
     const calls: Array<Readonly<{ operationId: string; parameters?: unknown }>> = [];
     const request = vi.fn(async (input: Readonly<{
       operationId: string;
@@ -268,8 +406,15 @@ describe('ElevenLabs public account operations', () => {
       calls.push(input);
       const body = input.operationId === 'voices'
         ? ACCOUNT_VOICE_CATALOG
+        : input.operationId === 'agent'
+          ? {
+              agent_id: 'agent_existing',
+              conversation_config: {
+                agent: { prompt: { tool_ids: ['tool_existing'] } },
+              },
+            }
         : input.operationId === 'tools'
-          ? { tools: [{ id: 'tool_existing', tool_config: { type: 'client', name: 'sendMessage' } }] }
+          ? { tools: [{ id: 'tool_existing', tool_config: EXACT_SEND_MESSAGE_TOOL_CONFIG }] }
           : {};
       return Object.freeze({
         status: 200,
@@ -296,10 +441,11 @@ describe('ElevenLabs public account operations', () => {
     })).resolves.toEqual({ ok: true, updated: true });
     expect(calls.map((call) => call.operationId)).toEqual([
       'voices',
+      'agent',
       'tools',
-      'update-tool',
       'update-agent',
     ]);
+    expect(calls.some((call) => call.operationId === 'create-tool')).toBe(false);
     const updateAgentParameters = calls[3]?.parameters as Readonly<{
       body?: Readonly<{
         conversation_config?: Readonly<{ turn?: unknown }>;
@@ -323,13 +469,20 @@ describe('ElevenLabs public account operations', () => {
       calls.push(input);
       const body = input.operationId === 'voices'
         ? ACCOUNT_VOICE_CATALOG
+        : input.operationId === 'agent'
+          ? {
+              agent_id: 'agent_existing',
+              conversation_config: {
+                agent: { prompt: { tool_ids: ['tool_existing'] } },
+              },
+            }
         : input.operationId === 'tools'
         ? (
             (input.parameters as Readonly<{ cursor?: unknown }>).cursor === 'tools_page_2'
               ? {
                   tools: [{
                     id: 'tool_existing',
-                    tool_config: { type: 'client', name: 'sendMessage' },
+                    tool_config: EXACT_SEND_MESSAGE_TOOL_CONFIG,
                   }],
                   has_more: false,
                   next_cursor: null,
@@ -378,13 +531,13 @@ describe('ElevenLabs public account operations', () => {
 
     expect(calls.map((call) => call.operationId)).toEqual([
       'voices',
+      'agent',
       'tools',
       'tools',
-      'update-tool',
       'update-agent',
     ]);
-    expect(calls[1]?.parameters).toEqual({});
-    expect(calls[2]?.parameters).toEqual({ cursor: 'tools_page_2' });
+    expect(calls[2]?.parameters).toEqual({});
+    expect(calls[3]?.parameters).toEqual({ cursor: 'tools_page_2' });
     expect(calls.some((call) => call.operationId === 'create-tool')).toBe(false);
   });
 
@@ -395,6 +548,13 @@ describe('ElevenLabs public account operations', () => {
       headers: { 'content-type': 'application/json' },
       body: new TextEncoder().encode(JSON.stringify(input.operationId === 'voices'
         ? ACCOUNT_VOICE_CATALOG
+        : input.operationId === 'agent'
+          ? {
+              agent_id: 'agent_existing',
+              conversation_config: {
+                agent: { prompt: { tool_ids: ['tool_existing'] } },
+              },
+            }
         : input.operationId === 'tools'
           ? { tools: [], has_more: true, next_cursor: null }
           : {})),
@@ -403,8 +563,9 @@ describe('ElevenLabs public account operations', () => {
     await expect(provisionElevenLabsWithAccountOperations({
       accountOperations: Object.freeze({ request }),
       request: {
-        kind: 'create',
-        prompt: 'Create a Happier Voice agent.',
+        kind: 'update',
+        agentId: 'agent_existing',
+        prompt: 'Keep helping.',
         tools: [{
           name: 'sendMessage',
           description: 'Send a message.',
@@ -426,7 +587,7 @@ describe('ElevenLabs public account operations', () => {
       stage: 'list_tools',
     });
 
-    expect(request).toHaveBeenCalledTimes(2);
+    expect(request).toHaveBeenCalledTimes(3);
     expect(request).toHaveBeenLastCalledWith(expect.objectContaining({ operationId: 'tools' }));
   });
 
@@ -499,16 +660,23 @@ describe('ElevenLabs public account operations', () => {
 
   it('attributes provider failures to a bounded provisioning stage', async () => {
     const request = vi.fn(async (input: Readonly<{ operationId: string }>) => ({
-      status: input.operationId === 'update-tool' ? 422 : 200,
+      status: input.operationId === 'update-agent' ? 422 : 200,
       finalUrl: `https://api.elevenlabs.io/${input.operationId}`,
       headers: { 'content-type': 'application/json' },
       body: new TextEncoder().encode(JSON.stringify(input.operationId === 'voices'
         ? ACCOUNT_VOICE_CATALOG
+        : input.operationId === 'agent'
+          ? {
+              agent_id: 'agent_existing',
+              conversation_config: {
+                agent: { prompt: { tool_ids: ['tool_existing'] } },
+              },
+            }
         : input.operationId === 'tools'
           ? {
               tools: [{
                 id: 'tool_existing',
-                tool_config: { type: 'client', name: 'sendMessage' },
+                tool_config: EXACT_SEND_MESSAGE_TOOL_CONFIG,
               }],
               has_more: false,
               next_cursor: null,
@@ -540,11 +708,404 @@ describe('ElevenLabs public account operations', () => {
       signal: new AbortController().signal,
     })).rejects.toMatchObject({
       code: 'provider_response_invalid',
-      stage: 'update_tool',
+      stage: 'update_agent',
     });
-    expect(request).not.toHaveBeenCalledWith(expect.objectContaining({
+    expect(request).toHaveBeenCalledWith(expect.objectContaining({
       operationId: 'update-agent',
     }));
+  });
+
+  it('retains created tools when create-agent may have committed before returning a malformed success', async () => {
+    const calls: Array<Readonly<{ operationId: string; parameters: unknown }>> = [];
+    let createdToolCount = 0;
+    const request = vi.fn(async (input: Readonly<{
+      operationId: string;
+      parameters: unknown;
+    }>) => {
+      calls.push(input);
+      const body = input.operationId === 'voices'
+        ? ACCOUNT_VOICE_CATALOG
+        : input.operationId === 'create-tool'
+          ? { id: `tool_created_${++createdToolCount}` }
+          : {};
+      return Object.freeze({
+        // The provider accepted and applied the agent write, but its success
+        // response cannot be decoded by this client.
+        status: 200,
+        finalUrl: `https://api.elevenlabs.io/${input.operationId}`,
+        headers: Object.freeze({ 'content-type': 'application/json' }),
+        body: input.operationId === 'create-agent'
+          ? new TextEncoder().encode('{')
+          : new TextEncoder().encode(JSON.stringify(body)),
+      });
+    });
+
+    await expect(provisionElevenLabsWithAccountOperations({
+      accountOperations: Object.freeze({ request }),
+      request: {
+        kind: 'create',
+        prompt: 'Create a Happier Voice agent.',
+        tools: [{
+          name: 'spawnSession',
+          description: 'Create a session.',
+          parameters: { type: 'object', properties: {} },
+        }, {
+          name: 'sendMessage',
+          description: 'Send a message.',
+          parameters: { type: 'object', properties: {} },
+        }],
+        tts: migrateLegacyProvisionTts(),
+      },
+      signal: new AbortController().signal,
+    })).rejects.toMatchObject({
+      code: 'provider_response_invalid',
+      stage: 'create_agent',
+      cleanupIncomplete: true,
+    });
+
+    expect(calls.map((call) => call.operationId)).toEqual([
+      'voices',
+      'create-tool',
+      'create-tool',
+      'create-agent',
+    ]);
+  });
+
+  it('marks cleanup incomplete without deleting after a 2xx tool create returns no usable id', async () => {
+    const calls: Array<Readonly<{ operationId: string; parameters: unknown }>> = [];
+    const request = vi.fn(async (input: Readonly<{
+      operationId: string;
+      parameters: unknown;
+    }>) => {
+      calls.push(input);
+      const body = input.operationId === 'voices'
+        ? ACCOUNT_VOICE_CATALOG
+        : input.operationId === 'create-tool'
+          ? { id: '   ' }
+          : {};
+      return Object.freeze({
+        status: 200,
+        finalUrl: `https://api.elevenlabs.io/${input.operationId}`,
+        headers: Object.freeze({ 'content-type': 'application/json' }),
+        body: new TextEncoder().encode(JSON.stringify(body)),
+      });
+    });
+
+    await expect(provisionElevenLabsWithAccountOperations({
+      accountOperations: Object.freeze({ request }),
+      request: {
+        kind: 'create',
+        prompt: 'Create a Happier Voice agent.',
+        tools: [{
+          name: 'sendMessage',
+          description: 'Send a message.',
+          parameters: { type: 'object', properties: {} },
+        }],
+        tts: migrateLegacyProvisionTts(),
+      },
+      signal: new AbortController().signal,
+    })).rejects.toMatchObject({
+      code: 'provider_response_invalid',
+      stage: 'create_tool',
+      cleanupIncomplete: true,
+    });
+
+    expect(calls.map((call) => call.operationId)).toEqual(['voices', 'create-tool']);
+  });
+
+  it('retains copy-on-write tools when update-agent may have committed before returning a malformed success', async () => {
+    const calls: Array<Readonly<{ operationId: string; parameters: unknown }>> = [];
+    let createdToolCount = 0;
+    const request = vi.fn(async (input: Readonly<{
+      operationId: string;
+      parameters: unknown;
+    }>) => {
+      calls.push(input);
+      const body = input.operationId === 'voices'
+        ? ACCOUNT_VOICE_CATALOG
+        : input.operationId === 'agent'
+          ? {
+              agent_id: 'agent_existing',
+              conversation_config: {
+                agent: { prompt: { tool_ids: ['tool_existing'] } },
+              },
+            }
+          : input.operationId === 'tools'
+            ? {
+                tools: [{
+                  id: 'tool_existing',
+                  tool_config: { type: 'client', name: 'sendMessage' },
+                }],
+                has_more: false,
+                next_cursor: null,
+              }
+            : input.operationId === 'create-tool'
+              ? { id: `tool_created_${++createdToolCount}` }
+              : {};
+      return Object.freeze({
+        // A 2xx update may already have published these tool ids even though
+        // the response body cannot be decoded by this client.
+        status: 200,
+        finalUrl: `https://api.elevenlabs.io/${input.operationId}`,
+        headers: Object.freeze({ 'content-type': 'application/json' }),
+        body: input.operationId === 'update-agent'
+          ? new TextEncoder().encode('{')
+          : new TextEncoder().encode(JSON.stringify(body)),
+      });
+    });
+
+    await expect(provisionElevenLabsWithAccountOperations({
+      accountOperations: Object.freeze({ request }),
+      request: {
+        kind: 'update',
+        agentId: 'agent_existing',
+        prompt: 'Keep helping.',
+        tools: [{
+          name: 'sendMessage',
+          description: 'Send a message.',
+          parameters: { type: 'object', properties: {} },
+        }, {
+          name: 'spawnSession',
+          description: 'Create a session.',
+          parameters: { type: 'object', properties: {} },
+        }],
+        tts: migrateLegacyProvisionTts(),
+      },
+      signal: new AbortController().signal,
+    })).rejects.toMatchObject({
+      code: 'provider_response_invalid',
+      stage: 'update_agent',
+      cleanupIncomplete: true,
+    });
+
+    expect(calls.map((call) => call.operationId)).toEqual([
+      'voices',
+      'agent',
+      'tools',
+      'create-tool',
+      'create-tool',
+      'update-agent',
+    ]);
+    expect(calls.some((call) => (
+      call.operationId === 'delete-tool'
+      && (call.parameters as Readonly<{ toolId?: unknown }>).toolId === 'tool_existing'
+    ))).toBe(false);
+  });
+
+  it('marks cleanup incomplete without deleting when the account-operation authority is already cancelled', async () => {
+    const controller = new AbortController();
+    const calls: string[] = [];
+    const request = vi.fn(async (input: Readonly<{ operationId: string }>) => {
+      calls.push(input.operationId);
+      if (input.operationId === 'create-agent') controller.abort();
+      const body = input.operationId === 'voices'
+        ? ACCOUNT_VOICE_CATALOG
+        : input.operationId === 'create-tool'
+          ? { id: 'tool_created' }
+          : {};
+      return Object.freeze({
+        status: input.operationId === 'create-agent' ? 422 : 200,
+        finalUrl: `https://api.elevenlabs.io/${input.operationId}`,
+        headers: Object.freeze({ 'content-type': 'application/json' }),
+        body: new TextEncoder().encode(JSON.stringify(body)),
+      });
+    });
+
+    await expect(provisionElevenLabsWithAccountOperations({
+      accountOperations: Object.freeze({ request }),
+      request: {
+        kind: 'create',
+        prompt: 'Create a Happier Voice agent.',
+        tools: [{
+          name: 'sendMessage',
+          description: 'Send a message.',
+          parameters: { type: 'object', properties: {} },
+        }],
+        tts: migrateLegacyProvisionTts(),
+      },
+      signal: controller.signal,
+    })).rejects.toMatchObject({
+      code: 'provider_response_invalid',
+      stage: 'create_agent',
+      cleanupIncomplete: true,
+    });
+
+    expect(calls).toEqual(['voices', 'create-tool', 'create-agent']);
+  });
+
+  it('marks cleanup incomplete without deleting when the account-operation authority retires without aborting its signal', async () => {
+    const calls: string[] = [];
+    const request = vi.fn(async (input: Readonly<{ operationId: string }>) => {
+      calls.push(input.operationId);
+      if (input.operationId === 'create-agent') {
+        throw Object.assign(new Error('voice_account_operation_cancelled'), {
+          code: 'voice_account_operation_cancelled',
+        });
+      }
+      const body = input.operationId === 'voices'
+        ? ACCOUNT_VOICE_CATALOG
+        : input.operationId === 'create-tool'
+          ? { id: 'tool_created' }
+          : {};
+      return Object.freeze({
+        status: 200,
+        finalUrl: `https://api.elevenlabs.io/${input.operationId}`,
+        headers: Object.freeze({ 'content-type': 'application/json' }),
+        body: new TextEncoder().encode(JSON.stringify(body)),
+      });
+    });
+
+    await expect(provisionElevenLabsWithAccountOperations({
+      accountOperations: Object.freeze({ request }),
+      request: {
+        kind: 'create',
+        prompt: 'Create a Happier Voice agent.',
+        tools: [{
+          name: 'sendMessage',
+          description: 'Send a message.',
+          parameters: { type: 'object', properties: {} },
+        }],
+        tts: migrateLegacyProvisionTts(),
+      },
+      signal: new AbortController().signal,
+    })).rejects.toMatchObject({
+      code: 'voice_account_operation_cancelled',
+      stage: 'create_agent',
+      cleanupIncomplete: true,
+    });
+
+    expect(calls).toEqual(['voices', 'create-tool', 'create-agent']);
+  });
+
+  it('marks cleanup incomplete and stops deleting when authority is lost during pre-final-write cleanup', async () => {
+    const controller = new AbortController();
+    const calls: Array<Readonly<{ operationId: string; parameters: unknown }>> = [];
+    let createdToolCount = 0;
+    const request = vi.fn(async (input: Readonly<{
+      operationId: string;
+      parameters: unknown;
+    }>) => {
+      calls.push(input);
+      if (input.operationId === 'delete-tool'
+        && (input.parameters as Readonly<{ toolId?: unknown }>).toolId === 'tool_created_2') {
+        controller.abort();
+      }
+      const thirdToolCreate = input.operationId === 'create-tool' && createdToolCount === 2;
+      const body = input.operationId === 'voices'
+        ? ACCOUNT_VOICE_CATALOG
+        : input.operationId === 'create-tool'
+          ? { id: `tool_created_${++createdToolCount}` }
+          : {};
+      return Object.freeze({
+        status: thirdToolCreate ? 422 : 200,
+        finalUrl: `https://api.elevenlabs.io/${input.operationId}`,
+        headers: Object.freeze({ 'content-type': 'application/json' }),
+        body: new TextEncoder().encode(JSON.stringify(body)),
+      });
+    });
+
+    await expect(provisionElevenLabsWithAccountOperations({
+      accountOperations: Object.freeze({ request }),
+      request: {
+        kind: 'create',
+        prompt: 'Create a Happier Voice agent.',
+        tools: [{
+          name: 'spawnSession',
+          description: 'Create a session.',
+          parameters: { type: 'object', properties: {} },
+        }, {
+          name: 'sendMessage',
+          description: 'Send a message.',
+          parameters: { type: 'object', properties: {} },
+        }, {
+          name: 'requestHumanApproval',
+          description: 'Request approval.',
+          parameters: { type: 'object', properties: {} },
+        }],
+        tts: migrateLegacyProvisionTts(),
+      },
+      signal: controller.signal,
+    })).rejects.toMatchObject({
+      code: 'provider_response_invalid',
+      stage: 'create_tool',
+      cleanupIncomplete: true,
+    });
+
+    expect(calls.map((call) => call.operationId)).toEqual([
+      'voices',
+      'create-tool',
+      'create-tool',
+      'create-tool',
+      'delete-tool',
+    ]);
+    expect(calls.at(-1)?.parameters).toEqual({ toolId: 'tool_created_2' });
+  });
+
+  it('stops further deletes when cleanup reports account-operation retirement before the final agent write', async () => {
+    const controller = new AbortController();
+    const calls: Array<Readonly<{ operationId: string; parameters: unknown }>> = [];
+    let createdToolCount = 0;
+    const request = vi.fn(async (input: Readonly<{
+      operationId: string;
+      parameters: unknown;
+    }>) => {
+      calls.push(input);
+      if (input.operationId === 'delete-tool'
+        && (input.parameters as Readonly<{ toolId?: unknown }>).toolId === 'tool_created_2') {
+        throw Object.assign(new Error('voice_account_operation_cancelled'), {
+          code: 'voice_account_operation_cancelled',
+        });
+      }
+      const thirdToolCreate = input.operationId === 'create-tool' && createdToolCount === 2;
+      const body = input.operationId === 'voices'
+        ? ACCOUNT_VOICE_CATALOG
+        : input.operationId === 'create-tool'
+          ? { id: `tool_created_${++createdToolCount}` }
+          : {};
+      return Object.freeze({
+        status: thirdToolCreate ? 422 : 200,
+        finalUrl: `https://api.elevenlabs.io/${input.operationId}`,
+        headers: Object.freeze({ 'content-type': 'application/json' }),
+        body: new TextEncoder().encode(JSON.stringify(body)),
+      });
+    });
+
+    await expect(provisionElevenLabsWithAccountOperations({
+      accountOperations: Object.freeze({ request }),
+      request: {
+        kind: 'create',
+        prompt: 'Create a Happier Voice agent.',
+        tools: [{
+          name: 'spawnSession',
+          description: 'Create a session.',
+          parameters: { type: 'object', properties: {} },
+        }, {
+          name: 'sendMessage',
+          description: 'Send a message.',
+          parameters: { type: 'object', properties: {} },
+        }, {
+          name: 'requestHumanApproval',
+          description: 'Request approval.',
+          parameters: { type: 'object', properties: {} },
+        }],
+        tts: migrateLegacyProvisionTts(),
+      },
+      signal: controller.signal,
+    })).rejects.toMatchObject({
+      code: 'provider_response_invalid',
+      stage: 'create_tool',
+      cleanupIncomplete: true,
+    });
+
+    expect(controller.signal.aborted).toBe(false);
+    expect(calls.map((call) => call.operationId)).toEqual([
+      'voices',
+      'create-tool',
+      'create-tool',
+      'create-tool',
+      'delete-tool',
+    ]);
+    expect(calls.at(-1)?.parameters).toEqual({ toolId: 'tool_created_2' });
   });
 
   it('refuses to provision a voice the bound account does not own, before any provider write', async () => {
@@ -624,7 +1185,7 @@ describe('ElevenLabs public account operations', () => {
       },
       signal: new AbortController().signal,
     })).resolves.toEqual({ ok: true, agentId: 'agent_1' });
-    expect(calls).toEqual(['voices', 'tools', 'create-tool', 'create-agent']);
+    expect(calls).toEqual(['voices', 'create-tool', 'create-agent']);
   });
 
   it('keeps the shipped default voice distinct from the not-owned fixture', () => {
@@ -782,7 +1343,7 @@ describe('ElevenLabs public account operations', () => {
     await expect(mintElevenLabsConversationAuthWithAccountOperations({
       accountOperations: Object.freeze({ request }),
       agentId: 'agent_1',
-      textOnly: true,
+      connectionType: 'websocket',
       signal: new AbortController().signal,
     })).rejects.toMatchObject({ code: 'provider_response_invalid' });
   });
@@ -798,11 +1359,28 @@ describe('ElevenLabs public account operations', () => {
     await expect(mintElevenLabsConversationAuthWithAccountOperations({
       accountOperations: Object.freeze({ request }),
       agentId: 'agent_1',
-      textOnly: true,
+      connectionType: 'websocket',
       signal: new AbortController().signal,
     })).rejects.toMatchObject({
       code: 'credential_unavailable',
       message: 'credential_unavailable',
     });
+  });
+
+  it('uses signed-url auth only when the preparation owner selects WebSocket', async () => {
+    const request = vi.fn(async () => ({
+      status: 200,
+      finalUrl: 'https://api.elevenlabs.io/v1/convai/conversation/get-signed-url?agent_id=agent_1',
+      headers: { 'content-type': 'application/json' },
+      body: new TextEncoder().encode(JSON.stringify({ signed_url: 'wss://provider.test/session' })),
+    }));
+
+    await expect(mintElevenLabsConversationAuthWithAccountOperations({
+      accountOperations: Object.freeze({ request }),
+      agentId: 'agent_1',
+      connectionType: 'websocket',
+      signal: new AbortController().signal,
+    })).resolves.toEqual({ kind: 'signed_url', value: 'wss://provider.test/session' });
+    expect(request).toHaveBeenCalledWith(expect.objectContaining({ operationId: 'signed-url' }));
   });
 });

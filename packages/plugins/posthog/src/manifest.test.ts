@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 
 import { definePlugin } from '@happier-dev/plugin-sdk';
+import { parsePluginManifest } from '@happier-dev/plugin-sdk/manifest';
 import { TriageScanInputV1Schema } from '@happier-dev/triage-protocol/v1';
 import { assertTriageSourceContributionV1 } from '@happier-dev/triage-protocol/testing/v1';
 import { describe, expect, it } from 'vitest';
@@ -22,13 +23,17 @@ import {
 /**
  * Declares one Action carrying the *published* scan input — the discriminated union
  * this source cannot replace — with whichever credential-ref binding path the caller
- * wants proven or refuted, through the same `definePlugin` parse the real manifest uses.
+ * wants proven or refuted, then puts it through the SAME manifest ingest a host runs
+ * before any manifest may contribute anything.
  *
- * A declaration-time guarantee that cannot fail is not a guarantee: this is what lets
- * the accepted union binding below be distinguished from a walker that silently admits
- * whatever it is handed.
+ * Ingest, not `definePlugin`, is the credential-ref binding walker's decision point:
+ * `definePlugin` is an authoring projector and validates no contribution schema, so a
+ * probe that only called it could never observe a rejection and proved nothing.
+ *
+ * A guarantee that cannot fail is not a guarantee: this is what lets the accepted union
+ * binding below be distinguished from a walker that silently admits whatever it is handed.
  */
-function defineScanBindingProbe(bindingPath: string): unknown {
+function defineScanBindingProbe(bindingPath: string) {
     return definePlugin({
         id: 'happier.posthog-manifest-probe',
         version: '0.0.0',
@@ -146,6 +151,7 @@ describe('PostHog plugin manifest', () => {
         }]));
 
         const actions = new Map(PLUGIN_MANIFEST.contributes.actions.map((action) => [action.id, action]));
+        expect(actions.has(POSTHOG_ACTION_IDS.capability)).toBe(true);
         for (const id of Object.values(POSTHOG_ACTION_IDS)) {
             expect(actions.get(id)?.execution).toEqual({ target: 'daemon' });
             expect(actions.get(id)?.hostAccess)
@@ -162,25 +168,49 @@ describe('PostHog plugin manifest', () => {
             .toEqual(declaredBinding);
         expect(actions.get(POSTHOG_ACTION_IDS.scan)?.connectedAccountPurposeBindings)
             .toEqual(declaredBinding);
+        expect(actions.get(POSTHOG_ACTION_IDS.configuration)?.connectedAccountPurposeBindings)
+            .toEqual([{
+                path: 'binding.account',
+                purpose: POSTHOG_CONNECTED_ACCOUNT_PURPOSE,
+            }]);
+        expect(actions.get(POSTHOG_ACTION_IDS.capability)?.connectedAccountPurposeBindings)
+            .toEqual([{
+                path: 'draft.binding.account',
+                purpose: POSTHOG_CONNECTED_ACCOUNT_PURPOSE,
+            }]);
         expect(actions.get(POSTHOG_ACTION_IDS.listInstances)?.connectedAccountPurposeBindings)
             .toBeUndefined();
     });
 
     it('binds scan through the union-shaped published input and rejects a malformed path', () => {
+        const ingestScanBinding = (bindingPath: string) => parsePluginManifest(
+            defineScanBindingProbe(bindingPath).manifest,
+        );
+        const rejectedBindingPaths = (bindingPath: string): readonly string[] => {
+            const parsed = ingestScanBinding(bindingPath);
+            if (parsed.ok) return [];
+            return parsed.diagnostics
+                .filter((diagnostic) => diagnostic.message.includes('Connected Account purpose bindings'))
+                .map((diagnostic) => diagnostic.path.join('.'));
+        };
+
         // `instance` is carried identically by both published scan arms, so the leaf is
         // proven for every representable input rather than for whichever arm was read
         // first. This is the declaration the real manifest makes.
-        expect(() => defineScanBindingProbe('instance.binding.account')).not.toThrow();
+        expect(ingestScanBinding('instance.binding.account').ok).toBe(true);
 
         // A path only the `initial` arm can reach proves nothing about a `continuation`
         // invocation, so it must be rejected — otherwise the accepted declaration above
-        // would only mean the walker looked at one arm.
-        expect(() => defineScanBindingProbe('page.limit')).toThrow();
+        // would only mean the walker looked at one arm. The diagnostic path is asserted
+        // so an unrelated ingest failure cannot masquerade as this rejection.
+        expect(rejectedBindingPaths('page.limit'))
+            .toEqual(['contributes.actions.0.connectedAccountPurposeBindings.0.path']);
 
         // Reachable in both arms, but not a qualified credential ref: a binding that
         // admitted this would let the source name a purpose over a value the host cannot
         // resolve to one exact account.
-        expect(() => defineScanBindingProbe('instance.binding')).toThrow();
+        expect(rejectedBindingPaths('instance.binding'))
+            .toEqual(['contributes.actions.0.connectedAccountPurposeBindings.0.path']);
     });
 
     it('binds the detail surface to the native renderer and keeps a truthful fallback', () => {

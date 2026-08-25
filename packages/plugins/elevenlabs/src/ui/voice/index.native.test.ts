@@ -2,30 +2,9 @@ import { readFile } from 'node:fs/promises';
 import { describe, expect, it, vi } from 'vitest';
 
 const nativeSessionDependencies = vi.hoisted(() => ({
-  nativeWebRtcModule: {
-    audioDeviceModuleSetAutomaticAudioSessionConfiguration: vi.fn(),
-    audioDeviceModuleSetEngineCreatedActive: vi.fn(),
-    audioDeviceModuleSetWillEnableEngineActive: vi.fn(),
-    audioDeviceModuleSetWillStartEngineActive: vi.fn(),
-    audioDeviceModuleSetDidStopEngineActive: vi.fn(),
-    audioDeviceModuleSetDidDisableEngineActive: vi.fn(),
-    audioDeviceModuleSetWillReleaseEngineActive: vi.fn(),
-  } as Record<string, unknown>,
-  registerGlobals: vi.fn(),
   setSetupStrategy: vi.fn(),
   createConnection: vi.fn(),
   setupWebRTCSession: vi.fn(),
-}));
-
-vi.mock('react-native', () => ({
-  get NativeModules() {
-    return { WebRTCModule: nativeSessionDependencies.nativeWebRtcModule };
-  },
-  Platform: { OS: 'ios' },
-}));
-
-vi.mock('./runtime/liveKitReactNative.js', () => ({
-  loadLiveKitRegisterGlobals: () => nativeSessionDependencies.registerGlobals,
 }));
 
 vi.mock('@elevenlabs/client/internal', () => ({
@@ -45,8 +24,7 @@ import {
 import { PLUGIN_MANIFEST } from '../../manifest.js';
 
 describe('ElevenLabs native voice entry', () => {
-  it('installs native setup before exposing the web runtime rather than retaining an inert presentation-only path', async () => {
-    expect(nativeSessionDependencies.registerGlobals).toHaveBeenCalledTimes(1);
+  it('installs only the provider media strategy before exposing the web runtime', async () => {
     expect(nativeSessionDependencies.setSetupStrategy).toHaveBeenCalledTimes(1);
 
     expect(VOICE_PROVIDER_PRESENTATIONS[0]?.providerId)
@@ -68,29 +46,25 @@ describe('ElevenLabs native voice entry', () => {
 
     const source = await readFile(new URL('./index.native.ts', import.meta.url), 'utf8');
     expect(source).not.toContain("from './index.js'");
+    expect(source).not.toContain('NativeModules');
+    expect(source).not.toContain('loadLiveKitRegisterGlobals');
   });
 
-  it('reports an incompatible iOS WebRTC bridge through activation instead of evaluating LiveKit', async () => {
-    const currentNativeWebRtcModule = nativeSessionDependencies.nativeWebRtcModule;
-    nativeSessionDependencies.nativeWebRtcModule = Object.freeze({});
-    nativeSessionDependencies.registerGlobals.mockClear();
-    nativeSessionDependencies.setSetupStrategy.mockClear();
-    vi.resetModules();
+  it('does not invoke ElevenLabs WebRTC setup after native host admission rejects the connection', async () => {
+    const strategy = nativeSessionDependencies.setSetupStrategy.mock.calls.at(-1)?.[0];
+    if (typeof strategy !== 'function') throw new Error('native_strategy_not_registered');
+    const setupCallsBeforeRejection = nativeSessionDependencies.setupWebRTCSession.mock.calls.length;
+    const incompatibleBridge = Object.assign(
+      new Error('Voice requires a current iOS WebRTC native module.'),
+      { code: 'voice_native_webrtc_incompatible' },
+    );
+    nativeSessionDependencies.createConnection.mockRejectedValueOnce(incompatibleBridge);
 
-    const { activate } = await import('./index.native.js');
-    const register = vi.fn();
-    let error: unknown;
-    try {
-      activate({ voiceProviders: { register } });
-    } catch (caught) {
-      error = caught;
-    } finally {
-      nativeSessionDependencies.nativeWebRtcModule = currentNativeWebRtcModule;
-    }
-
-    expect(error).toMatchObject({ code: 'elevenlabs_native_webrtc_incompatible' });
-    expect(register).not.toHaveBeenCalled();
-    expect(nativeSessionDependencies.registerGlobals).not.toHaveBeenCalled();
-    expect(nativeSessionDependencies.setSetupStrategy).not.toHaveBeenCalled();
+    await expect(strategy({ connectionType: 'webrtc' })).rejects.toMatchObject({
+      code: 'voice_native_webrtc_incompatible',
+    });
+    expect(nativeSessionDependencies.setupWebRTCSession).toHaveBeenCalledTimes(
+      setupCallsBeforeRejection,
+    );
   });
 });

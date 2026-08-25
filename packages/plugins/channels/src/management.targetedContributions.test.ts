@@ -19,7 +19,7 @@ import {
   createConversationConnectionForInvocation,
   prepareConversationConnectionForInvocation,
   retestConversationConnectionForInvocation,
-  setConversationConnectionEnabledForInvocation,
+  setConversationBindingEnabledForInvocation,
   updateConversationConnectionForInvocation,
   transferConversationConnectionForInvocation,
 } from './management.js';
@@ -27,6 +27,7 @@ import {
   createCurrentConversationConnectionFixture,
   type ConversationConnectionFixtureAuthority,
 } from './testkit/currentConnectionFixture.js';
+import { assertChannelsTestCollectionQueryLimit } from './testkit/collectionQueryBound.js';
 
 const providerSelection = {
   target: {
@@ -165,11 +166,13 @@ type MutableStateRow = Readonly<{
   revision: number;
   value: MutableStateValue;
 }>;
-type MutableStateMutation = Readonly<{
-  kind: 'put';
-  value: MutableStateValue;
-  expectedRevision: number | 'absent';
-}>;
+type MutableStateMutation =
+  | Readonly<{ kind: 'assert'; rowId: string; expectedRevision: number }>
+  | Readonly<{
+    kind: 'put';
+    value: MutableStateValue;
+    expectedRevision: number | 'absent';
+  }>;
 
 /** The Account Collection is the one external boundary for this owner test. */
 function createMutableConnectionStateCollection() {
@@ -177,13 +180,14 @@ function createMutableConnectionStateCollection() {
   let loseNextUpdatedBatchResponse = false;
   const batch = vi.fn(async (operations: readonly MutableStateMutation[]) => {
     const conflicts = operations.flatMap((operation) => {
-      const current = rows.get(operation.value.id);
+      const rowId = operation.kind === 'put' ? operation.value.id : operation.rowId;
+      const current = rows.get(rowId);
       const expected = operation.expectedRevision;
       const matches = expected === 'absent'
         ? current === undefined
         : current?.revision === expected;
       return matches ? [] : [{
-        rowId: operation.value.id,
+        rowId,
         revision: current?.revision ?? 0,
         deleted: false,
       }];
@@ -192,6 +196,7 @@ function createMutableConnectionStateCollection() {
 
     const results: Array<Readonly<{ rowId: string; revision: number; deleted: false }>> = [];
     for (const operation of operations) {
+      if (operation.kind !== 'put') continue;
       const current = rows.get(operation.value.id);
       const revision = (current?.revision ?? 0) + 1;
       rows.set(operation.value.id, { rowId: operation.value.id, revision, value: operation.value });
@@ -206,7 +211,8 @@ function createMutableConnectionStateCollection() {
   return {
     rows,
     get: async (rowId: string) => rows.get(rowId) ?? null,
-    async query(request: Readonly<{ index: string; prefix?: readonly unknown[] }>) {
+    async query(request: Readonly<{ index: string; prefix?: readonly unknown[]; limit?: number }>) {
+      assertChannelsTestCollectionQueryLimit(request.limit);
       if (request.index !== CHANNEL_STATE_INDEX_ID.byKind) {
         throw new Error(`Unexpected owner query index: ${request.index}`);
       }
@@ -272,6 +278,10 @@ function readyConnectionCreateActionExecutor() {
           overlapSafety: 'safe',
           replayContinuity: 'none',
           outboundTextLimit: { maximum: 4_000, unit: 'unicodeCodePoints' },
+          setupGuidance: {
+            externalUrl: 'https://provider.example.test/install',
+            requiredPermissionsLabel: 'Read messages, Send messages',
+          },
         },
         executionOrigin,
       };
@@ -340,6 +350,10 @@ describe('prepareConversationConnectionForInvocation targeted provider selection
           overlapSafety: 'safe',
           replayContinuity: 'none',
           outboundTextLimit: { maximum: 4_000, unit: 'unicodeCodePoints' },
+          setupGuidance: {
+            externalUrl: 'https://provider.example.test/install',
+            requiredPermissionsLabel: 'Read messages, Send messages',
+          },
         },
         executionOrigin: {
           serverIdentityId: 'srv-example',
@@ -366,6 +380,10 @@ describe('prepareConversationConnectionForInvocation targeted provider selection
       kind: 'ready',
       supportedTransports: ['socket'],
       recommendedTransport: 'socket',
+      setupGuidance: {
+        externalUrl: 'https://provider.example.test/install',
+        requiredPermissionsLabel: 'Read messages, Send messages',
+      },
     });
     expect(executeAdmittedTargetedOperationWithExecutionOrigin).toHaveBeenCalledOnce();
   });
@@ -1164,6 +1182,165 @@ describe('createConversationConnectionForInvocation targeted provider selection'
 });
 
 describe('transferConversationConnectionForInvocation targeted provider selection', () => {
+  it('conflicts a narrow transfer when a concurrent enable changes the binding demand after its scan', async () => {
+    const connectionId = 'connection-transfer-concurrent-enable';
+    const executionOrigin = {
+      serverIdentityId: 'srv-example',
+      materializationRef: {
+        pluginId: providerSelection.contributor.pluginId,
+        machineId: 'machine-old',
+        materializationId: 'materialization-old',
+      },
+    } as const;
+    const replacementExecutionOrigin = {
+      serverIdentityId: 'srv-example',
+      materializationRef: {
+        pluginId: providerSelection.contributor.pluginId,
+        machineId: 'machine-replacement',
+        materializationId: 'materialization-replacement',
+      },
+    } as const;
+    const collection = createMutableConnectionStateCollection();
+    const authority = {
+      providerPluginId: providerSelection.contributor.pluginId,
+      providerContributionSelection: {
+        contributionId: providerSelection.contributor.contributionId,
+        immutableGenerationId: providerSelection.contributor.immutableGenerationId,
+      },
+      providerSetupInput: { source: 'same' },
+      credentialRef: null,
+      transportOrigin: executionOrigin,
+      providerConnectionKey: 'example:connection',
+      providerConfig: { source: 'same' },
+      routingIdentityKey: 'r'.repeat(43),
+      integrationPrincipal: { id: 'example-bot' },
+      authorityEpoch: 4,
+    } as const satisfies ConversationConnectionFixtureAuthority;
+    collection.rows.set(connectionId, {
+      rowId: connectionId,
+      revision: 4,
+      value: createCurrentConversationConnectionFixture({
+        connectionId,
+        authority,
+        transport: { kind: 'socket' },
+        overlapSafety: 'safe',
+        replayContinuity: 'none',
+        outboundTextLimit: { maximum: 4_000, unit: 'unicodeCodePoints' },
+        sharedEndpointInputModes: ['directMentionsOnly', 'addressedMessages', 'allAllowedMessages'],
+      }),
+    });
+    const bindingId = 'binding-concurrent-enable';
+    collection.rows.set(bindingId, {
+      rowId: bindingId,
+      revision: 1,
+      value: {
+        [CHANNEL_STATE_FIELD.id]: bindingId,
+        [CHANNEL_STATE_FIELD.recordKind]: CHANNEL_STATE_RECORD_KIND.binding,
+        [CHANNEL_STATE_FIELD.connectionId]: connectionId,
+        [CHANNEL_STATE_FIELD.bindingId]: bindingId,
+        v: 1,
+        'created-at': 1,
+        'updated-at': 1,
+        payload: {
+          endpoint: { kind: 'shared', audience: 'shared', id: 'room-1' },
+          target: {
+            kind: 'session',
+            sessionId: 'session-1',
+            policy: {
+              deliveryMode: 'repliesOnly',
+              permissionCeiling: 'read-only',
+              approvals: { kind: 'off' },
+              newSession: { kind: 'off' },
+            },
+          },
+          allowedPrincipalIds: ['person-1'],
+          allowBotSenders: false,
+          inputMode: 'allAllowedMessages',
+          inboundDebounceMs: 750,
+          linkPreviewPolicy: 'suppress',
+          senderFeedback: 'off',
+          authorityEpoch: 1,
+          enabled: false,
+          deletionState: 'none',
+        },
+      },
+    });
+    const executeAdmittedTargetedOperationWithExecutionOrigin = vi.fn(async (action: unknown) => {
+      if (action === setupAction) {
+        return {
+          result: {
+            v: 1,
+            credentialRef: null,
+            providerConnectionKey: 'example:connection',
+            providerConfigVersion: 1,
+            providerConfig: { source: 'same' },
+            integrationPrincipal: { id: 'example-bot' },
+            supportedTransports: ['socket'],
+            recommendedTransport: 'socket',
+            overlapSafety: 'safe',
+            replayContinuity: 'none',
+            outboundTextLimit: { maximum: 4_000, unit: 'unicodeCodePoints' },
+            sharedEndpointInputModes: ['directMentionsOnly', 'addressedMessages'],
+          },
+          executionOrigin: replacementExecutionOrigin,
+        };
+      }
+      if (action === connectionTestAction) {
+        return {
+          result: {
+            kind: 'ready',
+            integrationPrincipal: { id: 'example-bot' },
+            providerConnectionKey: 'example:connection',
+            sharedEndpointInputModes: ['directMentionsOnly', 'addressedMessages'],
+          },
+          executionOrigin: replacementExecutionOrigin,
+        };
+      }
+      throw new Error('The transfer must lose before stopping the incumbent transport.');
+    });
+    const context = invocationContext({
+      actions: { executeAdmittedTargetedOperationWithExecutionOrigin } as unknown as ActionsService,
+      targetedContributions: targetedContributionsFixture({
+        contributorImmutableGenerationId: providerSelection.contributor.immutableGenerationId,
+        operations: {
+          setup: setupAction,
+          connectionTest: connectionTestAction,
+          messageDeliver: messageDeliverAction,
+          connectionStop: connectionStopAction,
+        },
+      }),
+      stateCollection: collection,
+    });
+    const queryBeforeConcurrentEnable = collection.query.bind(collection);
+    let enabled = false;
+    collection.query = async (request) => {
+      const scanned = await queryBeforeConcurrentEnable(request);
+      if (!enabled && request.index === CHANNEL_STATE_INDEX_ID.byKind
+        && request.prefix?.[0] === CHANNEL_STATE_RECORD_KIND.binding) {
+        enabled = true;
+        await setConversationBindingEnabledForInvocation({
+          bindingId,
+          expectedRevision: 1,
+          enabled: true,
+        }, context);
+      }
+      return scanned;
+    };
+
+    await expect(transferConversationConnectionForInvocation({
+      connectionId,
+      expectedRevision: 4,
+      providerSelection,
+      providerSetupInput: { source: 'same' },
+      credentialRef: null,
+      selectedTransport: 'socket',
+    }, context)).rejects.toMatchObject({
+      code: 'channels_connection_transfer_conflict',
+    });
+    expect(collection.rows.get(bindingId)?.value.payload).toMatchObject({ enabled: true });
+    expect(collection.rows.get(connectionId)?.revision).toBe(5);
+  });
+
   it('refuses a transfer whose replacement credential can no longer deliver an enabled shared binding', async () => {
     // Same bot, narrower credential: the replacement authenticates the same
     // immutable identity but its platform now withholds ordinary shared
@@ -2006,7 +2183,7 @@ describe('transferConversationConnectionForInvocation targeted provider selectio
   });
 });
 
-describe('setConversationConnectionEnabledForInvocation targeted provider stop', () => {
+describe('updateConversationConnectionForInvocation targeted provider stop', () => {
   it('uses the exact persisted contribution when one provider plugin contributes multiple channels providers', async () => {
     const connectionId = 'connection-disable-selected-contribution';
     const selectedConnectionStop = admittedProviderOperation({ role: 'connectionStop' });
@@ -2070,8 +2247,9 @@ describe('setConversationConnectionEnabledForInvocation targeted provider stop',
         };
       },
     };
-    const executeAdmittedTargetedOperationWithExecutionOrigin = vi.fn(async (action: unknown) => {
-      expect(action).toBe(selectedConnectionStop);
+    // The disable owner swallows a rejected best-effort stop by design, so an
+    // assertion inside this mock can never fail the test.
+    const executeAdmittedTargetedOperationWithExecutionOrigin = vi.fn(async (_action: unknown) => {
       return {
         result: { kind: 'stopped' },
         executionOrigin: row.value.payload.transportOrigin,
@@ -2096,12 +2274,15 @@ describe('setConversationConnectionEnabledForInvocation targeted provider stop',
       stateCollection,
     });
 
-    await expect(setConversationConnectionEnabledForInvocation({
+    await expect(updateConversationConnectionForInvocation({
       connectionId,
       expectedRevision: 4,
       enabled: false,
+      maximumObservationAgeMs: 60_000,
     }, context)).resolves.toMatchObject({ kind: 'updated', revision: 5 });
     expect(executeAdmittedTargetedOperationWithExecutionOrigin).toHaveBeenCalledOnce();
+    expect(executeAdmittedTargetedOperationWithExecutionOrigin.mock.calls[0]?.[0])
+      .toBe(selectedConnectionStop);
   });
 
   it('stops the socket transport when the ordinary connection policy Action is the one that disables it', async () => {
@@ -2159,9 +2340,12 @@ describe('setConversationConnectionEnabledForInvocation targeted provider stop',
         };
       },
     };
-    const executeAdmittedTargetedOperationWithExecutionOrigin = vi.fn(async (action: unknown, actionInput: unknown) => {
-      expect(action).toBe(connectionStop);
-      expect(actionInput).toMatchObject({ connectionId, authorityEpoch: 5, reason: 'disable' });
+    // The disable owner swallows a rejected best-effort stop by design, so an
+    // assertion inside this mock can never fail the test.
+    const executeAdmittedTargetedOperationWithExecutionOrigin = vi.fn(async (
+      _action: unknown,
+      _actionInput: unknown,
+    ) => {
       return {
         result: { kind: 'stopped' },
         executionOrigin: row.value.payload.transportOrigin,
@@ -2194,6 +2378,10 @@ describe('setConversationConnectionEnabledForInvocation targeted provider stop',
     });
     expect(row.value.payload.enabled).toBe(false);
     expect(executeAdmittedTargetedOperationWithExecutionOrigin).toHaveBeenCalledOnce();
+    expect(executeAdmittedTargetedOperationWithExecutionOrigin.mock.calls[0]?.[0])
+      .toBe(connectionStop);
+    expect(executeAdmittedTargetedOperationWithExecutionOrigin.mock.calls[0]?.[1])
+      .toMatchObject({ connectionId, authorityEpoch: 5, reason: 'disable' });
   });
 
   it('persists an online disable before best-effort stopping through the exact current contribution', async () => {
@@ -2251,25 +2439,16 @@ describe('setConversationConnectionEnabledForInvocation targeted provider stop',
         };
       },
     };
-    const executeAdmittedTargetedOperationWithExecutionOrigin = vi.fn(async (action: unknown, actionInput: unknown, options: unknown) => {
-      expect(row).toMatchObject({
-        revision: 5,
-        value: { payload: { authorityEpoch: 5, enabled: false } },
-      });
-      expect(action).toBe(connectionStop);
-      expect(actionInput).toEqual({
-        v: 1,
-        connectionId,
-        providerConnectionKey: 'example:connection',
-        providerConfigVersion: 1,
-        providerConfig: { opaque: true },
-        credentialRef: null,
-        authorityEpoch: 5,
-        reason: 'disable',
-      });
-      expect(options).toMatchObject({
-        expectedExecutionOrigin: row.value.payload.transportOrigin,
-      });
+    // The disable owner swallows a rejected best-effort stop by design, so an
+    // assertion inside this mock can never fail the test. Record the row the
+    // stop observed and assert both it and the recorded call afterwards.
+    const rowsObservedAtStop: (typeof row)[] = [];
+    const executeAdmittedTargetedOperationWithExecutionOrigin = vi.fn(async (
+      _action: unknown,
+      _actionInput: unknown,
+      _options: unknown,
+    ) => {
+      rowsObservedAtStop.push(row);
       return {
         result: { kind: 'stopped' },
         executionOrigin: row.value.payload.transportOrigin,
@@ -2289,10 +2468,11 @@ describe('setConversationConnectionEnabledForInvocation targeted provider stop',
       stateCollection,
     });
 
-    await expect(setConversationConnectionEnabledForInvocation({
+    await expect(updateConversationConnectionForInvocation({
       connectionId,
       expectedRevision: 4,
       enabled: false,
+      maximumObservationAgeMs: 60_000,
     }, context)).resolves.toEqual({
       kind: 'updated',
       connectionId,
@@ -2301,6 +2481,26 @@ describe('setConversationConnectionEnabledForInvocation targeted provider stop',
     });
     expect(row.value.payload.enabled).toBe(false);
     expect(executeAdmittedTargetedOperationWithExecutionOrigin).toHaveBeenCalledOnce();
+    expect(rowsObservedAtStop[0]).toMatchObject({
+      revision: 5,
+      value: { payload: { authorityEpoch: 5, enabled: false } },
+    });
+    const [stopAction, stopInput, stopOptions]
+      = executeAdmittedTargetedOperationWithExecutionOrigin.mock.calls[0] ?? [];
+    expect(stopAction).toBe(connectionStop);
+    expect(stopInput).toEqual({
+      v: 1,
+      connectionId,
+      providerConnectionKey: 'example:connection',
+      providerConfigVersion: 1,
+      providerConfig: { opaque: true },
+      credentialRef: null,
+      authorityEpoch: 5,
+      reason: 'disable',
+    });
+    expect(stopOptions).toMatchObject({
+      expectedExecutionOrigin: row.value.payload.transportOrigin,
+    });
   });
 });
 
@@ -2375,7 +2575,8 @@ describe('retestConversationConnectionForInvocation', () => {
     const batches: unknown[][] = [];
     const stateCollection = {
       async get() { return row; },
-      async query(request: Readonly<{ index: string; prefix?: readonly unknown[] }>) {
+      async query(request: Readonly<{ index: string; prefix?: readonly unknown[]; limit?: number }>) {
+        assertChannelsTestCollectionQueryLimit(request.limit);
         if (
           request.index !== CHANNEL_STATE_INDEX_ID.byKind
           || request.prefix?.[0] !== CHANNEL_STATE_RECORD_KIND.binding
@@ -2504,6 +2705,104 @@ describe('retestConversationConnectionForInvocation', () => {
       code: 'providerConfigurationInvalid',
       diagnostic: 'The saved bot token was rejected.',
     });
+  });
+
+  it.each([
+    {
+      name: 'ready',
+      result: {
+        kind: 'ready' as const,
+        integrationPrincipal: { id: 'example-bot' },
+        providerConnectionKey: 'example:connection',
+      },
+    },
+    {
+      name: 'not-ready',
+      result: {
+        kind: 'notReady' as const,
+        reason: 'credentialInvalid' as const,
+        diagnostic: 'The saved bot token was rejected.',
+      },
+    },
+  ])('refuses to publish a $name verdict after the tested connection revision changes', async ({ result }) => {
+    const fixture = retestFixture();
+    let readCount = 0;
+    const stateCollection = {
+      ...fixture.stateCollection,
+      async get() {
+        readCount += 1;
+        const current = fixture.readRow();
+        return readCount === 1 ? current : { ...current, revision: current.revision + 1 };
+      },
+    };
+    const connectionTest = admittedProviderOperation({ role: 'connectionTest' });
+    const context = invocationContext({
+      actions: {
+        executeAdmittedTargetedOperationWithExecutionOrigin: vi.fn(async () => ({
+          result,
+          executionOrigin: retestPersistedAuthority.transportOrigin,
+        })),
+      } as unknown as ActionsService,
+      targetedContributions: targetedContributionsFixture({
+        contributorImmutableGenerationId: providerSelection.contributor.immutableGenerationId,
+        operations: { setup: setupAction, connectionTest },
+      }),
+      stateCollection,
+    });
+
+    await expect(retestConversationConnectionForInvocation({
+      connectionId: fixture.connectionId,
+      expectedRevision: 4,
+      authorityEpoch: 4,
+    }, context)).rejects.toMatchObject({
+      code: 'channels_connection_retest_conflict',
+      retryable: true,
+    });
+    expect(readCount).toBe(2);
+    expect(fixture.batches).toHaveLength(0);
+  });
+
+  it('refuses to publish a provider verdict after the tested contribution generation changes', async () => {
+    const fixture = retestFixture();
+    const connectionTest = admittedProviderOperation({ role: 'connectionTest' });
+    const context = invocationContext({
+      actions: {
+        executeAdmittedTargetedOperationWithExecutionOrigin: vi.fn(async () => ({
+          result: {
+            kind: 'notReady',
+            reason: 'credentialInvalid',
+            diagnostic: 'The saved bot token was rejected.',
+          },
+          executionOrigin: retestPersistedAuthority.transportOrigin,
+        })),
+      } as unknown as ActionsService,
+      targetedContributions: targetedContributionsFixture({
+        contributorImmutableGenerationId: providerSelection.contributor.immutableGenerationId,
+        operations: { setup: setupAction, connectionTest },
+        snapshots: [
+          {
+            contributorImmutableGenerationId: providerSelection.contributor.immutableGenerationId,
+            operations: { setup: setupAction, connectionTest },
+          },
+          {
+            contributorImmutableGenerationId: providerSelection.contributor.immutableGenerationId,
+            targetImmutableGenerationId: 'channels-target-generation-replaced',
+            operations: { setup: setupAction, connectionTest },
+          },
+        ],
+      }),
+      stateCollection: fixture.stateCollection,
+    });
+
+    await expect(retestConversationConnectionForInvocation({
+      connectionId: fixture.connectionId,
+      expectedRevision: 4,
+      authorityEpoch: 4,
+    }, context)).rejects.toMatchObject({
+      code: 'channels_connection_retest_conflict',
+      retryable: true,
+    });
+    expect(fixture.batches).toHaveLength(0);
   });
 
   it('fails readiness truthfully when the current provider capability can no longer deliver an enabled shared binding', async () => {
