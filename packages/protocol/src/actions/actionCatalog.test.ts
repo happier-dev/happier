@@ -176,8 +176,10 @@ describe('actionCatalog action-definition adapter', () => {
     }
   });
 
-  it('computes immutable host search text once before reusing it across queries', () => {
+  it('reuses immutable host projections while evaluating request-current search inputs', () => {
     const hostSpec = getActionSpec('action.spec.get');
+    if (!hostSpec.outputSchema) throw new Error('Expected action.spec.get output schema');
+    const outputProjection = vi.spyOn(hostSpec.outputSchema, 'toJSONSchema');
     const hostSearchTextPrefix = `${hostSpec.id} ${hostSpec.title}`;
     const originalToLowerCase = String.prototype.toLowerCase;
     let hostSearchTextComputations = 0;
@@ -188,29 +190,6 @@ describe('actionCatalog action-definition adapter', () => {
       }
       return originalToLowerCase.call(this);
     });
-
-    try {
-      const firstSearch = searchSerializedActionSpecsForSurface({
-        surface: 'api',
-        query: hostSpec.id,
-      });
-      const secondSearch = searchSerializedActionSpecsForSurface({
-        surface: 'api',
-        query: hostSpec.id,
-      });
-
-      expect(firstSearch.map((definition) => definition.id)).toContain(hostSpec.id);
-      expect(secondSearch.map((definition) => definition.id)).toContain(hostSpec.id);
-      expect(hostSearchTextComputations).toBe(1);
-    } finally {
-      toLowerCase.mockRestore();
-    }
-  });
-
-  it('reuses immutable host projections while evaluating request-current search inputs', () => {
-    const hostSpec = getActionSpec('action.spec.get');
-    if (!hostSpec.outputSchema) throw new Error('Expected action.spec.get output schema');
-    const outputProjection = vi.spyOn(hostSpec.outputSchema, 'toJSONSchema');
     const contributedDefinition = (id: string): ActionDefinitionV1 => ({
       kindVersion: 1,
       id,
@@ -235,32 +214,43 @@ describe('actionCatalog action-definition adapter', () => {
       inputSchema: {},
     });
 
-    const firstHostSearch = searchSerializedActionSpecsForSurface({
-      surface: 'api',
-      query: hostSpec.id,
-      isActionEnabled: () => true,
-    });
-    const secondHostSearch = searchSerializedActionSpecsForSurface({
-      surface: 'api',
-      query: hostSpec.id,
-      isActionEnabled: (id) => id !== hostSpec.id,
-    });
-    const firstContributedSearch = searchSerializedActionSpecsForSurface({
-      surface: 'api',
-      query: 'fresh-contribution',
-      additionalDefinitions: [contributedDefinition('fresh-contribution-one')],
-    });
-    const secondContributedSearch = searchSerializedActionSpecsForSurface({
-      surface: 'api',
-      query: 'fresh-contribution',
-      additionalDefinitions: [contributedDefinition('fresh-contribution-two')],
-    });
+    try {
+      const firstHostSearch = searchSerializedActionSpecsForSurface({
+        surface: 'api',
+        query: hostSpec.id,
+        isActionEnabled: () => true,
+      });
+      const repeatedHostSearch = searchSerializedActionSpecsForSurface({
+        surface: 'api',
+        query: hostSpec.id,
+        isActionEnabled: () => true,
+      });
+      const secondHostSearch = searchSerializedActionSpecsForSurface({
+        surface: 'api',
+        query: hostSpec.id,
+        isActionEnabled: (id) => id !== hostSpec.id,
+      });
+      const firstContributedSearch = searchSerializedActionSpecsForSurface({
+        surface: 'api',
+        query: 'fresh-contribution',
+        additionalDefinitions: [contributedDefinition('fresh-contribution-one')],
+      });
+      const secondContributedSearch = searchSerializedActionSpecsForSurface({
+        surface: 'api',
+        query: 'fresh-contribution',
+        additionalDefinitions: [contributedDefinition('fresh-contribution-two')],
+      });
 
-    expect(firstHostSearch.map((definition) => definition.id)).toContain(hostSpec.id);
-    expect(secondHostSearch.map((definition) => definition.id)).not.toContain(hostSpec.id);
-    expect(firstContributedSearch.map((definition) => definition.id)).toEqual(['fresh-contribution-one']);
-    expect(secondContributedSearch.map((definition) => definition.id)).toEqual(['fresh-contribution-two']);
-    expect(outputProjection).toHaveBeenCalledTimes(1);
+      expect(firstHostSearch.map((definition) => definition.id)).toContain(hostSpec.id);
+      expect(repeatedHostSearch.map((definition) => definition.id)).toContain(hostSpec.id);
+      expect(secondHostSearch.map((definition) => definition.id)).not.toContain(hostSpec.id);
+      expect(firstContributedSearch.map((definition) => definition.id)).toEqual(['fresh-contribution-one']);
+      expect(secondContributedSearch.map((definition) => definition.id)).toEqual(['fresh-contribution-two']);
+      expect(hostSearchTextComputations).toBe(1);
+      expect(outputProjection).toHaveBeenCalledTimes(1);
+    } finally {
+      toLowerCase.mockRestore();
+    }
   });
 
   it('projects contributed Action summaries through named public fields', () => {
