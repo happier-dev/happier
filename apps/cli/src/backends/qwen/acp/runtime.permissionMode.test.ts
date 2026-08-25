@@ -31,14 +31,14 @@ describe('Qwen ACP runtime permission mode wiring', () => {
     await runtime.startOrLoad({});
     expect(createSpy).toHaveBeenCalledTimes(1);
     expect(createCalls).toHaveLength(1);
-    expect(createCalls[0]).toEqual({ agentId: 'qwen', permissionMode: 'default' });
+    expect(createCalls[0]).toEqual({ agentId: 'qwen', happierSessionId: 'test-session-id', permissionMode: 'default' });
 
     permissionMode = 'safe-yolo';
     await runtime.reset();
     await runtime.startOrLoad({});
     expect(createSpy).toHaveBeenCalledTimes(2);
     expect(createCalls).toHaveLength(2);
-    expect(createCalls[1]).toEqual({ agentId: 'qwen', permissionMode: 'safe-yolo' });
+    expect(createCalls[1]).toEqual({ agentId: 'qwen', happierSessionId: 'test-session-id', permissionMode: 'safe-yolo' });
   });
 
   it('normalizes non-string permissionMode values to undefined', async () => {
@@ -60,13 +60,13 @@ describe('Qwen ACP runtime permission mode wiring', () => {
     await runtime.startOrLoad({});
     expect(createSpy).toHaveBeenCalledTimes(1);
     expect(createCalls).toHaveLength(1);
-    expect(createCalls[0]).toEqual({ agentId: 'qwen', permissionMode: undefined });
+    expect(createCalls[0]).toEqual({ agentId: 'qwen', happierSessionId: 'test-session-id', permissionMode: undefined });
 
     permissionMode = 123;
     await runtime.reset();
     await runtime.startOrLoad({});
     expect(createSpy).toHaveBeenCalledTimes(2);
     expect(createCalls).toHaveLength(2);
-    expect(createCalls[1]).toEqual({ agentId: 'qwen', permissionMode: undefined });
+    expect(createCalls[1]).toEqual({ agentId: 'qwen', happierSessionId: 'test-session-id', permissionMode: undefined });
   });
 });

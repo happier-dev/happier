@@ -195,8 +195,6 @@ Provider-owned probing:
 - Fail closed to the static catalog. A probe that cannot authenticate returns `null` rather than
   probing with whatever credential happens to be in the daemon's environment.
 
----
-
 ## Adding a new agent/provider (end-to-end)
 
 ### Step 0 — pick the id contract (critical)

@@ -4,32 +4,39 @@ import {
   isApprovalRequiredByActionsSettings,
   listActionSpecs,
   type ActionId,
+  type ActionsSettingsV1,
   type ActionSurfaces,
   type ActionUiPlacement,
 } from '@happier-dev/protocol';
 
 const ENV_KEY = 'HAPPIER_ACTIONS_SETTINGS_V1';
+const EMPTY_ACTIONS_SETTINGS = ActionsSettingsV1Schema.parse({ v: 1, actions: {} });
 
-export function readActionsSettingsFromEnv(): { v: 1; actions: Record<ActionId, any> } {
+export function readActionsSettingsOverrideFromEnv(): ActionsSettingsV1 | null {
   const raw = typeof process.env[ENV_KEY] === 'string' ? String(process.env[ENV_KEY]).trim() : '';
-  if (!raw) return { v: 1 as const, actions: {} as Record<ActionId, any> };
+  if (!raw) return null;
 
   let parsedJson: unknown = null;
   try {
     parsedJson = JSON.parse(raw);
   } catch {
-    return { v: 1 as const, actions: {} as Record<ActionId, any> };
+    return null;
   }
 
   const parsed = ActionsSettingsV1Schema.safeParse(parsedJson);
-  return parsed.success ? (parsed.data as any) : ({ v: 1 as const, actions: {} as Record<ActionId, any> } as any);
+  return parsed.success ? parsed.data : null;
+}
+
+export function readActionsSettingsFromEnv(): ActionsSettingsV1 {
+  return readActionsSettingsOverrideFromEnv()
+    ?? EMPTY_ACTIONS_SETTINGS;
 }
 
 export function isActionEnabledByEnv(
   actionId: ActionId,
   ctx?: Readonly<{ surface?: keyof ActionSurfaces | null; placement?: ActionUiPlacement | null }>,
 ): boolean {
-  return isActionEnabledByActionsSettings(actionId, readActionsSettingsFromEnv() as any, {
+  return isActionEnabledByActionsSettings(actionId, readActionsSettingsFromEnv(), {
     surface: ctx?.surface ?? null,
     placement: ctx?.placement ?? null,
   });
@@ -39,7 +46,7 @@ export function isActionApprovalRequiredByEnv(
   actionId: ActionId,
   ctx?: Readonly<{ surface?: keyof ActionSurfaces | null }>,
 ): boolean {
-  return isApprovalRequiredByActionsSettings(actionId, readActionsSettingsFromEnv() as any, {
+  return isApprovalRequiredByActionsSettings(actionId, readActionsSettingsFromEnv(), {
     surface: ctx?.surface ?? null,
   });
 }

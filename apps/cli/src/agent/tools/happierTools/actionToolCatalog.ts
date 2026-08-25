@@ -102,20 +102,49 @@ export function createActionToolNameToIdMap(params?: Readonly<{
   );
 }
 
-function isDirectManualToolAvailable(params: Readonly<{
+export function isManualToolDirectAvailableOnToolSurface(params: Readonly<{
   toolName: string;
   actionId: ActionId;
   surface?: HappierBuiltInToolSurface;
   isActionEnabled?: ActionEnabledPredicate;
   actionsSettings?: ActionsSettingsV1 | null;
 }>): boolean {
-  if (!DIRECT_MANUAL_TOOL_NAMES.has(params.toolName)) {
-    return false;
+  const surface = params.surface ?? 'session_agent';
+  if (DIRECT_MANUAL_TOOL_NAMES.has(params.toolName)) {
+    const explicitMode = params.actionsSettings?.actions?.[params.actionId]?.toolExposureModes?.[surface];
+    if (explicitMode === 'discoverable_only') return false;
+    return isActionAvailableOnToolSurface({
+      actionId: params.actionId,
+      surface,
+      isActionEnabled: params.isActionEnabled,
+      actionsSettings: params.actionsSettings ?? null,
+    });
   }
 
+  return isActionDirectToolAvailableOnToolSurface({
+    actionId: params.actionId,
+    surface,
+    isActionEnabled: params.isActionEnabled,
+    actionsSettings: params.actionsSettings ?? null,
+  });
+}
+
+function isRequiredDirectActionToolAvailable(params: Readonly<{
+  actionId: ActionId;
+  surface?: HappierBuiltInToolSurface;
+  requiredDirectActionIds?: readonly ActionId[];
+  isActionEnabled?: ActionEnabledPredicate;
+  actionsSettings?: ActionsSettingsV1 | null;
+}>): boolean {
+  const surface = params.surface ?? 'session_agent';
+  if (surface !== 'session_agent' || !params.requiredDirectActionIds?.includes(params.actionId)) {
+    return false;
+  }
+  const explicitMode = params.actionsSettings?.actions?.[params.actionId]?.toolExposureModes?.session_agent;
+  if (explicitMode === 'discoverable_only') return false;
   return isActionAvailableOnToolSurface({
     actionId: params.actionId,
-    surface: params.surface,
+    surface,
     isActionEnabled: params.isActionEnabled,
     actionsSettings: params.actionsSettings ?? null,
   });
@@ -127,15 +156,25 @@ export function filterBuiltInToolsForSurface(
     surface?: HappierBuiltInToolSurface;
     isActionEnabled?: ActionEnabledPredicate;
     actionsSettings?: ActionsSettingsV1 | null;
+    requiredDirectActionIds?: readonly ActionId[];
   }>,
 ): readonly HappierBuiltInToolDefinition[] {
   return tools.filter((tool) => {
     const actionId = getEquivalentActionIdForBuiltInTool(tool.name);
     if (!actionId) return true;
-    if (isDirectManualToolAvailable({
+    if (isManualToolDirectAvailableOnToolSurface({
       toolName: tool.name,
       actionId,
       surface: params?.surface,
+      isActionEnabled: params?.isActionEnabled,
+      actionsSettings: params?.actionsSettings ?? null,
+    })) {
+      return true;
+    }
+    if (isRequiredDirectActionToolAvailable({
+      actionId,
+      surface: params?.surface,
+      requiredDirectActionIds: params?.requiredDirectActionIds,
       isActionEnabled: params?.isActionEnabled,
       actionsSettings: params?.actionsSettings ?? null,
     })) {

@@ -48,6 +48,12 @@ export type PiRpcSessionStatsData = Readonly<{
     total?: number;
   }> | null;
   cost?: number;
+  /** Pi's live context-window estimate (same source as its compaction footer). Omitted when no model is set; `tokens`/`percent` are null right after compaction. */
+  contextUsage?: Readonly<{
+    tokens?: number | null;
+    contextWindow?: number;
+    percent?: number | null;
+  }> | null;
 }>;
 
 export type PiRpcModel = Readonly<{
@@ -64,6 +70,7 @@ export type PiRpcModelsData = Readonly<{
 export type PiRpcCommandEntry = Readonly<{
   name?: string;
   description?: string;
+  source?: 'extension' | 'prompt' | 'skill';
 }>;
 
 export type PiRpcCommandsData = Readonly<{

@@ -1,4 +1,4 @@
-import type { ActionId } from '@happier-dev/protocol';
+import type { ActionId, ApprovalRequestOriginV1 } from '@happier-dev/protocol';
 
 type ActionExecutorResult = Readonly<
   | { ok: true; result: unknown }
@@ -9,25 +9,45 @@ type ActionExecutorLike = Readonly<{
   execute: (
     actionId: ActionId,
     input: unknown,
-    ctx: Readonly<{ defaultSessionId: string; surface: 'mcp' | 'cli' | 'session_agent' }>,
+    ctx: Readonly<{
+      defaultSessionId: string;
+      surface: 'mcp' | 'cli' | 'session_agent';
+      approvalOrigin?: ApprovalRequestOriginV1 | null;
+      callerPermissionMode?: string | null;
+      actionRequestId?: string | null;
+    }>,
   ) => Promise<ActionExecutorResult>;
 }>;
 
 export function createChangeTitleToolHandler(params: Readonly<{
   executor: ActionExecutorLike;
   surface: 'mcp' | 'cli' | 'session_agent';
+  resolveCallerPermissionMode?: (() => string | null | undefined) | null;
   afterCommit?: (args: Readonly<{ sessionId: string; title: string }>) => Promise<void> | void;
-}>): (sessionId: string, title: string) => Promise<unknown> {
-  return async (sessionId: string, title: string) => {
+}>): (sessionId: string, title: string, options?: Readonly<{ approvalOrigin?: ApprovalRequestOriginV1 | null }>) => Promise<unknown> {
+  return async (sessionId, title, options) => {
     const normalizedSessionId = String(sessionId ?? '').trim();
     if (!normalizedSessionId) {
       return { success: false, error: 'session_not_selected' };
     }
 
+    const approvalOrigin = options?.approvalOrigin ?? null;
+    const callerPermissionMode = params.resolveCallerPermissionMode?.() ?? null;
+    const actionRequestId = approvalOrigin?.toolCallId
+      ?? approvalOrigin?.mcpRequestId
+      ?? approvalOrigin?.messageId
+      ?? approvalOrigin?.parentMessageId
+      ?? null;
     const res = await params.executor.execute(
       'session.title.set',
       { sessionId: normalizedSessionId, title },
-      { surface: params.surface, defaultSessionId: normalizedSessionId },
+      {
+        surface: params.surface,
+        defaultSessionId: normalizedSessionId,
+        ...(approvalOrigin ? { approvalOrigin } : {}),
+        ...(callerPermissionMode ? { callerPermissionMode } : {}),
+        ...(actionRequestId ? { actionRequestId } : {}),
+      },
     );
 
     if (!res.ok) {

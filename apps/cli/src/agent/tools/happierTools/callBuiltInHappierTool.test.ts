@@ -3,7 +3,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const resolveSessionTransportContext = vi.fn();
 const updateSessionMetadataWithRetry = vi.fn();
 const startExecutionRun = vi.fn();
-const createCliActionExecutor = vi.fn(() => ({
+const callMachineRpc = vi.fn();
+const createCliActionExecutor = vi.fn((..._args: unknown[]) => ({
   execute,
 }));
 const execute = vi.fn();
@@ -22,6 +23,11 @@ vi.mock('@/session/actions/createCliActionExecutor', () => ({
 
 vi.mock('@/session/services/executionRuns', () => ({
   startExecutionRun,
+}));
+
+vi.mock('@/session/transport/rpc/machineRpc', () => ({
+  // Replace only the account machine-RPC boundary; the Agent bridge remains real.
+  callMachineRpc,
 }));
 
 vi.mock('@/session/transport/rpc/sessionRpc', () => ({
@@ -76,6 +82,103 @@ describe('callBuiltInHappierTool', () => {
     );
   });
 
+  it('dispatches trusted session-agent bridge calls on the agent surface with session machine context', async () => {
+    resolveSessionTransportContext.mockResolvedValueOnce({
+      ok: true,
+      sessionId: 'sess-1',
+      rawSession: {
+        id: 'sess-1',
+        machineId: 'machine-1',
+        metadata: { summary: { text: 'Old title' }, permissionMode: 'safe-yolo' },
+      },
+      ctx: { type: 'plain' as const },
+      mode: 'plain' as const,
+    });
+    execute.mockResolvedValueOnce({ ok: true, result: { matches: [] } });
+
+    const { callBuiltInHappierTool } = await import('./callBuiltInHappierTool');
+    const result = await callBuiltInHappierTool({
+      credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) } },
+      sessionId: 'sess-1',
+      toolName: 'action_execute',
+      args: {
+        actionId: 'memory.search',
+        input: { query: { v: 1, query: 'bridge', scope: { type: 'global' }, mode: 'hints' } },
+      },
+      invocation: 'session_agent_bridge',
+      toolCallId: 'pi-tool-call-1',
+    });
+
+    expect(result).toEqual({ ok: true, result: { matches: [] } });
+    expect(execute).toHaveBeenCalledWith(
+      'memory.search',
+      expect.objectContaining({ machineId: 'machine-1' }),
+      expect.objectContaining({
+        defaultSessionId: 'sess-1',
+        defaultSessionMachineId: 'machine-1',
+        surface: 'session_agent',
+        callerPermissionMode: 'safe-yolo',
+        actionRequestId: 'pi-tool-call-1',
+        approvalOrigin: {
+          kind: 'transcript_tool_call',
+          sessionId: 'sess-1',
+          toolCallId: 'pi-tool-call-1',
+          toolName: 'action_execute',
+        },
+      }),
+    );
+
+    callMachineRpc.mockResolvedValueOnce({ v: 1, ok: true, hits: [] });
+    const memoryDeps = createCliActionExecutor.mock.calls.at(-1)?.[1] as {
+      daemonMemorySearch: (args: unknown) => Promise<unknown>;
+    };
+    await expect(memoryDeps.daemonMemorySearch({
+      machineId: 'machine-1',
+      query: { v: 1, query: 'bridge', scope: { type: 'global' }, mode: 'hints' },
+    })).resolves.toEqual({ v: 1, ok: true, hits: [] });
+    expect(callMachineRpc).toHaveBeenCalledWith({
+      credentials: expect.objectContaining({ token: 'token' }),
+      machineId: 'machine-1',
+      method: 'daemon.memory.search',
+      request: { v: 1, query: 'bridge', scope: { type: 'global' }, mode: 'hints' },
+    });
+  });
+
+  it('rejects session-agent bridge calls when session permission metadata cannot be decrypted', async () => {
+    resolveSessionTransportContext.mockResolvedValueOnce({
+      ok: true,
+      sessionId: 'sess-1',
+      rawSession: {
+        id: 'sess-1',
+        machineId: 'machine-1',
+        metadata: 'not-valid-encrypted-metadata',
+      },
+      ctx: { type: 'plain' as const },
+      mode: 'e2ee' as const,
+    });
+
+    const { callBuiltInHappierTool } = await import('./callBuiltInHappierTool');
+    const result = await callBuiltInHappierTool({
+      credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) } },
+      sessionId: 'sess-1',
+      toolName: 'action_execute',
+      args: {
+        actionId: 'session.message.send',
+        input: { sessionId: 'sess-1', message: 'should not be sent' },
+      },
+      invocation: 'session_agent_bridge',
+      toolCallId: 'pi-tool-call-1',
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      errorCode: 'session_metadata_unavailable',
+      error: 'Session metadata is unavailable for Agent tool authorization',
+    });
+    expect(createCliActionExecutor).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
+  });
+
   it('rejects action_options_resolve on the CLI surface', async () => {
     const { callBuiltInHappierTool } = await import('./callBuiltInHappierTool');
     const result = await callBuiltInHappierTool({
@@ -99,14 +202,21 @@ describe('callBuiltInHappierTool', () => {
       }),
     });
     expect(execute).not.toHaveBeenCalled();
-    expect(createCliActionExecutor).toHaveBeenCalledWith(expect.objectContaining({
-      token: 'token',
-      sessionId: 'sess-1',
-      rawSession: {
-        id: 'sess-1',
-        metadata: { summary: { text: 'Old title' } },
-      },
-    }));
+    expect(createCliActionExecutor).toHaveBeenCalledWith(
+      expect.objectContaining({
+        token: 'token',
+        sessionId: 'sess-1',
+        rawSession: {
+          id: 'sess-1',
+          metadata: { summary: { text: 'Old title' } },
+        },
+      }),
+      expect.objectContaining({
+        daemonMemorySearch: expect.any(Function),
+        daemonMemoryGetWindow: expect.any(Function),
+        daemonMemoryEnsureUpToDate: expect.any(Function),
+      }),
+    );
   });
 
   it('preserves session resolution ambiguity details for built-in tool calls', async () => {
@@ -217,10 +327,10 @@ describe('callBuiltInHappierTool', () => {
     const result = await callBuiltInHappierTool({
       credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) } },
       sessionId: 'sess-1',
-      toolName: 'memory_search',
+      toolName: 'memory_ensure_up_to_date',
       args: {
         machineId: 'machine-1',
-        query: { q: 'needle' },
+        sessionId: 'sess-1',
       },
     });
 
@@ -229,7 +339,7 @@ describe('callBuiltInHappierTool', () => {
       errorCode: 'action_disabled',
       error: 'Action is disabled',
       details: expect.objectContaining({
-        actionId: 'memory.search',
+        actionId: 'memory.ensure_up_to_date',
         surface: 'cli',
         reason: 'unsupported_surface',
         settingsState: 'enabled',

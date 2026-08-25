@@ -4,7 +4,7 @@ import { dirname } from 'node:path';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { writeExecutableShimSync } from '@/testkit/fs/executableShim';
 import { createTempDirSync, removeTempDirSync } from '@/testkit/fs/tempDir';
-import { buildPiRpcArgs, buildPiToolsForPermissionMode, createPiBackend } from './backend';
+import { buildPiRpcArgs, buildPiToolsForPermissionMode, createPiBackend, resolveHappyBridgeExtensionArgs } from './backend';
 import { HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY } from '@/daemon/connectedServices/connectedServiceChildEnvironment';
 import {
   PI_BROKER_SELECTIONS_ENV,
@@ -15,14 +15,6 @@ import {
 const envKeys = ['PATH', 'HAPPIER_PI_PATH', HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY] as const;
 const TEMP_DIRS = new Set<string>();
 let envScope = createEnvKeyScope(envKeys);
-
-function readBackendArgs(backend: unknown): readonly string[] {
-  if (!backend || typeof backend !== 'object' || !('options' in backend)) return [];
-  const options = (backend as { options?: unknown }).options;
-  if (!options || typeof options !== 'object' || !('args' in options)) return [];
-  const args = (options as { args?: unknown }).args;
-  return Array.isArray(args) && args.every((arg) => typeof arg === 'string') ? args : [];
-}
 
 function createFakeBin(name: string): string {
   const dir = createTempDirSync('happier-pi-backend-');
@@ -59,7 +51,8 @@ describe('pi backend argv', () => {
       permissionMode: 'default',
     });
 
-    const args = readBackendArgs(backend);
+    const args = (backend as any).options?.args as string[] | undefined;
+    expect(Array.isArray(args)).toBe(true);
     expect(args).toContain('--thinking');
     expect(args).toContain('high');
   });
@@ -73,7 +66,8 @@ describe('pi backend argv', () => {
       permissionMode: 'default',
     });
 
-    const args = readBackendArgs(backend);
+    const args = (backend as any).options?.args as string[] | undefined;
+    expect(Array.isArray(args)).toBe(true);
     expect(args).not.toContain('--thinking');
   });
 
@@ -161,6 +155,125 @@ describe('pi backend argv', () => {
       '--extension',
       resolvePiBrokerExtensionPath(agentDir),
     ]));
+  });
+
+  it('forwards appendSystemPromptText via spawn options, never as literal argv', () => {
+    process.env.PATH = '';
+    process.env.HAPPIER_PI_PATH = createFakeBin('pi');
+
+    const backend = createPiBackend({
+      cwd: '/tmp',
+      env: {},
+      permissionMode: 'default',
+      appendSystemPromptText: 'CLAUDE_PATTERN_PROMPT',
+    });
+
+    // The args array must never carry the literal prompt text (process-list-visible,
+    // unbounded); the backend materializes a protected temp file and injects the flag at
+    // spawn time.
+    const args = (backend as any).options?.args as string[] | undefined;
+    expect(Array.isArray(args)).toBe(true);
+    expect(args).not.toContain('--append-system-prompt');
+    expect(args).not.toContain('CLAUDE_PATTERN_PROMPT');
+    expect((backend as any).options?.appendSystemPromptText).toBe('CLAUDE_PATTERN_PROMPT');
+  });
+
+  it('treats blank appendSystemPromptText as null', () => {
+    process.env.PATH = '';
+    process.env.HAPPIER_PI_PATH = createFakeBin('pi');
+
+    const backend = createPiBackend({
+      cwd: '/tmp',
+      env: {},
+      permissionMode: 'default',
+      appendSystemPromptText: '   ',
+    });
+
+    expect((backend as any).options?.appendSystemPromptText).toBeNull();
+  });
+});
+
+describe('happy tools bridge extension args', () => {
+  const baseBridge = {
+    extensionPath: '/agent/extensions/happier-pi-tools-bridge.js',
+    sessionConfig: {
+      v: 1 as const,
+      sessionId: 'happy-session-1',
+      directTools: [{
+        name: 'change_title',
+        title: 'Change title',
+        description: 'Change the session title',
+        inputSchema: { type: 'object' },
+        call: { toolName: 'change_title', actionId: null },
+      }],
+      promptAddition: 'TITLE_GUIDANCE',
+      launch: { filePath: process.execPath, argPrefix: [], env: {} },
+    },
+  };
+
+  it('passes only the shared extension path in static argv', () => {
+    expect(resolveHappyBridgeExtensionArgs({
+      happyToolsBridge: baseBridge,
+    })).toEqual([
+      '--extension',
+      baseBridge.extensionPath,
+    ]);
+  });
+
+  it('emits no extension args without resolved bridge options', () => {
+    expect(resolveHappyBridgeExtensionArgs({
+      happyToolsBridge: undefined,
+    })).toEqual([]);
+  });
+
+  it('keeps session policy in protected config text rather than argv or env', () => {
+    process.env.PATH = '';
+    process.env.HAPPIER_PI_PATH = createFakeBin('pi');
+
+    const backend = createPiBackend({
+      cwd: '/tmp',
+      env: {},
+      permissionMode: 'default',
+      happierSessionId: 'happy-session-1',
+      happyToolsBridge: baseBridge,
+    }) as unknown as { options?: { args?: string[]; env?: Record<string, string>; toolsBridgeConfigText?: string | null } };
+
+    expect(backend.options?.args).toEqual(expect.arrayContaining([
+      '--extension',
+      baseBridge.extensionPath,
+    ]));
+    expect(backend.options?.args).not.toContain('TITLE_GUIDANCE');
+    expect(backend.options?.args).not.toContain('happy-session-1');
+    expect(backend.options?.env).not.toHaveProperty('HAPPIER_PI_BRIDGE_CONFIG');
+    expect(JSON.parse(backend.options?.toolsBridgeConfigText ?? '{}')).toEqual(baseBridge.sessionConfig);
+  });
+
+  it.each(['plan', 'read-only', 'safe-yolo'] as const)(
+    'keeps native bridge tools available when %s restricts Pi built-in tools',
+    (permissionMode) => {
+      process.env.PATH = '';
+      process.env.HAPPIER_PI_PATH = createFakeBin('pi');
+
+      const backend = createPiBackend({
+        cwd: '/tmp',
+        env: {},
+        permissionMode,
+        happierSessionId: 'happy-session-1',
+        happyToolsBridge: baseBridge,
+      }) as unknown as { options?: { args?: string[] } };
+
+      const toolsFlagIndex = backend.options?.args?.indexOf('--tools') ?? -1;
+      expect(toolsFlagIndex).toBeGreaterThanOrEqual(0);
+      expect(backend.options?.args?.[toolsFlagIndex + 1]?.split(',')).toContain('change_title');
+    },
+  );
+});
+
+describe('buildPiRpcArgs', () => {
+  it('never emits --append-system-prompt (the backend injects the file-backed flag at spawn time)', () => {
+    const args = buildPiRpcArgs();
+    expect(args).not.toContain('--append-system-prompt');
+    expect(args).toEqual(['--mode', 'rpc']);
   });
 });
 

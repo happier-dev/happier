@@ -22,6 +22,7 @@ export type SerializedActionSpec = Readonly<{
   approval: ActionSpec['approval'];
   surfaces: ActionSpec['surfaces'];
   toolExposure: ActionSpec['toolExposure'] | null;
+  contextualDefaults: ActionSpec['contextualDefaults'] | null;
   inputHints: ActionSpec['inputHints'] | null;
 }>;
 
@@ -107,6 +108,7 @@ export function serializeActionSpec(spec: ActionSpec): SerializedActionSpec {
     approval: spec.approval,
     surfaces: spec.surfaces,
     toolExposure: spec.toolExposure ?? null,
+    contextualDefaults: spec.contextualDefaults ?? null,
     inputHints: spec.inputHints ?? null,
   };
 }

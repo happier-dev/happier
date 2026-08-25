@@ -71,6 +71,7 @@ describe('runKimi', () => {
       getAbortSignal: () => new AbortController().signal,
       setThinking: vi.fn(),
       memoryRecallGuidanceEnabled: false,
+      toolDelivery: 'unsupported',
       turnAssistantPreviewTracker: {} as never,
       providerInputConsumer: {} as never,
     });

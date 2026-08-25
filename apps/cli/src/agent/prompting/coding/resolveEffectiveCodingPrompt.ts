@@ -15,6 +15,7 @@ import {
 } from '@/agent/promptLibrary/resolveCliPromptStackSystemAppendBlocks';
 import { resolveCodingProviderBehaviorBlocks } from './providerPromptBehaviorRegistry';
 import { resolveCodingToolDeliveryBlocks } from './toolDeliveryPromptRegistry';
+import { resolveSessionCodingPromptSettings } from './resolveSessionCodingPromptSettings';
 
 type FetchPromptArtifactRecord = (artifactId: string) => Promise<PromptArtifactRecord | null>;
 export type { PromptArtifactRecord };
@@ -59,8 +60,13 @@ export async function resolveEffectiveCodingPromptPlan(
       ? args.memoryRecallGuidanceEnabled
       : await resolveCliMemoryRecallGuidanceEnabled();
 
+  // One resolved coding-prompt behavior decision per spawn: the selected profile's
+  // override merged over global account settings. Both the base prompt blocks and the
+  // tool-delivery appendix consume this merged record so they can never disagree.
+  const basePromptSettings = resolveSessionCodingPromptSettings({ settings, profileId: args.profileId });
+
   const basePlan = buildCodingSessionPromptPlanBaseV1({
-    settings,
+    settings: basePromptSettings,
     base: args.baseOverride === null ? '' : args.baseOverride,
     executionRunsFeatureEnabled: args.executionRunsFeatureEnabled === true,
     memoryRecallGuidanceEnabled,
@@ -92,7 +98,9 @@ export async function resolveEffectiveCodingPromptPlan(
       delivery: toolDelivery,
       sessionId,
       directory,
-      settings,
+      // Merged settings (profile override applied): the appendix must honor the same
+      // resolved coding-prompt behavior as the base blocks above.
+      settings: basePromptSettings,
       memoryRecallGuidance: {
         enabled: memoryRecallGuidanceEnabled,
         machineId: args.memoryMachineId ?? null,

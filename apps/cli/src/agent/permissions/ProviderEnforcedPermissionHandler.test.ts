@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import type { AcpPermissionHandler } from '@/agent/acp/AcpBackend';
+import type { ApiSessionClient } from '@/api/session/sessionClient';
 import { ProviderEnforcedPermissionHandler } from './ProviderEnforcedPermissionHandler';
 import { __resetToolTraceForTests } from '@/agent/tools/trace/toolTrace';
 
@@ -34,6 +35,11 @@ class FakeSession {
   }
 }
 
+function asApiSessionClient(session: FakeSession): ApiSessionClient {
+  // This fixture intentionally implements only the session boundary exercised by the permission handler.
+  return session as unknown as ApiSessionClient;
+}
+
 async function settledState<T>(promise: Promise<T>): Promise<'pending' | 'fulfilled' | 'rejected'> {
   await Promise.resolve();
   await Promise.resolve();
@@ -56,7 +62,7 @@ describe('ProviderEnforcedPermissionHandler always-auto-approve matching', () =>
 
   it('auto-approves known safe tools but does not auto-approve substring collisions', async () => {
     const session = new FakeSession();
-    const handler = new ProviderEnforcedPermissionHandler(session as any, { logPrefix: '[Test]' });
+    const handler = new ProviderEnforcedPermissionHandler(asApiSessionClient(session), { logPrefix: '[Test]' });
 
     await expect(handler.handleToolCall('safe-1', 'think', {})).resolves.toEqual({ decision: 'approved' });
     await expect(handler.handleToolCall('safe-2', 'mcp__happier__change_title', {})).resolves.toEqual({ decision: 'approved' });
@@ -91,7 +97,7 @@ describe('ProviderEnforcedPermissionHandler always-auto-approve matching', () =>
 
   it('cancels one pending request without aborting neighboring permissions', async () => {
     const session = new FakeSession();
-    const handler = new ProviderEnforcedPermissionHandler(session as any, { logPrefix: '[Test]' });
+    const handler = new ProviderEnforcedPermissionHandler(asApiSessionClient(session), { logPrefix: '[Test]' });
     const expired = handler.handleToolCall('expired-1', 'AskUserQuestion', {
       questions: [{ question: 'Continue?', header: 'Test', multiSelect: false, options: [{ label: 'Yes', description: '' }] }],
     });
@@ -149,6 +155,57 @@ describe('ProviderEnforcedPermissionHandler always-auto-approve matching', () =>
     expect(session.agentState.completedRequests['title-1']).toMatchObject({
       tool: 'mcp__happier__change_title',
       status: 'denied',
+      decision: 'denied',
+    });
+  });
+
+  it('falls back to account prompt settings when a compatibility session has no metadata snapshot reader', async () => {
+    const session = new FakeSession();
+    Object.defineProperty(session, 'getMetadataSnapshot', { value: undefined });
+    const handler = new ProviderEnforcedPermissionHandler(session as any, {
+      logPrefix: '[Test]',
+      getAccountSettings: () => ({
+        codingPromptBehaviorV1: {
+          v: 1,
+          sessionTitleUpdates: 'disabled',
+          responseOptions: 'agent',
+        },
+      } as any),
+    });
+
+    await expect(handler.handleToolCall('title-compat-1', 'mcp__happier__change_title', { title: 'Renamed' })).resolves.toEqual({
+      decision: 'denied',
+    });
+  });
+
+  it('denies session title tool calls when a profile override disables title updates over an enabled global', async () => {
+    const session = new FakeSession();
+    session.metadata = { profileId: 'profile-no-titles' };
+    const handler = new ProviderEnforcedPermissionHandler(session as any, {
+      logPrefix: '[Test]',
+      getAccountSettings: () => ({
+        codingPromptBehaviorV1: {
+          v: 1,
+          sessionTitleUpdates: 'ongoing',
+          responseOptions: 'agent',
+        },
+        profiles: [
+          {
+            id: 'profile-no-titles',
+            name: 'Profile (no titles)',
+            codingPromptBehaviorV1: {
+              v: 1,
+              sessionTitleUpdates: 'disabled',
+            },
+          },
+        ],
+      } as any),
+    });
+
+    // The deny layer must evaluate the same merged decision as the prompt and the
+    // tools bridge: the profile override disables title updates even though the
+    // global account default is ongoing.
+    await expect(handler.handleToolCall('title-1', 'mcp__happier__change_title', { title: 'Renamed' })).resolves.toEqual({
       decision: 'denied',
     });
   });

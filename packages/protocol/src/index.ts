@@ -3068,6 +3068,13 @@ export {
   type CodingPromptSessionTitleUpdatesModeV1,
   type CodingPromptBehaviorV1,
 } from './prompts/codingPromptBehaviorV1.js';
+
+export {
+  CodingPromptBehaviorOverrideV1Schema,
+  resolveCodingPromptBehaviorV1WithOverride,
+  applyCodingPromptBehaviorOverrideToSettings,
+  type CodingPromptBehaviorOverrideV1,
+} from './prompts/codingPromptBehaviorV1.js';
 export {
   CHANGE_TITLE_INSTRUCTION_V1,
   buildChangeTitleInstructionV1,

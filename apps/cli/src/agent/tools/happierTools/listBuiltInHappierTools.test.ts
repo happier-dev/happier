@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol';
 
 const env = process.env;
 
@@ -95,5 +96,44 @@ describe('listBuiltInHappierTools', () => {
     const names = listBuiltInHappierTools({ surface: 'session_agent' }).map((tool) => tool.name);
 
     expect(names).toContain('subagents_delegate_start');
+  });
+
+  it('does not expose change_title when session title updates are discoverable-only', async () => {
+    const { listBuiltInHappierTools } = await import('./listBuiltInHappierTools');
+    const names = listBuiltInHappierTools({
+      surface: 'session_agent',
+      actionsSettings: ActionsSettingsV1Schema.parse({
+        v: 1,
+        actions: {
+          'session.title.set': {
+            toolExposureModes: { session_agent: 'discoverable_only' },
+          },
+        },
+      }),
+    }).map((tool) => tool.name);
+
+    expect(names).not.toContain('change_title');
+  });
+
+  it('adds guidance-required direct tools without overriding an explicit discoverable-only preference', async () => {
+    const { listBuiltInHappierTools } = await import('./listBuiltInHappierTools');
+    const required = listBuiltInHappierTools({
+      surface: 'session_agent',
+      requiredDirectActionIds: ['memory.search', 'memory.get_window'],
+    }).map((tool) => tool.name);
+    expect(required).toEqual(expect.arrayContaining(['memory_search', 'memory_get_window']));
+
+    const explicitlyDiscoverable = listBuiltInHappierTools({
+      surface: 'session_agent',
+      requiredDirectActionIds: ['memory.search', 'memory.get_window'],
+      actionsSettings: ActionsSettingsV1Schema.parse({
+        v: 1,
+        actions: {
+          'memory.search': { toolExposureModes: { session_agent: 'discoverable_only' } },
+        },
+      }),
+    }).map((tool) => tool.name);
+    expect(explicitlyDiscoverable).not.toContain('memory_search');
+    expect(explicitlyDiscoverable).toContain('memory_get_window');
   });
 });
