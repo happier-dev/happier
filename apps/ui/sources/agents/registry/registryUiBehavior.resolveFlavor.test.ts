@@ -8,6 +8,7 @@ import {
     resolveAgentUiBehaviorFromFlavor,
     resolveAgentUiBehaviorFromSessionMetadata,
     resolvePendingDeliveryLabelKeyForSession,
+    resolveSessionGoalActionCapabilityProfile,
     supportsEditableSessionGoals,
 } from './registryUiBehavior';
 
@@ -144,7 +145,7 @@ describe('resolveAgentUiBehaviorFromFlavor', () => {
         expect(unknownBehavior.newSession?.canSelectWithoutDetectedCli).toBeUndefined();
     });
 
-    it('allows editable goals for Codex app-server sessions without enabling them for ACP or other agents', () => {
+    it('requires both Codex app-server semantics and live goal controls', () => {
         const appServerMetadata = {
             ...BASE_METADATA,
             agentRuntimeDescriptorV1: {
@@ -164,7 +165,16 @@ describe('resolveAgentUiBehaviorFromFlavor', () => {
 
         expect(supportsEditableSessionGoals({
             agentId: 'codex',
-            session: makeSession({ metadata: appServerMetadata }),
+            session: makeSession({
+                active: true,
+                metadata: appServerMetadata,
+                agentState: {
+                    capabilities: {
+                        sessionGoalSetSupported: true,
+                        sessionGoalClearSupported: true,
+                    },
+                },
+            }),
         })).toBe(true);
         expect(supportsEditableSessionGoals({
             agentId: 'codex',
@@ -173,6 +183,38 @@ describe('resolveAgentUiBehaviorFromFlavor', () => {
         expect(supportsEditableSessionGoals({
             agentId: 'claude',
             session: makeSession({ active: true, metadata: { ...BASE_METADATA, flavor: 'claude' } }),
+        })).toBe(false);
+    });
+
+    it('intersects the full Codex goal surface with the active runner registry', () => {
+        const session = makeSession({
+            active: true,
+            metadata: {
+                ...BASE_METADATA,
+                agentRuntimeDescriptorV1: {
+                    v: 1,
+                    agentId: 'codex',
+                    provider: { backendMode: 'appServer' },
+                },
+            },
+            agentState: {
+                capabilities: {
+                    sessionGoalSetSupported: true,
+                    sessionGoalClearSupported: false,
+                },
+            },
+        });
+
+        expect(resolveSessionGoalActionCapabilityProfile({ agentId: 'codex', session })).toEqual({
+            canEdit: true,
+            canStop: true,
+            canClear: false,
+            canConfigureBudget: true,
+        });
+        expect(supportsEditableSessionGoals({ agentId: 'codex', session })).toBe(true);
+        expect(supportsEditableSessionGoals({
+            agentId: 'codex',
+            session: makeSession({ ...session, agentState: null }),
         })).toBe(false);
     });
 
@@ -191,6 +233,22 @@ describe('resolveAgentUiBehaviorFromFlavor', () => {
                     },
                 } satisfies Metadata,
             }),
+            daemonGoalControlsSupported: true,
         })).toBe(true);
+        expect(supportsEditableSessionGoals({
+            agentId: 'codex',
+            session: makeSession({
+                active: false,
+                metadata: {
+                    ...BASE_METADATA,
+                    sessionWorkStateV1: {
+                        v: 1,
+                        agentId: 'codex',
+                        backendId: 'codex',
+                        items: [{ id: 'goal-1', kind: 'goal', title: 'Ship port' }],
+                    },
+                } satisfies Metadata,
+            }),
+        })).toBe(false);
     });
 });

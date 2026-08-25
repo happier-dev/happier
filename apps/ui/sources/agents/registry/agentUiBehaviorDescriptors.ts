@@ -36,6 +36,7 @@ import {
 } from './uiDescriptorDiagnostics';
 import { createDescriptorAdapterBehavior } from './agentUiBehaviorDescriptorAdapters';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+import { resolveSessionGoalExecutionCapabilities } from '@/sync/domains/session/control/sessionGoalExecutionCapabilities';
 
 type SettingsKey = Extract<keyof Settings, string>;
 
@@ -599,12 +600,14 @@ type EditableGoalsSession = Readonly<{
 function readLiveGoalActionCapabilityProfile(
     session: EditableGoalsSession,
 ): Readonly<{ canEdit: boolean; canStop: false; canClear: boolean; canConfigureBudget: false }> | null {
-    if (session.active !== true) return null;
-    const capabilities = session.agentState?.capabilities;
-    const canEdit = capabilities?.sessionGoalSetSupported === true;
-    const canClear = capabilities?.sessionGoalClearSupported === true;
-    if (!canEdit && !canClear) return null;
-    return { canEdit, canStop: false, canClear, canConfigureBudget: false };
+    const execution = resolveSessionGoalExecutionCapabilities({ session });
+    if (!execution.canSet && !execution.canClear) return null;
+    return {
+        canEdit: execution.canSet,
+        canStop: false,
+        canClear: execution.canClear,
+        canConfigureBudget: false,
+    };
 }
 
 function createWorkStateBehavior(

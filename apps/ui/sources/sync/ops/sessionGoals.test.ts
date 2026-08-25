@@ -45,7 +45,17 @@ describe('session goal operations', () => {
         machineRpcWithServerScopeMock.mockReset();
         resolvePreferredServerIdForSessionIdMock.mockReset();
         resumeSessionMock.mockReset();
-        storageStateMock.sessions = {};
+        storageStateMock.sessions = {
+            'session-1': {
+                active: true,
+                agentState: {
+                    capabilities: {
+                        sessionGoalSetSupported: true,
+                        sessionGoalClearSupported: true,
+                    },
+                },
+            },
+        };
         storageStateMock.sessionMessages = {};
         storageStateMock.machines = {};
         storageStateMock.settings = {};
@@ -151,7 +161,7 @@ describe('session goal operations', () => {
                 id: 'machine-1',
                 active: true,
                 activeAt: 20,
-                metadata: { host: 'host.local' },
+                metadata: { host: 'host.local', daemonSessionGoalControlsSupported: true },
             },
         };
         storageStateMock.getProjectForSession.mockReturnValue({
@@ -202,7 +212,7 @@ describe('session goal operations', () => {
                 id: 'machine-1',
                 active: true,
                 activeAt: 20,
-                metadata: { host: 'host.local' },
+                metadata: { host: 'host.local', daemonSessionGoalControlsSupported: true },
             },
         };
         storageStateMock.getProjectForSession.mockReturnValue({
@@ -245,7 +255,7 @@ describe('session goal operations', () => {
                 id: 'machine-1',
                 active: true,
                 activeAt: 20,
-                metadata: { host: 'host.local' },
+                metadata: { host: 'host.local', daemonSessionGoalControlsSupported: true },
             },
         };
         storageStateMock.getProjectForSession.mockReturnValue({
@@ -295,7 +305,7 @@ describe('session goal operations', () => {
                 id: 'machine-1',
                 active: true,
                 activeAt: 20,
-                metadata: { host: 'host.local' },
+                metadata: { host: 'host.local', daemonSessionGoalControlsSupported: true },
             },
         };
         storageStateMock.getProjectForSession.mockReturnValue({
@@ -342,7 +352,7 @@ describe('session goal operations', () => {
                 id: 'machine-1',
                 active: true,
                 activeAt: 20,
-                metadata: { host: 'host.local' },
+                metadata: { host: 'host.local', daemonSessionGoalControlsSupported: true },
             },
         };
         storageStateMock.getProjectForSession.mockReturnValue({
@@ -393,12 +403,76 @@ describe('session goal operations', () => {
         expect(machineRpcWithServerScopeMock).not.toHaveBeenCalled();
     });
 
+    it('fails closed before resuming when an inactive session targets an older daemon', async () => {
+        storageStateMock.sessions = {
+            'session-1': {
+                active: false,
+                metadata: {
+                    flavor: 'codex',
+                    path: '/repo',
+                    machineId: 'machine-1',
+                    codexSessionId: 'thread-1',
+                    codexBackendMode: 'appServer',
+                },
+            },
+        };
+        storageStateMock.machines = {
+            'machine-1': {
+                id: 'machine-1',
+                active: true,
+                metadata: { host: 'host.local' },
+            },
+        };
+        storageStateMock.getProjectForSession.mockReturnValue({
+            key: { machineId: 'machine-1', path: '/repo' },
+        });
+        const { sessionGoalSet } = await import('./sessionGoals');
+
+        await expect(sessionGoalSet('session-1', { objective: 'must not disappear' })).resolves.toEqual({
+            ok: false,
+            error: 'session_goal_control_unsupported',
+            errorCode: 'session_goal_control_unsupported',
+        });
+        expect(resumeSessionMock).not.toHaveBeenCalled();
+        expect(sessionRpcWithServerScopeMock).not.toHaveBeenCalled();
+        expect(machineRpcWithServerScopeMock).not.toHaveBeenCalled();
+    });
+
+    it('fails closed before calling an active runner that did not advertise goal controls', async () => {
+        storageStateMock.sessions = {
+            'session-1': {
+                active: true,
+                agentState: { capabilities: {} },
+                metadata: { machineId: 'machine-1' },
+            },
+        };
+        const { sessionGoalClear, sessionGoalSet } = await import('./sessionGoals');
+
+        await expect(sessionGoalSet('session-1', { objective: 'unsupported' })).resolves.toEqual({
+            ok: false,
+            error: 'session_goal_control_unsupported',
+            errorCode: 'session_goal_control_unsupported',
+        });
+        await expect(sessionGoalClear('session-1')).resolves.toEqual({
+            ok: false,
+            error: 'session_goal_control_unsupported',
+            errorCode: 'session_goal_control_unsupported',
+        });
+        expect(sessionRpcWithServerScopeMock).not.toHaveBeenCalled();
+    });
+
     it('keeps active status-only changes on the live session-scoped RPC path', async () => {
         resolvePreferredServerIdForSessionIdMock.mockReturnValue('server-owned');
         sessionRpcWithServerScopeMock.mockResolvedValue({ ok: true });
         storageStateMock.sessions = {
             'session-1': {
                 active: true,
+                agentState: {
+                    capabilities: {
+                        sessionGoalSetSupported: true,
+                        sessionGoalClearSupported: true,
+                    },
+                },
                 metadata: {
                     flavor: 'codex',
                     path: '/repo',

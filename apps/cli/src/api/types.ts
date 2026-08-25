@@ -360,6 +360,7 @@ export const MachineMetadataSchema = z.object({
   happyHomeDir: z.string(),
   happyLibDir: z.string(),
   daemonTerminalSessionAttachSupported: z.boolean().optional(),
+  daemonSessionGoalControlsSupported: z.boolean().optional(),
 })
 
 export type MachineMetadata = z.infer<typeof MachineMetadataSchema>

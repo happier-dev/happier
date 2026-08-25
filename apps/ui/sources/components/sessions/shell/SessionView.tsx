@@ -2703,6 +2703,9 @@ function SessionViewLoaded({
     }> | null>(null);
     const hasWriteAccess = hasSessionWriteAccess(session.accessLevel);
     const sessionMachineRecord = useMachine(typeof machineId === 'string' ? machineId : '');
+    const goalControlMachineId = controlMachineTarget?.machineId ?? machineId;
+    const goalControlMachineRecord = useMachine(typeof goalControlMachineId === 'string' ? goalControlMachineId : '');
+    const daemonGoalControlsSupported = goalControlMachineRecord?.metadata?.daemonSessionGoalControlsSupported === true;
     // Each successful connect stamps a new value, which is exactly the lifetime a
     // continuation inspection may be trusted for.
     const socketConnectionGeneration = useSocketStatus().lastConnectedAt;
@@ -2845,8 +2848,8 @@ function SessionViewLoaded({
         sessionAgentCatalogEntries,
     ]);
     const providerSupportsEditableSessionGoals = React.useMemo(
-        () => agentId ? supportsEditableSessionGoals({ agentId, session }) : false,
-        [agentId, session],
+        () => agentId ? supportsEditableSessionGoals({ agentId, session, daemonGoalControlsSupported }) : false,
+        [agentId, daemonGoalControlsSupported, session],
     );
     const canEditSessionGoals = React.useMemo(
         () => !externalSessionOperationShell.blocksNewOperation && isSessionGoalEditingAvailable({
@@ -2858,10 +2861,13 @@ function SessionViewLoaded({
     );
     // Provider goal-action capability profile for the "Set goal" form (no goal item yet). Lets a
     // provider (e.g. Claude) restrict the control surface to edit/clear, hiding the Codex-only budget
-    // editor before any native goal exists (QA-CHIP-2). Null → full legacy surface.
+    // editor before any native goal exists (QA-CHIP-2). The registry has already intersected
+    // provider semantics with runtime reachability.
     const sessionGoalActionCapabilityProfile = React.useMemo(
-        () => (agentId ? resolveSessionGoalActionCapabilityProfile({ agentId, session }) : null),
-        [agentId, session],
+        () => (agentId
+            ? resolveSessionGoalActionCapabilityProfile({ agentId, session, daemonGoalControlsSupported })
+            : null),
+        [agentId, daemonGoalControlsSupported, session],
     );
     const setSessionGoalForView = React.useCallback(
         (request: Parameters<typeof sessionGoalSet>[1]) => sessionGoalSet(sessionId, request),

@@ -51,6 +51,7 @@ import {
 import { LEGACY_COMPAT_PRIMARY_AGENT_ID } from '@/agents/backendCatalog/legacyCompatAgents';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { resolveSessionMachineId } from '@/sync/domains/session/external/resolveSessionMachineId';
+import { resolveSessionGoalExecutionCapabilities } from '@/sync/domains/session/control/sessionGoalExecutionCapabilities';
 
 type CapabilityResults = Partial<Record<CapabilityId, CapabilityDetectResult>>;
 
@@ -918,26 +919,51 @@ export function supportsDetectedMcpConfigScan(agentId: AgentLookupId): boolean {
 export function supportsEditableSessionGoals(ctx: {
     agentId: AgentLookupId;
     session: Session;
+    daemonGoalControlsSupported?: boolean;
 }): boolean {
-    const fn = resolveAgentUiBehavior(
-        ctx.agentId,
-        resolveOwningMachineIdForSession(ctx.session),
-    ).workState?.supportsEditableGoals;
-    return fn ? fn(ctx) : false;
+    const profile = resolveSessionGoalActionCapabilityProfile(ctx);
+    return profile !== null && (
+        profile.canEdit
+        || profile.canStop
+        || profile.canClear
+        || profile.canConfigureBudget
+    );
 }
 
 /**
- * Provider goal-action capability profile for a session, used as the fallback when no goal item
- * carries its own `goalCapabilities` (the "Set goal" form before any native goal exists). Returns
- * null when the provider declares no profile, in which case the full legacy control surface applies.
+ * Effective goal-action profile for a session. Provider semantics are intersected with the active
+ * runner or target daemon's callable controls here so every goal surface consumes one decision.
+ * Returns null only when the provider does not semantically support editable goals.
  */
 export function resolveSessionGoalActionCapabilityProfile(ctx: {
     agentId: AgentLookupId;
     session: Session;
+    daemonGoalControlsSupported?: boolean;
 }): GoalActionCapabilities | null {
-    const fn = resolveAgentUiBehavior(
+    const workState = resolveAgentUiBehavior(
         ctx.agentId,
         resolveOwningMachineIdForSession(ctx.session),
-    ).workState?.resolveGoalActionCapabilityProfile;
-    return fn ? fn(ctx) : null;
+    ).workState;
+    if (!workState?.supportsEditableGoals?.(ctx)) return null;
+
+    const semanticProfile = workState.resolveGoalActionCapabilityProfile?.(ctx) ?? {
+        canEdit: true,
+        canStop: true,
+        canClear: true,
+        canConfigureBudget: true,
+    };
+    const execution = resolveSessionGoalExecutionCapabilities({
+        session: ctx.session,
+        machine: {
+            metadata: {
+                daemonSessionGoalControlsSupported: ctx.daemonGoalControlsSupported,
+            },
+        },
+    });
+    return {
+        canEdit: semanticProfile.canEdit && execution.canSet,
+        canStop: semanticProfile.canStop && execution.canSet,
+        canClear: semanticProfile.canClear && execution.canClear,
+        canConfigureBudget: semanticProfile.canConfigureBudget && execution.canSet,
+    };
 }

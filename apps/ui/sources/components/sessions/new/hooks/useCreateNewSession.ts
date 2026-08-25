@@ -533,6 +533,10 @@ export function useCreateNewSession(params: Readonly<{
                 ? resolveSessionComposerSend({
                     input: sessionPrompt,
                     executionRunsEnabled: current.executionRunsEnabled === true,
+                    // A new session has no live runtime registry yet. Preserve the user's text and
+                    // let the Agent handle `/goal` until the attached runner can advertise the
+                    // callable controls used by the local goal UI.
+                    goalControlsAvailable: false,
                     promptInvocationsV1: storage.getState().settings.promptInvocationsV1,
                 })
                 : null;

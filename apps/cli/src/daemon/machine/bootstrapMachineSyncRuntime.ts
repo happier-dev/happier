@@ -53,6 +53,7 @@ import {
 import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
 import { createRuntimeProviderModelManagementServices } from '@/providers/modelManagement/runtimeServices';
 import { createRuntimeProviderConnectionServices } from '@/providers/connections/runtimeServices';
+import { refreshMachineMetadataForCurrentDaemon } from './metadata';
 import { createLegacyProfileMigrationRpcServices } from '@/providers/migrations/rpc';
 import {
   createRuntimeProviderOperationsProducer,
@@ -1367,31 +1368,15 @@ export async function bootstrapMachineSyncRuntime(
       const operation = (async () => {
         try {
           const outcome = await connectedApiMachine.updateMachineMetadata((metadata) => {
-            const base = (metadata ?? (params.machine.metadata as any) ?? {}) as any;
-            const next: MachineMetadata = {
-              ...base,
+            const base = (metadata ?? params.machine.metadata ?? {}) as Partial<MachineMetadata>;
+            return refreshMachineMetadataForCurrentDaemon(base, {
               host: params.preferredHost,
               platform: os.platform(),
               happyCliVersion: params.cliVersion,
               homeDir: os.homedir(),
               happyHomeDir: params.happyHomeDir,
               happyLibDir: params.happyLibDir,
-            } as MachineMetadata;
-
-            const current = base as Partial<MachineMetadata>;
-            const isSame =
-              current.host === next.host &&
-              current.platform === next.platform &&
-              current.happyCliVersion === next.happyCliVersion &&
-              current.homeDir === next.homeDir &&
-              current.happyHomeDir === next.happyHomeDir &&
-              current.happyLibDir === next.happyLibDir;
-
-            if (isSame) {
-              return base as MachineMetadata;
-            }
-
-            return next;
+            });
           });
           if (outcome !== 'suppressed') {
             didRefreshMachineMetadata = true;

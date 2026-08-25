@@ -30,7 +30,11 @@ describe('resolveSessionComposerSend', () => {
     });
 
     it('intercepts /goal complete as a client-side goal status command', () => {
-        expect(resolveSessionComposerSend({ input: '/goal complete', executionRunsEnabled: true })).toEqual({
+        expect(resolveSessionComposerSend({
+            input: '/goal complete',
+            executionRunsEnabled: true,
+            goalControlsAvailable: true,
+        })).toEqual({
             kind: 'goal',
             command: 'complete',
         });
@@ -42,6 +46,13 @@ describe('resolveSessionComposerSend', () => {
             executionRunsEnabled: true,
             goalControlsAvailable: false,
         })).toEqual({
+            kind: 'send',
+            text: '/goal clear',
+        });
+    });
+
+    it('fails closed when a caller omits goal-control availability', () => {
+        expect(resolveSessionComposerSend({ input: '/goal clear', executionRunsEnabled: true })).toEqual({
             kind: 'send',
             text: '/goal clear',
         });
