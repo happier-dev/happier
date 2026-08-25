@@ -1,6 +1,7 @@
 import { readServerEnabledBit } from "@happier-dev/protocol";
 import { describe, expect, it } from "vitest";
 
+import { peerMediationGrantSigningEnv as grantSigningEnv } from "@/testkit/env";
 import { resolveServerFeaturePayload } from "./catalog/resolveServerFeaturePayload";
 import { serverFeatureRegistry } from "./catalog/serverFeatureRegistry";
 
@@ -88,6 +89,7 @@ describe("local services server feature resolver", () => {
 
     it("reports PMS relay and WebSocket preview support only when server-routed tunnels are enabled", () => {
         const disabledTunnelPayload = resolveServerFeaturePayload({
+            ...grantSigningEnv(),
             HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__ENABLED: "1",
         } as NodeJS.ProcessEnv, serverFeatureRegistry);
         expect(disabledTunnelPayload.capabilities.localServices.preview).toMatchObject({
@@ -100,6 +102,7 @@ describe("local services server feature resolver", () => {
         );
 
         const enabledTunnelPayload = resolveServerFeaturePayload({
+            ...grantSigningEnv(),
             HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__ENABLED: "1",
             HAPPIER_FEATURE_MACHINES_TUNNEL_SERVER_ROUTED__ENABLED: "1",
             HAPPIER_FEATURE_MACHINES_TUNNEL_ALLOWED_PORTS: "5173",
@@ -113,8 +116,58 @@ describe("local services server feature resolver", () => {
         });
     });
 
+    // F-PREVIEW-1: route-grant signing is the master switch for the server-relayed preview tunnel
+    // (`docs/peer-mediation.md` §2.1) — `createLocalServicePreviewTunnelOpener` throws
+    // `grant_signing_unavailable` without it, so every request through the data path fails. The
+    // capability used to advertise `pmsRelayReady: true` regardless, which is a readiness bit that
+    // cannot fail: five QA sessions read it as a cleared gate on a stack where the preview 500s on
+    // every path.
+    it("does not advertise the PMS relay as ready when route-grant signing is unconfigured", () => {
+        const payload = resolveServerFeaturePayload({
+            HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__ENABLED: "1",
+            HAPPIER_FEATURE_MACHINES_TUNNEL_SERVER_ROUTED__ENABLED: "1",
+            HAPPIER_FEATURE_MACHINES_TUNNEL_ALLOWED_PORTS: "5173",
+        } as NodeJS.ProcessEnv, serverFeatureRegistry);
+
+        expect(payload.capabilities.machines.peerMediation.grantSigningKeys).toEqual([]);
+        expect(payload.capabilities.localServices.preview).toMatchObject({
+            pmsRelayReady: false,
+            pmsStreamingReady: false,
+            webSocketSupport: false,
+            streamingSseSupport: false,
+        });
+        expect(payload.capabilities.localServices.preview.disabledReasons).toContain(
+            "peer_mediation_grant_signing_unavailable",
+        );
+        // The private preview feature itself stays on: path-mode registration and token exchange
+        // still work, and this reason names the one prerequisite the data path is missing.
+        expect(readServerEnabledBit(payload, "localServices.preview")).toBe(true);
+    });
+
+    it("carries the same unmet signing prerequisite onto the public exposure node", () => {
+        const payload = resolveServerFeaturePayload({
+            HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__ENABLED: "1",
+            HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__HOST_ORIGIN_DOMAIN: "preview.example.test",
+            HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__ENABLED: "1",
+            HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__ALLOWED_MODES: "secret_link",
+            HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__MAX_TTL_MS: "300000",
+            HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__ALLOW_TEST_AUDIT_SINK: "1",
+            HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__RATE_LIMIT_PROFILE_IDS: "default",
+            HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__ALLOW_TEST_RATE_LIMIT_CHECKER: "1",
+            HAPPIER_FEATURE_MACHINES_TUNNEL_SERVER_ROUTED__ENABLED: "1",
+            HAPPIER_FEATURE_MACHINES_TUNNEL_ALLOWED_PORTS: "5173",
+            HAPPIER_PUBLIC_SERVER_URL: "https://app.example.test",
+        } as NodeJS.ProcessEnv, serverFeatureRegistry);
+
+        expect(readServerEnabledBit(payload, "localServices.publicPreview")).toBe(false);
+        expect(payload.capabilities.localServices.publicPreview.disabledReasons).toContain(
+            "peer_mediation_grant_signing_unavailable",
+        );
+    });
+
     it("enables public exposure only when preview and public exposure are explicitly enabled", () => {
         const payload = resolveServerFeaturePayload({
+            ...grantSigningEnv(),
             HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__ENABLED: "1",
             HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__HOST_ORIGIN_DOMAIN: "preview.example.test",
             HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__ENABLED: "1",
@@ -307,6 +360,7 @@ describe("local services server feature resolver", () => {
 
     it("enables production self-hosted public exposure with the in-memory limiter when the canonical feature opt-in is enabled", () => {
         const baseEnv = {
+            ...grantSigningEnv(),
             NODE_ENV: "production",
             HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__ENABLED: "1",
             HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__HOST_ORIGIN_DOMAIN: "preview.example.test",
@@ -372,7 +426,11 @@ describe("local services server feature resolver", () => {
 
     it("reports public WebSocket exposure support only when public preview and PMS relay are ready", () => {
         const payload = resolveServerFeaturePayload({
+            ...grantSigningEnv(),
             HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__ENABLED: "1",
+            // S-3: an isolated exposure origin is a hard prerequisite for enabling public preview.
+            HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__HOST_ORIGIN_DOMAIN: "preview.example.test",
+            HAPPIER_PUBLIC_SERVER_URL: "https://app.example.test",
             HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__ENABLED: "1",
             HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__ALLOWED_MODES: "secret_link",
             HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__MAX_TTL_MS: "300000",

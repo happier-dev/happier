@@ -6,7 +6,6 @@ import type {
     SealedConnectedServiceQuotaSnapshotV1,
     SealedProviderAccountUsageSnapshotV1,
 } from "@happier-dev/protocol";
-import { readAccountScopedCiphertextKindByte } from "@happier-dev/protocol";
 import { isPrismaErrorCode, type TransactionClient } from "@/storage/prisma";
 
 import { inTx } from "@/storage/inTx";
@@ -144,23 +143,6 @@ function sameLegacyQuotaProjections(
     return JSON.stringify(left) === JSON.stringify(right);
 }
 
-function isHistoricalPauAliasReseal(params: Readonly<{
-    existing: SealedProviderAccountUsageSnapshotV1 | undefined;
-    incoming: SealedProviderAccountUsageSnapshotV1 | undefined;
-}>): boolean {
-    return Boolean(
-        params.existing
-        && params.incoming
-        && params.existing.ciphertext !== params.incoming.ciphertext
-        && readAccountScopedCiphertextKindByte(
-            params.existing.ciphertext,
-        ) === 5
-        && readAccountScopedCiphertextKindByte(
-            params.incoming.ciphertext,
-        ) === 6,
-    );
-}
-
 async function writeProviderAccountUsageRecordWithPolicyInClient(
     params: ProviderAccountUsageWritePolicyParams & Readonly<{ client: ProviderAccountUsagePolicyClient }>,
 ): Promise<"written" | "noop" | "stale"> {
@@ -239,15 +221,6 @@ async function writeProviderAccountUsageRecordWithPolicyInClient(
                 existingLegacyQuotaProjections,
                 nextLegacyQuotaProjections,
             );
-        const historicalAliasReseal =
-            existingFingerprint === incomingFingerprint
-            && existingFetchedAt === params.fetchedAt
-            && params.payloadMode === "sealed_account_scoped_v1"
-            && isHistoricalPauAliasReseal({
-                existing: existing.sealedPayload,
-                incoming: params.sealedPayload,
-            });
-
         let nextWrite;
         let result: "written" | "noop" | "stale";
         if (!incomingFingerprint) {
@@ -263,7 +236,6 @@ async function writeProviderAccountUsageRecordWithPolicyInClient(
                 !isNewer
                 && !clearsRefreshRequest
                 && !compatibilityProjectionChanged
-                && !historicalAliasReseal
             ) return "noop";
             const preservedStatus = existing.status === "refresh_requested" ? params.status : existing.status;
             nextWrite = buildWriteParams(params, {
@@ -274,11 +246,7 @@ async function writeProviderAccountUsageRecordWithPolicyInClient(
                     ? (isNewer ? params.snapshot : existing.snapshot)
                     : undefined,
                 sealedPayload: params.payloadMode === "sealed_account_scoped_v1"
-                    ? (
-                        isNewer || historicalAliasReseal
-                            ? params.sealedPayload
-                            : existing.sealedPayload
-                    )
+                    ? (isNewer ? params.sealedPayload : existing.sealedPayload)
                     : undefined,
                 materialFingerprint: incomingFingerprint,
                 legacyQuotaCompatibilityProjections:

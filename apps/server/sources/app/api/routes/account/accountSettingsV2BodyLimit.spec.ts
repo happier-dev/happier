@@ -23,7 +23,7 @@ describe("Account Settings V2 request body limit", () => {
     });
 
     it("rejects a raw request body over the ceiling even when its parsed ciphertext is small", async () => {
-        const app = createAuthenticatedTestApp();
+        const app = createAuthenticatedTestApp({ bodyLimit: 100 * 1024 * 1024 });
         registerAccountSettingsRoutes(app as any);
         await app.ready();
 
@@ -43,6 +43,60 @@ describe("Account Settings V2 request body limit", () => {
             });
 
             expect(response.statusCode).toBe(413);
+        } finally {
+            await app.close();
+        }
+    });
+});
+
+describe("Account Settings V1 request body limit", () => {
+    it("provisions enough raw-body capacity for a maximally sized canonical encrypted request", () => {
+        const app = createFakeRouteApp();
+        registerAccountSettingsRoutes(app as any);
+        const maximumCanonicalRequestBytes = new TextEncoder().encode(JSON.stringify({
+            settings: "x".repeat(ACCOUNT_SETTINGS_MAX_ENCRYPTED_CIPHERTEXT_UTF8_BYTES),
+            expectedVersion: Number.MAX_VALUE,
+        })).byteLength;
+
+        const route = getRouteEntry(app, "POST", "/v1/account/settings");
+        expect(route.opts.bodyLimit).toBeGreaterThanOrEqual(maximumCanonicalRequestBytes);
+        expect(route.opts.bodyLimit).toBeLessThan(100 * 1024 * 1024);
+    });
+
+    it("rejects a predecessor raw request body over the ceiling before it reaches the transaction", async () => {
+        const app = createAuthenticatedTestApp({ bodyLimit: 100 * 1024 * 1024 });
+        registerAccountSettingsRoutes(app as any);
+        await app.ready();
+
+        try {
+            const response = await app.inject({
+                method: "POST",
+                url: "/v1/account/settings",
+                headers: {
+                    "content-type": "application/json",
+                    "x-test-user-id": "account-1",
+                },
+                payload: `{"settings":"${"x".repeat(
+                    ACCOUNT_SETTINGS_MAX_ENCRYPTED_CIPHERTEXT_UTF8_BYTES * 2,
+                )}","expectedVersion":0}`,
+            });
+
+            expect(response.statusCode).toBe(413);
+
+            // Positive control: a canonical maximum ciphertext must still be
+            // admitted past the ceiling and reach the handler.
+            const admitted = await app.inject({
+                method: "POST",
+                url: "/v1/account/settings",
+                headers: {
+                    "content-type": "application/json",
+                    "x-test-user-id": "account-1",
+                },
+                payload: `{"settings":"${"x".repeat(
+                    ACCOUNT_SETTINGS_MAX_ENCRYPTED_CIPHERTEXT_UTF8_BYTES,
+                )}","expectedVersion":0}`,
+            });
+            expect(admitted.statusCode).not.toBe(413);
         } finally {
             await app.close();
         }

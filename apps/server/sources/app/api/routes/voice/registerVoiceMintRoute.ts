@@ -47,10 +47,11 @@ async function lockAccountForMint(tx: Tx, accountId: string): Promise<void> {
     if (provider !== "postgres") return;
     const raw = tx as { $executeRawUnsafe?: (query: string, ...values: unknown[]) => Promise<unknown> };
     if (typeof raw.$executeRawUnsafe !== "function") return;
-    // hashtextextended yields a stable bigint key from the account id for the
-    // advisory lock namespace; a fixed first key scopes it to voice minting.
+    // Hash the account id into the bigint transaction-lock key. The fixed seed
+    // scopes that hash to Voice minting without narrowing it to PostgreSQL's
+    // incompatible two-int4 advisory-lock overload.
     await raw.$executeRawUnsafe(
-        `SELECT pg_advisory_xact_lock($1, hashtextextended($2, 0))`,
+        `SELECT pg_advisory_xact_lock(hashtextextended($2, $1::bigint))`,
         0x766f6963, // "voic"
         accountId,
     );

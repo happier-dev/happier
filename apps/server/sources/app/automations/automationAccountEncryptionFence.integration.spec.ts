@@ -9,7 +9,10 @@ import { inTx } from "@/storage/inTx";
 import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 
-import { createAutomation } from "./automationCrudService";
+import {
+    createAutomation,
+    finalizeDeletedAutomationsWithoutRetainedRunsTx,
+} from "./automationCrudService";
 import { AutomationValidationError } from "./automationValidation";
 
 function deferred(): Readonly<{
@@ -68,6 +71,56 @@ function installOldModeAccountReadBoundary(params: Readonly<{
                 const wrappedTx = new Proxy(tx, {
                     get(target, property, receiver) {
                         if (property === "account") return account;
+                        return Reflect.get(target, property, receiver);
+                    },
+                });
+                return await operation(wrappedTx);
+            },
+            options,
+        );
+    };
+    return {
+        restore: () => {
+            mutableDb.$transaction = originalTransaction;
+        },
+    };
+}
+
+function installAutomationFinalizerCandidateReadProbe(params: Readonly<{
+    onCandidateRead: () => void;
+}>): Readonly<{ restore: () => void }> {
+    // SQLite keeps the Account writer lock at database scope. This test-only
+    // Prisma boundary probe observes the real finalizer's candidate read so
+    // the test can distinguish Account-first admission from a late delete lock.
+    const mutableDb = db as any;
+    const originalTransaction = mutableDb.$transaction;
+    mutableDb.$transaction = async (operation: unknown, options: unknown) => {
+        if (typeof operation !== "function") {
+            return await originalTransaction.call(mutableDb, operation, options);
+        }
+        return await originalTransaction.call(
+            mutableDb,
+            async (tx: any) => {
+                const originalFindMany = tx.automation.findMany.bind(tx.automation);
+                const automation = new Proxy(tx.automation, {
+                    get(target, property, receiver) {
+                        if (property !== "findMany") {
+                            return Reflect.get(target, property, receiver);
+                        }
+                        return async (args: any) => {
+                            if (
+                                args?.where?.deletedAt?.not !== undefined
+                                && args?.where?.runs?.none !== undefined
+                            ) {
+                                params.onCandidateRead();
+                            }
+                            return await originalFindMany(args);
+                        };
+                    },
+                });
+                const wrappedTx = new Proxy(tx, {
+                    get(target, property, receiver) {
+                        if (property === "automation") return automation;
                         return Reflect.get(target, property, receiver);
                     },
                 });
@@ -187,5 +240,117 @@ describe("Automation Account-encryption transition fence (integration)", () => {
         })).resolves.toEqual({ encryptionMode: "plain" });
         await expect(db.automation.count({ where: { accountId: account.id } })).resolves.toBe(0);
         await expect(db.automationRun.count({ where: { accountId: account.id } })).resolves.toBe(0);
+    }, 30_000);
+
+    it("does not scan a soft-deleted Automation before the Account transition fence releases", async () => {
+        const account = await db.account.create({
+            data: {
+                ...createSignedAccountContentBinding(),
+                encryptionMode: "e2ee",
+                seq: 41,
+            },
+            select: { id: true },
+        });
+        await db.automation.create({
+            data: {
+                id: "automation-retention-finalizer-transition-fence",
+                accountId: account.id,
+                name: "soft deleted transition participant",
+                enabled: false,
+                deletedAt: new Date("2026-08-25T12:00:00.000Z"),
+                triggerKind: "schedule",
+                scheduleKind: "interval",
+                everyMs: 60_000,
+                targetType: "new_session",
+                templateCiphertext: buildEncryptedTemplate(),
+                templateVersion: 1,
+            },
+        });
+        const otherAccount = await db.account.create({
+            data: { encryptionMode: "plain" },
+            select: { id: true },
+        });
+        await db.automation.create({
+            data: {
+                id: "automation-retention-finalizer-other-account",
+                accountId: otherAccount.id,
+                name: "unrelated soft deleted Automation",
+                enabled: false,
+                deletedAt: new Date("2026-08-24T12:00:00.000Z"),
+                triggerKind: "schedule",
+                scheduleKind: "interval",
+                everyMs: 60_000,
+                targetType: "new_session",
+                templateCiphertext: JSON.stringify({
+                    kind: "happier_automation_template_plain_v1",
+                    payload: { prompt: "unrelated" },
+                }),
+                templateVersion: 1,
+            },
+        });
+
+        let candidateRead = false;
+        const candidateProbe = installAutomationFinalizerCandidateReadProbe({
+            onCandidateRead: () => {
+                candidateRead = true;
+            },
+        });
+        const finalizerTransactionEntered = deferred();
+        const beginFinalizer = deferred();
+        let finalizerSettled = false;
+        const finalizer = inTx(async (tx) => {
+            finalizerTransactionEntered.resolve();
+            await beginFinalizer.promise;
+            return await finalizeDeletedAutomationsWithoutRetainedRunsTx({
+                tx,
+                accountId: account.id,
+                limit: 1,
+            });
+        }).finally(() => {
+            finalizerSettled = true;
+        });
+
+        await finalizerTransactionEntered.promise;
+        const transitionFenceAcquired = deferred();
+        const releaseTransition = deferred();
+        const transition = inTx(async (tx) => {
+            const fence = await acquireAccountEncryptionTransitionFenceInTx(tx, account.id);
+            expect(fence.status).toBe("ready");
+            if (fence.status !== "ready") return;
+            transitionFenceAcquired.resolve();
+            await releaseTransition.promise;
+            await applyAccountEncryptionTransitionInTx(tx, {
+                accountId: account.id,
+                expectedVersion: fence.account.version,
+                toMode: "plain",
+                contentKey: { kind: "preserve" },
+            });
+        });
+
+        await transitionFenceAcquired.promise;
+
+        try {
+            beginFinalizer.resolve();
+            await new Promise((resolve) => setTimeout(resolve, 100));
+            expect(candidateRead).toBe(false);
+            expect(finalizerSettled).toBe(false);
+
+            releaseTransition.resolve();
+            await transition;
+            await expect(finalizer).resolves.toBe(1);
+        } finally {
+            candidateProbe.restore();
+            beginFinalizer.resolve();
+            releaseTransition.resolve();
+            await transition.catch(() => undefined);
+            await finalizer.catch(() => undefined);
+        }
+
+        await expect(db.account.findUniqueOrThrow({
+            where: { id: account.id },
+            select: { encryptionMode: true },
+        })).resolves.toEqual({ encryptionMode: "plain" });
+        await expect(db.automation.count({ where: { accountId: account.id } })).resolves.toBe(0);
+        await expect(db.automation.count({ where: { accountId: otherAccount.id } })).resolves.toBe(1);
     }, 30_000);
 });

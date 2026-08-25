@@ -71,6 +71,7 @@ function buildDispatchRequest(claim: Awaited<ReturnType<typeof claimNextAutomati
             handoffId: claim.handoffId,
             runId: claim.runId,
             automationId: claim.automationId,
+            occurrenceKey: claim.occurrenceKey,
             accountCurrentness: claim.accountCurrentness,
             resultEnvelope,
             replyContextEnvelope,

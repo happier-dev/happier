@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import type { LocalServicePreviewResourceV1 } from "@happier-dev/protocol";
 
+import { peerMediationGrantSigningEnv } from "@/testkit/env";
 import { registerLocalServiceRoutes } from "./registerRoutes";
 import type { LocalServicePreviewTunnelStream } from "@/app/local/services/preview/httpAdapter";
 
@@ -38,6 +39,7 @@ const preview: LocalServicePreviewResourceV1 = {
 
 function publicPreviewEnv(): NodeJS.ProcessEnv {
     return {
+        ...peerMediationGrantSigningEnv(),
         NODE_ENV: "test",
         HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__ENABLED: "1",
         HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__HOST_ORIGIN_DOMAIN: "preview.example.test",

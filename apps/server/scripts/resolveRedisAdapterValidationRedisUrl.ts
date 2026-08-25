@@ -1,4 +1,5 @@
 type RedisMemoryServerInstance = Readonly<{
+    start: () => Promise<boolean>;
     stop: () => Promise<boolean>;
     getIp: () => Promise<string>;
     getPort: () => Promise<number>;
@@ -6,14 +7,27 @@ type RedisMemoryServerInstance = Readonly<{
 
 type RedisMemoryServerModule = Readonly<{
     RedisMemoryServer: Readonly<{
-        create: () => Promise<RedisMemoryServerInstance>;
+        create: (options: Readonly<{
+            binary: Readonly<{
+                version: string;
+            }>;
+        }>) => Promise<RedisMemoryServerInstance>;
     }>;
 }>;
+
+const REDIS_MEMORY_SERVER_VERSION = '7.2.4';
 
 function buildMissingRedisMemoryServerError(error: unknown): Error {
     const message = error instanceof Error ? error.message : String(error);
     return new Error(
         `REDIS_URL is required when redis-memory-server is unavailable. Install the optional redis-memory-server dependency or set REDIS_URL explicitly. Original error: ${message}`,
+    );
+}
+
+function buildRedisMemoryServerStartError(error: unknown): Error {
+    const message = error instanceof Error ? error.message : String(error);
+    return new Error(
+        `REDIS_URL is required when embedded Redis ${REDIS_MEMORY_SERVER_VERSION} cannot start. Set REDIS_URL to a reachable Redis instance for Redis adapter validation. Original error: ${message}`,
     );
 }
 
@@ -42,12 +56,17 @@ export async function resolveRedisAdapterValidationRedisUrl(params: {
         throw buildMissingRedisMemoryServerError(error);
     }
 
-    const redisMemory = await redisMemoryModule.RedisMemoryServer.create();
-    const ip = await redisMemory.getIp();
-    const port = await redisMemory.getPort();
-
-    return {
-        redisUrl: `redis://${ip}:${port}`,
-        redisMemory,
-    };
+    try {
+        const redisMemory = await redisMemoryModule.RedisMemoryServer.create({
+            binary: { version: REDIS_MEMORY_SERVER_VERSION },
+        });
+        const ip = await redisMemory.getIp();
+        const port = await redisMemory.getPort();
+        return {
+            redisUrl: `redis://${ip}:${port}`,
+            redisMemory,
+        };
+    } catch (error) {
+        throw buildRedisMemoryServerStartError(error);
+    }
 }

@@ -91,6 +91,13 @@ export function registerAccountSettingsRoutes(app: Fastify): void {
 
     // Update Account Settings API
     app.post('/v1/account/settings', {
+        // The predecessor writer stores the same Account Settings document as
+        // V2 does, so it inherits the canonical envelope ceiling instead of the
+        // application-wide body limit. The V2 request form is the larger of the
+        // two encodings for one ciphertext, so reusing it admits every
+        // canonical V1 write and nothing beyond the stored document bound.
+        // Reads stay permissive for values a predecessor already stored.
+        bodyLimit: ACCOUNT_SETTINGS_V2_UPDATE_REQUEST_MAX_UTF8_BYTES,
         schema: {
             body: z.object({
                 settings: z.string().nullable(),

@@ -1053,4 +1053,46 @@ describe("local service preview routes", () => {
             `/v1/local-services/preview/preview_1/${CANONICAL_ENCODED_CRLF_PATH.slice(1)}`,
         );
     });
+
+    // F-5 (review gate R1, routed from C1-X5 / audit S-9). The path-mode exchange cookie follows
+    // the deployment: `Secure` on https, omitted on http where the browser would drop it and break
+    // the private preview outright. Pinned here because the option is supplied by the composition
+    // site — wiring it to the wrong consumer would otherwise fail silently.
+    it.each([
+        { name: "https deployment", publicBaseUrlSecure: true, expectSecure: true },
+        { name: "http deployment", publicBaseUrlSecure: false, expectSecure: false },
+    ])("marks the path-mode exchange cookie Secure only on an $name", async ({ publicBaseUrlSecure, expectSecure }) => {
+        const mod = await loadPreviewRoutesModule();
+        expect(mod?.registerLocalServicePreviewRoutes).toBeTypeOf("function");
+        if (!mod?.registerLocalServicePreviewRoutes) return;
+
+        const app = createFakeRouteApp();
+        mod.registerLocalServicePreviewRoutes(app as never, {
+            resolvePreview: vi.fn(() => preview),
+            validateAccess: vi.fn(() => ({ ok: true as const })),
+            exchangeAccessToken: vi.fn(() => ({
+                ok: true as const,
+                rawToken: "cookie_token_1",
+                expiresAt: 61_000,
+            })),
+            authorizeSessionAccess: allowSessionAccess(),
+            proxyHttp: vi.fn(async () => ({ ok: true as const })),
+            publicBaseUrlSecure,
+        });
+
+        const handler = getRouteHandler(app, "GET", "/v1/local-services/preview/:previewId/*");
+        const reply = createReplyStub();
+        await handler({
+            params: { previewId: "preview_1", "*": "" },
+            query: { previewToken: "token_1" },
+            headers: {},
+            method: "GET",
+        }, reply);
+
+        expect(reply.statusCode).toBe(303);
+        const setCookie = String(reply.headers["Set-Cookie"]);
+        expect(setCookie).toContain("happier_preview_token=cookie_token_1");
+        expect(setCookie).toContain("HttpOnly");
+        expect(setCookie.includes("Secure")).toBe(expectSecure);
+    });
 });

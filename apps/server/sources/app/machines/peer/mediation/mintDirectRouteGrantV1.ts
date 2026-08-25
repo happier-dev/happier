@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import tweetnacl from "tweetnacl";
 import {
-    DirectRouteGrantRevocationV1Schema,
     DirectRouteGrantScopeV1Schema,
     DirectRouteGrantPayloadV2Schema,
     PEER_MEDIATION_RECEIPTS,
@@ -11,7 +10,6 @@ import {
     type DirectPeerRouteKindV1,
     type DirectRouteGrantPayloadV1,
     type DirectRouteGrantPayloadV2,
-    type DirectRouteGrantRevocationV1,
     type DirectRouteGrantScopeV1,
     type PeerFlowKindV1,
     type SignedDirectRouteGrantV1,
@@ -265,33 +263,5 @@ export function mintDirectRouteGrantV2(input: MintDirectRouteGrantV2Input): Mint
             },
         },
         receipt: PEER_MEDIATION_RECEIPTS.routeGrantMinted,
-    };
-}
-
-export function createDirectRouteGrantRevocationRegistry(): {
-    revoke(revocation: DirectRouteGrantRevocationV1): void;
-    isRevoked(input: Readonly<{ grantId?: string; grantFamilyId?: string }>): boolean;
-    revokedGrantIds(): ReadonlySet<string>;
-    revokedGrantFamilyIds(): ReadonlySet<string>;
-} {
-    const grantIds = new Set<string>();
-    const grantFamilyIds = new Set<string>();
-
-    return {
-        revoke(revocation) {
-            const parsed = DirectRouteGrantRevocationV1Schema.parse(revocation);
-            if (parsed.grantId) grantIds.add(parsed.grantId);
-            if (parsed.grantFamilyId) grantFamilyIds.add(parsed.grantFamilyId);
-        },
-        isRevoked(input) {
-            return (input.grantId ? grantIds.has(input.grantId) : false)
-                || (input.grantFamilyId ? grantFamilyIds.has(input.grantFamilyId) : false);
-        },
-        revokedGrantIds() {
-            return grantIds;
-        },
-        revokedGrantFamilyIds() {
-            return grantFamilyIds;
-        },
     };
 }

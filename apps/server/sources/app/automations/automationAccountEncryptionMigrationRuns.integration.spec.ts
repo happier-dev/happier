@@ -18,8 +18,11 @@ import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lig
 
 import {
     AutomationAccountEncryptionMigrationConflictError,
+    applyAutomationAccountEncryptionTransitionStageInTx,
+    inspectAutomationAccountEncryptionTransitionInTx,
     matchAutomationAccountEncryptionMigrationPostStateInTx,
     migrateAutomationAccountEncryptionInTx,
+    validateAutomationAccountEncryptionTransitionStageInTx,
 } from "./automationCrudService";
 import { claimAutomationRun, heartbeatAutomationRun } from "./automationClaimService";
 import { cancelAutomationRun } from "./automationRunService";
@@ -229,24 +232,15 @@ function buildPlainResultEnvelope(params: Readonly<{
 }
 
 function buildPlainReplyContextEnvelope(params: Readonly<{
-    accountId: string;
     automationId: string;
-    runId: string;
-    handoffId: string;
+    occurrenceKey: string;
 }>, templateVersion: number): string {
     return JSON.stringify({
         t: "plain",
         v: {
             v: 1,
             correspondence: params,
-            source: {
-                kind: "automationResult",
-                automationRunId: params.runId,
-                resultId: params.handoffId,
-                automationId: params.automationId,
-                templateVersion,
-                resultDelivery: "finalResult",
-            },
+            templateVersion,
             opaqueContext: {
                 conversationId: "conversation-account-encryption-migration",
             },
@@ -381,6 +375,7 @@ async function seedAutomationRuns() {
         runId: conversationRunId,
         handoffId: "handoff-account-encryption-conversation",
     };
+    const conversationOccurrenceKey = deriveAutomationOccurrenceKeyV1(conversationEvidence);
     const conversationRun = await db.automationRun.create({
         data: {
             id: conversationRunId,
@@ -389,7 +384,7 @@ async function seedAutomationRuns() {
             state: "succeeded",
             originKind: "conversation",
             originOccurredAt: new Date(conversationEvidence.occurredAt),
-            occurrenceKey: deriveAutomationOccurrenceKeyV1(conversationEvidence),
+            occurrenceKey: conversationOccurrenceKey,
             occurrenceEvidenceEqualityTag: null,
             triggerEvidenceEnvelope: JSON.stringify({
                 t: "plain",
@@ -402,7 +397,10 @@ async function seedAutomationRuns() {
             }),
             resultEnvelope: buildPlainResultEnvelope(conversationCorrespondence),
             replyContextEnvelope: buildPlainReplyContextEnvelope(
-                conversationCorrespondence,
+                {
+                    automationId: conversationCorrespondence.automationId,
+                    occurrenceKey: conversationOccurrenceKey,
+                },
                 conversationAutomation.templateVersion,
             ),
             replyHandoffActionPluginId: "happier.channels",
@@ -1584,6 +1582,371 @@ describe("Automation account-encryption Run migration (integration)", () => {
         })).resolves.toBe(
             ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATIONS_MAX_ITEMS + 1,
         );
+    });
+
+    it("pages more than 500 current retained Runs and reapplies exact Event and Conversation evidence witnesses", async () => {
+        const account = await db.account.create({
+            data: {
+                id: "account-encryption-transition-current-pages",
+                ...createSignedAccountContentBinding(),
+                encryptionMode: "e2ee",
+            },
+            select: { id: true },
+        });
+        const eventAutomation = await db.automation.create({
+            data: {
+                id: "automation-encryption-transition-current-pages-event",
+                accountId: account.id,
+                name: "Current Event source page",
+                enabled: false,
+                triggerKind: "pluginEvent",
+                triggerEventPluginId: "com.example.github",
+                triggerEventLocalId: "repository-event",
+                triggerSourceSelectorId: SOURCE_SELECTOR_ID,
+                triggerSourceContractVersion: 1,
+                triggerObservationTransport: "checkpointedPull",
+                triggerDefinitionEnvelope: buildTriggerDefinitionEnvelope({
+                    automationId: "automation-encryption-transition-current-pages-event",
+                    templateVersion: 1,
+                    triggerKind: "pluginEvent",
+                    mode: "e2ee",
+                }),
+                targetType: "new_session",
+                templateCiphertext: buildEncryptedTemplate("current-page-event-template"),
+                templateVersion: 1,
+            },
+            select: { id: true },
+        });
+        const conversationAutomation = await db.automation.create({
+            data: {
+                id: "automation-encryption-transition-current-pages-conversation",
+                accountId: account.id,
+                name: "Current Conversation source page",
+                enabled: false,
+                triggerKind: "conversation",
+                triggerDefinitionEnvelope: buildTriggerDefinitionEnvelope({
+                    automationId: "automation-encryption-transition-current-pages-conversation",
+                    templateVersion: 1,
+                    triggerKind: "conversation",
+                    mode: "e2ee",
+                }),
+                targetType: "new_session",
+                templateCiphertext: buildEncryptedTemplate("current-page-conversation-template"),
+                templateVersion: 1,
+            },
+            select: { id: true },
+        });
+        const occurredAt = new Date("2026-08-12T00:00:00.000Z");
+        const eventEvidence = JSON.stringify({
+            t: "encrypted",
+            c: "exact-event-evidence-witness-bytes",
+        });
+        const conversationEvidence = JSON.stringify({
+            t: "encrypted",
+            c: "exact-conversation-evidence-witness-bytes",
+        });
+        // A SHA-256 base64url tag's final sextet has four significant bits.
+        // Keep this witness distinct from E2EE_TAG while retaining canonical
+        // base64url encoding.
+        const conversationTag = "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA";
+        await db.automationRun.createMany({
+            data: [
+                ...Array.from({ length: 499 }, (_, index) => ({
+                    id: `run-current-page-event-${String(index).padStart(3, "0")}`,
+                    accountId: account.id,
+                    automationId: eventAutomation.id,
+                    state: "queued" as const,
+                    originKind: "pluginEvent" as const,
+                    originOccurredAt: new Date(occurredAt.getTime() + index),
+                    occurrenceKey: `current-page-event-${index}`,
+                    occurrenceEvidenceEqualityTag: E2EE_TAG,
+                    originSourceSelectorId: SOURCE_SELECTOR_ID,
+                    triggerEvidenceEnvelope: JSON.stringify({
+                        t: "encrypted",
+                        c: `current-page-event-evidence-${index}`,
+                    }),
+                    scheduledAt: occurredAt,
+                    dueAt: occurredAt,
+                })),
+                {
+                    id: "run-current-page-event-witness",
+                    accountId: account.id,
+                    automationId: eventAutomation.id,
+                    state: "queued" as const,
+                    originKind: "pluginEvent" as const,
+                    originOccurredAt: occurredAt,
+                    occurrenceKey: "current-page-event-witness",
+                    occurrenceEvidenceEqualityTag: E2EE_TAG,
+                    originSourceSelectorId: SOURCE_SELECTOR_ID,
+                    triggerEvidenceEnvelope: eventEvidence,
+                    scheduledAt: occurredAt,
+                    dueAt: occurredAt,
+                },
+                {
+                    id: "run-current-page-conversation-witness",
+                    accountId: account.id,
+                    automationId: conversationAutomation.id,
+                    state: "queued" as const,
+                    originKind: "conversation" as const,
+                    originOccurredAt: occurredAt,
+                    occurrenceKey: "current-page-conversation-witness",
+                    occurrenceEvidenceEqualityTag: conversationTag,
+                    triggerEvidenceEnvelope: conversationEvidence,
+                    scheduledAt: occurredAt,
+                    dueAt: occurredAt,
+                },
+            ],
+        });
+
+        const first = await inTx(async (tx) => (
+            await inspectAutomationAccountEncryptionTransitionInTx({
+                tx,
+                accountId: account.id,
+                sourceMode: "e2ee",
+            })
+        ));
+        expect(first.status).toBe("complete");
+        if (first.status !== "complete" || !first.page.nextCursor) {
+            throw new Error("Expected the first retained Run source page to continue");
+        }
+        expect(first.page.runCount).toBe(498);
+        expect(first.page.nextCursor.kind).toBe("run");
+
+        const second = await inTx(async (tx) => (
+            await inspectAutomationAccountEncryptionTransitionInTx({
+                tx,
+                accountId: account.id,
+                sourceMode: "e2ee",
+                cursor: first.page.nextCursor,
+            })
+        ));
+        expect(second.status).toBe("complete");
+        if (second.status !== "complete") {
+            throw new Error("Expected the second retained Run source page to complete");
+        }
+        expect(second.page.runCount).toBe(3);
+        expect(second.page.nextCursor).toBeUndefined();
+
+        const currentRuns = [
+            ...first.page.items,
+            ...second.page.items,
+        ].filter((item) => item.kind === "run");
+        expect(currentRuns).toHaveLength(501);
+        const eventWitness = currentRuns.find(
+            (item) => item.runId === "run-current-page-event-witness",
+        );
+        const conversationWitness = currentRuns.find(
+            (item) => item.runId === "run-current-page-conversation-witness",
+        );
+        if (!eventWitness || !conversationWitness) {
+            throw new Error("Expected both retained Event and Conversation witnesses");
+        }
+        expect(eventWitness.source).toMatchObject({
+            triggerEvidenceEnvelope: eventEvidence,
+            occurrenceEvidenceEqualityTag: E2EE_TAG,
+        });
+        expect(conversationWitness.source).toMatchObject({
+            triggerEvidenceEnvelope: conversationEvidence,
+            occurrenceEvidenceEqualityTag: conversationTag,
+        });
+        const stageItems = [eventWitness, conversationWitness].map((item) => ({
+            kind: "run" as const,
+            runId: item.runId,
+            automationId: item.automationId,
+            expectedRevision: item.revision,
+            originKind: item.originKind,
+            occurrenceKey: item.occurrenceKey,
+            source: item.source,
+            target: {
+                triggerEvidenceEnvelope: item.source.triggerEvidenceEnvelope,
+                occurrenceEvidenceEqualityTag:
+                    item.source.occurrenceEvidenceEqualityTag,
+                executionInputEnvelope: item.source.executionInputEnvelope,
+                resultEnvelope: item.source.resultEnvelope,
+                replyContextEnvelope: item.source.replyContextEnvelope,
+                replyHandoffReceiptEnvelope:
+                    item.source.replyHandoffReceiptEnvelope,
+            },
+        }));
+        await expect(inTx(async (tx) => (
+            await validateAutomationAccountEncryptionTransitionStageInTx({
+                tx,
+                accountId: account.id,
+                fromMode: "e2ee",
+                toMode: "e2ee",
+                items: stageItems,
+            })
+        ))).resolves.toEqual({ status: "validated" });
+        await expect(inTx(async (tx) => (
+            await applyAutomationAccountEncryptionTransitionStageInTx({
+                tx,
+                accountId: account.id,
+                fromMode: "e2ee",
+                toMode: "e2ee",
+                items: stageItems,
+            })
+        ))).resolves.toEqual({ status: "applied" });
+        const retainedWitnesses = await db.automationRun.findMany({
+            where: { id: { in: stageItems.map((item) => item.runId) } },
+            orderBy: { id: "asc" },
+            select: {
+                id: true,
+                triggerEvidenceEnvelope: true,
+                occurrenceEvidenceEqualityTag: true,
+            },
+        });
+        expect(retainedWitnesses).toEqual([
+            {
+                id: "run-current-page-conversation-witness",
+                triggerEvidenceEnvelope: conversationEvidence,
+                occurrenceEvidenceEqualityTag: conversationTag,
+            },
+            {
+                id: "run-current-page-event-witness",
+                triggerEvidenceEnvelope: eventEvidence,
+                occurrenceEvidenceEqualityTag: E2EE_TAG,
+            },
+        ]);
+    });
+
+    it("skips more than one legacy page of compacted schedule history while retaining Event rejoin evidence in the staged census", async () => {
+        const account = await db.account.create({
+            data: {
+                id: "account-encryption-transition-compacted-history",
+                ...createSignedAccountContentBinding(),
+                encryptionMode: "e2ee",
+            },
+            select: { id: true },
+        });
+        const scheduleAutomation = await db.automation.create({
+            data: {
+                id: "automation-encryption-transition-compacted-history",
+                accountId: account.id,
+                name: "Compacted history source",
+                enabled: false,
+                triggerKind: "schedule",
+                scheduleKind: "interval",
+                everyMs: 60_000,
+                targetType: "new_session",
+                templateCiphertext: buildEncryptedTemplate("compacted-history-template"),
+                templateVersion: 1,
+            },
+            select: { id: true },
+        });
+        const eventAutomation = await db.automation.create({
+            data: {
+                id: "automation-encryption-transition-retained-event",
+                accountId: account.id,
+                name: "Retained Event evidence source",
+                enabled: false,
+                triggerKind: "pluginEvent",
+                triggerEventPluginId: "com.example.github",
+                triggerEventLocalId: "repository-event",
+                triggerSourceSelectorId: SOURCE_SELECTOR_ID,
+                triggerSourceContractVersion: 1,
+                triggerObservationTransport: "checkpointedPull",
+                triggerDefinitionEnvelope: buildTriggerDefinitionEnvelope({
+                    automationId: "automation-encryption-transition-retained-event",
+                    templateVersion: 1,
+                    triggerKind: "pluginEvent",
+                    mode: "e2ee",
+                }),
+                targetType: "new_session",
+                templateCiphertext: buildEncryptedTemplate("retained-event-template"),
+                templateVersion: 1,
+            },
+            select: { id: true },
+        });
+        const compactedAt = new Date("2026-08-12T00:00:00.000Z");
+        await db.automationRun.createMany({
+            data: Array.from({ length: 501 }, (_, index) => ({
+                id: `run-encryption-transition-compacted-${index}`,
+                accountId: account.id,
+                automationId: scheduleAutomation.id,
+                state: "succeeded" as const,
+                originKind: "scheduled" as const,
+                scheduledAt: new Date(1_724_000_000_000 + index),
+                dueAt: new Date(1_724_000_000_000 + index),
+                finishedAt: new Date(1_724_000_000_000 + index),
+                contentRemovedAt: compactedAt,
+            })),
+        });
+        const retainedRun = await db.automationRun.create({
+            data: {
+                id: "run-encryption-transition-retained-event",
+                accountId: account.id,
+                automationId: eventAutomation.id,
+                state: "succeeded",
+                originKind: "pluginEvent",
+                originOccurredAt: compactedAt,
+                occurrenceKey: "retained-event-occurrence",
+                occurrenceEvidenceEqualityTag: E2EE_TAG,
+                originSourceSelectorId: SOURCE_SELECTOR_ID,
+                triggerEvidenceEnvelope: JSON.stringify({
+                    t: "encrypted",
+                    c: "retained-event-evidence",
+                }),
+                scheduledAt: compactedAt,
+                dueAt: compactedAt,
+                finishedAt: compactedAt,
+            },
+            select: { id: true },
+        });
+
+        const inspected = await inTx(async (tx) => (
+            await inspectAutomationAccountEncryptionTransitionInTx({
+                tx,
+                accountId: account.id,
+                sourceMode: "e2ee",
+            })
+        ));
+        expect(inspected.status).toBe("complete");
+        if (inspected.status !== "complete") {
+            throw new Error("Expected compacted-history transition inventory to be complete");
+        }
+        expect(inspected.page.runCount).toBe(1);
+        expect(inspected.page.items.filter((item) => item.kind === "run"))
+            .toEqual([expect.objectContaining({ runId: retainedRun.id })]);
+        expect(inspected.page.nextCursor).toBeUndefined();
+
+        const retainedInventory = inspected.page.items.find(
+            (item) => item.kind === "run",
+        );
+        if (!retainedInventory || retainedInventory.kind !== "run") {
+            throw new Error("Expected retained Event evidence in the staged inventory");
+        }
+        const target = {
+            triggerEvidenceEnvelope: retainedInventory.source.triggerEvidenceEnvelope,
+            occurrenceEvidenceEqualityTag:
+                retainedInventory.source.occurrenceEvidenceEqualityTag,
+            executionInputEnvelope: retainedInventory.source.executionInputEnvelope,
+            resultEnvelope: retainedInventory.source.resultEnvelope,
+            replyContextEnvelope: retainedInventory.source.replyContextEnvelope,
+            replyHandoffReceiptEnvelope:
+                retainedInventory.source.replyHandoffReceiptEnvelope,
+        };
+        await expect(inTx(async (tx) => (
+            await validateAutomationAccountEncryptionTransitionStageInTx({
+                tx,
+                accountId: account.id,
+                fromMode: "e2ee",
+                toMode: "e2ee",
+                items: [{
+                    kind: "run",
+                    runId: retainedInventory.runId,
+                    automationId: retainedInventory.automationId,
+                    expectedRevision: retainedInventory.revision,
+                    originKind: retainedInventory.originKind,
+                    occurrenceKey: retainedInventory.occurrenceKey,
+                    source: {
+                        ...retainedInventory.source,
+                        occurrenceEvidenceEqualityTag:
+                            "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+                    },
+                    target,
+                }],
+            })
+        ))).resolves.toEqual({ status: "migration_incomplete" });
     });
 
     it("rejects a migration after canonical cancellation advances the Run revision", async () => {

@@ -19,14 +19,14 @@ import {
     convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1,
     createPluginInstallationManifestPublisherSigningInputV1,
     createAccountScopedCryptoMaterialSnapshotV1,
-    deriveAutomationEventTriggerEvidenceEqualityTagV1,
+    deriveAutomationOccurrenceTriggerEvidenceEqualityTagV1,
     deriveAutomationOccurrenceKeyV1,
     freezeAutomationRunPluginEventExecutionRecipeV1,
     normalizePluginReleaseFactsV1,
     serializeAutomationRunExecutionRecipeV1,
     sealAccountScopedBlobCiphertext,
-    sealAutomationEventTriggerEvidenceEnvelopeV1,
-    sealAutomationRunPluginEventTriggerEvidenceEnvelopeV1,
+    sealAutomationOccurrenceTriggerEvidenceEnvelopeV1,
+    sealAutomationRunTriggerEvidenceEnvelopeV1,
     sealAutomationTriggerDefinitionStoredEnvelopeV1,
     stringifyPluginInstallationManifestCanonicalJsonV1,
     type AccountEncryptionCurrentnessResponse,
@@ -813,7 +813,7 @@ function encryptedHostEvidence(params: Readonly<{
                 observationTransport: "checkpointedPull" as const,
                 occurrenceKey: deriveAutomationOccurrenceKeyV1(evidence),
                 occurredAt: event.occurredAt,
-                triggerEvidenceEnvelope: sealAutomationEventTriggerEvidenceEnvelopeV1({
+                triggerEvidenceEnvelope: sealAutomationOccurrenceTriggerEvidenceEnvelopeV1({
                     material: params.snapshot.material,
                     evidence,
                     randomBytes: (length) => Uint8Array.from(
@@ -822,14 +822,14 @@ function encryptedHostEvidence(params: Readonly<{
                     ),
                 }),
                 occurrenceEvidenceEqualityTag:
-                    deriveAutomationEventTriggerEvidenceEqualityTagV1({
+                    deriveAutomationOccurrenceTriggerEvidenceEqualityTagV1({
                         material: params.snapshot.material,
                         accountId: ACCOUNT_ID,
                         automationId: definition.automationId,
                         evidence,
                     }),
             };
-            const triggerEvidence = sealAutomationRunPluginEventTriggerEvidenceEnvelopeV1({
+            const triggerEvidence = sealAutomationRunTriggerEvidenceEnvelopeV1({
                 material: params.snapshot.material,
                 evidence: {
                     ...evidence,
@@ -1918,8 +1918,7 @@ describe("Automation Event admission", () => {
         expect(await db.automationRun.count({ where: { accountId: ACCOUNT_ID } })).toBe(0);
     });
 
-    it("rejoins E2EE Event evidence immutably while rejecting net-new outcomes prepared under a retired Event payload schema", async () => {
-        await seed();
+    async function configureE2eeEventAutomation() {
         const e2ee = await configureE2eeAccount();
         const e2eeRecipe = encryptedStrictEventDefinitionRecipe({
             snapshot: e2ee.snapshot,
@@ -1954,6 +1953,72 @@ describe("Automation Event admission", () => {
                 ),
             },
         });
+        return { e2ee, e2eeRecipe };
+    }
+
+    it("evaluates a repeated encrypted definition once and expands the outcome to every supplied position", async () => {
+        await seed();
+        const { e2ee, e2eeRecipe } = await configureE2eeEventAutomation();
+        const originalInput = input();
+        const hostEvidence = encryptedHostEvidence({
+            event: originalInput,
+            snapshot: e2ee.snapshot,
+            accountCurrentness: e2ee.accountCurrentness,
+            definitionRecipe: e2eeRecipe,
+        });
+        const definition = hostEvidence.definitions[0]!;
+
+        const admitted = await admitAutomationEventV1({
+            accountId: ACCOUNT_ID,
+            caller,
+            input: originalInput,
+            hostEvidence: { ...hostEvidence, definitions: [definition, definition] },
+        });
+
+        expect(admitted.results).toEqual([
+            expect.objectContaining({ kind: "admitted", checkpointSafe: true }),
+            expect.objectContaining({ kind: "admitted", checkpointSafe: true }),
+        ]);
+        expect((admitted.results[0] as { runId: string }).runId)
+            .toBe((admitted.results[1] as { runId: string }).runId);
+        expect(await db.automationRun.count({ where: { accountId: ACCOUNT_ID } })).toBe(1);
+    });
+
+    it("refuses one encrypted occurrence claimed twice with disagreeing evidence before writing any Run", async () => {
+        await seed();
+        const { e2ee, e2eeRecipe } = await configureE2eeEventAutomation();
+        const originalInput = input();
+        const hostEvidence = encryptedHostEvidence({
+            event: originalInput,
+            snapshot: e2ee.snapshot,
+            accountCurrentness: e2ee.accountCurrentness,
+            definitionRecipe: e2eeRecipe,
+        });
+        const definition = hostEvidence.definitions[0]!;
+
+        await expect(admitAutomationEventV1({
+            accountId: ACCOUNT_ID,
+            caller,
+            input: originalInput,
+            hostEvidence: {
+                ...hostEvidence,
+                definitions: [
+                    definition,
+                    { ...definition, occurredAt: definition.occurredAt + 1_000 },
+                ],
+            },
+        })).resolves.toEqual({
+            results: [
+                { kind: "blocked", reason: "occurrenceConflict", checkpointSafe: false },
+                { kind: "blocked", reason: "occurrenceConflict", checkpointSafe: false },
+            ],
+        });
+        expect(await db.automationRun.count({ where: { accountId: ACCOUNT_ID } })).toBe(0);
+    });
+
+    it("rejoins E2EE Event evidence immutably while rejecting net-new outcomes prepared under a retired Event payload schema", async () => {
+        await seed();
+        const { e2ee, e2eeRecipe } = await configureE2eeEventAutomation();
         const originalInput = input();
         const hostEvidence = encryptedHostEvidence({
             event: originalInput,

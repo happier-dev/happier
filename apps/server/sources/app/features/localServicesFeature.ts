@@ -2,6 +2,7 @@ import type { FeaturesPayloadDelta } from "./types";
 import {
     readLocalServicesFeatureEnv,
     readMachineTunnelFeatureEnv,
+    readPeerMediationFeatureEnv,
 } from "./catalog/readFeatureEnv";
 import {
     normalizeHttpUrl,
@@ -24,17 +25,26 @@ function isHttpsUrl(value: string | null): boolean {
 export function resolveLocalServicesFeature(env: NodeJS.ProcessEnv): FeaturesPayloadDelta {
     const featureConfig = readLocalServicesFeatureEnv(env);
     const tunnelConfig = readMachineTunnelFeatureEnv(env);
+    // Route-grant signing is the master switch for the server-relayed tunnel
+    // (`docs/peer-mediation.md` §2.1): without it `createLocalServicePreviewTunnelOpener` throws
+    // `grant_signing_unavailable` on every request, so a relay advertised as ready would be a
+    // readiness bit that cannot fail.
+    const peerMediationConfig = readPeerMediationFeatureEnv(env);
     // The core local-services product is server-represented + default-allow. Dependency
     // enforcement in resolveServerFeaturePayload cascades the parent off-state to children and
     // gates launcher behind preview, so emit the configured core gates directly.
     const localServicesEnabled = featureConfig.enabled;
     const pmsPreviewReady = featureConfig.previewEnabled
         && tunnelConfig.serverRoutedEnabled
-        && tunnelConfig.allowedPorts.length > 0;
+        && tunnelConfig.allowedPorts.length > 0
+        && peerMediationConfig.substrateEnabled;
     const pmsDisabledReasons = (() => {
         if (!featureConfig.previewEnabled) return ["disabled_by_server_policy"];
         if (!tunnelConfig.serverRoutedEnabled) return ["pms_server_relay_disabled"];
         if (tunnelConfig.allowedPorts.length === 0) return ["pms_allowed_ports_empty"];
+        // Same code `resolvePeerMediationFeature` emits for the same unmet prerequisite; one
+        // vocabulary for one fact.
+        if (!peerMediationConfig.substrateEnabled) return ["peer_mediation_grant_signing_unavailable"];
         return [];
     })();
     const publicDnsTlsHostModeAvailable = Boolean(featureConfig.previewHostOriginBaseDomain)

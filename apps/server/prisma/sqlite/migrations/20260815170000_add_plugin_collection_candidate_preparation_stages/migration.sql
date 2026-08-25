@@ -38,11 +38,11 @@ CREATE TABLE "PluginCollectionCandidatePreparationStage" (
             AND "sourceRevision" >= 0
         ),
     CONSTRAINT "PCCPS_candidate_identity_check"
-        CHECK (length("candidateIdentity") = 43),
+        CHECK (length("candidateIdentity") = 43 AND "candidateIdentity" NOT GLOB '*[^A-Za-z0-9_-]*'),
     CONSTRAINT "PCCPS_source_digest_check"
-        CHECK (length("sourceContractDigest") = 43),
+        CHECK (length("sourceContractDigest") = 43 AND "sourceContractDigest" NOT GLOB '*[^A-Za-z0-9_-]*'),
     CONSTRAINT "PCCPS_target_digest_check"
-        CHECK (length("targetContractDigest") = 43)
+        CHECK (length("targetContractDigest") = 43 AND "targetContractDigest" NOT GLOB '*[^A-Za-z0-9_-]*')
 );
 
 CREATE UNIQUE INDEX "PluginCollectionCandidatePreparationStage_identity_key"

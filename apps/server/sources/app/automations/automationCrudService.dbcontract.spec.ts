@@ -3,7 +3,6 @@ import { randomUUID } from "node:crypto";
 import {
     AutomationRunExecutionRecipeV1Schema,
     AutomationSourceSelectorIdV1Schema,
-    MAX_ENABLED_AUTOMATION_EVENT_SOURCE_DEFINITIONS_PER_ACCOUNT,
     normalizePluginReleaseFactsV1,
     openAutomationTriggerDefinitionStoredEnvelopeV1,
 } from "@happier-dev/protocol";
@@ -13,7 +12,6 @@ import { db, initDbMysql, initDbPostgres } from "@/storage/db";
 import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
 
 import {
-    AutomationEventDefinitionCapacityConflictError,
     AutomationTemplateMutationConflictError,
     createAutomation,
     deleteAutomation,
@@ -454,7 +452,7 @@ describe("Automation Event CRUD database contract", () => {
         expect(await readEventCatalogRevision(e2ee.id)).toBeNull();
     });
 
-    it("serializes competing resumes at the enabled Event source-definition ceiling", async () => {
+    it("allows competing Event-source resumes beyond the former aggregate definition ceiling", async () => {
         const account = await seedEventWriterAccount();
         const left = await createAutomation({
             accountId: account.id,
@@ -488,7 +486,7 @@ describe("Automation Event CRUD database contract", () => {
 
         await db.automation.createMany({
             data: Array.from(
-                { length: MAX_ENABLED_AUTOMATION_EVENT_SOURCE_DEFINITIONS_PER_ACCOUNT - 1 },
+                { length: 10_000 },
                 (_, index) => ({
                     id: `event-crud-capacity-${index}-${randomUUID()}`,
                     accountId: account.id,
@@ -522,12 +520,7 @@ describe("Automation Event CRUD database contract", () => {
             }),
         ]);
         const fulfilled = outcomes.filter((outcome) => outcome.status === "fulfilled");
-        const rejected = outcomes.filter((outcome) => outcome.status === "rejected");
-        expect(fulfilled).toHaveLength(1);
-        expect(rejected).toHaveLength(1);
-        expect(rejected[0]?.status === "rejected" && rejected[0].reason).toBeInstanceOf(
-            AutomationEventDefinitionCapacityConflictError,
-        );
+        expect(fulfilled).toHaveLength(2);
         expect(await db.automation.count({
             where: {
                 accountId: account.id,
@@ -535,11 +528,11 @@ describe("Automation Event CRUD database contract", () => {
                 enabled: true,
                 deletedAt: null,
             },
-        })).toBe(MAX_ENABLED_AUTOMATION_EVENT_SOURCE_DEFINITIONS_PER_ACCOUNT);
-        expect(await readEventCatalogRevision(account.id)).toBe(1n);
+        })).toBe(10_002);
+        expect(await readEventCatalogRevision(account.id)).toBe(2n);
         expect(await db.account.findUniqueOrThrow({
             where: { id: account.id },
             select: { seq: true },
-        })).toEqual({ seq: resumeSeq + 1 });
+        })).toEqual({ seq: resumeSeq + 2 });
     }, 120_000);
 });

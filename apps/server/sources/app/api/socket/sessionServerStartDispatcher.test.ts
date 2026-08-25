@@ -19,6 +19,13 @@ import {
 } from "./sessionServerStartDispatcher";
 import type { RpcAckResponseEmitter, RpcForwardTargetGuard } from "./rpc/_types";
 
+/** Both stamped facts still hold. */
+const CURRENT = { target: true, runClaim: true } as const;
+/** The exact target Machine or Account currentness moved. */
+const TARGET_LOST = { target: false, runClaim: true } as const;
+/** The Run was cancelled, reclaimed, retried, or lost its lease. */
+const RUN_CLAIM_LOST = { target: true, runClaim: false } as const;
+
 const request: SessionServerStartDispatchRequestV1 = {
     v: 1,
     kind: "session.serverStart.dispatch",
@@ -30,6 +37,8 @@ const request: SessionServerStartDispatchRequestV1 = {
     start: {
         automationId: "automation-1",
         runId: "run-1",
+        attempt: 3,
+        claimedByMachineId: "machine-source",
         origin: "event",
         accountCurrentness: {
             mode: "plain",
@@ -202,7 +211,7 @@ describe("createSessionServerStartDaemonDispatcher", () => {
                 initialInput: { status: "notRequested" as const },
             },
         }));
-        const resolveCurrentTarget = vi.fn(async () => true);
+        const resolveCurrentTarget = vi.fn(async () => CURRENT);
         const dispatcher = createSessionServerStartDaemonDispatcher({
             io: {} as Server,
             forwardRpc: forwardRpc as never,
@@ -244,7 +253,7 @@ describe("createSessionServerStartDaemonDispatcher", () => {
         const dispatcher = createSessionServerStartDaemonDispatcher({
             io: {} as Server,
             forwardRpc: forwardRpc as never,
-            resolveCurrentTarget: async () => true,
+            resolveCurrentTarget: async () => CURRENT,
         });
 
         await expect(dispatcher(e2eeRequest)).resolves.toEqual(expect.objectContaining({
@@ -261,7 +270,7 @@ describe("createSessionServerStartDaemonDispatcher", () => {
         const dispatcher = createSessionServerStartDaemonDispatcher({
             io: {} as Server,
             forwardRpc: forwardRpc as never,
-            resolveCurrentTarget: async () => false,
+            resolveCurrentTarget: async () => TARGET_LOST,
         });
 
         await expect(dispatcher(request)).resolves.toEqual({
@@ -270,6 +279,98 @@ describe("createSessionServerStartDaemonDispatcher", () => {
             retryable: true,
         });
         expect(forwardRpc).not.toHaveBeenCalled();
+    });
+
+    it("never submits when the derived Run claim stops being current before the target operation", async () => {
+        const target: RpcAckResponseEmitter = {
+            id: "socket-1",
+            data: {
+                clientType: "machine-scoped",
+                machineId: "machine-1",
+                verifiedMachineInstallationId: "installation-1",
+            },
+            timeout: () => ({ emitWithAck: async () => ({}) }),
+        };
+        const operation = vi.fn(async () => ({ emitted: true }));
+        const forwardRpc = vi.fn(async (params: Readonly<{
+            targetGuard?: RpcForwardTargetGuard;
+        }>) => {
+            const targetGuard = params.targetGuard;
+            if (!targetGuard) throw new Error("expected exact target guard");
+            await expect(targetGuard.filterTargets([target])).resolves.toEqual([]);
+            await expect(targetGuard.runOperation({
+                target,
+                operation,
+                readLatestTarget: async () => target,
+            })).resolves.toEqual({ status: "unavailable" });
+            return { ok: false as const, error: "target unavailable" };
+        });
+        // The Run claim is still current for the entry check and moves before
+        // the exact target is selected.
+        const resolveCurrentTarget = vi.fn()
+            .mockResolvedValueOnce(CURRENT)
+            .mockResolvedValue(RUN_CLAIM_LOST);
+        const dispatcher = createSessionServerStartDaemonDispatcher({
+            io: {} as Server,
+            forwardRpc: forwardRpc as never,
+            resolveCurrentTarget,
+        });
+
+        await expect(dispatcher(request)).resolves.toEqual({
+            type: "error",
+            code: "target_unavailable",
+            retryable: true,
+        });
+        expect(operation).not.toHaveBeenCalled();
+    });
+
+    it("keeps a committed Session identity when the Run claim moves only after the daemon response", async () => {
+        const target: RpcAckResponseEmitter = {
+            id: "socket-1",
+            data: {
+                clientType: "machine-scoped",
+                machineId: "machine-1",
+                verifiedMachineInstallationId: "installation-1",
+            },
+            timeout: () => ({ emitWithAck: async () => ({}) }),
+        };
+        const committed = {
+            type: "success" as const,
+            disposition: "created" as const,
+            sessionId: "session-committed",
+            executionTarget: { serverId: "server-1", machineId: "machine-1" },
+            organizationPlacement: { folderId: null, tagIds: [] },
+            initialInput: { status: "notRequested" as const },
+        };
+        const operation = vi.fn(async () => committed);
+        const forwardRpc = vi.fn(async (params: Readonly<{
+            targetGuard?: RpcForwardTargetGuard;
+        }>) => {
+            const targetGuard = params.targetGuard;
+            if (!targetGuard) throw new Error("expected exact target guard");
+            const guarded = await targetGuard.runOperation({
+                target,
+                operation,
+                readLatestTarget: async () => target,
+            });
+            if (guarded.status !== "current") throw new Error("expected a current guarded operation");
+            return { ok: true as const, result: guarded.value };
+        });
+        // Entry, filter, and both pre-submit checks see a current Run claim;
+        // the post-response check sees it gone.
+        const resolveCurrentTarget = vi.fn()
+            .mockResolvedValueOnce(CURRENT)
+            .mockResolvedValueOnce(CURRENT)
+            .mockResolvedValueOnce(CURRENT)
+            .mockResolvedValue(RUN_CLAIM_LOST);
+        const dispatcher = createSessionServerStartDaemonDispatcher({
+            io: {} as Server,
+            forwardRpc: forwardRpc as never,
+            resolveCurrentTarget,
+        });
+
+        await expect(dispatcher(request)).resolves.toEqual(committed);
+        expect(operation).toHaveBeenCalledTimes(1);
     });
 
     it("revalidates currentness at the selected Socket target before it can emit", async () => {
@@ -297,9 +398,9 @@ describe("createSessionServerStartDaemonDispatcher", () => {
             return { ok: false as const, error: "target unavailable" };
         });
         const resolveCurrentTarget = vi.fn()
-            .mockResolvedValueOnce(true)
-            .mockResolvedValueOnce(true)
-            .mockResolvedValueOnce(false);
+            .mockResolvedValueOnce(CURRENT)
+            .mockResolvedValueOnce(CURRENT)
+            .mockResolvedValueOnce(TARGET_LOST);
         const dispatcher = createSessionServerStartDaemonDispatcher({
             io: {} as Server,
             forwardRpc: forwardRpc as never,
@@ -350,7 +451,7 @@ describe("createSessionServerStartDaemonDispatcher", () => {
         const dispatcher = createSessionServerStartDaemonDispatcher({
             io: {} as Server,
             forwardRpc: forwardRpc as never,
-            resolveCurrentTarget: async () => true,
+            resolveCurrentTarget: async () => CURRENT,
         });
 
         await expect(dispatcher(request)).resolves.toEqual({
@@ -397,7 +498,7 @@ describe("createSessionServerStartDaemonDispatcher", () => {
         const dispatcher = createSessionServerStartDaemonDispatcher({
             io: {} as Server,
             forwardRpc: forwardRpc as never,
-            resolveCurrentTarget: async () => true,
+            resolveCurrentTarget: async () => CURRENT,
         });
 
         await expect(dispatcher(request)).resolves.toEqual({
@@ -432,10 +533,10 @@ describe("createSessionServerStartDaemonDispatcher", () => {
             return { ok: false as const, error: "target unavailable" };
         });
         const resolveCurrentTarget = vi.fn()
-            .mockResolvedValueOnce(true)
-            .mockResolvedValueOnce(true)
-            .mockResolvedValueOnce(true)
-            .mockResolvedValueOnce(false);
+            .mockResolvedValueOnce(CURRENT)
+            .mockResolvedValueOnce(CURRENT)
+            .mockResolvedValueOnce(CURRENT)
+            .mockResolvedValueOnce(TARGET_LOST);
         const dispatcher = createSessionServerStartDaemonDispatcher({
             io: {} as Server,
             forwardRpc: forwardRpc as never,
@@ -455,7 +556,7 @@ describe("createSessionServerStartDaemonDispatcher", () => {
         const dispatcher = createSessionServerStartDaemonDispatcher({
             io: {} as Server,
             forwardRpc: forwardRpc as never,
-            resolveCurrentTarget: async () => true,
+            resolveCurrentTarget: async () => CURRENT,
         });
 
         await expect(dispatcher({ ...request, start: { ...request.start, requestEnvelope: { t: "encrypted", c: "x" } } }))
@@ -493,7 +594,7 @@ describe("createSessionServerStartDaemonDispatcher", () => {
         const dispatcher = createSessionServerStartDaemonDispatcher({
             io: { to } as unknown as Server,
             forwardRpc: forwardRpc as never,
-            resolveCurrentTarget: async () => true,
+            resolveCurrentTarget: async () => CURRENT,
         });
 
         await expect(dispatcher(request, { signal: controller.signal })).resolves.toEqual({
@@ -525,7 +626,7 @@ describe("createSessionServerStartDaemonDispatcher", () => {
         const dispatcher = createSessionServerStartDaemonDispatcher({
             io: {} as Server,
             forwardRpc: forwardRpc as never,
-            resolveCurrentTarget: async () => true,
+            resolveCurrentTarget: async () => CURRENT,
         });
 
         await expect(dispatcher(request, { signal: controller.signal })).resolves.toEqual({
@@ -542,7 +643,7 @@ describe("createSessionServerStartDaemonDispatcher", () => {
         const dispatcher = createSessionServerStartDaemonDispatcher({
             io: {} as Server,
             forwardRpc: forwardRpc as never,
-            resolveCurrentTarget: async () => true,
+            resolveCurrentTarget: async () => CURRENT,
         });
 
         await expect(dispatcher(request, { signal: controller.signal })).resolves.toEqual({
@@ -566,6 +667,10 @@ describe("Session server-start Automation ingress", () => {
             start: expect.objectContaining({
                 automationId: "automation-1",
                 runId: "run-1",
+                // The stamped claim carries the exact correspondence the
+                // pre-submit guard revalidates against the canonical Run.
+                attempt: 3,
+                claimedByMachineId: "machine-1",
                 origin: "event",
                 accountCurrentness: ingressCurrentness,
                 requestEnvelope: ingressRequest.requestEnvelope,

@@ -11,7 +11,7 @@ import {
     evaluateAutomationEventFilterV1,
     freezeAutomationRunPluginEventExecutionRecipeV1,
     isAutomationEventObservationFreshV1,
-    isAutomationEventTriggerEvidenceCiphertextV1,
+    isAutomationTriggerEvidenceCiphertextV1,
     isSameAutomationEventDeclarationReleaseV1,
     isValidPluginJsonSchemaValue,
     openAutomationTriggerDefinitionStoredEnvelopeV1,
@@ -45,6 +45,7 @@ import {
     readCurrentAutomationEventDurablePushEndpointTargetTxV1,
     readCurrentAutomationEventDurablePushWebhookContributionV1,
     resolveCurrentAutomationEventContributionTx,
+    sameAutomationEventDurablePushWebhookContributionV1,
     AutomationEventCurrentnessError,
     type AutomationEventCallerV1,
     type CurrentAutomationEventContributionV1,
@@ -96,7 +97,7 @@ type Candidate = Readonly<{
 }>;
 
 type EncryptedCandidate = Readonly<{
-    resultIndex: number;
+    group: DefinitionGroup<EncryptedDefinition>;
     automationId: string;
     occurrenceKey: string;
     sourceSelectorId: string;
@@ -126,9 +127,14 @@ const existingEventOccurrenceSelect = {
     triggerEvidenceEnvelope: true,
 } satisfies Prisma.AutomationRunSelect;
 
-type DefinitionGroup = Readonly<{
+type EncryptedDefinition = Extract<
+    AutomationEventAdmitHostEvidenceV1,
+    Readonly<{ t: "encrypted" }>
+>["definitions"][number];
+
+type DefinitionGroup<TDefinition = AutomationEventAdmitHttpInputV1["definitions"][number]> = Readonly<{
     key: string;
-    definition: AutomationEventAdmitHttpInputV1["definitions"][number];
+    definition: TDefinition;
     indexes: readonly number[];
 }>;
 
@@ -147,14 +153,19 @@ function refresh(reason: "definitionStale" | "observationTargetChanged"):
     return { kind: "refreshDefinition", reason, checkpointSafe: false };
 }
 
-function groupDefinitions(input: AutomationEventAdmitHttpInputV1): readonly DefinitionGroup[] {
-    const groups = new Map<string, { definition: AutomationEventAdmitHttpInputV1["definitions"][number]; indexes: number[] }>();
-    input.definitions.forEach((definition, index) => {
-        const key = [
-            definition.automationId,
-            definition.templateVersion,
-            definition.sourceSelectorId,
-        ].join("\u0000");
+/**
+ * One bounded request may address the same occurrence from several positions.
+ * Grouping is request-local: each identity is evaluated once and its outcome is
+ * expanded back to every supplied position, so the transaction never attempts
+ * the same unique occurrence insert twice.
+ */
+function groupRequestDefinitions<TDefinition>(
+    definitions: readonly TDefinition[],
+    identityOf: (definition: TDefinition) => string,
+): readonly DefinitionGroup<TDefinition>[] {
+    const groups = new Map<string, { definition: TDefinition; indexes: number[] }>();
+    definitions.forEach((definition, index) => {
+        const key = identityOf(definition);
         const existing = groups.get(key);
         if (existing) {
             existing.indexes.push(index);
@@ -167,6 +178,42 @@ function groupDefinitions(input: AutomationEventAdmitHttpInputV1): readonly Defi
         definition: value.definition,
         indexes: value.indexes,
     }));
+}
+
+function groupDefinitions(input: AutomationEventAdmitHttpInputV1): readonly DefinitionGroup[] {
+    return groupRequestDefinitions(input.definitions, (definition) => [
+        definition.automationId,
+        definition.templateVersion,
+        definition.sourceSelectorId,
+    ].join("\u0000"));
+}
+
+/**
+ * Encrypted definitions carry their own host-derived occurrence key, so the
+ * durable `(automationId, occurrenceKey)` identity is the request-local group.
+ * Positions that claim one identity with different sealed evidence cannot both
+ * be honoured; they are refused before any mutation instead of letting the
+ * unique-constraint exception choose the outcome.
+ */
+function groupEncryptedDefinitions(
+    definitions: readonly EncryptedDefinition[],
+): Readonly<{
+    groups: readonly DefinitionGroup<EncryptedDefinition>[];
+    conflicting: readonly DefinitionGroup<EncryptedDefinition>[];
+}> {
+    const groups: DefinitionGroup<EncryptedDefinition>[] = [];
+    const conflicting: DefinitionGroup<EncryptedDefinition>[] = [];
+    for (const group of groupRequestDefinitions(
+        definitions,
+        (definition) => [definition.automationId, definition.occurrenceKey].join("\u0000"),
+    )) {
+        const representative = createCanonicalJsonSigningInput(group.definition);
+        const identical = group.indexes.every((index) => (
+            createCanonicalJsonSigningInput(definitions[index]) === representative
+        ));
+        (identical ? groups : conflicting).push(group);
+    }
+    return { groups, conflicting };
 }
 
 function stoppedContinuation(
@@ -189,7 +236,7 @@ function resultForEveryDefinition(
 
 function assignGroupResult(
     results: Array<AutomationEventAdmitItemResultV1 | undefined>,
-    group: DefinitionGroup,
+    group: DefinitionGroup<unknown>,
     result: AutomationEventAdmitItemResultV1,
 ): void {
     for (const index of group.indexes) results[index] = result;
@@ -259,7 +306,7 @@ function encryptedExistingEvidenceDisposition(params: Readonly<{
         mode: "e2ee",
     });
     if (outer.kind !== "available" || outer.envelope.t !== "encrypted") return "unavailable";
-    return isAutomationEventTriggerEvidenceCiphertextV1(outer.envelope.c)
+    return isAutomationTriggerEvidenceCiphertextV1(outer.envelope.c)
         ? "match"
         : "unavailable";
 }
@@ -331,13 +378,6 @@ function validatedWebhookTargetMatchesCaller(
         && target.machineInstallationId === caller.machineInstallationId;
 }
 
-function sameWebhookContribution(
-    left: Readonly<{ pluginId: string; localId: string }>,
-    right: Readonly<{ pluginId: string; localId: string }>,
-): boolean {
-    return left.pluginId === right.pluginId && left.localId === right.localId;
-}
-
 async function admitEncryptedAutomationEventV1(params: Readonly<{
     accountId: string;
     caller: AutomationEventAdmissionCallerV1;
@@ -390,11 +430,13 @@ async function admitEncryptedAutomationEventV1(params: Readonly<{
         const results: Array<AutomationEventAdmitItemResultV1 | undefined> = Array(
             params.hostEvidence.definitions.length,
         );
-        const missing: Array<Readonly<{
-            index: number;
-            definition: typeof params.hostEvidence.definitions[number];
-        }>> = [];
-        for (const [index, definition] of params.hostEvidence.definitions.entries()) {
+        const { groups, conflicting } = groupEncryptedDefinitions(params.hostEvidence.definitions);
+        for (const group of conflicting) {
+            assignGroupResult(results, group, blocked("occurrenceConflict"));
+        }
+        const missing: DefinitionGroup<EncryptedDefinition>[] = [];
+        for (const group of groups) {
+            const definition = group.definition;
             const existing = await findAutomationOccurrenceTx({
                 tx,
                 accountId: params.accountId,
@@ -403,7 +445,7 @@ async function admitEncryptedAutomationEventV1(params: Readonly<{
                 select: existingEventOccurrenceSelect,
             });
             if (existing === null) {
-                missing.push({ index, definition });
+                missing.push(group);
                 continue;
             }
             const disposition = encryptedExistingEvidenceDisposition({
@@ -413,9 +455,9 @@ async function admitEncryptedAutomationEventV1(params: Readonly<{
                 occurredAt: definition.occurredAt,
                 occurrenceEvidenceEqualityTag: definition.occurrenceEvidenceEqualityTag,
             });
-            results[index] = disposition === "match"
+            assignGroupResult(results, group, disposition === "match"
                 ? { kind: "rejoined", runId: existing.id, checkpointSafe: true }
-                : blocked(disposition === "mismatch" ? "occurrenceConflict" : "temporarilyUnavailable");
+                : blocked(disposition === "mismatch" ? "occurrenceConflict" : "temporarilyUnavailable"));
         }
 
         // Existing immutable occurrences rejoin above, before any mutable
@@ -423,7 +465,7 @@ async function admitEncryptedAutomationEventV1(params: Readonly<{
         // host-prepared skip, must still prove its adopted Definition is
         // current before it can be checkpoint-safe.
         if (!hostEvidenceIsCurrent) {
-            for (const item of missing) results[item.index] = blocked("temporarilyUnavailable");
+            for (const group of missing) assignGroupResult(results, group, blocked("temporarilyUnavailable"));
             return assertAllResults(results, stoppedContinuation("accountCurrentnessMoved"));
         }
         if (missing.length === 0) {
@@ -438,7 +480,7 @@ async function admitEncryptedAutomationEventV1(params: Readonly<{
             params.hostEvidence.eventDeclarationRelease,
             eventDeclarationRelease,
         )) {
-            for (const item of missing) results[item.index] = refresh("definitionStale");
+            for (const group of missing) assignGroupResult(results, group, refresh("definitionStale"));
             return await assertAllResultsWithReadyContinuationTx({
                 tx,
                 accountId: params.accountId,
@@ -461,7 +503,7 @@ async function admitEncryptedAutomationEventV1(params: Readonly<{
             }
         }
         if (event === null || !event.payloadSchema) {
-            for (const item of missing) results[item.index] = refresh("definitionStale");
+            for (const group of missing) assignGroupResult(results, group, refresh("definitionStale"));
             return await assertAllResultsWithReadyContinuationTx({
                 tx,
                 accountId: params.accountId,
@@ -473,7 +515,7 @@ async function admitEncryptedAutomationEventV1(params: Readonly<{
             select: { eventSourceDefinitionsRevision: true },
         });
         if (catalog === null || catalog.eventSourceDefinitionsRevision.toString() !== params.hostEvidence.adoptedRevision) {
-            for (const item of missing) results[item.index] = refresh("definitionStale");
+            for (const group of missing) assignGroupResult(results, group, refresh("definitionStale"));
             return await assertAllResultsWithReadyContinuationTx({
                 tx,
                 accountId: params.accountId,
@@ -482,8 +524,8 @@ async function admitEncryptedAutomationEventV1(params: Readonly<{
         }
 
         const candidates: EncryptedCandidate[] = [];
-        for (const item of missing) {
-            const definition = item.definition;
+        for (const group of missing) {
+            const definition = group.definition;
             const automation = await tx.automation.findFirst({
                 where: { id: definition.automationId, accountId: params.accountId },
                 select: {
@@ -510,11 +552,11 @@ async function admitEncryptedAutomationEventV1(params: Readonly<{
             });
             if (!automation || !automation.enabled || automation.deletedAt !== null
                 || automation.triggerKind !== "pluginEvent") {
-                results[item.index] = skipped("definitionRetired");
+                assignGroupResult(results, group, skipped("definitionRetired"));
                 continue;
             }
             if (automation.templateVersion !== definition.templateVersion) {
-                results[item.index] = refresh("definitionStale");
+                assignGroupResult(results, group, refresh("definitionStale"));
                 continue;
             }
             if (
@@ -528,7 +570,7 @@ async function admitEncryptedAutomationEventV1(params: Readonly<{
                     definition.observationTransport,
                 )
             ) {
-                results[item.index] = refresh("observationTargetChanged");
+                assignGroupResult(results, group, refresh("observationTargetChanged"));
                 continue;
             }
 
@@ -537,7 +579,7 @@ async function admitEncryptedAutomationEventV1(params: Readonly<{
                     params.hostEvidence.webhookInvocationReference !== undefined
                     || !selectedPullTargetMatchesCaller(automation, params.caller)
                 ) {
-                    results[item.index] = refresh("observationTargetChanged");
+                    assignGroupResult(results, group, refresh("observationTargetChanged"));
                     continue;
                 }
             } else if (definition.observationTransport === "durablePush") {
@@ -550,11 +592,11 @@ async function admitEncryptedAutomationEventV1(params: Readonly<{
                     || webhookContribution === null
                     || webhookContribution.pluginId !== params.hostEvidence.eventRef.pluginId
                 ) {
-                    results[item.index] = refresh("observationTargetChanged");
+                    assignGroupResult(results, group, refresh("observationTargetChanged"));
                     continue;
                 }
                 if (!reference) {
-                    results[item.index] = blocked("temporarilyUnavailable");
+                    assignGroupResult(results, group, blocked("temporarilyUnavailable"));
                     continue;
                 }
                 const validated = await validateCurrentPluginWebhookInvocationReferenceTxV1({
@@ -564,15 +606,18 @@ async function admitEncryptedAutomationEventV1(params: Readonly<{
                     serverIdentityId: params.serverIdentityId,
                 });
                 if (validated.kind !== "ready") {
-                    results[item.index] = blocked("temporarilyUnavailable");
+                    assignGroupResult(results, group, blocked("temporarilyUnavailable"));
                     continue;
                 }
                 if (
                     validated.webhookEndpointId !== webhookEndpointId
-                    || !sameWebhookContribution(validated.webhookContribution, webhookContribution)
+                    || !sameAutomationEventDurablePushWebhookContributionV1(
+                        validated.webhookContribution,
+                        webhookContribution,
+                    )
                     || !validatedWebhookTargetMatchesCaller(validated.target, params.caller)
                 ) {
-                    results[item.index] = refresh("observationTargetChanged");
+                    assignGroupResult(results, group, refresh("observationTargetChanged"));
                     continue;
                 }
                 const currentEndpoint = await readCurrentAutomationEventDurablePushEndpointTargetTxV1({
@@ -584,23 +629,26 @@ async function admitEncryptedAutomationEventV1(params: Readonly<{
                 });
                 if (
                     currentEndpoint === null
-                    || !sameWebhookContribution(currentEndpoint.webhookContribution, webhookContribution)
+                    || !sameAutomationEventDurablePushWebhookContributionV1(
+                        currentEndpoint.webhookContribution,
+                        webhookContribution,
+                    )
                 ) {
-                    results[item.index] = refresh("observationTargetChanged");
+                    assignGroupResult(results, group, refresh("observationTargetChanged"));
                     continue;
                 }
             } else {
-                results[item.index] = refresh("observationTargetChanged");
+                assignGroupResult(results, group, refresh("observationTargetChanged"));
                 continue;
             }
 
             if (definition.outcome.kind === "skipped") {
-                results[item.index] = skipped(definition.outcome.reason);
+                assignGroupResult(results, group, skipped(definition.outcome.reason));
                 continue;
             }
 
             if (automation.triggerDefinitionEnvelope === null) {
-                results[item.index] = skipped("occurrenceRejected");
+                assignGroupResult(results, group, skipped("occurrenceRejected"));
                 continue;
             }
             const definitionBinding = readAutomationTriggerDefinitionBinding({
@@ -619,7 +667,7 @@ async function admitEncryptedAutomationEventV1(params: Readonly<{
                     binding: definitionBinding,
                 });
             if (definitionOuter.kind !== "available" || definitionOuter.envelope.t !== "encrypted") {
-                results[item.index] = skipped("occurrenceRejected");
+                assignGroupResult(results, group, skipped("occurrenceRejected"));
                 continue;
             }
 
@@ -652,13 +700,13 @@ async function admitEncryptedAutomationEventV1(params: Readonly<{
                 || expectedTargetType !== automation.targetType
                 || triggerEvidence === null
                 || triggerEvidence.t !== "encrypted"
-                || !isAutomationEventTriggerEvidenceCiphertextV1(triggerEvidence.c)
+                || !isAutomationTriggerEvidenceCiphertextV1(triggerEvidence.c)
             ) {
-                results[item.index] = skipped("occurrenceRejected");
+                assignGroupResult(results, group, skipped("occurrenceRejected"));
                 continue;
             }
             candidates.push({
-                resultIndex: item.index,
+                group,
                 automationId: automation.id,
                 occurrenceKey: definition.occurrenceKey,
                 sourceSelectorId: definition.sourceSelectorId,
@@ -677,7 +725,7 @@ async function admitEncryptedAutomationEventV1(params: Readonly<{
             },
         });
         if (occupied + candidates.length > MAX_NON_TERMINAL_AUTOMATIC_RUNS_PER_ACCOUNT) {
-            for (const candidate of candidates) results[candidate.resultIndex] = blocked("capacity");
+            for (const candidate of candidates) assignGroupResult(results, candidate.group, blocked("capacity"));
             return await assertAllResultsWithReadyContinuationTx({
                 tx,
                 accountId: params.accountId,
@@ -708,7 +756,7 @@ async function admitEncryptedAutomationEventV1(params: Readonly<{
                 },
                 select: automationRunItemSelect,
             }) as AutomationRunItem;
-            results[candidate.resultIndex] = { kind: "admitted", runId: run.id, checkpointSafe: true };
+            assignGroupResult(results, candidate.group, { kind: "admitted", runId: run.id, checkpointSafe: true });
             newRuns.push(run);
         }
         if (newRuns.length > 0) {
@@ -1012,7 +1060,10 @@ export async function admitAutomationEventV1(params: Readonly<{
                 }
                 if (
                     validated.webhookEndpointId !== webhookEndpointId
-                    || !sameWebhookContribution(validated.webhookContribution, webhookContribution)
+                    || !sameAutomationEventDurablePushWebhookContributionV1(
+                        validated.webhookContribution,
+                        webhookContribution,
+                    )
                     || !validatedWebhookTargetMatchesCaller(validated.target, params.caller)
                 ) {
                     assignGroupResult(results, group, refresh("observationTargetChanged"));
@@ -1027,7 +1078,7 @@ export async function admitAutomationEventV1(params: Readonly<{
                 });
                 if (
                     currentEndpoint === null
-                    || !sameWebhookContribution(
+                    || !sameAutomationEventDurablePushWebhookContributionV1(
                         currentEndpoint.webhookContribution,
                         webhookContribution,
                     )

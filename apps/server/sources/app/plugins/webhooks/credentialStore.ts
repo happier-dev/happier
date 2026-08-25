@@ -178,6 +178,16 @@ export async function rotatePluginWebhookCredentialTxV1(tx: Tx, _params: Readonl
                 where: { id: route.previousCredentialId },
             });
         }
+        // A confirmation observed under the superseded secret says nothing
+        // about the secret the provider must now be configured with, and every
+        // delivery still signed with the old one stops verifying when the
+        // overlap ends. Rotation therefore returns every endpoint this route
+        // carries to provider-confirmation attention until a delivery verifies
+        // under the new credential.
+        await tx.pluginWebhookEndpoint.updateMany({
+            where: { routeId: _params.routeId, providerConfirmedAt: { not: null } },
+            data: { providerConfirmedAt: null },
+        });
         await markPluginWebhookRouteAccountsChangedInTxV1(tx, _params.routeId);
         return {
             credentialVersionId: _params.credentialVersionId,

@@ -144,6 +144,10 @@ import {
 import {
     inspectAccountSettingsForEncryptionTransitionInTx,
 } from "@/app/accountSettings/accountEncryptionTransitionCensus";
+import {
+    matchNewSessionDraftsAccountMigrationPostStateInTx,
+    migrateNewSessionDraftsForAccountModeInTx,
+} from "@/app/account/sessionDrafts/sessionDraftService";
 
 const AccountEncryptionMigrateIngressRequestSchema = z.union([
     AccountEncryptionMigrateRequestSchema,
@@ -273,6 +277,18 @@ class AccountEncryptionMigrationSessionRejectedError extends Error {
     ) {
         super(`Session migration rejected: ${status}`);
         this.name = "AccountEncryptionMigrationSessionRejectedError";
+    }
+}
+
+class AccountEncryptionMigrationSessionDraftRejectedError extends Error {
+    constructor(
+        readonly status:
+            | "requires_upgrade"
+            | "migration_incomplete"
+            | "source_mismatch",
+    ) {
+        super(`Session draft migration rejected: ${status}`);
+        this.name = "AccountEncryptionMigrationSessionDraftRejectedError";
     }
 }
 
@@ -907,6 +923,10 @@ export function registerAccountEncryptionMigrateRoutes(app: Fastify): void {
             "sessionOrganization" in ingressRequest
                 ? ingressRequest.sessionOrganization
                 : { action: "assert_empty" as const };
+        const sessionDrafts =
+            "sessionDrafts" in ingressRequest
+                ? ingressRequest.sessionDrafts
+                : undefined;
 
         const encryptionEnv = readEncryptionFeatureEnv(process.env);
 
@@ -1147,6 +1167,15 @@ export function registerAccountEncryptionMigrateRoutes(app: Fastify): void {
                             toMode,
                             directive: replayRequest.sessions,
                         });
+                    const sessionDraftsPostState =
+                        await matchNewSessionDraftsAccountMigrationPostStateInTx(
+                            tx,
+                            {
+                                accountId: userId,
+                                toMode,
+                                directive: replayRequest.sessionDrafts,
+                            },
+                        );
                     let reviewCommentsPostStateMatches = false;
                     try {
                         reviewCommentsPostStateMatches =
@@ -1185,6 +1214,7 @@ export function registerAccountEncryptionMigrateRoutes(app: Fastify): void {
                         || todosPostState.status !== "matched"
                         || artifactsPostState.status !== "matched"
                         || sessionsPostState.status !== "matched"
+                        || sessionDraftsPostState.status !== "matched"
                         || !reviewCommentsPostStateMatches
                         || sessionOrganizationPostState.status
                             !== "matched"
@@ -1200,6 +1230,9 @@ export function registerAccountEncryptionMigrateRoutes(app: Fastify): void {
                         mode: toMode,
                         accountVersion: account.version,
                         settingsVersion: account.settingsVersion,
+                        sessionDraftRecords: replayRequest.sessionDrafts
+                            ? sessionDraftsPostState.records
+                            : undefined,
                     };
                 }
 
@@ -1520,6 +1553,18 @@ export function registerAccountEncryptionMigrateRoutes(app: Fastify): void {
                     }
                 }
 
+                const sessionDraftMigration =
+                    await migrateNewSessionDraftsForAccountModeInTx(tx, {
+                        accountId: userId,
+                        toMode,
+                        directive: sessionDrafts,
+                    });
+                if (sessionDraftMigration.status !== "applied") {
+                    throw new AccountEncryptionMigrationSessionDraftRejectedError(
+                        sessionDraftMigration.status,
+                    );
+                }
+
                 const sessionMigration =
                     await migrateSessionAccountEncryptionInTx({
                         tx,
@@ -1835,6 +1880,9 @@ export function registerAccountEncryptionMigrateRoutes(app: Fastify): void {
                     mode: toMode,
                     accountVersion: finalized.version,
                     settingsVersion: nextSettingsVersion,
+                    sessionDraftRecords: sessionDrafts
+                        ? sessionDraftMigration.records
+                        : undefined,
                 };
             });
 
@@ -1892,9 +1940,28 @@ export function registerAccountEncryptionMigrateRoutes(app: Fastify): void {
                         mode: result.mode,
                         accountVersion: result.accountVersion,
                         settingsVersion: result.settingsVersion,
+                        ...(result.sessionDraftRecords
+                            ? { sessionDrafts: { records: result.sessionDraftRecords } }
+                            : {}),
                     },
             );
         } catch (error) {
+            if (
+                error
+                instanceof AccountEncryptionMigrationSessionDraftRejectedError
+            ) {
+                if (error.status === "requires_upgrade") {
+                    return reply.code(400).send({
+                        error: "metadata_privacy_upgrade_required",
+                    });
+                }
+                return reply.code(400).send({
+                    error: "invalid-params",
+                    reason:
+                        AccountEncryptionMigrateInvalidParamsReasonSchema
+                            .enum.migration_inventory_changed,
+                });
+            }
             if (
                 error
                 instanceof AccountEncryptionMigrationSessionRejectedError

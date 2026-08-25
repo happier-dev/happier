@@ -48,13 +48,25 @@ type TunnelRelayIo = Readonly<{
 
 type TunnelKey = string;
 
+type RelayMeteringCaps = Readonly<{
+    maxBytes: number;
+    maxFrameBytes: number;
+    maxIdleMs: number;
+    maxDurationMs: number;
+}>;
+
+type AuthorizedRelayState = Readonly<{
+    flowKind: PeerTcpTunnelRelayAuthorizationPayloadV2['flowKind'];
+    meteringCaps: RelayMeteringCaps;
+}>;
+
 const registeredSockets = new WeakSet<object>();
 const activeTunnelKeysBySocket = new WeakMap<object, Set<TunnelKey>>();
 const socketSetsByTunnelKey = new Map<TunnelKey, Set<Set<TunnelKey>>>();
 const authorizedTunnelKeys = new Set<TunnelKey>();
 const bytesByTunnelKey = new Map<TunnelKey, Readonly<{ in: number; out: number }>>();
 const encodingByTunnelKey = new Map<TunnelKey, PeerTcpTunnelEncoding>();
-const flowKindByTunnelKey = new Map<TunnelKey, PeerTcpTunnelRelayAuthorizationPayloadV2['flowKind']>();
+const authorizationStateByTunnelKey = new Map<TunnelKey, AuthorizedRelayState>();
 const voiceApplicationProtectionByTunnelKey = new Map<TunnelKey, {
     encryptedApplicationFrames: number;
     unprotectedApplicationFrames: number;
@@ -183,32 +195,33 @@ function validateRelayAuthorization(input: Readonly<{
     relaySocketId: string | undefined;
     nowMs: number;
     trustRoots: readonly PeerTcpTunnelRelayAuthorizationTrustRootV1[] | undefined;
-}>): string | null {
+}>): PeerTcpTunnelRelayAuthorizationPayloadV2 | null {
     const frame = input.envelope.frame;
     if (frame.kind !== 'open') return null;
 
     const authorization = frame.open.relayAuthorization;
-    if (authorization === undefined) return 'relay_authorization_invalid';
+    if (authorization === undefined) return null;
     if (input.trustRoots === undefined || input.trustRoots.length === 0) {
-        return 'relay_authorization_invalid';
+        return null;
     }
 
     const payload = authorization.payload;
-    if (payload.accountId !== input.envelope.scopeUserId) return 'relay_authorization_invalid';
+    if (payload.accountId !== input.envelope.scopeUserId) return null;
     const verification = verifyPeerTcpTunnelRelayAuthorizationV2({
         authorization,
         nowMs: input.nowMs,
         trustRoots: input.trustRoots,
     });
-    if (!verification.valid) return 'relay_authorization_invalid';
+    if (!verification.valid) return null;
     if (
         input.relaySocketId !== verification.payload.relaySocketId
         || input.envelope.sender.kind !== 'user'
         || input.envelope.sender.socketId !== verification.payload.relaySocketId
     ) {
-        return 'relay_authorization_invalid';
+        return null;
     }
-    return validateRelayAuthorizationBinding({ open: frame.open, payload: verification.payload });
+    if (validateRelayAuthorizationBinding({ open: frame.open, payload: verification.payload })) return null;
+    return verification.payload;
 }
 
 function validateRelayFrameDirection(envelope: PeerTcpTunnelRelayEnvelopeV1): string | null {
@@ -424,6 +437,21 @@ function frameDecodedBytes(frame: PeerTcpTunnelFrameV1, maxFrameBytes: number): 
     return capped.ok ? capped.decodedBytes : maxFrameBytes + 1;
 }
 
+function resolveEffectiveRelayMeteringCaps(
+    caps: PeerTcpTunnelRelayCaps,
+    authorization: PeerTcpTunnelRelayAuthorizationPayloadV2,
+): RelayMeteringCaps {
+    // The signed grant can only narrow the process policy. Keep the resulting
+    // limits with the existing per-tunnel authorization state so every frame
+    // and timer uses the same admitted authority.
+    return {
+        maxBytes: Math.min(caps.maxBytes, authorization.maxTotalBytes ?? caps.maxBytes),
+        maxFrameBytes: Math.min(caps.maxFrameBytes, authorization.maxFrameBytes),
+        maxIdleMs: Math.min(caps.maxIdleMs, authorization.maxIdleMs),
+        maxDurationMs: Math.min(caps.maxDurationMs, authorization.maxDurationMs),
+    };
+}
+
 function selectedOpenEncoding(frame: PeerTcpTunnelFrameV1): PeerTcpTunnelEncoding {
     return frame.kind === 'open'
         ? frame.open.selectedEncoding ?? PEER_TCP_TUNNEL_JSON_BASE64_ENCODING_V1
@@ -520,7 +548,7 @@ function clearTunnelState(tunnelKey: TunnelKey): void {
     tunnelStartedAtByKey.delete(tunnelKey);
     tunnelLastActivityAtByKey.delete(tunnelKey);
     encodingByTunnelKey.delete(tunnelKey);
-    flowKindByTunnelKey.delete(tunnelKey);
+    authorizationStateByTunnelKey.delete(tunnelKey);
     voiceApplicationProtectionByTunnelKey.delete(tunnelKey);
     observabilityIdentityByTunnelKey.delete(tunnelKey);
     userSocketIdByTunnelKey.delete(tunnelKey);
@@ -678,6 +706,15 @@ export function registerPeerTcpTunnelRelaySocketHandler(
          * single-use relay-grant consumption and exact-machine attachment.
          */
         coordinator: PeerTcpTunnelRelayCoordinator;
+        /**
+         * Production supplies one canonical feature decision for each signed
+         * relay flow. The scalar is retained for direct test/embedded handler
+         * callers that do not have the socket composition context.
+         */
+        serverRoutedEnabledByFlowKind?: Readonly<Partial<Record<
+            PeerTcpTunnelRelayAuthorizationPayloadV2['flowKind'],
+            boolean
+        >>>;
     } & Partial<PeerTcpTunnelRelayCaps>>,
 ): void {
     const socketObject = socket as object;
@@ -687,6 +724,14 @@ export function registerPeerTcpTunnelRelaySocketHandler(
     registeredSockets.add(socketObject);
 
     const caps = resolvePeerTcpTunnelRelayCaps(ctx);
+    const isServerRoutedFlowEnabled = (
+        flowKind: PeerTcpTunnelRelayAuthorizationPayloadV2['flowKind'],
+    ): boolean => {
+        if (ctx.serverRoutedEnabledByFlowKind) {
+            return ctx.serverRoutedEnabledByFlowKind[flowKind] === true;
+        }
+        return caps.serverRoutedEnabled;
+    };
     function emitAbort(input: Omit<
         Parameters<typeof emitAbortToRelayParticipants>[0],
         "notifyAttachedMachine"
@@ -711,6 +756,7 @@ export function registerPeerTcpTunnelRelaySocketHandler(
     function scheduleTunnelTimers(
         tunnelKey: TunnelKey,
         envelope: PeerTcpTunnelRelayEnvelope,
+        meteringCaps: RelayMeteringCaps,
         tunnelId?: string,
     ): void {
         const existing = tunnelTimersByKey.get(tunnelKey);
@@ -718,7 +764,7 @@ export function registerPeerTcpTunnelRelaySocketHandler(
         if (existing?.durationTimer) clearTimeout(existing.durationTimer);
         const now = ctx.nowMs?.() ?? Date.now();
         const startedAt = tunnelStartedAtByKey.get(tunnelKey) ?? now;
-        const durationRemainingMs = Math.max(1, caps.maxDurationMs - Math.max(0, now - startedAt));
+        const durationRemainingMs = Math.max(1, meteringCaps.maxDurationMs - Math.max(0, now - startedAt));
         const idleTimer = setTimeout(() => {
             emitAbort({
                 io: ctx.io,
@@ -735,7 +781,7 @@ export function registerPeerTcpTunnelRelaySocketHandler(
                 tunnelId,
                 reasonCode: 'relay_cap_exceeded',
             });
-        }, Math.max(1, caps.maxIdleMs));
+        }, Math.max(1, meteringCaps.maxIdleMs));
         const durationTimer = setTimeout(() => {
             emitAbort({
                 io: ctx.io,
@@ -774,7 +820,7 @@ export function registerPeerTcpTunnelRelaySocketHandler(
             machineId: input.machineId ?? (input.envelope ? participantMachineId(input.envelope) : undefined),
             flowKind: input.flowKind
                 ?? (input.envelope
-                    ? flowKindByTunnelKey.get(buildTunnelKey(input.envelope, input.tunnelId))
+                    ? authorizationStateByTunnelKey.get(buildTunnelKey(input.envelope, input.tunnelId))?.flowKind
                     : undefined)
                 ?? 'tcp_tunnel',
             flowId: input.tunnelId,
@@ -801,7 +847,7 @@ export function registerPeerTcpTunnelRelaySocketHandler(
         const tunnelId = input.tunnelId ?? identity.tunnelId;
         const bytes = bytesByTunnelKey.get(input.tunnelKey);
         const carrierEncoding = encodingByTunnelKey.get(input.tunnelKey);
-        const signedFlowKind = flowKindByTunnelKey.get(input.tunnelKey);
+        const signedFlowKind = authorizationStateByTunnelKey.get(input.tunnelKey)?.flowKind;
         const voiceProtection = voiceApplicationProtectionByTunnelKey.get(input.tunnelKey);
         clearTunnelState(input.tunnelKey);
         emitObservability({
@@ -944,7 +990,7 @@ export function registerPeerTcpTunnelRelaySocketHandler(
                     relaySocketId: socket.id,
                     nowMs: ctx.nowMs?.() ?? Date.now(),
                     trustRoots: ctx.relayAuthorizationTrustRoots,
-                }) === 'relay_authorization_invalid'
+                }) === null
                 ? 'relay_authorization_invalid'
                 : 'socket_binding_mismatch';
             emitAbort({ io: ctx.io, userId, envelope, reasonCode, senderSocketId: socket.id });
@@ -968,7 +1014,8 @@ export function registerPeerTcpTunnelRelaySocketHandler(
         const tunnelId = envelope.v === 1 ? getFrameTunnelId(envelope.frame) : decodedBinary?.header.tunnelId ?? '';
         const tunnelKey = buildTunnelKey(envelope, tunnelId);
         const now = ctx.nowMs?.() ?? Date.now();
-        const isV1OpenFrame = envelope.v === 1 && envelope.frame.kind === 'open';
+        const openEnvelope = envelope.v === 1 && envelope.frame.kind === 'open' ? envelope : null;
+        const isV1OpenFrame = openEnvelope !== null;
         const isTerminalFrame =
             envelope.v === 1
                 ? envelope.frame.kind === 'close' || envelope.frame.kind === 'abort'
@@ -1023,7 +1070,11 @@ export function registerPeerTcpTunnelRelaySocketHandler(
             }
         }
 
-        if (!caps.serverRoutedEnabled) {
+        // Production socket composition provides a flow map and therefore waits
+        // for the verified signed flow kind below. Direct embedded callers that
+        // only provide the existing scalar retain its historical fail-closed
+        // boundary before destination policy is evaluated.
+        if (ctx.serverRoutedEnabledByFlowKind === undefined && !caps.serverRoutedEnabled) {
             emitObservability({
                 envelope,
                 tunnelId,
@@ -1050,16 +1101,40 @@ export function registerPeerTcpTunnelRelaySocketHandler(
             return;
         }
 
-        const authorizationDenyReason = envelope.v === 1 ? validateRelayAuthorization({
-            envelope,
-            relaySocketId: socket.id,
-            nowMs: now,
-            trustRoots: ctx.relayAuthorizationTrustRoots,
-        }) : null;
-        if (authorizationDenyReason) {
-            emitObservability({ envelope, tunnelId, kind: 'flow.denied', reasonCode: authorizationDenyReason });
-            emitAbort({ io: ctx.io, userId, envelope, reasonCode: authorizationDenyReason, tunnelKey, senderSocketId: socket.id });
+        const relayAuthorizationPayload = openEnvelope
+            ? validateRelayAuthorization({
+                envelope: openEnvelope,
+                relaySocketId: socket.id,
+                nowMs: now,
+                trustRoots: ctx.relayAuthorizationTrustRoots,
+            })
+            : null;
+        if (openEnvelope && relayAuthorizationPayload === null) {
+            emitObservability({ envelope, tunnelId, kind: 'flow.denied', reasonCode: 'relay_authorization_invalid' });
+            emitAbort({ io: ctx.io, userId, envelope, reasonCode: 'relay_authorization_invalid', tunnelKey, senderSocketId: socket.id });
             emitSocketError(socket, 'Server-routed peer tunnel relay authorization is invalid');
+            return;
+        }
+        const openingAuthorization = relayAuthorizationPayload === null
+            ? null
+            : {
+                payload: relayAuthorizationPayload,
+                state: {
+                    flowKind: relayAuthorizationPayload.flowKind,
+                    meteringCaps: resolveEffectiveRelayMeteringCaps(caps, relayAuthorizationPayload),
+                } satisfies AuthorizedRelayState,
+            };
+        if (openingAuthorization && !isServerRoutedFlowEnabled(openingAuthorization.state.flowKind)) {
+            emitObservability({ envelope, tunnelId, kind: 'flow.denied', reasonCode: 'relay_disabled_by_server_policy' });
+            emitAbort({
+                io: ctx.io,
+                userId,
+                envelope,
+                reasonCode: 'relay_disabled_by_server_policy',
+                tunnelKey,
+                senderSocketId: socket.id,
+            });
+            emitSocketError(socket, 'Server-routed peer tunnel flow is disabled on this server');
             return;
         }
 
@@ -1127,14 +1202,30 @@ export function registerPeerTcpTunnelRelaySocketHandler(
             return;
         }
 
-        if (envelope.v === 1 && envelope.frame.kind === 'open') {
-            const payload = envelope.frame.open.relayAuthorization?.payload;
-            if (!payload) {
-                emitObservability({ envelope, tunnelId, kind: 'flow.denied', reasonCode: 'relay_authorization_invalid' });
-                emitAbort({ io: ctx.io, userId, envelope, tunnelId, reasonCode: 'relay_authorization_invalid', tunnelKey, senderSocketId: socket.id });
-                emitSocketError(socket, 'Server-routed peer tunnel relay authorization is missing');
-                return;
-            }
+        const authorizationState = openingAuthorization?.state ?? authorizationStateByTunnelKey.get(tunnelKey);
+        if (!authorizationState) {
+            emitObservability({ envelope, tunnelId, kind: 'flow.denied', reasonCode: 'tunnel_not_open' });
+            emitAbort({ io: ctx.io, userId, envelope, tunnelId, reasonCode: 'tunnel_not_open', tunnelKey, senderSocketId: socket.id });
+            emitSocketError(socket, 'Server-routed peer tunnel has no admitted authorization state');
+            return;
+        }
+        if (!isV1OpenFrame && !isServerRoutedFlowEnabled(authorizationState.flowKind)) {
+            emitObservability({ envelope, tunnelId, kind: 'flow.denied', reasonCode: 'relay_disabled_by_server_policy' });
+            emitAbort({
+                io: ctx.io,
+                userId,
+                envelope,
+                tunnelId,
+                reasonCode: 'relay_disabled_by_server_policy',
+                tunnelKey,
+                senderSocketId: socket.id,
+            });
+            emitSocketError(socket, 'Server-routed peer tunnel flow is disabled on this server');
+            return;
+        }
+
+        if (openingAuthorization) {
+            const { payload } = openingAuthorization;
             let resolveReady!: () => void;
             const ready = new Promise<void>((resolve) => {
                 resolveReady = resolve;
@@ -1153,7 +1244,7 @@ export function registerPeerTcpTunnelRelaySocketHandler(
                 grantId: payload.grantId,
                 grantExpiresAt: payload.exp,
                 machineId: payload.targetMachineId,
-                maxDurationMs: Math.min(caps.maxDurationMs, payload.maxDurationMs),
+                maxDurationMs: authorizationState.meteringCaps.maxDurationMs,
                 nowMs: now,
                 onMachineEnvelope: (machineEnvelope, machineSocketId) => handleRelayPayload(
                     machineEnvelope,
@@ -1200,6 +1291,7 @@ export function registerPeerTcpTunnelRelaySocketHandler(
                 return;
             }
             coordinatorByTunnelKey.set(tunnelKey, ctx.coordinator);
+            authorizationStateByTunnelKey.set(tunnelKey, authorizationState);
         }
 
         const lastActivityAt = tunnelLastActivityAtByKey.get(tunnelKey) ?? now;
@@ -1238,7 +1330,7 @@ export function registerPeerTcpTunnelRelaySocketHandler(
                 payloadBytes: decodedBinary.payloadBytes,
                 nowMs: now,
                 caps,
-                allowDataFirst: flowKindByTunnelKey.get(tunnelKey) === 'voice_media',
+                allowDataFirst: authorizationState.flowKind === 'voice_media',
             })
             : null;
         if (substreamDenyReason) {
@@ -1271,12 +1363,17 @@ export function registerPeerTcpTunnelRelaySocketHandler(
             return;
         }
 
-        const decodedBytes = envelope.v === 1 ? frameDecodedBytes(envelope.frame, caps.maxFrameBytes) : decodedBinary?.payloadBytes ?? 0;
+        const decodedBytes = envelope.v === 1
+            ? frameDecodedBytes(envelope.frame, authorizationState.meteringCaps.maxFrameBytes)
+            : decodedBinary?.payloadBytes ?? 0;
         const currentBytes = bytesByTunnelKey.get(tunnelKey) ?? { in: 0, out: 0 };
         const nextBytes = envelope.sender.kind === 'user'
             ? { in: currentBytes.in + decodedBytes, out: currentBytes.out }
             : { in: currentBytes.in, out: currentBytes.out + decodedBytes };
-        if (decodedBytes > caps.maxFrameBytes || nextBytes.in + nextBytes.out > caps.maxBytes) {
+        if (
+            decodedBytes > authorizationState.meteringCaps.maxFrameBytes
+            || nextBytes.in + nextBytes.out > authorizationState.meteringCaps.maxBytes
+        ) {
             emitObservability({
                 envelope,
                 tunnelId,
@@ -1307,7 +1404,7 @@ export function registerPeerTcpTunnelRelaySocketHandler(
 
         const startedAt = tunnelStartedAtByKey.get(tunnelKey) ?? now;
         tunnelStartedAtByKey.set(tunnelKey, startedAt);
-        if (now - startedAt > caps.maxDurationMs) {
+        if (now - startedAt > authorizationState.meteringCaps.maxDurationMs) {
             emitAbort({
                 io: ctx.io,
                 userId,
@@ -1328,7 +1425,7 @@ export function registerPeerTcpTunnelRelaySocketHandler(
             emitSocketError(socket, 'Server-routed peer tunnel duration cap exceeded');
             return;
         }
-        if (!isV1OpenFrame && now - lastActivityAt > caps.maxIdleMs) {
+        if (!isV1OpenFrame && now - lastActivityAt > authorizationState.meteringCaps.maxIdleMs) {
             emitAbort({
                 io: ctx.io,
                 userId,
@@ -1359,15 +1456,11 @@ export function registerPeerTcpTunnelRelaySocketHandler(
                 tunnelId,
                 ...(machineId ? { machineId } : {}),
             });
-            const flowKind = envelope.frame.open.relayAuthorization?.payload.flowKind;
-            if (flowKind) {
-                flowKindByTunnelKey.set(tunnelKey, flowKind);
-                if (flowKind === 'voice_media') {
-                    voiceApplicationProtectionByTunnelKey.set(tunnelKey, {
-                        encryptedApplicationFrames: 0,
-                        unprotectedApplicationFrames: 0,
-                    });
-                }
+            if (authorizationState.flowKind === 'voice_media') {
+                voiceApplicationProtectionByTunnelKey.set(tunnelKey, {
+                    encryptedApplicationFrames: 0,
+                    unprotectedApplicationFrames: 0,
+                });
             }
             if (envelope.sender.kind === 'user' && socket.id) {
                 userSocketIdByTunnelKey.set(tunnelKey, socket.id);
@@ -1379,7 +1472,7 @@ export function registerPeerTcpTunnelRelaySocketHandler(
             && decodedBinary.header.kind === 'data'
             && decodedBinary.header.substreamId
             && decodedBinary.payloadBytes > 0
-            && flowKindByTunnelKey.get(tunnelKey) === 'voice_media'
+            && authorizationState.flowKind === 'voice_media'
         ) {
             const current = voiceApplicationProtectionByTunnelKey.get(tunnelKey) ?? {
                 encryptedApplicationFrames: 0,
@@ -1393,10 +1486,10 @@ export function registerPeerTcpTunnelRelaySocketHandler(
         }
         bytesByTunnelKey.set(tunnelKey, nextBytes);
         tunnelLastActivityAtByKey.set(tunnelKey, now);
-        scheduleTunnelTimers(tunnelKey, envelope, tunnelId);
+        scheduleTunnelTimers(tunnelKey, envelope, authorizationState.meteringCaps, tunnelId);
         if (isV1OpenFrame) {
             const carrierEncoding = encodingByTunnelKey.get(tunnelKey);
-            const signedFlowKind = flowKindByTunnelKey.get(tunnelKey);
+            const signedFlowKind = authorizationState.flowKind;
             emitObservability({
                 envelope,
                 tunnelId,

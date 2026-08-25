@@ -42,47 +42,89 @@ return removed
 export type PluginWebhookAdmissionLeaseV1 = Readonly<{ release(): void }>;
 
 /**
+ * Working-memory cost of one admitted request, as a multiple of its declared
+ * raw body.
+ *
+ * The raw body is only the first of several representations this process holds
+ * simultaneously during the commit transaction: the fixed-size `Uint8Array`,
+ * its base64 string, the parsed canonical content, the canonical (or sealed and
+ * re-base64-encoded) envelope bytes, and the delivery owner's re-parse of them.
+ * Charging the raw length alone therefore understates the resource this
+ * reservation exists to bound by roughly an order of magnitude.
+ *
+ * Measured on this ingestion chain as `heapUsed + arrayBuffers`, in two ways.
+ * Peak allocation over the chain (2026-08-23):
+ *
+ * | declared raw body | plain | E2EE |
+ * |---:|---:|---:|
+ * | 1 MiB  | 5.03x | 10.38x |
+ * | 25 MiB | 5.00x | 10.27x |
+ *
+ * Retained set with every intermediate simultaneously reachable across a forced
+ * collection, re-measured independently (three runs each, `--expose-gc`):
+ *
+ * | declared raw body | plain | E2EE |
+ * |---:|---:|---:|
+ * | 1 MiB  | 5.07x | 6.05x |
+ * | 25 MiB | 5.00x | 5.89x |
+ *
+ * The two agree exactly for plain, where nothing on the chain is transient. For
+ * E2EE they differ by the sealed copy of the canonical content and its base64
+ * outer encoding, which the envelope builder drops once the canonical envelope
+ * bytes exist. Concurrent requests can each be at that peak at the same moment,
+ * so the peak is what this reservation must charge. The charge is the next
+ * integer above the highest measured multiple, keeping it conservative for both
+ * Account modes at every admitted body size.
+ */
+export const PLUGIN_WEBHOOK_WORKING_BYTES_PER_RAW_BYTE_V1 = 11;
+
+/** Working bytes one request of this declared raw length reserves. */
+export function chargePluginWebhookWorkingBytesV1(declaredRawBodyBytes: number): number {
+    return declaredRawBodyBytes * PLUGIN_WEBHOOK_WORKING_BYTES_PER_RAW_BYTE_V1;
+}
+
+/**
  * Process-wide admission for public webhook ingress.
  *
- * The charge is the declared raw body: the fixed-size `Uint8Array` that
- * `readWebhookRawBodyV1` allocates before ingress can authenticate or route a
- * request. Later base64/envelope representations have their own protocol
- * ceilings and are not re-charged here, so this is a raw-body custody bound,
- * not a model of process working memory.
+ * The reservation is acquired from the declared `Content-Length` before a
+ * single body byte is read, and it charges the measured working memory that
+ * length costs rather than the length itself, so the byte ceiling is a real
+ * per-replica memory bound instead of a raw-body custody bound.
  */
 export function createPluginWebhookProcessAdmissionV1(policy: Readonly<{
     maxRequests: number;
-    maxRawBodyBytes: number;
+    maxWorkingBytes: number;
 }>) {
     if (!Number.isSafeInteger(policy.maxRequests) || policy.maxRequests < 1) {
         throw new TypeError("Plugin webhook process request ceiling must be a positive integer");
     }
-    if (!Number.isSafeInteger(policy.maxRawBodyBytes) || policy.maxRawBodyBytes < 1) {
-        throw new TypeError("Plugin webhook process raw-body ceiling must be a positive integer");
+    if (!Number.isSafeInteger(policy.maxWorkingBytes) || policy.maxWorkingBytes < 1) {
+        throw new TypeError("Plugin webhook process working-memory ceiling must be a positive integer");
     }
     let requests = 0;
-    let rawBodyBytes = 0;
+    let workingBytes = 0;
     return {
         acquire(declaredRawBodyBytes: number): PluginWebhookAdmissionLeaseV1 | null {
             if (!Number.isSafeInteger(declaredRawBodyBytes) || declaredRawBodyBytes < 0) return null;
+            const charge = chargePluginWebhookWorkingBytesV1(declaredRawBodyBytes);
             if (
                 requests + 1 > policy.maxRequests
-                || rawBodyBytes + declaredRawBodyBytes > policy.maxRawBodyBytes
+                || workingBytes + charge > policy.maxWorkingBytes
             ) return null;
             requests += 1;
-            rawBodyBytes += declaredRawBodyBytes;
+            workingBytes += charge;
             let released = false;
             return {
                 release() {
                     if (released) return;
                     released = true;
                     requests -= 1;
-                    rawBodyBytes -= declaredRawBodyBytes;
+                    workingBytes -= charge;
                 },
             };
         },
-        snapshot(): Readonly<{ requests: number; rawBodyBytes: number }> {
-            return { requests, rawBodyBytes };
+        snapshot(): Readonly<{ requests: number; workingBytes: number }> {
+            return { requests, workingBytes };
         },
     };
 }

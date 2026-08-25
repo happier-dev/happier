@@ -58,6 +58,18 @@ export function readCurrentAutomationEventDurablePushWebhookContributionV1(
 }
 
 /**
+ * Durable-push endpoint routing and Event declarations use the same qualified
+ * webhook contribution identity. Keep that equality at the currentness owner
+ * so admission, status, and stored-definition reads cannot drift apart.
+ */
+export function sameAutomationEventDurablePushWebhookContributionV1(
+    left: Readonly<{ pluginId: string; localId: string }>,
+    right: Readonly<{ pluginId: string; localId: string }>,
+): boolean {
+    return left.pluginId === right.pluginId && left.localId === right.localId;
+}
+
+/**
  * Shared current-target check for Automation durable-push sources. Webhook
  * delivery custody stays with the Webhook claim owner; this only answers
  * whether the stored Automation source still points at the current endpoint

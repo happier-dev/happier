@@ -2,6 +2,7 @@ import { maybeCaptureSentryMonitorCheckIn } from '@/app/monitoring/sentryMonitor
 import { readRetentionPolicyFromEnv } from '@/app/retention/config/readRetentionPolicyFromEnv';
 import { resolveEffectiveRetentionEnabled } from '@/app/retention/config/retentionPolicyState';
 
+import { hasRetentionRulesThatRunWhenGlobalPolicyIsDisabled } from './retentionRuleRegistry';
 import { runRetentionSweep } from './runRetentionSweep';
 import { logRetentionSweepCompleted, logRetentionSweepFailed } from './retentionRunLogging';
 import { acquireRetentionSweepLock } from './retentionSweepLock';
@@ -10,7 +11,10 @@ const RETENTION_SWEEP_LOCK_TTL_FLOOR_MS = 30 * 60 * 1000;
 
 export function startRetentionWorker(): { stop: () => void } | null {
     const policy = readRetentionPolicyFromEnv(process.env);
-    if (!resolveEffectiveRetentionEnabled(policy)) {
+    if (
+        !resolveEffectiveRetentionEnabled(policy)
+        && !hasRetentionRulesThatRunWhenGlobalPolicyIsDisabled()
+    ) {
         return null;
     }
 

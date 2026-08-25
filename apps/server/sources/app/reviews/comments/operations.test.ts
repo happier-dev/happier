@@ -89,6 +89,50 @@ function directWriteCreate(input: ReviewCommentCreateRequestV1) {
 }
 
 describe("review comment operations", () => {
+    it("allows only one provider dispatch for simultaneous publication requests of one review comment target", async () => {
+        const { operations } = createHarness();
+        const created = await operations.create({
+            accountId: "account-1",
+            actor: { kind: "user", userId: "user-1" },
+            grants: [],
+            input: {
+                projectId: "project-1",
+                anchor: { kind: "line", filePath: "src/example.ts", line: 3 },
+                snapshot: textSnapshot(["return value.name;"]),
+                body: "Null-check this value.",
+                authorIntent: "open",
+                clientMutationId: "mutation-publication-comment",
+            },
+        });
+        const request = {
+            accountId: "account-1",
+            actor: { kind: "user", userId: "user-1" } as const,
+            input: {
+                commentId: created.comment.id,
+                target: {
+                    providerId: "github",
+                    configuredAccountId: "github-account-1",
+                    entryRef: {
+                        sourceId: "github",
+                        kindId: "pull-request",
+                        collisionScope: "github:repository-1",
+                        entryId: "42",
+                    },
+                },
+            },
+        };
+
+        const [first, second] = await Promise.all([
+            operations.claimPublicationDispatch(request),
+            operations.claimPublicationDispatch(request),
+        ]);
+
+        expect([first.disposition, second.disposition].sort()).toEqual(["dispatch", "reconcile"]);
+        expect(first.publicationCorrelationId).toBe(second.publicationCorrelationId);
+        expect(first.publicationCorrelationId).not.toContain("account-1");
+        expect(first.publicationCorrelationId).not.toContain("repository-1");
+    });
+
     it("replays an equivalent create exactly once for the same account and client mutation", async () => {
         const { store, operations } = createHarness();
         const params = {

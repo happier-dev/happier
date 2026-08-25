@@ -18,6 +18,7 @@ import {
     createSessionServerStartAutomationIngress,
     createSessionServerStartDaemonDispatcher,
 } from "./sessionServerStartDispatcher";
+import type { RpcAckResponseEmitter, RpcForwardTargetGuard } from "./rpc/_types";
 
 function sessionStartRecipe(targetMachineId: string): string {
     const serialized = serializeAutomationRunExecutionRecipeV1({
@@ -140,6 +141,49 @@ function ingressRequest(runId: string) {
     };
 }
 
+async function dispatchRequestFor(
+    seeded: Awaited<ReturnType<typeof seedCrossMachineRun>>,
+): Promise<SessionServerStartDispatchRequestV1> {
+    const accountCurrentness = await inTx(async (tx) =>
+        await fetchAutomationAccountCurrentnessWitnessTx(tx, seeded.account.id),
+    );
+    if (accountCurrentness === null) {
+        throw new Error("Expected plain Account currentness");
+    }
+    return {
+        v: 1,
+        kind: "session.serverStart.dispatch",
+        target: {
+            accountId: seeded.account.id,
+            machineId: seeded.targetMachineId,
+            machineInstallationId: seeded.targetMachineInstallationId,
+        },
+        start: {
+            automationId: seeded.automation.id,
+            runId: seeded.run.id,
+            attempt: 1,
+            claimedByMachineId: seeded.sourceMachineId,
+            origin: "event",
+            accountCurrentness,
+            requestEnvelope: { t: "plain", v: { opaqueToServer: true } },
+        },
+    };
+}
+
+function exactTargetSocket(
+    seeded: Awaited<ReturnType<typeof seedCrossMachineRun>>,
+): RpcAckResponseEmitter {
+    return {
+        id: `socket-${seeded.targetMachineId}`,
+        data: {
+            clientType: "machine-scoped",
+            machineId: seeded.targetMachineId,
+            verifiedMachineInstallationId: seeded.targetMachineInstallationId,
+        },
+        timeout: () => ({ emitWithAck: async () => ({}) }),
+    };
+}
+
 function deferred<T>() {
     let resolve!: (value: T) => void;
     const promise = new Promise<T>((resolvePromise) => {
@@ -250,30 +294,118 @@ describe("Session server-start Automation ingress on SQLite", () => {
         }));
     });
 
+    it.each([
+        {
+            // Cancellation publishes an Automation change, so it also advances
+            // `Account.seq` and trips the incumbent Account-currentness arm.
+            // The three facts below move no Account state and are what
+            // discriminate the Run-claim arm of the pre-submit guard.
+            name: "the user cancels the Run",
+            moveRun: async (seeded: Awaited<ReturnType<typeof seedCrossMachineRun>>) => {
+                await expect(cancelAutomationRun({
+                    accountId: seeded.account.id,
+                    runId: seeded.run.id,
+                })).resolves.toEqual(expect.objectContaining({ state: "cancelled" }));
+            },
+        },
+        {
+            name: "the claim moves to another machine",
+            moveRun: async (seeded: Awaited<ReturnType<typeof seedCrossMachineRun>>) => {
+                await db.automationRun.update({
+                    where: { id: seeded.run.id },
+                    data: { claimedByMachineId: seeded.targetMachineId },
+                });
+            },
+        },
+        {
+            name: "the Run advances to a later attempt",
+            moveRun: async (seeded: Awaited<ReturnType<typeof seedCrossMachineRun>>) => {
+                await db.automationRun.update({
+                    where: { id: seeded.run.id },
+                    data: { attempt: 2 },
+                });
+            },
+        },
+        {
+            name: "the claim lease expires",
+            moveRun: async (seeded: Awaited<ReturnType<typeof seedCrossMachineRun>>) => {
+                await db.automationRun.update({
+                    where: { id: seeded.run.id },
+                    data: { leaseExpiresAt: new Date(Date.now() - 1_000) },
+                });
+            },
+        },
+    ])("never submits the Session start when $name after ingress derivation", async ({ moveRun }) => {
+        const seeded = await seedCrossMachineRun();
+        const request = await dispatchRequestFor(seeded);
+        const target = exactTargetSocket(seeded);
+        const operation = vi.fn(async () => ({ emitted: true }));
+        const forwardRpc = vi.fn(async (params: Readonly<{
+            targetGuard?: RpcForwardTargetGuard;
+        }>) => {
+            const targetGuard = params.targetGuard;
+            if (!targetGuard) throw new Error("Expected the exact-machine target guard");
+            // The dispatch is derived and the exact target is selected. The Run
+            // stops being current here, before the target operation is submitted.
+            await moveRun(seeded);
+            await expect(targetGuard.filterTargets([target])).resolves.toEqual([]);
+            await expect(targetGuard.runOperation({
+                target,
+                operation,
+                readLatestTarget: async () => target,
+            })).resolves.toEqual({ status: "unavailable" });
+            return { ok: false as const, error: "target unavailable" };
+        });
+        const dispatcher = createSessionServerStartDaemonDispatcher({
+            io: {} as Server,
+            forwardRpc: forwardRpc as never,
+        });
+
+        await expect(dispatcher(request)).resolves.toEqual({
+            type: "error",
+            code: "target_unavailable",
+            retryable: true,
+        });
+        expect(operation).not.toHaveBeenCalled();
+        await expect(db.automationRun.findUniqueOrThrow({
+            where: { id: seeded.run.id },
+            select: { producedSessionId: true },
+        })).resolves.toEqual({ producedSessionId: null });
+    });
+
+    it("submits the Session start while the derived Run claim stays current", async () => {
+        const seeded = await seedCrossMachineRun();
+        const request = await dispatchRequestFor(seeded);
+        const target = exactTargetSocket(seeded);
+        const operation = vi.fn(async () => sessionStartSuccess("session-current", seeded.targetMachineId));
+        const forwardRpc = vi.fn(async (params: Readonly<{
+            targetGuard?: RpcForwardTargetGuard;
+        }>) => {
+            const targetGuard = params.targetGuard;
+            if (!targetGuard) throw new Error("Expected the exact-machine target guard");
+            await expect(targetGuard.filterTargets([target])).resolves.toEqual([target]);
+            const guarded = await targetGuard.runOperation({
+                target,
+                operation,
+                readLatestTarget: async () => target,
+            });
+            if (guarded.status !== "current") throw new Error("Expected a current guarded operation");
+            return { ok: true as const, result: guarded.value };
+        });
+        const dispatcher = createSessionServerStartDaemonDispatcher({
+            io: {} as Server,
+            forwardRpc: forwardRpc as never,
+        });
+
+        await expect(dispatcher(request)).resolves.toEqual(
+            sessionStartSuccess("session-current", seeded.targetMachineId),
+        );
+        expect(operation).toHaveBeenCalledTimes(1);
+    });
+
     it("does not forward when the exact target withdraws sessionSpawn after ingress derivation", async () => {
         const seeded = await seedCrossMachineRun();
-        const accountCurrentness = await inTx(async (tx) =>
-            await fetchAutomationAccountCurrentnessWitnessTx(tx, seeded.account.id),
-        );
-        if (accountCurrentness === null) {
-            throw new Error("Expected plain Account currentness");
-        }
-        const request: SessionServerStartDispatchRequestV1 = {
-            v: 1,
-            kind: "session.serverStart.dispatch",
-            target: {
-                accountId: seeded.account.id,
-                machineId: seeded.targetMachineId,
-                machineInstallationId: seeded.targetMachineInstallationId,
-            },
-            start: {
-                automationId: seeded.automation.id,
-                runId: seeded.run.id,
-                origin: "event",
-                accountCurrentness,
-                requestEnvelope: { t: "plain", v: { opaqueToServer: true } },
-            },
-        };
+        const request = await dispatchRequestFor(seeded);
         const forwardRpc = vi.fn(async () => ({
             ok: true as const,
             result: sessionStartSuccess("must-not-forward", seeded.targetMachineId),

@@ -1,14 +1,11 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { ConnectedServiceAuthGroupPolicyV1Schema } from "@happier-dev/protocol";
 
 import { db } from "@/storage/db";
 import { auth } from "@/app/auth/auth";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import { withAuthenticatedTestApp } from "../../testkit/sqliteFastify";
 import { accountRoutes } from "./accountRoutes";
-import {
-    DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1,
-    stringifyConnectedServiceAuthGroupPolicy,
-} from "../connect/connectedServicesV3/authGroupPolicy";
 import {
     createLegacyCredentialFixtureIdentity,
     createLegacyGroupFixtureIdentity,
@@ -254,7 +251,7 @@ describe("Account profile (integration)", () => {
                         displayName: "Codex Main",
                         activeProfileId: "work",
                         generation: 3,
-                        policyJson: stringifyConnectedServiceAuthGroupPolicy(DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1),
+                        policyJson: JSON.stringify(ConnectedServiceAuthGroupPolicyV1Schema.parse({})),
                     },
                 });
                 await db.connectedServiceAuthGroupMember.create({
@@ -435,7 +432,7 @@ describe("Account profile (integration)", () => {
                         }),
                         activeProfileId: "disabled-backup",
                         generation: 4,
-                        policyJson: stringifyConnectedServiceAuthGroupPolicy(DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1),
+                        policyJson: JSON.stringify(ConnectedServiceAuthGroupPolicyV1Schema.parse({})),
                     },
                 });
                 await db.connectedServiceAuthGroupMember.create({

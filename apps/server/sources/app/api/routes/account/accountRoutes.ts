@@ -12,6 +12,7 @@ import { registerPluginAccountSettingsRoutes } from "./registerPluginAccountSett
 import { registerPluginAccountStorageRoutes } from "./registerPluginAccountStorageRoutes";
 import { createServerFeatureGatedRouteApp } from "@/app/features/catalog/serverFeatureGate";
 import { registerAccountPetLibraryRoutes } from "@/app/pets/accountPetLibraryRoutes";
+import { registerSessionDraftRoutes } from "@/app/account/sessionDrafts/registerSessionDraftRoutes";
 
 export function accountRoutes(app: Fastify): void {
     registerAccountProfileRoute(app);
@@ -26,4 +27,5 @@ export function accountRoutes(app: Fastify): void {
     registerPluginAccountSettingsRoutes(app);
     registerPluginAccountStorageRoutes(app);
     registerAccountPetLibraryRoutes(createServerFeatureGatedRouteApp(app, "pets.sync"));
+    registerSessionDraftRoutes(createServerFeatureGatedRouteApp(app, "sessions.drafts"));
 }

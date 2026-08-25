@@ -1,3 +1,5 @@
+import tweetnacl from "tweetnacl";
+
 export type EnvValue = string | undefined;
 export type EnvValues = Record<string, EnvValue>;
 
@@ -69,4 +71,23 @@ export function createEnvPatcher(keys: readonly string[]) {
     };
 
     return { set, setMany, restore };
+}
+
+/**
+ * The peer-mediation route-grant signing variables, as a deterministic test fixture.
+ *
+ * Grant signing is the master switch for every server-relayed peer flow
+ * (`docs/peer-mediation.md` §2.1): without it the local-service preview tunnel opener throws
+ * `grant_signing_unavailable`, so `capabilities.localServices.{preview,publicPreview}` report the
+ * relay as unavailable. Any suite that composes a *working* preview or public exposure needs these.
+ */
+export function peerMediationGrantSigningEnv(): EnvValues {
+    // Ed25519 seed fixed at 0x09 repeated: the same deterministic key the peer-mediation feature
+    // specs use, so a payload's advertised public key is stable across suites.
+    const keyPair = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(9));
+    return {
+        HAPPIER_PEER_MEDIATION_ROUTE_GRANT_SIGNING_KEY_ID: "testkit_signing_key",
+        HAPPIER_PEER_MEDIATION_ROUTE_GRANT_SIGNING_PRIVATE_KEY: Buffer.from(keyPair.secretKey).toString("base64url"),
+        HAPPIER_PEER_MEDIATION_ROUTE_GRANT_SIGNING_PUBLIC_KEY: Buffer.from(keyPair.publicKey).toString("base64url"),
+    };
 }

@@ -45,6 +45,7 @@ import {
 } from '@happier-dev/protocol';
 import { resolvePeerMediationGrantSigningConfig } from '@/app/machines/peer/mediation/mintDirectRouteGrantV1';
 import { resolveEffectiveWebappBaseUrl } from '../../serverUrls/effectiveServerUrls';
+import { chargePluginWebhookWorkingBytesV1 } from '@/app/plugins/webhooks/admission';
 import { FEATURE_ENV_KEYS, type FeatureEnvKey } from './featureEnvSchema';
 
 export type AutomationsFeatureEnv = Readonly<{
@@ -105,6 +106,10 @@ export type SessionAgentSwitchingFeatureEnv = Readonly<{
 
 export type SessionFoldersFeatureEnv = Readonly<{
   foldersEnabled: boolean;
+}>;
+
+export type SessionDraftsFeatureEnv = Readonly<{
+  draftsEnabled: boolean;
 }>;
 
 export type MachineTransferFeatureEnv = Readonly<{
@@ -205,13 +210,15 @@ export type WebhookIngressPolicyV1 = Readonly<{
   process: Readonly<{
     maxRequests: number;
     /**
-     * Aggregate ceiling on the raw request bodies this process has buffered
-     * concurrently. Its default is the exact worst case the request ceiling
-     * already permits (`maxRequests` x the protocol raw-body limit), so the
-     * count is what binds by default and this stays a real lever only for an
-     * operator who wants a tighter memory bound than that.
+     * Aggregate ceiling on the working memory this process has committed to
+     * in-flight webhook requests. One request costs a measured multiple of its
+     * declared raw body, not the raw body alone. Its default is the exact worst
+     * case the request ceiling already permits (`maxRequests` x the protocol
+     * raw-body limit x that multiple), so the count is what binds by default
+     * and this stays a real lever only for an operator who wants a tighter
+     * memory bound than their replica's own budget.
      */
-    maxRawBodyBytes: number;
+    maxWorkingBytes: number;
   }>;
   route: Readonly<{
     ratePerMinute: number;
@@ -590,6 +597,12 @@ export function readSessionFoldersFeatureEnv(env: NodeJS.ProcessEnv): SessionFol
   };
 }
 
+export function readSessionDraftsFeatureEnv(env: NodeJS.ProcessEnv): SessionDraftsFeatureEnv {
+  return {
+    draftsEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.sessionsDraftsEnabled], true),
+  };
+}
+
 export function readSessionUsageLimitRecoveryFeatureEnv(env: NodeJS.ProcessEnv): SessionUsageLimitRecoveryFeatureEnv {
   return {
     enabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.sessionsUsageLimitRecoveryEnabled], true),
@@ -813,10 +826,10 @@ function readWebhookIngressPolicyV1(env: NodeJS.ProcessEnv): WebhookIngressPolic
     version: 1,
     process: Object.freeze({
       maxRequests,
-      maxRawBodyBytes: readLoweredWebhookIngressLimit(
+      maxWorkingBytes: readLoweredWebhookIngressLimit(
         env,
-        FEATURE_ENV_KEYS.pluginsWebhooksProcessMaxRawBodyBytes,
-        maxRequests * PLUGIN_WEBHOOK_MAX_RAW_BODY_BYTES_V1,
+        FEATURE_ENV_KEYS.pluginsWebhooksProcessMaxWorkingBytes,
+        chargePluginWebhookWorkingBytesV1(maxRequests * PLUGIN_WEBHOOK_MAX_RAW_BODY_BYTES_V1),
       ),
     }),
     route: Object.freeze({

@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
     AutomationRunExecutionInputV1Schema,
     deriveSessionCreationTagV1,
@@ -403,6 +403,67 @@ describe("automationClaimService (integration)", () => {
             }),
         );
         expect(["machine-1", "machine-2"]).toContain(claimed?.claimedByMachineId ?? "");
+    });
+
+    it("does not let a second machine reclaim a lease kept healthy by heartbeat", async () => {
+        vi.useFakeTimers();
+        try {
+            vi.setSystemTime(new Date("2026-08-23T12:00:00.000Z"));
+            const account = await db.account.create({
+                data: { encryptionMode: "plain" },
+                select: { id: true },
+            });
+            await db.machine.createMany({
+                data: [
+                    { id: "machine-heartbeat-1", accountId: account.id, metadata: "{}" },
+                    { id: "machine-heartbeat-2", accountId: account.id, metadata: "{}" },
+                ],
+            });
+            const automation = await createAutomationWithAssignments({
+                accountId: account.id,
+                machineIds: ["machine-heartbeat-1", "machine-heartbeat-2"],
+                name: "Heartbeat lease automation",
+            });
+            const run = await db.automationRun.create({
+                data: {
+                    automationId: automation.id,
+                    accountId: account.id,
+                    state: "queued",
+                    scheduledAt: new Date(Date.now() - 2_000),
+                    dueAt: new Date(Date.now() - 1_000),
+                    executionInputEnvelope: TEST_STRICT_PLAIN_EXECUTION_RECIPE,
+                    executionDispatchState: "notStarted",
+                },
+                select: { id: true },
+            });
+            const claim = await claimAutomationRun({
+                accountId: account.id,
+                machineId: "machine-heartbeat-1",
+                leaseDurationMs: 5_000,
+            });
+            expect(claim.run).toEqual(expect.objectContaining({ id: run.id, attempt: 1 }));
+
+            vi.setSystemTime(new Date(Date.now() + 2_500));
+            await expect(heartbeatAutomationRun({
+                accountId: account.id,
+                runId: run.id,
+                machineId: "machine-heartbeat-1",
+                attempt: 1,
+                leaseDurationMs: 5_000,
+            })).resolves.toEqual({
+                ok: true,
+                leaseExpiresAt: new Date(Date.now() + 5_000),
+            });
+
+            vi.setSystemTime(new Date(Date.now() + 2_501));
+            await expect(claimAutomationRun({
+                accountId: account.id,
+                machineId: "machine-heartbeat-2",
+                leaseDurationMs: 5_000,
+            })).resolves.toEqual({ run: null, accountCurrentness: null });
+        } finally {
+            vi.useRealTimers();
+        }
     });
 
     it("requires the claim witness at start and the post-start witness at settlement", async () => {
@@ -935,6 +996,109 @@ describe("automationClaimService (integration)", () => {
         });
     });
 
+    it("normalizes a retained never-started execution Run NULL marker while reclaiming it", async () => {
+        const account = await db.account.create({
+            data: { encryptionMode: "plain" },
+            select: { id: true },
+        });
+        await db.machine.createMany({
+            data: [
+                { id: "machine-null-claimed-1", accountId: account.id, metadata: "{}" },
+                { id: "machine-null-claimed-2", accountId: account.id, metadata: "{}" },
+            ],
+        });
+        const automation = await createAutomationWithAssignments({
+            accountId: account.id,
+            machineIds: ["machine-null-claimed-1", "machine-null-claimed-2"],
+            name: "Retained NULL claimed execution Run",
+        });
+        const run = await db.automationRun.create({
+            data: {
+                automationId: automation.id,
+                accountId: account.id,
+                state: "claimed",
+                executionInputEnvelope: TEST_STRICT_PLAIN_EXECUTION_RECIPE,
+                executionDispatchState: null,
+                scheduledAt: new Date(Date.now() - 60_000),
+                dueAt: new Date(Date.now() - 50_000),
+                claimedAt: new Date(Date.now() - 40_000),
+                claimedByMachineId: "machine-null-claimed-1",
+                leaseExpiresAt: new Date(Date.now() - 1_000),
+                attempt: 1,
+            },
+            select: { id: true },
+        });
+
+        const reclaimed = await claimAutomationRun({
+            accountId: account.id,
+            machineId: "machine-null-claimed-2",
+            leaseDurationMs: 30_000,
+        });
+
+        expect(reclaimed.run).toEqual(expect.objectContaining({
+            id: run.id,
+            state: "claimed",
+            claimedByMachineId: "machine-null-claimed-2",
+            attempt: 2,
+            executionDispatchState: "notStarted",
+        }));
+    });
+
+    it("terminalizes a retained previously-running execution Run NULL marker as uncertain", async () => {
+        const account = await db.account.create({
+            data: { encryptionMode: "plain" },
+            select: { id: true },
+        });
+        await db.machine.createMany({
+            data: [
+                { id: "machine-null-running-1", accountId: account.id, metadata: "{}" },
+                { id: "machine-null-running-2", accountId: account.id, metadata: "{}" },
+            ],
+        });
+        const automation = await createAutomationWithAssignments({
+            accountId: account.id,
+            machineIds: ["machine-null-running-1", "machine-null-running-2"],
+            name: "Retained NULL running execution Run",
+        });
+        const run = await db.automationRun.create({
+            data: {
+                automationId: automation.id,
+                accountId: account.id,
+                state: "running",
+                executionInputEnvelope: TEST_STRICT_PLAIN_EXECUTION_RECIPE,
+                executionDispatchState: null,
+                scheduledAt: new Date(Date.now() - 60_000),
+                dueAt: new Date(Date.now() - 50_000),
+                claimedAt: new Date(Date.now() - 40_000),
+                startedAt: new Date(Date.now() - 30_000),
+                claimedByMachineId: "machine-null-running-1",
+                leaseExpiresAt: new Date(Date.now() - 1_000),
+                attempt: 1,
+            },
+            select: { id: true },
+        });
+
+        await expect(claimAutomationRun({
+            accountId: account.id,
+            machineId: "machine-null-running-2",
+            leaseDurationMs: 30_000,
+        })).resolves.toEqual({ run: null, accountCurrentness: null });
+        await expect(db.automationRun.findUniqueOrThrow({
+            where: { id: run.id },
+            select: {
+                state: true,
+                executionDispatchState: true,
+                claimedByMachineId: true,
+                leaseExpiresAt: true,
+            },
+        })).resolves.toEqual({
+            state: "outcome_uncertain",
+            executionDispatchState: "outcomeUnknown",
+            claimedByMachineId: null,
+            leaseExpiresAt: null,
+        });
+    });
+
     it("keeps a disabled live lease nonterminal, then cancels it after expiry through its retained claimant wake", async () => {
         const machineId = "machine-retired-disabled-lease";
         const leaseExpiresAt = new Date(Date.now() + 60_000);
@@ -1092,6 +1256,294 @@ describe("automationClaimService (integration)", () => {
             claimedByMachineId: null,
             leaseExpiresAt: null,
             errorCode: "automation_retired_after_lease_expiry",
+        });
+    });
+
+    async function addAccountMachine(params: Readonly<{ accountId: string; machineId: string }>) {
+        await db.machine.create({
+            data: {
+                id: params.machineId,
+                accountId: params.accountId,
+                metadata: "{}",
+            },
+        });
+        return params.machineId;
+    }
+
+    it("cancels an expired claimed Run of a disabled Automation through a replacement machine that never executes it", async () => {
+        const claimantMachineId = "machine-dead-claimant-cancelled";
+        const { accountId, automationId, runId } = await createLeasedRetirementRun({
+            machineId: claimantMachineId,
+            name: "Dead claimant disabled retirement",
+            state: "claimed",
+            leaseExpiresAt: new Date(Date.now() - 1_000),
+        });
+        const recoveringMachineId = await addAccountMachine({
+            accountId,
+            machineId: "machine-recovering-cancelled",
+        });
+
+        await expect(setAutomationEnabled({
+            accountId,
+            automationId,
+            enabled: false,
+        })).resolves.toEqual(expect.objectContaining({ id: automationId, enabled: false }));
+
+        // The claimant never comes back: only the replacement machine scans.
+        await expect(claimAutomationRun({
+            accountId,
+            machineId: recoveringMachineId,
+            leaseDurationMs: 30_000,
+        })).resolves.toEqual({ run: null, accountCurrentness: null });
+
+        await expect(db.automationRun.findUniqueOrThrow({
+            where: { id: runId },
+            select: {
+                state: true,
+                claimedByMachineId: true,
+                leaseExpiresAt: true,
+                errorCode: true,
+                attempt: true,
+                startedAt: true,
+            },
+        })).resolves.toEqual({
+            state: "cancelled",
+            claimedByMachineId: null,
+            leaseExpiresAt: null,
+            errorCode: "automation_retired_after_lease_expiry",
+            // Recovery terminalizes; it never becomes a new execution attempt.
+            attempt: 1,
+            startedAt: null,
+        });
+        await expect(db.automationRunEvent.findMany({
+            where: { runId },
+            select: { type: true, payload: true },
+        })).resolves.toContainEqual({
+            type: "run_cancelled",
+            payload: { reason: "automation_retired_after_lease_expiry" },
+        });
+    });
+
+    it("terminalizes an expired running Run of a deleted Automation as outcome-uncertain through a replacement machine", async () => {
+        const claimantMachineId = "machine-dead-claimant-uncertain";
+        const { accountId, automationId, runId } = await createLeasedRetirementRun({
+            machineId: claimantMachineId,
+            name: "Dead claimant deleted retirement",
+            state: "running",
+            leaseExpiresAt: new Date(Date.now() - 1_000),
+        });
+        const recoveringMachineId = await addAccountMachine({
+            accountId,
+            machineId: "machine-recovering-uncertain",
+        });
+
+        await expect(deleteAutomation({ accountId, automationId })).resolves.toBe(true);
+
+        await expect(claimAutomationRun({
+            accountId,
+            machineId: recoveringMachineId,
+            leaseDurationMs: 30_000,
+        })).resolves.toEqual({ run: null, accountCurrentness: null });
+
+        await expect(db.automationRun.findUniqueOrThrow({
+            where: { id: runId },
+            select: {
+                state: true,
+                claimedByMachineId: true,
+                leaseExpiresAt: true,
+                errorCode: true,
+                attempt: true,
+            },
+        })).resolves.toEqual({
+            state: "outcome_uncertain",
+            claimedByMachineId: null,
+            leaseExpiresAt: null,
+            errorCode: "automation_retired_after_lease_expiry",
+            attempt: 1,
+        });
+        await expect(db.automationRunEvent.findMany({
+            where: { runId },
+            select: { type: true, payload: true },
+        })).resolves.toContainEqual({
+            type: "run_outcome_uncertain",
+            payload: { reason: "automation_retired_after_lease_expiry" },
+        });
+    });
+
+    it("terminalizes an expired running Run whose only assignment was removed through a replacement machine", async () => {
+        const claimantMachineId = "machine-dead-claimant-unassigned";
+        const { accountId, automationId, runId } = await createLeasedRetirementRun({
+            machineId: claimantMachineId,
+            name: "Dead claimant unassigned retirement",
+            state: "running",
+            leaseExpiresAt: new Date(Date.now() - 1_000),
+        });
+        const recoveringMachineId = await addAccountMachine({
+            accountId,
+            machineId: "machine-recovering-unassigned",
+        });
+
+        await expect(updateAutomation({
+            accountId,
+            automationId,
+            input: { assignments: [] },
+        })).resolves.toEqual(expect.objectContaining({ id: automationId }));
+
+        await expect(claimAutomationRun({
+            accountId,
+            machineId: recoveringMachineId,
+            leaseDurationMs: 30_000,
+        })).resolves.toEqual({ run: null, accountCurrentness: null });
+
+        await expect(db.automationRun.findUniqueOrThrow({
+            where: { id: runId },
+            select: { state: true, claimedByMachineId: true, errorCode: true, attempt: true },
+        })).resolves.toEqual({
+            state: "outcome_uncertain",
+            claimedByMachineId: null,
+            errorCode: "automation_retired_after_lease_expiry",
+            attempt: 1,
+        });
+    });
+
+    it("projects a retired Run's recovery wake to a replacement machine so the claim scan is reachable", async () => {
+        const claimantMachineId = "machine-dead-claimant-wake";
+        const leaseExpiresAt = new Date(Date.now() - 1_000);
+        const { accountId, automationId, runId } = await createLeasedRetirementRun({
+            machineId: claimantMachineId,
+            name: "Dead claimant recovery wake",
+            state: "running",
+            leaseExpiresAt,
+        });
+        const recoveringMachineId = await addAccountMachine({
+            accountId,
+            machineId: "machine-recovering-wake",
+        });
+
+        await expect(setAutomationEnabled({
+            accountId,
+            automationId,
+            enabled: false,
+        })).resolves.toEqual(expect.objectContaining({ id: automationId, enabled: false }));
+
+        await expect(listDaemonAssignments({
+            accountId,
+            machineId: recoveringMachineId,
+        })).resolves.toEqual([
+            expect.objectContaining({
+                id: runId,
+                machineId: recoveringMachineId,
+                automation: expect.objectContaining({ id: automationId, enabled: false }),
+                nextClaimAt: new Date(leaseExpiresAt.getTime() + 1),
+            }),
+        ]);
+    });
+
+    it("leaves a live Automation's expired lease to its own assigned machines", async () => {
+        const claimantMachineId = "machine-live-claimant";
+        const leaseExpiresAt = new Date(Date.now() - 1_000);
+        const { accountId, runId } = await createLeasedRetirementRun({
+            machineId: claimantMachineId,
+            name: "Live assignment lease takeover",
+            state: "claimed",
+            leaseExpiresAt,
+        });
+        const unassignedMachineId = await addAccountMachine({
+            accountId,
+            machineId: "machine-unassigned-bystander",
+        });
+
+        // The Definition is not retired, so an unassigned machine must neither
+        // terminalize the Run nor receive a wake for it.
+        await expect(listDaemonAssignments({
+            accountId,
+            machineId: unassignedMachineId,
+        })).resolves.toEqual([]);
+        await expect(claimAutomationRun({
+            accountId,
+            machineId: unassignedMachineId,
+            leaseDurationMs: 30_000,
+        })).resolves.toEqual({ run: null, accountCurrentness: null });
+        await expect(db.automationRun.findUniqueOrThrow({
+            where: { id: runId },
+            select: { state: true, claimedByMachineId: true, leaseExpiresAt: true, attempt: true },
+        })).resolves.toEqual({
+            state: "claimed",
+            claimedByMachineId: claimantMachineId,
+            leaseExpiresAt,
+            attempt: 1,
+        });
+
+        // The assigned claimant still recovers its own expired lease.
+        const reclaimed = await claimAutomationRun({
+            accountId,
+            machineId: claimantMachineId,
+            leaseDurationMs: 30_000,
+        });
+        expect(reclaimed.run).toEqual(expect.objectContaining({
+            id: runId,
+            state: "claimed",
+            claimedByMachineId: claimantMachineId,
+            attempt: 2,
+        }));
+    });
+
+    it("does not let an unassigned machine settle a live Automation's expired dispatch as uncertain", async () => {
+        const account = await db.account.create({
+            data: { encryptionMode: "plain" },
+            select: { id: true },
+        });
+        await db.machine.createMany({
+            data: [
+                { id: "machine-live-dispatch-claimant", accountId: account.id, metadata: "{}" },
+                { id: "machine-live-dispatch-bystander", accountId: account.id, metadata: "{}" },
+            ],
+        });
+        const automation = await createAutomationWithAssignments({
+            accountId: account.id,
+            machineIds: ["machine-live-dispatch-claimant"],
+            name: "Live execution dispatch",
+        });
+        const run = await db.automationRun.create({
+            data: {
+                automationId: automation.id,
+                accountId: account.id,
+                state: "running",
+                executionInputEnvelope: TEST_STRICT_PLAIN_EXECUTION_RECIPE,
+                executionDispatchState: "dispatchPermitted",
+                scheduledAt: new Date(Date.now() - 60_000),
+                dueAt: new Date(Date.now() - 50_000),
+                claimedAt: new Date(Date.now() - 40_000),
+                startedAt: new Date(Date.now() - 30_000),
+                claimedByMachineId: "machine-live-dispatch-claimant",
+                leaseExpiresAt: new Date(Date.now() - 1_000),
+                attempt: 1,
+            },
+            select: { id: true },
+        });
+
+        // The abandoned-dispatch owner scopes its write to an enabled,
+        // undeleted Definition and to nothing else, so recovery discovery is
+        // the only thing keeping an unassigned machine away from a live Run.
+        // Widening it past retirement would settle this Run as uncertain.
+        await expect(claimAutomationRun({
+            accountId: account.id,
+            machineId: "machine-live-dispatch-bystander",
+            leaseDurationMs: 30_000,
+        })).resolves.toEqual({ run: null, accountCurrentness: null });
+        await expect(db.automationRun.findUniqueOrThrow({
+            where: { id: run.id },
+            select: {
+                state: true,
+                executionDispatchState: true,
+                claimedByMachineId: true,
+                attempt: true,
+            },
+        })).resolves.toEqual({
+            state: "running",
+            executionDispatchState: "dispatchPermitted",
+            claimedByMachineId: "machine-live-dispatch-claimant",
+            attempt: 1,
         });
     });
 });

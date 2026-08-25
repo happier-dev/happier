@@ -69,6 +69,7 @@ function createRun(state: AutomationRunItem["state"]): AutomationRunItem {
         summaryCiphertext: null,
         errorCode: null,
         errorMessage: null,
+        contentRemovedAt: null,
         producedSessionId: null,
         createdAt: now,
         updatedAt: now,

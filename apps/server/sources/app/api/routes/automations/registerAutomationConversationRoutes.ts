@@ -10,6 +10,7 @@ import {
 
 import {
     admitAutomationConversationV1,
+    admitEncryptedAutomationConversationV1,
     AutomationConversationAdmissionCallerError,
 } from "@/app/automations/automationConversationAdmissionService";
 import {
@@ -35,6 +36,7 @@ const ADMIT_PATH = AutomationConversationActionHttpPathsV1[
 
 type RouteDependencies = Readonly<{
     admit: typeof admitAutomationConversationV1;
+    admitEncrypted: typeof admitEncryptedAutomationConversationV1;
     listTargets: typeof listAutomationConversationTargetsV1;
     verifyTarget: typeof verifyAutomationConversationTargetV1;
     verifyPublisher: typeof verifyPluginInstallationPublisherHeader;
@@ -42,6 +44,7 @@ type RouteDependencies = Readonly<{
 
 const DEFAULT_DEPENDENCIES: RouteDependencies = {
     admit: admitAutomationConversationV1,
+    admitEncrypted: admitEncryptedAutomationConversationV1,
     listTargets: listAutomationConversationTargetsV1,
     verifyTarget: verifyAutomationConversationTargetV1,
     verifyPublisher: verifyPluginInstallationPublisherHeader,
@@ -175,18 +178,29 @@ export function registerAutomationConversationRoutes(
                 return reply.code(401).send(null);
             }
 
-            return await reply.send(await resolvedDependencies.admit({
-                accountId: request.userId,
-                caller: {
-                    pluginId: request.body.caller.pluginId,
-                    contributionLocalId: request.body.caller.contributionLocalId,
-                    machineId: request.body.caller.materialization.machineId,
-                    machineInstallationId: publisher.installationId,
-                    materializationId:
-                        request.body.caller.materialization.materializationId,
-                },
-                input: request.body.input,
-            }));
+            const admissionCaller = {
+                pluginId: request.body.caller.pluginId,
+                contributionLocalId: request.body.caller.contributionLocalId,
+                machineId: request.body.caller.materialization.machineId,
+                machineInstallationId: publisher.installationId,
+                materializationId:
+                    request.body.caller.materialization.materializationId,
+            };
+            // The wire arm names the Account mode the admitting host produced
+            // for. An encrypted body carries no plugin input at all, so there
+            // is nothing to route into the plain reader.
+            return await reply.send("hostEvidence" in request.body
+                ? await resolvedDependencies.admitEncrypted({
+                    accountId: request.userId,
+                    caller: admissionCaller,
+                    hostEvidence: request.body.hostEvidence,
+                })
+                : await resolvedDependencies.admit({
+                    accountId: request.userId,
+                    caller: admissionCaller,
+                    input: request.body.input,
+                    replyHandoff: request.body.replyHandoff,
+                }));
         } catch (error) {
             if (
                 error instanceof PluginInstallationPublisherProofError

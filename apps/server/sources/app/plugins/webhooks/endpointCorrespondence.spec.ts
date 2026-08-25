@@ -29,6 +29,18 @@ function tx() {
     } as never;
 }
 
+function endpointRow(overrides: Record<string, unknown> = {}) {
+    return {
+        id: endpointId,
+        revision: 2,
+        enabled: true,
+        revokedAt: null,
+        providerConfirmedAt: new Date("2026-08-23T00:00:00.000Z"),
+        route: { enabled: true, revokedAt: null },
+        ...overrides,
+    };
+}
+
 const accountEndpointInput = {
     webhookEndpointId: endpointId,
     webhookContribution: contribution,
@@ -54,7 +66,7 @@ describe("plugin webhook endpoint correspondence", () => {
             verifierKind: "github_hmac_sha256_v1",
             routingKind: "accountEndpoint",
         });
-        mocks.endpointFindFirst.mockResolvedValue({ id: endpointId, revision: 2 });
+        mocks.endpointFindFirst.mockResolvedValue(endpointRow());
     });
 
     it("reports the current endpoint revision when every authorizing fact still corresponds", async () => {
@@ -75,8 +87,6 @@ describe("plugin webhook endpoint correspondence", () => {
                 targetPluginVersion: "1.0.0",
                 handlerActionId: "receive",
                 routingKind: "accountEndpoint",
-                enabled: true,
-                revokedAt: null,
             }),
         }));
     });
@@ -96,7 +106,7 @@ describe("plugin webhook endpoint correspondence", () => {
                 && query.where.targetMaterializationId === target.materializationId
                 && query.where.sourceInstanceId === accountEndpointInput.sourceInstanceId
                 && query.where.webhookContributionId === contribution.localId
-                ? { id: endpointId, revision: 2 }
+                ? endpointRow()
                 : null
         ));
 
@@ -142,6 +152,41 @@ describe("plugin webhook endpoint correspondence", () => {
         expect(mocks.endpointFindFirst).not.toHaveBeenCalled();
     });
 
+    it("attaches a corresponding endpoint the provider has not confirmed yet", async () => {
+        // Provider confirmation is setup attention, not persistence
+        // correspondence: a freshly ensured endpoint must be attachable before
+        // any provider delivery exists, otherwise first-time authoring
+        // dead-ends on an external side effect it cannot perform yet.
+        mocks.endpointFindFirst.mockResolvedValue(endpointRow({ providerConfirmedAt: null }));
+
+        await expect(checkCurrentPluginWebhookEndpointCorrespondenceTxV1({
+            tx: tx(),
+            serverIdentityId: "server-1",
+            accountId: "account-1",
+            input: accountEndpointInput,
+        })).resolves.toEqual({ kind: "ready", webhookEndpointId: endpointId, revision: 2 });
+    });
+
+    it("derives attachment from the one binding-availability projection, not a query predicate", async () => {
+        // Each of these projects to an unavailable binding, so a
+        // correspondence owner that only matched identity would attach a
+        // feature connection to a binding that cannot deliver.
+        for (const unready of [
+            { enabled: false },
+            { revokedAt: new Date("2026-08-23T00:00:00.000Z") },
+            { route: { enabled: false, revokedAt: null } },
+            { route: { enabled: true, revokedAt: new Date("2026-08-23T00:00:00.000Z") } },
+        ]) {
+            mocks.endpointFindFirst.mockResolvedValue(endpointRow(unready));
+            await expect(checkCurrentPluginWebhookEndpointCorrespondenceTxV1({
+                tx: tx(),
+                serverIdentityId: "server-1",
+                accountId: "account-1",
+                input: accountEndpointInput,
+            })).resolves.toEqual({ kind: "unavailable", code: "endpoint_unavailable" });
+        }
+    });
+
     it("requires the final shared-installation setup identity to match the ensured endpoint", async () => {
         mocks.readContribution.mockResolvedValue({
             pluginId: contribution.pluginId,
@@ -155,7 +200,7 @@ describe("plugin webhook endpoint correspondence", () => {
         }>) => (
             input.where.setupKind === "githubSharedInstallationV1"
                 && input.where.providerInstallationId === "123"
-                ? { id: endpointId, revision: 2 }
+                ? endpointRow()
                 : null
         ));
 

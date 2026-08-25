@@ -13,7 +13,6 @@ import {
     mutateQualifiedConnectedServiceCredentialHealth,
     mutateQualifiedConnectedServiceCredential,
     prepareQualifiedConnectedServiceCredentialCreate,
-    QUALIFIED_CONNECTED_ACCOUNT_UNPAGINATED_LIMIT,
     readQualifiedConnectedAccountConfiguration,
     resolveQualifiedConnectedAccountHostReferenceInTx,
     readQualifiedConnectedServiceCredential,
@@ -28,13 +27,6 @@ import {
     createProviderAccountUsageRecordKey,
     createUsageSnapshot,
 } from "../providerAccountUsageTestkit";
-import {
-    openAccountScopedBlobCiphertext,
-    sealAccountScopedBlobCiphertext,
-} from "@happier-dev/protocol";
-import {
-    sealHistoricalQualifiedConnectedAccountConfigurationAliasFixtureCiphertext,
-} from "@happier-dev/protocol/testing/accountScopedCipherFixtures";
 import {
     QualifiedConnectedAccountUsageBasisError,
     writeQualifiedProviderAccountUsageRecord,
@@ -746,137 +738,6 @@ describe("qualified Connected Account credential repository", () => {
         expect(JSON.stringify(stored.metadata)).not.toMatch(
             /accessToken|refreshToken|password|apiKey/i,
         );
-    });
-
-    it("reseals the historical configuration alias once without rotating the logical revision", async () => {
-        const account = await db.account.create({
-            data: {
-                ...createSignedAccountContentBinding(),
-                encryptionMode: "e2ee",
-            },
-            select: { id: true },
-        });
-        const ref = { service, accountId: "e2ee-config-alias" };
-        const material = {
-            type: "dataKey" as const,
-            machineKey: new Uint8Array(32).fill(7),
-        };
-        const configuration = { region: "eu", endpoint: "private" };
-        const historicalAlias =
-            sealHistoricalQualifiedConnectedAccountConfigurationAliasFixtureCiphertext({
-                material,
-                payload: configuration,
-                randomBytes: (length) =>
-                    new Uint8Array(length).fill(8),
-            });
-        const created = await mutateQualifiedConnectedServiceCredential({
-            accountId: account.id,
-            ref,
-            expectedCredentialRevision: null,
-            authenticationModeId: "api-key",
-            content: {
-                t: "encrypted",
-                c: "opaque-e2ee-credential",
-            },
-            metadata,
-            initialConfiguration: {
-                expectedConfigurationRevision: null,
-                replacementContentEnvelope: {
-                    t: "encrypted",
-                    c: historicalAlias,
-                },
-            },
-        });
-        if (
-            created.status !== "written"
-            || created.configurationRevision === null
-        ) {
-            throw new Error("Expected E2EE configuration create");
-        }
-        const canonical =
-            sealAccountScopedBlobCiphertext({
-                kind:
-                    "qualified_connected_account_configuration",
-                material,
-                payload: configuration,
-                randomBytes: (length) =>
-                    new Uint8Array(length).fill(9),
-            });
-
-        await expect(
-            mutateQualifiedConnectedAccountConfiguration({
-                accountId: account.id,
-                target: { kind: "account", ref },
-                expectedCredentialRevision:
-                    created.credentialRevision,
-                expectedConfigurationRevision:
-                    created.configurationRevision,
-                replacementContentEnvelope: {
-                    t: "encrypted",
-                    c: canonical,
-                },
-                preserveConfigurationRevisionForCiphertextReseal:
-                    true,
-            }),
-        ).resolves.toEqual({
-            status: "written",
-            credentialRevision:
-                created.credentialRevision,
-            configurationRevision:
-                created.configurationRevision,
-        });
-
-        const stored =
-            await readQualifiedConnectedAccountConfiguration({
-                accountId: account.id,
-                target: { kind: "account", ref },
-            });
-        if (!stored || "status" in stored) {
-            throw new Error("Expected resolved qualified configuration");
-        }
-        expect(stored.configurationRevision).toBe(
-            created.configurationRevision,
-        );
-        expect(
-            stored.configurationContent.t === "encrypted"
-                ? openAccountScopedBlobCiphertext({
-                    kind:
-                        "qualified_connected_account_configuration",
-                    material,
-                    ciphertext:
-                        stored.configurationContent.c,
-                })
-                : null,
-        ).toMatchObject({
-            kindTag: "canonical",
-            value: configuration,
-        });
-
-        await expect(
-            mutateQualifiedConnectedAccountConfiguration({
-                accountId: account.id,
-                target: { kind: "account", ref },
-                expectedCredentialRevision:
-                    created.credentialRevision,
-                expectedConfigurationRevision:
-                    created.configurationRevision,
-                replacementContentEnvelope: {
-                    t: "encrypted",
-                    c: sealAccountScopedBlobCiphertext({
-                        kind:
-                            "qualified_connected_account_configuration",
-                        material,
-                        payload: configuration,
-                        randomBytes: (length) =>
-                            new Uint8Array(length).fill(10),
-                    }),
-                },
-                preserveConfigurationRevisionForCiphertextReseal:
-                    true,
-            }),
-        ).resolves.toEqual({
-            status: "storage_mode_mismatch",
-        });
     });
 
     it("projects V4 health without rotating credential or configuration revisions", async () => {
@@ -2096,14 +1957,15 @@ describe("qualified Connected Account credential repository", () => {
             where: { accountId: account.id },
         })).resolves.toBe(0);
     });
-    it("refuses the create that would push an Account past the ceiling its unpaginated reader enforces", async () => {
+    it("creates a credential after an Account retains 500 existing credentials", async () => {
+        const inventorySize = 501;
         const account = await db.account.create({
             data: { publicKey: null, encryptionMode: "plain" },
             select: { id: true },
         });
         await db.serviceAccountToken.createMany({
             data: Array.from(
-                { length: QUALIFIED_CONNECTED_ACCOUNT_UNPAGINATED_LIMIT },
+                { length: inventorySize - 1 },
                 (_, index) => ({
                     accountId: account.id,
                     ...createServiceAccountTokenIdentityFields({
@@ -2115,15 +1977,11 @@ describe("qualified Connected Account credential repository", () => {
             ),
         });
 
-        // The reader is exactly at its unpaginated ceiling and still answers.
         await expect(listQualifiedConnectedAccounts({
             accountId: account.id,
             service,
-        })).resolves.toHaveLength(QUALIFIED_CONNECTED_ACCOUNT_UNPAGINATED_LIMIT);
+        })).resolves.toHaveLength(inventorySize - 1);
 
-        // One more qualified credential is what the writer must refuse. Persisting it
-        // would make every subsequent list throw, which is a total read outage for the
-        // Account rather than a failure of the one write that caused it.
         await expect(mutateQualifiedConnectedServiceCredential({
             accountId: account.id,
             ref: { service, accountId: "provider/account/overflow" },
@@ -2131,18 +1989,19 @@ describe("qualified Connected Account credential repository", () => {
             authenticationModeId: "api-key",
             content: { t: "plain", v: { token: "credential" } },
             metadata,
-        })).resolves.toEqual({ status: "capacity_exhausted" });
+        })).resolves.toMatchObject({ status: "written" });
 
         await expect(db.serviceAccountToken.count({
             where: { accountId: account.id },
-        })).resolves.toBe(QUALIFIED_CONNECTED_ACCOUNT_UNPAGINATED_LIMIT);
+        })).resolves.toBe(inventorySize);
         await expect(listQualifiedConnectedAccounts({
             accountId: account.id,
             service,
-        })).resolves.toHaveLength(QUALIFIED_CONNECTED_ACCOUNT_UNPAGINATED_LIMIT);
+        })).resolves.toHaveLength(inventorySize);
     }, 60_000);
 
-    it("keeps updating an existing credential available at the ceiling", async () => {
+    it("keeps updating an existing credential available in a large inventory", async () => {
+        const inventorySize = 501;
         const account = await db.account.create({
             data: { publicKey: null, encryptionMode: "plain" },
             select: { id: true },
@@ -2161,7 +2020,7 @@ describe("qualified Connected Account credential repository", () => {
         }
         await db.serviceAccountToken.createMany({
             data: Array.from(
-                { length: QUALIFIED_CONNECTED_ACCOUNT_UNPAGINATED_LIMIT - 1 },
+                { length: inventorySize - 1 },
                 (_, index) => ({
                     accountId: account.id,
                     ...createServiceAccountTokenIdentityFields({
@@ -2173,8 +2032,6 @@ describe("qualified Connected Account credential repository", () => {
             ),
         });
 
-        // The ceiling bounds how many credentials an Account may hold, not whether the
-        // ones it already holds can be rotated or repaired.
         await expect(mutateQualifiedConnectedServiceCredential({
             accountId: account.id,
             ref,

@@ -53,6 +53,7 @@ export type PluginWebhookIngestDependenciesV1 = Readonly<{
         expectedEndpointRevision: number;
         routeId: string;
         verifierKind: "github_hmac_sha256_v1";
+        credentialVersionId: string;
         deliveryIdentityDigest: string;
         stored: PluginWebhookStoredEnvelopeReadyV1;
         now?: Date;
@@ -257,6 +258,7 @@ export async function admitVerifiedPluginWebhookV1(params: Readonly<{
             expectedEndpointRevision: endpoint.revision,
             routeId: route.routeId,
             verifierKind: route.verifierKind,
+            credentialVersionId,
             deliveryIdentityDigest: createPluginWebhookDeliveryIdentityDigestV1({
                 verifierKind: route.verifierKind,
                 routeId: route.routeId,

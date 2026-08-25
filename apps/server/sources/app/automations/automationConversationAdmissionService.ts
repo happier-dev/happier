@@ -1,19 +1,23 @@
 import {
+    AutomationConversationAdmitEncryptedHostEvidenceV1Schema,
+    AutomationConversationAdmitReplyHandoffV1Schema,
     AutomationConversationAdmitInputV1Schema,
     AutomationConversationAdmitResultV1Schema,
-    AutomationConversationOccurrenceEvidenceV1Schema,
     AutomationReplyHandoffTargetV1Schema,
     AutomationStoredContentEnvelopeV1Schema,
     MAX_NON_TERMINAL_AUTOMATIC_RUNS_PER_ACCOUNT,
-    computeCanonicalDomainSeparatedDigest,
+    buildAutomationConversationOccurrenceEvidenceV1,
     createCanonicalJsonSigningInput,
     deriveAutomationOccurrenceKeyV1,
     isAutomationConversationResultDeliveryOwnedByCallerV1,
+    isAutomationTriggerEvidenceCiphertextV1,
     openAutomationConversationReplyContextStoredEnvelopeV1,
-    sealAutomationConversationReplyContextStoredEnvelopeV1,
+    type AutomationConversationAdmitEncryptedHostEvidenceV1,
+    type AutomationConversationAdmitReplyHandoffV1,
     type AutomationConversationAdmitInputV1,
     type AutomationConversationAdmitResultV1,
     type AutomationConversationOccurrenceEvidenceV1,
+    type AutomationOccurrenceKeyV1,
 } from "@happier-dev/protocol";
 import type { Prisma } from "@prisma/client";
 
@@ -24,7 +28,7 @@ import {
 import { markAccountChanged } from "@/app/changes/markAccountChanged";
 import { acquireAccountEncryptionTransitionFenceInTx } from "@/app/encryption/accountEncryptionTransition";
 import { getOrCreateServerIdentityId } from "@/app/serverIdentity/serverIdentity";
-import { afterTx, inTx } from "@/storage/inTx";
+import { afterTx, inTx, type Tx } from "@/storage/inTx";
 
 import { loadAutomationTx } from "./automationCrudService";
 import {
@@ -40,7 +44,10 @@ import {
     rejoinAutomationOccurrenceInsertRace,
 } from "./automationOccurrencePersistence";
 import { freezeAutomationRunExecutionRecipe } from "./automationRunQueueService";
-import { assertAutomationExecutionInputEnvelopeOuterForMode } from "./automationStoredContentRead";
+import {
+    assertAutomationExecutionInputEnvelopeOuterForMode,
+    validateAutomationStoredContentEnvelopeOuterForMode,
+} from "./automationStoredContentRead";
 import {
     AUTOMATION_RUN_TERMINAL_STATES,
     initialAutomationExecutionDispatchStateForRun,
@@ -113,9 +120,6 @@ type FinalResultDeliveryV1 = Extract<
     Readonly<{ kind: "finalResult" }>
 >;
 
-const CONVERSATION_REPLY_CONTEXT_IDENTITY_DOMAIN_V1 =
-    "happier.automation-conversation-reply-context.v1";
-
 function blocked(reason: "capacity" | "temporarilyUnavailable" | "occurrenceConflict"):
     AutomationConversationAdmitResultV1 {
     return AutomationConversationAdmitResultV1Schema.parse({
@@ -150,28 +154,14 @@ function parseJson(raw: string | null): unknown {
     }
 }
 
-function deriveReplyContextIdentity(params: Readonly<{
-    accountMode: "plain" | "e2ee";
-    resultDelivery: AutomationConversationAdmitInputV1["resultDelivery"];
-}>): string {
-    return computeCanonicalDomainSeparatedDigest(
-        CONVERSATION_REPLY_CONTEXT_IDENTITY_DOMAIN_V1,
-        [
-            "1",
-            params.accountMode,
-            createCanonicalJsonSigningInput(params.resultDelivery),
-        ],
-    );
-}
-
 function buildConversationEvidence(params: Readonly<{
     input: AutomationConversationAdmitInputV1;
-    accountMode: "plain" | "e2ee";
     caller: AutomationConversationAdmissionCallerV1;
 }>): AutomationConversationOccurrenceEvidenceV1 {
-    return AutomationConversationOccurrenceEvidenceV1Schema.parse({
-        v: 1,
-        kind: "conversation",
+    // One Protocol owner builds Conversation evidence for both Account modes:
+    // the plain writer here and the E2EE admission host that seals it.
+    return buildAutomationConversationOccurrenceEvidenceV1({
+        accountMode: "plain",
         bindingId: params.input.bindingId,
         occurrenceId: params.input.occurrenceId,
         occurredAt: params.input.occurredAt,
@@ -180,14 +170,9 @@ function buildConversationEvidence(params: Readonly<{
             contributionLocalId: params.caller.contributionLocalId,
             machineId: params.caller.machineId,
         },
-        input: {
-            sender: params.input.sender,
-            text: params.input.text,
-        },
-        replyContextIdentity: deriveReplyContextIdentity({
-            accountMode: params.accountMode,
-            resultDelivery: params.input.resultDelivery,
-        }),
+        sender: params.input.sender,
+        text: params.input.text,
+        resultDelivery: params.input.resultDelivery,
     });
 }
 
@@ -229,10 +214,77 @@ function hasNoReplyHandoff(row: ExistingConversationOccurrenceRow): boolean {
         && row.replyHandoffReceiptEnvelope === null;
 }
 
+type ReplyHandoffAdmissionPlanV1 = Readonly<{
+    actionRef: FinalResultDeliveryV1["actionRef"];
+    /** Canonical serialized host-sealed reply context; the server never reseals it. */
+    replyContextEnvelope: string;
+}>;
+
+function serializeReplyContextEnvelopeForMode(params: Readonly<{
+    handoff: AutomationConversationAdmitReplyHandoffV1;
+    mode: "plain" | "e2ee";
+}>): string | null {
+    const serialized = createCanonicalJsonSigningInput(params.handoff.replyContextEnvelope);
+    return validateAutomationStoredContentEnvelopeOuterForMode({
+        raw: serialized,
+        mode: params.mode,
+    }).kind === "available"
+        ? serialized
+        : null;
+}
+
+function resolvePlainReplyHandoffAdmissionPlan(params: Readonly<{
+    input: AutomationConversationAdmitInputV1;
+    occurrenceKey: string;
+    replyHandoff: unknown;
+}>): ReplyHandoffAdmissionPlanV1 | null | "invalid" {
+    if (params.input.resultDelivery.kind === "none") {
+        return params.replyHandoff === undefined ? null : "invalid";
+    }
+    const parsed = AutomationConversationAdmitReplyHandoffV1Schema.safeParse(params.replyHandoff);
+    if (
+        !parsed.success
+        || parsed.data.actionRef.pluginId !== params.input.resultDelivery.actionRef.pluginId
+        || parsed.data.actionRef.localId !== params.input.resultDelivery.actionRef.localId
+    ) return "invalid";
+    const replyContextEnvelope = serializeReplyContextEnvelopeForMode({
+        handoff: parsed.data,
+        mode: "plain",
+    });
+    if (replyContextEnvelope === null) return "invalid";
+    const opened = openAutomationConversationReplyContextStoredEnvelopeV1({
+        mode: "plain",
+        envelope: parsed.data.replyContextEnvelope,
+    });
+    if (
+        opened.kind !== "available"
+        || opened.correspondence.automationId !== params.input.automationId
+        || opened.correspondence.occurrenceKey !== params.occurrenceKey
+        || opened.templateVersion !== params.input.templateVersion
+        || createCanonicalJsonSigningInput(opened.opaqueContext)
+            !== createCanonicalJsonSigningInput(params.input.resultDelivery.opaqueContext)
+    ) return "invalid";
+    return {
+        actionRef: parsed.data.actionRef,
+        replyContextEnvelope,
+    };
+}
+
+function resolveEncryptedReplyHandoffAdmissionPlan(
+    handoff: AutomationConversationAdmitEncryptedHostEvidenceV1["replyHandoff"],
+): ReplyHandoffAdmissionPlanV1 | null | "invalid" {
+    if (handoff === undefined) return null;
+    const replyContextEnvelope = serializeReplyContextEnvelopeForMode({ handoff, mode: "e2ee" });
+    return replyContextEnvelope === null
+        ? "invalid"
+        : { actionRef: handoff.actionRef, replyContextEnvelope };
+}
+
 function hasMatchingFinalResultHandoff(params: Readonly<{
     row: ExistingConversationOccurrenceRow;
     accountId: string;
     automationId: string;
+    occurrenceKey: string;
     templateVersion: number;
     actionRef: FinalResultDeliveryV1["actionRef"];
     opaqueContext: FinalResultDeliveryV1["opaqueContext"];
@@ -262,16 +314,9 @@ function hasMatchingFinalResultHandoff(params: Readonly<{
         envelope: parseJson(params.row.replyContextEnvelope),
     });
     return opened.kind === "available"
-        && opened.correspondence.accountId === params.accountId
         && opened.correspondence.automationId === params.automationId
-        && opened.correspondence.runId === params.row.id
-        && opened.correspondence.handoffId === expectedHandoffId
-        && opened.source.kind === "automationResult"
-        && opened.source.automationRunId === params.row.id
-        && opened.source.resultId === expectedHandoffId
-        && opened.source.automationId === params.automationId
-        && opened.source.templateVersion === params.templateVersion
-        && opened.source.resultDelivery === "finalResult"
+        && opened.correspondence.occurrenceKey === params.occurrenceKey
+        && opened.templateVersion === params.templateVersion
         && createCanonicalJsonSigningInput(opened.opaqueContext)
             === createCanonicalJsonSigningInput(params.opaqueContext);
 }
@@ -291,10 +336,351 @@ function existingOccurrenceMatchesAdmission(params: Readonly<{
         row: params.row,
         accountId: params.accountId,
         automationId: params.input.automationId,
+        occurrenceKey: params.occurrenceKey,
         templateVersion: params.input.templateVersion,
         actionRef: params.input.resultDelivery.actionRef,
         opaqueContext: params.input.resultDelivery.opaqueContext,
     });
+}
+
+function encryptedFinalResultHandoffMatchesAdmission(params: Readonly<{
+    row: ExistingConversationOccurrenceRow;
+    accountId: string;
+    handoff: AutomationConversationAdmitReplyHandoffV1 | undefined;
+}>): boolean | "unavailable" {
+    if (params.handoff === undefined) return hasNoReplyHandoff(params.row);
+    const expectedHandoffId = deriveHandoffId(params.row.id);
+    const target = AutomationReplyHandoffTargetV1Schema.safeParse({
+        accountId: params.accountId,
+        machineId: params.row.replyHandoffTargetMachineId,
+        machineInstallationId: params.row.replyHandoffTargetMachineInstallationId,
+        materializationId: params.row.replyHandoffTargetMaterializationId,
+        actionRef: {
+            pluginId: params.row.replyHandoffActionPluginId,
+            localId: params.row.replyHandoffActionLocalId,
+        },
+    });
+    if (
+        params.row.replyHandoffState === "none"
+        || !target.success
+        || target.data.actionRef.pluginId !== params.handoff.actionRef.pluginId
+        || target.data.actionRef.localId !== params.handoff.actionRef.localId
+        || params.row.replyHandoffId !== expectedHandoffId
+        || params.row.replyContextEnvelope === null
+    ) return false;
+    const outer = validateAutomationStoredContentEnvelopeOuterForMode({
+        raw: params.row.replyContextEnvelope,
+        mode: "e2ee",
+    });
+    return outer.kind === "available" && outer.envelope.t === "encrypted"
+        ? true
+        : "unavailable";
+}
+
+/**
+ * Compares one retained encrypted Conversation occurrence with a replayed
+ * admission. The server holds no Account content key, so equality is the
+ * host-derived opaque tag plus the row facts it can read; the ciphertext is
+ * randomized and is only checked for its authenticated cipher domain.
+ */
+function encryptedOccurrenceMatchesAdmission(params: Readonly<{
+    row: ExistingConversationOccurrenceRow;
+    accountId: string;
+    hostEvidence: AutomationConversationAdmitEncryptedHostEvidenceV1;
+}>): "match" | "mismatch" | "unavailable" {
+    if (
+        params.row.originKind !== "conversation"
+        || params.row.originOccurredAt?.getTime() !== params.hostEvidence.occurredAt
+        || params.row.occurrenceKey !== params.hostEvidence.occurrenceKey
+        || params.row.originSourceSelectorId !== null
+        || params.row.triggerEvidenceEnvelope === null
+        || params.row.occurrenceEvidenceEqualityTag
+            !== params.hostEvidence.occurrenceEvidenceEqualityTag
+    ) return "mismatch";
+    const replyHandoff = encryptedFinalResultHandoffMatchesAdmission({
+        row: params.row,
+        accountId: params.accountId,
+        handoff: params.hostEvidence.replyHandoff,
+    });
+    if (replyHandoff === "unavailable") return "unavailable";
+    if (!replyHandoff) return "mismatch";
+    const outer = validateAutomationStoredContentEnvelopeOuterForMode({
+        raw: params.row.triggerEvidenceEnvelope,
+        mode: "e2ee",
+    });
+    if (outer.kind !== "available" || outer.envelope.t !== "encrypted") return "unavailable";
+    return isAutomationTriggerEvidenceCiphertextV1(outer.envelope.c) ? "match" : "unavailable";
+}
+
+function hostEvidenceMatchesAccountModeAndKey(params: Readonly<{
+    hostEvidence: AutomationConversationAdmitEncryptedHostEvidenceV1;
+    account: Readonly<{
+        contentKeyFingerprint: string | null;
+        currentness: Readonly<{ encryptionMode: "plain" | "e2ee" }>;
+    }>;
+}>): boolean {
+    return params.account.currentness.encryptionMode === "e2ee"
+        && params.hostEvidence.accountCurrentness.mode === "e2ee"
+        && params.hostEvidence.accountCurrentness.contentKeyFingerprint
+            === params.account.contentKeyFingerprint;
+}
+
+/**
+ * The mode-resolved facts one Conversation Run row is created from. Both
+ * Account modes converge here so capacity, Automation currentness, recipe
+ * freezing, publication, and reply custody stay with one writer.
+ */
+type ConversationRunAdmissionPlanV1 = Readonly<{
+    mode: "plain" | "e2ee";
+    automationId: string;
+    templateVersion: number;
+    occurrenceKey: AutomationOccurrenceKeyV1;
+    occurredAt: number;
+    /** Serialized mode-correct occurrence evidence retained on the Run. */
+    triggerEvidenceEnvelope: string;
+    /** Mode-correct trigger evidence frozen into the Run execution recipe. */
+    executionTriggerEvidence: unknown;
+    occurrenceEvidenceEqualityTag: string | null;
+    replyHandoff: ReplyHandoffAdmissionPlanV1 | null;
+}>;
+
+async function createConversationRunTx(params: Readonly<{
+    tx: Tx;
+    accountId: string;
+    caller: AutomationConversationAdmissionCallerV1;
+    plan: ConversationRunAdmissionPlanV1;
+}>): Promise<AutomationConversationAdmitResultV1> {
+    const { tx, plan } = params;
+    // A conversation is an additional invocation source for an Automation
+    // the Account already owns, so any current Automation admits whatever
+    // its primary trigger is, and several bindings may feed one Automation.
+    // The binding stays in the occurrence identity, which is already
+    // namespaced by the host-stamped caller plugin.
+    const automation = await loadAutomationTx(tx, {
+        accountId: params.accountId,
+        automationId: plan.automationId,
+    });
+    if (
+        !automation
+        || !automation.enabled
+        || automation.templateVersion !== plan.templateVersion
+    ) {
+        return blocked("temporarilyUnavailable");
+    }
+
+    const occupied = await tx.automationRun.count({
+        where: {
+            accountId: params.accountId,
+            originKind: { in: ["pluginEvent", "conversation"] },
+            state: { notIn: [...AUTOMATION_RUN_TERMINAL_STATES] },
+        },
+    });
+    if (occupied >= MAX_NON_TERMINAL_AUTOMATIC_RUNS_PER_ACCOUNT) {
+        return blocked("capacity");
+    }
+
+    const now = new Date();
+    let executionInputEnvelope: string;
+    try {
+        executionInputEnvelope = freezeAutomationRunExecutionRecipe({
+            targetType: automation.targetType,
+            templateVersion: automation.templateVersion,
+            templateCiphertext: automation.templateCiphertext,
+            origin: {
+                kind: "conversation",
+                occurrenceKey: plan.occurrenceKey,
+                occurredAt: plan.occurredAt,
+            },
+            triggerEvidence: AutomationStoredContentEnvelopeV1Schema.parse(
+                plan.executionTriggerEvidence,
+            ),
+        });
+        assertAutomationExecutionInputEnvelopeOuterForMode({
+            raw: executionInputEnvelope,
+            mode: plan.mode,
+            originKind: "conversation",
+        });
+    } catch {
+        return blocked("temporarilyUnavailable");
+    }
+
+    let run = await tx.automationRun.create({
+        data: {
+            automationId: automation.id,
+            accountId: params.accountId,
+            state: "queued",
+            originKind: "conversation",
+            originOccurredAt: new Date(plan.occurredAt),
+            occurrenceKey: plan.occurrenceKey,
+            occurrenceEvidenceEqualityTag: plan.occurrenceEvidenceEqualityTag,
+            originSourceSelectorId: null,
+            triggerEvidenceEnvelope: plan.triggerEvidenceEnvelope,
+            executionInputEnvelope,
+            executionDispatchState: initialAutomationExecutionDispatchStateForRun(
+                executionInputEnvelope,
+            ),
+            scheduledAt: now,
+            dueAt: now,
+        },
+        select: automationRunItemSelect,
+    }) as AutomationRunItem;
+
+    const replyHandoff = plan.replyHandoff;
+    if (replyHandoff !== null) {
+        const handoffId = deriveHandoffId(run.id);
+        run = await tx.automationRun.update({
+            where: { id: run.id },
+            data: {
+                // Admission stores the mode-correct host-sealed context
+                // verbatim. It does not manufacture a second reply binding
+                // after the unique occurrence has chosen this Run.
+                replyContextEnvelope: replyHandoff.replyContextEnvelope,
+                replyHandoffActionPluginId: replyHandoff.actionRef.pluginId,
+                replyHandoffActionLocalId: replyHandoff.actionRef.localId,
+                replyHandoffTargetMachineId: params.caller.machineId,
+                replyHandoffTargetMachineInstallationId: params.caller.machineInstallationId,
+                replyHandoffTargetMaterializationId: params.caller.materializationId,
+                replyHandoffId: handoffId,
+                replyHandoffState: "awaitingResult",
+                revision: { increment: 1 },
+            },
+            select: automationRunItemSelect,
+        }) as AutomationRunItem;
+    }
+
+    const assignmentRows = await tx.automationAssignment.findMany({
+        where: { automationId: automation.id, enabled: true },
+        select: { machineId: true },
+    });
+    const cursor = await markAccountChanged(tx, {
+        accountId: params.accountId,
+        kind: "automation",
+        entityId: automation.id,
+    });
+    afterTx(tx, () => {
+        emitAutomationRunTransition({
+            accountId: params.accountId,
+            run,
+            previousState: null,
+            cursor,
+        });
+        for (const assignment of assignmentRows) {
+            emitAutomationRunUpdatedToMachineOnly({
+                accountId: params.accountId,
+                machineId: assignment.machineId,
+                run,
+                cursor,
+            });
+        }
+    });
+    return admitted(run.id);
+}
+
+async function assertCurrentAdmissionCallerTx(params: Readonly<{
+    tx: Tx;
+    accountId: string;
+    serverIdentityId: string;
+    caller: AutomationConversationAdmissionCallerV1;
+}>): Promise<void> {
+    try {
+        await assertCurrentAutomationEventCallerMaterializationTx(params);
+    } catch (error) {
+        if (error instanceof AutomationEventCurrentnessError) {
+            throw new AutomationConversationAdmissionCallerError();
+        }
+        throw error;
+    }
+}
+
+/**
+ * Admits one Conversation occurrence for an E2EE Account. The admitting host
+ * has already sealed the occurrence evidence and derived the opaque rejoin tag
+ * with the Account content key, so this reader never sees the sender, message
+ * text, or reply context and compares replays through that tag alone. It shares
+ * the single Run writer with the plain arm below.
+ */
+export async function admitEncryptedAutomationConversationV1(params: Readonly<{
+    accountId: string;
+    caller: AutomationConversationAdmissionCallerV1;
+    hostEvidence: unknown;
+}>): Promise<AutomationConversationAdmitResultV1> {
+    const hostEvidence = AutomationConversationAdmitEncryptedHostEvidenceV1Schema.parse(
+        params.hostEvidence,
+    );
+    if (
+        hostEvidence.replyHandoff !== undefined
+        && hostEvidence.replyHandoff.actionRef.pluginId !== params.caller.pluginId
+    ) {
+        throw new AutomationConversationAdmissionCallerError();
+    }
+    const serverIdentityId = await getOrCreateServerIdentityId(process.env);
+
+    return await rejoinAutomationOccurrenceInsertRace(() => inTx(async (tx) => {
+        await assertCurrentAdmissionCallerTx({
+            tx,
+            accountId: params.accountId,
+            serverIdentityId,
+            caller: params.caller,
+        });
+
+        const accountFence = await acquireAccountEncryptionTransitionFenceInTx(tx, params.accountId);
+        // The sealed arm is only meaningful for an Account whose persisted mode
+        // is E2EE under the exact content key the host sealed with.
+        if (
+            accountFence.status !== "ready"
+            || !hostEvidenceMatchesAccountModeAndKey({
+                hostEvidence,
+                account: accountFence.account,
+            })
+        ) {
+            return blocked("temporarilyUnavailable");
+        }
+        const replyHandoff = resolveEncryptedReplyHandoffAdmissionPlan(hostEvidence.replyHandoff);
+        if (replyHandoff === "invalid") return blocked("temporarilyUnavailable");
+
+        const existing = await findAutomationOccurrenceTx({
+            tx,
+            automationId: hostEvidence.automationId,
+            occurrenceKey: hostEvidence.occurrenceKey,
+            select: existingConversationOccurrenceSelect,
+        });
+        if (existing && existing.accountId === params.accountId) {
+            const disposition = encryptedOccurrenceMatchesAdmission({
+                row: existing,
+                accountId: params.accountId,
+                hostEvidence,
+            });
+            if (disposition === "match") return rejoined(existing.id);
+            return blocked(
+                disposition === "mismatch" ? "occurrenceConflict" : "temporarilyUnavailable",
+            );
+        }
+        // A new sealed occurrence must have been produced against the Account
+        // version this transaction commits under; a rejoin above only needs the
+        // same content key.
+        if (hostEvidence.accountCurrentness.version !== accountFence.account.version) {
+            return blocked("temporarilyUnavailable");
+        }
+
+        return await createConversationRunTx({
+            tx,
+            accountId: params.accountId,
+            caller: params.caller,
+            plan: {
+                mode: "e2ee",
+                automationId: hostEvidence.automationId,
+                templateVersion: hostEvidence.templateVersion,
+                occurrenceKey: hostEvidence.occurrenceKey,
+                occurredAt: hostEvidence.occurredAt,
+                triggerEvidenceEnvelope: createCanonicalJsonSigningInput(
+                    hostEvidence.triggerEvidenceEnvelope,
+                ),
+                executionTriggerEvidence: hostEvidence.executionTriggerEvidenceEnvelope,
+                occurrenceEvidenceEqualityTag: hostEvidence.occurrenceEvidenceEqualityTag,
+                replyHandoff,
+            },
+        });
+    }));
 }
 
 /**
@@ -307,6 +693,7 @@ export async function admitAutomationConversationV1(params: Readonly<{
     accountId: string;
     caller: AutomationConversationAdmissionCallerV1;
     input: unknown;
+    replyHandoff?: unknown;
 }>): Promise<AutomationConversationAdmitResultV1> {
     const input = AutomationConversationAdmitInputV1Schema.parse(params.input);
     // This writer is the one place the caller-stamped machine/installation/
@@ -322,35 +709,33 @@ export async function admitAutomationConversationV1(params: Readonly<{
     const serverIdentityId = await getOrCreateServerIdentityId(process.env);
 
     return await rejoinAutomationOccurrenceInsertRace(() => inTx(async (tx) => {
-        try {
-            await assertCurrentAutomationEventCallerMaterializationTx({
-                tx,
-                accountId: params.accountId,
-                serverIdentityId,
-                caller: params.caller,
-            });
-        } catch (error) {
-            if (error instanceof AutomationEventCurrentnessError) {
-                throw new AutomationConversationAdmissionCallerError();
-            }
-            throw error;
-        }
+        await assertCurrentAdmissionCallerTx({
+            tx,
+            accountId: params.accountId,
+            serverIdentityId,
+            caller: params.caller,
+        });
 
         const accountFence = await acquireAccountEncryptionTransitionFenceInTx(tx, params.accountId);
         if (accountFence.status !== "ready") return blocked("temporarilyUnavailable");
-        // The present Action transports plaintext sender/text/context. An
-        // encrypted Account needs the Account-owned opaque input carrier, not
-        // a server-created alternate envelope.
+        // The plain Action transports plaintext sender/text/context. An
+        // encrypted Account must use the sealed host-evidence arm instead; the
+        // server never creates an alternate envelope for it.
         if (accountFence.account.currentness.encryptionMode !== "plain") {
             return blocked("temporarilyUnavailable");
         }
 
         const evidence = buildConversationEvidence({
             input,
-            accountMode: "plain",
             caller: params.caller,
         });
         const occurrenceKey = deriveAutomationOccurrenceKeyV1(evidence);
+        const replyHandoff = resolvePlainReplyHandoffAdmissionPlan({
+            input,
+            occurrenceKey,
+            replyHandoff: params.replyHandoff,
+        });
+        if (replyHandoff === "invalid") return blocked("temporarilyUnavailable");
         const existing = await findAutomationOccurrenceTx({
             tx,
             automationId: input.automationId,
@@ -369,148 +754,27 @@ export async function admitAutomationConversationV1(params: Readonly<{
                 : blocked("occurrenceConflict");
         }
 
-        // A conversation is an additional invocation source for an Automation
-        // the Account already owns, so any current Automation admits whatever
-        // its primary trigger is, and several bindings may feed one Automation.
-        // The binding stays in the occurrence identity above, which is already
-        // namespaced by the host-stamped caller plugin.
-        const automation = await loadAutomationTx(tx, {
+        return await createConversationRunTx({
+            tx,
             accountId: params.accountId,
-            automationId: input.automationId,
-        });
-        if (
-            !automation
-            || !automation.enabled
-            || automation.templateVersion !== input.templateVersion
-        ) {
-            return blocked("temporarilyUnavailable");
-        }
-
-        const occupied = await tx.automationRun.count({
-            where: {
-                accountId: params.accountId,
-                originKind: { in: ["pluginEvent", "conversation"] },
-                state: { notIn: [...AUTOMATION_RUN_TERMINAL_STATES] },
-            },
-        });
-        if (occupied >= MAX_NON_TERMINAL_AUTOMATIC_RUNS_PER_ACCOUNT) {
-            return blocked("capacity");
-        }
-
-        const now = new Date();
-        let executionInputEnvelope: string;
-        try {
-            executionInputEnvelope = freezeAutomationRunExecutionRecipe({
-                targetType: automation.targetType,
-                templateVersion: automation.templateVersion,
-                templateCiphertext: automation.templateCiphertext,
-                origin: {
-                    kind: "conversation",
-                    occurrenceKey,
-                    occurredAt: input.occurredAt,
-                },
-                triggerEvidence: AutomationStoredContentEnvelopeV1Schema.parse({
+            caller: params.caller,
+            plan: {
+                mode: "plain",
+                automationId: input.automationId,
+                templateVersion: input.templateVersion,
+                occurrenceKey,
+                occurredAt: input.occurredAt,
+                triggerEvidenceEnvelope: encodePlainAutomationOccurrenceEvidence(evidence),
+                executionTriggerEvidence: {
                     t: "plain",
                     v: {
                         ...evidence,
-                        observationReceivedAt: now.getTime(),
+                        observationReceivedAt: Date.now(),
                     },
-                }),
-            });
-            assertAutomationExecutionInputEnvelopeOuterForMode({
-                raw: executionInputEnvelope,
-                mode: "plain",
-                originKind: "conversation",
-            });
-        } catch {
-            return blocked("temporarilyUnavailable");
-        }
-
-        let run = await tx.automationRun.create({
-            data: {
-                automationId: automation.id,
-                accountId: params.accountId,
-                state: "queued",
-                originKind: "conversation",
-                originOccurredAt: new Date(input.occurredAt),
-                occurrenceKey,
-                occurrenceEvidenceEqualityTag: null,
-                originSourceSelectorId: null,
-                triggerEvidenceEnvelope: encodePlainAutomationOccurrenceEvidence(evidence),
-                executionInputEnvelope,
-                executionDispatchState: initialAutomationExecutionDispatchStateForRun(
-                    executionInputEnvelope,
-                ),
-                scheduledAt: now,
-                dueAt: now,
-            },
-            select: automationRunItemSelect,
-        }) as AutomationRunItem;
-
-        if (input.resultDelivery.kind === "finalResult") {
-            const handoffId = deriveHandoffId(run.id);
-            const replyContextEnvelope = JSON.stringify(
-                sealAutomationConversationReplyContextStoredEnvelopeV1({
-                    mode: "plain",
-                    correspondence: {
-                        accountId: params.accountId,
-                        automationId: automation.id,
-                        runId: run.id,
-                        handoffId,
-                    },
-                    source: {
-                        kind: "automationResult",
-                        automationRunId: run.id,
-                        resultId: handoffId,
-                        automationId: automation.id,
-                        templateVersion: automation.templateVersion,
-                        resultDelivery: "finalResult",
-                    },
-                    opaqueContext: input.resultDelivery.opaqueContext,
-                }),
-            );
-            run = await tx.automationRun.update({
-                where: { id: run.id },
-                data: {
-                    replyContextEnvelope,
-                    replyHandoffActionPluginId: input.resultDelivery.actionRef.pluginId,
-                    replyHandoffActionLocalId: input.resultDelivery.actionRef.localId,
-                    replyHandoffTargetMachineId: params.caller.machineId,
-                    replyHandoffTargetMachineInstallationId: params.caller.machineInstallationId,
-                    replyHandoffTargetMaterializationId: params.caller.materializationId,
-                    replyHandoffId: handoffId,
-                    replyHandoffState: "awaitingResult",
-                    revision: { increment: 1 },
                 },
-                select: automationRunItemSelect,
-            }) as AutomationRunItem;
-        }
-
-        const assignmentRows = await tx.automationAssignment.findMany({
-            where: { automationId: automation.id, enabled: true },
-            select: { machineId: true },
+                occurrenceEvidenceEqualityTag: null,
+                replyHandoff,
+            },
         });
-        const cursor = await markAccountChanged(tx, {
-            accountId: params.accountId,
-            kind: "automation",
-            entityId: automation.id,
-        });
-        afterTx(tx, () => {
-            emitAutomationRunTransition({
-                accountId: params.accountId,
-                run,
-                previousState: null,
-                cursor,
-            });
-            for (const assignment of assignmentRows) {
-                emitAutomationRunUpdatedToMachineOnly({
-                    accountId: params.accountId,
-                    machineId: assignment.machineId,
-                    run,
-                    cursor,
-                });
-            }
-        });
-        return admitted(run.id);
     }));
 }

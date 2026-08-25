@@ -100,18 +100,55 @@ function activeAutomationClaimWhere(params: {
     };
 }
 
-function retiredAutomationForClaimantWhere(params: {
+/**
+ * Which expired leases a machine may recover because their Definition retired.
+ *
+ * Retirement is a property of the durable Run's own claimant, never of the
+ * machine that happens to be scanning. The first disjunct covers a Definition
+ * that no machine can reach any more (disabled, deleted, or left with no
+ * enabled assignment): its expired lease is recoverable by any Account
+ * machine, so a claimant that never returns cannot wedge the row. The second
+ * keeps the incumbent claimant able to resolve a Definition that is still live
+ * but was reassigned away from it.
+ *
+ * This is the only owner of that predicate. `findClaimCandidates` selects the
+ * rows to resolve and `listDaemonAssignments` projects the recovery wake that
+ * makes the scan reachable; both must ask the identical question, so the wake
+ * consumes this builder rather than restating it.
+ *
+ * It only widens who can observe the row. The terminality owner still
+ * re-checks retirement against the stored claimant inside its own update and
+ * resolves the row before any claim is attempted, and `tryClaimRun` still
+ * requires an active assignment for the scanning machine. A recovering machine
+ * therefore terminalizes a retired Run and can never execute it.
+ */
+export function retiredAutomationLeaseRecoveryDisjuncts(params: {
     machineId: string;
+    accountId?: string;
     expectedTriggerKind?: AutomationTriggerKind;
 }) {
-    return {
+    const automationScope = {
+        ...(params.accountId ? { accountId: params.accountId } : {}),
         ...(params.expectedTriggerKind
             ? { triggerKind: params.expectedTriggerKind }
             : {}),
-        OR: [
-            { enabled: false },
-            { deletedAt: { not: null } },
-            {
+    };
+    return [
+        {
+            claimedByMachineId: { not: null },
+            automation: {
+                ...automationScope,
+                OR: [
+                    { enabled: false },
+                    { deletedAt: { not: null } },
+                    { assignments: { none: { enabled: true } } },
+                ],
+            },
+        },
+        {
+            claimedByMachineId: params.machineId,
+            automation: {
+                ...automationScope,
                 assignments: {
                     none: {
                         machineId: params.machineId,
@@ -119,8 +156,8 @@ function retiredAutomationForClaimantWhere(params: {
                     },
                 },
             },
-        ],
-    };
+        },
+    ];
 }
 
 async function findClaimCandidates(params: {
@@ -154,13 +191,10 @@ async function findClaimCandidates(params: {
                                 expectedTriggerKind: params.expectedTriggerKind,
                             }),
                         },
-                        {
-                            claimedByMachineId: params.machineId,
-                            automation: retiredAutomationForClaimantWhere({
-                                machineId: params.machineId,
-                                expectedTriggerKind: params.expectedTriggerKind,
-                            }),
-                        },
+                        ...retiredAutomationLeaseRecoveryDisjuncts({
+                            machineId: params.machineId,
+                            expectedTriggerKind: params.expectedTriggerKind,
+                        }),
                     ],
                 },
                 {
@@ -173,13 +207,10 @@ async function findClaimCandidates(params: {
                                 expectedTriggerKind: params.expectedTriggerKind,
                             }),
                         },
-                        {
-                            claimedByMachineId: params.machineId,
-                            automation: retiredAutomationForClaimantWhere({
-                                machineId: params.machineId,
-                                expectedTriggerKind: params.expectedTriggerKind,
-                            }),
-                        },
+                        ...retiredAutomationLeaseRecoveryDisjuncts({
+                            machineId: params.machineId,
+                            expectedTriggerKind: params.expectedTriggerKind,
+                        }),
                     ],
                 },
             ],
@@ -193,6 +224,7 @@ async function findClaimCandidates(params: {
             id: true,
             automationId: true,
             state: true,
+            claimedByMachineId: true,
             leaseExpiresAt: true,
             revision: true,
             originKind: true,
@@ -212,6 +244,7 @@ async function tryClaimRun(params: {
     now: Date;
     machineId: string;
     leaseExpiresAt: Date;
+    normalizeNullExecutionDispatchState?: boolean;
     expectedTriggerKind?: AutomationTriggerKind;
 }) {
     if (params.previousState === "queued") {
@@ -246,6 +279,9 @@ async function tryClaimRun(params: {
             leaseExpiresAt: { lt: params.now },
             revision: params.expectedRunRevision,
             executionInputEnvelope: params.executionInputEnvelope,
+            ...(params.normalizeNullExecutionDispatchState
+                ? { executionDispatchState: null }
+                : {}),
             ...(params.originKind ? { originKind: params.originKind } : {}),
             automation: activeAutomationClaimWhere({
                 machineId: params.machineId,
@@ -257,6 +293,9 @@ async function tryClaimRun(params: {
             claimedAt: params.now,
             claimedByMachineId: params.machineId,
             leaseExpiresAt: params.leaseExpiresAt,
+            ...(params.normalizeNullExecutionDispatchState
+                ? { executionDispatchState: "notStarted" }
+                : {}),
             attempt: { increment: 1 },
             revision: { increment: 1 },
         },
@@ -339,12 +378,15 @@ export async function claimAutomationRun(params: {
                     requireV2RunRepresentability: true,
                 })
                 : null;
+            const parsedCandidateRecipe = parseAutomationRunExecutionRecipeV1(candidate.executionInputEnvelope);
+            const isExecutionRun = parsedCandidateRecipe.kind === "available"
+                && parsedCandidateRecipe.recipe.target.kind === "executionRun";
             if (hasV2FrozenRecipe === false) {
                 // This Run may be valid for a current worker. A released V2
                 // claimant has no authority to classify or mutate it.
                 continue;
             }
-            if (candidate.state !== "queued") {
+            if (candidate.state !== "queued" && candidate.claimedByMachineId !== null) {
                 const terminalizedRetirement = await terminalizeRetiredAutomationRunAfterLeaseExpiryTx({
                     tx,
                     accountId: params.accountId,
@@ -352,7 +394,7 @@ export async function claimAutomationRun(params: {
                     runId: candidate.id,
                     state: candidate.state,
                     runRevision: candidate.revision,
-                    machineId: params.machineId,
+                    claimedByMachineId: candidate.claimedByMachineId,
                     executionInputEnvelope: candidate.executionInputEnvelope,
                     originKind: candidate.originKind,
                     executionDispatchState: candidate.executionDispatchState,
@@ -367,7 +409,14 @@ export async function claimAutomationRun(params: {
             }
             if (
                 candidate.state !== "queued"
-                && candidate.executionDispatchState === "dispatchPermitted"
+                && (
+                    candidate.executionDispatchState === "dispatchPermitted"
+                    || (
+                        isExecutionRun
+                        && candidate.state === "running"
+                        && candidate.executionDispatchState === null
+                    )
+                )
             ) {
                 await markAbandonedAutomationExecutionDispatchOutcomeUnknownTx({
                     tx,
@@ -377,6 +426,7 @@ export async function claimAutomationRun(params: {
                     state: candidate.state,
                     runRevision: candidate.revision,
                     executionInputEnvelope: candidate.executionInputEnvelope,
+                    expectedExecutionDispatchState: candidate.executionDispatchState,
                     accountCurrentness: preclaimCurrentness,
                     now,
                     expectedTriggerKind: params.expectedTriggerKind,
@@ -428,6 +478,9 @@ export async function claimAutomationRun(params: {
                 now,
                 machineId: params.machineId,
                 leaseExpiresAt,
+                normalizeNullExecutionDispatchState: isExecutionRun
+                    && candidate.state === "claimed"
+                    && candidate.executionDispatchState === null,
                 expectedTriggerKind: params.expectedTriggerKind,
             });
             if (updated.count !== 1) {

@@ -124,31 +124,20 @@ export async function rotatePluginWebhookEndpointCredentialV1(params: Readonly<{
                 revokedAt: true,
                 routingKind: true,
                 routeId: true,
-                route: {
-                    select: {
-                        currentCredential: { select: { credentialVersionId: true } },
-                        previousCredential: { select: { credentialVersionId: true, acceptUntil: true } },
-                    },
-                },
             },
         });
         if (!endpoint || !endpoint.enabled || endpoint.revokedAt !== null || endpoint.routingKind !== "accountEndpoint") {
             throw new PluginWebhookEndpointStoreError("endpoint_unavailable");
         }
-        if (
-            endpoint.revision === params.input.expectedRevision + 1
-            && endpoint.route.currentCredential
-            && endpoint.route.previousCredential?.acceptUntil
-        ) {
-            return PluginWebhookEndpointCredentialRotateResultV1Schema.parse({
-                kind: "alreadyRotated",
-                webhookEndpointId: params.input.webhookEndpointId,
-                revision: endpoint.revision,
-                credentialVersionId: endpoint.route.currentCredential.credentialVersionId,
-                previousCredentialVersionId: endpoint.route.previousCredential.credentialVersionId,
-                previousAcceptUntilMs: endpoint.route.previousCredential.acceptUntil.getTime(),
-            });
-        }
+        // Rotation carries no operation identity, so `expectedRevision + 1`
+        // cannot tell "my rotation committed and its response was lost" from
+        // "an unrelated retarget bumped the revision while an earlier
+        // rotation's previous credential is still inside its overlap window".
+        // Reporting the second case as a completed rotation hands the caller
+        // another request's credential versions as its own result, so this
+        // owner returns the truthful conflict and the caller rereads. Unlike
+        // finish-rotation, whose input names the exact previous credential it
+        // expects to be retired, nothing here corresponds to this request.
         if (endpoint.revision !== params.input.expectedRevision) {
             throw new PluginWebhookEndpointStoreError("idempotency_conflict");
         }

@@ -5,12 +5,13 @@ import { createEnvReset } from "../../testkit/env";
 import { createRouteTestBuilder } from "../../testkit/routeTestBuilder";
 
 const logSpy = vi.hoisted(() => vi.fn());
+const getDbProviderFromEnvSpy = vi.hoisted(() => vi.fn(() => "sqlite"));
 
 vi.mock("@/utils/logging/log", () => ({ log: logSpy }));
 // These route contracts use the database mock below. Avoid loading the real
 // Prisma client solely to resolve transaction-provider metadata.
 vi.mock("@/storage/prisma", () => ({
-    getDbProviderFromEnv: () => "sqlite",
+    getDbProviderFromEnv: getDbProviderFromEnvSpy,
     isPrismaErrorCode: () => false,
 }));
 
@@ -26,9 +27,11 @@ const leaseDeleteMany = dbMocks.db.voiceSessionLease.deleteMany;
 const conversationAggregate = dbMocks.db.voiceConversation.aggregate;
 const conversationFindMany = dbMocks.db.voiceConversation.findMany;
 const conversationUpdateMany = dbMocks.db.voiceConversation.updateMany;
+const postgresRawExecute = vi.fn();
 const dbTransaction = createDbTransactionMock(() => ({
     voiceSessionLease: dbMocks.db.voiceSessionLease,
     voiceConversation: dbMocks.db.voiceConversation,
+    $executeRawUnsafe: postgresRawExecute,
 }));
 
 installDbModuleMock(() => ({
@@ -44,6 +47,7 @@ describe("voiceRoutes (secure)", () => {
         vi.useFakeTimers();
         vi.setSystemTime(new Date("2026-02-03T12:00:00.000Z"));
         vi.clearAllMocks();
+        getDbProviderFromEnvSpy.mockReturnValue("sqlite");
         dbMocks.reset();
         dbTransaction.transaction.mockClear();
         resetVoiceEnv({
@@ -405,6 +409,38 @@ describe("voiceRoutes (secure)", () => {
         expect(leaseCreate).toHaveBeenCalledTimes(1);
         expect(leaseDeleteMany).toHaveBeenCalledTimes(1);
         expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+    });
+
+    it("uses the PostgreSQL bigint advisory-lock overload for an account mint", async () => {
+        getDbProviderFromEnvSpy.mockReturnValue("postgres");
+        resetVoiceEnv({
+            NODE_ENV: "production",
+            HAPPIER_FEATURE_VOICE__ENABLED: "1",
+            HAPPIER_FEATURE_VOICE__REQUIRE_SUBSCRIPTION: "0",
+            ELEVENLABS_API_KEY: "el_key",
+            ELEVENLABS_AGENT_ID_PROD: "agent_prod",
+            VOICE_MAX_CONCURRENT_SESSIONS: "1",
+            VOICE_MAX_SESSION_SECONDS: "600",
+        });
+        postgresRawExecute.mockResolvedValue({});
+        (globalThis.fetch as any).mockResolvedValueOnce(providerJsonResponse({ token: "conv_token" }));
+
+        const { voiceRoutes } = await import("./voiceRoutes");
+        const route = createRouteTestBuilder({
+            method: "POST",
+            path: "/v1/voice/token",
+            registerRoutes(app) {
+                voiceRoutes(app as any);
+            },
+        });
+        const { reply } = await route.invoke({ userId: "u1", body: { sessionId: "s1" } });
+
+        expect(reply.code).not.toHaveBeenCalled();
+        expect(postgresRawExecute).toHaveBeenCalledWith(
+            "SELECT pg_advisory_xact_lock(hashtextextended($2, $1::bigint))",
+            0x766f6963,
+            "u1",
+        );
     });
 
     it("aliases /v1/voice/lease/mint and persists a lease with sessionId null when body is empty", async () => {

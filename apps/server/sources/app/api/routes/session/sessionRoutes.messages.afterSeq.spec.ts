@@ -152,6 +152,7 @@ describe("sessionRoutes v1 messages pagination", () => {
     it("uses the canonical shareable publication fence and returns only the server-derived coarse admission actor", async () => {
         sessionFindUnique.mockResolvedValue({
             currentStorageState: "snapshot_complete",
+            seq: 9,
             acceptedThroughServerSeq: 9,
             materializationPublicationId: "publication-1",
             materializedThroughSourceAt: 123n,
@@ -225,6 +226,7 @@ describe("sessionRoutes v1 messages pagination", () => {
     it("returns the coarse machine actor only for history-observed user rows without exposing an input receipt", async () => {
         sessionFindUnique.mockResolvedValue({
             currentStorageState: "snapshot_complete",
+            seq: 2,
             acceptedThroughServerSeq: null,
             materializationPublicationId: "publication-1",
             materializedThroughSourceAt: 123n,
@@ -308,6 +310,7 @@ describe("sessionRoutes v1 messages pagination", () => {
     it("returns the same-transaction hidden-turn barrier before a later-publishable user row", async () => {
         sessionFindUnique.mockResolvedValue({
             currentStorageState: "snapshot_complete",
+            seq: 9,
             acceptedThroughServerSeq: 9,
             materializationPublicationId: "publication-1",
             materializedThroughSourceAt: 123n,
@@ -384,6 +387,7 @@ describe("sessionRoutes v1 messages pagination", () => {
     it("holds the external cursor at a committed admitted input until its turn is durably witnessed", async () => {
         sessionFindUnique.mockResolvedValue({
             currentStorageState: "snapshot_complete",
+            seq: 7,
             acceptedThroughServerSeq: 7,
             materializationPublicationId: "publication-1",
             materializedThroughSourceAt: 123n,
@@ -423,6 +427,7 @@ describe("sessionRoutes v1 messages pagination", () => {
     it("holds the external cursor while the matching active turn has not persisted anchors", async () => {
         sessionFindUnique.mockResolvedValue({
             currentStorageState: "snapshot_complete",
+            seq: 7,
             acceptedThroughServerSeq: 7,
             materializationPublicationId: "publication-1",
             materializedThroughSourceAt: 123n,
@@ -474,6 +479,7 @@ describe("sessionRoutes v1 messages pagination", () => {
     it("re-blocks an otherwise active external cursor when a legacy v0 turn projection reappears", async () => {
         sessionFindUnique.mockResolvedValue({
             currentStorageState: "snapshot_complete",
+            seq: 7,
             acceptedThroughServerSeq: 7,
             materializationPublicationId: "publication-1",
             materializedThroughSourceAt: 123n,
@@ -518,6 +524,7 @@ describe("sessionRoutes v1 messages pagination", () => {
     it("advances past a durably manual-handled input without a turn after the historical v0 rows are backfilled", async () => {
         sessionFindUnique.mockResolvedValue({
             currentStorageState: "snapshot_complete",
+            seq: 7,
             acceptedThroughServerSeq: 7,
             materializationPublicationId: "publication-1",
             materializedThroughSourceAt: 123n,
@@ -552,8 +559,10 @@ describe("sessionRoutes v1 messages pagination", () => {
         expect(response).not.toHaveProperty("externalShareableSnapshot.publicationBlockedFromSeq");
     });
 
-    it("keeps an external cursor blocked until the SessionTurn projection contract is activated", async () => {
+    it("keeps an external cursor blocked when Session.seq is missing until the SessionTurn projection contract is activated", async () => {
         resetSessionTurnTranscriptAnchorProjectionProtocolActivationForTests();
+        // Deliberately omit Session.seq: an incomplete complete-snapshot
+        // publication tuple must fail closed at sequence zero.
         sessionFindUnique.mockResolvedValue({
             currentStorageState: "snapshot_complete",
             acceptedThroughServerSeq: 7,
@@ -583,6 +592,7 @@ describe("sessionRoutes v1 messages pagination", () => {
 
         expect(response).toMatchObject({
             messages: [expect.objectContaining({ id: "m7", seq: 7 })],
+            publicationBlocked: true,
             hasMore: true,
             externalShareableSnapshot: {
                 turns: [],

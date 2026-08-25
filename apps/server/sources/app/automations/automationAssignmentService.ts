@@ -12,6 +12,7 @@ import {
 } from "./automationTypes";
 import { AutomationValidationError } from "./automationValidation";
 import { isAutomationDefinitionRepresentableInV2 } from "./automationApiProjection";
+import { retiredAutomationLeaseRecoveryDisjuncts } from "./automationClaimService";
 
 type AutomationAssignmentWakeRun = Readonly<{
     originKind: AutomationRunOriginKind;
@@ -207,28 +208,16 @@ export async function listDaemonAssignments(params: {
         db.automationRun.findMany({
             where: {
                 accountId: params.accountId,
-                claimedByMachineId: params.machineId,
                 dueAt: { lte: now },
                 state: { in: ["claimed", "running"] },
                 leaseExpiresAt: { not: null },
-                automation: {
+                // Exactly the rows the claim scan can resolve, asked through
+                // its owner so this wake cannot drift away from it.
+                OR: retiredAutomationLeaseRecoveryDisjuncts({
+                    machineId: params.machineId,
                     accountId: params.accountId,
-                    ...(params.expectedTriggerKind
-                        ? { triggerKind: params.expectedTriggerKind }
-                        : {}),
-                    OR: [
-                        { enabled: false },
-                        { deletedAt: { not: null } },
-                        {
-                            assignments: {
-                                none: {
-                                    machineId: params.machineId,
-                                    enabled: true,
-                                },
-                            },
-                        },
-                    ],
-                },
+                    expectedTriggerKind: params.expectedTriggerKind,
+                }),
             },
             select: {
                 id: true,
@@ -256,9 +245,10 @@ export async function listDaemonAssignments(params: {
         }));
 
     // An assignment is ordinarily a current-claim authority. This narrow
-    // projection is not: it retains only the incumbent claimant's lease-expiry
-    // wake after that authority is retired, so the existing claim transaction
-    // can terminalize the durable Run instead of leaving it capacity-counted.
+    // projection is not: it retains only a retired Run's lease-expiry wake, so
+    // the existing claim transaction can terminalize the durable Run instead of
+    // leaving it capacity-counted. The claim transaction refuses to hand a
+    // retired Run to any machine, so this wake can never start its work.
     const retirementWakes = retiredLeaseRuns
         .filter((run) => !params.requireV2DefinitionRepresentability
             || isAutomationDefinitionRepresentableInV2(run.automation))

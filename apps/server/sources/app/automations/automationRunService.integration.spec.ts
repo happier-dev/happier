@@ -486,19 +486,10 @@ describe("automationRunService (integration)", () => {
                     v: {
                         v: 1,
                         correspondence: {
-                            accountId: account.id,
                             automationId: automation.id,
-                            runId: "run-conversation-result-validation",
-                            handoffId: "handoff-conversation-result-validation",
+                            occurrenceKey: "conversation-occurrence-result-validation",
                         },
-                        source: {
-                            kind: "automationResult",
-                            automationRunId: "run-conversation-result-validation",
-                            resultId: "handoff-conversation-result-validation",
-                            automationId: automation.id,
-                            templateVersion: 1,
-                            resultDelivery: "finalResult",
-                        },
+                        templateVersion: 1,
                         opaqueContext: { conversationId: "conversation-1" },
                     },
                 }),
@@ -1202,6 +1193,53 @@ describe("automationRunService (integration)", () => {
         });
     });
 
+    it("refuses a started dispatch settlement whose witness names a different Account encryption identity", async () => {
+        const seeded = await seedExecutionDispatchRun({
+            id: "run-execution-dispatch-mode-transition",
+            state: "running",
+            executionDispatchState: "dispatchPermitted",
+            executionAttempt: 1,
+        });
+        const startWitness = await readAutomationAccountCurrentness(seeded.account.id);
+
+        // Relaxing the post-effect decision to content identity is not the
+        // same as dropping it. A witness naming a different Account
+        // encryption mode and content key may not terminalize the Run or
+        // persist its native identity, so the encryption transition still
+        // fences the one write the effect permit authorized.
+        const settle = readExecutionDispatchSettlementOwner();
+        await expect(settle({
+            accountId: seeded.account.id,
+            runId: seeded.run.id,
+            machineId: seeded.machine.id,
+            attempt: 1,
+            accountCurrentness: {
+                ...startWitness,
+                mode: "e2ee",
+                contentKeyFingerprint: "different-current-key",
+            },
+            outcome: {
+                kind: "started",
+                runId: "native-run-mode-transition",
+                callId: "native-call-mode-transition",
+                sidechainId: "native-sidechain-mode-transition",
+                wait: { ok: false, code: "timeout" },
+            },
+        })).resolves.toBeNull();
+        await expect(db.automationRun.findUniqueOrThrow({
+            where: { id: seeded.run.id },
+            select: {
+                state: true,
+                executionDispatchState: true,
+                executionNativeRunId: true,
+            },
+        })).resolves.toEqual({
+            state: "running",
+            executionDispatchState: "dispatchPermitted",
+            executionNativeRunId: null,
+        });
+    });
+
     it("refuses a generic success or failure claim over a permitted dispatch", async () => {
         const succeedSeed = await seedExecutionDispatchRun({
             id: "run-execution-dispatch-generic-succeed",
@@ -1407,19 +1445,10 @@ describe("automationRunService (integration)", () => {
                     v: {
                         v: 1,
                         correspondence: {
-                            accountId: account.id,
                             automationId: automation.id,
-                            runId: "run-conversation-reply-ready",
-                            handoffId: "handoff-conversation-reply-ready",
+                            occurrenceKey: "conversation-occurrence-ready",
                         },
-                        source: {
-                            kind: "automationResult",
-                            automationRunId: "run-conversation-reply-ready",
-                            resultId: "handoff-conversation-reply-ready",
-                            automationId: automation.id,
-                            templateVersion: 1,
-                            resultDelivery: "finalResult",
-                        },
+                        templateVersion: 1,
                         opaqueContext: { conversationId: "conversation-1" },
                     },
                 }),
@@ -1748,7 +1777,7 @@ describe("automationRunService (integration)", () => {
             runId: seeded.run.id,
             state: "running",
             runRevision: current.revision,
-            machineId: seeded.machine.id,
+            claimedByMachineId: seeded.machine.id,
             executionInputEnvelope: current.executionInputEnvelope,
             originKind: "conversation",
             executionDispatchState: current.executionDispatchState,

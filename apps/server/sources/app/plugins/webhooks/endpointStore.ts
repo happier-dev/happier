@@ -20,6 +20,7 @@ import { inTx, type Tx } from "@/storage/inTx";
 
 import { encryptPluginWebhookCredentialSecretV1 } from "./credentialCipher";
 import { createGeneratedPluginWebhookCredentialMaterialV1 } from "./credentialMaterial";
+import { projectPluginWebhookEndpointReadinessV1 } from "./endpointReadiness";
 import { markPluginWebhookAccountChangedInTxV1 } from "./accountChange";
 
 export class PluginWebhookEndpointStoreError extends Error {
@@ -81,10 +82,24 @@ export function formatPluginWebhookEndpointPublicUrlV1(publicBaseUrl: string, op
     return base.toString();
 }
 
+const ENSURE_REJOIN_SELECT_V1 = {
+    id: true,
+    revision: true,
+    routingKind: true,
+    enabled: true,
+    revokedAt: true,
+    providerConfirmedAt: true,
+    ensureRequestFingerprint: true,
+    route: { select: { opaqueRouteId: true, enabled: true, revokedAt: true } },
+} as const;
+
 function projectEnsureRejoin(row: Readonly<{
     id: string;
     revision: number;
     routingKind: string;
+    enabled: boolean;
+    revokedAt: Date | null;
+    providerConfirmedAt: Date | null;
     ensureRequestFingerprint: string | null;
     route: Readonly<{ opaqueRouteId: string; enabled: boolean; revokedAt: Date | null }>;
 }>, requestFingerprint: string, publicBaseUrl: string): PluginWebhookEndpointEnsureResultV1 {
@@ -95,24 +110,26 @@ function projectEnsureRejoin(row: Readonly<{
         webhookEndpointId: row.id,
         revision: row.revision,
         publicUrl: formatPluginWebhookEndpointPublicUrlV1(publicBaseUrl, row.route.opaqueRouteId),
-        readiness: !row.route.enabled || row.route.revokedAt
-            ? "routeUnavailable"
-            : row.routingKind === "accountEndpoint"
-                ? "credentialDisclosureLost"
-                : "ready",
+        readiness: projectPluginWebhookEndpointReadinessV1({
+            endpointEnabled: row.enabled,
+            endpointRevokedAt: row.revokedAt,
+            routeEnabled: row.route.enabled,
+            routeRevokedAt: row.route.revokedAt,
+            // This request resolved the exact current target before rejoining,
+            // and the fingerprint proves the rejoined row froze that same
+            // materialization, installation, and plugin version.
+            targetStatus: "current",
+            providerConfirmedAt: row.providerConfirmedAt,
+            // A rejoin never repeats the creating response's one-time secret.
+            oneTimeCredentialDisclosureLost: row.routingKind === "accountEndpoint",
+        }),
     });
 }
 
 async function readEnsureIdempotencyV1(accountId: string, idempotencyKey: string) {
     return await db.pluginWebhookEndpoint.findFirst({
         where: { accountId, ensureIdempotencyKey: idempotencyKey },
-        select: {
-            id: true,
-            revision: true,
-            routingKind: true,
-            ensureRequestFingerprint: true,
-            route: { select: { opaqueRouteId: true, enabled: true, revokedAt: true } },
-        },
+        select: ENSURE_REJOIN_SELECT_V1,
     });
 }
 
@@ -204,13 +221,7 @@ export async function ensurePluginWebhookEndpointV1(params: Readonly<{
         return await inTx(async (tx) => {
             const raced = await tx.pluginWebhookEndpoint.findFirst({
                 where: { accountId: params.accountId, ensureIdempotencyKey: params.input.idempotencyKey },
-                select: {
-                    id: true,
-                    revision: true,
-                    routingKind: true,
-                    ensureRequestFingerprint: true,
-                    route: { select: { opaqueRouteId: true, enabled: true, revokedAt: true } },
-                },
+                select: ENSURE_REJOIN_SELECT_V1,
             });
             if (raced) return projectEnsureRejoin(raced, requestFingerprint, params.publicBaseUrl);
 
@@ -221,7 +232,7 @@ export async function ensurePluginWebhookEndpointV1(params: Readonly<{
                         verifierKind: params.contribution.verifierKind,
                         routingKind: params.contribution.routingKind,
                     },
-                    select: { id: true, opaqueRouteId: true },
+                    select: { id: true, opaqueRouteId: true, enabled: true, revokedAt: true },
                 })
                 : await tx.pluginWebhookRoute.findFirst({
                     where: {
@@ -233,7 +244,7 @@ export async function ensurePluginWebhookEndpointV1(params: Readonly<{
                         revokedAt: null,
                         currentCredentialId: { not: null },
                     },
-                    select: { id: true, opaqueRouteId: true },
+                    select: { id: true, opaqueRouteId: true, enabled: true, revokedAt: true },
                 });
             if (!route) throw new PluginWebhookEndpointStoreError("route_unavailable");
 
@@ -258,7 +269,7 @@ export async function ensurePluginWebhookEndpointV1(params: Readonly<{
                     targetMaterializationId: params.target.materialization.materializationId,
                     targetPluginVersion: params.target.pluginVersion,
                 },
-                select: { id: true, revision: true },
+                select: { id: true, revision: true, enabled: true, revokedAt: true, providerConfirmedAt: true },
             });
 
             if (credential) {
@@ -291,7 +302,17 @@ export async function ensurePluginWebhookEndpointV1(params: Readonly<{
                 webhookEndpointId: endpoint.id,
                 revision: endpoint.revision,
                 publicUrl: formatPluginWebhookEndpointPublicUrlV1(params.publicBaseUrl, route.opaqueRouteId),
-                readiness: credential ? "providerConfirmationRequired" : "ready",
+                readiness: projectPluginWebhookEndpointReadinessV1({
+                    endpointEnabled: endpoint.enabled,
+                    endpointRevokedAt: endpoint.revokedAt,
+                    routeEnabled: route.enabled,
+                    routeRevokedAt: route.revokedAt,
+                    // The binding was just created against the resolved current target.
+                    targetStatus: "current",
+                    providerConfirmedAt: endpoint.providerConfirmedAt,
+                    // The creating response is the one that discloses the secret.
+                    oneTimeCredentialDisclosureLost: false,
+                }),
                 ...(credential ? { oneTimeGeneratedSecret: credential.secret } : {}),
             });
         });
@@ -310,6 +331,15 @@ export async function readPluginWebhookEndpointV1(params: Readonly<{
     accountId: string;
     webhookEndpointId: string;
     publicBaseUrl: string;
+    /**
+     * Read resolves claimable-target currentness itself. Without it the one
+     * readiness projection would have to accept an unresolved target, and an
+     * endpoint whose machine is gone would still read as `ready`.
+     */
+    resolveTarget: (params: Readonly<{
+        accountId: string;
+        target: ResolvedPluginWebhookTargetV1["materialization"];
+    }>) => Awaitable<ResolvedPluginWebhookTargetV1 | null>;
 }>): Promise<PluginWebhookEndpointReadResultV1> {
     const endpoint = await db.pluginWebhookEndpoint.findFirst({
         where: { id: params.webhookEndpointId, accountId: params.accountId },
@@ -322,9 +352,12 @@ export async function readPluginWebhookEndpointV1(params: Readonly<{
             routingKind: true,
             enabled: true,
             revokedAt: true,
+            providerConfirmedAt: true,
             createdAt: true,
             targetMachineId: true,
+            targetMachineInstallationId: true,
             targetMaterializationId: true,
+            targetPluginVersion: true,
             route: { select: { opaqueRouteId: true, enabled: true, revokedAt: true } },
         },
     });
@@ -334,27 +367,46 @@ export async function readPluginWebhookEndpointV1(params: Readonly<{
         || endpoint.webhookContributionId === null
         || endpoint.sourceInstanceId === null
         || endpoint.targetMachineId === null
+        || endpoint.targetMachineInstallationId === null
         || endpoint.targetMaterializationId === null
+        || endpoint.targetPluginVersion === null
         || (endpoint.routingKind !== "accountEndpoint" && endpoint.routingKind !== "providerInstallation")
     ) {
         throw new PluginWebhookEndpointStoreError("endpoint_unavailable");
     }
+    const targetMaterialization = {
+        machineId: endpoint.targetMachineId,
+        materializationId: endpoint.targetMaterializationId,
+        pluginId: endpoint.pluginId,
+    };
+    const resolved = await params.resolveTarget({
+        accountId: params.accountId,
+        target: targetMaterialization,
+    });
+    // The frozen target is what a claim authenticates against, so a resolved
+    // materialization that no longer carries the frozen installation/version is
+    // not this endpoint's target.
+    const targetStatus = resolved
+        && resolved.machineInstallationId === endpoint.targetMachineInstallationId
+        && resolved.pluginVersion === endpoint.targetPluginVersion
+        ? "current" as const
+        : "unavailable" as const;
     return PluginWebhookEndpointReadResultV1Schema.parse({
         webhookEndpointId: endpoint.id,
         revision: endpoint.revision,
         contribution: { pluginId: endpoint.pluginId, localId: endpoint.webhookContributionId },
-        targetMaterialization: {
-            machineId: endpoint.targetMachineId,
-            materializationId: endpoint.targetMaterializationId,
-            pluginId: endpoint.pluginId,
-        },
+        targetMaterialization,
         sourceInstanceId: endpoint.sourceInstanceId,
         routing: endpoint.routingKind,
-        readiness: !endpoint.enabled || endpoint.revokedAt !== null
-            ? "routeUnavailable"
-            : !endpoint.route.enabled || endpoint.route.revokedAt !== null
-                ? "routeUnavailable"
-                : "ready",
+        readiness: projectPluginWebhookEndpointReadinessV1({
+            endpointEnabled: endpoint.enabled,
+            endpointRevokedAt: endpoint.revokedAt,
+            routeEnabled: endpoint.route.enabled,
+            routeRevokedAt: endpoint.route.revokedAt,
+            targetStatus,
+            providerConfirmedAt: endpoint.providerConfirmedAt,
+            oneTimeCredentialDisclosureLost: false,
+        }),
         publicUrl: formatPluginWebhookEndpointPublicUrlV1(params.publicBaseUrl, endpoint.route.opaqueRouteId),
         createdAt: endpoint.createdAt.getTime(),
         ...(endpoint.revokedAt ? { revokedAt: endpoint.revokedAt.getTime() } : {}),
@@ -776,6 +828,7 @@ export function createPluginWebhookEndpointStoreV1(options: Readonly<{
         read: async (input) => await readPluginWebhookEndpointV1({
             ...input,
             publicBaseUrl: resolvePublicBaseUrl(),
+            resolveTarget: options.resolveTarget,
         }),
         revoke: revokePluginWebhookEndpointV1,
         retarget: async (input) => {

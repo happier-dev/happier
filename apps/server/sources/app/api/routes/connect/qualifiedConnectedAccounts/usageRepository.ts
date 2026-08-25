@@ -1214,13 +1214,11 @@ async function listQualifiedUsageSourcesForRecordInStorage(
             { qualifiedIdentityDigest: "asc" },
             { sourceKey: "asc" },
         ],
-        take: 501,
     });
-    if (rows.length > 500) {
-        throw new Error(
-            "Qualified provider usage source list limit exceeded",
-        );
-    }
+    // Every source the record is linked through. Sources are derived from the
+    // credential and group lists — one per account binding plus one per group
+    // membership — so they carry no capacity of their own, and this reader also
+    // decides whether the record's DELETE and refresh routes can see it at all.
     return rows.map(mapQualifiedSourceRow);
 }
 

@@ -79,6 +79,10 @@ describe("Account Settings writer admission", () => {
 
         await write({
             userId: "account-1",
+            // Both Settings writers run behind `requirePresentUser`. Without the
+            // authority an ordinary Account token carries, the preHandler answers
+            // 403 and the fence-ordering assertions below never reach the handler.
+            authAuthority: "present_user",
             body: { settings: "ciphertext", expectedVersion: 0 },
         }, reply);
 
@@ -96,6 +100,7 @@ describe("Account Settings writer admission", () => {
 
         await write({
             userId: "account-1",
+            authAuthority: "present_user",
             body: { content: null, expectedVersion: 0 },
         }, reply);
 

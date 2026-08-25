@@ -370,6 +370,46 @@ model Machine {
         expect(mysql).toContain("daemonState String? @db.LongText");
     });
 
+    it("uses LongText for RepeatKey values without widening other value fields", () => {
+        const master = `
+generator client {
+    provider = "prisma-client-js"
+}
+
+datasource db {
+    provider = "postgresql"
+    url      = env("DATABASE_URL")
+}
+
+model RepeatKey {
+    key       String @id
+    value     String
+    createdAt DateTime
+    expiresAt DateTime
+}
+
+model SimpleCache {
+    key   String @id
+    value String
+}
+`;
+
+        const mysql = generateMySqlSchemaFromPostgres(master);
+        expect(mysql).toMatch(
+            /model RepeatKey \{[\s\S]*?value\s+String\s+@db\.LongText/,
+        );
+        expect(mysql).toMatch(
+            /model SimpleCache \{[\s\S]*?value\s+String\n/,
+        );
+        expect(readFileSync(
+            join(
+                import.meta.dirname,
+                "../prisma/mysql/migrations/20260825120000_expand_repeat_key_value_longtext/migration.sql",
+            ),
+            "utf8",
+        )).toContain("ALTER TABLE `RepeatKey` MODIFY `value` LONGTEXT NOT NULL;");
+    });
+
     it("bounds MySQL SessionSystemRecord catalog fields so composite indexes fit InnoDB", () => {
         const master = `
 generator client { provider = "prisma-client-js" }

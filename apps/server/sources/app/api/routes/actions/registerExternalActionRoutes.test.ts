@@ -7,11 +7,19 @@ import {
     EXTERNAL_ACTION_HTTP_BODY_LIMIT_BYTES,
     EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES,
     measureExternalActionResponseEnvelopeUtf8BytesV1,
+    prepareExternalActionResponseEnvelopeV1,
 } from "@happier-dev/protocol/actions";
 import {
     type RegisterExternalActionRoutesDependencies,
     registerExternalActionRoutes,
 } from "./registerExternalActionRoutes";
+
+function dispatchedResponse(response: unknown) {
+    return {
+        kind: "response" as const,
+        prepared: prepareExternalActionResponseEnvelopeV1(response),
+    };
+}
 
 function createApp(params: Readonly<{
     dispatch?: RegisterExternalActionRoutesDependencies["dispatch"];
@@ -22,16 +30,13 @@ function createApp(params: Readonly<{
         app.register(import("@fastify/cors"), { origin: "*" });
     }
     registerExternalActionRoutes(app, {
-        dispatch: params.dispatch ?? vi.fn(async (request) => ({
-            kind: "response" as const,
-            response: {
-                v: 1 as const,
-                actionId: request.actionId,
-                ...(request.envelope.requestId === undefined
-                    ? {}
-                    : { requestId: request.envelope.requestId }),
-                execution: { ok: true as const, result: { accepted: true } },
-            },
+        dispatch: params.dispatch ?? vi.fn(async (request) => dispatchedResponse({
+            v: 1 as const,
+            actionId: request.actionId,
+            ...(request.envelope.requestId === undefined
+                ? {}
+                : { requestId: request.envelope.requestId }),
+            execution: { ok: true as const, result: { accepted: true } },
         })),
     });
     return app;
@@ -85,14 +90,11 @@ function externalActionJsonPayloadWithByteLength(byteLength: number): string {
 
 describe("registerExternalActionRoutes", () => {
     it("accepts a verified PAT, relays only the outer envelope, and forwards server-stamped provenance", async () => {
-        const dispatch = vi.fn(async () => ({
-            kind: "response" as const,
-            response: {
-                v: 1 as const,
-                actionId: "session.spawn_new" as const,
-                requestId: "request-1",
-                execution: { ok: true as const, result: { sessionId: "session-1" } },
-            },
+        const dispatch = vi.fn(async () => dispatchedResponse({
+            v: 1 as const,
+            actionId: "session.spawn_new" as const,
+            requestId: "request-1",
+            execution: { ok: true as const, result: { sessionId: "session-1" } },
         }));
         const app = createApp({ dispatch });
         await app.ready();
@@ -140,24 +142,18 @@ describe("registerExternalActionRoutes", () => {
 
     it("returns typed invalid_action_output rather than a recursive JSON response failure", async () => {
         const dispatch = vi.fn()
-            .mockImplementationOnce(async (request) => ({
-                kind: "response" as const,
-                response: {
-                    v: 1 as const,
-                    actionId: request.actionId,
-                    execution: {
-                        ok: true as const,
-                        result: createDeepExternalActionResult(),
-                    },
+            .mockImplementationOnce(async (request) => dispatchedResponse({
+                v: 1 as const,
+                actionId: request.actionId,
+                execution: {
+                    ok: true as const,
+                    result: createDeepExternalActionResult(),
                 },
             }))
-            .mockImplementationOnce(async (request) => ({
-                kind: "response" as const,
-                response: {
-                    v: 1 as const,
-                    actionId: request.actionId,
-                    execution: { ok: true as const, result: { carrier: "usable" } },
-                },
+            .mockImplementationOnce(async (request) => dispatchedResponse({
+                v: 1 as const,
+                actionId: request.actionId,
+                execution: { ok: true as const, result: { carrier: "usable" } },
             }));
         const app = createApp({ dispatch });
         await app.ready();
@@ -172,13 +168,13 @@ describe("registerExternalActionRoutes", () => {
             expect(deepResponse.statusCode).toBe(200);
             expect(deepResponse.json()).toMatchObject({
                 v: 1,
-                    actionId: "session.spawn_new",
-                    execution: {
-                        ok: false,
-                        errorCode: "invalid_action_output",
-                        error: "invalid_action_output",
-                    },
-                });
+                actionId: "session.spawn_new",
+                execution: {
+                    ok: false,
+                    errorCode: "invalid_action_output",
+                    error: "invalid_action_output",
+                },
+            });
 
             const nextResponse = await app.inject({
                 method: "POST",
@@ -199,38 +195,29 @@ describe("registerExternalActionRoutes", () => {
     it("serializes exact response bytes, projects one extra byte, and stays usable through the server Fastify adapter", async () => {
         const exactLimitResult = createExactLimitMultibyteResponseResult();
         const dispatch = vi.fn()
-            .mockImplementationOnce(async (request) => ({
-                kind: "response" as const,
-                response: {
-                    v: 1 as const,
-                    actionId: request.actionId,
-                    ...(request.envelope.requestId === undefined
-                        ? {}
-                        : { requestId: request.envelope.requestId }),
-                    execution: { ok: true as const, result: exactLimitResult },
-                },
+            .mockImplementationOnce(async (request) => dispatchedResponse({
+                v: 1 as const,
+                actionId: request.actionId,
+                ...(request.envelope.requestId === undefined
+                    ? {}
+                    : { requestId: request.envelope.requestId }),
+                execution: { ok: true as const, result: exactLimitResult },
             }))
-            .mockImplementationOnce(async (request) => ({
-                kind: "response" as const,
-                response: {
-                    v: 1 as const,
-                    actionId: request.actionId,
-                    ...(request.envelope.requestId === undefined
-                        ? {}
-                        : { requestId: request.envelope.requestId }),
-                    execution: { ok: true as const, result: `${exactLimitResult}a` },
-                },
+            .mockImplementationOnce(async (request) => dispatchedResponse({
+                v: 1 as const,
+                actionId: request.actionId,
+                ...(request.envelope.requestId === undefined
+                    ? {}
+                    : { requestId: request.envelope.requestId }),
+                execution: { ok: true as const, result: `${exactLimitResult}a` },
             }))
-            .mockImplementationOnce(async (request) => ({
-                kind: "response" as const,
-                response: {
-                    v: 1 as const,
-                    actionId: request.actionId,
-                    ...(request.envelope.requestId === undefined
-                        ? {}
-                        : { requestId: request.envelope.requestId }),
-                    execution: { ok: true as const, result: { carrier: "usable" } },
-                },
+            .mockImplementationOnce(async (request) => dispatchedResponse({
+                v: 1 as const,
+                actionId: request.actionId,
+                ...(request.envelope.requestId === undefined
+                    ? {}
+                    : { requestId: request.envelope.requestId }),
+                execution: { ok: true as const, result: { carrier: "usable" } },
             }));
         const app = createApp({ dispatch });
         await app.ready();
@@ -361,16 +348,13 @@ describe("registerExternalActionRoutes", () => {
     });
 
     it("keeps an admitted Action's invalid_action domain failure in the canonical response envelope", async () => {
-        const dispatch = vi.fn(async (request) => ({
-            kind: "response" as const,
-            response: {
-                v: 1 as const,
-                actionId: request.actionId,
-                execution: {
-                    ok: false as const,
-                    errorCode: "invalid_action",
-                    error: "invalid_action",
-                },
+        const dispatch = vi.fn(async (request) => dispatchedResponse({
+            v: 1 as const,
+            actionId: request.actionId,
+            execution: {
+                ok: false as const,
+                errorCode: "invalid_action",
+                error: "invalid_action",
             },
         }));
         const app = createApp({ dispatch });
@@ -404,13 +388,10 @@ describe("registerExternalActionRoutes", () => {
     });
 
     it("relays an opaque newer Action id to the daemon without server-side admission", async () => {
-        const dispatch = vi.fn(async (request) => ({
-            kind: "response" as const,
-            response: {
-                v: 1 as const,
-                actionId: request.actionId,
-                execution: { ok: true as const, result: { accepted: true } },
-            },
+        const dispatch = vi.fn(async (request) => dispatchedResponse({
+            v: 1 as const,
+            actionId: request.actionId,
+            execution: { ok: true as const, result: { accepted: true } },
         }));
         const app = createApp({ dispatch });
         await app.ready();
@@ -491,13 +472,10 @@ describe("registerExternalActionRoutes", () => {
     });
 
     it("enforces the shared byte ceiling with a typed non-CORS no-store response", async () => {
-        const dispatch = vi.fn(async (request) => ({
-            kind: "response" as const,
-            response: {
-                v: 1 as const,
-                actionId: request.actionId,
-                execution: { ok: true as const, result: { accepted: true } },
-            },
+        const dispatch = vi.fn(async (request) => dispatchedResponse({
+            v: 1 as const,
+            actionId: request.actionId,
+            execution: { ok: true as const, result: { accepted: true } },
         }));
         const app = createApp({ dispatch, withGlobalCors: true });
         await app.ready();

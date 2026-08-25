@@ -39,6 +39,7 @@ export type AutomationReplyHandoffClaim = Readonly<{
     automationId: string;
     runId: string;
     handoffId: string;
+    occurrenceKey: string;
     attempt: number;
     /** The exact Account material authority under which these bytes were claimed. */
     accountCurrentness: AutomationAccountCurrentnessWitnessV1;
@@ -59,6 +60,7 @@ const automationReplyHandoffCandidateSelect = {
     id: true,
     accountId: true,
     automationId: true,
+    occurrenceKey: true,
     state: true,
     originKind: true,
     resultEnvelope: true,
@@ -134,6 +136,7 @@ function handoffCandidateWhere(candidate: AutomationReplyHandoffCandidate): Pris
         id: candidate.id,
         accountId: candidate.accountId,
         automationId: candidate.automationId,
+        occurrenceKey: candidate.occurrenceKey,
         state: "succeeded",
         originKind: "conversation",
         resultEnvelope: candidate.resultEnvelope,
@@ -159,6 +162,7 @@ function hasClaimedFrozenIdentity(
         && candidate.automationId === claim.automationId
         && candidate.id === claim.runId
         && candidate.replyHandoffId === claim.handoffId
+        && candidate.occurrenceKey === claim.occurrenceKey
         && candidate.resultEnvelope === claim.resultEnvelope
         && candidate.replyContextEnvelope === claim.replyContextEnvelope
         && candidate.replyHandoffActionPluginId === claim.target.actionPluginId
@@ -181,7 +185,7 @@ function isClaimCurrent(
 
 function isDispatchableCandidate(candidate: AutomationReplyHandoffCandidate): boolean {
     const currentness = deriveAutomationAccountCurrentnessWitness(candidate.account);
-    if (!currentness) return false;
+    if (!currentness || typeof candidate.occurrenceKey !== "string") return false;
 
     const target = AutomationReplyHandoffTargetV1Schema.safeParse({
         accountId: candidate.accountId,
@@ -411,6 +415,7 @@ export async function claimNextAutomationReplyHandoff(params: Readonly<{
 
         if (
             typeof candidate.replyHandoffId !== "string"
+            || typeof candidate.occurrenceKey !== "string"
             || typeof candidate.resultEnvelope !== "string"
             || typeof candidate.replyContextEnvelope !== "string"
             || typeof candidate.replyHandoffActionPluginId !== "string"
@@ -435,6 +440,7 @@ export async function claimNextAutomationReplyHandoff(params: Readonly<{
             automationId: candidate.automationId,
             runId: candidate.id,
             handoffId: candidate.replyHandoffId,
+            occurrenceKey: candidate.occurrenceKey,
             attempt: candidate.replyHandoffAttempt + 1,
             accountCurrentness,
             runRevision: candidate.revision + 1,

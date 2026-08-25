@@ -1,6 +1,7 @@
 import Fastify from "fastify";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from "fastify-type-provider-zod";
+import { prepareExternalActionResponseEnvelopeV1 } from "@happier-dev/protocol/actions";
 
 import { auth } from "@/app/auth/auth";
 import type { Fastify as AppFastify } from "@/app/api/types";
@@ -10,6 +11,13 @@ import { db } from "@/storage/db";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 
 import { registerExternalActionRoutes } from "./registerExternalActionRoutes";
+
+function dispatchedResponse(response: unknown) {
+    return {
+        kind: "response" as const,
+        prepared: prepareExternalActionResponseEnvelopeV1(response),
+    };
+}
 
 function createTestApp(
     dispatch: ExternalActionDaemonDispatcher,
@@ -65,17 +73,14 @@ describe("registerExternalActionRoutes (API-token provenance) (integration)", ()
         };
         const dispatch: ExternalActionDaemonDispatcher = async (request) => {
             received.request = request;
-            return {
-                kind: "response",
-                response: {
-                    v: 1,
-                    actionId: request.actionId,
-                    ...(request.envelope.requestId === undefined
-                        ? {}
-                        : { requestId: request.envelope.requestId }),
-                    execution: { ok: true, result: { accepted: true } },
-                },
-            };
+            return dispatchedResponse({
+                v: 1,
+                actionId: request.actionId,
+                ...(request.envelope.requestId === undefined
+                    ? {}
+                    : { requestId: request.envelope.requestId }),
+                execution: { ok: true, result: { accepted: true } },
+            });
         };
         const app = createTestApp(dispatch);
         await app.ready();
@@ -118,13 +123,10 @@ describe("registerExternalActionRoutes (API-token provenance) (integration)", ()
         });
         const signedToken = await auth.createToken(account.id);
         const parse = vi.fn();
-        const dispatch = vi.fn(async () => ({
-            kind: "response" as const,
-            response: {
-                v: 1 as const,
-                actionId: "session.spawn_new" as const,
-                execution: { ok: true as const, result: { accepted: true } },
-            },
+        const dispatch = vi.fn(async () => dispatchedResponse({
+            v: 1 as const,
+            actionId: "session.spawn_new" as const,
+            execution: { ok: true as const, result: { accepted: true } },
         }));
         const app = createTestApp(dispatch, (configured) => {
             configured.removeContentTypeParser("application/json");

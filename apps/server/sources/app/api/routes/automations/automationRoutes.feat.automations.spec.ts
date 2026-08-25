@@ -3,12 +3,20 @@ import { AutomationValidationError } from "@/app/automations/automationValidatio
 
 import { createDbMocks, installDbModuleMock } from "../../testkit/dbMocks";
 import { createEnvReset } from "../../testkit/env";
-import { createRouteTestBuilder } from "../../testkit/routeTestBuilder";
+import { createRouteTestBuilder as createBaseRouteTestBuilder } from "../../testkit/routeTestBuilder";
+import { PRESENT_USER_REQUIRED_ERROR } from "../../utils/requirePresentUser";
 
 const dbMocks = createDbMocks({
     account: ["findUnique"],
 } as const);
 const findAccountById = dbMocks.db.account.findUnique;
+
+function createRouteTestBuilder(options: Parameters<typeof createBaseRouteTestBuilder>[0]) {
+    return createBaseRouteTestBuilder({
+        ...options,
+        defaultRequest: { authAuthority: "present_user", ...options.defaultRequest },
+    });
+}
 
 const TEST_TEMPLATE_ENVELOPE = JSON.stringify({
     kind: "happier_automation_template_plain_v1",
@@ -114,6 +122,7 @@ const claimAutomationRun = vi.fn(async () => ({
         contentKeyFingerprint: null,
     },
 }));
+const verifyPublisher = vi.hoisted(() => vi.fn());
 
 vi.mock("@/app/automations/automationCrudService", () => ({
     listAutomations,
@@ -124,6 +133,10 @@ vi.mock("@/app/automations/automationCrudService", () => ({
 vi.mock("@/app/automations/automationClaimService", () => ({
     claimAutomationRun,
 }));
+vi.mock("@/app/plugins/installations/publisherProof", async (importOriginal) => {
+    const actual = await importOriginal<typeof import("@/app/plugins/installations/publisherProof")>();
+    return { ...actual, verifyPluginInstallationPublisherHeader: verifyPublisher };
+});
 vi.mock("@/app/automations/automationConversationTargetVerificationService", () => ({
     AutomationConversationTargetVerificationCallerError: class extends Error {},
     createAutomationConversationTargetV1,
@@ -149,6 +162,65 @@ describe("automationRoutes", () => {
             contentPublicKey: null,
             contentPublicKeySig: null,
         });
+        verifyPublisher.mockImplementation(async ({ request }: { request: any }) => ({
+            machineId: request.body?.machineId ?? request.query?.machineId,
+            installationId: "installation-1",
+        }));
+    });
+
+    it("refuses terminal authority before a retained V2 management mutation", async () => {
+        const { automationRoutes } = await import("./automationRoutes");
+        const route = createRouteTestBuilder({
+            method: "POST",
+            path: "/v2/automations",
+            registerRoutes(app) {
+                automationRoutes(app as any);
+            },
+        });
+
+        const { response, reply } = await route.invoke({
+            userId: "u1",
+            authAuthority: "account_automation",
+            body: {
+                name: "Terminal must not create",
+                enabled: true,
+                schedule: { kind: "interval", everyMs: 60_000 },
+                targetType: "new_session",
+                templateCiphertext: TEST_TEMPLATE_ENVELOPE,
+                assignments: [{ machineId: "m1" }],
+            },
+        });
+
+        expect(reply.statusCode).toBe(403);
+        expect(response).toBeUndefined();
+        expect(reply.send).toHaveBeenCalledWith({ error: PRESENT_USER_REQUIRED_ERROR });
+        expect(createAutomation).not.toHaveBeenCalled();
+    });
+
+    it("refuses a retained V2 worker claim when publisher proof names another machine", async () => {
+        const { registerAutomationDaemonRoutes } = await import("./registerAutomationDaemonRoutes");
+        const verifyPublisher = vi.fn(async () => ({
+            machineId: "machine-other",
+            installationId: "installation-other",
+        }));
+        const route = createRouteTestBuilder({
+            method: "POST",
+            path: "/v2/automations/runs/claim",
+            registerRoutes(app) {
+                registerAutomationDaemonRoutes(app as any, { verifyPublisher } as any);
+            },
+        });
+
+        const { response, reply } = await route.invoke({
+            userId: "u1",
+            authAuthority: "account_automation",
+            method: "POST",
+            body: { machineId: "m1", leaseDurationMs: 30_000 },
+        });
+
+        expect(reply.statusCode).toBe(401);
+        expect(response).toBeNull();
+        expect(claimAutomationRun).not.toHaveBeenCalled();
     });
 
     it("registers CRUD, legacy daemon, V3 worker, and the E3 Event admission boundary", async () => {

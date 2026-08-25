@@ -11,7 +11,6 @@ import {
 } from "@happier-dev/protocol";
 import { NotFoundSchema } from "../../schemas/notFoundSchema";
 import { ConnectedServiceProfileIdSchema } from "./connectedServicesV2/profileIdSchema";
-import { registerProviderAccountUsageRoutesV2 } from "./providerAccountUsageRoutesV2";
 import {
     readLegacyConnectedServiceQuotaCompatibilitySource,
     requestLegacyConnectedServiceQuotaCompatibilityRefresh,
@@ -52,8 +51,6 @@ async function readE2eeAccount(accountId: string) {
 }
 
 export function connectConnectedServicesQuotasV2Routes(app: Fastify) {
-    registerProviderAccountUsageRoutesV2(app);
-
     app.post("/v2/connect/:serviceId/profiles/:profileId/quotas", {
         config: { rateLimit: resolveApiHotEndpointRateLimit(process.env, "connectedServices.quotas.write") },
         preHandler: app.authenticate,

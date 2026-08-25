@@ -48,6 +48,8 @@ export type RetentionDomainPolicyConfig = Readonly<
 type RetentionDomainDefinition = Readonly<{
     id: keyof RetentionDomainPolicies;
     policyConfig: RetentionDomainPolicyConfig;
+    /** Account-owned retention that remains active without an operator age policy. */
+    runsWhenGlobalPolicyIsDisabled?: true;
     createRule: () => RetentionRule;
 }>;
 
@@ -142,12 +144,27 @@ const RETENTION_DOMAIN_DEFINITIONS = Object.freeze({
     authPairingSessions: { id: 'authPairingSessions', policyConfig: ageConfig('AUTH_PAIRING_SESSIONS'), createRule: createAuthPairingSessionRetentionRule },
     repeatKeys: { id: 'repeatKeys', policyConfig: ageConfig('REPEAT_KEYS'), createRule: createRepeatKeyRetentionRule },
     globalLocks: { id: 'globalLocks', policyConfig: ageConfig('GLOBAL_LOCKS'), createRule: createGlobalLockRetentionRule },
-    automationRuns: { id: 'automationRuns', policyConfig: ageConfig('AUTOMATION_RUNS'), createRule: createAutomationRunRetentionRule },
+    automationRuns: {
+        id: 'automationRuns',
+        policyConfig: ageConfig('AUTOMATION_RUNS'),
+        runsWhenGlobalPolicyIsDisabled: true,
+        createRule: createAutomationRunRetentionRule,
+    },
     automationRunEvents: { id: 'automationRunEvents', policyConfig: ageConfig('AUTOMATION_RUN_EVENTS'), createRule: createAutomationRunEventRetentionRule },
 } satisfies Record<keyof RetentionDomainPolicies, RetentionDomainDefinition>);
 
 export function readRetentionDomainDefinitions(): readonly RetentionDomainDefinition[] {
     return Object.values(RETENTION_DOMAIN_DEFINITIONS);
+}
+
+/**
+ * The registry, rather than a second startup list, owns which domains have an
+ * Account-level contract independent of global operator retention settings.
+ */
+export function hasRetentionRulesThatRunWhenGlobalPolicyIsDisabled(): boolean {
+    return readRetentionDomainDefinitions().some(
+        (definition) => definition.runsWhenGlobalPolicyIsDisabled === true,
+    );
 }
 
 export function createRetentionRuleRegistry(): readonly RetentionRule[] {

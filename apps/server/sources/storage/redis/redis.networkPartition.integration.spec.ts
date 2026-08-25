@@ -1,6 +1,5 @@
 import { createServer, createConnection, type Socket } from "node:net";
 
-import { RedisMemoryServer } from "redis-memory-server";
 import type { Server, Socket as SocketIoSocket } from "socket.io";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -172,11 +171,17 @@ describe("Redis client silent network partition recovery", () => {
     }, 30_000);
 
     it("does not let a pre-restart stall timer destroy the healthy replacement socket", async () => {
-        const redisMemory = await RedisMemoryServer.create();
+        const resolvedRedis = await resolveRedisAdapterValidationRedisUrl({
+            env: {} as NodeJS.ProcessEnv,
+        });
+        if (!resolvedRedis.redisMemory) {
+            throw new Error("Redis restart integration requires an embedded Redis instance");
+        }
+        const { redisMemory } = resolvedRedis;
         cleanup.push(async () => {
             await redisMemory.stop();
         });
-        const redisUrl = `redis://${await redisMemory.getIp()}:${await redisMemory.getPort()}`;
+        const redisUrl = resolvedRedis.redisUrl;
         process.env.REDIS_URL = redisUrl;
 
         vi.resetModules();

@@ -1,6 +1,8 @@
 import {
     parseAutomationRunExecutionRecipeV1,
     type AutomationRunExecutionRecipeV1,
+    type AutomationReplyHandoffStateV1,
+    type AutomationExecutionDispatchStateV3,
     type AutomationRunStateV3,
     type AutomationV3PluginEventDefinitionTriggerInput,
 } from '@happier-dev/protocol';
@@ -38,13 +40,8 @@ export function isTerminalAutomationRunState(
 export type AutomationTriggerKind = 'schedule' | 'manual' | 'pluginEvent' | 'conversation';
 export type AutomationObservationTransport = 'checkpointedPull' | 'durablePush';
 export type AutomationRunOriginKind = 'scheduled' | 'manual' | 'pluginEvent' | 'conversation';
-export type AutomationExecutionDispatchState =
-    | 'notStarted'
-    | 'dispatchPermitted'
-    | 'retryWaiting'
-    | 'started'
-    | 'settled'
-    | 'outcomeUnknown';
+/** The canonical execution-dispatch vocabulary; the Protocol schema is its one owner. */
+export type AutomationExecutionDispatchState = AutomationExecutionDispatchStateV3;
 
 /**
  * The durable Run owner derives the only startable dispatch state from the
@@ -59,14 +56,7 @@ export function initialAutomationExecutionDispatchStateForRun(
         ? 'notStarted'
         : null;
 }
-export type AutomationRunReplyHandoffState =
-    | 'none'
-    | 'awaitingResult'
-    | 'ready'
-    | 'handingOff'
-    | 'accepted'
-    | 'suppressed'
-    | 'blocked';
+export type AutomationRunReplyHandoffState = AutomationReplyHandoffStateV1;
 
 /** States that no longer retain durable Conversation reply custody. */
 export const AUTOMATION_RUN_REPLY_HANDOFF_TERMINAL_STATES = [
@@ -302,6 +292,7 @@ export type AutomationRunItem = Readonly<{
     summaryCiphertext: string | null;
     errorCode: string | null;
     errorMessage: string | null;
+    contentRemovedAt: Date | null;
     producedSessionId: string | null;
     createdAt: Date;
     updatedAt: Date;

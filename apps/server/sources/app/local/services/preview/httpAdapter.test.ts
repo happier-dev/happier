@@ -794,4 +794,160 @@ describe("local service preview HTTP adapter", () => {
             expect.objectContaining({ kind: "http.request.finished" }),
         ]));
     });
+
+    // S-1 backstop. Every route entry point re-encodes the router-decoded wildcard before it gets
+    // here, so this guard protects any OTHER caller. Removing it must make this fail.
+    it("refuses to serialize a request whose target carries a raw CRLF", async () => {
+        const mod = await loadHttpAdapterModule();
+        expect(mod?.proxyLocalServicePreviewHttpRequest).toBeTypeOf("function");
+        if (!mod?.proxyLocalServicePreviewHttpRequest) return;
+
+        const sink = createSink();
+        const openTunnel = vi.fn();
+
+        const result = await mod.proxyLocalServicePreviewHttpRequest({
+            preview,
+            request: {
+                method: "GET",
+                path: "/index.html\r\nX-Injected: yes\r\n\r\nGET /admin HTTP/1.1",
+                search: "",
+                headers: { host: "preview.example.test" },
+                body: chunks([]),
+            },
+            response: sink,
+            openTunnel: openTunnel as never,
+        });
+
+        expect(result).toEqual({ ok: false, reasonCode: "invalid_request_target" });
+        // No tunnel is opened at all, so nothing can reach the user's service.
+        expect(openTunnel).not.toHaveBeenCalled();
+        expect(sink.writeHead).toHaveBeenCalledWith(400, "Bad Request", {});
+    });
+
+    // S-1 neighbouring case: a header value carrying a bare CRLF is dropped, never emitted.
+    it("drops a forwarded header value that carries a raw CRLF instead of splitting the request", async () => {
+        const mod = await loadHttpAdapterModule();
+        expect(mod?.proxyLocalServicePreviewHttpRequest).toBeTypeOf("function");
+        if (!mod?.proxyLocalServicePreviewHttpRequest) return;
+
+        const writes: string[] = [];
+        const sink = createSink();
+
+        const result = await mod.proxyLocalServicePreviewHttpRequest({
+            preview,
+            request: {
+                method: "GET",
+                path: "/index.html",
+                search: "",
+                headers: {
+                    host: "preview.example.test",
+                    "x-custom": "fine",
+                    "x-evil": "a\r\nX-Injected: yes",
+                },
+                body: chunks([]),
+            },
+            response: sink,
+            openTunnel: async () => ({
+                ...previewTunnelIdentity(),
+                write: (bytes: Uint8Array) => {
+                    writes.push(new TextDecoder().decode(bytes));
+                },
+                endWrite: vi.fn(),
+                read: () => chunks(["HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"]),
+                close: vi.fn(),
+                abort: vi.fn(),
+            }),
+        });
+
+        expect(result).toEqual({ ok: true });
+        const upstream = writes.join("");
+        expect(upstream).toContain("X-Custom: fine\r\n");
+        expect(upstream).not.toContain("X-Injected");
+        expect(upstream.split("\r\n\r\n")).toHaveLength(2);
+    });
+
+    it("classifies a tunnel that cannot be opened as a typed 503 instead of throwing an unhandled error", async () => {
+        const mod = await loadHttpAdapterModule();
+        expect(mod?.proxyLocalServicePreviewHttpRequest).toBeTypeOf("function");
+        if (!mod?.proxyLocalServicePreviewHttpRequest) return;
+
+        const sink = createSink();
+        const bodyWrites: string[] = [];
+        sink.write.mockImplementation((chunk: Uint8Array) => {
+            bodyWrites.push(new TextDecoder().decode(chunk));
+        });
+
+        const result = await mod.proxyLocalServicePreviewHttpRequest({
+            preview,
+            request: {
+                method: "GET",
+                path: "/index.html",
+                search: "",
+                headers: { host: "preview.example.test" },
+                body: chunks([]),
+            },
+            response: sink,
+            openTunnel: async () => {
+                throw Object.assign(
+                    new Error("local_service_preview_tunnel_unavailable:grant_signing_unavailable"),
+                    { reasonCode: "grant_signing_unavailable" },
+                );
+            },
+        });
+
+        expect(result).toEqual({ ok: false, reasonCode: "preview_tunnel_unavailable" });
+        expect(sink.writeHead).toHaveBeenCalledWith(503, "Service Unavailable", expect.objectContaining({
+            "content-type": "application/json; charset=utf-8",
+        }));
+        expect(JSON.parse(bodyWrites.join(""))).toEqual({
+            error: "preview_transport_unavailable",
+            reasonCode: "pms_tunnel_unavailable",
+        });
+        expect(sink.end).toHaveBeenCalled();
+        // The caller must never be told the request succeeded, and the connection must not be
+        // reset: a typed 503 is the whole point.
+        expect(sink.destroy).not.toHaveBeenCalled();
+    });
+
+    it("logs the specific tunnel reason code so an operator can see which prerequisite failed", async () => {
+        const mod = await loadHttpAdapterModule();
+        expect(mod?.proxyLocalServicePreviewHttpRequest).toBeTypeOf("function");
+        if (!mod?.proxyLocalServicePreviewHttpRequest) return;
+
+        const logModule = await import("@/utils/logging/log");
+        const logSpy = vi.spyOn(logModule, "log").mockImplementation(() => undefined);
+        try {
+            await mod.proxyLocalServicePreviewHttpRequest({
+                preview,
+                request: {
+                    method: "GET",
+                    path: "/index.html",
+                    search: "",
+                    headers: { host: "preview.example.test" },
+                    body: chunks([]),
+                },
+                response: createSink(),
+                openTunnel: async () => {
+                    throw Object.assign(
+                        new Error("local_service_preview_tunnel_unavailable:grant_signing_unavailable"),
+                        { reasonCode: "grant_signing_unavailable" },
+                    );
+                },
+            });
+
+            const entries = logSpy.mock.calls.filter(([context]) => (
+                (context as { module?: unknown }).module === "local-service-preview"
+            ));
+            expect(entries).toHaveLength(1);
+            expect(entries[0]?.[0]).toMatchObject({
+                level: "error",
+                previewId: "preview_1",
+                machineId: "machine_1",
+                reasonCode: "grant_signing_unavailable",
+            });
+            expect(String(entries[0]?.[1])).toContain("grant_signing_unavailable");
+        } finally {
+            logSpy.mockRestore();
+        }
+    });
 });

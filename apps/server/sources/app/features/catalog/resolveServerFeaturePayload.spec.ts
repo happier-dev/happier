@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import tweetnacl from "tweetnacl";
 
 import { resolveMachineTransferFeature } from "../machineTransferFeature";
+import { resolvePeerMediationFeature } from "../peerMediationFeature";
 import { resolveMachineLiveStreamFeature } from "../machineLiveStreamFeature";
 import { resolveSessionHandoffFeature } from "../sessionHandoffFeature";
 import { resolveServerUsageAnalyticsCapabilitiesFeature } from "../serverUsageAnalyticsCapabilitiesFeature";
@@ -11,7 +12,7 @@ import { resolveServerFeaturePayload } from "./resolveServerFeaturePayload";
 import { resolveServerFeatureBuildPolicy } from "./serverFeatureBuildPolicy";
 import { serverFeatureRegistry, type ServerFeatureResolver } from "./serverFeatureRegistry";
 import type { FeaturesPayloadDelta } from "../types";
-import { evaluateFeatureBuildPolicy } from "@happier-dev/protocol";
+import { evaluateFeatureBuildPolicy, readServerEnabledBit } from "@happier-dev/protocol";
 import { accountUsageRoutePaths } from "@/app/api/routes/account/accountUsageRoutePaths";
 import {
     initializeSessionSystemRecordsProtocolV1Activation,
@@ -373,7 +374,7 @@ describe("resolveServerFeaturePayload", () => {
             HAPPIER_PEER_MEDIATION_ROUTE_GRANT_SIGNING_KEY_ID: "key_1",
             HAPPIER_PEER_MEDIATION_ROUTE_GRANT_SIGNING_PUBLIC_KEY: "public_key_1",
             HAPPIER_PEER_MEDIATION_ROUTE_GRANT_SIGNING_EXPIRES_AT: "1900000000000",
-        } as NodeJS.ProcessEnv, [resolveSessionHandoffFeature, resolveMachineTransferFeature]);
+        } as NodeJS.ProcessEnv, [resolveSessionHandoffFeature, resolveMachineTransferFeature, resolvePeerMediationFeature]);
 
         expect(payload.capabilities.machines.peerMediation.grantSigningKeys).toEqual([]);
         expect(payload.capabilities.machines.peerMediation.directRouteGrantProofMintVersions).toEqual([]);
@@ -388,7 +389,7 @@ describe("resolveServerFeaturePayload", () => {
             HAPPIER_PEER_MEDIATION_ROUTE_GRANT_SIGNING_PRIVATE_KEY: toBase64Url(keyPair.secretKey),
             HAPPIER_PEER_MEDIATION_ROUTE_GRANT_SIGNING_PUBLIC_KEY: "mismatched_public_key",
             HAPPIER_PEER_MEDIATION_ROUTE_GRANT_SIGNING_EXPIRES_AT: "1900000000000",
-        } as NodeJS.ProcessEnv, [resolveSessionHandoffFeature, resolveMachineTransferFeature]);
+        } as NodeJS.ProcessEnv, [resolveSessionHandoffFeature, resolveMachineTransferFeature, resolvePeerMediationFeature]);
 
         expect(payload.capabilities.machines.peerMediation.grantSigningKeys).toEqual([]);
     });
@@ -400,7 +401,7 @@ describe("resolveServerFeaturePayload", () => {
             HAPPIER_PEER_MEDIATION_ROUTE_GRANT_SIGNING_PRIVATE_KEY: toBase64Url(keyPair.secretKey),
             HAPPIER_PEER_MEDIATION_ROUTE_GRANT_SIGNING_PUBLIC_KEY: toBase64Url(keyPair.publicKey),
             HAPPIER_PEER_MEDIATION_ROUTE_GRANT_SIGNING_EXPIRES_AT: "1900000000000",
-        } as NodeJS.ProcessEnv, [resolveSessionHandoffFeature, resolveMachineTransferFeature]);
+        } as NodeJS.ProcessEnv, [resolveSessionHandoffFeature, resolveMachineTransferFeature, resolvePeerMediationFeature]);
 
         expect(payload.capabilities.machines.peerMediation.grantSigningKeys).toEqual([
             {
@@ -411,6 +412,66 @@ describe("resolveServerFeaturePayload", () => {
         ]);
         expect(payload.capabilities.machines.peerMediation.directRouteGrantProofMintVersions).toEqual([2]);
         expect(payload.capabilities.machines.peerMediation.tcpTunnelRelayAuthorizationMintVersions).toEqual([2]);
+    });
+
+    // P1-1: `machines.peerMediation.observability` gates 3,031 LOC across four codebases and had no
+    // resolver at all, so the schema default (`false`) was final and no configuration could enable
+    // it while the daemon wrote on every relay flow. These three pin the gate's whole contract.
+    function signingEnv(): NodeJS.ProcessEnv {
+        const keyPair = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(9));
+        return {
+            HAPPIER_PEER_MEDIATION_ROUTE_GRANT_SIGNING_KEY_ID: "key_1",
+            HAPPIER_PEER_MEDIATION_ROUTE_GRANT_SIGNING_PRIVATE_KEY: toBase64Url(keyPair.secretKey),
+            HAPPIER_PEER_MEDIATION_ROUTE_GRANT_SIGNING_PUBLIC_KEY: toBase64Url(keyPair.publicKey),
+            HAPPIER_PEER_MEDIATION_ROUTE_GRANT_SIGNING_EXPIRES_AT: "1900000000000",
+        } as NodeJS.ProcessEnv;
+    }
+
+    it("keeps peer mediation observability disabled when its enabling variable is absent", () => {
+        const payload = resolveServerFeaturePayload(
+            signingEnv(),
+            [resolveSessionHandoffFeature, resolvePeerMediationFeature],
+        );
+
+        expect(readServerEnabledBit(payload, "machines.peerMediation")).toBe(true);
+        expect(readServerEnabledBit(payload, "machines.peerMediation.observability")).toBe(false);
+        expect(payload.capabilities.machines.peerMediation.observability.enabled).toBe(false);
+        expect(payload.capabilities.machines.peerMediation.observability.disabledReasons)
+            .toContain("observability_disabled_by_server_policy");
+    });
+
+    it("enables peer mediation observability when signing and the enabling variable are configured", () => {
+        const payload = resolveServerFeaturePayload(
+            {
+                ...signingEnv(),
+                HAPPIER_FEATURE_MACHINES_PEER_MEDIATION_OBSERVABILITY__ENABLED: "true",
+            } as NodeJS.ProcessEnv,
+            [resolveSessionHandoffFeature, resolvePeerMediationFeature],
+        );
+
+        expect(readServerEnabledBit(payload, "machines.peerMediation.observability")).toBe(true);
+        expect(payload.capabilities.machines.peerMediation.observability.enabled).toBe(true);
+        expect(payload.capabilities.machines.peerMediation.observability.available).toBe(true);
+        expect(payload.capabilities.machines.peerMediation.observability.disabledReasons).toEqual([]);
+        // Only kinds with a production emitter are advertised; the seven emitter-less kinds are not.
+        expect(payload.capabilities.machines.peerMediation.observability.supportedEventKinds)
+            .toContain("flow.ready");
+        expect(payload.capabilities.machines.peerMediation.observability.supportedEventKinds)
+            .not.toContain("tunnel.bytes");
+    });
+
+    it("fails closed: observability stays disabled when grant signing is unavailable", () => {
+        const payload = resolveServerFeaturePayload(
+            {
+                HAPPIER_FEATURE_MACHINES_PEER_MEDIATION_OBSERVABILITY__ENABLED: "true",
+            } as NodeJS.ProcessEnv,
+            [resolveSessionHandoffFeature, resolvePeerMediationFeature],
+        );
+
+        expect(readServerEnabledBit(payload, "machines.peerMediation")).toBe(false);
+        expect(readServerEnabledBit(payload, "machines.peerMediation.observability")).toBe(false);
+        expect(payload.capabilities.machines.peerMediation.observability.disabledReasons)
+            .toContain("peer_mediation_grant_signing_unavailable");
     });
 
     it("advertises live-stream relay caps only when server-routed live stream is configured", () => {

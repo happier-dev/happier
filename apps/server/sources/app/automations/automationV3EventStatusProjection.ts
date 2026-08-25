@@ -28,6 +28,16 @@ type CatalogStatusLookup = Readonly<{
     scopeKey: "checkpointedPull" | `durablePush:${string}`;
 }>;
 
+/**
+ * The one reporter identity an Automation's current observation can carry:
+ * its current watcher for `checkpointedPull`, or its current durable-push
+ * endpoint target. Resolved once and reused by both summaries.
+ */
+type CurrentSourceReporter = Pick<
+    CatalogStatusLookup,
+    "reporterMachineId" | "reporterMachineInstallationId" | "reporterMaterializationId"
+>;
+
 function catalogStatusLookupKey(lookup: Omit<CatalogStatusLookup, "automationId">): string {
     return JSON.stringify([
         lookup.accountId,
@@ -171,6 +181,7 @@ export async function loadAutomationV3EventStatusProjections(params: Readonly<{
                     sourceSelectorId: true,
                     templateVersion: true,
                     reporterMachineId: true,
+                    reporterMachineInstallationId: true,
                     reporterMaterializationId: true,
                     reporterImmutableGenerationId: true,
                     state: true,
@@ -209,26 +220,19 @@ export async function loadAutomationV3EventStatusProjections(params: Readonly<{
             }),
     ]);
 
-    const sourceStatusByAutomationId = new Map<string, AutomationEventSourceStatusV1>();
-    for (const row of sourceStatusRows) {
-        const automation = eventAutomationById.get(row.automationId);
-        if (
-            !automation
-            || automation.triggerEventPluginId !== row.eventPluginId
-            || automation.triggerEventLocalId !== row.eventLocalId
-            || automation.triggerSourceSelectorId !== row.sourceSelectorId
-            || automation.templateVersion !== row.templateVersion
-        ) continue;
-        sourceStatusByAutomationId.set(row.automationId, sourceStatusFromRow(row));
-    }
-
     const endpointById = new Map(durablePushEndpoints.map((endpoint) => [endpoint.id, endpoint]));
     const catalogLookups = new Map<string, Omit<CatalogStatusLookup, "automationId">>();
     const catalogLookupKeysByAutomationId = new Map<string, string>();
+    const currentReporterByAutomationId = new Map<string, CurrentSourceReporter>();
     const registerCatalogLookup = (lookup: CatalogStatusLookup): void => {
         const key = catalogStatusLookupKey(lookup);
         catalogLookups.set(key, lookup);
         catalogLookupKeysByAutomationId.set(lookup.automationId, key);
+        currentReporterByAutomationId.set(lookup.automationId, {
+            reporterMachineId: lookup.reporterMachineId,
+            reporterMachineInstallationId: lookup.reporterMachineInstallationId,
+            reporterMaterializationId: lookup.reporterMaterializationId,
+        });
     };
     for (const automation of eventAutomations) {
         const checkpointedPull = checkpointedPullCatalogLookup(automation);
@@ -260,6 +264,30 @@ export async function loadAutomationV3EventStatusProjections(params: Readonly<{
             scopeKey: `durablePush:${endpoint.id}`,
         };
         registerCatalogLookup(durablePush);
+    }
+
+    // The retained summary row keeps whichever reporter wrote it last. The
+    // status writer only accepts the Automation's current watcher or current
+    // durable-push endpoint target, so a row whose reporter no longer matches
+    // the resolved current one belongs to a reporter that can no longer
+    // observe or report at all. Presenting its last `observing` state would
+    // claim a settled observer is still healthy, so it is not projected.
+    const sourceStatusByAutomationId = new Map<string, AutomationEventSourceStatusV1>();
+    for (const row of sourceStatusRows) {
+        const automation = eventAutomationById.get(row.automationId);
+        const currentReporter = currentReporterByAutomationId.get(row.automationId);
+        if (
+            !automation
+            || automation.triggerEventPluginId !== row.eventPluginId
+            || automation.triggerEventLocalId !== row.eventLocalId
+            || automation.triggerSourceSelectorId !== row.sourceSelectorId
+            || automation.templateVersion !== row.templateVersion
+            || currentReporter === undefined
+            || currentReporter.reporterMachineId !== row.reporterMachineId
+            || currentReporter.reporterMachineInstallationId !== row.reporterMachineInstallationId
+            || currentReporter.reporterMaterializationId !== row.reporterMaterializationId
+        ) continue;
+        sourceStatusByAutomationId.set(row.automationId, sourceStatusFromRow(row));
     }
 
     const catalogRows = catalogLookups.size === 0

@@ -234,24 +234,15 @@ function plainResultEnvelope(params: Readonly<{
 }
 
 function plainReplyContextEnvelope(params: Readonly<{
-    accountId: string;
     automationId: string;
-    runId: string;
-    handoffId: string;
+    occurrenceKey: string;
 }>, templateVersion: number): string {
     return JSON.stringify({
         t: "plain",
         v: {
             v: 1,
             correspondence: params,
-            source: {
-                kind: "automationResult",
-                automationRunId: params.runId,
-                resultId: params.handoffId,
-                automationId: params.automationId,
-                templateVersion,
-                resultDelivery: "finalResult",
-            },
+            templateVersion,
             opaqueContext: {
                 conversationId: "conversation-account-encryption-migration",
             },
@@ -373,6 +364,7 @@ async function seedAllOriginRuns(onAccountCreated?: (accountId: string) => void)
         runId: conversationRunId,
         handoffId: "handoff-account-encryption-conversation",
     };
+    const conversationOccurrenceKey = deriveAutomationOccurrenceKeyV1(conversation);
     const conversationRun = await db.automationRun.create({
         data: {
             id: conversationRunId,
@@ -381,7 +373,7 @@ async function seedAllOriginRuns(onAccountCreated?: (accountId: string) => void)
             state: "succeeded",
             originKind: "conversation",
             originOccurredAt: new Date(conversation.occurredAt),
-            occurrenceKey: deriveAutomationOccurrenceKeyV1(conversation),
+            occurrenceKey: conversationOccurrenceKey,
             occurrenceEvidenceEqualityTag: null,
             triggerEvidenceEnvelope: JSON.stringify({ t: "plain", v: conversation }),
             executionInputEnvelope: strictExecutionInput({
@@ -391,7 +383,10 @@ async function seedAllOriginRuns(onAccountCreated?: (accountId: string) => void)
             }),
             resultEnvelope: plainResultEnvelope(conversationCorrespondence),
             replyContextEnvelope: plainReplyContextEnvelope(
-                conversationCorrespondence,
+                {
+                    automationId: conversationCorrespondence.automationId,
+                    occurrenceKey: conversationOccurrenceKey,
+                },
                 conversationAutomation.templateVersion,
             ),
             replyHandoffActionPluginId: "happier.channels",

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const serverCtor = vi.hoisted(() => vi.fn());
 vi.mock('socket.io', () => ({
@@ -10,6 +10,15 @@ vi.mock('socket.io', () => ({
 const onShutdownMock = vi.hoisted(() => vi.fn());
 vi.mock('@/utils/process/shutdown', () => ({
   onShutdown: (...args: unknown[]) => onShutdownMock(...args),
+}));
+
+const authVerifyTokenMock = vi.hoisted(() => vi.fn(async (token: string) => (
+  token === 'current-transfer-relay-v2-token' ? { userId: 'user-1' } : null
+)));
+vi.mock('@/app/auth/auth', () => ({
+  auth: {
+    verifyToken: (token: string) => authVerifyTokenMock(token),
+  },
 }));
 
 const eventRouterSetIoMock = vi.hoisted(() => vi.fn());
@@ -75,6 +84,15 @@ vi.mock('./socket/serverRpcForwarder', () => ({
 }));
 
 describe('startSocket transfer relay v2 registration', () => {
+  beforeEach(() => {
+    vi.stubEnv('HAPPIER_FEATURE_MACHINES_TUNNEL_SERVER_ROUTED__ENABLED', '1');
+    vi.stubEnv('HAPPIER_FEATURE_MACHINES_LIVE_STREAM_SERVER_ROUTED__ENABLED', '0');
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it('registers the new relay v2 handler beside the existing machine transfer handler', async () => {
     const fakeServer = {
       on: vi.fn(),
@@ -107,6 +125,11 @@ describe('startSocket transfer relay v2 registration', () => {
       connected: true,
       handshake: {
         address: '127.0.0.1',
+        auth: {
+          token: 'current-transfer-relay-v2-token',
+          clientType: 'user-scoped',
+          clientPurpose: 'transfer',
+        },
         headers: {
           'user-agent': 'happier-test-agent',
         },
@@ -136,7 +159,11 @@ describe('startSocket transfer relay v2 registration', () => {
         release: expect.any(Function),
         close: expect.any(Function),
       }),
-      serverRoutedEnabled: false,
+      serverRoutedEnabled: true,
+      serverRoutedEnabledByFlowKind: {
+        tcp_tunnel: true,
+        voice_media: false,
+      },
       maxBytes: 64 * 1024 * 1024,
       maxActiveTunnelsPerSocket: 8,
       maxFrameBytes: 64 * 1024,
@@ -181,6 +208,12 @@ describe('startSocket transfer relay v2 registration', () => {
       connected: true,
       handshake: {
         address: '127.0.0.1',
+        auth: {
+          token: 'current-transfer-relay-v2-token',
+          clientType: 'machine-scoped',
+          clientPurpose: 'transfer',
+          machineId: 'm-1',
+        },
         headers: {
           'user-agent': 'happier-test-agent',
         },

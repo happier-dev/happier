@@ -2,6 +2,8 @@ import { z } from "zod";
 
 import {
     AutomationV3AssignmentUpdateRequestSchema,
+    AutomationV3SettingsSchema,
+    AutomationV3SettingsUpdateRequestSchema,
     AutomationV3WorkerClaimRequestSchema,
     AutomationV3WorkerClaimResponseSchema,
     AutomationV3WorkerAssignmentsResponseSchema,
@@ -12,6 +14,7 @@ import {
     AutomationV3WorkerStartRequestSchema,
     AutomationV3WorkerStartResponseSchema,
     AutomationV3WorkerSucceedRequestSchema,
+    AutomationV3ClearRunHistoryResponseSchema,
     AutomationV3DeleteResponseSchema,
     AutomationV3DefinitionListResponseSchema,
     AutomationV3RunMutationResponseSchema,
@@ -33,6 +36,7 @@ import {
     deriveAutomationAccountCurrentnessWitness,
 } from "@/app/automations/automationAccountCurrentness";
 import {
+    clearAutomationRunHistory,
     createAutomation,
     deleteAutomation,
     getAutomation,
@@ -42,7 +46,6 @@ import {
     runAutomationNow,
     setAutomationEnabled,
     updateAutomation,
-    AutomationEventDefinitionCapacityConflictError,
     AutomationDisabledError,
     AutomationTemplateMutationConflictError,
 } from "@/app/automations/automationCrudService";
@@ -51,6 +54,10 @@ import {
     heartbeatAutomationRun,
 } from "@/app/automations/automationClaimService";
 import { listDaemonAssignments } from "@/app/automations/automationAssignmentService";
+import {
+    getAutomationSettings,
+    updateAutomationSettings,
+} from "@/app/automations/automationSettingsService";
 import {
     toAutomationRunV3DetailApiDto,
     toAutomationRunV3ListApiDto,
@@ -73,6 +80,12 @@ import {
 } from "@/app/automations/automationRunService";
 import type { AutomationScheduleInput } from "@/app/automations/automationTypes";
 import type { AutomationListItem } from "@/app/automations/automationTypes";
+import { requirePresentUser } from "../../utils/requirePresentUser";
+import {
+    DEFAULT_AUTOMATION_WORKER_PUBLISHER_DEPENDENCIES,
+    hasExactAutomationWorkerPublisher,
+    type AutomationWorkerPublisherDependencies,
+} from "./automationWorkerPublisher";
 
 async function getCurrentAutomationAccountCurrentness(accountId: string) {
     const account = await db.account.findUnique({
@@ -84,16 +97,6 @@ async function getCurrentAutomationAccountCurrentness(accountId: string) {
 
 function sendStoredContentFailure(reply: { code(code: number): { send(body: unknown): unknown } }) {
     return reply.code(409).send({ error: "automation_stored_content_unavailable" });
-}
-
-function sendEventDefinitionCapacityConflict(
-    reply: { code(code: number): { send(body: unknown): unknown } },
-    error: AutomationEventDefinitionCapacityConflictError,
-) {
-    return reply.code(409).send({
-        error: "automation_event_definition_capacity_exceeded",
-        enabledCount: error.enabledCount,
-    });
 }
 
 function toAutomationServiceSchedule(
@@ -153,9 +156,12 @@ const AutomationRunNowHeadersSchema = z.object({
     "idempotency-key": AutomationManualIdempotencyKeyV1Schema.optional(),
 }).passthrough();
 
-export function registerAutomationV3Routes(app: Fastify): void {
+export function registerAutomationV3Routes(
+    app: Fastify,
+    workerPublisherDependencies: AutomationWorkerPublisherDependencies = DEFAULT_AUTOMATION_WORKER_PUBLISHER_DEPENDENCIES,
+): void {
     app.get("/v3/automations", {
-        preHandler: app.authenticate,
+        preHandler: [app.authenticate, requirePresentUser],
     }, async (request) => {
         const rows = await listAutomations({ accountId: request.userId });
         const projections = await loadAutomationV3EventStatusProjections({ automations: rows });
@@ -167,8 +173,44 @@ export function registerAutomationV3Routes(app: Fastify): void {
         });
     });
 
+    app.get("/v3/automations/settings", {
+        preHandler: [app.authenticate, requirePresentUser],
+    }, async (request, reply) => {
+        const settings = await getAutomationSettings({ accountId: request.userId });
+        if (!settings) return reply.code(404).send({ error: "automation_settings_not_found" });
+        return AutomationV3SettingsSchema.parse(settings);
+    });
+
+    app.put("/v3/automations/settings", {
+        preHandler: [app.authenticate, requirePresentUser],
+        schema: { body: AutomationV3SettingsUpdateRequestSchema },
+    }, async (request, reply) => {
+        const settings = await updateAutomationSettings({
+            accountId: request.userId,
+            settings: AutomationV3SettingsUpdateRequestSchema.parse(request.body),
+        });
+        if (!settings) return reply.code(404).send({ error: "automation_settings_not_found" });
+        return AutomationV3SettingsSchema.parse(settings);
+    });
+
+    app.post("/v3/automations/:id/runs/clear-history", {
+        preHandler: [app.authenticate, requirePresentUser],
+        schema: { params: z.object({ id: z.string() }) },
+    }, async (request, reply) => {
+        const result = await clearAutomationRunHistory({
+            accountId: request.userId,
+            automationId: request.params.id,
+        });
+        if (result.status === "not_found") {
+            return reply.code(404).send({ error: "automation_not_found" });
+        }
+        return AutomationV3ClearRunHistoryResponseSchema.parse({
+            clearedRuns: result.clearedRuns,
+        });
+    });
+
     app.post("/v3/automations", {
-        preHandler: app.authenticate,
+        preHandler: [app.authenticate, requirePresentUser],
         schema: {
             body: AutomationV3DefinitionCreateRequestSchema,
         },
@@ -201,16 +243,13 @@ export function registerAutomationV3Routes(app: Fastify): void {
             if (error instanceof AutomationStoredContentReadError) {
                 return sendStoredContentFailure(reply);
             }
-            if (error instanceof AutomationEventDefinitionCapacityConflictError) {
-                return sendEventDefinitionCapacityConflict(reply, error);
-            }
             if (!isAutomationV3ValidationError(error)) throw error;
             return reply.code(400).send({ error: automationV3ValidationMessage(error) });
         }
     });
 
     app.patch("/v3/automations/:id", {
-        preHandler: app.authenticate,
+        preHandler: [app.authenticate, requirePresentUser],
         schema: {
             params: z.object({ id: z.string() }),
             body: AutomationV3DefinitionPatchRequestSchema,
@@ -263,9 +302,6 @@ export function registerAutomationV3Routes(app: Fastify): void {
             if (error instanceof AutomationStoredContentReadError) {
                 return sendStoredContentFailure(reply);
             }
-            if (error instanceof AutomationEventDefinitionCapacityConflictError) {
-                return sendEventDefinitionCapacityConflict(reply, error);
-            }
             if (error instanceof AutomationTemplateMutationConflictError) {
                 return reply.code(409).send({ error: "automation_template_version_conflict" });
             }
@@ -275,7 +311,7 @@ export function registerAutomationV3Routes(app: Fastify): void {
     });
 
     app.delete("/v3/automations/:id", {
-        preHandler: app.authenticate,
+        preHandler: [app.authenticate, requirePresentUser],
         schema: { params: z.object({ id: z.string() }) },
     }, async (request, reply) => {
         const deleted = await deleteAutomation({
@@ -287,7 +323,7 @@ export function registerAutomationV3Routes(app: Fastify): void {
     });
 
     app.post("/v3/automations/:id/pause", {
-        preHandler: app.authenticate,
+        preHandler: [app.authenticate, requirePresentUser],
         schema: { params: z.object({ id: z.string() }) },
     }, async (request, reply) => {
         const accountCurrentness = await getCurrentAutomationAccountCurrentness(request.userId);
@@ -305,32 +341,25 @@ export function registerAutomationV3Routes(app: Fastify): void {
     });
 
     app.post("/v3/automations/:id/resume", {
-        preHandler: app.authenticate,
+        preHandler: [app.authenticate, requirePresentUser],
         schema: { params: z.object({ id: z.string() }) },
     }, async (request, reply) => {
         const accountCurrentness = await getCurrentAutomationAccountCurrentness(request.userId);
         if (!accountCurrentness) return sendStoredContentFailure(reply);
-        try {
-            const automation = await setAutomationEnabled({
-                accountId: request.userId,
-                automationId: request.params.id,
-                enabled: true,
-            });
-            if (!automation) return reply.code(404).send({ error: "automation_not_found" });
-            return reply.send(await toAutomationV3DefinitionDetailWithCurrentEventStatus(
-                automation,
-                accountCurrentness,
-            ));
-        } catch (error) {
-            if (error instanceof AutomationEventDefinitionCapacityConflictError) {
-                return sendEventDefinitionCapacityConflict(reply, error);
-            }
-            throw error;
-        }
+        const automation = await setAutomationEnabled({
+            accountId: request.userId,
+            automationId: request.params.id,
+            enabled: true,
+        });
+        if (!automation) return reply.code(404).send({ error: "automation_not_found" });
+        return reply.send(await toAutomationV3DefinitionDetailWithCurrentEventStatus(
+            automation,
+            accountCurrentness,
+        ));
     });
 
     app.post("/v3/automations/:id/assignments", {
-        preHandler: app.authenticate,
+        preHandler: [app.authenticate, requirePresentUser],
         schema: {
             params: z.object({ id: z.string() }),
             body: AutomationV3AssignmentUpdateRequestSchema,
@@ -357,7 +386,7 @@ export function registerAutomationV3Routes(app: Fastify): void {
     });
 
     app.post("/v3/automations/:id/run-now", {
-        preHandler: app.authenticate,
+        preHandler: [app.authenticate, requirePresentUser],
         schema: {
             params: z.object({ id: z.string() }),
             headers: AutomationRunNowHeadersSchema,
@@ -390,25 +419,44 @@ export function registerAutomationV3Routes(app: Fastify): void {
         schema: {
             querystring: z.object({ machineId: z.string().trim().min(1) }),
         },
-    }, async (request) => {
+    }, async (request, reply) => {
+        if (!await hasExactAutomationWorkerPublisher({
+            dependencies: workerPublisherDependencies,
+            accountId: request.userId,
+            request,
+            path: "/v3/automations/worker/assignments",
+            machineId: request.query.machineId,
+        })) return reply.code(401).send(null);
         const assignments = await listDaemonAssignments({
             accountId: request.userId,
             machineId: request.query.machineId,
         });
+        const settings = await getAutomationSettings({ accountId: request.userId });
+        if (!settings) return reply.code(404).send(null);
         return AutomationV3WorkerAssignmentsResponseSchema.parse({
             assignments: assignments.map((assignment) => ({
                 machineId: assignment.machineId,
                 automationId: assignment.automation.id,
                 nextClaimAt: assignment.nextClaimAt?.getTime() ?? null,
             })),
+            settings: {
+                maxActiveRunsPerMachine: settings.maxActiveRunsPerMachine,
+            },
         });
     });
 
     app.post("/v3/automations/runs/claim", {
         preHandler: app.authenticate,
         schema: { body: AutomationV3WorkerClaimRequestSchema },
-    }, async (request) => {
+    }, async (request, reply) => {
         const body = AutomationV3WorkerClaimRequestSchema.parse(request.body);
+        if (!await hasExactAutomationWorkerPublisher({
+            dependencies: workerPublisherDependencies,
+            accountId: request.userId,
+            request,
+            path: "/v3/automations/runs/claim",
+            machineId: body.machineId,
+        })) return reply.code(401).send(null);
         const result = await claimAutomationRun({
             accountId: request.userId,
             machineId: body.machineId,
@@ -460,6 +508,13 @@ export function registerAutomationV3Routes(app: Fastify): void {
         },
     }, async (request, reply) => {
         const body = AutomationV3WorkerHeartbeatRequestSchema.parse(request.body);
+        if (!await hasExactAutomationWorkerPublisher({
+            dependencies: workerPublisherDependencies,
+            accountId: request.userId,
+            request,
+            path: `/v3/automations/runs/${encodeURIComponent(request.params.runId)}/heartbeat`,
+            machineId: body.machineId,
+        })) return reply.code(401).send(null);
         const result = await heartbeatAutomationRun({
             accountId: request.userId,
             runId: request.params.runId,
@@ -484,6 +539,13 @@ export function registerAutomationV3Routes(app: Fastify): void {
         },
     }, async (request, reply) => {
         const body = AutomationV3WorkerStartRequestSchema.parse(request.body);
+        if (!await hasExactAutomationWorkerPublisher({
+            dependencies: workerPublisherDependencies,
+            accountId: request.userId,
+            request,
+            path: `/v3/automations/runs/${encodeURIComponent(request.params.runId)}/start`,
+            machineId: body.machineId,
+        })) return reply.code(401).send(null);
         const started = await startAutomationRun({
             accountId: request.userId,
             runId: request.params.runId,
@@ -506,6 +568,13 @@ export function registerAutomationV3Routes(app: Fastify): void {
         },
     }, async (request, reply) => {
         const body = AutomationV3WorkerExecutionDispatchSettlementRequestSchema.parse(request.body);
+        if (!await hasExactAutomationWorkerPublisher({
+            dependencies: workerPublisherDependencies,
+            accountId: request.userId,
+            request,
+            path: `/v3/automations/runs/${encodeURIComponent(request.params.runId)}/execution-dispatch/settle`,
+            machineId: body.machineId,
+        })) return reply.code(401).send(null);
         const run = await settleAutomationExecutionDispatch({
             accountId: request.userId,
             runId: request.params.runId,
@@ -528,6 +597,13 @@ export function registerAutomationV3Routes(app: Fastify): void {
         },
     }, async (request, reply) => {
         const body = AutomationV3WorkerSucceedRequestSchema.parse(request.body);
+        if (!await hasExactAutomationWorkerPublisher({
+            dependencies: workerPublisherDependencies,
+            accountId: request.userId,
+            request,
+            path: `/v3/automations/runs/${encodeURIComponent(request.params.runId)}/succeed`,
+            machineId: body.machineId,
+        })) return reply.code(401).send(null);
         const run = await succeedAutomationRun({
             accountId: request.userId,
             runId: request.params.runId,
@@ -551,6 +627,13 @@ export function registerAutomationV3Routes(app: Fastify): void {
         },
     }, async (request, reply) => {
         const body = AutomationV3WorkerFailRequestSchema.parse(request.body);
+        if (!await hasExactAutomationWorkerPublisher({
+            dependencies: workerPublisherDependencies,
+            accountId: request.userId,
+            request,
+            path: `/v3/automations/runs/${encodeURIComponent(request.params.runId)}/fail`,
+            machineId: body.machineId,
+        })) return reply.code(401).send(null);
         const run = await failAutomationRun({
             accountId: request.userId,
             runId: request.params.runId,
@@ -568,7 +651,7 @@ export function registerAutomationV3Routes(app: Fastify): void {
     });
 
     app.post("/v3/automations/runs/:runId/cancel", {
-        preHandler: app.authenticate,
+        preHandler: [app.authenticate, requirePresentUser],
         schema: { params: z.object({ runId: z.string() }) },
     }, async (request, reply) => {
         const run = await cancelAutomationRun({
@@ -582,7 +665,7 @@ export function registerAutomationV3Routes(app: Fastify): void {
     });
 
     app.get("/v3/automations/:id", {
-        preHandler: app.authenticate,
+        preHandler: [app.authenticate, requirePresentUser],
         schema: { params: z.object({ id: z.string() }) },
     }, async (request, reply) => {
         const row = await getAutomation({
@@ -610,7 +693,7 @@ export function registerAutomationV3Routes(app: Fastify): void {
     });
 
     app.get("/v3/automations/:id/runs", {
-        preHandler: app.authenticate,
+        preHandler: [app.authenticate, requirePresentUser],
         schema: {
             params: z.object({ id: z.string() }),
             querystring: z.object({
@@ -633,7 +716,7 @@ export function registerAutomationV3Routes(app: Fastify): void {
     });
 
     app.get("/v3/automations/:id/runs/:runId", {
-        preHandler: app.authenticate,
+        preHandler: [app.authenticate, requirePresentUser],
         schema: {
             params: z.object({ id: z.string(), runId: z.string() }),
         },

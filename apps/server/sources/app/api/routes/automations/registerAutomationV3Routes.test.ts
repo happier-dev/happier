@@ -2,15 +2,25 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
     AutomationSourceSelectorIdV1Schema,
     sealAutomationTriggerDefinitionStoredEnvelopeV1,
+    type AutomationV3Settings,
 } from "@happier-dev/protocol";
 
 import { createDbMocks, installDbModuleMock } from "../../testkit/dbMocks";
-import { createRouteTestBuilder } from "../../testkit/routeTestBuilder";
+import { createRouteTestBuilder as createBaseRouteTestBuilder } from "../../testkit/routeTestBuilder";
 import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
 import { AutomationStoredContentReadError } from "@/app/automations/automationStoredContentRead";
+import type { ClearAutomationRunHistoryResult } from "@/app/automations/automationCrudService";
+import { PRESENT_USER_REQUIRED_ERROR } from "../../utils/requirePresentUser";
 
 const dbMocks = createDbMocks({ account: ["findUnique"] } as const);
 const findAccountById = dbMocks.db.account.findUnique;
+
+function createRouteTestBuilder(options: Parameters<typeof createBaseRouteTestBuilder>[0]) {
+    return createBaseRouteTestBuilder({
+        ...options,
+        defaultRequest: { authAuthority: "present_user", ...options.defaultRequest },
+    });
+}
 
 const templateCiphertext = JSON.stringify({
     kind: "happier_automation_template_plain_v1",
@@ -140,6 +150,10 @@ const eventTrigger = {
 };
 
 const createAutomation = vi.fn(async () => scheduleAutomation);
+const clearAutomationRunHistory = vi.fn(async (): Promise<ClearAutomationRunHistoryResult> => ({
+    status: "cleared" as const,
+    clearedRuns: 2,
+}));
 const deleteAutomation = vi.fn(async () => true);
 const getAutomation = vi.fn(async () => scheduleAutomation);
 const getAutomationRun = vi.fn(async () => null);
@@ -149,6 +163,12 @@ const runAutomationNow = vi.fn(async () => null);
 const setAutomationEnabled = vi.fn(async () => scheduleAutomation);
 const updateAutomation = vi.fn(async () => scheduleAutomation);
 const listDaemonAssignments = vi.fn(async () => []);
+const automationSettings: AutomationV3Settings = {
+    maxActiveRunsPerMachine: 4,
+    runRetention: "thirtyDays",
+};
+const getAutomationSettings = vi.fn(async (): Promise<AutomationV3Settings | null> => automationSettings);
+const updateAutomationSettings = vi.fn(async (): Promise<AutomationV3Settings | null> => automationSettings);
 const loadAutomationV3EventStatusProjections = vi.fn(async () => new Map());
 // The route observes the real service contract; this mocked system boundary
 // only needs to carry the fixture supplied by each test.
@@ -162,16 +182,13 @@ const succeedAutomationRun = vi.fn(async () => null);
 const failAutomationRun = vi.fn(async () => null);
 const settleAutomationExecutionDispatch = vi.fn(async () => null);
 const cancelAutomationRun = vi.fn(async () => null);
+const verifyPublisherDefault = vi.hoisted(() => vi.fn());
 class AutomationTemplateMutationConflictError extends Error {}
-class AutomationEventDefinitionCapacityConflictError extends Error {
-    constructor(readonly enabledCount: number) {
-        super("capacity exceeded");
-    }
-}
 class AutomationDisabledError extends Error {}
 
 vi.mock("@/app/automations/automationCrudService", () => ({
     createAutomation,
+    clearAutomationRunHistory,
     deleteAutomation,
     getAutomation,
     getAutomationRun,
@@ -181,10 +198,13 @@ vi.mock("@/app/automations/automationCrudService", () => ({
     setAutomationEnabled,
     updateAutomation,
     AutomationTemplateMutationConflictError,
-    AutomationEventDefinitionCapacityConflictError,
     AutomationDisabledError,
 }));
 vi.mock("@/app/automations/automationAssignmentService", () => ({ listDaemonAssignments }));
+vi.mock("@/app/automations/automationSettingsService", () => ({
+    getAutomationSettings,
+    updateAutomationSettings,
+}));
 vi.mock("@/app/automations/automationV3EventStatusProjection", () => ({
     loadAutomationV3EventStatusProjections,
 }));
@@ -199,6 +219,10 @@ vi.mock("@/app/automations/automationRunService", () => ({
     startAutomationRun,
     succeedAutomationRun,
 }));
+vi.mock("@/app/plugins/installations/publisherProof", async (importOriginal) => {
+    const actual = await importOriginal<typeof import("@/app/plugins/installations/publisherProof")>();
+    return { ...actual, verifyPluginInstallationPublisherHeader: verifyPublisherDefault };
+});
 installDbModuleMock(() => ({ db: dbMocks.db }));
 
 describe("registerAutomationV3Routes", () => {
@@ -212,6 +236,146 @@ describe("registerAutomationV3Routes", () => {
             contentPublicKey: null,
             contentPublicKeySig: null,
         });
+        verifyPublisherDefault.mockImplementation(async ({ request }: { request: any }) => ({
+            machineId: request.body?.machineId ?? request.query?.machineId,
+            installationId: "installation-1",
+        }));
+    });
+
+    it("refuses terminal authority before a V3 management mutation", async () => {
+        const { registerAutomationV3Routes } = await import("./registerAutomationV3Routes");
+        const route = createRouteTestBuilder({
+            method: "POST",
+            path: "/v3/automations",
+            registerRoutes(app) {
+                registerAutomationV3Routes(app as any);
+            },
+        });
+
+        const { response, reply } = await route.invoke({
+            userId: "account-1",
+            authAuthority: "account_automation",
+            body: {
+                name: "Terminal must not create",
+                enabled: true,
+                trigger: { kind: "manual" },
+                executionRecipe: scheduleExecutionRecipe,
+                assignments: [{ machineId: "machine-1", enabled: true, priority: 0 }],
+            },
+        });
+
+        expect(reply.statusCode).toBe(403);
+        expect(response).toBeUndefined();
+        expect(reply.send).toHaveBeenCalledWith({ error: PRESENT_USER_REQUIRED_ERROR });
+        expect(createAutomation).not.toHaveBeenCalled();
+    });
+
+    it("reads and replaces the Account-owned settings through the V3 worker wake contract", async () => {
+        const { registerAutomationV3Routes } = await import("./registerAutomationV3Routes");
+        const getSettingsRoute = createRouteTestBuilder({
+            method: "GET",
+            path: "/v3/automations/settings",
+            registerRoutes(app) {
+                registerAutomationV3Routes(app as any);
+            },
+        });
+        const putSettingsRoute = createRouteTestBuilder({
+            method: "PUT",
+            path: "/v3/automations/settings",
+            registerRoutes(app) {
+                registerAutomationV3Routes(app as any);
+            },
+        });
+        const assignmentsRoute = createRouteTestBuilder({
+            method: "GET",
+            path: "/v3/automations/worker/assignments",
+            registerRoutes(app) {
+                registerAutomationV3Routes(app as any);
+            },
+        });
+
+        expect(getSettingsRoute.routeExists).toBe(true);
+        expect(putSettingsRoute.routeExists).toBe(true);
+
+        await expect(getSettingsRoute.invoke({ userId: "account-1" }))
+            .resolves.toMatchObject({ response: automationSettings });
+        expect(getAutomationSettings).toHaveBeenCalledWith({ accountId: "account-1" });
+
+        const replacement = { maxActiveRunsPerMachine: 2, runRetention: "keepForever" as const };
+        updateAutomationSettings.mockResolvedValueOnce(replacement);
+        await expect(putSettingsRoute.invoke({
+            userId: "account-1",
+            body: replacement,
+        })).resolves.toMatchObject({ response: replacement });
+        expect(updateAutomationSettings).toHaveBeenCalledWith({
+            accountId: "account-1",
+            settings: replacement,
+        });
+
+        await expect(assignmentsRoute.invoke({
+            userId: "account-1",
+            query: { machineId: "machine-1" },
+        })).resolves.toMatchObject({
+            response: {
+                assignments: [],
+                settings: { maxActiveRunsPerMachine: automationSettings.maxActiveRunsPerMachine },
+            },
+        });
+    });
+
+    it("clears one Automation's terminal history through the retained-history owner", async () => {
+        const { registerAutomationV3Routes } = await import("./registerAutomationV3Routes");
+        const route = createRouteTestBuilder({
+            method: "POST",
+            path: "/v3/automations/:id/runs/clear-history",
+            registerRoutes(app) {
+                registerAutomationV3Routes(app as any);
+            },
+        });
+
+        expect(route.routeExists).toBe(true);
+        await expect(route.invoke({
+            userId: "account-1",
+            params: { id: "automation-1" },
+        })).resolves.toMatchObject({ response: { clearedRuns: 2 } });
+        expect(clearAutomationRunHistory).toHaveBeenCalledWith({
+            accountId: "account-1",
+            automationId: "automation-1",
+        });
+
+        clearAutomationRunHistory.mockResolvedValueOnce({ status: "not_found" });
+        const missing = await route.invoke({
+            userId: "account-1",
+            params: { id: "missing-automation" },
+        });
+        expect(missing.reply.statusCode).toBe(404);
+        expect(missing.response).toEqual({ error: "automation_not_found" });
+    });
+
+    it("refuses a V3 worker claim when publisher proof names another machine", async () => {
+        const { registerAutomationV3Routes } = await import("./registerAutomationV3Routes");
+        const verifyPublisher = vi.fn(async () => ({
+            machineId: "machine-other",
+            installationId: "installation-other",
+        }));
+        const route = createRouteTestBuilder({
+            method: "POST",
+            path: "/v3/automations/runs/claim",
+            registerRoutes(app) {
+                registerAutomationV3Routes(app as any, { verifyPublisher } as any);
+            },
+        });
+
+        const { response, reply } = await route.invoke({
+            userId: "account-1",
+            authAuthority: "account_automation",
+            method: "POST",
+            body: { machineId: "machine-1", leaseDurationMs: 30_000 },
+        });
+
+        expect(reply.statusCode).toBe(401);
+        expect(response).toBeNull();
+        expect(claimAutomationRun).not.toHaveBeenCalled();
     });
 
     it("maps strict Event create and optimistic patch through the incumbent V3 routes", async () => {
@@ -394,76 +558,6 @@ describe("registerAutomationV3Routes", () => {
 
         expect(reply.statusCode).toBe(409);
         expect(response).toEqual({ error: "automation_template_version_conflict" });
-    });
-
-    it("maps Event create, patch, and resume capacity conflicts with the authoritative enabled count", async () => {
-        createAutomation.mockRejectedValueOnce(
-            new AutomationEventDefinitionCapacityConflictError(10_000),
-        );
-        setAutomationEnabled.mockRejectedValueOnce(
-            new AutomationEventDefinitionCapacityConflictError(10_000),
-        );
-        updateAutomation.mockRejectedValueOnce(
-            new AutomationEventDefinitionCapacityConflictError(10_000),
-        );
-        const { registerAutomationV3Routes } = await import("./registerAutomationV3Routes");
-        const createRoute = createRouteTestBuilder({
-            method: "POST",
-            path: "/v3/automations",
-            registerRoutes(app) { registerAutomationV3Routes(app as any); },
-        });
-        const resumeRoute = createRouteTestBuilder({
-            method: "POST",
-            path: "/v3/automations/:id/resume",
-            registerRoutes(app) { registerAutomationV3Routes(app as any); },
-        });
-        const patchRoute = createRouteTestBuilder({
-            method: "PATCH",
-            path: "/v3/automations/:id",
-            registerRoutes(app) { registerAutomationV3Routes(app as any); },
-        });
-
-        const createResult = await createRoute.invoke({
-            userId: "account-1",
-            body: {
-                name: "Repository updates",
-                enabled: true,
-                trigger: eventTrigger,
-                executionRecipe: scheduleExecutionRecipe,
-            },
-        });
-        expect(createResult.reply.statusCode).toBe(409);
-        expect(createResult.response).toEqual({
-            error: "automation_event_definition_capacity_exceeded",
-            enabledCount: 10_000,
-        });
-
-        const patchResult = await patchRoute.invoke({
-            userId: "account-1",
-            params: { id: "automation-event-1" },
-            body: {
-                name: "Repository updates",
-                enabled: true,
-                trigger: eventTrigger,
-                executionRecipe: scheduleExecutionRecipe,
-                expectedTemplateVersion: 1,
-            },
-        });
-        expect(patchResult.reply.statusCode).toBe(409);
-        expect(patchResult.response).toEqual({
-            error: "automation_event_definition_capacity_exceeded",
-            enabledCount: 10_000,
-        });
-
-        const resumeResult = await resumeRoute.invoke({
-            userId: "account-1",
-            params: { id: "automation-event-1" },
-        });
-        expect(resumeResult.reply.statusCode).toBe(409);
-        expect(resumeResult.response).toEqual({
-            error: "automation_event_definition_capacity_exceeded",
-            enabledCount: 10_000,
-        });
     });
 
     it("keeps schedule-shaped V3 patches on the schedule trigger owner", async () => {

@@ -5,7 +5,10 @@ import {
     createQualifiedConnectedAccountIdentityDigest,
     createQualifiedConnectedAccountServiceDigest,
 } from "./identity";
-import { toQualifiedConnectedAccountGroup } from "./groupRepository";
+import {
+    listAllQualifiedConnectedAccountGroupsInTx,
+    toQualifiedConnectedAccountGroup,
+} from "./groupRepository";
 
 const service = {
     pluginId: "example.connected-accounts",
@@ -17,7 +20,7 @@ const accountRef = {
     accountId: "provider/account",
 } as const;
 
-function row() {
+function row(groupId: string = groupRef.groupId) {
     const now = new Date(1);
     return {
         id: "group-row",
@@ -28,7 +31,7 @@ function row() {
             createQualifiedConnectedAccountServiceDigest(service),
         qualifiedGroupDigest:
             createQualifiedConnectedAccountGroupDigest(groupRef),
-        groupId: groupRef.groupId,
+        groupId,
         displayName: null,
         policyJson: "{}",
         activeProfileId: accountRef.accountId,
@@ -65,6 +68,38 @@ function row() {
     };
 }
 
+type GroupListStorage =
+    Parameters<typeof listAllQualifiedConnectedAccountGroupsInTx>[0];
+
+/**
+ * Stands in for the Prisma group delegate — a genuine storage boundary — and
+ * honours `take` exactly as the database would, so a reader that keeps a page
+ * window silently truncates here instead of appearing complete.
+ */
+function storageHolding(groupCount: number): GroupListStorage {
+    const rows = Array.from({ length: groupCount }, (_, index) => {
+        const groupId = `fallback-${index}`;
+        const retained = row(groupId);
+        const digest = createQualifiedConnectedAccountGroupDigest({
+            service,
+            groupId,
+        });
+        retained.id = `group-row-${index}`;
+        retained.qualifiedGroupDigest = digest;
+        retained.members[0]!.qualifiedGroupDigest = digest;
+        return retained;
+    });
+    return {
+        connectedServiceAuthGroup: {
+            findMany: async (args: Readonly<{ take?: number }>) => (
+                typeof args.take === "number"
+                    ? rows.slice(0, args.take)
+                    : rows
+            ),
+        },
+    } as unknown as GroupListStorage;
+}
+
 describe("qualified Connected Account group repository", () => {
     it("projects one strict structured service identity", () => {
         expect(toQualifiedConnectedAccountGroup(row())).toMatchObject({
@@ -95,5 +130,24 @@ describe("qualified Connected Account group repository", () => {
 
         expect(() => toQualifiedConnectedAccountGroup(disabledActive))
             .toThrow(/active account.*enabled member/i);
+    });
+
+    it("lists every retained group the Account holds", async () => {
+        // A predecessor or migration can leave more rows than a current create is
+        // allowed to add. Refusing the whole list would take the Account's group
+        // projection, and therefore every mutation that republishes it, offline.
+        const storage = storageHolding(501);
+
+        await expect(listAllQualifiedConnectedAccountGroupsInTx(storage, {
+            accountId: "owner",
+        })).resolves.toHaveLength(501);
+    });
+
+    it("does not page a retained group list down to a window", async () => {
+        const storage = storageHolding(1_200);
+
+        await expect(listAllQualifiedConnectedAccountGroupsInTx(storage, {
+            accountId: "owner",
+        })).resolves.toHaveLength(1_200);
     });
 });

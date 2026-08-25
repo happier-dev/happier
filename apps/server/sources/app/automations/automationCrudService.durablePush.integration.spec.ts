@@ -395,6 +395,36 @@ describe("Automation durable-push authoring", () => {
         expect(await db.automation.count()).toBe(0);
     });
 
+    it("attaches a durable-push trigger before the provider has ever delivered", async () => {
+        const account = await seedAccount();
+        const endpoint = await ensureEndpoint(account.id, "ensure-durable-push-0005");
+
+        // AUTO-19 correspondence is endpoint existence, ownership, route,
+        // target and currentness. Provider configuration is a later external
+        // step, and the delivery that would prove it cannot arrive before the
+        // Automation that receives it exists, so requiring it here would make
+        // first-time authoring unreachable.
+        await expect(db.pluginWebhookEndpoint.findUnique({
+            where: { id: endpoint.webhookEndpointId },
+            select: { providerConfirmedAt: true },
+        })).resolves.toEqual({ providerConfirmedAt: null });
+
+        await expect(createAutomation({
+            accountId: account.id,
+            input: {
+                name: "Unconfirmed endpoint",
+                description: null,
+                enabled: true,
+                pluginEvent: pushTrigger({ webhookEndpointId: endpoint.webhookEndpointId }),
+                executionRecipe: executionRecipe(1),
+                assignments: [{ machineId: MACHINE_ID }],
+            },
+        })).resolves.toMatchObject({
+            triggerObservationTransport: "durablePush",
+            triggerWebhookEndpointId: endpoint.webhookEndpointId,
+        });
+    });
+
     it("refuses durable push when the current Event declaration does not support it", async () => {
         const account = await seedAccount({ supportsDurablePush: false });
         const endpoint = await ensureEndpoint(account.id, "ensure-durable-push-0003");

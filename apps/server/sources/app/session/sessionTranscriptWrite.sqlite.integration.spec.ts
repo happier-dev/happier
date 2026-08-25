@@ -3265,4 +3265,203 @@ describe("canonical transcript sequence writer on SQLite", () => {
             thinking: false,
         });
     }, 120_000);
+
+    it("admits a resumed persisted takeover under its successor operation claim and fences the released one", async () => {
+        const sharedMetadata = JSON.stringify(
+            projectSessionSharedMetadataV1({ metadata: {} }),
+        );
+        const account = await db.account.create({
+            data: {
+                ...createSignedAccountContentBinding(),
+                encryptionMode: "e2ee",
+            },
+            select: { id: true },
+        });
+        const session = await db.session.create({
+            data: {
+                tag: `takeover-claim-succession-${randomUUID()}`,
+                accountId: account.id,
+                metadata: sharedMetadata,
+                metadataVersion: 7,
+                metadataLayoutVersion: 1,
+                ownerMetadata: JSON.stringify(LIVE_EXTERNAL_LINK_OWNER_METADATA_ENVELOPE),
+                agentState: null,
+                agentStateVersion: 0,
+                encryptionMode: "plain",
+                currentStorageState: "machine_only",
+                pendingVersion: 4,
+                pendingCount: 2,
+                pendingBlockedCount: 1,
+                active: false,
+                thinking: false,
+            },
+            select: { id: true },
+        });
+        const machineId = `machine-claim-succession-${randomUUID()}`;
+        const publisherFence = new Date(7_654);
+        await db.machine.create({
+            data: { id: machineId, accountId: account.id, metadata: "{}" },
+        });
+        await db.accessKey.create({
+            data: {
+                accountId: account.id,
+                machineId,
+                sessionId: session.id,
+                data: "encrypted",
+            },
+        });
+        const operationId = "takeover-claim-succession-operation";
+        // Materialization holds one local exclusion claim for begin/batch/finalize
+        // and releases it when the operation parks at `awaiting_user_resume`.
+        const materializationClaim = {
+            sessionId: session.id,
+            operationId,
+            operationClaimId: "materialization-claim-a",
+        } as const;
+        // Resume acquires a fresh exclusion claim and binds it into the daemon
+        // operation record at `revision + 1`, so admission sends this one.
+        const resumeClaim = {
+            sessionId: session.id,
+            operationId,
+            operationClaimId: "resume-claim-b",
+        } as const;
+        const execute = async (command: unknown) => await executeExternalSessionHistoricalImportCommand({
+            actorUserId: account.id,
+            transportMachineId: machineId,
+            command,
+        });
+
+        await expect(execute({
+            v: 1,
+            kind: "begin",
+            claim: materializationClaim,
+            expectedRevision: 9,
+            expectedPriorStableStorage: { state: "machine_only" },
+        })).resolves.toMatchObject({ kind: "ready" });
+        await expect(execute({
+            v: 1,
+            kind: "batch",
+            claim: materializationClaim,
+            expectedRevision: 9,
+            batchId: makeExternalSessionHistoricalImportBatchIdV1([
+                "history:claim-succession",
+            ]),
+            items: [{
+                localId: "history:claim-succession",
+                sidechainId: null,
+                messageRole: "user",
+                content: { t: "plain", v: { text: "historical row" } },
+            }],
+        })).resolves.toMatchObject({
+            kind: "batch_accepted",
+            acceptedThroughServerSeq: 1,
+        });
+        await expect(execute({
+            v: 1,
+            kind: "finalize",
+            claim: materializationClaim,
+            expectedRevision: 9,
+            expectedAcceptedThroughServerSeq: 1,
+        })).resolves.toMatchObject({ kind: "finalized" });
+
+        await db.session.update({
+            where: { id: session.id },
+            data: { active: true, lastActiveAt: publisherFence },
+        });
+        const before = await db.session.findUniqueOrThrow({
+            where: { id: session.id },
+            select: {
+                materializationPublicationId: true,
+                materializedThroughSourceAt: true,
+            },
+        });
+
+        const admission = {
+            v: 1,
+            kind: "admit_persisted_takeover",
+            mode: "persisted",
+            claim: resumeClaim,
+            // Resume commits the successor claim at revision 11 and the admission
+            // owner commits refreshed authority evidence at revision 12.
+            expectedRevision: 12,
+            attemptId: "attempt-1",
+            publisherPrecondition: {
+                machineId,
+                committedFenceMs: publisherFence.getTime(),
+            },
+            expectedSessionMetadataVersion: 7,
+            metadataPatch: {
+                mode: "owner",
+                metadataLayoutVersion: 1,
+                expectedOwnerMetadata: LIVE_EXTERNAL_LINK_OWNER_METADATA_ENVELOPE,
+                sharedMetadata: {
+                    ciphertext: sharedMetadata,
+                    expectedVersion: 7,
+                },
+                ownerMetadata: RETIRED_EXTERNAL_LINK_OWNER_METADATA_ENVELOPE,
+                agentState: {
+                    ciphertext: null,
+                    expectedVersion: 0,
+                },
+            },
+            expectedSessionSeq: 1,
+            expectedPending: {
+                version: 4,
+                count: 2,
+                blockedCount: 1,
+            },
+            expectedPublication: {
+                materializationPublicationId: before.materializationPublicationId,
+                materializedThroughSourceAt: Number(before.materializedThroughSourceAt),
+                publishedThroughServerSeq: 1,
+            },
+        } as const;
+
+        await expect(execute(admission)).resolves.toEqual({
+            v: 1,
+            kind: "takeover_admitted",
+            mode: "persisted",
+            claim: resumeClaim,
+            revision: 12,
+            attemptId: "attempt-1",
+        });
+        await expect(db.session.findUniqueOrThrow({
+            where: { id: session.id },
+            select: { currentStorageState: true, metadataVersion: true },
+        })).resolves.toEqual({ currentStorageState: "hosted", metadataVersion: 8 });
+
+        // The released claim is stale the moment the successor becomes
+        // authoritative: it is refused at the revision the successor bound, so
+        // the refusal cannot come from the revision fence alone.
+        await expect(execute({
+            ...admission,
+            claim: materializationClaim,
+        })).resolves.toMatchObject({
+            kind: "error",
+            errorCode: "wrong_operation_claim",
+        });
+        await expect(execute({
+            v: 1,
+            kind: "resume",
+            claim: materializationClaim,
+            expectedRevision: 12,
+        })).resolves.toMatchObject({
+            kind: "error",
+            errorCode: "wrong_operation_claim",
+        });
+        await expect(db.sessionSystemRecord.findUnique({
+            where: hostSystemRecordUniqueWhere({
+                accountId: account.id,
+                sessionId: session.id,
+                namespace: "external_sessions",
+                localId: `historical-import:${operationId}`,
+            }),
+        })).resolves.toMatchObject({
+            content: expect.objectContaining({
+                claim: resumeClaim,
+                revision: 12,
+                state: "finalized",
+            }),
+        });
+    }, 120_000);
 });

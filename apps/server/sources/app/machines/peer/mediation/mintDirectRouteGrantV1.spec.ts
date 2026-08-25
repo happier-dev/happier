@@ -6,7 +6,6 @@ import {
 } from "@happier-dev/protocol";
 
 import {
-    createDirectRouteGrantRevocationRegistry,
     mintDirectRouteGrantV1,
     mintDirectRouteGrantV2,
     resolvePeerMediationGrantSigningConfig,
@@ -202,16 +201,5 @@ describe("mintDirectRouteGrantV1", () => {
             ok: false,
             reasonCode: "invalid_public_key",
         });
-    });
-
-    it("tracks revocations by grant id and grant family id", () => {
-        const registry = createDirectRouteGrantRevocationRegistry();
-
-        registry.revoke({ v: 1, grantId: "grant_1", reason: "manual", revokedAt: 1_000 });
-        registry.revoke({ v: 1, grantFamilyId: "family_1", reason: "policy_changed", revokedAt: 1_000 });
-
-        expect(registry.isRevoked({ grantId: "grant_1" })).toBe(true);
-        expect(registry.isRevoked({ grantFamilyId: "family_1" })).toBe(true);
-        expect(registry.isRevoked({ grantId: "grant_2", grantFamilyId: "family_2" })).toBe(false);
     });
 });

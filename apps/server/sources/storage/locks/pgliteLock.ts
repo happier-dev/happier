@@ -3,6 +3,8 @@ import { dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 
+import { isPidPresent } from "@happier-dev/cli-common/process";
+
 export const PGLITE_LOCK_FILENAME = ".happier.pglite.lock";
 
 type PgliteLockInfo = {
@@ -11,18 +13,6 @@ type PgliteLockInfo = {
     purpose?: string;
     dbDir?: string;
 };
-
-function isPidAlive(pid: number): boolean {
-    if (!Number.isFinite(pid) || pid <= 0) return false;
-    try {
-        process.kill(pid, 0);
-        return true;
-    } catch (err: any) {
-        if (err?.code === "ESRCH") return false;
-        // EPERM and other errors mean "we can't signal it" but it likely exists.
-        return true;
-    }
-}
 
 function parseEtimeToMs(raw: string): number | null {
     // ps etime formats:
@@ -142,7 +132,7 @@ export async function acquirePgliteDirLock(
         if (legacy.kind === "valid") {
             const legacyInfo = legacy.info;
             const sameDbDir = legacyInfo.dbDir ? resolve(legacyInfo.dbDir) === resolvedDbDir : true;
-            const legacyAlive = legacyInfo.pid ? isPidAlive(legacyInfo.pid) : false;
+            const legacyAlive = legacyInfo.pid ? isPidPresent(legacyInfo.pid) : false;
             if (sameDbDir) {
                 if (legacyAlive) {
                     const details =
@@ -201,7 +191,7 @@ export async function acquirePgliteDirLock(
             const info = await readLockInfo(lockPath);
 
             const holderPid = info?.pid ?? null;
-            const holderAlive = holderPid != null ? isPidAlive(holderPid) : false;
+            const holderAlive = holderPid != null ? isPidPresent(holderPid) : false;
 
             // Stale lock: remove and retry.
             if (!holderAlive) {

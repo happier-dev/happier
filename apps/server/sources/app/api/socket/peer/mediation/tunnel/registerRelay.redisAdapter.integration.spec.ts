@@ -9,7 +9,6 @@ import {
 } from "@happier-dev/protocol";
 import { createAdapter } from "@socket.io/redis-streams-adapter";
 import { Redis } from "ioredis";
-import { RedisMemoryServer } from "redis-memory-server";
 import { Server } from "socket.io";
 import { io as createClient, type Socket as ClientSocket } from "socket.io-client";
 import tweetnacl from "tweetnacl";
@@ -68,7 +67,7 @@ type RestartableProductCluster = Readonly<{
     portA: number;
     portB: number;
     restartRedis(): Promise<void>;
-    waitForGrantConsumedBeforeAdapterRecovery(grantId: string): Promise<void>;
+    waitForGrantReservationBeforeAdapterRecovery(grantId: string): Promise<void>;
     waitForAdapterRecovery(): Promise<void>;
     close(): Promise<void>;
 }>;
@@ -250,8 +249,13 @@ async function startCluster(relayCaps: Readonly<{
 }
 
 async function startRestartableProductCluster(): Promise<RestartableProductCluster> {
-    const redisMemory = await RedisMemoryServer.create();
-    const redisUrl = `redis://${await redisMemory.getIp()}:${await redisMemory.getPort()}`;
+    const resolvedRedis = await resolveRedisAdapterValidationRedisUrl({
+        env: {} as NodeJS.ProcessEnv,
+    });
+    if (!resolvedRedis.redisMemory) {
+        throw new Error("Redis restart integration requires an embedded Redis instance");
+    }
+    const { redisUrl, redisMemory } = resolvedRedis;
     const originalRedisUrl = process.env.REDIS_URL;
 
     const loadProductRedisModule = async (): Promise<ProductRedisModule> => {
@@ -311,7 +315,7 @@ async function startRestartableProductCluster(): Promise<RestartableProductClust
                 throw new Error("Redis adapter recovered before the restart probe could exercise admission isolation");
             }
         },
-        waitForGrantConsumedBeforeAdapterRecovery: async (grantId) => {
+        waitForGrantReservationBeforeAdapterRecovery: async (grantId) => {
             const verifier = new Redis(redisUrl, {
                 enableOfflineQueue: false,
                 lazyConnect: true,
@@ -324,12 +328,12 @@ async function startRestartableProductCluster(): Promise<RestartableProductClust
                 const deadline = Date.now() + 4_000;
                 while (Date.now() < deadline) {
                     if (redisA.status === "ready") {
-                        throw new Error("Adapter recovered before the dedicated admission client consumed the grant");
+                        throw new Error("Adapter recovered before the dedicated admission client reserved the grant");
                     }
                     if (await verifier.exists(grantKey) === 1) return;
                     await new Promise<void>((resolve) => setTimeout(resolve, 20));
                 }
-                throw new Error("Dedicated admission client did not consume the grant before adapter recovery");
+                throw new Error("Dedicated admission client did not reserve the grant before adapter recovery");
             } finally {
                 if (verifier.status === "ready") {
                     await verifier.quit();
@@ -763,7 +767,7 @@ describe("peer tunnel relay Redis adapter integration", () => {
             grantId: afterRestartGrantId,
             relaySocketId: user.id!,
         }));
-        await cluster.waitForGrantConsumedBeforeAdapterRecovery(afterRestartGrantId);
+        await cluster.waitForGrantReservationBeforeAdapterRecovery(afterRestartGrantId);
         await cluster.waitForAdapterRecovery();
         await waitForCondition(() => machineFrames.some((frame) =>
             frame.v === 1

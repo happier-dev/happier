@@ -14,7 +14,7 @@ const mocks = vi.hoisted(() => {
         updateMany: vi.fn(),
     };
     const tx = {
-        pluginWebhookEndpoint: { findFirst: vi.fn() },
+        pluginWebhookEndpoint: { findFirst: vi.fn(), updateMany: vi.fn() },
         pluginWebhookDelivery: delivery,
     };
     return {
@@ -95,6 +95,7 @@ describe("plugin webhook delivery store exact-target admission", () => {
             pluginId: "acme.github",
             routeId: "route-1",
             revision: 2,
+            providerConfirmedAt: null,
             targetMachineId: "machine-1",
             targetMachineInstallationId: "installation-1",
             targetMaterializationId: "materialization-1",
@@ -102,6 +103,7 @@ describe("plugin webhook delivery store exact-target admission", () => {
             webhookContributionId: "github-events",
             handlerActionId: "handle-webhook",
             sourceInstanceId: "source-1",
+            route: { currentCredential: { credentialVersionId: "credential-1" } },
         });
         mocks.acquireFence.mockResolvedValue({
             status: "ready",
@@ -116,6 +118,7 @@ describe("plugin webhook delivery store exact-target admission", () => {
         mocks.delivery.count.mockResolvedValue(0);
         mocks.delivery.aggregate.mockResolvedValue({ _sum: { payloadBytes: 0n } });
         mocks.delivery.create.mockResolvedValue({ id: "delivery-1" });
+        mocks.tx.pluginWebhookEndpoint.updateMany.mockResolvedValue({ count: 1 });
     });
 
     it("uses the authenticated server origin and freezes only the server-scoped materialization tuple", async () => {
@@ -126,6 +129,7 @@ describe("plugin webhook delivery store exact-target admission", () => {
             expectedEndpointRevision: 2,
             routeId: "route-1",
             verifierKind: "github_hmac_sha256_v1",
+            credentialVersionId: "credential-1",
             deliveryIdentityDigest: "a".repeat(64),
             stored,
             now: new Date("2026-08-10T00:00:00.000Z"),
@@ -162,6 +166,120 @@ describe("plugin webhook delivery store exact-target admission", () => {
             accountId: "account-1",
             targetMachineId: "machine-1",
             accountChangeCursor: 123,
+        });
+    });
+
+    it("stamps the provider-confirmation fact exactly once, in the same transaction as the admitted row", async () => {
+        await expect(admitPluginWebhookDeliveryV1({
+            endpointId: "endpoint-1",
+            expectedEndpointRevision: 2,
+            routeId: "route-1",
+            verifierKind: "github_hmac_sha256_v1",
+            credentialVersionId: "credential-1",
+            deliveryIdentityDigest: "a".repeat(64),
+            stored: plainStoredEnvelope(),
+            now: new Date("2026-08-10T00:00:00.000Z"),
+        })).resolves.toEqual({ kind: "admitted", deliveryId: "delivery-1" });
+
+        // Readiness projections read this column; without the write an enabled
+        // endpoint the provider really is delivering to stays unconfirmed.
+        expect(mocks.tx.pluginWebhookEndpoint.updateMany).toHaveBeenCalledWith({
+            where: { id: "endpoint-1", providerConfirmedAt: null },
+            data: { providerConfirmedAt: new Date("2026-08-10T00:00:00.000Z") },
+        });
+
+        // An endpoint already confirmed keeps its original instant.
+        vi.clearAllMocks();
+        mocks.delivery.findUnique.mockResolvedValue(null);
+        mocks.tx.pluginWebhookEndpoint.findFirst.mockResolvedValue({
+            id: "endpoint-1",
+            accountId: "account-1",
+            pluginId: "acme.github",
+            routeId: "route-1",
+            revision: 2,
+            providerConfirmedAt: new Date("2026-08-01T00:00:00.000Z"),
+            targetMachineId: "machine-1",
+            targetMachineInstallationId: "installation-1",
+            targetMaterializationId: "materialization-1",
+            targetPluginVersion: "1.0.0",
+            webhookContributionId: "github-events",
+            handlerActionId: "handle-webhook",
+            sourceInstanceId: "source-1",
+            route: { currentCredential: { credentialVersionId: "credential-1" } },
+        });
+        mocks.acquireFence.mockResolvedValue({
+            status: "ready",
+            account: { currentness: { encryptionMode: "plain", contentPublicKeyFingerprint: null } },
+        });
+        mocks.resolveTarget.mockResolvedValue({ kind: "current", materialization: {} });
+        mocks.delivery.count.mockResolvedValue(0);
+        mocks.delivery.aggregate.mockResolvedValue({ _sum: { payloadBytes: 0n } });
+        mocks.delivery.create.mockResolvedValue({ id: "delivery-2" });
+        mocks.markAccountChanged.mockResolvedValue(123);
+
+        await expect(admitPluginWebhookDeliveryV1({
+            endpointId: "endpoint-1",
+            expectedEndpointRevision: 2,
+            routeId: "route-1",
+            verifierKind: "github_hmac_sha256_v1",
+            credentialVersionId: "credential-1",
+            deliveryIdentityDigest: "b".repeat(64),
+            stored: plainStoredEnvelope(),
+            now: new Date("2026-08-11T00:00:00.000Z"),
+        })).resolves.toEqual({ kind: "admitted", deliveryId: "delivery-2" });
+        expect(mocks.tx.pluginWebhookEndpoint.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("confirms only a delivery verified under the route's current credential", async () => {
+        // A rotation cleared the confirmation and the provider has not been
+        // reconfigured yet, so this delivery still carries the superseded
+        // secret. It verifies during the overlap window, but it proves nothing
+        // about the credential every later delivery will have to use.
+        mocks.tx.pluginWebhookEndpoint.findFirst.mockResolvedValue({
+            id: "endpoint-1",
+            accountId: "account-1",
+            pluginId: "acme.github",
+            routeId: "route-1",
+            revision: 2,
+            providerConfirmedAt: null,
+            targetMachineId: "machine-1",
+            targetMachineInstallationId: "installation-1",
+            targetMaterializationId: "materialization-1",
+            targetPluginVersion: "1.0.0",
+            webhookContributionId: "github-events",
+            handlerActionId: "handle-webhook",
+            sourceInstanceId: "source-1",
+            route: { currentCredential: { credentialVersionId: "credential-2" } },
+        });
+
+        await expect(admitPluginWebhookDeliveryV1({
+            endpointId: "endpoint-1",
+            expectedEndpointRevision: 2,
+            routeId: "route-1",
+            verifierKind: "github_hmac_sha256_v1",
+            credentialVersionId: "credential-1",
+            deliveryIdentityDigest: "c".repeat(64),
+            stored: plainStoredEnvelope(),
+            now: new Date("2026-08-11T00:00:00.000Z"),
+        })).resolves.toEqual({ kind: "admitted", deliveryId: "delivery-1" });
+        expect(mocks.tx.pluginWebhookEndpoint.updateMany).not.toHaveBeenCalled();
+
+        // Positive twin: the identical delivery under the current credential
+        // does confirm, so the refusal above is the credential version and not
+        // a broken confirmation write.
+        await expect(admitPluginWebhookDeliveryV1({
+            endpointId: "endpoint-1",
+            expectedEndpointRevision: 2,
+            routeId: "route-1",
+            verifierKind: "github_hmac_sha256_v1",
+            credentialVersionId: "credential-2",
+            deliveryIdentityDigest: "d".repeat(64),
+            stored: plainStoredEnvelope(),
+            now: new Date("2026-08-11T00:00:00.000Z"),
+        })).resolves.toEqual({ kind: "admitted", deliveryId: "delivery-1" });
+        expect(mocks.tx.pluginWebhookEndpoint.updateMany).toHaveBeenCalledWith({
+            where: { id: "endpoint-1", providerConfirmedAt: null },
+            data: { providerConfirmedAt: new Date("2026-08-11T00:00:00.000Z") },
         });
     });
 });

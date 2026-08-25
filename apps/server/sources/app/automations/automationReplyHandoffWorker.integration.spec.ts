@@ -10,6 +10,7 @@ const ACCOUNT_ID = "account-reply-handoff-worker";
 const AUTOMATION_ID = "automation-reply-handoff-worker";
 const RUN_ID = "run-reply-handoff-worker";
 const HANDOFF_ID = "handoff-reply-handoff-worker";
+const OCCURRENCE_KEY = "A".repeat(43);
 const NOW = new Date("2026-08-10T12:00:00.000Z");
 
 const RESULT_ENVELOPE = {
@@ -30,19 +31,10 @@ const REPLY_CONTEXT_ENVELOPE = {
     v: {
         v: 1 as const,
         correspondence: {
-            accountId: ACCOUNT_ID,
             automationId: AUTOMATION_ID,
-            runId: RUN_ID,
-            handoffId: HANDOFF_ID,
+            occurrenceKey: OCCURRENCE_KEY,
         },
-        source: {
-            kind: "automationResult" as const,
-            automationRunId: RUN_ID,
-            resultId: HANDOFF_ID,
-            automationId: AUTOMATION_ID,
-            templateVersion: 1,
-            resultDelivery: "finalResult" as const,
-        },
+        templateVersion: 1,
         opaqueContext: {
             conversationId: "conversation-1",
             messageId: "message-1",
@@ -99,7 +91,7 @@ describe("Automation reply handoff worker", () => {
                 state: "succeeded",
                 originKind: "conversation",
                 originOccurredAt: NOW,
-                occurrenceKey: "conversation-occurrence-1",
+                occurrenceKey: OCCURRENCE_KEY,
                 triggerEvidenceEnvelope: JSON.stringify({ t: "plain", v: {} }),
                 resultEnvelope: JSON.stringify(RESULT_ENVELOPE),
                 replyContextEnvelope: JSON.stringify(REPLY_CONTEXT_ENVELOPE),
@@ -173,6 +165,7 @@ describe("Automation reply handoff worker", () => {
                 handoffId: HANDOFF_ID,
                 runId: RUN_ID,
                 automationId: AUTOMATION_ID,
+                occurrenceKey: OCCURRENCE_KEY,
                 accountCurrentness: claimedCurrentness,
                 resultEnvelope: RESULT_ENVELOPE,
                 replyContextEnvelope: REPLY_CONTEXT_ENVELOPE,

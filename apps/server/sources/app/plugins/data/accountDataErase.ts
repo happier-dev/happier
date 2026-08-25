@@ -331,6 +331,19 @@ export type DeleteAccountForErasureResult =
  * The sole physical Account-deletion composition for Data-owned Account
  * erasure. Domain cleanup runs in the same transaction as the Account row
  * delete so any remaining restrictive relation aborts every prior cleanup.
+ *
+ * It therefore deletes only an Account that still owns nothing behind a
+ * restrictive relation — today the just-created Account an OAuth finalize
+ * failure rolls back. `Session`, `Machine`, `AccessKey`, `Artifact`,
+ * `UploadedFile`, `UsageReport`, `AccountPushToken`, `SessionShare`,
+ * `SessionShareAccessLog` and `PublicSessionShare` all reference `Account`
+ * with `ON DELETE RESTRICT`, so an Account owning even one Session fails
+ * here with Prisma `P2003`. (`PluginWebhookEndpoint` is restrictive too but
+ * does not block, because the cleanup above detaches it in this same
+ * transaction.) A present-user "delete my account" ingress cannot be
+ * composed from this owner as written: those domains must be erased first,
+ * along with the `UploadedFile.path` blobs that `storage/blob/files.ts` has
+ * no delete owner for.
  */
 export async function deleteAccountForErasure(input: Readonly<{
     accountId: string;

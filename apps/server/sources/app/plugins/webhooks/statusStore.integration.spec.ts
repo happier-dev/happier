@@ -41,7 +41,9 @@ describe("plugin webhook Account status projection", () => {
         ]);
     });
 
-    async function seedFixture(): Promise<void> {
+    async function seedFixture(
+        options: Readonly<{ providerConfirmedAt?: Date }> = {},
+    ): Promise<void> {
         const manifest = {
             schemaVersion: 2,
             id: "acme.github",
@@ -179,6 +181,7 @@ describe("plugin webhook Account status projection", () => {
                 previousTargetMaterializationId: "materialization-old",
                 previousTargetPluginVersion: "1.0.0",
                 createdAt: NOW,
+                providerConfirmedAt: options.providerConfirmedAt ?? null,
             },
         });
         await db.pluginWebhookRoute.update({
@@ -251,8 +254,25 @@ describe("plugin webhook Account status projection", () => {
         }
     }
 
-    it("lists committed endpoints with exact target readiness and bounded queue/dead-letter metadata", async () => {
+    it("reports an endpoint no verified delivery has confirmed as not yet ready", async () => {
+        // Same current target and live route as the ready case below: the only
+        // difference is that no verified provider delivery ever arrived.
         await seedFixture();
+
+        await expect(readPluginWebhookAccountStatusV1({
+            accountId: ACCOUNT_ID,
+            input: { pageSize: 50, deadLetterPageSize: 0 },
+        })).resolves.toMatchObject({
+            endpoints: [{
+                webhookEndpointId: ENDPOINT_ID,
+                readiness: "providerConfirmationRequired",
+                targetStatus: "current",
+            }],
+        });
+    });
+
+    it("lists committed endpoints with exact target readiness and bounded queue/dead-letter metadata", async () => {
+        await seedFixture({ providerConfirmedAt: NOW });
 
         const result = await readPluginWebhookAccountStatusV1({
             accountId: ACCOUNT_ID,

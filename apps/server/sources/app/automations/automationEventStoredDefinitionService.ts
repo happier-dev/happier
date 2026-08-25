@@ -9,6 +9,7 @@ import {
     decodeBase64,
     encodeBase64,
     type AutomationEventStoredDefinitionsReadResultV1,
+    type AutomationEventCheckpointRetirementCandidateV1,
     type AutomationEventSourcesListInputV1,
     type AutomationEventDeclarationReleaseV1,
     type PluginWebhookInvocationReferenceV1,
@@ -18,13 +19,14 @@ import { acquireAccountEncryptionTransitionFenceInTx } from "@/app/encryption/ac
 import { listCurrentPluginWebhookEndpointTargetsTxV1 } from "@/app/plugins/webhooks/endpointStore";
 import { validateCurrentPluginWebhookInvocationReferenceTxV1 } from "@/app/plugins/webhooks/claimStore";
 import { getOrCreateServerIdentityId } from "@/app/serverIdentity/serverIdentity";
-import { inTx } from "@/storage/inTx";
+import { inTx, type Tx } from "@/storage/inTx";
 
 import {
     assertCurrentAutomationEventCallerMaterializationTx,
     readCurrentAutomationEventDurablePushEndpointTargetTxV1,
     readCurrentAutomationEventDurablePushWebhookContributionV1,
     resolveCurrentAutomationEventContributionsTx,
+    sameAutomationEventDurablePushWebhookContributionV1,
     AutomationEventCurrentnessError,
     type AutomationEventCallerV1,
 } from "./automationEventCurrentness";
@@ -161,6 +163,74 @@ function eventDefinitionWhere(params: Readonly<{
     };
 }
 
+/**
+ * The Event catalog owns retirement truth; a provider may only present a
+ * bounded persisted checkpoint identity and later apply its incumbent row CAS.
+ * A disabled Automation retains continuity, while a deleted Automation retains
+ * it exactly until no Run still references that Automation row.
+ */
+function shouldRetireCheckpoint(params: Readonly<{
+    candidate: AutomationEventCheckpointRetirementCandidateV1;
+    caller: AutomationEventStoredDefinitionsReadCallerV1;
+    automation: Readonly<{
+        enabled: boolean;
+        deletedAt: Date | null;
+        triggerKind: string;
+        triggerEventPluginId: string | null;
+        triggerEventLocalId: string | null;
+        triggerSourceSelectorId: string | null;
+        triggerSourceContractVersion: number | null;
+        triggerObservationTransport: string | null;
+        runs: readonly Readonly<{ id: string }>[];
+    }> | undefined;
+}>): boolean {
+    const { automation, candidate } = params;
+    if (automation === undefined) return true;
+    if (automation.deletedAt !== null) return automation.runs.length === 0;
+    if (!automation.enabled) return false;
+    return automation.triggerKind !== "pluginEvent"
+        || automation.triggerEventPluginId !== params.caller.pluginId
+        || automation.triggerEventLocalId !== candidate.eventRef.localId
+        || automation.triggerSourceSelectorId !== candidate.sourceSelectorId
+        || automation.triggerSourceContractVersion !== candidate.sourceContractVersion
+        || automation.triggerObservationTransport !== "checkpointedPull";
+}
+
+async function classifyCheckpointRetirementsTx(params: Readonly<{
+    tx: Tx;
+    accountId: string;
+    caller: AutomationEventStoredDefinitionsReadCallerV1;
+    candidates: readonly AutomationEventCheckpointRetirementCandidateV1[];
+}>): Promise<readonly AutomationEventCheckpointRetirementCandidateV1[]> {
+    if (params.candidates.some((candidate) => candidate.eventRef.pluginId !== params.caller.pluginId)) {
+        fail("event_contribution_not_current");
+    }
+    const automations = await params.tx.automation.findMany({
+        where: {
+            accountId: params.accountId,
+            id: { in: params.candidates.map((candidate) => candidate.automationId) },
+        },
+        select: {
+            id: true,
+            enabled: true,
+            deletedAt: true,
+            triggerKind: true,
+            triggerEventPluginId: true,
+            triggerEventLocalId: true,
+            triggerSourceSelectorId: true,
+            triggerSourceContractVersion: true,
+            triggerObservationTransport: true,
+            runs: { take: 1, select: { id: true } },
+        },
+    });
+    const automationsById = new Map(automations.map((automation) => [automation.id, automation]));
+    return params.candidates.filter((candidate) => shouldRetireCheckpoint({
+        candidate,
+        caller: params.caller,
+        automation: automationsById.get(candidate.automationId),
+    }));
+}
+
 function webhookInvocationTargetsCaller(
     reference: PluginWebhookInvocationReferenceV1,
     caller: AutomationEventStoredDefinitionsReadCallerV1,
@@ -286,12 +356,34 @@ export async function readAutomationEventStoredDefinitionsV1(params: Readonly<{
                 : {}),
         });
 
+        // Retirement is meaningful only for the revision whose complete source
+        // set the observer already adopted. Unlike an ordinary source refresh,
+        // a stale retirement request must not fall through to a fresh page: it
+        // carries no deletion subset for the provider's Collection CAS.
+        if (
+            input.checkpointRetirementCandidates !== undefined
+            && input.knownRevision !== revision
+        ) {
+            return AutomationEventStoredDefinitionsReadResultV1Schema.parse({
+                kind: "cursorStale",
+                currentRevision: revision,
+            });
+        }
         if (input.cursor === undefined && input.knownRevision === revision) {
+            const checkpointRetirements = input.checkpointRetirementCandidates === undefined
+                ? undefined
+                : await classifyCheckpointRetirementsTx({
+                    tx,
+                    accountId: params.accountId,
+                    caller: params.caller,
+                    candidates: input.checkpointRetirementCandidates,
+                });
             return AutomationEventStoredDefinitionsReadResultV1Schema.parse({
                 kind: "unchanged",
                 revision,
                 eventDeclarationRelease,
                 scope,
+                ...(checkpointRetirements === undefined ? {} : { checkpointRetirements }),
             });
         }
 
@@ -398,8 +490,10 @@ export async function readAutomationEventStoredDefinitionsV1(params: Readonly<{
                         row.triggerObservationTransport !== "durablePush"
                         || endpoint === null
                         || webhookContribution === null
-                        || endpoint.webhookContribution.pluginId !== webhookContribution.pluginId
-                        || endpoint.webhookContribution.localId !== webhookContribution.localId
+                        || !sameAutomationEventDurablePushWebhookContributionV1(
+                            endpoint.webhookContribution,
+                            webhookContribution,
+                        )
                         || row.triggerObservationStartsAt === null
                         || row.watcherMachineId !== null
                         || row.watcherMachineInstallationId !== null

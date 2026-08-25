@@ -120,7 +120,7 @@ export async function verifyPluginInstallationPublisherHeaderBeforeBody(params: 
     }
     const { proof } = header;
     assertPublisherProofFresh(proof);
-    if (proof.method !== "POST" || params.request.method !== "POST" || proof.path !== params.path) {
+    if (proof.method !== params.request.method || proof.path !== params.path) {
         throw new PluginInstallationPublisherProofError(
             "invalid",
             "Plugin installation publisher proof request binding is invalid",

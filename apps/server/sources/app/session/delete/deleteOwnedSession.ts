@@ -1,6 +1,7 @@
 import { afterTx, inTx } from '@/storage/inTx';
 import { log } from '@/utils/logging/log';
 import { markAccountChanged } from '@/app/changes/markAccountChanged';
+import { tombstoneSessionDraftForLifecycleInTx } from '@/app/account/sessionDrafts/sessionDraftService';
 
 import { deleteSessionTree, SessionDeleteConditionLostError } from './deleteSessionTree';
 import { emitSessionDeletedUpdate } from './emitSessionDeletedUpdate';
@@ -76,6 +77,12 @@ export async function deleteOwnedSession(
                     : null),
             };
             const recipientCursors: Array<{ accountId: string; cursor: number }> = [];
+            for (const accountId of recipientAccountIds) {
+                await tombstoneSessionDraftForLifecycleInTx(tx as any, {
+                    accountId,
+                    sessionId: params.sessionId,
+                });
+            }
             const deleted = await deleteSessionTree(tx as any, {
                 sessionId: params.sessionId,
                 sessionUpdatedAt: session.updatedAt,

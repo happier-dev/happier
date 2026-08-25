@@ -43,6 +43,14 @@ export type RegisterLocalServicePreviewRoutesOptions = Readonly<{
     resolvePreview: (previewId: string) => LocalServicePreviewResourceV1 | null | undefined;
     resolvePreviewByHost?: (hostname: string) => LocalServicePreviewResourceV1 | null | undefined;
     hostOriginBaseDomain?: string | null;
+    /**
+     * Whether the canonical public base URL is `https:` (F-5 / audit S-9). Path-mode preview
+     * cookies are marked `Secure` when it is. It cannot be unconditional: on a plain-http
+     * deployment a `Secure` cookie is dropped by the browser, which would break the private
+     * preview outright. The production composition site always supplies this; it defaults to
+     * `false` so an http-only caller keeps working rather than silently losing the feature.
+     */
+    publicBaseUrlSecure?: boolean;
     authorizeSessionAccess?: (input: Readonly<{
         userId: string;
         sessionId: string;
@@ -267,7 +275,9 @@ function resolvePreviewHttpRouteTarget(
             search,
             tokenMaterial,
             exchangeCookiePath: pathModePreviewCookiePath(previewId),
-            exchangeCookieSecure: false,
+            // F-5: host mode is always https, so it hard-codes `true`. Path mode follows the
+            // deployment: `Secure` on https, omitted on http where it would drop the cookie.
+            exchangeCookieSecure: options.publicBaseUrlSecure === true,
             // `pathModePreviewCookiePath` already ends in `/`; the encoded wildcard path always
             // begins with one, so join them without producing a `//` segment.
             exchangeRedirectLocation: `${pathModePreviewCookiePath(previewId)}${path.replace(/^\/+/u, "")}${search}`,

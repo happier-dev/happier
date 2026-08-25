@@ -143,7 +143,13 @@ export async function listAutomationConversationTargetsV1(params: Readonly<{
             // only when a further Automation really exists, including when the
             // last page exactly fills the requested limit.
             take: limit + 1,
-            select: { id: true, name: true, templateVersion: true },
+            select: {
+                id: true,
+                name: true,
+                templateVersion: true,
+                targetType: true,
+                enabled: true,
+            },
         });
         const page = rows.slice(0, limit);
 
@@ -152,6 +158,10 @@ export async function listAutomationConversationTargetsV1(params: Readonly<{
                 automationId: row.id,
                 templateVersion: row.templateVersion,
                 label: readAutomationConversationTargetLabel(row),
+                execution: {
+                    targetType: row.targetType,
+                    enabled: row.enabled,
+                },
             })),
             nextCursor: rows.length > limit ? page[page.length - 1]?.id ?? null : null,
         });

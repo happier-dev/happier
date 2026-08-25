@@ -424,6 +424,205 @@ describe("createPeerTcpTunnelRelayCoordinator", () => {
         }
     });
 
+    it("releases only its remote provisional Redis claim when exact attachment fails", async () => {
+        const accountId = "account-remote-provisional";
+        const machineId = "machine-remote-provisional";
+        const machineSocketId = "socket-remote-provisional";
+        const remoteMachineSocket = {
+            id: machineSocketId,
+            data: {
+                userId: accountId,
+                clientType: "machine-scoped",
+                machineId,
+            },
+        } as unknown as Socket;
+        const redisValues = new Map<string, string>();
+        let remoteAttachmentAccepted = false;
+        let replaceProvisionalClaimBeforeReject = false;
+        const relayAdmissionRedis = Object.assign(new EventEmitter(), {
+            set: vi.fn(async (
+                key: string,
+                value: string,
+            ): Promise<"OK" | null> => {
+                if (redisValues.has(key)) return null;
+                redisValues.set(key, value);
+                return "OK";
+            }),
+            eval: vi.fn(async (
+                script: string,
+                _keyCount: number,
+                key: string,
+                expectedValue: string,
+                nextValue?: string,
+            ): Promise<number> => {
+                if (redisValues.get(key) !== expectedValue) return 0;
+                if (script.includes("redis.call('DEL'")) {
+                    redisValues.delete(key);
+                    return 1;
+                }
+                if (!nextValue) return 0;
+                redisValues.set(key, nextValue);
+                return 1;
+            }),
+            disconnect: vi.fn(),
+        });
+        Object.defineProperty(relayAdmissionRedis, "status", {
+            get: () => "ready",
+        });
+        const serverSideEmitWithAck = vi.fn(async () => {
+            if (!remoteAttachmentAccepted && replaceProvisionalClaimBeforeReject) {
+                const claimKey = redisValues.keys().next().value;
+                if (claimKey) redisValues.set(claimKey, "another-owner-provisional-claim");
+            }
+            return [{ status: remoteAttachmentAccepted ? "attached" : "rejected" }];
+        });
+        const io = {
+            sockets: {
+                sockets: new Map(),
+            },
+            on: vi.fn(),
+            off: vi.fn(),
+            in: vi.fn(() => ({
+                local: { fetchSockets: vi.fn(async () => []) },
+                timeout: vi.fn(() => ({ fetchSockets: vi.fn(async () => [remoteMachineSocket]) })),
+            })),
+            to: vi.fn(() => ({ emit: vi.fn() })),
+            serverSideEmit: vi.fn(),
+            serverSideEmitWithAck,
+        } as unknown as Server;
+        const coordinator = createPeerTcpTunnelRelayCoordinator({
+            io,
+            config: {
+                mode: "redis",
+                redis: {
+                    duplicate: vi.fn(() => relayAdmissionRedis),
+                } as unknown as Pick<Redis, "duplicate">,
+            },
+        });
+        const nowMs = Date.now();
+        const admission = {
+            accountId,
+            tunnelKey: `${accountId}:machine:${machineId}:user:tunnel-remote-provisional`,
+            grantId: "grant-remote-provisional",
+            grantExpiresAt: nowMs + 60_000,
+            machineId,
+            maxDurationMs: 30_000,
+            nowMs,
+        } as const;
+
+        try {
+            await expect(coordinator.admit({
+                ...admission,
+                onMachineEnvelope: vi.fn(),
+                onMachineDisconnect: vi.fn(),
+            })).resolves.toEqual({ status: "rejected", reason: "machine_unavailable" });
+
+            remoteAttachmentAccepted = true;
+
+            // An unattached remote recipient never makes the grant durably consumed.
+            await expect(coordinator.admit({
+                ...admission,
+                onMachineEnvelope: vi.fn(),
+                onMachineDisconnect: vi.fn(),
+            })).resolves.toEqual({ status: "attached" });
+
+            coordinator.release(admission.tunnelKey);
+            redisValues.clear();
+            remoteAttachmentAccepted = false;
+            replaceProvisionalClaimBeforeReject = true;
+            const replacedClaimAdmission = {
+                ...admission,
+                tunnelKey: `${accountId}:machine:${machineId}:user:tunnel-remote-provisional-replaced`,
+                grantId: "grant-remote-provisional-replaced",
+            };
+
+            await expect(coordinator.admit({
+                ...replacedClaimAdmission,
+                onMachineEnvelope: vi.fn(),
+                onMachineDisconnect: vi.fn(),
+            })).resolves.toEqual({ status: "rejected", reason: "machine_unavailable" });
+
+            replaceProvisionalClaimBeforeReject = false;
+            remoteAttachmentAccepted = true;
+
+            // Cleanup must compare the provisional value before deleting. A later claimant
+            // therefore remains authoritative rather than being erased by this loser.
+            await expect(coordinator.admit({
+                ...replacedClaimAdmission,
+                onMachineEnvelope: vi.fn(),
+                onMachineDisconnect: vi.fn(),
+            })).resolves.toEqual({ status: "rejected", reason: "grant_already_consumed" });
+        } finally {
+            await coordinator.close();
+        }
+    });
+
+    it("keeps the winning owner route when a concurrent same-tunnel admission loses local attachment", async () => {
+        const accountId = "account-same-tunnel";
+        const machineId = "machine-same-tunnel";
+        const machineSocketId = "socket-same-tunnel";
+        const tunnelKey = `${accountId}:machine:${machineId}:user:tunnel-same`;
+        const machineSocket = {
+            connected: true,
+            id: machineSocketId,
+            data: {
+                userId: accountId,
+                clientType: "machine-scoped",
+                machineId,
+            },
+            rooms: new Set(getSocketRooms({
+                userId: accountId,
+                clientType: "machine-scoped",
+                machineId,
+            })),
+            once: vi.fn(),
+            off: vi.fn(),
+        } as unknown as Socket;
+        const io = {
+            sockets: {
+                sockets: new Map([[machineSocketId, machineSocket]]),
+            },
+            on: vi.fn(),
+            off: vi.fn(),
+            in: vi.fn(() => ({
+                local: {
+                    fetchSockets: vi.fn(async () => [machineSocket]),
+                },
+                timeout: vi.fn(() => ({ fetchSockets: vi.fn(async () => [machineSocket]) })),
+            })),
+            to: vi.fn(() => ({ emit: vi.fn() })),
+            serverSideEmit: vi.fn(),
+            serverSideEmitWithAck: vi.fn(async () => []),
+        } as unknown as Server;
+        const coordinator = createPeerTcpTunnelRelayCoordinator({
+            io,
+            config: { mode: "memory" },
+        });
+
+        try {
+            const results = await Promise.all(["first", "second"].map(async (suffix) => await coordinator.admit({
+                accountId,
+                tunnelKey,
+                grantId: `grant-same-tunnel-${suffix}`,
+                grantExpiresAt: 60_000,
+                machineId,
+                maxDurationMs: 30_000,
+                nowMs: 1_000,
+                onMachineEnvelope: vi.fn(),
+                onMachineDisconnect: vi.fn(),
+            })));
+
+            expect(results.filter((result) => result.status === "attached")).toHaveLength(1);
+            expect(results).toContainEqual({ status: "rejected", reason: "machine_unavailable" });
+            expect(coordinator.routeOwnerEnvelope({
+                tunnelKey,
+                envelope: {} as PeerTcpTunnelRelayEnvelope,
+            })).toBe(true);
+        } finally {
+            await coordinator.close();
+        }
+    });
+
     it("spends a single-use grant exactly once across concurrent admissions", async () => {
         const accountId = "account-once";
         const machineId = "machine-once";

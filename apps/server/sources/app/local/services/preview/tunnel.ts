@@ -126,8 +126,16 @@ function normalizeChunk(chunk: Uint8Array): Uint8Array {
     return chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk);
 }
 
+/**
+ * Carry the failed prerequisite on the error itself. The HTTP/WebSocket adapters classify a tunnel
+ * that will not open into a typed transport failure, and parsing it back out of the message string
+ * would be the fragile way to learn which one it was.
+ */
 function createTunnelUnavailableError(reasonCode: string): Error {
-    return new Error(`local_service_preview_tunnel_unavailable:${reasonCode}`);
+    return Object.assign(
+        new Error(`local_service_preview_tunnel_unavailable:${reasonCode}`),
+        { reasonCode },
+    );
 }
 
 export function createLocalServicePreviewTunnelOpener(

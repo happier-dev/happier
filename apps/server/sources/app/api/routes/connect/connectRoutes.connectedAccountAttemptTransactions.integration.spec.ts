@@ -256,6 +256,84 @@ describe("Connected Account attempt transaction routes", () => {
         expect(await db.repeatKey.count()).toBe(0);
     });
 
+    it("seals a plain Account's readable attempt payload at rest and reopens it", async () => {
+        // A plain Account's envelope is the readable value, and an in-flight
+        // authentication attempt carries the PKCE verifier and the staged provider
+        // secrets. The same Account's settled credentials are sealed with the
+        // server at-rest key, so its in-flight ones cannot sit in the database in
+        // the clear.
+        const account = await createPlainAccount();
+        const app = createTestApp();
+        await app.ready();
+        const expiresAtMs = Date.now() + 15 * 60_000;
+        const url =
+            "/v2/connect/connected-account-attempt-transactions/oauth/plain-attempt";
+        const verifier = "pkce-verifier-must-not-be-readable";
+        const stagedSecret = "device-auth-secret-must-not-be-readable";
+        const content = {
+            t: "plain",
+            v: {
+                version: 1,
+                kind: "oauth",
+                verifier,
+                stagedCredentials: { deviceAuthId: stagedSecret },
+            },
+        } as const;
+
+        const created = await app.inject({
+            method: "POST",
+            url,
+            headers: {
+                "content-type": "application/json",
+                "x-test-user-id": account.id,
+            },
+            payload: { content, expiresAtMs },
+        });
+        expect(created.statusCode).toBe(200);
+        expect(created.json()).toEqual({ revision: 1, content, expiresAtMs });
+
+        const stored = await db.repeatKey.findMany();
+        expect(stored).toHaveLength(1);
+        expect(stored[0]?.value).not.toContain(verifier);
+        expect(stored[0]?.value).not.toContain(stagedSecret);
+
+        // Sealing is only useful if the exact envelope still comes back, through
+        // the read path and through a later replace.
+        const opened = await app.inject({
+            method: "GET",
+            url,
+            headers: { "x-test-user-id": account.id },
+        });
+        expect(opened.statusCode).toBe(200);
+        expect(opened.json()).toEqual({ revision: 1, content, expiresAtMs });
+
+        const nextContent = {
+            t: "plain",
+            v: { version: 1, kind: "oauth", verifier, consumed: true },
+        } as const;
+        const replaced = await app.inject({
+            method: "PATCH",
+            url,
+            headers: {
+                "content-type": "application/json",
+                "x-test-user-id": account.id,
+            },
+            payload: {
+                expectedRevision: 1,
+                content: nextContent,
+                expiresAtMs,
+            },
+        });
+        expect(replaced.statusCode).toBe(200);
+        expect(replaced.json()).toEqual({
+            revision: 2,
+            content: nextContent,
+            expiresAtMs,
+        });
+        const afterReplace = await db.repeatKey.findMany();
+        expect(afterReplace[0]?.value).not.toContain(verifier);
+    });
+
     it("admits each envelope kind against the persisted Account mode and refuses the other", async () => {
         const [plainAccount, e2eeAccount] = await Promise.all([
             createPlainAccount(),

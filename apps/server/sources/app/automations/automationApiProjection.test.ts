@@ -7,7 +7,7 @@ import {
 } from "@happier-dev/protocol";
 
 import {
-    isAutomationV2Compatible,
+    isAutomationDefinitionRepresentableInV2,
     isAutomationRunV2Compatible,
     toAutomationV2ApiDto,
     toAutomationV3DefinitionDetailApiDto,
@@ -256,6 +256,7 @@ function eventRun() {
         summaryCiphertext: null,
         errorCode: "source_waiting",
         errorMessage: "private provider detail",
+        contentRemovedAt: null,
         producedSessionId: null,
         createdAt: DATE,
         updatedAt: DATE,
@@ -344,9 +345,9 @@ describe("Automation API projections", () => {
         const schedule = scheduleAutomation();
         const event = eventAutomation();
 
-        expect(isAutomationV2Compatible(schedule)).toBe(true);
-        expect(isAutomationV2Compatible(event)).toBe(false);
-        expect(isAutomationV2Compatible({
+        expect(isAutomationDefinitionRepresentableInV2(schedule)).toBe(true);
+        expect(isAutomationDefinitionRepresentableInV2(event)).toBe(false);
+        expect(isAutomationDefinitionRepresentableInV2({
             ...schedule,
             templateCiphertext: "not a retained V2 template envelope",
         })).toBe(false);
@@ -542,6 +543,26 @@ describe("Automation API projections", () => {
         }));
         expect(() => toAutomationRunV3DetailApiDto(run, "e2ee"))
             .toThrow("Automation stored content mode does not match the Account");
+    });
+
+    it("redacts compacted private Run content without re-parsing retained internal evidence", () => {
+        const contentRemovedAt = new Date("2026-08-11T12:00:00.000Z");
+        const run = {
+            ...eventRun(),
+            state: "failed" as const,
+            finishedAt: DATE,
+            contentRemovedAt,
+        };
+
+        expect(toAutomationRunV3ListApiDto(run).contentRemovedAt)
+            .toBe(contentRemovedAt.getTime());
+        expect(toAutomationRunV3DetailApiDto(run, "plain")).toEqual(expect.objectContaining({
+            triggerEvidenceEnvelope: null,
+            executionInputEnvelope: null,
+            resultEnvelope: null,
+            legacySummaryCiphertext: null,
+            errorDetailEnvelope: null,
+        }));
     });
 
     it("exposes the native execution identity and ordered transition history an uncertain Run needs", () => {

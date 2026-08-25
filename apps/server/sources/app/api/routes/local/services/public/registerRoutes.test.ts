@@ -82,6 +82,14 @@ async function decodeBody(body: AsyncIterable<Uint8Array> | undefined): Promise<
 }
 
 describe("local service public exposure routes", () => {
+    // The upgrade path awaits the caller's identity resolution (S-2) before it writes, so tests
+    // that observe an in-flight write must drain the queue rather than count microtasks.
+    async function flushAsyncWork(): Promise<void> {
+        await new Promise<void>((resolve) => {
+            setImmediate(resolve);
+        });
+    }
+
     function allowSessionAccess() {
         return vi.fn(() => true);
     }
@@ -1243,7 +1251,7 @@ describe("local service public exposure routes", () => {
             rawHeaders: [],
         }, socket, new Uint8Array()));
 
-        await Promise.resolve();
+        await flushAsyncWork();
         expect(socket.write).toHaveBeenCalled();
         expect(socket.once).toHaveBeenCalledWith("drain", expect.any(Function));
         expect(socket.destroy).not.toHaveBeenCalled();
@@ -1287,7 +1295,7 @@ describe("local service public exposure routes", () => {
                 rawHeaders: [],
             }, socket, new Uint8Array()));
 
-            await Promise.resolve();
+            await flushAsyncWork();
             expect(socket.write).toHaveBeenCalled();
             expect(socket.once).toHaveBeenCalledWith("drain", expect.any(Function));
             expect(socket.destroy).not.toHaveBeenCalled();

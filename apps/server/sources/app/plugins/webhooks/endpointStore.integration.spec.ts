@@ -254,7 +254,12 @@ describe("plugin webhook endpoint lifecycle store", () => {
             randomBytes: deterministicRandomBytes(),
         });
 
-        const read = await readPluginWebhookEndpointV1({ accountId: ACCOUNT_ID, webhookEndpointId: created.webhookEndpointId, publicBaseUrl: "https://happier.example" });
+        const read = await readPluginWebhookEndpointV1({
+            accountId: ACCOUNT_ID,
+            webhookEndpointId: created.webhookEndpointId,
+            publicBaseUrl: "https://happier.example",
+            resolveTarget: async () => TARGET,
+        });
         expect(read).toMatchObject({
             webhookEndpointId: created.webhookEndpointId,
             revision: 1,

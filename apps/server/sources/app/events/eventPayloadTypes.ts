@@ -10,6 +10,7 @@ import type {
     SessionRuntimeIssueV1,
     SessionStoredMessageContent,
     ActionOperationSnapshotEphemeralV1,
+    SessionDraftSocketUpdateV1,
     SessionTranscriptObservationProvenanceV1,
 } from "@happier-dev/protocol";
 
@@ -333,7 +334,9 @@ export type EphemeralEvent = {
     active: boolean;
     activeAt: number;
     thinking?: boolean;
-} | {
+} | ({
+    type: 'session-draft-updated';
+} & SessionDraftSocketUpdateV1) | {
     type: 'execution-run-updated';
     sessionId: string;
     run: ExecutionRunPublicState;

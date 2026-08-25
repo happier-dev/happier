@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import tweetnacl from "tweetnacl";
 
 import { normalizePluginReleaseFactsV1 } from "@happier-dev/protocol";
 
@@ -298,6 +299,73 @@ describe("Automation conversation target verification database boundary", () => 
         })).resolves.toEqual({ kind: "notVerified", reason: "resultDeliveryUnsupported" });
     });
 
+    it("keeps final-result delivery verified before persistence for an E2EE Account", async () => {
+        await db.automation.create({
+            data: {
+                id: "automation-session-owned",
+                accountId: ACCOUNT_ID,
+                name: "Owned session",
+                enabled: true,
+                scheduleKind: "interval",
+                everyMs: 60_000,
+                targetType: "new_session",
+                templateCiphertext: "session-definition-content",
+                templateVersion: 3,
+                triggerKind: "schedule",
+            },
+        });
+
+        await expect(verifyAutomationConversationTargetV1({
+            accountId: ACCOUNT_ID,
+            caller,
+            input: {
+                automationId: "automation-session-owned",
+                expectedTemplateVersion: 3,
+                resultDelivery: "finalResult",
+            },
+        })).resolves.toEqual({ kind: "verified", templateVersion: 3 });
+
+        // A complete, verifiable content-key binding means E2EE itself is not
+        // a target-verification refusal once the host can seal the context
+        // before the unique Conversation Run exists.
+        const signing = tweetnacl.sign.keyPair();
+        const content = tweetnacl.box.keyPair();
+        await db.account.update({
+            where: { id: ACCOUNT_ID },
+            data: {
+                encryptionMode: "e2ee",
+                publicKey: Buffer.from(signing.publicKey).toString("hex"),
+                contentPublicKey: new Uint8Array(content.publicKey),
+                contentPublicKeySig: new Uint8Array(tweetnacl.sign.detached(
+                    Buffer.concat([
+                        Buffer.from("Happy content key v1\u0000", "utf8"),
+                        Buffer.from(content.publicKey),
+                    ]),
+                    signing.secretKey,
+                )),
+            },
+        });
+
+        await expect(verifyAutomationConversationTargetV1({
+            accountId: ACCOUNT_ID,
+            caller,
+            input: {
+                automationId: "automation-session-owned",
+                expectedTemplateVersion: 3,
+                resultDelivery: "finalResult",
+            },
+        })).resolves.toEqual({ kind: "verified", templateVersion: 3 });
+
+        await expect(verifyAutomationConversationTargetV1({
+            accountId: ACCOUNT_ID,
+            caller,
+            input: {
+                automationId: "automation-session-owned",
+                expectedTemplateVersion: 3,
+            },
+        })).resolves.toEqual({ kind: "verified", templateVersion: 3 });
+    });
+
     it("refuses a caller whose plugin materialization is not current", async () => {
         await db.pluginMachineMaterialization.deleteMany({});
 
@@ -335,16 +403,19 @@ describe("Automation conversation target verification database boundary", () => 
                     automationId: "automation-manual-disabled",
                     templateVersion: 4,
                     label: "Disabled manual",
+                    execution: { targetType: "execution_run", enabled: false },
                 },
                 {
                     automationId: "automation-manual-owned",
                     templateVersion: 3,
                     label: "Owned manual",
+                    execution: { targetType: "execution_run", enabled: true },
                 },
                 {
                     automationId: "automation-schedule-owned",
                     templateVersion: 3,
                     label: "Owned schedule",
+                    execution: { targetType: "execution_run", enabled: true },
                 },
             ],
             nextCursor: null,
@@ -358,8 +429,8 @@ describe("Automation conversation target verification database boundary", () => 
             input: { limit: 2 },
         })).resolves.toEqual({
             items: [
-                { automationId: "automation-manual-owned", templateVersion: 3, label: "Owned manual" },
-                { automationId: "automation-schedule-owned", templateVersion: 3, label: "Owned schedule" },
+                { automationId: "automation-manual-owned", templateVersion: 3, label: "Owned manual", execution: { targetType: "execution_run", enabled: true } },
+                { automationId: "automation-schedule-owned", templateVersion: 3, label: "Owned schedule", execution: { targetType: "execution_run", enabled: true } },
             ],
             nextCursor: null,
         });
@@ -402,9 +473,9 @@ describe("Automation conversation target verification database boundary", () => 
             input: { cursor: firstPage.nextCursor },
         })).resolves.toEqual({
             items: [
-                { automationId: "automation-page-100", templateVersion: 99, label: "Target 100" },
-                { automationId: "automation-page-101", templateVersion: 100, label: "Target 101" },
-                { automationId: "automation-schedule-owned", templateVersion: 3, label: "Owned schedule" },
+                { automationId: "automation-page-100", templateVersion: 99, label: "Target 100", execution: { targetType: "execution_run", enabled: false } },
+                { automationId: "automation-page-101", templateVersion: 100, label: "Target 101", execution: { targetType: "execution_run", enabled: true } },
+                { automationId: "automation-schedule-owned", templateVersion: 3, label: "Owned schedule", execution: { targetType: "execution_run", enabled: true } },
             ],
             nextCursor: null,
         });
@@ -444,8 +515,8 @@ describe("Automation conversation target verification database boundary", () => 
             input: { cursor: "automation-keyset-a" },
         })).resolves.toEqual({
             items: [
-                { automationId: "automation-keyset-b", templateVersion: 1, label: "Keyset b" },
-                { automationId: "automation-keyset-c", templateVersion: 2, label: "Keyset c" },
+                { automationId: "automation-keyset-b", templateVersion: 1, label: "Keyset b", execution: { targetType: "execution_run", enabled: true } },
+                { automationId: "automation-keyset-c", templateVersion: 2, label: "Keyset c", execution: { targetType: "execution_run", enabled: false } },
             ],
             nextCursor: null,
         });

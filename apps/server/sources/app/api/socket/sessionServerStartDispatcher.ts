@@ -29,9 +29,45 @@ import type { RpcAckResponseEmitter, RpcForwardTargetGuard } from "./rpc/_types"
 
 export type SessionServerStartForwardRpcCall = typeof forwardRpcCall;
 
+/**
+ * The two currentness facts a stamped dispatch depends on. They are read
+ * together but consumed separately: every pre-submission decision needs both,
+ * while post-response settlement keeps the incumbent target-only recheck so a
+ * committed Session identity is still returned to its Run owner.
+ */
+type SessionServerStartCurrentness = Readonly<{
+    /** Exact target Machine availability, capability, and Account currentness. */
+    target: boolean;
+    /** Canonical Run state, claim, attempt, and lease correspondence. */
+    runClaim: boolean;
+}>;
+
+const NOT_CURRENT: SessionServerStartCurrentness = { target: false, runClaim: false };
+
 type ResolveCurrentTarget = (
     request: SessionServerStartDispatchRequestV1,
-) => Promise<boolean>;
+) => Promise<SessionServerStartCurrentness>;
+
+/**
+ * The one predicate for "this Run still holds the claim this dispatch was
+ * derived from". Ingress derivation and the pre-submit guard must not drift.
+ */
+function currentAutomationRunClaimWhere(params: Readonly<{
+    accountId: string;
+    runId: string;
+    claimedByMachineId: string;
+    attempt: number;
+    now: Date;
+}>) {
+    return {
+        id: params.runId,
+        accountId: params.accountId,
+        claimedByMachineId: params.claimedByMachineId,
+        attempt: params.attempt,
+        state: "running",
+        leaseExpiresAt: { gt: params.now },
+    } as const;
+}
 
 function unavailable(): SessionServerStartDispatchResultV1 {
     return { type: "error", code: "target_unavailable", retryable: true };
@@ -59,9 +95,10 @@ function isExactMachineDaemonTarget(
 
 async function resolveCurrentTargetFromServer(
     request: SessionServerStartDispatchRequestV1,
-): Promise<boolean> {
+): Promise<SessionServerStartCurrentness> {
     return await inTx(async (tx) => {
-        const [machine, currentness] = await Promise.all([
+        const now = new Date();
+        const [machine, currentness, runClaim] = await Promise.all([
             tx.machine.findFirst({
                 where: {
                     accountId: request.target.accountId,
@@ -76,34 +113,47 @@ async function resolveCurrentTargetFromServer(
                 },
             }),
             fetchAutomationAccountCurrentnessWitnessTx(tx, request.target.accountId),
+            tx.automationRun.findFirst({
+                where: currentAutomationRunClaimWhere({
+                    accountId: request.target.accountId,
+                    runId: request.start.runId,
+                    claimedByMachineId: request.start.claimedByMachineId,
+                    attempt: request.start.attempt,
+                    now,
+                }),
+                select: { id: true },
+            }),
         ]);
-        return machine !== null
-            && classifyMachineAvailabilityState(machine) === "available"
-            && typeof machine.operationProtocolCapabilitiesRevision === "number"
-            && machine.operationProtocolCapabilitiesRevision >= 1
-            && supportsMachineOperationProtocolCapabilityV1(
-                machine.operationProtocolCapabilities,
-                "sessionSpawn",
-            )
-            && currentness !== null
-            && sameAutomationAccountCurrentnessWitnessV1(
-                request.start.accountCurrentness,
-                currentness,
-            );
+        return {
+            target: machine !== null
+                && classifyMachineAvailabilityState(machine) === "available"
+                && typeof machine.operationProtocolCapabilitiesRevision === "number"
+                && machine.operationProtocolCapabilitiesRevision >= 1
+                && supportsMachineOperationProtocolCapabilityV1(
+                    machine.operationProtocolCapabilities,
+                    "sessionSpawn",
+                )
+                && currentness !== null
+                && sameAutomationAccountCurrentnessWitnessV1(
+                    request.start.accountCurrentness,
+                    currentness,
+                ),
+            runClaim: runClaim !== null,
+        };
     });
 }
 
 function createExactMachineDaemonGuard(params: Readonly<{
     request: SessionServerStartDispatchRequestV1;
-    resolveCurrentTarget: ResolveCurrentTarget;
+    /** Every decision that can still prevent target submission. */
+    currentForSubmission: () => Promise<boolean>;
+    /**
+     * The post-response recheck. It deliberately stays target-only: a Run
+     * cancelled or reclaimed after the target committed a Session must still
+     * surrender that Session identity to its canonical Run owner.
+     */
+    currentTarget: () => Promise<boolean>;
 }>): RpcForwardTargetGuard {
-    const current = async (): Promise<boolean> => {
-        try {
-            return await params.resolveCurrentTarget(params.request);
-        } catch {
-            return false;
-        }
-    };
     const isExact = (target: Pick<RpcAckResponseEmitter, "data">): boolean =>
         isExactMachineDaemonTarget(
             target,
@@ -113,20 +163,20 @@ function createExactMachineDaemonGuard(params: Readonly<{
 
     return {
         filterTargets: async (targets) => {
-            if (!await current()) return [];
+            if (!await params.currentForSubmission()) return [];
             return targets.filter(isExact);
         },
         runOperation: async ({ target, operation, readLatestTarget }) => {
-            if (!isExact(target) || !await current()) {
+            if (!isExact(target) || !await params.currentForSubmission()) {
                 return { status: "unavailable" };
             }
             const latestTarget = await readLatestTarget();
-            if (!latestTarget || !isExact(latestTarget) || !await current()) {
+            if (!latestTarget || !isExact(latestTarget) || !await params.currentForSubmission()) {
                 return { status: "unavailable" };
             }
             const value = await operation();
             const latestTargetAfterResponse = await readLatestTarget();
-            if (!latestTargetAfterResponse || !isExact(latestTargetAfterResponse) || !await current()) {
+            if (!latestTargetAfterResponse || !isExact(latestTargetAfterResponse) || !await params.currentTarget()) {
                 return { status: "unavailable" };
             }
             return { status: "current", value };
@@ -159,14 +209,26 @@ export function createSessionServerStartDaemonDispatcher(params: Readonly<{
         if (options.signal?.aborted) return cancelled();
 
         const request = parsed.data;
-        try {
-            if (!await resolveCurrentTarget(request)) return unavailable();
-        } catch {
-            return unavailable();
-        }
+        const readCurrentness = async (): Promise<SessionServerStartCurrentness> => {
+            try {
+                return await resolveCurrentTarget(request);
+            } catch {
+                return NOT_CURRENT;
+            }
+        };
+        const currentForSubmission = async (): Promise<boolean> => {
+            const currentness = await readCurrentness();
+            return currentness.target && currentness.runClaim;
+        };
+        const currentTarget = async (): Promise<boolean> => (await readCurrentness()).target;
+        if (!await currentForSubmission()) return unavailable();
         if (options.signal?.aborted) return cancelled();
 
-        const targetGuard = createExactMachineDaemonGuard({ request, resolveCurrentTarget });
+        const targetGuard = createExactMachineDaemonGuard({
+            request,
+            currentForSubmission,
+            currentTarget,
+        });
         const requestId = options.signal ? randomUUID() : null;
         let targetSocketId: string | null = null;
         let submittedUnknown = false;
@@ -341,6 +403,8 @@ export function deriveSessionServerStartDispatchFromIngress(params: Readonly<{
         start: {
             automationId: run.automationId,
             runId: request.data.runId,
+            attempt: run.attempt,
+            claimedByMachineId: params.sourceMachineId,
             origin,
             accountCurrentness: params.accountCurrentness,
             requestEnvelope: requestEnvelope.envelope,
@@ -383,14 +447,13 @@ async function resolveSessionServerStartDispatchFromServer(params: Readonly<{
         const [accountCurrentness, run] = await Promise.all([
             fetchAutomationAccountCurrentnessWitnessTx(tx, params.accountId),
             tx.automationRun.findFirst({
-                where: {
-                    id: request.data.runId,
+                where: currentAutomationRunClaimWhere({
                     accountId: params.accountId,
+                    runId: request.data.runId,
                     claimedByMachineId: params.sourceMachineId,
                     attempt: request.data.attempt,
-                    state: "running",
-                    leaseExpiresAt: { gt: now },
-                },
+                    now,
+                }),
                 select: {
                     automationId: true,
                     state: true,

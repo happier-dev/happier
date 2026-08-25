@@ -123,6 +123,10 @@ function createRelayAuthorization(
         relaySocketId?: string;
         signatureBase64Url?: string;
         flowKind?: 'tcp_tunnel' | 'voice_media';
+        maxFrameBytes?: number;
+        maxIdleMs?: number;
+        maxDurationMs?: number;
+        maxTotalBytes?: number;
     }>,
 ) {
     const issuedAt = Date.now();
@@ -142,10 +146,10 @@ function createRelayAuthorization(
         relaySocketId: overrides?.relaySocketId ?? 'socket_1',
         destination,
         capProfileId: 'interactive',
-        maxFrameBytes: 64 * 1024,
-        maxIdleMs: 30_000,
-        maxDurationMs: 300_000,
-        maxTotalBytes: 64 * 1024 * 1024,
+        maxFrameBytes: overrides?.maxFrameBytes ?? 64 * 1024,
+        maxIdleMs: overrides?.maxIdleMs ?? 30_000,
+        maxDurationMs: overrides?.maxDurationMs ?? 300_000,
+        maxTotalBytes: overrides?.maxTotalBytes ?? 64 * 1024 * 1024,
         iat: issuedAt,
         exp: issuedAt + 300_000,
         aud: 'happier-tcp-tunnel-relay-authorization',
@@ -1280,6 +1284,249 @@ describe('registerPeerTcpTunnelRelaySocketHandler', () => {
         }));
 
         await socket.trigger('disconnect');
+    });
+
+    it('uses the signed voice flow gate instead of the generic tunnel gate', async () => {
+        const mod = await loadRegisterRelayModule();
+        const socket = createSocket();
+        const io = createIo();
+        const tunnelId = 'tun_voice_live_gate';
+        const destination = { host: '127.0.0.1', port: 3000 } as const;
+        expect(mod?.registerPeerTcpTunnelRelaySocketHandler).toBeTypeOf('function');
+
+        mod?.registerPeerTcpTunnelRelaySocketHandler('user_1', socket, {
+            io,
+            // A Voice grant is minted under the live-stream relay feature. The generic tunnel
+            // feature is deliberately disabled to prove that relay admission consults the signed
+            // flow kind rather than the handler-wide generic tunnel bit.
+            serverRoutedEnabled: false,
+            serverRoutedEnabledByFlowKind: {
+                tcp_tunnel: false,
+                voice_media: true,
+            },
+            allowedPorts: [3000],
+            relayAuthorizationTrustRoots,
+            coordinator: createRelayTestCoordinator(io, 'user_1'),
+        });
+
+        await socket.trigger('peer:tunnel:v1', createOpenEnvelope(tunnelId, destination, {
+            relayAuthorization: createRelayAuthorization(tunnelId, destination, { flowKind: 'voice_media' }),
+        }));
+
+        expect(io.roomEmit).toHaveBeenCalledWith('peer:tunnel:v1', expect.objectContaining({
+            frame: expect.objectContaining({
+                kind: 'open',
+                open: expect.objectContaining({ tunnelId }),
+            }),
+        }));
+        await socket.trigger('disconnect');
+    });
+
+    it('rejects a signed voice relay when its live-stream flow gate is disabled', async () => {
+        const mod = await loadRegisterRelayModule();
+        const socket = createSocket();
+        const io = createIo();
+        const tunnelId = 'tun_voice_live_gate_disabled';
+        const destination = { host: '127.0.0.1', port: 3000 } as const;
+        expect(mod?.registerPeerTcpTunnelRelaySocketHandler).toBeTypeOf('function');
+
+        mod?.registerPeerTcpTunnelRelaySocketHandler('user_1', socket, {
+            io,
+            serverRoutedEnabled: true,
+            serverRoutedEnabledByFlowKind: {
+                tcp_tunnel: true,
+                voice_media: false,
+            },
+            allowedPorts: [3000],
+            relayAuthorizationTrustRoots,
+            coordinator: createRelayTestCoordinator(io, 'user_1'),
+        });
+
+        await socket.trigger('peer:tunnel:v1', createOpenEnvelope(tunnelId, destination, {
+            relayAuthorization: createRelayAuthorization(tunnelId, destination, { flowKind: 'voice_media' }),
+        }));
+
+        expect(io.roomEmit).toHaveBeenCalledWith('peer:tunnel:v1', expect.objectContaining({
+            frame: expect.objectContaining({
+                kind: 'abort',
+                tunnelId,
+                reasonCode: 'relay_disabled_by_server_policy',
+            }),
+        }));
+        await socket.trigger('disconnect');
+    });
+
+    it('enforces the signed relay frame cap when server policy is looser', async () => {
+        const mod = await loadRegisterRelayModule();
+        const socket = createSocket();
+        const io = createIo();
+        const tunnelId = 'tun_signed_frame_cap';
+        const destination = { host: '127.0.0.1', port: 3000 } as const;
+        expect(mod?.registerPeerTcpTunnelRelaySocketHandler).toBeTypeOf('function');
+
+        mod?.registerPeerTcpTunnelRelaySocketHandler('user_1', socket, {
+            io,
+            serverRoutedEnabled: true,
+            allowedPorts: [3000],
+            maxFrameBytes: 4_096,
+            maxBytes: 4_096,
+            relayAuthorizationTrustRoots,
+            coordinator: createRelayTestCoordinator(io, 'user_1'),
+        });
+
+        await socket.trigger('peer:tunnel:v1', createOpenEnvelope(tunnelId, destination, {
+            relayAuthorization: createRelayAuthorization(tunnelId, destination, {
+                maxFrameBytes: 256,
+                maxTotalBytes: 4_096,
+            }),
+        }));
+        expect(io.roomEmit).toHaveBeenCalledWith('peer:tunnel:v1', expect.objectContaining({
+            frame: expect.objectContaining({
+                kind: 'open',
+                open: expect.objectContaining({ tunnelId }),
+            }),
+        }));
+        await socket.trigger('peer:tunnel:v1', createDataEnvelope(tunnelId, 'x'.repeat(300)));
+
+        expect(io.roomEmit).toHaveBeenCalledWith('peer:tunnel:v1', expect.objectContaining({
+            frame: expect.objectContaining({
+                kind: 'abort',
+                tunnelId,
+                reasonCode: 'relay_cap_exceeded',
+            }),
+        }));
+        await socket.trigger('disconnect');
+    });
+
+    it('enforces the signed relay total-byte cap when server policy is looser', async () => {
+        const mod = await loadRegisterRelayModule();
+        const socket = createSocket();
+        const io = createIo();
+        const tunnelId = 'tun_signed_total_cap';
+        const destination = { host: '127.0.0.1', port: 3000 } as const;
+        expect(mod?.registerPeerTcpTunnelRelaySocketHandler).toBeTypeOf('function');
+
+        mod?.registerPeerTcpTunnelRelaySocketHandler('user_1', socket, {
+            io,
+            serverRoutedEnabled: true,
+            allowedPorts: [3000],
+            maxFrameBytes: 4_096,
+            maxBytes: 4_096,
+            relayAuthorizationTrustRoots,
+            coordinator: createRelayTestCoordinator(io, 'user_1'),
+        });
+
+        await socket.trigger('peer:tunnel:v1', createOpenEnvelope(tunnelId, destination, {
+            relayAuthorization: createRelayAuthorization(tunnelId, destination, {
+                maxFrameBytes: 4_096,
+                maxTotalBytes: 400,
+            }),
+        }));
+        expect(io.roomEmit).toHaveBeenCalledWith('peer:tunnel:v1', expect.objectContaining({
+            frame: expect.objectContaining({
+                kind: 'open',
+                open: expect.objectContaining({ tunnelId }),
+            }),
+        }));
+        const firstData = createDataEnvelope(tunnelId, 'x'.repeat(300));
+        await socket.trigger('peer:tunnel:v1', firstData);
+        expect(io.roomEmit).toHaveBeenCalledWith('peer:tunnel:v1', firstData);
+        await socket.trigger('peer:tunnel:v1', createDataEnvelope(tunnelId, 'y'.repeat(200), 1));
+
+        expect(io.roomEmit).toHaveBeenCalledWith('peer:tunnel:v1', expect.objectContaining({
+            frame: expect.objectContaining({
+                kind: 'abort',
+                tunnelId,
+                reasonCode: 'relay_cap_exceeded',
+            }),
+        }));
+        await socket.trigger('disconnect');
+    });
+
+    it('uses the signed relay idle cap for timer cleanup when server policy is looser', async () => {
+        vi.useFakeTimers();
+        try {
+            const mod = await loadRegisterRelayModule();
+            const socket = createSocket();
+            const io = createIo();
+            const tunnelId = 'tun_signed_idle_cap';
+            const destination = { host: '127.0.0.1', port: 3000 } as const;
+            expect(mod?.registerPeerTcpTunnelRelaySocketHandler).toBeTypeOf('function');
+
+            vi.setSystemTime(0);
+            mod?.registerPeerTcpTunnelRelaySocketHandler('user_1', socket, {
+                io,
+                serverRoutedEnabled: true,
+                allowedPorts: [3000],
+                maxIdleMs: 1_000,
+                maxDurationMs: 1_000,
+                relayAuthorizationTrustRoots,
+                nowMs: () => Date.now(),
+                coordinator: createRelayTestCoordinator(io, 'user_1'),
+            });
+
+            await socket.trigger('peer:tunnel:v1', createOpenEnvelope(tunnelId, destination, {
+                relayAuthorization: createRelayAuthorization(tunnelId, destination, {
+                    maxIdleMs: 30,
+                    maxDurationMs: 100,
+                }),
+            }));
+            await vi.advanceTimersByTimeAsync(31);
+
+            expect(io.roomEmit).toHaveBeenCalledWith('peer:tunnel:v1', expect.objectContaining({
+                frame: expect.objectContaining({
+                    kind: 'abort',
+                    tunnelId,
+                    reasonCode: 'relay_cap_exceeded',
+                }),
+            }));
+            await socket.trigger('disconnect');
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('uses the signed relay duration cap for timer cleanup when server policy is looser', async () => {
+        vi.useFakeTimers();
+        try {
+            const mod = await loadRegisterRelayModule();
+            const socket = createSocket();
+            const io = createIo();
+            const tunnelId = 'tun_signed_duration_cap';
+            const destination = { host: '127.0.0.1', port: 3000 } as const;
+            expect(mod?.registerPeerTcpTunnelRelaySocketHandler).toBeTypeOf('function');
+
+            vi.setSystemTime(0);
+            mod?.registerPeerTcpTunnelRelaySocketHandler('user_1', socket, {
+                io,
+                serverRoutedEnabled: true,
+                allowedPorts: [3000],
+                maxIdleMs: 1_000,
+                maxDurationMs: 1_000,
+                relayAuthorizationTrustRoots,
+                nowMs: () => Date.now(),
+                coordinator: createRelayTestCoordinator(io, 'user_1'),
+            });
+
+            await socket.trigger('peer:tunnel:v1', createOpenEnvelope(tunnelId, destination, {
+                relayAuthorization: createRelayAuthorization(tunnelId, destination, {
+                    maxIdleMs: 100,
+                    maxDurationMs: 30,
+                }),
+            }));
+            await vi.advanceTimersByTimeAsync(31);
+
+            expect(io.roomEmit).toHaveBeenCalledWith('peer:tunnel:v1', expect.objectContaining({
+                frame: expect.objectContaining({
+                    kind: 'abort',
+                    tunnelId,
+                    reasonCode: 'relay_cap_exceeded',
+                }),
+            }));
+            await socket.trigger('disconnect');
+        } finally {
+            vi.useRealTimers();
+        }
     });
 
     it('relays negotiated binary_frame_v2 frames without base64-wrapping the payload', async () => {

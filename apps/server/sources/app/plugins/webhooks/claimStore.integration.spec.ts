@@ -732,7 +732,7 @@ describe("plugin webhook claim/lease settlement", () => {
             .resolves.toMatchObject({ state: "dead_letter", lastErrorCode: "lease_expired", payloadBytes: 256n });
     });
 
-    it("marks each queue-aging CAS transition without charging an attempt", async () => {
+    it("leaves ordinary backlog alone and ages only a target already proven offline", async () => {
         await seedDelivery();
         await db.pluginWebhookDelivery.update({
             where: { id: "delivery-claim" },
@@ -740,27 +740,34 @@ describe("plugin webhook claim/lease settlement", () => {
         });
 
         await expect(ageOverduePluginWebhookDeliveriesV1({ now: NOW, batchSize: 100 })).resolves.toEqual({
-            markedOffline: 1,
             deadLettered: 0,
         });
         await expect(db.pluginWebhookDelivery.findUniqueOrThrow({ where: { id: "delivery-claim" } }))
             .resolves.toMatchObject({
                 state: "queued",
-                automationAdmissionUnresolved: null,
+                attemptCount: 0,
+                offlineSinceAt: null,
+                lastErrorCode: null,
+                automationAdmissionUnresolved: AUTOMATION_ADMISSION_UNRESOLVED,
             });
-        const markedOfflineChange = await readWebhookChange();
-        expect(markedOfflineChange).toEqual({
-            cursor: expect.any(Number),
-            hint: { pluginDomain: "webhook", pluginId: "acme.github" },
+
+        const offlineSinceAt = new Date(NOW.getTime() - 7 * 24 * 60 * 60 * 1_000);
+        await db.pluginWebhookDelivery.update({
+            where: { id: "delivery-claim" },
+            data: {
+                offlineSinceAt,
+                lastErrorCode: "target_offline",
+            },
         });
 
-        const expiredAt = new Date(NOW.getTime() + 7 * 24 * 60 * 60 * 1_000);
-        await expect(ageOverduePluginWebhookDeliveriesV1({ now: expiredAt, batchSize: 100 })).resolves.toEqual({
-            markedOffline: 0,
+        await expect(ageOverduePluginWebhookDeliveriesV1({ now: NOW, batchSize: 100 })).resolves.toEqual({
             deadLettered: 1,
         });
         const deadLetteredChange = await readWebhookChange();
-        expect(deadLetteredChange.cursor).toBeGreaterThan(markedOfflineChange.cursor);
+        expect(deadLetteredChange).toEqual({
+            cursor: expect.any(Number),
+            hint: { pluginDomain: "webhook", pluginId: "acme.github" },
+        });
         await expect(db.pluginWebhookDelivery.findUniqueOrThrow({ where: { id: "delivery-claim" } }))
             .resolves.toMatchObject({ state: "dead_letter", attemptCount: 0, lastErrorCode: "target_offline" });
     });

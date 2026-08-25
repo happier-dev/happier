@@ -15,7 +15,6 @@ import {
     AccountEncryptionMigrateAutomationsDirectiveSchema,
     AutomationEventTriggerDefinitionStoredPayloadV1Schema,
     AutomationSourceSelectorIdV1Schema,
-    MAX_ENABLED_AUTOMATION_EVENT_SOURCE_DEFINITIONS_PER_ACCOUNT,
     AutomationOccurrenceEvidenceEqualityTagV1Schema,
     AutomationOccurrenceEvidenceV1Schema,
     AutomationRunResultStoredV1Schema,
@@ -81,6 +80,8 @@ import {
     validateAutomationTriggerDefinitionEnvelopeOuterForMode,
 } from "./automationStoredContentRead";
 import {
+    AUTOMATION_RUN_REPLY_HANDOFF_TERMINAL_STATES,
+    AUTOMATION_RUN_TERMINAL_STATES,
     isAutomationCurrentPatchInput,
     isAutomationCurrentUpsertInput,
     isAutomationLegacyTargetType,
@@ -638,27 +639,6 @@ async function deleteSupersededAutomationEventSourceStatusTx(params: Readonly<{
     });
 }
 
-async function assertEnabledAutomationEventSourceCapacityTx(params: Readonly<{
-    tx: Tx;
-    accountId: string;
-    excludeAutomationId?: string;
-}>): Promise<void> {
-    const enabledCount = await params.tx.automation.count({
-        where: {
-            accountId: params.accountId,
-            triggerKind: "pluginEvent",
-            enabled: true,
-            deletedAt: null,
-            ...(params.excludeAutomationId
-                ? { id: { not: params.excludeAutomationId } }
-                : {}),
-        },
-    });
-    if (enabledCount >= MAX_ENABLED_AUTOMATION_EVENT_SOURCE_DEFINITIONS_PER_ACCOUNT) {
-        throw new AutomationEventDefinitionCapacityConflictError(enabledCount);
-    }
-}
-
 /**
  * A V2 endpoint asks the owner for a released-shape Definition, not merely a
  * schedule trigger. Keep the snapshot columns in conditional mutations so a
@@ -730,13 +710,6 @@ export class AutomationTemplateMutationConflictError
     constructor() {
         super("Automation template changed during update; retry");
         this.name = "AutomationTemplateMutationConflictError";
-    }
-}
-
-export class AutomationEventDefinitionCapacityConflictError extends Error {
-    constructor(readonly enabledCount: number) {
-        super("Enabled Automation Event source definition limit exceeded");
-        this.name = "AutomationEventDefinitionCapacityConflictError";
     }
 }
 
@@ -2752,6 +2725,64 @@ async function markAutomationChangedTx(tx: Tx, params: { accountId: string; auto
     });
 }
 
+/**
+ * A Run may leave retained history only after both its execution lifecycle and
+ * any Conversation reply custody have reached terminal states. Retention and
+ * the user-initiated clear operation share this exact predicate so neither
+ * path can make a still-actionable Run disappear.
+ */
+export function automationRunCustodyTerminalWhere() {
+    return {
+        state: { in: [...AUTOMATION_RUN_TERMINAL_STATES] },
+        replyHandoffState: { in: [...AUTOMATION_RUN_REPLY_HANDOFF_TERMINAL_STATES] },
+    };
+}
+
+export type ClearAutomationRunHistoryResult =
+    | Readonly<{ status: "not_found" }>
+    | Readonly<{ status: "cleared"; clearedRuns: number }>;
+
+/**
+ * The one user-facing history clear owner. It intentionally never cancels or
+ * terminalizes a Run: the lifecycle owner remains authoritative for any work
+ * that has not reached the shared retained-history predicate above.
+ */
+export async function clearAutomationRunHistory(params: {
+    accountId: string;
+    automationId: string;
+}): Promise<ClearAutomationRunHistoryResult> {
+    return await inTx(async (tx) => {
+        const accountFence = await acquireAccountEncryptionTransitionFenceInTx(
+            tx,
+            params.accountId,
+        );
+        if (accountFence.status !== "ready") {
+            return { status: "not_found" };
+        }
+        const automation = await loadAutomationTx(tx, {
+            accountId: params.accountId,
+            automationId: params.automationId,
+        });
+        if (!automation) {
+            return { status: "not_found" };
+        }
+        const cleared = await tx.automationRun.deleteMany({
+            where: {
+                accountId: params.accountId,
+                automationId: automation.id,
+                ...automationRunCustodyTerminalWhere(),
+            },
+        });
+        if (cleared.count > 0) {
+            await markAutomationChangedTx(tx, {
+                accountId: params.accountId,
+                automationId: automation.id,
+            });
+        }
+        return { status: "cleared", clearedRuns: cleared.count };
+    });
+}
+
 function emitAssignmentUpdates(params: {
     accountId: string;
     automationId: string;
@@ -2908,12 +2939,6 @@ export async function createAutomation(params: {
             throw new AutomationValidationError(
                 "Automation definitions require exactly one trigger",
             );
-        }
-        if (params.input.pluginEvent && params.input.enabled) {
-            await assertEnabledAutomationEventSourceCapacityTx({
-                tx,
-                accountId: params.accountId,
-            });
         }
         const pluginEvent = params.input.pluginEvent
             ? await normalizeAutomationPluginEventWriteTx({
@@ -3137,13 +3162,6 @@ export async function updateAutomation(params: {
             );
         }
         const effectiveEnabled = params.input.enabled ?? existing.enabled;
-        if (existing.triggerKind === "pluginEvent" && effectiveEnabled && !existing.enabled) {
-            await assertEnabledAutomationEventSourceCapacityTx({
-                tx,
-                accountId: params.accountId,
-                excludeAutomationId: existing.id,
-            });
-        }
         const pluginEvent = params.input.pluginEvent
             ? await normalizeAutomationPluginEventWriteTx({
                 tx,
@@ -3609,16 +3627,25 @@ export async function deleteAutomation(params: {
  *
  * There is no separate age rule. A soft-deleted definition with no retained Run
  * is already unreachable by every product path, so the relation emptiness is
- * the exact currentness proof. The relation filter is repeated on the delete so
- * a Run created between the scan and the delete simply excludes that row rather
- * than raising the restrict error.
+ * the exact currentness proof. This helper is deliberately Account-scoped: the
+ * Account transition fence must precede both the candidate scan and delete.
+ * The relation filter is repeated on the delete so a Run created between the
+ * scan and the delete simply excludes that row rather than raising the restrict
+ * error.
  */
 export async function finalizeDeletedAutomationsWithoutRetainedRunsTx(params: Readonly<{
     tx: Tx;
+    accountId: string;
     limit: number;
 }>): Promise<number> {
+    const accountFence = await acquireAccountEncryptionTransitionFenceInTx(
+        params.tx,
+        params.accountId,
+    );
+    if (accountFence.status !== "ready") return 0;
     const candidates = await params.tx.automation.findMany({
         where: {
+            accountId: params.accountId,
             deletedAt: { not: null },
             runs: { none: {} },
         },
@@ -3630,6 +3657,7 @@ export async function finalizeDeletedAutomationsWithoutRetainedRunsTx(params: Re
     const deleted = await params.tx.automation.deleteMany({
         where: {
             id: { in: candidates.map((candidate) => candidate.id) },
+            accountId: params.accountId,
             deletedAt: { not: null },
             runs: { none: {} },
         },

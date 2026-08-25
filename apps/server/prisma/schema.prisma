@@ -41,6 +41,9 @@ model Account {
     tokenEpoch      Int         @default(0)
     encryptionMode  String      @default("e2ee")
     encryptionModeUpdatedAt DateTime @default(now())
+    /// Server-readable Automation operational policy; never stored in private Account settings.
+    automationMaxActiveRunsPerMachine Int @default(4)
+    automationRunRetention String @default("thirtyDays")
 
     // Profile
     firstName String?
@@ -67,7 +70,6 @@ model Account {
     ServiceAccountToken    ServiceAccountToken[]
     ProviderAccountUsageRecord    ProviderAccountUsageRecord[]
     ConnectedServiceAuthGroup ConnectedServiceAuthGroup[]
-    ConnectedServiceAuthGroupLegacyV3MutationFence ConnectedServiceAuthGroupLegacyV3MutationFence[]
     RelationshipsFrom      UserRelationship[]         @relation("RelationshipsFrom")
     RelationshipsTo        UserRelationship[]         @relation("RelationshipsTo")
     Artifact               Artifact[]
@@ -99,6 +101,7 @@ model Account {
     SessionSubagentCustodyRetiredGeneration SessionSubagentCustodyRetiredGeneration[]
     ReviewComments         ReviewComment[]
     ReviewCommentEvents    ReviewCommentEvent[]
+    ReviewCommentPublicationCorrelations ReviewCommentPublicationCorrelation[]
     PluginPermissionGrants PluginPermissionGrant[]
     PluginPermissionGrantRequests PluginPermissionGrantRequest[]
     PluginPermissionGrantEvents PluginPermissionGrantEvent[]
@@ -1316,6 +1319,7 @@ model AutomationRun {
     summaryCiphertext  String?
     errorCode          String?
     errorMessage       String?
+    contentRemovedAt   DateTime?
     producedSessionId  String?
     producedSession    Session?           @relation("AutomationRunProducedSession", fields: [producedSessionId], references: [id], onDelete: SetNull)
     createdAt          DateTime           @default(now())
@@ -1580,20 +1584,6 @@ model ConnectedServiceAuthGroup {
     @@index([accountId, vendor])
 }
 
-/// The one group incarnation that released V3 clients may mutate without
-/// carrying an incarnation token. The row intentionally survives group
-/// deletion so a delayed V3 write cannot target a recreated group.
-model ConnectedServiceAuthGroupLegacyV3MutationFence {
-    accountId                     String @map("account_id")
-    qualifiedGroupDigest          String @map("qualified_group_digest")
-    legacyV3EligibleIncarnation   String @map("legacy_v3_eligible_incarnation")
-
-    account Account @relation(fields: [accountId], references: [id], onDelete: Cascade, onUpdate: Cascade, map: "csag_legacy_v3_fence_account_fkey")
-
-    @@id([accountId, qualifiedGroupDigest], map: "csag_legacy_v3_fence_pkey")
-    @@map("connected_service_auth_group_legacy_v3_mutation_fence")
-}
-
 model ConnectedServiceAuthGroupMember {
     id        String   @id @default(cuid())
     groupDbId String
@@ -1786,6 +1776,11 @@ model PluginWebhookEndpoint {
     revision                          Int      @default(1)
     revokedAt                         DateTime?
     releasedAt                        DateTime?
+    /// The one canonical provider-confirmation fact: the instant this binding first admitted a
+    /// signature-verified provider delivery. Every readiness projection (ensure, read, Account
+    /// status) derives `ready` from it, so an enabled endpoint the provider was never configured
+    /// with is never reported as a working delivery path.
+    providerConfirmedAt               DateTime?
     tombstoneExpiresAt                DateTime?
     targetMachineId                   String?
     targetMachineInstallationId       String?
@@ -2233,6 +2228,7 @@ model ReviewComment {
 
     account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
     events  ReviewCommentEvent[]
+    publicationCorrelations ReviewCommentPublicationCorrelation[]
 
     @@index([projectId, state, updatedAt])
     @@index([projectId, runId, updatedAt])
@@ -2263,6 +2259,21 @@ model ReviewCommentEvent {
     @@index([commentId, serverRevision])
     @@index([accountId, projectId, createdAt])
     @@map("review_comment_events")
+}
+
+model ReviewCommentPublicationCorrelation {
+    publicationCorrelationId String @id @map("publication_correlation_id")
+    accountId                 String @map("account_id")
+    commentId                 String @map("comment_id")
+    targetKey                 String @map("target_key")
+    targetJson                String @map("target_json")
+    createdAt                 BigInt @map("created_at")
+
+    account Account       @relation(fields: [accountId], references: [id], onDelete: Cascade)
+    comment ReviewComment @relation(fields: [commentId], references: [id], onDelete: Cascade)
+
+    @@unique([accountId, commentId, targetKey], map: "review_comment_publication_target_key")
+    @@map("review_comment_publication_correlations")
 }
 
 //

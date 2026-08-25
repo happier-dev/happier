@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+    createExternalActionDaemonDispatchResponseV1,
     createExternalActionResultTooLargeExecutionV1,
+    prepareExternalActionResponseEnvelopeV1,
     type ExternalActionRequestEnvelopeV1,
 } from "@happier-dev/protocol/actions";
 import { SOCKET_RPC_EVENTS } from "@happier-dev/protocol/socketRpc";
@@ -25,13 +27,25 @@ function response(actionId: string, envelope: ExternalActionRequestEnvelopeV1) {
         actionId,
         ...(envelope.requestId ? { requestId: envelope.requestId } : {}),
         execution: { ok: true as const, result: { accepted: true } },
-  };
+    };
 }
 
 function relayResponse(actionId: string, envelope: ExternalActionRequestEnvelopeV1) {
+    return createExternalActionDaemonDispatchResponseV1(
+        prepareExternalActionResponseEnvelopeV1(response(actionId, envelope)),
+    );
+}
+
+function relayedPreparedResponse(value: unknown) {
+    return createExternalActionDaemonDispatchResponseV1(
+        prepareExternalActionResponseEnvelopeV1(value),
+    );
+}
+
+function dispatchedResponse(value: unknown) {
     return {
         kind: "response" as const,
-        response: response(actionId, envelope),
+        prepared: prepareExternalActionResponseEnvelopeV1(value),
     };
 }
 
@@ -61,10 +75,7 @@ describe("createExternalActionDaemonDispatcher", () => {
             actionId: "session.spawn_new",
             envelope,
             principal,
-        })).resolves.toEqual({
-            kind: "response",
-            response: response("session.spawn_new", envelope),
-        });
+        })).resolves.toEqual(dispatchedResponse(response("session.spawn_new", envelope)));
 
         expect(forwardRpc).toHaveBeenCalledWith(expect.objectContaining({
             targetUserId: "account-1",
@@ -114,7 +125,7 @@ describe("createExternalActionDaemonDispatcher", () => {
         });
     });
 
-    it("uses the canonical external Action result projection for daemon failures", async () => {
+    it("preserves the daemon's canonical prepared Action failure through the relay", async () => {
         const envelope: ExternalActionRequestEnvelopeV1 = {
             v: 1,
             target: { kind: "machine", machineId: "machine-1" },
@@ -125,22 +136,16 @@ describe("createExternalActionDaemonDispatcher", () => {
         };
         const forwardRpc = vi.fn(async () => ({
             ok: true as const,
-            result: {
-                kind: "response" as const,
-                response: {
-                    v: 1,
-                    actionId: "action.invoke",
-                    execution: {
-                        ok: false,
-                        errorCode: "target_declined",
-                        error: "Target rejected this request",
-                        details: { reason: "policy" },
-                        retryable: true,
-                        data: { internalTargetState: "declined" },
-                        actionHandlerInvocation: "notStarted",
-                    },
+            result: relayedPreparedResponse({
+                v: 1,
+                actionId: "action.invoke",
+                execution: {
+                    ok: false,
+                    errorCode: "target_declined",
+                    error: "Target rejected this request",
+                    details: { reason: "policy" },
                 },
-            },
+            }),
         }));
         const dispatch = createExternalActionDaemonDispatcher({
             io: {} as never,
@@ -152,19 +157,16 @@ describe("createExternalActionDaemonDispatcher", () => {
             actionId: "action.invoke",
             envelope,
             principal,
-        })).resolves.toEqual({
-            kind: "response",
-            response: {
-                v: 1,
-                actionId: "action.invoke",
-                execution: {
-                    ok: false,
-                    errorCode: "target_declined",
-                    error: "Target rejected this request",
-                    details: { reason: "policy" },
-                },
+        })).resolves.toEqual(dispatchedResponse({
+            v: 1,
+            actionId: "action.invoke",
+            execution: {
+                ok: false,
+                errorCode: "target_declined",
+                error: "Target rejected this request",
+                details: { reason: "policy" },
             },
-        });
+        }));
     });
 
     it("keeps the relay carrier usable after a typed oversized execution response", async () => {
@@ -176,14 +178,11 @@ describe("createExternalActionDaemonDispatcher", () => {
         const forwardRpc = vi.fn<ExternalActionForwardRpcCall>()
             .mockResolvedValueOnce({
                 ok: true as const,
-                result: {
-                    kind: "response" as const,
-                    response: {
-                        v: 1,
-                        actionId: "session.spawn_new",
-                        execution: createExternalActionResultTooLargeExecutionV1(),
-                    },
-                },
+                result: relayedPreparedResponse({
+                    v: 1,
+                    actionId: "session.spawn_new",
+                    execution: createExternalActionResultTooLargeExecutionV1(),
+                }),
             })
             .mockResolvedValueOnce({
                 ok: true as const,
@@ -202,18 +201,19 @@ describe("createExternalActionDaemonDispatcher", () => {
 
         await expect(dispatch(request)).resolves.toMatchObject({
             kind: "response",
-            response: {
-                execution: {
-                    ok: false,
-                    errorCode: "result_too_large",
-                    details: { executionCompleted: true },
+            prepared: {
+                response: {
+                    execution: {
+                        ok: false,
+                        errorCode: "result_too_large",
+                        details: { executionCompleted: true },
+                    },
                 },
             },
         });
-        await expect(dispatch(request)).resolves.toEqual({
-            kind: "response",
-            response: response("session.spawn_new", envelope),
-        });
+        await expect(dispatch(request)).resolves.toEqual(
+            dispatchedResponse(response("session.spawn_new", envelope)),
+        );
         expect(forwardRpc).toHaveBeenCalledTimes(2);
     });
 
@@ -293,10 +293,7 @@ describe("createExternalActionDaemonDispatcher", () => {
             envelope,
             principal,
         });
-        expect(result).toEqual({
-            kind: "response",
-            response: response("action.invoke", envelope),
-        });
+        expect(result).toEqual(dispatchedResponse(response("action.invoke", envelope)));
 
         expect(resolveSessionMachine).toHaveBeenCalledWith({
             accountId: "account-1",
@@ -352,10 +349,7 @@ describe("createExternalActionDaemonDispatcher", () => {
             envelope,
             principal,
         });
-        expect(result).toEqual({
-            kind: "response",
-            response: response("session.message.send", envelope),
-        });
+        expect(result).toEqual(dispatchedResponse(response("session.message.send", envelope)));
 
         expect(isCurrentPublisherProjection).toHaveBeenCalledWith({
             expectedAccountId: "account-1",
@@ -391,10 +385,7 @@ describe("createExternalActionDaemonDispatcher", () => {
                 readLatestTarget: async () => target,
                 operation: async () => {
                     targetCurrent = false;
-                    return {
-                        kind: "response" as const,
-                        response: response("session.spawn_new", envelope),
-                    };
+                    return relayResponse("session.spawn_new", envelope);
                 },
             });
             return guarded.status === "current"
@@ -414,10 +405,7 @@ describe("createExternalActionDaemonDispatcher", () => {
             actionId: "session.spawn_new",
             envelope,
             principal,
-        })).resolves.toEqual({
-            kind: "response",
-            response: response("session.spawn_new", envelope),
-        });
+        })).resolves.toEqual(dispatchedResponse(response("session.spawn_new", envelope)));
         expect(resolveMachine).toHaveBeenCalled();
     });
 

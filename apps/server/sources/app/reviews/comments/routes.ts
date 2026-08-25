@@ -9,6 +9,7 @@ import {
     REVIEW_COMMENT_PRINCIPAL_HEADER_V1,
     ReviewCommentAttachEvidenceRequestV1Schema,
     ReviewCommentBulkTransitionRequestV1Schema,
+    ReviewCommentClaimPublicationDispatchRequestV1Schema,
     ReviewCommentCreateRequestV1Schema,
     ReviewCommentEditRequestV1Schema,
     ReviewCommentGetRequestV1Schema,
@@ -611,6 +612,32 @@ export function registerReviewCommentRoutes(app: Fastify, options: ReviewComment
                 input: parseReviewCommentRouteInput(
                     ReviewCommentBulkTransitionRequestV1Schema,
                     request.body,
+                    "review_comment_invalid_request",
+                ),
+            });
+        } catch (error) {
+            return sendOperationError(reply, error);
+        }
+    });
+
+    app.post("/v1/reviews/comments/:commentId/publication/claim", {
+        preHandler: app.authenticate,
+    }, async (request, reply) => {
+        try {
+            const params = request.params as { commentId: string };
+            const principal = await resolvePrincipal(withPrincipalRouteBinding(
+                request,
+                "POST",
+                `/v1/reviews/comments/${encodeReviewCommentPathSegment(params.commentId)}/publication/claim`,
+            ));
+            return await operations.claimPublicationDispatch({
+                ...principal,
+                input: parseReviewCommentRouteInput(
+                    ReviewCommentClaimPublicationDispatchRequestV1Schema,
+                    {
+                        commentId: params.commentId,
+                        ...(request.body as Record<string, unknown>),
+                    },
                     "review_comment_invalid_request",
                 ),
             });

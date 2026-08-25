@@ -9,8 +9,17 @@ import {
 } from "@/app/automations/automationRunService";
 import { toAutomationRunV2ApiDto } from "@/app/automations/automationApiProjection";
 import { resolveAutomationRunAttemptV2 } from "./automationRunAttemptV2Compatibility";
+import { requirePresentUser } from "../../utils/requirePresentUser";
+import {
+    DEFAULT_AUTOMATION_WORKER_PUBLISHER_DEPENDENCIES,
+    hasExactAutomationWorkerPublisher,
+    type AutomationWorkerPublisherDependencies,
+} from "./automationWorkerPublisher";
 
-export function registerAutomationRunRoutes(app: Fastify): void {
+export function registerAutomationRunRoutes(
+    app: Fastify,
+    dependencies: AutomationWorkerPublisherDependencies = DEFAULT_AUTOMATION_WORKER_PUBLISHER_DEPENDENCIES,
+): void {
     app.post('/v2/automations/runs/:runId/start', {
         preHandler: app.authenticate,
         schema: {
@@ -21,6 +30,13 @@ export function registerAutomationRunRoutes(app: Fastify): void {
             }),
         },
     }, async (request, reply) => {
+        if (!await hasExactAutomationWorkerPublisher({
+            dependencies,
+            accountId: request.userId,
+            request,
+            path: `/v2/automations/runs/${encodeURIComponent(request.params.runId)}/start`,
+            machineId: request.body.machineId,
+        })) return reply.code(401).send(null);
         const run = await startAutomationRunFromV2({
             accountId: request.userId,
             runId: request.params.runId,
@@ -46,6 +62,13 @@ export function registerAutomationRunRoutes(app: Fastify): void {
             }),
         },
     }, async (request, reply) => {
+        if (!await hasExactAutomationWorkerPublisher({
+            dependencies,
+            accountId: request.userId,
+            request,
+            path: `/v2/automations/runs/${encodeURIComponent(request.params.runId)}/succeed`,
+            machineId: request.body.machineId,
+        })) return reply.code(401).send(null);
         const run = await succeedAutomationRunFromV2({
             accountId: request.userId,
             runId: request.params.runId,
@@ -74,6 +97,13 @@ export function registerAutomationRunRoutes(app: Fastify): void {
             }),
         },
     }, async (request, reply) => {
+        if (!await hasExactAutomationWorkerPublisher({
+            dependencies,
+            accountId: request.userId,
+            request,
+            path: `/v2/automations/runs/${encodeURIComponent(request.params.runId)}/fail`,
+            machineId: request.body.machineId,
+        })) return reply.code(401).send(null);
         const run = await failAutomationRunFromV2({
             accountId: request.userId,
             runId: request.params.runId,
@@ -91,7 +121,7 @@ export function registerAutomationRunRoutes(app: Fastify): void {
     });
 
     app.post('/v2/automations/runs/:runId/cancel', {
-        preHandler: app.authenticate,
+        preHandler: [app.authenticate, requirePresentUser],
         schema: {
             params: z.object({ runId: z.string() }),
         },

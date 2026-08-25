@@ -14,6 +14,8 @@ export const PLUGIN_ACCOUNT_STORAGE_KEY_PREFIX =
     "@happier/account/plugin-storage/v1/" as const;
 export const PLUGIN_DECLARATIVE_SETTINGS_KEY_PREFIX =
     "@happier/account/plugin-settings/v1/" as const;
+export const ACCOUNT_SESSION_DRAFT_KV_PREFIX =
+    "@happier/account/session-draft/v1/" as const;
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
@@ -23,6 +25,7 @@ export type AccountScopedKvKeyClassification =
     | Readonly<{ kind: "todo"; keyKind: "index" | "item" }>
     | Readonly<{ kind: "pluginAccountStorage"; pluginId: string }>
     | Readonly<{ kind: "pluginDeclarativeSettings"; pluginId: string }>
+    | Readonly<{ kind: "accountSessionDraft" }>
     | Readonly<{ kind: "reservedUnknown" }>;
 
 export class AccountScopedKvReservedKeyError extends Error {
@@ -76,6 +79,9 @@ export function decodeAccountScopedKvJson(value: Uint8Array): unknown {
 export function classifyAccountScopedKvKey(
     key: string,
 ): AccountScopedKvKeyClassification {
+    if (key.startsWith(ACCOUNT_SESSION_DRAFT_KV_PREFIX)) {
+        return { kind: "accountSessionDraft" };
+    }
     const pluginAccountStorage = parsePluginIdAtPrefix(
         key,
         PLUGIN_ACCOUNT_STORAGE_KEY_PREFIX,
@@ -113,6 +119,7 @@ export function isReservedAccountScopedKvKey(key: string): boolean {
     const classification = classifyAccountScopedKvKey(key);
     return classification.kind === "pluginAccountStorage"
         || classification.kind === "pluginDeclarativeSettings"
+        || classification.kind === "accountSessionDraft"
         || classification.kind === "reservedUnknown";
 }
 

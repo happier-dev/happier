@@ -24,7 +24,7 @@ import {
     parseAutomationUpsertInput,
 } from "@/app/automations/automationValidation";
 import {
-    isAutomationV2Compatible,
+    isAutomationDefinitionRepresentableInV2,
     toAutomationRunV2ApiDto,
     toAutomationV2ApiDto,
 } from "@/app/automations/automationApiProjection";
@@ -147,7 +147,7 @@ export function registerAutomationCrudRoutes(app: Fastify): void {
                 expectedTriggerKind: "schedule",
                 requireV2DefinitionRepresentability: true,
             });
-            const legacyExisting = existing && isAutomationV2Compatible(existing)
+            const legacyExisting = existing && isAutomationDefinitionRepresentableInV2(existing)
                 ? existing
                 : null;
             if (!legacyExisting) {

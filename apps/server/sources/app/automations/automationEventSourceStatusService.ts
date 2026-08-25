@@ -15,6 +15,7 @@ import {
     readCurrentAutomationEventDurablePushWebhookContributionV1,
     resolveCurrentAutomationEventContributionTx,
     resolveCurrentAutomationEventManifestTx,
+    sameAutomationEventDurablePushWebhookContributionV1,
     AutomationEventCurrentnessError,
     type AutomationEventCallerV1,
 } from "./automationEventCurrentness";
@@ -167,7 +168,11 @@ async function assertCurrentDurablePushCatalogScope(params: Readonly<{
     const supported = manifest.contributes.events.some((event) => {
         if (event.kind !== "event" || event.automation?.eligible !== true) return false;
         const contribution = readCurrentAutomationEventDurablePushWebhookContributionV1(event);
-        return contribution !== null && sameWebhookContribution(contribution, endpoint.webhookContribution);
+        return contribution !== null
+            && sameAutomationEventDurablePushWebhookContributionV1(
+                contribution,
+                endpoint.webhookContribution,
+            );
     });
     if (!supported) fail("event_contribution_not_current");
 }
@@ -185,13 +190,6 @@ function sourceTargetMatchesCaller(
         && automation.watcherMachineInstallationId === caller.machineInstallationId
         && automation.watcherPluginId === caller.pluginId
         && automation.watcherMaterializationId === caller.materializationId;
-}
-
-function sameWebhookContribution(
-    left: Readonly<{ pluginId: string; localId: string }>,
-    right: Readonly<{ pluginId: string; localId: string }>,
-): boolean {
-    return left.pluginId === right.pluginId && left.localId === right.localId;
 }
 
 async function reportSourceStatus(params: Readonly<{
@@ -256,7 +254,7 @@ async function reportSourceStatus(params: Readonly<{
         });
         if (
             endpoint === null
-            || !sameWebhookContribution(
+            || !sameAutomationEventDurablePushWebhookContributionV1(
                 endpoint.webhookContribution,
                 eventContribution.durablePushWebhookContribution,
             )

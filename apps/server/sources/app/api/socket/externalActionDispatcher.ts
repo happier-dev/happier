@@ -2,10 +2,10 @@ import { randomUUID } from "node:crypto";
 
 import {
     EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1,
-    projectExternalActionDaemonDispatchResultV1,
+    parseExternalActionDaemonDispatchResultV1,
     type ExternalActionActionIdV1,
     type ExternalActionDaemonDispatchRequestV1,
-    type ExternalActionDaemonDispatchResultV1,
+    type ParsedExternalActionDaemonDispatchResultV1,
     type ExternalActionDaemonPlacementV1,
     type ExternalActionRequestEnvelopeV1,
     type ExternalActionServerPrincipalV1,
@@ -43,7 +43,7 @@ export type ExternalActionPlacementErrorCode =
     | "target_unavailable";
 
 export type ExternalActionDaemonDispatchResult =
-    | ExternalActionDaemonDispatchResultV1
+    | ParsedExternalActionDaemonDispatchResultV1
     | Readonly<{ kind: "placement_error"; code: ExternalActionPlacementErrorCode }>;
 
 export type ExternalActionDaemonDispatcher = (
@@ -79,10 +79,10 @@ type SocketDataCarrier = Readonly<{ data?: unknown }>;
 function parseDaemonResponse(
     raw: unknown,
     expected: Readonly<{ actionId: ExternalActionActionIdV1; requestId?: string }>,
-): ExternalActionDaemonDispatchResultV1 | null {
-    const result = projectExternalActionDaemonDispatchResultV1(raw);
+): ParsedExternalActionDaemonDispatchResultV1 | null {
+    const result = parseExternalActionDaemonDispatchResultV1(raw);
     if (!result || result.kind === "invalid_request") return result;
-    const response = result.response;
+    const response = result.prepared.response;
     if (response.actionId !== expected.actionId) return null;
 
     if (expected.requestId === undefined) {
@@ -91,7 +91,7 @@ function parseDaemonResponse(
         return null;
     }
 
-    return { kind: "response", response };
+    return result;
 }
 
 async function resolveMachineFromServer(params: Readonly<{

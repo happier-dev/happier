@@ -10,6 +10,7 @@ import { getOrCreateServerIdentityId } from "@/app/serverIdentity/serverIdentity
 import { resolveConfiguredCanonicalServerUrl } from "@/app/serverUrls/effectiveServerUrls";
 import { inTx } from "@/storage/inTx";
 
+import { projectPluginWebhookEndpointReadinessV1 } from "./endpointReadiness";
 import { formatPluginWebhookEndpointPublicUrlV1 } from "./endpointStore";
 
 export async function readPluginWebhookAccountStatusV1(params: Readonly<{
@@ -36,6 +37,7 @@ export async function readPluginWebhookAccountStatusV1(params: Readonly<{
                 routingKind: true,
                 enabled: true,
                 revokedAt: true,
+                providerConfirmedAt: true,
                 createdAt: true,
                 targetMachineId: true,
                 targetMachineInstallationId: true,
@@ -129,7 +131,6 @@ export async function readPluginWebhookAccountStatusV1(params: Readonly<{
                     ))
                     .reduce((total, item) => total + item._count._all, 0)
                 : 0;
-            const routeAvailable = row.enabled && row.revokedAt === null && row.route.enabled && row.route.revokedAt === null;
             endpoints.push({
                 webhookEndpointId: row.id,
                 revision: row.revision,
@@ -141,11 +142,15 @@ export async function readPluginWebhookAccountStatusV1(params: Readonly<{
                 },
                 sourceInstanceId: row.sourceInstanceId,
                 routing: row.routingKind,
-                readiness: !routeAvailable
-                    ? "routeUnavailable" as const
-                    : current.kind === "current"
-                        ? "ready" as const
-                        : "targetUnavailable" as const,
+                readiness: projectPluginWebhookEndpointReadinessV1({
+                    endpointEnabled: row.enabled,
+                    endpointRevokedAt: row.revokedAt,
+                    routeEnabled: row.route.enabled,
+                    routeRevokedAt: row.route.revokedAt,
+                    targetStatus: current.kind === "current" ? "current" : "unavailable",
+                    providerConfirmedAt: row.providerConfirmedAt,
+                    oneTimeCredentialDisclosureLost: false,
+                }),
                 targetStatus: current.kind === "current" ? "current" as const : "unavailable" as const,
                 publicUrl: formatPluginWebhookEndpointPublicUrlV1(publicBaseUrl, row.route.opaqueRouteId),
                 createdAt: row.createdAt.getTime(),

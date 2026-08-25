@@ -11,7 +11,6 @@ import {
     QualifiedConnectedAccountServiceRefSchema,
     QualifiedConnectedAccountProfileV4Schema,
     PluginContributionLocalIdSchema,
-    readAccountScopedCiphertextKindByte,
     type QualifiedConnectedAccountConfigurationSnapshotV4,
     type QualifiedConnectedAccountConfigurationTargetV4,
     type QualifiedConnectedAccountCredentialMetadataV4,
@@ -23,10 +22,12 @@ import {
 } from "@happier-dev/protocol";
 
 import { deriveAccountEncryptionCurrentnessFromRow } from "@/app/encryption/accountContentKeyAdmission";
-import { readEncryptionFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
-import { decryptString, encryptString } from "@/modules/encrypt";
 import { db } from "@/storage/db";
 import { inTx, type Tx } from "@/storage/inTx";
+import {
+    decodeAccountContentFromAtRestStorage,
+    encodeAccountContentForAtRestStorage,
+} from "../accountContentAtRestStorage";
 import { recordConnectedServiceAccountProfileChange } from "../connectedServicesAccountProfileChange";
 import {
     createConnectedServiceCredentialRevision,
@@ -71,18 +72,6 @@ import {
     clearQualifiedConnectedAccountUsageForAccountInTx,
 } from "./usageRepository";
 
-type StoredEnvelopeContainerV1 =
-    | Readonly<{
-        v: 1;
-        storage: "json_v1";
-        content: StoredJsonContentEnvelope;
-    }>
-    | Readonly<{
-        v: 1;
-        storage: "server_sealed_json_v1";
-        ciphertext: string;
-    }>;
-
 export type QualifiedConnectedServiceCredentialMutationResult =
     | Readonly<{
         status: "written";
@@ -102,7 +91,6 @@ export type QualifiedConnectedServiceCredentialMutationResult =
     | Readonly<{ status: "provider_identity_mismatch" }>
     | Readonly<{ status: "authentication_mode_mismatch" }>
     | Readonly<{ status: "revision_required" }>
-    | Readonly<{ status: "capacity_exhausted" }>
     | Readonly<{ status: "storage_mode_mismatch" }>;
 
 export type QualifiedConnectedAccountConfigurationMutationResult =
@@ -347,25 +335,11 @@ function encodeEnvelopeForStorage(params: Readonly<{
     accountMode: "plain" | "e2ee";
     content: StoredJsonContentEnvelope;
 }>): Uint8Array<ArrayBuffer> {
-    const content = StoredJsonContentEnvelopeSchema.parse(params.content);
-    const json = JSON.stringify(content);
-    const shouldServerSeal = params.accountMode === "plain"
-        && readEncryptionFeatureEnv(process.env).plainAccountCredentialsAtRest !== "none";
-    const container: StoredEnvelopeContainerV1 = shouldServerSeal
-        ? {
-            v: 1,
-            storage: "server_sealed_json_v1",
-            ciphertext: Buffer.from(encryptString(
-                buildEnvelopeStorageKeyPath(params),
-                json,
-            )).toString("base64"),
-        }
-        : {
-            v: 1,
-            storage: "json_v1",
-            content,
-        };
-    return encodeUtf8(JSON.stringify(container));
+    return encodeUtf8(encodeAccountContentForAtRestStorage({
+        accountMode: params.accountMode,
+        keyPath: buildEnvelopeStorageKeyPath(params),
+        content: params.content,
+    }));
 }
 
 function decodeEnvelopeFromStorage(params: Readonly<{
@@ -374,26 +348,10 @@ function decodeEnvelopeFromStorage(params: Readonly<{
     kind: "credential" | "configuration";
     bytes: Uint8Array;
 }>): StoredJsonContentEnvelope {
-    const raw = JSON.parse(decodeUtf8(params.bytes)) as unknown;
-    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-        throw new Error("Invalid qualified Connected Account content envelope");
-    }
-    const container = raw as Partial<StoredEnvelopeContainerV1>;
-    if (container.v !== 1) {
-        throw new Error("Unsupported qualified Connected Account content envelope");
-    }
-    if (container.storage === "json_v1") {
-        return StoredJsonContentEnvelopeSchema.parse(container.content);
-    }
-    if (container.storage === "server_sealed_json_v1"
-        && typeof container.ciphertext === "string") {
-        const opened = decryptString(
-            buildEnvelopeStorageKeyPath(params),
-            Buffer.from(container.ciphertext, "base64"),
-        );
-        return StoredJsonContentEnvelopeSchema.parse(JSON.parse(opened));
-    }
-    throw new Error("Unsupported qualified Connected Account content envelope");
+    return decodeAccountContentFromAtRestStorage({
+        keyPath: buildEnvelopeStorageKeyPath(params),
+        value: decodeUtf8(params.bytes),
+    });
 }
 
 function decodeQualifiedConnectedAccountConfigurationRowContent(
@@ -830,18 +788,6 @@ async function mutateQualifiedConnectedServiceCredentialWithPreparedInTx(
         });
 
     if (!current) {
-        // Only a create can grow the Account past what the unpaginated reader can
-        // serve. The count runs in this transaction, immediately before the insert,
-        // so the refusal and the row it prevents cannot straddle a concurrent write.
-        // Every row for the Account counts: the list query takes its ceiling from the
-        // raw row set, so a legacy shadow row consumes the same reader budget as a
-        // qualified one.
-        const held = await tx.serviceAccountToken.count({
-            where: { accountId: params.accountId },
-        });
-        if (held >= QUALIFIED_CONNECTED_ACCOUNT_UNPAGINATED_LIMIT) {
-            return { status: "capacity_exhausted" };
-        }
         const configurationRevision =
             effectivePreparedCreate?.configurationRevision ?? null;
         await tx.serviceAccountToken.create({
@@ -1268,7 +1214,6 @@ export type QualifiedConnectedAccountConfigurationMutationParams = Readonly<{
     expectedCredentialRevision: string;
     expectedConfigurationRevision: string | null;
     replacementContentEnvelope: StoredJsonContentEnvelope;
-    preserveConfigurationRevisionForCiphertextReseal?: true;
 }>;
 
 export async function mutateQualifiedConnectedAccountConfigurationInTx(
@@ -1355,37 +1300,7 @@ async function mutateQualifiedConnectedAccountConfigurationForModeInTx(
         };
     }
 
-    let configurationRevision: string;
-    if (params.preserveConfigurationRevisionForCiphertextReseal) {
-        if (
-            accountMode !== "e2ee"
-            || row.configurationRevision === null
-            || row.configurationContent === null
-            || params.replacementContentEnvelope.t !== "encrypted"
-        ) {
-            return { status: "storage_mode_mismatch" };
-        }
-        const currentContent = decodeEnvelopeFromStorage({
-            accountId: params.accountId,
-            ref: params.target.ref,
-            kind: "configuration",
-            bytes: row.configurationContent,
-        });
-        if (
-            currentContent.t !== "encrypted"
-            || readAccountScopedCiphertextKindByte(
-                currentContent.c,
-            ) !== 8
-            || readAccountScopedCiphertextKindByte(
-                params.replacementContentEnvelope.c,
-            ) !== 9
-        ) {
-            return { status: "storage_mode_mismatch" };
-        }
-        configurationRevision = row.configurationRevision;
-    } else {
-        configurationRevision = createConfigurationRevision();
-    }
+    const configurationRevision = createConfigurationRevision();
     const write = await tx.serviceAccountToken.updateMany({
         where: {
             id: row.id,
@@ -1461,15 +1376,6 @@ export async function mutateQualifiedConnectedAccountConfiguration(
     });
 }
 
-/**
- * How many qualified Connected Account credentials one Account may hold.
- *
- * The list wire shape is deliberately unpaginated, so this is simultaneously the
- * reader's hard ceiling and the writer's capacity. Both must read it from here:
- * a writer that admits one more row than the reader accepts turns a single write
- * into a total read outage for the Account.
- */
-export const QUALIFIED_CONNECTED_ACCOUNT_UNPAGINATED_LIMIT = 500;
 type QualifiedConnectedAccountListStorage = Pick<
     Tx,
     "serviceAccountToken"
@@ -1612,7 +1518,6 @@ async function listQualifiedConnectedAccountsByFilterInTx(
             { connectedAccountId: "asc" },
             { id: "asc" },
         ],
-        take: QUALIFIED_CONNECTED_ACCOUNT_UNPAGINATED_LIMIT + 1,
     });
     const rows = selectedRows.filter((row) => {
         const canonicalValues = [
@@ -1634,11 +1539,6 @@ async function listQualifiedConnectedAccountsByFilterInTx(
         }
         return true;
     });
-    if (rows.length > QUALIFIED_CONNECTED_ACCOUNT_UNPAGINATED_LIMIT) {
-        throw new Error(
-            "Qualified Connected Account unpaginated list limit exceeded",
-        );
-    }
     return rows.map((row) => {
         const ref = parseStoredQualifiedConnectedAccountRef(row);
         const rowService = ref.service;
@@ -1728,13 +1628,7 @@ export async function listAllQualifiedConnectedAccountsForLegacyProjectionInTx(
             authenticationModeId: true,
             metadata: true,
         },
-        take: QUALIFIED_CONNECTED_ACCOUNT_UNPAGINATED_LIMIT + 1,
     });
-    if (rows.length > QUALIFIED_CONNECTED_ACCOUNT_UNPAGINATED_LIMIT) {
-        throw new Error(
-            "Qualified Connected Account legacy projection limit exceeded",
-        );
-    }
     const storedByIdentityDigest = new Map(
         rows.map((row) => [
             row.qualifiedIdentityDigest,

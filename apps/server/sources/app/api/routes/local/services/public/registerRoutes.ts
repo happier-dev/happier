@@ -618,9 +618,13 @@ export function registerLocalServicePublicRoutes(
     app: Fastify,
     options: RegisterLocalServicePublicRoutesOptions,
 ): void {
-    app.server?.on?.("upgrade", (request, socket, head) => {
-        void handleLocalServicePublicWebSocketUpgrade(request, socket, head, options);
-    });
+    // The upgrade handling is async (S-2 resolves the caller's session access before validating
+    // access), so the promise is returned rather than discarded. Node ignores an `upgrade`
+    // listener's return value; returning it lets callers and tests await the completed handling
+    // instead of guessing how many microtasks it takes.
+    app.server?.on?.("upgrade", (request, socket, head) => (
+        handleLocalServicePublicWebSocketUpgrade(request, socket, head, options)
+    ));
 
     app.post(PUBLIC_CONTROL_ROUTE_PATH, {
         preHandler: app.authenticate,

@@ -14,8 +14,12 @@ import {
 import { db } from "@/storage/db";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 
-import { createPluginWebhookEndpointActionsV1 } from "./endpointActions";
+import {
+    createPluginWebhookEndpointActionsV1,
+    rotatePluginWebhookEndpointCredentialV1,
+} from "./endpointActions";
 import { ingestPluginWebhookV1 } from "./ingest";
+import { readPluginWebhookAccountStatusV1 } from "./statusStore";
 
 /**
  * The end-to-end reachability proof for the durable-push producer the GitHub
@@ -273,6 +277,99 @@ describe("GitHub Account webhook endpoint vertical", () => {
             sourceInstanceId: ROUTING_SOURCE_INSTANCE_ID,
         });
         expect(endpoint.deliveries).toHaveLength(1);
+    });
+
+    it("keeps every readiness projection unconfirmed until a verified delivery proves the provider was configured", async () => {
+        const accountId = await seedAccount();
+        const ensured = await ensureGithubEndpoint(accountId, "ensure-github-account-endpoint-readiness");
+        const opaqueRouteId = readOpaqueRouteId(ensured.publicUrl);
+        const readReadiness = async () => (await createPluginWebhookEndpointActionsV1().read({
+            accountId,
+            input: { webhookEndpointId: ensured.webhookEndpointId },
+        })).readiness;
+        const statusReadiness = async () => (await readPluginWebhookAccountStatusV1({
+            accountId,
+            input: { pageSize: 50, deadLetterPageSize: 0 },
+        })).endpoints.map((endpoint) => endpoint.readiness);
+
+        // An enabled endpoint with a live route is NOT a working delivery path.
+        expect(ensured.readiness).toBe("providerConfirmationRequired");
+        await expect(readReadiness()).resolves.toBe("providerConfirmationRequired");
+        await expect(statusReadiness()).resolves.toEqual(["providerConfirmationRequired"]);
+
+        // A request the verifier rejected is not provider confirmation.
+        await expect(ingestPluginWebhookV1({
+            opaqueRouteId,
+            rawBody: PUSH_BODY,
+            headers: githubHeaders(`${ensured.oneTimeGeneratedSecret!}-tampered`, "delivery-readiness-rejected"),
+        })).resolves.toMatchObject({ kind: "rejected", statusCode: 401 });
+        await expect(readReadiness()).resolves.toBe("providerConfirmationRequired");
+        await expect(statusReadiness()).resolves.toEqual(["providerConfirmationRequired"]);
+
+        await expect(ingestPluginWebhookV1({
+            opaqueRouteId,
+            rawBody: PUSH_BODY,
+            headers: githubHeaders(ensured.oneTimeGeneratedSecret!, "delivery-readiness-verified"),
+        })).resolves.toMatchObject({ kind: "accepted" });
+
+        await expect(readReadiness()).resolves.toBe("ready");
+        await expect(statusReadiness()).resolves.toEqual(["ready"]);
+
+        // The same idempotency key rejoins a confirmed endpoint, so the lost
+        // one-time disclosure no longer blocks provider setup.
+        await expect(ensureGithubEndpoint(accountId, "ensure-github-account-endpoint-readiness"))
+            .resolves.toMatchObject({ readiness: "ready" });
+    });
+
+    it("returns readiness to provider confirmation across a credential rotation until the new secret delivers", async () => {
+        const accountId = await seedAccount();
+        const ensured = await ensureGithubEndpoint(accountId, "ensure-github-account-endpoint-rotation");
+        const opaqueRouteId = readOpaqueRouteId(ensured.publicUrl);
+        const readEndpoint = async () => await createPluginWebhookEndpointActionsV1().read({
+            accountId,
+            input: { webhookEndpointId: ensured.webhookEndpointId },
+        });
+
+        await expect(ingestPluginWebhookV1({
+            opaqueRouteId,
+            rawBody: PUSH_BODY,
+            headers: githubHeaders(ensured.oneTimeGeneratedSecret!, "delivery-rotation-1"),
+        })).resolves.toMatchObject({ kind: "accepted" });
+        const confirmed = await readEndpoint();
+        expect(confirmed.readiness).toBe("ready");
+
+        const rotated = await rotatePluginWebhookEndpointCredentialV1({
+            accountId,
+            input: { webhookEndpointId: ensured.webhookEndpointId, expectedRevision: confirmed.revision },
+        });
+        expect(rotated).toMatchObject({ kind: "rotated", oneTimeGeneratedSecret: expect.any(String) });
+        const rotatedSecret = rotated.oneTimeGeneratedSecret;
+        if (rotatedSecret === undefined) throw new Error("Expected the rotation to disclose its new secret");
+
+        // The provider still holds the superseded secret. Reporting `ready`
+        // here would call a configuration that breaks when the overlap ends a
+        // working delivery path.
+        await expect(readEndpoint()).resolves.toMatchObject({ readiness: "providerConfirmationRequired" });
+
+        // A delivery still signed with the superseded secret verifies inside
+        // the overlap window and is admitted, but it proves nothing about the
+        // credential the provider now has to be reconfigured with.
+        await expect(ingestPluginWebhookV1({
+            opaqueRouteId,
+            rawBody: PUSH_BODY,
+            headers: githubHeaders(ensured.oneTimeGeneratedSecret!, "delivery-rotation-2"),
+        })).resolves.toMatchObject({ kind: "accepted" });
+        await expect(readEndpoint()).resolves.toMatchObject({ readiness: "providerConfirmationRequired" });
+
+        // Positive twin: the reconfigured provider's first delivery confirms
+        // the current credential, so the states above are the rotation and not
+        // a permanently unconfirmable endpoint.
+        await expect(ingestPluginWebhookV1({
+            opaqueRouteId,
+            rawBody: PUSH_BODY,
+            headers: githubHeaders(rotatedSecret, "delivery-rotation-3"),
+        })).resolves.toMatchObject({ kind: "accepted" });
+        await expect(readEndpoint()).resolves.toMatchObject({ readiness: "ready" });
     });
 
     it("rejects a delivery signed with any secret other than the one disclosed by ensure", async () => {

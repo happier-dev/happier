@@ -1,8 +1,26 @@
 import { Buffer } from "node:buffer";
 
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { io as ioClient } from "socket.io-client";
 import { Server } from "socket.io";
+
+const protocolSerializerSpy = vi.hoisted(() => vi.fn());
+const protocolPrepareSpy = vi.hoisted(() => vi.fn());
+
+vi.mock("@happier-dev/protocol/actions", async (importOriginal) => {
+    const protocol = await importOriginal<typeof import("@happier-dev/protocol/actions")>();
+    return {
+        ...protocol,
+        prepareExternalActionResponseEnvelopeV1: (value: unknown) => {
+            protocolPrepareSpy(value);
+            return protocol.prepareExternalActionResponseEnvelopeV1(value);
+        },
+        serializeExternalActionResponseEnvelopeV1: (value: unknown) => {
+            protocolSerializerSpy(value);
+            return protocol.serializeExternalActionResponseEnvelopeV1(value);
+        },
+    };
+});
 
 import {
     EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1,
@@ -11,6 +29,7 @@ import {
     EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES,
     ExternalActionDaemonDispatchRequestV1Schema,
     measureExternalActionResponseEnvelopeUtf8BytesV1,
+    prepareExternalActionResponseEnvelopeV1,
 } from "@happier-dev/protocol/actions";
 import {
     SOCKET_RPC_EVENTS,
@@ -203,16 +222,18 @@ describe("external Action server-to-daemon request carrier", () => {
         daemonSocket.on(SOCKET_RPC_EVENTS.REQUEST, (request: unknown, acknowledge: (response: unknown) => void) => {
             const relayed = summarizeRelayedRequest(request);
             relayedRequests.push(relayed.summary);
+            const response = {
+                v: 1,
+                actionId: relayed.dispatch.actionId,
+                ...(relayed.dispatch.envelope.requestId === undefined
+                    ? {}
+                    : { requestId: relayed.dispatch.envelope.requestId }),
+                execution: { ok: true, result: responseResult },
+            } as const;
+            const prepared = prepareExternalActionResponseEnvelopeV1(response);
             acknowledge({
                 kind: "response",
-                response: {
-                    v: 1,
-                    actionId: relayed.dispatch.actionId,
-                    ...(relayed.dispatch.envelope.requestId === undefined
-                        ? {}
-                        : { requestId: relayed.dispatch.envelope.requestId }),
-                    execution: { ok: true, result: responseResult },
-                },
+                body: new TextEncoder().encode(prepared.body),
             });
         });
 
@@ -357,6 +378,22 @@ describe("external Action server-to-daemon request carrier", () => {
                 execution: { ok: true, result: { carrier: "response-still-usable" } },
             });
             expect(relayedRequests).toHaveLength(5);
+            expect(daemonSocket.connected).toBe(true);
+
+            protocolSerializerSpy.mockClear();
+            protocolPrepareSpy.mockClear();
+            responseResult = { carrier: "daemon-prepared" };
+            const daemonPreparedResponse = await app.inject(responseBoundaryRequest);
+            expect(daemonPreparedResponse.statusCode).toBe(200);
+            expect(daemonPreparedResponse.body).toBe(JSON.stringify({
+                v: 1,
+                actionId: "session.spawn_new",
+                requestId: "carrier-response-boundary",
+                execution: { ok: true, result: { carrier: "daemon-prepared" } },
+            }));
+            expect(protocolSerializerSpy).not.toHaveBeenCalled();
+            expect(protocolPrepareSpy).toHaveBeenCalledTimes(1);
+            expect(relayedRequests).toHaveLength(6);
             expect(daemonSocket.connected).toBe(true);
         } finally {
             daemonSocket.close();

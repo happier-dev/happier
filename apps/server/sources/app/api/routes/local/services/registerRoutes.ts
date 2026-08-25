@@ -206,6 +206,10 @@ export function registerLocalServiceRoutes(
         resolvePreview: (previewId) => runtimes.preview.resolvePreview(previewId),
         resolvePreviewByHost: (hostname) => runtimes.preview.resolvePreviewByHost(hostname),
         hostOriginBaseDomain: featureEnv.previewHostOriginBaseDomain,
+        // F-5: mark the path-mode exchange cookie `Secure` on an https deployment. It cannot be
+        // unconditional — on plain http the browser drops a `Secure` cookie and the private
+        // preview stops working entirely.
+        publicBaseUrlSecure: isHttpsUrl(resolvePublicBaseUrl(env)),
         validateAccess: (input) => runtimes.preview.validateAccess(input),
         exchangeAccessToken: (input) => runtimes.preview.exchangeAccessToken(input),
         authorizeSessionAccess,

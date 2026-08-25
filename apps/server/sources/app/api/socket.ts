@@ -72,6 +72,7 @@ import {
     EXTERNAL_ACTION_RELAY_RESPONSE_SOCKET_MIN_BUFFER_BYTES,
     PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT,
     EXTERNAL_SESSION_OPERATION_SOCKET_MAX_BATCH_ITEMS_V1,
+    resolvePeerRouteFeatureId,
     resolveExternalSessionOperationSocketBatchLimitsV1,
     type ExternalSessionOperationSocketBatchLimitResolutionV1,
     type PeerMediationObservabilityEventV1,
@@ -218,10 +219,16 @@ export function startSocket(app: Fastify) {
         'machines.liveStream.serverRouted',
         process.env,
     );
-    const serverRoutedTunnelEnabled = isServerFeatureEnabledForRequest(
-        'machines.tunnel.serverRouted',
-        process.env,
-    );
+    const serverRoutedTunnelRelayEnabledByFlowKind = {
+        tcp_tunnel: isServerFeatureEnabledForRequest(
+            resolvePeerRouteFeatureId({ flowKind: 'tcp_tunnel', routeKind: 'server_relay' }),
+            process.env,
+        ),
+        voice_media: isServerFeatureEnabledForRequest(
+            resolvePeerRouteFeatureId({ flowKind: 'voice_media', routeKind: 'server_relay' }),
+            process.env,
+        ),
+    } as const;
     const machineTransferFeatureEnv = readMachineTransferFeatureEnv(process.env);
     const machineLiveStreamFeatureEnv = readMachineLiveStreamFeatureEnv(process.env);
     const machineTunnelFeatureEnv = readMachineTunnelFeatureEnv(process.env);
@@ -324,7 +331,8 @@ export function startSocket(app: Fastify) {
     const tunnelRelayHandlerOptions = {
         io: tunnelRelayBridge.io,
         relayAuthorizationTrustRoots: tunnelRelayAuthorizationTrustRoots,
-        serverRoutedEnabled: serverRoutedTunnelEnabled,
+        serverRoutedEnabled: serverRoutedTunnelRelayEnabledByFlowKind.tcp_tunnel,
+        serverRoutedEnabledByFlowKind: serverRoutedTunnelRelayEnabledByFlowKind,
         maxBytes: machineTunnelFeatureEnv.serverRoutedMaxBytes,
         maxActiveTunnelsPerSocket: machineTunnelFeatureEnv.serverRoutedMaxActiveTunnelsPerSocket,
         maxFrameBytes: machineTunnelFeatureEnv.serverRoutedMaxFrameBytes,

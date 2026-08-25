@@ -4,6 +4,7 @@ import type {
     ReviewCommentEventV1,
     ReviewCommentEventRequestBindingV1,
     ReviewCommentListRequestV1,
+    ReviewCommentPublicationTargetV1,
     ReviewCommentV1,
     StoredJsonContentEnvelope,
 } from "@happier-dev/protocol";
@@ -22,7 +23,7 @@ import {
 } from "@/app/encryption/accountEncryptionTransition";
 import { db } from "@/storage/db";
 import { inTx, type Tx } from "@/storage/inTx";
-import { isPrismaErrorCode, prismaRuntime as Prisma } from "@/storage/prisma";
+import { isPrismaErrorCode, isPrismaUniqueConstraintError, prismaRuntime as Prisma } from "@/storage/prisma";
 import { ReviewCommentOperationError } from "./errors";
 import {
     bindReviewCommentEventSensitiveForStorage,
@@ -66,12 +67,29 @@ export type ReviewCommentStoreCreateResult = Readonly<{
     replayed: boolean;
 }>;
 
+export type ReviewCommentStorePublicationClaimParams = Readonly<{
+    accountId: string;
+    commentId: string;
+    targetKey: string;
+    target: ReviewCommentPublicationTargetV1;
+    publicationCorrelationId: string;
+    createdAt: number;
+}>;
+
+export type ReviewCommentStorePublicationClaimResult = Readonly<{
+    claimed: boolean;
+    publicationCorrelationId: string;
+}>;
+
 export interface ReviewCommentStore {
     get(params: ReviewCommentStoreCommentParams): Promise<ReviewCommentV1 | null>;
     list(params: ReviewCommentStoreListParams): Promise<ReviewCommentListResult>;
     listEvents(params: ReviewCommentStoreCommentParams): Promise<readonly ReviewCommentEventV1[]>;
     create(params: ReviewCommentStoreCreateParams): Promise<ReviewCommentStoreCreateResult>;
     commit(params: ReviewCommentStoreCommitParams): Promise<void>;
+    claimPublicationDispatch(
+        params: ReviewCommentStorePublicationClaimParams,
+    ): Promise<ReviewCommentStorePublicationClaimResult>;
 }
 
 type ReviewCommentRow = {
@@ -418,6 +436,7 @@ export function createInMemoryReviewCommentStore(): ReviewCommentStore {
         comment: ReviewCommentV1;
         requestFingerprint: string;
     }>>();
+    const publicationClaims = new Map<string, string>();
 
     return {
         async get(params) {
@@ -455,6 +474,20 @@ export function createInMemoryReviewCommentStore(): ReviewCommentStore {
             const key = `${params.accountId}:${params.comment.id}`;
             const current = events.get(key) ?? [];
             events.set(key, [...current, ReviewCommentEventV1Schema.parse(params.event)]);
+        },
+        async claimPublicationDispatch(params) {
+            const commentKey = `${params.accountId}:${params.commentId}`;
+            if (!comments.has(commentKey)) {
+                throw new ReviewCommentOperationError(
+                    "review_comment_not_found",
+                    `Review comment not found: ${params.commentId}`,
+                );
+            }
+            const claimKey = `${commentKey}:${params.targetKey}`;
+            const existing = publicationClaims.get(claimKey);
+            if (existing) return { claimed: false, publicationCorrelationId: existing };
+            publicationClaims.set(claimKey, params.publicationCorrelationId);
+            return { claimed: true, publicationCorrelationId: params.publicationCorrelationId };
         },
     };
 }
@@ -733,6 +766,39 @@ export function createSqlReviewCommentStore(): ReviewCommentStore {
                     )
                 `);
             });
+        },
+        async claimPublicationDispatch(params) {
+            try {
+                await db.$executeRaw(Prisma.sql`
+                    INSERT INTO review_comment_publication_correlations (
+                        publication_correlation_id, account_id, comment_id, target_key,
+                        target_json, created_at
+                    ) VALUES (
+                        ${params.publicationCorrelationId}, ${params.accountId}, ${params.commentId},
+                        ${params.targetKey}, ${stringifyJson(params.target)}, ${params.createdAt}
+                    )
+                `);
+                return {
+                    claimed: true,
+                    publicationCorrelationId: params.publicationCorrelationId,
+                };
+            } catch (error) {
+                if (!isPrismaUniqueConstraintError(error)) throw error;
+                const rows = await db.$queryRaw<Array<{ publication_correlation_id: string }>>(Prisma.sql`
+                    SELECT publication_correlation_id
+                    FROM review_comment_publication_correlations
+                    WHERE account_id = ${params.accountId}
+                        AND comment_id = ${params.commentId}
+                        AND target_key = ${params.targetKey}
+                    LIMIT 1
+                `);
+                const existing = rows[0];
+                if (!existing) throw error;
+                return {
+                    claimed: false,
+                    publicationCorrelationId: existing.publication_correlation_id,
+                };
+            }
         },
     };
 }

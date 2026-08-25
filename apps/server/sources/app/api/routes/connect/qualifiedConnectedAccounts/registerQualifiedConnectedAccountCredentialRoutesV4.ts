@@ -255,11 +255,6 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
                 error: "connect_authentication_mode_mismatch",
             });
         }
-        if (result.status === "capacity_exhausted") {
-            return reply.code(409).send({
-                error: "connect_connected_account_capacity_exhausted",
-            });
-        }
         if (result.status === "superseded") {
             return reply.code(409).send({
                 error: "connect_credential_mutation_superseded",
@@ -389,13 +384,6 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
                     request.body.expectedConfigurationRevision,
                 replacementContentEnvelope:
                     request.body.replacementContentEnvelope,
-                ...(request.body
-                    .preserveConfigurationRevisionForCiphertextReseal
-                    ? {
-                        preserveConfigurationRevisionForCiphertextReseal:
-                            true as const,
-                    }
-                    : {}),
             });
         if (
             result.status === "storage_mode_mismatch"
@@ -702,7 +690,6 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
         const result = await createQualifiedConnectedAccountGroup({
             accountId: request.userId,
             ...request.body,
-            legacyV3Mutation: false,
         });
         if (result.status === "already_exists") {
             return reply.code(409).send({

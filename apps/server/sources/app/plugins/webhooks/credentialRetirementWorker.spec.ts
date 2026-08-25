@@ -38,7 +38,7 @@ describe("plugin webhook credential retirement worker", () => {
         vi.clearAllMocks();
         mocks.enabled.mockReturnValue(true);
         mocks.recover.mockResolvedValue({ requeued: 0, deadLettered: 0 });
-        mocks.ageOverdue.mockResolvedValue({ markedOffline: 0, deadLettered: 0 });
+        mocks.ageOverdue.mockResolvedValue({ deadLettered: 0 });
         mocks.retire.mockResolvedValue({ retired: 0 });
         mocks.purge.mockResolvedValue({ payloadsPurged: 0, metadataDeleted: 0 });
         mocks.cleanupTransitions.mockResolvedValue({

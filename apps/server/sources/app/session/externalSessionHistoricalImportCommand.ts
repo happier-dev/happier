@@ -395,6 +395,65 @@ function claimsEqual(
         && left.operationClaimId === right.operationClaimId;
 }
 
+/**
+ * The daemon operation record — not this job — owns `operationClaimId`, and it rotates by
+ * design. Materialization runs `begin`/`batch`/`finalize` under one local exclusion claim and
+ * releases it when the operation parks for the user; Resume, Retry and Discard each acquire a
+ * fresh claim and bind it into the record. A job that permanently bound the episode which ran
+ * `begin` therefore rejects its own successor, and an ordinary persisted takeover can never
+ * admit.
+ *
+ * Succession is monotone and exact: same Session, same operation, same authenticated machine,
+ * and a daemon revision strictly newer than the one this job is bound to. The daemon writes the
+ * successor claim and the successor revision in a single operation-record CAS, so only an owner
+ * that read the record after the current binding can present a newer revision. The caller
+ * rebinds claim and revision together inside this transaction, which makes the superseded claim
+ * fail the claim fence for every later command at or below the revision it can still present.
+ */
+function supersedesBoundClaim(
+    job: HistoricalImportJob,
+    command: ExternalSessionOperationSocketCommandV1,
+): boolean {
+    return job.claim.sessionId === command.claim.sessionId
+        && job.claim.operationId === command.claim.operationId
+        && job.claim.operationClaimId !== command.claim.operationClaimId
+        && command.expectedRevision > job.revision;
+}
+
+function authorizesBoundClaim(
+    job: HistoricalImportJob,
+    command: ExternalSessionOperationSocketCommandV1,
+): boolean {
+    return claimsEqual(job.claim, command.claim)
+        || supersedesBoundClaim(job, command);
+}
+
+/**
+ * Bind the job to the owner episode that issued this command. Claim and revision advance
+ * together so an authorized successor becomes authoritative atomically with the transaction
+ * that acts on it.
+ */
+async function bindCommandOwnerInTx(
+    tx: Tx,
+    actorUserId: string,
+    job: HistoricalImportJob,
+    command: ExternalSessionOperationSocketCommandV1,
+): Promise<HistoricalImportJob> {
+    if (
+        claimsEqual(job.claim, command.claim)
+        && command.expectedRevision <= job.revision
+    ) {
+        return job;
+    }
+    const bound: HistoricalImportJob = {
+        ...job,
+        claim: command.claim,
+        revision: Math.max(job.revision, command.expectedRevision),
+    };
+    await writeJobInTx(tx, actorUserId, bound);
+    return bound;
+}
+
 function admissionsEqual(
     left: PersistedTakeoverAdmission,
     right: PersistedTakeoverAdmissionCommand,
@@ -873,7 +932,7 @@ function authorizeDiscardJob(
     if (job.machineId !== transportMachineId) {
         return errorResponse("wrong_machine_socket", "Historical import belongs to another machine.");
     }
-    if (!claimsEqual(job.claim, command.claim)) {
+    if (!authorizesBoundClaim(job, command)) {
         return errorResponse("wrong_operation_claim", "Historical import claim does not match.");
     }
     // The daemon operation record advances for interruption/cancellation without
@@ -1018,7 +1077,7 @@ function authorizeResumeJob(
     if (job.machineId !== transportMachineId) {
         return errorResponse("wrong_machine_socket", "Historical import belongs to another machine.");
     }
-    if (!claimsEqual(job.claim, command.claim)) {
+    if (!authorizesBoundClaim(job, command)) {
         return errorResponse("wrong_operation_claim", "Historical import claim does not match.");
     }
     // The daemon operation revision is canonical and can advance through several
@@ -1227,10 +1286,7 @@ async function executeExternalSessionHistoricalImportCommandWithCreateRaceRetry(
                 );
                 if (rejection) return rejection;
                 if (job.state === "finalized") {
-                    if (command.expectedRevision > job.revision) {
-                        job = { ...job, revision: command.expectedRevision };
-                        await writeJobInTx(tx, params.actorUserId, job);
-                    }
+                    job = await bindCommandOwnerInTx(tx, params.actorUserId, job, command);
                     return terminalResponse(job)!;
                 }
                 const priorStableStorage = readPriorStableStorage(job, session);
@@ -1246,10 +1302,7 @@ async function executeExternalSessionHistoricalImportCommandWithCreateRaceRetry(
                         "Historical import prior storage authority no longer matches begin.",
                     );
                 }
-                if (command.expectedRevision > job.revision) {
-                    job = { ...job, revision: command.expectedRevision };
-                    await writeJobInTx(tx, params.actorUserId, job);
-                }
+                job = await bindCommandOwnerInTx(tx, params.actorUserId, job, command);
             }
             const rejection = authorizeJob(job, params.transportMachineId, command);
             if (rejection) return rejection;
@@ -1283,10 +1336,7 @@ async function executeExternalSessionHistoricalImportCommandWithCreateRaceRetry(
             if (!job) return errorResponse("wrong_operation", "Historical import operation was not begun.");
             const rejection = authorizeResumeJob(job, params.transportMachineId, command);
             if (rejection) return rejection;
-            if (command.expectedRevision > job.revision) {
-                job = { ...job, revision: command.expectedRevision };
-                await writeJobInTx(tx, params.actorUserId, job);
-            }
+            job = await bindCommandOwnerInTx(tx, params.actorUserId, job, command);
             const terminal = terminalResponse(job);
             if (terminal) return terminal;
             const priorStableStorage = readPriorStableStorage(job, session);
@@ -1350,10 +1400,7 @@ async function executeExternalSessionHistoricalImportCommandWithCreateRaceRetry(
                         "Persisted takeover link retirement no longer matches canonical metadata.",
                     );
                 }
-                if (command.expectedRevision > job.revision) {
-                    job = { ...job, revision: command.expectedRevision };
-                    await writeJobInTx(tx, params.actorUserId, job);
-                }
+                job = await bindCommandOwnerInTx(tx, params.actorUserId, job, command);
                 return takeoverAdmittedResponse(job, command.attemptId);
             }
 
@@ -1440,6 +1487,7 @@ async function executeExternalSessionHistoricalImportCommandWithCreateRaceRetry(
 
             job = {
                 ...job,
+                claim: command.claim,
                 revision: command.expectedRevision,
                 admission: {
                     attemptId: command.attemptId,
@@ -1707,6 +1755,7 @@ async function executeExternalSessionHistoricalImportCommandWithCreateRaceRetry(
             }
             job = {
                 ...job,
+                claim: command.claim,
                 revision: command.expectedRevision,
                 acceptedThroughServerSeq: null,
                 insertedMessageIds: null,

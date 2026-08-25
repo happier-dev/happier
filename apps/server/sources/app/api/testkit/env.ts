@@ -3,6 +3,7 @@ export {
     createEnvPatcher,
     createEnvReset,
     restoreEnv,
+    peerMediationGrantSigningEnv,
     restoreEnvValues,
     snapshotEnv,
     snapshotEnvValues,

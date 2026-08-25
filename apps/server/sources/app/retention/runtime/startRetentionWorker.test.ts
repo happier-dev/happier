@@ -5,6 +5,7 @@ const maybeCaptureSentryMonitorCheckIn = vi.fn(async ({ run }: { run: () => Prom
 });
 const readRetentionPolicyFromEnv = vi.fn();
 const resolveEffectiveRetentionEnabled = vi.fn();
+const hasRetentionRulesThatRunWhenGlobalPolicyIsDisabled = vi.fn();
 const runRetentionSweep = vi.fn(async () => ({ deleted: 0, byRule: {}, details: {} }));
 const logRetentionSweepCompleted = vi.fn();
 const logRetentionSweepFailed = vi.fn();
@@ -20,6 +21,10 @@ vi.mock('@/app/retention/config/readRetentionPolicyFromEnv', () => ({
 
 vi.mock('@/app/retention/config/retentionPolicyState', () => ({
     resolveEffectiveRetentionEnabled,
+}));
+
+vi.mock('./retentionRuleRegistry', () => ({
+    hasRetentionRulesThatRunWhenGlobalPolicyIsDisabled,
 }));
 
 vi.mock('./runRetentionSweep', () => ({
@@ -67,6 +72,7 @@ describe('startRetentionWorker', () => {
         vi.useFakeTimers();
         vi.clearAllMocks();
         resolveEffectiveRetentionEnabled.mockReturnValue(true);
+        hasRetentionRulesThatRunWhenGlobalPolicyIsDisabled.mockReturnValue(false);
         acquireRetentionSweepLock.mockResolvedValue({
             release: vi.fn(async () => {}),
         });
@@ -103,6 +109,22 @@ describe('startRetentionWorker', () => {
 
         expect(acquireRetentionSweepLock).toHaveBeenCalledTimes(2);
         expect(runRetentionSweep).toHaveBeenCalledTimes(1);
+        worker?.stop();
+    });
+
+    it('starts the Automation retention sweep when global retention is disabled', async () => {
+        const policy = { ...createPolicy(15_000), enabled: false };
+        readRetentionPolicyFromEnv.mockReturnValue(policy);
+        resolveEffectiveRetentionEnabled.mockReturnValue(false);
+        hasRetentionRulesThatRunWhenGlobalPolicyIsDisabled.mockReturnValue(true);
+
+        const { startRetentionWorker } = await import('./startRetentionWorker');
+        const worker = startRetentionWorker();
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(worker).not.toBeNull();
+        expect(acquireRetentionSweepLock).toHaveBeenCalledTimes(1);
+        expect(runRetentionSweep).toHaveBeenCalledWith({ policy });
         worker?.stop();
     });
 });

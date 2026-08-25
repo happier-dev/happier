@@ -33,6 +33,8 @@ const PATH = "/v1/automations/events/admit";
 function createSignedPublisherHeader(params: Readonly<{
     keyPair: tweetnacl.SignKeyPair;
     body: unknown;
+    method?: "GET" | "POST";
+    path?: string;
 }>): string {
     const proof = {
         v: 1 as const,
@@ -41,8 +43,8 @@ function createSignedPublisherHeader(params: Readonly<{
         installationId: INSTALLATION_ID,
         issuedAt: Date.now(),
         nonce: "publisher-proof-nonce-1",
-        method: "POST" as const,
-        path: PATH,
+        method: params.method ?? "POST",
+        path: params.path ?? PATH,
         bodySha256Base64Url: createHash("sha256")
             .update(stringifyPluginInstallationManifestCanonicalJsonV1(params.body))
             .digest("base64url"),
@@ -179,5 +181,29 @@ describe("plugin installation publisher proof", () => {
             path: PATH,
             required: true,
         })).rejects.toMatchObject({ code: "invalid" });
+    });
+
+    it("verifies an exact bodyless GET publisher proof", async () => {
+        const path = "/v3/automations/worker/assignments";
+        const keyPair = tweetnacl.sign.keyPair();
+        trustPublisher(keyPair);
+        const headers = {
+            [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]: createSignedPublisherHeader({
+                keyPair,
+                body: null,
+                method: "GET",
+                path,
+            }),
+        };
+
+        await expect(verifyPluginInstallationPublisherHeader({
+            accountId: ACCOUNT_ID,
+            request: { method: "GET", headers },
+            path,
+            required: true,
+        })).resolves.toEqual({
+            machineId: MACHINE_ID,
+            installationId: INSTALLATION_ID,
+        });
     });
 });

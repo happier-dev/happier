@@ -697,13 +697,22 @@ export async function applyPluginCollectionAccountEncryptionTransitionInTx(
             return { status: "invalid_content" };
         }
         const expectedEntryKeys = new Set<string>();
+        // One pass over the group instead of a linear scan per entry: the
+        // entry set is `states.length * group.rows.length`, so the scan made
+        // verification quadratic in the number of rows an Account holds.
+        const groupRowsByRowId = new Map<string, (typeof group.rows)[number]>();
         for (const state of states) {
             for (const row of group.rows) {
                 expectedEntryKeys.add(`${state.id}\u0000${row.persisted.rowId}`);
             }
         }
+        for (const row of group.rows) {
+            if (!groupRowsByRowId.has(row.persisted.rowId)) {
+                groupRowsByRowId.set(row.persisted.rowId, row);
+            }
+        }
         for (const entry of entries) {
-            const expectedRow = group.rows.find((row) => row.persisted.rowId === entry.rowId);
+            const expectedRow = groupRowsByRowId.get(entry.rowId);
             if (
                 !expectedRow
                 || entry.rowRevision !== expectedRow.persisted.revision
@@ -713,6 +722,18 @@ export async function applyPluginCollectionAccountEncryptionTransitionInTx(
             }
         }
         if (expectedEntryKeys.size !== 0) return { status: "invalid_content" };
+    }
+
+    // The first group that holds a row, resolved once. The row loop below used
+    // to rescan every group's rows per row, which is the same quadratic shape
+    // as the entry verification above.
+    const firstGroupByRowDbId = new Map<string, (typeof groups)[number]>();
+    for (const group of groups) {
+        for (const candidate of group.rows) {
+            if (!firstGroupByRowDbId.has(candidate.persisted.id)) {
+                firstGroupByRowDbId.set(candidate.persisted.id, group);
+            }
+        }
     }
 
     for (const row of loaded.rows) {
@@ -754,9 +775,9 @@ export async function applyPluginCollectionAccountEncryptionTransitionInTx(
         if (relations.count !== (relationsByRowId.get(row.persisted.id) ?? []).length) {
             throw new PluginCollectionAccountEncryptionTransitionConflictError();
         }
-        for (const group of groups) {
-            if (!group.rows.some((candidate) => candidate.persisted.id === row.persisted.id)) continue;
-            for (const state of statesByGroup.get(group.key) ?? []) {
+        const owningGroup = firstGroupByRowDbId.get(row.persisted.id);
+        if (owningGroup) {
+            for (const state of statesByGroup.get(owningGroup.key) ?? []) {
                 const entries = await params.tx.pluginCollectionIndexEntry.updateMany({
                     where: {
                         indexStateId: state.id,
@@ -769,7 +790,6 @@ export async function applyPluginCollectionAccountEncryptionTransitionInTx(
                     throw new PluginCollectionAccountEncryptionTransitionConflictError();
                 }
             }
-            break;
         }
     }
 

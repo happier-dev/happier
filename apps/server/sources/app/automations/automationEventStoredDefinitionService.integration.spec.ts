@@ -443,6 +443,110 @@ describe("Automation Event stored-definition projection", () => {
         });
     });
 
+    it("classifies only retired checkpoint identities at one unchanged catalog revision", async () => {
+        await seed(5);
+        const eventRef = { pluginId: PLUGIN_ID, localId: EVENT_LOCAL_ID } as const;
+        const candidates = [
+            {
+                automationId: "automation-absent",
+                eventRef,
+                sourceSelectorId: sourceSelector(91),
+                sourceContractVersion: 1,
+            },
+            {
+                automationId: "automation-0001",
+                eventRef,
+                sourceSelectorId: sourceSelector(1),
+                sourceContractVersion: 1,
+            },
+            {
+                automationId: "automation-0002",
+                eventRef,
+                sourceSelectorId: sourceSelector(2),
+                sourceContractVersion: 1,
+            },
+            {
+                automationId: "automation-0003",
+                eventRef,
+                sourceSelectorId: sourceSelector(3),
+                sourceContractVersion: 1,
+            },
+            {
+                automationId: "automation-0004",
+                eventRef,
+                sourceSelectorId: sourceSelector(4),
+                sourceContractVersion: 1,
+            },
+            {
+                automationId: "automation-0005",
+                eventRef,
+                sourceSelectorId: sourceSelector(5),
+                sourceContractVersion: 1,
+            },
+        ] as const;
+        await db.automation.update({
+            where: { id: "automation-0001" },
+            data: { enabled: false, deletedAt: new Date("2026-08-19T00:00:00.000Z") },
+        });
+        await db.automation.update({
+            where: { id: "automation-0002" },
+            data: { triggerSourceSelectorId: sourceSelector(92) },
+        });
+        await db.automation.update({
+            where: { id: "automation-0003" },
+            data: { triggerSourceContractVersion: 2 },
+        });
+        await db.automation.update({
+            where: { id: "automation-0004" },
+            data: { enabled: false },
+        });
+        await db.automation.update({
+            where: { id: "automation-0005" },
+            data: { enabled: false, deletedAt: new Date("2026-08-19T00:00:00.000Z") },
+        });
+        await db.automationRun.create({
+            data: {
+                id: "run-retains-soft-deleted-automation",
+                automationId: "automation-0005",
+                accountId: ACCOUNT_ID,
+                scheduledAt: new Date("2026-08-18T00:00:00.000Z"),
+                dueAt: new Date("2026-08-18T00:00:00.000Z"),
+            },
+        });
+
+        await expect(readAutomationEventStoredDefinitionsV1({
+            accountId: ACCOUNT_ID,
+            caller,
+            input: {
+                transport: { kind: "checkpointedPull" },
+                knownRevision: "7",
+                checkpointRetirementCandidates: candidates,
+            },
+        })).resolves.toMatchObject({
+            kind: "unchanged",
+            revision: "7",
+            eventDeclarationRelease: {
+                release: { pluginId: PLUGIN_ID, version: PLUGIN_VERSION },
+                archiveDigestSha256: `sha256:${"a".repeat(64)}`,
+            },
+            checkpointRetirements: [candidates[0], candidates[1], candidates[2], candidates[3]],
+        });
+
+        await db.automationEventCatalogState.update({
+            where: { accountId: ACCOUNT_ID },
+            data: { eventSourceDefinitionsRevision: 8n },
+        });
+        await expect(readAutomationEventStoredDefinitionsV1({
+            accountId: ACCOUNT_ID,
+            caller,
+            input: {
+                transport: { kind: "checkpointedPull" },
+                knownRevision: "7",
+                checkpointRetirementCandidates: [candidates[0]],
+            },
+        })).resolves.toEqual({ kind: "cursorStale", currentRevision: "8" });
+    });
+
     it("projects durable-push envelopes only through the current generic endpoint target", async () => {
         await seed(1);
         const durableRelease = releaseFacts({ supportedObservationTransports: ["durablePush"] });

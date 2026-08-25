@@ -6,8 +6,16 @@ import { listDaemonAssignments } from "@/app/automations/automationAssignmentSer
 import { toAutomationRunV2ApiDto } from "@/app/automations/automationApiProjection";
 import { readRetainedAutomationRunExecutionInputV2ForMode } from "@/app/automations/automationStoredContentRead";
 import { resolveAutomationRunAttemptV2 } from "./automationRunAttemptV2Compatibility";
+import {
+    DEFAULT_AUTOMATION_WORKER_PUBLISHER_DEPENDENCIES,
+    hasExactAutomationWorkerPublisher,
+    type AutomationWorkerPublisherDependencies,
+} from "./automationWorkerPublisher";
 
-export function registerAutomationDaemonRoutes(app: Fastify): void {
+export function registerAutomationDaemonRoutes(
+    app: Fastify,
+    dependencies: AutomationWorkerPublisherDependencies = DEFAULT_AUTOMATION_WORKER_PUBLISHER_DEPENDENCIES,
+): void {
     app.post('/v2/automations/runs/claim', {
         preHandler: app.authenticate,
         schema: {
@@ -16,7 +24,14 @@ export function registerAutomationDaemonRoutes(app: Fastify): void {
                 leaseDurationMs: z.number().int().min(5_000).max(15 * 60_000).optional(),
             }),
         },
-    }, async (request) => {
+    }, async (request, reply) => {
+        if (!await hasExactAutomationWorkerPublisher({
+            dependencies,
+            accountId: request.userId,
+            request,
+            path: "/v2/automations/runs/claim",
+            machineId: request.body.machineId,
+        })) return reply.code(401).send(null);
         const result = await claimAutomationRun({
             accountId: request.userId,
             machineId: request.body.machineId,
@@ -57,6 +72,13 @@ export function registerAutomationDaemonRoutes(app: Fastify): void {
             }),
         },
     }, async (request, reply) => {
+        if (!await hasExactAutomationWorkerPublisher({
+            dependencies,
+            accountId: request.userId,
+            request,
+            path: `/v2/automations/runs/${encodeURIComponent(request.params.runId)}/heartbeat`,
+            machineId: request.body.machineId,
+        })) return reply.code(401).send(null);
         const result = await heartbeatAutomationRun({
             accountId: request.userId,
             runId: request.params.runId,
@@ -84,7 +106,14 @@ export function registerAutomationDaemonRoutes(app: Fastify): void {
                 machineId: z.string().trim().min(1),
             }),
         },
-    }, async (request) => {
+    }, async (request, reply) => {
+        if (!await hasExactAutomationWorkerPublisher({
+            dependencies,
+            accountId: request.userId,
+            request,
+            path: "/v2/automations/daemon/assignments",
+            machineId: request.query.machineId,
+        })) return reply.code(401).send(null);
         const rows = await listDaemonAssignments({
             accountId: request.userId,
             machineId: request.query.machineId,

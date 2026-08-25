@@ -5,45 +5,82 @@ import {
 } from "@happier-dev/protocol";
 
 import {
+    chargePluginWebhookWorkingBytesV1,
     createPluginWebhookProcessAdmissionV1,
     createPluginWebhookRedisAdmissionV1,
+    PLUGIN_WEBHOOK_WORKING_BYTES_PER_RAW_BYTE_V1,
 } from "./admission";
 
 describe("plugin webhook edge admission", () => {
-    it("reserves aggregate process count and declared raw-body bytes atomically before body work", () => {
-        const admission = createPluginWebhookProcessAdmissionV1({ maxRequests: 2, maxRawBodyBytes: 10 });
-        const first = admission.acquire(7);
-        expect(first).not.toBeNull();
-        expect(admission.snapshot()).toEqual({ requests: 1, rawBodyBytes: 7 });
-        expect(admission.acquire(4)).toBeNull();
-        expect(admission.snapshot()).toEqual({ requests: 1, rawBodyBytes: 7 });
-        first?.release();
-        expect(admission.snapshot()).toEqual({ requests: 0, rawBodyBytes: 0 });
-        first?.release();
-        expect(admission.snapshot()).toEqual({ requests: 0, rawBodyBytes: 0 });
-    });
-
-    it("charges the raw body only, so the request ceiling binds before the derived byte ceiling", () => {
-        // The default byte ceiling is exactly the worst case the request ceiling
-        // permits, so a full-size body per slot must still be admitted and the
-        // count must be what rejects the next one.
+    it("reserves aggregate process count and working bytes atomically before body work", () => {
         const admission = createPluginWebhookProcessAdmissionV1({
             maxRequests: 2,
-            maxRawBodyBytes: 2 * PLUGIN_WEBHOOK_MAX_RAW_BODY_BYTES_V1,
+            maxWorkingBytes: chargePluginWebhookWorkingBytesV1(10),
         });
-        const first = admission.acquire(PLUGIN_WEBHOOK_MAX_RAW_BODY_BYTES_V1);
-        const second = admission.acquire(PLUGIN_WEBHOOK_MAX_RAW_BODY_BYTES_V1);
+        const first = admission.acquire(7);
         expect(first).not.toBeNull();
-        expect(second).not.toBeNull();
-        expect(admission.acquire(0)).toBeNull();
-
-        // Lowering only the byte ceiling is the operator lever that makes bytes bind first.
-        const tightened = createPluginWebhookProcessAdmissionV1({
-            maxRequests: 2,
-            maxRawBodyBytes: PLUGIN_WEBHOOK_MAX_RAW_BODY_BYTES_V1,
+        expect(admission.snapshot()).toEqual({
+            requests: 1,
+            workingBytes: chargePluginWebhookWorkingBytesV1(7),
         });
-        expect(tightened.acquire(PLUGIN_WEBHOOK_MAX_RAW_BODY_BYTES_V1)).not.toBeNull();
-        expect(tightened.acquire(1)).toBeNull();
+        expect(admission.acquire(4)).toBeNull();
+        expect(admission.snapshot()).toEqual({
+            requests: 1,
+            workingBytes: chargePluginWebhookWorkingBytesV1(7),
+        });
+        first?.release();
+        expect(admission.snapshot()).toEqual({ requests: 0, workingBytes: 0 });
+        first?.release();
+        expect(admission.snapshot()).toEqual({ requests: 0, workingBytes: 0 });
+    });
+
+    it("charges the measured working memory a declared body costs, not the declared body", () => {
+        // An operator budgeting one maximum-size request's raw length has NOT
+        // budgeted the memory that request actually needs: the base64 string,
+        // the parsed content, the sealed and re-encoded envelope, and the
+        // delivery owner's re-parse are all reachable at once.
+        const rawOnly = createPluginWebhookProcessAdmissionV1({
+            maxRequests: 4,
+            maxWorkingBytes: PLUGIN_WEBHOOK_MAX_RAW_BODY_BYTES_V1,
+        });
+        expect(rawOnly.acquire(PLUGIN_WEBHOOK_MAX_RAW_BODY_BYTES_V1)).toBeNull();
+
+        const budgeted = createPluginWebhookProcessAdmissionV1({
+            maxRequests: 4,
+            maxWorkingBytes: chargePluginWebhookWorkingBytesV1(PLUGIN_WEBHOOK_MAX_RAW_BODY_BYTES_V1),
+        });
+        expect(budgeted.acquire(PLUGIN_WEBHOOK_MAX_RAW_BODY_BYTES_V1)).not.toBeNull();
+        expect(budgeted.acquire(1)).toBeNull();
+    });
+
+    it("keeps the charge above the highest measured plain and E2EE working-memory multiple", () => {
+        // Source: apps/server/sources/app/plugins/webhooks/admission.ts records
+        // 5.03x plain and 10.38x E2EE peak for this ingestion chain. A charge at
+        // or below either figure would let a full process reservation exceed the
+        // memory it claims to bound.
+        const highestMeasuredMultiple = 10.38;
+        expect(PLUGIN_WEBHOOK_WORKING_BYTES_PER_RAW_BYTE_V1).toBeGreaterThan(highestMeasuredMultiple);
+        expect(chargePluginWebhookWorkingBytesV1(PLUGIN_WEBHOOK_MAX_RAW_BODY_BYTES_V1))
+            .toBeGreaterThan(highestMeasuredMultiple * PLUGIN_WEBHOOK_MAX_RAW_BODY_BYTES_V1);
+    });
+
+    it("never admits more concurrent peak memory than the process budget", () => {
+        // The whole point of the byte ceiling: every request this process
+        // admitted can be at its measured peak at the same moment, so the sum
+        // of those peaks must stay inside the operator's budget. Charging the
+        // raw body instead let the request count bind and blow straight past it.
+        const measuredE2eePeakBytes = Math.ceil(10.38 * PLUGIN_WEBHOOK_MAX_RAW_BODY_BYTES_V1);
+        const budget = 3 * measuredE2eePeakBytes;
+        const admission = createPluginWebhookProcessAdmissionV1({
+            maxRequests: 4,
+            maxWorkingBytes: budget,
+        });
+
+        let admitted = 0;
+        while (admission.acquire(PLUGIN_WEBHOOK_MAX_RAW_BODY_BYTES_V1) !== null) admitted += 1;
+
+        expect(admitted).toBeGreaterThan(0);
+        expect(admitted * measuredE2eePeakBytes).toBeLessThanOrEqual(budget);
     });
 
     it("uses one atomic Redis acquisition and one owner-bound release for all tenant scopes", async () => {

@@ -36,17 +36,9 @@ describe("plugin webhook overdue queue aging", () => {
         mocks.updateMany.mockResolvedValue({ count: 1 });
     });
 
-    it("starts the offline clock for overdue work and dead-letters it after seven days without charging an attempt", async () => {
+    it("ages only work whose exact target was already proven offline", async () => {
         const now = new Date("2026-08-10T00:00:00.000Z");
         mocks.findMany.mockResolvedValue([
-            {
-                id: "delivery-new",
-                accountId: "account-1",
-                targetPluginId: "acme.github",
-                revision: 2,
-                attemptCount: 0,
-                offlineSinceAt: null,
-            },
             {
                 id: "delivery-expired",
                 accountId: "account-1",
@@ -58,22 +50,17 @@ describe("plugin webhook overdue queue aging", () => {
         ]);
 
         await expect(ageOverduePluginWebhookDeliveriesV1({ now, batchSize: 100 })).resolves.toEqual({
-            markedOffline: 1,
             deadLettered: 1,
         });
         expect(mocks.findMany).toHaveBeenCalledWith(expect.objectContaining({
-            where: expect.objectContaining({ state: "queued", nextAttemptAt: { lte: now } }),
+            where: expect.objectContaining({
+                state: "queued",
+                nextAttemptAt: { lte: now },
+                offlineSinceAt: { lte: new Date("2026-08-03T00:00:00.000Z") },
+            }),
             take: 100,
         }));
         expect(mocks.updateMany).toHaveBeenNthCalledWith(1, expect.objectContaining({
-            where: expect.objectContaining({ id: "delivery-new", revision: 2, state: "queued" }),
-            data: expect.objectContaining({
-                offlineSinceAt: now,
-                lastErrorCode: "target_offline",
-                revision: { increment: 1 },
-            }),
-        }));
-        expect(mocks.updateMany).toHaveBeenNthCalledWith(2, expect.objectContaining({
             where: expect.objectContaining({ id: "delivery-expired", revision: 5, state: "queued" }),
             data: expect.objectContaining({
                 state: "dead_letter",
@@ -81,6 +68,6 @@ describe("plugin webhook overdue queue aging", () => {
                 revision: { increment: 1 },
             }),
         }));
-        expect(mocks.markAccountChanged).toHaveBeenCalledTimes(2);
+        expect(mocks.markAccountChanged).toHaveBeenCalledTimes(1);
     });
 });

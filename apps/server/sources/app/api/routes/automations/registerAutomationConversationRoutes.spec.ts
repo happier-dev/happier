@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { sealAccountScopedBlobCiphertext } from "@happier-dev/protocol";
+
 import {
     AutomationConversationTargetVerificationCallerError,
 } from "@/app/automations/automationConversationTargetVerificationService";
@@ -79,11 +81,62 @@ const ADMIT_BODY = {
     },
 } as const;
 
+const SEALED_ARM_MATERIAL = {
+    type: "dataKey" as const,
+    machineKey: new Uint8Array(32).fill(11),
+};
+
+/**
+ * Exactly what an E2EE Account's admission host puts on the wire: a sealed body
+ * with no `input` member at all.
+ */
+const ENCRYPTED_ADMIT_BODY = {
+    v: 1,
+    caller: ADMIT_BODY.caller,
+    hostEvidence: {
+        v: 1,
+        t: "encrypted",
+        accountCurrentness: {
+            mode: "e2ee",
+            version: 4,
+            contentKeyFingerprint: "aemk1_content",
+        },
+        automationId: "automation-1",
+        templateVersion: 3,
+        occurrenceKey: "A".repeat(43),
+        occurredAt: 1_723_247_200_000,
+        triggerEvidenceEnvelope: {
+            t: "encrypted",
+            c: sealAccountScopedBlobCiphertext({
+                kind: "automation_trigger_evidence",
+                material: SEALED_ARM_MATERIAL,
+                payload: { v: 1, seed: 1 },
+                randomBytes: (length: number) => Uint8Array.from({ length }, (_, index) => index + 1),
+            }),
+        },
+        executionTriggerEvidenceEnvelope: {
+            t: "encrypted",
+            c: sealAccountScopedBlobCiphertext({
+                kind: "automation_trigger_evidence",
+                material: SEALED_ARM_MATERIAL,
+                payload: { v: 1, seed: 9 },
+                randomBytes: (length: number) => Uint8Array.from({ length }, (_, index) => index + 9),
+            }),
+        },
+        occurrenceEvidenceEqualityTag: `${"A".repeat(42)}g`,
+    },
+} as const;
+
 describe("Automation conversation target-verification route", () => {
     it("registers the current-materialization target selector with a narrow response and no cache", async () => {
         const app = createFakeRouteApp();
         const listTargets = vi.fn(async () => ({
-            items: [{ automationId: "automation-1", templateVersion: 3, label: "Conversation target" }],
+            items: [{
+                automationId: "automation-1",
+                templateVersion: 3,
+                label: "Conversation target",
+                execution: { targetType: "new_session" as const, enabled: true },
+            }],
             nextCursor: null,
         }));
         const verifyPublisher = vi.fn(async () => ({
@@ -127,7 +180,12 @@ describe("Automation conversation target-verification route", () => {
         });
         expect(reply.headers).toEqual({ "Cache-Control": "no-store" });
         expect(reply.send).toHaveBeenCalledWith({
-            items: [{ automationId: "automation-1", templateVersion: 3, label: "Conversation target" }],
+            items: [{
+                automationId: "automation-1",
+                templateVersion: 3,
+                label: "Conversation target",
+                execution: { targetType: "new_session" as const, enabled: true },
+            }],
             nextCursor: null,
         });
     });
@@ -177,7 +235,12 @@ describe("Automation conversation target-verification route", () => {
             materializationId: "materialization-slack-1",
         } as const;
         const listTargets = vi.fn(async () => ({
-            items: [{ automationId: "automation-1", templateVersion: 3, label: "Conversation target" }],
+            items: [{
+                automationId: "automation-1",
+                templateVersion: 3,
+                label: "Conversation target",
+                execution: { targetType: "new_session" as const, enabled: true },
+            }],
             nextCursor: null,
         }));
         const verifyTarget = vi.fn(async () => ({ kind: "verified" as const, templateVersion: 3 }));
@@ -298,6 +361,67 @@ describe("Automation conversation target-verification route", () => {
         expect(reply.send).toHaveBeenCalledWith({
             kind: "admitted",
             runId: "run-1",
+            checkpointSafe: true,
+        });
+    });
+
+    it("routes a sealed E2EE body to the encrypted admitter and never into the plain reader", async () => {
+        const app = createFakeRouteApp();
+        const admit = vi.fn(async () => ({
+            kind: "admitted" as const,
+            runId: "run-plain",
+            checkpointSafe: true as const,
+        }));
+        const admitEncrypted = vi.fn(async () => ({
+            kind: "admitted" as const,
+            runId: "run-sealed",
+            checkpointSafe: true as const,
+        }));
+        const verifyPublisher = vi.fn(async () => ({
+            machineId: "machine-1",
+            installationId: "installation-1",
+        }));
+        registerAutomationConversationRoutes(app as never, {
+            admit,
+            admitEncrypted,
+            verifyPublisher,
+        });
+
+        // The published route body schema is what Fastify's zod validator runs,
+        // so the sealed arm must survive it before the branch below can matter.
+        const bodySchema = getRouteEntry(app, "POST", ADMIT_PATH).opts.schema as {
+            body: { safeParse(value: unknown): { success: boolean } };
+        };
+        expect(bodySchema.body.safeParse(ENCRYPTED_ADMIT_BODY).success).toBe(true);
+        expect(bodySchema.body.safeParse({
+            ...ENCRYPTED_ADMIT_BODY,
+            input: ADMIT_BODY.input,
+        }).success).toBe(false);
+
+        const reply = createReplyStub();
+        await getRouteHandler(app, "POST", ADMIT_PATH)({
+            userId: "account-1",
+            method: "POST",
+            url: ADMIT_PATH,
+            headers: {},
+            body: ENCRYPTED_ADMIT_BODY,
+        }, reply);
+
+        expect(admit).not.toHaveBeenCalled();
+        expect(admitEncrypted).toHaveBeenCalledWith({
+            accountId: "account-1",
+            caller: {
+                pluginId: "happier.channels",
+                contributionLocalId: "provider/observation-ingest-v1",
+                machineId: "machine-1",
+                machineInstallationId: "installation-1",
+                materializationId: "materialization-1",
+            },
+            hostEvidence: ENCRYPTED_ADMIT_BODY.hostEvidence,
+        });
+        expect(reply.send).toHaveBeenCalledWith({
+            kind: "admitted",
+            runId: "run-sealed",
             checkpointSafe: true,
         });
     });

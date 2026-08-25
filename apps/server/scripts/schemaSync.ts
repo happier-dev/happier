@@ -126,6 +126,8 @@ function generateProviderSchemaFromPostgres(
 	        body = body.replace(/^(\s*policyJson\s+String\b)(?![^\n]*@db\.)/gm, "$1 @db.LongText");
 	        body = body.replace(/^(\s*stateJson\s+String\?)(?![^\n]*@db\.)/gm, "$1 @db.LongText");
 
+        body = annotateMySqlRepeatKeyFields(body);
+
         body = annotateMySqlSessionSubagentCustodyFields(body);
 
         body = annotateMySqlSessionSystemRecordFields(body);
@@ -174,6 +176,16 @@ function generateProviderSchemaFromPostgres(
     ].join('\n');
 
     return normalizeSchemaText([header, '', generatorClient, '', datasourceDb, '', body].join('\n'));
+}
+
+function annotateMySqlRepeatKeyFields(schemaBody: string): string {
+    return schemaBody.replace(
+        /^model\s+RepeatKey\s+\{[\s\S]*?^\}\s*$/gm,
+        (model) => model.replace(
+            /^(\s*value\s+String)(?![^\n]*@db\.)/m,
+            "$1 @db.LongText",
+        ),
+    );
 }
 
 function annotateMySqlSessionSystemRecordFields(schemaBody: string): string {

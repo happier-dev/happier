@@ -879,4 +879,35 @@ describe("local service preview WebSocket adapter", () => {
             expect.objectContaining({ kind: "websocket.closed" }),
         ]));
     });
+
+    // S-1 backstop. The upgrade routes derive the path from `URL.pathname`, which is canonical by
+    // construction, so this guard exists for any OTHER caller. Removing it must make this fail.
+    it("refuses to serialize an upgrade request whose target carries a raw CRLF", async () => {
+        const mod = await loadWebSocketAdapterModule();
+        expect(mod?.proxyLocalServicePreviewWebSocketUpgrade).toBeTypeOf("function");
+        if (!mod?.proxyLocalServicePreviewWebSocketUpgrade) return;
+
+        const tunnelWrites: string[] = [];
+        const client = createClient();
+        const openTunnel = vi.fn();
+
+        const result = await mod.proxyLocalServicePreviewWebSocketUpgrade({
+            preview,
+            request: {
+                path: "/socket\r\nX-Injected: yes\r\n\r\nGET /admin HTTP/1.1",
+                search: "",
+                headers: client.headers,
+                rawHeaders: client.rawHeaders,
+                head: client.head,
+                client,
+            },
+            openTunnel: openTunnel as never,
+        });
+
+        expect(result).toEqual({ ok: false, reasonCode: "invalid_request_target" });
+        // No tunnel is opened at all, so nothing can reach the user's service.
+        expect(openTunnel).not.toHaveBeenCalled();
+        expect(tunnelWrites).toEqual([]);
+        expect(new TextDecoder().decode(client.write.mock.calls[0]?.[0])).toContain("400 Bad Request");
+    });
 });

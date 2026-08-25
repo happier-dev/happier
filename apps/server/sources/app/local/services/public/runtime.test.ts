@@ -367,7 +367,8 @@ describe("local service public exposure runtime", () => {
             generateAuditEventId: () => "audit_create_1",
             allowTestDevAuditSink: true,
             recordAuditEvent: () => undefined,
-            checkRateLimit: () => true,
+            // Deliberately no `checkRateLimit`: S-5 makes a checker a hard prerequisite for
+            // minting, so this must refuse rather than mint an unlimited exposure.
         });
 
         expect(runtime.createExposure({
@@ -607,8 +608,9 @@ describe("local service public exposure runtime", () => {
             clientKey: "client_a",
         })).toEqual({ ok: false, reasonCode: "rate_limited" });
         expect(rateLimitChecks).toBe(1);
+        // S-5: the refusal is per-request. The exposure stays active so the link is not bricked.
         expect(runtime.resolveExposure("public_preview_1")).toEqual(expect.objectContaining({
-            state: "rate_limited",
+            state: "active",
         }));
         expect(auditEvents).toEqual([
             expect.objectContaining({ eventId: "audit_create_1", action: "create" }),

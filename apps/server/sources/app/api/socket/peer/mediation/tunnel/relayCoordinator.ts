@@ -17,6 +17,13 @@ const DISCONNECT_EVENT = "happier:peer-tunnel:disconnect:v1";
 const REDIS_GRANT_KEY_PREFIX = "peer-tunnel-relay-grant:v1:";
 const FETCH_SOCKETS_TIMEOUT_MS = 5_000;
 const REDIS_GRANT_ADMISSION_TIMEOUT_MS = 2_000;
+const COMMIT_RELAY_GRANT_CLAIM_SCRIPT = [
+    "if redis.call('GET', KEYS[1]) ~= ARGV[1] then return 0 end",
+    "redis.call('SET', KEYS[1], ARGV[2], 'PX', ARGV[3], 'XX')",
+    "return 1",
+].join(" ");
+const RELEASE_RELAY_GRANT_CLAIM_SCRIPT =
+    "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) else return 0 end";
 
 type AttachRequest = Readonly<{
     attachmentId: string;
@@ -71,6 +78,12 @@ type MachineAttachment = Readonly<{
 type MachineSocketAttachmentMembership = Readonly<{
     attachmentIds: Set<string>;
     onDisconnect(): void;
+}>;
+
+type RedisProvisionalRelayGrantClaim = Readonly<{
+    key: string;
+    provisionalValue: string;
+    expiresAt: number;
 }>;
 
 export type PeerTcpTunnelRelayCoordinatorConfig =
@@ -305,6 +318,78 @@ export function createPeerTcpTunnelRelayCoordinator(input: Readonly<{
         });
     }
 
+    async function reserveRedisGrant(params: Readonly<{
+        grantId: string;
+        expiresAt: number;
+        nowMs: number;
+    }>): Promise<
+        | Readonly<{ status: "reserved"; claim: RedisProvisionalRelayGrantClaim }>
+        | Readonly<{ status: "duplicate" | "unavailable" }>
+    > {
+        if (closed || params.expiresAt <= params.nowMs) return { status: "unavailable" };
+        try {
+            if (!await waitForRelayAdmissionRedisReady()) return { status: "unavailable" };
+            if (closed) return { status: "unavailable" };
+            const readyAtMs = Date.now();
+            if (params.expiresAt <= readyAtMs) return { status: "unavailable" };
+            const ttlMs = Math.max(1, Math.floor(params.expiresAt - readyAtMs));
+            const claim: RedisProvisionalRelayGrantClaim = {
+                key: consumedGrantKey(params.grantId),
+                provisionalValue: `${ownerRouteId}:${randomUUID()}`,
+                expiresAt: params.expiresAt,
+            };
+            const result = await relayAdmissionRedis!.set(
+                claim.key,
+                claim.provisionalValue,
+                "PX",
+                ttlMs,
+                "NX",
+            );
+            return result === "OK"
+                ? { status: "reserved", claim }
+                : { status: "duplicate" };
+        } catch {
+            return { status: "unavailable" };
+        }
+    }
+
+    async function commitRedisGrantClaim(
+        claim: RedisProvisionalRelayGrantClaim,
+    ): Promise<"committed" | "not_owner" | "unavailable"> {
+        if (closed || claim.expiresAt <= Date.now() || relayAdmissionRedis?.status !== "ready") {
+            return "unavailable";
+        }
+        try {
+            const ttlMs = Math.max(1, Math.floor(claim.expiresAt - Date.now()));
+            const result = await relayAdmissionRedis.eval(
+                COMMIT_RELAY_GRANT_CLAIM_SCRIPT,
+                1,
+                claim.key,
+                claim.provisionalValue,
+                ownerRouteId,
+                ttlMs.toString(),
+            );
+            return result === 1 ? "committed" : "not_owner";
+        } catch {
+            return "unavailable";
+        }
+    }
+
+    async function releaseRedisGrantClaim(claim: RedisProvisionalRelayGrantClaim): Promise<void> {
+        if (relayAdmissionRedis?.status !== "ready") return;
+        try {
+            await relayAdmissionRedis.eval(
+                RELEASE_RELAY_GRANT_CLAIM_SCRIPT,
+                1,
+                claim.key,
+                claim.provisionalValue,
+            );
+        } catch {
+            // The provisional key still expires with the signed grant. A failed cleanup never
+            // deletes a claim that belongs to another coordinator.
+        }
+    }
+
     async function consumeGrant(params: Readonly<{
         grantId: string;
         expiresAt: number;
@@ -317,23 +402,23 @@ export function createPeerTcpTunnelRelayCoordinator(input: Readonly<{
             consumedGrantExpById.set(params.grantId, params.expiresAt);
             return "consumed";
         }
-        try {
-            if (!await waitForRelayAdmissionRedisReady()) return "unavailable";
-            if (closed) return "unavailable";
-            const readyAtMs = Date.now();
-            if (params.expiresAt <= readyAtMs) return "unavailable";
-            const ttlMs = Math.max(1, Math.floor(params.expiresAt - readyAtMs));
-            const result = await relayAdmissionRedis!.set(
-                consumedGrantKey(params.grantId),
-                ownerRouteId,
-                "PX",
-                ttlMs,
-                "NX",
-            );
-            return result === "OK" ? "consumed" : "duplicate";
-        } catch {
-            return "unavailable";
-        }
+        const reservation = await reserveRedisGrant(params);
+        if (reservation.status !== "reserved") return reservation.status;
+        const committed = await commitRedisGrantClaim(reservation.claim);
+        if (committed === "committed") return "consumed";
+        await releaseRedisGrantClaim(reservation.claim);
+        return committed === "not_owner" ? "duplicate" : "unavailable";
+    }
+
+    function relayAdmissionRejectionReason(
+        result: "duplicate" | "not_owner" | "unavailable",
+    ): PeerTcpTunnelRelayAdmissionResult {
+        return {
+            status: "rejected",
+            reason: result === "duplicate" || result === "not_owner"
+                ? "grant_already_consumed"
+                : "cluster_unavailable",
+        };
     }
 
     function removeMachineAttachment(attachmentId: string): void {
@@ -535,14 +620,10 @@ export function createPeerTcpTunnelRelayCoordinator(input: Readonly<{
     }
 
     /**
-     * Admission resolves the exact machine and attaches PROVISIONALLY, then spends the
-     * single-use grant immediately before the attachment becomes admitted.
-     *
-     * Spending first would burn the authorization on a machine that turned out to be
-     * unreachable: the owner cannot retry with the same grant and every later attempt is
-     * refused as `grant_already_consumed`. The grant is still spent exactly once — an
-     * ambiguously successful Redis consumption is never rolled back; the loser instead
-     * detaches its own provisional attachment synchronously.
+     * Remote discovery reserves the grant with one Redis compare-and-commit claim. The
+     * reservation prevents another replica from admitting the same grant while the Socket.IO
+     * adapter locates and attaches the exact machine, but only the successful attachment makes
+     * the single-use claim durable. Public OPEN still waits for that commit.
      */
     async function performAdmission(params: Parameters<PeerTcpTunnelRelayCoordinator["admit"]>[0]) {
         if (closed) {
@@ -550,6 +631,8 @@ export function createPeerTcpTunnelRelayCoordinator(input: Readonly<{
         }
 
         let exactMachineSocketId: string;
+        let provisionalRedisGrantClaim: RedisProvisionalRelayGrantClaim | null = null;
+        let durableGrantClaimCommitted = false;
         try {
             const room = input.io.in(machineRoom(params.accountId, params.machineId));
             const localSockets = await room.local.fetchSockets();
@@ -564,6 +647,22 @@ export function createPeerTcpTunnelRelayCoordinator(input: Readonly<{
             if (localExactSockets.length === 1) {
                 exactMachineSocketId = localExactSockets[0]!.id;
             } else {
+                if (input.config.mode !== "redis") {
+                    return { status: "rejected", reason: "machine_unavailable" } as const;
+                }
+                // Cross-replica discovery is transported by the Socket.IO adapter. Do not
+                // let its intentionally delayed restart recovery block the independent,
+                // bounded global grant reservation. It is deliberately not durable until the
+                // exact machine accepts the owner attachment below.
+                const reservation = await reserveRedisGrant({
+                    grantId: params.grantId,
+                    expiresAt: params.grantExpiresAt,
+                    nowMs: params.nowMs,
+                });
+                if (reservation.status !== "reserved") {
+                    return relayAdmissionRejectionReason(reservation.status);
+                }
+                provisionalRedisGrantClaim = reservation.claim;
                 const sockets = await room
                     .timeout(FETCH_SOCKETS_TIMEOUT_MS)
                     .fetchSockets();
@@ -577,68 +676,83 @@ export function createPeerTcpTunnelRelayCoordinator(input: Readonly<{
                 }
                 exactMachineSocketId = exactSockets[0]!.id;
             }
+            // The user-socket replica is the one lifecycle owner for a tunnel. Once an
+            // admission has reached exact-machine attachment, a concurrent OPEN for the
+            // same tunnel cannot replace that owner or later unwind its attachment.
+            if (ownerAttachmentsByTunnelKey.has(params.tunnelKey)) {
+                return { status: "rejected", reason: "machine_unavailable" } as const;
+            }
+
+            const attachmentId = randomUUID();
+            const ownerAttachment: OwnerAttachment = {
+                attachmentId,
+                ownerRouteId,
+                machineSocketId: exactMachineSocketId,
+                local: false,
+                onMachineEnvelope: params.onMachineEnvelope,
+                onMachineDisconnect: params.onMachineDisconnect,
+            };
+            ownerAttachmentsByTunnelKey.set(params.tunnelKey, ownerAttachment);
+            ownerAttachmentById.set(attachmentId, ownerAttachment);
+            const attached = await attachExactMachine({
+                attachmentId,
+                ownerRouteId,
+                accountId: params.accountId,
+                tunnelKey: params.tunnelKey,
+                machineId: params.machineId,
+                machineSocketId: exactMachineSocketId,
+                maxDurationMs: params.maxDurationMs,
+            });
+            if (attached.status !== "attached") {
+                detachOwnerAttachment(params.tunnelKey, attachmentId);
+                return {
+                    status: "rejected",
+                    reason: attached.status === "unavailable" ? "cluster_unavailable" : "machine_unavailable",
+                } as const;
+            }
+            // Record the real locality before admission completes so every unwind path below —
+            // and `close()` — tears the provisional attachment down through one owner.
+            const attachedOwner = {
+                ...ownerAttachment,
+                local: attached.local,
+            };
+            ownerAttachmentsByTunnelKey.set(params.tunnelKey, attachedOwner);
+            ownerAttachmentById.set(attachmentId, attachedOwner);
+
+            if (provisionalRedisGrantClaim) {
+                const committed = await commitRedisGrantClaim(provisionalRedisGrantClaim);
+                if (committed !== "committed") {
+                    detachOwnerAttachment(params.tunnelKey, attachmentId);
+                    return relayAdmissionRejectionReason(committed);
+                }
+                durableGrantClaimCommitted = true;
+            } else {
+                const consumed = await consumeGrant({
+                    grantId: params.grantId,
+                    expiresAt: params.grantExpiresAt,
+                    nowMs: params.nowMs,
+                });
+                if (consumed !== "consumed") {
+                    detachOwnerAttachment(params.tunnelKey, attachmentId);
+                    return relayAdmissionRejectionReason(consumed);
+                }
+            }
+            if (closed) {
+                // Shutdown raced an already-spent grant. `close()` joins pending admissions
+                // before it drains the maps, so this attachment is torn down there.
+                return {
+                    status: "rejected",
+                    reason: "cluster_unavailable",
+                } as const;
+            }
+            return { status: "attached" } as const;
         } catch {
             return { status: "rejected", reason: "cluster_unavailable" } as const;
+        } finally {
+            if (provisionalRedisGrantClaim && !durableGrantClaimCommitted) {
+                await releaseRedisGrantClaim(provisionalRedisGrantClaim);
+            }
         }
-
-        const attachmentId = randomUUID();
-        const ownerAttachment: OwnerAttachment = {
-            attachmentId,
-            ownerRouteId,
-            machineSocketId: exactMachineSocketId,
-            local: false,
-            onMachineEnvelope: params.onMachineEnvelope,
-            onMachineDisconnect: params.onMachineDisconnect,
-        };
-        ownerAttachmentsByTunnelKey.set(params.tunnelKey, ownerAttachment);
-        ownerAttachmentById.set(attachmentId, ownerAttachment);
-        const attached = await attachExactMachine({
-            attachmentId,
-            ownerRouteId,
-            accountId: params.accountId,
-            tunnelKey: params.tunnelKey,
-            machineId: params.machineId,
-            machineSocketId: exactMachineSocketId,
-            maxDurationMs: params.maxDurationMs,
-        });
-        if (attached.status !== "attached") {
-            ownerAttachmentsByTunnelKey.delete(params.tunnelKey);
-            ownerAttachmentById.delete(attachmentId);
-            return {
-                status: "rejected",
-                reason: attached.status === "unavailable" ? "cluster_unavailable" : "machine_unavailable",
-            } as const;
-        }
-        // Record the real locality before the grant step so every unwind path below —
-        // and `close()` — tears the provisional attachment down through one owner.
-        const attachedOwner = {
-            ...ownerAttachment,
-            local: attached.local,
-        };
-        ownerAttachmentsByTunnelKey.set(params.tunnelKey, attachedOwner);
-        ownerAttachmentById.set(attachmentId, attachedOwner);
-
-        const consumed = await consumeGrant({
-            grantId: params.grantId,
-            expiresAt: params.grantExpiresAt,
-            nowMs: params.nowMs,
-        });
-        if (consumed !== "consumed") {
-            detachOwnerAttachment(params.tunnelKey, attachmentId);
-            return {
-                status: "rejected",
-                reason: consumed === "duplicate" ? "grant_already_consumed" : "cluster_unavailable",
-            } as const;
-        }
-        if (closed) {
-            // Shutdown raced an already-spent grant. `close()` joins pending admissions
-            // before it drains the maps, so this attachment is torn down there.
-            return {
-                status: "rejected",
-                reason: "cluster_unavailable",
-            } as const;
-        }
-        return { status: "attached" } as const;
     }
 
     function admit(

@@ -87,11 +87,11 @@ async function hasCompatibleAutomationAccountEncryptionTx(params: Readonly<{
  * (which attempt started, which dispatch retry was scheduled, and why a Run
  * became uncertain rather than cancelled) exists only here.
  *
- * It is deliberately write-only inside the server today: no API, projection, or
- * client reads it. Its consumer is the operator, through the published
+ * Its readers are the authenticated Run detail — `automationRunDetailSelect`
+ * plus `toAutomationRunV3DetailApiDto`, which project a bounded newest-first
+ * tail by named payload keys only — and the operator, through the published
  * `automationRunEvents` retention domain that decides how long this history is
- * kept. Exposing it through a product surface is an open product decision; it
- * is not dead persistence, and it must not be dropped as a side effect of one.
+ * kept. A new payload key is not user-facing until that projection names it.
  */
 async function appendRunEventTx(params: {
     tx: any;
@@ -1365,6 +1365,7 @@ export async function markAbandonedAutomationExecutionDispatchOutcomeUnknownTx(p
     state: "claimed" | "running";
     runRevision: number;
     executionInputEnvelope: string | null;
+    expectedExecutionDispatchState: "dispatchPermitted" | null;
     accountCurrentness: AutomationAccountCurrentnessWitnessV1;
     now: Date;
     expectedTriggerKind?: AutomationTriggerKind;
@@ -1377,7 +1378,7 @@ export async function markAbandonedAutomationExecutionDispatchOutcomeUnknownTx(p
             state: params.state,
             revision: params.runRevision,
             executionInputEnvelope: params.executionInputEnvelope,
-            executionDispatchState: "dispatchPermitted",
+            executionDispatchState: params.expectedExecutionDispatchState,
             leaseExpiresAt: { lt: params.now },
             account: { is: { seq: params.accountCurrentness.version } },
             automation: {
@@ -1453,6 +1454,12 @@ export async function markAbandonedAutomationExecutionDispatchOutcomeUnknownTx(p
  * reclaimed through a retired Definition. A claimed Run has not crossed the
  * start boundary, while a running Run (or committed detached dispatch) may
  * already have produced an effect and therefore remains explicitly uncertain.
+ *
+ * `claimedByMachineId` is the durable Run's own stored claimant, used as the
+ * evidence this transition is written against: it pins the row that was
+ * observed and decides which assignment retirement is being resolved. It is
+ * not the actor performing the recovery, so a claimant that never returns
+ * cannot keep the Run nonterminal.
  */
 export async function terminalizeRetiredAutomationRunAfterLeaseExpiryTx(params: Readonly<{
     tx: Tx;
@@ -1461,7 +1468,8 @@ export async function terminalizeRetiredAutomationRunAfterLeaseExpiryTx(params: 
     runId: string;
     state: "claimed" | "running";
     runRevision: number;
-    machineId: string;
+    /** Evidence: the claimant stored on the observed Run row. */
+    claimedByMachineId: string;
     executionInputEnvelope: string | null;
     originKind: AutomationRunOriginKind;
     executionDispatchState: string | null;
@@ -1481,7 +1489,7 @@ export async function terminalizeRetiredAutomationRunAfterLeaseExpiryTx(params: 
             automationId: params.automationId,
             state: params.state,
             revision: params.runRevision,
-            claimedByMachineId: params.machineId,
+            claimedByMachineId: params.claimedByMachineId,
             executionInputEnvelope: params.executionInputEnvelope,
             leaseExpiresAt: { lt: params.now },
             account: { is: { seq: params.accountCurrentness.version } },
@@ -1495,7 +1503,7 @@ export async function terminalizeRetiredAutomationRunAfterLeaseExpiryTx(params: 
                     {
                         assignments: {
                             none: {
-                                machineId: params.machineId,
+                                machineId: params.claimedByMachineId,
                                 enabled: true,
                             },
                         },

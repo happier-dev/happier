@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
 
 import {
-    StoredJsonContentEnvelopeSchema,
     isStoredJsonContentEnvelopeModeCompatible,
     type StoredJsonContentEnvelope,
 } from "@happier-dev/protocol";
@@ -10,6 +9,10 @@ import { z } from "zod";
 import { deriveAccountEncryptionCurrentnessFromRow } from "@/app/encryption/accountContentKeyAdmission";
 import { inTx, type Tx } from "@/storage/inTx";
 import { isPrismaErrorCode } from "@/storage/prisma";
+import {
+    decodeAccountContentFromAtRestStorage,
+    encodeAccountContentForAtRestStorage,
+} from "../accountContentAtRestStorage";
 
 export type ConnectedAccountAttemptTransactionKind = "oauth" | "device";
 
@@ -29,7 +32,7 @@ export type ConnectedAccountAttemptTransactionMutationResult =
 const StoredConnectedAccountAttemptTransactionSchema = z.object({
     version: z.literal(1),
     revision: z.number().int().min(1),
-    content: StoredJsonContentEnvelopeSchema,
+    content: z.string().min(1),
 }).strict();
 
 /**
@@ -42,7 +45,13 @@ async function readAccountEnvelopeAdmission(
     tx: Tx,
     accountId: string,
     content: StoredJsonContentEnvelope,
-): Promise<"ok" | "storage_mode_mismatch"> {
+): Promise<
+    | Readonly<{ status: "ok"; accountMode: "plain" | "e2ee" }>
+    | Readonly<{ status: "storage_mode_mismatch" }>
+> {
+    const mismatch = Object.freeze({
+        status: "storage_mode_mismatch" as const,
+    });
     const account = await tx.account.findUnique({
         where: { id: accountId },
         select: {
@@ -52,15 +61,16 @@ async function readAccountEnvelopeAdmission(
             contentPublicKeySig: true,
         },
     });
-    if (!account) return "storage_mode_mismatch";
+    if (!account) return mismatch;
     const currentness = deriveAccountEncryptionCurrentnessFromRow(account);
-    if (currentness.status === "inconsistent") return "storage_mode_mismatch";
+    if (currentness.status === "inconsistent") return mismatch;
+    const accountMode = currentness.currentness.encryptionMode;
     return isStoredJsonContentEnvelopeModeCompatible(
-        currentness.currentness.encryptionMode,
+        accountMode,
         content,
     )
-        ? "ok"
-        : "storage_mode_mismatch";
+        ? Object.freeze({ status: "ok" as const, accountMode })
+        : mismatch;
 }
 
 function transactionKey(input: Readonly<{
@@ -79,20 +89,40 @@ function transactionKey(input: Readonly<{
     return `caat_v1_${digest}`;
 }
 
+/**
+ * Domain-separated at-rest path for one exact attempt transaction, so a sealed
+ * payload can only be opened as the attempt it was written for.
+ */
+function transactionStorageKeyPath(input: Readonly<{
+    accountId: string;
+    kind: ConnectedAccountAttemptTransactionKind;
+    attemptId: string;
+}>): string[] {
+    return [
+        "storage",
+        "connected_account_attempt_transaction",
+        input.kind,
+        input.accountId,
+        input.attemptId,
+        "v1",
+    ];
+}
+
 function encodeStored(
     revision: number,
-    content: StoredJsonContentEnvelope,
+    atRestContent: string,
 ): string {
     return JSON.stringify({
         version: 1,
         revision,
-        content,
+        content: atRestContent,
     });
 }
 
 function parseRecord(
     value: string,
     expiresAt: Date,
+    keyPath: string[],
 ): ConnectedAccountAttemptTransactionRecord | null {
     let decoded: unknown;
     try {
@@ -102,9 +132,18 @@ function parseRecord(
     }
     const parsed = StoredConnectedAccountAttemptTransactionSchema.safeParse(decoded);
     if (!parsed.success) return null;
+    let content: StoredJsonContentEnvelope;
+    try {
+        content = decodeAccountContentFromAtRestStorage({
+            keyPath,
+            value: parsed.data.content,
+        });
+    } catch {
+        return null;
+    }
     return Object.freeze({
         revision: parsed.data.revision,
-        content: parsed.data.content,
+        content,
         expiresAtMs: expiresAt.getTime(),
     });
 }
@@ -113,6 +152,7 @@ async function readCurrent(
     tx: Tx,
     key: string,
     nowMs: number,
+    keyPath: string[],
 ) {
     const row = await tx.repeatKey.findUnique({ where: { key } });
     if (!row) return null;
@@ -122,7 +162,7 @@ async function readCurrent(
         });
         return null;
     }
-    const record = parseRecord(row.value, row.expiresAt);
+    const record = parseRecord(row.value, row.expiresAt, keyPath);
     return record ? Object.freeze({ row, record }) : null;
 }
 
@@ -138,7 +178,7 @@ export async function createConnectedAccountAttemptTransaction(input: Readonly<{
     expiresAtMs: number;
 }>): Promise<ConnectedAccountAttemptTransactionMutationResult> {
     const key = transactionKey(input);
-    const value = encodeStored(1, input.content);
+    const keyPath = transactionStorageKeyPath(input);
     try {
         const admission = await inTx(async (tx) => {
             const result = await readAccountEnvelopeAdmission(
@@ -146,11 +186,15 @@ export async function createConnectedAccountAttemptTransaction(input: Readonly<{
                 input.accountId,
                 input.content,
             );
-            if (result !== "ok") return result;
+            if (result.status !== "ok") return result.status;
             await tx.repeatKey.create({
                 data: {
                     key,
-                    value,
+                    value: encodeStored(1, encodeAccountContentForAtRestStorage({
+                        accountMode: result.accountMode,
+                        keyPath,
+                        content: input.content,
+                    })),
                     expiresAt: new Date(input.expiresAtMs),
                 },
             });
@@ -185,7 +229,12 @@ export async function readConnectedAccountAttemptTransaction(input: Readonly<{
     nowMs: number;
 }>): Promise<ConnectedAccountAttemptTransactionRecord | null> {
     return await inTx(async (tx) => (
-        await readCurrent(tx, transactionKey(input), input.nowMs)
+        await readCurrent(
+            tx,
+            transactionKey(input),
+            input.nowMs,
+            transactionStorageKeyPath(input),
+        )
     )?.record ?? null);
 }
 
@@ -208,17 +257,25 @@ export async function replaceConnectedAccountAttemptTransaction(input: Readonly<
             input.accountId,
             input.content,
         );
-        if (admission !== "ok") {
+        if (admission.status !== "ok") {
             return Object.freeze({ status: "storage_mode_mismatch" as const });
         }
         const key = transactionKey(input);
-        const current = await readCurrent(tx, key, input.nowMs);
+        const keyPath = transactionStorageKeyPath(input);
+        const current = await readCurrent(tx, key, input.nowMs, keyPath);
         if (!current) return Object.freeze({ status: "not_found" as const });
         if (current.record.revision !== input.expectedRevision) {
             return Object.freeze({ status: "conflict" as const });
         }
         const revision = current.record.revision + 1;
-        const value = encodeStored(revision, input.content);
+        const value = encodeStored(
+            revision,
+            encodeAccountContentForAtRestStorage({
+                accountMode: admission.accountMode,
+                keyPath,
+                content: input.content,
+            }),
+        );
         const updated = await tx.repeatKey.updateMany({
             where: {
                 key,
@@ -257,7 +314,12 @@ export async function deleteConnectedAccountAttemptTransaction(input: Readonly<{
 }>): Promise<Readonly<{ status: "deleted" | "not_found" | "conflict" }>> {
     return await inTx(async (tx) => {
         const key = transactionKey(input);
-        const current = await readCurrent(tx, key, input.nowMs);
+        const current = await readCurrent(
+            tx,
+            key,
+            input.nowMs,
+            transactionStorageKeyPath(input),
+        );
         if (!current) return Object.freeze({ status: "not_found" as const });
         if (current.record.revision !== input.expectedRevision) {
             return Object.freeze({ status: "conflict" as const });

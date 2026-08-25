@@ -14,6 +14,7 @@ import { eventRouter, buildSessionSharedUpdate, buildSessionShareUpdatedUpdate, 
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import { afterTx, inTx } from "@/storage/inTx";
 import { markAccountChanged } from "@/app/changes/markAccountChanged";
+import { tombstoneSessionDraftForLifecycleInTx } from "@/app/account/sessionDrafts/sessionDraftService";
 import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
 import { tryParseDirectShareEncryptedDataKey } from "./directShareEncryptedDataKeyValidation";
 import {
@@ -472,6 +473,11 @@ export function shareRoutes(app: Fastify) {
 
             await tx.sessionShare.delete({
                 where: { id: shareId }
+            });
+
+            await tombstoneSessionDraftForLifecycleInTx(tx, {
+                accountId: share.sharedWithUserId,
+                sessionId,
             });
 
             await markAccountChanged(tx, { accountId: userId, kind: 'share', entityId: sessionId });

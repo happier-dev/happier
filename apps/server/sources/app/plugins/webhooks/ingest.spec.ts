@@ -50,6 +50,37 @@ describe("plugin webhook durable ingress owner", () => {
         };
     }
 
+    function accountEndpointDependencies(): PluginWebhookIngestDependenciesV1 {
+        const base = dependencies();
+        return {
+            ...base,
+            findRoute: vi.fn(async () => ({
+                routeId: "route-1",
+                verifierKind: "github_hmac_sha256_v1" as const,
+                routingKind: "accountEndpoint" as const,
+                policyVersion: 1 as const,
+            })),
+            resolveEndpoint: vi.fn(async () => ({
+                endpointId: "wh_ep_AAECAwQFBgcICQoLDA0ODw",
+                revision: 2,
+                accountId: "account-1",
+                pluginId: "acme.github",
+                webhookContributionId: "github-events",
+                handlerActionId: "handle-webhook",
+                sourceInstanceId: "source-1",
+                routingKind: "accountEndpoint" as const,
+                providerInstallationId: null,
+                targetMaterialization: {
+                    machineId: "machine-1",
+                    materializationId: "materialization-1",
+                    pluginId: "acme.github",
+                },
+                targetMachineInstallationId: "installation-1",
+                targetPluginVersion: "1.0.0",
+            })),
+        };
+    }
+
     it("verifies exact raw bytes before parsing shared-route installation identity or touching Account custody", async () => {
         const deps = dependencies();
         await expect(ingestPluginWebhookV1({
@@ -151,6 +182,58 @@ describe("plugin webhook durable ingress owner", () => {
                 }),
             }),
         });
+    });
+
+    /**
+     * Tenant admission moved off the unauthenticated hop, so the ingest owner
+     * is now the only place an Account endpoint's endpoint/Account sublimits
+     * are charged. Without these two cases, deleting the reservation call here
+     * would silently remove distributed tenant admission for every routing
+     * kind while the ingress route's own tests — which supply their own ingest
+     * double — stayed green.
+     */
+    it("charges the resolved endpoint's tenant admission before durable admission and releases it", async () => {
+        const deps = accountEndpointDependencies();
+        const order: string[] = [];
+        const release = vi.fn(async () => { order.push("release"); });
+        const reserveResolvedEndpoint = vi.fn(async () => {
+            order.push("reserve");
+            return { release };
+        });
+        vi.mocked(deps.admitDelivery).mockImplementation(async () => {
+            order.push("admit");
+            return { kind: "admitted" as const, deliveryId: "delivery-1" };
+        });
+
+        await expect(ingestPluginWebhookV1({
+            opaqueRouteId: "opaque-1",
+            rawBody: BODY,
+            headers: { "x-hub-signature-256": signature(), "x-github-delivery": "delivery-guid-1" },
+            reserveResolvedEndpoint,
+            dependencies: deps,
+        })).resolves.toEqual({ kind: "accepted", deliveryId: "delivery-1", duplicate: false });
+
+        expect(reserveResolvedEndpoint).toHaveBeenCalledWith(expect.objectContaining({
+            endpointId: "wh_ep_AAECAwQFBgcICQoLDA0ODw",
+            accountId: "account-1",
+            routingKind: "accountEndpoint",
+        }));
+        expect(order).toEqual(["reserve", "admit", "release"]);
+    });
+
+    it("refuses the delivery without admitting it when tenant admission is exhausted", async () => {
+        const deps = accountEndpointDependencies();
+
+        await expect(ingestPluginWebhookV1({
+            opaqueRouteId: "opaque-1",
+            rawBody: BODY,
+            headers: { "x-hub-signature-256": signature(), "x-github-delivery": "delivery-guid-1" },
+            reserveResolvedEndpoint: async () => null,
+            dependencies: deps,
+        })).resolves.toEqual({ kind: "rejected", statusCode: 503, code: "unavailable" });
+
+        expect(deps.readAccount).not.toHaveBeenCalled();
+        expect(deps.admitDelivery).not.toHaveBeenCalled();
     });
 
     it("fails closed on malformed identity, missing encryption binding, and queue admission rejection", async () => {

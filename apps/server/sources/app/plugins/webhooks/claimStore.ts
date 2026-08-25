@@ -728,7 +728,7 @@ export async function recoverExpiredPluginWebhookClaimsV1(params: Readonly<{
 export async function ageOverduePluginWebhookDeliveriesV1(params: Readonly<{
     now?: Date;
     batchSize?: number;
-}> = {}): Promise<Readonly<{ markedOffline: number; deadLettered: number }>> {
+}> = {}): Promise<Readonly<{ deadLettered: number }>> {
     const now = params.now ?? new Date();
     const batchSize = params.batchSize ?? DEFAULT_RECOVERY_BATCH_SIZE_V1;
     if (!Number.isInteger(batchSize) || batchSize < 1 || batchSize > MAX_RECOVERY_BATCH_SIZE_V1) {
@@ -740,20 +740,14 @@ export async function ageOverduePluginWebhookDeliveriesV1(params: Readonly<{
             state: "queued",
             payloadBytes: { gt: 0n },
             nextAttemptAt: { lte: now },
-            OR: [
-                { offlineSinceAt: null },
-                { offlineSinceAt: { lte: offlineDeadline } },
-            ],
+            offlineSinceAt: { lte: offlineDeadline },
         },
         orderBy: [{ nextAttemptAt: "asc" }, { id: "asc" }],
         take: batchSize,
         select: { id: true, accountId: true, targetPluginId: true, revision: true, attemptCount: true, offlineSinceAt: true },
     });
-    let markedOffline = 0;
     let deadLettered = 0;
     for (const candidate of candidates) {
-        const expired = candidate.offlineSinceAt !== null
-            && candidate.offlineSinceAt.getTime() <= offlineDeadline.getTime();
         const transitioned = await inTx(async (tx) => {
             const updated = await tx.pluginWebhookDelivery.updateMany({
                 where: {
@@ -764,14 +758,7 @@ export async function ageOverduePluginWebhookDeliveriesV1(params: Readonly<{
                     nextAttemptAt: { lte: now },
                     offlineSinceAt: candidate.offlineSinceAt,
                 },
-                data: expired
-                    ? deadLetterMutation(now, "target_offline")
-                    : {
-                        offlineSinceAt: now,
-                        lastErrorCode: "target_offline",
-                        automationAdmissionUnresolved: getActivePrismaRuntime().DbNull,
-                        revision: { increment: 1 },
-                    },
+                data: deadLetterMutation(now, "target_offline"),
             });
             if (updated.count !== 1) return false;
             await markPluginWebhookAccountChangedInTxV1(tx, {
@@ -781,8 +768,7 @@ export async function ageOverduePluginWebhookDeliveriesV1(params: Readonly<{
             return true;
         });
         if (!transitioned) continue;
-        if (expired) deadLettered += 1;
-        else markedOffline += 1;
+        deadLettered += 1;
     }
-    return { markedOffline, deadLettered };
+    return { deadLettered };
 }

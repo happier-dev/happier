@@ -91,6 +91,7 @@ export const automationRunItemSelect = {
     summaryCiphertext: true,
     errorCode: true,
     errorMessage: true,
+    contentRemovedAt: true,
     producedSessionId: true,
     createdAt: true,
     updatedAt: true,

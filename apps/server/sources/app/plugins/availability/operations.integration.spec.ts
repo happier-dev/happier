@@ -930,6 +930,138 @@ describe("plugin Availability operations", () => {
         await expect(db.pluginMachineMaterialization.count({ where: { accountId: ACCOUNT_ID } })).resolves.toBe(0);
     });
 
+    it("refuses a machine inventory published by another machine or under another server identity", async () => {
+        await seedAccountAndMachine();
+        const service = operations();
+        const materialization = {
+            serverIdentityId: SERVER_IDENTITY_ID,
+            machineId: MACHINE_ID,
+            materializationId: "install-epoch-1",
+            pluginId: PLUGIN_ID,
+            version: RELEASE.version,
+            sourceClass: "registryPackage" as const,
+            portableRelease: true,
+            uiArtifacts: [],
+            enabled: true,
+            trustState: "trusted" as const,
+            observedAt: 1_700_000_000_000,
+        };
+        const snapshot = {
+            serverIdentityId: SERVER_IDENTITY_ID,
+            machineId: MACHINE_ID,
+            revision: 1,
+            materializations: [materialization],
+        };
+
+        // A machine may only report its own inventory; the authenticated
+        // publisher, not the body, decides whose inventory this is.
+        await expect(service.reportMaterializations({
+            accountId: ACCOUNT_ID,
+            publisherMachineId: "machine-availability-other",
+            input: { snapshot },
+        })).rejects.toMatchObject({ code: "plugin_materialization_machine_mismatch" });
+
+        // A server alias change cannot be absorbed silently: portable identity
+        // is the server's own, never the reporter's claim.
+        const aliasedServerIdentityId = "srv_availabilityAlias000001";
+        await expect(service.reportMaterializations({
+            accountId: ACCOUNT_ID,
+            publisherMachineId: MACHINE_ID,
+            input: {
+                snapshot: {
+                    ...snapshot,
+                    serverIdentityId: aliasedServerIdentityId,
+                    materializations: [{ ...materialization, serverIdentityId: aliasedServerIdentityId }],
+                },
+            },
+        })).rejects.toMatchObject({ code: "plugin_materialization_server_identity_mismatch" });
+
+        await expect(db.pluginMachineMaterialization.count()).resolves.toBe(0);
+        await expect(db.machine.findUnique({
+            where: { id: MACHINE_ID },
+            select: { pluginMaterializationRevision: true },
+        })).resolves.toEqual({ pluginMaterializationRevision: null });
+
+        // Positive twin: the identical inventory from its own machine under the
+        // server's own identity is accepted.
+        await expect(service.reportMaterializations({
+            accountId: ACCOUNT_ID,
+            publisherMachineId: MACHINE_ID,
+            input: { snapshot },
+        })).resolves.toMatchObject({ outcome: "replaced" });
+        await expect(db.pluginMachineMaterialization.count()).resolves.toBe(1);
+    });
+
+    it("refuses an inventory body that names a sibling machine of the same Account", async () => {
+        await seedAccountAndMachine();
+        const SIBLING_MACHINE_ID = "machine-plugin-availability-sibling";
+        await db.machine.create({
+            data: {
+                id: SIBLING_MACHINE_ID,
+                accountId: ACCOUNT_ID,
+                metadata: "{}",
+                installationId: "machine-installation-availability-sibling",
+            },
+        });
+        const service = operations();
+        const materializationFor = (machineId: string) => ({
+            serverIdentityId: SERVER_IDENTITY_ID,
+            machineId,
+            materializationId: `install-epoch-${machineId}`,
+            pluginId: PLUGIN_ID,
+            version: RELEASE.version,
+            sourceClass: "registryPackage" as const,
+            portableRelease: true,
+            uiArtifacts: [],
+            enabled: true,
+            trustState: "trusted" as const,
+            observedAt: 1_700_000_000_000,
+        });
+        const snapshotFor = (machineId: string) => ({
+            serverIdentityId: SERVER_IDENTITY_ID,
+            machineId,
+            revision: 1,
+            materializations: [materializationFor(machineId)],
+        });
+
+        // The publisher is a real machine of this Account, so the in-transaction
+        // ownership lookup cannot catch this: only the body/publisher comparison
+        // stops one machine from writing another machine's installation epochs.
+        await expect(service.reportMaterializations({
+            accountId: ACCOUNT_ID,
+            publisherMachineId: MACHINE_ID,
+            input: { snapshot: snapshotFor(SIBLING_MACHINE_ID) },
+        })).rejects.toMatchObject({ code: "plugin_materialization_machine_mismatch" });
+        await expect(db.pluginMachineMaterialization.count()).resolves.toBe(0);
+        await expect(db.machine.findUnique({
+            where: { id: MACHINE_ID },
+            select: { pluginMaterializationRevision: true },
+        })).resolves.toEqual({ pluginMaterializationRevision: null });
+        await expect(db.machine.findUnique({
+            where: { id: SIBLING_MACHINE_ID },
+            select: { pluginMaterializationRevision: true },
+        })).resolves.toEqual({ pluginMaterializationRevision: null });
+
+        // Positive twin: each machine may still publish its own inventory, and
+        // one machine's report never disturbs the sibling's rows or watermark.
+        await expect(service.reportMaterializations({
+            accountId: ACCOUNT_ID,
+            publisherMachineId: SIBLING_MACHINE_ID,
+            input: { snapshot: snapshotFor(SIBLING_MACHINE_ID) },
+        })).resolves.toMatchObject({ outcome: "replaced" });
+        await expect(service.reportMaterializations({
+            accountId: ACCOUNT_ID,
+            publisherMachineId: MACHINE_ID,
+            input: { snapshot: snapshotFor(MACHINE_ID) },
+        })).resolves.toMatchObject({ outcome: "replaced" });
+        await expect(db.pluginMachineMaterialization.count({
+            where: { machineId: SIBLING_MACHINE_ID },
+        })).resolves.toBe(1);
+        await expect(db.pluginMachineMaterialization.count({
+            where: { machineId: MACHINE_ID },
+        })).resolves.toBe(1);
+    });
+
     it("retains conflicting portable materialization evidence so currentness can reject it visibly", async () => {
         await seedAccountAndMachine();
         const service = operations();
@@ -1317,6 +1449,75 @@ describe("plugin Availability operations", () => {
                 expectedArtifactDigest: `sha256:${"f".repeat(64)}`,
             },
         })).rejects.toMatchObject({ code: "plugin_release_content_conflict" });
+    });
+
+    it("refuses hosted publish and exact read while the operator has not enabled Artifact hosting", async () => {
+        await seedAccountAndMachine();
+        const hostingEnabled = operations();
+        const hostingDisabled = createPluginAvailabilityOperations({
+            resolveHostingCapability: () => ({ enabled: false }),
+            resolveServerIdentityId: async () => SERVER_IDENTITY_ID,
+        });
+        await hostingEnabled.publishRelease({
+            accountId: ACCOUNT_ID,
+            input: { facts: releaseFacts(), sourceClass: "registryPackage" },
+        });
+        await db.accountPluginIntent.create({
+            data: {
+                accountId: ACCOUNT_ID,
+                pluginId: PLUGIN_ID,
+                desiredVersion: RELEASE.version,
+                enabled: true,
+                offlineUiHosting: "enabled",
+                writableCollections: [],
+                revision: BigInt(1),
+            },
+        });
+        const slot = releaseFacts().uiSlots[0]!;
+        const artifactId = "00000000-0000-4000-8000-000000000009";
+        const publishInput = {
+            release: RELEASE,
+            slot,
+            hostCompatibility: hostedArtifactLinkCompatibility(),
+            artifactId,
+            artifact: {
+                header: encodePlainArtifactStoredContent({ title: "Hosting disabled" }),
+                body: encodePlainArtifactStoredContent({ archive: "fixture" }),
+                dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+            },
+        } as const;
+
+        // Present-user hosting intent is enabled; only the operator capability is off.
+        await expect(hostingDisabled.publishUiArtifact({
+            accountId: ACCOUNT_ID,
+            supportsCurrentStoredContentProtocol: true,
+            input: publishInput,
+        })).rejects.toMatchObject({ code: "plugin_ui_artifact_hosting_unsupported" });
+        await expect(db.artifact.count()).resolves.toBe(0);
+        await expect(db.accountPluginUiArtifact.count()).resolves.toBe(0);
+
+        // Positive twin: the identical envelope commits once the operator supports hosting.
+        await expect(hostingEnabled.publishUiArtifact({
+            accountId: ACCOUNT_ID,
+            supportsCurrentStoredContentProtocol: true,
+            input: publishInput,
+        })).resolves.toMatchObject({ outcome: "created", link: { artifactId } });
+
+        const exactReadInput = {
+            release: RELEASE,
+            contributionId: slot.contributionId,
+            tier: slot.tier,
+            platform: slot.platform,
+        } as const;
+        await expect(hostingEnabled.readUiArtifact({
+            accountId: ACCOUNT_ID,
+            input: exactReadInput,
+        })).resolves.toMatchObject({ link: { artifactId } });
+        // A committed archive stays behind the same typed unsupported result.
+        await expect(hostingDisabled.readUiArtifact({
+            accountId: ACCOUNT_ID,
+            input: exactReadInput,
+        })).rejects.toMatchObject({ code: "plugin_ui_artifact_hosting_unsupported" });
     });
 
     it("keeps an E2EE UI archive opaque to Availability while exact qualified read and removal use the generic Artifact owner", async () => {

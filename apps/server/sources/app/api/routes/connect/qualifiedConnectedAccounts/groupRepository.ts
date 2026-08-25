@@ -20,9 +20,7 @@ import type { Prisma } from "@prisma/client";
 import { db } from "@/storage/db";
 import { inTx, type Tx } from "@/storage/inTx";
 import {
-    getDbProviderFromEnv,
     isPrismaErrorCode,
-    prismaRuntime as PrismaRuntime,
 } from "@/storage/prisma";
 import { recordConnectedServiceAccountProfileChange } from "../connectedServicesAccountProfileChange";
 import {
@@ -182,8 +180,6 @@ type QualifiedGroupListStorage = Pick<
     "connectedServiceAuthGroup"
 >;
 
-const QUALIFIED_GROUP_UNPAGINATED_LIMIT = 500;
-
 async function listQualifiedConnectedAccountGroupsByFilter(
     tx: QualifiedGroupListStorage,
     params: Readonly<{
@@ -234,7 +230,6 @@ async function listQualifiedConnectedAccountGroupsByFilter(
             { groupId: "asc" },
             { id: "asc" },
         ],
-        take: QUALIFIED_GROUP_UNPAGINATED_LIMIT + 1,
     });
     const preparedRows = rows.filter((row) => {
         const canonicalValues = [
@@ -254,11 +249,6 @@ async function listQualifiedConnectedAccountGroupsByFilter(
         }
         return true;
     });
-    if (preparedRows.length > QUALIFIED_GROUP_UNPAGINATED_LIMIT) {
-        throw new Error(
-            "Qualified Connected Account group unpaginated list limit exceeded",
-        );
-    }
     return preparedRows.map((row) => ({
         group: toQualifiedConnectedAccountGroup(row),
         activeProfileId: row.activeProfileId,
@@ -420,15 +410,6 @@ export type QualifiedConnectedAccountGroupMutationResult =
         resetAtMs?: number;
     }>;
 
-export type QualifiedConnectedAccountGroupLegacyV3MutationReadResult =
-    | Readonly<{
-        status: "current";
-        group: QualifiedConnectedAccountGroupV4;
-        activeProfileId: string | null;
-    }>
-    | Readonly<{ status: "not_found" }>
-    | Readonly<{ status: "incarnation_superseded" }>;
-
 class QualifiedGroupMemberCasConflictError extends Error {
     constructor() {
         super("Qualified Connected Account group member CAS lost");
@@ -436,95 +417,14 @@ class QualifiedGroupMemberCasConflictError extends Error {
     }
 }
 
-/**
- * A released V3 mutation cannot carry a group incarnation. The fence records
- * the one incarnation that remains eligible for that route shape, and it is
- * never rewritten after delete/recreate. V4 adapters pass `null` when their
- * wire request omitted the token, so their unfenced mutations fail closed.
- */
-type QualifiedGroupLegacyV3FenceStorage = Pick<
-    Tx,
-    "$executeRaw" | "$queryRaw"
->;
-
-type QualifiedGroupLegacyV3FenceRow = Readonly<{
-    legacy_v3_eligible_incarnation: string;
-}>;
-
-async function readQualifiedGroupLegacyV3EligibleIncarnationInTx(
-    tx: QualifiedGroupLegacyV3FenceStorage,
-    params: Readonly<{
-        accountId: string;
-        qualifiedGroupDigest: string;
-    }>,
-): Promise<string | null> {
-    const rows = await tx.$queryRaw<QualifiedGroupLegacyV3FenceRow[]>(
-        PrismaRuntime.sql`
-            SELECT legacy_v3_eligible_incarnation
-            FROM connected_service_auth_group_legacy_v3_mutation_fence
-            WHERE account_id = ${params.accountId}
-              AND qualified_group_digest = ${params.qualifiedGroupDigest}
-        `,
-    );
-    if (rows.length > 1) {
-        throw new Error(
-            "Qualified Connected Account legacy V3 group fence is not unique",
-        );
-    }
-    return rows[0]?.legacy_v3_eligible_incarnation ?? null;
-}
-
-async function createQualifiedGroupLegacyV3FenceIfAbsentInTx(
-    tx: QualifiedGroupLegacyV3FenceStorage,
-    params: Readonly<{
-        accountId: string;
-        qualifiedGroupDigest: string;
-        incarnation: string;
-    }>,
-): Promise<void> {
-    const provider = getDbProviderFromEnv(process.env, "postgres");
-    const insert = provider === "mysql"
-        ? PrismaRuntime.sql`
-            INSERT IGNORE INTO connected_service_auth_group_legacy_v3_mutation_fence (
-                account_id,
-                qualified_group_digest,
-                legacy_v3_eligible_incarnation
-            ) VALUES (
-                ${params.accountId},
-                ${params.qualifiedGroupDigest},
-                ${params.incarnation}
-            )
-        `
-        : PrismaRuntime.sql`
-            INSERT INTO connected_service_auth_group_legacy_v3_mutation_fence (
-                account_id,
-                qualified_group_digest,
-                legacy_v3_eligible_incarnation
-            ) VALUES (
-                ${params.accountId},
-                ${params.qualifiedGroupDigest},
-                ${params.incarnation}
-            )
-            ON CONFLICT (account_id, qualified_group_digest) DO NOTHING
-        `;
-    await tx.$executeRaw(insert);
-}
-
-type QualifiedGroupMutationAdmissionStorage =
-    QualifiedGroupListStorage & QualifiedGroupLegacyV3FenceStorage;
+type QualifiedGroupMutationAdmissionStorage = QualifiedGroupListStorage;
 
 type QualifiedGroupMutationAdmissionResult =
     | Readonly<{ status: "current"; current: QualifiedGroupStoredRow }>
     | Readonly<{ status: "not_found" }>
     | Readonly<{ status: "incarnation_superseded" }>;
 
-/**
- * Owns mutation admission for both wire generations. V4 supplies an exact
- * row incarnation and does not read the legacy marker. V3 has no incarnation,
- * so its durable eligible incarnation is read before classifying an absent or
- * duplicate current row: a deleted/recreated group cannot be re-admitted by a
- * delayed V3 mutation.
- */
+/** Owns exact-incarnation mutation admission for the canonical V4 group. */
 async function readQualifiedGroupMutationAdmissionInTx(
     tx: QualifiedGroupMutationAdmissionStorage,
     params: Readonly<{
@@ -534,69 +434,15 @@ async function readQualifiedGroupMutationAdmissionInTx(
         expectedIncarnation?: string | null;
     }>,
 ): Promise<QualifiedGroupMutationAdmissionResult> {
-    if (params.expectedIncarnation === undefined) {
-        const service = QualifiedConnectedAccountServiceRefSchema.parse(
-            params.service,
-        );
-        const groupRef = QualifiedConnectedAccountGroupRefSchema.parse({
-            service,
-            groupId: params.groupId,
-        });
-        const legacyV3EligibleIncarnation =
-            await readQualifiedGroupLegacyV3EligibleIncarnationInTx(tx, {
-                accountId: params.accountId,
-                qualifiedGroupDigest:
-                    createQualifiedConnectedAccountGroupDigest(groupRef),
-            });
-        const current = await readQualifiedGroupRowInTx(tx, {
-            accountId: params.accountId,
-            service,
-            groupId: params.groupId,
-        });
-        if (legacyV3EligibleIncarnation === null) {
-            return current
-                ? { status: "incarnation_superseded" }
-                : { status: "not_found" };
-        }
-        if (!current || current.id !== legacyV3EligibleIncarnation) {
-            return { status: "incarnation_superseded" };
-        }
-        return { status: "current", current };
-    }
-
     const current = await readQualifiedGroupRowInTx(tx, params);
     if (!current) return { status: "not_found" };
-    if (params.expectedIncarnation !== current.id) {
+    if (
+        params.expectedIncarnation !== undefined
+        && params.expectedIncarnation !== current.id
+    ) {
         return { status: "incarnation_superseded" };
     }
     return { status: "current", current };
-}
-
-/**
- * Mutation-only legacy V3 read admission. Ordinary V3 projections remain
- * readable after recreation; callers use this only when an early legacy no-op
- * could otherwise bypass the repository's mutation admission check.
- */
-export async function readQualifiedConnectedAccountGroupForLegacyV3Mutation(
-    params: Readonly<{
-        accountId: string;
-        service: QualifiedConnectedAccountServiceRef;
-        groupId: string;
-    }>,
-): Promise<QualifiedConnectedAccountGroupLegacyV3MutationReadResult> {
-    return await inTx(async (tx) => {
-        const admission = await readQualifiedGroupMutationAdmissionInTx(tx, {
-            ...params,
-            expectedIncarnation: undefined,
-        });
-        if (admission.status !== "current") return admission;
-        const current = admission.current;
-        return {
-            status: "current",
-            group: toQualifiedConnectedAccountGroup(current),
-            activeProfileId: current.activeProfileId,
-        };
-    });
 }
 
 async function settleQualifiedGroupMemberCasConflict(
@@ -670,7 +516,6 @@ export async function createQualifiedConnectedAccountGroup(
             state?: unknown;
         }>>;
         activeConnectedAccountId?: string | null;
-        legacyV3Mutation?: boolean;
     }>,
 ): Promise<QualifiedConnectedAccountGroupMutationResult> {
     const parsed = QualifiedConnectedAccountGroupCreateV4Schema.parse({
@@ -685,27 +530,12 @@ export async function createQualifiedConnectedAccountGroup(
                 service: parsed.service,
                 groupId: parsed.group.groupId,
             });
-        if (params.legacyV3Mutation === true) {
-            const admission = await readQualifiedGroupMutationAdmissionInTx(tx, {
-                accountId: params.accountId,
-                service: parsed.service,
-                groupId: parsed.group.groupId,
-                expectedIncarnation: undefined,
-            });
-            if (admission.status === "current") {
-                return { status: "already_exists" };
-            }
-            if (admission.status === "incarnation_superseded") {
-                return admission;
-            }
-        } else {
-            const existing = await readQualifiedGroupRowInTx(tx, {
-                accountId: params.accountId,
-                service: parsed.service,
-                groupId: parsed.group.groupId,
-            });
-            if (existing) return { status: "already_exists" };
-        }
+        const existing = await readQualifiedGroupRowInTx(tx, {
+            accountId: params.accountId,
+            service: parsed.service,
+            groupId: parsed.group.groupId,
+        });
+        if (existing) return { status: "already_exists" };
         const legacyServiceId =
             resolveLegacyServiceIdForQualifiedConnectedAccountService(
                 parsed.service,
@@ -791,11 +621,6 @@ export async function createQualifiedConnectedAccountGroup(
             },
             select: { id: true },
         });
-        await createQualifiedGroupLegacyV3FenceIfAbsentInTx(tx, {
-            accountId: params.accountId,
-            qualifiedGroupDigest: groupDigest,
-            incarnation: created.id,
-        });
         if (initialMembers.length > 0) {
             await tx.connectedServiceAuthGroupMember.createMany({
                 data: initialMembers.map((member) => {
@@ -846,7 +671,6 @@ export async function patchQualifiedConnectedAccountGroup(
         expectedGeneration?: number;
         expectedIncarnation?: string | null;
         activeConnectedAccountId?: string | null;
-        preserveLegacyNoopSemantics?: boolean;
     }>,
 ): Promise<QualifiedConnectedAccountGroupMutationResult> {
     const patch = QualifiedConnectedAccountGroupPatchV4Schema.parse(
@@ -892,19 +716,12 @@ export async function patchQualifiedConnectedAccountGroup(
                 ConnectedServiceAuthGroupStateV1Schema,
                 patch.state,
             );
-        const displayNameChanged = patch.displayName !== undefined
-            && patch.displayName !== current.displayName;
-        const policyChanged = nextPolicyJson !== null
-            && nextPolicyJson !== current.policyJson;
         const runtimeStateChanged = nextStateJson !== null
             && nextStateJson !== current.stateJson;
         const activeAccountChanged =
             params.activeConnectedAccountId !== undefined
-            && params.activeConnectedAccountId !== (
-                params.preserveLegacyNoopSemantics === true
-                    ? current.activeProfileId
-                    : current.activeConnectedAccountId
-            );
+            && params.activeConnectedAccountId
+                !== current.activeConnectedAccountId;
         if (
             params.activeConnectedAccountId !== undefined
             && params.activeConnectedAccountId !== null
@@ -941,25 +758,8 @@ export async function patchQualifiedConnectedAccountGroup(
                 };
             }
         }
-        const structuralChanged = params.preserveLegacyNoopSemantics === true
-            ? policyChanged || activeAccountChanged
-            : patch.displayName !== undefined || patch.policy !== undefined;
-        const anyChanged =
-            displayNameChanged
-            || policyChanged
-            || runtimeStateChanged
-            || activeAccountChanged;
-        if (
-            params.preserveLegacyNoopSemantics === true
-            && !anyChanged
-        ) {
-            return await finishQualifiedGroupMutation(tx, {
-                accountId: params.accountId,
-                service: patch.service,
-                groupId: patch.groupId,
-                recordProfileChange: false,
-            });
-        }
+        const structuralChanged =
+            patch.displayName !== undefined || patch.policy !== undefined;
         const updated = await tx.connectedServiceAuthGroup.updateMany({
             where: {
                 id: current.id,
@@ -968,26 +768,14 @@ export async function patchQualifiedConnectedAccountGroup(
             },
             data: {
                 ...(patch.displayName !== undefined
-                    && (
-                        params.preserveLegacyNoopSemantics !== true
-                        || displayNameChanged
-                    )
                     ? { displayName: patch.displayName }
                     : {}),
                 ...(nextPolicyJson !== null
-                    && (
-                        params.preserveLegacyNoopSemantics !== true
-                        || policyChanged
-                    )
                     ? {
                         policyJson: nextPolicyJson,
                     }
                     : {}),
                 ...(nextStateJson !== null
-                    && (
-                        params.preserveLegacyNoopSemantics !== true
-                        || runtimeStateChanged
-                    )
                     ? {
                         stateJson: nextStateJson,
                     }

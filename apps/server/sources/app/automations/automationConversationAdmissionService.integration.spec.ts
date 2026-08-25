@@ -1,8 +1,20 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import tweetnacl from "tweetnacl";
 
 import {
     MAX_NON_TERMINAL_AUTOMATIC_RUNS_PER_ACCOUNT,
+    AutomationConversationAdmitInputV1Schema,
+    buildAutomationConversationOccurrenceEvidenceV1,
+    convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1,
+    createAccountScopedCryptoMaterialSnapshotV1,
+    deriveAutomationOccurrenceKeyV1,
+    deriveAutomationOccurrenceTriggerEvidenceEqualityTagV1,
     normalizePluginReleaseFactsV1,
+    openAutomationConversationReplyContextStoredEnvelopeV1,
+    sealAccountScopedBlobCiphertext,
+    sealAutomationConversationReplyContextStoredEnvelopeV1,
+    sealAutomationOccurrenceTriggerEvidenceEnvelopeV1,
+    sealAutomationRunTriggerEvidenceEnvelopeV1,
     sealAutomationTriggerDefinitionStoredEnvelopeV1,
     serializeAutomationRunExecutionRecipeV1,
     type AutomationConversationResultDeliveryV1,
@@ -17,7 +29,8 @@ import {
     findNextAutomationReplyHandoffDueAt,
 } from "./automationReplyHandoffService";
 import {
-    admitAutomationConversationV1,
+    admitAutomationConversationV1 as admitPlainAutomationConversationV1,
+    admitEncryptedAutomationConversationV1,
 } from "./automationConversationAdmissionService";
 import {
     listAutomationConversationTargetsV1,
@@ -93,7 +106,7 @@ function strictConversationDefinitionRecipe(): string {
     return serialized.serialized;
 }
 
-const FINAL_RESULT_DELIVERY: AutomationConversationResultDeliveryV1 = {
+const FINAL_RESULT_DELIVERY = {
     kind: "finalResult",
     actionRef: {
         pluginId: "happier.channels",
@@ -103,7 +116,7 @@ const FINAL_RESULT_DELIVERY: AutomationConversationResultDeliveryV1 = {
         connectionId: "connection-1",
         bindingId: BINDING_ID,
     },
-};
+} satisfies AutomationConversationResultDeliveryV1;
 
 function conversationInput(params: Readonly<{
     resultDelivery?: AutomationConversationResultDeliveryV1;
@@ -117,6 +130,227 @@ function conversationInput(params: Readonly<{
         sender: { id: "sender-1" },
         text: "Please summarize the latest change.",
         resultDelivery: params.resultDelivery ?? FINAL_RESULT_DELIVERY,
+    };
+}
+
+/**
+ * Direct service tests exercise the same host-owned precommit seal as the
+ * public Action. Individual negative cases call the implementation alias when
+ * they need to prove the server refuses a missing or mismatched envelope.
+ */
+async function admitAutomationConversationV1(
+    params: Parameters<typeof admitPlainAutomationConversationV1>[0],
+) {
+    const input = AutomationConversationAdmitInputV1Schema.parse(params.input);
+    const replyHandoff = params.replyHandoff ?? (input.resultDelivery.kind === "none"
+        ? undefined
+        : (() => {
+            const occurrenceKey = deriveAutomationOccurrenceKeyV1(
+                buildAutomationConversationOccurrenceEvidenceV1({
+                    accountMode: "plain",
+                    bindingId: input.bindingId,
+                    occurrenceId: input.occurrenceId,
+                    occurredAt: input.occurredAt,
+                    caller: {
+                        pluginId: params.caller.pluginId,
+                        contributionLocalId: params.caller.contributionLocalId,
+                        machineId: params.caller.machineId,
+                    },
+                    sender: input.sender,
+                    text: input.text,
+                    resultDelivery: input.resultDelivery,
+                }),
+            );
+            return {
+                actionRef: input.resultDelivery.actionRef,
+                replyContextEnvelope: sealAutomationConversationReplyContextStoredEnvelopeV1({
+                    mode: "plain",
+                    correspondence: { automationId: input.automationId, occurrenceKey },
+                    templateVersion: input.templateVersion,
+                    opaqueContext: input.resultDelivery.opaqueContext,
+                }),
+            };
+        })());
+    return await admitPlainAutomationConversationV1({
+        ...params,
+        ...(replyHandoff === undefined ? {} : { replyHandoff }),
+    });
+}
+
+type E2eeAccountFixture = Readonly<{
+    snapshot: ReturnType<typeof createAccountScopedCryptoMaterialSnapshotV1>;
+    accountCurrentness: Readonly<{
+        mode: "e2ee";
+        version: number;
+        contentKeyFingerprint: string;
+    }>;
+}>;
+
+/**
+ * `resealAutomationTemplate: false` leaves the Automation template in its plain
+ * envelope so the persisted Account mode becomes the only fact that can refuse a
+ * plaintext admission. Without it the downstream recipe-mode assertion returns
+ * the same blocked result, and the refusal could be deleted unnoticed.
+ */
+async function configureE2eeAccount(params: Readonly<{
+    resealAutomationTemplate?: boolean;
+}> = {}): Promise<E2eeAccountFixture> {
+    const signing = tweetnacl.sign.keyPair();
+    const content = tweetnacl.box.keyPair();
+    const contentKeyBinding = Buffer.concat([
+        Buffer.from("Happy content key v1\u0000", "utf8"),
+        Buffer.from(content.publicKey),
+    ]);
+    await db.account.update({
+        where: { id: ACCOUNT_ID },
+        data: {
+            encryptionMode: "e2ee",
+            publicKey: Buffer.from(signing.publicKey).toString("hex"),
+            contentPublicKey: new Uint8Array(content.publicKey),
+            contentPublicKeySig: new Uint8Array(
+                tweetnacl.sign.detached(contentKeyBinding, signing.secretKey),
+            ),
+        },
+    });
+    const snapshot = createAccountScopedCryptoMaterialSnapshotV1({
+        accountEncryptionMode: "e2ee",
+        material: { type: "dataKey", machineKey: content.secretKey },
+        dataKeyPublicKey: content.publicKey,
+    });
+    const account = await db.account.findUniqueOrThrow({
+        where: { id: ACCOUNT_ID },
+        select: { seq: true },
+    });
+    if (params.resealAutomationTemplate !== false) {
+        await db.automation.update({
+            where: { id: AUTOMATION_ID },
+            data: { templateCiphertext: encryptedConversationDefinitionRecipe(snapshot) },
+        });
+    }
+    return {
+        snapshot,
+        accountCurrentness: {
+            mode: "e2ee",
+            version: account.seq,
+            contentKeyFingerprint:
+                convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1(
+                    snapshot.contentPublicKeyFingerprint,
+                ),
+        },
+    };
+}
+
+function encryptedConversationDefinitionRecipe(
+    snapshot: ReturnType<typeof createAccountScopedCryptoMaterialSnapshotV1>,
+): string {
+    const serialized = serializeAutomationRunExecutionRecipeV1({
+        v: 1,
+        templateVersion: 3,
+        template: {
+            t: "encrypted",
+            c: sealAccountScopedBlobCiphertext({
+                kind: "automation_template_payload",
+                material: snapshot.material,
+                payload: { v: 1, prompt: "Respond to the Conversation message." },
+                randomBytes: (length: number) => Uint8Array.from({ length }, (_, index) => index + 31),
+            }),
+        },
+        triggerEvidence: null,
+        target: {
+            kind: "executionRun",
+            request: {
+                intent: "task",
+                backendTarget: { kind: "builtInAgent", agentId: "codex" },
+                permissionMode: "read_only",
+                retentionPolicy: "ephemeral",
+                runClass: "bounded",
+                ioMode: "request_response",
+            },
+        },
+    });
+    if (serialized.kind !== "available") {
+        throw new Error("Encrypted Conversation admission fixture must use a valid strict recipe");
+    }
+    return serialized.serialized;
+}
+
+/**
+ * Builds exactly what the authenticated admission host produces for an E2EE
+ * Account: sealed occurrence evidence, sealed Run trigger evidence, and the
+ * opaque equality tag. `nonceSeed` varies the randomized ciphertext so a replay
+ * can only rejoin through the tag, never through matching bytes.
+ */
+function encryptedConversationHostEvidence(params: Readonly<{
+    account: E2eeAccountFixture;
+    nonceSeed: number;
+    text?: string;
+    occurredAt?: number;
+    resultDelivery?: AutomationConversationResultDeliveryV1;
+}>) {
+    const resultDelivery = params.resultDelivery ?? { kind: "none" };
+    const input = conversationInput({ resultDelivery });
+    const evidence = buildAutomationConversationOccurrenceEvidenceV1({
+        accountMode: "e2ee",
+        bindingId: input.bindingId,
+        occurrenceId: input.occurrenceId,
+        occurredAt: params.occurredAt ?? input.occurredAt,
+        caller: {
+            pluginId: caller.pluginId,
+            contributionLocalId: caller.contributionLocalId,
+            machineId: caller.machineId,
+        },
+        sender: input.sender,
+        text: params.text ?? input.text,
+        resultDelivery,
+    });
+    const occurrenceKey = deriveAutomationOccurrenceKeyV1(evidence);
+    const replyHandoff = resultDelivery.kind === "none"
+        ? undefined
+        : {
+            actionRef: resultDelivery.actionRef,
+            replyContextEnvelope: sealAutomationConversationReplyContextStoredEnvelopeV1({
+                mode: "e2ee",
+                material: params.account.snapshot.material,
+                randomBytes: (length: number) => Uint8Array.from(
+                    { length },
+                    (_, index) => (index + params.nonceSeed + 193) % 251,
+                ),
+                correspondence: { automationId: input.automationId, occurrenceKey },
+                templateVersion: input.templateVersion,
+                opaqueContext: resultDelivery.opaqueContext,
+            }),
+        };
+    return {
+        v: 1 as const,
+        t: "encrypted" as const,
+        accountCurrentness: params.account.accountCurrentness,
+        automationId: input.automationId,
+        templateVersion: input.templateVersion,
+        occurrenceKey,
+        occurredAt: params.occurredAt ?? input.occurredAt,
+        triggerEvidenceEnvelope: sealAutomationOccurrenceTriggerEvidenceEnvelopeV1({
+            material: params.account.snapshot.material,
+            evidence,
+            randomBytes: (length: number) => Uint8Array.from(
+                { length },
+                (_, index) => (index + params.nonceSeed) % 251,
+            ),
+        }),
+        executionTriggerEvidenceEnvelope: sealAutomationRunTriggerEvidenceEnvelopeV1({
+            material: params.account.snapshot.material,
+            evidence: { ...evidence, observationReceivedAt: 1_723_247_200_500 },
+            randomBytes: (length: number) => Uint8Array.from(
+                { length },
+                (_, index) => (index + params.nonceSeed + 97) % 251,
+            ),
+        }),
+        occurrenceEvidenceEqualityTag: deriveAutomationOccurrenceTriggerEvidenceEqualityTagV1({
+            material: params.account.snapshot.material,
+            accountId: ACCOUNT_ID,
+            automationId: input.automationId,
+            evidence,
+        }),
+        ...(replyHandoff === undefined ? {} : { replyHandoff }),
     };
 }
 
@@ -849,6 +1083,7 @@ describe("Automation Conversation admission database boundary", () => {
                 automationId: AUTOMATION_ID,
                 templateVersion: 3,
                 label: "Conversation admission",
+                execution: { targetType: "execution_run", enabled: true },
             }],
             nextCursor: null,
         });
@@ -920,19 +1155,10 @@ describe("Automation Conversation admission database boundary", () => {
             v: {
                 v: 1,
                 correspondence: {
-                    accountId: ACCOUNT_ID,
                     automationId: AUTOMATION_ID,
-                    runId: admitted.runId,
-                    handoffId: run.replyHandoffId,
+                    occurrenceKey: expect.any(String),
                 },
-                source: {
-                    kind: "automationResult",
-                    automationRunId: admitted.runId,
-                    resultId: run.replyHandoffId,
-                    automationId: AUTOMATION_ID,
-                    templateVersion: 3,
-                    resultDelivery: "finalResult",
-                },
+                templateVersion: 3,
                 opaqueContext: finalResultDelivery.opaqueContext,
             },
         });
@@ -1016,31 +1242,21 @@ describe("Automation Conversation admission database boundary", () => {
             where: { id: AUTOMATION_ID },
             data: { templateVersion: 4 },
         });
-        await expect(db.automationRun.findUniqueOrThrow({
+        const frozenReplyContext = await db.automationRun.findUniqueOrThrow({
             where: { id: admitted.runId },
             select: { replyContextEnvelope: true },
-        })).resolves.toEqual({
-            replyContextEnvelope: JSON.stringify({
-                t: "plain",
-                v: {
-                    v: 1,
-                    correspondence: {
-                        accountId: ACCOUNT_ID,
-                        automationId: AUTOMATION_ID,
-                        runId: admitted.runId,
-                        handoffId: run.replyHandoffId,
-                    },
-                    source: {
-                        kind: "automationResult",
-                        automationRunId: admitted.runId,
-                        resultId: run.replyHandoffId,
-                        automationId: AUTOMATION_ID,
-                        templateVersion: 3,
-                        resultDelivery: "finalResult",
-                    },
-                    opaqueContext: finalResultDelivery.opaqueContext,
+        });
+        expect(JSON.parse(frozenReplyContext.replyContextEnvelope!)).toEqual({
+            t: "plain",
+            v: {
+                v: 1,
+                correspondence: {
+                    automationId: AUTOMATION_ID,
+                    occurrenceKey: expect.any(String),
                 },
-            }),
+                templateVersion: 3,
+                opaqueContext: finalResultDelivery.opaqueContext,
+            },
         });
     });
 
@@ -1080,14 +1296,11 @@ describe("Automation Conversation admission database boundary", () => {
         });
         expect(JSON.parse(frozenHandoff.replyContextEnvelope!)).toMatchObject({
             v: {
-                source: {
-                    kind: "automationResult",
-                    automationRunId: admitted.runId,
-                    resultId: frozenHandoff.replyHandoffId,
+                correspondence: {
                     automationId: AUTOMATION_ID,
-                    templateVersion: 3,
-                    resultDelivery: "finalResult",
+                    occurrenceKey: expect.any(String),
                 },
+                templateVersion: 3,
             },
         });
         const accountChangesBeforeReplay = await db.accountChange.count({
@@ -1137,5 +1350,272 @@ describe("Automation Conversation admission database boundary", () => {
                 replyContextEnvelope: true,
             },
         })).resolves.toEqual(frozenHandoff);
+    });
+
+    it("admits an E2EE Conversation occurrence from sealed host evidence and rejoins its replay by tag", async () => {
+        const account = await configureE2eeAccount();
+        const hostEvidence = encryptedConversationHostEvidence({ account, nonceSeed: 1 });
+
+        const admitted = await admitEncryptedAutomationConversationV1({
+            accountId: ACCOUNT_ID,
+            caller,
+            hostEvidence,
+        });
+        expect(admitted).toEqual({
+            kind: "admitted",
+            runId: expect.any(String),
+            checkpointSafe: true,
+        });
+        if (admitted.kind !== "admitted") throw new Error("Expected an E2EE Conversation admission");
+
+        const run = await db.automationRun.findUniqueOrThrow({
+            where: { id: admitted.runId },
+            select: {
+                originKind: true,
+                originOccurredAt: true,
+                occurrenceKey: true,
+                occurrenceEvidenceEqualityTag: true,
+                originSourceSelectorId: true,
+                triggerEvidenceEnvelope: true,
+                executionInputEnvelope: true,
+                replyContextEnvelope: true,
+                replyHandoffState: true,
+            },
+        });
+        expect(run.originKind).toBe("conversation");
+        expect(run.originOccurredAt).toEqual(new Date(hostEvidence.occurredAt));
+        expect(run.occurrenceKey).toBe(hostEvidence.occurrenceKey);
+        expect(run.occurrenceEvidenceEqualityTag)
+            .toBe(hostEvidence.occurrenceEvidenceEqualityTag);
+        expect(run.originSourceSelectorId).toBeNull();
+        expect(run.replyContextEnvelope).toBeNull();
+        expect(run.replyHandoffState).toBe("none");
+        expect(JSON.parse(run.triggerEvidenceEnvelope ?? "null"))
+            .toEqual(hostEvidence.triggerEvidenceEnvelope);
+        // The sealed Run evidence must reach the frozen recipe: without it the
+        // exact-machine materializer renders an empty Automation input.
+        expect(JSON.parse(run.executionInputEnvelope ?? "null")).toMatchObject({
+            triggerEvidence: hostEvidence.executionTriggerEvidenceEnvelope,
+            template: { t: "encrypted" },
+        });
+        // Nothing the Account sealed may appear in any server-readable column.
+        const storedBytes = JSON.stringify(run);
+        expect(storedBytes).not.toContain("Please summarize the latest change.");
+        expect(storedBytes).not.toContain("sender-1");
+        expect(storedBytes).not.toContain(BINDING_ID);
+
+        // A replay reseals the same occurrence under a different nonce, so only
+        // the opaque equality tag can rejoin it.
+        const replay = encryptedConversationHostEvidence({ account, nonceSeed: 140 });
+        expect(replay.triggerEvidenceEnvelope.c)
+            .not.toBe(hostEvidence.triggerEvidenceEnvelope.c);
+        expect(replay.occurrenceEvidenceEqualityTag)
+            .toBe(hostEvidence.occurrenceEvidenceEqualityTag);
+        await expect(admitEncryptedAutomationConversationV1({
+            accountId: ACCOUNT_ID,
+            caller,
+            hostEvidence: replay,
+        })).resolves.toEqual({
+            kind: "rejoined",
+            runId: admitted.runId,
+            checkpointSafe: true,
+        });
+
+        // Same occurrence identity, different sealed content: the tag differs
+        // and the conflict is reported instead of silently rejoining.
+        await expect(admitEncryptedAutomationConversationV1({
+            accountId: ACCOUNT_ID,
+            caller,
+            hostEvidence: encryptedConversationHostEvidence({
+                account,
+                nonceSeed: 200,
+                text: "A different message under the same occurrence id.",
+            }),
+        })).resolves.toEqual({
+            kind: "blocked",
+            reason: "occurrenceConflict",
+            checkpointSafe: false,
+        });
+        await expect(db.automationRun.count({ where: { accountId: ACCOUNT_ID } })).resolves.toBe(1);
+    });
+
+    it("freezes an E2EE final-result handoff before the Run exists and retains it for the actual Run", async () => {
+        const account = await configureE2eeAccount();
+        const hostEvidence = encryptedConversationHostEvidence({
+            account,
+            nonceSeed: 31,
+            resultDelivery: FINAL_RESULT_DELIVERY,
+        });
+
+        const admitted = await admitEncryptedAutomationConversationV1({
+            accountId: ACCOUNT_ID,
+            caller,
+            hostEvidence,
+        });
+        expect(admitted).toEqual({
+            kind: "admitted",
+            runId: expect.any(String),
+            checkpointSafe: true,
+        });
+        if (admitted.kind !== "admitted") throw new Error("Expected an E2EE Conversation admission");
+
+        const run = await db.automationRun.findUniqueOrThrow({
+            where: { id: admitted.runId },
+            select: {
+                occurrenceKey: true,
+                replyContextEnvelope: true,
+                replyHandoffActionPluginId: true,
+                replyHandoffActionLocalId: true,
+                replyHandoffId: true,
+                replyHandoffState: true,
+            },
+        });
+        expect(run.occurrenceKey).toBe(hostEvidence.occurrenceKey);
+        expect(run.replyHandoffActionPluginId).toBe(FINAL_RESULT_DELIVERY.actionRef.pluginId);
+        expect(run.replyHandoffActionLocalId).toBe(FINAL_RESULT_DELIVERY.actionRef.localId);
+        expect(run.replyHandoffId).toBe(`automation-reply-handoff:${admitted.runId}`);
+        expect(run.replyHandoffState).toBe("awaitingResult");
+        expect(JSON.parse(run.replyContextEnvelope ?? "null")).toMatchObject({ t: "encrypted" });
+        expect(JSON.stringify(run)).not.toContain(FINAL_RESULT_DELIVERY.opaqueContext.connectionId);
+
+        const opened = openAutomationConversationReplyContextStoredEnvelopeV1({
+            mode: "e2ee",
+            material: account.snapshot.material,
+            envelope: JSON.parse(run.replyContextEnvelope ?? "null"),
+        });
+        expect(opened).toEqual({
+            kind: "available",
+            correspondence: {
+                automationId: AUTOMATION_ID,
+                occurrenceKey: hostEvidence.occurrenceKey,
+            },
+            templateVersion: 3,
+            opaqueContext: FINAL_RESULT_DELIVERY.opaqueContext,
+        });
+
+        const replay = encryptedConversationHostEvidence({
+            account,
+            nonceSeed: 131,
+            resultDelivery: FINAL_RESULT_DELIVERY,
+        });
+        await expect(admitEncryptedAutomationConversationV1({
+            accountId: ACCOUNT_ID,
+            caller,
+            hostEvidence: replay,
+        })).resolves.toEqual({
+            kind: "rejoined",
+            runId: admitted.runId,
+            checkpointSafe: true,
+        });
+    });
+
+    it("keeps each Account mode on its own admission arm", async () => {
+        // A plain Account has no sealed carrier to admit.
+        const strangerKeyPair = tweetnacl.box.keyPair();
+        await expect(admitEncryptedAutomationConversationV1({
+            accountId: ACCOUNT_ID,
+            caller,
+            hostEvidence: encryptedConversationHostEvidence({
+                account: {
+                    snapshot: createAccountScopedCryptoMaterialSnapshotV1({
+                        accountEncryptionMode: "e2ee",
+                        material: { type: "dataKey", machineKey: strangerKeyPair.secretKey },
+                        dataKeyPublicKey: strangerKeyPair.publicKey,
+                    }),
+                    accountCurrentness: {
+                        mode: "e2ee",
+                        version: 0,
+                        contentKeyFingerprint: "not-the-current-account-key",
+                    },
+                },
+                nonceSeed: 3,
+            }),
+        })).resolves.toEqual({
+            kind: "blocked",
+            reason: "temporarilyUnavailable",
+            checkpointSafe: false,
+        });
+
+        // An E2EE Account may not admit plaintext sender/text/context. The
+        // Automation template stays plain so nothing downstream of the Account
+        // mode can refuse this: delete the refusal and the plain writer freezes
+        // a recipe and persists a plaintext Run for an encrypted Account.
+        await configureE2eeAccount({ resealAutomationTemplate: false });
+        await expect(admitAutomationConversationV1({
+            accountId: ACCOUNT_ID,
+            caller,
+            input: conversationInput({ resultDelivery: { kind: "none" } }),
+        })).resolves.toEqual({
+            kind: "blocked",
+            reason: "temporarilyUnavailable",
+            checkpointSafe: false,
+        });
+        await expect(db.automationRun.count({ where: { accountId: ACCOUNT_ID } })).resolves.toBe(0);
+    });
+
+    it("refuses sealed evidence that is not current for this Account key and version", async () => {
+        const account = await configureE2eeAccount();
+
+        // Current Account version, superseded content key. Only the content-key
+        // match can refuse this, and admitting it would persist a Run sealed
+        // under a retired key that no current-key reader could ever open.
+        const supersededKey = encryptedConversationHostEvidence({ account, nonceSeed: 11 });
+        await expect(admitEncryptedAutomationConversationV1({
+            accountId: ACCOUNT_ID,
+            caller,
+            hostEvidence: {
+                ...supersededKey,
+                accountCurrentness: {
+                    ...supersededKey.accountCurrentness,
+                    contentKeyFingerprint: "aemk1_superseded_content",
+                },
+            },
+        })).resolves.toEqual({
+            kind: "blocked",
+            reason: "temporarilyUnavailable",
+            checkpointSafe: false,
+        });
+
+        // Current content key, but the Account version advanced between sealing
+        // and admission. Only the exact version match on a new insert can
+        // refuse this; the fingerprint still agrees.
+        const supersededVersion = encryptedConversationHostEvidence({ account, nonceSeed: 12 });
+        const advanced = await db.account.update({
+            where: { id: ACCOUNT_ID },
+            data: { seq: { increment: 1 } },
+            select: { seq: true },
+        });
+        expect(advanced.seq).not.toBe(supersededVersion.accountCurrentness.version);
+        await expect(admitEncryptedAutomationConversationV1({
+            accountId: ACCOUNT_ID,
+            caller,
+            hostEvidence: supersededVersion,
+        })).resolves.toEqual({
+            kind: "blocked",
+            reason: "temporarilyUnavailable",
+            checkpointSafe: false,
+        });
+
+        await expect(db.automationRun.count({ where: { accountId: ACCOUNT_ID } })).resolves.toBe(0);
+
+        // Positive twin: the same producer witnessing the now-current Account
+        // version is admitted, so neither refusal above is the arm simply
+        // being broken.
+        await expect(admitEncryptedAutomationConversationV1({
+            accountId: ACCOUNT_ID,
+            caller,
+            hostEvidence: {
+                ...encryptedConversationHostEvidence({ account, nonceSeed: 13 }),
+                accountCurrentness: {
+                    ...account.accountCurrentness,
+                    version: advanced.seq,
+                },
+            },
+        })).resolves.toEqual({
+            kind: "admitted",
+            runId: expect.any(String),
+            checkpointSafe: true,
+        });
+        await expect(db.automationRun.count({ where: { accountId: ACCOUNT_ID } })).resolves.toBe(1);
     });
 });

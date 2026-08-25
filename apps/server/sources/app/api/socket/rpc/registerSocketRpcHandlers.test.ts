@@ -938,6 +938,44 @@ describe("registerSocketRpcHandlers", () => {
         });
     });
 
+    it("requires exact Session edit attestation for remote grant inventory and revocation", async () => {
+        requireAccessLevelMock.mockReturnValue(false);
+        const socket = createFakeSocket({
+            id: "caller-socket",
+            join: vi.fn().mockResolvedValue(undefined),
+            leave: vi.fn().mockResolvedValue(undefined),
+        } as any);
+        registerSocketRpcHandlers({
+            userId: "user-1",
+            socket: socket as any,
+            io: {} as Server,
+        });
+
+        for (const method of [
+            "session.permission.remote.grants.list",
+            "session.permission.remote.grants.revoke",
+        ]) {
+            const callback = vi.fn();
+            await triggerSocketHandler(socket, SOCKET_RPC_EVENTS.CALL, {
+                method: `sess_1:${method}`,
+                params: "encrypted-payload",
+                authorization: {
+                    kind: SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS.SESSION_WRITE,
+                    sessionId: "sess_1",
+                },
+            }, callback);
+
+            expect(callback).toHaveBeenCalledWith({
+                ok: false,
+                error: "Forbidden",
+                errorCode: RPC_ERROR_CODES.FORBIDDEN,
+            });
+        }
+        expect(checkSessionAccessMock).toHaveBeenCalledTimes(2);
+        expect(requireAccessLevelMock).toHaveBeenCalledTimes(2);
+        expect(resolveRpcCallTargetMock).not.toHaveBeenCalled();
+    });
+
     it("rejects a Session Agent transition that carries no edit proof before resolving a target", async () => {
         const socket = createFakeSocket({
             id: "caller-socket",

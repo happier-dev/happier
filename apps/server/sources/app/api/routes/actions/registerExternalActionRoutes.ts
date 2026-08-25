@@ -7,9 +7,10 @@ import {
     ExternalActionActionIdV1Schema,
     ExternalActionRequestEnvelopeV1Schema,
     type ExternalActionServerPrincipalV1,
+    type PreparedExternalActionResponseEnvelopeV1,
     projectExternalActionResponseEnvelopeV1,
     projectExternalActionHttpErrorV1,
-    serializeExternalActionResponseEnvelopeV1,
+    prepareExternalActionResponseEnvelopeV1,
     type ExternalActionHttpErrorCodeV1,
 } from "@happier-dev/protocol/actions";
 
@@ -47,9 +48,11 @@ function sendExternalActionSerializedJson(
         .send(body);
 }
 
-function sendExternalActionResponse(reply: FastifyReply, payload: unknown): FastifyReply {
-    const serialized = serializeExternalActionResponseEnvelopeV1(payload);
-    return sendExternalActionSerializedJson(reply, 200, serialized.body, serialized.byteLength);
+function sendExternalActionResponse(
+    reply: FastifyReply,
+    prepared: PreparedExternalActionResponseEnvelopeV1,
+): FastifyReply {
+    return sendExternalActionSerializedJson(reply, 200, prepared.body, prepared.byteLength);
 }
 
 function sendExternalActionHttpError(
@@ -208,12 +211,15 @@ export function registerExternalActionRoutes(
                 if (!response) {
                     throw new Error("Protocol rejected external Action placement response");
                 }
-                return sendExternalActionResponse(reply, response);
+                return sendExternalActionResponse(
+                    reply,
+                    prepareExternalActionResponseEnvelopeV1(response),
+                );
             }
             if (result.kind === "invalid_request") {
                 return sendExternalActionHttpError(reply, result.errorCode);
             }
-            return sendExternalActionResponse(reply, result.response);
+            return sendExternalActionResponse(reply, result.prepared);
         } finally {
             lifetime.dispose();
         }

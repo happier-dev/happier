@@ -14,6 +14,7 @@ const ACCOUNT_ID = "account-reply-handoff";
 const AUTOMATION_ID = "automation-reply-handoff";
 const RUN_ID = "run-reply-handoff";
 const HANDOFF_ID = "handoff-reply-handoff";
+const OCCURRENCE_KEY = "A".repeat(43);
 const NOW = new Date("2026-08-10T12:00:00.000Z");
 const EXPECTED_AUTOMATION_REPLY_HANDOFF_RETRY_AFTER_MS = 10_000;
 
@@ -35,19 +36,10 @@ const REPLY_CONTEXT_ENVELOPE = JSON.stringify({
     v: {
         v: 1,
         correspondence: {
-            accountId: ACCOUNT_ID,
             automationId: AUTOMATION_ID,
-            runId: RUN_ID,
-            handoffId: HANDOFF_ID,
+            occurrenceKey: OCCURRENCE_KEY,
         },
-        source: {
-            kind: "automationResult",
-            automationRunId: RUN_ID,
-            resultId: HANDOFF_ID,
-            automationId: AUTOMATION_ID,
-            templateVersion: 1,
-            resultDelivery: "finalResult",
-        },
+        templateVersion: 1,
         opaqueContext: {
             conversationId: "conversation-1",
             messageId: "message-1",
@@ -137,7 +129,7 @@ describe("Automation reply handoff service", () => {
                 state: "succeeded",
                 originKind: "conversation",
                 originOccurredAt: NOW,
-                occurrenceKey: "conversation-occurrence-1",
+                occurrenceKey: OCCURRENCE_KEY,
                 triggerEvidenceEnvelope: JSON.stringify({ t: "plain", v: {} }),
                 resultEnvelope: params.resultEnvelope ?? RESULT_ENVELOPE,
                 replyContextEnvelope: REPLY_CONTEXT_ENVELOPE,
@@ -189,6 +181,7 @@ describe("Automation reply handoff service", () => {
             automationId: AUTOMATION_ID,
             runId: RUN_ID,
             handoffId: HANDOFF_ID,
+            occurrenceKey: OCCURRENCE_KEY,
             attempt: 1,
             accountCurrentness: claimedCurrentness,
             runRevision: 1,
@@ -348,24 +341,15 @@ describe("Automation reply handoff service", () => {
                 result: { v: 1, kind: "text", text: "Healthy result" },
             },
         });
-        const createHealthyReplyContextEnvelope = (runId: string, handoffId: string) => JSON.stringify({
+        const createHealthyReplyContextEnvelope = (occurrenceKey: string) => JSON.stringify({
             t: "plain",
             v: {
                 v: 1,
                 correspondence: {
-                    accountId: healthyAccountId,
                     automationId: healthyAutomationId,
-                    runId,
-                    handoffId,
+                    occurrenceKey,
                 },
-                source: {
-                    kind: "automationResult",
-                    automationRunId: runId,
-                    resultId: handoffId,
-                    automationId: healthyAutomationId,
-                    templateVersion: 1,
-                    resultDelivery: "finalResult",
-                },
+                templateVersion: 1,
                 opaqueContext: {
                     conversationId: "healthy-conversation",
                     messageId: "healthy-message",
@@ -373,14 +357,15 @@ describe("Automation reply handoff service", () => {
             },
         });
         const healthyResultEnvelope = createHealthyResultEnvelope(healthyRunId, healthyHandoffId);
-        const healthyReplyContextEnvelope = createHealthyReplyContextEnvelope(healthyRunId, healthyHandoffId);
+        const healthyOccurrenceKey = "B".repeat(43);
+        const healthyReplyContextEnvelope = createHealthyReplyContextEnvelope(healthyOccurrenceKey);
         const secondaryHealthyResultEnvelope = createHealthyResultEnvelope(
             secondaryHealthyRunId,
             secondaryHealthyHandoffId,
         );
+        const secondaryHealthyOccurrenceKey = "C".repeat(43);
         const secondaryHealthyReplyContextEnvelope = createHealthyReplyContextEnvelope(
-            secondaryHealthyRunId,
-            secondaryHealthyHandoffId,
+            secondaryHealthyOccurrenceKey,
         );
         const binding = createSignedAccountContentBinding();
         await db.account.createMany({
@@ -471,7 +456,7 @@ describe("Automation reply handoff service", () => {
                     state: "succeeded",
                     originKind: "conversation",
                     originOccurredAt: inconsistentDueAt,
-                    occurrenceKey: "healthy-later-occurrence",
+                    occurrenceKey: healthyOccurrenceKey,
                     triggerEvidenceEnvelope: JSON.stringify({ t: "plain", v: {} }),
                     resultEnvelope: healthyResultEnvelope,
                     replyContextEnvelope: healthyReplyContextEnvelope,
@@ -496,7 +481,7 @@ describe("Automation reply handoff service", () => {
                     state: "succeeded",
                     originKind: "conversation",
                     originOccurredAt: inconsistentDueAt,
-                    occurrenceKey: "healthy-secondary-later-occurrence",
+                    occurrenceKey: secondaryHealthyOccurrenceKey,
                     triggerEvidenceEnvelope: JSON.stringify({ t: "plain", v: {} }),
                     resultEnvelope: secondaryHealthyResultEnvelope,
                     replyContextEnvelope: secondaryHealthyReplyContextEnvelope,
@@ -524,6 +509,7 @@ describe("Automation reply handoff service", () => {
             automationId: healthyAutomationId,
             runId: healthyRunId,
             handoffId: healthyHandoffId,
+            occurrenceKey: healthyOccurrenceKey,
             attempt: 1,
             resultEnvelope: healthyResultEnvelope,
             replyContextEnvelope: healthyReplyContextEnvelope,
@@ -535,6 +521,7 @@ describe("Automation reply handoff service", () => {
             automationId: healthyAutomationId,
             runId: secondaryHealthyRunId,
             handoffId: secondaryHealthyHandoffId,
+            occurrenceKey: secondaryHealthyOccurrenceKey,
             attempt: 1,
             resultEnvelope: secondaryHealthyResultEnvelope,
             replyContextEnvelope: secondaryHealthyReplyContextEnvelope,
@@ -775,11 +762,10 @@ describe("Automation reply handoff service", () => {
             v: {
                 v: 1,
                 correspondence: {
-                    accountId: ACCOUNT_ID,
                     automationId: AUTOMATION_ID,
-                    runId: RUN_ID,
-                    handoffId: HANDOFF_ID,
+                    occurrenceKey: OCCURRENCE_KEY,
                 },
+                templateVersion: 1,
                 opaqueContext: {
                     conversationId: "conversation-transformed",
                     messageId: "message-transformed",

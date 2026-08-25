@@ -22,6 +22,7 @@ import { resolveBrowserFeature } from '../browserFeature';
 import { resolvePluginsFeature } from '../pluginsFeature';
 import { resolveDevicesFeature } from '../devicesFeature';
 import { resolveSessionFoldersFeature } from '../sessionFoldersFeature';
+import { resolveSessionDraftsFeature } from '../sessionDraftsFeature';
 import { resolveSessionAgentSwitchingFeature } from '../sessionAgentSwitchingFeature';
 import { resolveSessionHandoffFeature } from '../sessionHandoffFeature';
 import { resolveSessionUsageLimitRecoveryFeature } from '../sessionUsageLimitRecoveryFeature';
@@ -63,6 +64,7 @@ export const serverFeatureRegistry = Object.freeze([
     (env) => resolveMachineLiveStreamFeature(env),
     (env) => resolveMachineRpcFeature(env),
     (env) => resolveSessionFoldersFeature(env),
+    (env) => resolveSessionDraftsFeature(env),
     (env) => resolveSessionAgentSwitchingFeature(env),
     (env) => resolveSessionHandoffFeature(env),
     (env) => resolveSessionUsageLimitRecoveryFeature(env),

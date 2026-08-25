@@ -9,6 +9,8 @@ import {
     type ReviewCommentAttachEvidenceResponseV1,
     type ReviewCommentBulkTransitionRequestV1,
     type ReviewCommentBulkTransitionResponseV1,
+    type ReviewCommentClaimPublicationDispatchRequestV1,
+    type ReviewCommentClaimPublicationDispatchResponseV1,
     type ReviewCommentCreateRequestV1,
     type ReviewCommentCreateResponseV1,
     type ReviewCommentEditRequestV1,
@@ -84,6 +86,9 @@ export interface ReviewCommentOperations {
     setDisposition(params: ReviewCommentMutationOperationParams<ReviewCommentSetDispositionRequestV1>): Promise<ReviewCommentSetDispositionResponseV1>;
     attachEvidence(params: ReviewCommentMutationOperationParams<ReviewCommentAttachEvidenceRequestV1>): Promise<ReviewCommentAttachEvidenceResponseV1>;
     bulkTransition(params: ReviewCommentMutationOperationParams<ReviewCommentBulkTransitionRequestV1>): Promise<ReviewCommentBulkTransitionResponseV1>;
+    claimPublicationDispatch(
+        params: ReviewCommentMutationOperationParams<ReviewCommentClaimPublicationDispatchRequestV1>,
+    ): Promise<ReviewCommentClaimPublicationDispatchResponseV1>;
 }
 
 async function requireComment(store: ReviewCommentStore, accountId: string, commentId: string): Promise<ReviewCommentV1> {
@@ -710,6 +715,32 @@ export function createReviewCommentOperations(
                 }
             }
             return { bulkActionId, updated, failed };
+        },
+        async claimPublicationDispatch(params) {
+            await requireComment(store, params.accountId, params.input.commentId);
+            const canonicalTarget = stringifyReviewCommentPrincipalCanonicalJsonV1(params.input.target);
+            const targetKey = createHash("sha256")
+                .update("happier.reviewCommentPublicationTarget.v1\0")
+                .update(canonicalTarget)
+                .digest("base64url");
+            const publicationCorrelationId = createHash("sha256")
+                .update("happier.reviewCommentPublicationCorrelation.v1\0")
+                .update(params.input.commentId)
+                .update("\0")
+                .update(targetKey)
+                .digest("base64url");
+            const claim = await store.claimPublicationDispatch({
+                accountId: params.accountId,
+                commentId: params.input.commentId,
+                targetKey,
+                target: params.input.target,
+                publicationCorrelationId,
+                createdAt: runtime.now(),
+            });
+            return {
+                disposition: claim.claimed ? "dispatch" : "reconcile",
+                publicationCorrelationId: claim.publicationCorrelationId,
+            };
         },
     };
 }

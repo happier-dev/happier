@@ -842,7 +842,7 @@ describe("automationCrudService (integration)", () => {
         })).toEqual({ eventSourceDefinitionsRevision: 1n });
     });
 
-    it("refuses invalid, E2EE, and over-capacity Event writes without partial mutation", async () => {
+    it("refuses invalid and E2EE Event writes without partial mutation, but has no aggregate source-definition cap", async () => {
         const plain = await seedEventWriterAccount();
         await expect(createAutomation({
             accountId: plain.id,
@@ -885,7 +885,8 @@ describe("automationCrudService (integration)", () => {
         })).seq).toBe(plain.seq);
 
         // This retained row isolates the enable transition from plugin-release
-        // currentness; create-at-capacity below still exercises the full writer.
+        // currentness while the regression density passes the former aggregate
+        // source-definition cap.
         const disabledAtCapacity = await db.automation.create({
             data: {
                 id: "event-disabled-capacity",
@@ -931,7 +932,7 @@ describe("automationCrudService (integration)", () => {
                 templateCiphertext: "retained-capacity-fixture",
             })),
         });
-        const createConflict = await createAutomation({
+        const createdBeyondFormerCap = await createAutomation({
             accountId: plain.id,
             input: {
                 name: "Over capacity",
@@ -939,42 +940,28 @@ describe("automationCrudService (integration)", () => {
                 pluginEvent: eventWriterTrigger("repository-over-capacity"),
                 executionRecipe: eventExecutionRecipe(1),
             },
-        }).catch((error: unknown) => error);
-        expect(createConflict).toMatchObject({
-            name: "AutomationEventDefinitionCapacityConflictError",
-            enabledCount: 10_000,
         });
+        expect(createdBeyondFormerCap.enabled).toBe(true);
 
-        const resumeConflict = await setAutomationEnabled({
+        const resumedBeyondFormerCap = await setAutomationEnabled({
             accountId: plain.id,
             automationId: disabledAtCapacity.id,
             enabled: true,
-        }).catch((error: unknown) => error);
-        expect(resumeConflict).toMatchObject({
-            name: "AutomationEventDefinitionCapacityConflictError",
-            enabledCount: 10_000,
         });
-        expect(await db.automation.count({ where: { accountId: plain.id } })).toBe(10_001);
+        expect(resumedBeyondFormerCap?.enabled).toBe(true);
+        expect(await db.automation.count({ where: { accountId: plain.id } })).toBe(10_002);
         expect(await db.automation.findUniqueOrThrow({
             where: { id: disabledAtCapacity.id },
             select: { enabled: true },
-        })).toEqual({ enabled: false });
+        })).toEqual({ enabled: true });
         expect((await db.account.findUniqueOrThrow({
             where: { id: plain.id },
             select: { seq: true },
-        })).seq).toBe(capacityBaseline.accountSeq);
+        })).seq).toBe(capacityBaseline.accountSeq + 2);
         expect(await db.automationEventCatalogState.findUnique({
             where: { accountId: plain.id },
             select: { eventSourceDefinitionsRevision: true },
-        })).toEqual(capacityBaseline.catalogState);
-
-        await db.automation.delete({ where: { id: "event-capacity-9999" } });
-        await setAutomationEnabled({
-            accountId: plain.id,
-            automationId: disabledAtCapacity.id,
-            enabled: true,
-        });
-        expect(await db.automation.count({ where: { accountId: plain.id } })).toBe(10_000);
+        })).toEqual({ eventSourceDefinitionsRevision: 2n });
 
         await harness.resetDbTables([
             () => db.accountChange.deleteMany(),

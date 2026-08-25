@@ -89,9 +89,6 @@ export function isAutomationDefinitionRepresentableInV2<
         && hasRetainedV2TemplateEnvelope(item.templateCiphertext);
 }
 
-/** @deprecated Use isAutomationDefinitionRepresentableInV2 at service boundaries. */
-export const isAutomationV2Compatible = isAutomationDefinitionRepresentableInV2;
-
 /** A released V2 Run DTO deliberately has no Event/Conversation origin arm. */
 export function isAutomationRunV2Compatible(item: AutomationRunItem): boolean {
     return item.executionInputEnvelope !== null
@@ -129,7 +126,7 @@ function projectLegacyV2ErrorMessage(errorMessage: string | null): string | null
  * than leaking current fields into a released UI/daemon schema.
  */
 export function toAutomationV2ApiDto(item: AutomationListItem) {
-    if (!isAutomationV2Compatible(item)) {
+    if (!isAutomationDefinitionRepresentableInV2(item)) {
         throw new Error("Automation is not representable by the V2 contract");
     }
     return AutomationApiV2Schema.parse({
@@ -429,6 +426,7 @@ export function toAutomationRunV3ListApiDto(item: AutomationRunItem) {
         replyHandoffState: item.replyHandoffState,
         replyHandoffAttempt: item.replyHandoffAttempt,
         replyHandoffDueAt: item.replyHandoffDueAt?.getTime() ?? null,
+        contentRemovedAt: item.contentRemovedAt?.getTime() ?? null,
         createdAt: item.createdAt.getTime(),
         updatedAt: item.updatedAt.getTime(),
     });
@@ -556,6 +554,24 @@ export function toAutomationRunV3DetailApiDto(
     item: AutomationRunItem | AutomationRunDetailItem,
     mode: "plain" | "e2ee",
 ) {
+    const listItem = toAutomationRunV3ListApiDto(item);
+    if (item.contentRemovedAt !== null) {
+        // Retained Event/Conversation evidence stays internal for rejoin, but
+        // a compacted Run must disclose none of its historical envelopes.
+        // Do not re-parse those internal bytes under the current Account mode.
+        return AutomationV3RunDetailSchema.parse({
+            ...listItem,
+            triggerEvidenceEnvelope: null,
+            executionInputEnvelope: null,
+            executionNativeRunId: item.executionNativeRunId,
+            executionNativeCallId: item.executionNativeCallId,
+            executionNativeSidechainId: item.executionNativeSidechainId,
+            events: projectRunEvents("events" in item ? item.events : undefined),
+            resultEnvelope: null,
+            legacySummaryCiphertext: null,
+            errorDetailEnvelope: null,
+        });
+    }
     assertAutomationStoredContentEnvelopeOuterForMode({
         raw: item.triggerEvidenceEnvelope,
         mode,
@@ -566,7 +582,7 @@ export function toAutomationRunV3DetailApiDto(
         originKind: item.originKind,
     });
     return AutomationV3RunDetailSchema.parse({
-        ...toAutomationRunV3ListApiDto(item),
+        ...listItem,
         triggerEvidenceEnvelope: item.triggerEvidenceEnvelope,
         executionInputEnvelope: item.executionInputEnvelope,
         // The native execution identity is what makes an uncertain Run

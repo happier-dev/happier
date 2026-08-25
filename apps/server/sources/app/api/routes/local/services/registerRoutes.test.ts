@@ -13,6 +13,7 @@ import {
 } from "@happier-dev/protocol";
 import { createFakeRouteApp, createReplyStub, getRouteHandler } from "@/app/api/testkit/routeHarness";
 import { describe, expect, it, vi } from "vitest";
+import { peerMediationGrantSigningEnv } from "@/testkit/env";
 import tweetnacl from "tweetnacl";
 
 import { FEATURE_ENV_KEYS } from "@/app/features/catalog/featureEnvSchema";
@@ -390,7 +391,9 @@ describe("local service API route composition", () => {
         const authorizeSessionAccess = vi.fn(() => true);
         mod.registerLocalServiceRoutes(app as never, {
             env: {
+                ...peerMediationGrantSigningEnv(),
                 HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__ENABLED: "1",
+                HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__HOST_ORIGIN_DOMAIN: "preview.example.test",
                 HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__ENABLED: "1",
                 HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__ALLOWED_MODES: "secret_link",
                 HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__MAX_TTL_MS: "60000",
@@ -478,7 +481,9 @@ describe("local service API route composition", () => {
         const app = createFakeRouteApp();
         mod.registerLocalServiceRoutes(app as never, {
             env: {
+                ...peerMediationGrantSigningEnv(),
                 HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__ENABLED: "1",
+                HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__HOST_ORIGIN_DOMAIN: "preview.example.test",
                 HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__ENABLED: "1",
                 HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__ALLOWED_MODES: "secret_link",
                 HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__MAX_TTL_MS: "60000",
@@ -533,7 +538,9 @@ describe("local service API route composition", () => {
         const app = createFakeRouteApp();
         mod.registerLocalServiceRoutes(app as never, {
             env: {
+                ...peerMediationGrantSigningEnv(),
                 HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__ENABLED: "1",
+                HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__HOST_ORIGIN_DOMAIN: "preview.example.test",
                 HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__ENABLED: "1",
                 HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__ALLOWED_MODES: "secret_link",
                 HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__MAX_TTL_MS: "60000",
@@ -617,6 +624,7 @@ describe("local service API route composition", () => {
         const app = createFakeRouteApp();
         mod.registerLocalServiceRoutes(app as never, {
             env: {
+                ...peerMediationGrantSigningEnv(),
                 NODE_ENV: "production",
                 HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__ENABLED: "1",
                 HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__ENABLED: "1",
@@ -678,6 +686,7 @@ describe("local service API route composition", () => {
             }));
             mod.registerLocalServiceRoutes(app as never, {
                 env: {
+                    ...peerMediationGrantSigningEnv(),
                     HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__ENABLED: "1",
                     HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__HOST_ORIGIN_DOMAIN: "preview.example.test",
                     HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__ENABLED: "1",
@@ -816,6 +825,7 @@ describe("local service API route composition", () => {
             const app = createFakeRouteApp();
             mod.registerLocalServiceRoutes(app as never, {
                 env: {
+                    ...peerMediationGrantSigningEnv(),
                     NODE_ENV: "production",
                     HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__ENABLED: "1",
                     HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__HOST_ORIGIN_DOMAIN: "preview.example.test",
@@ -883,7 +893,9 @@ describe("local service API route composition", () => {
         }));
         mod.registerLocalServiceRoutes(app as never, {
             env: {
+                ...peerMediationGrantSigningEnv(),
                 HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__ENABLED: "1",
+                HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__HOST_ORIGIN_DOMAIN: "preview.example.test",
                 HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__ENABLED: "1",
                 HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__ALLOWED_MODES: "secret_link",
                 HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__MAX_TTL_MS: "60000",
@@ -1318,6 +1330,56 @@ describe("local service API route composition", () => {
         const socketResponse = socket.write.mock.calls.map((call) => new TextDecoder().decode(call[0])).join("");
         expect(socketResponse).toContain("HTTP/1.1 101 Switching Protocols");
         expect(socketResponse).toContain("Sec-WebSocket-Protocol: vite-hmr");
+    });
+
+    // F-5 (review gate R1). The preview package's own `it.each` passes `publicBaseUrlSecure` as a
+    // direct option, so it pins the CONSUMER — it stays green if this composition site is rewired
+    // to a constant. What actually has to hold is the derivation at `registerRoutes.ts:212`:
+    // `isHttpsUrl(resolvePublicBaseUrl(env))`. So this drives the whole composition from `env` and
+    // nothing else. `env` is the only input that differs between the two rows, so no constant can
+    // satisfy both, and wiring the option to the wrong consumer drops `Secure` on the https row.
+    it.each([
+        { name: "https deployment", publicServerUrl: "https://app.happier.test", expectSecure: true },
+        { name: "http deployment", publicServerUrl: "http://app.happier.test", expectSecure: false },
+    ])("derives the path-mode exchange cookie's Secure flag from the env public base URL on an $name", async ({ publicServerUrl, expectSecure }) => {
+        const mod = await loadLocalServiceRoutesModule();
+        expect(mod?.registerLocalServiceRoutes).toBeTypeOf("function");
+        if (!mod?.registerLocalServiceRoutes) return;
+
+        const app = createFakeRouteApp();
+        mod.registerLocalServiceRoutes(app as never, {
+            env: {
+                HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__ENABLED: "1",
+                HAPPIER_PUBLIC_SERVER_URL: publicServerUrl,
+                HANDY_MASTER_SECRET: "master-secret",
+            } as NodeJS.ProcessEnv,
+            authorizeSessionAccess: vi.fn(() => true),
+        });
+
+        const registerReply = createReplyStub();
+        await getRouteHandler(app, "POST", "/v1/local-services/preview")({
+            userId: "user_1",
+            body: preview,
+        }, registerReply);
+        expect(registerReply.statusCode).toBe(201);
+
+        const registered = registerReply.send.mock.calls[0]?.[0] as { accessUrl?: string } | undefined;
+        const previewToken = registered?.accessUrl ? new URL(registered.accessUrl).searchParams.get("previewToken") : null;
+        expect(previewToken).toBeTypeOf("string");
+
+        const exchangeReply = createReplyStub();
+        await getRouteHandler(app, "GET", "/v1/local-services/preview/:previewId/*")({
+            method: "GET",
+            params: { previewId: "preview_1", "*": "" },
+            query: { previewToken: previewToken! },
+            headers: { host: "app.happier.test" },
+        }, exchangeReply);
+
+        expect(exchangeReply.statusCode).toBe(303);
+        const setCookie = String(exchangeReply.headers["Set-Cookie"]);
+        expect(setCookie).toContain("happier_preview_token=");
+        expect(setCookie).toContain("HttpOnly");
+        expect(setCookie.includes("Secure")).toBe(expectSecure);
     });
 
     it("maps route purposes to the canonical session access levels", async () => {

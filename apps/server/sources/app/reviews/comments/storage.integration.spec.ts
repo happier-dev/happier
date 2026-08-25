@@ -268,6 +268,7 @@ describe("review comment durable storage", () => {
 
     afterEach(async () => {
         harness.resetEnv();
+        await db.$executeRawUnsafe("DELETE FROM review_comment_publication_correlations").catch(() => undefined);
         await db.$executeRawUnsafe("DELETE FROM review_comment_events").catch(() => undefined);
         await db.$executeRawUnsafe("DELETE FROM review_comments").catch(() => undefined);
         await harness.resetDbTables([
@@ -275,6 +276,64 @@ describe("review comment durable storage", () => {
             () => db.userKVStore.deleteMany(),
             () => db.account.deleteMany(),
         ]);
+    });
+
+    it("persists one first-dispatch claim across simultaneous SQL-store callers", async () => {
+        const account = await db.account.create({
+            data: {
+                id: "account-review-comment-publication",
+                publicKey: "pk-review-comment-publication",
+                encryptionMode: "plain",
+            },
+            select: { id: true },
+        });
+        const create = getRouteHandler(registerDefaultRoutes(), "POST", "/v1/reviews/comments");
+        const created = ReviewCommentCreateResponseV1Schema.parse(await create({
+            userId: account.id,
+            body: {
+                projectId: "project-1",
+                anchor: { kind: "line", filePath: "src/example.ts", line: 2 },
+                snapshot: textSnapshot(),
+                body: "Null-check this value.",
+                clientMutationId: "mutation-publication-correlation",
+            },
+        }, createReplyStub()));
+        const operations = createReviewCommentOperations(createSqlReviewCommentStore(), {
+            now: () => 1234,
+            createId: (prefix) => `${prefix}-unused`,
+        });
+        const request = {
+            accountId: account.id,
+            actor: { kind: "user", userId: account.id } as const,
+            input: {
+                commentId: created.comment.id,
+                target: {
+                    providerId: "github",
+                    configuredAccountId: "github-account-1",
+                    entryRef: {
+                        sourceId: "github",
+                        kindId: "pull-request",
+                        collisionScope: "github:repository-1",
+                        entryId: "42",
+                    },
+                },
+            },
+        };
+
+        const outcomes = await Promise.all([
+            operations.claimPublicationDispatch(request),
+            operations.claimPublicationDispatch(request),
+        ]);
+
+        expect(outcomes.map(({ disposition }) => disposition).sort())
+            .toEqual(["dispatch", "reconcile"]);
+        expect(new Set(outcomes.map(({ publicationCorrelationId }) => publicationCorrelationId)).size)
+            .toBe(1);
+        const [row] = await db.$queryRaw<Array<{ count: bigint }>>`
+            SELECT COUNT(*) AS count FROM review_comment_publication_correlations
+            WHERE account_id = ${account.id} AND comment_id = ${created.comment.id}
+        `;
+        expect(Number(row?.count ?? 0)).toBe(1);
     });
 
     it("atomically replays concurrent and restarted creates by account-scoped client mutation", async () => {

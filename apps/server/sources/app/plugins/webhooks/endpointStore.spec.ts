@@ -28,6 +28,7 @@ vi.mock("./accountChange", () => ({
     markPluginWebhookAccountChangedInTxV1: mocks.markAccountChanged,
 }));
 
+import { projectPluginWebhookEndpointReadinessV1 } from "./endpointReadiness";
 import { createPluginWebhookEndpointStoreV1 } from "./endpointStore";
 
 const endpointId = "wh_ep_AAECAwQFBgcICQoLDA0ODw";
@@ -53,6 +54,7 @@ function endpointRow(overrides: Record<string, unknown> = {}) {
         enabled: true,
         revokedAt: null,
         releasedAt: null,
+        providerConfirmedAt: null,
         targetMachineId: target.machineId,
         targetMachineInstallationId: "install-1",
         targetMaterializationId: target.materializationId,
@@ -77,13 +79,21 @@ function transaction(row: ReturnType<typeof endpointRow> | null = endpointRow())
         pluginWebhookEndpoint: {
             findFirst: vi.fn(async () => row),
             findUnique: vi.fn(async () => null),
-            create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => ({ id: data.id, revision: 1 })),
+            create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => ({
+                id: data.id,
+                revision: 1,
+                enabled: true,
+                revokedAt: null,
+                providerConfirmedAt: null,
+            })),
             updateMany: vi.fn(async () => ({ count: 1 })),
         },
         pluginWebhookRoute: {
             create: vi.fn(async ({ data }: { data: { opaqueRouteId: string } }) => ({
                 id: "route-1",
                 opaqueRouteId: data.opaqueRouteId,
+                enabled: true,
+                revokedAt: null,
             })),
             update: vi.fn(async ({ data }: { data: Record<string, unknown> }) => ({ id: "route-1", ...data })),
             updateMany: vi.fn(async () => ({ count: 1 })),
@@ -222,11 +232,120 @@ describe("plugin webhook endpoint store", () => {
         expect(mocks.inTx).not.toHaveBeenCalled();
     });
 
+    it("derives one readiness ordering for every endpoint projection", async () => {
+        const base = {
+            endpointEnabled: true,
+            endpointRevokedAt: null,
+            routeEnabled: true,
+            routeRevokedAt: null,
+            targetStatus: "current",
+            providerConfirmedAt: null,
+            oneTimeCredentialDisclosureLost: false,
+        } as const;
+
+        expect(projectPluginWebhookEndpointReadinessV1(base)).toBe("providerConfirmationRequired");
+        expect(projectPluginWebhookEndpointReadinessV1({
+            ...base,
+            providerConfirmedAt: new Date("2026-08-23T00:00:00.000Z"),
+        })).toBe("ready");
+        // A confirmed provider outranks a lost one-time disclosure: the user
+        // does not have to rotate a credential the provider already uses.
+        expect(projectPluginWebhookEndpointReadinessV1({
+            ...base,
+            providerConfirmedAt: new Date("2026-08-23T00:00:00.000Z"),
+            oneTimeCredentialDisclosureLost: true,
+        })).toBe("ready");
+        expect(projectPluginWebhookEndpointReadinessV1({
+            ...base,
+            oneTimeCredentialDisclosureLost: true,
+        })).toBe("credentialDisclosureLost");
+        expect(projectPluginWebhookEndpointReadinessV1({
+            ...base,
+            providerConfirmedAt: new Date("2026-08-23T00:00:00.000Z"),
+            targetStatus: "unavailable",
+        })).toBe("targetUnavailable");
+        // Availability outranks confirmation in both directions.
+        expect(projectPluginWebhookEndpointReadinessV1({
+            ...base,
+            providerConfirmedAt: new Date("2026-08-23T00:00:00.000Z"),
+            targetStatus: "unavailable",
+            routeRevokedAt: new Date("2026-08-23T00:00:00.000Z"),
+        })).toBe("routeUnavailable");
+        expect(projectPluginWebhookEndpointReadinessV1({
+            ...base,
+            endpointEnabled: false,
+        })).toBe("routeUnavailable");
+    });
+
+    it("reads an enabled but unconfirmed endpoint as not yet ready", async () => {
+        const store = createPluginWebhookEndpointStoreV1({
+            resolveTarget: mocks.readTarget,
+            resolveContribution: mocks.readContribution,
+            resolvePublicBaseUrl: () => "https://server.example.test",
+        });
+        mocks.readTarget.mockResolvedValue({
+            materialization: target,
+            machineInstallationId: "install-1",
+            pluginVersion: "1.0.0",
+        });
+
+        await expect(store.read({ accountId: "account-1", webhookEndpointId: endpointId }))
+            .resolves.toMatchObject({ readiness: "providerConfirmationRequired" });
+
+        mocks.endpointFindFirst.mockResolvedValueOnce(endpointRow({
+            providerConfirmedAt: new Date("2026-08-23T10:00:00.000Z"),
+        }));
+        await expect(store.read({ accountId: "account-1", webhookEndpointId: endpointId }))
+            .resolves.toMatchObject({ readiness: "ready" });
+    });
+
+    it("resolves the frozen target before reading a confirmed endpoint as ready", async () => {
+        const store = createPluginWebhookEndpointStoreV1({
+            resolveTarget: mocks.readTarget,
+            resolveContribution: mocks.readContribution,
+            resolvePublicBaseUrl: () => "https://server.example.test",
+        });
+        const confirmed = () => endpointRow({
+            providerConfirmedAt: new Date("2026-08-23T10:00:00.000Z"),
+        });
+
+        // A read that never resolved the target would report every one of
+        // these as `ready`, telling the owner an undeliverable binding works.
+        for (const gone of [
+            null,
+            { materialization: target, machineInstallationId: "install-9", pluginVersion: "1.0.0" },
+            { materialization: target, machineInstallationId: "install-1", pluginVersion: "2.0.0" },
+        ]) {
+            mocks.endpointFindFirst.mockResolvedValueOnce(confirmed());
+            mocks.readTarget.mockResolvedValueOnce(gone);
+            await expect(store.read({ accountId: "account-1", webhookEndpointId: endpointId }))
+                .resolves.toMatchObject({ readiness: "targetUnavailable" });
+        }
+
+        mocks.endpointFindFirst.mockResolvedValueOnce(confirmed());
+        mocks.readTarget.mockResolvedValueOnce({
+            materialization: target,
+            machineInstallationId: "install-1",
+            pluginVersion: "1.0.0",
+        });
+        await expect(store.read({ accountId: "account-1", webhookEndpointId: endpointId }))
+            .resolves.toMatchObject({ readiness: "ready" });
+        expect(mocks.readTarget).toHaveBeenLastCalledWith({
+            accountId: "account-1",
+            target,
+        });
+    });
+
     it("reads the Account-owned endpoint without credential material", async () => {
         const store = createPluginWebhookEndpointStoreV1({
             resolveTarget: mocks.readTarget,
             resolveContribution: mocks.readContribution,
             resolvePublicBaseUrl: () => "https://server.example.test",
+        });
+        mocks.readTarget.mockResolvedValue({
+            materialization: target,
+            machineInstallationId: "install-1",
+            pluginVersion: "1.0.0",
         });
         const result = await store.read({ accountId: "account-1", webhookEndpointId: endpointId });
 

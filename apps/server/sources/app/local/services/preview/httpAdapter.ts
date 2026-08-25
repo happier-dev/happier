@@ -14,6 +14,7 @@ import {
     createPeerMediationHttpRequestStartedEvent,
     type PeerMediationObservabilityEmitter,
 } from "@/app/api/socket/peer/mediation/observability/events";
+import { log } from "@/utils/logging/log";
 
 const DEFAULT_PREVIEW_MAX_PROXY_HOPS = 5;
 const PREVIEW_HOP_HEADER = "x-happier-preview-hops";
@@ -63,6 +64,7 @@ export type ProxyLocalServicePreviewHttpRequestResult =
               | "invalid_request_target"
               | "method_not_allowed"
               | "preview_loop_detected"
+              | "preview_tunnel_unavailable"
               | "request_body_too_large"
               | "response_header_too_large"
               | "response_body_too_large"
@@ -398,6 +400,39 @@ function nextRequestId(previewId: string): string {
     return `${previewId}:http:${nextRequestSequence}`;
 }
 
+/**
+ * `createLocalServicePreviewTunnelOpener` tags its rejections with the prerequisite that failed
+ * (`grant_signing_unavailable`, `preview_account_missing`, the relay-authorization mint's own
+ * reason code). Read it structurally so the adapter stays free of a `tunnel.ts` value import —
+ * that module imports this one for its types, and a value edge would close the cycle.
+ */
+function readTunnelUnavailableReasonCode(error: unknown): string {
+    const raw = (error as { reasonCode?: unknown } | null | undefined)?.reasonCode;
+    return typeof raw === "string" && raw.trim().length > 0 ? raw.trim() : "preview_tunnel_open_failed";
+}
+
+/**
+ * A tunnel that cannot be opened is a transport failure, not a server fault. `registerRoutes`
+ * already defines the typed shape for that situation
+ * (`503 preview_transport_unavailable / pms_tunnel_unavailable`) for the case where no transport is
+ * configured at all; emit the same one here so the two ways of having no transport read alike.
+ *
+ * The wire reason stays generic on purpose: the specific prerequisite is server configuration, and
+ * it belongs in the operator's log rather than in a preview visitor's response body.
+ */
+function writePreviewTransportUnavailable(
+    response: LocalServicePreviewHttpResponseSink,
+    body: string,
+): void | Promise<void> {
+    const payload = textEncoder.encode(body);
+    response.writeHead(503, "Service Unavailable", {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": String(payload.byteLength),
+        "cache-control": "no-store",
+    });
+    return Promise.resolve(response.write(payload)).then(() => response.end());
+}
+
 export async function proxyLocalServicePreviewHttpRequest(
     input: ProxyLocalServicePreviewHttpRequestInput,
 ): Promise<ProxyLocalServicePreviewHttpRequestResult> {
@@ -433,7 +468,31 @@ export async function proxyLocalServicePreviewHttpRequest(
         return { ok: false, reasonCode: "request_body_too_large" };
     }
 
-    const tunnel = await input.openTunnel({ preview: input.preview });
+    let tunnel: LocalServicePreviewTunnelStream;
+    try {
+        tunnel = await input.openTunnel({ preview: input.preview });
+    } catch (error) {
+        // Every other failure this adapter knows about is written to the sink and returned as a
+        // typed result. Opening the tunnel used to be the one that escaped as an exception, which
+        // Fastify's global handler turned into an untyped `500 An unexpected error occurred` with
+        // no product vocabulary attached (`F-PREVIEW-1`).
+        const reasonCode = readTunnelUnavailableReasonCode(error);
+        log({
+            module: "local-service-preview",
+            level: "error",
+            previewId: input.preview.previewId,
+            machineId: input.preview.machineId,
+            requestId,
+            method: input.request.method,
+            url: requestTargetPath(input.request),
+            reasonCode,
+        }, `Local service preview tunnel unavailable: ${reasonCode}`);
+        await writePreviewTransportUnavailable(input.response, JSON.stringify({
+            error: "preview_transport_unavailable",
+            reasonCode: "pms_tunnel_unavailable",
+        }));
+        return { ok: false, reasonCode: "preview_tunnel_unavailable" };
+    }
     if (input.observability) {
         input.observability.emit(createPeerMediationHttpRequestStartedEvent({
             accountId: observabilityAccountId,

@@ -427,7 +427,13 @@ describe("Automation Event source status", () => {
         const staleMaterialization = await loadAutomationV3EventStatusProjections({
             automations: [staleAutomation],
         });
-        expect(staleMaterialization.get(AUTOMATION_ID)?.sourceCatalogStatus).toBeNull();
+        // The retired reporter can no longer write this row (the writer rejects
+        // it as `observation_target_changed`), so its last healthy summary is
+        // not the current observer's status and must not be presented as one.
+        expect(staleMaterialization.get(AUTOMATION_ID)).toEqual({
+            sourceStatus: null,
+            sourceCatalogStatus: null,
+        });
 
         await db.automation.update({
             where: { id: AUTOMATION_ID },
@@ -490,6 +496,25 @@ describe("Automation Event source status", () => {
                 nextRetryAt: 1_723_247_260_000,
             },
         });
+        await reportAutomationEventSourceStatusV1({
+            accountId: ACCOUNT_ID,
+            caller,
+            input: {
+                kind: "source",
+                automationId: AUTOMATION_ID,
+                templateVersion: 7,
+                eventRef: { pluginId: PLUGIN_ID, localId: EVENT_LOCAL_ID },
+                sourceSelectorId: SOURCE_SELECTOR_ID,
+                state: "observing",
+                code: "none",
+                lastObservedAt: 1_723_247_200_000,
+                lastDispositionAt: 1_723_247_200_001,
+                nextRetryAt: null,
+                observedDelta: 1,
+                admittedDelta: 1,
+                skippedDelta: 0,
+            },
+        });
         const automation = await getAutomation({
             accountId: ACCOUNT_ID,
             automationId: AUTOMATION_ID,
@@ -504,13 +529,22 @@ describe("Automation Event source status", () => {
             scanStartedAt: 1_723_247_200_000,
             nextRetryAt: 1_723_247_260_000,
         });
+        expect(current.get(AUTOMATION_ID)?.sourceStatus).toMatchObject({
+            state: "observing",
+            observedCount: 1,
+        });
 
         await db.pluginWebhookEndpoint.update({
             where: { id: DURABLE_PUSH_ENDPOINT_ID },
             data: { targetMaterializationId: "materialization-moved" },
         });
         const stale = await loadAutomationV3EventStatusProjections({ automations: [automation] });
-        expect(stale.get(AUTOMATION_ID)?.sourceCatalogStatus).toBeNull();
+        // The retargeted endpoint means the row's reporter is no longer the
+        // Automation's delivery target, so neither summary is current.
+        expect(stale.get(AUTOMATION_ID)).toEqual({
+            sourceStatus: null,
+            sourceCatalogStatus: null,
+        });
     });
 
     it("publishes one content-free Automation invalidation after each committed source and catalog status", async () => {

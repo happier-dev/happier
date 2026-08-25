@@ -1,11 +1,12 @@
 import {
     AccountEncryptionMigrateAutomationsDirectiveSchema,
+    AutomationOccurrenceKeyV1Schema,
     AutomationStoredContentEnvelopeV1Schema,
     AutomationSourceSelectorIdV1Schema,
     deriveAutomationOccurrenceEvidenceEqualityTagV1,
     deriveAutomationOccurrenceKeyV1,
     sealAutomationConversationReplyContextStoredEnvelopeV1,
-    sealAutomationEventTriggerEvidenceEnvelopeV1,
+    sealAutomationOccurrenceTriggerEvidenceEnvelopeV1,
     sealAutomationReplyHandoffReceiptStoredEnvelopeV1,
     sealAutomationRunResultStoredEnvelopeV1,
     sealAutomationTriggerDefinitionStoredEnvelopeV1,
@@ -61,13 +62,9 @@ const MEASUREMENT_CORRESPONDENCE = {
     runId: "pep1-measurement-representative-run",
     handoffId: "pep1-measurement-representative-handoff",
 };
-const MEASUREMENT_SOURCE = {
-    kind: "automationResult" as const,
-    automationRunId: MEASUREMENT_CORRESPONDENCE.runId,
-    resultId: MEASUREMENT_CORRESPONDENCE.handoffId,
+const MEASUREMENT_REPLY_CONTEXT_CORRESPONDENCE = {
     automationId: MEASUREMENT_CORRESPONDENCE.automationId,
-    templateVersion: 1,
-    resultDelivery: "finalResult" as const,
+    occurrenceKey: AutomationOccurrenceKeyV1Schema.parse("A".repeat(43)),
 };
 
 type MemorySample = Readonly<{
@@ -291,8 +288,8 @@ function sealReplyContextEnvelope(mode: "plain" | "e2ee"): string {
     if (mode === "plain") {
         return JSON.stringify(sealAutomationConversationReplyContextStoredEnvelopeV1({
             mode,
-            correspondence: MEASUREMENT_CORRESPONDENCE,
-            source: MEASUREMENT_SOURCE,
+            correspondence: MEASUREMENT_REPLY_CONTEXT_CORRESPONDENCE,
+            templateVersion: 1,
             opaqueContext,
         }));
     }
@@ -300,8 +297,8 @@ function sealReplyContextEnvelope(mode: "plain" | "e2ee"): string {
         mode,
         material: ACCOUNT_MATERIAL,
         randomBytes: deterministicRandomBytes,
-        correspondence: MEASUREMENT_CORRESPONDENCE,
-        source: MEASUREMENT_SOURCE,
+        correspondence: MEASUREMENT_REPLY_CONTEXT_CORRESPONDENCE,
+        templateVersion: 1,
         opaqueContext,
     }));
 }
@@ -437,7 +434,7 @@ function buildRunItem(params: Readonly<{
             expectedRunRevision: params.expectedRunRevision,
             triggerEvidenceEnvelope: evidence === null
                 ? null
-                : JSON.stringify(sealAutomationEventTriggerEvidenceEnvelopeV1({
+                : JSON.stringify(sealAutomationOccurrenceTriggerEvidenceEnvelopeV1({
                     material: ACCOUNT_MATERIAL,
                     evidence,
                     randomBytes: deterministicRandomBytes,

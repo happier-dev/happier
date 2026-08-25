@@ -214,6 +214,7 @@ describe("plugin webhook durable delivery admission", () => {
             expectedEndpointRevision: endpointRevision,
             routeId: "route-delivery",
             verifierKind: "github_hmac_sha256_v1" as const,
+            credentialVersionId: "credential-1",
             deliveryIdentityDigest: "a".repeat(64),
             stored: plainStoredEnvelope(),
             now: NOW,

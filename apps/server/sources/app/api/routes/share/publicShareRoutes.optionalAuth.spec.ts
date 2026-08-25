@@ -709,6 +709,7 @@ describe("publicShareRoutes optional auth (no reply-already-sent)", () => {
         });
 
         txDbMocks.db.session.findUnique.mockResolvedValue({
+            seq: 1,
             encryptionMode: "plain",
             currentStorageState: "snapshot_complete",
             acceptedThroughServerSeq: null,

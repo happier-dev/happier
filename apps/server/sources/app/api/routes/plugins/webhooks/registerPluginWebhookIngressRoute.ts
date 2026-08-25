@@ -52,9 +52,14 @@ const UNSUPPORTED_INGRESS_METHODS_V1 = [
     "TRACE",
 ] as const;
 
+/**
+ * What the unauthenticated hop is allowed to know. It deliberately carries no
+ * endpoint or Account identity: tenant facts belong to the authenticated
+ * routing point, and a field here would invite charging a tenant for a request
+ * that never produced a valid signature.
+ */
 type PreparedRouteV1 = Readonly<{
     route: ActivePluginWebhookRouteV1;
-    endpoint: ActivePluginWebhookEndpointV1 | null;
 }>;
 
 type ProcessAdmissionV1 = Readonly<{
@@ -160,12 +165,15 @@ function endpointScopesV1(
 async function defaultPrepareRouteV1(opaqueRouteId: string): Promise<PreparedRouteV1 | null> {
     const route = await findActivePluginWebhookRouteV1(opaqueRouteId);
     if (!route) return null;
-    if (route.routingKind === "providerInstallation") return { route, endpoint: null };
+    if (route.routingKind === "providerInstallation") return { route };
+    // A revoked or detached Account binding is the same non-enumerating 404 as
+    // an unknown route, decided before any body byte is read. Resolution stays
+    // with the one route/endpoint owner the verified path also consults.
     const endpoint = await resolveActivePluginWebhookEndpointV1({
         routeId: route.routeId,
         routingKind: route.routingKind,
     });
-    return endpoint ? { route, endpoint } : null;
+    return endpoint ? { route } : null;
 }
 
 function resolveDistributedAdmissionV1(
@@ -230,7 +238,7 @@ export function registerPluginWebhookIngressRoute(
     const policy = resolvePluginWebhookIngressPolicyV1(env);
     const processAdmission = options.processAdmission ?? createPluginWebhookProcessAdmissionV1({
         maxRequests: policy.process.maxRequests,
-        maxRawBodyBytes: policy.process.maxRawBodyBytes,
+        maxWorkingBytes: policy.process.maxWorkingBytes,
     });
     const prepareRoute = options.prepareRoute ?? defaultPrepareRouteV1;
     const distributedAdmission = resolveDistributedAdmissionV1(env, options.distributedAdmission);
@@ -345,11 +353,15 @@ export function registerPluginWebhookIngressRoute(
                 }
                 requestReservation.prepared = prepared;
                 if (distributedAdmission) {
-                    const scopes = [
+                    // Pre-HMAC admission protects the shared route and this
+                    // replica only. Charging an endpoint's or an Account's
+                    // tenant budget here would let anyone who learns a public
+                    // URL exhaust that one customer's admission budget without
+                    // ever producing a valid signature, so tenant sublimits are
+                    // acquired at the first authenticated routing point below.
+                    const acquireDistributed = distributedAdmission.acquire([
                         routeScopeV1(prepared.route.routeId, policy),
-                        ...(prepared.endpoint ? endpointScopesV1(prepared.endpoint, policy) : []),
-                    ];
-                    const acquireDistributed = distributedAdmission.acquire(scopes, {
+                    ], {
                         nowMs: Date.now(),
                         ttlMs: DISTRIBUTED_RESERVATION_TTL_MS_V1,
                         ownerToken: requestReservation.ownerToken,
@@ -404,7 +416,10 @@ export function registerPluginWebhookIngressRoute(
                 const resolvedAdmissionFailure: {
                     current: Readonly<{ statusCode: 429 | 503; retryAfterMs: number }> | null;
                 } = { current: null };
-                const reserveResolvedEndpoint = prepared.endpoint || !distributedAdmission
+                // The one tenant-admission seam, for both routing kinds: the
+                // ingest owner resolves the endpoint from the verified request
+                // and calls this before it builds an envelope or commits.
+                const reserveResolvedEndpoint = !distributedAdmission
                     ? undefined
                     : async (endpoint: ActivePluginWebhookEndpointV1) => {
                         if (reservation.deadlineController.signal.aborted) return null;

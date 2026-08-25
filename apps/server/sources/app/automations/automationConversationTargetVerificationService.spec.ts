@@ -41,8 +41,20 @@ const caller = {
     materializationId: "materialization-1",
 } as const;
 
-function listedRow(params: Readonly<{ id: string; name: string; templateVersion: number }>) {
-    return { id: params.id, name: params.name, templateVersion: params.templateVersion };
+function listedRow(params: Readonly<{
+    id: string;
+    name: string;
+    templateVersion: number;
+    targetType?: "new_session" | "existing_session" | "execution_run";
+    enabled?: boolean;
+}>) {
+    return {
+        id: params.id,
+        name: params.name,
+        templateVersion: params.templateVersion,
+        targetType: params.targetType ?? "execution_run",
+        enabled: params.enabled ?? true,
+    };
 }
 
 const scheduleAutomation: AutomationListItem = {
@@ -177,8 +189,18 @@ describe("Automation conversation target verification", () => {
             input: { limit: 2, cursor: "automation-0" },
         })).resolves.toEqual({
             items: [
-                { automationId: "automation-1", templateVersion: 0, label: "Current target" },
-                { automationId: "automation-2", templateVersion: 2, label: "automation-2" },
+                {
+                    automationId: "automation-1",
+                    templateVersion: 0,
+                    label: "Current target",
+                    execution: { targetType: "execution_run", enabled: true },
+                },
+                {
+                    automationId: "automation-2",
+                    templateVersion: 2,
+                    label: "automation-2",
+                    execution: { targetType: "execution_run", enabled: true },
+                },
             ],
             nextCursor: "automation-2",
         });
@@ -191,7 +213,13 @@ describe("Automation conversation target verification", () => {
             },
             orderBy: { id: "asc" },
             take: 3,
-            select: { id: true, name: true, templateVersion: true },
+            select: {
+                id: true,
+                name: true,
+                templateVersion: true,
+                targetType: true,
+                enabled: true,
+            },
         });
     });
 
@@ -205,7 +233,12 @@ describe("Automation conversation target verification", () => {
             caller,
             input: {},
         })).resolves.toEqual({
-            items: [{ automationId: "automation-1", templateVersion: 3, label: "automation-1" }],
+            items: [{
+                automationId: "automation-1",
+                templateVersion: 3,
+                label: "automation-1",
+                execution: { targetType: "execution_run", enabled: true },
+            }],
             nextCursor: null,
         });
         expect(mocks.listAutomations).toHaveBeenCalledWith(expect.objectContaining({ take: 101 }));

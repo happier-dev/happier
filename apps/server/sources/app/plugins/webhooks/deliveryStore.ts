@@ -223,6 +223,8 @@ export async function admitPluginWebhookDeliveryV1(params: Readonly<{
     expectedEndpointRevision: number;
     routeId: string;
     verifierKind: "github_hmac_sha256_v1";
+    /** The exact credential version whose secret verified this delivery. */
+    credentialVersionId: string;
     deliveryIdentityDigest: string;
     stored: PluginWebhookStoredEnvelopeReadyV1;
     now?: Date;
@@ -290,6 +292,8 @@ export async function admitPluginWebhookDeliveryV1(params: Readonly<{
                     webhookContributionId: true,
                     handlerActionId: true,
                     sourceInstanceId: true,
+                    providerConfirmedAt: true,
+                    route: { select: { currentCredential: { select: { credentialVersionId: true } } } },
                 },
             });
             if (
@@ -440,6 +444,27 @@ export async function admitPluginWebhookDeliveryV1(params: Readonly<{
             },
             select: { id: true },
         });
+        // The one canonical readiness fact: this delivery reached durable
+        // custody under the route's *current* credential, which proves the
+        // provider is configured with the secret every later delivery must
+        // also use. Retention compacting the delivery rows cannot regress it,
+        // and only credential rotation clears it. A delivery whose signature
+        // verified but which this transaction then refused (target
+        // unavailable, quota, encryption mismatch) does not confirm the
+        // endpoint, so a first delivery that arrives while the target machine
+        // is away leaves the binding unconfirmed until the next one lands. Nor
+        // does one still signed with a superseded secret inside the rotation
+        // overlap: it says nothing about the credential the provider now has
+        // to be reconfigured with.
+        if (
+            endpoint.providerConfirmedAt === null
+            && endpoint.route.currentCredential?.credentialVersionId === params.credentialVersionId
+        ) {
+            await tx.pluginWebhookEndpoint.updateMany({
+                where: { id: endpoint.id, providerConfirmedAt: null },
+                data: { providerConfirmedAt: now },
+            });
+        }
         const accountId = endpoint.accountId;
         const targetMachineId = endpoint.targetMachineId;
         const accountChangeCursor = await markPluginWebhookAccountChangedInTxV1(tx, {
