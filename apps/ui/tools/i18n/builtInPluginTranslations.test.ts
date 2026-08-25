@@ -10,22 +10,22 @@ const SUPPORTED_LOCALES = [
     'en', 'ru', 'pl', 'es', 'fr', 'it', 'pt', 'ca', 'zh-Hans', 'zh-Hant', 'ja',
 ] as const;
 
-const INLINE_MANIFESTS = [
-    'channels',
-    'google',
-    'inspector',
-    'openai-compat',
-    'posthog',
-    'scm-azure-devops',
-    'scm-bitbucket',
-    'scm-github',
-    'scm-gitlab',
-    'sentry',
+const INLINE_TRANSLATION_BUNDLE_FILES = [
+    'google/src/voice/declarations.ts',
+    'inspector/src/manifest.ts',
+    'openai-compat/src/manifest.ts',
+    'posthog/src/manifest.ts',
+    'scm-azure-devops/src/manifest.ts',
+    'scm-bitbucket/src/manifest.ts',
+    'scm-github/src/manifest.ts',
+    'scm-gitlab/src/manifest.ts',
+    'sentry/src/manifest.ts',
 ] as const;
 
 const MODULE_BUNDLES = [
     'channel-discord',
     'channel-telegram',
+    'channels',
     'claude',
     'codex',
     'copilot',
@@ -40,7 +40,6 @@ const MODULE_BUNDLES = [
 ] as const;
 
 const ADDITIONAL_MODULE_BUNDLES = [
-    'channels/src/ui/additionalTranslations.ts',
     'inspector/src/ui/additionalTranslations.ts',
     'posthog/src/ui/renderTranslations.ts',
     'sentry/src/ui/renderTranslations.ts',
@@ -104,6 +103,9 @@ function propertyName(node: ts.PropertyName): string | null {
 
 function unwrapObject(node: ts.Expression): ts.ObjectLiteralExpression | null {
     if (ts.isObjectLiteralExpression(node)) return node;
+    if (ts.isAsExpression(node) || ts.isSatisfiesExpression(node) || ts.isParenthesizedExpression(node)) {
+        return unwrapObject(node.expression);
+    }
     if (ts.isCallExpression(node) && node.arguments.length === 1) return unwrapObject(node.arguments[0]);
     return null;
 }
@@ -178,6 +180,30 @@ function readModuleBundles(file: string): readonly Bundle[] {
     throw new Error(`${file}: *_UI_TRANSLATIONS object not found`);
 }
 
+function readGeneratedHostBundles(file: string): ReadonlyMap<string, Readonly<Record<string, string>>> {
+    const source = readFileSync(file, 'utf8');
+    const root = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+    for (const statement of root.statements) {
+        if (!ts.isVariableStatement(statement)) continue;
+        for (const declaration of statement.declarationList.declarations) {
+            if (!ts.isIdentifier(declaration.name)
+                || declaration.name.text !== 'BUNDLED_PLUGIN_TRANSLATIONS'
+                || !declaration.initializer) continue;
+            const localeObject = unwrapObject(declaration.initializer);
+            if (!localeObject) break;
+            return new Map(localeObject.properties.map((property) => {
+                if (!ts.isPropertyAssignment(property)) throw new Error(`${file}: non-literal generated locale`);
+                const locale = propertyName(property.name);
+                const messages = unwrapObject(property.initializer);
+                if (!locale || !messages) throw new Error(`${file}: non-literal generated locale`);
+                const bundle = readMessageObject(messages, locale);
+                return [locale, Object.fromEntries(bundle.keys.map((key, index) => [key, bundle.values[index]]))] as const;
+            }));
+        }
+    }
+    throw new Error(`${file}: BUNDLED_PLUGIN_TRANSLATIONS object not found`);
+}
+
 function placeholders(value: string): readonly string[] {
     return [...value.matchAll(/\{([A-Za-z][A-Za-z0-9_]*)\}/g)]
         .map((match) => match[1] ?? '')
@@ -185,9 +211,11 @@ function placeholders(value: string): readonly string[] {
 }
 
 function assertComplete(file: string, bundles: readonly Bundle[]): void {
-    expect(bundles.map(({ locale }) => locale), file).toEqual(SUPPORTED_LOCALES);
-    const english = bundles[0];
-    expect(english, file).toBeDefined();
+    const locales = bundles.map(({ locale }) => locale);
+    expect(new Set(locales).size, `${file}: duplicate translation locale`).toBe(locales.length);
+    expect(SUPPORTED_LOCALES.every((locale) => locales.includes(locale)), `${file}: missing supported host locale`).toBe(true);
+    const english = bundles.find(({ locale }) => locale === 'en');
+    expect(english, `${file}: missing English translation bundle`).toBeDefined();
     for (const bundle of bundles) {
         expect(new Set(bundle.keys).size, `${file}:${bundle.locale}: duplicate translation key`).toBe(bundle.keys.length);
         expect(bundle.keys, `${file}:${bundle.locale}`).toEqual(english?.keys);
@@ -423,8 +451,8 @@ function localizedFallbackKeys(file: string): readonly string[] {
 describe('built-in plugin translation bundles', () => {
     it('covers every supported host locale with exact key parity', () => {
         const root = path.resolve(__dirname, '../../../..');
-        for (const plugin of INLINE_MANIFESTS) {
-            const file = path.join(root, 'packages/plugins', plugin, 'src/manifest.ts');
+        for (const relativeFile of INLINE_TRANSLATION_BUNDLE_FILES) {
+            const file = path.join(root, 'packages/plugins', relativeFile);
             assertComplete(file, readInlineManifestBundles(file));
         }
         for (const plugin of MODULE_BUNDLES) {
@@ -437,14 +465,36 @@ describe('built-in plugin translation bundles', () => {
         }
     });
 
+    it('keeps the generated host bundle synchronized with source plugin catalogs', () => {
+        const root = path.resolve(__dirname, '../../../..');
+        const pluginRoot = path.join(root, 'packages/plugins');
+        const generatedByLocale = readGeneratedHostBundles(
+            path.join(root, 'apps/ui/sources/text/bundledPluginTranslations.generated.ts'),
+        );
+
+        for (const plugin of MODULE_BUNDLES) {
+            const file = path.join(pluginRoot, plugin, 'src/ui/translations.ts');
+            for (const bundle of readModuleBundles(file)) {
+                const generated = generatedByLocale.get(bundle.locale);
+                expect(generated, `${plugin}:${bundle.locale}: missing generated locale`).toBeDefined();
+                expect(
+                    generated,
+                    `${plugin}:${bundle.locale}: generated host bundle drift`,
+                ).toMatchObject(
+                    Object.fromEntries(bundle.keys.map((key, index) => [key, bundle.values[index]])),
+                );
+            }
+        }
+    });
+
     it('resolves every built-in localized fallback key from a real catalog', () => {
         const root = path.resolve(__dirname, '../../../..');
         const pluginRoot = path.join(root, 'packages/plugins');
         const declared = new Set<string>(collectTranslationKeys(en));
 
-        for (const plugin of INLINE_MANIFESTS) {
+        for (const relativeFile of INLINE_TRANSLATION_BUNDLE_FILES) {
             for (const key of readInlineManifestBundles(
-                path.join(pluginRoot, plugin, 'src/manifest.ts'),
+                path.join(pluginRoot, relativeFile),
             )[0]?.keys ?? []) declared.add(key);
         }
         for (const plugin of MODULE_BUNDLES) {
