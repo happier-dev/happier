@@ -1,6 +1,7 @@
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { createAttemptGuard } from '@/utils/timing/attemptGuard';
 import { storage } from '@/sync/domains/state/storage';
+import { settingsParse, type Settings } from '@/sync/domains/settings/settings';
 import { voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
 import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError, type RpcErrorCarrier } from '@/sync/runtime/rpcErrors';
 import { createDeviceSttController } from '@/voice/input/DeviceSttController';
@@ -34,13 +35,20 @@ import { isVoiceTextTurnRejectedBeforeEffectError } from '@/voice/session/types'
 import {
   createLocalVoiceCaptureOwner,
   type LocalVoiceCaptureOwner,
+  type LocalNeuralCaptureExecution,
   type LocalVoiceCaptureProvider,
 } from '@/voice/runtime/input/LocalVoiceCaptureOwner';
+import {
+  createRecordedAudioArtifactCleanup,
+  deleteRecordedAudioArtifact,
+  type RecordedAudioArtifactCleanup,
+} from '@/voice/runtime/input/recordedAudioArtifactCleanup';
 import {
   voiceCaptureAdmissionController,
   type VoiceCaptureAdmissionLease,
 } from '@/voice/runtime/input/VoiceCaptureAdmissionController';
 import { resolveVoiceSttCapturePlan } from '@/voice/runtime/input/resolveVoiceSttCapturePlan';
+import { resolveVoiceExecutionMachineIdFromState } from '@/voice/settings/executionMachine';
 import type { TurnEndpointSignal } from '@/voice/runtime/input/TurnEndpointController';
 import { createExpoAudioRecordingMicSession } from '@/voice/runtime/mic/NativeMicSession';
 import {
@@ -78,9 +86,21 @@ let inFlight: Promise<void> | null = null;
 let activeTurnAbortController: AbortController | null = null;
 let activeTurnAbortSessionId: string | null = null;
 let inputLevelWriter: VoiceRuntimeLevelWriter | null = null;
+type LocalVoiceCaptureAttempt = Readonly<{
+  controlSessionId: string;
+  lease: VoiceCaptureAdmissionLease;
+  settings: Settings;
+  provider: LocalVoiceCaptureProvider;
+  handsFree: boolean;
+  localNeuralExecution?: LocalNeuralCaptureExecution;
+  executionMachineId: string | null;
+}>;
+
 type LocalVoiceCaptureAdmission = {
   controlSessionId: string;
   lease: VoiceCaptureAdmissionLease;
+  captureAttempt: LocalVoiceCaptureAttempt;
+  captureAbortController: AbortController;
   currentUiContext?: VoiceCurrentUiToolPort;
   currentUiContextRetirementController?: AbortController;
   currentUiContextAutomaticUpdateProjector?: CurrentUiContextAutomaticUpdateProjector;
@@ -104,9 +124,11 @@ const localVoiceCaptureOwner = createLocalVoiceCaptureOwner({
     handleRuntimeOwnedEndpointSignal(signal);
   },
   onSpeechCandidateStart: ({ controlSessionId }) => {
+    const admission = readCaptureAdmission(controlSessionId);
+    if (!admission) return;
     bargeInController.onUserSpeechCandidate({
       sessionId: controlSessionId,
-      bargeInEnabled: isVoiceBargeInEnabled(storage.getState().settings as any),
+      bargeInEnabled: isVoiceBargeInEnabled(admission.captureAttempt.settings),
     });
   },
   onSpeechCandidateFalseAlarm: ({ controlSessionId }) => {
@@ -143,18 +165,54 @@ function releaseCaptureAdmission(controlSessionId?: string): void {
   admission.lease.release();
 }
 
+function abortCaptureAdmission(controlSessionId?: string): void {
+  const admission = captureAdmission;
+  if (!admission) return;
+  if (controlSessionId && admission.controlSessionId !== controlSessionId) return;
+  if (!admission.captureAbortController.signal.aborted) {
+    admission.captureAbortController.abort();
+  }
+}
+
+function resolveLocalVoiceCaptureAttempt(
+  controlSessionId: string,
+  lease: VoiceCaptureAdmissionLease,
+): LocalVoiceCaptureAttempt {
+  const state = storage.getState();
+  const settings = settingsParse(state.settings);
+  const capturePlan = resolveVoiceSttCapturePlan(settings);
+  const { config } = resolveLocalVoiceAdapterSettings(settings);
+  return Object.freeze({
+    controlSessionId,
+    lease,
+    settings,
+    provider: capturePlan.provider,
+    handsFree: isHandsFreeCaptureEnabled(settings, capturePlan.provider, config),
+    ...(capturePlan.localNeuralExecution
+      ? { localNeuralExecution: capturePlan.localNeuralExecution }
+      : {}),
+    executionMachineId: resolveVoiceExecutionMachineIdFromState(state),
+  });
+}
+
 function acquireCaptureAdmission(
   controlSessionId: string,
   currentUiContext?: VoiceCurrentUiToolPort,
-): boolean {
-  if (captureAdmission?.controlSessionId === controlSessionId) return true;
+): LocalVoiceCaptureAdmission | null {
+  if (captureAdmission?.controlSessionId === controlSessionId) {
+    captureAdmission.captureAttempt = resolveLocalVoiceCaptureAttempt(
+      controlSessionId,
+      captureAdmission.lease,
+    );
+    return captureAdmission;
+  }
   if (captureAdmission) {
     surfaceRecoverableVoiceCaptureError({
       controlSessionId,
       reason: 'voice_capture_busy_conversation',
       kind: 'provider_error',
     });
-    return false;
+    return null;
   }
   const admission = voiceCaptureAdmissionController.acquire('conversation');
   if (admission.status === 'busy') {
@@ -163,7 +221,7 @@ function acquireCaptureAdmission(
       reason: `voice_capture_busy_${admission.activeOwner}`,
       kind: 'provider_error',
     });
-    return false;
+    return null;
   }
   const currentUiContextRetirementController = currentUiContext
     ? new AbortController()
@@ -171,6 +229,8 @@ function acquireCaptureAdmission(
   captureAdmission = {
     controlSessionId,
     lease: admission.lease,
+    captureAttempt: resolveLocalVoiceCaptureAttempt(controlSessionId, admission.lease),
+    captureAbortController: new AbortController(),
     ...(currentUiContext && currentUiContextRetirementController ? {
       currentUiContext: bindCurrentUiContextVoiceToolPortToAdmission(
         currentUiContext,
@@ -180,7 +240,26 @@ function acquireCaptureAdmission(
       currentUiContextAutomaticUpdateProjector: createCurrentUiContextAutomaticUpdateProjector(),
     } : {}),
   };
-  return true;
+  return captureAdmission;
+}
+
+function readCaptureAdmission(controlSessionId: string): LocalVoiceCaptureAdmission | null {
+  return captureAdmission?.controlSessionId === controlSessionId
+    ? captureAdmission
+    : null;
+}
+
+function isCaptureAdmissionCurrent(admission: LocalVoiceCaptureAdmission): boolean {
+  return captureAdmission === admission;
+}
+
+function isCaptureAttemptCurrent(
+  admission: LocalVoiceCaptureAdmission,
+  captureAttempt: LocalVoiceCaptureAttempt,
+): boolean {
+  return isCaptureAdmissionCurrent(admission)
+    && admission.captureAttempt === captureAttempt
+    && !admission.captureAbortController.signal.aborted;
 }
 
 function readCaptureCurrentUiContext(controlSessionId: string): VoiceCurrentUiToolPort | undefined {
@@ -245,6 +324,24 @@ async function startCaptureWithInputLevel(
   }
 }
 
+async function startCaptureForAdmission(
+  admission: LocalVoiceCaptureAdmission,
+  captureAttempt: LocalVoiceCaptureAttempt,
+  signal?: AbortSignal,
+): Promise<void> {
+  if (!isCaptureAdmissionCurrent(admission) || admission.captureAttempt !== captureAttempt) return;
+  await startCaptureWithInputLevel({
+    sessionId: captureAttempt.controlSessionId,
+    provider: captureAttempt.provider,
+    handsFree: captureAttempt.handsFree,
+    ...(captureAttempt.localNeuralExecution
+      ? { localNeuralExecution: captureAttempt.localNeuralExecution }
+      : {}),
+    settings: captureAttempt.settings,
+    signal,
+  });
+}
+
 function resetInputLevel(): void {
   inputLevelWriter?.reset();
 }
@@ -258,22 +355,14 @@ function closeInputLevel(): void {
 /**
  * Rearm leg for the automatic VAD-driven barge-in. The barge-in controller
  * drives the machine through `interruptAndRearmListening`, which calls this to
- * re-acquire the mic for the interrupting session. Provider/hands-free are
- * resolved from live settings so the rearm matches the active capture mode.
+ * re-acquire the mic for the interrupting session. The admission refreshes at
+ * this new capture boundary, then that snapshot owns its provider/settings
+ * through stop and send.
  */
 async function startBargeInRearmListening(sessionId: string, signal?: AbortSignal): Promise<void> {
-  const settings = storage.getState().settings as any;
-  const { config } = resolveLocalVoiceAdapterSettings(settings);
-  const provider = resolveLocalVoiceCaptureProvider(settings);
-  await startCaptureWithInputLevel({
-    sessionId,
-    provider,
-    handsFree: isHandsFreeCaptureEnabled(settings, provider, config),
-    ...(provider === 'local_neural'
-      ? { localNeuralExecution: resolveLocalNeuralSttExecutionPolicy(settings)?.preferredExecution }
-      : {}),
-    signal,
-  });
+  const admission = acquireCaptureAdmission(sessionId);
+  if (!admission) return;
+  await startCaptureForAdmission(admission, admission.captureAttempt, signal);
 }
 
 // Live automatic barge-in: the SINGLE owner of the "user spoke over the
@@ -375,13 +464,6 @@ function resolveLocalVoiceCaptureProvider(settings: any): LocalVoiceCaptureProvi
   return resolveVoiceSttCapturePlan(settings).provider;
 }
 
-function resolveLocalNeuralSttExecutionPolicy(settings: any) {
-  const plan = resolveVoiceSttCapturePlan(settings);
-  return plan.provider === 'local_neural'
-    ? { preferredExecution: plan.localNeuralExecution }
-    : null;
-}
-
 async function ensureLocalConversationBindingForSession(settings: any, sessionId: string): Promise<boolean> {
   const { adapterId, config } = resolveLocalVoiceAdapterSettings(settings);
   if (adapterId !== 'local_conversation' || (config?.conversationMode ?? 'direct_session') !== 'agent') {
@@ -449,27 +531,34 @@ async function maybeRearmHandsFreeCapture(
     return false;
   }
 
+  const admission = acquireCaptureAdmission(followUp.sessionId);
+  const captureAttempt = admission?.captureAttempt;
+  if (
+    !admission
+    || !captureAttempt
+    || !captureAttempt.handsFree
+    || !isEndpointDrivenCaptureProvider(captureAttempt.provider)
+  ) {
+    return false;
+  }
+
   await voiceConversationRuntimeMachine.rearmListening({
     controlSessionId: followUp.sessionId,
-    startListening: (signal) => startCaptureWithInputLevel({
-      handsFree: true,
-      ...(followUp.provider === 'local_neural'
-        ? { localNeuralExecution: resolveLocalNeuralSttExecutionPolicy(storage.getState().settings as any)?.preferredExecution }
-        : {}),
-      provider: followUp.provider,
-      sessionId: followUp.sessionId,
-      signal,
-    }),
+    startListening: (signal) => startCaptureForAdmission(admission, captureAttempt, signal),
   });
   return true;
 }
 
-function beginEndpointDrivenStopAndSend(sessionId: string, provider: EndpointDrivenCaptureProvider): void {
+function beginEndpointDrivenStopAndSend(
+  admission: LocalVoiceCaptureAdmission,
+  captureAttempt: LocalVoiceCaptureAttempt,
+  provider: EndpointDrivenCaptureProvider,
+): void {
   if (inFlight) {
     return;
   }
 
-  const operation = stopSttAndSend(sessionId, provider).finally(() => {
+  const operation = stopSttAndSend(admission, captureAttempt, provider).finally(() => {
     if (inFlight === operation) {
       inFlight = null;
     }
@@ -479,8 +568,10 @@ function beginEndpointDrivenStopAndSend(sessionId: string, provider: EndpointDri
 
 function handleRuntimeOwnedEndpointSignal(signal: TurnEndpointSignal): void {
   const current = getCurrentLocalRuntimeCompatState();
-  const settings = storage.getState().settings as any;
-  const provider = resolveLocalVoiceCaptureProvider(settings);
+  const admission = readCaptureAdmission(signal.sessionId);
+  if (!admission) return;
+  const captureAttempt = admission.captureAttempt;
+  const { settings, provider } = captureAttempt;
 
   // Live barge-in: a runtime-owned endpoint that lands WHILE the assistant is
   // speaking is forwarded to the single barge-in owner instead of being dropped.
@@ -505,7 +596,8 @@ function handleRuntimeOwnedEndpointSignal(signal: TurnEndpointSignal): void {
   const endpointAction = localVoiceCaptureOwner.resolveEndpointSignalAction({
     currentSessionId: current.sessionId,
     currentStatus: current.status,
-    handsFreeEnabled: isEndpointDrivenCaptureProvider(provider)
+    handsFreeEnabled: captureAttempt.handsFree
+      && isEndpointDrivenCaptureProvider(provider)
       && localVoiceCaptureOwner.isHandsFreeCaptureSession({ provider, sessionId: signal.sessionId }),
     inFlight: inFlight !== null,
     provider,
@@ -515,7 +607,7 @@ function handleRuntimeOwnedEndpointSignal(signal: TurnEndpointSignal): void {
     return;
   }
 
-  beginEndpointDrivenStopAndSend(endpointAction.sessionId, endpointAction.provider);
+  beginEndpointDrivenStopAndSend(admission, captureAttempt, endpointAction.provider);
 }
 
 function isUnsupportedVoiceAgentPrewarmError(error: unknown): boolean {
@@ -538,27 +630,19 @@ function isMicPermissionDeniedError(error: unknown): boolean {
 
 async function startLocalVoiceCapture(args: Readonly<{
   sessionId: string;
-  provider: LocalVoiceCaptureProvider;
-  handsFree: boolean;
   interrupted?: boolean;
   currentUiContext?: VoiceCurrentUiToolPort;
 }>): Promise<void> {
-  if (!acquireCaptureAdmission(args.sessionId, args.currentUiContext)) {
+  const admission = acquireCaptureAdmission(args.sessionId, args.currentUiContext);
+  if (!admission) {
     return;
   }
+  const captureAttempt = admission.captureAttempt;
 
   let startError: unknown = null;
   const startListening = async (signal?: AbortSignal) => {
     try {
-      await startCaptureWithInputLevel({
-        sessionId: args.sessionId,
-        provider: args.provider,
-        handsFree: args.handsFree,
-        ...(args.provider === 'local_neural'
-          ? { localNeuralExecution: resolveLocalNeuralSttExecutionPolicy(storage.getState().settings as any)?.preferredExecution }
-          : {}),
-        signal,
-      });
+      await startCaptureForAdmission(admission, captureAttempt, signal);
     } catch (error) {
       startError = error;
       throw error;
@@ -579,15 +663,19 @@ async function startLocalVoiceCapture(args: Readonly<{
 
   const startedState = getCurrentLocalRuntimeCompatState();
   if (
+    !isCaptureAdmissionCurrent(admission)
+    ||
     startedState.sessionId !== args.sessionId
     || startedState.status !== 'recording'
   ) {
-    releaseCaptureAdmission(args.sessionId);
+    if (isCaptureAdmissionCurrent(admission)) {
+      releaseCaptureAdmission(args.sessionId);
+    }
   } else {
     beginAutomaticCurrentUiContextUpdates(args.sessionId);
   }
 
-  if (args.provider !== 'recorded_audio' || !startError) {
+  if (captureAttempt.provider !== 'recorded_audio' || !startError) {
     return;
   }
 
@@ -635,78 +723,144 @@ async function runVoiceTurnWithSendFailureHandling(
   }
 }
 
-async function stopAndSendRecordedTurn(sessionId: string): Promise<void> {
+function surfaceRecordedAudioCleanupFailure(
+  admission: LocalVoiceCaptureAdmission,
+  captureAttempt: LocalVoiceCaptureAttempt,
+): void {
+  if (!isCaptureAdmissionCurrent(admission) || admission.captureAttempt !== captureAttempt) return;
+  const current = voiceConversationRuntimeMachine.getSnapshot();
+  if (
+    current.controlSessionId !== captureAttempt.controlSessionId
+    || current.state === 'disconnected'
+    || current.state === 'ending'
+  ) {
+    return;
+  }
+  transitionVoiceRuntimeToIdle({
+    controlSessionId: captureAttempt.controlSessionId,
+    reason: 'recording_cleanup_failed',
+    kind: 'provider_error',
+  });
+}
+
+async function stopAndSendRecordedTurn(
+  admission: LocalVoiceCaptureAdmission,
+  captureAttempt: LocalVoiceCaptureAttempt,
+): Promise<void> {
+  const sessionId = captureAttempt.controlSessionId;
+  if (
+    !isCaptureAttemptCurrent(admission, captureAttempt)
+    || captureAttempt.provider !== 'recorded_audio'
+  ) {
+    return;
+  }
   voiceConversationRuntimeMachine.transitionToTranscribing({ controlSessionId: sessionId });
   let uri: string | null = null;
+  let artifactCleanup: RecordedAudioArtifactCleanup | null = null;
   try {
-    const stopped = await localVoiceCaptureOwner.stopCapture({
-      sessionId,
-      provider: 'recorded_audio',
-    });
-    resetInputLevel();
-    uri = stopped.provider === 'recorded_audio' ? stopped.uri : null;
-  } catch {
+    try {
+      const stopped = await localVoiceCaptureOwner.stopCapture({
+        sessionId,
+        provider: captureAttempt.provider,
+      });
+      resetInputLevel();
+      uri = stopped.provider === 'recorded_audio' ? stopped.uri : null;
+      if (uri) {
+        artifactCleanup = createRecordedAudioArtifactCleanup(deleteRecordedAudioArtifact);
+        artifactCleanup.admit(uri);
+      }
+    } catch {
+      transitionVoiceRuntimeToIdle({
+        controlSessionId: sessionId,
+        reason: 'recording_stop_failed',
+      });
+      return;
+    }
+
+    if (!uri) {
+      if (!isCaptureAttemptCurrent(admission, captureAttempt)) return;
+      transitionVoiceRuntimeToIdle({
+        controlSessionId: sessionId,
+        reason: 'recording_uri_missing',
+      });
+      return;
+    }
+
+    if (!isCaptureAttemptCurrent(admission, captureAttempt)) return;
+
+    let text: string | null = null;
+    try {
+      text = await recordedAudioTranscriptionController.transcribe({
+        sessionId,
+        uri,
+        executionMachineId: captureAttempt.executionMachineId,
+        settings: captureAttempt.settings,
+        signal: admission.captureAbortController.signal,
+      });
+    } catch (error) {
+      if (!isCaptureAttemptCurrent(admission, captureAttempt)) return;
+      if (error instanceof MissingBundledSpeechCredentialError) {
+        transitionVoiceRuntimeToIdle({
+          controlSessionId: sessionId,
+          reason: 'missing_stt_api_key',
+        });
+        throw error;
+      }
+      transitionVoiceRuntimeToIdle({
+        controlSessionId: sessionId,
+        reason: resolveRecordedAudioTranscriptionFailureReason(error),
+      });
+      return;
+    }
+
+    if (!isCaptureAttemptCurrent(admission, captureAttempt)) return;
+    if (!text) {
+      transitionVoiceRuntimeToIdle({ controlSessionId: sessionId });
+      return;
+    }
+
+    const currentUiContext = admission.currentUiContext;
+    await runVoiceTurnWithSendFailureHandling(sessionId, captureAttempt.settings, (signal) =>
+      sendVoiceTextTurnImpl({
+        sessionId,
+        settings: captureAttempt.settings,
+        userText: text,
+        playbackController,
+        voiceAgentSessions,
+        onTtsStarted: noteTtsStarted,
+        onAssistantFinalAvailable: noteAssistantFinalAvailable,
+        onTtsStopped: noteTtsStopped,
+        signal,
+        ...(currentUiContext ? { currentUiContext } : {}),
+      }),
+    );
+  } finally {
+    const cleanupResult = await artifactCleanup?.cleanup();
+    if (cleanupResult?.kind === 'failed') {
+      surfaceRecordedAudioCleanupFailure(admission, captureAttempt);
+    }
+  }
+}
+
+async function stopSttAndSend(
+  admission: LocalVoiceCaptureAdmission,
+  captureAttempt: LocalVoiceCaptureAttempt,
+  provider: Extract<LocalVoiceCaptureProvider, 'device' | 'local_neural'>,
+): Promise<void> {
+  const sessionId = captureAttempt.controlSessionId;
+  if (
+    !isCaptureAdmissionCurrent(admission)
+    || admission.captureAttempt !== captureAttempt
+    || captureAttempt.provider !== provider
+  ) {
     transitionVoiceRuntimeToIdle({
       controlSessionId: sessionId,
       reason: 'recording_stop_failed',
     });
     return;
   }
-
-  if (!uri) {
-    transitionVoiceRuntimeToIdle({
-      controlSessionId: sessionId,
-      reason: 'recording_uri_missing',
-    });
-    return;
-  }
-
-  const settings = storage.getState().settings as any;
-  const currentUiContext = readCaptureCurrentUiContext(sessionId);
-  let text: string | null = null;
-  try {
-    text = await recordedAudioTranscriptionController.transcribe({ sessionId, uri, settings });
-  } catch (error) {
-    if (error instanceof MissingBundledSpeechCredentialError) {
-      transitionVoiceRuntimeToIdle({
-        controlSessionId: sessionId,
-        reason: 'missing_stt_api_key',
-      });
-      throw error;
-    }
-    transitionVoiceRuntimeToIdle({
-      controlSessionId: sessionId,
-      reason: resolveRecordedAudioTranscriptionFailureReason(error),
-    });
-    return;
-  }
-
-  if (!text) {
-    transitionVoiceRuntimeToIdle({ controlSessionId: sessionId });
-    return;
-  }
-
-  await runVoiceTurnWithSendFailureHandling(sessionId, settings, (signal) =>
-    sendVoiceTextTurnImpl({
-      sessionId,
-      settings,
-      userText: text,
-      playbackController,
-      voiceAgentSessions,
-      onTtsStarted: noteTtsStarted,
-      onAssistantFinalAvailable: noteAssistantFinalAvailable,
-      onTtsStopped: noteTtsStopped,
-      signal,
-      ...(currentUiContext ? { currentUiContext } : {}),
-    }),
-  );
-}
-
-async function stopSttAndSend(sessionId: string, provider: Extract<LocalVoiceCaptureProvider, 'device' | 'local_neural'>): Promise<void> {
   voiceConversationRuntimeMachine.transitionToTranscribing({ controlSessionId: sessionId });
 
-  const settings = storage.getState().settings as any;
-  const currentUiContext = readCaptureCurrentUiContext(sessionId);
   const endpointDecision = await localVoiceCaptureOwner.stopEndpointDrivenCapture({
     adaptiveConfig: resolveAdaptiveInterruptionConfig(),
     provider,
@@ -725,10 +879,10 @@ async function stopSttAndSend(sessionId: string, provider: Extract<LocalVoiceCap
     return;
   }
 
-  await runVoiceTurnWithSendFailureHandling(sessionId, settings, (signal) =>
+  await runVoiceTurnWithSendFailureHandling(sessionId, captureAttempt.settings, (signal) =>
     sendVoiceTextTurnImpl({
       sessionId,
-      settings,
+      settings: captureAttempt.settings,
       userText: endpointDecision.transcript,
       playbackController,
       voiceAgentSessions,
@@ -736,7 +890,7 @@ async function stopSttAndSend(sessionId: string, provider: Extract<LocalVoiceCap
       onAssistantFinalAvailable: noteAssistantFinalAvailable,
       onTtsStopped: noteTtsStopped,
       signal,
-      ...(currentUiContext ? { currentUiContext } : {}),
+      ...(admission.currentUiContext ? { currentUiContext: admission.currentUiContext } : {}),
     }),
   );
 
@@ -765,6 +919,12 @@ export function appendLocalVoiceAgentContextUpdate(sessionId: string, update: st
   const settings = storage.getState().settings as any;
   const resolvedSessionId = resolveLocalConversationControlSessionId(settings, sessionId);
   voiceAgentSessions.appendContextUpdate(resolvedSessionId, update);
+}
+
+export function appendLocalVoiceAgentAutomaticUiContextUpdate(sessionId: string, update: string): void {
+  const settings = storage.getState().settings as any;
+  const resolvedSessionId = resolveLocalConversationControlSessionId(settings, sessionId);
+  voiceAgentSessions.appendAutomaticUiContextUpdate(resolvedSessionId, update);
 }
 
 function projectLocalVoiceAgentAssistantText(sessionId: string, text: string): string | null {
@@ -878,11 +1038,15 @@ async function settleEndingTransition(
     await work();
   } finally {
     if (nextState === 'disconnected') {
-      voiceConversationRuntimeMachine.transitionToDisconnected({ controlSessionId });
-      return;
+      const currentSnapshot = voiceConversationRuntimeMachine.getSnapshot();
+      voiceConversationRuntimeMachine.transitionToDisconnected({
+        controlSessionId,
+        error: currentSnapshot.controlSessionId === controlSessionId ? currentSnapshot.error : null,
+      });
+    } else {
+      // Settle to the idle, mic-off `connected` state between turns.
+      voiceConversationRuntimeMachine.transitionToConnected({ controlSessionId });
     }
-    // Settle to the idle, mic-off `connected` state between turns.
-    voiceConversationRuntimeMachine.transitionToConnected({ controlSessionId });
   }
 }
 
@@ -1091,8 +1255,6 @@ export async function toggleLocalVoiceTurn(
     prewarmDaemonVoiceInferenceOnConnect({ settings });
     inFlight = startLocalVoiceCapture({
       sessionId: resolveLocalConversationControlSessionId(settings, bargeInDecision.sessionId),
-      provider: bargeInDecision.provider,
-      handsFree: bargeInDecision.handsFree,
       interrupted: true,
       ...(currentUiContext ? { currentUiContext } : {}),
     }).finally(() => {
@@ -1110,11 +1272,8 @@ export async function toggleLocalVoiceTurn(
     }
     prewarmLocalVoiceAgentOnConnect({ settings, config });
     prewarmDaemonVoiceInferenceOnConnect({ settings });
-    const provider = resolveLocalVoiceCaptureProvider(settings);
     inFlight = startLocalVoiceCapture({
       sessionId: controlSessionId,
-      provider,
-      handsFree: isHandsFreeCaptureEnabled(settings, provider, config),
       ...(currentUiContext ? { currentUiContext } : {}),
     }).finally(() => {
       inFlight = null;
@@ -1124,20 +1283,20 @@ export async function toggleLocalVoiceTurn(
   }
 
   if (current.status === 'recording') {
-    const settings = storage.getState().settings as any;
-    const resolvedSessionId = resolveLocalConversationControlSessionId(settings, sessionId);
-    if (current.sessionId !== resolvedSessionId) {
-      return;
-    }
+    const resolvedSessionId = current.sessionId;
+    if (!resolvedSessionId) return;
+    const admission = readCaptureAdmission(resolvedSessionId);
+    if (!admission) return;
 
-    const provider = resolveLocalVoiceCaptureProvider(settings);
+    const captureAttempt = admission.captureAttempt;
+    const provider = captureAttempt.provider;
     if (provider === 'device' || provider === 'local_neural') {
       localVoiceCaptureOwner.clearHandsFree({ provider, sessionId: resolvedSessionId });
     }
 
     inFlight = (provider === 'recorded_audio'
-      ? stopAndSendRecordedTurn(resolvedSessionId)
-      : stopSttAndSend(resolvedSessionId, provider)).finally(() => {
+      ? stopAndSendRecordedTurn(admission, captureAttempt)
+      : stopSttAndSend(admission, captureAttempt, provider)).finally(() => {
       inFlight = null;
     });
     await inFlight;
@@ -1160,9 +1319,14 @@ export async function stopLocalVoiceSession(): Promise<void> {
   // Revoke it synchronously; native capture cleanup may yield while the next
   // Account is already publishing through the shared current-UI port.
   detachCaptureCurrentUiContext(activeSessionId);
+  // Recorded STT is an attempt-local asynchronous boundary. Cancel it before
+  // any teardown can yield, and retain the same admission as its currentness
+  // owner until capture cleanup releases the lease.
+  abortCaptureAdmission(activeSessionId);
   await settleEndingTransition(activeSessionId, 'disconnected', async () => {
     playbackController.interrupt();
     noteTtsStopped();
+    let captureCleanupError: unknown = null;
 
     if (activeTurnAbortController && activeTurnAbortSessionId === activeSessionId) {
       try {
@@ -1174,7 +1338,14 @@ export async function stopLocalVoiceSession(): Promise<void> {
       activeTurnAbortSessionId = null;
     }
 
-    await localVoiceCaptureOwner.stopSession(activeSessionId);
+    try {
+      await localVoiceCaptureOwner.stopSession(activeSessionId);
+    } catch (error) {
+      // Capture cleanup reports its own error fact. End Voice must still
+      // complete the independent input and Local Agent teardown below before
+      // the original cleanup failure reaches the caller.
+      captureCleanupError = error;
+    }
     voiceConversationRuntimeMachine.setMuted({
       controlSessionId: activeSessionId,
       adapterId: null,
@@ -1196,6 +1367,9 @@ export async function stopLocalVoiceSession(): Promise<void> {
     // publishes disconnected and a configured provider switch may start its
     // replacement capture path synchronously.
     releaseCaptureAdmission(activeSessionId);
+    if (captureCleanupError) {
+      throw captureCleanupError;
+    }
   }).finally(() => {
     releaseCaptureAdmission(activeSessionId);
   });

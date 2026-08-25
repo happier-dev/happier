@@ -11,7 +11,7 @@ import {
   createPluginContributionIdentity,
   createRecipientContractDigestV1,
 } from '@happier-dev/protocol';
-import type { VoiceProviderRuntime } from '@happier-dev/plugin-sdk/voice';
+import type { PluginApi } from '@happier-dev/plugin-sdk';
 import {
   settingsDefaults,
   settingsParse,
@@ -191,7 +191,7 @@ describe('ElevenLabs settings provisioning composed path', () => {
       approvedRecipientContractDigest:
         createRecipientContractDigestV1(recipientContract),
     }).settings;
-    const registeredRuntimes: VoiceProviderRuntime[] = [];
+    const registeredRuntimes: Parameters<PluginApi['voiceProviders']['register']>[1][] = [];
     entry.activate({
       voiceProviders: {
         register(localId, runtime) {

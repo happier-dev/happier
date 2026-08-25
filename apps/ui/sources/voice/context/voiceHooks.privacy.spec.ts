@@ -5,7 +5,6 @@ import { storage } from '@/sync/domains/state/storage';
 import type { Message } from '@/sync/domains/messages/messageTypes';
 import { projectParameterFreeRoute } from '@/track/parameterFreeRouteProjection';
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
-import { useVoiceContextSeenStore } from '@/voice/runtime/voiceContextSeenStore';
 
 const { fakeSink, getVoiceContextSinkForSession } = vi.hoisted(() => {
   const fakeSink = {
@@ -61,6 +60,8 @@ function seedSession(sessionId: string) {
 
 describe('voiceHooks privacy settings (opt-out defaults)', () => {
   beforeEach(() => {
+    // Reset attempt-local disclosure state through its public lifecycle owner.
+    voiceHooks.onVoiceStopped();
     fakeSink.sendTextMessage.mockReset();
     fakeSink.sendContextualUpdate.mockReset();
     getVoiceContextSinkForSession.mockClear();
@@ -78,7 +79,6 @@ describe('voiceHooks privacy settings (opt-out defaults)', () => {
     // previous case's focus makes a target assertion pass without the code
     // under test ever running.
     useVoiceTargetStore.getState().setLastFocusedSessionId(null);
-    useVoiceContextSeenStore.getState().clearShownSessions();
   });
 
   it('does not forward permission requests when sharePermissionRequests is false', () => {
@@ -101,7 +101,7 @@ describe('voiceHooks privacy settings (opt-out defaults)', () => {
     expect(fakeSink.sendTextMessage).not.toHaveBeenCalled();
   });
 
-  it('does not leak an already-pending permission request through repeated full-session reports', () => {
+  it('keeps automatic session focus local instead of reporting stored session context', () => {
     storage.setState((s: any) => ({
       ...s,
       settings: {
@@ -111,8 +111,8 @@ describe('voiceHooks privacy settings (opt-out defaults)', () => {
           privacy: {
             ...s.settings.voice.privacy,
             sharePermissionRequests: false,
-            // onSessionFocus discloses only under the automatic current-UI
-            // mode; this test is about what the disclosure may contain.
+            // The automatic mode activates the dedicated navigation channel;
+            // a session-focus signal itself must remain local.
             currentUiContextMode: 'automatic',
           },
         },
@@ -121,6 +121,12 @@ describe('voiceHooks privacy settings (opt-out defaults)', () => {
         ...s.sessions,
         s1: {
           ...s.sessions.s1,
+          metadata: {
+            ...s.sessions.s1.metadata,
+            path: '/Users/alice/SESSION_FOCUS_PATH_SENTINEL',
+            machineId: 'SESSION_FOCUS_MACHINE_SENTINEL',
+            summary: { text: 'SESSION_FOCUS_SUMMARY_SENTINEL', updatedAt: 1 },
+          },
           seq: 0,
           createdAt: 0,
           updatedAt: 0,
@@ -144,6 +150,13 @@ describe('voiceHooks privacy settings (opt-out defaults)', () => {
           },
         },
       },
+      sessionMessages: {
+        ...s.sessionMessages,
+        s1: {
+          ...s.sessionMessages.s1,
+          messages: [createUserTextMessage('SESSION_FOCUS_TRANSCRIPT_SENTINEL', 1)],
+        },
+      },
     }));
 
     voiceHooks.onSessionFocus('s1');
@@ -151,18 +164,21 @@ describe('voiceHooks privacy settings (opt-out defaults)', () => {
     const providerBoundPayloads = fakeSink.sendContextualUpdate.mock.calls
       .map((call) => String(call[1] ?? ''))
       .join('\n');
-    expect(providerBoundPayloads).toContain('# Session:');
-    expect(providerBoundPayloads).not.toContain('req_report_secret');
+    expect(providerBoundPayloads).toBe('');
+    expect(providerBoundPayloads).not.toContain('SESSION_FOCUS_PATH_SENTINEL');
+    expect(providerBoundPayloads).not.toContain('SESSION_FOCUS_MACHINE_SENTINEL');
+    expect(providerBoundPayloads).not.toContain('SESSION_FOCUS_SUMMARY_SENTINEL');
+    expect(providerBoundPayloads).not.toContain('SESSION_FOCUS_TRANSCRIPT_SENTINEL');
     expect(providerBoundPayloads).not.toContain('REPORTED_PERMISSION_SECRET');
   });
 
   it.each([
-    ['off', false],
-    ['on_demand', false],
-    ['automatic', true],
+    ['off'],
+    ['on_demand'],
+    ['automatic'],
   ] as const)(
-    'announces session focus to the provider only in automatic current-UI mode (%s)',
-    (currentUiContextMode, shouldAnnounce) => {
+    'keeps session focus local in every current-UI mode (%s)',
+    (currentUiContextMode) => {
       storage.setState((state: any) => ({
         ...state,
         settings: {
@@ -180,21 +196,14 @@ describe('voiceHooks privacy settings (opt-out defaults)', () => {
       voiceHooks.onSessionFocus('s1', { summary: { text: 'Summary' } });
 
       // Focusing a session is an observation of this device's UI, so it always
-      // updates the local voice target; only the disclosure is mode-governed.
+      // updates the local voice target. The dedicated current-UI subscription
+      // is the only automatic provider disclosure path.
       expect(useVoiceTargetStore.getState().lastFocusedSessionId).toBe('s1');
-
-      const payloads = fakeSink.sendContextualUpdate.mock.calls.map((call) => String(call[1] ?? ''));
-      if (!shouldAnnounce) {
-        expect(payloads).toEqual([]);
-        return;
-      }
-      const joined = payloads.join('\n');
-      expect(joined).toContain('became focused.');
-      expect(joined).toContain('# Session:');
+      expect(fakeSink.sendContextualUpdate).not.toHaveBeenCalled();
     },
   );
 
-  it('withholds the automatic focus announcement for a session whose voice update level is none', () => {
+  it('keeps focus local even when a session has a non-none voice update level', () => {
     storage.setState((state: any) => ({
       ...state,
       settings: {
@@ -205,21 +214,14 @@ describe('voiceHooks privacy settings (opt-out defaults)', () => {
             ...state.settings.voice.privacy,
             currentUiContextMode: 'automatic',
           },
-          ui: {
-            ...state.settings.voice.ui,
-            updates: {
-              ...state.settings.voice.ui?.updates,
-              activeSession: 'none',
-            },
-          },
         },
       },
     }));
 
     voiceHooks.onSessionFocus('s1', { summary: { text: 'Summary' } });
 
-    // Enabling automatic current-UI context does not override the per-session
-    // update level the user set for this session.
+    // Automatic current-UI mode does not turn a session-focus event into a
+    // stored-session disclosure at any update level.
     expect(useVoiceTargetStore.getState().lastFocusedSessionId).toBe('s1');
     expect(fakeSink.sendContextualUpdate).not.toHaveBeenCalled();
   });
@@ -401,6 +403,33 @@ describe('voiceHooks privacy settings (opt-out defaults)', () => {
     expect(fakeSink.sendContextualUpdate).toHaveBeenCalledWith('s1', expect.stringContaining('# Session: Summary'));
   });
 
+  it('dedupes full session context within an attempt and clears it at both lifecycle boundaries', () => {
+    useVoiceTargetStore.getState().setTrackedSessionIds(['s1']);
+
+    expect(voiceHooks.onVoiceStarted('s1', 'session_context')).toContain('# Session: Summary');
+    voiceHooks.onReady('s1');
+    expect(fakeSink.sendContextualUpdate).not.toHaveBeenCalledWith(
+      's1',
+      expect.stringContaining('# Session: Summary'),
+    );
+
+    voiceHooks.onVoiceStopped();
+    voiceHooks.onReady('s1');
+    expect(fakeSink.sendContextualUpdate).toHaveBeenCalledTimes(1);
+    expect(fakeSink.sendContextualUpdate).toHaveBeenLastCalledWith(
+      's1',
+      expect.stringContaining('# Session: Summary'),
+    );
+
+    voiceHooks.onVoiceStarted('s1', 'current_ui_only');
+    voiceHooks.onReady('s1');
+    expect(fakeSink.sendContextualUpdate).toHaveBeenCalledTimes(2);
+    expect(fakeSink.sendContextualUpdate).toHaveBeenLastCalledWith(
+      's1',
+      expect.stringContaining('# Session: Summary'),
+    );
+  });
+
   it.each([
     ['off', false],
     ['on_demand', false],
@@ -441,7 +470,10 @@ describe('voiceHooks privacy settings (opt-out defaults)', () => {
 
     expect(getVoiceContextSinkForSession).toHaveBeenCalledWith('s1');
     const update = String(fakeSink.sendContextualUpdate.mock.calls.at(-1)?.[1] ?? '');
-    expect(update).toContain('Session details');
+    expect(update).toContain('"area":"session"');
+    expect(update).toContain('"screen":"details"');
+    expect(update).toContain('"presentation":"pane"');
+    expect(update).not.toContain('Session details');
     expect(update).not.toContain('PRIVATE ENTITY');
     expect(update).not.toContain('PRIVATE DETAIL');
     expect(update).not.toContain('PRIVATE COMMAND');
@@ -534,10 +566,13 @@ describe('voiceHooks privacy settings (opt-out defaults)', () => {
     }, createCurrentUiContextAutomaticUpdateProjector());
 
     const update = String(fakeSink.sendContextualUpdate.mock.calls.at(-1)?.[1] ?? '');
+    expect(update).toContain('"area":"settings"');
+    expect(update).toContain('"screen":"settings_page"');
+    expect(update).toContain('"presentation":"screen"');
     expect(update).toContain('HOST_SETTINGS_LABEL_SENTINEL');
   });
 
-  it('forwards only composer-approved framework labels automatically and never a gated workspace path', () => {
+  it('strips session and machine identity titles from automatic context while retaining structural navigation metadata', () => {
     storage.setState((state: any) => ({
       ...state,
       settings: {
@@ -560,7 +595,7 @@ describe('voiceHooks privacy settings (opt-out defaults)', () => {
         id: 'session-a',
         metadata: {
           summary: {
-            text: 'Review /Users/alice/SECRET_AUTOMATIC_WORKSPACE',
+            text: 'SESSION_CONTENT_SENTINEL /Users/alice/SECRET_AUTOMATIC_WORKSPACE',
             updatedAt: 1,
           },
         },
@@ -574,7 +609,11 @@ describe('voiceHooks privacy settings (opt-out defaults)', () => {
     (voiceHooks as any).onCurrentUiContextChanged('s1', sessionSnapshot, projector);
 
     const sessionUpdate = String(fakeSink.sendContextualUpdate.mock.calls.at(-1)?.[1] ?? '');
-    expect(sessionUpdate).toContain('Review <path_redacted>');
+    expect(sessionUpdate).toContain(`"area":"${sessionSnapshot.navigation.area}"`);
+    expect(sessionUpdate).toContain(`"screen":"${sessionSnapshot.navigation.screen}"`);
+    expect(sessionUpdate).toContain(`"presentation":"${sessionSnapshot.navigation.presentation}"`);
+    expect(sessionUpdate).not.toContain('"title":');
+    expect(sessionUpdate).not.toContain('SESSION_CONTENT_SENTINEL');
     expect(sessionUpdate).not.toContain('SECRET_AUTOMATIC_WORKSPACE');
 
     const machineSnapshot = composeCurrentUiContextSnapshot({
@@ -582,7 +621,7 @@ describe('voiceHooks privacy settings (opt-out defaults)', () => {
       machineActive: true,
       machine: {
         id: 'machine-a',
-        metadata: { displayName: 'AUTOMATIC_MACHINE_LABEL' },
+        metadata: { displayName: 'AUTOMATIC_MACHINE_DEVICE_IDENTITY_SENTINEL' },
       },
       privacy: {
         shareSessionSummary: false,
@@ -593,8 +632,11 @@ describe('voiceHooks privacy settings (opt-out defaults)', () => {
     (voiceHooks as any).onCurrentUiContextChanged('s1', machineSnapshot, projector);
 
     const machineUpdate = String(fakeSink.sendContextualUpdate.mock.calls.at(-1)?.[1] ?? '');
-    expect(machineUpdate).toContain('AUTOMATIC_MACHINE_LABEL');
-    expect(machineUpdate).not.toContain('SECRET_AUTOMATIC_WORKSPACE');
+    expect(machineUpdate).toContain(`"area":"${machineSnapshot.navigation.area}"`);
+    expect(machineUpdate).toContain(`"screen":"${machineSnapshot.navigation.screen}"`);
+    expect(machineUpdate).toContain(`"presentation":"${machineSnapshot.navigation.presentation}"`);
+    expect(machineUpdate).not.toContain('"title":');
+    expect(machineUpdate).not.toContain('AUTOMATIC_MACHINE_DEVICE_IDENTITY_SENTINEL');
   });
 
   it('sends an automatic update only on a real navigation transition, and again for a new attempt', () => {

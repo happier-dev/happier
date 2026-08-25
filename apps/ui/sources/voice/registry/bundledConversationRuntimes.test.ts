@@ -137,7 +137,7 @@ function installCredentialSettings(
         kind: 'apiKey' as const,
         encryptedValue: Object.freeze({
           _isSecretValue: true as const,
-          value: 'must-not-be-read-before-approval',
+          value: 'bundled-encrypted-secret',
         }),
         createdAt: 1,
         updatedAt: 1,
@@ -164,22 +164,36 @@ describe('createBundledConversationRuntimes', () => {
     vi.restoreAllMocks();
   });
 
+  /**
+   * The re-approval fence is scoped to publishers Happier does not author:
+   * `resolveRequiredRecipientContractApprovalDigestV1` returns `null` for a
+   * `bundled` publisher, so a first-party release that changes its mediated
+   * operations must not revoke an approval Happier itself wrote. This proves
+   * the bundled COMPOSITION reaches the credential with that trust: it goes red
+   * if the fence is reinstated for bundled, and red if the composition ever
+   * stamps a non-bundled publisher on a first-party recipient contract. The
+   * external-publisher fence stays proven at the account operation owner.
+   */
   it.each([
-    ['missing', undefined],
-    ['stale', `sha256:${'0'.repeat(64)}`],
+    ['no stored', undefined],
+    ['superseded', `sha256:${'0'.repeat(64)}`],
   ])(
-    'fails a bundled SavedSecret operation closed for a %s recipient approval before materialization or network',
+    'keeps a bundled SavedSecret operation usable with a %s recipient approval',
     async (_approvalState, approvedRecipientContractDigest) => {
       const entry = createCredentialSettingsEntry();
       const settings = installCredentialSettings(approvedRecipientContractDigest);
       const decryptSecretValue = vi.spyOn(sync, 'decryptSecretValue')
         .mockReturnValue('bundled-account-secret');
-      const fetch = vi.fn(async () => new Response(JSON.stringify({
-        voices: [{ id: 'must-not-be-read', name: 'Must not be read' }],
-      }), {
-        status: 200,
-        headers: { 'content-type': 'application/json' },
-      }));
+      const fetch = vi.fn(async (_input: URL | RequestInfo, init?: RequestInit) => {
+        expect(new Headers(init?.headers).get('authorization'))
+          .toBe('Bearer bundled-account-secret');
+        return new Response(JSON.stringify({
+          voices: [{ id: 'first-party-voice', name: 'First party voice' }],
+        }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      });
       vi.stubGlobal('fetch', fetch);
       const hostLease = createBundledConversationRuntimeHostLease();
       const runtimes = createBundledConversationRuntimes({
@@ -193,11 +207,9 @@ describe('createBundledConversationRuntimes', () => {
           catalog: 'voices',
           providerConfig: {},
           signal: new AbortController().signal,
-        })).rejects.toMatchObject({
-          code: 'credential_access_review_required',
-        });
-        expect(decryptSecretValue).not.toHaveBeenCalled();
-        expect(fetch).not.toHaveBeenCalled();
+        })).resolves.toEqual([{ id: 'first-party-voice', name: 'First party voice', metadata: {} }]);
+        expect(decryptSecretValue).toHaveBeenCalledTimes(1);
+        expect(fetch).toHaveBeenCalledTimes(1);
       } finally {
         await Promise.all(runtimes.map((runtime) => runtime.dispose()));
         hostLease.revoke();

@@ -57,6 +57,31 @@ describe('resolveVoiceRoleReadiness', () => {
     })).toMatchObject({ status: 'ready', code: 'ready' });
   });
 
+  it('keeps a strict passive unavailable runtime result informational', () => {
+    const input = {
+      registry: createDefaultVoiceProviderRegistry(),
+      role: 'realtime_conversation' as const,
+      providerId: 'happier.agent.codex/realtime-codex',
+      platform: 'web' as const,
+      modeId: 'experimental',
+      facts: { ...readyFacts, runtime: 'unknown' as const },
+    };
+
+    expect(resolveVoicePassiveSetupReadiness(input)).toMatchObject({
+      status: 'unavailable',
+      code: 'runtime_unknown',
+      recoveryAction: 'switch_provider',
+    });
+    expect(resolveVoicePassiveSetupReadiness({
+      ...input,
+      passiveSetupUnavailable: true,
+    })).toMatchObject({
+      status: 'unavailable',
+      code: 'runtime_unknown',
+      recoveryAction: 'none',
+    });
+  });
+
   it('keeps dictation and conversation role support separate', () => {
     expect(resolveVoiceRoleReadiness({
       registry,

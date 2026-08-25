@@ -2,11 +2,16 @@ import {
   containsProviderRegisteredSensitiveValue,
   materializeRecipientOperationRequestV1,
   normalizeRecipientContractV1,
+  resolveVoiceCredentialOperationAuthorization,
   resolveRequiredRecipientContractApprovalDigestV1,
   type PluginContributionIdentityV1,
   type QualifiedConnectedAccountPurposeBindingTargetV1,
   type QualifiedConnectedAccountPurposeV1,
   type RecipientContractV1,
+  type VoiceCredentialAccessPhase,
+  type VoiceCredentialOperationAuthorization,
+  type VoiceCredentialOperationSelectedSource,
+  type VoiceProviderContribution,
 } from '@happier-dev/protocol';
 import {
   classifyVoiceProviderHttpFailure,
@@ -16,6 +21,7 @@ import {
 import { storage } from '@/sync/domains/state/storage';
 import { areAccountSettingsJsonValuesEqual } from '@/sync/domains/settings/accountSettingsStructuralEquality';
 import { areAccountSettingsScopesEqual } from '@/sync/domains/settings/scope/accountSettingsScope';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { sync } from '@/sync/sync';
 import {
   BoundedResponseBodyError,
@@ -23,7 +29,6 @@ import {
 } from '@/utils/system/readBoundedResponseBody';
 
 import {
-  materializeAccountVoiceCredential,
   resolveAccountVoiceCredential,
   resolveAccountVoiceCredentialSourceSelection,
 } from './accountVoiceCredential';
@@ -95,6 +100,17 @@ function operationError(
 function hasHeader(headers: Readonly<Record<string, string>> | undefined, name: string): boolean {
   const normalized = name.toLowerCase();
   return Object.keys(headers ?? {}).some((candidate) => candidate.toLowerCase() === normalized);
+}
+
+function selectedVoiceCredentialOperationSource(
+  selection: ReturnType<typeof resolveAccountVoiceCredentialSourceSelection>['selection'],
+): VoiceCredentialOperationSelectedSource | null {
+  if (selection.kind === 'savedSecret') return Object.freeze({ kind: 'savedSecret' });
+  if (selection.kind !== 'connectedAccount') return null;
+  const service = selection.target.kind === 'account'
+    ? selection.target.account.service
+    : selection.target.service;
+  return Object.freeze({ kind: 'connectedAccount', service: Object.freeze({ ...service }) });
 }
 
 type AccountCredentialAuthority = Readonly<{
@@ -224,6 +240,11 @@ function createAccountCredentialAuthorityLease(input: Readonly<{
   machineId: string | null;
   isCurrent(): boolean;
 }>): AccountCredentialAuthorityLease {
+  // The settings/source comparison identifies the selected credential, but a
+  // logout followed by re-entry to the same Account can publish identical
+  // settings. Capture the incumbent Account lifetime as the canonical fence
+  // for this invocation; no second Account owner or retained watcher is needed.
+  const accountScopeLifetime = captureActiveServerAccountScopeLifetime();
   const resolution = resolveAccountCredentialAuthority(
     input.contribution,
     input.providerId,
@@ -234,7 +255,11 @@ function createAccountCredentialAuthorityLease(input: Readonly<{
   return Object.freeze({
     resolution,
     isCurrent: () => {
-      if (resolution.state !== 'resolved' || !input.isCurrent()) return false;
+      if (
+        resolution.state !== 'resolved'
+        || !input.isCurrent()
+        || (accountScopeLifetime !== null && !accountScopeLifetime.isCurrent())
+      ) return false;
       const current = resolveAccountCredentialAuthority(
         input.contribution,
         input.providerId,
@@ -349,6 +374,9 @@ function projectJsonBody(
 export function createAccountVoiceOperationService(input: Readonly<{
   providerId: string;
   contribution: PluginContributionIdentityV1;
+  declaration: Extract<VoiceProviderContribution, Readonly<{ kind: 'conversation' }>>;
+  /** Host-owned lifecycle phase bound by external Voice activation. */
+  phase: Exclude<VoiceCredentialAccessPhase, 'speech'>;
   recipientContract: AccountVoiceRecipientContractBinding;
   signal: AbortSignal;
   isCurrent: () => boolean;
@@ -395,8 +423,9 @@ export function createAccountVoiceOperationService(input: Readonly<{
     operationAuthority: AccountOperationCredentialAuthority,
   ): boolean => operationAuthority.lease.isCurrent();
   const inspectOperationAvailability = async (
+    operationId: string,
     operationAuthority: AccountOperationCredentialAuthority,
-  ): Promise<void> => {
+  ): Promise<VoiceCredentialOperationAuthorization> => {
     const captured = operationAuthority.resolution;
     if (input.signal.aborted) {
       throw operationError('voice_account_operation_cancelled');
@@ -408,11 +437,31 @@ export function createAccountVoiceOperationService(input: Readonly<{
     if (!isAuthorityCurrent(operationAuthority)) {
       throw operationError('voice_account_operation_cancelled');
     }
-    if (accountAuthority.source.selection.kind === 'connectedAccount') {
+    const selectedSource = selectedVoiceCredentialOperationSource(
+      accountAuthority.source.selection,
+    );
+    if (!selectedSource) {
+      throw operationError('credential_unavailable');
+    }
+    const authorization = resolveVoiceCredentialOperationAuthorization({
+      pluginId: input.contribution.pluginId,
+      contributionId: input.contribution.localId,
+      contribution: input.declaration,
+      selectedSource,
+      phase: input.phase,
+      operationId,
+    });
+    if (!authorization) {
+      throw operationError('voice_account_operation_unauthorized');
+    }
+    if (authorization.projection.kind === 'materializedHttpHeaders') {
+      if (accountAuthority.source.selection.kind !== 'connectedAccount') {
+        throw operationError('voice_account_operation_unauthorized');
+      }
       if (!input.materializeConnectedAccountHeaders) {
         throw operationError('credential_unavailable');
       }
-      return;
+      return authorization;
     }
     if (accountAuthority.source.selection.kind !== 'savedSecret' || !accountAuthority.secret) {
       throw operationError('credential_unavailable');
@@ -424,10 +473,11 @@ export function createAccountVoiceOperationService(input: Readonly<{
     ) {
       throw operationError('credential_access_review_required');
     }
+    return authorization;
   };
   const inspectAvailability = async (): Promise<void> => {
-    for (const operationAuthority of operationAuthorities.values()) {
-      await inspectOperationAvailability(operationAuthority);
+    for (const [operationId, operationAuthority] of operationAuthorities) {
+      await inspectOperationAvailability(operationId, operationAuthority);
     }
   };
   return Object.freeze({
@@ -470,7 +520,7 @@ export function createAccountVoiceOperationService(input: Readonly<{
         ) {
           throw operationError('voice_account_operation_unauthorized');
         }
-        await inspectOperationAvailability(operationAuthority);
+        const authorization = await inspectOperationAvailability(operation.id, operationAuthority);
         const capturedAuthority = operationAuthority.resolution;
         if (capturedAuthority.state !== 'resolved') {
           throw operationError(CREDENTIAL_SNAPSHOT_INDETERMINATE_CODE);
@@ -478,13 +528,19 @@ export function createAccountVoiceOperationService(input: Readonly<{
         const accountAuthority = capturedAuthority.authority;
         let credentialHeaders: Readonly<Record<string, string>>;
         let sourceCredentials: readonly string[];
-        if (accountAuthority.source.selection.kind === 'connectedAccount') {
+        if (authorization.projection.kind === 'materializedHttpHeaders') {
+          if (accountAuthority.source.selection.kind !== 'connectedAccount') {
+            throw operationError('voice_account_operation_unauthorized');
+          }
           const returned = await input.materializeConnectedAccountHeaders?.({
             operationId: operation.id,
             selection: accountAuthority.source.selection.target,
             signal: operationSignal.signal,
           });
           if (!returned) throw operationError('credential_unavailable');
+          const allowedHeaderNames = new Set(
+            authorization.projection.allowedHeaderNames.map((name) => name.toLowerCase()),
+          );
           const normalized = new Map<string, string>();
           for (const [rawName, value] of Object.entries(returned)) {
             const name = rawName.trim().toLowerCase();
@@ -494,26 +550,28 @@ export function createAccountVoiceOperationService(input: Readonly<{
               || value.length === 0
               || /[\r\n]/u.test(value)
               || normalized.has(name)
+              || !allowedHeaderNames.has(name)
               || hasHeader(materialized.headers, name)
             ) {
               throw operationError('voice_account_operation_unauthorized');
             }
             normalized.set(name, value);
           }
-          const credentialHeaderName = operation.request.credential.name.toLowerCase();
-          if (!normalized.has(credentialHeaderName)) {
+          if (normalized.size !== allowedHeaderNames.size) {
             throw operationError('credential_unavailable');
           }
           credentialHeaders = Object.freeze(Object.fromEntries(normalized));
           sourceCredentials = Object.freeze([...normalized.values()]);
         } else {
-          const materializeSecret = input.materializeSecret ?? (() => materializeAccountVoiceCredential({
-            settings: storage.getState().settings,
-            contribution: input.contribution,
-            credentialSlotId,
-            requiredRecipientContractDigest,
-            decrypt: (value) => sync.decryptSecretValue(value),
-          }));
+          const capturedSecret = accountAuthority.secret;
+          if (accountAuthority.source.selection.kind !== 'savedSecret' || !capturedSecret) {
+            throw operationError('voice_account_operation_unauthorized');
+          }
+          if (!isAuthorityCurrent(operationAuthority)) {
+            throw operationError('voice_account_operation_cancelled');
+          }
+          const materializeSecret = input.materializeSecret
+            ?? (() => sync.decryptSecretValue(capturedSecret.encryptedValue));
           const sourceCredential = await materializeSecret();
           if (!sourceCredential) throw operationError('credential_unavailable');
           credentialHeaders = Object.freeze({

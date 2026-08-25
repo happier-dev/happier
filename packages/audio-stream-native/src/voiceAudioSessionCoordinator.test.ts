@@ -88,7 +88,7 @@ function createNativePlatformReportingRequestedAecAsActive() {
 }
 
 describe('VoiceAudioSessionCoordinator', () => {
-  it('does not admit required AEC from a pre-capture configuration request, then accepts the start-time confirmation event', async () => {
+  it('does not admit required AEC from a pre-capture configuration request, but admits it after the host capture confirms activation', async () => {
     const { nativeModule, platform } = createNativePlatformReportingRequestedAecAsActive();
     const coordinator = createVoiceAudioSessionCoordinator({ platform });
 
@@ -96,14 +96,28 @@ describe('VoiceAudioSessionCoordinator', () => {
       .rejects.toMatchObject({ code: 'aec_required_unavailable' });
     expect(coordinator.getSnapshot()).toMatchObject({ leaseCount: 0, capabilities: null });
 
-    const preferred = await coordinator.acquire(request({ mode: 'conversation', aec: 'preferred' }));
-    expect(preferred.capabilities).toMatchObject({ aecAvailable: true, aecActive: false });
-
-    const generation = coordinator.getSnapshot().generation;
-    await nativeModule.start({ sampleRate: 16_000, channels: 1, frameMs: 20, generation });
+    const required = await coordinator.acquireForCapture(
+      request({ mode: 'conversation', aec: 'required' }),
+      async () => {
+        const generation = coordinator.getSnapshot().generation;
+        await nativeModule.start({ sampleRate: 16_000, channels: 1, frameMs: 20, generation });
+      },
+    );
+    expect(required.capabilities).toMatchObject({ aecAvailable: true, aecActive: true });
     expect(coordinator.getSnapshot().capabilities).toMatchObject({ aecAvailable: true, aecActive: true });
 
-    await preferred.release();
+    await required.release();
+  });
+
+  it('fails required AEC when a host capture returns without an activation confirmation', async () => {
+    const { platform } = createNativePlatformReportingRequestedAecAsActive();
+    const coordinator = createVoiceAudioSessionCoordinator({ platform });
+
+    await expect(coordinator.acquireForCapture(
+      request({ mode: 'conversation', aec: 'required' }),
+      async () => undefined,
+    )).rejects.toMatchObject({ code: 'aec_required_unavailable' });
+    expect(coordinator.getSnapshot()).toMatchObject({ leaseCount: 0, capabilities: null });
   });
 
   it('merges overlapping leases and restores only after the final release in either order', async () => {
@@ -216,6 +230,7 @@ describe('VoiceAudioSessionCoordinator', () => {
     emit({ generation: currentGeneration, kind: 'interruption_began' });
     emit({ generation: currentGeneration, kind: 'interruption_ended', shouldResume: true });
     emit({ generation: currentGeneration, kind: 'focus_changed', state: 'lost_transient' });
+    emit({ generation: firstGeneration, kind: 'focus_changed', state: 'gained' });
     emit({ generation: currentGeneration, kind: 'route_changed', route: 'bluetooth' });
     emit({ generation: currentGeneration, kind: 'lifecycle_changed', state: 'background' });
 

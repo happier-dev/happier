@@ -40,6 +40,7 @@ import {
   createExternalVoiceProviderSettingsDescriptor,
   projectExternalVoiceProviderSettings,
 } from '@/voice/settings/externalProviderSettings';
+import { bundledSpeechDaemonClient } from '@/voice/credentials/bundledSpeechClient';
 import type { VoiceProviderPresentation, VoiceSpeechSettingsPresentation } from './voiceProviderPresentation';
 
 const projectedSpeechRegistrationTokens = new WeakMap<PluginUiExecutableModuleHost, object>();
@@ -168,6 +169,17 @@ function reconcileProjectedExternalSpeechProviders(input: Readonly<{
       providerId: entry.id,
       descriptor,
       adapter: null,
+      ...(declaration.settings.actions?.length
+        ? {
+            settingsActions: Object.freeze({
+              execute: async (action) => await bundledSpeechDaemonClient.executeSettingsAction({
+                entry: descriptor,
+                actionId: action.actionId,
+                signal: action.signal,
+              }),
+            }),
+          }
+        : {}),
     }));
     projected = true;
   }
@@ -194,6 +206,8 @@ function createVoiceDerivedScope(input: Readonly<{
   resolveContributedAction: PluginUiProjectedActionResolver;
   readNavigationBinding?: () => PluginSurfaceDestinationNavigationBinding | null | undefined;
   createInvocationUi?: typeof createAppShellPluginUiInvocationHost;
+  /** Admitted UI projection; resolves declared confirmation wording. */
+  pluginUiProjection?: PluginUiProjectionModel | null;
 }>): ReturnType<PluginUiClientExecutableDerivedScopeFactory> {
   if (input.target.voiceProviders.length === 0) return null;
   const declarations: readonly VoiceConversationProviderContribution[] = input.target.voiceProviders
@@ -218,6 +232,7 @@ function createVoiceDerivedScope(input: Readonly<{
       serverId: input.target.authority.serverId,
       resolveContributedAction: input.resolveContributedAction,
       readNavigationBinding: input.readNavigationBinding,
+      pluginUiProjection: input.pluginUiProjection,
     }),
   });
   return scope;
@@ -258,6 +273,7 @@ export function createProjectedExternalVoiceProviderDerivedScopeFactory(input: R
       resolveContributedAction,
       readNavigationBinding: input.readNavigationBinding,
       createInvocationUi: input.createInvocationUi,
+      pluginUiProjection: input.actionProjection,
     });
   };
 }

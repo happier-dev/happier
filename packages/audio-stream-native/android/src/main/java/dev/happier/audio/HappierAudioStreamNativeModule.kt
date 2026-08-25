@@ -1,6 +1,8 @@
 package dev.happier.audio
 
+import android.Manifest
 import android.content.Context
+import android.content.pm.PackageManager
 import android.media.AudioDeviceCallback
 import android.media.AudioDeviceInfo
 import android.media.AudioFocusRequest
@@ -69,6 +71,64 @@ internal data class AudioCaptureStartResult<T>(
   val aecActive: Boolean,
 )
 
+internal enum class AudioPlaybackFocusAction {
+  NONE,
+  PAUSE,
+  RESUME,
+}
+
+/**
+ * Owns only the native PCM output's response to Android audio focus. Capture
+ * lifecycle remains with the audio-session coordinator and its JS bridge.
+ */
+internal class AudioPlaybackFocusController {
+  private var outputPaused = false
+  private var permanentFocusLoss = false
+
+  @Synchronized
+  fun onFocusChange(change: Int): AudioPlaybackFocusAction = when (change) {
+    AudioManager.AUDIOFOCUS_GAIN -> {
+      if (permanentFocusLoss) AudioPlaybackFocusAction.NONE else resumeOutput()
+    }
+    AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> pauseOutput()
+    // The JS/native PCM gain owner applies the shared duck policy. Keep the
+    // AudioTrack running here so CAN_DUCK stays audible at that canonical gain.
+    AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> AudioPlaybackFocusAction.NONE
+    AudioManager.AUDIOFOCUS_LOSS -> {
+      permanentFocusLoss = true
+      pauseOutput()
+    }
+    else -> AudioPlaybackFocusAction.NONE
+  }
+
+  @Synchronized
+  fun onFocusRequestGranted(): AudioPlaybackFocusAction {
+    permanentFocusLoss = false
+    return resumeOutput()
+  }
+
+  @Synchronized
+  fun isOutputPaused(): Boolean = outputPaused
+
+  @Synchronized
+  fun clear() {
+    outputPaused = false
+    permanentFocusLoss = false
+  }
+
+  private fun pauseOutput(): AudioPlaybackFocusAction {
+    if (outputPaused) return AudioPlaybackFocusAction.NONE
+    outputPaused = true
+    return AudioPlaybackFocusAction.PAUSE
+  }
+
+  private fun resumeOutput(): AudioPlaybackFocusAction {
+    if (!outputPaused) return AudioPlaybackFocusAction.NONE
+    outputPaused = false
+    return AudioPlaybackFocusAction.RESUME
+  }
+}
+
 private class ActivePlayback(
   val streamId: String,
   val generation: Int,
@@ -81,6 +141,7 @@ private class ActivePlayback(
   var queuedFrames: Long = 0
   var playedFrames: Long = 0
   var lastPlaybackHeadPosition: Long = 0
+  var pausedForTransientFocusLoss: Boolean = false
   var monitorThread: Thread? = null
 }
 
@@ -140,6 +201,8 @@ class HappierAudioStreamNativeModule : Module() {
   private var stopSignal: AudioCaptureStopSignal? = null
   private var audioManager: AudioManager? = null
   private var audioSessionGeneration: Int = 0
+  private var foregroundServiceContext: Context? = null
+  private var voiceForegroundServiceActive = false
   private val audioSessionOwnership = AudioSessionOwnershipGate()
   private val captureStartAdmission = AudioCaptureStartAdmission(audioSessionOwnership)
   private val priorAudioSessionState = AudioSessionPriorState()
@@ -152,6 +215,7 @@ class HappierAudioStreamNativeModule : Module() {
   private var communicationDeviceChangedListener: AudioManager.OnCommunicationDeviceChangedListener? = null
   private val playbackLock = Any()
   private var activePlayback: ActivePlayback? = null
+  private val playbackFocus = AudioPlaybackFocusController()
 
   private fun emitAudioSessionEvent(kind: String, values: Map<String, Any> = emptyMap(), generation: Int = audioSessionGeneration) {
     sendEvent("voiceAudioSessionEvent", values + mapOf("generation" to generation, "kind" to kind))
@@ -249,15 +313,9 @@ class HappierAudioStreamNativeModule : Module() {
     }
   }
 
-  private fun requestAudioFocus(manager: AudioManager, output: Boolean, generation: Int) {
-    if (!output) return
+  private fun requestAudioFocus(manager: AudioManager, generation: Int) {
     val listener = AudioManager.OnAudioFocusChangeListener { change ->
-      when (change) {
-        AudioManager.AUDIOFOCUS_GAIN -> emitAudioSessionEvent("focus_changed", mapOf("state" to "gained"), generation)
-        AudioManager.AUDIOFOCUS_LOSS_TRANSIENT,
-        AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> emitAudioSessionEvent("focus_changed", mapOf("state" to "lost_transient"), generation)
-        AudioManager.AUDIOFOCUS_LOSS -> emitAudioSessionEvent("focus_changed", mapOf("state" to "lost_permanent"), generation)
-      }
+      handleAudioFocusChange(change, generation)
     }
     focusListener = listener
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -269,6 +327,7 @@ class HappierAudioStreamNativeModule : Module() {
             .build()
         )
         .setOnAudioFocusChangeListener(listener)
+        .setWillPauseWhenDucked(true)
         .build()
       val result = manager.requestAudioFocus(request)
       if (result != AudioManager.AUDIOFOCUS_REQUEST_GRANTED) throw IllegalStateException("audio_focus_denied")
@@ -278,6 +337,14 @@ class HappierAudioStreamNativeModule : Module() {
       val result = manager.requestAudioFocus(listener, AudioManager.STREAM_VOICE_CALL, AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE)
       if (result != AudioManager.AUDIOFOCUS_REQUEST_GRANTED) throw IllegalStateException("audio_focus_denied")
     }
+    // A newly granted request authorizes the retained shared PCM player to
+    // resume, including after a prior permanent focus loss.
+    applyPlaybackFocusAction(playbackFocus.onFocusRequestGranted())
+    // Request success does not reliably produce a callback. Reconcile the
+    // current generation so the JS capture owner can clear a prior transient
+    // focus suspension without accepting a late callback from an abandoned
+    // request.
+    emitAudioSessionEvent("focus_changed", mapOf("state" to "gained"), generation)
   }
 
   private fun abandonAudioFocus(manager: AudioManager) {
@@ -291,12 +358,50 @@ class HappierAudioStreamNativeModule : Module() {
     focusListener = null
   }
 
+  private fun requireMicrophonePermission(context: Context) {
+    if (
+      Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
+      && context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED
+    ) {
+      throw IllegalStateException("microphone_permission_required")
+    }
+  }
+
+  /**
+   * This is intentionally driven only by the aggregate coordinator's applied
+   * configuration. The foreground service provides Android background delivery;
+   * it does not own conversation state, provider choice, or session teardown.
+   */
+  private fun synchronizeVoiceForegroundService(context: Context, mode: String, input: Boolean) {
+    if (requiresVoiceForegroundService(mode, input)) {
+      if (!voiceForegroundServiceActive) {
+        requireMicrophonePermission(context)
+        HappierVoiceAudioForegroundService.start(context)
+        voiceForegroundServiceActive = true
+        foregroundServiceContext = context
+      }
+      return
+    }
+    stopVoiceForegroundService()
+  }
+
+  private fun stopVoiceForegroundService() {
+    if (voiceForegroundServiceActive) {
+      foregroundServiceContext?.let { context ->
+        HappierVoiceAudioForegroundService.stop(context)
+      }
+    }
+    voiceForegroundServiceActive = false
+    foregroundServiceContext = null
+  }
+
   private fun configureAudioSession(params: Map<String, Any>): Map<String, Any> {
     val generation = (params["generation"] as? Number)?.toInt() ?: 0
     @Suppress("UNCHECKED_CAST")
     val configuration = params["configuration"] as? Map<String, Any>
       ?: throw IllegalArgumentException("configuration_required")
     val mode = configuration["mode"] as? String ?: "dictation"
+    val input = configuration["input"] as? Boolean ?: false
     val output = configuration["output"] as? Boolean ?: false
     val aec = configuration["aec"] as? String ?: "off"
     val context = appContext.reactContext?.applicationContext
@@ -309,8 +414,16 @@ class HappierAudioStreamNativeModule : Module() {
     audioManager = manager
     audioSessionGeneration = generation
     audioSessionOwnership.markConfigured()
+    synchronizeVoiceForegroundService(context, mode, input)
     manager.mode = if (mode == "conversation") AudioManager.MODE_IN_COMMUNICATION else AudioManager.MODE_NORMAL
-    requestAudioFocus(manager, output, generation)
+    if (output) {
+      requestAudioFocus(manager, generation)
+    } else {
+      playbackFocus.clear()
+      // This generation deliberately owns no output focus, so any capture
+      // suspension caused by an earlier output generation is no longer valid.
+      emitAudioSessionEvent("focus_changed", mapOf("state" to "not_required"), generation)
+    }
     ensureRouteCallbacks(context, manager, generation)
     val aecAvailable = AcousticEchoCanceler.isAvailable()
     captureAecRequest = if (mode == "conversation" && aecAvailable) {
@@ -333,6 +446,7 @@ class HappierAudioStreamNativeModule : Module() {
   private fun restoreAudioSession(generation: Int) {
     if (generation < audioSessionGeneration) return
     val wasConfigured = audioSessionOwnership.isConfigured
+    stopVoiceForegroundService()
     stopActive()
     val manager = audioManager
     if (manager != null) {
@@ -344,8 +458,72 @@ class HappierAudioStreamNativeModule : Module() {
     audioManager = null
     audioSessionGeneration = generation
     audioSessionOwnership.clear()
+    playbackFocus.clear()
     captureAecRequest = AudioCaptureAecRequest.OFF
     if (wasConfigured) emitAudioSessionEvent("restoration_completed")
+  }
+
+  private fun handleAudioFocusChange(change: Int, generation: Int) {
+    // An abandoned request can report late. The JS coordinator already fences
+    // event delivery, but the native player must also reject stale side effects.
+    if (generation != audioSessionGeneration || !audioSessionOwnership.isConfigured) return
+    when (change) {
+      AudioManager.AUDIOFOCUS_GAIN -> {
+        applyPlaybackFocusAction(playbackFocus.onFocusChange(change))
+        emitAudioSessionEvent("focus_changed", mapOf("state" to "gained"), generation)
+      }
+      AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
+        applyPlaybackFocusAction(playbackFocus.onFocusChange(change))
+        emitAudioSessionEvent("focus_changed", mapOf("state" to "lost_transient"), generation)
+      }
+      AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
+        // Ducking is a gain policy owned by the JS/native PCM bridge. Do not
+        // also pause this AudioTrack; true transient loss remains the pause path.
+        emitAudioSessionEvent("focus_duckable", generation = generation)
+      }
+      AudioManager.AUDIOFOCUS_LOSS -> {
+        applyPlaybackFocusAction(playbackFocus.onFocusChange(change))
+        emitAudioSessionEvent("focus_changed", mapOf("state" to "lost_permanent"), generation)
+      }
+    }
+  }
+
+  private fun applyPlaybackFocusAction(action: AudioPlaybackFocusAction) {
+    when (action) {
+      AudioPlaybackFocusAction.PAUSE -> pauseActivePlaybackForTransientFocusLoss()
+      AudioPlaybackFocusAction.RESUME -> resumeActivePlaybackAfterTransientFocusLoss()
+      AudioPlaybackFocusAction.NONE -> Unit
+    }
+  }
+
+  private fun pauseActivePlaybackForTransientFocusLoss() {
+    var playbackFailure: ActivePlayback? = null
+    synchronized(playbackLock) {
+      val playback = activePlayback ?: return@synchronized
+      if (playback.pausedForTransientFocusLoss) return@synchronized
+      playback.pausedForTransientFocusLoss = true
+      try {
+        playback.track.pause()
+      } catch (_: Throwable) {
+        playbackFailure = playback
+      }
+    }
+    playbackFailure?.let { terminatePlayback(it, "player_error") }
+  }
+
+  private fun resumeActivePlaybackAfterTransientFocusLoss() {
+    var playbackFailure: ActivePlayback? = null
+    synchronized(playbackLock) {
+      val playback = activePlayback ?: return@synchronized
+      if (!playback.pausedForTransientFocusLoss) return@synchronized
+      playback.pausedForTransientFocusLoss = false
+      try {
+        playback.track.play()
+      } catch (_: Throwable) {
+        playbackFailure = playback
+      }
+    }
+    playbackFailure?.let { terminatePlayback(it, "player_error") }
   }
 
   private fun playbackIdentityMatches(
@@ -533,6 +711,7 @@ class HappierAudioStreamNativeModule : Module() {
       if (activePlayback != null || !playbackIdentityMatches(playback, streamId, generation)) {
         false
       } else {
+        playback.pausedForTransientFocusLoss = playbackFocus.isOutputPaused()
         activePlayback = playback
         true
       }
@@ -542,7 +721,11 @@ class HappierAudioStreamNativeModule : Module() {
       throw IllegalStateException("playback_already_active")
     }
     try {
-      track.play()
+      synchronized(playbackLock) {
+        if (activePlayback === playback && !playback.pausedForTransientFocusLoss) {
+          track.play()
+        }
+      }
       startPlaybackMonitor(playback)
     } catch (error: Throwable) {
       stopActivePlayback(streamId, generation)
@@ -623,17 +806,20 @@ class HappierAudioStreamNativeModule : Module() {
       activePlayback?.takeIf { playbackIdentityMatches(it, streamId, generation) }
     } ?: return
     try {
-      synchronized(playbackLock) {
-        if (activePlayback === playback) updatePlaybackProgressLocked(playback)
+      val cleared = synchronized(playbackLock) {
+        if (activePlayback !== playback) {
+          false
+        } else {
+          updatePlaybackProgressLocked(playback)
+          playback.track.pause()
+          playback.track.flush()
+          playback.queuedFrames = 0
+          playback.lastPlaybackHeadPosition = playback.track.playbackHeadPosition.toLong() and 0xffffffffL
+          if (!playback.pausedForTransientFocusLoss) playback.track.play()
+          true
+        }
       }
-      playback.track.pause()
-      playback.track.flush()
-      playback.track.play()
-      synchronized(playbackLock) {
-        if (activePlayback !== playback) return@synchronized
-        playback.queuedFrames = 0
-        playback.lastPlaybackHeadPosition = playback.track.playbackHeadPosition.toLong() and 0xffffffffL
-      }
+      if (!cleared) return
       emitPlaybackEvent("playbackLevel", playback, mapOf("level" to 0.0))
       emitPlaybackEvent("playbackDrained", playback)
     } catch (_: Throwable) {

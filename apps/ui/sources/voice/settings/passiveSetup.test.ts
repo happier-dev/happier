@@ -4,12 +4,19 @@ import {
   projectVoiceProviderAgentRealtimePassiveSetup,
   projectVoiceProviderConnectedServicesCredentialFact,
   projectVoiceProviderPassiveSetupFacts,
+  readVoiceProviderConnectedServicesBinding,
+  readVoiceProviderPassiveRealtimeSetupResult,
 } from './passiveSetup';
 
 const AGENT_REALTIME_EXECUTION = Object.freeze({
   kind: 'experimental_agent_session_realtime' as const,
   agent: Object.freeze({ pluginId: 'happier.agent.codex', localId: 'codex' }),
   supportedRuntimeVersions: Object.freeze(['0.145.0', '0.146.0']),
+});
+
+const AGENT_REALTIME_EXECUTION_WITHOUT_VERSION_POLICY = Object.freeze({
+  kind: 'experimental_agent_session_realtime' as const,
+  agent: Object.freeze({ pluginId: 'happier.agent.codex', localId: 'codex' }),
 });
 
 describe('projectVoiceProviderPassiveSetupFacts', () => {
@@ -85,6 +92,22 @@ describe('projectVoiceProviderPassiveSetupFacts', () => {
       executionMachine: 'ready',
       runtime: 'incompatible',
     });
+
+    // The selection remains persisted even when it is currently unreachable.
+    // Treating it as no selection would offer the wrong recovery and discard
+    // the owner-local distinction the execution-machine selector already made.
+    expect(projectVoiceProviderPassiveSetupFacts({
+      execution: AGENT_REALTIME_EXECUTION,
+      executionMachineId: 'machine-offline',
+      executionMachineSelectionKind: 'selected_unreachable',
+      executionMachineOnline: false,
+      runtimeCapabilityResult: null,
+    } as Parameters<typeof projectVoiceProviderPassiveSetupFacts>[0] & {
+      executionMachineSelectionKind: 'selected_unreachable';
+    })).toEqual({
+      executionMachine: 'incompatible',
+      runtime: 'unknown',
+    });
   });
 
   it('derives the capability from the declared Agent local id', () => {
@@ -104,6 +127,84 @@ describe('projectVoiceProviderPassiveSetupFacts', () => {
     })).toMatchObject({
       executionMachine: 'ready',
       runtime: 'missing',
+    });
+  });
+
+  it('does not invent an exact runtime floor when the provider omits version policy', () => {
+    expect(projectVoiceProviderAgentRealtimePassiveSetup(
+      AGENT_REALTIME_EXECUTION_WITHOUT_VERSION_POLICY,
+    )).toEqual({
+      capabilityId: 'cli.codex',
+    });
+    expect(projectVoiceProviderPassiveSetupFacts({
+      execution: AGENT_REALTIME_EXECUTION_WITHOUT_VERSION_POLICY,
+      executionMachineId: 'machine-1',
+      executionMachineOnline: true,
+      runtimeCapabilityResult: {
+        ok: true,
+        checkedAt: 1,
+        data: { available: true, version: '0.149.1', resolvedPath: '/managed/codex' },
+      },
+    })).toEqual({
+      executionMachine: 'ready',
+      runtime: 'unknown',
+    });
+  });
+
+  it('accepts only the strict passive capability DTO and lets it own a checked result', () => {
+    expect(readVoiceProviderPassiveRealtimeSetupResult({
+      v: 1,
+      status: 'ready',
+      rawCodexResponse: { account: 'must-not-cross-the-seam' },
+    })).toBeNull();
+
+    expect(projectVoiceProviderPassiveSetupFacts({
+      execution: AGENT_REALTIME_EXECUTION,
+      executionMachineId: 'machine-1',
+      executionMachineOnline: true,
+      runtimeCapabilityResult: { ok: true, data: { available: false } },
+      passiveRealtimeSetupResult: { v: 1, status: 'ready' },
+    })).toEqual({
+      executionMachine: 'ready',
+      runtime: 'ready',
+      credential: 'ready',
+    });
+
+    expect(projectVoiceProviderPassiveSetupFacts({
+      execution: AGENT_REALTIME_EXECUTION,
+      executionMachineId: 'machine-1',
+      executionMachineOnline: true,
+      runtimeCapabilityResult: null,
+      passiveRealtimeSetupResult: { v: 1, status: 'authentication_required' },
+    })).toEqual({
+      executionMachine: 'ready',
+      credential: 'missing',
+    });
+
+    expect(projectVoiceProviderPassiveSetupFacts({
+      execution: AGENT_REALTIME_EXECUTION,
+      executionMachineId: 'machine-1',
+      executionMachineOnline: true,
+      runtimeCapabilityResult: null,
+      passiveRealtimeSetupResult: { v: 1, status: 'feature_disabled' },
+    })).toEqual({
+      executionMachine: 'ready',
+      runtime: 'missing',
+      credential: 'ready',
+    });
+
+    // The strict unavailable result reports no more than the generic
+    // runtime-unknown fact. The settings projection decides that this passive
+    // result must not offer a provider-switch action.
+    expect(projectVoiceProviderPassiveSetupFacts({
+      execution: AGENT_REALTIME_EXECUTION,
+      executionMachineId: 'machine-1',
+      executionMachineOnline: true,
+      runtimeCapabilityResult: null,
+      passiveRealtimeSetupResult: { v: 1, status: 'unavailable' },
+    })).toEqual({
+      executionMachine: 'ready',
+      runtime: 'unknown',
     });
   });
 
@@ -128,6 +229,11 @@ describe('projectVoiceProviderPassiveSetupFacts', () => {
         },
       },
     };
+
+    expect(readVoiceProviderConnectedServicesBinding({
+      providerSettings,
+      providerConfig,
+    })).toEqual(providerConfig.globalConnectedServices);
 
     expect(projectVoiceProviderConnectedServicesCredentialFact({
       providerSettings,

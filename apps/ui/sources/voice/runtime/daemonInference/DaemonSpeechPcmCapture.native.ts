@@ -7,6 +7,7 @@ import {
 import { decodeBase64, VOICE_RUNTIME_DAEMON_STT_PCM_FORMAT } from '@happier-dev/protocol';
 
 import { createVoiceMachineError } from '@/voice/runtime/machine/voiceMachineError';
+import { VOICE_PCM_CONVERSATION_AUDIO_SESSION } from '@/voice/runtime/nativePcmAudioSession';
 import type { MicSession } from '@/voice/runtime/mic/MicSession';
 
 export type DaemonSpeechPcmCaptureOptions = Readonly<{
@@ -120,12 +121,7 @@ export function createDaemonSpeechPcmCapture(options: DaemonSpeechPcmCaptureOpti
       lease = await capture.acquire({
         ownerId: 'daemon-streaming-stt',
         format: { sampleRate: TARGET_SAMPLE_RATE, channels: TARGET_CHANNELS, frameMs: FRAME_MS },
-        audioSession: {
-          mode: 'conversation',
-          input: true,
-          output: true,
-          aec: 'preferred',
-        },
+        audioSession: VOICE_PCM_CONVERSATION_AUDIO_SESSION,
         maxQueuedFrames: maxQueuedChunks,
         shouldDeliver: () => active && !options.micSession.isMuted(),
         onFrame: handleFrame,

@@ -231,11 +231,13 @@ export async function playAudioBytesWithStopper(opts: {
 
     const blob = new Blob([opts.bytes], { type: mimeType });
     const url = URL.createObjectURL(blob);
-    const audio = new Audio(url);
-
+    let audio: HTMLAudioElement | null = null;
+    let cleanupComplete = false;
     const cleanup = () => {
+      if (cleanupComplete) return;
+      cleanupComplete = true;
       try {
-        audio.pause();
+        audio?.pause();
       } catch {
         // ignore
       }
@@ -245,6 +247,17 @@ export async function playAudioBytesWithStopper(opts: {
         // ignore
       }
     };
+    try {
+      audio = new Audio(url);
+    } catch (error) {
+      cleanup();
+      throw error;
+    }
+    const playbackAudio = audio;
+    if (!playbackAudio) {
+      cleanup();
+      throw new Error('audio_playback_initialization_failed');
+    }
 
     return await new Promise<void>((resolve, reject) => {
       let settled = false;
@@ -253,12 +266,14 @@ export async function playAudioBytesWithStopper(opts: {
       const safeResolve = () => {
         if (settled) return;
         settled = true;
+        cleanup();
         clearStopper();
         resolve();
       };
       const safeReject = (error: unknown) => {
         if (settled) return;
         settled = true;
+        cleanup();
         clearStopper();
         reject(error);
       };
@@ -272,12 +287,12 @@ export async function playAudioBytesWithStopper(opts: {
         stop: stopPlayback,
         beginCandidate: () => {
           if (settled) return 'unsupported';
-          try { audio.pause(); } catch {}
+          try { playbackAudio.pause(); } catch {}
           return 'retained';
         },
         resolveCandidate: (resolution) => {
           if (settled || resolution !== 'false_alarm') return;
-          try { void Promise.resolve(audio.play()).catch(() => safeReject(new Error('audio_playback_resume_failed'))); } catch (error) { safeReject(error); }
+          try { void Promise.resolve(playbackAudio.play()).catch(() => safeReject(new Error('audio_playback_resume_failed'))); } catch (error) { safeReject(error); }
         },
       };
       clearStopper = opts.registerPlaybackStopper.registerTarget?.(target)
@@ -287,13 +302,13 @@ export async function playAudioBytesWithStopper(opts: {
         return;
       }
 
-      audio.onended = () => {
+      playbackAudio.onended = () => {
         if (settled) return;
         qaOutputTap.markCompleted();
         cleanup();
         safeResolve();
       };
-      audio.onerror = () => {
+      playbackAudio.onerror = () => {
         if (settled) return;
         qaOutputTap.markFailed('audio_playback_failed');
         cleanup();
@@ -301,7 +316,7 @@ export async function playAudioBytesWithStopper(opts: {
       };
 
       try {
-        const result = audio.play();
+        const result = playbackAudio.play();
         Promise.resolve(result)
           .then(() => {
             if (settled) return;
@@ -328,116 +343,122 @@ export async function playAudioBytesWithStopper(opts: {
     const ext = opts.format === 'wav' ? '.wav' : '.mp3';
     const { File, Paths } = await import('expo-file-system');
     const file = new File(Paths.cache, `happier-voice-${Date.now()}${ext}`);
-    await file.write(new Uint8Array(opts.bytes));
-
-    const player = createAudioPlayer(file.uri);
-    const qaOutputTap = beginVoiceQaOutputTap({ bytes: opts.bytes, format: opts.format });
+    let player: ReturnType<typeof createAudioPlayer> | null = null;
     let subscription: { remove(): void } | null = null;
-    const cleanup = async () => {
-    try {
-      subscription?.remove();
-    } catch {
-      // ignore
-    }
-    subscription = null;
-    try {
-      player.remove();
-    } catch {
-      // ignore
-    }
-    try {
-      await file.delete();
-    } catch {
-      // ignore
-    }
-    };
-
-    return await new Promise<void>((resolve, reject) => {
-    let settled = false;
-    let clearStopper = () => {};
     let cleanupPromise: Promise<void> | null = null;
-    const runCleanup = () => {
-      cleanupPromise ??= cleanup();
+    const runCleanup = (): Promise<void> => {
+      cleanupPromise ??= (async () => {
+        try {
+          subscription?.remove();
+        } catch {
+          // ignore
+        }
+        subscription = null;
+        try {
+          player?.remove();
+        } catch {
+          // ignore
+        }
+        try {
+          await file.delete();
+        } catch {
+          // ignore
+        }
+      })();
       return cleanupPromise;
     };
-    const safeResolve = () => {
-      if (settled) return;
-      void runCleanup().catch(() => {});
-      settled = true;
-      clearStopper();
-      resolve();
-    };
-    const safeReject = (error: unknown) => {
-      if (settled) return;
-      void runCleanup().catch(() => {});
-      settled = true;
-      clearStopper();
-      reject(error);
-    };
-
-    const stopPlayback = () => {
-      qaOutputTap.markCancelled();
-      safeResolve();
-    };
-    const target: VoicePlaybackTarget = {
-      stop: stopPlayback,
-      beginCandidate: () => {
-        if (settled || typeof (player as { pause?: unknown }).pause !== 'function') return 'unsupported';
-        try { (player as { pause: () => void }).pause(); } catch { return 'unsupported'; }
-        return 'retained';
-      },
-      resolveCandidate: (resolution) => {
-        if (settled || resolution !== 'false_alarm') return;
-        try {
-          const resumed = player.play();
-          void Promise.resolve(resumed).catch((error) => safeReject(error));
-        } catch (error) {
-          safeReject(error);
-        }
-      },
-    };
-    clearStopper = opts.registerPlaybackStopper.registerTarget?.(target)
-      ?? opts.registerPlaybackStopper(stopPlayback);
-    if (settled) {
-      clearStopper();
-      return;
-    }
-
-    subscription = player.addListener('playbackStatusUpdate', (status: any) => {
-      if (settled) return;
-      // Settle on a post-play() failure surfaced via status (corrupt bytes,
-      // decode error, failed load) instead of leaving the promise unsettled.
-      // Because the streaming chunk queue is serial, a hung chunk would block
-      // every subsequent chunk until an interrupt (audit Finding 4).
-      const failed =
-        status?.error != null
-        || status?.reasonForWaitingToPlay === 'error';
-      if (failed) {
-        qaOutputTap.markFailed('audio_playback_failed');
-        safeReject(new Error('audio_playback_failed'));
-        return;
-      }
-      if (nativeStatusShowsPlaybackStarted(status)) {
-        qaOutputTap.markPlaying();
-        notifyPlaybackStarted();
-      }
-      if (!status?.didJustFinish) return;
-      qaOutputTap.markCompleted();
-      safeResolve();
-    });
 
     try {
-      const result = player.play();
-      Promise.resolve(result).catch((error) => {
-        if (settled) return;
-        qaOutputTap.markFailed('audio_playback_failed');
-        safeReject(error);
+      await file.write(new Uint8Array(opts.bytes));
+      player = createAudioPlayer(file.uri);
+      const playbackPlayer = player;
+      const qaOutputTap = beginVoiceQaOutputTap({ bytes: opts.bytes, format: opts.format });
+
+      return await new Promise<void>((resolve, reject) => {
+        let settled = false;
+        let clearStopper = () => {};
+        const safeResolve = () => {
+          if (settled) return;
+          void runCleanup().catch(() => {});
+          settled = true;
+          clearStopper();
+          resolve();
+        };
+        const safeReject = (error: unknown) => {
+          if (settled) return;
+          void runCleanup().catch(() => {});
+          settled = true;
+          clearStopper();
+          reject(error);
+        };
+
+        const stopPlayback = () => {
+          qaOutputTap.markCancelled();
+          safeResolve();
+        };
+        const target: VoicePlaybackTarget = {
+          stop: stopPlayback,
+          beginCandidate: () => {
+            if (settled || typeof (playbackPlayer as { pause?: unknown }).pause !== 'function') return 'unsupported';
+            try { (playbackPlayer as { pause: () => void }).pause(); } catch { return 'unsupported'; }
+            return 'retained';
+          },
+          resolveCandidate: (resolution) => {
+            if (settled || resolution !== 'false_alarm') return;
+            try {
+              const resumed = playbackPlayer.play();
+              void Promise.resolve(resumed).catch((error) => safeReject(error));
+            } catch (error) {
+              safeReject(error);
+            }
+          },
+        };
+        clearStopper = opts.registerPlaybackStopper.registerTarget?.(target)
+          ?? opts.registerPlaybackStopper(stopPlayback);
+        if (settled) {
+          clearStopper();
+          return;
+        }
+
+        subscription = playbackPlayer.addListener('playbackStatusUpdate', (status: any) => {
+          if (settled) return;
+          // Settle on a post-play() failure surfaced via status (corrupt bytes,
+          // decode error, failed load) instead of leaving the promise unsettled.
+          // Because the streaming chunk queue is serial, a hung chunk would block
+          // every subsequent chunk until an interrupt (audit Finding 4).
+          const failed =
+            status?.error != null
+            || status?.reasonForWaitingToPlay === 'error';
+          if (failed) {
+            qaOutputTap.markFailed('audio_playback_failed');
+            safeReject(new Error('audio_playback_failed'));
+            return;
+          }
+          if (nativeStatusShowsPlaybackStarted(status)) {
+            qaOutputTap.markPlaying();
+            notifyPlaybackStarted();
+          }
+          if (!status?.didJustFinish) return;
+          qaOutputTap.markCompleted();
+          safeResolve();
+        });
+
+        try {
+          const result = playbackPlayer.play();
+          Promise.resolve(result).catch((error) => {
+            if (settled) return;
+            qaOutputTap.markFailed('audio_playback_failed');
+            safeReject(error);
+          });
+        } catch (error) {
+          qaOutputTap.markFailed('audio_playback_failed');
+          safeReject(error);
+        }
       });
     } catch (error) {
-      qaOutputTap.markFailed('audio_playback_failed');
-      safeReject(error);
+      void runCleanup().catch(() => {});
+      throw error;
     }
-    });
   } finally {
     await playbackLease.release();
   }

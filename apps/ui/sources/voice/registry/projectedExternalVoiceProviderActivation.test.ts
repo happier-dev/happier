@@ -192,6 +192,7 @@ function createCurrentVoiceArtifactAdmission(input: Readonly<{
         },
       }],
       materializations: [materialization],
+      snapshots: [],
     },
   });
   const lifetime: ActiveServerAccountScopeLifetime = Object.freeze({
@@ -241,6 +242,7 @@ describe('projected external Voice provider activation', () => {
   });
 
   it('projects a current installed external speech declaration into the Voice registry and withdraws it with generation authority', async () => {
+    rawCredentialMachineRpc.mockReset();
     const declaration = PluginContributesV2Schema.parse({ voiceProviders: [{
       id: 'speech',
       title: 'Never-before-seen Speech',
@@ -286,6 +288,13 @@ describe('projected external Voice provider activation', () => {
             presentation: { control: 'text' },
           },
         ],
+        actions: [{
+          id: 'refresh-voice',
+          title: 'Refresh voice',
+          placement: { kind: 'contributionFooter' },
+          confirmation: { kind: 'none' },
+          patchFieldIds: ['voiceName'],
+        }],
       },
       credentials: {
         slot: { id: 'api_key', purpose: 'voice.speech', title: 'API key' },
@@ -360,6 +369,9 @@ describe('projected external Voice provider activation', () => {
 
     const installedRegistrations = listExternalVoiceProviderRegistrations()
       .filter((registration) => registration.pluginId === pluginId && registration.localId === declaration.id);
+    const installedRegistration = installedRegistrations.find(
+      (registration) => registration.descriptor?.kind === 'voice.speech-engine.v1',
+    ) ?? null;
     const installedEntry = installedRegistrations
       .map((registration) => registration.descriptor)
       .find((entry) => entry?.kind === 'voice.speech-engine.v1') ?? null;
@@ -368,6 +380,31 @@ describe('projected external Voice provider activation', () => {
       contributionId,
       installedRegistry.get(contributionId),
     );
+    const actionSignal = new AbortController().signal;
+    rawCredentialMachineRpc.mockResolvedValueOnce({ ok: true, patch: { voiceName: 'synthetic-voice-v2' } });
+    if (!installedRegistration?.settingsActions) {
+      throw new Error('speech_settings_action_projection_required');
+    }
+    await expect(installedRegistration.settingsActions.execute({
+      actionId: 'refresh-voice',
+      settings: {
+        baseUrl: '',
+        insecureLocalOriginConsent: '',
+        insecureLocalConsentMachineId: '',
+        model: 'synthetic-stt-v1',
+        voiceName: 'synthetic-voice-v1',
+      },
+      signal: actionSignal,
+    })).resolves.toEqual({ patch: { voiceName: 'synthetic-voice-v2' } });
+    expect(rawCredentialMachineRpc).toHaveBeenCalledWith({
+      machineId: 'machine-1',
+      method: 'daemon.voice.speech.settingsAction.execute',
+      payload: {
+        target: { pluginId, localId: declaration.id },
+        actionId: 'refresh-voice',
+      },
+      signal: actionSignal,
+    });
     const installedSttSpec = listLocalSttProviderSpecs().find((spec) => spec.id === contributionId) ?? null;
     const installedTtsSpec = listLocalTtsProviderSpecs().find((spec) => spec.id === contributionId) ?? null;
     const speechRuntime = createBundledSpeechRuntime({
@@ -502,6 +539,7 @@ describe('projected external Voice provider activation', () => {
       installedSettingsDescriptor: {
         providerId: contributionId,
         role: 'both',
+        actions: [{ id: 'refresh-voice', placement: { kind: 'contributionFooter' } }],
         fields: [
           { key: 'baseUrl', kind: 'text' },
           { key: 'model', kind: 'text' },

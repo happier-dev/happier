@@ -10,6 +10,7 @@ import { createVoiceWelcomePolicy } from './voiceWelcomePolicy';
 
 export type VoiceExecutionTransport = Readonly<{
     appendContextUpdate: (sessionId: string, update: string) => void;
+    appendAutomaticUiContextUpdate: (sessionId: string, update: string) => void;
     commitUserTranscript: (sessionId: string, text: string, localId: string) => Promise<void>;
     commit: (sessionId: string) => Promise<string>;
     ensureRunning: (sessionId: string) => Promise<void>;
@@ -35,7 +36,11 @@ export type VoiceExecutionTransport = Readonly<{
 export function createVoiceExecutionTransport(): VoiceExecutionTransport {
     const voiceAgentBySessionId = new Map<string, VoiceAgentHandle>();
     const voiceAgentInitBySessionId = new Map<string, Promise<VoiceAgentHandle>>();
-    const voiceAgentPendingContextBySessionId = new Map<string, string[]>();
+    const voiceAgentPendingSessionContextBySessionId = new Map<string, string[]>();
+    // A null entry records that this attempt has already admitted its deferred
+    // target context, so a recovered handle cannot queue it for the next turn.
+    const deferredTargetSessionContextBySessionId = new Map<string, string | null>();
+    const latestAutomaticUiContextBySessionId = new Map<string, string>();
     const voiceAgentActiveTurnSettlementsBySessionId = new Map<string, Set<Promise<void>>>();
     const voiceAgentTurnAbortControllerBySessionId = new Map<string, AbortController>();
     const voiceAgentStopPromiseBySessionId = new Map<string, Promise<void>>();
@@ -86,18 +91,18 @@ export function createVoiceExecutionTransport(): VoiceExecutionTransport {
                     daemonVoiceAgentClient ??= new DaemonVoiceAgentClient();
                     return daemonVoiceAgentClient;
                 },
-                enqueuePendingContextUpdate: (pendingSessionId, update) => {
-                    const existingPendingContext = voiceAgentPendingContextBySessionId.get(pendingSessionId) ?? [];
-                    existingPendingContext.push(update);
-                    voiceAgentPendingContextBySessionId.set(
-                        pendingSessionId,
-                        existingPendingContext.slice(Math.max(0, existingPendingContext.length - 8)),
-                    );
+                setDeferredTargetSessionContext: (pendingSessionId, update) => {
+                    const text = update.trim();
+                    if (!text) return;
+                    if (deferredTargetSessionContextBySessionId.get(pendingSessionId) === null) return;
+                    deferredTargetSessionContextBySessionId.set(pendingSessionId, text);
                 },
             }),
         voiceAgentBySessionId,
         voiceAgentInitBySessionId,
-        voiceAgentPendingContextBySessionId,
+        voiceAgentPendingSessionContextBySessionId,
+        deferredTargetSessionContextBySessionId,
+        latestAutomaticUiContextBySessionId,
     });
 
     const welcomePolicy = createVoiceWelcomePolicy({
@@ -110,7 +115,9 @@ export function createVoiceExecutionTransport(): VoiceExecutionTransport {
         interruptActiveTurn,
         resetCachedHandle: recovery.resetCachedHandle,
         trackActiveTurn,
-        voiceAgentPendingContextBySessionId,
+        voiceAgentPendingSessionContextBySessionId,
+        deferredTargetSessionContextBySessionId,
+        latestAutomaticUiContextBySessionId,
         voiceAgentTurnAbortControllerBySessionId,
     });
 
@@ -158,6 +165,7 @@ export function createVoiceExecutionTransport(): VoiceExecutionTransport {
 
     return {
         appendContextUpdate: recovery.appendContextUpdate,
+        appendAutomaticUiContextUpdate: recovery.appendAutomaticUiContextUpdate,
         commitUserTranscript,
         commit: recovery.commit,
         ensureRunning: recovery.ensureRunning,

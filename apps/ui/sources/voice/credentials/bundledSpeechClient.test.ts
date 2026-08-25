@@ -133,6 +133,23 @@ describe('bundled speech selected-daemon client', () => {
     ]);
   });
 
+  it('routes a declared speech settings action through the qualified daemon target', async () => {
+    const rpc = vi.fn(async (request: Readonly<{ method: string; payload: unknown }>) => {
+      expect(request.method).toBe('daemon.voice.speech.settingsAction.execute');
+      expect(request.payload).toEqual({
+        target: { pluginId: 'acme.voice', localId: 'speech-v2' },
+        actionId: 'refresh-model',
+      });
+      return { ok: true, patch: { model: 'acme-speech-v2' } };
+    });
+    const client = new BundledSpeechDaemonClient({ resolveMachineId: () => 'machine-1', machineRpc: rpc as never });
+
+    await expect(client.executeSettingsAction({
+      entry: createAcmeSpeechContribution(),
+      actionId: 'refresh-model',
+    })).resolves.toEqual({ patch: { model: 'acme-speech-v2' } });
+  });
+
   it('uses the same supplied contribution for transcribe and synthesize targets', async () => {
     const rpc = vi.fn(async (request: Readonly<{ method: string; payload: any }>) => {
       expect(request.payload).toEqual(expect.objectContaining({

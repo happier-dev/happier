@@ -200,6 +200,7 @@ function createStubLifecycleController(
     setConfiguredProviderId: createNoopSpy(),
     setCurrentUiContextToolSetEnabled: createNoopSpy(),
     setMuted: createAsyncNoopSpy(),
+    retry: createAsyncNoopSpy(),
     stop: createAsyncNoopSpy(),
     subscribe: vi.fn(() => createNoopSpy()),
     toggle: createAsyncNoopSpy(),

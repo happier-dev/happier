@@ -56,7 +56,7 @@ export function LocalNeuralTtsSettings(props: {
   const effectiveSpeed = props.cfgKokoro.speed ?? 1;
   const effectiveAssetSetId = resolveKokoroDaemonTtsPackId(props.cfgKokoro.assetId ?? KOKORO_DEFAULT_TTS_PACK_ID);
   const usesDaemonExecution = executionPolicy.preferredExecution === 'daemon';
-  const assetSets = React.useMemo(() => getKokoroAssetSetOptions().filter((s) => s.id), []);
+  const assetSets = getKokoroAssetSetOptions().filter((s) => s.id);
   const catalogEntry = getModelPackCatalogEntry(effectiveAssetSetId);
   const publicationAvailable = catalogEntry === null || isPublishedModelPackCatalogEntry(catalogEntry);
   const runtimeSupported = React.useMemo(

@@ -3,6 +3,43 @@ import { describe, expect, it } from 'vitest';
 import { collectVoiceSessionRows } from './voiceSessionRows';
 
 describe('collectVoiceSessionRows', () => {
+  it('excludes the hidden Voice History carrier when only a session-list projection has its owner metadata', () => {
+    const rows = collectVoiceSessionRows({
+      sessions: {
+        visible: {
+          id: 'visible',
+          updatedAt: 20,
+          active: true,
+          presence: 'online',
+          metadata: {
+            summary: { text: 'Visible session' },
+          },
+        },
+      },
+      sessionListRenderables: {
+        voice_history: {
+          id: 'voice_history',
+          updatedAt: 30,
+          active: false,
+          presence: 'offline',
+          metadata: {
+            hiddenSystemSession: true,
+          },
+        },
+      },
+      sessionListIndexByServerId: {
+        server: [{
+          type: 'session',
+          sessionId: 'voice_history',
+          serverId: 'server',
+          serverName: 'Server',
+        }],
+      },
+    });
+
+    expect(rows.map((row) => row.id)).toEqual(['visible']);
+  });
+
   it('ignores stale renderable-only rows and keeps canonical session rows', () => {
     const rows = collectVoiceSessionRows({
       sessions: {

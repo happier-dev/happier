@@ -4,6 +4,8 @@ import {
 } from '@happier-dev/protocol';
 import type {
   VoiceRealtimeConnection,
+  VoiceOutputFocusApplication,
+  VoiceOutputFocusState,
 } from '@happier-dev/plugin-sdk/voice/client';
 import type {
   VoicePlaybackInterruptionMode,
@@ -29,6 +31,7 @@ export type VoiceConnectionDriver = Readonly<{
   sendControl(event: VoiceRealtimeJsonValue): Promise<void>;
   beginOutputInterruptionCandidate?(): VoicePlaybackInterruptionMode;
   resolveOutputInterruptionCandidate?(resolution: VoicePlaybackInterruptionResolution): void;
+  setOutputFocusState?(state: VoiceOutputFocusState): void;
   close(reason: VoiceConnectionCloseReason): Promise<void>;
 }>;
 
@@ -62,6 +65,7 @@ export type VoicePcmConnectionMedia = Readonly<{
   playbackCursorMs?(): number;
   beginOutputInterruptionCandidate?(): VoicePlaybackInterruptionMode;
   resolveOutputInterruptionCandidate?(resolution: VoicePlaybackInterruptionResolution): void;
+  setOutputFocusState?(state: VoiceOutputFocusState): VoiceOutputFocusApplication;
 }>;
 
 export type { VoiceRealtimeConnection };
@@ -261,6 +265,7 @@ function createConnection(input: Readonly<{
   let retainedSendBytes = 0;
   let terminalSendFailure: Error | null = null;
   let providerSessionId: string | null = null;
+  let outputFocusState: VoiceOutputFocusState = 'active';
   let pcmTerminalSubscription: Readonly<{ remove: () => void }> | null = null;
   const lifecycleController = new AbortController();
   let controlQueue!: ReturnType<typeof createEventQueue<VoiceRealtimeJsonValue>>;
@@ -321,6 +326,25 @@ function createConnection(input: Readonly<{
     transportQueue.publish(event);
   };
 
+  const setOutputFocusState = (
+    next: VoiceOutputFocusState,
+  ): VoiceOutputFocusApplication => {
+    outputFocusState = next;
+    try {
+      if (input.pcm?.setOutputFocusState) {
+        return input.pcm.setOutputFocusState(next);
+      }
+      if (input.driver.setOutputFocusState) {
+        input.driver.setOutputFocusState(next);
+        return 'applied';
+      }
+    } catch {
+      // An output implementation that cannot apply the host focus fact must
+      // report unsupported so the lifecycle bridge can stop the exact attempt.
+    }
+    return 'unsupported';
+  };
+
   return Object.freeze({
     kind: input.kind,
     async connect(signal: AbortSignal): Promise<void> {
@@ -337,6 +361,9 @@ function createConnection(input: Readonly<{
       const abortLifecycle = (): void => lifecycleController.abort();
       signal.addEventListener('abort', abortLifecycle, { once: true });
       try {
+        if (outputFocusState !== 'active' && setOutputFocusState(outputFocusState) === 'unsupported') {
+          throw connectionError('voice_output_focus_unsupported');
+        }
         const openDriver = input.driver.open({
           signal: lifecycleController.signal,
           onControl: publishControl,
@@ -416,6 +443,7 @@ function createConnection(input: Readonly<{
       }
       input.driver.resolveOutputInterruptionCandidate?.(resolution);
     },
+    setOutputFocusState,
   });
 }
 
@@ -432,6 +460,7 @@ export type VoiceWebRtcRemoteOutputAttachment = Readonly<{
   dispose(): void;
   beginOutputInterruptionCandidate(): VoicePlaybackInterruptionMode;
   resolveOutputInterruptionCandidate(resolution: VoicePlaybackInterruptionResolution): void;
+  setOutputFocusState(state: VoiceOutputFocusState): VoiceOutputFocusApplication;
 }>;
 
 export function createWebRtcConnection(input: Readonly<{
@@ -462,6 +491,7 @@ export function createWebRtcConnection(input: Readonly<{
   let sendTail: Promise<void> = Promise.resolve();
   let queuedSends = 0;
   let currentRemoteTrackId: string | null = null;
+  let outputFocusState: VoiceOutputFocusState = 'active';
   const listeners: Array<() => void> = [];
   let controlQueue!: ReturnType<typeof createEventQueue<VoiceRealtimeJsonValue>>;
   let transportQueue!: ReturnType<typeof createEventQueue<VoiceRealtimeTransportEvent>>;
@@ -659,6 +689,7 @@ export function createWebRtcConnection(input: Readonly<{
         dispose: () => {},
         beginOutputInterruptionCandidate: () => 'unsupported' as const,
         resolveOutputInterruptionCandidate: () => {},
+        setOutputFocusState: () => 'applied' as const,
       });
     }
     const audio = document.createElement('audio');
@@ -671,6 +702,14 @@ export function createWebRtcConnection(input: Readonly<{
       playbackStarted = Promise.reject(new Error(remoteAudioPlaybackFailureCode));
     }
     let candidateActive = false;
+    let focusState: VoiceOutputFocusState = 'active';
+    const applyVolume = (): void => {
+      audio.volume = focusState === 'suspended'
+        ? 0
+        : focusState === 'ducked' || candidateActive
+          ? Math.max(0, Math.min(1, input.duckGain))
+          : 1;
+    };
     return Object.freeze({
       playbackStarted,
       dispose() {
@@ -680,13 +719,18 @@ export function createWebRtcConnection(input: Readonly<{
       },
       beginOutputInterruptionCandidate() {
         candidateActive = true;
-        audio.volume = Math.max(0, Math.min(1, input.duckGain));
+        applyVolume();
         return 'ducked' as const;
       },
       resolveOutputInterruptionCandidate(_resolution: VoicePlaybackInterruptionResolution) {
         if (!candidateActive) return;
         candidateActive = false;
-        audio.volume = 1;
+        applyVolume();
+      },
+      setOutputFocusState(next: VoiceOutputFocusState) {
+        focusState = next;
+        applyVolume();
+        return 'applied' as const;
       },
     });
   });
@@ -744,6 +788,11 @@ export function createWebRtcConnection(input: Readonly<{
             return;
           }
           remoteOutput = nextRemoteOutput;
+          if (nextRemoteOutput.setOutputFocusState(outputFocusState) === 'unsupported') {
+            disposeRemoteOutput();
+            fail('voice_output_focus_unsupported');
+            return;
+          }
           if (nextRemoteOutput.playbackStarted) {
             let abandonPlayback!: () => void;
             const abandoned = new Promise<void>((resolve) => {
@@ -935,6 +984,11 @@ export function createWebRtcConnection(input: Readonly<{
     resolveOutputInterruptionCandidate: (resolution) => {
       if (currentState !== 'open') return;
       remoteOutput?.resolveOutputInterruptionCandidate(resolution);
+    },
+    setOutputFocusState(next: VoiceOutputFocusState): VoiceOutputFocusApplication {
+      if (currentState === 'closed') return 'unsupported';
+      outputFocusState = next;
+      return remoteOutput?.setOutputFocusState(next) ?? 'applied';
     },
   });
 }

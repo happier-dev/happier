@@ -5,6 +5,7 @@ import type { VoiceSurfaceRecovery } from '@/components/voice/surface/resolveVoi
 
 const state = vi.hoisted(() => ({
   openSettings: vi.fn(async () => undefined),
+  retry: vi.fn(async () => undefined),
   toggle: vi.fn(async () => undefined),
 }));
 
@@ -18,6 +19,7 @@ vi.mock('react-native', async (importOriginal) => {
 });
 vi.mock('@/voice/session/voiceSession', () => ({
   voiceSessionManager: {
+    retry: state.retry,
     toggle: state.toggle,
     bargeIn: vi.fn(),
     stop: vi.fn(),
@@ -75,6 +77,15 @@ describe('the one Voice recovery dispatch every placement fires', () => {
     expect(navigate).toHaveBeenCalledWith({
       pathname: '/settings/voice/conversations',
       params: { focus: 'provider' },
+    });
+  });
+
+  it('opens the canonical execution-machine settings section for an unavailable machine', async () => {
+    const navigate = vi.fn();
+    (await dispatch('select_execution_machine', navigate))();
+    expect(navigate).toHaveBeenCalledWith({
+      pathname: '/settings/voice/conversations',
+      params: { focus: 'execution_machine' },
     });
   });
 
@@ -150,7 +161,7 @@ describe('the one Voice recovery dispatch every placement fires', () => {
 
   it('retries through the canonical voice session manager', async () => {
     (await dispatch('retry'))();
-    expect(state.toggle).toHaveBeenCalledWith('s1');
+    expect(state.retry).toHaveBeenCalledWith('s1');
   });
 
   it('retries the conversation the surface named rather than falling back to a global start', async () => {
@@ -159,7 +170,7 @@ describe('the one Voice recovery dispatch every placement fires', () => {
       startSessionId: 'named-session',
       globalStartAuthorized: false,
     }))();
-    expect(state.toggle).toHaveBeenCalledWith('named-session');
+    expect(state.retry).toHaveBeenCalledWith('named-session');
   });
 
   it('refuses a retry that has no conversation to retry', async () => {
@@ -168,7 +179,7 @@ describe('the one Voice recovery dispatch every placement fires', () => {
       startSessionId: null,
       globalStartAuthorized: false,
     }))();
-    expect(state.toggle).not.toHaveBeenCalled();
+    expect(state.retry).not.toHaveBeenCalled();
   });
 
   it('finishes an unfinished provider setup in Voice settings when nothing has failed yet', async () => {

@@ -11,6 +11,7 @@ export type {
   VoiceAudioSessionApplyRequest,
   VoiceAudioSessionApplyResult,
   VoiceAudioSessionCapabilities,
+  VoiceAudioSessionCaptureStart,
   VoiceAudioSessionConfiguration,
   VoiceAudioSessionCoordinator,
   VoiceAudioSessionLease,

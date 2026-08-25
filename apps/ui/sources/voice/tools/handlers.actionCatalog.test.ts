@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  formatQualifiedPluginActionId,
   getActionSpec,
   type ActionDefinitionV1,
 } from '@happier-dev/protocol';
@@ -11,7 +12,7 @@ describe('Voice Action reference catalog', () => {
   it('composes current contributed Actions into the existing action.spec tools', async () => {
     const contributedAction: ActionDefinitionV1 = {
       kindVersion: 1,
-      id: 'acme.triage/file-ticket',
+      id: formatQualifiedPluginActionId({ pluginId: 'acme.triage', localId: 'file-ticket' }),
       title: 'File ticket',
       description: 'Files a ticket for the selected issue.',
       safety: 'safe',

@@ -109,7 +109,7 @@ describe('createDaemonSpeechPcmCapture (native shared capture)', () => {
         channels: VOICE_RUNTIME_DAEMON_STT_PCM_FORMAT.channelCount,
         frameMs: 20,
       },
-      audioSession: { mode: 'conversation', input: true, output: true, aec: 'preferred' },
+      audioSession: { mode: 'conversation', input: true, output: true, aec: 'required' },
       maxQueuedFrames: 8,
     }));
     expect(capture.isActive()).toBe(true);

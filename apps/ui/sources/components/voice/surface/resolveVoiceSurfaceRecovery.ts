@@ -3,6 +3,7 @@ import type { VoiceMachineRecoveryAction } from '@/voice/runtime/machine/voiceCo
 export type VoiceSurfaceRecovery = Readonly<{
   kind:
     | 'review_credentials'
+    | 'select_execution_machine'
     | 'open_settings'
     | 'retry'
     | 'reconnect'
@@ -11,6 +12,7 @@ export type VoiceSurfaceRecovery = Readonly<{
     | 'update_agent_runtime';
   labelKey:
     | 'voiceSurface.reviewCredentials'
+    | 'voice.readiness.actions.select_execution_machine'
     | 'voiceSurface.reconnect'
     | 'voiceSurface.connectAgent'
     | 'voiceSurface.installAgentRuntime'
@@ -25,6 +27,11 @@ export function resolveVoiceSurfaceRecovery(
   switch (action) {
     case 'review_credentials':
       return { kind: 'review_credentials', labelKey: 'voiceSurface.reviewCredentials' };
+    case 'select_execution_machine':
+      return {
+        kind: 'select_execution_machine',
+        labelKey: 'voice.readiness.actions.select_execution_machine',
+      };
     case 'open_settings':
     case 'open_settings_then_reconnect':
       return { kind: 'open_settings', labelKey: 'modals.openSettings' };

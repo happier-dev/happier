@@ -117,6 +117,15 @@ async function configureBargeInSpeakingSession(sessionId: string): Promise<void>
         },
     });
 
+    const localVoiceEngine = await loadLocalVoiceEngineWithCompatState();
+    await localVoiceEngine.toggleLocalVoiceTurn(sessionId);
+    await vi.waitFor(() => {
+        expect(captureOwnerHooks.current?.startCapture).toHaveBeenCalledTimes(1);
+    });
+    // The public start owns the admission. The barge-in assertion below must
+    // observe only its fresh rearm, rather than counting setup capture.
+    captureOwnerHooks.current?.startCapture.mockClear();
+
     const { voiceConversationRuntimeMachine } = await import('@/voice/runtime/machine/VoiceConversationRuntimeMachine');
     voiceConversationRuntimeMachine.transitionToSpeaking({ controlSessionId: sessionId });
 }
@@ -203,6 +212,15 @@ async function driveReplyToSpeaking(
         });
         storage.__notify();
     });
+
+    // A real public capture start creates the admission that is retained while
+    // the reply speaks. The endpoint callback is only valid for that admitted
+    // attempt; direct state injection alone would test a rejected stale signal.
+    await engine.toggleLocalVoiceTurn('s1');
+    await vi.waitFor(() => {
+        expect(captureOwnerHooks.current?.startCapture).toHaveBeenCalledTimes(1);
+    });
+    captureOwnerHooks.current?.startCapture.mockClear();
 
     const turnPromise = engine.sendLocalVoiceAgentTextTurn('s1', 'what is the forecast');
     await vi.waitFor(() => {

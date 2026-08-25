@@ -6,7 +6,12 @@ import type {
   HappierAudioStreamNativeModule,
 } from './HappierAudioStreamNative.types';
 import { createVoicePcmCapture } from './voicePcmCapture';
-import type { VoiceAudioSessionCoordinator } from './voiceAudioSessionCoordinator';
+import {
+  createVoiceAudioSessionCoordinator,
+  type VoiceAudioSessionCoordinator,
+  type VoiceAudioSessionPlatform,
+  type VoiceAudioSessionPlatformEvent,
+} from './voiceAudioSessionCoordinator';
 
 const FORMAT = { sampleRate: 16_000, channels: 1 as const, frameMs: 20 };
 
@@ -39,7 +44,11 @@ function createHarness() {
   };
   const sessionLease = { id: 'audio-lease', capabilities: { aecAvailable: true, aecActive: false, route: 'speaker' }, release: vi.fn(async () => undefined) };
   const audioSessionCoordinator = {
-    acquire: vi.fn(async () => sessionLease),
+    acquireForCapture: vi.fn(async (_request, startCapture: () => Promise<void>) => {
+      await startCapture();
+      return sessionLease;
+    }),
+    subscribe: vi.fn(() => ({ remove: vi.fn() })),
   } as unknown as VoiceAudioSessionCoordinator;
   return {
     nativeModule,
@@ -50,7 +59,148 @@ function createHarness() {
   };
 }
 
+function createRequiredAecHarness() {
+  let sessionListener: ((event: VoiceAudioSessionPlatformEvent) => void) | null = null;
+  let frameListener: ((event: AudioStreamFrameEvent) => void) | null = null;
+  let captureTerminalListener: ((event: AudioStreamCaptureTerminalEvent) => void) | null = null;
+  let configuredGeneration = 0;
+  const platform: VoiceAudioSessionPlatform = {
+    apply: vi.fn(async ({ generation }) => {
+      configuredGeneration = generation;
+      return {
+        generation,
+        aecAvailable: true,
+        // Native configuration can request AEC but only native capture start
+        // proves it is active.
+        aecActive: false,
+        route: 'speaker',
+      };
+    }),
+    restore: vi.fn(async () => undefined),
+    subscribe: vi.fn((listener) => {
+      sessionListener = listener;
+      return { remove: () => { sessionListener = null; } };
+    }),
+  };
+  const nativeModule: HappierAudioStreamNativeModule = {
+    start: vi.fn(async () => {
+      sessionListener?.({
+        generation: configuredGeneration,
+        kind: 'capabilities_changed',
+        aecAvailable: true,
+        aecActive: true,
+      });
+      return { streamId: 'required-aec-stream' };
+    }),
+    stop: vi.fn(async () => undefined),
+    configureAudioSession: vi.fn(async ({ generation, configuration }) => ({
+      generation,
+      aecAvailable: true,
+      aecActive: configuration.aec !== 'off',
+      route: 'speaker',
+    })),
+    restoreAudioSession: vi.fn(async () => undefined),
+    addListener: vi.fn((eventName, listener) => {
+      if (eventName === 'audioFrame') frameListener = listener as (event: AudioStreamFrameEvent) => void;
+      if ((eventName as string) === 'captureTerminal') {
+        captureTerminalListener = listener as unknown as (event: AudioStreamCaptureTerminalEvent) => void;
+      }
+      return {
+        remove: () => {
+          if (eventName === 'audioFrame') frameListener = null;
+          if ((eventName as string) === 'captureTerminal') captureTerminalListener = null;
+        },
+      };
+    }),
+  };
+  const audioSessionCoordinator = createVoiceAudioSessionCoordinator({ platform });
+  return {
+    nativeModule,
+    audioSessionCoordinator,
+    emitAecCapabilities: (aecAvailable: boolean, aecActive: boolean) => {
+      sessionListener?.({
+        generation: audioSessionCoordinator.getSnapshot().generation,
+        kind: 'capabilities_changed',
+        aecAvailable,
+        aecActive,
+      });
+    },
+    emit: (event: AudioStreamFrameEvent) => frameListener?.(event),
+    emitCaptureTerminal: (event: AudioStreamCaptureTerminalEvent) => captureTerminalListener?.(event),
+  };
+}
+
 describe('VoicePcmCapture', () => {
+  it('admits required AEC only after the host capture reports it active', async () => {
+    const harness = createRequiredAecHarness();
+    const capture = createVoicePcmCapture(harness);
+
+    const lease = await capture.acquire({
+      ownerId: 'required-aec',
+      format: FORMAT,
+      audioSession: { mode: 'conversation', input: true, output: true, aec: 'required' },
+      onFrame: () => undefined,
+    });
+
+    expect(lease.streamId).toBe('required-aec-stream');
+    expect(harness.nativeModule.start).toHaveBeenCalledTimes(1);
+    expect(harness.audioSessionCoordinator.getSnapshot().capabilities).toMatchObject({
+      aecAvailable: true,
+      aecActive: true,
+    });
+
+    await lease.release();
+  });
+
+  it('tears down the host capture and reports an error when required AEC is lost', async () => {
+    const harness = createRequiredAecHarness();
+    const capture = createVoicePcmCapture(harness);
+    const onError = vi.fn();
+    const lease = await capture.acquire({
+      ownerId: 'required-aec',
+      format: FORMAT,
+      audioSession: { mode: 'conversation', input: true, output: true, aec: 'required' },
+      onFrame: () => undefined,
+      onError,
+    });
+
+    harness.emitAecCapabilities(true, false);
+
+    await vi.waitFor(() => expect(harness.nativeModule.stop).toHaveBeenCalledWith({ streamId: lease.streamId }));
+    expect(onError).toHaveBeenCalledWith(expect.objectContaining({ code: 'aec_required_unavailable' }));
+    expect(capture.getSnapshot()).toMatchObject({ streamId: null, subscriberCount: 0 });
+  });
+
+  it('does not hand out a required-AEC lease when capability is already lost before observation attaches', async () => {
+    const harness = createHarness();
+    const audioSessionCoordinator = {
+      acquireForCapture: vi.fn(async (_request, startCapture: () => Promise<void>) => {
+        await startCapture();
+        return harness.sessionLease;
+      }),
+      subscribe: vi.fn(() => ({ remove: vi.fn() })),
+      getSnapshot: vi.fn(() => ({
+        generation: 1,
+        leaseCount: 1,
+        pendingReleaseCount: 0,
+        configuration: { mode: 'conversation', input: true, output: true, aec: 'required', capture: 'host_managed' },
+        capabilities: { aecAvailable: true, aecActive: false, route: 'speaker' },
+      })),
+    } as unknown as VoiceAudioSessionCoordinator;
+    const capture = createVoicePcmCapture({ nativeModule: harness.nativeModule, audioSessionCoordinator });
+
+    await expect(capture.acquire({
+      ownerId: 'required-aec',
+      format: FORMAT,
+      audioSession: { mode: 'conversation', input: true, output: true, aec: 'required' },
+      onFrame: () => undefined,
+    })).rejects.toMatchObject({ code: 'aec_required_unavailable' });
+
+    expect(harness.nativeModule.stop).toHaveBeenCalledWith({ streamId: 'stream-1' });
+    expect(harness.sessionLease.release).toHaveBeenCalledTimes(1);
+    expect(capture.getSnapshot()).toMatchObject({ streamId: null, subscriberCount: 0 });
+  });
+
   it('shares one native stream across compatible subscriber leases and stops after the final release', async () => {
     const harness = createHarness();
     const capture = createVoicePcmCapture(harness);
@@ -141,7 +291,7 @@ describe('VoicePcmCapture', () => {
       onFrame: () => undefined,
     })).rejects.toMatchObject({ code: 'invalid_capture_request' });
 
-    expect(harness.audioSessionCoordinator.acquire).not.toHaveBeenCalled();
+    expect(harness.audioSessionCoordinator.acquireForCapture).not.toHaveBeenCalled();
     expect(harness.nativeModule.start).not.toHaveBeenCalled();
   });
 
@@ -162,15 +312,15 @@ describe('VoicePcmCapture', () => {
     });
 
     expect(first.streamId).toBe(second.streamId);
-    expect(harness.audioSessionCoordinator.acquire).toHaveBeenCalledTimes(1);
-    expect(harness.audioSessionCoordinator.acquire).toHaveBeenCalledWith({
+    expect(harness.audioSessionCoordinator.acquireForCapture).toHaveBeenCalledTimes(1);
+    expect(harness.audioSessionCoordinator.acquireForCapture).toHaveBeenCalledWith({
       ownerId: 'stt',
       mode: 'conversation',
       input: true,
       output: true,
       aec: 'preferred',
       capture: 'host_managed',
-    });
+    }, expect.any(Function));
     expect(harness.nativeModule.start).toHaveBeenCalledTimes(1);
     await first.release();
     await second.release();
@@ -241,7 +391,7 @@ describe('VoicePcmCapture', () => {
     await healthy.release();
   });
 
-  it('unwinds native stream and session lease on partial startup failure', async () => {
+  it('leaves no capture state when coordinator-owned start admission fails', async () => {
     const harness = createHarness();
     vi.mocked(harness.nativeModule.start).mockRejectedValueOnce(new Error('native start failed'));
     const capture = createVoicePcmCapture(harness);
@@ -249,7 +399,7 @@ describe('VoicePcmCapture', () => {
     await expect(capture.acquire({ ownerId: 'stt', format: FORMAT, onFrame: () => undefined }))
       .rejects.toThrow('native start failed');
 
-    expect(harness.sessionLease.release).toHaveBeenCalledTimes(1);
+    expect(harness.audioSessionCoordinator.acquireForCapture).toHaveBeenCalledTimes(1);
     expect(capture.getSnapshot()).toMatchObject({ streamId: null, subscriberCount: 0 });
   });
 

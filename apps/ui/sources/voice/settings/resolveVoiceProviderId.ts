@@ -2,6 +2,7 @@ import { VoiceProviderIdSchema, type VoiceSettings } from '@/sync/domains/settin
 import type { VoiceSessionSnapshot } from '@/voice/session/types';
 import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegistry';
 import {
+    isVoiceProviderSettingsProjectionCurrent,
     projectVoiceProviderSettings,
     type VoiceProviderRegistry,
 } from '@/voice/registry/providerRegistry';
@@ -30,12 +31,45 @@ export function resolveStoredVoiceProviderId(value: unknown): string | null {
 }
 
 export function resolveVoiceProviderId(
+  value: unknown,
+  registry: VoiceProviderRegistry = getDefaultRegistry(),
+): KnownVoiceProviderId | null {
+    const providerId = resolveStoredVoiceProviderId(value);
+    if (!providerId) return null;
+  return registry.get(providerId)?.kind === 'voice.conversation-provider.v1' ? providerId : null;
+}
+
+/**
+ * The provider identity a generic settings action may act on.
+ *
+ * Conversation providers are selected by the root Voice provider id. Speech
+ * engines are selected by their mounted local Speech settings panel, so their
+ * declaration-owned settings projection is the currentness fact available at
+ * this shared action boundary. Both paths stay in this single registry-owned
+ * resolver instead of teaching the generic action invoker provider-specific
+ * dispatch rules.
+ */
+export function resolveVoiceProviderIdForSettingsAction(
+    settings: Pick<VoiceSettings, 'providerId' | 'providers'>,
     value: unknown,
     registry: VoiceProviderRegistry = getDefaultRegistry(),
 ): KnownVoiceProviderId | null {
     const providerId = resolveStoredVoiceProviderId(value);
     if (!providerId) return null;
-    return registry.get(providerId)?.kind === 'voice.conversation-provider.v1' ? providerId : null;
+    const contribution = registry.get(providerId);
+    if (contribution?.kind === 'voice.conversation-provider.v1') {
+        return resolveVoiceProviderId(settings.providerId, registry) === providerId
+            ? providerId
+            : null;
+    }
+    if (contribution?.kind !== 'voice.speech-engine.v1') return null;
+    const settingsProjection = projectVoiceProviderSettings(
+        contribution,
+        settings.providers?.[providerId] ?? null,
+    );
+    return isVoiceProviderSettingsProjectionCurrent(settingsProjection)
+        ? providerId
+        : null;
 }
 
 export function resolveVoiceProviderIdFromSettings(

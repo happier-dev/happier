@@ -18,10 +18,17 @@ const storageBoundary = vi.hoisted(() => ({
   settings: null as unknown,
   platformOs: 'ios',
 }));
+const nativeModelReadiness = vi.hoisted(() => ({
+  read: vi.fn(),
+}));
+const providerFocus = vi.hoisted(() => vi.fn());
 
 installVoiceSettingsPanelCommonModuleMocks({
   reactNative: async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    const {
+      createFocusablePressableMock,
+      createReactNativeWebMock,
+    } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock({
       Platform: {
         get OS() {
@@ -30,6 +37,7 @@ installVoiceSettingsPanelCommonModuleMocks({
         select: (values: any) => values[storageBoundary.platformOs] ?? values.default,
       },
       View: (props: any) => React.createElement('View', props, props.children),
+      Pressable: createFocusablePressableMock(providerFocus),
     });
   },
   icons: async () => ({
@@ -48,14 +56,63 @@ vi.mock('@/text', () => ({
   t: (key: string) => key,
   tLoose: (key: string) => key,
 }));
-vi.mock('@/components/ui/lists/Item', () => ({
-  Item: (props: any) => React.createElement('Item', props),
-}));
 vi.mock('@/components/ui/lists/ItemGroup', () => ({
   ItemGroup: (props: any) => React.createElement('ItemGroup', props, props.children),
+  ItemGroupSelectionContext: React.createContext(null),
 }));
-vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
-  DropdownMenu: (props: any) => React.createElement('DropdownMenu', props),
+vi.mock('@/components/ui/lists/ItemGroupRowPosition', () => ({
+  useItemGroupRowPosition: () => 'middle',
+}));
+vi.mock('@/components/ui/lists/itemGroupRowCorners', () => ({
+  getItemGroupRowCornerRadii: () => ({}),
+}));
+vi.mock('@/components/ui/rendering/normalizeNodeForView', () => ({
+  normalizeNodeForView: (node: unknown) => node,
+}));
+vi.mock('@/components/ui/text/Text', () => ({
+  Text: ({ children, ...props }: any) => React.createElement('Text', props, children),
+}));
+vi.mock('@/constants/Typography', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/constants/Typography')>();
+  return {
+    ...actual,
+    Typography: {
+      ...actual.Typography,
+      default: () => ({}),
+      rowMeta: () => ({}),
+    },
+  };
+});
+vi.mock('expo-clipboard', () => ({
+  setStringAsync: vi.fn(),
+}));
+vi.mock('@/sync/store/hooks', () => ({
+  useLocalSetting: (key: string) => {
+    if (key === 'uiItemDensity') return 'comfortable';
+    if (key === 'uiFontScale') return 1;
+    return null;
+  },
+}));
+vi.mock('@/components/ui/forms/dropdown/DropdownMenu', async () => {
+  const { Item } = await import('@/components/ui/lists/Item');
+  return {
+    DropdownMenu: (props: any) => React.createElement(
+      'DropdownMenu',
+      props,
+      props.itemTrigger
+        ? React.createElement(Item, {
+            ...props.itemTrigger.itemProps,
+            title: props.itemTrigger.title,
+            subtitle: props.itemTrigger.subtitle,
+            accessibilityRole: 'button',
+            onPress: () => props.onOpenChange(!props.open),
+          })
+        : null,
+    ),
+  };
+});
+vi.mock('@/voice/dictation/voiceDictationNativeModelReadiness', () => ({
+  readVoiceDictationNativeModelReadiness: (...args: unknown[]) => nativeModelReadiness.read(...args),
 }));
 vi.mock('@/voice/settings/panels/localStt/providers/registry', () => {
   const ProviderSettings = (props: LocalSttProviderSettingsProps) => React.createElement('ProviderSettings', props);
@@ -90,8 +147,11 @@ vi.mock('@/voice/settings/panels/localStt/providers/registry', () => {
 
 import {
   readLocalConversationVoiceSettings,
+  readLocalDirectVoiceSettings,
   voiceSettingsDefaults,
   voiceSettingsParse,
+  writeLocalConversationVoiceSettings,
+  writeLocalDirectVoiceSettings,
 } from '@/sync/domains/settings/voiceSettings';
 import type { VoiceProviderLocalAvailability } from '@/voice/settings/voiceProviderLocalAvailability';
 
@@ -169,6 +229,22 @@ const localAvailability = {
   },
 } as const satisfies VoiceProviderLocalAvailability;
 
+function findRenderedItem(tree: ReturnType<typeof create>, testID: string) {
+  const item = tree.root
+    .findAll((node) => node.props.testID === testID)
+    .at(0);
+  if (!item) throw new Error(`Missing rendered Item: ${testID}`);
+  return item;
+}
+
+function findRenderedPressable(tree: ReturnType<typeof create>, testID: string) {
+  const pressable = tree.root
+    .findAllByType('Pressable' as any)
+    .find((node) => node.props.testID === testID);
+  if (!pressable) throw new Error(`Missing rendered Pressable: ${testID}`);
+  return pressable;
+}
+
 describe('DictationSettingsSection', () => {
   it('seeds an external provider default envelope atomically with an explicit Dictation selection', async () => {
     registerExternalDictationSttProvider();
@@ -240,12 +316,30 @@ describe('DictationSettingsSection', () => {
     expect(setVoice.mock.calls[0]?.[0].providers[EXTERNAL_DICTATION_STT_PROVIDER_ID]).toEqual(envelope);
   });
 
-  it('edits the canonical Local Voice STT settings when Dictation follows Local Voice', async () => {
+  it('edits the selected Local Voice adapter STT settings when Dictation follows Local Voice', async () => {
     const { DictationSettingsSection } = await import('./DictationSettingsSection');
-    const voice = {
+    const localDirect = readLocalDirectVoiceSettings(voiceSettingsDefaults);
+    const localConversation = readLocalConversationVoiceSettings(voiceSettingsDefaults);
+    const voice = writeLocalConversationVoiceSettings(writeLocalDirectVoiceSettings({
       ...voiceSettingsDefaults,
+      providerId: 'local_direct',
+    }, {
+      ...localDirect,
+      stt: {
+        ...localDirect.stt,
+        provider: 'device',
+      },
+    }), {
+      ...localConversation,
+      stt: {
+        ...localConversation.stt,
+        provider: 'happier.voice.openai-compat/stt',
+      },
+    });
+    const dictationVoice = {
+      ...voice,
       dictation: {
-        ...voiceSettingsDefaults.dictation,
+        ...voice.dictation,
         sttBinding: 'same_as_local' as const,
       },
     };
@@ -253,7 +347,7 @@ describe('DictationSettingsSection', () => {
     let tree!: ReturnType<typeof create>;
     await act(async () => {
       tree = create(<DictationSettingsSection
-        voice={voice}
+        voice={dictationVoice}
         setVoice={setVoice}
         executionMachineId={null}
         localAvailability={localAvailability}
@@ -272,6 +366,8 @@ describe('DictationSettingsSection', () => {
         provider: 'happier.voice.openai-compat/stt',
       });
     });
+    expect(readLocalDirectVoiceSettings(setVoice.mock.calls[0]![0]).stt.provider)
+      .toBe('happier.voice.openai-compat/stt');
     expect(readLocalConversationVoiceSettings(setVoice.mock.calls[0]![0]).stt.provider)
       .toBe('happier.voice.openai-compat/stt');
   });
@@ -305,11 +401,89 @@ describe('DictationSettingsSection', () => {
     expect(providerSettings[0]?.props.voice).toBe(voice);
     expect(providerSettings[0]?.props.setVoice).toBe(setVoice);
     await act(async () => {
-      tree.root.findByProps({ testID: 'settings.voice.dictation.checkSetup' }).props.onPress();
+      findRenderedItem(tree, 'settings.voice.dictation.checkSetup').props.onPress();
     });
     const readiness = tree.root.findByProps({ testID: 'settings.voice.dictation.readiness' });
     expect(readiness.props.subtitle).toBe('settingsVoice.dictation.readiness.ready');
     expect(readiness.props.detail).toBeUndefined();
+    expect(setVoice).not.toHaveBeenCalled();
+  });
+
+  it('checks the exact selected native Local Neural pack once while the passive check is pending', async () => {
+    const { DictationSettingsSection } = await import('./DictationSettingsSection');
+    const localDirect = readLocalDirectVoiceSettings(voiceSettingsDefaults);
+    const localConversation = readLocalConversationVoiceSettings(voiceSettingsDefaults);
+    const withDirectPack = writeLocalDirectVoiceSettings({
+      ...voiceSettingsDefaults,
+      providerId: 'local_direct',
+    }, {
+      ...localDirect,
+      stt: {
+        ...localDirect.stt,
+        provider: 'local_neural',
+        localNeural: {
+          ...localDirect.stt.localNeural,
+          assetId: 'selected-direct-pack',
+          execution: 'device',
+        },
+      },
+    });
+    const voice = writeLocalConversationVoiceSettings(withDirectPack, {
+      ...localConversation,
+      stt: {
+        ...localConversation.stt,
+        provider: 'local_neural',
+        localNeural: {
+          ...localConversation.stt.localNeural,
+          assetId: 'unselected-conversation-pack',
+          execution: 'device',
+        },
+      },
+    });
+    let settleModelReadiness!: (value: 'ready') => void;
+    const pendingModelReadiness = new Promise<'ready'>((resolve) => {
+      settleModelReadiness = resolve;
+    });
+    nativeModelReadiness.read.mockReset();
+    nativeModelReadiness.read.mockReturnValue(pendingModelReadiness);
+    onTestFinished(() => {
+      nativeModelReadiness.read.mockReset();
+    });
+    const setVoice = vi.fn();
+    let tree!: ReturnType<typeof create>;
+    await act(async () => {
+      tree = create(<DictationSettingsSection
+        voice={{
+          ...voice,
+          dictation: {
+            ...voice.dictation,
+            sttBinding: 'same_as_local',
+          },
+        }}
+        setVoice={setVoice}
+        executionMachineId={null}
+        localAvailability={localAvailability}
+      />);
+    });
+
+    const checkSetup = findRenderedItem(tree, 'settings.voice.dictation.checkSetup');
+    await act(async () => {
+      checkSetup.props.onPress();
+      checkSetup.props.onPress();
+    });
+
+    expect(nativeModelReadiness.read).toHaveBeenCalledTimes(1);
+    expect(nativeModelReadiness.read).toHaveBeenCalledWith('selected-direct-pack');
+    expect(findRenderedItem(tree, 'settings.voice.dictation.checkSetup').props.disabled).toBe(true);
+
+    await act(async () => {
+      settleModelReadiness('ready');
+      await Promise.resolve();
+    });
+
+    expect(tree.root.findByProps({
+      testID: 'settings.voice.dictation.readiness',
+    }).props.subtitle).toBe('settingsVoice.dictation.readiness.ready');
     expect(setVoice).not.toHaveBeenCalled();
   });
 
@@ -350,7 +524,7 @@ describe('DictationSettingsSection', () => {
     });
 
     await act(async () => {
-      tree.root.findByProps({ testID: 'settings.voice.dictation.checkSetup' }).props.onPress();
+      findRenderedItem(tree, 'settings.voice.dictation.checkSetup').props.onPress();
     });
 
     expect(tree.root.findByProps({
@@ -359,10 +533,79 @@ describe('DictationSettingsSection', () => {
       'voice.readiness.device_stt_unavailable · voice.readiness.actions.switch_provider',
     );
     await act(async () => {
-      tree.root.findByProps({ testID: 'settings.voice.dictation.readiness' }).props.onPress();
+      findRenderedPressable(tree, 'settings.voice.dictation.readiness').props.onPress();
     });
     expect(onRecoveryAction).toHaveBeenCalledWith('switch_provider');
     expect(setVoice).not.toHaveBeenCalled();
+
+    await act(async () => {
+      tree.update(<DictationSettingsSection
+        voice={voice}
+        setVoice={setVoice}
+        executionMachineId={null}
+        localAvailability={{
+          ...localAvailability,
+          browserSpeech: {
+            support: 'unavailable',
+            onDevice: 'unsupported',
+          },
+        }}
+      />);
+    });
+    expect(tree.root.findAllByType('Pressable' as any).filter(
+      (node) => node.props.testID === 'settings.voice.dictation.readiness',
+    )).toHaveLength(0);
+  });
+
+  it('returns switch-provider recovery focus to the provider control on every activation', async () => {
+    const { DictationSettingsSection } = await import('./DictationSettingsSection');
+    storageBoundary.platformOs = 'web';
+    providerFocus.mockClear();
+    onTestFinished(() => {
+      storageBoundary.platformOs = 'ios';
+      providerFocus.mockClear();
+    });
+    const voice = {
+      ...voiceSettingsDefaults,
+      dictation: {
+        ...voiceSettingsDefaults.dictation,
+        sttBinding: 'explicit' as const,
+        stt: {
+          ...voiceSettingsDefaults.dictation.stt,
+          provider: 'device' as const,
+        },
+      },
+    };
+    const onRecoveryAction = vi.fn();
+    let tree!: ReturnType<typeof create>;
+    await act(async () => {
+      tree = create(<DictationSettingsSection
+        voice={voice}
+        setVoice={vi.fn()}
+        executionMachineId={null}
+        localAvailability={{
+          ...localAvailability,
+          browserSpeech: {
+            support: 'unavailable',
+            onDevice: 'unsupported',
+          },
+        }}
+        onRecoveryAction={onRecoveryAction}
+      />);
+    });
+    await act(async () => {
+      findRenderedItem(tree, 'settings.voice.dictation.checkSetup').props.onPress();
+    });
+
+    const recovery = findRenderedPressable(tree, 'settings.voice.dictation.readiness');
+    await act(async () => {
+      recovery.props.onPress();
+      recovery.props.onPress();
+    });
+
+    expect(providerFocus).toHaveBeenCalledTimes(2);
+    expect(onRecoveryAction).toHaveBeenNthCalledWith(1, 'switch_provider');
+    expect(onRecoveryAction).toHaveBeenNthCalledWith(2, 'switch_provider');
   });
 
   it('explains when daemon-backed Dictation has no policy-allowed heavy-audio route', async () => {
@@ -404,7 +647,7 @@ describe('DictationSettingsSection', () => {
     });
 
     await act(async () => {
-      tree.root.findByProps({ testID: 'settings.voice.dictation.checkSetup' }).props.onPress();
+      findRenderedItem(tree, 'settings.voice.dictation.checkSetup').props.onPress();
     });
 
     expect(tree.root.findByProps({
@@ -457,7 +700,7 @@ describe('DictationSettingsSection', () => {
       tree = create(render(ready.voice));
     });
     await act(async () => {
-      tree.root.findByProps({ testID: 'settings.voice.dictation.checkSetup' }).props.onPress();
+      findRenderedItem(tree, 'settings.voice.dictation.checkSetup').props.onPress();
     });
     expect(tree.root.findByProps({
       testID: 'settings.voice.dictation.readiness',

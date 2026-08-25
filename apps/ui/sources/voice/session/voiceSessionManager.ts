@@ -4,6 +4,7 @@ import type { VoiceSessionLifecycleController } from './voiceSessionLifecycleCon
 
 export type VoiceSessionManager = Readonly<{
   bargeIn: (sessionId: string) => Promise<void>;
+  retry: (sessionId: string) => Promise<void>;
   toggle: (sessionId: string) => Promise<void>;
   stop: (sessionId: string) => Promise<void>;
   interrupt: (sessionId: string) => Promise<void>;
@@ -27,6 +28,12 @@ export function createVoiceSessionManager(deps: Readonly<{
     const lifecycleController = resolveLifecycleController();
     if (!lifecycleController) return;
     await lifecycleController.bargeIn(sessionId);
+  };
+
+  const retry = async (sessionId: string) => {
+    const lifecycleController = resolveLifecycleController();
+    if (!lifecycleController) return;
+    await lifecycleController.retry(sessionId);
   };
 
   const stop = async (sessionId: string) => {
@@ -55,6 +62,7 @@ export function createVoiceSessionManager(deps: Readonly<{
 
   return {
     bargeIn,
+    retry,
     toggle,
     stop,
     interrupt,

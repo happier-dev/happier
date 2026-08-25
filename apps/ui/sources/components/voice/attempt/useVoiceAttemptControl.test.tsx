@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderHook, standardCleanup } from '@/dev/testkit';
 import { getStorage } from '@/sync/domains/state/storage';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
+import { VOICE_SETTINGS_PROVIDER_FOCUS_TARGET } from '@/voice/settings/voiceSettingsRouteFocus';
 import type { VoiceAdapterController, VoiceSessionSnapshot } from '@/voice/session/types';
 import type { ConnectedServiceRegistryEntry } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import { t } from '@/text';
@@ -489,13 +490,13 @@ describe('useVoiceAttemptControl availability ladder', () => {
         await hook.unmount();
     });
 
-    it('routes that recovery to the canonical Voice setup screen', async () => {
+    it('routes that recovery to the canonical Voice provider-focus screen', async () => {
         const hook = await renderIncompleteSetup();
 
         hook.getCurrent().control.onPrimaryAction();
 
         expect(routerMock.instance?.spies.push.mock.calls.map((call) => call[0]))
-            .toContain('/settings/voice');
+            .toContainEqual(VOICE_SETTINGS_PROVIDER_FOCUS_TARGET);
 
         await hook.unmount();
     });
@@ -995,6 +996,57 @@ describe('useVoiceAttemptControl terminal connection failures', () => {
         const { useVoiceAttemptControl } = await import('./useVoiceAttemptControl');
         return await renderHook(() => useVoiceAttemptControl(GLOBAL_TARGET));
     }
+
+    it('offers Retry during an owned reconnect backoff and routes it without restarting the session', async () => {
+        const retry = vi.fn(async () => undefined);
+        const start = vi.fn(async () => undefined);
+        const adapter: VoiceAdapterController = {
+            id: PROVIDER_ID,
+            engineKind: 'realtime',
+            start,
+            stop: async () => undefined,
+            toggle: async () => undefined,
+            retry,
+            interrupt: async () => undefined,
+            bargeIn: async () => undefined,
+            setMuted: async () => undefined,
+            sendContextUpdate: () => undefined,
+            getSnapshot: () => ({
+                adapterId: PROVIDER_ID,
+                sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+                status: 'connecting',
+                mode: 'idle',
+                canStop: true,
+                presentationState: 'reconnecting',
+                reconnectRetryAvailable: true,
+            }),
+            subscribe: () => () => {},
+            resolveSurfaceCapabilities: () => ({
+                allowsGlobalStart: true,
+                controlSessionScope: 'global',
+                requiresVoiceAgentFeature: false,
+                bargeInEnabled: false,
+                cancelResponse: 'unsupported',
+            }),
+        };
+        const hook = await renderWithLifecycle(adapter);
+
+        await vi.waitFor(() => {
+            expect(hook.getCurrent().recoveryAvailable).toBe(true);
+        });
+        expect(hook.getCurrent().recoveryLabel).toBe(t('common.retry'));
+
+        await act(async () => {
+            hook.getCurrent().onRecover();
+            await Promise.resolve();
+        });
+
+        await vi.waitFor(() => {
+            expect(retry).toHaveBeenCalledWith({ sessionId: VOICE_AGENT_GLOBAL_SESSION_ID });
+        });
+        expect(start).not.toHaveBeenCalled();
+        await hook.unmount();
+    });
 
     it('keeps a published connection failure recoverable without logging through fire-and-forget', async () => {
         const connectionFailure = Object.assign(new Error('voice_connection_failed'), {

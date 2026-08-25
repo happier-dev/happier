@@ -240,6 +240,23 @@ describe('VoiceRealtimeConnection implementations', () => {
     expect(resolveOutputInterruptionCandidate).toHaveBeenCalledWith('false_alarm');
   });
 
+  it('latches non-active output focus through a late SDK connection open and rejects absent custody', async () => {
+    const fixture = createDriver();
+    const setOutputFocusState = vi.fn();
+    const connection = createSdkHandleConnection({
+      driver: { ...fixture.driver, setOutputFocusState },
+    });
+
+    expect(connection.setOutputFocusState?.('suspended')).toBe('applied');
+    await connection.connect(new AbortController().signal);
+    expect(setOutputFocusState.mock.calls).toEqual([['suspended'], ['suspended']]);
+    expect(connection.setOutputFocusState?.('active')).toBe('applied');
+    expect(setOutputFocusState).toHaveBeenLastCalledWith('active');
+
+    const unsupported = createSdkHandleConnection({ driver: createDriver().driver });
+    expect(unsupported.setOutputFocusState?.('suspended')).toBe('unsupported');
+  });
+
   it('starts websocket PCM capture while the transport handshake is still pending', async () => {
     let releaseOpen!: () => void;
     const openGate = new Promise<void>((resolve) => { releaseOpen = resolve; });
@@ -473,6 +490,7 @@ describe('VoiceRealtimeConnection implementations', () => {
         dispose: vi.fn(),
         beginOutputInterruptionCandidate: () => 'ducked',
         resolveOutputInterruptionCandidate: vi.fn(),
+        setOutputFocusState: vi.fn(() => 'applied' as const),
       }),
     });
     const abortController = new AbortController();
@@ -515,6 +533,35 @@ describe('VoiceRealtimeConnection implementations', () => {
     vi.unstubAllGlobals();
   });
 
+  it('fails closed when a late native-style remote output cannot honor held focus', async () => {
+    const peer = new FakeWebRtcPeer();
+    const setOutputFocusState = vi.fn(() => 'unsupported' as const);
+    const connection = createWebRtcConnection({
+      micStream: { getAudioTracks: () => [] } as unknown as MediaStream,
+      duckGain: 0.18,
+      signaling: { exchangeOffer: async () => ({ answerSdp: 'answer-sdp' }) },
+      control: { label: 'oai-events', onOpen: () => undefined },
+      createPeerConnection: () => peer as unknown as RTCPeerConnection,
+      attachRemoteStream: () => ({
+        dispose: vi.fn(),
+        beginOutputInterruptionCandidate: () => 'unsupported' as const,
+        resolveOutputInterruptionCandidate: vi.fn(),
+        setOutputFocusState,
+      }),
+    });
+    const connecting = connection.connect(new AbortController().signal);
+    await vi.waitFor(() => expect(peer.setRemoteDescription).toHaveBeenCalledTimes(1));
+    peer.channel.open();
+    await connecting;
+
+    // Focus can arrive before the remote track; connection ownership retains
+    // the fact until media attaches, then closes instead of leaking audio.
+    expect(connection.setOutputFocusState?.('suspended')).toBe('applied');
+    peer.remoteTrack({ id: 'uncontrollable-remote-output' } as MediaStreamTrack);
+    await vi.waitFor(() => expect(connection.state()).toBe('closed'));
+    expect(setOutputFocusState).toHaveBeenCalledWith('suspended');
+  });
+
   it('uses injected native WebRTC primitives without creating a second connection lifecycle', async () => {
     const peer = new FakeWebRtcPeer();
     const createPeerConnection = vi.fn(() => peer as unknown as RTCPeerConnection);
@@ -524,6 +571,7 @@ describe('VoiceRealtimeConnection implementations', () => {
       dispose: vi.fn(),
       beginOutputInterruptionCandidate: () => 'unsupported' as const,
       resolveOutputInterruptionCandidate: vi.fn(),
+      setOutputFocusState: vi.fn(() => 'applied' as const),
     }));
     const localTrack = { id: 'local-native', stop: vi.fn() } as unknown as MediaStreamTrack;
     const localStream = { getAudioTracks: () => [localTrack] } as unknown as MediaStream;
@@ -708,18 +756,21 @@ describe('VoiceRealtimeConnection implementations', () => {
         dispose: vi.fn(),
         beginOutputInterruptionCandidate: () => 'ducked' as const,
         resolveOutputInterruptionCandidate: vi.fn(),
+        setOutputFocusState: vi.fn(() => 'applied' as const),
       },
       {
         playbackStarted: Promise.resolve(),
         dispose: vi.fn(),
         beginOutputInterruptionCandidate: () => 'ducked' as const,
         resolveOutputInterruptionCandidate: vi.fn(),
+        setOutputFocusState: vi.fn(() => 'applied' as const),
       },
       {
         playbackStarted: closedPlayback,
         dispose: vi.fn(),
         beginOutputInterruptionCandidate: () => 'ducked' as const,
         resolveOutputInterruptionCandidate: vi.fn(),
+        setOutputFocusState: vi.fn(() => 'applied' as const),
       },
     ] as const;
     const attachRemoteStream = vi.fn()
@@ -804,6 +855,7 @@ describe('VoiceRealtimeConnection implementations', () => {
       dispose: vi.fn(),
       beginOutputInterruptionCandidate: () => 'ducked' as const,
       resolveOutputInterruptionCandidate: vi.fn(),
+      setOutputFocusState: vi.fn(() => 'applied' as const),
     }));
     let releaseInitialControl!: () => void;
     const initialControlGate = new Promise<void>((resolve) => {

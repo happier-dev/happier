@@ -2,7 +2,7 @@ import React from 'react';
 import { act } from 'react-test-renderer';
 import { PluginContributesV2Schema } from '@happier-dev/protocol';
 import { vi } from 'vitest';
-import { describe, expect, it, onTestFinished } from 'vitest';
+import { afterEach, describe, expect, it, onTestFinished } from 'vitest';
 import type {
     MachineCapabilitiesCacheState,
     MachineCapabilitiesSnapshot,
@@ -30,7 +30,36 @@ const passiveSetupBoundary = vi.hoisted(() => ({
     machineTarget: { daemonStateVersion: 0, isOnline: false },
     state: { status: 'idle' } as MachineCapabilitiesCacheState,
     refresh: vi.fn(),
+    invoke: vi.fn<(...args: unknown[]) => Promise<unknown>>(
+        async () => ({ supported: false, reason: 'error' }),
+    ),
 }));
+
+const activeAccountLifetimeBoundary = vi.hoisted(() => ({
+    value: null as Readonly<{
+        scope: Readonly<{ serverId: string; accountId: string }>;
+        isCurrent(): boolean;
+    }> | null,
+}));
+
+function createActiveAccountLifetime(accountId: string): Readonly<{
+    scope: Readonly<{ serverId: string; accountId: string }>;
+    isCurrent(): boolean;
+    retire(): void;
+}> {
+    let current = true;
+    return Object.freeze({
+        scope: Object.freeze({ serverId: 'server-1', accountId }),
+        isCurrent: () => current,
+        retire: () => { current = false; },
+    });
+}
+
+afterEach(() => {
+    activeAccountLifetimeBoundary.value = null;
+    passiveSetupBoundary.invoke.mockReset();
+    passiveSetupBoundary.invoke.mockResolvedValue({ supported: false, reason: 'error' });
+});
 
 installVoiceSettingsPanelCommonModuleMocks({
     reactNative: async () => {
@@ -53,10 +82,27 @@ installVoiceSettingsPanelCommonModuleMocks({
 
 vi.mock('@/components/ui/lists/ItemGroup', () => ({
     ItemGroup: (props: any) => React.createElement('ItemGroup', props, props.children),
+    ItemGroupSelectionContext: React.createContext(null),
 }));
 
-vi.mock('@/components/ui/lists/Item', () => ({
-    Item: (props: any) => React.createElement('Item', props),
+vi.mock('@/components/ui/lists/ItemGroupRowPosition', () => ({
+    useItemGroupRowPosition: () => 'middle',
+}));
+
+vi.mock('@/components/ui/lists/itemGroupRowCorners', () => ({
+    getItemGroupRowCornerRadii: () => ({}),
+}));
+
+vi.mock('@/components/ui/rendering/normalizeNodeForView', () => ({
+    normalizeNodeForView: (node: unknown) => node,
+}));
+
+vi.mock('@/components/ui/text/Text', () => ({
+    Text: ({ children, ...props }: any) => React.createElement('Text', props, children),
+}));
+
+vi.mock('expo-clipboard', () => ({
+    setStringAsync: vi.fn(),
 }));
 
 vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
@@ -70,14 +116,19 @@ vi.mock('@/hooks/server/useDaemonScopedMachineCapabilitiesCache', () => ({
     }),
 }));
 
-vi.mock('@/sync/store/hooks', async (importOriginal) => {
-    const original = await importOriginal<typeof import('@/sync/store/hooks')>();
-    return {
-        ...original,
-        useMachineCliDetectionTarget: () => passiveSetupBoundary.machineTarget,
-        useProfile: () => passiveSetupBoundary.profile ?? original.useProfile(),
-    };
-});
+vi.mock('@/sync/ops/capabilities', () => ({
+    machineCapabilitiesInvoke: (...args: unknown[]) => passiveSetupBoundary.invoke(...args),
+}));
+
+vi.mock('@/sync/store/hooks', () => ({
+    useMachineCliDetectionTarget: () => passiveSetupBoundary.machineTarget,
+    useProfile: () => passiveSetupBoundary.profile ?? { connectedServicesV2: [] },
+    useLocalSetting: (key: string) => key === 'uiFontScale' ? 1 : null,
+}));
+
+vi.mock('@/sync/domains/scope/activeServerAccountScope', () => ({
+    captureActiveServerAccountScopeLifetime: () => activeAccountLifetimeBoundary.value,
+}));
 
 vi.mock('./realtime/VoiceGlobalConnectedServicesBindingField', () => ({
     VoiceGlobalConnectedServicesBindingField: (props: any) =>
@@ -129,7 +180,7 @@ function installCodexConnectedAccountDescriptor() {
 describe('VoiceProviderSection', () => {
     it('does not render a second declarative settings writer for a provider-owned settings section', async () => {
         const { VoiceProviderSection } = await import('./VoiceProviderSection');
-        const { tree } = await renderScreen(React.createElement(VoiceProviderSection, {
+        const screen = await renderScreen(React.createElement(VoiceProviderSection, {
             voice: {
                 providerId: XAI_PROVIDER_ID,
                 providers: {
@@ -144,14 +195,14 @@ describe('VoiceProviderSection', () => {
             platformOs: 'web',
         }));
 
-        const duplicateDeclarativeControls = tree.root.findAll((node) => (
+        const duplicateDeclarativeControls = screen.tree.root.findAll((node) => (
             typeof node.props?.testID === 'string'
             && node.props.testID.startsWith('settings.plugins.detail.happier.voice.xai.settings.')
         ));
         expect(duplicateDeclarativeControls).toEqual([]);
     }, 120_000);
 
-    it('refreshes the exact machine capability without claiming Start-authoritative Codex availability', async () => {
+    it('checks the exact machine and selected Codex Connected Service through the passive capability', async () => {
         passiveSetupBoundary.profile = {
             connectedServicesV2: [{
                 serviceId: 'openai-codex',
@@ -183,6 +234,10 @@ describe('VoiceProviderSection', () => {
             },
         };
         passiveSetupBoundary.refresh.mockClear();
+        passiveSetupBoundary.invoke.mockResolvedValue({
+            supported: true,
+            response: { ok: true, result: { v: 1, status: 'unavailable' } },
+        });
         onTestFinished(() => {
             passiveSetupBoundary.profile = null;
             passiveSetupBoundary.machineTarget = { daemonStateVersion: 0, isOnline: false };
@@ -190,7 +245,7 @@ describe('VoiceProviderSection', () => {
             passiveSetupBoundary.refresh.mockReset();
         });
         const { VoiceProviderSection } = await import('./VoiceProviderSection');
-        const { tree } = await renderScreen(React.createElement(VoiceProviderSection, {
+        const screen = await renderScreen(React.createElement(VoiceProviderSection, {
             voice: {
                 providerId: CODEX_PROVIDER_ID,
                 providers: {
@@ -218,51 +273,392 @@ describe('VoiceProviderSection', () => {
                 browserSpeech: { support: 'available' },
             },
             executionMachineId: 'machine-1',
-            showProcessingDisclosure: false,
         }));
 
-        const providerRow = findTestInstanceByTypeWithProps(tree, 'Item' as any, {
-            testID: `settings.voice.provider.${encodeURIComponent(CODEX_PROVIDER_ID)}.experimental`,
-        });
-        expect(providerRow?.props.detail).toContain('voice.readiness.runtime_unknown');
-        expect(providerRow?.props.detail).not.toContain('voice.readiness.execution_machine_missing');
-        expect(providerRow?.props.disabled).not.toBe(true);
-        expect(providerRow?.props.onPress).toBeTypeOf('function');
-
-        const check = findTestInstanceByTypeWithProps(tree, 'Item' as any, {
-            testID: 'settings.voice.provider.checkSetup',
-        });
-        await act(async () => {
-            check?.props.onPress();
-        });
+        await screen.pressByTestIdAsync('settings.voice.provider.checkSetup');
 
         expect(passiveSetupBoundary.refresh).toHaveBeenCalledWith(expect.objectContaining({
             bypassCache: true,
         }));
-        const readiness = findTestInstanceByTypeWithProps(tree, 'Item' as any, {
-            testID: 'settings.voice.provider.readiness',
-        });
-        expect(readiness?.props.subtitle).toContain('voice.readiness.runtime_unknown');
-        expect(readiness?.props.accessibilityLiveRegion).toBeUndefined();
-        expect(readiness?.props.webRole).toBeUndefined();
-        const status = tree.root.findByProps({ testID: 'settings.voice.provider.readiness-status' });
+        expect(passiveSetupBoundary.invoke).toHaveBeenCalledWith(
+            'machine-1',
+            {
+                id: 'cli.codex',
+                method: 'probePassiveRealtimeSetup',
+                params: {
+                    connectedServices: {
+                        v: 1,
+                        bindingsByServiceId: {
+                            'openai-codex': {
+                                source: 'connected',
+                                selection: 'profile',
+                                profileId: 'codex-profile',
+                            },
+                        },
+                    },
+                },
+            },
+            { timeoutMs: 30_000 },
+        );
+        const readinessHost = screen.findHostByTestId('settings.voice.provider.readiness');
+        expect(readinessHost?.type).toBe('View');
+        expect(readinessHost?.props.onPress).toBeUndefined();
+        expect(readinessHost?.props.role).toBeUndefined();
+        const readinessText = readinessHost?.findAllByType('Text' as any)
+            .map((node) => node.props.children)
+            .filter((value): value is string => typeof value === 'string')
+            .join(' ') ?? '';
+        expect(readinessText).toContain('voice.readiness.runtime_unknown');
+        expect(readinessText).not.toContain('voice.readiness.actions.switch_provider');
+        const status = screen.findHostByTestId('settings.voice.provider.readiness-status');
+        expect(status).not.toBeNull();
+        if (status === null) return;
         expect(status.props.accessibilityLiveRegion).toBe('polite');
         expect(status.props['aria-live']).toBe('polite');
     }, 120_000);
 
-    it('withholds the first passive setup result until the capability check settles', async () => {
+    it('marks Codex setup ready only from the strict passive owner result', async () => {
         passiveSetupBoundary.profile = {
             connectedServicesV2: [{
                 serviceId: 'openai-codex',
-                profiles: [{
-                    profileId: 'codex-profile',
-                    status: 'connected',
-                    kind: 'oauth',
-                }],
+                profiles: [{ profileId: 'codex-profile', status: 'connected', kind: 'oauth' }],
             }],
         };
         passiveSetupBoundary.machineTarget = { daemonStateVersion: 7, isOnline: true };
-        passiveSetupBoundary.state = { status: 'loading' };
+        passiveSetupBoundary.invoke.mockResolvedValue({
+            supported: true,
+            response: { ok: true, result: { v: 1, status: 'ready' } },
+        });
+        onTestFinished(() => {
+            passiveSetupBoundary.profile = null;
+            passiveSetupBoundary.machineTarget = { daemonStateVersion: 0, isOnline: false };
+            passiveSetupBoundary.state = { status: 'idle' };
+            passiveSetupBoundary.refresh.mockReset();
+        });
+
+        const { VoiceProviderSection } = await import('./VoiceProviderSection');
+        const sectionProps = {
+            voice: {
+                providerId: CODEX_PROVIDER_ID,
+                providers: {
+                    [CODEX_PROVIDER_ID]: {
+                        schemaVersion: 2,
+                        config: {
+                            globalConnectedServices: {
+                                v: 1,
+                                bindingsByServiceId: {
+                                    'openai-codex': {
+                                        source: 'connected',
+                                        selection: 'profile',
+                                        profileId: 'codex-profile',
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
+            } as any,
+            setVoice: vi.fn(),
+            happierVoiceSupported: true,
+            platformOs: 'web',
+            executionMachineId: 'machine-1',
+        };
+        const screen = await renderScreen(React.createElement(VoiceProviderSection, sectionProps));
+
+        await screen.pressByTestIdAsync('settings.voice.provider.checkSetup');
+
+        expect(screen.getTextContent()).toContain('voice.readiness.ready');
+
+        passiveSetupBoundary.profile = {
+            connectedServicesV2: [{
+                serviceId: 'openai-codex',
+                profiles: [{ profileId: 'codex-profile', status: 'needs_reauth', kind: 'oauth' }],
+            }],
+        };
+        await act(async () => {
+            screen.tree.update(React.createElement(VoiceProviderSection, sectionProps));
+        });
+
+        expect(screen.getTextContent()).toContain('voice.readiness.credential_missing');
+        expect(screen.getTextContent()).not.toContain('voice.readiness.ready');
+    }, 120_000);
+
+    it('does not commit a stale passive result after the selected execution machine changes', async () => {
+        passiveSetupBoundary.profile = {
+            connectedServicesV2: [{
+                serviceId: 'openai-codex',
+                profiles: [{ profileId: 'codex-profile', status: 'connected', kind: 'oauth' }],
+            }],
+        };
+        passiveSetupBoundary.machineTarget = { daemonStateVersion: 7, isOnline: true };
+        let settlePassiveCheck: ((value: unknown) => void) | null = null;
+        const pendingPassiveCheck = new Promise<unknown>((resolve) => {
+            settlePassiveCheck = resolve;
+        });
+        passiveSetupBoundary.invoke
+            .mockImplementationOnce(async () => await pendingPassiveCheck)
+            .mockResolvedValueOnce({
+                supported: true,
+                response: { ok: true, result: { v: 1, status: 'ready' } },
+            });
+        onTestFinished(() => {
+            passiveSetupBoundary.profile = null;
+            passiveSetupBoundary.machineTarget = { daemonStateVersion: 0, isOnline: false };
+            passiveSetupBoundary.state = { status: 'idle' };
+            passiveSetupBoundary.refresh.mockReset();
+        });
+
+        const { VoiceProviderSection } = await import('./VoiceProviderSection');
+        const render = (executionMachineId: string) => React.createElement(VoiceProviderSection, {
+            voice: {
+                providerId: CODEX_PROVIDER_ID,
+                providers: {
+                    [CODEX_PROVIDER_ID]: {
+                        schemaVersion: 2,
+                        config: {
+                            globalConnectedServices: {
+                                v: 1,
+                                bindingsByServiceId: {
+                                    'openai-codex': {
+                                        source: 'connected',
+                                        selection: 'profile',
+                                        profileId: 'codex-profile',
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
+            } as any,
+            setVoice: vi.fn(),
+            happierVoiceSupported: true,
+            platformOs: 'web',
+            executionMachineId,
+        });
+        const screen = await renderScreen(render('machine-1'));
+
+        await screen.pressByTestIdAsync('settings.voice.provider.checkSetup');
+        await act(async () => {
+            screen.tree.update(render('machine-2'));
+        });
+        await act(async () => {
+            settlePassiveCheck?.({
+                supported: true,
+                response: { ok: true, result: { v: 1, status: 'ready' } },
+            });
+            await Promise.resolve();
+        });
+
+        expect(screen.findHostByTestId('settings.voice.provider.readiness')).toBeNull();
+        expect(passiveSetupBoundary.invoke).toHaveBeenCalledTimes(1);
+    }, 120_000);
+
+    it('clears a settled passive result when the active Account changes', async () => {
+        passiveSetupBoundary.profile = {
+            connectedServicesV2: [{
+                serviceId: 'openai-codex',
+                profiles: [{ profileId: 'codex-profile', status: 'connected', kind: 'oauth' }],
+            }],
+        };
+        passiveSetupBoundary.machineTarget = { daemonStateVersion: 7, isOnline: true };
+        const accountA = createActiveAccountLifetime('account-a');
+        activeAccountLifetimeBoundary.value = accountA;
+        passiveSetupBoundary.invoke.mockResolvedValue({
+            supported: true,
+            response: { ok: true, result: { v: 1, status: 'ready' } },
+        });
+        onTestFinished(() => {
+            passiveSetupBoundary.profile = null;
+            passiveSetupBoundary.machineTarget = { daemonStateVersion: 0, isOnline: false };
+            passiveSetupBoundary.state = { status: 'idle' };
+            passiveSetupBoundary.refresh.mockReset();
+        });
+
+        const { VoiceProviderSection } = await import('./VoiceProviderSection');
+        const sectionProps = {
+            voice: {
+                providerId: CODEX_PROVIDER_ID,
+                providers: {
+                    [CODEX_PROVIDER_ID]: {
+                        schemaVersion: 2,
+                        config: {
+                            globalConnectedServices: {
+                                v: 1,
+                                bindingsByServiceId: {
+                                    'openai-codex': {
+                                        source: 'connected',
+                                        selection: 'profile',
+                                        profileId: 'codex-profile',
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
+            } as any,
+            setVoice: vi.fn(),
+            happierVoiceSupported: true,
+            platformOs: 'web' as const,
+            executionMachineId: 'machine-1',
+        };
+        const screen = await renderScreen(React.createElement(VoiceProviderSection, sectionProps));
+
+        await screen.pressByTestIdAsync('settings.voice.provider.checkSetup');
+        expect(screen.findHostByTestId('settings.voice.provider.readiness')).not.toBeNull();
+
+        accountA.retire();
+        activeAccountLifetimeBoundary.value = createActiveAccountLifetime('account-b');
+        await act(async () => {
+            screen.tree.update(React.createElement(VoiceProviderSection, sectionProps));
+        });
+
+        expect(screen.findHostByTestId('settings.voice.provider.readiness')).toBeNull();
+    }, 120_000);
+
+    it('does not display a settled passive result after the active Account lifetime restarts', async () => {
+        passiveSetupBoundary.profile = {
+            connectedServicesV2: [{
+                serviceId: 'openai-codex',
+                profiles: [{ profileId: 'codex-profile', status: 'connected', kind: 'oauth' }],
+            }],
+        };
+        passiveSetupBoundary.machineTarget = { daemonStateVersion: 7, isOnline: true };
+        const accountA = createActiveAccountLifetime('account-a');
+        activeAccountLifetimeBoundary.value = accountA;
+        passiveSetupBoundary.invoke.mockResolvedValue({
+            supported: true,
+            response: { ok: true, result: { v: 1, status: 'ready' } },
+        });
+        onTestFinished(() => {
+            passiveSetupBoundary.profile = null;
+            passiveSetupBoundary.machineTarget = { daemonStateVersion: 0, isOnline: false };
+            passiveSetupBoundary.state = { status: 'idle' };
+            passiveSetupBoundary.refresh.mockReset();
+        });
+
+        const { VoiceProviderSection } = await import('./VoiceProviderSection');
+        const sectionProps = {
+            voice: {
+                providerId: CODEX_PROVIDER_ID,
+                providers: {
+                    [CODEX_PROVIDER_ID]: {
+                        schemaVersion: 2,
+                        config: {
+                            globalConnectedServices: {
+                                v: 1,
+                                bindingsByServiceId: {
+                                    'openai-codex': {
+                                        source: 'connected',
+                                        selection: 'profile',
+                                        profileId: 'codex-profile',
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
+            } as any,
+            setVoice: vi.fn(),
+            happierVoiceSupported: true,
+            platformOs: 'web' as const,
+            executionMachineId: 'machine-1',
+        };
+        const screen = await renderScreen(React.createElement(VoiceProviderSection, sectionProps));
+
+        await screen.pressByTestIdAsync('settings.voice.provider.checkSetup');
+        expect(screen.findHostByTestId('settings.voice.provider.readiness')).not.toBeNull();
+
+        accountA.retire();
+        activeAccountLifetimeBoundary.value = createActiveAccountLifetime('account-a');
+        await act(async () => {
+            screen.tree.update(React.createElement(VoiceProviderSection, sectionProps));
+        });
+
+        expect(screen.findHostByTestId('settings.voice.provider.readiness')).toBeNull();
+    }, 120_000);
+
+    it('does not commit a stale passive result after the active Account lifetime restarts', async () => {
+        passiveSetupBoundary.profile = {
+            connectedServicesV2: [{
+                serviceId: 'openai-codex',
+                profiles: [{ profileId: 'codex-profile', status: 'connected', kind: 'oauth' }],
+            }],
+        };
+        passiveSetupBoundary.machineTarget = { daemonStateVersion: 7, isOnline: true };
+        const accountA = createActiveAccountLifetime('account-a');
+        activeAccountLifetimeBoundary.value = accountA;
+        let settlePassiveCheck: ((value: unknown) => void) | null = null;
+        const pendingPassiveCheck = new Promise<unknown>((resolve) => {
+            settlePassiveCheck = resolve;
+        });
+        passiveSetupBoundary.invoke.mockImplementation(async () => await pendingPassiveCheck);
+        onTestFinished(() => {
+            activeAccountLifetimeBoundary.value = null;
+            passiveSetupBoundary.profile = null;
+            passiveSetupBoundary.machineTarget = { daemonStateVersion: 0, isOnline: false };
+            passiveSetupBoundary.state = { status: 'idle' };
+            passiveSetupBoundary.refresh.mockReset();
+        });
+
+        const { VoiceProviderSection } = await import('./VoiceProviderSection');
+        const render = () => React.createElement(VoiceProviderSection, {
+            voice: {
+                providerId: CODEX_PROVIDER_ID,
+                providers: {
+                    [CODEX_PROVIDER_ID]: {
+                        schemaVersion: 2,
+                        config: {
+                            globalConnectedServices: {
+                                v: 1,
+                                bindingsByServiceId: {
+                                    'openai-codex': {
+                                        source: 'connected',
+                                        selection: 'profile',
+                                        profileId: 'codex-profile',
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
+            } as any,
+            setVoice: vi.fn(),
+            happierVoiceSupported: true,
+            platformOs: 'web',
+            executionMachineId: 'machine-1',
+        });
+        const screen = await renderScreen(render());
+
+        await screen.pressByTestIdAsync('settings.voice.provider.checkSetup');
+        accountA.retire();
+        activeAccountLifetimeBoundary.value = createActiveAccountLifetime('account-a');
+        await act(async () => {
+            screen.tree.update(render());
+        });
+        await act(async () => {
+            settlePassiveCheck?.({
+                supported: true,
+                response: { ok: true, result: { v: 1, status: 'ready' } },
+            });
+            await Promise.resolve();
+        });
+
+        expect(screen.findHostByTestId('settings.voice.provider.readiness')).toBeNull();
+    }, 120_000);
+
+    it('does not commit a delayed passive result after the selected daemon restarts', async () => {
+        passiveSetupBoundary.profile = {
+            connectedServicesV2: [{
+                serviceId: 'openai-codex',
+                profiles: [{ profileId: 'codex-profile', status: 'connected', kind: 'oauth' }],
+            }],
+        };
+        passiveSetupBoundary.machineTarget = { daemonStateVersion: 7, isOnline: true };
+        let settlePassiveCheck: ((value: unknown) => void) | null = null;
+        const pendingPassiveCheck = new Promise<unknown>((resolve) => {
+            settlePassiveCheck = resolve;
+        });
+        passiveSetupBoundary.invoke.mockImplementation(async () => await pendingPassiveCheck);
         onTestFinished(() => {
             passiveSetupBoundary.profile = null;
             passiveSetupBoundary.machineTarget = { daemonStateVersion: 0, isOnline: false };
@@ -296,22 +692,92 @@ describe('VoiceProviderSection', () => {
             happierVoiceSupported: true,
             platformOs: 'web',
             executionMachineId: 'machine-1',
-            showProcessingDisclosure: false,
         });
-        const { tree } = await renderScreen(render());
+        const screen = await renderScreen(render());
 
+        await screen.pressByTestIdAsync('settings.voice.provider.checkSetup');
+        passiveSetupBoundary.machineTarget = { daemonStateVersion: 8, isOnline: true };
         await act(async () => {
-            findTestInstanceByTypeWithProps(tree, 'Item' as any, {
-                testID: 'settings.voice.provider.checkSetup',
-            })?.props.onPress();
+            screen.tree.update(render());
+        });
+        await act(async () => {
+            settlePassiveCheck?.({
+                supported: true,
+                response: { ok: true, result: { v: 1, status: 'ready' } },
+            });
+            await Promise.resolve();
         });
 
-        expect(findTestInstanceByTypeWithProps(tree, 'Item' as any, {
-            testID: 'settings.voice.provider.readiness',
-        })).toBeUndefined();
-        expect(tree.root.findAllByProps({
+        expect(screen.findHostByTestId('settings.voice.provider.readiness')).toBeNull();
+    }, 120_000);
+
+    it('keeps the first passive setup check visibly and accessibly checking until it settles', async () => {
+        passiveSetupBoundary.profile = {
+            connectedServicesV2: [{
+                serviceId: 'openai-codex',
+                profiles: [{
+                    profileId: 'codex-profile',
+                    status: 'connected',
+                    kind: 'oauth',
+                }],
+            }],
+        };
+        passiveSetupBoundary.machineTarget = { daemonStateVersion: 7, isOnline: true };
+        passiveSetupBoundary.state = { status: 'loading' };
+        let settlePassiveCheck: ((value: unknown) => void) | null = null;
+        const pendingPassiveCheck = new Promise<unknown>((resolve) => {
+            settlePassiveCheck = resolve;
+        });
+        passiveSetupBoundary.invoke.mockImplementation(async () => await pendingPassiveCheck);
+        onTestFinished(() => {
+            passiveSetupBoundary.profile = null;
+            passiveSetupBoundary.machineTarget = { daemonStateVersion: 0, isOnline: false };
+            passiveSetupBoundary.state = { status: 'idle' };
+            passiveSetupBoundary.refresh.mockReset();
+        });
+
+        const { VoiceProviderSection } = await import('./VoiceProviderSection');
+        const render = () => React.createElement(VoiceProviderSection, {
+            voice: {
+                providerId: CODEX_PROVIDER_ID,
+                providers: {
+                    [CODEX_PROVIDER_ID]: {
+                        schemaVersion: 2,
+                        config: {
+                            globalConnectedServices: {
+                                v: 1,
+                                bindingsByServiceId: {
+                                    'openai-codex': {
+                                        source: 'connected',
+                                        selection: 'profile',
+                                        profileId: 'codex-profile',
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
+            } as any,
+            setVoice: vi.fn(),
+            happierVoiceSupported: true,
+            platformOs: 'web',
+            executionMachineId: 'machine-1',
+        });
+        const screen = await renderScreen(render());
+        const { tree } = screen;
+
+        await screen.pressByTestIdAsync('settings.voice.provider.checkSetup');
+
+        expect(screen.getTextContent()).toContain('settings.updates.checking');
+        const checkingAnnouncers = tree.root.findAllByProps({
             statusTestID: 'settings.voice.provider.readiness-status',
-        })).toHaveLength(0);
+        });
+        expect(checkingAnnouncers).toHaveLength(1);
+        expect(checkingAnnouncers[0]?.props.announcement).toBe('settings.updates.checking');
+
+        expect(screen.findHostByTestId('settings.voice.provider.checkSetup')?.props.disabled).toBe(true);
+        await screen.pressByTestIdAsync('settings.voice.provider.checkSetup');
+        expect(passiveSetupBoundary.invoke).toHaveBeenCalledTimes(1);
 
         passiveSetupBoundary.state = {
             status: 'loaded',
@@ -332,17 +798,32 @@ describe('VoiceProviderSection', () => {
             tree.update(render());
         });
 
-        expect(findTestInstanceByTypeWithProps(tree, 'Item' as any, {
-            testID: 'settings.voice.provider.readiness',
-        })?.props.subtitle).toContain('voice.readiness.runtime_missing');
+        expect(screen.getTextContent()).toContain('settings.updates.checking');
+
+        await act(async () => {
+            settlePassiveCheck?.({
+                supported: true,
+                response: {
+                    ok: true,
+                    result: { v: 1, status: 'feature_disabled' },
+                },
+            });
+            await Promise.resolve();
+        });
+
+        expect(screen.getTextContent()).toContain('voice.readiness.runtime_missing');
         const announcers = tree.root.findAllByProps({
             statusTestID: 'settings.voice.provider.readiness-status',
         });
         expect(announcers).toHaveLength(1);
         expect(announcers[0]?.props.announcement).toContain('voice.readiness.runtime_missing');
+
+        expect(screen.findHostByTestId('settings.voice.provider.checkSetup')?.props.disabled).toBeFalsy();
+        await screen.pressByTestIdAsync('settings.voice.provider.checkSetup');
+        expect(passiveSetupBoundary.invoke).toHaveBeenCalledTimes(2);
     }, 120_000);
 
-    it('withholds the result while refreshing and reports an unknown result on refresh error', async () => {
+    it('does not turn a settled passive check back into checking during a CLI refresh', async () => {
         const unavailableRuntimeSnapshot = {
             response: {
                 protocolVersion: 1,
@@ -403,7 +884,6 @@ describe('VoiceProviderSection', () => {
             happierVoiceSupported: true,
             platformOs: 'web',
             executionMachineId: 'machine-1',
-            showProcessingDisclosure: false,
         });
         const { tree } = await renderScreen(render());
 
@@ -427,10 +907,10 @@ describe('VoiceProviderSection', () => {
         });
         expect(findTestInstanceByTypeWithProps(tree, 'Item' as any, {
             testID: 'settings.voice.provider.readiness',
-        })).toBeUndefined();
+        })?.props.subtitle).toContain('voice.readiness.runtime_missing');
         expect(tree.root.findAllByProps({
             statusTestID: 'settings.voice.provider.readiness-status',
-        })).toHaveLength(0);
+        })[0]?.props.transitionKey).toBe(terminalTransitionKey);
 
         passiveSetupBoundary.state = {
             status: 'error',
@@ -447,7 +927,7 @@ describe('VoiceProviderSection', () => {
         })[0]?.props.transitionKey).not.toBe(terminalTransitionKey);
     }, 120_000);
 
-    it('does not report Codex passive setup ready when the selected execution machine is offline', async () => {
+    it('reports a persisted but unreachable Codex execution target as incompatible', async () => {
         const { VoiceProviderSection } = await import('./VoiceProviderSection');
         const { tree } = await renderScreen(React.createElement(VoiceProviderSection, {
             voice: {
@@ -473,8 +953,9 @@ describe('VoiceProviderSection', () => {
             setVoice: vi.fn(),
             happierVoiceSupported: true,
             platformOs: 'web',
-            executionMachineId: 'machine-1',
-            showProcessingDisclosure: false,
+            executionMachineId: null,
+            executionMachineSelectedId: 'machine-offline',
+            executionMachineSelectionKind: 'selected_unreachable',
         }));
 
         const check = findTestInstanceByTypeWithProps(tree, 'Item' as any, {
@@ -487,15 +968,17 @@ describe('VoiceProviderSection', () => {
         const readiness = findTestInstanceByTypeWithProps(tree, 'Item' as any, {
             testID: 'settings.voice.provider.readiness',
         });
-        expect(readiness?.props.subtitle).toContain('voice.readiness.execution_machine_missing');
+        expect(readiness?.props.subtitle).toContain('voice.readiness.execution_machine_incompatible');
         expect(readiness?.props.subtitle).not.toContain('voice.readiness.ready');
+        expect(JSON.stringify(readiness?.props)).not.toContain('machine-offline');
+        expect(passiveSetupBoundary.invoke).not.toHaveBeenCalled();
     }, 120_000);
 
     it('exposes a generic passive setup check for selected Codex Live without a live-test action', async () => {
         const { VoiceProviderSection } = await import('./VoiceProviderSection');
         const setVoice = vi.fn();
         const onRecoveryAction = vi.fn();
-        const { tree } = await renderScreen(React.createElement(VoiceProviderSection, {
+        const screen = await renderScreen(React.createElement(VoiceProviderSection, {
             voice: {
                 providerId: 'happier.agent.codex/realtime-codex',
                 providers: {
@@ -508,34 +991,40 @@ describe('VoiceProviderSection', () => {
             setVoice,
             happierVoiceSupported: true,
             platformOs: 'web',
-            showProcessingDisclosure: false,
             onRecoveryAction,
         }));
 
-        const check = findTestInstanceByTypeWithProps(tree, 'Item' as any, {
-            testID: 'settings.voice.provider.checkSetup',
-        });
-        expect(check?.props.onPress).toBeTypeOf('function');
-        await act(async () => {
-            check?.props.onPress();
-        });
-        const readiness = findTestInstanceByTypeWithProps(tree, 'Item' as any, {
-            testID: 'settings.voice.provider.readiness',
-        });
-        expect(readiness?.props.subtitle).toContain(
+        await screen.pressByTestIdAsync('settings.voice.provider.checkSetup');
+        expect(screen.getTextContent()).toContain(
             'voice.readiness.settings_missing_required_setting',
         );
-        expect(readiness?.props.subtitle).toContain(
+        expect(screen.getTextContent()).toContain(
             'voice.readiness.actions.open_provider_settings',
         );
-        expect(readiness?.props.subtitle).not.toContain('voice.readiness.ready');
-        await act(async () => {
-            readiness?.props.onPress();
-        });
+        expect(screen.getTextContent()).not.toContain('voice.readiness.ready');
+        expect(screen.findHostByTestId('settings.voice.provider.readiness')?.type).toBe('Pressable');
+        await screen.pressByTestIdAsync('settings.voice.provider.readiness');
         expect(onRecoveryAction).toHaveBeenCalledWith('open_provider_settings');
-        expect(findTestInstanceByTypeWithProps(tree, 'Item' as any, {
-            testID: 'settings.voice.provider.testLive',
-        })).toBeUndefined();
+
+        const withoutRecoveryHandler = await renderScreen(React.createElement(VoiceProviderSection, {
+            voice: {
+                providerId: 'happier.agent.codex/realtime-codex',
+                providers: {
+                    'happier.agent.codex/realtime-codex': {
+                        schemaVersion: 2,
+                        config: { globalConnectedServices: null },
+                    },
+                },
+            } as any,
+            setVoice: vi.fn(),
+            happierVoiceSupported: true,
+            platformOs: 'web',
+        }));
+        await withoutRecoveryHandler.pressByTestIdAsync('settings.voice.provider.checkSetup');
+        const passiveOnlyReadiness = withoutRecoveryHandler.findHostByTestId('settings.voice.provider.readiness');
+        expect(passiveOnlyReadiness?.type).toBe('View');
+        expect(passiveOnlyReadiness?.props.onPress).toBeUndefined();
+        expect(withoutRecoveryHandler.findHostByTestId('settings.voice.provider.testLive')).toBeNull();
         expect(setVoice).not.toHaveBeenCalled();
     }, 120_000);
 
@@ -576,7 +1065,19 @@ describe('VoiceProviderSection', () => {
             hasAccountCredentialSlot: true,
             hasAccountCredentialReference: false,
             accountCredentialApprovalRequired: true,
-        }), providerId).toBe('approval_required');
+        }), providerId).toBe('missing');
+    }, 120_000);
+
+    it('keeps a stale recipient-contract review requirement for an external provider', async () => {
+        const { resolveVoiceProviderCredentialFact: resolveCredentialFact } = await import('./VoiceProviderSection');
+
+        expect(resolveCredentialFact({
+            sourceKind: 'external',
+            projectedCredential: { status: 'missing' },
+            hasAccountCredentialSlot: true,
+            hasAccountCredentialReference: false,
+            accountCredentialApprovalRequired: true,
+        })).toBe('approval_required');
     }, 120_000);
 
     it.each([
@@ -666,6 +1167,9 @@ describe('VoiceProviderSection', () => {
         expect(findTestInstanceByTypeWithProps(tree, 'Item' as any, {
             testID: 'settings.voice.provider.readiness',
         })?.props.subtitle).toContain(expectedReadiness);
+        expect(JSON.stringify(findTestInstanceByTypeWithProps(tree, 'Item' as any, {
+            testID: 'settings.voice.provider.readiness',
+        })?.props)).not.toContain(account.ref.accountId);
     }, 120_000);
 
     it('does not claim a bound Connected Account credential is missing when its descriptor is unavailable', async () => {
@@ -857,8 +1361,11 @@ describe('VoiceProviderSection', () => {
             testID: 'voice-credential-source-api_key',
         });
         expect(sourceField?.props.items).toContainEqual(expect.objectContaining({
-            subtitle: 'codex-work',
+            title: 'Codex',
             disabled: false,
+        }));
+        expect(sourceField?.props.items).not.toContainEqual(expect.objectContaining({
+            subtitle: 'codex-work',
         }));
         const credentialEditor = selected.tree.root.findAll((node) => (
             node.props.contribution?.pluginId === 'happier.voice.openai'
@@ -985,7 +1492,7 @@ describe('VoiceProviderSection', () => {
         expect(JSON.stringify(readiness?.props)).not.toContain(providerId);
     }, 120_000);
 
-    it('shows review-required instead of add-credential when a bundled provider retains a stale approved recipient digest', async () => {
+    it('does not require external-publisher re-review for a bundled provider with a stale digest', async () => {
         const { settingsParse } = await import('@/sync/domains/settings/settings');
         const { createDefaultVoiceProviderRegistry } = await import('@/voice/registry/defaultRegistry');
         const entry = createDefaultVoiceProviderRegistry().get(XAI_PROVIDER_ID);
@@ -1029,12 +1536,6 @@ describe('VoiceProviderSection', () => {
             happierVoiceSupported: true,
             platformOs: 'web',
         }));
-        const row = findTestInstanceByTypeWithProps(tree, 'Item' as any, {
-            testID: `settings.voice.provider.${encodeURIComponent(XAI_PROVIDER_ID)}.byo`,
-        });
-
-        expect(row?.props?.detail).toBe('settingsVoice.externalCredentials.reviewRequired');
-
         await act(async () => {
             findTestInstanceByTypeWithProps(tree, 'Item' as any, {
                 testID: 'settings.voice.provider.checkSetup',
@@ -1043,10 +1544,11 @@ describe('VoiceProviderSection', () => {
         const readiness = findTestInstanceByTypeWithProps(tree, 'Item' as any, {
             testID: 'settings.voice.provider.readiness',
         });
-        expect(readiness?.props.subtitle).toContain('voice.readiness.credential_approval_required');
-        expect(readiness?.props.subtitle).toContain('voice.readiness.actions.review_credential_access');
+        expect(readiness?.props.subtitle).toContain('voice.readiness.ready');
         expect(readiness?.props.subtitle).not.toContain('voice.readiness.credential_missing');
         expect(readiness?.props.subtitle).not.toContain('voice.readiness.actions.configure_credential');
+        expect(readiness?.props.subtitle).not.toContain('voice.readiness.credential_approval_required');
+        expect(readiness?.props.subtitle).not.toContain('voice.readiness.actions.review_credential_access');
     }, 120_000);
 
     it('does not report ElevenLabs ready when its credential is approved but its BYO agent is missing', async () => {
@@ -2101,7 +2603,6 @@ describe('VoiceProviderSection', () => {
             setVoice,
             happierVoiceSupported: true,
             platformOs: 'web',
-            showProcessingDisclosure: false,
         }));
 
         const select = findTestInstanceByTypeWithProps(tree, 'DropdownMenu' as any, {
@@ -2582,7 +3083,6 @@ describe('VoiceProviderSection', () => {
             setVoice,
             happierVoiceSupported: true,
             platformOs: 'web',
-            showProcessingDisclosure: false,
         }));
 
         const fields = tree.findAllByType('VoiceGlobalConnectedServicesBindingField' as any)

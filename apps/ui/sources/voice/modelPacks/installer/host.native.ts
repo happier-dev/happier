@@ -256,10 +256,10 @@ export function createExpoModelPackInstallerHost(opts: {
   fetchImpl: typeof fetch;
   timeoutMs: number;
   /**
-   * Awaited immediately before this pack's live directory bytes change, while
-   * the superseded pack is still the one on disk. Native engines cache by that
-   * stable directory path, so dropping them after the swap would leave a window
-   * in which the replaced pack still serves its predecessor's bytes.
+   * Awaited immediately before and again after this pack's live directory bytes
+   * change. Native engines cache by that stable directory path: the first
+   * retirement drops engines built from the predecessor, and the second closes
+   * the creator window between that retirement and the filesystem mutation.
    */
   invalidatePackRuntime?: InvalidatePackRuntime;
 }): ModelPackInstallerHost {
@@ -275,6 +275,9 @@ export function createExpoModelPackInstallerHost(opts: {
       const freshScratchDir = () => getPackSiblingDir(fs, packId, SCRATCH_SUFFIX);
       const freshBackupDir = () => getPackSiblingDir(fs, packId, BACKUP_SUFFIX);
       const freshIntentFile = () => getPackSiblingFile(fs, packId, INTENT_SUFFIX);
+      const invalidateLivePackRuntime = async (): Promise<void> => {
+        await opts.invalidatePackRuntime?.(getPackRootDir(fs, packId).uri);
+      };
 
       let promoted = false;
       let promotionSettled = false;
@@ -390,7 +393,7 @@ export function createExpoModelPackInstallerHost(opts: {
 
           // The live bytes are about to be replaced: drop everything keyed on this
           // directory while it still holds the superseded pack.
-          await opts.invalidatePackRuntime?.(getPackRootDir(fs, packId).uri);
+          await invalidateLivePackRuntime();
 
           let backupCreated = false;
           let swapWindowClosed = false;
@@ -417,6 +420,12 @@ export function createExpoModelPackInstallerHost(opts: {
             if (rollbackRestored) {
               swapWindowClosed = true;
             }
+            if (swapWindowClosed && !promoted) {
+              // A creator can begin after the pre-swap retirement and before a
+              // failed swap restores the predecessor. Retire it again before
+              // exposing that restored directory to a later attempt.
+              await invalidateLivePackRuntime();
+            }
             throw error;
           } finally {
             if (swapWindowClosed && !promoted) {
@@ -438,6 +447,11 @@ export function createExpoModelPackInstallerHost(opts: {
             },
             commit: async () => {
               if (promotionSettled) return;
+              // A load may have started after the pre-swap invalidation and
+              // completed while the filesystem move was in progress. Retire it
+              // before this promotion can complete, so only a later load can
+              // publish an engine for the successor bytes.
+              await invalidateLivePackRuntime();
               promotionSettled = true;
               tryDelete(freshIntentFile());
               tryDelete(freshBackupDir());
@@ -448,14 +462,16 @@ export function createExpoModelPackInstallerHost(opts: {
               writeIntent();
               // Rollback swaps the promoted bytes back out of the same live path,
               // so anything cached against it is stale again.
-              await opts.invalidatePackRuntime?.(getPackRootDir(fs, packId).uri);
-              deleteRequired(getPackRootDir(fs, packId));
+              await invalidateLivePackRuntime();
+              const liveDir = getPackRootDir(fs, packId);
+              deleteRequired(liveDir);
               if (backupCreated && freshBackupDir().exists) {
                 if (promotionPriorInstall) freshBackupDir().move(getPackRootDir(fs, packId));
                 else deleteRequired(freshBackupDir());
               } else if (promotionPriorInstall) {
                 throw new Error('model_pack_promotion_prior_missing');
               }
+              await invalidateLivePackRuntime();
               promoted = false;
             },
             completeRollback: async () => {
@@ -493,7 +509,7 @@ export async function reconcileExpoModelPackPromotion(opts: {
   fs: InstallerFs;
   packId: string;
   outcome?: 'commit' | 'rollback';
-  /** Awaited before a rollback rewrites the live directory (see `createExpoModelPackInstallerHost`). */
+  /** Awaited on both sides of a rollback that rewrites the live directory (see `createExpoModelPackInstallerHost`). */
   invalidatePackRuntime?: InvalidatePackRuntime;
 }): Promise<boolean> {
   return reconcileExpoModelPackPromotionOwned(opts);
@@ -567,15 +583,20 @@ async function reconcileExpoModelPackPromotionOwned(opts: {
   }
 
   let restored = false;
+  let liveBytesMutated = false;
 
   if (backupDir.exists) {
     // Crash in the swap window: roll back to the prior install. The live bytes
     // change here too, so this is a live-directory mutation like promote/remove.
     await opts.invalidatePackRuntime?.(liveDir.uri);
     try {
-      if (liveDir.exists) deleteRequired(liveDir);
+      if (liveDir.exists) {
+        deleteRequired(liveDir);
+        liveBytesMutated = true;
+      }
       if (intent.priorInstall) {
         backupDir.move(getPackRootDir(fs, packId));
+        liveBytesMutated = true;
         restored = true;
       } else {
         deleteRequired(backupDir);
@@ -589,9 +610,17 @@ async function reconcileExpoModelPackPromotionOwned(opts: {
     throw new Error('model_pack_promotion_prior_missing');
   } else if (liveDir.exists && !intent.priorInstall) {
     // Uncommitted first install has no prior tree to restore.
+    await opts.invalidatePackRuntime?.(liveDir.uri);
     deleteRequired(liveDir);
+    liveBytesMutated = true;
   }
 
+  if (liveBytesMutated) {
+    // A creator can start after the pre-mutation retirement and load bytes that
+    // this recovery just replaced or deleted. Close that window before removing
+    // the durable marker that tells a later caller reconciliation is complete.
+    await opts.invalidatePackRuntime?.(liveDir.uri);
+  }
   deleteRequired(getPackSiblingFile(fs, packId, INTENT_SUFFIX));
   return restored;
 }
@@ -604,7 +633,7 @@ export async function removeExpoModelPackWithHost(opts: {
   fs: InstallerFs;
   packId: string;
   signal?: AbortSignal;
-  /** Awaited before the live directory is deleted (see `createExpoModelPackInstallerHost`). */
+  /** Awaited on both sides of a live-directory deletion (see `createExpoModelPackInstallerHost`). */
   invalidatePackRuntime?: InvalidatePackRuntime;
 }): Promise<void> {
   const { fs, packId, signal } = opts;
@@ -619,8 +648,17 @@ export async function removeExpoModelPackWithHost(opts: {
 
     deleteRequired(getPackSiblingDir(fs, packId, SCRATCH_SUFFIX));
     throwIfRemoveAborted(signal);
-    await opts.invalidatePackRuntime?.(getPackRootDir(fs, packId).uri);
-    deleteRequired(getPackRootDir(fs, packId));
+    const liveDir = getPackRootDir(fs, packId);
+    const hadLivePack = liveDir.exists;
+    await opts.invalidatePackRuntime?.(liveDir.uri);
+    deleteRequired(liveDir);
+    if (hadLivePack) {
+      // The first retirement only reaches engines already published. A creator
+      // that began in the interval before this delete can finish against the
+      // predecessor bytes, so retire the directory again before remove reports
+      // success (or observes a late caller abort).
+      await opts.invalidatePackRuntime?.(liveDir.uri);
+    }
     throwIfRemoveAborted(signal);
     deleteRequired(getPackSiblingDir(fs, packId, BACKUP_SUFFIX));
     throwIfRemoveAborted(signal);

@@ -2,7 +2,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   createRecipientContractDigestV1,
   normalizeRecipientContractV1,
+  VoiceProviderContributionSchema,
 } from '@happier-dev/protocol';
+import {
+  captureActiveServerAccountScopeLifetime,
+  retireActiveServerAccountScopeLifetime,
+} from '@/sync/domains/scope/activeServerAccountScope';
+import { sync } from '@/sync/sync';
 
 import {
   createAccountVoiceCredentialAuthorityLease,
@@ -52,13 +58,12 @@ type TestConnectedAccountPurposeBindings = Readonly<{
   }>[];
 }>;
 
-function createAccountVoiceOperationService(
-  input: Omit<Parameters<typeof createQualifiedAccountVoiceOperationService>[0], 'contribution'>,
-) {
-  return createQualifiedAccountVoiceOperationService({ ...input, contribution });
-}
-
 const mocks = vi.hoisted(() => ({
+  activeServerId: 'server-1',
+  activeProfileScope: Object.freeze({ serverId: 'server-1', accountId: 'account-1' }) as Readonly<{
+    serverId: string;
+    accountId: string;
+  }> | null,
   state: {
     settingsScope: Object.freeze({ serverId: 'server-1', accountId: 'account-1' }) as Readonly<{
       serverId: string;
@@ -117,6 +122,14 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('@/sync/domains/state/storage', () => ({
   storage: { getState: () => mocks.state },
+}));
+
+vi.mock('@/sync/domains/server/serverRuntime', () => ({
+  getActiveServerSnapshot: () => ({ serverId: mocks.activeServerId }),
+}));
+
+vi.mock('@/sync/domains/state/storageStateReaderBridge', () => ({
+  readRegisteredStorageState: () => ({ profileScope: mocks.activeProfileScope }),
 }));
 
 vi.mock('@/sync/sync', () => ({
@@ -247,6 +260,52 @@ const recipientContract = normalizeRecipientContractV1({
 });
 const recipientContractDigest = createRecipientContractDigestV1(recipientContract);
 
+const phaseSeparatedCredentialDeclaration = VoiceProviderContributionSchema.parse({
+  id: contribution.localId,
+  title: 'OpenAI Realtime',
+  kind: 'conversation',
+  roles: ['realtime_conversation'],
+  platforms: ['web'],
+  capabilities: { turn: { cancelResponse: true, bargeIn: false } },
+  credentials: {
+    slot: { id: 'api_key', purpose: 'voice.client-auth', title: 'API key' },
+    requirement: { kind: 'always' },
+    sources: [{
+      kind: 'savedSecret',
+      secretKinds: ['apiKey'],
+      operationProjections: [{
+        kind: 'recipientCredential',
+        operation: 'client-auth',
+        phase: 'connection',
+        format: 'bearer',
+      }],
+    }, {
+      kind: 'connectedAccount',
+      service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
+      operationProjections: [{
+        kind: 'materializedHttpHeaders',
+        operation: 'client-auth',
+        phase: 'prepare',
+        request: {
+          kind: 'httpHeaders',
+          origin: 'https://api.openai.com',
+          headerNames: ['authorization'],
+        },
+        allowedHeaderNames: ['authorization'],
+      }],
+    }],
+    hostMediated: { operations: recipientContract.operations },
+  },
+  client: {
+    artifactId: 'voice-runtime-web',
+    modulePath: './voiceRuntime',
+    exportName: 'activate',
+  },
+});
+if (phaseSeparatedCredentialDeclaration.kind !== 'conversation') {
+  throw new Error('expected conversation credential declaration');
+}
+
 /**
  * The same declaration published by a party that could rewrite where the raw
  * key is sent. Only this publisher class carries a re-approval fence.
@@ -279,6 +338,83 @@ const multiPurposeRecipientContract = normalizeRecipientContractV1({
   ],
 });
 
+const defaultCredentialDeclaration = (() => {
+  const declaration = VoiceProviderContributionSchema.parse({
+  id: contribution.localId,
+  title: 'OpenAI Realtime',
+  kind: 'conversation',
+  roles: ['realtime_conversation'],
+  platforms: ['web'],
+  capabilities: { turn: { cancelResponse: true, bargeIn: false } },
+  credentials: {
+    slot: { id: 'api_key', purpose: 'voice.client-auth', title: 'API key' },
+    requirement: { kind: 'always' },
+    sources: [{
+      kind: 'savedSecret',
+      secretKinds: ['apiKey'],
+      operationProjections: multiPurposeRecipientContract.operations.map((operation) => ({
+        kind: 'recipientCredential' as const,
+        operation: operation.id,
+        phase: 'prepare' as const,
+        format: 'bearer' as const,
+      })),
+    }, {
+      kind: 'connectedAccount',
+      service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
+      operationProjections: [{
+        kind: 'materializedHttpHeaders',
+        operation: 'client-auth',
+        phase: 'prepare',
+        request: {
+          kind: 'httpHeaders',
+          origin: 'https://api.openai.com',
+          headerNames: ['authorization', 'chatgpt-account-id'],
+        },
+        allowedHeaderNames: ['authorization', 'chatgpt-account-id'],
+      }],
+    }, {
+      kind: 'connectedAccount',
+      service: { pluginId: 'happier.voice.openai', localId: 'openai' },
+      operationProjections: [{
+        kind: 'materializedHttpHeaders',
+        operation: 'voices',
+        phase: 'prepare',
+        request: {
+          kind: 'httpHeaders',
+          origin: 'https://api.openai.com',
+          headerNames: ['authorization'],
+        },
+        allowedHeaderNames: ['authorization'],
+      }],
+    }],
+    hostMediated: { operations: multiPurposeRecipientContract.operations },
+  },
+  client: {
+    artifactId: 'voice-runtime-web',
+    modulePath: './voiceRuntime',
+    exportName: 'activate',
+  },
+  });
+  if (declaration.kind !== 'conversation') {
+    throw new Error('expected conversation credential declaration');
+  }
+  return declaration;
+})();
+
+function createAccountVoiceOperationService(
+  input: Omit<
+    Parameters<typeof createQualifiedAccountVoiceOperationService>[0],
+    'contribution' | 'declaration' | 'phase'
+  >,
+) {
+  return createQualifiedAccountVoiceOperationService({
+    ...input,
+    contribution,
+    declaration: defaultCredentialDeclaration,
+    phase: 'prepare',
+  });
+}
+
 function requestClientAuth(service: ReturnType<typeof createAccountVoiceOperationService>) {
   return service.request({
     operationId: 'client-auth',
@@ -295,8 +431,18 @@ function requestClientAuth(service: ReturnType<typeof createAccountVoiceOperatio
   });
 }
 
+function retireAndReenterSameAccount(): void {
+  mocks.activeProfileScope = null;
+  retireActiveServerAccountScopeLifetime();
+  mocks.activeProfileScope = Object.freeze({ serverId: 'server-1', accountId: 'account-1' });
+  captureActiveServerAccountScopeLifetime();
+}
+
 describe('account Voice operation service', () => {
   beforeEach(() => {
+    retireActiveServerAccountScopeLifetime();
+    mocks.activeServerId = 'server-1';
+    mocks.activeProfileScope = Object.freeze({ serverId: 'server-1', accountId: 'account-1' });
     mocks.state = {
       settingsScope: Object.freeze({ serverId: 'server-1', accountId: 'account-1' }),
       settings: createSettings('secret-1', 1),
@@ -428,6 +574,71 @@ describe('account Voice operation service', () => {
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(new TextDecoder().decode(response.body)).toContain('short-lived-client-auth');
     expect(new TextDecoder().decode(response.body)).not.toContain('account-secret');
+  });
+
+  it('rejects a selected SavedSecret when only a different source projects the operation into the host phase', async () => {
+    const materializeSecret = vi.fn(async () => 'account-secret');
+    const fetch = vi.fn(async () => new Response(JSON.stringify({
+      value: 'short-lived-client-auth',
+      expires_at: Math.floor(Date.now() / 1_000) + 60,
+    }), { status: 200, headers: { 'content-type': 'application/json' } }));
+    // The selected SavedSecret projects client-auth only for `connection`,
+    // while this host service owns the distinct `prepare` phase.
+    const phaseBoundInput: Parameters<typeof createQualifiedAccountVoiceOperationService>[0] = {
+      providerId: 'happier.voice.openai/realtime-openai',
+      contribution,
+      recipientContract,
+      declaration: phaseSeparatedCredentialDeclaration,
+      phase: 'prepare',
+      signal: new AbortController().signal,
+      isCurrent: () => true,
+      fetch,
+      materializeSecret,
+    };
+    const service = createQualifiedAccountVoiceOperationService(phaseBoundInput);
+
+    await expect(requestClientAuth(service)).rejects.toMatchObject({
+      code: 'voice_account_operation_unauthorized',
+    });
+    expect(materializeSecret).not.toHaveBeenCalled();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('does not fetch when the selected credential source changes while materialization is already in flight', async () => {
+    const fetch = vi.fn();
+    const materializeSecret = vi.fn(async () => {
+      // The source changes after the pre-materialization fence. The
+      // post-materialization fence must still prevent the provider request.
+      const replacement = createSettings('secret-1', 2);
+      mocks.state = {
+        ...mocks.state,
+        settings: {
+          ...replacement,
+          voiceSettingsV1: {
+            ...replacement.voiceSettingsV1,
+            credentialBindings: [{
+              ...replacement.voiceSettingsV1.credentialBindings[0]!,
+              credentialSource: { kind: 'none' as const },
+            }],
+          },
+        },
+      };
+      return 'account-secret';
+    });
+    const service = createAccountVoiceOperationService({
+      providerId: 'happier.voice.openai/realtime-openai',
+      recipientContract,
+      signal: new AbortController().signal,
+      isCurrent: () => true,
+      fetch,
+      materializeSecret,
+    });
+
+    await expect(requestClientAuth(service)).rejects.toMatchObject({
+      code: 'voice_account_operation_cancelled',
+    });
+    expect(materializeSecret).toHaveBeenCalledOnce();
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   it('inspects SavedSecret availability without materializing the secret or calling the provider', async () => {
@@ -1052,25 +1263,47 @@ describe('account Voice operation service', () => {
     await expect(pending).rejects.toMatchObject({ code: 'voice_account_operation_cancelled' });
   });
 
-  it('withdraws authority when the account credential binding rotates during materialization', async () => {
-    const fetch = vi.fn(async () => new Response(JSON.stringify({
-      value: 'short-lived-client-auth',
-      expires_at: Math.floor(Date.now() / 1_000) + 60,
-    }), { status: 200, headers: { 'content-type': 'application/json' } }));
+  it('does not decrypt after the selected credential source switches between authorization and materialization', async () => {
+    const fetch = vi.fn();
+    const decryptSecretValue = vi.spyOn(sync, 'decryptSecretValue');
+    let currentnessChecks = 0;
     const service = createAccountVoiceOperationService({
       providerId: 'happier.voice.openai/realtime-openai',
       recipientContract,
       signal: new AbortController().signal,
-      isCurrent: () => true,
-      fetch,
-      materializeSecret: async () => {
-        mocks.state = { ...mocks.state, settings: createSettings('secret-2', 2) };
-        return 'account-secret';
+      isCurrent: () => {
+        currentnessChecks += 1;
+        // Request admission is the first check and authorization is the
+        // second. Switching away from SavedSecret immediately before materialization
+        // must prevent secret disclosure altogether.
+        if (currentnessChecks === 3) {
+          const replacement = createSettings('secret-1', 1);
+          mocks.state = {
+            ...mocks.state,
+            settings: {
+              ...replacement,
+              voiceSettingsV1: {
+                ...replacement.voiceSettingsV1,
+                credentialBindings: [{
+                  ...replacement.voiceSettingsV1.credentialBindings[0]!,
+                  credentialSource: { kind: 'none' as const },
+                }],
+              },
+            },
+          };
+        }
+        return true;
       },
+      fetch,
     });
 
-    await expect(requestClientAuth(service)).rejects.toMatchObject({ code: 'voice_account_operation_cancelled' });
-    expect(fetch).not.toHaveBeenCalled();
+    try {
+      await expect(requestClientAuth(service)).rejects.toMatchObject({ code: 'voice_account_operation_cancelled' });
+      expect(decryptSecretValue).not.toHaveBeenCalled();
+      expect(fetch).not.toHaveBeenCalled();
+    } finally {
+      decryptSecretValue.mockRestore();
+    }
   });
 
   it('withdraws authority when the account credential binding rotates while reading the response', async () => {
@@ -1097,6 +1330,190 @@ describe('account Voice operation service', () => {
     });
 
     await expect(requestClientAuth(service)).rejects.toMatchObject({ code: 'voice_account_operation_cancelled' });
+  });
+
+  it('keeps a selected SavedSecret operation current when an unrelated Account Settings entry changes', async () => {
+    const fetch = vi.fn(async () => {
+      const settings = structuredClone(mocks.state.settings);
+      mocks.state = {
+        ...mocks.state,
+        settings: {
+          ...settings,
+          secrets: [
+            ...settings.secrets,
+            {
+              id: 'unrelated-secret',
+              name: 'Unrelated',
+              kind: 'apiKey' as const,
+              encryptedValue: { _isSecretValue: true as const, value: 'unrelated-secret-value' },
+              createdAt: 2,
+              updatedAt: 2,
+            },
+          ],
+        },
+      };
+      return new Response(JSON.stringify({
+        value: 'short-lived-client-auth',
+        expires_at: Math.floor(Date.now() / 1_000) + 60,
+      }), { status: 200, headers: { 'content-type': 'application/json' } });
+    });
+    const service = createAccountVoiceOperationService({
+      providerId: 'happier.voice.openai/realtime-openai',
+      recipientContract,
+      signal: new AbortController().signal,
+      isCurrent: () => true,
+      fetch,
+      materializeSecret: async () => 'account-secret',
+    });
+
+    await expect(requestClientAuth(service)).resolves.toMatchObject({ status: 200 });
+  });
+
+  it('keeps a selected Connected Account operation current when an unrelated Account Settings entry changes', async () => {
+    const selectedSettings = createSettings('secret-1', 1);
+    mocks.state = {
+      ...mocks.state,
+      settings: {
+        ...selectedSettings,
+        voiceSettingsV1: {
+          ...selectedSettings.voiceSettingsV1,
+          credentialBindings: [{
+            ...selectedSettings.voiceSettingsV1.credentialBindings[0]!,
+            credentialSource: { kind: 'connectedAccount' as const },
+          }],
+        },
+        connectedAccountPurposeBindingsV1: {
+          v: 1 as const,
+          bindings: [{
+            purpose: { consumer: contribution, purpose: 'voice.client-auth' },
+            target: {
+              kind: 'account' as const,
+              account: {
+                service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
+                accountId: 'codex-work',
+              },
+            },
+          }],
+        },
+      },
+    };
+    const fetch = vi.fn(async () => {
+      const settings = structuredClone(mocks.state.settings);
+      mocks.state = {
+        ...mocks.state,
+        settings: {
+          ...settings,
+          secrets: [
+            ...settings.secrets,
+            {
+              id: 'unrelated-secret',
+              name: 'Unrelated',
+              kind: 'apiKey' as const,
+              encryptedValue: { _isSecretValue: true as const, value: 'unrelated-secret-value' },
+              createdAt: 2,
+              updatedAt: 2,
+            },
+          ],
+        },
+      };
+      return new Response(JSON.stringify({
+        value: 'short-lived-client-auth',
+        expires_at: Math.floor(Date.now() / 1_000) + 60,
+      }), { status: 200, headers: { 'content-type': 'application/json' } });
+    });
+    const service = createAccountVoiceOperationService({
+      providerId: 'happier.voice.openai/realtime-openai',
+      recipientContract,
+      signal: new AbortController().signal,
+      isCurrent: () => true,
+      fetch,
+      materializeSecret: async () => 'must-not-materialize',
+      materializeConnectedAccountHeaders: async () => ({
+        authorization: 'Bearer codex-access-token',
+        'chatgpt-account-id': 'account-work',
+      }),
+    });
+
+    await expect(requestClientAuth(service)).resolves.toMatchObject({ status: 200 });
+  });
+
+  it('invalidates an in-flight SavedSecret operation after logout and same-Account reentry', async () => {
+    const fetch = vi.fn(async () => {
+      retireAndReenterSameAccount();
+      return new Response(JSON.stringify({
+        value: 'short-lived-client-auth',
+        expires_at: Math.floor(Date.now() / 1_000) + 60,
+      }), { status: 200, headers: { 'content-type': 'application/json' } });
+    });
+    const service = createAccountVoiceOperationService({
+      providerId: 'happier.voice.openai/realtime-openai',
+      recipientContract,
+      signal: new AbortController().signal,
+      isCurrent: () => true,
+      fetch,
+      materializeSecret: async () => 'account-secret',
+    });
+
+    await expect(requestClientAuth(service)).rejects.toMatchObject({
+      code: 'voice_account_operation_cancelled',
+    });
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+
+  it('invalidates an in-flight Connected Account operation after logout and same-Account reentry', async () => {
+    const selectedSettings = createSettings('secret-1', 1);
+    mocks.state = {
+      ...mocks.state,
+      settings: {
+        ...selectedSettings,
+        voiceSettingsV1: {
+          ...selectedSettings.voiceSettingsV1,
+          credentialBindings: [{
+            ...selectedSettings.voiceSettingsV1.credentialBindings[0]!,
+            credentialSource: { kind: 'connectedAccount' as const },
+          }],
+        },
+        connectedAccountPurposeBindingsV1: {
+          v: 1 as const,
+          bindings: [{
+            purpose: { consumer: contribution, purpose: 'voice.client-auth' },
+            target: {
+              kind: 'account' as const,
+              account: {
+                service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
+                accountId: 'codex-work',
+              },
+            },
+          }],
+        },
+      },
+    };
+    const fetch = vi.fn(async () => {
+      retireAndReenterSameAccount();
+      return new Response(JSON.stringify({
+        value: 'short-lived-client-auth',
+        expires_at: Math.floor(Date.now() / 1_000) + 60,
+      }), { status: 200, headers: { 'content-type': 'application/json' } });
+    });
+    const materializeConnectedAccountHeaders = vi.fn(async () => ({
+      authorization: 'Bearer codex-access-token',
+      'chatgpt-account-id': 'account-work',
+    }));
+    const service = createAccountVoiceOperationService({
+      providerId: 'happier.voice.openai/realtime-openai',
+      recipientContract,
+      signal: new AbortController().signal,
+      isCurrent: () => true,
+      fetch,
+      materializeSecret: async () => 'must-not-materialize',
+      materializeConnectedAccountHeaders,
+    });
+
+    await expect(requestClientAuth(service)).rejects.toMatchObject({
+      code: 'voice_account_operation_cancelled',
+    });
+    expect(materializeConnectedAccountHeaders).toHaveBeenCalledOnce();
+    expect(fetch).toHaveBeenCalledOnce();
   });
 
   it('preserves authority when settings sync rehydrates the same account credential during the response', async () => {

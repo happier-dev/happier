@@ -41,7 +41,12 @@ export type RealtimeToolValidation =
 export type RealtimeToolEffectClass = 'read_only' | 'mutation' | 'external';
 
 export type RealtimeToolBarrierResult = Readonly<{
-  status: 'submitted' | 'cancelled' | 'failed';
+  /**
+   * `detached` is a delivery-only interruption. Completed results stay
+   * attempt-owned so the controller can redeliver them with current redaction
+   * only after the provider has proven that its response/call identity holds.
+   */
+  status: 'submitted' | 'cancelled' | 'detached' | 'failed';
   results: readonly VoiceRealtimeToolResultV1[];
 }>;
 
@@ -60,14 +65,19 @@ type RealtimeToolBarrierDeps = Readonly<{
   timeoutMs?: number;
   maxResponses?: number;
   maxCallsPerResponse?: number;
-  maxEffectOutcomes?: number;
 }>;
 
 type ResponseRecord = {
   fingerprint: string;
+  calls: readonly VoiceRealtimeToolCallV1[];
+  /** Terminal attempt/call cancellation; never used for a transport detach. */
   controller: AbortController;
+  /** The current provider-delivery leg, independently abortable on detach. */
+  deliveryController: AbortController;
+  detached: boolean;
   promise: Promise<RealtimeToolBarrierResult>;
   settled: boolean;
+  result: RealtimeToolBarrierResult | null;
 };
 
 type EffectOutcomeRecord = {
@@ -172,7 +182,6 @@ export function createRealtimeToolBarrier(deps: RealtimeToolBarrierDeps) {
   const timeoutMs = clampPositiveInteger(deps.timeoutMs, 30_000);
   const maxResponses = clampPositiveInteger(deps.maxResponses, 128);
   const maxCallsPerResponse = clampPositiveInteger(deps.maxCallsPerResponse, 64);
-  const maxEffectOutcomes = clampPositiveInteger(deps.maxEffectOutcomes, 8_192);
   const responses = new Map<string, ResponseRecord>();
   const effectOutcomes = new Map<string, EffectOutcomeRecord>();
   let disposed = false;
@@ -180,9 +189,74 @@ export function createRealtimeToolBarrier(deps: RealtimeToolBarrierDeps) {
   const evictSettledResponses = (targetSize: number): void => {
     if (responses.size <= targetSize) return;
     for (const [responseId, record] of responses) {
-      if (!record.settled) continue;
+      // A failed delivery still owns a completed result.
+      // Keep that bounded same-call custody until it is redelivered or the
+      // attempt disposes; evicting it would turn a replay into re-execution.
+      if (
+        !record.settled
+        || record.result?.status === 'failed'
+        || record.result?.status === 'detached'
+      ) continue;
       responses.delete(responseId);
       if (responses.size <= targetSize) return;
+    }
+  };
+
+  const resetDeliveryController = (record: ResponseRecord): void => {
+    record.deliveryController.abort();
+    const deliveryController = new AbortController();
+    if (record.controller.signal.aborted) deliveryController.abort();
+    else record.controller.signal.addEventListener(
+      'abort',
+      () => deliveryController.abort(),
+      { once: true },
+    );
+    record.deliveryController = deliveryController;
+  };
+
+  const redactCompletedResults = (
+    results: readonly VoiceRealtimeToolResultV1[],
+    calls: readonly VoiceRealtimeToolCallV1[],
+  ): readonly VoiceRealtimeToolResultV1[] => Object.freeze(results.map((result, index) => {
+    if (result.status !== 'success') return result;
+    const call = calls[index]!;
+    try {
+      const output = VoiceRealtimeJsonValueSchema.parse(deps.redactResult(result.output, call));
+      return VoiceRealtimeToolResultV1Schema.parse({ ...result, output });
+    } catch {
+      return terminalResult(call, 'error', 'redaction_failed');
+    }
+  }));
+
+  const submitCompletedResults = async (
+    responseId: string,
+    results: readonly VoiceRealtimeToolResultV1[],
+    record: ResponseRecord,
+  ): Promise<RealtimeToolBarrierResult> => {
+    const redactedResults = redactCompletedResults(results, record.calls);
+    const executionSignal = record.controller.signal;
+    const deliverySignal = record.deliveryController.signal;
+    const deliveryDetached = (): boolean => record.detached && !executionSignal.aborted;
+    if (executionSignal.aborted) return Object.freeze({ status: 'cancelled', results: redactedResults });
+    if (deliveryDetached()) return Object.freeze({ status: 'detached', results: redactedResults });
+    try {
+      await raceWithAbort(
+        () => deps.submitResults(responseId, redactedResults, deliverySignal),
+        deliverySignal,
+      );
+      if (executionSignal.aborted) return Object.freeze({ status: 'cancelled', results: redactedResults });
+      if (deliveryDetached()) return Object.freeze({ status: 'detached', results: redactedResults });
+      await raceWithAbort(
+        () => deps.continueResponse(responseId, deliverySignal),
+        deliverySignal,
+      );
+      if (executionSignal.aborted) return Object.freeze({ status: 'cancelled', results: redactedResults });
+      if (deliveryDetached()) return Object.freeze({ status: 'detached', results: redactedResults });
+      return Object.freeze({ status: 'submitted', results: redactedResults });
+    } catch {
+      if (executionSignal.aborted) return Object.freeze({ status: 'cancelled', results: redactedResults });
+      if (deliveryDetached()) return Object.freeze({ status: 'detached', results: redactedResults });
+      return Object.freeze({ status: 'failed', results: redactedResults });
     }
   };
 
@@ -261,9 +335,6 @@ export function createRealtimeToolBarrier(deps: RealtimeToolBarrierDeps) {
           effectOutcome = existingOutcome;
           execution = effectOutcome.promise;
         } else {
-          if (effectOutcomes.size >= maxEffectOutcomes) {
-            return terminalResult(call, 'error', 'tool_outcome_capacity_exceeded');
-          }
           const initialExecution = executeAndRedact();
           const record: EffectOutcomeRecord = {
             fingerprint,
@@ -312,8 +383,9 @@ export function createRealtimeToolBarrier(deps: RealtimeToolBarrierDeps) {
   const executeResponse = async (
     responseId: string,
     calls: readonly VoiceRealtimeToolCallV1[],
-    controller: AbortController,
+    record: ResponseRecord,
   ): Promise<RealtimeToolBarrierResult> => {
+    const controller = record.controller;
     const retainedEffectResults = (): readonly VoiceRealtimeToolResultV1[] => Object.freeze(
       calls.flatMap((call) => {
         const outcome = effectOutcomes.get(call.callId);
@@ -328,38 +400,11 @@ export function createRealtimeToolBarrier(deps: RealtimeToolBarrierDeps) {
     if (controller.signal.aborted) {
       return Object.freeze({ status: 'cancelled', results: retainedEffectResults() });
     }
-    const results = Object.freeze(completedResults.map((result, index) => {
-      if (result.status !== 'success') return result;
-      const call = calls[index]!;
-      try {
-        const output = VoiceRealtimeJsonValueSchema.parse(deps.redactResult(result.output, call));
-        return VoiceRealtimeToolResultV1Schema.parse({ ...result, output });
-      } catch {
-        return terminalResult(call, 'error', 'redaction_failed');
-      }
-    }));
-    try {
-      await raceWithAbort(
-        () => deps.submitResults(responseId, results, controller.signal),
-        controller.signal,
-      );
-      if (controller.signal.aborted) {
-        return Object.freeze({ status: 'cancelled', results: retainedEffectResults() });
-      }
-      await raceWithAbort(
-        () => deps.continueResponse(responseId, controller.signal),
-        controller.signal,
-      );
-      if (controller.signal.aborted) {
-        return Object.freeze({ status: 'cancelled', results: retainedEffectResults() });
-      }
-      return Object.freeze({ status: 'submitted', results });
-    } catch {
-      if (controller.signal.aborted) {
-        return Object.freeze({ status: 'cancelled', results: retainedEffectResults() });
-      }
-      return Object.freeze({ status: 'failed', results });
+    const submission = await submitCompletedResults(responseId, completedResults, record);
+    if (submission.status === 'cancelled') {
+      return Object.freeze({ status: 'cancelled', results: retainedEffectResults() });
     }
+    return submission;
   };
 
   const run = async (input: Readonly<{
@@ -385,6 +430,33 @@ export function createRealtimeToolBarrier(deps: RealtimeToolBarrierDeps) {
     const existing = responses.get(responseId);
     if (existing) {
       if (existing.fingerprint !== fingerprint) throw new RealtimeToolBarrierError('response_conflict');
+      if (
+        existing.settled
+        && (existing.result?.status === 'failed' || existing.result?.status === 'detached')
+      ) {
+        // The controller calls `run` again only after the provider has proven
+        // same-response custody on a resumed transport. Reapply current
+        // redaction to its retained result without re-entering authorization
+        // or execution.
+        existing.detached = false;
+        resetDeliveryController(existing);
+        existing.settled = false;
+        existing.promise = submitCompletedResults(
+          responseId,
+          existing.result.results,
+          existing,
+        ).then((result) => {
+          existing.result = result;
+          existing.settled = true;
+          if (result.status === 'cancelled' && responses.get(responseId) === existing) {
+            responses.delete(responseId);
+          }
+          return result;
+        }).finally(() => {
+          existing.settled = true;
+          evictSettledResponses(maxResponses);
+        });
+      }
       return await existing.promise;
     }
 
@@ -399,14 +471,20 @@ export function createRealtimeToolBarrier(deps: RealtimeToolBarrierDeps) {
     else input.signal?.addEventListener('abort', abort, { once: true });
     const record: ResponseRecord = {
       fingerprint,
+      calls,
       controller,
+      deliveryController: new AbortController(),
+      detached: false,
       settled: false,
+      result: null,
       promise: Promise.resolve({ status: 'cancelled', results: [] }),
     };
-    record.promise = executeResponse(responseId, calls, controller)
+    resetDeliveryController(record);
+    record.promise = executeResponse(responseId, calls, record)
       .then((result) => {
         record.settled = true;
-        if (result.status !== 'submitted' && responses.get(responseId) === record) {
+        record.result = result;
+        if (result.status === 'cancelled' && responses.get(responseId) === record) {
           responses.delete(responseId);
         }
         return result;
@@ -422,6 +500,19 @@ export function createRealtimeToolBarrier(deps: RealtimeToolBarrierDeps) {
 
   return Object.freeze({
     run,
+    /**
+     * A reconnect loses only this provider delivery leg. It must not abort
+     * execution: completed results remain in this attempt-local response
+     * record until the controller can prove same-call resumption.
+     */
+    detach: (responseId: string): boolean => {
+      const record = responses.get(responseId);
+      if (!record || record.settled) return false;
+      record.detached = true;
+      record.deliveryController.abort();
+      return true;
+    },
+    /** Terminal response cancellation, distinct from a transport detach. */
     cancel: (responseId: string): boolean => {
       const record = responses.get(responseId);
       if (!record || record.settled) return false;

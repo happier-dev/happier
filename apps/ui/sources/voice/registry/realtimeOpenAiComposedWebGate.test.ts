@@ -138,6 +138,10 @@ function openAiEntry() {
 const OPENAI_HISTORY_SESSION_ID = 'voice-history-openai-composed';
 const OPENAI_SOURCE_CREDENTIAL = 'sk_source_composed';
 
+function transcriptMessageUrl(sessionId: string): string {
+  return `https://openai-composed.example.test/v2/sessions/${encodeURIComponent(sessionId)}/messages`;
+}
+
 function buildToken(accountId: string): string {
   const encode = (value: unknown) =>
     encodeBase64(new TextEncoder().encode(JSON.stringify(value)), 'base64url');
@@ -588,6 +592,7 @@ function createSourceComposedOpenAiRuntime(
           signal: AbortSignal,
           _conversationSessionId: string | null,
           isCurrent: () => boolean,
+          phase: 'settings' | 'prepare' | 'connection',
         ) => {
           if (options?.createInvocationAccountOperations) {
             const accountOperations = options.createInvocationAccountOperations(
@@ -603,6 +608,8 @@ function createSourceComposedOpenAiRuntime(
               pluginId: entry.pluginId,
               localId: entry.declaration.id,
             },
+            declaration: entry.declaration,
+            phase,
             recipientContract,
             signal,
             isCurrent,
@@ -715,9 +722,9 @@ function buildLiveShapedOpenAiTurnEvents(): readonly Readonly<Record<string, unk
       },
       { type: 'response.content_part.added', event_id: `${prefix}_content_part_added`, response_id: responseId, item_id: assistantItem, output_index: 0, content_index: 0, part: { type: 'audio', transcript: '' } },
       { type: 'response.output_audio_transcript.delta', event_id: `${prefix}_assistant_delta_1`, response_id: responseId, item_id: assistantItem, output_index: 0, content_index: 0, delta: assistantHead },
-      { type: 'response.output_audio.delta', event_id: `${prefix}_audio_delta_1`, response_id: responseId, item_id: assistantItem, output_index: 0, content_index: 0, delta: 'AAAA' },
+      { type: 'output_audio_buffer.started', event_id: `${prefix}_audio_buffer_started`, response_id: responseId },
       { type: 'response.output_audio_transcript.delta', event_id: `${prefix}_assistant_delta_2`, response_id: responseId, item_id: assistantItem, output_index: 0, content_index: 0, delta: turn.assistantText.slice(8) },
-      { type: 'response.output_audio.done', event_id: `${prefix}_audio_done`, response_id: responseId, item_id: assistantItem, output_index: 0, content_index: 0 },
+      { type: 'output_audio_buffer.stopped', event_id: `${prefix}_audio_buffer_stopped`, response_id: responseId },
       {
         type: 'response.output_audio_transcript.done',
         event_id: `${prefix}_assistant_final`,
@@ -751,28 +758,12 @@ function buildLiveShapedOpenAiTurnEvents(): readonly Readonly<Record<string, unk
   return Object.freeze(events);
 }
 
-function removeOpenAiSavedSecretApproval(input: Readonly<{
-  removeSecret: boolean;
-}>): void {
+function removeOpenAiSavedSecret(): void {
   storage.setState((current) => ({
     ...current,
     settings: {
       ...current.settings,
-      secrets: input.removeSecret ? [] : current.settings.secrets,
-      voiceSettingsV1: {
-        ...current.settings.voiceSettingsV1,
-        credentialBindings: current.settings.voiceSettingsV1.credentialBindings.map(
-          (binding) => binding.contribution.pluginId === 'happier.voice.openai'
-            && binding.contribution.localId === 'realtime-openai'
-            ? Object.freeze({
-                contribution: binding.contribution,
-                credentialSlotId: binding.credentialSlotId,
-                credentialSource: binding.credentialSource,
-                credentialBindings: binding.credentialBindings,
-              })
-            : binding,
-        ),
-      },
+      secrets: [],
     },
   }) as never);
 }
@@ -781,6 +772,7 @@ describe('realtime_openai source-composed WebRTC gate', () => {
   const originalSyncEncryption = sync.encryption;
   const originalSyncCredentials = Reflect.get(sync, 'credentials');
   let transcriptRequest: ReturnType<typeof vi.fn>;
+  let allowedTranscriptMessageUrls: Set<string>;
 
   beforeEach(async (context) => {
     await resetServerReachabilitySupervisors();
@@ -823,6 +815,9 @@ describe('realtime_openai source-composed WebRTC gate', () => {
       installOpenAiSettings();
     }
     installOpenAiFetchBoundary();
+    allowedTranscriptMessageUrls = new Set([
+      transcriptMessageUrl(OPENAI_HISTORY_SESSION_ID),
+    ]);
     let nextTranscriptSeq = 0;
     vi.spyOn(apiSocket, 'request').mockRejectedValue(
       new Error('dynamic active request must not own transcript persistence'),
@@ -835,9 +830,7 @@ describe('realtime_openai source-composed WebRTC gate', () => {
           headers: { 'content-type': 'application/json' },
         });
       }
-      expect(url).toBe(
-        `https://openai-composed.example.test/v2/sessions/${OPENAI_HISTORY_SESSION_ID}/messages`,
-      );
+      expect(allowedTranscriptMessageUrls.has(url)).toBe(true);
       expect(init?.method).toBe('POST');
       const body = JSON.parse(String(init?.body)) as Readonly<{
         localId: string;
@@ -873,6 +866,13 @@ describe('realtime_openai source-composed WebRTC gate', () => {
 
   it('fences an Account-retired real OpenAI attempt before retained current-UI read or command tool calls can reach A or B', async () => {
     const browser = installVoiceWebRtcBrowserBoundary();
+    // This composed test mounts the real AppShell runtime in the Node runner.
+    // Keep its real web path while supplying only the browser-owned boundaries
+    // that the runner cannot select through platform file resolution.
+    vi.stubGlobal('window', Object.freeze({}));
+    vi.stubGlobal('document', Object.freeze({}));
+    vi.spyOn(realtimeMicSession, 'createRealtimeMicSession')
+      .mockReturnValue(browser.micSession);
     const openSurface = vi.fn(async () => ({ ok: true as const }));
     const navigationBinding = createPluginSurfaceDestinationNavigationBinding({
       placements: [composedCurrentUiPlacement],
@@ -1128,44 +1128,41 @@ describe('realtime_openai source-composed WebRTC gate', () => {
     }
   });
 
-  it.each([
-    ['missing', true],
-    ['review-required', false],
-  ] as const)(
-    'declines a %s SavedSecret before microphone or WebRTC admission',
-    async (_readiness, removeSecret) => {
-      removeOpenAiSavedSecretApproval({ removeSecret });
-      const browser = installVoiceWebRtcBrowserBoundary();
-      const composed = createSourceComposedOpenAiRuntime(browser);
-      const peerConstructor = vi.mocked(globalThis.RTCPeerConnection);
-      const getUserMedia = vi.mocked(
-        globalThis.navigator.mediaDevices.getUserMedia,
-      );
-      const providerFetch = vi.mocked(globalThis.fetch);
+  it('declines a missing SavedSecret before microphone or WebRTC admission', async () => {
+    removeOpenAiSavedSecret();
+    const browser = installVoiceWebRtcBrowserBoundary();
+    const composed = createSourceComposedOpenAiRuntime(browser);
+    const peerConstructor = vi.mocked(globalThis.RTCPeerConnection);
+    const getUserMedia = vi.mocked(
+      globalThis.navigator.mediaDevices.getUserMedia,
+    );
+    const providerFetch = vi.mocked(globalThis.fetch);
 
-      try {
-        await composed.runtime.adapter.start({
-          sessionId: '',
-          initialContext: '',
-        });
+    try {
+      await composed.runtime.adapter.start({
+        sessionId: '',
+        initialContext: '',
+      });
 
-        expect(composed.runtime.adapter.getSnapshot()).toMatchObject({
-          status: 'error',
-          errorCode: 'provider_auth_invalid',
-        });
-        expect(browser.micSession.ensureActive).not.toHaveBeenCalled();
-        expect(getUserMedia).not.toHaveBeenCalled();
-        expect(peerConstructor).not.toHaveBeenCalled();
-        expect(browser.peer.createDataChannel).not.toHaveBeenCalled();
-        expect(providerFetch).not.toHaveBeenCalled();
-        expect(composed.requestAccountOperation).toHaveBeenCalledOnce();
-      } finally {
-        await composed.runtime.dispose();
-        composed.hostLease.revoke();
-        browser.restore();
-      }
-    },
-  );
+      expect(composed.runtime.adapter.getSnapshot()).toMatchObject({
+        status: 'error',
+        errorCode: 'provider_auth_invalid',
+        errorMessage: 'credential_unavailable',
+        errorRecoveryAction: 'review_credentials',
+        errorPresentation: 'error',
+      });
+      expect(browser.micSession.ensureActive).not.toHaveBeenCalled();
+      expect(getUserMedia).not.toHaveBeenCalled();
+      expect(peerConstructor).not.toHaveBeenCalled();
+      expect(browser.peer.createDataChannel).not.toHaveBeenCalled();
+      expect(providerFetch).not.toHaveBeenCalled();
+      expect(composed.requestAccountOperation).toHaveBeenCalledOnce();
+    } finally {
+      await composed.runtime.dispose();
+      composed.hostLease.revoke();
+      browser.restore();
+    }
+  });
 
   it('declines a selected Connected Account without an eligible binding before microphone or WebRTC admission', async () => {
     installOpenAiConnectedAccountSettings();
@@ -2065,13 +2062,9 @@ describe('realtime_openai source-composed WebRTC gate', () => {
       await starting;
 
       browser.peer.channel.message(JSON.stringify({
-        type: 'response.output_audio.delta',
+        type: 'output_audio_buffer.started',
         event_id: 'interrupted-audio-started',
         response_id: 'interrupted-response',
-        item_id: 'interrupted-assistant',
-        output_index: 0,
-        content_index: 0,
-        delta: 'AA==',
       }));
       browser.peer.channel.message(JSON.stringify({
         type: 'response.output_audio_transcript.done',
@@ -2572,10 +2565,11 @@ describe('realtime_openai source-composed WebRTC gate', () => {
     }
   });
 
-  it('does not leave a recreated carrier bound when End Voice races cross-device deletion recovery', async () => {
+  it('drains an admitted final through End Voice without leaving its recreated carrier bound', async () => {
     const browser = installVoiceWebRtcBrowserBoundary();
     const composed = createSourceComposedOpenAiRuntime(browser);
     const recreatedSessionId = 'voice-history-openai-stop-during-rebind';
+    const recreatedTranscriptMessageUrl = transcriptMessageUrl(recreatedSessionId);
     const ensureStarted = createDeferredVoid();
     const releaseEnsure = createDeferredVoid();
     vi.spyOn(sync, 'ensureHostedSystemSession').mockImplementation(async () => {
@@ -2619,12 +2613,13 @@ describe('realtime_openai source-composed WebRTC gate', () => {
         clearScmStatusForSession: vi.fn(),
         log: { log: vi.fn() },
       });
+      allowedTranscriptMessageUrls.add(recreatedTranscriptMessageUrl);
       browser.peer.channel.message(JSON.stringify({
         type: 'conversation.item.input_audio_transcription.completed',
         event_id: 'cross-device-stop-race-final',
         item_id: 'cross-device-stop-race-final',
         content_index: 0,
-        transcript: 'must not outlive End Voice',
+        transcript: 'drain through End Voice',
         usage: { type: 'duration', seconds: 1 },
       }));
       await ensureStarted.promise;
@@ -2643,13 +2638,29 @@ describe('realtime_openai source-composed WebRTC gate', () => {
         storage.getState().sessions[recreatedSessionId],
       ).toBeDefined());
 
+      await vi.waitFor(() => expect(readStoredSessionMessages(
+        storage.getState(),
+        recreatedSessionId,
+      )).toEqual([
+        expect.objectContaining({
+          kind: 'user-text',
+          text: 'drain through End Voice',
+        }),
+      ]));
+      expect(transcriptRequest.mock.calls.filter(
+        ([input]) => String(input) === recreatedTranscriptMessageUrl,
+      )).toHaveLength(1);
+      expect(transcriptRequest.mock.calls.filter(
+        ([input]) => String(input) === transcriptMessageUrl(OPENAI_HISTORY_SESSION_ID),
+      )).toHaveLength(0);
+      expect(storage.getState().sessions[OPENAI_HISTORY_SESSION_ID]).toBeUndefined();
+      expect(storage.getState().sessionMessages[OPENAI_HISTORY_SESSION_ID]).toBeUndefined();
       expect(voiceSessionBindingStore.getState().getByControlSessionId(
         composed.controlSessionId,
       )).toBeNull();
-      expect(readStoredSessionMessages(
-        storage.getState(),
+      expect(voiceSessionBindingStore.getState().getByConversationSessionId(
         recreatedSessionId,
-      )).toEqual([]);
+      )).toBeNull();
     } finally {
       releaseEnsure.resolve();
       await composed.runtime.adapter.stop({
@@ -3532,4 +3543,5 @@ describe('realtime_openai source-composed WebRTC gate', () => {
       browser.restore();
     }
   });
+
 });

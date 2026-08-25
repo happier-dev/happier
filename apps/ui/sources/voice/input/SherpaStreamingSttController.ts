@@ -6,7 +6,10 @@ import {
   type VoicePcmCapture,
   type VoicePcmCaptureLease,
 } from '@happier-dev/audio-stream-native';
-import { getOptionalHappierSherpaNativeModule, type SherpaNativeStreamingFinalResult } from '@happier-dev/sherpa-native';
+import {
+  getOptionalHappierSherpaNativeModule,
+  type SherpaNativeModule,
+} from '@happier-dev/sherpa-native';
 import { ensureModelPackInstalled } from '@/voice/modelPacks/installer.native';
 import { resolveModelPackManifestUrl } from '@/voice/modelPacks/manifests';
 import {
@@ -15,17 +18,16 @@ import {
   type TurnEndpointSignal,
 } from '@/voice/runtime/input/TurnEndpointController';
 import { createVoiceMachineError } from '@/voice/runtime/machine/voiceMachineError';
+import { VOICE_PCM_CONVERSATION_AUDIO_SESSION } from '@/voice/runtime/nativePcmAudioSession';
 import { VOICE_RUNTIME_STT_PCM_FORMAT } from '@happier-dev/protocol';
 
 import { resolveLocalNeuralSttCaptureSettings } from './resolveLocalNeuralSttCaptureSettings';
 import type { SttController, SttStartParams, SttStopResult } from './sttController';
 
-type SherpaNativeModuleLike = Readonly<{
-  createStreamingRecognizer(params: { jobId: string; assetsDir: string; sampleRate: number; channels: number; language: string | null }): Promise<void>;
-  pushAudioFrame(params: { jobId: string; pcm16leBase64: string; sampleRate: number; channels: number }): Promise<{ text: string; isEndpoint: boolean }>;
-  finishStreaming(params: { jobId: string }): Promise<SherpaNativeStreamingFinalResult>;
-  cancel(params: { jobId: string }): Promise<void>;
-}>;
+type SherpaStreamingNativeModule = Pick<
+  SherpaNativeModule,
+  'createStreamingRecognizer' | 'pushAudioFrame' | 'finishStreaming' | 'cancel'
+>;
 
 type SherpaSttHandle = {
   sessionId: string;
@@ -47,8 +49,8 @@ export type CreateSherpaStreamingSttControllerDeps = {
   endpointController?: TurnEndpointController;
 };
 
-function getOptionalSherpaNativeModule(): SherpaNativeModuleLike | null {
-  return (getOptionalHappierSherpaNativeModule() as unknown as SherpaNativeModuleLike | null) ?? null;
+function getOptionalSherpaNativeModule(): SherpaStreamingNativeModule | null {
+  return getOptionalHappierSherpaNativeModule();
 }
 
 export function createSherpaStreamingSttController(deps: CreateSherpaStreamingSttControllerDeps): SherpaStreamingSttController {
@@ -231,12 +233,7 @@ export function createSherpaStreamingSttController(deps: CreateSherpaStreamingSt
       startupLease = await capture.acquire({
         ownerId: `sherpa-streaming-stt:${normalizedSessionId}`,
         format: { sampleRate, channels, frameMs: 20 },
-        audioSession: {
-          mode: 'conversation',
-          input: true,
-          output: true,
-          aec: 'preferred',
-        },
+        audioSession: VOICE_PCM_CONVERSATION_AUDIO_SESSION,
         maxQueuedFrames: MAX_QUEUED_FRAMES,
         shouldDeliver: () => !abortController.signal.aborted && !micSession.isMuted(),
         onFrame: async (frame) => {

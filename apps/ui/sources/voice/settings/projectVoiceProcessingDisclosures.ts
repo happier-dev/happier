@@ -97,11 +97,8 @@ export function projectVoiceProcessingDisclosures(
       return;
     }
     const descriptor = readBundledSpeechSettingsDescriptorFromEntry(providerId, entry);
-    if (!entry || !descriptor?.privacyDisclosureKey) return;
-    add(providerId, role, {
-      key: descriptor.privacyDisclosureKey,
-      fallback: descriptor.privacyDisclosureKey,
-    }, descriptor.titleKey);
+    if (!entry || !descriptor?.privacyDisclosure) return;
+    add(providerId, role, descriptor.privacyDisclosure, descriptor.titleKey);
   };
 
   const dictationRuntime = createVoiceDictationRuntimeSettingsSnapshot({ voice });

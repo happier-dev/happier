@@ -33,6 +33,7 @@ const POLICY_BY_KIND: Readonly<Record<VoiceMachineErrorKind, VoiceMachineErrorPo
     provider_error: { phase: 'runtime', retryPolicy: 'user_action', recoveryAction: 'retry', presentation: 'notice' },
     provider_auth_invalid: { phase: 'preflight', retryPolicy: 'user_action', recoveryAction: 'review_credentials', presentation: 'error' },
     provider_setup_required: { phase: 'preflight', retryPolicy: 'user_action', recoveryAction: 'open_settings', presentation: 'error' },
+    execution_machine_unavailable: { phase: 'preflight', retryPolicy: 'user_action', recoveryAction: 'select_execution_machine', presentation: 'error' },
     reconnect_exhausted: { phase: 'active_session', retryPolicy: 'user_action', recoveryAction: 'reconnect', presentation: 'error' },
     audio_context_suspended: { phase: 'active_session', retryPolicy: 'immediate_once', recoveryAction: 'reconnect', presentation: 'notice' },
     stt_timeout: { phase: 'turn', retryPolicy: 'user_action', recoveryAction: 'retry', presentation: 'notice' },

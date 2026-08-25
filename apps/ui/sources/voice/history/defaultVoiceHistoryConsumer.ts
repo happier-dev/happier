@@ -12,7 +12,10 @@ import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope
 import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
 import { storage } from '@/sync/domains/state/storage';
 import type { Session } from '@/sync/domains/state/storageTypes';
-import { sessionDeleteWithServerAccountAuthority } from '@/sync/ops/sessions';
+import {
+  sessionDeleteWithServerAccountAuthority,
+  type SessionDeleteResult,
+} from '@/sync/ops/sessions';
 import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
 import {
   captureSessionRequestAuthorityForServerAccountScope,
@@ -172,10 +175,15 @@ export type DefaultVoiceHistoryRuntime = Readonly<{
   readMessages(sessionId: string): readonly Message[];
   readMessagesRevision(sessionId: string): number;
   subscribeMessages(listener: () => void): () => void;
+  /**
+   * The canonical scoped client result, not a narrowed copy of it: the typed
+   * `session_absent` / `session_delete_conflict` outcome is what decides whether
+   * History retires its decrypted rows, so this seam must not erase it.
+   */
   deleteSession(
     sessionId: string,
     authority: ServerAccountSessionRequestAuthority,
-  ): Promise<Readonly<{ success: boolean; message?: string }>>;
+  ): Promise<SessionDeleteResult>;
   canDeleteSession(sessionId: string): boolean;
   retireLocalSession(sessionId: string): void;
 }>;

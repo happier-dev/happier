@@ -97,7 +97,7 @@ vi.mock('@/sync/domains/settings/voiceSettings', async (importOriginal) => {
   };
 });
 vi.mock('@/voice/settings/resolveVoiceProviderId', () => ({
-  resolveVoiceProviderId: (value: unknown) => value,
+  resolveVoiceProviderIdForSettingsAction: (_settings: unknown, value: unknown) => value,
 }));
 vi.mock('@/voice/registry/externalVoiceProviderRegistrations', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/voice/registry/externalVoiceProviderRegistrations')>();
@@ -472,6 +472,8 @@ describe('VoiceProviderSettingsActions', () => {
           const accountOperations = createAccountVoiceOperationService({
             providerId: PROVIDER_ID,
             contribution,
+            declaration,
+            phase: 'settings',
             recipientContract,
             signal: input.signal,
             isCurrent: () => true,

@@ -119,7 +119,11 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
         errorPresentation: snap.errorPresentation,
         presentationState: snap.presentationState,
     });
-    const recoveryAction = snap.errorRecoveryAction ?? null;
+    const recoveryAction = snap.errorRecoveryAction ?? (
+        snap.presentationState === 'reconnecting' && snap.reconnectRetryAvailable === true
+            ? 'retry'
+            : null
+    );
     const recovery = React.useMemo(
         () => resolveVoiceSurfaceRecovery(recoveryAction),
         [recoveryAction],

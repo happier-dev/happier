@@ -138,6 +138,7 @@ function createHarness(input: Readonly<{
     clearAttemptStatus: vi.fn(),
     createToolBarrier: vi.fn(() => ({
       run: vi.fn(async () => ({ status: 'submitted' as const })),
+      detach: vi.fn(),
       cancel: vi.fn(),
       dispose: vi.fn(),
     })),

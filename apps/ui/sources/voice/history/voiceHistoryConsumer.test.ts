@@ -21,10 +21,6 @@ const ELEVENLABS_SOURCE = Object.freeze({
   pluginId: 'happier.voice.elevenlabs',
   contributionId: 'realtime-elevenlabs',
 });
-const HISTORICAL_ELEVENLABS_SOURCE = Object.freeze({
-  pluginId: 'happier.voice.elevenlabs',
-  contributionId: 'realtime_elevenlabs',
-});
 
 function voiceMessage(input: Readonly<{
   id: string;
@@ -125,7 +121,7 @@ describe('projectVoiceHistoryRows', () => {
         role: 'user',
         text: 'First question',
         createdAt: 100,
-        source: HISTORICAL_ELEVENLABS_SOURCE,
+        source: ELEVENLABS_SOURCE,
       }),
       voiceMessage({
         id: 'assistant-1',
@@ -476,7 +472,7 @@ describe('createVoiceHistoryConsumer', () => {
     expect(consumer.read()).toMatchObject({ sessionId: null, rows: [] });
   });
 
-  it('fetches every requested page before building an all-history client export', async () => {
+  it('fetches every requested page before building an all-history export without reprojecting a mounted reader', async () => {
     const loaded: Message[] = [
       voiceMessage({
         id: 'newest',
@@ -502,9 +498,15 @@ describe('createVoiceHistoryConsumer', () => {
         source: OPENAI_SOURCE,
       }),
     ];
+    let messagesRevision = 1;
+    const sourceListeners = new Set<() => void>();
     const loadOlderMessages = vi.fn(async () => {
       const next = pages.shift();
-      if (next) loaded.push(next);
+      if (next) {
+        loaded.push(next);
+        messagesRevision += 1;
+        for (const listener of [...sourceListeners]) listener();
+      }
       return {
         loaded: next ? 1 : 0,
         hasMore: pages.length > 0,
@@ -515,12 +517,22 @@ describe('createVoiceHistoryConsumer', () => {
       source?.pluginId === XAI_SOURCE.pluginId ? 'Grok Realtime' : 'OpenAI Realtime');
     const consumer = createVoiceHistoryConsumer(createDeps({
       readMessages: () => loaded,
+      readMessagesRevision: () => messagesRevision,
       loadOlderMessages,
       resolveProviderLabel,
+      subscribeHistorySources: (listener) => {
+        sourceListeners.add(listener);
+        return () => { sourceListeners.delete(listener); };
+      },
     }));
 
     await consumer.open();
     resolveProviderLabel.mockClear();
+    // A mounted History screen re-reads synchronously for each external-store
+    // publication. Paging an export must not make that reader re-project each
+    // growing prefix before the final artifact is assembled.
+    const mountedRead = vi.fn(() => consumer.read());
+    const unsubscribe = consumer.subscribe(mountedRead);
     const artifact = await consumer.exportHistory({ range: 'all' });
     const payload = JSON.parse([...artifact.chunks()].join(''));
 
@@ -528,6 +540,7 @@ describe('createVoiceHistoryConsumer', () => {
     // The growing slice is projected and re-sorted exactly ONCE, after the last
     // page, instead of once per page: three rows, three label resolutions.
     expect(resolveProviderLabel).toHaveBeenCalledTimes(3);
+    expect(mountedRead).toHaveBeenCalledTimes(3);
     expect(artifact).toMatchObject({
       mimeType: 'application/json',
       rowCount: 3,
@@ -542,6 +555,7 @@ describe('createVoiceHistoryConsumer', () => {
         expect.objectContaining({ id: 'newest', provider: 'Grok Realtime' }),
       ],
     });
+    unsubscribe();
   });
 
   it('exports the complete history past every former page, row and byte ceiling', async () => {

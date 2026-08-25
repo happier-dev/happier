@@ -146,7 +146,7 @@ describe('Agent-realtime voice RPCs keep the server they were bound to', () => {
         controlSessionId: SESSION_ID,
         applicationAttemptId: 'attempt-1',
         signal: attempt.signal,
-        onTerminal: () => {},
+        onStarted: () => {},
       });
       if (!service) throw new Error('agent realtime service was not created');
 

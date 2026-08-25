@@ -28,12 +28,13 @@ import type { InstallerFs, InstallMode, InstallerOverrides, InvalidatePackRuntim
  * lets whichever holder releases last destroy the handles, so an in-flight decode
  * or synthesis is never freed underneath.
  *
- * This fails closed. It is awaited before the live bytes move, so a rejection
- * aborts the promotion or removal with the pack still intact; letting it through
- * would replace the bytes while the engine built from the predecessor bytes keeps
- * serving, which reads to the user as an update that did nothing. The native
- * module being absent entirely (web, or a build without the module) is not that
- * case: nothing is cached against the directory, so there is nothing to retire.
+ * This fails closed and brackets every live-byte mutation. A rejection before
+ * mutation leaves the current pack intact; one after mutation prevents the
+ * lifecycle action from reporting completion without current runtime state.
+ * Letting either call through would leave an engine built from superseded bytes
+ * serving despite the update or removal. The native module being absent entirely
+ * (web, or a build without the module) is not that case: nothing is cached
+ * against the directory, so there is nothing to retire.
  */
 function getInvalidatePackRuntime(overrides: InstallerOverrides): InvalidatePackRuntime {
   return overrides.invalidatePackRuntime ?? (async (packDirUri) => {

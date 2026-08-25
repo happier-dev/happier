@@ -148,6 +148,34 @@ describe('projectVoiceProcessingDisclosures', () => {
     expect(text).not.toMatch(/transcription/iu);
   });
 
+  it('carries the plugin-declared fallback prose so an unresolvable key never becomes the disclosure', () => {
+    const voice = voiceSettingsParse({
+      ...voiceSettingsDefaults,
+      dictation: {
+        ...voiceSettingsDefaults.dictation,
+        sttBinding: 'explicit',
+        stt: {
+          ...voiceSettingsDefaults.dictation.stt,
+          provider: 'happier.voice.google/gemini-stt',
+        },
+      },
+    });
+
+    const [projected] = projectVoiceProcessingDisclosures(voice)
+      .filter((entry) => entry.providerIds.includes('happier.voice.google/gemini-stt'));
+    const disclosure = projected?.disclosure;
+
+    // Externally installed voice plugins register no translations with the host
+    // bundle, so their declared fallback prose is the only thing between the user
+    // and a raw i18n key rendered as their privacy statement. The conversation role
+    // already forwards the declaration verbatim; the speech roles must not collapse
+    // it to the key.
+    expect(typeof disclosure).toBe('object');
+    const declared = disclosure as Readonly<{ key: string; fallback: string }>;
+    expect(declared.fallback).not.toBe(declared.key);
+    expect(declared.fallback).toMatch(/Google/u);
+  });
+
   it('projects only the selected OpenAI-compatible Dictation STT role', () => {
     const voice = voiceSettingsParse({
       ...voiceSettingsDefaults,
@@ -169,7 +197,7 @@ describe('projectVoiceProcessingDisclosures', () => {
       titleKey: 'settingsVoice.local.openaiCompatStt.provider.title',
       disclosure: {
         key: 'settingsVoice.realtimeProviders.speechProcessing.openAiCompatStt',
-        fallback: 'settingsVoice.realtimeProviders.speechProcessing.openAiCompatStt',
+        fallback: expect.stringContaining('Audio for transcription is sent'),
       },
     })]);
     expect(openAiCompat.some((entry) => entry.roles.includes('tts'))).toBe(false);

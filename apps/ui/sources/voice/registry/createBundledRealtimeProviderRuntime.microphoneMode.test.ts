@@ -97,7 +97,7 @@ function createRuntimeForMode(mode: MicrophoneMode) {
     presentHostedLeaseNotice: vi.fn(),
     presentAttemptDiagnostic: vi.fn(),
     clearAttemptStatus: vi.fn(),
-    createToolBarrier: vi.fn(() => ({ run: vi.fn(async () => ({ status: 'submitted' })), cancel: vi.fn(), dispose: vi.fn() })),
+    createToolBarrier: vi.fn(() => ({ run: vi.fn(async () => ({ status: 'submitted' })), detach: vi.fn(), cancel: vi.fn(), dispose: vi.fn() })),
     voiceHooks: { onStarted: vi.fn(() => ''), onStopped: vi.fn() },
     createMachineError: vi.fn((input) => ({
       ...input,

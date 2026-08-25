@@ -1,4 +1,8 @@
 import type { PendingDeliveryBlockedReason } from '@happier-dev/protocol';
+import type {
+  VoiceOutputFocusApplication,
+  VoiceOutputFocusState,
+} from '@happier-dev/plugin-sdk/voice/client';
 
 export type VoiceAdapterId = string;
 export type VoiceAdapterEngineKind = 'local' | 'realtime';
@@ -18,6 +22,9 @@ export type VoiceConversationTargeting = 'route_target' | 'bound_conversation';
  */
 export type VoiceHostAuthoredContextScope = 'session_context' | 'current_ui_only';
 
+/** Classifies the host-authored payload before an adapter transport delivers it. */
+export type HostAuthoredContextClass = 'current_ui' | 'session_context';
+
 export type VoiceAdapterSurfaceCapabilities = Readonly<{
   allowsGlobalStart: boolean;
   controlSessionScope: 'surface' | 'global';
@@ -33,7 +40,7 @@ export type VoiceAdapterSurfaceCapabilities = Readonly<{
 export type VoiceAdapterContextChannel = Readonly<{
   /** Which host-authored context this provider's execution kind authorizes. */
   hostAuthoredContext: VoiceHostAuthoredContextScope;
-  sendContextualUpdate(update: string): void;
+  sendContextualUpdate(update: string, contextClass: HostAuthoredContextClass): void;
   sendTextMessage(text: string): void;
   announceAssistantText?(text: string): void;
 }>;
@@ -61,6 +68,8 @@ export type VoiceSessionSnapshot = Readonly<{
   errorRecoveryAction?: import('@/voice/runtime/machine/voiceConversationRuntimeTypes').VoiceMachineRecoveryAction;
   errorPresentation?: import('@/voice/runtime/machine/voiceConversationRuntimeTypes').VoiceMachineErrorPresentation;
   presentationState?: VoiceSessionPresentationState;
+  /** The owned realtime reconnect scheduler has a pending backoff slot. */
+  reconnectRetryAvailable?: boolean;
 }>;
 
 export type VoiceAdapterController = Readonly<{
@@ -77,8 +86,18 @@ export type VoiceAdapterController = Readonly<{
   start(input: Readonly<{ sessionId: string; initialContext?: string; textOnly?: boolean }>): Promise<void>;
   stop(input: Readonly<{ sessionId: string }>): Promise<void>;
   toggle(input: Readonly<{ sessionId: string }>): Promise<void>;
+  /** Routes a recovery through the exact active attempt without replacing it. */
+  retry?(input: Readonly<{ sessionId: string }>): Promise<void>;
   interrupt(input: Readonly<{ sessionId: string }>): Promise<void>;
   bargeIn?(input: Readonly<{ sessionId: string }>): Promise<void>;
+  /**
+   * Applies the native audio-session's provider-neutral output policy through
+   * the admitted runtime attempt. Omission is a fail-closed unsupported result.
+   */
+  setOutputFocusState?(input: Readonly<{
+    sessionId: string;
+    state: VoiceOutputFocusState;
+  }>): VoiceOutputFocusApplication;
   setMuted(input: Readonly<{ sessionId: string; muted: boolean }>): Promise<void>;
   sendContextUpdate(input: Readonly<{ sessionId: string; update: string }>): void;
   sendContextText?(input: Readonly<{ sessionId: string; text: string }>): void;

@@ -52,7 +52,13 @@ export function createLocalConversationVoiceAdapter(input: Readonly<{
         // Local Voice is Happier's own assistant: it has no external prompt
         // authority, so host-authored session context is its normal input.
         hostAuthoredContext: 'session_context',
-        sendContextualUpdate: active.sendContextualUpdate,
+        sendContextualUpdate: (update, contextClass) => {
+          if (contextClass === 'current_ui') {
+            active.sendAutomaticUiContextUpdate(update);
+            return;
+          }
+          active.sendContextualUpdate(update);
+        },
         sendTextMessage: (text) => fireAndForget(active.sendTextUpdate(text), {
           tag: 'local_voice_agent_text_update',
         }),

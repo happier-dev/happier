@@ -24,6 +24,7 @@ function createLifecycleControllerStub(
     setConfiguredProviderId: vi.fn(() => {}),
     setCurrentUiContextToolSetEnabled: vi.fn(() => {}),
     setMuted: vi.fn(async () => {}),
+    retry: vi.fn(async () => {}),
     stop: vi.fn(async () => {}),
     subscribe: vi.fn(() => () => {}),
     toggle: vi.fn(async () => {}),
@@ -48,6 +49,7 @@ describe('voiceSessionManager', () => {
     });
 
     await mgr.toggle('toggle-session');
+    await mgr.retry('retry-session');
     await mgr.stop('stop-session');
     await mgr.interrupt('interrupt-session');
     await mgr.bargeIn('barge-session');
@@ -55,6 +57,7 @@ describe('voiceSessionManager', () => {
     mgr.sendContextUpdate('context-session', 'hello');
 
     expect(lifecycleController.toggle).toHaveBeenCalledWith('toggle-session');
+    expect(lifecycleController.retry).toHaveBeenCalledWith('retry-session');
     expect(lifecycleController.stop).toHaveBeenCalledWith('stop-session');
     expect(lifecycleController.interrupt).toHaveBeenCalledWith('interrupt-session');
     expect(lifecycleController.bargeIn).toHaveBeenCalledWith('barge-session');
@@ -84,6 +87,7 @@ describe('voiceSessionManager', () => {
     });
 
     await mgr.toggle('s1');
+    await mgr.retry('s1');
     await mgr.stop('s1');
     await mgr.interrupt('s1');
     await mgr.bargeIn('s1');

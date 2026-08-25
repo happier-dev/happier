@@ -112,6 +112,27 @@ describe('playAudioBytesWithStopper (web)', () => {
     expect(onPlaybackStarted).not.toHaveBeenCalled();
   });
 
+  it('revokes a created HTML-audio object URL when audio construction throws', async () => {
+    (globalThis as unknown as { AudioContext?: unknown }).AudioContext = undefined;
+    const revokeObjectURL = vi.fn();
+    stubBlobUrlHelpers({
+      createObjectURL: vi.fn(() => 'blob:audio-construction-failure'),
+      revokeObjectURL,
+    });
+    (globalThis as unknown as { Audio?: unknown }).Audio = function AudioMock() {
+      throw new Error('audio construction failed');
+    };
+
+    await expect(playAudioBytesWithStopper({
+      bytes: new ArrayBuffer(4),
+      format: 'wav',
+      registerPlaybackStopper: () => () => {},
+    })).rejects.toThrow('audio construction failed');
+
+    expect(revokeObjectURL).toHaveBeenCalledOnce();
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:audio-construction-failure');
+  });
+
   it('meters the currently playing WebAudio window instead of repeating whole-buffer RMS', async () => {
     vi.useFakeTimers();
     try {

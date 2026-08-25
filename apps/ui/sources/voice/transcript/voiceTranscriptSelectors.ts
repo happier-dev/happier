@@ -103,6 +103,30 @@ function extractMessageText(message: unknown): string | null {
     return null;
 }
 
+function projectTranscriptEntry(message: unknown, entryId?: string): VoiceTranscriptEntry | null {
+    const record = readRecord(message);
+    if (!record) return null;
+    const id = entryId ?? resolveVoiceTranscriptEntryId(message);
+    if (!id) return null;
+    const text = extractMessageText(record);
+    if (!text) return null;
+    const kind =
+        record.kind === 'user-text' || record.role === 'user'
+            ? 'user'
+            : hasVoiceTranscriptNoteMeta(record.meta)
+                ? 'note'
+                : 'assistant';
+    return {
+        id,
+        createdAt: typeof record.createdAt === 'number' && Number.isFinite(record.createdAt) ? record.createdAt : 0,
+        kind,
+        text,
+        ...(kind === 'assistant' && isVoiceTurnInterrupted(id)
+            ? { interrupted: true }
+            : {}),
+    };
+}
+
 export function selectVoiceTranscriptEntriesForConversationSession(
     state: Readonly<{ sessionMessages?: Record<string, unknown> }> | null | undefined,
     conversationSessionId: string | null | undefined,
@@ -119,6 +143,26 @@ export function selectVoiceTranscriptEntriesForConversationSession(
     const cached = readTranscriptSelectorCache(resolvedConversationSessionId);
     if (cached && cached.slice === slice && cached.limit === limit && cached.interruptionVersion === interruptionVersion) {
         return cached.result;
+    }
+
+    const sessionSlice = state?.sessionMessages?.[resolvedConversationSessionId];
+    const sessionRecord = readRecord(sessionSlice);
+    const canonicalIds = sessionRecord?.messageIdsOldestFirst;
+    const canonicalMessagesById = readRecord(sessionRecord?.messagesById ?? sessionRecord?.messagesMap);
+
+    if (Array.isArray(canonicalIds) && canonicalMessagesById) {
+        const newestFirst: VoiceTranscriptEntry[] = [];
+        for (let cursor = canonicalIds.length - 1; cursor >= 0 && newestFirst.length < limit; cursor -= 1) {
+            const messageId = canonicalIds[cursor];
+            const message = typeof messageId === 'string' ? canonicalMessagesById[messageId] : undefined;
+            const entry = projectTranscriptEntry(message);
+            if (entry) newestFirst.push(entry);
+        }
+        const result: ReadonlyArray<VoiceTranscriptEntry> = newestFirst.length === 0
+            ? EMPTY_ENTRIES
+            : Object.freeze(newestFirst.reverse());
+        writeTranscriptSelectorCache(resolvedConversationSessionId, { slice, limit, interruptionVersion, result });
+        return result;
     }
 
     const messages = readStoredSessionMessages<unknown, unknown>(state, resolvedConversationSessionId);
@@ -159,24 +203,9 @@ export function selectVoiceTranscriptEntriesForConversationSession(
      */
     const newestFirst: VoiceTranscriptEntry[] = [];
     for (let cursor = orderKeys.length - 1; cursor >= 0 && newestFirst.length < limit; cursor -= 1) {
-        const { record, id, createdAt } = orderKeys[cursor]!;
-        const text = extractMessageText(record);
-        if (!text) continue;
-        const kind =
-            record.kind === 'user-text' || record.role === 'user'
-                ? 'user'
-                : hasVoiceTranscriptNoteMeta(record.meta)
-                    ? 'note'
-                    : 'assistant';
-        newestFirst.push({
-            id,
-            createdAt,
-            kind,
-            text,
-            ...(kind === 'assistant' && isVoiceTurnInterrupted(id)
-                ? { interrupted: true }
-                : {}),
-        });
+        const { record, id } = orderKeys[cursor]!;
+        const entry = projectTranscriptEntry(record, id);
+        if (entry) newestFirst.push(entry);
     }
 
     const result: ReadonlyArray<VoiceTranscriptEntry> = newestFirst.length === 0

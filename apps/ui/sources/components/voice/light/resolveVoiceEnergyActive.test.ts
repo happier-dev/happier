@@ -7,7 +7,7 @@ import {
 
 /** A surface that could animate *and* has something to animate about. */
 const LIVE: VoiceEnergyActivationInputs = {
-    runtimeVisible: true,
+    runtimeMotionActive: true,
     providerReady: true,
     motionAllowed: true,
     hasVisibleConsumer: true,
@@ -18,7 +18,7 @@ const LIVE: VoiceEnergyActivationInputs = {
 };
 
 const GATES = [
-    'runtimeVisible',
+    'runtimeMotionActive',
     'providerReady',
     'motionAllowed',
     'hasVisibleConsumer',

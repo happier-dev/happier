@@ -1,6 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { VoiceRealtimeJsonValue } from '@happier-dev/protocol';
-import type { VoiceRealtimeCanonicalEvent } from '@happier-dev/plugin-sdk/voice/client';
 
 import type {
   VoiceRealtimeConnection,
@@ -12,7 +11,6 @@ import {
   readCanonicalVoiceTranscriptSnapshot,
 } from '@/voice/transcript/voiceConversationTranscript';
 import { createRealtimeToolBarrier } from '@/voice/tools/realtimeToolBarrier';
-import { VOICE_RUNTIME_CONFIG_DEFAULTS } from '@/voice/runtime/voiceRuntimeConfigDefaults';
 import {
   createVoiceConversationController,
   type VoiceConversationControllerDeps,
@@ -34,8 +32,10 @@ function createConnectionFixture(kind: VoiceRealtimeConnection['kind'] = 'sdk_ha
     rejectControlEvents = reject;
   });
   let finishTransportEvents!: () => void;
-  const transportEventsFinished = new Promise<void>((resolve) => {
+  let rejectTransportEvents!: (reason: unknown) => void;
+  const transportEventsFinished = new Promise<void>((resolve, reject) => {
     finishTransportEvents = resolve;
+    rejectTransportEvents = reject;
   });
   const connect = vi.fn(async (_signal: AbortSignal) => {});
   const close = vi.fn(async () => {
@@ -89,6 +89,15 @@ function createConnectionFixture(kind: VoiceRealtimeConnection['kind'] = 'sdk_ha
       remoteClosed = true;
       rejectControlEvents(reason);
     },
+    failTransportEvents: (reason: unknown) => {
+      remoteClosed = true;
+      rejectTransportEvents(reason);
+    },
+    failEvents: (reason: unknown) => {
+      remoteClosed = true;
+      rejectControlEvents(reason);
+      rejectTransportEvents(reason);
+    },
   };
 }
 
@@ -106,7 +115,11 @@ function createAdapter(overrides: Partial<VoiceRealtimeProtocolAdapter> = {}): V
     },
     prepare: async () => ({
       kind: 'prepared',
-      session: { config: { session: 'fixture' }, safeMetadata: null },
+      session: {
+        config: { session: 'fixture' },
+        safeMetadata: null,
+        toolResultReplay: 'stable_ids',
+      },
     }),
     decodeControl: () => [],
     encodeTurnControl: (action) => ({ type: action }),
@@ -117,12 +130,17 @@ function createAdapter(overrides: Partial<VoiceRealtimeProtocolAdapter> = {}): V
 function createMachineFixture() {
   const transitions: string[] = [];
   const failureCodes: string[] = [];
+  let reconnecting = false;
   return {
     transitions,
     failureCodes,
     machine: {
       connecting: () => transitions.push('connecting'),
-      reconnecting: ({ active }: Readonly<{ active: boolean }>) => transitions.push(active ? 'reconnecting' : 'reconnect-settled'),
+      reconnecting: ({ active }: Readonly<{ active: boolean }>) => {
+        if (reconnecting === active) return;
+        reconnecting = active;
+        transitions.push(active ? 'reconnecting' : 'reconnect-settled');
+      },
       connected: () => transitions.push('connected'),
       ending: () => transitions.push('ending'),
       disconnected: () => transitions.push('disconnected'),
@@ -135,6 +153,69 @@ function createMachineFixture() {
 }
 
 describe('VoiceConversationController', () => {
+  it('latches a transient output suspension onto a connection that arrives after focus loss', async () => {
+    const connectionReady = deferred<VoiceRealtimeConnection>();
+    const fixture = createConnectionFixture('sdk_handle');
+    const setOutputFocusState = vi.fn(() => 'applied' as const);
+    const connection = Object.assign(fixture.connection, { setOutputFocusState });
+    const controller = createVoiceConversationController({
+      adapter: createAdapter(),
+      machine: createMachineFixture().machine,
+      createConnection: async () => await connectionReady.promise,
+      isSelectionCurrent: () => true,
+      onCanonicalEvent: async () => {},
+    });
+    const outputController = controller as typeof controller & Readonly<{
+      setOutputFocusState(state: 'active' | 'ducked' | 'suspended'): 'applied' | 'unsupported';
+    }>;
+
+    const start = controller.start({ controlSessionId: 'focus-latched-attempt' });
+    await vi.waitFor(() => expect(controller.getOwnedAttemptId()).not.toBeNull());
+    expect(outputController.setOutputFocusState('suspended')).toBe('applied');
+
+    connectionReady.resolve(connection);
+    await expect(start).resolves.toEqual({ status: 'connected' });
+    expect(setOutputFocusState).toHaveBeenCalledWith('suspended');
+    expect(setOutputFocusState.mock.invocationCallOrder[0]).toBeLessThan(
+      fixture.connect.mock.invocationCallOrder[0]!,
+    );
+
+    expect(outputController.setOutputFocusState('active')).toBe('applied');
+    expect(setOutputFocusState).toHaveBeenLastCalledWith('active');
+    await controller.stop();
+  });
+
+  it('starts a fresh attempt with active output focus after its suspended predecessor ends', async () => {
+    const first = createConnectionFixture('webrtc');
+    const second = createConnectionFixture('webrtc');
+    const firstOutputFocus = vi.fn(() => 'applied' as const);
+    const secondOutputFocus = vi.fn(() => 'applied' as const);
+    Object.assign(first.connection, { setOutputFocusState: firstOutputFocus });
+    Object.assign(second.connection, { setOutputFocusState: secondOutputFocus });
+    let connectionIndex = 0;
+    const controller = createVoiceConversationController({
+      adapter: createAdapter(),
+      machine: createMachineFixture().machine,
+      createConnection: async () => [first.connection, second.connection][connectionIndex++]!,
+      isSelectionCurrent: () => true,
+      onCanonicalEvent: async () => {},
+    });
+    const setOutputFocusState = controller.setOutputFocusState;
+    if (!setOutputFocusState) throw new Error('voice_output_focus_owner_missing');
+
+    await expect(controller.start({ controlSessionId: 'focus-attempt-a' })).resolves.toEqual({ status: 'connected' });
+    expect(setOutputFocusState('suspended')).toBe('applied');
+    expect(firstOutputFocus).toHaveBeenLastCalledWith('suspended');
+    await controller.stop();
+
+    // The native audio-session owner may recover focus while no Voice attempt
+    // exists, so that recovery is intentionally not delivered to this controller.
+    await expect(controller.start({ controlSessionId: 'focus-attempt-b' })).resolves.toEqual({ status: 'connected' });
+
+    expect(secondOutputFocus).not.toHaveBeenCalled();
+    await controller.stop();
+  });
+
   it('routes provisional output interruption through only the currently owned connection', async () => {
     const fixture = createConnectionFixture('webrtc');
     const controller = createVoiceConversationController({
@@ -607,6 +688,38 @@ describe('VoiceConversationController', () => {
     ]);
   });
 
+  it('reapplies a held non-active output focus state before a reconnect can play', async () => {
+    const first = createConnectionFixture('webrtc');
+    const second = createConnectionFixture('webrtc');
+    const firstOutputFocus = vi.fn(() => 'applied' as const);
+    const secondOutputFocus = vi.fn(() => 'applied' as const);
+    Object.assign(first.connection, { setOutputFocusState: firstOutputFocus });
+    Object.assign(second.connection, { setOutputFocusState: secondOutputFocus });
+    let connectionIndex = 0;
+    const controller = createVoiceConversationController({
+      adapter: createAdapter(),
+      machine: createMachineFixture().machine,
+      createConnection: async () => [first.connection, second.connection][connectionIndex++]!,
+      isSelectionCurrent: () => true,
+      onCanonicalEvent: async () => {},
+      waitBeforeReconnect: async () => {},
+      maxReconnectAttempts: 1,
+    });
+    const setOutputFocusState = controller.setOutputFocusState;
+    if (!setOutputFocusState) throw new Error('voice_output_focus_owner_missing');
+
+    await controller.start({ controlSessionId: 'focus-reconnect' });
+    expect(setOutputFocusState('ducked')).toBe('applied');
+    await expect(controller.requestReconnect()).resolves.toBe(true);
+
+    expect(secondOutputFocus).toHaveBeenCalledWith('ducked');
+    expect(secondOutputFocus.mock.invocationCallOrder[0]).toBeLessThan(
+      second.connect.mock.invocationCallOrder[0]!,
+    );
+    expect(firstOutputFocus).toHaveBeenCalledWith('ducked');
+    await controller.stop();
+  });
+
   it.each([
     {
       failure: 'ordinary provider rejection',
@@ -647,10 +760,9 @@ describe('VoiceConversationController', () => {
   });
 
   it.each([
-    'voice_webrtc_ice_failed',
-    'voice_webrtc_data_channel_closed',
-    'voice_webrtc_failed',
-  ])('preserves %s when the owned WebRTC event queue terminates', async (failureCode) => {
+    'voice_webrtc_control_malformed',
+    'voice_connection_inbound_overflow',
+  ])('fails closed for non-transport %s when the owned WebRTC event queue terminates', async (failureCode) => {
     const connection = createConnectionFixture('webrtc');
     const machine = createMachineFixture();
     const controller = createVoiceConversationController({
@@ -1219,6 +1331,63 @@ describe('VoiceConversationController', () => {
     await controller.stop();
   });
 
+  it('preserves a typed preparation decline during reconnect instead of flattening it to exhaustion', async () => {
+    const first = createConnectionFixture('webrtc');
+    const machine = createMachineFixture();
+    let prepareCount = 0;
+    const controller = createVoiceConversationController({
+      adapter: createAdapter({
+        prepare: async () => {
+          prepareCount += 1;
+          return prepareCount === 1
+            ? { kind: 'prepared' as const, session: { config: {}, safeMetadata: null } }
+            : { kind: 'declined' as const, code: 'voice_auth_expired' };
+        },
+      }),
+      machine: machine.machine,
+      createConnection: async () => first.connection,
+      isSelectionCurrent: () => true,
+      onCanonicalEvent: async () => {},
+      waitBeforeReconnect: async () => {},
+      maxReconnectAttempts: 2,
+    });
+
+    await expect(controller.start({ controlSessionId: 'typed-reconnect-decline' }))
+      .resolves.toEqual({ status: 'connected' });
+    await expect(controller.requestReconnect()).resolves.toBe(false);
+
+    expect(machine.failureCodes).toEqual(['voice_auth_expired']);
+    expect(machine.transitions.at(-1)).toBe('failed');
+  });
+
+  it('routes a terminal WebRTC event-queue loss through the shared reconnect owner', async () => {
+    const first = createConnectionFixture('webrtc');
+    const second = createConnectionFixture('webrtc');
+    const machine = createMachineFixture();
+    const waits: number[] = [];
+    let connectionIndex = 0;
+    const controller = createVoiceConversationController({
+      adapter: createAdapter(),
+      machine: machine.machine,
+      createConnection: async () => [first.connection, second.connection][connectionIndex++]!,
+      isSelectionCurrent: () => true,
+      onCanonicalEvent: async () => {},
+      waitBeforeReconnect: async (attempt) => { waits.push(attempt); },
+      maxReconnectAttempts: 1,
+    });
+
+    await expect(controller.start({ controlSessionId: 'webrtc-queue-loss' }))
+      .resolves.toEqual({ status: 'connected' });
+    first.failEvents(Object.assign(new Error('voice_webrtc_data_channel_closed'), {
+      code: 'voice_webrtc_data_channel_closed',
+    }));
+
+    await vi.waitFor(() => expect(second.connect).toHaveBeenCalledTimes(1));
+    expect(waits).toEqual([1]);
+    expect(machine.failureCodes).toEqual([]);
+    await controller.stop();
+  });
+
   it('ignores a late provider identity from the detached connection during reconnect', async () => {
     const first = createConnectionFixture();
     const second = createConnectionFixture();
@@ -1298,6 +1467,53 @@ describe('VoiceConversationController', () => {
     expect(second.connect).not.toHaveBeenCalled();
     expect(machine.transitions.at(-1)).toBe('disconnected');
     expect(machine.transitions.filter((entry) => entry === 'disconnected')).toHaveLength(1);
+  });
+
+  it('uses Retry to consume the pending reconnect slot without duplicating it', async () => {
+    const first = createConnectionFixture();
+    const second = createConnectionFixture();
+    const third = createConnectionFixture();
+    first.transportEvents.push({ type: 'webrtc_ice_state', state: 'failed' });
+    const secondConnect = vi.fn(async () => { throw new Error('offline'); });
+    second.connection.connect = secondConnect;
+    const waits: number[] = [];
+    const settledWaits: number[] = [];
+    const waitSignals: AbortSignal[] = [];
+    let connectionIndex = 0;
+    const controller = createVoiceConversationController({
+      adapter: createAdapter(),
+      machine: createMachineFixture().machine,
+      createConnection: async () => [first.connection, second.connection, third.connection][connectionIndex++]!,
+      isSelectionCurrent: () => true,
+      onCanonicalEvent: async () => {},
+      waitBeforeReconnect: async (attempt, signal) => {
+        waits.push(attempt);
+        waitSignals.push(signal);
+        await new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }));
+        settledWaits.push(attempt);
+      },
+      maxReconnectAttempts: 2,
+    });
+
+    try {
+      await controller.start({ controlSessionId: 'retry-pending-reconnect' });
+      await vi.waitFor(() => expect(waits).toEqual([1]));
+
+      const retry = controller.requestReconnect();
+      expect(waitSignals[0]?.aborted).toBe(true);
+      await vi.waitFor(() => expect(settledWaits).toEqual([1]));
+      expect(controller.getOwnedAttemptId()).toBe(1);
+      await vi.waitFor(() => expect(connectionIndex).toBe(2));
+      await vi.waitFor(() => expect(secondConnect).toHaveBeenCalledTimes(1));
+      await vi.waitFor(() => expect(waits).toEqual([1, 2]));
+      expect(waitSignals[1]?.aborted).toBe(false);
+      expect(third.connect).not.toHaveBeenCalled();
+      await controller.stop();
+      expect(waitSignals[1]?.aborted).toBe(true);
+      await expect(retry).resolves.toBe(false);
+    } finally {
+      await controller.stop();
+    }
   });
 
   it('settles disconnected when provider selection changes during reconnect backoff', async () => {
@@ -1393,6 +1609,7 @@ describe('VoiceConversationController', () => {
     }];
     const toolBarrier = {
       run: vi.fn(async () => ({ status: 'submitted' as const, results: [] })),
+      detach: vi.fn(),
       cancel: vi.fn(),
       dispose: vi.fn(),
     };
@@ -1442,13 +1659,16 @@ describe('VoiceConversationController', () => {
     expect(toolBarrier.dispose).toHaveBeenCalledTimes(1);
   });
 
-  it('cancels detached response delivery but preserves the attempt tool barrier across reconnect', async () => {
+  it('detaches provider delivery but preserves the attempt tool barrier across reconnect', async () => {
     const first = createConnectionFixture();
     const second = createConnectionFixture();
     first.events.push({ kind: 'tools' });
     const cancelled = deferred<Readonly<{ status: 'cancelled'; results: readonly [] }>>();
     const firstBarrier = {
       run: vi.fn(async () => await cancelled.promise),
+      detach: vi.fn(() => {
+        cancelled.resolve({ status: 'cancelled', results: [] });
+      }),
       cancel: vi.fn(() => {
         cancelled.resolve({ status: 'cancelled', results: [] });
       }),
@@ -1485,7 +1705,8 @@ describe('VoiceConversationController', () => {
     first.finishEvents();
     await vi.waitFor(() => expect(second.connect).toHaveBeenCalledTimes(1));
 
-    expect(firstBarrier.cancel).toHaveBeenCalledWith('response-before-reconnect');
+    expect(firstBarrier.detach).toHaveBeenCalledWith('response-before-reconnect');
+    expect(firstBarrier.cancel).not.toHaveBeenCalled();
     expect(firstBarrier.dispose).not.toHaveBeenCalled();
     expect(createToolBarrier).toHaveBeenCalledTimes(1);
     await controller.stop();
@@ -1543,6 +1764,149 @@ describe('VoiceConversationController', () => {
     expect(executeCall).toHaveBeenCalledTimes(1);
     expect(continueResponse).toHaveBeenCalledTimes(1);
     expect(machine.transitions).not.toContain('failed');
+
+    await controller.stop();
+  });
+
+  it('redelivers a detached provider response through the retained barrier without repeating its effect', async () => {
+    const first = createConnectionFixture();
+    const second = createConnectionFixture();
+    first.events.push({ kind: 'tools' });
+    const calls = [{
+      v: 1 as const,
+      responseId: 'response-transport-detach',
+      callId: 'call-transport-detach',
+      toolName: 'sendSessionMessage',
+      order: 0,
+      arguments: { message: 'deliver once' },
+    }];
+    const deliveryStarted = vi.fn();
+    const executeCall = vi.fn(async () => ({ ok: true, receipt: 'transport-detach' }));
+    const submitResults = vi.fn()
+      .mockImplementationOnce(async (
+        _responseId: string,
+        _results: readonly unknown[],
+        signal: AbortSignal,
+      ) => {
+        deliveryStarted();
+        await new Promise<void>((_resolve, reject) => {
+          signal.addEventListener('abort', () => reject(new Error('transport detached')), { once: true });
+        });
+      })
+      .mockResolvedValueOnce(undefined);
+    const continueResponse = vi.fn(async () => {});
+    const toolBarrier = createRealtimeToolBarrier({
+      classifyCall: () => 'mutation',
+      authorizeCall: async () => ({ status: 'allowed' }),
+      executeCall,
+      redactResult: (value) => value,
+      submitResults,
+      continueResponse,
+    });
+    let connectionIndex = 0;
+    const machine = createMachineFixture();
+    const controller = createVoiceConversationController({
+      adapter: createAdapter({
+        decodeControl: () => [{
+          type: 'tool_calls',
+          responseId: 'response-transport-detach',
+          calls,
+        }],
+      }),
+      machine: machine.machine,
+      createConnection: async () => [first.connection, second.connection][connectionIndex++]!,
+      isSelectionCurrent: () => true,
+      onCanonicalEvent: async () => {},
+      createToolBarrier: () => toolBarrier,
+      waitBeforeReconnect: async () => {},
+      maxReconnectAttempts: 1,
+    });
+
+    await controller.start({ controlSessionId: 'tool-transport-detach' });
+    await vi.waitFor(() => expect(deliveryStarted).toHaveBeenCalledTimes(1));
+    first.finishEvents();
+    await vi.waitFor(() => expect(second.connect).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(submitResults).toHaveBeenCalledTimes(2));
+
+    expect(executeCall).toHaveBeenCalledTimes(1);
+    expect(continueResponse).toHaveBeenCalledTimes(1);
+    expect(machine.failureCodes).toEqual([]);
+
+    await controller.stop();
+  });
+
+  it('fails the turn when detached settled tool results cannot be correlated to a resumed provider response', async () => {
+    const first = createConnectionFixture();
+    const second = createConnectionFixture();
+    first.events.push({ kind: 'tools' });
+    const calls = [{
+      v: 1 as const,
+      responseId: 'response-no-resume',
+      callId: 'call-no-resume',
+      toolName: 'sendSessionMessage',
+      order: 0,
+      arguments: { message: 'do not rerun' },
+    }];
+    const deliveryStarted = vi.fn();
+    const executeCall = vi.fn(async () => ({ ok: true, receipt: 'no-resume' }));
+    const submitResults = vi.fn(async (
+      _responseId: string,
+      _results: readonly unknown[],
+      signal: AbortSignal,
+    ) => {
+      deliveryStarted();
+      await new Promise<void>((_resolve, reject) => {
+        signal.addEventListener('abort', () => reject(new Error('transport detached')), { once: true });
+      });
+    });
+    const continueResponse = vi.fn(async () => {});
+    const toolBarrier = createRealtimeToolBarrier({
+      classifyCall: () => 'mutation',
+      authorizeCall: async () => ({ status: 'allowed' }),
+      executeCall,
+      redactResult: (value) => value,
+      submitResults,
+      continueResponse,
+    });
+    let connectionIndex = 0;
+    let preparationCount = 0;
+    const machine = createMachineFixture();
+    const controller = createVoiceConversationController({
+      adapter: createAdapter({
+        // A declaration may support resumption in general while the next
+        // prepared carrier is a fresh session with no stable call identity.
+        prepare: async () => ({
+          kind: 'prepared' as const,
+          session: {
+            config: {},
+            safeMetadata: null,
+            toolResultReplay: ++preparationCount === 1 ? 'stable_ids' as const : 'none' as const,
+          },
+        }),
+        decodeControl: () => [{
+          type: 'tool_calls',
+          responseId: 'response-no-resume',
+          calls,
+        }],
+      }),
+      machine: machine.machine,
+      createConnection: async () => [first.connection, second.connection][connectionIndex++]!,
+      isSelectionCurrent: () => true,
+      onCanonicalEvent: async () => {},
+      createToolBarrier: () => toolBarrier,
+      waitBeforeReconnect: async () => {},
+      maxReconnectAttempts: 1,
+    });
+
+    await controller.start({ controlSessionId: 'tool-no-resume' });
+    await vi.waitFor(() => expect(deliveryStarted).toHaveBeenCalledTimes(1));
+    first.finishEvents();
+    await vi.waitFor(() => expect(machine.failureCodes).toEqual([
+      'voice_tool_result_delivery_unrecoverable',
+    ]));
+
+    expect(executeCall).toHaveBeenCalledTimes(1);
+    expect(continueResponse).not.toHaveBeenCalled();
 
     await controller.stop();
   });
@@ -1704,104 +2068,6 @@ describe('VoiceConversationController', () => {
     expect(fixture.close).toHaveBeenCalledWith({
       code: 'replaced',
       detail: 'voice_provider_not_selected',
-    });
-  });
-
-  describe('inbound liveness', () => {
-    const STALL_MS = VOICE_RUNTIME_CONFIG_DEFAULTS.realtime.inboundWatchdog.stallTimeoutMs;
-    const AWAITING_MS = VOICE_RUNTIME_CONFIG_DEFAULTS.realtime.inboundWatchdog.awaitingResponseTimeoutMs;
-
-    beforeEach(() => {
-      vi.useFakeTimers();
-    });
-
-    afterEach(() => {
-      vi.clearAllTimers();
-      vi.useRealTimers();
-    });
-
-    function createStallFixture(controlEvent: VoiceRealtimeJsonValue) {
-      const first = createConnectionFixture('webrtc');
-      const second = createConnectionFixture('webrtc');
-      first.events.push(controlEvent);
-      let index = 0;
-      const machine = createMachineFixture();
-      const controller = createVoiceConversationController({
-        adapter: createAdapter({
-          decodeControl: (event) => [event as unknown as VoiceRealtimeCanonicalEvent],
-        }),
-        machine: machine.machine,
-        createConnection: async () => [first.connection, second.connection][index++]!,
-        isSelectionCurrent: () => true,
-        onCanonicalEvent: async () => {},
-        waitBeforeReconnect: async () => {},
-        maxReconnectAttempts: 1,
-      });
-      return { first, second, machine, controller };
-    }
-
-    it('reconnects an attempt that stays open but stops delivering audio mid-turn', async () => {
-      const { first, second, controller } = createStallFixture({ type: 'assistant_output_started' });
-
-      await controller.start({ controlSessionId: 'inbound-stall-speaking' });
-      await vi.waitFor(() => expect(first.connect).toHaveBeenCalledTimes(1));
-
-      // A transport that stays nominally open but stops delivering content
-      // otherwise hangs forever: the assistant never finishes speaking and the
-      // user has no exit.
-      await vi.advanceTimersByTimeAsync(STALL_MS);
-      await vi.waitFor(() => expect(second.connect).toHaveBeenCalledTimes(1));
-      expect(first.close).toHaveBeenCalledWith({ code: 'remote_close' });
-
-      second.finishEvents();
-      await controller.stop();
-    });
-
-    it('reconnects an attempt that dies while the assistant is still thinking', async () => {
-      const { first, second, controller } = createStallFixture({ type: 'input_speech_stopped' });
-
-      await controller.start({ controlSessionId: 'inbound-stall-awaiting' });
-      await vi.waitFor(() => expect(first.connect).toHaveBeenCalledTimes(1));
-
-      // Response generation legitimately outlasts an inter-chunk gap, so the
-      // thinking window must not fire on the tighter speaking timeout.
-      await vi.advanceTimersByTimeAsync(STALL_MS);
-      expect(second.connect).not.toHaveBeenCalled();
-
-      await vi.advanceTimersByTimeAsync(AWAITING_MS - STALL_MS);
-      await vi.waitFor(() => expect(second.connect).toHaveBeenCalledTimes(1));
-
-      second.finishEvents();
-      await controller.stop();
-    });
-
-    it('never reconnects an idle attempt that is legitimately listening in silence', async () => {
-      const { first, second, controller } = createStallFixture({ type: 'assistant_output_stopped' });
-
-      await controller.start({ controlSessionId: 'inbound-idle-silence' });
-      await vi.waitFor(() => expect(first.connect).toHaveBeenCalledTimes(1));
-
-      await vi.advanceTimersByTimeAsync(AWAITING_MS * 3);
-      expect(second.connect).not.toHaveBeenCalled();
-
-      first.finishEvents();
-      await controller.stop();
-    });
-
-    it('cancels the stall timer when the attempt ends', async () => {
-      const { second, controller } = createStallFixture({ type: 'assistant_output_started' });
-
-      await controller.start({ controlSessionId: 'inbound-stall-ended' });
-      // The speaking window is armed while the assistant is producing audio.
-      await vi.waitFor(() => expect(vi.getTimerCount()).toBe(1));
-
-      await controller.stop();
-
-      // End retires the timer itself rather than relying on a retired attempt
-      // to no-op a stall that still fires minutes later.
-      expect(vi.getTimerCount()).toBe(0);
-      await vi.advanceTimersByTimeAsync(AWAITING_MS * 3);
-      expect(second.connect).not.toHaveBeenCalled();
     });
   });
 

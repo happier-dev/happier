@@ -181,7 +181,7 @@ describe('initializeVoiceAgentHandle', () => {
                 commit: vi.fn(),
                 stop: vi.fn(),
             }),
-            enqueuePendingContextUpdate: vi.fn(),
+            setDeferredTargetSessionContext: vi.fn(),
         });
 
         expect(handle.backend).toBe('daemon');
@@ -234,7 +234,7 @@ describe('initializeVoiceAgentHandle', () => {
                     commit: vi.fn(),
                     stop: vi.fn(),
                 }),
-                enqueuePendingContextUpdate: vi.fn(),
+                setDeferredTargetSessionContext: vi.fn(),
             });
 
             expect(handle.backend).toBe('daemon');

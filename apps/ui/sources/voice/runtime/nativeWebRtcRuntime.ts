@@ -16,9 +16,20 @@ type NativeWebRtcRuntime = Readonly<{
   MediaStream: new (tracks: unknown[]) => unknown;
 }>;
 
+type LiveKitRegisterGlobals = (
+  options?: Readonly<{ autoConfigureAudioSession?: boolean }>,
+) => void;
+
+type VoiceNativeWebRtcBootstrapDependencies = Readonly<{
+  nativeWebRtcModule: unknown;
+  requiresIosAudioLifecycle: boolean;
+  loadRegisterGlobals(): LiveKitRegisterGlobals;
+}>;
+
 type NativeWebRtcRuntimeDependencies = Readonly<{
   nativeWebRtcModule: unknown;
   requiresIosAudioLifecycle: boolean;
+  initializeWebRtc?(): void;
   loadRuntime(): NativeWebRtcRuntime;
 }>;
 
@@ -47,6 +58,67 @@ function nativeWebRtcIncompatible(): Error {
   );
 }
 
+/**
+ * The host owns the one native WebRTC bootstrap shared by OpenAI, Codex, and
+ * provider-managed media engines. LiveKit only installs WebRTC globals and
+ * lifecycle hooks here; the native coordinator remains the sole owner of the
+ * AVAudioSession policy and lease lifetime.
+ */
+export function createVoiceNativeWebRtcBootstrap(
+  dependencies: VoiceNativeWebRtcBootstrapDependencies,
+): Readonly<{ initialize(): void; require(): void }> {
+  let initialized = false;
+  const requireCompatibleBridge = (): void => {
+    if (
+      dependencies.requiresIosAudioLifecycle
+      && !supportsIosWebRtcAudioLifecycle(dependencies.nativeWebRtcModule)
+    ) {
+      throw nativeWebRtcIncompatible();
+    }
+  };
+  const initialize = (): void => {
+    if (initialized) return;
+    if (
+      dependencies.requiresIosAudioLifecycle
+      && !supportsIosWebRtcAudioLifecycle(dependencies.nativeWebRtcModule)
+    ) {
+      return;
+    }
+    dependencies.loadRegisterGlobals()({ autoConfigureAudioSession: false });
+    initialized = true;
+  };
+  return Object.freeze({
+    initialize,
+    require(): void {
+      requireCompatibleBridge();
+      initialize();
+    },
+  });
+}
+
+const nativeWebRtcBootstrap = createVoiceNativeWebRtcBootstrap({
+  nativeWebRtcModule: NativeModules.WebRTCModule,
+  requiresIosAudioLifecycle: Platform.OS === 'ios',
+  loadRegisterGlobals: () => (
+    require('@livekit/react-native') as Readonly<{
+      registerGlobals: LiveKitRegisterGlobals;
+    }>
+  ).registerGlobals,
+});
+
+export function initializeVoiceNativeWebRtcBootstrap(): void {
+  nativeWebRtcBootstrap.initialize();
+}
+
+/**
+ * Provider-managed native media reaches the same host bootstrap before its
+ * SDK can create a WebRTC session. Unlike eager host setup, this admission is
+ * explicit so an incompatible iOS bridge is surfaced as a typed failure.
+ */
+export function requireVoiceNativeWebRtcBootstrap(): void {
+  nativeWebRtcBootstrap.require();
+}
+
 export function loadVoiceNativeWebRtcRuntime(
   dependencies: NativeWebRtcRuntimeDependencies,
 ): NativeWebRtcRuntime {
@@ -56,6 +128,7 @@ export function loadVoiceNativeWebRtcRuntime(
   ) {
     throw nativeWebRtcIncompatible();
   }
+  dependencies.initializeWebRtc?.();
   return dependencies.loadRuntime();
 }
 
@@ -67,6 +140,7 @@ export function getVoiceNativeWebRtcRuntime(): NativeWebRtcRuntime {
   return loadVoiceNativeWebRtcRuntime({
     nativeWebRtcModule: NativeModules.WebRTCModule,
     requiresIosAudioLifecycle: Platform.OS === 'ios',
+    initializeWebRtc: initializeVoiceNativeWebRtcBootstrap,
     loadRuntime: () => (
       require('@livekit/react-native-webrtc') as NativeWebRtcRuntime
     ),

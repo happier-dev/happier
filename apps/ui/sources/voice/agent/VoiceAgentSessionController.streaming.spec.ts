@@ -1262,6 +1262,88 @@ describe('VoiceAgentSessionController (streaming)', () => {
     );
   });
 
+  it('keeps one deferred target context across a pre-turn handle recovery', async () => {
+    voiceSessionBindingStore.getState().bind({
+      adapterId: 'local_conversation',
+      controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+      conversationSessionId: 'sys_voice',
+      transcriptMode: 'native_session',
+      targetSessionId: 's1',
+      updatedAt: 1,
+    } as any);
+    commit.mockRejectedValueOnce(
+      Object.assign(new Error('execution_run_not_found'), { rpcErrorCode: 'execution_run_not_found' }),
+    );
+
+    const controller = createVoiceAgentSessionController();
+
+    await controller.commit(VOICE_AGENT_GLOBAL_SESSION_ID);
+    await controller.sendTurn(VOICE_AGENT_GLOBAL_SESSION_ID, 'first turn');
+
+    const firstPayload = String((startTurnStream.mock.calls[0]?.[0] as any)?.userText ?? '');
+    expect(start).toHaveBeenCalledTimes(2);
+    expect(firstPayload.match(/TARGET_CONTEXT:__voice_agent__->s1/g)).toHaveLength(1);
+
+    await controller.sendTurn(VOICE_AGENT_GLOBAL_SESSION_ID, 'next turn');
+    const nextPayload = String((startTurnStream.mock.calls[1]?.[0] as any)?.userText ?? '');
+    expect(nextPayload).not.toContain('TARGET_CONTEXT:__voice_agent__->s1');
+  });
+
+  it('does not requeue consumed target context when the first turn retries its handle', async () => {
+    voiceSessionBindingStore.getState().bind({
+      adapterId: 'local_conversation',
+      controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+      conversationSessionId: 'sys_voice',
+      transcriptMode: 'native_session',
+      targetSessionId: 's1',
+      updatedAt: 1,
+    } as any);
+    startTurnStream.mockRejectedValueOnce(
+      Object.assign(new Error('execution_run_not_found'), { rpcErrorCode: 'execution_run_not_found' }),
+    );
+
+    const controller = createVoiceAgentSessionController();
+
+    await controller.sendTurn(VOICE_AGENT_GLOBAL_SESSION_ID, 'first turn');
+
+    const retriedPayload = String((startTurnStream.mock.calls[1]?.[0] as any)?.userText ?? '');
+    expect(start).toHaveBeenCalledTimes(2);
+    expect(retriedPayload.match(/TARGET_CONTEXT:__voice_agent__->s1/g)).toHaveLength(1);
+
+    await controller.sendTurn(VOICE_AGENT_GLOBAL_SESSION_ID, 'next turn');
+    const nextPayload = String((startTurnStream.mock.calls[2]?.[0] as any)?.userText ?? '');
+    expect(nextPayload).not.toContain('TARGET_CONTEXT:__voice_agent__->s1');
+  });
+
+  it('keeps deferred target context outside the bounded generic context history', async () => {
+    voiceSessionBindingStore.getState().bind({
+      adapterId: 'local_conversation',
+      controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+      conversationSessionId: 'sys_voice',
+      transcriptMode: 'native_session',
+      targetSessionId: 's1',
+      updatedAt: 1,
+    } as any);
+
+    const controller = createVoiceAgentSessionController();
+    await controller.ensureRunning(VOICE_AGENT_GLOBAL_SESSION_ID);
+    for (let index = 0; index < 8; index += 1) {
+      controller.appendContextUpdate(VOICE_AGENT_GLOBAL_SESSION_ID, `ORDINARY_CONTEXT_${index}`);
+    }
+
+    await controller.sendTurn(VOICE_AGENT_GLOBAL_SESSION_ID, 'first turn');
+
+    const firstPayload = String((startTurnStream.mock.calls[0]?.[0] as any)?.userText ?? '');
+    expect(firstPayload.match(/TARGET_CONTEXT:__voice_agent__->s1/g)).toHaveLength(1);
+    for (let index = 0; index < 8; index += 1) {
+      expect(firstPayload).toContain(`ORDINARY_CONTEXT_${index}`);
+    }
+
+    await controller.sendTurn(VOICE_AGENT_GLOBAL_SESSION_ID, 'next turn');
+    const nextPayload = String((startTurnStream.mock.calls[1]?.[0] as any)?.userText ?? '');
+    expect(nextPayload).not.toContain('TARGET_CONTEXT:__voice_agent__->s1');
+  });
+
   it('passes the clean user turn separately from wrapped context updates when streaming a daemon voice turn', async () => {
     useVoiceTargetStore.getState().setPrimaryActionSessionId('s1');
 

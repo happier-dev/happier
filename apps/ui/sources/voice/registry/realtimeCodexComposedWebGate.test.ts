@@ -352,6 +352,7 @@ describe('realtime_codex normal web composed gate', () => {
         )).toMatchObject({
           conversationSessionId: 'codex-direct-session',
         });
+        expect(input.onStarted).toEqual(expect.any(Function));
         const createService = hostLease.host.createAgentSessionRealtimeService;
         return createService ? await createService(input) : null;
       },
@@ -489,20 +490,24 @@ describe('realtime_codex normal web composed gate', () => {
     ]));
     expect(transcriptPostCount()).toBe(1);
     persistenceCleanup?.();
+    const secondBrowser = installVoiceWebRtcBrowserBoundary();
     browser.peer.channel.close();
     await vi.waitFor(() => expect(rpcBoundary.sessionRpc.mock.calls.filter(
       ([input]) => String((input as { method?: unknown }).method).endsWith('.stop'),
     )).toHaveLength(1));
     await vi.waitFor(() => expect(browser.peer.close).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(secondBrowser.peer.createDataChannel).toHaveBeenCalledTimes(1));
+    secondBrowser.peer.channel.open();
+    await vi.waitFor(() => expect(runtime.adapter.getSnapshot()).toMatchObject({
+      status: 'connected',
+    }));
     expect(runtime.adapter.getSnapshot()).toMatchObject({
-      status: 'error',
-      errorCode: 'voice_webrtc_data_channel_closed',
-      errorMessage: 'voice_webrtc_data_channel_closed',
+      status: 'connected',
     });
     expect(browser.peer.createDataChannel).toHaveBeenCalledTimes(1);
     expect(rpcBoundary.sessionRpc.mock.calls.filter(
       ([input]) => String((input as { method?: unknown }).method).endsWith('.start'),
-    )).toHaveLength(1);
+    )).toHaveLength(2);
     expect(rpcBoundary.sessionRpc.mock.calls.filter(
       ([input]) => String((input as { method?: unknown }).method).endsWith('.stop'),
     )).toHaveLength(1);
@@ -513,18 +518,6 @@ describe('realtime_codex normal web composed gate', () => {
       sessionId: 'codex-direct-session',
       payload: { applicationAttemptId },
     });
-
-    await runtime.adapter.stop({ sessionId: 'codex-direct-session' });
-    expect(storage.getState().sessions['codex-direct-session']).toBeDefined();
-    expect(rpcBoundary.sessionRpc.mock.calls.filter(
-      ([input]) => String((input as { method?: unknown }).method).endsWith('.stop'),
-    )).toHaveLength(1);
-
-    const secondBrowser = installVoiceWebRtcBrowserBoundary();
-    const secondStarting = runtime.adapter.start({ sessionId: 'codex-direct-session' });
-    await vi.waitFor(() => expect(secondBrowser.peer.createDataChannel).toHaveBeenCalledTimes(1));
-    secondBrowser.peer.channel.open();
-    await secondStarting;
 
     await installTranscriptPersistenceBoundary();
     secondBrowser.peer.channel.message(JSON.stringify({
@@ -539,8 +532,18 @@ describe('realtime_codex normal web composed gate', () => {
       readCanonicalVoiceTranscriptSnapshot('codex-direct-session'),
     ).toEqual([
       expect.objectContaining({
-        epoch: 2,
-        itemId: 'codex-v3:2:turn-second-attempt',
+        epoch: 1,
+        itemId: 'codex-v3:1:turn-direct-final',
+        role: 'assistant',
+        text: 'Finished once.',
+        revision: 1,
+        final: true,
+      }),
+      expect.objectContaining({
+        // A reconnect retains the controller's current logical conversation
+        // attempt; it must not create a second persistence epoch.
+        epoch: 1,
+        itemId: 'codex-v3:1:turn-second-attempt',
         role: 'assistant',
         text: 'Second attempt survives.',
         revision: 1,
@@ -632,6 +635,9 @@ describe('realtime_codex normal web composed gate', () => {
       errorCode: 'voice_webrtc_remote_audio_playback_failed',
       errorMessage: 'voice_webrtc_remote_audio_playback_failed',
     });
+    await vi.waitFor(() => expect(rpcBoundary.sessionRpc.mock.calls.filter(
+      ([input]) => String((input as { method?: unknown }).method).endsWith('.stop'),
+    )).toHaveLength(3));
 
     await runtime.dispose();
     hostLease.revoke();

@@ -56,7 +56,7 @@ import { buildAgentUniverseBackendTargetKey } from '@/agents/catalog/agentUniver
 type InitializeVoiceAgentHandleParams = Readonly<{
     sessionId: string;
     getDaemonVoiceAgentClient: () => VoiceAgentClient;
-    enqueuePendingContextUpdate: (sessionId: string, update: string) => void;
+    setDeferredTargetSessionContext: (sessionId: string, update: string) => void;
 }>;
 
 type VoiceAgentSessionLike = Readonly<{
@@ -143,7 +143,7 @@ function buildVoiceAgentStartArgsBase(args: Readonly<{
 export async function initializeVoiceAgentHandle({
     sessionId,
     getDaemonVoiceAgentClient,
-    enqueuePendingContextUpdate,
+    setDeferredTargetSessionContext,
 }: InitializeVoiceAgentHandleParams): Promise<VoiceAgentHandle> {
     const settings: any = storage.getState().settings;
     const voiceCfg = readLocalConversationSettingsFromAccountSettings(settings);
@@ -678,7 +678,7 @@ export async function initializeVoiceAgentHandle({
     }
 
     if (deferredTargetSessionContext.trim().length > 0) {
-        enqueuePendingContextUpdate(sessionId, deferredTargetSessionContext);
+        setDeferredTargetSessionContext(sessionId, deferredTargetSessionContext);
     }
 
     clearVoiceAgentRecoveryReplaySource(sessionId);

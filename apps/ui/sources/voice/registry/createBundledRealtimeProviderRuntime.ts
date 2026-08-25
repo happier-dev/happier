@@ -21,7 +21,10 @@ import {
   type VoiceHostAuthoredContextScope,
 } from '@/voice/session/types';
 import type { VoiceConnectionCloseReason } from '@/voice/runtime/connection/VoiceRealtimeConnection';
-import type { VoiceRealtimeProtocolAdapter } from '@/voice/runtime/protocol/VoiceRealtimeProtocolAdapter';
+import type {
+  VoiceRealtimePreparedSession,
+  VoiceRealtimeProtocolAdapter,
+} from '@/voice/runtime/protocol/VoiceRealtimeProtocolAdapter';
 import { createRealtimeBargeInCoordinator } from '@/voice/runtime/realtime/createRealtimeBargeInCoordinator';
 import { isVoiceMachineErrorKind } from '@/voice/runtime/machine/voiceMachineError';
 import { VOICE_RUNTIME_CONFIG_DEFAULTS } from '@/voice/runtime/voiceRuntimeConfigDefaults';
@@ -630,13 +633,17 @@ export function createBundledRealtimeProviderRuntime(
     machine: {
       connecting: ({ controlSessionId, attemptId }: Readonly<{ controlSessionId: string; attemptId: number }>) =>
         host.machine.transitionToConnecting(controlSessionId, providerId, attemptId),
-      reconnecting: ({ controlSessionId, attemptId, active }: Readonly<{
-        controlSessionId: string; attemptId: number; active: boolean;
+      reconnecting: ({ controlSessionId, attemptId, active, retryAvailable }: Readonly<{
+        controlSessionId: string; attemptId: number; active: boolean; retryAvailable?: boolean;
       }>) => {
         if (active) {
           bargeInCoordinator?.reset();
         }
-        host.machine.setReconnecting(controlSessionId, providerId, active, attemptId);
+        if (retryAvailable === undefined) {
+          host.machine.setReconnecting(controlSessionId, providerId, active, attemptId);
+        } else {
+          host.machine.setReconnecting(controlSessionId, providerId, active, attemptId, retryAvailable);
+        }
       },
       connected: ({ controlSessionId, attemptId }: Readonly<{ controlSessionId: string; attemptId: number }>) => {
         host.machine.transitionToConnected(controlSessionId, providerId, attemptId);
@@ -681,7 +688,7 @@ export function createBundledRealtimeProviderRuntime(
     },
     resources,
     createConnection: async (
-      session: Readonly<{ config: VoiceRealtimeJsonValue; safeMetadata: VoiceRealtimeJsonValue }>,
+      session: VoiceRealtimePreparedSession,
       attemptId: number,
       signal: AbortSignal,
     ) => {
@@ -725,11 +732,13 @@ export function createBundledRealtimeProviderRuntime(
             controlSessionId,
             applicationAttemptId: `voice:${attemptId}`,
             signal: lifetime.signal,
-            onTerminal(event) {
-              if (signal.aborted || lifetime.signal.aborted) return;
-              void runtime?.fail(
-                event.diagnostic?.code ?? `agent_realtime_${event.reason}`,
-              );
+            onStarted(handle) {
+              handle.watch((event) => {
+                if (signal.aborted || lifetime.signal.aborted) return;
+                void runtime?.fail(
+                  event.diagnostic?.code ?? `agent_realtime_${event.reason}`,
+                );
+              });
             },
           });
           if (!service) {
@@ -1531,11 +1540,17 @@ export function createBundledRealtimeProviderRuntime(
     start,
     stop,
     async toggle(input) { if (runtime!.getActiveControlSessionId()) await stop(); else await start(input); },
+    async retry() {
+      await runtime?.requestReconnect();
+    },
     async interrupt() {
       await interruptActiveResponse();
     },
     async bargeIn() {
       await interruptActiveResponse();
+    },
+    setOutputFocusState({ state }) {
+      return runtime?.setOutputFocusState?.(state) ?? 'unsupported';
     },
     async setMuted({ muted }) {
       const controlSessionId = runtime?.getOwnedControlSessionId();
@@ -1543,7 +1558,11 @@ export function createBundledRealtimeProviderRuntime(
       if (!controlSessionId || attemptId === null || attemptId === undefined) return;
       mic.setMuted(muted);
       if (muted) inputLevelWriter?.reset();
-      await config.setInputMuted?.(muted);
+      if (config.microphoneMode === 'provider_managed') {
+        await config.setInputMuted(muted);
+      } else {
+        await config.setInputMuted?.(muted);
+      }
       host.machine.setMuted(controlSessionId, providerId, attemptId, muted);
     },
     sendContextUpdate({ update }) {

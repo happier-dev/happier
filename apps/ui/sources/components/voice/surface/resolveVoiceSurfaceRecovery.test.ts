@@ -16,6 +16,13 @@ describe('resolveVoiceSurfaceRecovery', () => {
     expect(resolveVoiceSurfaceRecovery(action)).toEqual({ kind, labelKey });
   });
 
+  it('uses the existing localized execution-machine action for unavailable machine recovery', () => {
+    expect(resolveVoiceSurfaceRecovery('select_execution_machine')).toEqual({
+      kind: 'select_execution_machine',
+      labelKey: 'voice.readiness.actions.select_execution_machine',
+    });
+  });
+
   it('does not render a recovery action for terminal none', () => {
     expect(resolveVoiceSurfaceRecovery('none')).toBeNull();
     expect(resolveVoiceSurfaceRecovery(null)).toBeNull();

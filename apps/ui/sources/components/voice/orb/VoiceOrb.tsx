@@ -767,7 +767,7 @@ export function VoiceOrb(props: Readonly<{
                     </View>
 
                     {extraControls.length > 0 ? (
-                        <View style={{ flexShrink: 1, minWidth: 0 }}>
+                        <View testID="voice.orb.bar.contextual" style={{ flexShrink: 1, minWidth: 0 }}>
                             <ControlRow controls={extraControls} onAction={props.onAction ?? (() => {})} />
                         </View>
                     ) : null}

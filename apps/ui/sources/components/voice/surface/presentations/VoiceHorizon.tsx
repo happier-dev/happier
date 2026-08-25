@@ -109,8 +109,9 @@ export const VoiceHorizon = React.memo(function VoiceHorizon(props: Readonly<{
     const decorativePointerEvents = resolveOverlayPointerEvents('none');
     const attemptControl = model.attemptControl;
 
-    // Presence is how a mounted surface tells the one clock it is on screen;
-    // the clock still refuses to run without a live attempt (§2.4a).
+    // VoiceSurface does not mount Horizon for a retained hidden Session. A
+    // mounted Horizon is therefore presented and can own its ordinary presence
+    // lease without duplicating the presentation decision at this leaf.
     React.useEffect(() => {
         presence.acquire();
         return () => presence.release();

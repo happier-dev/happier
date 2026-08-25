@@ -1,0 +1,63 @@
+import * as React from 'react';
+import renderer, { act } from 'react-test-renderer';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const hookCalls = vi.hoisted(() => ({ energy: 0, control: 0 }));
+
+vi.mock('@/components/voice/light/useVoiceEnergy', () => ({
+    useVoiceEnergyIfMounted: () => {
+        hookCalls.energy += 1;
+        return { luminosity: 0, energized: false, direction: 'none' };
+    },
+}));
+
+vi.mock('@/components/voice/attempt/useVoiceAttemptControl', () => ({
+    VOICE_ATTEMPT_IDLE_TARGET_GLOBAL: { kind: 'global' },
+    useVoiceAttemptControl: () => {
+        hookCalls.control += 1;
+        return {
+            availability: 'available',
+            canStop: false,
+            muted: false,
+            primaryAction: 'start',
+            primaryActionHint: 'hint',
+            primaryActionLabel: 'label',
+            stop: vi.fn(),
+            onPrimaryAction: vi.fn(),
+        };
+    },
+}));
+
+vi.mock('@/text', () => ({ t: (key: string) => key }));
+vi.mock('./VoiceComposerPlanet', () => ({
+    VoiceComposerPlanet: () => React.createElement('VoiceComposerPlanet'),
+}));
+
+import { VoiceComposerPlanetMount } from './VoiceComposerPlanetMount';
+
+describe('VoiceComposerPlanetMount retained presentation', () => {
+    beforeEach(() => {
+        hookCalls.energy = 0;
+        hookCalls.control = 0;
+    });
+
+    it('does not mount energy or attempt subscriptions while its retained Session is hidden', () => {
+        let tree: renderer.ReactTestRenderer;
+        act(() => {
+            tree = renderer.create(<VoiceComposerPlanetMount sessionId="session-1" isPresented={false} />);
+        });
+
+        expect(hookCalls).toEqual({ energy: 0, control: 0 });
+        expect(tree!.toJSON()).toBeNull();
+
+        act(() => {
+            tree!.update(<VoiceComposerPlanetMount sessionId="session-1" isPresented />);
+        });
+
+        expect(hookCalls.energy).toBe(1);
+        expect(hookCalls.control).toBe(1);
+        expect(tree!.root.findByType('VoiceComposerPlanet')).toBeTruthy();
+
+        act(() => tree!.unmount());
+    });
+});

@@ -196,7 +196,11 @@ describe('DaemonSpeechStreamTunnelTransport carrier ordering', () => {
           peerApplicationEncryption: { v: 1 as const, suite: 'aes-256-gcm' as const, recipientPublicKeyBase64Url },
         })),
         finish: vi.fn(),
-        cancel: vi.fn(async () => ({ ok: true as const })),
+        cancel: vi.fn(async (payload: { streamId: string; generation: number }) => ({
+          ok: true as const,
+          streamId: payload.streamId,
+          generation: payload.generation,
+        })),
       },
     });
 

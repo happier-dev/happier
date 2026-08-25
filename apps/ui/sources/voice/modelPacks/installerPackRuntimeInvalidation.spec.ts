@@ -36,8 +36,12 @@ describe('default pack runtime invalidation', () => {
     await removeModelPack({ packId }, { fs } as any);
 
     // The native cache is keyed by the filesystem path, not the uri the
-    // installer works in.
-    expect(observed).toEqual([{ assetsDir: '/docs/happier/voice/modelPacks/stt-en', liveBytesPresent: true }]);
+    // installer works in. The final retirement closes a creator that began
+    // after the pre-delete retirement but before bytes were removed.
+    expect(observed).toEqual([
+      { assetsDir: '/docs/happier/voice/modelPacks/stt-en', liveBytesPresent: true },
+      { assetsDir: '/docs/happier/voice/modelPacks/stt-en', liveBytesPresent: false },
+    ]);
     expect(files.has(`${liveRoot}/encoder.onnx`)).toBe(false);
   });
 
@@ -76,6 +80,7 @@ describe('default pack runtime invalidation', () => {
 
     expect(observed).toEqual([
       { assetsDir: '/docs/happier/voice/modelPacks/stt-crashed-upgrade', liveBytes: 'candidate' },
+      { assetsDir: '/docs/happier/voice/modelPacks/stt-crashed-upgrade', liveBytes: 'prior' },
     ]);
     // The rollback still ran: the prior install is live again.
     expect(new TextDecoder().decode(files.get(`${liveRoot}/encoder.onnx`)!)).toBe('prior');

@@ -6,7 +6,10 @@ import type { VoiceSurfaceRecovery } from '@/components/voice/surface/resolveVoi
 import { voiceSessionManager } from '@/voice/session/voiceSession';
 import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
 import type { VoiceMachineRecoveryAction } from '@/voice/runtime/machine/voiceConversationRuntimeTypes';
-import { VOICE_SETTINGS_PROVIDER_FOCUS_TARGET } from '@/voice/settings/voiceSettingsRouteFocus';
+import {
+    VOICE_SETTINGS_EXECUTION_MACHINE_FOCUS_TARGET,
+    VOICE_SETTINGS_PROVIDER_FOCUS_TARGET,
+} from '@/voice/settings/voiceSettingsRouteFocus';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
 /**
@@ -112,6 +115,10 @@ export function createVoiceAttemptRecoveryDispatch(params: Readonly<{
             navigate(VOICE_SETTINGS_PROVIDER_FOCUS_TARGET);
             return;
         }
+        if (recoveryAction === 'select_execution_machine') {
+            navigate(VOICE_SETTINGS_EXECUTION_MACHINE_FOCUS_TARGET);
+            return;
+        }
         if (recoveryAction === 'open_settings' || recoveryAction === 'open_settings_then_reconnect') {
             if (Platform.OS === 'web') {
                 navigate(SETTINGS_ROUTES.voice);
@@ -135,7 +142,7 @@ export function createVoiceAttemptRecoveryDispatch(params: Readonly<{
                 ?? (context.globalStartAuthorized ? '' : null);
             if (retrySessionId === null) return;
             fireAndForget(
-                voiceSessionManager.toggle(retrySessionId),
+                voiceSessionManager.retry(retrySessionId),
                 { tag: 'VoiceAttemptControl.recover' },
             );
             return;

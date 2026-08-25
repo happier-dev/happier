@@ -17,7 +17,10 @@ import { sync } from '@/sync/sync';
 import { useProfile, useSettings, useSettingsVersion } from '@/sync/store/hooks';
 import { tLoose } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
-import { useProjectedConnectedServicesRegistry } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import {
+  useProjectedConnectedServicesRegistry,
+  useProjectedPluginLocalizedTextResolver,
+} from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { resolveQualifiedConnectedServiceRegistryDisplayName } from '@/components/settings/connectedServices/model/resolveConnectedServiceDisplayName';
 import { getConnectedAccountAuthenticationMode } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import { presentQualifiedConnectedAccountTarget } from '@/sync/domains/connectedServices/qualifiedConnectedAccountTargetPresentation';
@@ -83,6 +86,7 @@ export function VoiceCredentialSourceField(props: Readonly<{
   const settingsVersion = useSettingsVersion();
   const profile = useProfile();
   const projectedConnectedServicesRegistry = useProjectedConnectedServicesRegistry();
+  const localizePluginText = useProjectedPluginLocalizedTextResolver();
   const [open, setOpen] = React.useState(false);
   const [mutationOutcomeUnknown, setMutationOutcomeUnknown] = React.useState(false);
   const mountedRef = React.useRef(true);
@@ -172,6 +176,7 @@ export function VoiceCredentialSourceField(props: Readonly<{
           projectedConnectedServicesRegistry,
           account.ref.service,
           tLoose,
+          localizePluginText,
         ),
       });
       next.push({
@@ -213,6 +218,7 @@ export function VoiceCredentialSourceField(props: Readonly<{
           projectedConnectedServicesRegistry,
           group.ref.service,
           tLoose,
+          localizePluginText,
         ),
       });
       next.push({
@@ -243,6 +249,7 @@ export function VoiceCredentialSourceField(props: Readonly<{
   }, [
     connectedSources,
     declaredServices,
+    localizePluginText,
     profile.connectedAccountGroupsV4,
     profile.connectedAccountsV4,
     projectedConnectedServicesRegistry,

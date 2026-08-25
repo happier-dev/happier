@@ -4,11 +4,16 @@ import {
   type VoicePcmCaptureLease,
   type VoicePcmPlaybackLease,
 } from '@happier-dev/audio-stream-native';
+import { VOICE_PCM_CONVERSATION_AUDIO_SESSION } from '@/voice/runtime/nativePcmAudioSession';
 
 import type {
   VoicePlaybackInterruptionMode,
   VoicePlaybackInterruptionResolution,
 } from '@/voice/runtime/playback/VoicePlaybackController';
+import type {
+  VoiceOutputFocusApplication,
+  VoiceOutputFocusState,
+} from '@happier-dev/plugin-sdk/voice/client';
 import { decodePcm16LeBase64 } from './Pcm16LeBase64';
 
 export { decodePcm16LeBase64, encodePcm16LeBase64 } from './Pcm16LeBase64';
@@ -107,10 +112,13 @@ export function createWebSocketPcmMedia(input: Readonly<{
   let latestInputLevel = 0;
   let latestOutputLevel = 0;
   let interruptionCandidateActive = false;
+  let outputFocusState: VoiceOutputFocusState = 'active';
   const terminalListeners = new Set<(error: Error) => void>();
 
   const publishOutputLevel = (level: number): void => {
-    latestOutputLevel = Math.max(0, Math.min(1, Number.isFinite(level) ? level : 0));
+    latestOutputLevel = outputFocusState === 'suspended'
+      ? 0
+      : Math.max(0, Math.min(1, Number.isFinite(level) ? level : 0));
     try {
       input.onOutputLevel?.(latestOutputLevel);
     } catch {
@@ -183,6 +191,20 @@ export function createWebSocketPcmMedia(input: Readonly<{
     failTerminal(createPcmError(code));
   };
 
+  const applyOutputGain = (): VoiceOutputFocusApplication => {
+    if (terminalError) return 'unsupported';
+    const playback = playbackLease;
+    // Retain the native-owner focus fact before the output lease exists. The
+    // exact same state is applied immediately after a late lease opens.
+    if (!playback) return 'applied';
+    const gain = outputFocusState === 'suspended'
+      ? 0
+      : outputFocusState === 'ducked' || interruptionCandidateActive
+        ? DUCK_GAIN
+        : 1;
+    return playback.setGain(gain) ? 'applied' : 'unsupported';
+  };
+
   const pcm = Object.freeze({
     async start(signal: AbortSignal): Promise<void> {
       if (stopPromise) await stopPromise;
@@ -217,7 +239,7 @@ export function createWebSocketPcmMedia(input: Readonly<{
         acquiredCapture = await capture.acquire({
           ownerId: NATIVE_PCM_CAPTURE_OWNER_ID,
           format: { sampleRate: input.input.sampleRate, channels: 1, frameMs: input.input.chunkMs },
-          audioSession: { mode: 'conversation', input: true, output: true, aec: 'preferred' },
+          audioSession: VOICE_PCM_CONVERSATION_AUDIO_SESSION,
           shouldDeliver: () => !stopped && input.mic.isMuted?.() !== true,
           onFrame: (frame) => {
             if (stopped) return;
@@ -249,6 +271,9 @@ export function createWebSocketPcmMedia(input: Readonly<{
         ensureCurrentStart();
         playbackLease = acquiredPlayback;
         acquiredPlayback = null;
+        if (applyOutputGain() === 'unsupported') {
+          throw createPcmError('pcm_output_focus_unsupported');
+        }
       } catch (error) {
         await releaseLeases(acquiredPlayback, acquiredCapture);
         if (activeStartEpoch === startEpoch) await stopMedia();
@@ -266,12 +291,19 @@ export function createWebSocketPcmMedia(input: Readonly<{
       return Object.freeze({ remove: () => terminalListeners.delete(listener) });
     },
     playbackCursorMs: (): number => playbackLease?.playbackCursorMs() ?? 0,
+    setOutputFocusState(state: VoiceOutputFocusState): VoiceOutputFocusApplication {
+      outputFocusState = state;
+      return applyOutputGain();
+    },
     beginOutputInterruptionCandidate: (): VoicePlaybackInterruptionMode => {
       const playback = playbackLease;
       if (!playback || terminalError) return 'unsupported';
       if (interruptionCandidateActive) return 'ducked';
-      if (!playback.setGain(DUCK_GAIN)) return 'unsupported';
       interruptionCandidateActive = true;
+      if (applyOutputGain() === 'unsupported') {
+        interruptionCandidateActive = false;
+        return 'unsupported';
+      }
       return 'ducked';
     },
     resolveOutputInterruptionCandidate(resolution: VoicePlaybackInterruptionResolution): void {
@@ -283,7 +315,7 @@ export function createWebSocketPcmMedia(input: Readonly<{
         publishOutputLevel(0);
         return;
       }
-      playback.setGain(1);
+      applyOutputGain();
     },
   });
 
@@ -296,6 +328,7 @@ export function createWebSocketPcmMedia(input: Readonly<{
     clearOutput(): void {
       interruptionCandidateActive = false;
       playbackLease?.clear();
+      applyOutputGain();
       publishOutputLevel(0);
     },
     beginOutputInterruptionCandidate: pcm.beginOutputInterruptionCandidate,

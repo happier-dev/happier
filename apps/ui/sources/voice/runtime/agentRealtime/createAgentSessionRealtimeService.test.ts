@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { AGENT_SESSION_REALTIME_SDP_MAX_BYTES } from '@happier-dev/protocol';
+import type { AgentSessionRealtimeHandle } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { createAgentSessionRealtimeService } from './createAgentSessionRealtimeService';
 
@@ -63,7 +64,10 @@ async function exerciseProviderFacingOperation(input: Readonly<{
   operation: DiagnosticOperation;
   result(): Promise<unknown>;
 }>): Promise<unknown> {
-  const onTerminal = vi.fn();
+  const terminal = vi.fn();
+  const onStarted = vi.fn((handle: AgentSessionRealtimeHandle) => {
+    handle.watch(terminal);
+  });
   const sessionRpc = vi.fn(async ({ method }: Readonly<{ method: string }>) => {
     if (method.endsWith(`.${input.operation}`)) return await input.result();
     if (method.endsWith('.start')) return successfulStart;
@@ -77,7 +81,7 @@ async function exerciseProviderFacingOperation(input: Readonly<{
     applicationAttemptId: `voice:${input.operation}`,
     signal: new AbortController().signal,
     sessionRpc,
-    onTerminal,
+    onStarted,
   });
 
   if (input.operation === 'inspect') return await service.inspect();
@@ -91,8 +95,8 @@ async function exerciseProviderFacingOperation(input: Readonly<{
 
   if (input.operation === 'stop') return await started.handle.stop();
 
-  await vi.waitFor(() => expect(onTerminal).toHaveBeenCalledTimes(1));
-  return onTerminal.mock.calls[0]?.[0];
+  await vi.waitFor(() => expect(terminal).toHaveBeenCalledTimes(1));
+  return terminal.mock.calls[0]?.[0];
 }
 
 describe('bound Agent-session realtime service', () => {
@@ -109,7 +113,7 @@ describe('bound Agent-session realtime service', () => {
       applicationAttemptId: 'voice:exact-offer-bound',
       signal: new AbortController().signal,
       sessionRpc,
-      onTerminal: vi.fn(),
+      onStarted: vi.fn(),
     });
 
     await expect(service.start({
@@ -138,7 +142,7 @@ describe('bound Agent-session realtime service', () => {
       applicationAttemptId: 'voice:oversized-offer-bound',
       signal: new AbortController().signal,
       sessionRpc,
-      onTerminal: vi.fn(),
+      onStarted: vi.fn(),
     });
 
     await expect(service.start({
@@ -173,7 +177,7 @@ describe('bound Agent-session realtime service', () => {
         message: 'Connect the selected Agent account.',
         reason: 'authentication_required',
       })),
-      onTerminal: vi.fn(),
+      onStarted: vi.fn(),
     });
 
     await expect(service.inspect()).resolves.toMatchObject({
@@ -183,10 +187,13 @@ describe('bound Agent-session realtime service', () => {
     });
   });
 
-  it('watches terminal before returning the started handle and retains it for a late watcher', async () => {
+  it('registers the attempt owner against the public handle before returning a successful start', async () => {
     let resolveWatch!: (value: unknown) => void;
     const calls: string[] = [];
-    const onTerminal = vi.fn();
+    const ownerTerminal = vi.fn();
+    const onStarted = vi.fn((handle: AgentSessionRealtimeHandle) => {
+      handle.watch(ownerTerminal);
+    });
     const sessionRpc = vi.fn(async ({ method }: Readonly<{ method: string }>) => {
       calls.push(method);
       if (method.endsWith('.inspect')) {
@@ -204,14 +211,15 @@ describe('bound Agent-session realtime service', () => {
       }
       return { ok: true, status: 'stopped' };
     });
-    const service = createAgentSessionRealtimeService({
+    const serviceInput = {
       provider,
       conversationSessionId: 'session-1',
       applicationAttemptId: 'voice:1',
       signal: new AbortController().signal,
       sessionRpc,
-      onTerminal,
-    });
+      onStarted,
+    };
+    const service = createAgentSessionRealtimeService(serviceInput);
 
     await expect(service.inspect()).resolves.toEqual({
       status: 'available',
@@ -221,6 +229,9 @@ describe('bound Agent-session realtime service', () => {
       transport: { kind: 'webrtc', offerSdp: 'v=0\r\na=offer\r\n' },
     });
     expect(started.status).toBe('started');
+    if (started.status !== 'started') return;
+    expect(onStarted).toHaveBeenCalledOnce();
+    expect(onStarted).toHaveBeenCalledWith(started.handle);
     expect(calls.at(-1)).toBe('session.agentRealtime.watch');
 
     resolveWatch({
@@ -228,9 +239,13 @@ describe('bound Agent-session realtime service', () => {
       status: 'terminal',
       event: { kind: 'terminal', reason: 'upstream_closed' },
     });
-    await vi.waitFor(() => expect(onTerminal).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(ownerTerminal).toHaveBeenCalledTimes(1));
+    expect(ownerTerminal).toHaveBeenCalledWith({
+      kind: 'terminal',
+      reason: 'upstream_closed',
+    });
     const late = vi.fn();
-    if (started.status === 'started') started.handle.watch(late);
+    started.handle.watch(late);
     expect(late).toHaveBeenCalledWith({ kind: 'terminal', reason: 'upstream_closed' });
   });
 
@@ -241,7 +256,10 @@ describe('bound Agent-session realtime service', () => {
     'does not replace a retained $reason WATCH fact when STOP first reports already_stopped',
     async ({ reason }) => {
       let resolveWatch!: (value: unknown) => void;
-      const onTerminal = vi.fn();
+      const ownerTerminal = vi.fn();
+      const onStarted = vi.fn((handle: AgentSessionRealtimeHandle) => {
+        handle.watch(ownerTerminal);
+      });
       const sessionRpc = vi.fn(async ({ method }: Readonly<{ method: string }>) => {
         if (method.endsWith('.start')) return successfulStart;
         if (method.endsWith('.watch')) {
@@ -260,7 +278,7 @@ describe('bound Agent-session realtime service', () => {
         applicationAttemptId: `voice:retained-${reason}`,
         signal: new AbortController().signal,
         sessionRpc,
-        onTerminal,
+        onStarted,
       });
       const started = await service.start({
         transport: { kind: 'webrtc', offerSdp: 'v=0\r\na=offer\r\n' },
@@ -271,7 +289,7 @@ describe('bound Agent-session realtime service', () => {
       await expect(started.handle.stop()).resolves.toEqual({
         status: 'already_stopped',
       });
-      expect(onTerminal).not.toHaveBeenCalled();
+      expect(ownerTerminal).not.toHaveBeenCalled();
 
       const retainedTerminal = { kind: 'terminal' as const, reason };
       resolveWatch({
@@ -280,8 +298,8 @@ describe('bound Agent-session realtime service', () => {
         event: retainedTerminal,
       });
       await vi.waitFor(() => {
-        expect(onTerminal).toHaveBeenCalledOnce();
-        expect(onTerminal).toHaveBeenCalledWith(retainedTerminal);
+        expect(ownerTerminal).toHaveBeenCalledOnce();
+        expect(ownerTerminal).toHaveBeenCalledWith(retainedTerminal);
       });
 
       const late = vi.fn();
@@ -315,7 +333,7 @@ describe('bound Agent-session realtime service', () => {
       applicationAttemptId: 'voice:2',
       signal: controller.signal,
       sessionRpc,
-      onTerminal: vi.fn(),
+      onStarted: vi.fn(),
     });
     const started = await service.start({
       transport: { kind: 'webrtc', offerSdp: 'v=0\r\n' },
@@ -347,7 +365,7 @@ describe('bound Agent-session realtime service', () => {
       applicationAttemptId: 'voice:pending-inspect',
       signal: inspectAttempt.signal,
       sessionRpc: vi.fn(async () => await pendingInspect),
-      onTerminal: vi.fn(),
+      onStarted: vi.fn(),
     });
     const inspecting = inspectService.inspect();
 
@@ -357,7 +375,7 @@ describe('bound Agent-session realtime service', () => {
     });
     const startAttempt = new AbortController();
     const stopRpc = vi.fn(async () => ({ ok: true, status: 'stopped' }));
-    const onTerminal = vi.fn();
+    const onStarted = vi.fn();
     const sessionRpc = vi.fn(async ({ method }: Readonly<{ method: string }>) => {
       if (method.endsWith('.start')) return await pendingStart;
       if (method.endsWith('.stop')) return await stopRpc();
@@ -370,7 +388,7 @@ describe('bound Agent-session realtime service', () => {
       applicationAttemptId: 'voice:pending-start',
       signal: startAttempt.signal,
       sessionRpc,
-      onTerminal,
+      onStarted,
     });
     const starting = startService.start({
       transport: { kind: 'webrtc', offerSdp: 'v=0\r\na=pending-offer\r\n' },
@@ -404,11 +422,7 @@ describe('bound Agent-session realtime service', () => {
       diagnostic: { code: 'agent_realtime_attempt_aborted' },
     });
     expect(startOutcome).toEqual({ status: 'aborted' });
-    expect(onTerminal).toHaveBeenCalledOnce();
-    expect(onTerminal).toHaveBeenCalledWith({
-      kind: 'terminal',
-      reason: 'aborted',
-    });
+    expect(onStarted).not.toHaveBeenCalled();
     expect(stopRpc).toHaveBeenCalledOnce();
   });
 
@@ -438,14 +452,14 @@ describe('bound Agent-session realtime service', () => {
     });
     const attempt = new AbortController();
     const caller = new AbortController();
-    const onTerminal = vi.fn();
+    const onStarted = vi.fn();
     const service = createAgentSessionRealtimeService({
       provider,
       conversationSessionId: 'session-late-start-dual-ambiguous',
       applicationAttemptId: 'voice:late-start-dual-ambiguous',
       signal: attempt.signal,
       sessionRpc,
-      onTerminal,
+      onStarted,
     });
     const starting = service.start(
       {
@@ -492,11 +506,7 @@ describe('bound Agent-session realtime service', () => {
       expectedStopRequest,
     ]);
     expect(stopRpc).toHaveBeenCalledTimes(4);
-    expect(onTerminal).toHaveBeenCalledOnce();
-    expect(onTerminal).toHaveBeenCalledWith({
-      kind: 'terminal',
-      reason: 'aborted',
-    });
+    expect(onStarted).not.toHaveBeenCalled();
   });
 
   it('does not let a caller-aborted stop suppress mandatory disposal cleanup', async () => {
@@ -518,7 +528,7 @@ describe('bound Agent-session realtime service', () => {
       applicationAttemptId: 'voice:aborted-stop',
       signal: new AbortController().signal,
       sessionRpc,
-      onTerminal: vi.fn(),
+      onStarted: vi.fn(),
     });
     const started = await service.start({
       transport: { kind: 'webrtc', offerSdp: 'v=0\r\na=offer\r\n' },
@@ -583,7 +593,7 @@ describe('bound Agent-session realtime service', () => {
       applicationAttemptId: 'voice:inflight-aborted-stop',
       signal: new AbortController().signal,
       sessionRpc,
-      onTerminal: vi.fn(),
+      onStarted: vi.fn(),
     });
     const started = await service.start({
       transport: { kind: 'webrtc', offerSdp: 'v=0\r\na=offer\r\n' },
@@ -634,7 +644,7 @@ describe('bound Agent-session realtime service', () => {
       applicationAttemptId: 'voice:stop-transport-retry',
       signal: new AbortController().signal,
       sessionRpc,
-      onTerminal: vi.fn(),
+      onStarted: vi.fn(),
     });
     const started = await service.start({
       transport: { kind: 'webrtc', offerSdp: 'v=0\r\na=offer\r\n' },
@@ -698,7 +708,7 @@ describe('bound Agent-session realtime service', () => {
       applicationAttemptId: 'voice:stop-malformed-retry',
       signal: new AbortController().signal,
       sessionRpc,
-      onTerminal: vi.fn(),
+      onStarted: vi.fn(),
     });
     const started = await service.start({
       transport: { kind: 'webrtc', offerSdp: 'v=0\r\na=offer\r\n' },
@@ -740,7 +750,10 @@ describe('bound Agent-session realtime service', () => {
 
   it('bounds mandatory disposal to one retry after ambiguous STOP failures', async () => {
     let resolveWatch!: (value: unknown) => void;
-    const onTerminal = vi.fn();
+    const ownerTerminal = vi.fn();
+    const onStarted = vi.fn((handle: AgentSessionRealtimeHandle) => {
+      handle.watch(ownerTerminal);
+    });
     const stopRpc = vi.fn(async () => {
       throw new Error('stop_transport_closed');
     });
@@ -760,7 +773,7 @@ describe('bound Agent-session realtime service', () => {
       applicationAttemptId: 'voice:stop-bounded-retry',
       signal: new AbortController().signal,
       sessionRpc,
-      onTerminal,
+      onStarted,
     });
     const started = await service.start({
       transport: { kind: 'webrtc', offerSdp: 'v=0\r\na=offer\r\n' },
@@ -792,8 +805,8 @@ describe('bound Agent-session realtime service', () => {
       reason: 'error',
       diagnostic: retainedStopResult.diagnostic,
     } as const;
-    expect(onTerminal).toHaveBeenCalledOnce();
-    expect(onTerminal).toHaveBeenCalledWith(retainedTerminal);
+    expect(ownerTerminal).toHaveBeenCalledOnce();
+    expect(ownerTerminal).toHaveBeenCalledWith(retainedTerminal);
     expect(watchingBeforeDispose).toHaveBeenCalledOnce();
     expect(watchingBeforeDispose).toHaveBeenCalledWith(retainedTerminal);
     expect(watchingAfterDispose).toHaveBeenCalledOnce();
@@ -806,7 +819,7 @@ describe('bound Agent-session realtime service', () => {
     });
     await Promise.resolve();
 
-    expect(onTerminal).toHaveBeenCalledOnce();
+    expect(ownerTerminal).toHaveBeenCalledOnce();
     expect(watchingBeforeDispose).toHaveBeenCalledOnce();
     expect(watchingAfterDispose).toHaveBeenCalledOnce();
   });
@@ -835,7 +848,7 @@ describe('bound Agent-session realtime service', () => {
       applicationAttemptId: 'voice:stop-authoritative-unavailable',
       signal: new AbortController().signal,
       sessionRpc,
-      onTerminal: vi.fn(),
+      onStarted: vi.fn(),
     });
     const started = await service.start({
       transport: { kind: 'webrtc', offerSdp: 'v=0\r\na=offer\r\n' },
@@ -886,7 +899,7 @@ describe('bound Agent-session realtime service', () => {
       applicationAttemptId: 'voice:shared-dispose',
       signal: new AbortController().signal,
       sessionRpc,
-      onTerminal: vi.fn(),
+      onStarted: vi.fn(),
     });
     const started = await service.start({
       transport: { kind: 'webrtc', offerSdp: 'v=0\r\na=offer\r\n' },
@@ -929,13 +942,16 @@ describe('bound Agent-session realtime service', () => {
     expect(stopRpc).toHaveBeenCalledOnce();
   });
 
-  it.each(['host', 'watcher'] as const)(
-    'isolates a throwing %s terminal callback while preserving subscriptions and abort cleanup',
+  it.each(['owner', 'watcher'] as const)(
+    'isolates a throwing %s public-handle watcher while preserving subscriptions and abort cleanup',
     async (throwingBoundary) => {
       const attempt = createManualAbortSignal();
       const stopRpc = vi.fn(async () => ({ ok: true, status: 'stopped' }));
-      const onTerminal = vi.fn(() => {
-        if (throwingBoundary === 'host') throw new Error('host_terminal_callback_failed');
+      const ownerTerminal = vi.fn(() => {
+        if (throwingBoundary === 'owner') throw new Error('owner_terminal_callback_failed');
+      });
+      const onStarted = vi.fn((handle: AgentSessionRealtimeHandle) => {
+        handle.watch(ownerTerminal);
       });
       const sessionRpc = vi.fn(async ({ method }: Readonly<{ method: string }>) => {
         if (method.endsWith('.start')) return successfulStart;
@@ -949,7 +965,7 @@ describe('bound Agent-session realtime service', () => {
         applicationAttemptId: `voice:throwing-${throwingBoundary}`,
         signal: attempt.signal,
         sessionRpc,
-        onTerminal,
+        onStarted,
       });
       const started = await service.start({
         transport: { kind: 'webrtc', offerSdp: 'v=0\r\na=offer\r\n' },
@@ -979,7 +995,7 @@ describe('bound Agent-session realtime service', () => {
 
       expect(abortFailure).toBeNull();
       expect(stopCallsAfterAbort).toBe(1);
-      expect(onTerminal).toHaveBeenCalledOnce();
+      expect(ownerTerminal).toHaveBeenCalledOnce();
       expect(repeatedListener).toHaveBeenCalledOnce();
       expect(survivingListener).toHaveBeenCalledOnce();
       expect(stopRpc).toHaveBeenCalledOnce();

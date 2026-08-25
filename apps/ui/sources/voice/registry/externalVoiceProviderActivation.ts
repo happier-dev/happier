@@ -18,10 +18,10 @@ import {
   type DaemonPluginReactNativeBundleCacheIdentityV1,
 } from '@happier-dev/protocol';
 import { PLUGIN_UI_HOST_API_VERSION_V1 } from '@happier-dev/protocol/plugins/ui';
+import type { PluginApi } from '@happier-dev/plugin-sdk';
 import type {
   VoiceAccountOperationService,
   VoiceCredentialAccess,
-  VoiceProviderRuntime,
   VoiceSettingsActionContext,
 } from '@happier-dev/plugin-sdk/voice';
 import type {
@@ -78,7 +78,10 @@ import {
 import { getProviderConversationServiceFactory } from './providerConversationService';
 import { createVoiceClientRawCredentialAccess } from '@/voice/credentials/rawCredentialClient';
 import { createVoiceClientMediatedCredentialHeadersMaterializer } from '@/voice/credentials/mediatedCredentialClient';
-import { resolveVoiceExecutionMachineId } from '@/voice/settings/executionMachine';
+import {
+  isCapturedVoiceExecutionMachineCurrent,
+  resolveVoiceExecutionMachineId,
+} from '@/voice/settings/executionMachine';
 import { createAppShellTransientInteractions } from '@/components/appShell/plugins/appShellQuestionInteractions';
 
 type ExternalVoiceProviderProtocolLeaf = RealtimeVoiceProviderProtocol;
@@ -93,7 +96,7 @@ export type VoiceConversationProviderContribution = Extract<
  * lifecycle, mic, transcript, tools, privacy, cancellation, and persistence.
  */
 export type ExternalVoiceProviderRuntimeRegistration = Extract<
-  VoiceProviderRuntime,
+  Parameters<PluginApi['voiceProviders']['register']>[1],
   Readonly<{ kind: 'conversation' }>
 >;
 
@@ -526,8 +529,7 @@ export function createDeclaredVoiceClientRawCredentialAccess(input: Readonly<{
     isCurrent: input.isCurrent,
     machineId,
     isInvocationCurrent: () => (
-      machineId !== null
-      && resolveVoiceExecutionMachineId() === machineId
+      isCapturedVoiceExecutionMachineCurrent(machineId)
       && sourceLease.isCurrent()
     ),
   });
@@ -727,6 +729,17 @@ export function createExternalVoiceProviderRuntimeContribution(input: Readonly<{
     input.createInvocationHostedConversation,
     input.createInvocationRawCredentials,
   );
+  const microphoneConfig = runtime.microphoneMode === 'provider_managed'
+    ? {
+        microphoneMode: runtime.microphoneMode,
+        setInputMuted: (muted: boolean) => runtime.setInputMuted(muted),
+      }
+    : {
+        microphoneMode: runtime.microphoneMode,
+        ...(runtime.setInputMuted
+          ? { setInputMuted: (muted: boolean) => runtime.setInputMuted!(muted) }
+          : {}),
+      };
   const config: BundledRealtimeProviderRuntimeConfig = Object.freeze({
     providerId,
     ...(input.providerRef
@@ -822,10 +835,7 @@ export function createExternalVoiceProviderRuntimeContribution(input: Readonly<{
     ...(declaration.capabilities.turn.bargeIn && runtime.encodePostBargeInControls
       ? { encodePostBargeInControls: () => runtime.encodePostBargeInControls!() }
       : {}),
-    microphoneMode: runtime.microphoneMode,
-    ...(runtime.setInputMuted
-      ? { setInputMuted: (muted: boolean) => runtime.setInputMuted!(muted) }
-      : {}),
+    ...microphoneConfig,
     encodeContextUpdate: (text) => runtime.encodeContextUpdate(text),
     encodeTextTurn: (text) => runtime.encodeTextTurn(text),
     ...(execution
@@ -1150,6 +1160,8 @@ export function createExternalVoiceProviderActivationScope(input: Readonly<{
                     pluginId: input.pluginId,
                     localId: declaration.id,
                   },
+                  declaration,
+                  phase,
                   recipientContract,
                   signal,
                   isCurrent,
@@ -1170,8 +1182,7 @@ export function createExternalVoiceProviderActivationScope(input: Readonly<{
                       machineId,
                       isCurrent,
                       isInvocationCurrent: () => (
-                        machineId !== null
-                        && resolveVoiceExecutionMachineId() === machineId
+                        isCapturedVoiceExecutionMachineCurrent(machineId)
                       ),
                     }),
                 });

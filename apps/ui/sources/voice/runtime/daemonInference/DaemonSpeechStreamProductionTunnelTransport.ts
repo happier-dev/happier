@@ -794,6 +794,7 @@ async function tryOpenDirectTunnel(
       };
   const result = await openPeerTcpTunnel({
     open,
+    flowKind: 'voice_media',
     directPeerDecision: directDecision,
     serverRoutedDecision: null,
     resolveLoopback: async () => params.direct.availability,
@@ -923,6 +924,7 @@ async function tryOpenServerRelayTunnel(
   };
   const result = await openPeerTcpTunnel({
     open,
+    flowKind: 'voice_media',
     directPeerDecision: null,
     serverRoutedDecision,
     resolveLoopback: async () => ({

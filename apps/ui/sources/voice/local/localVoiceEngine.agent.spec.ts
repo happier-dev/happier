@@ -681,6 +681,9 @@ describe('local voice engine agent behavior', () => {
             () => (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length === 1,
             'recorded transcription request',
         );
+        const daemonTurnsBeforeEnd = daemonVoiceAgentSendTurn.mock.calls.length;
+        const currentUiReadsBeforeEnd = readCurrentUiContext.mock.calls.length;
+        const currentUiInvocationsBeforeEnd = invokeCurrentUiCommand.mock.calls.length;
 
         // VoiceSessionRuntime invokes this exact local stop when Account A's
         // active-scope lifetime retires. The raw AppShell port then follows the
@@ -693,14 +696,11 @@ describe('local voice engine agent behavior', () => {
         });
         await pendingTurn;
 
-        await waitForMockCalls(daemonVoiceAgentSendTurn, 2);
+        expect(daemonVoiceAgentSendTurn).toHaveBeenCalledTimes(daemonTurnsBeforeEnd);
+        expect(readCurrentUiContext).toHaveBeenCalledTimes(currentUiReadsBeforeEnd);
+        expect(invokeCurrentUiCommand).toHaveBeenCalledTimes(currentUiInvocationsBeforeEnd);
         expect(readAccounts).not.toContain('account-b');
         expect(invokeCurrentUiCommand).not.toHaveBeenCalled();
-        const providerText = daemonVoiceAgentSendTurn.mock.calls
-            .map(([request]) => String((request as { userText?: unknown } | undefined)?.userText ?? ''))
-            .join('\n');
-        expect(providerText).not.toContain('ACCOUNT_A_CURRENT_UI_SENTINEL');
-        expect(providerText).not.toContain('ACCOUNT_B_CURRENT_UI_SENTINEL');
     });
 
     it('suppresses expected daemon-unavailable prewarm errors while still starting the local recording flow', async () => {

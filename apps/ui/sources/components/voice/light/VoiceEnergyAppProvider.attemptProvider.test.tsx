@@ -23,6 +23,11 @@ const runtime = vi.hoisted(() => ({
     } as VoiceSessionSnapshot,
 }));
 
+const hostPresence = vi.hoisted(() => ({
+    activelyViewed: true,
+    activelyFocused: true,
+}));
+
 vi.mock('@/sync/domains/state/storage', () => ({
     useSetting: () => runtime.voice,
 }));
@@ -36,7 +41,8 @@ vi.mock('@/hooks/ui/useReducedMotionPreference', () => ({
 }));
 
 vi.mock('@/utils/runtime/useHostActivelyViewed', () => ({
-    useHostActivelyViewed: () => true,
+    useHostActivelyViewed: () => hostPresence.activelyViewed,
+    useHostActivelyFocused: () => hostPresence.activelyFocused,
 }));
 
 /** A mounted Voice surface: the energy clock only runs while one is present. */
@@ -74,6 +80,8 @@ describe('VoiceEnergyAppProvider attempt provider', () => {
             mode: 'idle',
             canStop: false,
         };
+        hostPresence.activelyViewed = true;
+        hostPresence.activelyFocused = true;
     });
 
     afterEach(() => {
@@ -109,6 +117,25 @@ describe('VoiceEnergyAppProvider attempt provider', () => {
 
     it('leaves the clock idle when nothing is running and nothing is selected', async () => {
         runtime.voice = { providerId: 'off' };
+
+        await renderProvider();
+
+        expect(latestFrameActivation()).toBe(false);
+    });
+
+    it('stays still when a desktop window remains visible but loses focus', async () => {
+        runtime.voice = { providerId: 'local_conversation' };
+        runtime.snapshot = {
+            adapterId: 'local_conversation',
+            sessionId: 'voice-attempt',
+            status: 'connected',
+            mode: 'listening',
+            canStop: true,
+        };
+        // Context and other visible-window consumers still receive this fact. The
+        // energy clock is the narrower focus projection, so it must stop here.
+        hostPresence.activelyViewed = true;
+        hostPresence.activelyFocused = false;
 
         await renderProvider();
 

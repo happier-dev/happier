@@ -14,7 +14,6 @@ export type LocalTtsProviderSettingsProps = {
   networkTimeoutMs: number;
   popoverBoundaryRef?: React.RefObject<any> | null;
   daemonRouteDiagnosticReason?: VoiceDaemonRouteDiagnosticReason | null;
-  showProcessingDisclosure?: boolean;
 };
 export type LocalTtsProviderTestContext = {
   cfgTts: VoiceLocalTtsSettings;

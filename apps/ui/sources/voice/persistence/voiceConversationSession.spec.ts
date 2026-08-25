@@ -549,6 +549,10 @@ describe('ensureVoiceConversationSessionForVoiceHome', () => {
       });
       expect(sessionRpcBoundary.sessionRpcWithServerScope).toHaveBeenCalledWith({
         sessionId: 'installed-codex-direct',
+        // The seeded session has no server-list index entry, so the scoped RPC
+        // must carry the explicit null scope that falls back to the active
+        // server rather than silently omitting the server dimension.
+        serverId: null,
         method: 'session.agentRealtime.inspect',
         payload: {
           v: 1,

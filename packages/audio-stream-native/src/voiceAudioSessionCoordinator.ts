@@ -40,7 +40,17 @@ export type VoiceAudioSessionApplyResult = Readonly<{
 export type VoiceAudioSessionPlatformEvent =
   | Readonly<{ generation: number; kind: 'interruption_began' }>
   | Readonly<{ generation: number; kind: 'interruption_ended'; shouldResume: boolean }>
-  | Readonly<{ generation: number; kind: 'focus_changed'; state: 'gained' | 'lost_transient' | 'lost_permanent' }>
+  | Readonly<{
+    generation: number;
+    kind: 'focus_changed';
+    /** `not_required` means this generation does not request output focus. */
+    state: 'gained' | 'lost_transient' | 'lost_permanent' | 'not_required';
+  }>
+  /**
+   * A native output-policy fact. It is separate from focus loss so consumers
+   * cannot accidentally resume input or cancel a true transient suspension.
+   */
+  | Readonly<{ generation: number; kind: 'focus_duckable' }>
   | Readonly<{ generation: number; kind: 'route_changed'; route: string }>
   | Readonly<{ generation: number; kind: 'lifecycle_changed'; state: 'foreground' | 'background' }>
   | Readonly<{ generation: number; kind: 'capabilities_changed'; aecAvailable: boolean; aecActive: boolean }>
@@ -67,6 +77,13 @@ export type VoiceAudioSessionPlatform = Readonly<{
   ) => Readonly<{ remove: () => void }>;
 }>;
 
+/**
+ * Starts the host-owned capture after its audio-session configuration is
+ * installed. The native session owner correlates its own audio-session
+ * generation; capture-stream generations remain capture-owner local.
+ */
+export type VoiceAudioSessionCaptureStart = () => Promise<void>;
+
 export type VoiceAudioSessionLease = Readonly<{
   id: string;
   capabilities: VoiceAudioSessionCapabilities;
@@ -87,6 +104,15 @@ export type VoiceAudioSessionSnapshot = Readonly<{
 
 export type VoiceAudioSessionCoordinator = Readonly<{
   acquire: (request: VoiceAudioSessionRequest) => Promise<VoiceAudioSessionLease>;
+  /**
+   * The only admission path for host-owned PCM capture. A required-AEC request
+   * is provisional while the session is configured, then becomes admitted only
+   * after the capture itself reports active AEC for the same generation.
+   */
+  acquireForCapture: (
+    request: VoiceAudioSessionRequest,
+    startCapture: VoiceAudioSessionCaptureStart,
+  ) => Promise<VoiceAudioSessionLease>;
   subscribe: (
     listener: (event: VoiceAudioSessionPlatformEvent) => void,
   ) => Readonly<{ remove: () => void }>;
@@ -235,7 +261,9 @@ export function createVoiceAudioSessionCoordinator(options: Readonly<{
     return result;
   };
 
-  const applyCurrent = async (): Promise<VoiceAudioSessionCapabilities | null> => {
+  const applyCurrent = async (applyOptions: Readonly<{
+    allowRequiredAecActivation?: boolean;
+  }> = {}): Promise<VoiceAudioSessionCapabilities | null> => {
     generation += 1;
     const targetGeneration = generation;
     const target = mergeRequests(leases);
@@ -249,18 +277,31 @@ export function createVoiceAudioSessionCoordinator(options: Readonly<{
     if (applied.generation !== targetGeneration) {
       throw new Error('voice_audio_session_generation_mismatch');
     }
-    if (target.aec === 'required' && (!applied.aecAvailable || !applied.aecActive)) {
+    // A native configuration request cannot prove AEC is active: that fact is
+    // emitted only when the host capture has started. Preserve a prior
+    // start-time confirmation across a same-capture reconfiguration, but never
+    // let a fresh required request pass without its capture-start admission.
+    const nextCapabilities: VoiceAudioSessionCapabilities = {
+      aecAvailable: applied.aecAvailable,
+      aecActive: applied.aecActive || (
+        target.aec === 'required'
+        && applied.aecAvailable
+        && capabilities?.aecAvailable === true
+        && capabilities.aecActive
+      ),
+      route: applied.route,
+    };
+    if (
+      target.aec === 'required'
+      && (!nextCapabilities.aecAvailable || (!nextCapabilities.aecActive && !applyOptions.allowRequiredAecActivation))
+    ) {
       throw new VoiceAudioSessionCoordinatorError(
         'aec_required_unavailable',
         'Echo cancellation is required but unavailable for this native audio route.',
       );
     }
     configuration = target;
-    capabilities = {
-      aecAvailable: applied.aecAvailable,
-      aecActive: applied.aecActive,
-      route: applied.route,
-    };
+    capabilities = nextCapabilities;
     return capabilities;
   };
 
@@ -334,8 +375,17 @@ export function createVoiceAudioSessionCoordinator(options: Readonly<{
     }
   };
 
-  const acquire = async (request: VoiceAudioSessionRequest): Promise<VoiceAudioSessionLease> => {
+  const acquireInternal = async (
+    request: VoiceAudioSessionRequest,
+    startCapture?: VoiceAudioSessionCaptureStart,
+  ): Promise<VoiceAudioSessionLease> => {
     validateRequest(request);
+    if (startCapture && (request.capture !== 'host_managed' || !request.input)) {
+      throw new VoiceAudioSessionCoordinatorError(
+        'invalid_request',
+        'Only input-enabled host-managed capture can confirm required echo cancellation.',
+      );
+    }
     return serialize(async () => {
       if (disposalRequested) throw new Error('voice_audio_session_coordinator_disposed');
       // A failed release keeps its logical lease deliberately. Retrying here
@@ -348,9 +398,25 @@ export function createVoiceAudioSessionCoordinator(options: Readonly<{
       leases.set(id, active);
       let applied: VoiceAudioSessionCapabilities;
       try {
-        const next = await applyCurrent();
+        const next = await applyCurrent({
+          allowRequiredAecActivation: startCapture !== undefined,
+        });
         if (!next) throw new Error('voice_audio_session_apply_missing');
         applied = next;
+        if (startCapture) {
+          await startCapture();
+          const confirmed = capabilities;
+          if (
+            configuration?.aec === 'required'
+            && (!confirmed?.aecAvailable || !confirmed.aecActive)
+          ) {
+            throw new VoiceAudioSessionCoordinatorError(
+              'aec_required_unavailable',
+              'Echo cancellation is required but the host capture did not confirm activation.',
+            );
+          }
+          if (confirmed) applied = confirmed;
+        }
       } catch (error) {
         leases.delete(id);
         try {
@@ -388,8 +454,20 @@ export function createVoiceAudioSessionCoordinator(options: Readonly<{
     });
   };
 
+  const acquire = async (request: VoiceAudioSessionRequest): Promise<VoiceAudioSessionLease> => {
+    return await acquireInternal(request);
+  };
+
+  const acquireForCapture = async (
+    request: VoiceAudioSessionRequest,
+    startCapture: VoiceAudioSessionCaptureStart,
+  ): Promise<VoiceAudioSessionLease> => {
+    return await acquireInternal(request, startCapture);
+  };
+
   return {
     acquire,
+    acquireForCapture,
     subscribe: (listener) => {
       if (disposalRequested) return { remove: () => undefined };
       listeners.add(listener);

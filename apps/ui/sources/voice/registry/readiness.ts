@@ -148,6 +148,7 @@ type ResolveVoiceRoleReadinessInput = Readonly<{
   modeId?: string | null;
   credentialSourceKind?: VoiceProviderCredentialSourceKind | null;
   localAvailability?: VoiceProviderLocalAvailability;
+  passiveSetupUnavailable?: boolean;
   facts: VoiceRoleReadinessFacts;
 }>;
 
@@ -226,5 +227,10 @@ export function resolveVoiceRoleReadiness(
 export function resolveVoicePassiveSetupReadiness(
   input: ResolveVoiceRoleReadinessInput,
 ): VoiceRoleReadiness {
-  return resolveVoiceRoleReadinessInternal(input, true);
+  const readiness = resolveVoiceRoleReadinessInternal(input, true);
+  return input.passiveSetupUnavailable
+    && readiness.code === 'runtime_unknown'
+    && readiness.recoveryAction === 'switch_provider'
+    ? Object.freeze({ ...readiness, recoveryAction: 'none' as const })
+    : readiness;
 }

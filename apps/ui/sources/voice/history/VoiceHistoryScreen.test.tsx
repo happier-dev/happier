@@ -451,7 +451,14 @@ describe('VoiceHistoryScreen', () => {
         createdAt: 100,
         source: OPENAI_SOURCE,
       })],
-      { discoverHistorySession: () => discovery.promise },
+      {
+        discoverHistorySession: () => discovery.promise,
+        loadOlderMessages: vi.fn(async () => ({
+          loaded: 0,
+          hasMore: true,
+          status: 'retryable_error' as const,
+        })),
+      },
     ));
     const screen = await renderScreen(
       <VoiceHistoryScreen consumer={consumer} saveExportArtifact={vi.fn()} />,
@@ -466,10 +473,17 @@ describe('VoiceHistoryScreen', () => {
     discovery.resolve('voice-history-session');
     await flushAsyncState();
 
-    // The live region is the SAME node across the transition. A region that
-    // mounts with its message already inside it is not announced at all.
+    // The live region outlives the transition into a silent state. A region that
+    // mounts with its message already inside it is not announced at all, so it
+    // has to be here, empty, BEFORE the next message exists.
     expect(screen.findByTestId('voice-history-operation-status')).not.toBeNull();
     expect(readStatus()).toBe('');
+
+    // ...and the already-mounted region is what carries the next message, so it
+    // is a real announcer and not a permanently empty placeholder.
+    await screen.pressByTestIdAsync('voice-history-load-older');
+
+    expect(readStatus()).toBe('Older Voice History could not be loaded.');
     await screen.unmount();
 
     const errorScreen = await renderScreen(

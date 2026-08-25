@@ -7,17 +7,7 @@ import {
 export const VOICE_RUNTIME_CONFIG_DEFAULTS = {
     realtimeConversationHandleReadyTimeoutMs: 500,
     realtimeStartAbortGraceMs: 1_000,
-    realtimeWatchdogPollMs: 3_000,
-    realtimeWatchdogPlateauMs: 10_000,
-    /**
-     * Realtime conversation hardening knobs — the single source of truth for the
-     * transient-drop reconnect backoff and the inbound-audio/event stall
-     * watchdog. The provider-neutral conversation runtime and the modules under
-     * `runtime/realtime/**` derive their typed timers from these so call sites
-     * carry no magic numbers and the values cannot drift. Provider-specific
-     * behavior stays inside its own provider folder; only the timing/retry
-     * policy lives here.
-     */
+    /** Realtime connection and transient-drop reconnect policy. */
     realtime: {
         /** Maximum time for a provider connection or its initial context handshake to settle. */
         connectionReadyTimeoutMs: 30_000,
@@ -39,25 +29,6 @@ export const VOICE_RUNTIME_CONFIG_DEFAULTS = {
             backoffFactor: 2,
             /** Reconnect attempts before the drop is surfaced as non-recoverable. */
             maxRetries: 5,
-        },
-        /**
-         * Inbound stall watchdog — detects a STALLED-but-"open" connection where
-         * no inbound audio/events arrive while a turn is active. Debounced,
-         * re-entrancy-guarded, reset on every inbound event, and quiescent
-         * during legitimate between-turn silence (only armed while a turn is
-         * active or a response is awaited).
-         */
-        inboundWatchdog: {
-            /** No inbound event within this window (while a turn is active) is a stall. */
-            stallTimeoutMs: 6_000,
-            /**
-             * No inbound event within this (more generous) window during the
-             * AWAITING-RESPONSE / "thinking" gap — after the user's turn ends but
-             * before the agent emits its first audio — is a stall. Larger than
-             * `stallTimeoutMs` because response generation legitimately takes
-             * longer than an inter-chunk gap.
-             */
-            awaitingResponseTimeoutMs: 12_000,
         },
     },
     /**

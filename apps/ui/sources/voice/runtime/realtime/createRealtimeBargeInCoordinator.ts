@@ -213,6 +213,16 @@ export function createRealtimeBargeInCoordinator(deps: Deps) {
           : null;
         activeAssistantOutputItemId = itemId;
         activeAssistantEntryId = null;
+      } else if (activeAssistantOutputItemId === null && itemId !== null) {
+        // Some providers announce remote audio before they can name its
+        // transcript item. This is the same active output acquiring its exact
+        // persistence correlation, not a second output authority.
+        activeAssistantOutputItemId = itemId;
+        activeAssistantEntryId = null;
+        if (candidate) {
+          candidate.assistantOutputItemId = itemId;
+          candidate.assistantEntryId = null;
+        }
       } else if (itemId !== activeAssistantOutputItemId) {
         // Concurrent/overlapping output cannot be attributed to one persisted
         // final. Keep the acoustic lifecycle active but fail identity closed.

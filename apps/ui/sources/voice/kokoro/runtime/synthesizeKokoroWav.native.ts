@@ -16,7 +16,7 @@ import {
 } from '@happier-dev/protocol';
 
 type KokoroNativeModuleLike = {
-  initialize(params: { assetsDir: string }): Promise<void>;
+  initialize(params: { assetsDir: string; initializationId: string }): Promise<void>;
   listVoices(params: { assetsDir: string }): Promise<Array<{ id: string; title: string; sid?: number }>>;
   synthesizeToWavFile(params: {
     jobId: string;
@@ -28,6 +28,10 @@ type KokoroNativeModuleLike = {
     outWavPath: string | null;
   }): Promise<{ wavPath: string; sampleRate: number }>;
   cancel(params: { jobId: string }): Promise<void>;
+  /** Refuses one queued initialization without retiring this pack's runtime. */
+  cancelInitialization?(params: { assetsDir: string; initializationId: string }): Promise<void>;
+  /** Retires the existing native cache/currentness owner for one pack path. */
+  releaseAssetsDir?(params: { assetsDir: string }): Promise<{ cancelledJobs: number; releasedEngines: number }>;
 };
 
 const DEFAULT_KOKORO_ASSET_SET_ID = KOKORO_DEFAULT_TTS_PACK_ID;
@@ -56,22 +60,124 @@ type NativeOverrides = {
   resolveOutWavPath?: (jobId: string) => string;
 };
 
-function createAbortPromise(signal: AbortSignal): Promise<never> {
-  if (signal.aborted) return Promise.reject(new Error('aborted'));
-  return new Promise((_, reject) => {
-    const onAbort = () => {
-      signal.removeEventListener('abort', onAbort);
-      reject(new Error('aborted'));
+/**
+ * Race one operation against the caller lifetime and deadline without leaving
+ * the losing listener or timer alive. When initialization loses the race, its
+ * cache-owned immutable admission is cancelled before this settles, so a late
+ * initializer cannot publish an engine for the cancelled attempt without
+ * retiring an unrelated active same-pack synthesis.
+ */
+function awaitAbortableOperation<T>(
+  start: () => Promise<T>,
+  opts: {
+    signal: AbortSignal;
+    timeoutMs: number;
+    onCancelled?: () => void | Promise<void>;
+  },
+): Promise<T> {
+  if (opts.signal.aborted) return Promise.reject(new Error('aborted'));
+
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    let cancellationStarted = false;
+    let started = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let cleaned = false;
+
+    const cleanup = () => {
+      if (cleaned) return;
+      cleaned = true;
+      if (timer !== null) clearTimeout(timer);
+      opts.signal.removeEventListener('abort', onAbort);
     };
-    signal.addEventListener('abort', onAbort);
+    const settle = (outcome: { value: T } | { error: unknown }) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if ('value' in outcome) resolve(outcome.value);
+      else reject(outcome.error);
+    };
+    const cancel = (reason: 'aborted' | 'timeout') => {
+      if (settled || cancellationStarted) return;
+      cancellationStarted = true;
+      // The caller must stay pending until its native initialization admission
+      // is cancelled, but its local cancellation resources are no longer needed
+      // while that cache-owned control call is in flight.
+      cleanup();
+      let cancellation: void | Promise<void>;
+      try {
+        cancellation = started ? opts.onCancelled?.() : undefined;
+      } catch (error) {
+        settle({ error });
+        return;
+      }
+      void Promise.resolve(cancellation).then(
+        () => settle({ error: new Error(reason) }),
+        (error: unknown) => settle({ error }),
+      );
+    };
+    const onAbort = () => cancel('aborted');
+
+    opts.signal.addEventListener('abort', onAbort);
+    if (opts.signal.aborted) {
+      cancel('aborted');
+      return;
+    }
+    timer = setTimeout(() => cancel('timeout'), opts.timeoutMs);
+    (timer as unknown as { unref?: () => void }).unref?.();
+
+    let operation: Promise<T>;
+    try {
+      started = true;
+      operation = start();
+    } catch (error) {
+      settle({ error });
+      return;
+    }
+    void operation.then(
+      (value) => {
+        if (cancellationStarted) return;
+        if (opts.signal.aborted) {
+          cancel('aborted');
+          return;
+        }
+        settle({ value });
+      },
+      (error: unknown) => {
+        if (cancellationStarted) return;
+        if (opts.signal.aborted) {
+          cancel('aborted');
+          return;
+        }
+        settle({ error });
+      },
+    );
   });
 }
 
-function createTimeoutPromise(timeoutMs: number): Promise<never> {
-  return new Promise((_, reject) => {
-    const timer = setTimeout(() => reject(new Error('timeout')), timeoutMs);
-    (timer as any)?.unref?.();
-  });
+async function initializeNativeRuntime(opts: {
+  native: KokoroNativeModuleLike;
+  assetsDirPath: string;
+  timeoutMs: number;
+  signal: AbortSignal;
+}): Promise<void> {
+  const initializationId = randomUUID();
+  await awaitAbortableOperation(
+    () => opts.native.initialize({ assetsDir: opts.assetsDirPath, initializationId }),
+    {
+      signal: opts.signal,
+      timeoutMs: opts.timeoutMs,
+      onCancelled: async () => {
+        if (typeof opts.native.cancelInitialization !== 'function') {
+          // An old binary cannot cancel a queued initialization without using
+          // pack retirement, which would also cancel unrelated active work.
+          // Refuse this one operation rather than changing pack authority.
+          throw new Error('kokoro_native_initialize_cancellation_unsupported');
+        }
+        await opts.native.cancelInitialization({ assetsDir: opts.assetsDirPath, initializationId });
+      },
+    },
+  );
 }
 
 async function getSpeakerCountForAssetsDir(opts: {
@@ -85,11 +191,10 @@ async function getSpeakerCountForAssetsDir(opts: {
   if (cached !== undefined) return cached;
 
   try {
-    const voices = await Promise.race([
-      opts.native.listVoices({ assetsDir: key }),
-      createAbortPromise(opts.signal),
-      createTimeoutPromise(opts.timeoutMs),
-    ]);
+    const voices = await awaitAbortableOperation(
+      () => opts.native.listVoices({ assetsDir: key }),
+      { signal: opts.signal, timeoutMs: opts.timeoutMs },
+    );
     const count = Array.isArray(voices) ? voices.length : null;
     // Cache ONLY a successful, meaningful count. A transient failure (abort,
     // timeout, native error) or a non-array result must never be cached: a
@@ -183,11 +288,12 @@ async function prepareKokoroSynthContext(
   const installedAssetsDirUri = installed.packDirUri;
   const assetsDirPath = uriToFilePath(installedAssetsDirUri);
 
-  await Promise.race([
-    native.initialize({ assetsDir: assetsDirPath }),
-    createAbortPromise(opts.signal),
-    createTimeoutPromise(opts.timeoutMs),
-  ]);
+  await initializeNativeRuntime({
+    native,
+    assetsDirPath,
+    timeoutMs: opts.timeoutMs,
+    signal: opts.signal,
+  });
 
   const manifestVoiceSid =
     (installed.manifest as any)?.voices?.find?.((v: any) => v?.id === opts.voiceId && typeof v?.sid === 'number')?.sid
@@ -214,45 +320,40 @@ async function prepareKokoroSynthContext(
       cancelRequested = true;
       void native.cancel({ jobId }).catch(() => {});
     };
-    const onAbort = () => {
-      cancelNativeJob();
-    };
-    if (opts.signal.aborted) {
-      // Already interrupted before this job started: cancel and bail.
-      onAbort();
-      throw new Error('aborted');
-    }
-    opts.signal.addEventListener('abort', onAbort);
     const outWavUri = resolveOutWavPathUri(jobId, fs, overrides);
     let wavUriToDelete: string | null = outWavUri;
     let nativeSynthesisSettled: Promise<void> | null = null;
     try {
-      const nativeSynthesis = native.synthesizeToWavFile({
-        jobId,
-        assetsDir: assetsDirPath,
-        text,
-        voiceId: opts.voiceId,
-        sid,
-        speed: opts.speed,
-        outWavPath: uriToFilePath(outWavUri),
-      });
-      // The native job outlives a lost race. Track its settlement so cleanup
-      // never deletes a staged WAV the job is still writing.
-      nativeSynthesisSettled = nativeSynthesis.then(() => undefined, () => undefined);
-      const res = await Promise.race([
-        nativeSynthesis,
-        createAbortPromise(opts.signal),
-        createTimeoutPromise(opts.timeoutMs),
-      ]);
+      const res = await awaitAbortableOperation(
+        () => {
+          const nativeSynthesis = native.synthesizeToWavFile({
+            jobId,
+            assetsDir: assetsDirPath,
+            text,
+            voiceId: opts.voiceId,
+            sid,
+            speed: opts.speed,
+            outWavPath: uriToFilePath(outWavUri),
+          });
+          // The native job outlives a lost race. Track its settlement so cleanup
+          // never deletes a staged WAV the job is still writing.
+          nativeSynthesisSettled = nativeSynthesis.then(() => undefined, () => undefined);
+          return nativeSynthesis;
+        },
+        {
+          signal: opts.signal,
+          timeoutMs: opts.timeoutMs,
+          onCancelled: cancelNativeJob,
+        },
+      );
 
       const wavUri = filePathToUri(res.wavPath);
       wavUriToDelete = wavUri;
       const wavFile = new fs.File(wavUri);
-      const bytes = await Promise.race([
-        wavFile.arrayBuffer(),
-        createAbortPromise(opts.signal),
-        createTimeoutPromise(opts.timeoutMs),
-      ]);
+      const bytes = await awaitAbortableOperation<ArrayBuffer>(
+        () => wavFile.arrayBuffer(),
+        { signal: opts.signal, timeoutMs: opts.timeoutMs },
+      );
 
       await deleteFileBestEffort(fs, wavUri);
       wavUriToDelete = null;
@@ -264,7 +365,6 @@ async function prepareKokoroSynthContext(
       if (nativeSynthesisSettled) await nativeSynthesisSettled;
       throw error;
     } finally {
-      opts.signal.removeEventListener('abort', onAbort);
       // Always clean up the staged out-WAV, including on abort/timeout where the
       // job may have written a partial file before we bailed.
       if (wavUriToDelete) {
@@ -326,11 +426,12 @@ export async function prepareKokoroTts(
     },
     { fs: fs as any },
   );
-  await Promise.race([
-    native.initialize({ assetsDir: uriToFilePath(installed.packDirUri) }),
-    createAbortPromise(opts.signal),
-    createTimeoutPromise(opts.timeoutMs),
-  ]);
+  await initializeNativeRuntime({
+    native,
+    assetsDirPath: uriToFilePath(installed.packDirUri),
+    timeoutMs: opts.timeoutMs,
+    signal: opts.signal,
+  });
 }
 
 /**

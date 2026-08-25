@@ -51,7 +51,6 @@ export function LocalConversationSection(props: {
   popoverBoundaryRef?: React.RefObject<any> | null;
   daemonModelCatalog?: DaemonVoiceModelCatalogController;
   daemonRouteDiagnosticReason?: VoiceDaemonRouteDiagnosticReason | null;
-  showProcessingDisclosure?: boolean;
 }) {
   const { theme } = useUnistyles();
   const voiceAgentEnabled = useFeatureEnabled('voice.agent');
@@ -275,7 +274,6 @@ export function LocalConversationSection(props: {
         setVoice={props.setVoice}
         popoverBoundaryRef={props.popoverBoundaryRef}
         daemonRouteDiagnosticReason={props.daemonRouteDiagnosticReason}
-        showProcessingDisclosure={props.showProcessingDisclosure}
       />
 
       {sttProvider === 'device' ? (
@@ -349,7 +347,6 @@ export function LocalConversationSection(props: {
         networkTimeoutMs={cfg.networkTimeoutMs}
         popoverBoundaryRef={props.popoverBoundaryRef}
         daemonRouteDiagnosticReason={props.daemonRouteDiagnosticReason}
-        showProcessingDisclosure={props.showProcessingDisclosure}
       />
 
       <DaemonVoiceModelCatalogSection

@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { attachVoiceAgentActionEffectId } from '@/voice/agent/types';
+
 import {
   getStorage,
   registerLocalVoiceEngineHarnessHooks,
@@ -252,6 +254,50 @@ describe('runVoiceAgentTurnWithTools local effect custody', () => {
     expect(submitMessage).toHaveBeenCalledTimes(1);
     expect(replay.toolResultBatches[0]).toEqual(first.toolResultBatches[0]);
   });
+
+  it('retains more than 8,192 sequential stable local effect outcomes for the active session', async () => {
+    await prepareSession();
+    submitMessage.mockResolvedValue(undefined);
+    const { runVoiceAgentTurnWithTools } = await import('./runVoiceAgentTurnWithTools');
+    const { getRetainedLocalVoiceEffectOutcomes } = await import('@/voice/tools/localVoiceEffectOutcomeCustody');
+    const retainedOutcomes = getRetainedLocalVoiceEffectOutcomes('sys_voice');
+    for (let index = 0; index < 8_192; index += 1) {
+      retainedOutcomes.set(`effect-${index}`, {
+        fingerprint: `settled-effect-${index}`,
+        outcome: Promise.resolve({
+          t: 'sendSessionMessage',
+          args: { message: `Message ${index}` },
+          result: { ok: true },
+        }),
+      });
+    }
+    const finalAction = attachVoiceAgentActionEffectId(
+      {
+        t: 'sendSessionMessage',
+        args: { message: 'Message 8192' },
+      },
+      'effect-8192',
+    );
+    const sessions = createSessions([
+      { assistantText: 'Sending.', actions: [finalAction] },
+      { assistantText: 'Done.', actions: [] },
+    ]);
+
+    const result = await runVoiceAgentTurnWithTools({
+      sessionId: 'sys_voice',
+      userText: 'send all',
+      durableLocalId: 'test-durable-local-id',
+      currentToolSessionId: 's1',
+      voiceAgentSessions: sessions,
+    });
+
+    expect(result.toolResultBatches[0]?.at(-1)).toMatchObject({
+      t: 'sendSessionMessage',
+      result: { ok: true },
+    });
+    expect(submitMessage).toHaveBeenCalledOnce();
+    expect(retainedOutcomes).toHaveLength(8_193);
+  }, 180_000);
 
   it('releases retained effect outcomes when the owning local Voice session stops', async () => {
     await prepareSession();

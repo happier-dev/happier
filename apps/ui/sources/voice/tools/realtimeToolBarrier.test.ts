@@ -234,6 +234,93 @@ describe('realtime tool barrier', () => {
     expect(continueResponse).not.toHaveBeenCalled();
   });
 
+  it('detaches provider delivery without cancelling a settled mutation and redelivers its retained result once', async () => {
+    const deliveryStarted = vi.fn();
+    const executeCall = vi.fn(async () => ({ ok: true, receipt: 'effect-receipt' }));
+    const submitResults = vi.fn()
+      .mockImplementationOnce(async (
+        _responseId: string,
+        _results: readonly VoiceRealtimeToolResultV1[],
+        signal: AbortSignal,
+      ) => {
+        deliveryStarted();
+        await new Promise<void>((_resolve, reject) => {
+          signal.addEventListener('abort', () => reject(new Error('transport detached')), { once: true });
+        });
+      })
+      .mockResolvedValueOnce(undefined);
+    const continueResponse = vi.fn(async () => undefined);
+    const barrier = createRealtimeToolBarrier({
+      classifyCall: () => 'mutation',
+      authorizeCall: async () => ({ status: 'allowed' as const }),
+      executeCall,
+      redactResult: (value) => value,
+      submitResults,
+      continueResponse,
+    });
+    const input = { responseId: 'response-1', calls: [call('detached-effect', 0)] };
+
+    const first = barrier.run(input);
+    await vi.waitFor(() => expect(deliveryStarted).toHaveBeenCalledTimes(1));
+    barrier.detach('response-1');
+
+    await expect(first).resolves.toMatchObject({
+      status: 'detached',
+      results: [expect.objectContaining({
+        callId: 'detached-effect',
+        status: 'success',
+        output: { ok: true, receipt: 'effect-receipt' },
+      })],
+    });
+    await expect(barrier.run(input)).resolves.toMatchObject({ status: 'submitted' });
+
+    expect(executeCall).toHaveBeenCalledTimes(1);
+    expect(submitResults).toHaveBeenCalledTimes(2);
+    expect(continueResponse).toHaveBeenCalledTimes(1);
+  });
+
+  it('retains a detached read result and redelivers it without rerunning the read', async () => {
+    const deliveryStarted = vi.fn();
+    let executions = 0;
+    const executeCall = vi.fn(async () => ({ execution: ++executions }));
+    const submitResults = vi.fn()
+      .mockImplementationOnce(async (
+        _responseId: string,
+        _results: readonly VoiceRealtimeToolResultV1[],
+        signal: AbortSignal,
+      ) => {
+        deliveryStarted();
+        await new Promise<void>((_resolve, reject) => {
+          signal.addEventListener('abort', () => reject(new Error('transport detached')), { once: true });
+        });
+      })
+      .mockResolvedValueOnce(undefined);
+    const barrier = createRealtimeToolBarrier({
+      classifyCall: () => 'read_only',
+      authorizeCall: async () => ({ status: 'allowed' as const }),
+      executeCall,
+      redactResult: (value) => value,
+      submitResults,
+      continueResponse: async () => undefined,
+    });
+    const input = { responseId: 'response-1', calls: [call('detached-read', 0)] };
+
+    const first = barrier.run(input);
+    await vi.waitFor(() => expect(deliveryStarted).toHaveBeenCalledOnce());
+    barrier.detach('response-1');
+
+    await expect(first).resolves.toMatchObject({
+      status: 'detached',
+      results: [expect.objectContaining({ output: { execution: 1 } })],
+    });
+    await expect(barrier.run(input)).resolves.toMatchObject({
+      status: 'submitted',
+      results: [expect.objectContaining({ output: { execution: 1 } })],
+    });
+    expect(executeCall).toHaveBeenCalledOnce();
+    expect(submitResults).toHaveBeenCalledTimes(2);
+  });
+
   it('dedupes response replay and rejects conflicting duplicate call ids', async () => {
     const executeCall = vi.fn(async () => ({ ok: true }));
     const submitResults = vi.fn(async () => undefined);
@@ -360,6 +447,52 @@ describe('realtime tool barrier', () => {
     expect(replay.status).toBe('submitted');
     expect(executeCall).toHaveBeenCalledTimes(1);
     expect(submitResults).toHaveBeenCalledTimes(2);
+    expect(continueResponse).toHaveBeenCalledTimes(1);
+  });
+
+  it('reapplies current redaction to a retained read result after failed delivery without rerunning it', async () => {
+    let executions = 0;
+    let shareDeviceInventory = true;
+    const executeCall = vi.fn(async () => ({ execution: ++executions, machineId: 'MACHINE_SECRET' }));
+    const submitResults = vi.fn()
+      .mockRejectedValueOnce(new Error('provider unavailable'))
+      .mockResolvedValueOnce(undefined);
+    const continueResponse = vi.fn(async () => undefined);
+    const barrier = createRealtimeToolBarrier({
+      classifyCall: () => 'read_only',
+      authorizeCall: async () => ({ status: 'allowed' as const }),
+      executeCall,
+      redactResult: (value, input) => input.toolName === 'listMachines' && !shareDeviceInventory
+        ? {
+          ok: false,
+          errorCode: 'privacy_disabled',
+          errorMessage: 'privacy_disabled',
+        }
+        : value,
+      submitResults,
+      continueResponse,
+    });
+    const input = { responseId: 'response-1', calls: [call('read-once', 0)] };
+
+    const first = await barrier.run(input);
+    shareDeviceInventory = false;
+    const replay = await barrier.run(input);
+
+    const expectedRedactedOutput = {
+      ok: false,
+      errorCode: 'privacy_disabled',
+      errorMessage: 'privacy_disabled',
+    };
+    expect(first.status).toBe('failed');
+    expect(replay).toMatchObject({
+      status: 'submitted',
+      results: [expect.objectContaining({ output: expectedRedactedOutput })],
+    });
+    expect(executeCall).toHaveBeenCalledTimes(1);
+    expect(submitResults.mock.calls[1]?.[1]).toEqual([
+      expect.objectContaining({ output: expectedRedactedOutput }),
+    ]);
+    expect(JSON.stringify(submitResults.mock.calls[1]?.[1])).not.toContain('MACHINE_SECRET');
     expect(continueResponse).toHaveBeenCalledTimes(1);
   });
 
@@ -530,7 +663,7 @@ describe('realtime tool barrier', () => {
     expect(executeCall).not.toHaveBeenCalled();
   });
 
-  it('refuses a new mutating effect when session outcome custody is full without evicting or executing', async () => {
+  it('retains more than 8,192 distinct mutating effect outcomes for their attempt', async () => {
     const executeCall = vi.fn(async (input: VoiceRealtimeToolCallV1) => ({ receipt: input.callId }));
     const barrier = createRealtimeToolBarrier({
       classifyCall: () => 'mutation',
@@ -539,26 +672,26 @@ describe('realtime tool barrier', () => {
       redactResult: (value) => value,
       submitResults: async () => undefined,
       continueResponse: async () => undefined,
-      maxEffectOutcomes: 1,
     });
 
-    await expect(barrier.run({
-      responseId: 'response-1',
-      calls: [call('first-effect', 0)],
-    })).resolves.toMatchObject({ status: 'submitted' });
-    await expect(barrier.run({
-      responseId: 'response-2',
-      calls: [{ ...call('second-effect', 0), responseId: 'response-2' }],
-    })).resolves.toMatchObject({
+    let finalResult: Awaited<ReturnType<typeof barrier.run>> | undefined;
+    for (let index = 0; index <= 8_192; index += 1) {
+      const responseId = `response-${index}`;
+      finalResult = await barrier.run({
+        responseId,
+        calls: [{ ...call(`effect-${index}`, 0), responseId }],
+      });
+    }
+
+    expect(finalResult).toMatchObject({
       status: 'submitted',
       results: [expect.objectContaining({
-        callId: 'second-effect',
-        status: 'error',
-        errorCode: 'tool_outcome_capacity_exceeded',
+        callId: 'effect-8192',
+        output: { receipt: 'effect-8192' },
+        status: 'success',
       })],
     });
-
-    expect(executeCall).toHaveBeenCalledTimes(1);
+    expect(executeCall).toHaveBeenCalledTimes(8_193);
   });
 
   it('bounds concurrently active responses instead of growing past the replay cache limit', async () => {

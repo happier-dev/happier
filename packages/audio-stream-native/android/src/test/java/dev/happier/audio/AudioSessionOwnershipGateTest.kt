@@ -1,5 +1,8 @@
 package dev.happier.audio
 
+import android.content.pm.ServiceInfo
+import android.media.AudioManager
+import android.os.Build
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -7,6 +10,79 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AudioSessionOwnershipGateTest {
+  @Test
+  fun androidQConversationForegroundServiceDeclaresMicrophoneAndMediaPlaybackTypes() {
+    assertEquals(
+      ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE or ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK,
+      foregroundServiceTypeForSdk(Build.VERSION_CODES.Q),
+    )
+  }
+
+  @Test
+  fun preAndroidQConversationForegroundServiceUsesTheLegacyUntypedStartPath() {
+    assertEquals(null, foregroundServiceTypeForSdk(Build.VERSION_CODES.P))
+  }
+
+  @Test
+  fun onlyAnInputEnabledAggregateConversationRequiresTheAndroidForegroundService() {
+    assertTrue(requiresVoiceForegroundService("conversation", true))
+    assertFalse(requiresVoiceForegroundService("conversation", false))
+    assertFalse(requiresVoiceForegroundService("dictation", true))
+    assertFalse(requiresVoiceForegroundService("playback", false))
+  }
+
+  @Test
+  fun duckableFocusLossLeavesPcmRunningForTheCanonicalGainOwner() {
+    val focus = AudioPlaybackFocusController()
+
+    assertEquals(
+      AudioPlaybackFocusAction.NONE,
+      focus.onFocusChange(AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK),
+    )
+    assertFalse(focus.isOutputPaused())
+  }
+
+  @Test
+  fun transientFocusLossPausesOutputAndGainRestoresIt() {
+    val focus = AudioPlaybackFocusController()
+
+    assertEquals(
+      AudioPlaybackFocusAction.PAUSE,
+      focus.onFocusChange(AudioManager.AUDIOFOCUS_LOSS_TRANSIENT),
+    )
+    assertTrue(focus.isOutputPaused())
+    assertEquals(
+      AudioPlaybackFocusAction.RESUME,
+      focus.onFocusChange(AudioManager.AUDIOFOCUS_GAIN),
+    )
+    assertFalse(focus.isOutputPaused())
+  }
+
+  @Test
+  fun permanentFocusLossPreventsGainFromResumingPausedOutputUntilFocusIsGrantedAgain() {
+    val focus = AudioPlaybackFocusController()
+
+    assertEquals(
+      AudioPlaybackFocusAction.PAUSE,
+      focus.onFocusChange(AudioManager.AUDIOFOCUS_LOSS_TRANSIENT),
+    )
+    assertEquals(
+      AudioPlaybackFocusAction.NONE,
+      focus.onFocusChange(AudioManager.AUDIOFOCUS_LOSS_TRANSIENT),
+    )
+    assertEquals(
+      AudioPlaybackFocusAction.NONE,
+      focus.onFocusChange(AudioManager.AUDIOFOCUS_LOSS),
+    )
+    assertEquals(
+      AudioPlaybackFocusAction.NONE,
+      focus.onFocusChange(AudioManager.AUDIOFOCUS_GAIN),
+    )
+    assertTrue(focus.isOutputPaused())
+    assertEquals(AudioPlaybackFocusAction.RESUME, focus.onFocusRequestGranted())
+    assertFalse(focus.isOutputPaused())
+  }
+
   @Test
   fun captureStartBeforeCoordinatorConfigurationFailsClosed() {
     val gate = AudioSessionOwnershipGate()

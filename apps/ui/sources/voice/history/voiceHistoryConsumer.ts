@@ -221,6 +221,7 @@ export function createVoiceHistoryConsumer<
   let capturedScope: TScope | null = null;
   let hasMore: boolean | null = null;
   let operationEpoch = 0;
+  let deferredExportProjectionEpoch: number | null = null;
   let projectedSessionId: string | null = null;
   let projectedMessagesRevision: string | number | null = null;
   let projectedRevision: string | number | null = null;
@@ -244,6 +245,11 @@ export function createVoiceHistoryConsumer<
     projectedRows = Object.freeze([]);
   };
 
+  const publishProjection = (): void => {
+    resetProjection();
+    emit();
+  };
+
   const resetBinding = () => {
     sessionId = null;
     scopeKey = null;
@@ -254,6 +260,9 @@ export function createVoiceHistoryConsumer<
 
   const beginOperation = (): number => {
     operationEpoch += 1;
+    // A newer operation owns its own current projection. It must not inherit
+    // an interrupted export's read suppression.
+    deferredExportProjectionEpoch = null;
     return operationEpoch;
   };
 
@@ -285,10 +294,13 @@ export function createVoiceHistoryConsumer<
     if (!sessionId || !isScopeCurrent()) return empty();
     const messagesRevision = deps.readMessagesRevision(sessionId);
     const revision = deps.readProjectionRevision?.() ?? 0;
+    const projectionIsDeferredForExport = deferredExportProjectionEpoch !== null;
     if (
       projectedSessionId !== sessionId
-      || projectedMessagesRevision !== messagesRevision
-      || projectedRevision !== revision
+      || (!projectionIsDeferredForExport && (
+        projectedMessagesRevision !== messagesRevision
+        || projectedRevision !== revision
+      ))
     ) {
       projectedSessionId = sessionId;
       projectedMessagesRevision = messagesRevision;
@@ -330,6 +342,7 @@ export function createVoiceHistoryConsumer<
   const pageOnce = async (
     epoch: number,
     expectedSessionId: string,
+    publish = true,
   ): Promise<VoiceHistoryPageResult | null> => {
     assertOperationCurrent(epoch);
     if (sessionId !== expectedSessionId || !capturedScope || !isScopeCurrent()) return null;
@@ -352,8 +365,7 @@ export function createVoiceHistoryConsumer<
     // The canonical message owner may append into its existing array while
     // paging. This operation is the mutation boundary, so invalidate here
     // without imposing a second message-version owner on History.
-    resetProjection();
-    emit();
+    if (publish) publishProjection();
     return result;
   };
 
@@ -405,19 +417,56 @@ export function createVoiceHistoryConsumer<
         // "All" means all of it. There is no page, row or byte ceiling: a
         // ceiling turned a large history into no artifact at all, while the
         // only export action the screen offers asks for the whole range.
-        while (true) {
-          const page = await pageOnce(epoch, expectedSessionId);
-          if (!page) break;
-          assertOperationCurrent(epoch);
-          if (page.status === 'no_more' || page.hasMore === false) break;
-          if (page.status === 'not_ready' || page.status === 'in_flight') {
-            throw new Error(`Voice History pagination is ${page.status}`);
+        let hasDeferredPagePublication = false;
+        deferredExportProjectionEpoch = epoch;
+        try {
+          while (true) {
+            // A mounted external-store reader otherwise projects the growing
+            // prefix after every page. Export owns these pages, so it publishes
+            // once after the final accumulated history is ready.
+            const page = await pageOnce(epoch, expectedSessionId, false);
+            if (!page) break;
+            hasDeferredPagePublication = true;
+            assertOperationCurrent(epoch);
+            if (page.status === 'no_more' || page.hasMore === false) break;
+            if (page.status === 'not_ready' || page.status === 'in_flight') {
+              throw new Error(`Voice History pagination is ${page.status}`);
+            }
+            // `loaded` is the canonical count of rows the pager applied, so it
+            // reports cursor progress without projecting the growing slice.
+            if (page.loaded === 0) {
+              throw new Error('Voice History pagination made no progress');
+            }
           }
-          // `loaded` is the canonical count of rows the pager applied, so it
-          // reports cursor progress without projecting the growing slice.
-          if (page.loaded === 0) {
-            throw new Error('Voice History pagination made no progress');
+        } catch (error) {
+          // A completed earlier page still belongs to the current History
+          // binding. Publish it before surfacing a later pager failure, while
+          // never reviving a superseded operation or scope.
+          const shouldPublishDeferredProjection = (
+            hasDeferredPagePublication
+            && operationEpoch === epoch
+            && sessionId === expectedSessionId
+            && isScopeCurrent()
+          );
+          if (deferredExportProjectionEpoch === epoch) {
+            deferredExportProjectionEpoch = null;
           }
+          if (shouldPublishDeferredProjection) {
+            publishProjection();
+          }
+          throw error;
+        }
+        const shouldPublishDeferredProjection = (
+          hasDeferredPagePublication
+          && operationEpoch === epoch
+          && sessionId === expectedSessionId
+          && isScopeCurrent()
+        );
+        if (deferredExportProjectionEpoch === epoch) {
+          deferredExportProjectionEpoch = null;
+        }
+        if (shouldPublishDeferredProjection) {
+          publishProjection();
         }
       }
       assertOperationCurrent(epoch);

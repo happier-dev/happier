@@ -1,3 +1,5 @@
+import type { VoiceProviderSettingsActionDeclaration } from '@happier-dev/protocol';
+
 import type { VoiceProviderRegistryEntry } from '@/voice/registry/providerRegistry';
 
 export type BundledSpeechSettingsConfig = Readonly<{
@@ -62,7 +64,13 @@ export type BundledSpeechSettingsDescriptor = Readonly<{
   titleKey: string;
   subtitleKey: string;
   detailKey: string;
-  privacyDisclosureKey?: string;
+  /**
+   * The provider declaration's own disclosure, forwarded verbatim. Collapsing it
+   * to its translation key discards the declared fallback prose, which is the only
+   * copy an externally installed plugin has: its translations are never merged into
+   * the host bundle.
+   */
+  privacyDisclosure?: string | Readonly<{ key: string; fallback: string }>;
   iconName: string;
   credential: Readonly<{
     slotId: string;
@@ -72,6 +80,7 @@ export type BundledSpeechSettingsDescriptor = Readonly<{
     promptBodyKey: string;
   }> | null;
   fields: readonly BundledSpeechSettingsField[];
+  actions: readonly VoiceProviderSettingsActionDeclaration[];
   endpointConsent: Readonly<{
     baseUrlFieldId: 'baseUrl';
     originConsentFieldId: 'insecureLocalOriginConsent';
@@ -126,6 +135,20 @@ function localizedKey(value: unknown): string | null {
   if (typeof value === 'string' && value.length > 0) return value;
   if (value && typeof value === 'object' && 'key' in value
     && typeof value.key === 'string' && value.key.length > 0) return value.key;
+  return null;
+}
+
+function readDeclaredDisclosure(
+  value: unknown,
+): string | Readonly<{ key: string; fallback: string }> | null {
+  if (typeof value === 'string' && value.length > 0) return value;
+  if (value && typeof value === 'object' && 'key' in value
+    && typeof value.key === 'string' && value.key.length > 0) {
+    const fallback = 'fallback' in value && typeof value.fallback === 'string' && value.fallback.length > 0
+      ? value.fallback
+      : value.key;
+    return Object.freeze({ key: value.key, fallback });
+  }
   return null;
 }
 
@@ -276,7 +299,7 @@ export function readBundledSpeechSettingsDescriptorFromEntry(
       || new Set(fields.map((field) => field.key)).size !== fields.length) {
       return null;
     }
-    const privacyDisclosureKey = localizedKey(entry.declaration.settings?.privacyDisclosure);
+    const privacyDisclosure = readDeclaredDisclosure(entry.declaration.settings?.privacyDisclosure);
     const voicesCatalog = entry.declaration.catalogs?.find((catalog) => catalog.kind === 'voices');
     const testMissingFieldId = voicesCatalog?.settingFieldId
       ?? entry.declaration.settings?.readiness?.find(
@@ -292,7 +315,7 @@ export function readBundledSpeechSettingsDescriptorFromEntry(
       titleKey: presentation.titleKey,
       subtitleKey: presentation.subtitleKey,
       detailKey: presentation.detailKey,
-      ...(privacyDisclosureKey ? { privacyDisclosureKey } : {}),
+      ...(privacyDisclosure ? { privacyDisclosure } : {}),
       iconName: presentation.iconName,
       credential: credentials && presentation.credential
         ? Object.freeze({
@@ -302,6 +325,7 @@ export function readBundledSpeechSettingsDescriptorFromEntry(
           })
         : null,
       fields: Object.freeze(fields),
+      actions: Object.freeze([...(entry.declaration.settings.actions ?? [])]),
       endpointConsent,
       defaultConfig,
       parseConfig(value: unknown) {

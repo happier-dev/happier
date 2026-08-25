@@ -52,6 +52,21 @@ describe('createVoiceMachineError', () => {
         });
     });
 
+    it('projects an unavailable execution machine to its existing settings recovery', () => {
+        expect(createVoiceMachineError({
+            kind: 'execution_machine_unavailable',
+            reason: 'machine_unavailable',
+        })).toEqual({
+            kind: 'execution_machine_unavailable',
+            reason: 'machine_unavailable',
+            phase: 'preflight',
+            retryPolicy: 'user_action',
+            recoveryAction: 'select_execution_machine',
+            presentation: 'error',
+            recoverable: false,
+        });
+    });
+
     it.each([
         ['provider_setup_required', 'user_action', 'open_settings'],
         ['authentication_required', 'user_action', 'connect_agent'],
@@ -100,6 +115,7 @@ describe('isVoiceMachineErrorKind', () => {
     it('accepts known kinds and rejects others', () => {
         expect(isVoiceMachineErrorKind('mic_plateau')).toBe(true);
         expect(isVoiceMachineErrorKind('tts_failed')).toBe(true);
+        expect(isVoiceMachineErrorKind('execution_machine_unavailable')).toBe(true);
         expect(isVoiceMachineErrorKind('not_a_kind')).toBe(false);
         expect(isVoiceMachineErrorKind(42)).toBe(false);
     });
@@ -128,6 +144,7 @@ describe('classifyMicSessionFailure', () => {
             'provider_error',
             'provider_auth_invalid',
             'provider_setup_required',
+            'execution_machine_unavailable',
             'reconnect_exhausted',
             'audio_context_suspended',
             'stt_timeout',
@@ -147,6 +164,7 @@ describe('classifyMicSessionFailure', () => {
                 'immediate_once',
                 'immediate_once',
                 'backoff',
+                'user_action',
                 'user_action',
                 'user_action',
                 'user_action',

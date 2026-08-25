@@ -42,6 +42,7 @@ import {
   VoiceCredentialSourceField,
   type VoiceCredentialSourceFieldStatus,
 } from '../realtime/VoiceCredentialSourceField';
+import { VoiceProviderSettingsActions } from '../realtime/VoiceProviderSettingsActions';
 import type { VoiceRemoteCatalogState } from '@/voice/settings/remoteCatalogState';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -179,7 +180,6 @@ function BundledSpeechSettings(props: Readonly<{
   voice: VoiceSettings;
   onVoiceChange: (next: VoiceSettings) => void;
   popoverBoundaryRef?: React.RefObject<unknown> | null;
-  showProcessingDisclosure?: boolean;
 }>) {
   const { theme } = useUnistyles();
   const machine = useVoiceExecutionMachinePresentation();
@@ -300,12 +300,12 @@ function BundledSpeechSettings(props: Readonly<{
         const value = config[field.key];
         if (field.kind === 'text') {
           return (
-            <Item
-              key={field.key}
-              title={translateDescriptorKey(field.titleKey)}
-              subtitle={translateDescriptorKey(field.subtitleKey)}
-              detail={typeof value === 'string' && value.length > 0 ? value : t('common.none')}
-              onPress={() => fireAndForget((async () => {
+            <React.Fragment key={field.key}>
+              <Item
+                title={translateDescriptorKey(field.titleKey)}
+                subtitle={translateDescriptorKey(field.subtitleKey)}
+                detail={typeof value === 'string' && value.length > 0 ? value : t('common.none')}
+                onPress={() => fireAndForget((async () => {
                 if (props.descriptor.endpointConsent?.baseUrlFieldId === field.key) {
                   const consent = props.descriptor.endpointConsent;
                   const patch = await promptSpeechEndpointChange({
@@ -346,18 +346,26 @@ function BundledSpeechSettings(props: Readonly<{
                   return;
                 }
                 setValue(field.key, next);
-              })(), { tag: `BundledSpeechSettings.text.${field.key}` })}
-            />
+                })(), { tag: `BundledSpeechSettings.text.${field.key}` })}
+              />
+              <VoiceProviderSettingsActions
+                providerId={props.descriptor.providerId}
+                owner={props.descriptor}
+                actions={props.descriptor.actions}
+                config={config}
+                placement={{ kind: 'afterField', fieldId: field.key }}
+              />
+            </React.Fragment>
           );
         }
         if (field.kind === 'number') {
           return (
-            <Item
-              key={field.key}
-              title={translateDescriptorKey(field.titleKey)}
-              subtitle={translateDescriptorKey(field.subtitleKey)}
-              detail={typeof value === 'number' ? String(value) : t('common.none')}
-              onPress={() => fireAndForget((async () => {
+            <React.Fragment key={field.key}>
+              <Item
+                title={translateDescriptorKey(field.titleKey)}
+                subtitle={translateDescriptorKey(field.subtitleKey)}
+                detail={typeof value === 'number' ? String(value) : t('common.none')}
+                onPress={() => fireAndForget((async () => {
                 const raw = await Modal.prompt(translateDescriptorKey(field.promptTitleKey!), translateDescriptorKey(field.promptBodyKey!), {
                   inputType: 'numeric',
                   placeholder: typeof value === 'number' ? String(value) : '',
@@ -371,39 +379,63 @@ function BundledSpeechSettings(props: Readonly<{
                   return;
                 }
                 setValue(field.key, next);
-              })(), { tag: `BundledSpeechSettings.number.${field.key}` })}
-            />
+                })(), { tag: `BundledSpeechSettings.number.${field.key}` })}
+              />
+              <VoiceProviderSettingsActions
+                providerId={props.descriptor.providerId}
+                owner={props.descriptor}
+                actions={props.descriptor.actions}
+                config={config}
+                placement={{ kind: 'afterField', fieldId: field.key }}
+              />
+            </React.Fragment>
           );
         }
         if (field.kind === 'textarea' || field.kind === 'json') {
           return (
-            <BundledSpeechEditableField
-              key={field.key}
-              descriptor={props.descriptor}
-              field={field}
-              config={config}
-              onCommit={writeConfig}
-            />
+            <React.Fragment key={field.key}>
+              <BundledSpeechEditableField
+                descriptor={props.descriptor}
+                field={field}
+                config={config}
+                onCommit={writeConfig}
+              />
+              <VoiceProviderSettingsActions
+                providerId={props.descriptor.providerId}
+                owner={props.descriptor}
+                actions={props.descriptor.actions}
+                config={config}
+                placement={{ kind: 'afterField', fieldId: field.key }}
+              />
+            </React.Fragment>
           );
         }
         if (field.kind === 'switch') {
           return (
-            <Item
-              key={field.key}
-              title={translateDescriptorKey(field.titleKey)}
-              subtitle={translateDescriptorKey(field.subtitleKey)}
-              rightElement={(
-                <Switch
-                  testID={`voice-speech-setting:${field.key}.switch`}
-                  accessibilityLabel={translateDescriptorKey(field.titleKey)}
-                  value={value === true}
-                  onValueChange={(next) => setValue(field.key, next)}
-                />
-              )}
-              rightElementOutsidePressable
-              showChevron={false}
-              onPress={() => setValue(field.key, value !== true)}
-            />
+            <React.Fragment key={field.key}>
+              <Item
+                title={translateDescriptorKey(field.titleKey)}
+                subtitle={translateDescriptorKey(field.subtitleKey)}
+                rightElement={(
+                  <Switch
+                    testID={`voice-speech-setting:${field.key}.switch`}
+                    accessibilityLabel={translateDescriptorKey(field.titleKey)}
+                    value={value === true}
+                    onValueChange={(next) => setValue(field.key, next)}
+                  />
+                )}
+                rightElementOutsidePressable
+                showChevron={false}
+                onPress={() => setValue(field.key, value !== true)}
+              />
+              <VoiceProviderSettingsActions
+                providerId={props.descriptor.providerId}
+                owner={props.descriptor}
+                actions={props.descriptor.actions}
+                config={config}
+                placement={{ kind: 'afterField', fieldId: field.key }}
+              />
+            </React.Fragment>
           );
         }
 
@@ -455,8 +487,8 @@ function BundledSpeechSettings(props: Readonly<{
                 ? [{ id: '__status__', title: t('settingsVoice.realtimeProviders.catalog.empty'), subtitle: undefined, disabled: true }]
                 : [];
         return (
-          <DropdownMenu
-            key={field.key}
+          <React.Fragment key={field.key}>
+            <DropdownMenu
             open={openKey === field.key}
             onOpenChange={(next) => setOpenKey(next ? field.key : null)}
             variant="selectable"
@@ -491,18 +523,24 @@ function BundledSpeechSettings(props: Readonly<{
               }
               setOpenKey(null);
             }}
-          />
+            />
+            <VoiceProviderSettingsActions
+              providerId={props.descriptor.providerId}
+              owner={props.descriptor}
+              actions={props.descriptor.actions}
+              config={config}
+              placement={{ kind: 'afterField', fieldId: field.key }}
+            />
+          </React.Fragment>
         );
       })}
-      {(props.showProcessingDisclosure ?? true) && props.descriptor.privacyDisclosureKey ? (
-        <Item
-          testID={`voice-speech-provider-data:${props.descriptor.providerId}`}
-          mode="info"
-          title={t('settingsVoice.realtimeProviders.links.privacy.title')}
-          subtitle={translateDescriptorKey(props.descriptor.privacyDisclosureKey)}
-          showChevron={false}
-        />
-      ) : null}
+      <VoiceProviderSettingsActions
+        providerId={props.descriptor.providerId}
+        owner={props.descriptor}
+        actions={props.descriptor.actions}
+        config={config}
+        placement={{ kind: 'contributionFooter' }}
+      />
     </>
   );
 }
@@ -519,7 +557,6 @@ export function createBundledLocalSttProviderSpec(
       voice={props.voice}
       onVoiceChange={props.setVoice}
       popoverBoundaryRef={props.popoverBoundaryRef}
-      showProcessingDisclosure={props.showProcessingDisclosure}
     />
   );
   return Object.freeze({
@@ -545,7 +582,6 @@ export function createBundledLocalTtsProviderSpec(
       voice={props.voice}
       onVoiceChange={props.setVoice}
       popoverBoundaryRef={props.popoverBoundaryRef}
-      showProcessingDisclosure={props.showProcessingDisclosure}
     />
   );
   return Object.freeze({

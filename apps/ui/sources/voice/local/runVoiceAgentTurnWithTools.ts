@@ -32,8 +32,6 @@ import type { VoiceCurrentUiToolPort } from '@/voice/tools/currentUiContextToolP
 
 type VoiceToolAction = Readonly<{ t?: unknown; args?: unknown }>;
 
-const MAX_RETAINED_LOCAL_EFFECT_OUTCOMES_PER_SESSION = 8_192;
-
 /**
  * Privacy controls that gate what tool-result detail is serialized back to the voice provider on
  * the follow-up turn. Sourced from the canonical voice privacy settings so the local agent honors
@@ -627,13 +625,6 @@ export async function runVoiceAgentTurnWithTools(params: Readonly<{
         };
       }
       return { result: await existing.outcome, completedOrReused: true };
-    }
-
-    if (retainedEffectOutcomes.size >= MAX_RETAINED_LOCAL_EFFECT_OUTCOMES_PER_SESSION) {
-      return {
-        result: createLocalToolErrorResult(input.toolName, input.args, 'tool_outcome_capacity_exceeded'),
-        completedOrReused: false,
-      };
     }
 
     const outcome = (async (): Promise<LocalVoiceAgentToolResultEntry> => {

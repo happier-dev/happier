@@ -22,14 +22,17 @@ import {
   getExternalVoiceProviderRegistration,
   type ExternalVoiceProviderRegistration,
 } from '@/voice/registry/externalVoiceProviderRegistrations';
-import { resolveVoiceProviderId } from '@/voice/settings/resolveVoiceProviderId';
+import { resolveVoiceProviderIdForSettingsAction } from '@/voice/settings/resolveVoiceProviderId';
 
-import type { RealtimeProviderSettingsOwner } from './descriptor';
+export type VoiceProviderSettingsActionOwner = Readonly<{
+  defaultConfig: Readonly<Record<string, unknown>>;
+  parseConfig(value: unknown): Readonly<Record<string, unknown>> | null;
+}>;
 
 type ActionContext = Readonly<{
   actionId: string;
   providerId: string;
-  owner: RealtimeProviderSettingsOwner;
+  owner: VoiceProviderSettingsActionOwner;
   registration: ExternalVoiceProviderRegistration;
 }>;
 
@@ -207,7 +210,10 @@ function actionError(code: string): Error {
 
 /** The user moved to another Voice provider: the press was superseded by them. */
 function isPressedProviderSelected(context: ActionContext): boolean {
-  return resolveVoiceProviderId(storage.getState().settings.voice.providerId) === context.providerId;
+  return resolveVoiceProviderIdForSettingsAction(
+    storage.getState().settings.voice,
+    context.providerId,
+  ) === context.providerId;
 }
 
 function isContextCurrent(context: ActionContext): boolean {
@@ -320,7 +326,7 @@ const settingsActionInvoker = createHostPluginSettingsActionInvoker<ActionContex
 
 export function VoiceProviderSettingsActions(props: Readonly<{
   providerId: string;
-  owner: RealtimeProviderSettingsOwner;
+  owner: VoiceProviderSettingsActionOwner;
   actions: readonly VoiceProviderSettingsActionDeclaration[];
   config?: Readonly<Record<string, unknown>>;
   placement: Readonly<{ kind: 'afterField'; fieldId: string }> | Readonly<{ kind: 'contributionFooter' }>;

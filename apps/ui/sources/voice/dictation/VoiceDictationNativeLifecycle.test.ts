@@ -273,7 +273,9 @@ async function proveTerminalLifecycleAndRetry(input: Readonly<{
         });
         expect(input.coordinator.getSnapshot().leaseCount).toBe(1);
         await input.controller.cancel('dictation-session');
-        expect(input.coordinator.getSnapshot().leaseCount).toBe(0);
+        await vi.waitFor(() => {
+            expect(input.coordinator.getSnapshot().leaseCount).toBe(0);
+        });
     }
 }
 

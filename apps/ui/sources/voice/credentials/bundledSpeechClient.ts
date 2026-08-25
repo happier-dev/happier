@@ -3,6 +3,7 @@ import {
   DaemonVoiceSpeechDownloadAbortResponseSchema,
   DaemonVoiceSpeechDownloadChunkResponseSchema,
   DaemonVoiceSpeechDownloadFinalizeResponseSchema,
+  DaemonVoiceSpeechSettingsActionResponseSchema,
   DaemonVoiceSpeechSynthesizeResponseSchema,
   DaemonVoiceSpeechTranscribeResponseSchema,
   DaemonVoiceSpeechTranscribeUploadAbortResponseSchema,
@@ -12,6 +13,7 @@ import {
   VoiceProviderCatalogResponseSchema,
 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import type { PluginSettingsActionResult } from '@happier-dev/plugin-sdk/settings';
 import type { LocalUploadSource } from '@/sync/runtime/files/localUploadSourceReader';
 import { openLocalUploadSourceReader } from '@/sync/runtime/files/localUploadSourceReader';
 import { createTransferRecipientKeyPair, downloadInChunks, uploadInChunks } from '@/sync/domains/transfers/runtime/transferRuntime/carriers/chunkTransferClient';
@@ -56,6 +58,21 @@ export class BundledSpeechDaemonClient {
     ));
     if (!response.ok) throw new VoiceCredentialClientError('invalid_response');
     return response.items;
+  }
+
+  async executeSettingsAction(params: Readonly<{
+    entry: VoiceProviderRegistryEntry;
+    actionId: string;
+    signal?: AbortSignal | null;
+  }>): Promise<PluginSettingsActionResult> {
+    const target = getSpeechTarget(params.entry);
+    const response = parseCredentialResponse(DaemonVoiceSpeechSettingsActionResponseSchema, await this.machine.invoke(
+      RPC_METHODS.DAEMON_VOICE_SPEECH_SETTINGS_ACTION_EXECUTE,
+      { target: target.ref, actionId: params.actionId },
+      params.signal,
+    ));
+    if (!response.ok) throw new VoiceCredentialClientError('invalid_response');
+    return Object.freeze({ patch: response.patch });
   }
 
   async transcribe(params: Readonly<{

@@ -1,6 +1,8 @@
 import type {
   VoiceRealtimeCanonicalEvent,
   VoiceRealtimeConnection,
+  VoiceOutputFocusApplication,
+  VoiceOutputFocusState,
   VoiceRealtimePreparation,
 } from '@happier-dev/plugin-sdk/voice/client';
 import type {
@@ -24,10 +26,6 @@ import {
   resolveVoiceTurnControlAction,
   type VoiceTurnControlAction,
 } from '@/voice/runtime/protocol/VoiceTurnControlCapabilities';
-import {
-  createRealtimeInboundWatchdog,
-  type RealtimeInboundWatchdog,
-} from '@/voice/runtime/realtime/realtimeInboundWatchdog';
 import { VOICE_RUNTIME_CONFIG_DEFAULTS } from '@/voice/runtime/voiceRuntimeConfigDefaults';
 import {
   normalizeVoiceRuntimeFailureCode,
@@ -36,12 +34,31 @@ import {
   type VoiceRuntimeFailureDiagnosticReason,
 } from '@/voice/runtime/voiceRuntimeFailureCode';
 
+const RECOVERABLE_WEBRTC_TRANSPORT_FAILURE_CODES: ReadonlySet<string> = new Set([
+  'voice_webrtc_ice_closed',
+  'voice_webrtc_ice_failed',
+  'voice_webrtc_closed',
+  'voice_webrtc_failed',
+  'voice_webrtc_data_channel_closed',
+  'voice_webrtc_data_channel_error',
+]);
+
+function isRecoverableWebRtcTransportFailure(
+  connection: VoiceRealtimeConnection,
+  code: string,
+): boolean {
+  return connection.kind === 'webrtc' && RECOVERABLE_WEBRTC_TRANSPORT_FAILURE_CODES.has(code);
+}
+
 export type VoiceConversationToolBarrier = Readonly<{
   run(input: Readonly<{
     responseId: string;
     calls: readonly VoiceRealtimeToolCallV1[];
     signal?: AbortSignal | null;
-  }>): Promise<Readonly<{ status: 'submitted' | 'cancelled' | 'failed' }>>;
+  }>): Promise<Readonly<{ status: 'submitted' | 'cancelled' | 'detached' | 'failed' }>>;
+  /** Cancel only the detached provider-delivery leg; preserve attempt execution custody. */
+  detach(responseId: string): void;
+  /** Terminal response/attempt cancellation. */
   cancel(responseId: string): void;
   dispose(): void;
 }>;
@@ -58,6 +75,8 @@ export type VoiceConversationControllerMachinePort = Readonly<{
     controlSessionId: string;
     attemptId: number;
     active: boolean;
+    /** True only while the next retained reconnect slot is waiting. */
+    retryAvailable?: boolean;
   }>): void;
   connected(input: Readonly<{ controlSessionId: string; attemptId: number }>): void;
   ending(input: Readonly<{ controlSessionId: string; attemptId: number }>): void;
@@ -165,6 +184,11 @@ export type VoiceConversationController = Readonly<{
   playbackCursorMs(): number | null;
   beginOutputInterruptionCandidate(): VoicePlaybackInterruptionMode;
   resolveOutputInterruptionCandidate(resolution: VoicePlaybackInterruptionResolution): void;
+  /**
+   * Retains the native audio-session output policy across connection creation
+   * and reconnects for this exact attempt owner.
+   */
+  setOutputFocusState?(state: VoiceOutputFocusState): VoiceOutputFocusApplication;
 }>;
 
 export type CreateVoiceConversationController = (
@@ -176,12 +200,22 @@ type Attempt = {
   controlSessionId: string;
   abortController: AbortController;
   connection: VoiceRealtimeConnection | null;
+  /**
+   * The native audio-session owner projects this exact attempt's desired output
+   * state. Retaining it covers a late connection or reconnect without letting
+   * a completed attempt govern its successor.
+   */
+  outputFocusState: VoiceOutputFocusState;
   closePromise: Promise<void> | null;
   terminalSettled: boolean;
   reconnecting: boolean;
+  reconnectPromise: Promise<void> | null;
+  pendingReconnectBackoffAbortController: AbortController | null;
   toolBarrier: VoiceConversationToolBarrier | null;
   activeToolResponseIds: Set<string>;
   toolTasks: Set<Promise<void>>;
+  /** Current prepared carrier's proof that exact tool identities survived. */
+  toolResultReplay: 'none' | 'stable_ids';
   request: VoiceRealtimeJsonValue;
   resourcesPrepared: boolean;
   resourceReleasePromise: Promise<void> | null;
@@ -190,7 +224,6 @@ type Attempt = {
   providerPreparationReleasePromise: Promise<void> | null;
   authRefreshCount: number;
   connectionSequence: number;
-  inboundWatchdog: RealtimeInboundWatchdog | null;
 };
 
 class VoiceConnectionReadyTimeoutError extends Error {
@@ -236,21 +269,13 @@ export function createVoiceConversationController(
 
   const owns = (attempt: Attempt): boolean => current === attempt && !attempt.abortController.signal.aborted;
 
-  /**
-   * A transport can stay nominally open while it stops delivering content, which
-   * otherwise leaves the attempt awaiting or speaking forever with no user exit.
-   * The watchdog is attempt-local, armed only in the states that require inbound
-   * progress, and recovers through this controller's single reconnect owner.
-   */
-  const armInboundWatchdog = (attempt: Attempt): void => {
-    attempt.inboundWatchdog ??= createRealtimeInboundWatchdog({
-      onStall: () => {
-        if (current !== attempt) return;
-        void requestReconnect();
-      },
-    });
-    attempt.inboundWatchdog.start();
-  };
+  const applyOutputFocusState = (
+    attempt: Attempt,
+    connection: VoiceRealtimeConnection,
+  ): VoiceOutputFocusApplication => (
+    connection.setOutputFocusState?.(attempt.outputFocusState)
+      ?? (attempt.outputFocusState === 'active' ? 'applied' : 'unsupported')
+  );
 
   const awaitConnectionReady = async (operation: Promise<void>): Promise<void> => {
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -275,12 +300,32 @@ export function createVoiceConversationController(
     attempt.activeToolResponseIds.clear();
   };
 
-  const cancelActiveToolResponses = (attempt: Attempt): void => {
+  const detachActiveToolResponses = (attempt: Attempt): void => {
     const barrier = attempt.toolBarrier;
     if (!barrier) return;
-    for (const responseId of attempt.activeToolResponseIds) barrier.cancel(responseId);
+    for (const responseId of attempt.activeToolResponseIds) barrier.detach(responseId);
     attempt.activeToolResponseIds.clear();
   };
+
+  const recordPreparedToolResultReplay = (
+    attempt: Attempt,
+    preparation: Extract<VoiceRealtimePreparation, Readonly<{ kind: 'prepared' }>>,
+  ): void => {
+    // A provider declaration says what its implementation can support in
+    // principle. Only this concrete prepared carrier can establish that the
+    // original response/call identities survived this reconnect.
+    attempt.toolResultReplay = (
+      deps.adapter.turnControls.resumption === 'resume'
+      && deps.adapter.turnControls.replay === 'stable_ids'
+      && preparation.session.toolResultReplay === 'stable_ids'
+    ) ? 'stable_ids' : 'none';
+  };
+
+  const canRedeliverRetainedToolResult = (attempt: Attempt): boolean => (
+    deps.adapter.turnControls.resumption === 'resume'
+    && deps.adapter.turnControls.replay === 'stable_ids'
+    && attempt.toolResultReplay === 'stable_ids'
+  );
 
   const createToolBarrier = (attempt: Attempt): void => {
     attempt.toolBarrier = deps.createToolBarrier?.({
@@ -332,7 +377,6 @@ export function createVoiceConversationController(
     attempt: Attempt,
     reason: VoiceConnectionCloseReason,
   ): Promise<void> => {
-    attempt.inboundWatchdog?.stop();
     disposeToolBarrier(attempt);
     if (attempt.connection) {
       attempt.closePromise ??= attempt.connection.close(reason);
@@ -400,22 +444,26 @@ export function createVoiceConversationController(
         controlSessionId: attempt.controlSessionId,
         attemptId: attempt.id,
         active: false,
+        retryAvailable: false,
       });
     }
     settleDisconnected(attempt, 'voice_provider_not_selected');
   };
 
-  const reconnect = async (
+  const reconnect = (
     attempt: Attempt,
     reason: 'reconnect' | 'auth_refresh',
   ): Promise<void> => {
-    if (!owns(attempt) || attempt.reconnecting || attempt.terminalSettled) return;
-    attempt.inboundWatchdog?.stop();
+    if (!owns(attempt) || attempt.terminalSettled) return Promise.resolve();
+    if (attempt.reconnectPromise) return attempt.reconnectPromise;
+
+    const reconnectPromise = (async () => {
     attempt.reconnecting = true;
     deps.machine.reconnecting?.({
       controlSessionId: attempt.controlSessionId,
       attemptId: attempt.id,
       active: true,
+      retryAvailable: false,
     });
     const previousConnection = attempt.connection;
     try {
@@ -439,17 +487,46 @@ export function createVoiceConversationController(
       }
 
       if (previousConnection) {
-        // Tool calls are scoped to the provider response on the detached
-        // connection. Cancel provider delivery, but retain the attempt-scoped
-        // barrier so a completed mutation can be resubmitted without rerunning.
-        cancelActiveToolResponses(attempt);
-        await previousConnection.close({ code: 'remote_close' }).catch(() => {});
+        // A lost carrier interrupts only provider delivery. The barrier keeps
+        // execution and its redacted settlement attempt-owned so a resumed
+        // provider response can receive it without replaying the tool.
+        detachActiveToolResponses(attempt);
         if (attempt.connection === previousConnection) attempt.connection = null;
+        await previousConnection.close({ code: 'remote_close' }).catch(() => {});
         await endProviderSession(attempt, 'reconnect');
       }
 
       for (let reconnectAttempt = 1; reconnectAttempt <= maxReconnectAttempts; reconnectAttempt += 1) {
-        await waitBeforeReconnect(reconnectAttempt, attempt.abortController.signal);
+        const backoffAbortController = new AbortController();
+        const abortBackoff = () => backoffAbortController.abort();
+        if (attempt.abortController.signal.aborted) {
+          abortBackoff();
+        } else {
+          attempt.abortController.signal.addEventListener('abort', abortBackoff, { once: true });
+        }
+        attempt.pendingReconnectBackoffAbortController = backoffAbortController;
+        deps.machine.reconnecting?.({
+          controlSessionId: attempt.controlSessionId,
+          attemptId: attempt.id,
+          active: true,
+          retryAvailable: true,
+        });
+        try {
+          await waitBeforeReconnect(reconnectAttempt, backoffAbortController.signal);
+        } finally {
+          attempt.abortController.signal.removeEventListener('abort', abortBackoff);
+          if (attempt.pendingReconnectBackoffAbortController === backoffAbortController) {
+            attempt.pendingReconnectBackoffAbortController = null;
+          }
+          if (owns(attempt) && attempt.reconnecting) {
+            deps.machine.reconnecting?.({
+              controlSessionId: attempt.controlSessionId,
+              attemptId: attempt.id,
+              active: true,
+              retryAvailable: false,
+            });
+          }
+        }
         if (!owns(attempt)) return;
         if (!deps.isSelectionCurrent()) {
           await settleSelectionInvalidated(attempt);
@@ -458,6 +535,9 @@ export function createVoiceConversationController(
         deps.machine.connecting({ controlSessionId: attempt.controlSessionId, attemptId: attempt.id });
         let preparation: VoiceRealtimePreparation;
         try {
+          // Never carry a previous provider carrier's proof into a new
+          // preparation. Omission remains an explicit fail-closed result.
+          attempt.toolResultReplay = 'none';
           preparation = await deps.adapter.prepare({
             controlSessionId: attempt.controlSessionId,
             attemptId: attempt.id,
@@ -474,10 +554,17 @@ export function createVoiceConversationController(
           await settleSelectionInvalidated(attempt);
           return;
         }
-        if (preparation.kind !== 'prepared') {
-          if (preparation.kind === 'aborted') return;
-          break;
+        if (preparation.kind === 'declined') {
+          await settleReconnectFailure(
+            attempt,
+            normalizeVoiceRuntimeFailureCode(preparation.code),
+          );
+          return;
         }
+        if (preparation.kind === 'aborted') {
+          return;
+        }
+        recordPreparedToolResultReplay(attempt, preparation);
 
         let nextConnection: VoiceRealtimeConnection;
         try {
@@ -501,6 +588,13 @@ export function createVoiceConversationController(
         }
         attempt.connection = nextConnection;
         attempt.closePromise = null;
+        if (
+          attempt.outputFocusState !== 'active'
+          && applyOutputFocusState(attempt, nextConnection) === 'unsupported'
+        ) {
+          await settleReconnectFailure(attempt, 'voice_output_focus_unsupported');
+          return;
+        }
         try {
           await awaitConnectionReady(nextConnection.connect(attempt.abortController.signal));
           if (!owns(attempt) || attempt.connection !== nextConnection) {
@@ -537,7 +631,6 @@ export function createVoiceConversationController(
             return;
           }
         }
-        armInboundWatchdog(attempt);
         deps.machine.connected({ controlSessionId: attempt.controlSessionId, attemptId: attempt.id });
         if (!owns(attempt) || attempt.connection !== nextConnection) return;
         if (!deps.isSelectionCurrent()) {
@@ -559,42 +652,19 @@ export function createVoiceConversationController(
           controlSessionId: attempt.controlSessionId,
           attemptId: attempt.id,
           active: false,
+          retryAvailable: false,
         });
       }
     }
-  };
-
-  /**
-   * Canonical turn edges decide which inbound-progress window is open: the
-   * assistant speaking uses the tight inter-chunk bound, the gap between the
-   * user finishing and the assistant starting uses the generous
-   * response-generation bound, and listening silence arms nothing.
-   */
-  const noteInboundTurnEdge = (attempt: Attempt, event: VoiceRealtimeCanonicalEvent): void => {
-    const watchdog = attempt.inboundWatchdog;
-    if (!watchdog) return;
-    switch (event.type) {
-      case 'assistant_output_started':
-        watchdog.markTurnActive(true);
-        return;
-      case 'assistant_output_stopped':
-        watchdog.markTurnActive(false);
-        watchdog.markAwaitingResponse(false);
-        return;
-      case 'input_speech_started':
-        watchdog.markAwaitingResponse(false);
-        return;
-      case 'input_speech_stopped':
-        watchdog.markAwaitingResponse(true);
-        return;
-      case 'transcript':
-        if (event.event.role === 'user' && event.event.type === 'voice.transcript.final') {
-          watchdog.markAwaitingResponse(true);
-        }
-        return;
-      default:
-        return;
-    }
+    })();
+    attempt.reconnectPromise = reconnectPromise;
+    const clearReconnectPromise = (): void => {
+      if (attempt.reconnectPromise === reconnectPromise) {
+        attempt.reconnectPromise = null;
+      }
+    };
+    void reconnectPromise.then(clearReconnectPromise, clearReconnectPromise);
+    return reconnectPromise;
   };
 
   const pumpControlEvents = async (
@@ -614,7 +684,6 @@ export function createVoiceConversationController(
           await settleSelectionInvalidated(attempt);
           return;
         }
-        attempt.inboundWatchdog?.noteInboundEvent();
         const events = deps.adapter.decodeControl(control);
         for (const event of events) {
           if (!owns(attempt) || attempt.connection !== connection) return;
@@ -622,7 +691,6 @@ export function createVoiceConversationController(
             await settleSelectionInvalidated(attempt);
             return;
           }
-          noteInboundTurnEdge(attempt, event);
           if (event.type === 'auth_expired') {
             await reconnect(attempt, 'auth_refresh');
             return;
@@ -660,6 +728,15 @@ export function createVoiceConversationController(
                 || attempt.connection?.state() !== 'open'
               ) return;
 
+              // A fresh provider response cannot safely receive a retained
+              // result. The reconnect preparation, not the static declaration,
+              // must prove that this concrete carrier retained response/call
+              // identity. Never discard the settlement or rerun its effect/read.
+              if (!canRedeliverRetainedToolResult(attempt)) {
+                await settleReconnectFailure(attempt, 'voice_tool_result_delivery_unrecoverable');
+                return;
+              }
+
               attempt.activeToolResponseIds.add(event.responseId);
               const redelivered = await runBarrier();
               if (!owns(attempt) || redelivered.status === 'cancelled' || redelivered.status === 'submitted') return;
@@ -683,6 +760,10 @@ export function createVoiceConversationController(
       if (!owns(attempt) || attempt.connection !== connection) return;
       const failureCode = readSafeVoiceRuntimeFailureCode(error)
         ?? 'voice_control_event_failure';
+      if (isRecoverableWebRtcTransportFailure(connection, failureCode)) {
+        await reconnect(attempt, 'reconnect');
+        return;
+      }
       await closeAttempt(attempt, { code: 'error', detail: failureCode });
       if (!owns(attempt)) return;
       attempt.terminalSettled = true;
@@ -731,6 +812,10 @@ export function createVoiceConversationController(
       if (!owns(attempt) || attempt.connection !== connection) return;
       const failureCode = readSafeVoiceRuntimeFailureCode(error)
         ?? 'voice_transport_event_failure';
+      if (isRecoverableWebRtcTransportFailure(connection, failureCode)) {
+        await reconnect(attempt, 'reconnect');
+        return;
+      }
       await closeAttempt(attempt, { code: 'error', detail: failureCode });
       if (!owns(attempt)) return;
       attempt.terminalSettled = true;
@@ -758,12 +843,16 @@ export function createVoiceConversationController(
       controlSessionId: input.controlSessionId,
       abortController: new AbortController(),
       connection: null,
+      outputFocusState: 'active',
       closePromise: null,
       terminalSettled: false,
       reconnecting: false,
+      reconnectPromise: null,
+      pendingReconnectBackoffAbortController: null,
       toolBarrier: null,
       activeToolResponseIds: new Set(),
       toolTasks: new Set(),
+      toolResultReplay: 'none',
       request: input.request ?? null,
       resourcesPrepared: false,
       resourceReleasePromise: null,
@@ -772,7 +861,6 @@ export function createVoiceConversationController(
       providerPreparationReleasePromise: null,
       authRefreshCount: 0,
       connectionSequence: 0,
-      inboundWatchdog: null,
     };
     const previousAttemptCleanup = claimAttemptOwnership(attempt);
 
@@ -847,6 +935,7 @@ export function createVoiceConversationController(
         settleDisconnected(attempt, failureCode);
         return { status: 'declined', code: failureCode };
       }
+      recordPreparedToolResultReplay(attempt, preparation);
 
       if (deps.resources) {
         attempt.resourcesPrepared = true;
@@ -884,6 +973,15 @@ export function createVoiceConversationController(
         return { status: 'aborted' };
       }
 
+      if (
+        attempt.outputFocusState !== 'active'
+        && applyOutputFocusState(attempt, connection) === 'unsupported'
+      ) {
+        throw Object.assign(new Error('voice_output_focus_unsupported'), {
+          code: 'voice_output_focus_unsupported',
+        });
+      }
+
       await awaitConnectionReady(connection.connect(attempt.abortController.signal));
       if (!owns(attempt) || !deps.isSelectionCurrent()) {
         await closeAttempt(attempt, { code: 'aborted' });
@@ -914,7 +1012,6 @@ export function createVoiceConversationController(
           return { status: 'aborted' };
         }
       }
-      armInboundWatchdog(attempt);
       deps.machine.connected({ controlSessionId: attempt.controlSessionId, attemptId: attempt.id });
       if (!owns(attempt) || attempt.connection !== connection) {
         return { status: 'aborted' };
@@ -1039,6 +1136,11 @@ export function createVoiceConversationController(
   const requestReconnect = async (): Promise<boolean> => {
     const attempt = current;
     if (!attempt || !owns(attempt) || attempt.terminalSettled) return false;
+    if (attempt.reconnecting) {
+      attempt.pendingReconnectBackoffAbortController?.abort();
+      await attempt.reconnectPromise;
+      return owns(attempt) && attempt.connection?.state() === 'open';
+    }
     await reconnect(attempt, 'reconnect');
     return owns(attempt) && attempt.connection?.state() === 'open';
   };
@@ -1065,6 +1167,17 @@ export function createVoiceConversationController(
     attempt.connection.resolveOutputInterruptionCandidate(resolution);
   };
 
+  const setOutputFocusState = (
+    state: VoiceOutputFocusState,
+  ): VoiceOutputFocusApplication => {
+    const attempt = current;
+    if (!attempt || !owns(attempt)) return 'unsupported';
+    attempt.outputFocusState = state;
+    if (!attempt.connection) return 'applied';
+    return attempt.connection.setOutputFocusState?.(state)
+      ?? (state === 'active' ? 'applied' : 'unsupported');
+  };
+
   return Object.freeze({
     start,
     stop,
@@ -1078,5 +1191,6 @@ export function createVoiceConversationController(
     playbackCursorMs,
     beginOutputInterruptionCandidate,
     resolveOutputInterruptionCandidate,
+    setOutputFocusState,
   });
 }

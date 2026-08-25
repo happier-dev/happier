@@ -5,8 +5,6 @@ import { DaemonTtsController } from './DaemonTtsController';
 
 vi.mock('@/voice/runtime/voiceRuntimeConfigDefaults', () => ({
     VOICE_RUNTIME_CONFIG_DEFAULTS: {
-        realtimeWatchdogPollMs: 3_000,
-        realtimeWatchdogPlateauMs: 10_000,
         daemonInference: {
             warmIdleEvictMs: 5 * 60 * 1000,
             warmOnVoiceHomeAttach: true,
@@ -661,6 +659,82 @@ describe('DaemonTtsController', () => {
 
         await speaking;
         expect(cancel).toHaveBeenCalledTimes(1);
+        expect(playAudioBytesWithStopper).not.toHaveBeenCalled();
+    });
+
+    it('cancels a segmented stream that resolves after abort has already been observed', async () => {
+        const abortController = new AbortController();
+        let resolveStream!: (stream: any) => void;
+        const streamStarted = new Promise<any>((resolve) => {
+            resolveStream = resolve;
+        });
+        const cancel = vi.fn(async () => {});
+        const next = vi.fn(async () => ({
+            type: 'done' as const,
+            streamId: 'tts-stream-late-start',
+            generation: 0,
+        }));
+        const startSegmentedTts = vi.fn(() => streamStarted);
+        const playAudioBytesWithStopper = vi.fn();
+        const controller = new DaemonTtsController({
+            client: { synthesizeText: vi.fn(), startSegmentedTts } as any,
+            playAudioBytesWithStopper,
+        });
+
+        const speaking = controller.speak({
+            text: 'Abort before the daemon start reply arrives.',
+            packId: 'pack-1',
+            voiceId: null,
+            speed: null,
+            registerPlaybackStopper: () => () => {},
+            onSpeaking: vi.fn(),
+            signal: abortController.signal,
+        });
+        await vi.waitFor(() => {
+            expect(startSegmentedTts).toHaveBeenCalledTimes(1);
+        });
+
+        abortController.abort();
+        resolveStream({
+            streamId: 'tts-stream-late-start',
+            generation: 0,
+            segmentCount: 1,
+            next,
+            ackSegment: vi.fn(async () => {}),
+            cancel,
+        });
+
+        await speaking;
+        expect(cancel).toHaveBeenCalledTimes(1);
+        expect(next).not.toHaveBeenCalled();
+        expect(playAudioBytesWithStopper).not.toHaveBeenCalled();
+    });
+
+    it('does not materialize segmented synthesis when the source signal is already aborted', async () => {
+        const abortController = new AbortController();
+        abortController.abort();
+        const startSegmentedTts = vi.fn(async () => {
+            throw new Error('segmented_start_should_not_be_materialized');
+        });
+        const registerPlaybackStopper = vi.fn(() => () => {});
+        const playAudioBytesWithStopper = vi.fn();
+        const controller = new DaemonTtsController({
+            client: { synthesizeText: vi.fn(), startSegmentedTts } as any,
+            playAudioBytesWithStopper,
+        });
+
+        await expect(controller.speak({
+            text: 'Do not start this synthesizer.',
+            packId: 'pack-1',
+            voiceId: null,
+            speed: null,
+            registerPlaybackStopper,
+            onSpeaking: vi.fn(),
+            signal: abortController.signal,
+        })).resolves.toBeUndefined();
+
+        expect(registerPlaybackStopper).not.toHaveBeenCalled();
+        expect(startSegmentedTts).not.toHaveBeenCalled();
         expect(playAudioBytesWithStopper).not.toHaveBeenCalled();
     });
 

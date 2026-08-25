@@ -501,15 +501,6 @@ export function formatSessionOnline(
     return `${formatSessionReference(sessionId, prefs, metadata, 'the current session')} came online.`;
 }
 
-export function formatSessionFocus(
-    sessionId: string,
-    metadata: SessionMetadata | undefined,
-    formatterPrefs: VoiceContextFormatterPrefs,
-): string {
-    const prefs = resolvePrefs(formatterPrefs);
-    return `${formatSessionReference(sessionId, prefs, metadata, 'the current session')} became focused.`;
-}
-
 export function formatReadyEvent(
     sessionId: string,
     messages?: ReadonlyArray<Message>,

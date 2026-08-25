@@ -19,7 +19,6 @@ export function LocalVoiceSttGroup(props: {
   setVoice: (next: VoiceSettings) => void;
   popoverBoundaryRef?: React.RefObject<any> | null;
   daemonRouteDiagnosticReason?: VoiceDaemonRouteDiagnosticReason | null;
-  showProcessingDisclosure?: boolean;
 }) {
   const { theme } = useUnistyles();
   const providerSpecs = useLocalSttProviderSpecs();
@@ -71,7 +70,6 @@ export function LocalVoiceSttGroup(props: {
           setVoice={props.setVoice}
           popoverBoundaryRef={props.popoverBoundaryRef}
           daemonRouteDiagnosticReason={props.daemonRouteDiagnosticReason}
-          showProcessingDisclosure={props.showProcessingDisclosure}
         />
       ) : (
         <Item title={t('common.unavailable')} />

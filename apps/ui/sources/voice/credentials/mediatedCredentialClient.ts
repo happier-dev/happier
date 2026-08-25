@@ -95,7 +95,12 @@ export function createVoiceClientMediatedCredentialHeadersMaterializer(input: Re
       );
     } catch (error) {
       throwIfAborted(request.signal);
-      throw failure('machine_rpc', 'credential_unavailable', readSafeCause(error));
+      const cause = readSafeCause(error);
+      throw failure(
+        'machine_rpc',
+        cause === 'machine_unavailable' ? 'execution_machine_unavailable' : 'credential_unavailable',
+        cause,
+      );
     }
     throwIfAborted(request.signal);
     if (!input.isCurrent() || !input.isInvocationCurrent()) {

@@ -218,6 +218,7 @@ describe('createBundledRealtimeProviderRuntime', () => {
       clearAttemptStatus: vi.fn(),
       createToolBarrier: vi.fn(() => ({
         run: vi.fn(async () => ({ status: 'submitted' as const })),
+        detach: vi.fn(),
         cancel: vi.fn(),
         dispose: vi.fn(),
       })),
@@ -466,7 +467,7 @@ describe('createBundledRealtimeProviderRuntime', () => {
       presentHostedLeaseNotice: vi.fn(),
       presentAttemptDiagnostic: vi.fn(),
       clearAttemptStatus: vi.fn(),
-      createToolBarrier: vi.fn(() => ({ run: vi.fn(async () => ({ status: 'submitted' as const })), cancel: vi.fn(), dispose: vi.fn() })),
+      createToolBarrier: vi.fn(() => ({ run: vi.fn(async () => ({ status: 'submitted' as const })), detach: vi.fn(), cancel: vi.fn(), dispose: vi.fn() })),
       voiceHooks: { onStarted: vi.fn(() => ''), onStopped: vi.fn() },
       createMachineError: vi.fn((input) => ({
         ...input, phase: 'runtime' as const, retryPolicy: 'user_action' as const,
@@ -725,6 +726,7 @@ describe('createBundledRealtimeProviderRuntime', () => {
       clearAttemptStatus: vi.fn(),
       createToolBarrier: vi.fn(() => ({
         run: vi.fn(async () => ({ status: 'submitted' as const })),
+        detach: vi.fn(),
         cancel: vi.fn(),
         dispose: vi.fn(),
       })),
@@ -984,7 +986,7 @@ describe('createBundledRealtimeProviderRuntime', () => {
       clearAttemptStatus: vi.fn(),
       createToolBarrier: vi.fn((input: Parameters<BundledRealtimeProviderRuntimeHost['createToolBarrier']>[0]) => {
         barrierInput = input;
-        return { run: vi.fn(async () => ({ status: 'submitted' as const })), cancel: vi.fn(), dispose: vi.fn() };
+        return { run: vi.fn(async () => ({ status: 'submitted' as const })), detach: vi.fn(), cancel: vi.fn(), dispose: vi.fn() };
       }),
       voiceHooks: currentUiVoiceHooks,
       createMachineError: vi.fn((input) => ({
@@ -1051,6 +1053,10 @@ describe('createBundledRealtimeProviderRuntime', () => {
     expect(runtime.adapter.resolveSurfaceCapabilities?.({})).not.toHaveProperty('agentRuntime');
     await runtime.adapter.start({ sessionId: 'session-1' });
     expect(start).toHaveBeenCalledWith(expect.objectContaining({ controlSessionId: 'session-1' }));
+    if (!runtime.adapter.retry) throw new Error('realtime retry route unavailable');
+    await runtime.adapter.retry({ sessionId: 'stale-session-id' });
+    expect(requestReconnect).toHaveBeenCalledTimes(1);
+    expect(stop).not.toHaveBeenCalled();
     expect(host.voiceHooks.onStarted).toHaveBeenCalledWith('session-1', 'session_context');
     expect(onConnected).toHaveBeenCalledWith('session-1');
     expect(openLevelWriter).toHaveBeenCalledWith({ channel: 'input', sourceId: 'realtime_example:session-1' });
@@ -1372,7 +1378,12 @@ describe('createBundledRealtimeProviderRuntime', () => {
       adapter: Readonly<{ prepare(input: unknown): Promise<unknown> }>;
       machine: Readonly<{
         connected(input: Readonly<{ controlSessionId: string; attemptId: number }>): void;
-        reconnecting(input: Readonly<{ controlSessionId: string; active: boolean }>): void;
+        reconnecting(input: Readonly<{
+          controlSessionId: string;
+          attemptId?: number;
+          active: boolean;
+          retryAvailable?: boolean;
+        }>): void;
         disconnected(input: Readonly<{ controlSessionId: string; code?: string }>): void;
         failed(input: Readonly<{ controlSessionId: string; code: string }>): void;
       }>;
@@ -1391,12 +1402,18 @@ describe('createBundledRealtimeProviderRuntime', () => {
     });
     prepare.mockRejectedValueOnce(Object.assign(new Error('rate_limited'), { code: 'rate_limited' }));
     await expect(controllerProtocol.adapter.prepare({})).rejects.toThrow('rate_limited');
-    controllerProtocol.machine.reconnecting({ controlSessionId: 'voice-global', active: true });
+    controllerProtocol.machine.reconnecting({
+      controlSessionId: 'voice-global',
+      attemptId: 1,
+      active: true,
+      retryAvailable: true,
+    });
     expect(host.machine.setReconnecting).toHaveBeenCalledWith(
       'voice-global',
       'realtime_example',
       true,
-      undefined,
+      1,
+      true,
     );
     controllerProtocol.machine.connected({ controlSessionId: 'voice-global', attemptId: 1 });
     controllerProtocol.machine.disconnected({ controlSessionId: 'voice-global', code: 'credential_unavailable' });
@@ -1405,6 +1422,14 @@ describe('createBundledRealtimeProviderRuntime', () => {
     expect(host.createMachineError).toHaveBeenLastCalledWith({
       kind: 'provider_auth_invalid',
       reason: 'credential_unavailable',
+    });
+    controllerProtocol.machine.disconnected({
+      controlSessionId: 'voice-global',
+      code: 'execution_machine_unavailable',
+    });
+    expect(host.createMachineError).toHaveBeenLastCalledWith({
+      kind: 'execution_machine_unavailable',
+      reason: 'execution_machine_unavailable',
     });
     controllerProtocol.machine.disconnected({
       controlSessionId: 'voice-global',
@@ -1878,7 +1903,7 @@ describe('createBundledRealtimeProviderRuntime', () => {
       presentAttemptDiagnostic: vi.fn(),
       clearAttemptStatus: vi.fn(),
       createToolBarrier: vi.fn(() => ({
-        run: vi.fn(async () => ({ status: 'submitted' as const })), cancel: vi.fn(), dispose: vi.fn(),
+        run: vi.fn(async () => ({ status: 'submitted' as const })), detach: vi.fn(), cancel: vi.fn(), dispose: vi.fn(),
       })),
       voiceHooks: { onStarted: vi.fn(() => ''), onStopped },
       createMachineError: vi.fn((input) => ({

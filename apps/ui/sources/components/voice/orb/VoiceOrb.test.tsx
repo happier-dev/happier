@@ -438,7 +438,7 @@ describe('VoiceOrb', () => {
             control,
             expanded: true,
             extraControls: [{
-                id: 'open-conversation',
+                id: 'openConversation',
                 label: 'Open the conversation this Voice session belongs to',
                 weight: 'primary',
             }],
@@ -457,6 +457,31 @@ describe('VoiceOrb', () => {
         const transport = flattenStyle(screen.findByTestId('voice.orb.bar.transport')?.props.style);
         expect(transport.flexShrink).toBe(0);
         expect(transport.flexGrow).toBeUndefined();
+
+        // The contextual group is the other half of "the meter surrenders first": if it were
+        // rigid, wrapping the row would move an un-shrinkable box to a second line that is just
+        // as narrow, and Open-conversation would still be clipped.
+        const contextual = flattenStyle(screen.findByTestId('voice.orb.bar.contextual')?.props.style);
+        expect(contextual.flexShrink).toBe(1);
+        expect(contextual.minWidth).toBe(0);
+
+        // Flex intent on the three slots is not the gate; fitting 320px at 200% text is. Yoga does
+        // not run here, so the falsifiable stand-in is that nothing inside the bar declares itself
+        // wider than the content box a 320px screen leaves (320 - 2x12 margin - 2x12 padding).
+        // A rigid child anywhere below — inside VoiceTransport or ControlRow, not only in this
+        // file — overflows the row no matter what the container's flexWrap says.
+        const NARROW_BAR_CONTENT_WIDTH = 272;
+        const oversized = (bar_ = screen.findByTestId('voice.orb.bar')) => bar_
+            ? bar_.findAll(() => true)
+                .flatMap((node) => {
+                    const style = flattenStyle(node.props?.style);
+                    return [style.width, style.minWidth]
+                        .filter((value): value is number => typeof value === 'number')
+                        .filter((value) => value > NARROW_BAR_CONTENT_WIDTH)
+                        .map((value) => `${String(node.props?.testID ?? node.type)}: ${value}`);
+                })
+            : ['voice.orb.bar did not render'];
+        expect(oversized()).toEqual([]);
 
         // Everything the gate names is still mounted and operable at once.
         expect(findTransportControl(screen, labels.transport.end)).toHaveLength(1);

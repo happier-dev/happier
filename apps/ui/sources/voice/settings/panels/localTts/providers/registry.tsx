@@ -59,5 +59,5 @@ export function useLocalTtsProviderSpecs(): readonly LocalTtsProviderSpec[] {
     registry.getRevision ?? (() => 0),
     registry.getRevision ?? (() => 0),
   );
-  return React.useMemo(() => listLocalTtsProviderSpecs(), [revision]);
+  return React.useMemo(() => createLocalTtsProviderRegistry(registry).list, [registry, revision]);
 }

@@ -281,9 +281,10 @@ const VoiceHistoryScreenBody = React.memo(function VoiceHistoryScreenBody(
    * Loading, failure and recovery are rendered as ordinary text, which a screen
    * reader never re-reads on its own. The announcement below is derived from the
    * same state that chooses the visible content, and it is rendered from ONE
-   * region that outlives every transition: a live region mounted with its
-   * message already inside it is not announced, so an announcer that appears
-   * together with each state could never fire.
+   * region that outlives every transition — including the silent ones, where it
+   * stays mounted holding an empty message. A live region mounted with its text
+   * already inside it is not announced at all, so a region that appeared
+   * together with each message could never announce the first one.
    */
   const statusAnnouncement = (() => {
     switch (loadState) {
@@ -304,13 +305,11 @@ const VoiceHistoryScreenBody = React.memo(function VoiceHistoryScreenBody(
   const withAccessibilityStatus = (content: React.ReactNode) => (
     <>
       {content}
-      {statusAnnouncement ? (
-        <ExternalSessionOperationAccessibilityStatus
-          announcement={statusAnnouncement}
-          statusTestID="voice-history-operation-status"
-          transitionKey={`${loadState}\u0001${statusAnnouncement}`}
-        />
-      ) : null}
+      <ExternalSessionOperationAccessibilityStatus
+        announcement={statusAnnouncement}
+        statusTestID="voice-history-operation-status"
+        transitionKey={`${loadState}\u0001${statusAnnouncement}`}
+      />
     </>
   );
 

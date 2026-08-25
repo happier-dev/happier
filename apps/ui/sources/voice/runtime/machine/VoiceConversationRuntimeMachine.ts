@@ -60,7 +60,10 @@ export type VoiceConversationRuntimeMachine = Readonly<{
     transitionToThinking: (args: TransitionArgs) => void;
     transitionToSpeaking: (args: TransitionArgs) => void;
     transitionToDisconnected: (args: TransitionArgs & { error?: VoiceMachineError | null }) => void;
-    setReconnecting: (args: TransitionArgs & { reconnecting: boolean }) => void;
+    setReconnecting: (args: TransitionArgs & {
+        reconnecting: boolean;
+        retryAvailable?: boolean;
+    }) => void;
     setMuted: (args: MuteArgs) => void;
     setError: (args: TransitionArgs & { error: VoiceMachineError }) => void;
     reset: () => void;
@@ -191,6 +194,15 @@ export function createVoiceConversationRuntimeMachine(): VoiceConversationRuntim
         return nextSnapshot;
     };
 
+    const withReconnectRetryAvailability = (
+        snapshot: VoiceConversationRuntimeSnapshot,
+        retryAvailable: boolean,
+    ): VoiceConversationRuntimeSnapshot => {
+        if (retryAvailable) return { ...snapshot, reconnectRetryAvailable: true };
+        const { reconnectRetryAvailable: _reconnectRetryAvailable, ...withoutRetryAvailability } = snapshot;
+        return withoutRetryAvailability;
+    };
+
     type StateTransition = Readonly<{
         controlSessionId: string;
         toState: VoiceConversationRuntimeState;
@@ -264,7 +276,7 @@ export function createVoiceConversationRuntimeMachine(): VoiceConversationRuntim
 
             accepted = true;
             nextActiveAttemptId = ownerAttemptId;
-            return {
+            return withReconnectRetryAvailability({
                 ...current,
                 adapterId: nextAdapterId,
                 controlSessionId: transition.controlSessionId,
@@ -274,7 +286,7 @@ export function createVoiceConversationRuntimeMachine(): VoiceConversationRuntim
                     ? false
                     : current.micMuted,
                 error: nextError,
-            };
+            }, nextReconnecting && current.reconnectRetryAvailable === true);
         });
         if (accepted) {
             activeAttemptId = nextActiveAttemptId;
@@ -402,7 +414,7 @@ export function createVoiceConversationRuntimeMachine(): VoiceConversationRuntim
             cancelActiveListeningAttemptIfOwned({ controlSessionId, adapterId, attemptId });
             applyStateTransition({ controlSessionId, toState: 'disconnected', error, adapterId: adapterId ?? null, attemptId });
         },
-        setReconnecting: ({ controlSessionId, adapterId, attemptId, reconnecting }) => {
+        setReconnecting: ({ controlSessionId, adapterId, attemptId, reconnecting, retryAvailable }) => {
             patchSnapshot((current) => {
                 const ownsSnapshot = current.controlSessionId === controlSessionId
                     && current.adapterId === (adapterId ?? null)
@@ -411,10 +423,20 @@ export function createVoiceConversationRuntimeMachine(): VoiceConversationRuntim
                     && current.state !== 'ending'
                     && current.state !== 'error'
                     && current.state !== 'mic_error';
-                if (!ownsSnapshot || current.reconnecting === reconnecting) {
+                const nextRetryAvailable = reconnecting && retryAvailable === true;
+                if (
+                    !ownsSnapshot
+                    || (
+                        current.reconnecting === reconnecting
+                        && (current.reconnectRetryAvailable === true) === nextRetryAvailable
+                    )
+                ) {
                     return current;
                 }
-                return { ...current, reconnecting };
+                return withReconnectRetryAvailability(
+                    { ...current, reconnecting },
+                    nextRetryAvailable,
+                );
             });
         },
         setMuted: ({ controlSessionId, adapterId, attemptId, micMuted }) => {

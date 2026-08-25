@@ -28,7 +28,13 @@ import { VoiceComposerPlanet } from './VoiceComposerPlanet';
 export const VoiceComposerPlanetMount = React.memo(function VoiceComposerPlanetMount(props: Readonly<{
     /** The composer's own session, or `null` in New Session where none exists yet. */
     sessionId: string | null;
+    /** The retaining Session surface's existing presented fact, when it has one. */
+    isPresented?: boolean;
 }>): React.ReactElement | null {
+    // AgentInput and the draft stay retained; the Voice presentation runtime
+    // does not. Gate before opening energy and attempt subscriptions.
+    if (props.isPresented === false) return null;
+
     /*
      * The planet is drawn from the app's one energy clock; there is nothing to draw
      * it from without the bus. `app/(app)/_layout.tsx` wraps the whole authenticated

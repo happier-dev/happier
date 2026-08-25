@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Platform, View } from 'react-native';
+import { Platform, Pressable, View } from 'react-native';
 
 import {
   VoiceRuntimePlatformSchema,
@@ -11,8 +11,9 @@ import { LANGUAGES } from '@/constants/Languages';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { restoreFocusToBestTarget } from '@/keyboard/focusReturn';
 import {
-  readLocalConversationVoiceSettings,
+  writeLocalDirectVoiceSettings,
   writeLocalConversationVoiceSettings,
   type VoiceSettings,
 } from '@/sync/domains/settings/voiceSettings';
@@ -29,15 +30,27 @@ import type {
 import { resolveVoiceProviderReadinessPresentation } from '@/voice/settings/panels/voiceProviderReadinessPresentation';
 import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegistry';
 import { selectVoiceSpeechProvider } from '@/voice/registry/providerSelection';
-import type { VoiceRoleReadiness } from '@/voice/registry/readiness';
+import type { VoiceReadinessFact, VoiceRoleReadiness } from '@/voice/registry/readiness';
+import { resolveLocalVoiceAdapterSettings } from '@/voice/local/localVoiceSettings';
 
 import {
   voiceDictationSettingsDefaults,
 } from './voiceDictationSettings';
-import { resolveVoiceDictationReadiness } from './voiceDictationReadiness';
+import { readVoiceDictationNativeModelReadiness } from './voiceDictationNativeModelReadiness';
+import {
+  resolveVoiceDictationNativeLocalNeuralModelSelection,
+  resolveVoiceDictationReadiness,
+} from './voiceDictationReadiness';
 import { Icon } from '@/components/ui/icons/Icon';
 
 const voiceProviderRegistry = createDefaultVoiceProviderRegistry();
+
+type DictationReadinessCheck = Readonly<{
+  providerId: string;
+  nativeModelPackId: string | null;
+  status: 'checking' | 'checked';
+  nativeLocalNeuralModel: VoiceReadinessFact | null;
+}>;
 
 function resolveRuntimePlatform(): VoiceRuntimePlatform | 'unknown' {
   const parsed = VoiceRuntimePlatformSchema.safeParse(Platform.OS);
@@ -69,29 +82,91 @@ export function DictationSettingsSection(props: Readonly<{
   const accountSettings = useSettings();
   const dictation = props.voice.dictation ?? voiceDictationSettingsDefaults;
   const [openMenu, setOpenMenu] = React.useState<null | 'provider' | 'language'>(null);
-  const [readinessChecked, setReadinessChecked] = React.useState(false);
-  const checkedReadiness = readinessChecked
+  const [readinessCheck, setReadinessCheck] = React.useState<DictationReadinessCheck | null>(null);
+  const nativeModelCheckInFlight = React.useRef(false);
+  const providerControlRef = React.useRef<React.ComponentRef<typeof Pressable> | null>(null);
+  const platform = resolveRuntimePlatform();
+  const readinessSettings = { ...accountSettings, voice: props.voice };
+  const nativeModelSelection = resolveVoiceDictationNativeLocalNeuralModelSelection({
+    registry: voiceProviderRegistry,
+    settings: readinessSettings,
+    platform,
+  });
+  const isCurrentReadinessCheck = readinessCheck !== null
+    && readinessCheck.providerId === nativeModelSelection.providerId
+    && readinessCheck.nativeModelPackId === nativeModelSelection.packId;
+  const isCheckingReadiness = readinessCheck?.status === 'checking';
+  const checkedReadiness = isCurrentReadinessCheck && readinessCheck?.status === 'checked'
     ? resolveVoiceDictationReadiness({
         registry: voiceProviderRegistry,
-        settings: { ...accountSettings, voice: props.voice },
-        platform: resolveRuntimePlatform(),
+        settings: readinessSettings,
+        platform,
         executionMachineId: props.executionMachineId,
         executionMachineSelectionKind: props.executionMachineSelectionKind,
         localAvailability: props.localAvailability,
+        nativeLocalNeuralModel: readinessCheck.nativeLocalNeuralModel ?? undefined,
       })
     : null;
+  const recoveryAction = checkedReadiness?.recoveryAction ?? 'none';
+  const recoveryActionHandler = recoveryAction === 'none'
+    ? null
+    : props.onRecoveryAction ?? null;
   const selectedId = dictation.sttBinding === 'same_as_local'
     ? 'same_as_local'
     : dictation.stt.provider;
-  const localConversation = readLocalConversationVoiceSettings(props.voice);
+  const localAdapter = resolveLocalVoiceAdapterSettings({ voice: props.voice });
   const selectedStt = dictation.sttBinding === 'explicit'
     ? dictation.stt
-    : localConversation.stt;
+    : localAdapter.config.stt;
   const providerSpec = getLocalSttProviderSpec(selectedStt.provider, 'dictation_stt');
   const setDictation = (next: typeof dictation): void => {
-    setReadinessChecked(false);
+    setReadinessCheck((current) => current?.status === 'checking' ? current : null);
     props.setVoice({ ...props.voice, dictation: next });
   };
+  const checkSetup = React.useCallback(() => {
+    if (nativeModelCheckInFlight.current || isCheckingReadiness) return;
+    const { providerId, packId } = nativeModelSelection;
+    if (!packId) {
+      setReadinessCheck({
+        providerId,
+        nativeModelPackId: null,
+        status: 'checked',
+        nativeLocalNeuralModel: null,
+      });
+      return;
+    }
+
+    // This ref only closes the native event-batching gap before the existing
+    // checking state has rendered. It stores no request identity or history.
+    nativeModelCheckInFlight.current = true;
+    setReadinessCheck({
+      providerId,
+      nativeModelPackId: packId,
+      status: 'checking',
+      nativeLocalNeuralModel: null,
+    });
+    void readVoiceDictationNativeModelReadiness(packId).then((nativeLocalNeuralModel) => {
+      nativeModelCheckInFlight.current = false;
+      setReadinessCheck((current) => (
+        current?.status === 'checking'
+        && current.providerId === providerId
+        && current.nativeModelPackId === packId
+          ? {
+              ...current,
+              status: 'checked',
+              nativeLocalNeuralModel,
+            }
+          : current
+      ));
+    });
+  }, [isCheckingReadiness, nativeModelSelection]);
+  const handleRecoveryAction = React.useCallback(() => {
+    if (!recoveryActionHandler) return;
+    if (recoveryAction === 'switch_provider') {
+      restoreFocusToBestTarget(providerControlRef);
+    }
+    recoveryActionHandler(recoveryAction);
+  }, [recoveryAction, recoveryActionHandler]);
 
   return (
     <View testID="settings.voice.section.dictation">
@@ -114,6 +189,10 @@ export function DictationSettingsSection(props: Readonly<{
             title: t('settingsVoice.dictation.provider'),
             subtitle: t('settingsVoice.dictation.providerSubtitle'),
             showSelectedSubtitle: false,
+            itemProps: {
+              testID: 'settings.voice.dictation.provider',
+              pressableRef: providerControlRef,
+            },
           }}
           items={[
             {
@@ -148,7 +227,7 @@ export function DictationSettingsSection(props: Readonly<{
                 'dictation_stt',
               );
               if (voice) {
-                setReadinessChecked(false);
+                setReadinessCheck((current) => current?.status === 'checking' ? current : null);
                 props.setVoice({
                   ...voice,
                   dictation: {
@@ -214,17 +293,19 @@ export function DictationSettingsSection(props: Readonly<{
                 setDictation({ ...dictation, stt });
                 return;
               }
-              setReadinessChecked(false);
-              props.setVoice(writeLocalConversationVoiceSettings(props.voice, {
-                ...localConversation,
+              setReadinessCheck((current) => current?.status === 'checking' ? current : null);
+              const nextLocalAdapterSettings = {
+                ...localAdapter.config,
                 stt,
-              }));
+              };
+              props.setVoice(localAdapter.adapterId === 'local_direct'
+                ? writeLocalDirectVoiceSettings(props.voice, nextLocalAdapterSettings)
+                : writeLocalConversationVoiceSettings(props.voice, nextLocalAdapterSettings));
             }}
             voice={props.voice}
             setVoice={props.setVoice}
             popoverBoundaryRef={props.popoverBoundaryRef}
             daemonRouteDiagnosticReason={props.daemonRouteDiagnosticReason}
-            showProcessingDisclosure={false}
           />
         ) : null}
       </ItemGroup>
@@ -238,18 +319,20 @@ export function DictationSettingsSection(props: Readonly<{
           title={t('settingsVoice.dictation.readiness.check')}
           subtitle={t('settingsVoice.dictation.readiness.checkSubtitle')}
           accessibilityRole="button"
-          onPress={() => setReadinessChecked(true)}
+          disabled={isCheckingReadiness}
+          loading={isCheckingReadiness}
+          onPress={isCheckingReadiness ? undefined : checkSetup}
         />
         {checkedReadiness ? (
           <Item
             testID="settings.voice.dictation.readiness"
-            mode="info"
+            mode={recoveryActionHandler ? 'interactive' : 'info'}
             title={t('settingsVoice.dictation.readiness.result')}
             subtitle={readinessSubtitle(checkedReadiness)}
-            accessibilityRole={checkedReadiness.recoveryAction === 'none' ? undefined : 'button'}
-            onPress={checkedReadiness.recoveryAction === 'none'
-              ? undefined
-              : () => props.onRecoveryAction?.(checkedReadiness.recoveryAction)}
+            accessibilityRole={recoveryActionHandler ? 'button' : undefined}
+            onPress={recoveryActionHandler
+              ? handleRecoveryAction
+              : undefined}
           />
         ) : null}
       </ItemGroup>

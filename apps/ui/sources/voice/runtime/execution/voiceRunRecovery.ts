@@ -89,9 +89,12 @@ export function createVoiceRunRecovery(args: Readonly<{
     createHandle: (sessionId: string) => Promise<VoiceAgentHandle>;
     voiceAgentBySessionId: Map<string, VoiceAgentHandle>;
     voiceAgentInitBySessionId: Map<string, Promise<VoiceAgentHandle>>;
-    voiceAgentPendingContextBySessionId: Map<string, string[]>;
+    voiceAgentPendingSessionContextBySessionId: Map<string, string[]>;
+    deferredTargetSessionContextBySessionId: Map<string, string | null>;
+    latestAutomaticUiContextBySessionId: Map<string, string>;
 }>): Readonly<{
     appendContextUpdate: (sessionId: string, update: string) => void;
+    appendAutomaticUiContextUpdate: (sessionId: string, update: string) => void;
     commit: (sessionId: string) => Promise<string>;
     ensureRunning: (sessionId: string) => Promise<void>;
     getVoiceAgentHandle: (sessionId: string) => Promise<VoiceAgentHandle>;
@@ -187,7 +190,9 @@ export function createVoiceRunRecovery(args: Readonly<{
                 : null;
 
         args.voiceAgentBySessionId.delete(sessionId);
-        args.voiceAgentPendingContextBySessionId.delete(sessionId);
+        args.voiceAgentPendingSessionContextBySessionId.delete(sessionId);
+        args.deferredTargetSessionContextBySessionId.delete(sessionId);
+        args.latestAutomaticUiContextBySessionId.delete(sessionId);
 
         const fallbackRpcSessionId =
             sessionId === VOICE_AGENT_GLOBAL_SESSION_ID
@@ -240,13 +245,20 @@ export function createVoiceRunRecovery(args: Readonly<{
         const text = update.trim();
         if (!text) return;
 
-        const existing = args.voiceAgentPendingContextBySessionId.get(sessionId) ?? [];
+        const existing = args.voiceAgentPendingSessionContextBySessionId.get(sessionId) ?? [];
         existing.push(text);
-        args.voiceAgentPendingContextBySessionId.set(sessionId, existing.slice(Math.max(0, existing.length - 8)));
+        args.voiceAgentPendingSessionContextBySessionId.set(sessionId, existing.slice(Math.max(0, existing.length - 8)));
+    };
+
+    const appendAutomaticUiContextUpdate = (sessionId: string, update: string): void => {
+        const text = update.trim();
+        if (!text) return;
+        args.latestAutomaticUiContextBySessionId.set(sessionId, text);
     };
 
     return {
         appendContextUpdate,
+        appendAutomaticUiContextUpdate,
         commit,
         ensureRunning: async (sessionId: string) => {
             await getVoiceAgentHandle(sessionId);

@@ -16,6 +16,17 @@ describe('native Voice WebRTC platform binding', () => {
     expect(setVolume).toHaveBeenCalledWith(0.18);
     attachment.resolveOutputInterruptionCandidate('false_alarm');
     expect(setVolume).toHaveBeenLastCalledWith(1);
+    expect(attachment.setOutputFocusState('suspended')).toBe('applied');
+    expect(setVolume).toHaveBeenLastCalledWith(0);
+    // A barge-in candidate must not undo an active focus suspension.
+    expect(attachment.beginOutputInterruptionCandidate()).toBe('ducked');
+    expect(setVolume).toHaveBeenLastCalledWith(0);
+    attachment.resolveOutputInterruptionCandidate('false_alarm');
+    expect(setVolume).toHaveBeenLastCalledWith(0);
+    expect(attachment.setOutputFocusState('ducked')).toBe('applied');
+    expect(setVolume).toHaveBeenLastCalledWith(0.18);
+    expect(attachment.setOutputFocusState('active')).toBe('applied');
+    expect(setVolume).toHaveBeenLastCalledWith(1);
     attachment.dispose();
     expect(release).not.toHaveBeenCalled();
   });
@@ -26,5 +37,6 @@ describe('native Voice WebRTC platform binding', () => {
     } as unknown as MediaStream, 0.18);
 
     expect(attachment.beginOutputInterruptionCandidate()).toBe('unsupported');
+    expect(attachment.setOutputFocusState('suspended')).toBe('unsupported');
   });
 });

@@ -26,6 +26,10 @@ import type { MicSession, MicSessionFailure } from '@/voice/runtime/mic/MicSessi
 import type { RecordingMicSession } from '@/voice/runtime/mic/NativeMicSession';
 import { createLiveMicSession } from '@/voice/runtime/mic/createLiveMicSession';
 import {
+    createRecordedAudioArtifactCleanup,
+    deleteRecordedAudioArtifact,
+} from '@/voice/runtime/input/recordedAudioArtifactCleanup';
+import {
     createRuntimeTurnPolicyController,
     type RuntimeTurnCaptureProvider,
     type RuntimeTurnPolicyController,
@@ -833,6 +837,11 @@ export function createLocalVoiceCaptureOwner(
             const normalizedSessionId = typeof sessionId === 'string' && sessionId.trim().length > 0
                 ? sessionId.trim()
                 : null;
+            const recordingCaptureSessionId = activeCaptureProvider === 'recorded_audio'
+                ? activeCaptureSessionId
+                : null;
+            let terminalRecordingCleanupError: unknown;
+            let terminalRecordingCleanupFailed = false;
 
             clearMicPlateauWatchdog();
             const captureStart = pendingCaptureStart;
@@ -869,10 +878,33 @@ export function createLocalVoiceCaptureOwner(
                 });
             });
 
-            if (recordingMicSession) {
-                recordingMicSession.setMuted(false);
-                await recordingMicSession.teardown();
-                recordingMicSession = null;
+            const activeRecordingMicSession = recordingMicSession;
+            recordingMicSession = null;
+            if (activeRecordingMicSession) {
+                activeRecordingMicSession.setMuted(false);
+                if (activeCaptureProvider === 'recorded_audio') {
+                    // A normal recorded stop clears the active provider before
+                    // transferring its URI to Local Voice's stop-and-send
+                    // cleanup. Terminal teardown has no consumer, so it
+                    // finalizes and consumes the artifact through that same
+                    // attempt-local cleanup owner before releasing the session.
+                    const artifactCleanup = createRecordedAudioArtifactCleanup(
+                        deleteRecordedAudioArtifact,
+                    );
+                    try {
+                        artifactCleanup.admit(await activeRecordingMicSession.stopRecording());
+                    } catch {
+                        // `stopRecording` releases its lease in its own finally;
+                        // preserve teardown's best-effort terminal behavior when
+                        // the recorder cannot yield a finalized artifact.
+                    }
+                    const cleanupResult = await artifactCleanup.cleanup();
+                    if (cleanupResult.kind === 'failed') {
+                        terminalRecordingCleanupError = cleanupResult.error;
+                        terminalRecordingCleanupFailed = true;
+                    }
+                }
+                await activeRecordingMicSession.teardown();
             }
             if (liveMicSession) {
                 liveMicSession.setMuted(false);
@@ -884,6 +916,17 @@ export function createLocalVoiceCaptureOwner(
             activeCaptureSettings = null;
             mutedSessionId = null;
             muted = false;
+
+            if (terminalRecordingCleanupFailed) {
+                if (recordingCaptureSessionId) {
+                    deps.onCaptureError({
+                        controlSessionId: recordingCaptureSessionId,
+                        kind: 'provider_error',
+                        reason: 'recording_cleanup_failed',
+                    });
+                }
+                throw terminalRecordingCleanupError;
+            }
         },
     };
 }

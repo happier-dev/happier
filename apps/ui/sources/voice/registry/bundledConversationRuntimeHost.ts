@@ -11,6 +11,7 @@ import type {
 import {
   AgentSessionRealtimeInspectResultV1Schema,
   describeActionForVoiceTool,
+  isVoiceSdkSafeActionSpec,
   SessionLookupByTagsResponseV2Schema,
   VoiceRealtimeJsonValueSchema,
   zodSchemaToJsonSchemaObject,
@@ -19,10 +20,7 @@ import {
   type VoiceRealtimeJsonValue,
 } from '@happier-dev/protocol';
 import type { VoiceHostedConversationService } from '@happier-dev/plugin-sdk/voice/client';
-import {
-  createRealtimeClientTools,
-  createRealtimeReadOnlyClientTools,
-} from '@/realtime/realtimeClientTools';
+import { createRealtimeReadOnlyClientTools } from '@/realtime/realtimeClientTools';
 import { fetchHappierVoiceToken, completeHappierVoiceSession, releaseHappierVoiceSession } from '@/sync/api/voice/apiVoice';
 import { apiSocket } from '@/sync/api/session/apiSocket';
 import {
@@ -63,6 +61,10 @@ import {
   createSdkHandleConnection,
   createWebSocketPcmConnection,
 } from '@/voice/runtime/connection/VoiceRealtimeConnection';
+import {
+  initializeVoiceNativeWebRtcBootstrap,
+  requireVoiceNativeWebRtcBootstrap,
+} from '@/voice/runtime/nativeWebRtcRuntime';
 import {
   createHostWebRtcConnection,
 } from '@/voice/runtime/connection/createHostWebRtcConnection';
@@ -132,6 +134,18 @@ function formatHostedLeaseDuration(ms: number): string {
   return bounded < 90_000
     ? `${Math.max(1, Math.ceil(bounded / 1000))}s`
     : `${Math.max(1, Math.ceil(bounded / 60_000))}m`;
+}
+
+/**
+ * Provider SDK callbacks do not carry the stable call identity that effect
+ * custody needs. Effects enter only through the controller's canonical
+ * `tool_calls` barrier; direct definitions remain a read-only convenience.
+ */
+function directVoiceEffectExecutionUnavailable(): Error {
+  return Object.assign(new Error('voice_effect_call_custody_required'), {
+    name: 'VoiceEffectCallCustodyError',
+    code: 'voice_effect_call_custody_required',
+  });
 }
 import {
     AGENT_REALTIME_REQUEST_ABORTED_REJECTION,
@@ -445,6 +459,9 @@ export function getCurrentBundledConversationRuntimeHost(): BundledRealtimeProvi
 export function createBundledConversationRuntimeHostLease(input: Readonly<{
   currentUiContext?: VoiceCurrentUiToolPort;
 }> = {}) {
+  if (Platform.OS === 'ios' || Platform.OS === 'android') {
+    initializeVoiceNativeWebRtcBootstrap();
+  }
   const generation = acquireBundledConversationRuntimeGeneration();
   let currentUiContextSubscription: Readonly<{
     sessionId: string;
@@ -585,23 +602,25 @@ export function createBundledConversationRuntimeHostLease(input: Readonly<{
       const actionSpecs = exposure === 'current_ui_only'
         ? enabledSpecs.filter((spec) => isCurrentUiContextVoiceAction(spec.id as ActionId))
         : enabledSpecs;
-      const handlers = canRunEffects
-        ? createRealtimeClientTools({
-          ...(input.currentUiContext ? { currentUiContext: input.currentUiContext } : {}),
-        })
-        : createRealtimeReadOnlyClientTools({
-          ...(input.currentUiContext ? { currentUiContext: input.currentUiContext } : {}),
-        });
+      // A direct SDK callback has no response/call identity. It therefore
+      // remains strictly read-only even when the provider separately declares
+      // stable effect custody for canonical `tool_calls` below.
+      const directHandlers = createRealtimeReadOnlyClientTools({
+        ...(input.currentUiContext ? { currentUiContext: input.currentUiContext } : {}),
+      });
       return Object.freeze(actionSpecs.flatMap((spec) => {
         const name = String(spec.bindings?.voiceClientToolName ?? '').trim();
-        const handler = handlers[name];
-        if (!name || typeof handler !== 'function') return [];
+        const isReadOnly = isVoiceSdkSafeActionSpec(spec);
+        const handler = directHandlers[name];
+        if (!name || (isReadOnly && typeof handler !== 'function')) return [];
         return [Object.freeze({
           name,
           description: describeActionForVoiceTool(spec),
           parameters: createRealtimeClientToolParameters(spec.inputSchema),
           async execute(parameters: VoiceRealtimeJsonValue): Promise<VoiceRealtimeJsonValue> {
             if (!generation.isCurrent()) throw new Error('voice_runtime_generation_revoked');
+            if (!isReadOnly) throw directVoiceEffectExecutionUnavailable();
+            if (typeof handler !== 'function') throw new Error('voice_read_tool_unavailable');
             const raw = await handler(parameters);
             let value: unknown = raw;
             try {
@@ -632,12 +651,19 @@ export function createBundledConversationRuntimeHostLease(input: Readonly<{
         generation.runIfCurrent(() => voiceConversationRuntimeMachine.transitionToAcquiringMic({ controlSessionId, adapterId, attemptId })),
       transitionToConnecting: (controlSessionId: string, adapterId: string, attemptId?: number) =>
         generation.runIfCurrent(() => voiceConversationRuntimeMachine.transitionToConnecting({ controlSessionId, adapterId, attemptId })),
-      setReconnecting: (controlSessionId: string, adapterId: string, reconnecting: boolean, attemptId?: number) =>
+      setReconnecting: (
+        controlSessionId: string,
+        adapterId: string,
+        reconnecting: boolean,
+        attemptId?: number,
+        retryAvailable?: boolean,
+      ) =>
         generation.runIfCurrent(() => voiceConversationRuntimeMachine.setReconnecting({
           controlSessionId,
           adapterId,
           attemptId,
           reconnecting,
+          retryAvailable,
         })),
       transitionToConnected: (controlSessionId: string, adapterId: string, attemptId?: number) =>
         generation.runIfCurrent(() => voiceConversationRuntimeMachine.transitionToConnected({ controlSessionId, adapterId, attemptId })),
@@ -679,7 +705,12 @@ export function createBundledConversationRuntimeHostLease(input: Readonly<{
     }),
     createConversationController: (input: Parameters<typeof createVoiceConversationController>[0]) =>
       createVoiceConversationController(input),
-    createSdkHandleConnection,
+    createSdkHandleConnection: (input: Parameters<typeof createSdkHandleConnection>[0]) => {
+      if (Platform.OS === 'ios' || Platform.OS === 'android') {
+        requireVoiceNativeWebRtcBootstrap();
+      }
+      return createSdkHandleConnection(input);
+    },
     createWebRtcConnection: createHostWebRtcConnection,
     createWebSocketPcmConnection,
     createWebSocketPcmMedia,
@@ -917,7 +948,7 @@ export function createBundledConversationRuntimeHostLease(input: Readonly<{
       controlSessionId: string;
       applicationAttemptId: string;
       signal: AbortSignal;
-      onTerminal: Parameters<typeof createAgentSessionRealtimeService>[0]['onTerminal'];
+      onStarted: Parameters<typeof createAgentSessionRealtimeService>[0]['onStarted'];
     }>) {
       if (!generation.isCurrent()) return null;
       const conversationSessionId =
@@ -953,7 +984,7 @@ export function createBundledConversationRuntimeHostLease(input: Readonly<{
         conversationSessionId,
         applicationAttemptId: boundApplicationAttemptId,
         signal: input.signal,
-        onTerminal: input.onTerminal,
+        onStarted: input.onStarted,
         sessionRpc: async ({ sessionId, method, payload, signal }) => {
           const isRetiredBoundCleanup =
             method === SESSION_RPC_METHODS.SESSION_AGENT_REALTIME_STOP

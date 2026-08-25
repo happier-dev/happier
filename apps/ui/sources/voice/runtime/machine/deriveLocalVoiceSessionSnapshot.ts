@@ -199,5 +199,6 @@ export function deriveLocalVoiceSessionSnapshot(
             : snapshot.state === 'interrupted'
                 ? { presentationState: 'interrupted' as const }
                 : {}),
+        ...(snapshot.reconnectRetryAvailable ? { reconnectRetryAvailable: true } : {}),
     };
 }

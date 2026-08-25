@@ -7,6 +7,7 @@ import { resolveVoiceExecutionMachineSelectionFromState } from '@/voice/settings
  * Credential settings use this for both display and request invalidation.
  */
 export function useVoiceExecutionMachinePresentation(): Readonly<{
+  selectedMachineId: string | null;
   machineId: string | null;
   machineLabel: string | null;
   selectionKind: 'resolved' | 'selected_unreachable' | 'none';
@@ -22,5 +23,5 @@ export function useVoiceExecutionMachinePresentation(): Readonly<{
     const machine = resolveMachineForActiveServerFromState(state, selectedMachineId);
     return machine?.metadata?.displayName || machine?.metadata?.host || selectedMachineId;
   });
-  return { machineId, machineLabel, selectionKind };
+  return { selectedMachineId, machineId, machineLabel, selectionKind };
 }

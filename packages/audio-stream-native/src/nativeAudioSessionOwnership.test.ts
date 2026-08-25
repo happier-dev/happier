@@ -41,7 +41,10 @@ describe('native audio-session ownership', () => {
 
   it('degrades preferred AEC activation failures but keeps required AEC fail-closed at the capture owner', () => {
     const iosSource = readPackageFile('ios/HappierAudioStreamNativeModule.swift');
-    expect(iosSource).toMatch(/case \.preferred:[\s\S]*?aecActive = false/);
+    // The match must stay inside `case .preferred:`. An unbounded `[\s\S]*?` reaches
+    // the `aecActive = false` in `case .required:`, so the guard passed even with the
+    // preferred degradation deleted.
+    expect(iosSource).toMatch(/case \.preferred:(?:(?!case \.)[\s\S])*?aecActive = false/);
     expect(iosSource).toMatch(/case \.required:[\s\S]*?aec_unavailable/);
 
     const androidSource = readPackageFile(
@@ -80,7 +83,52 @@ describe('native audio-session ownership', () => {
     const androidSource = readPackageFile(
       'android/src/main/java/dev/happier/audio/HappierAudioStreamNativeModule.kt',
     );
-    expect(androidSource).toMatch(/private fun playbackCursorMs\([\s\S]*?playbackHeadPosition/);
+    // Both matches stay inside their own function. An unbounded `[\s\S]*?` from
+    // `playbackCursorMs` reaches the `playbackHeadPosition` read in a later function,
+    // so the guard passed even with the hardware head read removed entirely.
+    expect(androidSource).toMatch(
+      /private fun playbackCursorMs\((?:(?!\n  private fun )[\s\S])*?updatePlaybackProgressLocked\(/,
+    );
+    expect(androidSource).toMatch(
+      /private fun updatePlaybackProgressLocked\((?:(?!\n  private fun )[\s\S])*?\.playbackHeadPosition/,
+    );
     expect(androidSource).toMatch(/Function\("getPlaybackCursorMs"\)/);
+  });
+
+  it('leaves Android PCM audible at the canonical duck gain without turning it into a capture suspension', () => {
+    const androidSource = readPackageFile(
+      'android/src/main/java/dev/happier/audio/HappierAudioStreamNativeModule.kt',
+    );
+
+    expect(androidSource).toMatch(
+      /AudioFocusRequest\.Builder\([\s\S]*?\.setWillPauseWhenDucked\(true\)/,
+    );
+    expect(androidSource).toMatch(
+      /AudioManager\.AUDIOFOCUS_LOSS_TRANSIENT\s*->\s*pauseOutput\(\)[\s\S]*?AudioManager\.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK\s*->\s*AudioPlaybackFocusAction\.NONE/,
+    );
+    expect(androidSource).toMatch(
+      /AudioManager\.AUDIOFOCUS_LOSS_TRANSIENT\s*->\s*\{[\s\S]*?applyPlaybackFocusAction\(playbackFocus\.onFocusChange\(change\)\)[\s\S]*?emitAudioSessionEvent\("focus_changed", mapOf\("state" to "lost_transient"\), generation\)/,
+    );
+    expect(androidSource).toMatch(
+      /AudioManager\.AUDIOFOCUS_GAIN\s*->\s*\{[\s\S]*?applyPlaybackFocusAction\(playbackFocus\.onFocusChange\(change\)\)[\s\S]*?emitAudioSessionEvent\("focus_changed", mapOf\("state" to "gained"\), generation\)/,
+    );
+    const duckableBranch = androidSource.match(
+      /AudioManager\.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK\s*->\s*\{([\s\S]*?)\n\s*\}/,
+    )?.[1];
+    expect(duckableBranch).toContain('emitAudioSessionEvent("focus_duckable", generation = generation)');
+    expect(duckableBranch).not.toContain('applyPlaybackFocusAction');
+  });
+
+  it('reconciles each reconfigured Android focus generation to the bridge', () => {
+    const androidSource = readPackageFile(
+      'android/src/main/java/dev/happier/audio/HappierAudioStreamNativeModule.kt',
+    );
+
+    expect(androidSource).toMatch(
+      /private fun requestAudioFocus\([\s\S]*?AUDIOFOCUS_REQUEST_GRANTED[\s\S]*?applyPlaybackFocusAction\(playbackFocus\.onFocusRequestGranted\(\)\)[\s\S]*?emitAudioSessionEvent\("focus_changed", mapOf\("state" to "gained"\), generation\)/,
+    );
+    expect(androidSource).toMatch(
+      /if \(output\) \{[\s\S]*?requestAudioFocus\(manager, generation\)[\s\S]*?\} else \{[\s\S]*?playbackFocus\.clear\(\)[\s\S]*?emitAudioSessionEvent\("focus_changed", mapOf\("state" to "not_required"\), generation\)/,
+    );
   });
 });

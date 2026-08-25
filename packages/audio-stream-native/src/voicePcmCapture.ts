@@ -8,6 +8,7 @@ import type {
   VoiceAudioSessionLease,
   VoiceAudioSessionRequest,
 } from './voiceAudioSessionCoordinator';
+import { VoiceAudioSessionCoordinatorError } from './voiceAudioSessionCoordinator';
 
 export type VoicePcmCaptureFormat = Readonly<{
   sampleRate: number;
@@ -130,6 +131,7 @@ export function createVoicePcmCapture(options: Readonly<{
   let format: VoicePcmCaptureFormat | null = null;
   let audioSessionRequest: Omit<VoiceAudioSessionRequest, 'ownerId' | 'capture'> | null = null;
   let audioSessionLease: VoiceAudioSessionLease | null = null;
+  let audioSessionSubscription: Readonly<{ remove: () => void }> | null = null;
   let frameSubscription: Readonly<{ remove: () => void }> | null = null;
   let terminalSubscription: Readonly<{ remove: () => void }> | null = null;
   let pendingStartupFrames: AudioStreamFrameEvent[] = [];
@@ -232,13 +234,21 @@ export function createVoicePcmCapture(options: Readonly<{
     terminatingStreamId = null;
     const subscription = frameSubscription;
     const terminal = terminalSubscription;
+    const audioSession = audioSessionSubscription;
     frameSubscription = null;
     terminalSubscription = null;
+    audioSessionSubscription = null;
     try {
       try {
         subscription?.remove();
       } finally {
         terminal?.remove();
+        try {
+          audioSession?.remove();
+        } catch {
+          // Coordinator listeners are advisory at teardown; native/session
+          // restoration still has to run when an observer is already gone.
+        }
       }
     } finally {
       let stopFailure: unknown = null;
@@ -263,6 +273,30 @@ export function createVoicePcmCapture(options: Readonly<{
       }
       if (stopFailure) throw stopFailure;
     }
+  };
+
+  const terminateRequiredAecCapture = (): void => {
+    void serialize(async () => {
+      const currentStreamId = streamId;
+      if (
+        disposed
+        || !currentStreamId
+        || terminatingStreamId !== null
+        || audioSessionRequest?.aec !== 'required'
+      ) return;
+      terminatingStreamId = currentStreamId;
+      const failure = new VoiceAudioSessionCoordinatorError(
+        'aec_required_unavailable',
+        'Echo cancellation became unavailable for the active native PCM capture.',
+      );
+      const activeSubscribers = [...subscribers.values()];
+      subscribers.clear();
+      for (const subscriber of activeSubscribers) {
+        subscriber.active = false;
+        reportSubscriberError(subscriber, failure);
+      }
+      await stopNativeCapture();
+    }).catch(() => undefined);
   };
 
   const handleCaptureTerminal = (
@@ -352,13 +386,6 @@ export function createVoicePcmCapture(options: Readonly<{
         subscribers.set(id, subscriber);
         subscriberAdded = true;
         if (!streamId) {
-          const acquiredSessionLease = await options.audioSessionCoordinator.acquire({
-            ...sessionRequest,
-            ownerId: request.ownerId,
-            capture: 'host_managed',
-          });
-          audioSessionLease = acquiredSessionLease;
-          audioSessionRequest = { ...sessionRequest };
           generation += 1;
           const activeGeneration = generation;
           format = { ...request.format };
@@ -370,15 +397,49 @@ export function createVoicePcmCapture(options: Readonly<{
             'audioFrame',
             (event) => handleFrame(event, activeGeneration),
           );
-          const started = await options.nativeModule.start({
-            sampleRate: request.format.sampleRate,
-            channels: request.format.channels,
-            frameMs: request.format.frameMs,
-            generation: activeGeneration,
+          let startedStreamId: string | null = null;
+          const acquiredSessionLease = await options.audioSessionCoordinator.acquireForCapture({
+            ...sessionRequest,
+            ownerId: request.ownerId,
+            capture: 'host_managed',
+          }, async () => {
+            const started = await options.nativeModule.start({
+              sampleRate: request.format.sampleRate,
+              channels: request.format.channels,
+              frameMs: request.format.frameMs,
+              generation: activeGeneration,
+            });
+            const normalizedStreamId = started.streamId.trim();
+            if (normalizedStreamId.length === 0) throw new Error('voice_pcm_capture_stream_id_missing');
+            // If start-time AEC admission fails after the native stream exists,
+            // the outer rollback stops this exact stream as well as releasing
+            // the coordinator configuration.
+            pendingStopStreamId = normalizedStreamId;
+            startedStreamId = normalizedStreamId;
           });
-          const normalizedStreamId = started.streamId.trim();
-          if (normalizedStreamId.length === 0) throw new Error('voice_pcm_capture_stream_id_missing');
-          streamId = normalizedStreamId;
+          if (!startedStreamId) throw new Error('voice_pcm_capture_stream_id_missing');
+          const normalizedStreamId = startedStreamId;
+          audioSessionLease = acquiredSessionLease;
+          audioSessionRequest = { ...sessionRequest };
+          streamId = startedStreamId;
+          pendingStopStreamId = null;
+          audioSessionSubscription = options.audioSessionCoordinator.subscribe((event) => {
+            if (
+              event.kind === 'capabilities_changed'
+              && (!event.aecAvailable || !event.aecActive)
+            ) {
+              terminateRequiredAecCapture();
+            }
+          });
+          if (sessionRequest.aec === 'required') {
+            const confirmedCapabilities = options.audioSessionCoordinator.getSnapshot().capabilities;
+            if (!confirmedCapabilities?.aecAvailable || !confirmedCapabilities.aecActive) {
+              throw new VoiceAudioSessionCoordinatorError(
+                'aec_required_unavailable',
+                'Echo cancellation became unavailable before native PCM capture observation attached.',
+              );
+            }
+          }
           const startupFrames = pendingStartupFrames;
           pendingStartupFrames = [];
           const startupTerminal = pendingStartupTerminal;

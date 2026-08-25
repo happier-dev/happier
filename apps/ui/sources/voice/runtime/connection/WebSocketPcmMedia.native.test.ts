@@ -86,7 +86,7 @@ describe('native WebSocketPcmMedia', () => {
 
     expect((nativeBoundary.capture as { acquire: ReturnType<typeof vi.fn> }).acquire).toHaveBeenCalledWith(expect.objectContaining({
       format: { sampleRate: 24_000, channels: 1, frameMs: 100 },
-      audioSession: { mode: 'conversation', input: true, output: true, aec: 'preferred' },
+      audioSession: { mode: 'conversation', input: true, output: true, aec: 'required' },
     }));
     expect((nativeBoundary.playback as { open: ReturnType<typeof vi.fn> }).open).toHaveBeenCalledWith(expect.objectContaining({
       capture: { streamId: 'stream-1', generation: 3 },
@@ -105,6 +105,16 @@ describe('native WebSocketPcmMedia', () => {
     expect(media.beginOutputInterruptionCandidate()).toBe('ducked');
     expect(setGain).toHaveBeenCalledWith(0.18);
     media.resolveOutputInterruptionCandidate('false_alarm');
+    expect(setGain).toHaveBeenLastCalledWith(1);
+    expect(media.pcm.setOutputFocusState?.('suspended')).toBe('applied');
+    expect(setGain).toHaveBeenLastCalledWith(0);
+    expect(media.beginOutputInterruptionCandidate()).toBe('ducked');
+    expect(setGain).toHaveBeenLastCalledWith(0);
+    media.resolveOutputInterruptionCandidate('false_alarm');
+    expect(setGain).toHaveBeenLastCalledWith(0);
+    expect(media.pcm.setOutputFocusState?.('ducked')).toBe('applied');
+    expect(setGain).toHaveBeenLastCalledWith(0.18);
+    expect(media.pcm.setOutputFocusState?.('active')).toBe('applied');
     expect(setGain).toHaveBeenLastCalledWith(1);
     expect(media.beginOutputInterruptionCandidate()).toBe('ducked');
     media.resolveOutputInterruptionCandidate('confirmed');

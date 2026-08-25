@@ -5,14 +5,17 @@ import { createVoiceProviderRegistry } from '@/voice/registry/providerRegistry';
 import { settingsParse, type Settings } from '@/sync/domains/settings/settings';
 import {
   readLocalConversationVoiceSettings,
+  readLocalDirectVoiceSettings,
   voiceSettingsDefaults,
   writeLocalConversationVoiceSettings,
+  writeLocalDirectVoiceSettings,
 } from '@/sync/domains/settings/voiceSettings';
 import { upsertAccountVoiceCredential } from '@/voice/credentials/accountVoiceCredential';
 import { resolveVoiceProviderLocalAvailability } from '@/voice/settings/voiceProviderLocalAvailability';
 
 import {
   resolveVoiceDictationExecutionMachineRequirement,
+  resolveVoiceDictationNativeLocalNeuralPackId,
   resolveVoiceDictationReadiness,
 } from './voiceDictationReadiness';
 
@@ -429,6 +432,90 @@ describe('resolveVoiceDictationReadiness', () => {
       })).toBe(false);
     },
   );
+
+  it('uses the checked selected native Local Neural model fact instead of reporting it unknown', () => {
+    const localAvailability = resolveVoiceProviderLocalAvailability({
+      platformOs: 'ios',
+      daemonFeatureEnabled: false,
+      serverFeatures: null,
+      nativeDeviceSpeechRecognition: 'available',
+    });
+    const settings = settingsParse({
+      voice: {
+        dictation: {
+          sttBinding: 'explicit',
+          language: null,
+          stt: {
+            provider: 'local_neural',
+            localNeural: {
+              assetId: 'sherpa-streaming-zipformer-bilingual-zh-en',
+              execution: 'device',
+            },
+          },
+        },
+      },
+    });
+
+    expect(resolveVoiceDictationReadiness({
+      registry,
+      platform: 'ios',
+      executionMachineId: null,
+      localAvailability,
+      settings,
+      nativeLocalNeuralModel: 'ready',
+    })).toMatchObject({
+      providerId: 'local_neural',
+      status: 'ready',
+      code: 'ready',
+    });
+  });
+
+  it('uses the Dictation runtime snapshot pack for a same-as-local native Local Neural selection', () => {
+    const localDirect = readLocalDirectVoiceSettings(voiceSettingsDefaults);
+    const localConversation = readLocalConversationVoiceSettings(voiceSettingsDefaults);
+    const withDirectPack = writeLocalDirectVoiceSettings({
+      ...voiceSettingsDefaults,
+      providerId: 'local_direct',
+    }, {
+      ...localDirect,
+      stt: {
+        ...localDirect.stt,
+        provider: 'local_neural',
+        localNeural: {
+          ...localDirect.stt.localNeural,
+          assetId: 'selected-direct-pack',
+          execution: 'device',
+        },
+      },
+    });
+    const voice = writeLocalConversationVoiceSettings(withDirectPack, {
+      ...localConversation,
+      stt: {
+        ...localConversation.stt,
+        provider: 'local_neural',
+        localNeural: {
+          ...localConversation.stt.localNeural,
+          assetId: 'unselected-conversation-pack',
+          execution: 'device',
+        },
+      },
+    });
+    const settings = settingsParse({
+      voice: {
+        ...voice,
+        dictation: {
+          ...voice.dictation,
+          sttBinding: 'same_as_local',
+        },
+      },
+    });
+
+    expect(resolveVoiceDictationNativeLocalNeuralPackId({
+      registry,
+      settings,
+      platform: 'ios',
+    })).toBe('selected-direct-pack');
+  });
 
   it.each([
     [GOOGLE_STT_PROVIDER_ID, 'api_key'],

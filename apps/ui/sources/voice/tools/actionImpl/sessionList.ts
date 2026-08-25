@@ -1,8 +1,6 @@
 import { readStoredSessionMessages } from '@/sync/domains/messages/readStoredSessionMessages';
 import { readVoicePrivacySettings } from '@/sync/domains/settings/readVoicePrivacySettings';
 import { storage } from '@/sync/domains/state/storage';
-import { isHiddenSystemSession } from '@happier-dev/protocol';
-import { readVoiceSessionOwnerMetadataFromState } from '@/voice/shared/readVoiceSessionOwnerMetadata';
 
 import {
   compareSessionKeyDesc,
@@ -34,11 +32,6 @@ export async function listSessionsForVoiceTool(params: Readonly<{
   const rows = visibleSessionRows
     .map((row) => {
       const raw = sessionsObj?.[row.id];
-      if (raw && isHiddenSystemSession({
-        metadata: readVoiceSessionOwnerMetadataFromState(state, row.id),
-      })) {
-        return null;
-      }
       const updatedAt = typeof raw?.updatedAt === 'number' ? raw.updatedAt : row.updatedAt;
       return {
         id: row.id,

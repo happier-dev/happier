@@ -132,7 +132,7 @@ export function createAgentSessionRealtimeService(input: Readonly<{
   applicationAttemptId: string;
   signal: AbortSignal;
   sessionRpc: SessionRpc;
-  onTerminal(event: AgentSessionRealtimeLifecycleEvent): void;
+  onStarted(handle: AgentSessionRealtimeHandle): void;
 }>): PluginVoiceAgentSessionRealtimeService {
   const selection = Object.freeze({
     v: 1 as const,
@@ -168,7 +168,6 @@ export function createAgentSessionRealtimeService(input: Readonly<{
     terminal = event;
     const registrations = [...watchers];
     watchers.clear();
-    notifyTerminal(input.onTerminal, event);
     for (const registration of registrations) {
       notifyTerminal(registration.listener, event);
     }
@@ -566,6 +565,7 @@ export function createAgentSessionRealtimeService(input: Readonly<{
         }
         if (parsed.data.status !== 'started') return { status: parsed.data.status };
         watchTerminal();
+        input.onStarted(handle);
         return Object.freeze({
           status: 'started' as const,
           transport: parsed.data.transport,

@@ -2,6 +2,11 @@ import type {
   VoiceAudioSessionCoordinator,
   VoiceAudioSessionPlatformEvent,
 } from '@happier-dev/audio-stream-native';
+import type {
+  VoiceOutputFocusApplication,
+  VoiceOutputFocusState,
+} from '@happier-dev/plugin-sdk/voice/client';
+import { Platform } from 'react-native';
 
 type Controller = Readonly<{
   getSnapshot(): Readonly<{
@@ -10,6 +15,10 @@ type Controller = Readonly<{
     micMuted?: boolean;
   }>;
   setMuted(sessionId: string, muted: boolean): Promise<void>;
+  setOutputFocusState?(
+    sessionId: string,
+    state: VoiceOutputFocusState,
+  ): Promise<VoiceOutputFocusApplication>;
   stop(sessionId: string): Promise<void>;
 }>;
 
@@ -66,6 +75,26 @@ export function createNativeAudioSessionLifecycleBridge(input: Readonly<{
     });
   };
 
+  /**
+   * The native coordinator is the only audio-focus authority. This bridge
+   * carries its output fact to the admitted Voice runtime. The lifecycle owner
+   * holds the exact adapter reference and terminates only that owner when the
+   * application cannot be made current; this bridge only gates capture work.
+   */
+  const applyOutputFocusState = async (state: VoiceOutputFocusState): Promise<boolean> => {
+    const sessionId = activeSessionId();
+    if (!sessionId) return true;
+    let application: VoiceOutputFocusApplication;
+    try {
+      application = input.controller.setOutputFocusState
+        ? await input.controller.setOutputFocusState(sessionId, state)
+        : 'unsupported';
+    } catch {
+      application = 'unsupported';
+    }
+    return application === 'applied';
+  };
+
   const stopActive = async (): Promise<void> => {
     suspensionReasons.clear();
     autoMutedSessionId = null;
@@ -79,12 +108,31 @@ export function createNativeAudioSessionLifecycleBridge(input: Readonly<{
       if (!event.shouldResume) return await stopActive();
       return await resume('interruption');
     }
+    if (event.kind === 'focus_duckable') {
+      // Ducking is distinct from a transient loss. It must not downgrade a
+      // true capture/output suspension before Android has returned focus.
+      if (suspensionReasons.has('focus')) return;
+      await applyOutputFocusState('ducked');
+      return;
+    }
     if (event.kind === 'focus_changed') {
       if (event.state === 'lost_permanent') return await stopActive();
-      if (event.state === 'lost_transient') return await suspend('focus');
-      return await resume('focus');
+      if (event.state === 'lost_transient') {
+        if (!await applyOutputFocusState('suspended')) return;
+        return await suspend('focus');
+      }
+      if (event.state === 'gained' || event.state === 'not_required') {
+        if (!await applyOutputFocusState('active')) return;
+        return await resume('focus');
+      }
     }
     if (event.kind === 'lifecycle_changed') {
+      // Active native conversation Voice keeps its call-like audio session in
+      // ordinary background/lock transitions. Those lifecycle changes are not
+      // audio interruptions, so this bridge must not manufacture a mute,
+      // reconnect, or reacquisition transition. Dictation retains its separate
+      // background-cancellation policy through its own coordinator subscription.
+      if (Platform.OS === 'ios' || Platform.OS === 'android') return;
       return event.state === 'background' ? await suspend('lifecycle') : await resume('lifecycle');
     }
     // The native owner reports this only after deciding the graph cannot be

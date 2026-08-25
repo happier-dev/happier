@@ -14,6 +14,7 @@ const { playbackLeaseRelease, acquirePlaybackLease } = vi.hoisted(() => {
   };
 });
 const nativePlayerPlay = vi.hoisted(() => vi.fn(() => undefined));
+const nativeCreateAudioPlayer = vi.hoisted(() => vi.fn());
 
 vi.mock('@/voice/runtime/voiceAudioMode', () => ({ acquireVoicePlaybackAudioMode: acquirePlaybackLease }));
 
@@ -56,14 +57,7 @@ vi.mock('expo-file-system', () => ({
 }));
 
 vi.mock('expo-audio', () => ({
-  createAudioPlayer: (_source?: string) => ({
-    addListener: (_event: string, cb: (status: any) => void) => {
-      playbackState.playbackStatusListener = cb;
-      return { remove() {} };
-    },
-    play: nativePlayerPlay,
-    remove() {},
-  }),
+  createAudioPlayer: (...args: unknown[]) => nativeCreateAudioPlayer(...args),
 }));
 
 import { playAudioBytesWithStopper } from '@/voice/output/playAudioBytesWithStopper';
@@ -74,6 +68,15 @@ describe('playAudioBytesWithStopper (native)', () => {
     acquirePlaybackLease.mockClear();
     playbackLeaseRelease.mockClear();
     nativePlayerPlay.mockClear();
+    nativeCreateAudioPlayer.mockReset();
+    nativeCreateAudioPlayer.mockImplementation(() => ({
+      addListener: (_event: string, cb: (status: any) => void) => {
+        playbackState.playbackStatusListener = cb;
+        return { remove() {} };
+      },
+      play: nativePlayerPlay,
+      remove() {},
+    }));
   });
   it('does not start native audio when a stale attempt is rejected during registration', async () => {
     playbackState.playbackStatusListener = null;
@@ -89,6 +92,24 @@ describe('playAudioBytesWithStopper (native)', () => {
 
     expect(nativePlayerPlay).not.toHaveBeenCalled();
     expect(playbackState.playbackStatusListener).toBeNull();
+  });
+
+  it('deletes the created temp file when player initialization throws', async () => {
+    fileDelete.mockReset();
+    fileDelete.mockResolvedValue(undefined);
+    nativeCreateAudioPlayer.mockImplementationOnce(() => {
+      throw new Error('native player construction failed');
+    });
+
+    await expect(playAudioBytesWithStopper({
+      bytes: new Uint8Array([1, 2, 3]).buffer,
+      format: 'mp3',
+      registerPlaybackStopper: () => () => {},
+    })).rejects.toThrow('native player construction failed');
+
+    await waitForFileDeleteCall();
+    expect(fileDelete).toHaveBeenCalledOnce();
+    expect(playbackLeaseRelease).toHaveBeenCalledOnce();
   });
 
   it('resolves promptly when playback finishes even if temp-file cleanup stalls', async () => {

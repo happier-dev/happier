@@ -21,15 +21,29 @@ import {
   type VoiceRealtimeJsonValue,
   type PluginProjectedActionV2,
 } from '@happier-dev/protocol';
-import { computePluginUiArtifactSha256DigestV1 } from '@happier-dev/protocol/plugins/ui';
+import {
+  computePluginUiArtifactSha256DigestV1,
+  type CurrentUiContextSnapshotV1,
+} from '@happier-dev/protocol/plugins/ui';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createPluginReactNativeBundleCache } from '@/components/plugins/reactNative/bundleCache';
 import {
+  createPluginUiClientExecutableComposition,
   getInstalledPluginUiClientExecutableComposition,
   resolvePluginUiClientActionRegistration,
+  type PluginUiClientExecutableActivation,
 } from '@/components/plugins/reactNative/clientExecutableContributions';
+import {
+  EMPTY_PLUGIN_UI_PROJECTION,
+  type PluginUiProjectionModel,
+} from '@/sync/domains/plugins/ui/projection';
+import { PLUGIN_UI_CONTRIBUTION_ORIGIN_KEY } from '@/sync/domains/plugins/ui/projectionUnion';
+import {
+  createCurrentUiContextVoiceToolPort,
+} from '@/components/appShell/currentUiContext/currentUiContextVoiceToolPort';
+import type { CurrentUiContextReader } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
 import {
   createAppShellPluginUiInvocationHost,
   type AppShellPluginUiActionExecute,
@@ -47,15 +61,18 @@ import {
   createWebSocketPcmConnection,
 } from '@/voice/runtime/connection/VoiceRealtimeConnection';
 import { createRealtimeToolBarrierForVoiceHandlers } from '@/voice/tools/defaultRealtimeToolBarrier';
+import { createVoiceToolHandlers } from '@/voice/tools/handlers';
 import type { VoiceSessionSnapshot } from '@/voice/session/types';
 import { storage } from '@/sync/domains/state/storage';
 import type { PluginReactNativeBundleCacheIdentity } from '@/sync/domains/plugins/ui/reactNativeRuntime';
 import { createVoiceClientRawCredentialAccess } from '@/voice/credentials/rawCredentialClient';
+import { createBundledConversationRuntimeHostLease } from './bundledConversationRuntimeHost';
 
 import {
   bindVoiceProviderSettingsActions,
   bindVoiceProviderSettingsOperations,
   createExternalProtocol,
+  createExternalVoiceProviderActivationScope as createProductionExternalVoiceProviderActivationScope,
   createExternalVoiceProviderRuntimeContribution,
 } from './externalVoiceProviderActivation';
 import { createExternalVoiceProviderActivationScope } from './externalVoiceProviderActivation.testkit';
@@ -71,6 +88,7 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', (
 }));
 vi.mock('@/voice/settings/executionMachine', () => ({
   resolveVoiceExecutionMachineId: () => 'machine-1',
+  isCapturedVoiceExecutionMachineCurrent: (machineId: string) => machineId === 'machine-1',
 }));
 
 const providerId = 'acme.synthetic-voice/conversation';
@@ -169,10 +187,6 @@ function createClientActionFixture(handler: PluginClientActionHandler) {
     materializationRef: CLIENT_ACTION_ORIGIN.materializationRef,
     available: true,
     authorization: {
-      packageTrust: {
-        packageIdentity: `acme.synthetic-voice/actions/${CLIENT_ACTION_LOCAL_ID}`,
-        reviewedPackageIdentity: `acme.synthetic-voice/actions/${CLIENT_ACTION_LOCAL_ID}`,
-      },
       generation: {
         targetGeneration: String(CLIENT_ACTION_GENERATION),
         desiredGeneration: String(CLIENT_ACTION_GENERATION),
@@ -252,6 +266,8 @@ function createHostFixture(input: Readonly<{
   createWebSocketPcmMedia?: BundledRealtimeProviderRuntimeHost['createWebSocketPcmMedia'];
   createSdkHandleConnection?: BundledRealtimeProviderRuntimeHost['createSdkHandleConnection'];
   getRealtimeClientToolDefinitions?: BundledRealtimeProviderRuntimeHost['getRealtimeClientToolDefinitions'];
+  currentUiContext?: NonNullable<Parameters<typeof createVoiceToolHandlers>[0]['currentUiContext']>;
+  selectedProviderId?: string;
   voiceHooks?: BundledRealtimeProviderRuntimeHost['voiceHooks'];
   readProviderConfig?: () => unknown;
   readProviderConversationState?: BundledRealtimeProviderRuntimeHost['readProviderConversationState'];
@@ -261,6 +277,7 @@ function createHostFixture(input: Readonly<{
     conversationSessionId: string;
   }>) => boolean;
 }>): BundledRealtimeProviderRuntimeHost {
+  const selectedProviderId = input.selectedProviderId ?? providerId;
   let snapshot: VoiceSessionSnapshot = Object.freeze({
     adapterId: null,
     sessionId: null,
@@ -278,14 +295,14 @@ function createHostFixture(input: Readonly<{
     getPlatform: () => 'web' as const,
     getRealtimeClientToolDefinitions: input.getRealtimeClientToolDefinitions ?? (() => []),
     getSettings: () => ({ voice: {
-      providerId,
-      providers: { [providerId]: {
+      providerId: selectedProviderId,
+      providers: { [selectedProviderId]: {
         schemaVersion: 1,
         config: input.readProviderConfig?.() ?? { mode: 'default' },
       } },
     } }),
     projectVoiceSettings: () => ({
-      providerId,
+      providerId: selectedProviderId,
       providerConfig: input.readProviderConfig?.() ?? { mode: 'default' },
     }),
     machine: {
@@ -378,6 +395,12 @@ function createHostFixture(input: Readonly<{
     clearAttemptStatus: () => {},
     createToolBarrier: (barrierInput) => createRealtimeToolBarrierForVoiceHandlers({
       handlers: {
+        ...(input.currentUiContext
+          ? createVoiceToolHandlers({
+              resolveSessionId: barrierInput.resolveSessionId,
+              currentUiContext: input.currentUiContext,
+            })
+          : {}),
         listMachines: async () => JSON.stringify({
           ok: true,
           machineId: 'machine-visible',
@@ -389,9 +412,10 @@ function createHostFixture(input: Readonly<{
         shareFilePaths: false,
         shareSessionSummary: false,
         sharePermissionRequests: false,
-        shareDeviceInventory: true,
-        shareRecentMessages: true,
-      }),
+          shareDeviceInventory: true,
+          shareRecentMessages: true,
+        }),
+      ...(input.currentUiContext ? { effectCalls: barrierInput.effectCalls } : {}),
       submitResults: barrierInput.submitResults,
       continueResponse: barrierInput.continueResponse,
     }),
@@ -752,6 +776,60 @@ describe('external Voice provider host composition', () => {
     expect(prepareConfigs.at(-1)).toEqual({ mode: 'default', voice: 'after-throw' });
   });
 
+  it('passes only the leaf-proven prepared carrier replay custody through the external adapter', async () => {
+    const resumableDeclaration = Object.freeze({
+      ...declaration,
+      capabilities: Object.freeze({
+        ...declaration.capabilities,
+        turn: Object.freeze({
+          ...declaration.capabilities.turn,
+          resumption: 'resume' as const,
+          replay: 'stable_ids' as const,
+        }),
+      }),
+    });
+    const leaf: RealtimeVoiceProviderRuntime['protocol'] = {
+      async prepare(input) {
+        return input.reason === 'initial'
+          ? {
+              kind: 'prepared' as const,
+              session: { config: { carrier: 'resumed' }, safeMetadata: null, toolResultReplay: 'stable_ids' as const },
+            }
+          : {
+              // The same declaration can create a fresh carrier on a later
+              // reconnect. Omission must survive as fail-closed, not be
+              // synthesized from static declaration capabilities.
+              kind: 'prepared' as const,
+              session: { config: { carrier: 'fresh' }, safeMetadata: null },
+            };
+      },
+      decodeControl: () => [],
+      encodeTurnControl: () => null,
+    };
+    const protocol = createExternalProtocol(
+      createHostFixture({ transcriptEvents: [], lifecycleEvents: [] }),
+      providerId,
+      'web',
+      resumableDeclaration,
+      leaf,
+    );
+    const prepareInput = {
+      controlSessionId: 'replay-carrier',
+      attemptId: 1,
+      request: null,
+      signal: new AbortController().signal,
+    } as const;
+
+    await expect(protocol.prepare({ ...prepareInput, reason: 'initial' })).resolves.toEqual({
+      kind: 'prepared',
+      session: { config: { carrier: 'resumed' }, safeMetadata: null, toolResultReplay: 'stable_ids' },
+    });
+    await expect(protocol.prepare({ ...prepareInput, reason: 'reconnect' })).resolves.toEqual({
+      kind: 'prepared',
+      session: { config: { carrier: 'fresh' }, safeMetadata: null },
+    });
+  });
+
   it.each(['web', 'ios', 'android'] as const)(
     'projects declaration-held effect-call custody into the provider-neutral %s protocol',
     (platform) => {
@@ -1047,11 +1125,17 @@ describe('external Voice provider host composition', () => {
           expect(input.credentials.phase).toBe('connection');
           if (declaredPhase === 'connection') await requestAccountOperation(input.credentials);
           else expect(input.credentials.mediated).toBeNull();
+          let open = false;
           return {
-            kind: 'sdk_handle' as const, async connect() {}, async sendControl() {},
+            kind: 'sdk_handle' as const,
+            async connect() { open = true; },
+            async sendControl() {},
             controlEvents: () => ({ async *[Symbol.asyncIterator]() {} }),
-            transportEvents: () => ({ async *[Symbol.asyncIterator]() {} }), async close() {},
-            state: () => 'closed' as const, currentProviderSessionId: () => null, playbackCursorMs: () => null,
+            transportEvents: () => ({ async *[Symbol.asyncIterator]() {} }),
+            async close() { open = false; },
+            state: () => open ? 'open' as const : 'closed' as const,
+            currentProviderSessionId: () => null,
+            playbackCursorMs: () => null,
             beginOutputInterruptionCandidate: () => 'unsupported' as const, resolveOutputInterruptionCandidate() {},
           };
         },
@@ -1723,7 +1807,7 @@ describe('external Voice provider host composition', () => {
     expect(lifecycleEvents).toContain('disconnected');
   });
 
-  it('loads the packed public activation leaf and routes transcript, tools, privacy, cancellation, and teardown through canonical host owners', async () => {
+  it('loads the packed public Action and Voice leaf through one client composition and routes current context, transcript, privacy, cancellation, and teardown through canonical owners', async () => {
     const transcriptEvents: unknown[] = [];
     const lifecycleEvents: string[] = [];
     const fixtureRoot = new URL(
@@ -1732,7 +1816,7 @@ describe('external Voice provider host composition', () => {
     );
     const [artifactBytes, manifestText] = await Promise.all([
       readFile(new URL(
-        'dist/happier-plugin-ui/react-native/voice-runtime-web/index.js',
+        'dist/happier-plugin-ui/react-native-web/voice-runtime-web/entry.mjs.bundle',
         fixtureRoot,
       )),
       readFile(new URL('.happier-plugin/plugin.json', fixtureRoot), 'utf8'),
@@ -1741,6 +1825,22 @@ describe('external Voice provider host composition', () => {
     const manifest = JSON.parse(manifestText) as Readonly<{ contributes?: unknown }>;
     const packedContributes = PluginContributesV2Schema.parse(manifest.contributes);
     const packedDeclaration = packedContributes.voiceProviders[0];
+    const packedContextAction = packedContributes.actions.find(
+      (action) => action.id === 'open-packed-current-context',
+    );
+    expect(packedContextAction).toMatchObject({
+      id: 'open-packed-current-context',
+      surfaces: ['ui', 'voice'],
+      execution: {
+        target: 'client',
+        client: {
+          artifactId: 'voice-runtime-web',
+          modulePath: './voiceRuntime',
+          exportName: 'activate',
+        },
+        platforms: ['web', 'ios', 'android'],
+      },
+    });
     if (packedDeclaration?.kind !== 'conversation') {
       throw new Error('packed_voice_conversation_declaration_required');
     }
@@ -1782,7 +1882,7 @@ describe('external Voice provider host composition', () => {
         /* @vite-ignore */ `data:text/javascript,${encodeURIComponent(source)}#${digest}`
       ) as Promise<Readonly<{ default?: unknown } & Record<string, unknown>>>,
     });
-    expect(packedDeclaration.platforms).toEqual(['web']);
+    expect(packedDeclaration.platforms).toEqual(['web', 'ios', 'android']);
     await expect(loadPluginReactNativeBundleExport({
       cache,
       identity,
@@ -1793,31 +1893,110 @@ describe('external Voice provider host composition', () => {
       ok: false,
       code: 'platform_mismatch',
     });
-    const loaded = await loadPluginReactNativeBundleExport({
-      cache,
-      identity,
-      moduleReference: { containerName: 'acme_packed_voice', modulePath: './voiceRuntime', exportName: 'activate' },
-      backend,
-      hostPlatform: 'web',
-    });
-    expect(loaded.ok).toBe(true);
-    if (!loaded.ok) return;
-    let registration: RealtimeVoiceProviderRuntime | null = null;
-    const activationApi: Pick<PluginApi, 'voiceProviders'> = Object.freeze({
-      voiceProviders: Object.freeze({
-        register(id: string, runtime: RealtimeVoiceProviderRuntime) {
-          if (id === packedDeclaration.id) registration = runtime;
-        },
+    if (!packedContextAction) {
+      throw new Error('packed_current_context_action_required');
+    }
+    const packedOrigin: PluginMachineExecutionOriginV1 = Object.freeze({
+      serverIdentityId: 'srv_packed_voice',
+      materializationRef: Object.freeze({
+        pluginId: 'acme.packed-voice',
+        machineId: 'machine-packed-voice',
+        materializationId: 'materialization-packed-voice',
       }),
     });
-    await Reflect.apply(loaded.exported, undefined, [activationApi]);
-    expect(registration).not.toBeNull();
-    const fixtureEvents = (globalThis as Readonly<Record<string, unknown>>)
-      .__HAPPIER_PACKED_VOICE_FIXTURE_EVENTS__ as unknown[];
-    const attemptToolExecute = vi.fn(async () => ({
-      ok: true,
-      machineId: 'machine-visible',
-    }));
+    const packedAction = PluginProjectedActionV2Schema.parse({
+      ...packedContextAction,
+      pluginId: packedOrigin.materializationRef.pluginId,
+      serverIdentityId: packedOrigin.serverIdentityId,
+      materializationRef: packedOrigin.materializationRef,
+      available: true,
+      authorization: {
+        generation: {
+          targetGeneration: '12',
+          desiredGeneration: '12',
+          appliedGeneration: '12',
+        },
+        resourceSelections: [],
+        scopedGrants: [],
+        serviceAvailability: [],
+        operatingSystemAuthorization: [],
+      },
+    });
+    const packedProjection: PluginUiProjectionModel = Object.freeze({
+      ...EMPTY_PLUGIN_UI_PROJECTION,
+      generation: 12,
+      actionsById: Object.freeze({
+        [`${packedAction.pluginId}/${packedAction.id}`]: Object.freeze({
+          ...packedAction,
+          [PLUGIN_UI_CONTRIBUTION_ORIGIN_KEY]: Object.freeze({
+            machineId: packedOrigin.materializationRef.machineId,
+            serverId: 'server-packed-voice',
+            generation: 12,
+            interactionEnabled: true,
+            phase: 'current',
+            executionOrigin: packedOrigin,
+          }),
+        }),
+      }),
+    });
+    const createCurrentContext = (
+      id: string,
+      label: string,
+    ): Readonly<{
+      command: NonNullable<ReturnType<CurrentUiContextReader['resolveCurrentUiCommand']>>;
+      retirement: AbortController;
+      snapshot: CurrentUiContextSnapshotV1;
+    }> => {
+      const retirement = new AbortController();
+      const command: NonNullable<ReturnType<CurrentUiContextReader['resolveCurrentUiCommand']>> = {
+        id,
+        command: {
+          kind: 'executeAction',
+          action: {
+            pluginId: packedAction.pluginId,
+            localId: packedAction.id,
+          },
+        },
+        retirementSignal: retirement.signal,
+      };
+      const snapshot: CurrentUiContextSnapshotV1 = {
+        navigation: { area: 'app', screen: 'home' },
+        entity: { kind: 'voice', label },
+        commands: [{
+          id,
+          title: 'Open packed current context',
+        }],
+      };
+      return {
+        command,
+        retirement,
+        snapshot,
+      };
+    };
+    let currentContext = createCurrentContext(
+      'current-ui-command:packed-a',
+      'Packed Voice current context',
+    );
+    const currentContextListeners = new Set<() => void>();
+    const currentContextReader: CurrentUiContextReader = Object.freeze({
+      readCurrentUiContext: () => currentContext.snapshot,
+      resolveCurrentUiCommand: (id) => currentContext.command.id === id
+        ? currentContext.command
+        : null,
+      subscribe: (listener) => {
+        currentContextListeners.add(listener);
+        return () => currentContextListeners.delete(listener);
+      },
+    });
+    const currentUiContext = createCurrentUiContextVoiceToolPort({
+      reader: currentContextReader,
+      readProjection: () => packedProjection,
+      readNavigationBinding: () => null,
+    });
+    const toolCatalogLease = createBundledConversationRuntimeHostLease({ currentUiContext });
+    const getRealtimeClientToolDefinitions = vi.fn((input: Parameters<
+      BundledRealtimeProviderRuntimeHost['getRealtimeClientToolDefinitions']
+    >[0]) => toolCatalogLease.host.getRealtimeClientToolDefinitions(input));
     const accountOperationRequest = vi.fn(async (
       request: Parameters<
         ReturnType<NonNullable<
@@ -1854,175 +2033,196 @@ describe('external Voice provider host composition', () => {
         body: new TextEncoder().encode(JSON.stringify(body)),
       });
     });
-    const packedRuntime = registration as unknown as RealtimeVoiceProviderRuntime & Readonly<{
-      settingsActions?: Parameters<typeof bindVoiceProviderSettingsActions>[0]['actions'];
-    }>;
-    let settingsGenerationCurrent = true;
-    const settingsAccountOperationSignals: AbortSignal[] = [];
-    const createSettingsCredentials = vi.fn((signal: AbortSignal) => {
-      settingsAccountOperationSignals.push(signal);
-      return Object.freeze({
-        phase: 'settings' as const,
-        mediated: Object.freeze({ request: accountOperationRequest }),
-        raw: null,
-      });
-    });
-    const boundSettingsOperations = bindVoiceProviderSettingsOperations({
-      operations: packedRuntime.settingsOperations!,
-      createCredentials: createSettingsCredentials,
-      isCurrent: () => settingsGenerationCurrent,
-    });
-    const settingsOperationSignal = new AbortController().signal;
-    await expect(boundSettingsOperations.listCatalog?.({
-      catalog: 'voices',
-      providerConfig: packedProviderSettings.defaultConfig,
-      signal: settingsOperationSignal,
-    })).resolves.toEqual([{
-      id: 'packed-voice-primary',
-      name: 'Fixture Voice',
-      metadata: { language: 'en' },
-    }]);
-    expect(createSettingsCredentials).toHaveBeenCalledTimes(1);
-    expect(settingsAccountOperationSignals).toHaveLength(1);
-    expect(accountOperationRequest.mock.calls[0]?.[0].signal).toBe(settingsAccountOperationSignals[0]);
-    if (!packedRuntime.settingsActions || !packedDeclaration.settings?.actions) {
-      throw new Error('packed_voice_settings_action_missing');
-    }
-    const boundSettingsActions = bindVoiceProviderSettingsActions({
-      actions: packedRuntime.settingsActions,
-      declaredActions: packedDeclaration.settings.actions,
-      createCredentials: createSettingsCredentials,
-      createInteractions: () => Object.freeze({
-        askQuestions: async () => {
-          throw new Error('unexpected_packed_voice_settings_question');
-        },
-      }),
-      getRealtimeClientToolDefinitions: () => [],
-      isCurrent: () => settingsGenerationCurrent,
-    });
-    await expect(boundSettingsActions.execute({
-      actionId: 'provision-voice',
-      settings: packedProviderSettings.defaultConfig,
-      signal: new AbortController().signal,
-    })).resolves.toEqual({ patch: { profile: 'expressive' } });
-    settingsGenerationCurrent = false;
-    await expect(boundSettingsOperations.listCatalog?.({
-      catalog: 'voices',
-      providerConfig: packedProviderSettings.defaultConfig,
-      signal: new AbortController().signal,
-    })).rejects.toMatchObject({ code: 'voice_account_operation_cancelled' });
-    const createInvocationAccountOperations = vi.fn(() => Object.freeze({
-      request: accountOperationRequest,
-    }));
     const hostCreateSdkHandleConnection = vi.fn(createSdkHandleConnection);
-    const executeImpl: AppShellPluginUiActionExecute = async (_machineId, request) => {
-      throw new Error(`unexpected_voice_ui_action:${request.qualifiedActionId}`);
-    };
-    const execute = vi.fn(executeImpl);
-    const getAttemptTools = vi.fn(() => [Object.freeze({
-      name: 'listMachines',
-      description: 'List available machines',
-      parameters: Object.freeze({
-        type: 'object',
-        properties: Object.freeze({
-          limit: Object.freeze({ type: 'number' }),
-        }),
-      }),
-      execute: attemptToolExecute,
-    })]);
-    const runtime = createExternalVoiceProviderRuntimeContribution({
-      host: createHostFixture({
+    const runtimeHost = createHostFixture({
         transcriptEvents,
         lifecycleEvents,
         createSdkHandleConnection: hostCreateSdkHandleConnection,
-        getRealtimeClientToolDefinitions: getAttemptTools,
+        getRealtimeClientToolDefinitions,
+        currentUiContext,
+        selectedProviderId: 'acme.packed-voice/conversation-mediated',
         readProviderConfig: () => packedProviderSettings.defaultConfig,
+    });
+    const conversationDeclarations = packedContributes.voiceProviders.filter(
+      (candidate) => candidate.kind === 'conversation',
+    );
+    const composition = getInstalledPluginUiClientExecutableComposition();
+    const createInvocationAccountOperations = vi.fn((signal: AbortSignal) => Object.freeze({
+      request: accountOperationRequest,
+      signal,
+    }));
+    const activation = Object.freeze({
+      pluginId: 'acme.packed-voice',
+      pluginVersion: '1.0.0',
+      contributes: packedContributes,
+      target: Object.freeze({
+        artifactId: 'voice-runtime-web',
+        modulePath: './voiceRuntime',
+        exportName: 'activate',
+        platform: 'web' as const,
       }),
-      platform: 'web',
-      providerId,
-      providerRef: Object.freeze({ pluginId: 'acme.packed-voice', localId: packedDeclaration.id }),
-      declaration: packedDeclaration,
-      providerSettings: packedProviderSettings,
-      createInvocationAccountOperations,
-      createInvocationUi: (signal) => createAppShellPluginUiInvocationHost({
+      executionOrigin: packedOrigin,
+      projectionGeneration: 12,
+      cache,
+      identity,
+      moduleReference: Object.freeze({
+        containerName: 'acme_packed_voice',
+        modulePath: './voiceRuntime',
+        exportName: 'activate',
+      }),
+      backend,
+      authority: Object.freeze({
+        serverId: 'server-packed-voice',
+        machineId: 'machine-packed-voice',
+        projectionGeneration: 12,
+      }),
+      isCurrent: () => true,
+      createScope: (registrationScope) => createProductionExternalVoiceProviderActivationScope({
         pluginId: 'acme.packed-voice',
-        contributionId: 'conversation',
         generation: '12',
-        machineId: 'machine-1',
-        signal,
-        isCurrent: () => true,
-        execute,
-      }),
-      runtime: packedRuntime,
-    });
-
-    await runtime.adapter.start({ sessionId: 'control-session-1' });
-    await vi.waitFor(() => {
-      expect(JSON.stringify(fixtureEvents)).toContain('fixture_continue');
-    });
-    expect(transcriptEvents).toEqual([expect.objectContaining({ text: 'packed provider transcript' })]);
-    expect(lifecycleEvents).toContain('connected');
-    expect(createInvocationAccountOperations).toHaveBeenCalledTimes(1);
-    expect(accountOperationRequest.mock.calls.map(([request]) => request)).toEqual([
-      expect.objectContaining({
-        operationId: 'list-voices',
-        parameters: {},
-      }),
-      expect.objectContaining({
-        operationId: 'provision-voice',
-        parameters: {
-          voiceId: 'packed-voice-primary',
-          body: { profile: 'balanced' },
+        declarations: conversationDeclarations,
+        hostPlatform: 'web',
+        registrationScope,
+        runtimeHost,
+        isRuntimeHostCurrent: () => true,
+        hostBindingsByLocalId: {
+          'conversation-mediated': {
+            descriptor: 'external',
+            createInvocationAccountOperations,
+          },
         },
       }),
-      expect.objectContaining({
-        operationId: 'client-auth',
-        parameters: { body: { audience: 'realtime', voiceId: 'packed-voice-primary' } },
-      }),
-    ]);
-    expect(execute).not.toHaveBeenCalled();
-    expect(hostCreateSdkHandleConnection).toHaveBeenCalledTimes(1);
-    // The packed leaf's first conversation declaration is an Agent-session
-    // realtime execution, so its realtime surface publishes only the
-    // current-UI tools rather than the full Voice-assistant inventory.
-    expect(getAttemptTools).toHaveBeenCalledWith({ effectCalls: 'none', exposure: 'current_ui_only' });
-    expect(attemptToolExecute).toHaveBeenCalledWith({ limit: 10 });
-    expect(fixtureEvents).toContainEqual({
-      kind: 'catalog',
-      selectedVoiceId: 'packed-voice-primary',
-    });
-    expect(fixtureEvents).toContainEqual({
-      kind: 'provisioned',
-      selectedVoiceId: 'packed-voice-primary',
-      profile: 'balanced',
-    });
-    expect(fixtureEvents).toContainEqual(expect.objectContaining({
-      kind: 'client_auth',
-      artifact: expect.objectContaining({
-        kind: 'bearer_token',
-        placement: 'authorization_header',
-      }),
-    }));
-    expect(fixtureEvents).toContainEqual({
-      kind: 'attempt_tool',
-      toolName: 'listMachines',
-      result: {
-        ok: true,
-        machineId: 'machine-visible',
-      },
-    });
-    expect(JSON.stringify(fixtureEvents)).toContain('machine-visible');
-    expect(JSON.stringify(fixtureEvents)).not.toContain('short-lived-packed-artifact');
-    expect(JSON.stringify(fixtureEvents)).not.toContain('malicious.example.invalid');
-    expect(JSON.stringify(fixtureEvents)).not.toContain('private session summary');
-    expect(JSON.stringify(fixtureEvents)).not.toContain('/Users/alice');
+    } satisfies PluginUiClientExecutableActivation);
 
-    await runtime.adapter.interrupt({ sessionId: 'control-session-1' });
-    expect(JSON.stringify(fixtureEvents)).toContain('fixture_cancel');
-    await runtime.dispose();
-    expect(JSON.stringify(fixtureEvents)).toContain('user_stop');
-    expect(JSON.stringify(fixtureEvents)).toContain('runtime_disposed');
-    expect(lifecycleEvents).toContain('disconnected');
+    await composition.unload();
+    try {
+      const attempts = await composition.reconcile([activation]);
+      expect(attempts).toMatchObject([{ result: { ok: true }, reused: false }]);
+      const fixtureEvents = (globalThis as Readonly<Record<string, unknown>>)
+        .__HAPPIER_PACKED_VOICE_FIXTURE_EVENTS__ as unknown[];
+      const registration = getExternalVoiceProviderRegistration(
+        'acme.packed-voice/conversation-mediated',
+      );
+      if (!registration?.adapter || !registration.settingsOperations?.listCatalog || !registration.settingsActions) {
+        throw new Error('packed_voice_generic_registration_required');
+      }
+      expect(resolvePluginUiClientActionRegistration({
+        action: packedAction,
+        projectionGeneration: 12,
+        platform: 'web',
+      })).not.toBeNull();
+
+      await expect(registration.settingsOperations.listCatalog({
+        catalog: 'voices',
+        providerConfig: packedProviderSettings.defaultConfig,
+        signal: new AbortController().signal,
+      })).resolves.toEqual([{
+        id: 'packed-voice-primary',
+        name: 'Fixture Voice',
+        metadata: { language: 'en' },
+      }]);
+      await expect(registration.settingsActions.execute({
+        actionId: 'provision-voice',
+        settings: packedProviderSettings.defaultConfig,
+        signal: new AbortController().signal,
+      })).resolves.toEqual({ patch: { profile: 'expressive' } });
+
+      await registration.adapter.start({ sessionId: 'control-session-1' });
+      await vi.waitFor(() => {
+        expect(fixtureEvents).toContainEqual(expect.objectContaining({
+          kind: 'current_ui_context_invoked',
+          result: expect.objectContaining({ ok: true }),
+        }));
+      });
+      expect(transcriptEvents).toEqual([expect.objectContaining({ text: 'packed provider transcript' })]);
+      expect(lifecycleEvents).toContain('connected');
+      expect(createInvocationAccountOperations).toHaveBeenCalled();
+      expect(accountOperationRequest.mock.calls.map(([request]) => request)).toEqual([
+        expect.objectContaining({ operationId: 'list-voices', parameters: {} }),
+        expect.objectContaining({
+          operationId: 'provision-voice',
+          parameters: { voiceId: 'packed-voice-primary', body: { profile: 'balanced' } },
+        }),
+        expect.objectContaining({
+          operationId: 'client-auth',
+          parameters: { body: { audience: 'realtime', voiceId: 'packed-voice-primary' } },
+        }),
+      ]);
+      expect(hostCreateSdkHandleConnection).toHaveBeenCalledTimes(1);
+      expect(getRealtimeClientToolDefinitions).toHaveBeenCalledWith({
+        effectCalls: 'stable_ids',
+        exposure: 'current_ui_only',
+      });
+      expect(fixtureEvents).toContainEqual({
+        kind: 'current_ui_context_read',
+        entityLabel: 'Packed Voice current context',
+        commandCount: 1,
+      });
+      expect(fixtureEvents).toContainEqual(expect.objectContaining({
+        kind: 'packed_current_context_action',
+        entityLabel: 'Packed Voice current context',
+      }));
+      expect(fixtureEvents).toContainEqual({
+        kind: 'catalog',
+        selectedVoiceId: 'packed-voice-primary',
+      });
+      expect(fixtureEvents).toContainEqual({
+        kind: 'provisioned',
+        selectedVoiceId: 'packed-voice-primary',
+        profile: 'balanced',
+      });
+      expect(fixtureEvents).toContainEqual(expect.objectContaining({
+        kind: 'client_auth',
+        artifact: expect.objectContaining({
+          kind: 'bearer_token',
+          placement: 'authorization_header',
+        }),
+      }));
+      expect(JSON.stringify(fixtureEvents)).not.toContain('short-lived-packed-artifact');
+      expect(JSON.stringify(fixtureEvents)).not.toContain('malicious.example.invalid');
+      expect(JSON.stringify(fixtureEvents)).not.toContain('private session summary');
+      expect(JSON.stringify(fixtureEvents)).not.toContain('/Users/alice');
+
+      const retiredCommandId = currentContext.command.id;
+      currentContext.retirement.abort();
+      currentContext = createCurrentContext(
+        'current-ui-command:packed-b',
+        'Packed Voice replacement context',
+      );
+      for (const listener of currentContextListeners) listener();
+      await expect(currentUiContext.invokeCurrentUiCommand?.({ commandId: retiredCommandId }))
+        .resolves.toEqual({ ok: false, code: 'unavailable' });
+      await expect(currentUiContext.invokeCurrentUiCommand?.({
+        commandId: currentContext.command.id,
+      })).resolves.toEqual({ ok: true, result: { opened: true } });
+      expect(fixtureEvents).toContainEqual(expect.objectContaining({
+        kind: 'packed_current_context_action',
+        entityLabel: 'Packed Voice replacement context',
+      }));
+
+      await registration.adapter.interrupt({ sessionId: 'control-session-1' });
+      expect(JSON.stringify(fixtureEvents)).toContain('fixture_cancel');
+      await registration.adapter.stop({ sessionId: 'control-session-1' });
+      expect(JSON.stringify(fixtureEvents)).toContain('user_stop');
+      expect(lifecycleEvents).toContain('disconnected');
+
+      await composition.reconcile([]);
+      expect(getExternalVoiceProviderRegistration(
+        'acme.packed-voice/conversation-mediated',
+      )).toBeNull();
+      expect(resolvePluginUiClientActionRegistration({
+        action: packedAction,
+        projectionGeneration: 12,
+        platform: 'web',
+      })).toBeNull();
+      await expect(currentUiContext.invokeCurrentUiCommand?.({
+        commandId: currentContext.command.id,
+      })).resolves.toEqual({ ok: false, code: 'unavailable' });
+      expect(JSON.stringify(fixtureEvents)).toContain('runtime_disposed');
+    } finally {
+      await composition.unload();
+      toolCatalogLease.revoke();
+    }
   });
 
   it('fails closed when a provider leaf returns a malformed connection', async () => {

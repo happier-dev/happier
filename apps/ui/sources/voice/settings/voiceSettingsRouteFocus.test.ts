@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  VOICE_SETTINGS_EXECUTION_MACHINE_FOCUS_TARGET,
   VOICE_SETTINGS_PRIVACY_FOCUS_TARGET,
   VOICE_SETTINGS_PROVIDER_FOCUS_TARGET,
   resolveVoiceSettingsRecoveryFocus,
@@ -19,6 +20,10 @@ describe('voice settings route focus', () => {
     expect(VOICE_SETTINGS_PROVIDER_FOCUS_TARGET).not.toEqual(
       VOICE_SETTINGS_PRIVACY_FOCUS_TARGET,
     );
+    expect(VOICE_SETTINGS_EXECUTION_MACHINE_FOCUS_TARGET).toMatchObject({
+      pathname: '/settings/voice/conversations',
+      params: { focus: 'execution_machine' },
+    });
   });
 
   it('accepts canonical Voice section focus and fails closed for other values', () => {

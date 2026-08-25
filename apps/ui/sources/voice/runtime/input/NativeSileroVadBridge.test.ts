@@ -54,7 +54,7 @@ describe('resolveNativeSileroVadBridge frame-fed VAD', () => {
                 mode: 'conversation',
                 input: true,
                 output: true,
-                aec: 'preferred',
+                aec: 'required',
             },
         }));
 

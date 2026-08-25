@@ -3,6 +3,7 @@ import {
   listSessionListLookupServerSessions,
 } from '@/sync/domains/session/listing/sessionListLookupState';
 import type { SessionMetadataLike } from '@/sync/domains/session/listing/sessionListLookupState';
+import { isUserFacingSession } from '@/sync/domains/session/listing/isUserFacingSession';
 
 import { normalizeNonEmptyString } from './shared';
 import {
@@ -138,6 +139,26 @@ function toVoiceSessionRowDraft(
   };
 }
 
+function isUserFacingVoiceSession(
+  state: unknown,
+  session: unknown,
+  sessionId: string,
+): boolean {
+  const record = session && typeof session === 'object' ? session as Record<string, unknown> : null;
+  const metadataLayoutVersion = typeof record?.metadataLayoutVersion === 'number'
+    ? record.metadataLayoutVersion
+    : undefined;
+  const ownerMetadata = readVoiceSessionOwnerMetadataFromState(state, sessionId);
+  return isUserFacingSession({
+    metadata: metadataLayoutVersion === 1 ? record?.metadata : ownerMetadata,
+    ownerMetadataView: metadataLayoutVersion === 1 ? ownerMetadata : undefined,
+    metadataLayoutVersion,
+    accessLevel: record?.accessLevel,
+    metadataUnavailable: record?.metadataUnavailable === true
+      || (metadataLayoutVersion === 1 && ownerMetadata === null),
+  });
+}
+
 export function collectVoiceSessionRows(state: unknown): readonly VoiceSessionRow[] {
   const stateRecord = state && typeof state === 'object' ? (state as Record<string, unknown>) : null;
   const sessions = stateRecord?.sessions && typeof stateRecord.sessions === 'object'
@@ -147,7 +168,7 @@ export function collectVoiceSessionRows(state: unknown): readonly VoiceSessionRo
 
   const pushRow = (session: unknown, sourcePriority: number, options?: Readonly<{ serverId?: string | null; serverName?: string | null }>) => {
     const next = toVoiceSessionRowDraft(state, session, sourcePriority, options);
-    if (!next) return;
+    if (!next || !isUserFacingVoiceSession(state, session, next.id)) return;
     rows.set(next.id, mergeVoiceSessionRow(rows.get(next.id), next));
   };
 

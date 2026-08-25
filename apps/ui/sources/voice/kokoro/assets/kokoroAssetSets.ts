@@ -5,6 +5,7 @@ import {
   listModelPackCatalogEntries,
   resolveCanonicalModelPackId,
 } from '@happier-dev/protocol';
+import { t } from '@/text';
 import { z } from 'zod';
 
 const EXPO_PUBLIC_KOKORO_ASSET_SETS_ENV_VAR = 'EXPO_PUBLIC_KOKORO_ASSET_SETS';
@@ -23,14 +24,19 @@ const KokoroAssetSetOptionSchema = z.object({
 
 // Display copy is host-local; resolvable ids, including the published q8
 // `-wasm` pack identity, are sourced from the protocol model-pack catalog.
-const BUILT_IN_ASSET_SET_COPY: Readonly<Record<string, Pick<KokoroAssetSetOption, 'title' | 'subtitle'>>> = {
+const BUILT_IN_ASSET_SET_COPY: Readonly<Record<string, Readonly<{
+  title: string;
+  subtitleKey:
+    | 'settingsVoice.local.models.nativeOptions.kokoroDefaultSubtitle'
+    | 'settingsVoice.local.models.nativeOptions.kokoroHigherQualitySubtitle';
+}>>> = {
   [KOKORO_DEFAULT_TTS_PACK_ID]: {
     title: 'Kokoro 82M',
-    subtitle: 'Default local neural voice model.',
+    subtitleKey: 'settingsVoice.local.models.nativeOptions.kokoroDefaultSubtitle',
   },
   'kokoro-en-v0_19': {
     title: 'Kokoro v0.19',
-    subtitle: 'Higher-quality local Kokoro voice model.',
+    subtitleKey: 'settingsVoice.local.models.nativeOptions.kokoroHigherQualitySubtitle',
   },
 };
 
@@ -46,11 +52,14 @@ function getBuiltInAssetSets(): KokoroAssetSetOption[] {
   return listModelPackCatalogEntries('tts_sherpa')
     .filter(isPublishedModelPackCatalogEntry)
     .filter((entry) => entry.model.toLowerCase().includes('kokoro') || entry.packId.toLowerCase().includes('kokoro'))
-    .map((entry) => ({
-      id: entry.packId,
-      title: BUILT_IN_ASSET_SET_COPY[entry.packId]?.title ?? deriveDisplayTitle(entry.model || entry.packId),
-      subtitle: BUILT_IN_ASSET_SET_COPY[entry.packId]?.subtitle,
-    }));
+    .map((entry) => {
+      const copy = BUILT_IN_ASSET_SET_COPY[entry.packId];
+      return {
+        id: entry.packId,
+        title: copy?.title ?? deriveDisplayTitle(entry.model || entry.packId),
+        subtitle: copy ? t(copy.subtitleKey) : undefined,
+      };
+    });
 }
 
 function readAssetSetsFromEnv(env: Record<string, string | undefined>): KokoroAssetSetOption[] | null {
@@ -88,8 +97,8 @@ export function getKokoroAssetSetOptions(env: Record<string, string | undefined>
   return [
     {
       id: '',
-      title: 'Default (from env)',
-      subtitle: 'Uses environment-configured Kokoro model-pack defaults.',
+      title: t('settingsVoice.local.models.nativeOptions.kokoroEnvironmentDefaultTitle'),
+      subtitle: t('settingsVoice.local.models.nativeOptions.kokoroEnvironmentDefaultSubtitle'),
     },
     ...concrete,
   ];

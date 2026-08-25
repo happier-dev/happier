@@ -13,7 +13,6 @@ export type LocalSttProviderSettingsProps = {
   setVoice: (next: VoiceSettings) => void;
   popoverBoundaryRef?: React.RefObject<any> | null;
   daemonRouteDiagnosticReason?: VoiceDaemonRouteDiagnosticReason | null;
-  showProcessingDisclosure?: boolean;
 };
 export type LocalSttProviderSpec = {
   id: LocalSttProviderId;

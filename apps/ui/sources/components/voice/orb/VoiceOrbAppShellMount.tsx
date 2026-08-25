@@ -125,18 +125,29 @@ function VoiceOrbAppShellRuntime(): React.ReactElement | null {
      */
     const openConversationSessionId = control.openConversationSessionId;
     const onOpenConversation = control.onOpenConversation;
-    const extraControls = React.useMemo<readonly VoiceControlAction[]>(() => (
-        openConversationSessionId
-            ? [{
+    const onRecover = control.onRecover;
+    const extraControls = React.useMemo<readonly VoiceControlAction[]>(() => {
+        const controls: VoiceControlAction[] = [];
+        if (control.primaryAction === 'end' && control.recoveryAvailable) {
+            controls.push({
+                id: 'retry',
+                label: control.recoveryLabel ?? t('common.retry'),
+                weight: 'secondary',
+            });
+        }
+        if (openConversationSessionId) {
+            controls.push({
                 id: 'openConversation',
                 label: t('voiceSurface.a11y.openConversation'),
                 weight: 'secondary',
-            }]
-            : NO_EXTRA_CONTROLS
-    ), [openConversationSessionId]);
+            });
+        }
+        return controls.length > 0 ? controls : NO_EXTRA_CONTROLS;
+    }, [control.primaryAction, control.recoveryAvailable, control.recoveryLabel, openConversationSessionId]);
     const handleAction = React.useCallback((id: VoiceControlId) => {
-        if (id === 'openConversation') onOpenConversation();
-    }, [onOpenConversation]);
+        if (id === 'retry') onRecover();
+        else if (id === 'openConversation') onOpenConversation();
+    }, [onOpenConversation, onRecover]);
 
     // Terminally unavailable: do not render a transport that cannot do anything.
     if (control.availability === 'unavailable') return null;

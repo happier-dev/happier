@@ -310,7 +310,7 @@ describe('modelPacks installer (native) atomicity', () => {
     );
     expect(leftovers).toEqual([]);
   });
-  it('invalidates pack runtime state while the superseded bytes are still live, for both promotion and removal', async () => {
+  it('retires pack runtime state on both sides of live-directory mutations', async () => {
     const { fs, files } = createMemFs();
     const packId = 'runtime-invalidation';
     const liveRoot = `file:///docs/happier/voice/modelPacks/${packId}`;
@@ -364,8 +364,12 @@ describe('modelPacks installer (native) atomicity', () => {
       signal: new AbortController().signal,
     }, overrides);
     expect(sha256Hex(files.get(`${liveRoot}/model.onnx`)!)).toBe(sha256Hex(v1));
-    // Nothing was installed here before, so the pack dir held no bytes to supersede.
-    expect(observed).toEqual([{ packDirUri: liveRoot, liveBytes: null }]);
+    // First install has no predecessor, but its final retirement still closes a
+    // creator that began between the pre-mutation release and promotion.
+    expect(observed).toEqual([
+      { packDirUri: liveRoot, liveBytes: null },
+      { packDirUri: liveRoot, liveBytes: sha256Hex(v1) },
+    ]);
 
     servedManifest = manifestFor('v2', v2);
     servedBytes = v2;
@@ -379,13 +383,26 @@ describe('modelPacks installer (native) atomicity', () => {
     }, overrides);
 
     expect(sha256Hex(files.get(`${liveRoot}/model.onnx`)!)).toBe(sha256Hex(v2));
-    // The promotion invalidated while v1 was still the live pack.
-    expect(observed.at(-1)).toEqual({ packDirUri: liveRoot, liveBytes: sha256Hex(v1) });
+    expect(observed).toEqual([
+      { packDirUri: liveRoot, liveBytes: null },
+      { packDirUri: liveRoot, liveBytes: sha256Hex(v1) },
+      // The first update retirement sees the predecessor, and the final one
+      // sees the promoted successor before install reports completion.
+      { packDirUri: liveRoot, liveBytes: sha256Hex(v1) },
+      { packDirUri: liveRoot, liveBytes: sha256Hex(v2) },
+    ]);
 
     await removeModelPack({ packId }, overrides);
 
     expect(files.has(`${liveRoot}/model.onnx`)).toBe(false);
-    expect(observed.at(-1)).toEqual({ packDirUri: liveRoot, liveBytes: sha256Hex(v2) });
+    expect(observed).toEqual([
+      { packDirUri: liveRoot, liveBytes: null },
+      { packDirUri: liveRoot, liveBytes: sha256Hex(v1) },
+      { packDirUri: liveRoot, liveBytes: sha256Hex(v1) },
+      { packDirUri: liveRoot, liveBytes: sha256Hex(v2) },
+      { packDirUri: liveRoot, liveBytes: sha256Hex(v2) },
+      { packDirUri: liveRoot, liveBytes: null },
+    ]);
   });
 
   it('invalidates pack runtime state before a recovered promotion rolls the live directory back', async () => {
@@ -418,9 +435,99 @@ describe('modelPacks installer (native) atomicity', () => {
 
     await getModelPackInstallSummary({ packId }, { fs, invalidatePackRuntime });
 
-    // Recovery restored the prior pack at the same path, so the runtime derived
-    // from the promoted bytes had to be dropped while those bytes were live.
+    // Recovery restores the prior pack at the same path. Retire both the
+    // promoted predecessor and any creator that started before the restore
+    // completed.
     expect(sha256Hex(files.get(`${liveRoot}/model.onnx`)!)).toBe(sha256Hex(prior));
-    expect(observed).toEqual([sha256Hex(promoted)]);
+    expect(observed).toEqual([sha256Hex(promoted), sha256Hex(prior)]);
+  });
+
+  it('retires creators admitted after pre-mutation invalidation before an update or remove completes', async () => {
+    const { fs, files, root } = createMemFs();
+    const packId = 'runtime-creator-race';
+    const liveRoot = `${root}/${packId}`;
+    const v1 = new Uint8Array([1, 2, 3]);
+    const v2 = new Uint8Array([4, 5, 6]);
+    const manifestFor = (version: string, bytes: Uint8Array) => ({
+      packId,
+      kind: 'tts_sherpa',
+      model: 'kokoro',
+      version,
+      files: [{ path: 'model.onnx', url: `https://example.com/${version}.onnx`, sha256: sha256Hex(bytes), sizeBytes: bytes.length }],
+    });
+
+    files.set(`${liveRoot}/model.onnx`, v1);
+    files.set(`${liveRoot}/pack.json`, new TextEncoder().encode(JSON.stringify({ manifest: manifestFor('v1', v1) })));
+
+    // Boundary model for the native cache: it clears on release, but a creator
+    // can finish loading the stable path after the first release and before the
+    // filesystem mutation. The installer must retire it again before reporting
+    // either mutation complete.
+    let liveCreator: { source: 'update' | 'remove'; bytes: string } | null = null;
+    const invalidationCountsAtCreator: number[] = [];
+    let invalidationCount = 0;
+    const invalidatePackRuntime = async () => {
+      invalidationCount += 1;
+      liveCreator = null;
+    };
+
+    const OriginalDirectory = fs.Directory;
+    class CreatorRaceDirectory extends (OriginalDirectory as any) {
+      move(destination: { uri: string }) {
+        if (this.uri === liveRoot && destination.uri === `${root}/.${packId}.backup`) {
+          invalidationCountsAtCreator.push(invalidationCount);
+          liveCreator = { source: 'update', bytes: sha256Hex(v1) };
+        }
+        return super.move(destination);
+      }
+
+      delete(options?: { idempotent?: boolean }) {
+        if (this.uri === liveRoot) {
+          invalidationCountsAtCreator.push(invalidationCount);
+          liveCreator = { source: 'remove', bytes: sha256Hex(v2) };
+        }
+        return super.delete(options);
+      }
+    }
+    (fs as any).Directory = CreatorRaceDirectory;
+
+    const fetchImpl = async (url: string) => {
+      if (url.includes('manifest.json')) {
+        return { ok: true, status: 200, json: async () => manifestFor('v2', v2) } as any;
+      }
+      let done = false;
+      return {
+        ok: true,
+        status: 200,
+        headers: { get: () => String(v2.length) },
+        body: {
+          getReader: () => ({
+            read: async () => {
+              if (done) return { done: true, value: undefined };
+              done = true;
+              return { done: false, value: v2 };
+            },
+          }),
+        },
+      } as any;
+    };
+    const overrides = { fs, fetch: fetchImpl as any, invalidatePackRuntime };
+
+    await ensureModelPackInstalled({
+      packId,
+      mode: 'download_if_missing',
+      updatePolicy: 'manual_update_if_available',
+      manifestUrl: 'https://example.com/manifest.json',
+      timeoutMs: 5000,
+      signal: new AbortController().signal,
+    }, overrides);
+
+    expect(liveCreator).toBeNull();
+
+    await removeModelPack({ packId }, overrides);
+
+    expect(liveCreator).toBeNull();
+    expect(invalidationCountsAtCreator).toEqual([1, 3]);
+    expect(invalidationCount).toBe(4);
   });
 });

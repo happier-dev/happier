@@ -15,6 +15,11 @@ export const VOICE_SETTINGS_PROVIDER_FOCUS_TARGET = {
   params: { focus: 'provider' },
 } as const satisfies Href;
 
+export const VOICE_SETTINGS_EXECUTION_MACHINE_FOCUS_TARGET = {
+  pathname: SETTINGS_ROUTES.voiceConversations,
+  params: { focus: 'execution_machine' },
+} as const satisfies Href;
+
 export type VoiceSettingsRouteFocus = 'privacy' | 'provider' | 'execution_machine' | 'local';
 
 export function resolveVoiceSettingsRecoveryFocus(

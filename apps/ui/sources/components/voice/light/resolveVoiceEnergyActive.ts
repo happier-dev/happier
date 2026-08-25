@@ -1,15 +1,15 @@
 /**
  * Everything the energy clock's activation depends on.
  *
- * All eight are already observable somewhere else — the host's visibility, the
+ * All eight are already observable somewhere else — the host's motion presence, the
  * provider resolver, the reduced-motion preference, the mounted surfaces and the
  * level store. Nothing here is persisted, and no Voice lifecycle state is added:
  * this is a predicate over facts that exist, which is why it can be a pure
  * function instead of a store.
  */
 export type VoiceEnergyActivationInputs = Readonly<{
-    /** The app is genuinely being viewed (`useHostActivelyViewed`). */
-    runtimeVisible: boolean;
+    /** The host permits motion (focused desktop / active native runtime). */
+    runtimeMotionActive: boolean;
     /** A Voice provider is resolved — not `off`. */
     providerReady: boolean;
     /** Reduced motion is off and no frozen preview is pinned. */
@@ -38,7 +38,7 @@ export type VoiceEnergyActivationInputs = Readonly<{
  * accessibility floor rather than an efficiency measure.
  */
 export function resolveVoiceEnergyActive(inputs: VoiceEnergyActivationInputs): boolean {
-    return inputs.runtimeVisible
+    return inputs.runtimeMotionActive
         && inputs.providerReady
         && inputs.motionAllowed
         && inputs.hasVisibleConsumer

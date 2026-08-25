@@ -47,6 +47,7 @@ function areVoiceConversationRuntimeSnapshotsEqual(
         && a.controlSessionId === b.controlSessionId
         && a.state === b.state
         && a.reconnecting === b.reconnecting
+        && a.reconnectRetryAvailable === b.reconnectRetryAvailable
         && a.micMuted === b.micMuted
         && areVoiceMachineErrorsEqual(a.error, b.error)
     );

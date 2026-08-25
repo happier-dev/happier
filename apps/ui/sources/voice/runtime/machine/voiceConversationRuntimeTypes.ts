@@ -9,6 +9,7 @@ export type VoiceMachineErrorKind =
     | 'provider_error'
     | 'provider_auth_invalid'
     | 'provider_setup_required'
+    | 'execution_machine_unavailable'
     | 'reconnect_exhausted'
     | 'audio_context_suspended'
     | 'stt_timeout'
@@ -29,6 +30,7 @@ export type VoiceMachineRecoveryAction =
     | 'open_settings'
     | 'open_settings_then_reconnect'
     | 'review_credentials'
+    | 'select_execution_machine'
     | 'connect_agent'
     | 'install_agent_runtime'
     | 'update_agent_runtime'
@@ -81,6 +83,8 @@ export type VoiceConversationRuntimeSnapshot = Readonly<{
     state: VoiceConversationRuntimeState;
     /** True only while the owning realtime controller is replacing its connection. */
     reconnecting: boolean;
+    /** True only while that controller has a scheduled reconnect slot to advance. */
+    reconnectRetryAvailable?: boolean;
     micMuted: boolean;
     error: VoiceMachineError | null;
 }>;

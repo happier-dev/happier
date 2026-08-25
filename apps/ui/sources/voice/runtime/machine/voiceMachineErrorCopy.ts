@@ -8,6 +8,7 @@ export const VOICE_MACHINE_ERROR_TRANSLATION_KEYS = {
     provider_error: 'settingsVoice.local.machineErrors.provider_error',
     provider_auth_invalid: 'settingsVoice.local.machineErrors.provider_auth_invalid',
     provider_setup_required: 'voice.readiness.settings_missing_required_setting',
+    execution_machine_unavailable: 'voice.readiness.execution_machine_missing',
     audio_context_suspended: 'settingsVoice.local.machineErrors.audio_context_suspended',
     stt_timeout: 'settingsVoice.local.machineErrors.stt_timeout',
     tts_failed: 'settingsVoice.local.machineErrors.tts_failed',

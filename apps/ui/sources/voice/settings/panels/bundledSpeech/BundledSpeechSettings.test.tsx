@@ -10,7 +10,10 @@ import {
 import { createDeferred, renderScreen } from '@/dev/testkit';
 import { VoiceLocalTtsSchema } from '@/sync/domains/settings/voiceLocalTtsSettings';
 import {
+  readLocalConversationVoiceSettings,
+  readVoiceProviderSettingsConfig,
   voiceSettingsDefaults,
+  writeLocalConversationVoiceSettings,
   type VoiceSettings,
 } from '@/sync/domains/settings/voiceSettings';
 import { installLocalSttProviderCommonModuleMocks } from '../localStt/providers/localSttProviderTestHelpers';
@@ -19,6 +22,7 @@ import { createVoiceProviderRegistry } from '@/voice/registry/providerRegistry';
 import {
   commitExternalVoiceProviderRegistration,
   removeExternalVoiceProviderRegistration,
+  type ExternalVoiceProviderRegistration,
 } from '@/voice/registry/externalVoiceProviderRegistrations';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -26,7 +30,13 @@ import {
 const prompt = vi.hoisted(() => vi.fn());
 const alert = vi.hoisted(() => vi.fn());
 const synthesize = vi.hoisted(() => vi.fn());
+const executeSettingsAction = vi.hoisted(() => vi.fn());
 const playAudioBytesWithStopper = vi.hoisted(() => vi.fn());
+const settingsActionState = vi.hoisted(() => ({
+  voice: null as unknown,
+  settingsVersion: 4,
+  mutationApplied: false,
+}));
 
 installLocalSttProviderCommonModuleMocks({
   modal: async () => {
@@ -58,10 +68,29 @@ function voiceWithRootProviderConfig(
   };
 }
 
+function localConversationVoiceWithSttProvider(
+  providerId: string,
+  config: VoiceProviderSettingsJsonValueV1,
+): VoiceSettings {
+  const withSpeechConfig = voiceWithRootProviderConfig(providerId, config);
+  const localConversation = readLocalConversationVoiceSettings(withSpeechConfig);
+  return writeLocalConversationVoiceSettings({
+    ...withSpeechConfig,
+    providerId: 'local_conversation',
+  }, {
+    ...localConversation,
+    stt: {
+      ...localConversation.stt,
+      provider: providerId,
+    },
+  });
+}
+
 function registerExternalSettingsOwner(
   pluginId: string,
   localId: string,
   descriptor: ReturnType<ReturnType<typeof createVoiceProviderRegistry>['get']>,
+  settingsActions?: ExternalVoiceProviderRegistration['settingsActions'],
 ): void {
   if (!descriptor) throw new Error('expected external Voice descriptor');
   const token = {};
@@ -72,6 +101,7 @@ function registerExternalSettingsOwner(
     providerId: `${pluginId}/${localId}`,
     descriptor,
     adapter: null,
+    ...(settingsActions ? { settingsActions } : {}),
   });
   onTestFinished(() => removeExternalVoiceProviderRegistration(token));
 }
@@ -224,7 +254,40 @@ vi.mock('@/voice/credentials/bundledSpeechClient', () => ({
   bundledSpeechDaemonClient: {
     fetchCatalog,
     synthesize,
+    executeSettingsAction,
   },
+}));
+
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+  const {
+    createLiveStorageStoreMock,
+    createPartialStorageModuleMock,
+  } = await import('@/dev/testkit/mocks/storage');
+  return await createPartialStorageModuleMock(importOriginal, {
+    storage: createLiveStorageStoreMock(() => ({
+      settings: { voice: settingsActionState.voice } as never,
+      settingsScope: null,
+    })),
+  });
+});
+
+vi.mock('@/sync/runtime/getSyncSingleton', () => ({
+  getSyncSingleton: () => ({
+    prepareAccountSettingsForDaemonSpawn: async () => ({
+      accountSettingsVersionHint: settingsActionState.settingsVersion,
+    }),
+    mutateAccountSettingsOnce: async (input: Readonly<{
+      mutate: (settings: Readonly<{ voiceSettingsV1: unknown }>) => Readonly<{
+        settings: Readonly<{ voiceSettingsV1: unknown }>;
+        value: undefined;
+      }>;
+    }>) => {
+      const result = input.mutate({ voiceSettingsV1: settingsActionState.voice });
+      settingsActionState.voice = result.settings.voiceSettingsV1;
+      settingsActionState.mutationApplied = true;
+      return { status: 'applied' as const, settingsVersion: settingsActionState.settingsVersion + 1, value: result.value };
+    },
+  }),
 }));
 
 vi.mock('@/voice/output/playAudioBytesWithStopper', () => ({
@@ -304,6 +367,10 @@ describe('BundledSpeechSettings', () => {
     alert.mockReset();
     synthesize.mockReset();
     synthesize.mockResolvedValue({ bytes: new Uint8Array([1, 2, 3]), mimeType: 'audio/mpeg' });
+    executeSettingsAction.mockReset();
+    settingsActionState.voice = voiceSettingsDefaults;
+    settingsActionState.settingsVersion = 4;
+    settingsActionState.mutationApplied = false;
     playAudioBytesWithStopper.mockReset();
     playAudioBytesWithStopper.mockResolvedValue(undefined);
   });
@@ -332,9 +399,6 @@ describe('BundledSpeechSettings', () => {
     const model = rendered.tree.root.findAllByType('DropdownMenu' as never)
       .find((row) => row.props.searchPlaceholder === 'settingsVoice.local.googleGeminiStt.model.searchPlaceholder');
     expect(model).toBeTruthy();
-    expect(rendered.tree.root.findByProps({
-      testID: `voice-speech-provider-data:${GOOGLE_GEMINI_STT_ID}`,
-    }).props.subtitle).toBe('settingsVoice.realtimeProviders.google.privacyDisclosure');
     await act(async () => model!.props.onSelect('gemini-test'));
     expect(setVoice).toHaveBeenCalledWith(expect.objectContaining({
       providers: {
@@ -345,6 +409,100 @@ describe('BundledSpeechSettings', () => {
         },
       },
     }));
+  });
+
+  it('invokes a declared speech settings action from the real bundled STT panel and persists its patch', async () => {
+    const providerId = 'acme.external/action-stt';
+    const declaration = parseSpeechDeclaration({
+      id: 'action-stt',
+      title: 'Action Speech-to-Text',
+      kind: 'speech',
+      roles: ['conversation_stt'],
+      platforms: ['web'],
+      settings: {
+        schemaVersion: 2,
+        fields: [{
+          id: 'model',
+          title: 'Model',
+          schema: { type: 'string', minLength: 1, maxLength: 256 },
+          default: 'speech-1',
+          presentation: { control: 'text' },
+        }],
+        actions: [{
+          id: 'refresh-model',
+          title: 'Refresh model',
+          placement: { kind: 'contributionFooter' },
+          confirmation: { kind: 'none' },
+          patchFieldIds: ['model'],
+        }],
+      },
+    });
+    const entry = createVoiceProviderRegistry({
+      bundledContributions: [{
+        pluginId: 'acme.external',
+        providerId,
+        declaration,
+      }],
+      bundledPresentations: [{
+        providerId,
+        settingsSectionId: providerId,
+        createSettingsSpec: () => ({
+          titleKey: 'Action Speech-to-Text',
+          subtitleKey: 'Action Speech-to-Text',
+          detailKey: 'Action Speech-to-Text',
+          iconName: 'extension',
+          fields: [{
+            fieldId: 'model',
+            titleKey: 'Model',
+            subtitleKey: 'Model',
+          }],
+          test: null,
+        }),
+      }],
+    }).get(providerId)!;
+    registerExternalSettingsOwner('acme.external', 'action-stt', entry, {
+      execute: async ({ actionId, signal }) => await executeSettingsAction({
+        entry,
+        actionId,
+        signal,
+      }),
+    });
+    const { createBundledLocalSttProviderSpec } = await import('./BundledSpeechSettings');
+    const spec = createBundledLocalSttProviderSpec(entry);
+    if (!spec) throw new Error('speech settings spec is required');
+    const voice = localConversationVoiceWithSttProvider(providerId, { model: 'speech-1' });
+    settingsActionState.voice = voice;
+    executeSettingsAction.mockResolvedValueOnce({ patch: { model: 'speech-2' } });
+    const rendered = await renderScreen(React.createElement(spec.Settings, {
+      cfgStt: {
+        provider: providerId,
+        providers: {
+          [providerId]: {
+            schemaVersion: 2,
+            config: { model: 'speech-1' },
+          },
+        },
+      },
+      setStt: vi.fn(),
+      voice,
+      setVoice: vi.fn(),
+      popoverBoundaryRef: null,
+    }));
+    const action = rendered.tree.root.findByProps({
+      testID: 'voice-settings-action-refresh-model',
+    });
+
+    await act(async () => {
+      action.props.onPress();
+      await vi.waitFor(() => expect(executeSettingsAction).toHaveBeenCalledWith({
+        entry,
+        actionId: 'refresh-model',
+        signal: expect.any(AbortSignal),
+      }));
+    });
+    await vi.waitFor(() => expect(settingsActionState.mutationApplied).toBe(true));
+    expect(readVoiceProviderSettingsConfig(settingsActionState.voice as VoiceSettings, providerId))
+      .toEqual({ model: 'speech-2' });
   });
 
   it.each([
@@ -847,28 +1005,6 @@ describe('BundledSpeechSettings', () => {
 
     expect(alert).toHaveBeenCalledWith('common.error', 'settingsVoice.local.testTtsMissingBaseUrl');
     expect(synthesize).not.toHaveBeenCalled();
-  });
-
-  it('suppresses the capability-panel disclosure when Privacy & data owns the selected projection', async () => {
-    const { createBundledLocalSttProviderSpec } = await import('./BundledSpeechSettings');
-    const spec = createBundledLocalSttProviderSpec(createDefaultVoiceProviderRegistry().get(GOOGLE_GEMINI_STT_ID)!);
-    const voiceSettings = voiceWithRootProviderConfig(
-      GOOGLE_GEMINI_STT_ID,
-      { model: 'gemini-2.5-flash', language: '' },
-    );
-    const rendered = await renderScreen(React.createElement(spec!.Settings, {
-      cfgStt: {
-        provider: GOOGLE_GEMINI_STT_ID,
-        providers: { [GOOGLE_GEMINI_STT_ID]: { schemaVersion: 2, config: { model: 'gemini-2.5-flash', language: null } } },
-      },
-      setStt: vi.fn(),
-      voice: voiceSettings,
-      setVoice: vi.fn(),
-      popoverBoundaryRef: null,
-      showProcessingDisclosure: false,
-    }));
-
-    expect(rendered.findByTestId(`voice-speech-provider-data:${GOOGLE_GEMINI_STT_ID}`)).toBeNull();
   });
 
   it('marks selected-machine Google STT credentials for plain-account disclosure', async () => {

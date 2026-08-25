@@ -3,8 +3,11 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import {
     getStorage,
+    fileDelete,
     loadLocalVoiceEngineWithCompatState,
     machineRpcWithServerScope,
+    emitSpeechRecEvent,
+    speechRecStop,
     registerLocalVoiceEngineHarnessHooks,
     setRecorderUri,
     setNextRecorderPrepareError,
@@ -66,6 +69,69 @@ describe('local voice engine recording lifecycle', () => {
 
         expect(getLocalVoiceState().status).toBe('idle');
         expect(getLocalVoiceState().error).toBe('stt_failed');
+        expect(fileDelete).toHaveBeenCalledOnce();
+    });
+
+    it('surfaces a failed recorded-audio cleanup instead of silently treating the attempt as clean', async () => {
+        fileDelete.mockRejectedValueOnce(new Error('recording_delete_failed'));
+        (globalThis.fetch as any).mockResolvedValueOnce({
+            ok: true,
+            json: async () => ({ text: '' }),
+        });
+
+        const { toggleLocalVoiceTurn, getLocalVoiceState } = await loadLocalVoiceEngineWithCompatState();
+        await toggleLocalVoiceTurn('s1');
+        await expect(toggleLocalVoiceTurn('s1')).resolves.toBeUndefined();
+
+        expect(fileDelete).toHaveBeenCalledOnce();
+        expect(getLocalVoiceState()).toMatchObject({
+            status: 'idle',
+            error: 'recording_cleanup_failed',
+        });
+    });
+
+    it('keeps recorded-audio transcription on the admitted STT settings after a mid-capture setting change', async () => {
+        const storage = await getStorage();
+        const { toggleLocalVoiceTurn } = await loadLocalVoiceEngineWithCompatState();
+        await toggleLocalVoiceTurn('s1');
+
+        storage.__setState({
+            settings: {
+                ...storage.getState().settings,
+                voice: {
+                    ...storage.getState().settings.voice,
+                    providerId: 'local_direct',
+                    providers: {
+                        ...storage.getState().settings.voice.providers,
+                        local_direct: {
+                            ...storage.getState().settings.voice.providers.local_direct,
+                            config: {
+                                ...storage.getState().settings.voice.providers.local_direct.config,
+                                stt: {
+                                    ...storage.getState().settings.voice.providers.local_direct.config.stt,
+                                    provider: 'device',
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+        });
+        (globalThis.fetch as any).mockResolvedValueOnce({
+            ok: true,
+            json: async () => ({ text: '' }),
+        });
+        speechRecStop.mockImplementation(() => {
+            queueMicrotask(() => emitSpeechRecEvent('end', {}));
+        });
+
+        await expect(toggleLocalVoiceTurn('s1')).resolves.toBeUndefined();
+
+        expect(globalThis.fetch).toHaveBeenCalledWith(
+            'http://localhost:8000/v1/audio/transcriptions',
+            expect.objectContaining({ method: 'POST' }),
+        );
+        expect(fileDelete).toHaveBeenCalledOnce();
     });
 
     it('surfaces a missing finalized recording URI instead of silently completing an empty turn', async () => {

@@ -1,6 +1,7 @@
 import {
   abortLocalVoiceTurn,
   announceLocalVoiceAgentAssistantText,
+  appendLocalVoiceAgentAutomaticUiContextUpdate,
   appendLocalVoiceAgentContextUpdate,
   isLocalVoiceAgentActive,
   sendLocalVoiceAgentTextTurn,
@@ -15,6 +16,7 @@ export type LocalVoiceRuntimeController = Readonly<{
   abortTurn: (sessionId: string) => Promise<void>;
   announceAgentAssistantText: (sessionId: string, text: string) => void;
   appendAgentContextUpdate: (sessionId: string, update: string) => void;
+  appendAgentAutomaticUiContextUpdate: (sessionId: string, update: string) => void;
   isAgentActive: (sessionId: string) => boolean;
   setMuted: (sessionId: string, muted: boolean) => Promise<void>;
   sendAgentTextTurn: (params: Readonly<{
@@ -36,6 +38,7 @@ export function createLocalVoiceRuntimeController(): LocalVoiceRuntimeController
     abortTurn: async (sessionId) => await abortLocalVoiceTurn(sessionId),
     announceAgentAssistantText: (sessionId, text) => announceLocalVoiceAgentAssistantText(sessionId, text),
     appendAgentContextUpdate: (sessionId, update) => appendLocalVoiceAgentContextUpdate(sessionId, update),
+    appendAgentAutomaticUiContextUpdate: (sessionId, update) => appendLocalVoiceAgentAutomaticUiContextUpdate(sessionId, update),
     isAgentActive: (sessionId) => isLocalVoiceAgentActive(sessionId),
     setMuted: async (sessionId, muted) => await setLocalVoiceMuted(sessionId, muted),
     sendAgentTextTurn: async ({ controlSessionId, text, durableDispatch, onAccepted }) =>

@@ -387,6 +387,193 @@ describe('synthesizeKokoroWav (native)', () => {
     await expect(promise).rejects.toThrow(/aborted/i);
   });
 
+  it('cleans the initialization cancellation listener and deadline after native initialization succeeds', async () => {
+    vi.useFakeTimers();
+    try {
+      const controller = new AbortController();
+      const removeAbortListener = vi.spyOn(controller.signal, 'removeEventListener');
+      const kokoroNativeModule = {
+        initialize: vi.fn().mockResolvedValue(undefined),
+        listVoices: vi.fn().mockResolvedValue([]),
+        synthesizeToWavFile: vi.fn(),
+        cancel: vi.fn().mockResolvedValue(undefined),
+      };
+
+      await prepareKokoroTts(
+        {
+          assetSetId: 'kokoro-init-cleanup-success',
+          timeoutMs: 50,
+          signal: controller.signal,
+        },
+        {
+          kokoroNativeModule,
+          fs: { File: class {}, Paths: { cache: 'file:///tmp/', document: 'file:///docs/' } } as any,
+          ensureInstalled: async () => ({
+            packDirUri: 'file:///docs/happier/voice/modelPacks/kokoro-init-cleanup-success',
+            manifest: { packId: 'kokoro-init-cleanup-success', kind: 'tts_sherpa', model: 'kokoro', version: '1.0.0', files: [] } as any,
+          }),
+        },
+      );
+
+      expect(removeAbortListener).toHaveBeenCalledWith('abort', expect.any(Function));
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('cancels only the queued native initialization admission when abort overtakes it, leaving active same-pack work alone', async () => {
+    vi.useFakeTimers();
+    try {
+      let resolveInitialization: () => void = () => {};
+      const initialization = new Promise<void>((resolve) => {
+        resolveInitialization = resolve;
+      });
+      const cancelledAdmissions = new Set<string>();
+      const publishedAdmissions: string[] = [];
+      let activeJobCancelled = false;
+      const controller = new AbortController();
+      const removeAbortListener = vi.spyOn(controller.signal, 'removeEventListener');
+      const kokoroNativeModule = {
+        initialize: vi.fn(async ({ initializationId }: { initializationId: string }) => {
+          await initialization;
+          if (!cancelledAdmissions.has(initializationId)) publishedAdmissions.push(initializationId);
+        }),
+        listVoices: vi.fn().mockResolvedValue([]),
+        synthesizeToWavFile: vi.fn(),
+        cancel: vi.fn().mockResolvedValue(undefined),
+        cancelInitialization: vi.fn(async ({ initializationId }: { initializationId: string }) => {
+          cancelledAdmissions.add(initializationId);
+        }),
+        releaseAssetsDir: vi.fn(async () => {
+          activeJobCancelled = true;
+          return { cancelledJobs: 0, releasedEngines: 0 };
+        }),
+      };
+
+      const preparation = prepareKokoroTts(
+        {
+          assetSetId: 'kokoro-init-abort-race',
+          timeoutMs: 50,
+          signal: controller.signal,
+        },
+        {
+          kokoroNativeModule,
+          fs: { File: class {}, Paths: { cache: 'file:///tmp/', document: 'file:///docs/' } } as any,
+          ensureInstalled: async () => ({
+            packDirUri: 'file:///docs/happier/voice/modelPacks/kokoro-init-abort-race',
+            manifest: { packId: 'kokoro-init-abort-race', kind: 'tts_sherpa', model: 'kokoro', version: '1.0.0', files: [] } as any,
+          }),
+        },
+      );
+
+      await vi.advanceTimersByTimeAsync(0);
+      expect(kokoroNativeModule.initialize).toHaveBeenCalledOnce();
+
+      controller.abort();
+
+      await expect(preparation).rejects.toThrow('aborted');
+      expect(kokoroNativeModule.cancelInitialization).toHaveBeenCalledWith({
+        assetsDir: '/docs/happier/voice/modelPacks/kokoro-init-abort-race',
+        initializationId: expect.any(String),
+      });
+      expect(kokoroNativeModule.releaseAssetsDir).not.toHaveBeenCalled();
+      expect(activeJobCancelled).toBe(false);
+      expect(removeAbortListener).toHaveBeenCalledWith('abort', expect.any(Function));
+      expect(vi.getTimerCount()).toBe(0);
+
+      resolveInitialization();
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(publishedAdmissions).toEqual([]);
+
+      // A new immutable admission has not been cancelled, so it can still warm
+      // the same active pack after the stale queued initialization is refused.
+      await prepareKokoroTts(
+        {
+          assetSetId: 'kokoro-init-abort-race',
+          timeoutMs: 50,
+          signal: new AbortController().signal,
+        },
+        {
+          kokoroNativeModule,
+          fs: { File: class {}, Paths: { cache: 'file:///tmp/', document: 'file:///docs/' } } as any,
+          ensureInstalled: async () => ({
+            packDirUri: 'file:///docs/happier/voice/modelPacks/kokoro-init-abort-race',
+            manifest: { packId: 'kokoro-init-abort-race', kind: 'tts_sherpa', model: 'kokoro', version: '1.0.0', files: [] } as any,
+          }),
+        },
+      );
+      expect(publishedAdmissions).toEqual([expect.any(String)]);
+      expect(publishedAdmissions[0]).not.toBe(cancelledAdmissions.values().next().value);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('releases the initialization listener and deadline before a slow admission cancellation settles', async () => {
+    vi.useFakeTimers();
+    try {
+      let resolveInitialization: () => void = () => {};
+      const initialization = new Promise<void>((resolve) => {
+        resolveInitialization = resolve;
+      });
+      let resolveCancellation: () => void = () => {};
+      const admissionCancellation = new Promise<void>((resolve) => {
+        resolveCancellation = resolve;
+      });
+      const controller = new AbortController();
+      const removeAbortListener = vi.spyOn(controller.signal, 'removeEventListener');
+      const kokoroNativeModule = {
+        initialize: vi.fn(() => initialization),
+        listVoices: vi.fn().mockResolvedValue([]),
+        synthesizeToWavFile: vi.fn(),
+        cancel: vi.fn().mockResolvedValue(undefined),
+        cancelInitialization: vi.fn(async () => await admissionCancellation),
+        releaseAssetsDir: vi.fn(),
+      };
+
+      const preparation = prepareKokoroTts(
+        {
+          assetSetId: 'kokoro-init-slow-release',
+          timeoutMs: 50,
+          signal: controller.signal,
+        },
+        {
+          kokoroNativeModule,
+          fs: { File: class {}, Paths: { cache: 'file:///tmp/', document: 'file:///docs/' } } as any,
+          ensureInstalled: async () => ({
+            packDirUri: 'file:///docs/happier/voice/modelPacks/kokoro-init-slow-release',
+            manifest: { packId: 'kokoro-init-slow-release', kind: 'tts_sherpa', model: 'kokoro', version: '1.0.0', files: [] } as any,
+          }),
+        },
+      );
+
+      await vi.advanceTimersByTimeAsync(0);
+      controller.abort();
+
+      expect(kokoroNativeModule.cancelInitialization).toHaveBeenCalledOnce();
+      expect(kokoroNativeModule.releaseAssetsDir).not.toHaveBeenCalled();
+      expect(removeAbortListener).toHaveBeenCalledWith('abort', expect.any(Function));
+      expect(vi.getTimerCount()).toBe(0);
+
+      let settled = false;
+      void preparation.then(
+        () => { settled = true; },
+        () => { settled = true; },
+      );
+      await Promise.resolve();
+      expect(settled).toBe(false);
+
+      resolveCancellation();
+      await expect(preparation).rejects.toThrow('aborted');
+      resolveInitialization();
+      await Promise.resolve();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('cancels the exact native job on deadline and waits for its settlement before cleanup', async () => {
     vi.useFakeTimers();
     try {

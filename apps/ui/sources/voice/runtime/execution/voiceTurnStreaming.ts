@@ -15,13 +15,16 @@ import { streamVoiceAgentTurn } from '@/voice/agent/streamVoiceAgentTurn';
 import { buildVoiceAgentTurnPayload } from '@/voice/agent/buildVoiceAgentTurnPayload';
 import { readPersistedVoiceConversationRuntimePublication } from '@/voice/binding/voiceConversationBindingPersistence';
 import { readLocalConversationSettingsFromAccountSettings } from '@/voice/local/localVoiceSettings';
+import { readVoicePrivacySettings } from '@/sync/domains/settings/readVoicePrivacySettings';
 
 export function createVoiceTurnStreaming(args: Readonly<{
     getVoiceAgentHandle: (sessionId: string) => Promise<VoiceAgentHandle>;
     interruptActiveTurn: (sessionId: string) => void;
     resetCachedHandle: (sessionId: string) => void;
     trackActiveTurn: <T>(sessionId: string, task: () => Promise<T>) => Promise<T>;
-    voiceAgentPendingContextBySessionId: Map<string, string[]>;
+    voiceAgentPendingSessionContextBySessionId: Map<string, string[]>;
+    deferredTargetSessionContextBySessionId: Map<string, string | null>;
+    latestAutomaticUiContextBySessionId: Map<string, string>;
     voiceAgentTurnAbortControllerBySessionId: Map<string, AbortController>;
 }>): Readonly<{
     sendInterruptingTextUpdate: (
@@ -73,10 +76,28 @@ export function createVoiceTurnStreaming(args: Readonly<{
         const preparePayloadText = (): string => {
             if (preparedPayloadText !== null) return preparedPayloadText;
 
-            const pendingContext = args.voiceAgentPendingContextBySessionId.get(sessionId) ?? [];
+            const pendingSessionContext = args.voiceAgentPendingSessionContextBySessionId.get(sessionId) ?? [];
+            const deferredTargetSessionContext = args.deferredTargetSessionContextBySessionId.get(sessionId);
+            const latestAutomaticUiContext = args.latestAutomaticUiContextBySessionId.get(sessionId);
+            const automaticUiContext =
+                latestAutomaticUiContext
+                && readVoicePrivacySettings(storage.getState().settings).currentUiContextMode === 'automatic'
+                    ? latestAutomaticUiContext
+                    : null;
+            const pendingContext = [
+                ...(deferredTargetSessionContext ? [deferredTargetSessionContext] : []),
+                ...pendingSessionContext,
+                ...(automaticUiContext ? [automaticUiContext] : []),
+            ];
             const nextPayloadText = userText;
-            if (pendingContext.length > 0) {
-                args.voiceAgentPendingContextBySessionId.delete(sessionId);
+            if (pendingSessionContext.length > 0) {
+                args.voiceAgentPendingSessionContextBySessionId.delete(sessionId);
+            }
+            if (deferredTargetSessionContext) {
+                args.deferredTargetSessionContextBySessionId.set(sessionId, null);
+            }
+            if (latestAutomaticUiContext) {
+                args.latestAutomaticUiContextBySessionId.delete(sessionId);
             }
             const payload = buildVoiceAgentTurnPayload({
                 sessionId,

@@ -638,7 +638,23 @@ describe('voice tool handlers', () => {
   });
 
   it('can get an execution run via sessionExecutionRunGet', async () => {
-    executionRunGet.mockResolvedValue({ run: { runId: 'run_1', availableActionIds: ['voice_agent.welcome'] } });
+    executionRunGet.mockResolvedValue({
+      run: {
+        runId: 'run_1',
+        callId: 'call_1',
+        sidechainId: 'call_1',
+        intent: 'review',
+        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        permissionMode: 'read_only',
+        retentionPolicy: 'ephemeral',
+        runClass: 'bounded',
+        ioMode: 'request_response',
+        status: 'succeeded',
+        startedAtMs: 1,
+        finishedAtMs: 2,
+        availableActionIds: ['voice_agent.welcome'],
+      },
+    });
 
     const { createVoiceToolHandlers } = await import('./handlers');
     const tools = createVoiceToolHandlers({ resolveSessionId: () => 's1' });

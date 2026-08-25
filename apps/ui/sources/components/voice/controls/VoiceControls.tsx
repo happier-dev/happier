@@ -47,7 +47,9 @@ const EASE_LOCAL = Easing.bezier(...(VOICE_MOTION.local.bezier as [number, numbe
  *
  * `scale(0.96)` is the standard tactile value; anything below 0.95 reads as
  * exaggerated. The press-in is instant and the release settles, so a cancelled
- * press (finger moved away) returns without ever committing.
+ * press (finger moved away) returns without ever committing. The canonical
+ * reduced-motion preference keeps that acknowledgement as an immediate opacity
+ * change rather than spatial motion.
  */
 export const TactilePressable = React.memo(function TactilePressable(props: Readonly<{
     onPress?: () => void;
@@ -98,6 +100,8 @@ export const TactilePressable = React.memo(function TactilePressable(props: Read
      */
 }>) {
     const pressed = useSharedValue(0);
+    const energy = useVoiceEnergy();
+    const reducedMotion = energy.reduced;
     // A pressable must never wrap another pressable: react-native-web renders
     // `accessibilityRole="button"` as a real <button>, so nesting produces
     // invalid DOM and a screen reader that cannot reach the inner control.
@@ -105,7 +109,7 @@ export const TactilePressable = React.memo(function TactilePressable(props: Read
     // never as its children.
     const animated = useAnimatedStyle(() => {
         'worklet';
-        if (props.static) return { opacity: 1 - pressed.get() * 0.3 };
+        if (props.static || reducedMotion) return { opacity: 1 - pressed.get() * 0.3 };
         return { transform: [{ scale: 1 - pressed.get() * 0.04 }] };
     });
 
@@ -122,8 +126,12 @@ export const TactilePressable = React.memo(function TactilePressable(props: Read
             disabled={props.disabled}
             testID={props.testID}
             style={props.containerStyle}
-            onPressIn={() => pressed.set(withTiming(1, { duration: 90, easing: EASE_LOCAL }))}
-            onPressOut={() => pressed.set(withTiming(0, { duration: 180, easing: EASE_LOCAL }))}
+            onPressIn={() => pressed.set(
+                reducedMotion ? 1 : withTiming(1, { duration: 90, easing: EASE_LOCAL }),
+            )}
+            onPressOut={() => pressed.set(
+                reducedMotion ? 0 : withTiming(0, { duration: 180, easing: EASE_LOCAL }),
+            )}
             onPress={props.onPress}
             onLongPress={props.onLongPress}
         >

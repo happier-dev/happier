@@ -11,6 +11,7 @@ import {
 import {
   projectVoiceProviderRequirements,
   resolveVoiceRoleReadiness,
+  type VoiceReadinessFact,
   type VoiceRoleReadiness,
 } from '@/voice/registry/readiness';
 import {
@@ -43,6 +44,12 @@ type VoiceDictationProviderProjection = Readonly<{
   entry: VoiceProviderRegistryEntry | null;
   settingsProjection: VoiceProviderSettingsProjection | null;
   usesDaemonLocalNeural: boolean;
+  nativeLocalNeuralPackId: string | null;
+}>;
+
+export type VoiceDictationNativeLocalNeuralModelSelection = Readonly<{
+  providerId: string;
+  packId: string | null;
 }>;
 
 function projectVoiceDictationProvider(input: Readonly<{
@@ -60,16 +67,45 @@ function projectVoiceDictationProvider(input: Readonly<{
   const settingsProjection = entry
     ? projectVoiceProviderSettings(entry, providerEnvelope)
     : null;
+  const usesDaemonLocalNeural = providerId === 'local_neural'
+    && resolveLocalNeuralExecutionPolicy({
+      requestedExecution: localStt.localNeural.execution,
+      platformOs: input.platform,
+    }).preferredExecution === 'daemon';
   return Object.freeze({
     providerId,
     providerEnvelope,
     entry,
     settingsProjection,
-    usesDaemonLocalNeural: providerId === 'local_neural'
-      && resolveLocalNeuralExecutionPolicy({
-        requestedExecution: localStt.localNeural.execution,
-        platformOs: input.platform,
-      }).preferredExecution === 'daemon',
+    usesDaemonLocalNeural,
+    nativeLocalNeuralPackId: providerId === 'local_neural' && !usesDaemonLocalNeural
+      ? localStt.localNeural.assetId
+      : null,
+  });
+}
+
+/**
+ * Resolves the exact native pack consumed by the Dictation runtime snapshot.
+ * This deliberately follows the same explicit/same-as-local selection owner
+ * as capture and readiness instead of consulting a settings-row-local choice.
+ */
+export function resolveVoiceDictationNativeLocalNeuralPackId(input: Readonly<{
+  registry: VoiceProviderRegistry;
+  settings: any;
+  platform: VoiceRuntimePlatform | 'unknown';
+}>): string | null {
+  return resolveVoiceDictationNativeLocalNeuralModelSelection(input).packId;
+}
+
+export function resolveVoiceDictationNativeLocalNeuralModelSelection(input: Readonly<{
+  registry: VoiceProviderRegistry;
+  settings: any;
+  platform: VoiceRuntimePlatform | 'unknown';
+}>): VoiceDictationNativeLocalNeuralModelSelection {
+  const projection = projectVoiceDictationProvider(input);
+  return Object.freeze({
+    providerId: projection.providerId,
+    packId: projection.nativeLocalNeuralPackId,
   });
 }
 
@@ -105,6 +141,8 @@ export function resolveVoiceDictationReadiness(input: Readonly<{
   executionMachineId: string | null;
   executionMachineSelectionKind?: 'resolved' | 'selected_unreachable' | 'none';
   localAvailability: VoiceProviderLocalAvailability;
+  /** Passive installed-pack fact for the exact native Local Neural STT selection. */
+  nativeLocalNeuralModel?: VoiceReadinessFact;
 }>): VoiceRoleReadiness {
   const projection = projectVoiceDictationProvider(input);
   const { providerId, providerEnvelope, settingsProjection } = projection;
@@ -148,11 +186,8 @@ export function resolveVoiceDictationReadiness(input: Readonly<{
         : 'ready',
       model: projection.usesDaemonLocalNeural
         ? projectVoiceDaemonModelReadinessFact(input.localAvailability.daemon)
-        // Native Local Neural installation is currently component-local. Do
-        // not reinterpret daemon catalog facts as native state or claim ready
-        // until that owner exposes a passive shared projection.
         : providerId === 'local_neural'
-          ? 'unknown'
+          ? input.nativeLocalNeuralModel ?? 'unknown'
           : 'ready',
       credential: projectVoiceSpeechCredentialReadiness({
         registry: input.registry,

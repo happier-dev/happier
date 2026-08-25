@@ -15,18 +15,11 @@ const voiceConfigState = vi.hoisted(() => ({
   ENABLE_DEBUG_LOGGING: true,
 }));
 
-const voiceContextSeenState = vi.hoisted(() => ({
-  hasShownSession: vi.fn(() => false),
-  markSessionShown: vi.fn(),
-  clearShownSessions: vi.fn(),
-}));
-
 vi.mock('./contextFormatters', () => ({
   formatNewMessages: vi.fn(() => 'TOP_SECRET_CONTEXT'),
   formatUserActionRequest: vi.fn(() => null),
   formatPermissionRequest: vi.fn(() => null),
   formatReadyEvent: vi.fn(() => null),
-  formatSessionFocus: vi.fn(() => null),
   formatSessionFull: vi.fn(() => 'TOP_SECRET_CONTEXT'),
   formatSessionOffline: vi.fn(() => null),
   formatSessionOnline: vi.fn(() => null),
@@ -74,12 +67,6 @@ vi.mock('@/voice/context/voiceContextPrefs', () => ({
   getVoiceContextFormatterPrefs: vi.fn(() => ({})),
 }));
 
-vi.mock('@/voice/runtime/voiceContextSeenStore', () => ({
-  useVoiceContextSeenStore: {
-    getState: () => voiceContextSeenState,
-  },
-}));
-
 vi.mock('@/voice/runtime/voiceTargetStore', () => ({
   useVoiceTargetStore: {
     getState: () => ({
@@ -123,10 +110,6 @@ describe('voiceHooks debug diagnostics', () => {
   afterEach(() => {
     fakeSink.sendContextualUpdate.mockReset();
     fakeSink.sendTextMessage.mockReset();
-    voiceContextSeenState.hasShownSession.mockReset();
-    voiceContextSeenState.hasShownSession.mockReturnValue(false);
-    voiceContextSeenState.markSessionShown.mockReset();
-    voiceContextSeenState.clearShownSessions.mockReset();
     vi.restoreAllMocks();
     vi.resetModules();
   });

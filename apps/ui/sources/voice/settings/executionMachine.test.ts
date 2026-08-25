@@ -1,12 +1,89 @@
 import { describe, expect, it } from 'vitest';
 
-import { resolveVoiceExecutionMachineIdFromState, resolveVoiceExecutionMachineSelectionFromState } from './executionMachine';
+import { storage } from '@/sync/domains/state/storage';
+
+import {
+  isCapturedVoiceExecutionMachineCurrent,
+  resolveVoiceExecutionMachineIdFromState,
+  resolveVoiceExecutionMachineSelectionFromState,
+} from './executionMachine';
 
 function machine(id: string, active: boolean, extra: Record<string, unknown> = {}) {
   return { id, active, createdAt: 1, updatedAt: 1, metadata: {}, ...extra } as any;
 }
 
 describe('resolveVoiceExecutionMachineIdFromState', () => {
+  it('keeps an unresolved captured target current until the selected execution machine changes', () => {
+    const previous = storage.getState();
+    storage.setState({
+      ...previous,
+      settings: {
+        ...previous.settings,
+        voice: {
+          ...previous.settings.voice,
+          executionMachine: { mode: 'fixed', machineId: 'offline-machine' },
+        },
+      },
+      machines: [],
+    } as never);
+
+    try {
+      expect(isCapturedVoiceExecutionMachineCurrent(null)).toBe(true);
+      expect(isCapturedVoiceExecutionMachineCurrent('machine-a')).toBe(false);
+    } finally {
+      storage.setState(previous, true);
+    }
+  });
+
+  it('keeps a captured selected machine current after it becomes unreachable, but invalidates a new selection', () => {
+    const previous = storage.getState();
+    storage.setState({
+      ...previous,
+      settings: {
+        ...previous.settings,
+        voice: {
+          ...previous.settings.voice,
+          executionMachine: { mode: 'fixed', machineId: 'machine-a', autoMachineId: null },
+        },
+      },
+      machines: {
+        'machine-a': machine('machine-a', true, { activeAt: Date.now() }),
+      },
+    } as never);
+
+    try {
+      expect(isCapturedVoiceExecutionMachineCurrent('machine-a')).toBe(true);
+
+      storage.setState({
+        ...storage.getState(),
+        machines: {
+          'machine-a': machine('machine-a', false),
+        },
+      } as never);
+
+      expect(isCapturedVoiceExecutionMachineCurrent('machine-a')).toBe(true);
+
+      storage.setState({
+        ...storage.getState(),
+        settings: {
+          ...storage.getState().settings,
+          voice: {
+            ...storage.getState().settings.voice,
+            executionMachine: { mode: 'fixed', machineId: 'machine-b', autoMachineId: null },
+          },
+        },
+        machines: {
+          'machine-a': machine('machine-a', false),
+          'machine-b': machine('machine-b', true, { activeAt: Date.now() }),
+        },
+      } as never);
+
+      expect(isCapturedVoiceExecutionMachineCurrent('machine-a')).toBe(false);
+    } finally {
+      storage.setState(previous, true);
+    }
+  });
+
   it('resolves fixed and sticky-auto targets without requiring a voice-home directory', () => {
     const state = {
       machines: { fixed: machine('fixed', true), sticky: machine('sticky', true) },

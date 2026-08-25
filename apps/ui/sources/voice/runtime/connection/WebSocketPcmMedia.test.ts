@@ -51,6 +51,7 @@ describe('WebSocketPcmMedia', () => {
       createOutputScheduler: vi.fn(() => ({
         enqueue: vi.fn(() => true), clear: vi.fn(), stop: stopPlayback,
         beginCandidate, resolveCandidate,
+        setOutputFocusState: vi.fn(() => 'applied' as const),
         waitForDrain: vi.fn(async () => undefined), playbackCursorMs: vi.fn(() => 12), outputLevel: vi.fn(() => candidateActive ? 0 : 0.5),
       })),
     });
@@ -113,6 +114,7 @@ describe('WebSocketPcmMedia', () => {
       createOutputScheduler: vi.fn(() => ({
         enqueue: vi.fn(() => true), clear: vi.fn(), stop: stopPlayback,
         beginCandidate: vi.fn(() => 'ducked' as const), resolveCandidate: vi.fn(),
+        setOutputFocusState: vi.fn(() => 'applied' as const),
         waitForDrain: vi.fn(async () => {}), playbackCursorMs: () => 0, outputLevel: () => 0.5,
       })),
     });
@@ -152,6 +154,7 @@ describe('WebSocketPcmMedia', () => {
       createOutputScheduler: vi.fn(() => ({
         enqueue: vi.fn(() => true), clear: vi.fn(), stop: stopPlayback,
         beginCandidate: vi.fn(() => 'ducked' as const), resolveCandidate: vi.fn(),
+        setOutputFocusState: vi.fn(() => 'applied' as const),
         waitForDrain: vi.fn(async () => {}), playbackCursorMs: () => 0, outputLevel: () => 0,
       })),
     });
@@ -209,6 +212,7 @@ describe('WebSocketPcmMedia', () => {
       createOutputScheduler: vi.fn(() => ({
         enqueue: vi.fn(() => true), clear: vi.fn(), stop: stopPlayback,
         beginCandidate: vi.fn(() => 'ducked' as const), resolveCandidate: vi.fn(),
+        setOutputFocusState: vi.fn(() => 'applied' as const),
         waitForDrain: vi.fn(async () => {}), playbackCursorMs: () => 0, outputLevel: () => 0,
       })),
     });
@@ -228,11 +232,12 @@ describe('WebSocketPcmMedia', () => {
       disconnect: ReturnType<typeof vi.fn>;
     }> & { buffer: AudioBuffer | null; onended: (() => void) | null };
     const sources: FakeSource[] = [];
+    const setTargetAtTime = vi.fn();
     const context = {
       currentTime: 0,
       destination: {},
       createGain: () => ({
-        gain: { value: 1, setTargetAtTime: vi.fn() },
+        gain: { value: 1, setTargetAtTime },
         connect: vi.fn(),
         disconnect: vi.fn(),
       }),
@@ -264,6 +269,13 @@ describe('WebSocketPcmMedia', () => {
       })),
     });
     await media.pcm.start(new AbortController().signal);
+
+    expect(media.pcm.setOutputFocusState?.('suspended')).toBe('applied');
+    expect(setTargetAtTime).toHaveBeenLastCalledWith(0, 0, 0.015);
+    expect(media.pcm.setOutputFocusState?.('ducked')).toBe('applied');
+    expect(setTargetAtTime).toHaveBeenLastCalledWith(0.18, 0, 0.015);
+    expect(media.pcm.setOutputFocusState?.('active')).toBe('applied');
+    expect(setTargetAtTime).toHaveBeenLastCalledWith(1, 0, 0.015);
 
     expect(media.enqueueOutput(encodePcm16LeBase64(new Int16Array(24_000)))).toBe(true);
     (context as unknown as { currentTime: number }).currentTime = 0.25;

@@ -31,8 +31,29 @@ describe('deriveLocalVoiceSessionSnapshot', () => {
             }),
         );
 
-        expect(snapshot.presentationState).toBe('reconnecting');
+    expect(snapshot.presentationState).toBe('reconnecting');
+  });
+
+  it('projects Retry only while the canonical reconnect backoff is pending', () => {
+    const runtimeSnapshot = {
+        ...createRuntimeSnapshot({
+            adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
+            controlSessionId: 'session-reconnecting-retry',
+            state: 'connecting',
+            reconnecting: true,
+        }),
+        reconnectRetryAvailable: true,
+    };
+
+    expect(deriveLocalVoiceSessionSnapshot(
+        'happier.voice.elevenlabs/realtime-elevenlabs',
+        'realtime',
+        runtimeSnapshot,
+    )).toMatchObject({
+        presentationState: 'reconnecting',
+        reconnectRetryAvailable: true,
     });
+  });
 
     it('does not project a null-owned local machine snapshot for a realtime adapter', () => {
         const snapshot = deriveLocalVoiceSessionSnapshot(

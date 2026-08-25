@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { VOICE_RUNTIME_STT_PCM_FORMAT } from '@happier-dev/protocol';
+import type { SherpaNativeStreamingFinalResult } from '@happier-dev/sherpa-native';
 
 import type { MicSession } from '@/voice/runtime/mic/MicSession';
 import type { SttSink } from '@/voice/input/sttController';
@@ -39,7 +40,9 @@ vi.mock('@happier-dev/audio-stream-native', () => ({
 
 const sherpaStreamingCreate = vi.fn(async () => {});
 const sherpaStreamingPushFrame = vi.fn(async () => ({ text: '', isEndpoint: false }));
-const sherpaStreamingFinish = vi.fn(async () => ({ status: 'finalized', text: '' }));
+const sherpaStreamingFinish = vi.fn<() => Promise<SherpaNativeStreamingFinalResult>>(
+  async () => ({ status: 'finalized', text: '' }),
+);
 const sherpaCancel = vi.fn(async () => {});
 
 vi.mock('@happier-dev/sherpa-native', () => ({
@@ -153,7 +156,7 @@ describe('SherpaStreamingSttController (native shared capture)', () => {
         channels: VOICE_RUNTIME_STT_PCM_FORMAT.channelCount,
         frameMs: 20,
       },
-      audioSession: { mode: 'conversation', input: true, output: true, aec: 'preferred' },
+      audioSession: { mode: 'conversation', input: true, output: true, aec: 'required' },
       maxQueuedFrames: 8,
     }));
   });

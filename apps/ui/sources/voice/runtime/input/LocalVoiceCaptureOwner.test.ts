@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { Platform } from 'react-native';
 import type {
     VoiceAudioSessionPlatform,
     VoicePcmCapture,
@@ -27,10 +28,27 @@ const micVadPause = vi.fn();
 let activeOnSpeechEnd: (() => void) | null = null;
 let activeOnSpeechStart: (() => void) | null = null;
 
+const nativeFileBoundary = vi.hoisted(() => {
+    const file = {
+        exists: true,
+        delete: vi.fn(async () => {}),
+    };
+    return {
+        file,
+        File: vi.fn(function File(_uri: string) {
+            return file;
+        }),
+    };
+});
+
 vi.mock('@ricky0123/vad-web', () => ({
     MicVAD: {
         new: (...args: unknown[]) => micVadNew(...args),
     },
+}));
+
+vi.mock('expo-file-system', () => ({
+    File: nativeFileBoundary.File,
 }));
 
 // WebVadController is platform-split for Metro (`WebVadController.ts` is the
@@ -171,7 +189,7 @@ function createSharedPcmSherpaController(capture: VoicePcmCapture): Readonly<{
                     mode: 'conversation',
                     input: true,
                     output: true,
-                    aec: 'preferred',
+                    aec: 'required',
                 },
                 shouldDeliver: () => !signal.aborted,
                 onFrame: () => {
@@ -199,6 +217,9 @@ describe('createLocalVoiceCaptureOwner', () => {
         micVadNew.mockReset();
         micVadStart.mockReset();
         micVadPause.mockReset();
+        nativeFileBoundary.file.exists = true;
+        nativeFileBoundary.file.delete.mockReset();
+        nativeFileBoundary.File.mockClear();
         activeOnSpeechEnd = null;
         activeOnSpeechStart = null;
         micVadNew.mockImplementation(async (options: { onSpeechEnd?: () => void; onSpeechStart?: () => void }) => {
@@ -222,6 +243,221 @@ describe('createLocalVoiceCaptureOwner', () => {
             Reflect.deleteProperty(globalThis as object, 'document');
         } else {
             (globalThis as { document?: object }).document = previousDocument;
+        }
+    });
+
+    it('discards a finalized browser recording exactly once when End Voice tears down capture', async () => {
+        const originalPlatformOs = Platform.OS;
+        const revokeObjectURL = vi.fn();
+        const deviceStart = vi.fn(async () => {});
+        const deviceStop = vi.fn(async () => ({ finalText: '' }));
+        const recordingUri = 'blob:voice-end-recording';
+        let recordingStopped = false;
+        const recordingMicSession = {
+            beginRecording: vi.fn(async () => {}),
+            stopRecording: vi.fn(async () => {
+                if (recordingStopped) return null;
+                recordingStopped = true;
+                return recordingUri;
+            }),
+            teardown: vi.fn(async () => {}),
+            setMuted: vi.fn(),
+            isMuted: vi.fn(() => false),
+            ensureActive: vi.fn(async () => {}),
+            getStream: vi.fn(() => null),
+        };
+        const owner = createLocalVoiceCaptureOwner(
+            {
+                getSettings: () => ({}),
+                onCaptureStarted: vi.fn(),
+                onCaptureError: vi.fn(),
+            },
+            {
+                createDeviceSttController: () => ({
+                    start: deviceStart,
+                    stop: deviceStop,
+                }) as never,
+                createRecordingMicSession: () => recordingMicSession as never,
+            },
+        );
+
+        try {
+            (Platform as unknown as { OS: string }).OS = 'web';
+            vi.stubGlobal('URL', { revokeObjectURL });
+
+            await owner.startCapture({
+                handsFree: false,
+                provider: 'recorded_audio',
+                sessionId: 'end-voice-session',
+            });
+            await Promise.all([
+                owner.stopSession('end-voice-session'),
+                owner.stopSession('end-voice-session'),
+            ]);
+
+            expect(recordingMicSession.stopRecording).toHaveBeenCalledOnce();
+            expect(recordingMicSession.teardown).toHaveBeenCalledOnce();
+            expect(revokeObjectURL).toHaveBeenCalledOnce();
+            expect(revokeObjectURL).toHaveBeenCalledWith(recordingUri);
+            expect(deviceStart).not.toHaveBeenCalled();
+            expect(deviceStop).not.toHaveBeenCalled();
+        } finally {
+            (Platform as unknown as { OS: string }).OS = originalPlatformOs;
+            vi.unstubAllGlobals();
+        }
+    });
+
+    it('surfaces a failed finalized-recording deletion when End Voice tears down capture', async () => {
+        const originalPlatformOs = Platform.OS;
+        const deletionFailure = new Error('recording_delete_failed');
+        const revokeObjectURL = vi.fn(() => {
+            throw deletionFailure;
+        });
+        const deviceStart = vi.fn(async () => {});
+        const deviceStop = vi.fn(async () => ({ finalText: '' }));
+        const onCaptureError = vi.fn();
+        const recordingUri = 'blob:voice-end-recording';
+        const recordingMicSession = {
+            beginRecording: vi.fn(async () => {}),
+            stopRecording: vi.fn(async () => recordingUri),
+            teardown: vi.fn(async () => {}),
+            setMuted: vi.fn(),
+            isMuted: vi.fn(() => false),
+            ensureActive: vi.fn(async () => {}),
+            getStream: vi.fn(() => null),
+        };
+        const owner = createLocalVoiceCaptureOwner(
+            {
+                getSettings: () => ({}),
+                onCaptureStarted: vi.fn(),
+                onCaptureError,
+            },
+            {
+                createDeviceSttController: () => ({
+                    start: deviceStart,
+                    stop: deviceStop,
+                }) as never,
+                createRecordingMicSession: () => recordingMicSession as never,
+            },
+        );
+
+        try {
+            (Platform as unknown as { OS: string }).OS = 'web';
+            vi.stubGlobal('URL', { revokeObjectURL });
+
+            await owner.startCapture({
+                handsFree: false,
+                provider: 'recorded_audio',
+                sessionId: 'end-voice-session',
+            });
+
+            await expect(owner.stopSession('end-voice-session')).rejects.toBe(deletionFailure);
+
+            expect(recordingMicSession.stopRecording).toHaveBeenCalledOnce();
+            expect(recordingMicSession.teardown).toHaveBeenCalledOnce();
+            expect(revokeObjectURL).toHaveBeenCalledExactlyOnceWith(recordingUri);
+            expect(onCaptureError).toHaveBeenCalledExactlyOnceWith({
+                controlSessionId: 'end-voice-session',
+                kind: 'provider_error',
+                reason: 'recording_cleanup_failed',
+            });
+            expect(deviceStart).not.toHaveBeenCalled();
+            expect(deviceStop).not.toHaveBeenCalled();
+        } finally {
+            (Platform as unknown as { OS: string }).OS = originalPlatformOs;
+            vi.unstubAllGlobals();
+        }
+    });
+
+    it('still tears down terminal recording media when finalization cannot yield an artifact', async () => {
+        const recorderStopFailure = new Error('recorder_stop_failed');
+        const recordingMicSession = {
+            beginRecording: vi.fn(async () => {}),
+            stopRecording: vi.fn(async () => {
+                throw recorderStopFailure;
+            }),
+            teardown: vi.fn(async () => {}),
+            setMuted: vi.fn(),
+            isMuted: vi.fn(() => false),
+            ensureActive: vi.fn(async () => {}),
+            getStream: vi.fn(() => null),
+        };
+        const owner = createLocalVoiceCaptureOwner(
+            {
+                getSettings: () => ({}),
+                onCaptureStarted: vi.fn(),
+                onCaptureError: vi.fn(),
+            },
+            {
+                createRecordingMicSession: () => recordingMicSession as never,
+            },
+        );
+
+        await owner.startCapture({
+            handsFree: false,
+            provider: 'recorded_audio',
+            sessionId: 'recording-stop-error-session',
+        });
+        await expect(owner.stopSession('recording-stop-error-session')).resolves.toBeUndefined();
+
+        expect(recordingMicSession.stopRecording).toHaveBeenCalledOnce();
+        expect(recordingMicSession.teardown).toHaveBeenCalledOnce();
+    });
+
+    it('leaves a normal recorded stop for the existing stop-and-send cleanup path', async () => {
+        const originalPlatformOs = Platform.OS;
+        const revokeObjectURL = vi.fn();
+        const recordingUri = 'blob:voice-send-recording';
+        let recordingStopped = false;
+        const recordingMicSession = {
+            beginRecording: vi.fn(async () => {}),
+            stopRecording: vi.fn(async () => {
+                if (recordingStopped) return null;
+                recordingStopped = true;
+                return recordingUri;
+            }),
+            teardown: vi.fn(async () => {}),
+            setMuted: vi.fn(),
+            isMuted: vi.fn(() => false),
+            ensureActive: vi.fn(async () => {}),
+            getStream: vi.fn(() => null),
+        };
+        const owner = createLocalVoiceCaptureOwner(
+            {
+                getSettings: () => ({}),
+                onCaptureStarted: vi.fn(),
+                onCaptureError: vi.fn(),
+            },
+            {
+                createRecordingMicSession: () => recordingMicSession as never,
+            },
+        );
+
+        try {
+            (Platform as unknown as { OS: string }).OS = 'web';
+            vi.stubGlobal('URL', { revokeObjectURL });
+
+            await owner.startCapture({
+                handsFree: false,
+                provider: 'recorded_audio',
+                sessionId: 'stop-and-send-session',
+            });
+            await expect(owner.stopCapture({
+                provider: 'recorded_audio',
+                sessionId: 'stop-and-send-session',
+            })).resolves.toEqual({
+                provider: 'recorded_audio',
+                uri: recordingUri,
+            });
+
+            expect(revokeObjectURL).not.toHaveBeenCalled();
+            await owner.stopSession('stop-and-send-session');
+            expect(recordingMicSession.stopRecording).toHaveBeenCalledOnce();
+            expect(recordingMicSession.teardown).toHaveBeenCalledOnce();
+            expect(revokeObjectURL).not.toHaveBeenCalled();
+        } finally {
+            (Platform as unknown as { OS: string }).OS = originalPlatformOs;
+            vi.unstubAllGlobals();
         }
     });
 
@@ -1681,7 +1917,7 @@ describe('createLocalVoiceCaptureOwner', () => {
                         mode: 'conversation',
                         input: true,
                         output: true,
-                        aec: 'preferred',
+                        aec: 'required',
                     },
                     onFrame: () => {},
                 });

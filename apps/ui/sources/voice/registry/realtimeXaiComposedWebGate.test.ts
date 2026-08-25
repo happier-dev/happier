@@ -316,6 +316,7 @@ function createSourceComposedXaiRuntime() {
           signal: AbortSignal,
           _conversationSessionId: string | null,
           isCurrent: () => boolean,
+          phase: 'settings' | 'prepare' | 'connection',
         ) => {
           const accountOperations = createAccountVoiceOperationService({
             providerId,
@@ -323,6 +324,8 @@ function createSourceComposedXaiRuntime() {
               pluginId: entry.pluginId,
               localId: entry.declaration.id,
             },
+            declaration: entry.declaration,
+            phase,
             recipientContract,
             signal,
             isCurrent,

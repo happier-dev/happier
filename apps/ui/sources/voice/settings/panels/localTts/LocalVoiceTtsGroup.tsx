@@ -25,7 +25,6 @@ export function LocalVoiceTtsGroup(props: {
   networkTimeoutMs: number;
   popoverBoundaryRef?: React.RefObject<any> | null;
   daemonRouteDiagnosticReason?: VoiceDaemonRouteDiagnosticReason | null;
-  showProcessingDisclosure?: boolean;
 }) {
   const { theme } = useUnistyles();
   const providerSpecs = useLocalTtsProviderSpecs();
@@ -95,7 +94,6 @@ export function LocalVoiceTtsGroup(props: {
           networkTimeoutMs={props.networkTimeoutMs}
           popoverBoundaryRef={props.popoverBoundaryRef}
           daemonRouteDiagnosticReason={props.daemonRouteDiagnosticReason}
-          showProcessingDisclosure={props.showProcessingDisclosure}
         />
       ) : (
         <Item title={t('common.unavailable')} />

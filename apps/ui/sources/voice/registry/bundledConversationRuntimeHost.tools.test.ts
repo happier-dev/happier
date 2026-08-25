@@ -69,7 +69,11 @@ describe('bundled Conversation runtime host tool projection', () => {
     }
   });
 
-  it('projects Action and current-UI command outcomes before the realtime provider boundary', async () => {
+  it('keeps direct provider callbacks read-only and rejects effectful Action definitions without a call identity', async () => {
+    const readCurrentUiContext = vi.fn(() => ({
+      navigation: { area: 'app', screen: 'home' },
+      commands: [],
+    }));
     const invokeAction = vi.fn(async () => ({
       ok: true as const,
       result: {
@@ -92,7 +96,7 @@ describe('bundled Conversation runtime host tool projection', () => {
     }));
     const lease = createBundledConversationRuntimeHostLease({
       currentUiContext: {
-        readCurrentUiContext: () => null,
+        readCurrentUiContext,
         resolveCurrentUiCommand: () => null,
         subscribe: () => () => {},
         invokeAction,
@@ -105,6 +109,9 @@ describe('bundled Conversation runtime host tool projection', () => {
     const invokeCurrentUiCommandToolName = String(
       getActionSpec('ui.current_context.command.invoke').bindings?.voiceClientToolName ?? '',
     ).trim();
+    const readCurrentUiContextToolName = String(
+      getActionSpec('ui.current_context.read').bindings?.voiceClientToolName ?? '',
+    ).trim();
     try {
       const tools = lease.host.getRealtimeClientToolDefinitions({
         effectCalls: 'stable_ids',
@@ -112,54 +119,60 @@ describe('bundled Conversation runtime host tool projection', () => {
       });
       const invokeActionTool = tools.find((tool) => tool.name === invokeActionToolName);
       const invokeCurrentUiCommandTool = tools.find((tool) => tool.name === invokeCurrentUiCommandToolName);
-      if (!invokeActionTool || !invokeCurrentUiCommandTool) {
-        throw new Error('Expected stable-id Action and current UI command tools');
+      const readCurrentUiContextTool = tools.find((tool) => tool.name === readCurrentUiContextToolName);
+      if (!invokeActionTool || !invokeCurrentUiCommandTool || !readCurrentUiContextTool) {
+        throw new Error('Expected stable-id Action, current UI command, and read tools');
       }
 
+      await expect(readCurrentUiContextTool.execute({})).resolves.toEqual({
+        navigation: { area: 'app', screen: 'home' },
+        commands: [],
+      });
       await expect(invokeActionTool.execute({
         action: { pluginId: 'acme.triage', localId: 'comment' },
         input: { body: 'private action body' },
-      })).resolves.toEqual({ ok: true });
+      })).rejects.toMatchObject({ code: 'voice_effect_call_custody_required' });
       await expect(invokeCurrentUiCommandTool.execute({
         commandId: 'current-ui-command:private-selection',
-      })).resolves.toEqual({ ok: true });
+      })).rejects.toMatchObject({ code: 'voice_effect_call_custody_required' });
     } finally {
       lease.revoke();
     }
 
-    expect(invokeAction).toHaveBeenCalledTimes(1);
-    expect(invokeCurrentUiCommand).toHaveBeenCalledTimes(1);
+    expect(readCurrentUiContext).toHaveBeenCalledTimes(1);
+    expect(invokeAction).not.toHaveBeenCalled();
+    expect(invokeCurrentUiCommand).not.toHaveBeenCalled();
   });
 
-  it('retains a known bounded effect settlement when its generation retires immediately after handler settlement', async () => {
-    let revoke: () => void = () => {};
-    const invokeCurrentUiCommand = vi.fn(() => {
-      const settled = Promise.resolve({ ok: true as const, result: { navigated: true } });
-      void settled.then(() => queueMicrotask(revoke));
-      return settled;
-    });
+  it('keeps a direct read bounded to its current host generation', async () => {
+    const readCurrentUiContext = vi.fn(() => ({
+      navigation: { area: 'app', screen: 'home' },
+      commands: [],
+    }));
     const lease = createBundledConversationRuntimeHostLease({
       currentUiContext: {
-        readCurrentUiContext: () => null,
+        readCurrentUiContext,
         resolveCurrentUiCommand: () => null,
         subscribe: () => () => {},
-        invokeCurrentUiCommand,
       },
     });
-    revoke = lease.revoke;
     const toolName = String(
-      getActionSpec('ui.current_context.command.invoke').bindings?.voiceClientToolName ?? '',
+      getActionSpec('ui.current_context.read').bindings?.voiceClientToolName ?? '',
     ).trim();
     const tool = lease.host.getRealtimeClientToolDefinitions({
       effectCalls: 'stable_ids',
       exposure: 'voice_assistant',
     }).find((candidate) => candidate.name === toolName);
 
-    if (!tool) throw new Error('Expected stable-id current UI command tool');
+    if (!tool) throw new Error('Expected current UI read tool');
 
-    await expect(tool.execute({ commandId: 'current-ui-command:1' })).resolves.toEqual({ ok: true });
-    await expect(tool.execute({ commandId: 'current-ui-command:1' })).rejects.toThrow('voice_runtime_generation_revoked');
-    expect(invokeCurrentUiCommand).toHaveBeenCalledTimes(1);
+    await expect(tool.execute({})).resolves.toEqual({
+      navigation: { area: 'app', screen: 'home' },
+      commands: [],
+    });
+    lease.revoke();
+    await expect(tool.execute({})).rejects.toThrow('voice_runtime_generation_revoked');
+    expect(readCurrentUiContext).toHaveBeenCalledTimes(1);
   });
   it('narrows the canonical Action projection to the current-UI tools for a current-UI-only exposure', () => {
     const lease = createBundledConversationRuntimeHostLease({

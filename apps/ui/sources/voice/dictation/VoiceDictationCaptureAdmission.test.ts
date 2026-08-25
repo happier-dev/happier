@@ -89,7 +89,9 @@ describe('Dictation capture admission integration', () => {
 
         await controller.cancel('session-1');
 
-        expect(rawCaptureOwner.stopSession).toHaveBeenCalledOnce();
-        expect(admission.acquire('conversation').status).toBe('acquired');
+        await vi.waitFor(() => {
+            expect(rawCaptureOwner.stopSession).toHaveBeenCalledOnce();
+            expect(admission.acquire('conversation').status).toBe('acquired');
+        });
     });
 });

@@ -3,7 +3,6 @@ import {
   formatUserActionRequest,
   formatPermissionRequest,
   formatReadyEvent,
-  formatSessionFocus,
   formatSessionFull,
   formatSessionOffline,
   formatSessionOnline,
@@ -19,13 +18,12 @@ import { getVoiceContextSinkForSession } from '@/voice/context/getVoiceContextSi
 import type { VoiceContextSink } from '@/voice/context/VoiceContextSink';
 import { resolveEffectiveVoiceTargetState } from '@/voice/context/resolveEffectiveVoiceTargetState';
 import { getVoiceContextFormatterPrefs } from '@/voice/context/voiceContextPrefs';
-import { useVoiceContextSeenStore } from '@/voice/runtime/voiceContextSeenStore';
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
 import { resolveVoiceSessionUpdatePolicy, type VoiceSessionUpdatePolicy } from '@/voice/runtime/voiceUpdatePolicy';
 import type { AgentRequestKind } from '@/utils/sessions/permissions/permissionPromptPolicy';
 import { resolveVoiceContextSessionFromState } from '@/voice/context/resolveVoiceContextSession';
 import type { CurrentUiContextSnapshotV1 } from '@happier-dev/protocol/plugins/ui';
-import type { VoiceHostAuthoredContextScope } from '@/voice/session/types';
+import type { HostAuthoredContextClass, VoiceHostAuthoredContextScope } from '@/voice/session/types';
 
 /**
  * Centralized voice assistant hooks for multi-session context updates.
@@ -39,6 +37,9 @@ interface SessionMetadata {
   machineId?: string;
   [key: string]: any;
 }
+
+/** Full session context already disclosed during the current Voice attempt. */
+const voiceAttemptShownSessionIds = new Set<string>();
 
 type VoiceDebugEvent =
   | 'voice_contextual_update'
@@ -83,10 +84,9 @@ function resolvePolicy(sessionId: string): VoiceSessionUpdatePolicy {
 
 /**
  * The single authority over ambient disclosure caused by observing this
- * device's UI. Both automatic current-UI navigation updates and the
- * session-focus announcement exist only because the user navigated here, so
- * `currentUiContextMode` owns them: `off` and `on_demand` withhold every
- * automatic announcement, `automatic` admits the bounded ones.
+ * device's UI. The current-UI subscription is the only automatic disclosure
+ * path: `off` and `on_demand` withhold it, while `automatic` admits only its
+ * bounded navigation projection.
  */
 function isAmbientCurrentUiDisclosureEnabled(): boolean {
   return readVoicePrivacySettings(storage.getState().settings).currentUiContextMode === 'automatic';
@@ -101,14 +101,6 @@ function getVoiceContextPrefs(sessionId: string) {
     trackedSessionIds: targetState.trackedSessionIds,
   });
 }
-
-/**
- * What a host-authored contextual update is. `current_ui` is the authorized
- * bounded navigation metadata projection; `session_context` is everything
- * Happier composes from stored session state. A provider whose Agent runtime
- * owns the authoritative prompt accepts only the former.
- */
-type HostAuthoredContextClass = 'current_ui' | 'session_context';
 
 /**
  * The single host-authored context disclosure decision. A `current_ui_only`
@@ -134,7 +126,7 @@ function reportContextualUpdate(
   const sink = getVoiceContextSinkForSession(sessionId);
   if (!sink) return false;
   if (!sinkAcceptsHostAuthoredContext(sink, contextClass)) return false;
-  sink.sendContextualUpdate(sessionId, update);
+  sink.sendContextualUpdate(sessionId, update, contextClass);
   return true;
 }
 
@@ -145,6 +137,14 @@ function reportContextualUpdate(
  */
 function formatCurrentUiNavigationUpdate(snapshot: CurrentUiContextSnapshotV1): string {
   const navigation = snapshot.navigation;
+  // Session titles can contain session summaries or path-derived fallback
+  // text, and machine titles are device identity. They remain available to an
+  // explicit current-UI read, but are never ambient automatic metadata.
+  const hasAutomaticSafeTitle = navigation.title !== undefined
+    && navigation.area !== 'plugin'
+    && navigation.screen !== 'settings.plugin_page'
+    && navigation.area !== 'session'
+    && navigation.area !== 'machine';
   return `CURRENT UI CONTEXT\n\n${JSON.stringify({ navigation: {
     area: navigation.area,
     screen: navigation.screen,
@@ -153,9 +153,7 @@ function formatCurrentUiNavigationUpdate(snapshot: CurrentUiContextSnapshotV1): 
     // plugin-provided text and must not cross the automatic provider channel.
     // The composer preserves external plugin Settings title provenance through
     // this host-owned semantic screen without exposing page identity or text.
-    ...(navigation.area === 'plugin' || navigation.screen === 'settings.plugin_page' || navigation.title === undefined
-      ? {}
-      : { title: navigation.title }),
+    ...(hasAutomaticSafeTitle ? { title: navigation.title } : {}),
   } })}`;
 }
 
@@ -218,8 +216,8 @@ function announceAssistantText(sessionId: string, update: string | null | undefi
 }
 
 function reportSession(sessionId: string) {
-  const seen = useVoiceContextSeenStore.getState();
-  if (seen.hasShownSession(sessionId)) return;
+  const normalizedSessionId = String(sessionId ?? '').trim();
+  if (normalizedSessionId.length > 0 && voiceAttemptShownSessionIds.has(normalizedSessionId)) return;
   const level = resolvePolicy(sessionId).level;
   if (level !== 'summaries' && level !== 'snippets') return;
   const session = resolveVoiceContextSessionFromState(sessionId, storage.getState());
@@ -228,7 +226,7 @@ function reportSession(sessionId: string) {
   const contextUpdate = formatSessionFull(session, messages, getVoiceContextPrefs(sessionId));
   reportContextualUpdate(sessionId, contextUpdate, 'session_context');
   // Mark as shown only once we've actually emitted the full context.
-  seen.markSessionShown(sessionId);
+  if (normalizedSessionId.length > 0) voiceAttemptShownSessionIds.add(normalizedSessionId);
 }
 
 function formatNewMessagesActivity(sessionId: string, messages: Message[]): string {
@@ -294,21 +292,16 @@ export const voiceHooks = {
     reportContextualUpdate(sessionId, contextUpdate, 'session_context');
   },
 
-  onSessionFocus(sessionId: string, metadata?: SessionMetadata) {
+  onSessionFocus(sessionId: string, _metadata?: SessionMetadata) {
     // Focus is a local target signal first: it selects this device's voice
     // target and does not override an explicit active target. That selection
     // never leaves the device, so no disclosure setting governs it.
     useVoiceTargetStore.getState().setLastFocusedSessionId(sessionId);
 
-    // Announcing the focus does leave the device, and the only thing that
-    // produces it is the user navigating here — so it is current-UI context
-    // and answers to that mode, not to a second switch. The per-session update
-    // level still bounds how much stored-session detail the announcement may
-    // carry, exactly as it does for every other session update.
-    if (!isAmbientCurrentUiDisclosureEnabled()) return;
-    if (resolvePolicy(sessionId).level === 'none') return;
-    reportSession(sessionId);
-    reportContextualUpdate(sessionId, formatSessionFocus(sessionId, metadata, getVoiceContextPrefs(sessionId)), 'session_context');
+    // The CurrentUiContextProvider observes the same foreground transition
+    // and is the sole automatic delivery owner. Do not turn a focus callback
+    // into a second path that serializes session summaries, transcripts, paths,
+    // or machine identity to a provider.
   },
 
   onAgentRequest(sessionId: string, requestId: string, requestKind: AgentRequestKind, toolName: string, toolArgs: any) {
@@ -381,7 +374,7 @@ export const voiceHooks = {
    */
   onVoiceStarted(sessionId: string, scope: VoiceHostAuthoredContextScope): string {
     emitVoiceDebugDiagnostic('voice_session_started', { sessionId });
-    useVoiceContextSeenStore.getState().clearShownSessions();
+    voiceAttemptShownSessionIds.clear();
     if (scope === 'current_ui_only') return '';
     const state: any = storage.getState();
     const normalized = String(sessionId ?? '').trim();
@@ -407,7 +400,7 @@ export const voiceHooks = {
     const prompt =
       'THIS IS AN ACTIVE SESSION: \n\n' +
       formatSessionFull(session, readStoredSessionMessages(state, normalized), getVoiceContextPrefs(normalized));
-    useVoiceContextSeenStore.getState().markSessionShown(normalized);
+    voiceAttemptShownSessionIds.add(normalized);
     return prompt;
   },
 
@@ -430,6 +423,6 @@ export const voiceHooks = {
 
   onVoiceStopped() {
     emitVoiceDebugDiagnostic('voice_session_stopped', {});
-    useVoiceContextSeenStore.getState().clearShownSessions();
+    voiceAttemptShownSessionIds.clear();
   },
 };

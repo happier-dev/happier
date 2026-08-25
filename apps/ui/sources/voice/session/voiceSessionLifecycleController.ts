@@ -1,6 +1,10 @@
 import { getVoiceAdapterRegistry } from './voiceAdapterRegistry';
 import { getVoiceSessionSnapshot } from './voiceSessionStore';
 import type { VoiceAdapterController, VoiceAdapterId, VoiceSessionSnapshot } from './types';
+import type {
+    VoiceOutputFocusApplication,
+    VoiceOutputFocusState,
+} from '@happier-dev/plugin-sdk/voice/client';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
 import {
     VoiceCaptureBusyError,
@@ -12,6 +16,7 @@ import {
     readSafeVoiceRuntimeFailureCode,
     recordVoiceRuntimeFailure,
 } from '@/voice/runtime/voiceRuntimeFailureCode';
+import { createVoiceMachineError } from '@/voice/runtime/machine/voiceMachineError';
 
 export type VoiceSessionLifecycleController = Readonly<{
     bargeIn: (sessionId: string) => Promise<void>;
@@ -27,6 +32,11 @@ export type VoiceSessionLifecycleController = Readonly<{
     setConfiguredProviderId: (providerId: VoiceAdapterId | 'off' | null) => void;
     setCurrentUiContextToolSetEnabled: (enabled: boolean) => void;
     setMuted: (sessionId: string, muted: boolean) => Promise<void>;
+    retry: (sessionId: string) => Promise<void>;
+    setOutputFocusState?: (
+        sessionId: string,
+        state: VoiceOutputFocusState,
+    ) => Promise<VoiceOutputFocusApplication>;
     stop: (sessionId: string) => Promise<void>;
     subscribe: (listener: () => void) => () => void;
     toggle: (sessionId: string) => Promise<void>;
@@ -49,6 +59,11 @@ type StartingAdapter = {
     observedActiveTransition: boolean;
 };
 
+type UnavailableConfiguredProvider = Readonly<{
+    providerId: VoiceAdapterId;
+    sessionId: string;
+}>;
+
 function createDisconnectedSnapshot(): VoiceSessionSnapshot {
     return {
         adapterId: null,
@@ -56,6 +71,27 @@ function createDisconnectedSnapshot(): VoiceSessionSnapshot {
         status: 'disconnected',
         mode: 'idle',
         canStop: false,
+    };
+}
+
+function createUnavailableConfiguredProviderSnapshot(
+    providerId: VoiceAdapterId,
+    sessionId: string,
+): VoiceSessionSnapshot {
+    const failure = createVoiceMachineError({
+        kind: 'service_temporarily_unavailable',
+        reason: 'voice_provider_adapter_not_registered',
+    });
+    return {
+        adapterId: providerId,
+        sessionId,
+        status: 'error',
+        mode: 'idle',
+        canStop: false,
+        errorCode: failure.kind,
+        errorMessage: failure.reason,
+        errorRecoveryAction: failure.recoveryAction,
+        errorPresentation: failure.presentation,
     };
 }
 
@@ -87,17 +123,12 @@ function isAbortError(error: unknown): boolean {
         && (error as Readonly<{ name?: unknown }>).name === 'AbortError';
 }
 
-function requiresCurrentUiContextToolSetReplacement(
-    adapter: VoiceAdapterController,
-    enabled: boolean,
-): boolean {
+function requiresCurrentUiContextToolSetReplacement(adapter: VoiceAdapterController): boolean {
     // Realtime tool definitions are frozen for a connection. Local Agent Voice
-    // seeds its model session once, so only the restrictive off transition
-    // needs to replace it; restoring disclosure applies on a later attempt.
-    // Local direct lacks the Agent text-turn capability, hence no model-session
-    // tool catalog to retire.
-    return adapter.engineKind === 'realtime'
-        || (enabled === false && typeof adapter.sendTextTurn === 'function');
+    // seeds its model session once, so either tool-catalog boundary needs to
+    // replace it. Local direct lacks the Agent text-turn capability, hence no
+    // model-session tool catalog to retire.
+    return adapter.engineKind === 'realtime' || typeof adapter.sendTextTurn === 'function';
 }
 
 export function createVoiceSessionLifecycleController(deps?: Readonly<{
@@ -109,6 +140,7 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
         deps?.captureAdmission ?? voiceCaptureAdmissionController;
     let configuredProviderId: VoiceAdapterId | 'off' | null = null;
     let currentUiContextToolSetEnabled: boolean | null = null;
+    let unavailableConfiguredProvider: UnavailableConfiguredProvider | null = null;
     let publishedSnapshot = getVoiceSessionSnapshot();
     let pendingAdapterSwitch: PendingAdapterSwitch | null = null;
     let suppressedProviderAuthFailureAdapterId: string | null = null;
@@ -347,6 +379,17 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
             return createDisconnectedSnapshot();
         }
 
+        const unavailable = unavailableConfiguredProvider;
+        if (
+            unavailable?.providerId === configuredProviderId
+            && !getRegistry().get(unavailable.providerId)
+        ) {
+            return createUnavailableConfiguredProviderSnapshot(
+                unavailable.providerId,
+                unavailable.sessionId,
+            );
+        }
+
         // Only the configured provider may surface as active or terminal. The machine now
         // carries its owning adapterId, so non-owning adapters already project a
         // disconnected snapshot; a blind `find(status !== 'disconnected')`
@@ -387,7 +430,7 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
                     && pending.startedCurrentUiContextToolSetEnabled !== null
                     && currentUiContextToolSetEnabled !== null
                     && pending.startedCurrentUiContextToolSetEnabled !== currentUiContextToolSetEnabled
-                    && requiresCurrentUiContextToolSetReplacement(targetAdapter, currentUiContextToolSetEnabled);
+                    && requiresCurrentUiContextToolSetReplacement(targetAdapter);
                 if (!toolSetChangedDuringRestart) {
                     pendingAdapterSwitch = null;
                     return;
@@ -543,6 +586,10 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
     };
 
     const refreshAdapterSubscriptions = () => {
+        const unavailable = unavailableConfiguredProvider;
+        if (unavailable && getRegistry().get(unavailable.providerId)) {
+            unavailableConfiguredProvider = null;
+        }
         const adapters = listAttemptAdapters();
         const currentIds = new Set(adapters.map((adapter) => adapter.id));
         for (const [adapterId, unsubscribe] of adapterUnsubs) {
@@ -596,6 +643,94 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
             return startAttempt;
         }
         return null;
+    };
+
+    const toggle = async (sessionId: string): Promise<void> => {
+        if (disposed) return;
+        const cancelledRestartStart = cancelPendingCurrentUiContextToolSetRestart();
+        const owned = resolveOwnedAdapter();
+        if (owned) {
+            await stopAdapter(
+                owned.adapter,
+                owned.snapshot.sessionId ?? sessionId,
+            );
+            return;
+        }
+        if (cancelledRestartStart) {
+            await stopAdapter(cancelledRestartStart.adapter, cancelledRestartStart.sessionId);
+            return;
+        }
+
+        const adapter = resolveConfiguredAdapter();
+        if (!adapter) {
+            /*
+             * A selected provider whose adapter is absent from the registry —
+             * withdrawn while its plugin projection re-installs, or never
+             * registered — must refuse Start before capture admission and name
+             * that refusal through this lifecycle owner.
+             */
+            if (configuredProviderId !== null && configuredProviderId !== 'off') {
+                const unavailable: UnavailableConfiguredProvider = {
+                    providerId: configuredProviderId,
+                    sessionId: sessionId.trim() || VOICE_AGENT_GLOBAL_SESSION_ID,
+                };
+                if (
+                    unavailableConfiguredProvider?.providerId === unavailable.providerId
+                    && unavailableConfiguredProvider.sessionId === unavailable.sessionId
+                ) {
+                    return;
+                }
+                unavailableConfiguredProvider = unavailable;
+                recordVoiceRuntimeFailure(
+                    configuredProviderId,
+                    'unstarted',
+                    'adapter_unavailable',
+                    'voice_provider_adapter_not_registered',
+                );
+                publishSnapshot();
+            }
+            return;
+        }
+        if (unavailableConfiguredProvider?.providerId === adapter.id) {
+            unavailableConfiguredProvider = null;
+        }
+        if (suppressedProviderAuthFailureAdapterId === adapter.id) {
+            suppressedProviderAuthFailureAdapterId = null;
+        }
+        const startAttempt = createStartingAdapter(adapter, sessionId);
+        try {
+            await startAdapter(adapter, sessionId, startAttempt);
+        } catch (error) {
+            const settledSnapshot = publishedSnapshot;
+            const isCurrentPublishedFailure = configuredProviderId === adapter.id
+                && startAttempt.observedActiveTransition
+                && settledSnapshot.adapterId === adapter.id
+                && settledSnapshot.sessionId === startAttempt.expectedSnapshotSessionId
+                && isTerminalRetryableRecovery(settledSnapshot);
+            /*
+             * Realtime adapters publish their terminal recovery before
+             * rejecting the Start. That is an expected, already-visible
+             * attempt outcome: consumers recover from the snapshot, while
+             * surfacing the rejection again through fire-and-forget makes
+             * Expo hide that recovery behind its development error overlay.
+             *
+             * The terminal snapshot must follow this Start's own active
+             * transition for its exact control session and name the same
+             * safe error code. Every other rejection remains observable:
+             * a prior error republished by the registry, a provider
+             * switch, cancellation, a non-retryable recovery, an
+             * unexpected rejection after a recovery snapshot, and a
+             * failure that never entered this current attempt.
+             */
+            if (
+                !isAbortError(error)
+                && isCurrentPublishedFailure
+                && settledSnapshot.errorCode === readSafeVoiceRuntimeFailureCode(error)
+            ) {
+                return;
+            }
+            throw error;
+        }
     };
     refreshAdapterSubscriptions();
     const unsubscribeRegistry = getRegistry().subscribe?.(() => {
@@ -744,6 +879,7 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
             if (disposed) return;
             if (providerId !== configuredProviderId) {
                 suppressedProviderAuthFailureAdapterId = null;
+                unavailableConfiguredProvider = null;
             }
             configuredProviderId = providerId;
             publishSnapshot();
@@ -757,10 +893,8 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
             const pending = pendingAdapterSwitch;
             if (pending) {
                 if (pending.restartForCurrentUiContextTools) {
-                    // Keep this serialized transition current. Realtime will
-                    // retire a started stale schema; Local Agent only retires
-                    // on the restrictive boundary and otherwise waits for its
-                    // next explicit attempt.
+                    // Keep this serialized transition current. Realtime and
+                    // Local Agent both retire a started stale tool catalog.
                     publishSnapshot();
                 }
                 if (!pending.restartForCurrentUiContextTools) {
@@ -771,7 +905,7 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
                         : null;
                     if (
                         pendingTargetAdapter
-                        && requiresCurrentUiContextToolSetReplacement(pendingTargetAdapter, enabled)
+                        && requiresCurrentUiContextToolSetReplacement(pendingTargetAdapter)
                     ) {
                         // A normal provider hand-off has already chosen its
                         // target, but it may have captured the old tool-set
@@ -793,7 +927,7 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
             if (
                 !owned
                 || !owned.snapshot.sessionId
-                || !requiresCurrentUiContextToolSetReplacement(owned.adapter, enabled)
+                || !requiresCurrentUiContextToolSetReplacement(owned.adapter)
             ) {
                 return;
             }
@@ -820,6 +954,45 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
             if (!owned) return;
             await owned.adapter.setMuted({ sessionId: owned.snapshot.sessionId ?? sessionId, muted });
         },
+        retry: async (sessionId) => {
+            if (disposed) return;
+            const owned = resolveOwnedAdapter();
+            if (owned) {
+                await owned.adapter.retry?.({ sessionId: owned.snapshot.sessionId ?? sessionId });
+                return;
+            }
+            await toggle(sessionId);
+        },
+        setOutputFocusState: async (sessionId, state) => {
+            if (disposed) return 'unsupported';
+            const owned = resolveOwnedAdapter();
+            if (!owned) return 'unsupported';
+            const ownedSessionId = owned.snapshot.sessionId ?? sessionId;
+            if (!owned.adapter.setOutputFocusState) {
+                // Local Voice output is not a realtime connection transport;
+                // preserve its existing native playback ownership instead of
+                // treating a connection-only capability as a second owner.
+                if (owned.adapter.engineKind === 'local') return 'applied';
+                await stopAdapter(owned.adapter, ownedSessionId).catch(() => undefined);
+                return 'unsupported';
+            }
+            let application: VoiceOutputFocusApplication;
+            try {
+                application = await owned.adapter.setOutputFocusState({
+                    sessionId: ownedSessionId,
+                    state,
+                });
+            } catch {
+                application = 'unsupported';
+            }
+            // A session id is reusable. The captured adapter object is the
+            // lifecycle owner's exact incumbent, so never stop a replacement
+            // that happens to report the same session id.
+            if (resolveOwnedAdapter()?.adapter !== owned.adapter) return 'unsupported';
+            if (application === 'applied') return 'applied';
+            await stopAdapter(owned.adapter, ownedSessionId).catch(() => undefined);
+            return 'unsupported';
+        },
         stop: async (sessionId) => {
             if (disposed) return;
             const cancelledRestartStart = cancelPendingCurrentUiContextToolSetRestart();
@@ -839,78 +1012,6 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
                 listeners.delete(listener);
             };
         },
-        toggle: async (sessionId) => {
-            if (disposed) return;
-            const cancelledRestartStart = cancelPendingCurrentUiContextToolSetRestart();
-            const owned = resolveOwnedAdapter();
-            if (owned) {
-                await stopAdapter(
-                    owned.adapter,
-                    owned.snapshot.sessionId ?? sessionId,
-                );
-                return;
-            }
-            if (cancelledRestartStart) {
-                await stopAdapter(cancelledRestartStart.adapter, cancelledRestartStart.sessionId);
-                return;
-            }
-
-            const adapter = resolveConfiguredAdapter();
-            if (!adapter) {
-                /*
-                 * A selected provider whose adapter is absent from the registry —
-                 * withdrawn while its plugin projection re-installs, or never
-                 * registered — makes Start a no-op: no request, no microphone, no
-                 * state change, and a surface still showing its previous label.
-                 * It is the one Start refusal with no other observer.
-                 */
-                if (configuredProviderId !== null && configuredProviderId !== 'off') {
-                    recordVoiceRuntimeFailure(
-                        configuredProviderId,
-                        'unstarted',
-                        'adapter_unavailable',
-                        'voice_provider_adapter_not_registered',
-                    );
-                }
-                return;
-            }
-            if (suppressedProviderAuthFailureAdapterId === adapter.id) {
-                suppressedProviderAuthFailureAdapterId = null;
-            }
-            const startAttempt = createStartingAdapter(adapter, sessionId);
-            try {
-                await startAdapter(adapter, sessionId, startAttempt);
-            } catch (error) {
-                const settledSnapshot = publishedSnapshot;
-                const isCurrentPublishedFailure = configuredProviderId === adapter.id
-                    && startAttempt.observedActiveTransition
-                    && settledSnapshot.adapterId === adapter.id
-                    && settledSnapshot.sessionId === startAttempt.expectedSnapshotSessionId
-                    && isTerminalRetryableRecovery(settledSnapshot);
-                /*
-                 * Realtime adapters publish their terminal recovery before
-                 * rejecting the Start. That is an expected, already-visible
-                 * attempt outcome: consumers recover from the snapshot, while
-                 * surfacing the rejection again through fire-and-forget makes
-                 * Expo hide that recovery behind its development error overlay.
-                 *
-                 * The terminal snapshot must follow this Start's own active
-                 * transition for its exact control session and name the same
-                 * safe error code. Every other rejection remains observable:
-                 * a prior error republished by the registry, a provider
-                 * switch, cancellation, a non-retryable recovery, an
-                 * unexpected rejection after a recovery snapshot, and a
-                 * failure that never entered this current attempt.
-                 */
-                if (
-                    !isAbortError(error)
-                    && isCurrentPublishedFailure
-                    && settledSnapshot.errorCode === readSafeVoiceRuntimeFailureCode(error)
-                ) {
-                    return;
-                }
-                throw error;
-            }
-        },
+        toggle,
     };
 }

@@ -3,6 +3,17 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const logSpy = vi.hoisted(() => vi.fn());
 vi.mock('@/log', () => ({ log: { log: logSpy, warn: vi.fn(), error: vi.fn() } }));
 
+const machineRpc = vi.hoisted(() => vi.fn());
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
+  machineRpcWithServerScope: machineRpc,
+}));
+// The ambient Voice target is re-derived from mutable ordering on every read,
+// so it has to be able to move for the captured pin to mean anything.
+const ambientMachine = vi.hoisted(() => ({ id: null as string | null }));
+vi.mock('@/voice/settings/executionMachine', () => ({
+  resolveVoiceExecutionMachineId: () => ambientMachine.id,
+}));
+
 import { createVoiceClientMediatedCredentialHeadersMaterializer } from './mediatedCredentialClient';
 
 const contribution = Object.freeze({ pluginId: 'happier.openai', localId: 'realtime' });
@@ -44,9 +55,11 @@ function materializer(
 describe('createVoiceClientMediatedCredentialHeadersMaterializer', () => {
   beforeEach(() => {
     logSpy.mockReset();
+    machineRpc.mockReset();
+    ambientMachine.id = null;
   });
 
-  it('names the failing pre-flight step and its cause when the machine cannot be reached', async () => {
+  it('preserves an unreachable execution machine as distinct from credential failure', async () => {
     const materialize = materializer(async () => {
       throw Object.assign(new Error('machine_unavailable'), { code: 'machine_unavailable' });
     });
@@ -55,7 +68,7 @@ describe('createVoiceClientMediatedCredentialHeadersMaterializer', () => {
       operationId: 'mint-client-secret',
       selection,
       signal: new AbortController().signal,
-    })).rejects.toMatchObject({ code: 'credential_unavailable' });
+    })).rejects.toMatchObject({ code: 'execution_machine_unavailable' });
 
     expect(logSpy).toHaveBeenCalledTimes(1);
     const line = String(logSpy.mock.calls[0]?.[0]);
@@ -159,5 +172,58 @@ describe('createVoiceClientMediatedCredentialHeadersMaterializer', () => {
     })).rejects.toMatchObject({ code: 'voice_account_operation_cancelled' });
 
     expect(invoke).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * The captured machine is part of this credential authority. Without an
+   * injected client the materializer must still dispatch to the machine the
+   * authority was captured on, not to whatever the ambient resolver now names.
+   */
+  it('dispatches to the machine captured with the authority after the ambient target moved', async () => {
+    machineRpc.mockResolvedValue({ ok: true, headers: { authorization: 'Bearer account-a' } });
+    const materialize = createVoiceClientMediatedCredentialHeadersMaterializer({
+      contribution,
+      platform: 'web',
+      phase: 'prepare',
+      declarationAuthority: { kind: 'projected', cacheIdentity },
+      machineId: 'machine-a',
+      isCurrent: () => true,
+      isInvocationCurrent: () => true,
+    });
+    ambientMachine.id = 'machine-b';
+
+    await expect(materialize({
+      operationId: 'mint-client-secret',
+      selection,
+      signal: new AbortController().signal,
+    })).resolves.toEqual({ authorization: 'Bearer account-a' });
+
+    expect(machineRpc).toHaveBeenCalledTimes(1);
+    expect(machineRpc).toHaveBeenCalledWith(expect.objectContaining({
+      machineId: 'machine-a',
+      method: 'daemon.voice.client.mediatedCredential.materialize',
+    }));
+  });
+
+  it('reports execution-machine recovery instead of falling back to the ambient machine when no target was captured', async () => {
+    machineRpc.mockResolvedValue({ ok: true, headers: { authorization: 'Bearer account-a' } });
+    const materialize = createVoiceClientMediatedCredentialHeadersMaterializer({
+      contribution,
+      platform: 'web',
+      phase: 'prepare',
+      declarationAuthority: { kind: 'projected', cacheIdentity },
+      machineId: null,
+      isCurrent: () => true,
+      isInvocationCurrent: () => true,
+    });
+    ambientMachine.id = 'machine-b';
+
+    await expect(materialize({
+      operationId: 'mint-client-secret',
+      selection,
+      signal: new AbortController().signal,
+    })).rejects.toMatchObject({ code: 'execution_machine_unavailable' });
+
+    expect(machineRpc).not.toHaveBeenCalled();
   });
 });

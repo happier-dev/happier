@@ -92,6 +92,15 @@ export function resolveVoiceExecutionMachineId(
   return resolveVoiceExecutionMachineIdFromState(storage.getState(), override);
 }
 
+export function isCapturedVoiceExecutionMachineCurrent(
+  capturedMachineId: string | null,
+): boolean {
+  const selection = resolveVoiceExecutionMachineSelectionFromState(storage.getState());
+  return capturedMachineId === null
+    ? selection.kind !== 'resolved'
+    : selection.kind !== 'none' && selection.machineId === capturedMachineId;
+}
+
 export function listVoiceExecutionMachinesFromState(state: any): readonly Machine[] {
   return resolveVisibleMachinesForActiveServerFromState(state);
 }

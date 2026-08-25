@@ -371,4 +371,54 @@ describe('VoiceOrbAppShellMount', () => {
         (orb.props.onAction as (id: string) => void)('openConversation');
         expect(onOpenConversation).toHaveBeenCalledTimes(1);
     });
+
+    it('offers Retry beside End while the owned reconnect backoff is pending', async () => {
+        localSettings.voiceOrbEnabled = true;
+        const onRecover = vi.fn();
+        attemptControl.current = {
+            ...attemptControl.current,
+            availability: 'ready',
+            live: true,
+            canStart: false,
+            canStop: true,
+            primaryAction: 'end',
+            recoveryAvailable: true,
+            recoveryLabel: 'Retry',
+            captionLabel: 'Retry',
+            onRecover,
+            openConversationSessionId: null,
+        };
+        const { VoiceOrbAppShellMount } = await import('./VoiceOrbAppShellMount');
+        const screen = await renderScreen(withEnergy(React.createElement(VoiceOrbAppShellMount)));
+        const orb = screen.tree.root.findByType(VoiceOrb);
+        const controls = orb.props.extraControls as ReadonlyArray<{ id: string; label: string }>;
+
+        expect(controls).toEqual([
+            expect.objectContaining({ id: 'retry', label: 'Retry' }),
+        ]);
+        (orb.props.onAction as (id: string) => void)('retry');
+        expect(onRecover).toHaveBeenCalledTimes(1);
+        expect(attemptControl.current.onPrimaryAction).not.toHaveBeenCalled();
+    });
+
+    it('does not duplicate terminal recovery that is already the primary Orb action', async () => {
+        localSettings.voiceOrbEnabled = true;
+        attemptControl.current = {
+            ...attemptControl.current,
+            availability: 'recoverable',
+            live: false,
+            canStart: false,
+            canStop: false,
+            primaryAction: 'recover',
+            recoveryAvailable: true,
+            recoveryLabel: 'Retry',
+            captionLabel: 'Retry',
+            openConversationSessionId: null,
+        };
+        const { VoiceOrbAppShellMount } = await import('./VoiceOrbAppShellMount');
+        const screen = await renderScreen(withEnergy(React.createElement(VoiceOrbAppShellMount)));
+        const orb = screen.tree.root.findByType(VoiceOrb);
+
+        expect(orb.props.extraControls).toEqual([]);
+    });
 });

@@ -7,7 +7,6 @@ import {
   formatMessage,
   formatPermissionRequest,
   formatReadyEvent,
-  formatSessionFocus,
   formatSessionFull,
   formatSessionOffline,
   formatSessionOnline,
@@ -262,7 +261,6 @@ describe('voice context privacy (opt-out defaults)', () => {
   it.each([
     ['online', formatSessionOnline],
     ['offline', formatSessionOffline],
-    ['focus', formatSessionFocus],
   ] as const)('applies real summary and path prefs to the %s session label', (_name, formatter) => {
     const out = formatter(
       's_private',

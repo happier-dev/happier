@@ -145,9 +145,9 @@ export function VoiceConversationsSettingsScreen() {
               happierVoiceSupported={happierVoiceSupported}
               localAvailability={localAvailability}
               executionMachineId={executionMachine.machineId}
+              executionMachineSelectedId={executionMachine.selectedMachineId}
               executionMachineSelectionKind={executionMachine.selectionKind}
               popoverBoundaryRef={popoverBoundaryRef}
-              showProcessingDisclosure={false}
               onRecoveryAction={focusRecovery}
             />
           </View>
@@ -222,7 +222,6 @@ export function VoiceConversationsSettingsScreen() {
               setVoice={setVoice}
               popoverBoundaryRef={popoverBoundaryRef}
               daemonRouteDiagnosticReason={daemonRouteDiagnosticReason}
-              showProcessingDisclosure={false}
             />
             <LocalConversationSection
               voice={voice}
@@ -230,7 +229,6 @@ export function VoiceConversationsSettingsScreen() {
               popoverBoundaryRef={popoverBoundaryRef}
               daemonModelCatalog={daemonModelCatalog}
               daemonRouteDiagnosticReason={daemonRouteDiagnosticReason}
-              showProcessingDisclosure={false}
             />
           </View>
         </ItemList>

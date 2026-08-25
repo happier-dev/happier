@@ -63,6 +63,7 @@ describe('useVoiceDictation composed daemon readiness', () => {
     it('does not report Ready when the real controller will fail the daemon feature gate before RPC', async () => {
         const executionMachineId = 'machine-ready-at-start';
         const recording = new Blob(['recorded-audio'], { type: 'audio/webm;codecs=opus' });
+        const stopRecording = vi.fn(async () => 'blob:dictation-composed-recording');
         setRuntimeFetch(async (input) => {
             if (String(input) !== 'blob:dictation-composed-recording') {
                 throw new Error(`unexpected fetch: ${String(input)}`);
@@ -160,7 +161,7 @@ describe('useVoiceDictation composed daemon readiness', () => {
                         teardown: async () => {},
                         getStream: () => null,
                         beginRecording: async () => {},
-                        stopRecording: async () => 'blob:dictation-composed-recording',
+                        stopRecording,
                     };
                 },
             }),
@@ -199,5 +200,49 @@ describe('useVoiceDictation composed daemon readiness', () => {
             status: 'unavailable',
             code: 'server_feature_disabled',
         });
+
+        storage.setState({
+            ...storage.getState(),
+            settings: {
+                ...storage.getState().settings,
+                voice: {
+                    ...storage.getState().settings.voice,
+                    dictation: {
+                        ...storage.getState().settings.voice.dictation,
+                        sttBinding: 'explicit',
+                        stt: {
+                            ...storage.getState().settings.voice.dictation.stt,
+                            provider: 'happier.voice.openai-compat/stt',
+                        },
+                    },
+                },
+            },
+        });
+        await act(async () => {
+            await expect(hook.getCurrent().toggle()).resolves.toEqual({ kind: 'started' });
+        });
+        expect(stopRecording).toHaveBeenCalledOnce();
+
+        await act(async () => {
+            primeServerFeaturesSnapshot({
+                snapshot: {
+                    status: 'ready',
+                    features: createRootLayoutFeaturesResponse({
+                        features: {
+                            voice: {
+                                enabled: false,
+                                happierVoice: { enabled: false },
+                            },
+                        },
+                    }),
+                },
+            });
+        });
+
+        await vi.waitFor(() => {
+            expect(hook.getCurrent().status).toBe('idle');
+            expect(stopRecording).toHaveBeenCalledTimes(2);
+        });
+        await expect(hook.getCurrent().toggle()).resolves.toEqual({ kind: 'cancelled' });
     });
 });

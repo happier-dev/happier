@@ -1,4 +1,5 @@
 import type { NativeVadBridge } from './NativeVadController';
+import { VOICE_PCM_CONVERSATION_AUDIO_SESSION } from '@/voice/runtime/nativePcmAudioSession';
 
 const VAD_SAMPLE_RATE = 16_000;
 const VAD_CHANNELS = 1;
@@ -22,12 +23,7 @@ export type NativePcmFrameSource = Readonly<{
             channels: 1 | 2;
             frameMs: number;
         }>;
-        audioSession: Readonly<{
-            mode: 'conversation';
-            input: true;
-            output: true;
-            aec: 'preferred';
-        }>;
+        audioSession: typeof VOICE_PCM_CONVERSATION_AUDIO_SESSION;
         onFrame: (frame: NativePcmFrame) => void;
         onError?: (error: unknown) => void;
     }>) => NativePcmCaptureLease | Promise<NativePcmCaptureLease>;
@@ -207,12 +203,7 @@ export async function resolveNativeSileroVadBridge(
                         channels: VAD_CHANNELS,
                         frameMs: VAD_FRAME_MS,
                     },
-                    audioSession: {
-                        mode: 'conversation',
-                        input: true,
-                        output: true,
-                        aec: 'preferred',
-                    },
+                    audioSession: VOICE_PCM_CONVERSATION_AUDIO_SESSION,
                     onFrame,
                     onError: () => stopAfterFrameFailure(),
                 });

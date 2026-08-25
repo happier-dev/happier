@@ -73,7 +73,7 @@ describe('Voice History export targets', () => {
       click,
       remove,
     };
-    const createObjectURL = vi.fn(() => 'blob:voice-history');
+    const createObjectURL = vi.fn((_value: Blob) => 'blob:voice-history');
     const revokeObjectURL = vi.fn();
     vi.stubGlobal('document', {
       createElement: vi.fn(() => anchor),
@@ -102,23 +102,82 @@ describe('Voice History export targets', () => {
     expect(revokeObjectURL).toHaveBeenCalledWith('blob:voice-history');
   });
 
-  it('streams every chunk into the native file, shares it, and removes it', async () => {
-    await shareVoiceHistoryExportArtifactNative(ARTIFACT);
+  it('coalesces ordered native writes to a bounded buffer, shares the result, and removes it', async () => {
+    const chunks = [
+      'a'.repeat(32 * 1024),
+      'b'.repeat(32 * 1024),
+      'c'.repeat(32 * 1024),
+    ];
+    const artifact: VoiceHistoryExportArtifact = {
+      ...ARTIFACT,
+      chunks: () => chunks,
+    };
+    await shareVoiceHistoryExportArtifactNative(artifact);
 
     expect(nativeBoundary.isAvailableAsync).toHaveBeenCalledOnce();
     expect(nativeBoundary.File).toHaveBeenCalledWith('file:///cache', ARTIFACT.fileName);
-    // The first write replaces the file; every later chunk appends, so the file
-    // holds the whole document instead of only its last chunk.
+    // The existing target remains the ordered streaming sink, but coalesces
+    // small producer chunks so the native file boundary is not invoked once per
+    // row. The final partial buffer must still be appended in order.
     expect(nativeBoundary.file.write.mock.calls).toEqual([
-      [ARTIFACT_CHUNKS[0], undefined],
-      [ARTIFACT_CHUNKS[1], { append: true }],
-      [ARTIFACT_CHUNKS[2], { append: true }],
-      [ARTIFACT_CHUNKS[3], { append: true }],
+      [`${chunks[0]}${chunks[1]}`, undefined],
+      [chunks[2], { append: true }],
     ]);
     expect(nativeBoundary.shareAsync).toHaveBeenCalledWith(
       nativeBoundary.file.uri,
       expect.objectContaining({ mimeType: ARTIFACT.mimeType }),
     );
+    expect(nativeBoundary.file.delete).toHaveBeenCalledOnce();
+  });
+
+  it('keeps every native write UTF-8 bounded across awkward code-point boundaries', async () => {
+    const boundaryChunk = `${'a'.repeat((64 * 1024) - 1)}😀`;
+    const mixedChunk = Array.from(
+      { length: 24_000 },
+      (_value, index) => ['b', 'é', '漢', '😀', '🫠'][index % 5],
+    ).join('');
+    const artifact: VoiceHistoryExportArtifact = {
+      ...ARTIFACT,
+      chunks: () => [boundaryChunk, mixedChunk],
+    };
+
+    await shareVoiceHistoryExportArtifactNative(artifact);
+
+    const writes = nativeBoundary.file.write.mock.calls.map(([contents]) => contents as string);
+    expect(writes.length).toBeGreaterThan(1);
+    // 65,535 ASCII bytes cannot absorb the following four-byte emoji. The
+    // first write must flush before the emoji, rather than emitting 65,539 B.
+    expect(writes[0]).toBe('a'.repeat((64 * 1024) - 1));
+    expect(writes.join('')).toBe(`${boundaryChunk}${mixedChunk}`);
+    for (const write of writes) {
+      expect(new TextEncoder().encode(write).byteLength).toBeLessThanOrEqual(64 * 1024);
+      expect(new TextDecoder().decode(new TextEncoder().encode(write))).toBe(write);
+    }
+  });
+
+  it('removes the native cache file when a buffered write fails before sharing', async () => {
+    nativeBoundary.file.write.mockImplementationOnce(() => {
+      throw new Error('write_failed');
+    });
+
+    await expect(shareVoiceHistoryExportArtifactNative(ARTIFACT)).rejects.toThrow('write_failed');
+
+    expect(nativeBoundary.shareAsync).not.toHaveBeenCalled();
+    expect(nativeBoundary.file.delete).toHaveBeenCalledOnce();
+  });
+
+  it('removes the native cache file when the export producer throws before sharing', async () => {
+    const artifact: VoiceHistoryExportArtifact = {
+      ...ARTIFACT,
+      chunks: function* () {
+        yield '{"version":1';
+        throw new Error('producer_failed');
+      },
+    };
+
+    await expect(shareVoiceHistoryExportArtifactNative(artifact)).rejects.toThrow('producer_failed');
+
+    expect(nativeBoundary.shareAsync).not.toHaveBeenCalled();
     expect(nativeBoundary.file.delete).toHaveBeenCalledOnce();
   });
 });

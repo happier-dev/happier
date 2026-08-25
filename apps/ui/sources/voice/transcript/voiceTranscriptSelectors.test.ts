@@ -25,6 +25,39 @@ function buildCountingUserMessage(seq: number, reads: { count: number }) {
     };
 }
 
+function buildCanonicalCountingSession(
+    total: number,
+    reads: { visited: number; content: number },
+) {
+    const messageIdsOldestFirst: string[] = [];
+    const messagesById: Record<string, ReturnType<typeof buildUserMessage>> = {};
+
+    for (let index = 1; index <= total; index += 1) {
+        const id = `m-${index}`;
+        const message = buildUserMessage(index);
+        Object.defineProperty(message, 'content', {
+            configurable: true,
+            get() {
+                reads.content += 1;
+                return { type: 'text', text: index > total - 3 ? '   ' : `msg-${index}` };
+            },
+        });
+        messageIdsOldestFirst.push(id);
+        messagesById[id] = message;
+    }
+
+    const countedMessagesById = new Proxy(messagesById, {
+        get(target, property, receiver) {
+            if (typeof property === 'string' && property.startsWith('m-')) {
+                reads.visited += 1;
+            }
+            return Reflect.get(target, property, receiver);
+        },
+    });
+
+    return { messageIdsOldestFirst, messagesById: countedMessagesById };
+}
+
 describe('voiceTranscriptSelectors', () => {
     it('uses the canonical local id when a persisted acknowledgement also has a server id', () => {
         const entries = selectVoiceTranscriptEntriesForConversationSession({
@@ -157,6 +190,25 @@ describe('voiceTranscriptSelectors', () => {
         expect(entries[entries.length - 1]?.id).toBe(`m-${total}`);
         // …reached without extracting the 800 messages outside the window.
         expect(reads.count).toBe(VOICE_TRANSCRIPT_ACTIVE_RENDER_WINDOW);
+    });
+
+    it('walks the canonical ordered store backward and only visits the bounded suffix needed for renderable rows', () => {
+        const total = VOICE_TRANSCRIPT_ACTIVE_RENDER_WINDOW + 10;
+        const reads = { visited: 0, content: 0 };
+        const session = buildCanonicalCountingSession(total, reads);
+
+        const entries = selectVoiceTranscriptEntriesForConversationSession(
+            { sessionMessages: { 'carrier-canonical-bounded': session } },
+            'carrier-canonical-bounded',
+        );
+
+        expect(entries).toHaveLength(VOICE_TRANSCRIPT_ACTIVE_RENDER_WINDOW);
+        expect(entries[0]?.id).toBe('m-8');
+        expect(entries[entries.length - 1]?.id).toBe('m-207');
+        // Three non-projectable tail messages are visited before the 200 rows
+        // are admitted; all older messages remain untouched.
+        expect(reads.visited).toBe(VOICE_TRANSCRIPT_ACTIVE_RENDER_WINDOW + 3);
+        expect(reads.content).toBe(VOICE_TRANSCRIPT_ACTIVE_RENDER_WINDOW + 3);
     });
 
     it('keeps the exact newest window for legacy input the store never ordered', () => {

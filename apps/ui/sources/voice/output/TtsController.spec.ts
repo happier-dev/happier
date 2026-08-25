@@ -210,4 +210,5 @@ describe('createTtsPlaybackController — ordered ack\'d playback queue', () => 
         expect(playbackErrors).toEqual([0]);
         expect(confirmed).toEqual([1]);
     });
+
 });

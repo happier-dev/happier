@@ -10,7 +10,7 @@ import {
 
 import { useVoiceLevelSharedValue } from '@/components/voice/surface/useVoiceLevelSharedValue';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
-import { useHostActivelyViewed } from '@/utils/runtime/useHostActivelyViewed';
+import { useHostActivelyFocused } from '@/utils/runtime/useHostActivelyViewed';
 import type { VoiceRuntimeLevelSourceActivity } from '@/voice/runtime/levels/voiceRuntimeLevelStore';
 
 import { arrivalGesture } from './arrivalGesture';
@@ -231,7 +231,7 @@ export function VoiceEnergyProvider(props: Readonly<{
     children: React.ReactNode;
 }>) {
     const reduced = useReducedMotionPreference();
-    const runtimeVisible = useHostActivelyViewed();
+    const runtimeMotionActive = useHostActivelyFocused();
     // Two calls, two literal channels. `useVoiceLevelSharedValue` samples the
     // store only at mount and re-binds just the subscription, so a dynamic
     // channel argument leaves the shared value holding the other channel's last
@@ -322,7 +322,7 @@ export function VoiceEnergyProvider(props: Readonly<{
      */
     const micCaptureActive = runtime?.micCaptureActive ?? true;
     const active = resolveVoiceEnergyActive({
-        runtimeVisible,
+        runtimeMotionActive,
         providerReady: runtime?.providerReady ?? true,
         motionAllowed,
         hasVisibleConsumer: runtime === null || hasVisibleConsumer,

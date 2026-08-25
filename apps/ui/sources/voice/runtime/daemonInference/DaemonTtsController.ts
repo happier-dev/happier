@@ -123,10 +123,16 @@ export class DaemonTtsController {
         output?: DaemonVoiceInferenceAudioOutput | null;
         signal?: AbortSignal | null;
     }>): Promise<void> {
+        if (params.signal?.aborted) {
+            return;
+        }
         const abortController = new AbortController();
         const abortListener = () => abortController.abort();
         if (params.signal) {
             params.signal.addEventListener('abort', abortListener, { once: true });
+            if (params.signal.aborted) {
+                abortController.abort();
+            }
         }
 
         let stopPlayback: (() => void) | null = null;
@@ -143,10 +149,17 @@ export class DaemonTtsController {
         abortController.signal.addEventListener('abort', stopActivePlayback);
 
         try {
+            if (abortController.signal.aborted) {
+                return;
+            }
             clearStopper = params.registerPlaybackStopper(() => {
                 abortController.abort();
                 stopActivePlayback();
             });
+
+            if (abortController.signal.aborted) {
+                return;
+            }
 
             const registerPlaybackOnly: VoicePlaybackStopperRegistrar = (stopper) => {
                 stopPlayback = stopper;
@@ -232,7 +245,8 @@ export class DaemonTtsController {
         const epoch = ++this.speakEpoch;
         let stream: DaemonSegmentedTtsSession | null = null;
         let firstSegmentRecorded = false;
-        let cancelRequested = false;
+        let abortObserved = params.abortController.signal.aborted;
+        let cancelDelivery: Promise<void> | null = null;
         let abortPlayback: (() => void) | null = null;
         const maxResidentSegments = 2;
         let producerTerminated = false;
@@ -262,6 +276,16 @@ export class DaemonTtsController {
             residentSegmentIds.clear();
             wakeResidencyWaiters();
         };
+        const cancelDeliveredStream = (): Promise<void> => {
+            const activeStream = stream;
+            if (!activeStream) {
+                return Promise.resolve();
+            }
+            cancelDelivery ??= Promise.resolve()
+                .then(async () => await activeStream.cancel())
+                .catch(() => undefined);
+            return cancelDelivery;
+        };
         const waitForResidencySlot = async (): Promise<boolean> => {
             while (
                 residentSegmentIds.size >= maxResidentSegments
@@ -289,41 +313,37 @@ export class DaemonTtsController {
                 }
             },
             confirmPlayback: async (chunk) => {
-                if (this.speakEpoch !== epoch || params.abortController.signal.aborted) {
+                if (this.speakEpoch !== epoch || abortObserved || params.abortController.signal.aborted) {
                     return;
                 }
                 await stream?.ackSegment(chunk.segment);
             },
             onPlaybackError: async () => {
                 terminateProducer();
-                if (this.speakEpoch !== epoch || params.abortController.signal.aborted || cancelRequested) {
+                if (this.speakEpoch !== epoch || abortObserved || params.abortController.signal.aborted) {
                     return;
                 }
-                cancelRequested = true;
                 abortPlayback?.();
-                await stream?.cancel().catch(() => undefined);
+                await cancelDeliveredStream();
             },
             onConfirmationError: async () => {
                 terminateProducer();
                 params.stopActivePlayback();
-                if (this.speakEpoch !== epoch || params.abortController.signal.aborted || cancelRequested) {
+                if (this.speakEpoch !== epoch || abortObserved || params.abortController.signal.aborted) {
                     return;
                 }
-                cancelRequested = true;
                 abortPlayback?.();
-                await stream?.cancel().catch(() => undefined);
+                await cancelDeliveredStream();
             },
             prefetchDepth: 2,
         });
         const playback = playbackController.speak();
         abortPlayback = playback.abort;
         const abortListener = () => {
+            abortObserved = true;
             terminateProducer();
             playback.abort();
-            if (!cancelRequested) {
-                cancelRequested = true;
-                void stream?.cancel();
-            }
+            void cancelDeliveredStream();
         };
         params.abortController.signal.addEventListener('abort', abortListener, { once: true });
 
@@ -337,6 +357,12 @@ export class DaemonTtsController {
                 output: params.output,
                 signal: params.abortController.signal,
             });
+            if (abortObserved || params.abortController.signal.aborted) {
+                abortObserved = true;
+                await cancelDeliveredStream();
+                await playback.done;
+                return;
+            }
             let receivedSegments = 0;
             while (
                 this.speakEpoch === epoch
@@ -393,16 +419,13 @@ export class DaemonTtsController {
             terminateProducer();
             params.stopActivePlayback();
             playback.abort();
-            if (!cancelRequested) {
-                cancelRequested = true;
-                await stream?.cancel().catch(() => undefined);
-            }
+            await cancelDeliveredStream();
             throw error;
         } finally {
             params.abortController.signal.removeEventListener('abort', abortListener);
-            if (params.abortController.signal.aborted && !cancelRequested) {
-                cancelRequested = true;
-                await stream?.cancel().catch(() => undefined);
+            if (abortObserved || params.abortController.signal.aborted) {
+                abortObserved = true;
+                await cancelDeliveredStream();
             }
         }
     }

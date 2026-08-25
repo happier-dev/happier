@@ -166,7 +166,9 @@ describe('createVoiceTurnStreaming', () => {
             interruptActiveTurn: () => undefined,
             resetCachedHandle: () => undefined,
             trackActiveTurn: async (_sessionId, task) => await task(),
-            voiceAgentPendingContextBySessionId: new Map(),
+            voiceAgentPendingSessionContextBySessionId: new Map(),
+            deferredTargetSessionContextBySessionId: new Map(),
+            latestAutomaticUiContextBySessionId: new Map(),
             voiceAgentTurnAbortControllerBySessionId: new Map(),
         });
 
@@ -221,7 +223,9 @@ describe('createVoiceTurnStreaming', () => {
             interruptActiveTurn: () => undefined,
             resetCachedHandle: () => undefined,
             trackActiveTurn: async (_sessionId, task) => await task(),
-            voiceAgentPendingContextBySessionId: new Map(),
+            voiceAgentPendingSessionContextBySessionId: new Map(),
+            deferredTargetSessionContextBySessionId: new Map(),
+            latestAutomaticUiContextBySessionId: new Map(),
             voiceAgentTurnAbortControllerBySessionId: new Map(),
         });
 
@@ -255,7 +259,9 @@ describe('createVoiceTurnStreaming', () => {
             interruptActiveTurn: () => undefined,
             resetCachedHandle: () => undefined,
             trackActiveTurn: async (_sessionId, task) => await task(),
-            voiceAgentPendingContextBySessionId: new Map(),
+            voiceAgentPendingSessionContextBySessionId: new Map(),
+            deferredTargetSessionContextBySessionId: new Map(),
+            latestAutomaticUiContextBySessionId: new Map(),
             voiceAgentTurnAbortControllerBySessionId: new Map(),
         });
 
@@ -268,4 +274,96 @@ describe('createVoiceTurnStreaming', () => {
         expect(sendTurn).toHaveBeenCalledTimes(1);
         expect(startTurnStream).not.toHaveBeenCalled();
     });
+
+    it('injects only the latest automatic UI projection beside deferred session context', async () => {
+        stateRef.current.settings.voice.providers.local_conversation.config.streaming.enabled = false;
+        stateRef.current.settings.voice.privacy = { currentUiContextMode: 'automatic' };
+        const sendTurn = vi.fn(async () => ({ assistantText: 'reply', actions: [] }));
+        const client: VoiceAgentClient = {
+            start: vi.fn(async () => ({ voiceAgentId: 'run_1' })),
+            sendTurn,
+            welcome: vi.fn(async () => ({ assistantText: 'unused' })),
+            startTurnStream: vi.fn(async () => ({ streamId: 'stream_1' })),
+            readTurnStream: vi.fn(async () => ({ streamId: 'stream_1', events: [], nextCursor: 0, done: true })),
+            cancelTurnStream: vi.fn(async () => ({ ok: true as const })),
+            commit: vi.fn(async () => ({ commitText: 'unused' })),
+            stop: vi.fn(async () => ({ ok: true as const })),
+        };
+        const pendingSessionContextBySessionId = new Map<string, string[]>();
+        const latestAutomaticUiContextBySessionId = new Map([
+            ['__voice_agent__', 'CURRENT UI CONTEXT\n\n{"navigation":{"title":"LATEST_NAVIGATION_SENTINEL"}}'],
+        ]);
+
+        const { createVoiceTurnStreaming } = await import('./voiceTurnStreaming');
+        const turnStreaming = createVoiceTurnStreaming({
+            getVoiceAgentHandle: async () => createHandle(client),
+            interruptActiveTurn: () => undefined,
+            resetCachedHandle: () => undefined,
+            trackActiveTurn: async (_sessionId, task) => await task(),
+            voiceAgentPendingSessionContextBySessionId: pendingSessionContextBySessionId,
+            deferredTargetSessionContextBySessionId: new Map<string, string | null>([
+                ['__voice_agent__', 'TARGET_CONTEXT:__voice_agent__->s1'],
+            ]),
+            latestAutomaticUiContextBySessionId,
+            voiceAgentTurnAbortControllerBySessionId: new Map(),
+        });
+
+        await turnStreaming.sendTurn('__voice_agent__', 'hello');
+
+        const payloadText = String(sendTurn.mock.calls[0]?.[0]?.userText ?? '');
+        expect(payloadText).toContain('TARGET_CONTEXT:__voice_agent__->s1');
+        expect(payloadText.match(/TARGET_CONTEXT:__voice_agent__->s1/g)).toHaveLength(1);
+        expect(payloadText).toContain('LATEST_NAVIGATION_SENTINEL');
+        expect(payloadText.match(/CURRENT UI CONTEXT/g)).toHaveLength(1);
+        expect(pendingSessionContextBySessionId.has('__voice_agent__')).toBe(false);
+        expect(latestAutomaticUiContextBySessionId.has('__voice_agent__')).toBe(false);
+    });
+
+    it.each(['on_demand', 'off'] as const)(
+        'clears queued automatic UI context when disclosure changes to %s before turn admission',
+        async (currentUiContextMode) => {
+            stateRef.current.settings.voice.providers.local_conversation.config.streaming.enabled = false;
+            stateRef.current.settings.voice.privacy = { currentUiContextMode: 'automatic' };
+            const sendTurn = vi.fn(async () => ({ assistantText: 'reply', actions: [] }));
+            const client: VoiceAgentClient = {
+                start: vi.fn(async () => ({ voiceAgentId: 'run_1' })),
+                sendTurn,
+                welcome: vi.fn(async () => ({ assistantText: 'unused' })),
+                startTurnStream: vi.fn(async () => ({ streamId: 'stream_1' })),
+                readTurnStream: vi.fn(async () => ({ streamId: 'stream_1', events: [], nextCursor: 0, done: true })),
+                cancelTurnStream: vi.fn(async () => ({ ok: true as const })),
+                commit: vi.fn(async () => ({ commitText: 'unused' })),
+                stop: vi.fn(async () => ({ ok: true as const })),
+            };
+            const pendingSessionContextBySessionId = new Map([
+                ['__voice_agent__', ['ORDINARY_CONTEXT_SENTINEL']],
+            ]);
+            const latestAutomaticUiContextBySessionId = new Map([
+                ['__voice_agent__', 'CURRENT UI CONTEXT\n\n{"navigation":{"title":"REVOKED_NAVIGATION_SENTINEL"}}'],
+            ]);
+
+            // The projection was accepted while automatic disclosure was enabled,
+            // then the user changed its disclosure policy before the next turn.
+            stateRef.current.settings.voice.privacy = { currentUiContextMode };
+
+            const { createVoiceTurnStreaming } = await import('./voiceTurnStreaming');
+            const turnStreaming = createVoiceTurnStreaming({
+                getVoiceAgentHandle: async () => createHandle(client),
+                interruptActiveTurn: () => undefined,
+                resetCachedHandle: () => undefined,
+                trackActiveTurn: async (_sessionId, task) => await task(),
+                voiceAgentPendingSessionContextBySessionId: pendingSessionContextBySessionId,
+                deferredTargetSessionContextBySessionId: new Map(),
+                latestAutomaticUiContextBySessionId,
+                voiceAgentTurnAbortControllerBySessionId: new Map(),
+            });
+
+            await turnStreaming.sendTurn('__voice_agent__', 'hello');
+
+            const payloadText = String(sendTurn.mock.calls[0]?.[0]?.userText ?? '');
+            expect(payloadText).toContain('ORDINARY_CONTEXT_SENTINEL');
+            expect(payloadText).not.toContain('REVOKED_NAVIGATION_SENTINEL');
+            expect(latestAutomaticUiContextBySessionId.has('__voice_agent__')).toBe(false);
+        },
+    );
 });

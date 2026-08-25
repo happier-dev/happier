@@ -3,6 +3,7 @@ import { Platform } from 'react-native';
 import { getSharedVoiceAudioSessionCoordinator } from '@happier-dev/audio-stream-native';
 
 import { storage } from '@/sync/domains/state/storage';
+import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { resolveLocalUploadSourceSizeBytes } from '@/sync/runtime/files/localUploadSourceReader';
 import { runtimeFetch } from '@/utils/system/runtimeFetch';
 import { createLocalVoiceCaptureOwner } from '@/voice/runtime/input/LocalVoiceCaptureOwner';
@@ -12,6 +13,7 @@ import { resolveVoiceExecutionMachineId } from '@/voice/settings/executionMachin
 import {
     recordedAudioTranscriptionController,
 } from '@/voice/runtime/input/recordedAudioTranscriptionController';
+import { deleteRecordedAudioArtifact } from '@/voice/runtime/input/recordedAudioArtifactCleanup';
 
 import {
     createVoiceDictationController,
@@ -48,15 +50,9 @@ async function measureRecordedAudioBytes(uri: string): Promise<number | null> {
 }
 
 async function deleteRecordedAudio(uri: string): Promise<void> {
+    await deleteRecordedAudioArtifact(uri);
     if (Platform.OS === 'web' && uri.startsWith('blob:')) {
         admittedWebRecordingBlobs.delete(uri);
-        URL.revokeObjectURL(uri);
-        return;
-    }
-    const FileSystem: any = await import('expo-file-system');
-    const file = new FileSystem.File(uri);
-    if (file.exists !== false) {
-        file.delete();
     }
 }
 
@@ -88,6 +84,7 @@ export function useVoiceDictation(sessionId: string | undefined): Readonly<{
     toggle: () => Promise<VoiceDictationToggleResult>;
 }> {
     const normalizedSessionId = sessionId?.trim() ?? '';
+    const voiceEnabled = useFeatureEnabled('voice');
     const snapshot = React.useSyncExternalStore(
         normalizedSessionId
             ? voiceDictationController.subscribe
@@ -102,17 +99,21 @@ export function useVoiceDictation(sessionId: string | undefined): Readonly<{
 
     React.useEffect(() => {
         if (!normalizedSessionId) return;
+        if (!voiceEnabled) {
+            void voiceDictationController.cancel(normalizedSessionId);
+            return;
+        }
         return () => {
             void voiceDictationController.cancel(normalizedSessionId);
         };
-    }, [normalizedSessionId]);
+    }, [normalizedSessionId, voiceEnabled]);
 
     const toggle = React.useCallback(async () => {
-        if (!normalizedSessionId) {
+        if (!normalizedSessionId || !voiceEnabled) {
             return { kind: 'cancelled' } as const;
         }
         return await voiceDictationController.toggle(normalizedSessionId);
-    }, [normalizedSessionId]);
+    }, [normalizedSessionId, voiceEnabled]);
 
     const dismissFailure = React.useCallback((failureId: number) => {
         voiceDictationController.dismissFailure(failureId);

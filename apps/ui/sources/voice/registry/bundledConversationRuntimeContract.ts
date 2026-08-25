@@ -6,7 +6,7 @@ import type {
   VoiceTranscriptCanonicalEventV1,
 } from '@happier-dev/protocol';
 import type {
-  AgentSessionRealtimeLifecycleEvent,
+  AgentSessionRealtimeHandle,
 } from '@happier-dev/plugin-sdk/agents/runtime';
 import type {
   PluginVoiceAgentSessionRealtimeService,
@@ -26,7 +26,10 @@ import type {
   VoiceNegotiatedWebRtcInput,
   VoiceRealtimeConnection,
 } from '@/voice/runtime/connection/VoiceRealtimeConnection';
-import type { VoiceRealtimeProtocolAdapter } from '@/voice/runtime/protocol/VoiceRealtimeProtocolAdapter';
+import type {
+  VoiceRealtimePreparedSession,
+  VoiceRealtimeProtocolAdapter,
+} from '@/voice/runtime/protocol/VoiceRealtimeProtocolAdapter';
 import type {
   BundledVoiceRuntimeContribution,
   VoiceAdapterConversationBinding,
@@ -131,7 +134,13 @@ export type BundledVoiceProviderMediaPort = Readonly<{
 export type BundledVoiceRuntimeMachinePort = Readonly<{
   transitionToAcquiringMic(controlSessionId: string, adapterId: string, attemptId?: number): void;
   transitionToConnecting(controlSessionId: string, adapterId: string, attemptId?: number): void;
-  setReconnecting(controlSessionId: string, adapterId: string, reconnecting: boolean, attemptId?: number): void;
+  setReconnecting(
+    controlSessionId: string,
+    adapterId: string,
+    reconnecting: boolean,
+    attemptId?: number,
+    retryAvailable?: boolean,
+  ): void;
   transitionToConnected(controlSessionId: string, adapterId: string, attemptId?: number): void;
   transitionToSpeaking(controlSessionId: string, adapterId: string, attemptId?: number): void;
   transitionToEnding(controlSessionId: string, adapterId: string, attemptId?: number): void;
@@ -188,7 +197,7 @@ export type BundledRealtimeProviderRuntimeHost = Readonly<{
     controlSessionId: string;
     applicationAttemptId: string;
     signal: AbortSignal;
-    onTerminal(event: AgentSessionRealtimeLifecycleEvent): void;
+    onStarted(handle: AgentSessionRealtimeHandle): void;
   }>): Promise<PluginVoiceAgentSessionRealtimeService | null>;
   createWebSocketPcmMedia(input: Readonly<{
     mic: BundledVoiceMicSession;
@@ -347,7 +356,7 @@ export type BundledRealtimeProviderRuntimeHost = Readonly<{
   }>): VoiceMachineError;
 }>;
 
-export type BundledRealtimeProviderRuntimeConfig = Readonly<{
+type BundledRealtimeProviderRuntimeConfigBase = Readonly<{
   providerId: string;
   providerSource?: Readonly<{
     pluginId: string;
@@ -363,10 +372,7 @@ export type BundledRealtimeProviderRuntimeConfig = Readonly<{
   protocol: VoiceRealtimeProtocolAdapter;
   createConnection(input: Readonly<{
     controlSessionId: string;
-    session: Readonly<{
-      config: VoiceRealtimeJsonValue;
-      safeMetadata: VoiceRealtimeJsonValue;
-    }>;
+    session: VoiceRealtimePreparedSession;
     attemptId: number;
     mic: BundledVoiceMicSession;
     interruption: Readonly<{ duckGain: number; retainedOutputMaxMs: number }>;
@@ -382,8 +388,6 @@ export type BundledRealtimeProviderRuntimeConfig = Readonly<{
   encodePostCancelControls?(): readonly VoiceRealtimeJsonValue[];
   encodePostBargeInControls?(): readonly VoiceRealtimeJsonValue[];
   runtimeActions?: Readonly<Record<string, () => Promise<void>>>;
-  microphoneMode: VoiceMicrophoneMode;
-  setInputMuted?(muted: boolean): Promise<void> | void;
   encodeContextUpdate(text: string): readonly VoiceRealtimeJsonValue[];
   /** Element zero accepts input; remaining controls continue the response. */
   encodeTextTurn(text: string): readonly VoiceRealtimeJsonValue[];
@@ -395,6 +399,16 @@ export type BundledRealtimeProviderRuntimeConfig = Readonly<{
   resolveSurfaceCapabilities(settings: unknown): VoiceAdapterSurfaceCapabilities | null;
   outputLevelMeter?: 'measured' | 'unavailable';
 }>;
+
+export type BundledRealtimeProviderRuntimeConfig =
+  | (BundledRealtimeProviderRuntimeConfigBase & Readonly<{
+      microphoneMode: 'provider_managed';
+      setInputMuted(muted: boolean): Promise<void> | void;
+    }>)
+  | (BundledRealtimeProviderRuntimeConfigBase & Readonly<{
+      microphoneMode: Exclude<VoiceMicrophoneMode, 'provider_managed'>;
+      setInputMuted?(muted: boolean): Promise<void> | void;
+    }>);
 
 export type CreateBundledRealtimeProviderRuntime = (
   host: BundledRealtimeProviderRuntimeHost,

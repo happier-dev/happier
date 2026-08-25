@@ -1,4 +1,5 @@
 import { getDefaultModelPackId } from '@happier-dev/protocol';
+import { t } from '@/text';
 import { z } from 'zod';
 
 export type SherpaStreamingSttPackOption = {
@@ -23,7 +24,7 @@ function getBuiltInOptions(): SherpaStreamingSttPackOption[] {
     {
       id: DEFAULT_STREAMING_STT_PACK_ID,
       title: 'Zipformer EN 20M (int8)',
-      subtitle: 'Streaming, low latency (recommended).',
+      subtitle: t('settingsVoice.local.models.nativeOptions.sherpaStreamingRecommendedSubtitle'),
     },
   ];
 }

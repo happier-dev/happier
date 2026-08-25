@@ -11,6 +11,10 @@ import type {
   VoicePlaybackInterruptionMode,
   VoicePlaybackInterruptionResolution,
 } from '@/voice/runtime/playback/VoicePlaybackController';
+import type {
+  VoiceOutputFocusApplication,
+  VoiceOutputFocusState,
+} from '@happier-dev/plugin-sdk/voice/client';
 import { VOICE_RUNTIME_CONFIG_DEFAULTS } from '@/voice/runtime/voiceRuntimeConfigDefaults';
 
 type CanonicalMicPort = Readonly<{
@@ -24,6 +28,7 @@ type OutputScheduler = Readonly<{
   enqueue(samples: Int16Array): boolean;
   beginCandidate(): VoicePlaybackInterruptionMode;
   resolveCandidate(resolution: VoicePlaybackInterruptionResolution): void;
+  setOutputFocusState(state: VoiceOutputFocusState): VoiceOutputFocusApplication;
   clear(): void;
   stop(): void;
   waitForDrain(signal: AbortSignal): Promise<void>;
@@ -61,16 +66,27 @@ function createDefaultOutputScheduler(input: Parameters<CreateOutputScheduler>[0
   let level = 0;
   let stopped = false;
   let candidateActive = false;
+  let outputFocusState: VoiceOutputFocusState = 'active';
   const gainNode = typeof input.context.createGain === 'function' ? input.context.createGain() : null;
   if (gainNode) gainNode.connect(input.context.destination);
-  const setGain = (value: number): void => {
-    if (!gainNode) return;
+  const setGain = (value: number): boolean => {
+    if (!gainNode) return false;
     const normalized = Math.max(0, Math.min(1, value));
     if (typeof gainNode.gain.setTargetAtTime === 'function') {
       gainNode.gain.setTargetAtTime(normalized, input.context.currentTime, 0.015);
     } else {
       gainNode.gain.value = normalized;
     }
+    return true;
+  };
+  const applyOutputFocus = (): VoiceOutputFocusApplication => {
+    if (!gainNode) return outputFocusState === 'active' ? 'applied' : 'unsupported';
+    const gain = outputFocusState === 'suspended'
+      ? 0
+      : outputFocusState === 'ducked'
+        ? VOICE_RUNTIME_CONFIG_DEFAULTS.turnTaking.interruption.duckGain
+        : 1;
+    return setGain(gain) ? 'applied' : 'unsupported';
   };
   const drainWaiters = new Set<() => void>();
   const settleDrain = () => {
@@ -116,7 +132,7 @@ function createDefaultOutputScheduler(input: Parameters<CreateOutputScheduler>[0
     stopScheduled(false);
     clearRetained();
     candidateActive = false;
-    setGain(1);
+    applyOutputFocus();
     settleDrain();
   };
   const schedule = (samples: Int16Array): boolean => {
@@ -172,9 +188,13 @@ function createDefaultOutputScheduler(input: Parameters<CreateOutputScheduler>[0
       }
       const pending = retained.splice(0);
       retainedSamples = 0;
-      setGain(1);
+      applyOutputFocus();
       for (const samples of pending) schedule(samples);
       settleDrain();
+    },
+    setOutputFocusState(state: VoiceOutputFocusState): VoiceOutputFocusApplication {
+      outputFocusState = state;
+      return applyOutputFocus();
     },
     clear,
     stop() {
@@ -203,7 +223,7 @@ function createDefaultOutputScheduler(input: Parameters<CreateOutputScheduler>[0
       }
       return Math.round((playedSeconds + activeSeconds) * 1_000);
     },
-    outputLevel: () => candidateActive ? 0 : level,
+    outputLevel: () => candidateActive || outputFocusState === 'suspended' ? 0 : level,
   });
 }
 
@@ -229,6 +249,7 @@ export function createWebSocketPcmMedia(input: Readonly<{
   let stopPromise: Promise<void> | null = null;
   let latestInputLevel = 0;
   let terminalError: Error | null = null;
+  let outputFocusState: VoiceOutputFocusState = 'active';
   const terminalListeners = new Set<(error: Error) => void>();
   const publishOutputLevel = (level: number): void => {
     try {
@@ -290,6 +311,11 @@ export function createWebSocketPcmMedia(input: Readonly<{
       stopped = false;
       terminalError = null;
       playback = createOutputScheduler({ context, ...input.output });
+      if (playback.setOutputFocusState(outputFocusState) === 'unsupported') {
+        throw Object.assign(new Error('pcm_output_focus_unsupported'), {
+          code: 'pcm_output_focus_unsupported',
+        });
+      }
       capture = createCapture({
         mic: {
           ensureActive: input.mic.ensureActive ?? (async () => {}),
@@ -339,6 +365,11 @@ export function createWebSocketPcmMedia(input: Readonly<{
       return Object.freeze({ remove: () => terminalListeners.delete(listener) });
     },
     playbackCursorMs: (): number => playback?.playbackCursorMs() ?? 0,
+    setOutputFocusState(state: VoiceOutputFocusState): VoiceOutputFocusApplication {
+      outputFocusState = state;
+      if (terminalError) return 'unsupported';
+      return playback?.setOutputFocusState(state) ?? 'applied';
+    },
   });
 
   return Object.freeze({

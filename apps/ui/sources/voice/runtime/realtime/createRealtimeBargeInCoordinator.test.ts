@@ -106,6 +106,46 @@ describe('createRealtimeBargeInCoordinator', () => {
     });
   });
 
+  it('upgrades an anonymous active output to its exact transcript item before interruption persistence', async () => {
+    let now = 1_000;
+    const onConfirmedInterruption = vi.fn();
+    const coordinator = createRealtimeBargeInCoordinator({
+      beginOutputInterruptionCandidate: () => 'retained',
+      resolveOutputInterruptionCandidate: vi.fn(),
+      readPlaybackCursorMs: () => 0,
+      onConfirmedInterruption,
+      interrupt: vi.fn(async () => undefined),
+      transitionToSpeaking: vi.fn(),
+      transitionToConnected: vi.fn(),
+      getControlSessionId: () => 'voice-global',
+      isBargeInEnabled: () => true,
+      now: () => now,
+    });
+
+    coordinator.onAssistantOutputStarted();
+    coordinator.onAssistantOutputStarted({ itemId: 'turn-n' });
+    await coordinator.onTranscript({
+      role: 'assistant',
+      type: 'voice.transcript.final',
+      text: 'current response',
+      itemId: 'turn-n',
+      assistantEntryId: 'persisted-turn-n',
+    });
+    now += 1_500;
+    coordinator.onInputSpeechStarted();
+    await coordinator.onTranscript({
+      role: 'user',
+      type: 'voice.transcript.final',
+      text: 'please stop and answer this question',
+    });
+
+    expect(onConfirmedInterruption).toHaveBeenCalledWith({
+      controlSessionId: 'voice-global',
+      playedMs: 0,
+      assistantEntryId: 'persisted-turn-n',
+    });
+  });
+
   it('does not reuse N-1 when active output N has no final or an ambiguous output identity', async () => {
     let now = 1_000;
     const onConfirmedInterruption = vi.fn();

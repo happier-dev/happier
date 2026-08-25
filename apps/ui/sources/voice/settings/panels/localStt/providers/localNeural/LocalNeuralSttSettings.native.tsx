@@ -43,7 +43,7 @@ export function LocalNeuralSttSettings(props: {
     requestedExecution: props.cfg.localNeural.execution,
   }), [props.cfg.localNeural.execution]);
 
-  const packOptions = React.useMemo(() => getSherpaStreamingSttPackOptions(), []);
+  const packOptions = getSherpaStreamingSttPackOptions();
   const effectivePackId = props.cfg.localNeural.assetId ?? packOptions[0]?.id ?? null;
   const usesDaemonExecution = executionPolicy.preferredExecution === 'daemon';
 

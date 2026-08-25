@@ -517,7 +517,7 @@ describe('createBuiltinVoiceAdapterAssembly', () => {
         controlSessionId,
         applicationAttemptId: 'voice:1',
         signal: new AbortController().signal,
-        onTerminal: vi.fn(),
+        onStarted: vi.fn(),
       }) ?? null
     );
 
@@ -622,7 +622,7 @@ describe('createBuiltinVoiceAdapterAssembly', () => {
         controlSessionId,
         applicationAttemptId: 'voice:1',
         signal: attemptLifetime.signal,
-        onTerminal: vi.fn(),
+        onStarted: vi.fn(),
       });
       if (!pendingAuthority) throw new Error('Agent realtime race authority did not begin');
       await vi.waitFor(() => expect(machineRpcBoundary.machineRpc).toHaveBeenCalledTimes(1));
@@ -805,7 +805,7 @@ describe('createBuiltinVoiceAdapterAssembly', () => {
           // qualify this repeated local identity before daemon RPC.
           applicationAttemptId: 'voice:1',
           signal,
-          onTerminal: vi.fn(),
+          onStarted: vi.fn(),
         }) ?? null
       );
       const oldService = await createBoundService(oldRuntimeHost, oldAttemptLifetime.signal);
@@ -961,7 +961,7 @@ describe('createBuiltinVoiceAdapterAssembly', () => {
         controlSessionId,
         applicationAttemptId: 'voice:2',
         signal: new AbortController().signal,
-        onTerminal: vi.fn(),
+        onStarted: vi.fn(),
       })).resolves.toBeNull();
 
       await replacementAssembly?.dispose();

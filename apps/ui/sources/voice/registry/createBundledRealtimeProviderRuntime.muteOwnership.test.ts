@@ -164,9 +164,10 @@ describe('createBundledRealtimeProviderRuntime mute ownership', () => {
       presentHostedLeaseNotice: vi.fn(),
       presentAttemptDiagnostic: vi.fn(),
       clearAttemptStatus: vi.fn(),
-      createToolBarrier: vi.fn(() => ({
-        run: vi.fn(async () => ({ status: 'submitted' as const })),
-        cancel: vi.fn(),
+    createToolBarrier: vi.fn(() => ({
+      run: vi.fn(async () => ({ status: 'submitted' as const })),
+      detach: vi.fn(),
+      cancel: vi.fn(),
         dispose: vi.fn(),
       })),
       voiceHooks: { onStarted: vi.fn(() => ''), onStopped: vi.fn() },

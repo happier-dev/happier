@@ -237,13 +237,26 @@ describe('VoiceConversationRuntimeMachine', () => {
             controlSessionId: 's1',
             adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
             reconnecting: true,
+            retryAvailable: true,
         });
         expect(machine.getSnapshot()).toMatchObject({
             controlSessionId: 's1',
             adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
             state: 'connected',
             reconnecting: true,
+            reconnectRetryAvailable: true,
         });
+
+        // The controller owns availability: once the retained slot leaves its
+        // timer, the snapshot stays reconnecting but must no longer expose Retry.
+        machine.setReconnecting({
+            controlSessionId: 's1',
+            adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
+            reconnecting: true,
+            retryAvailable: false,
+        });
+        expect(machine.getSnapshot()).toMatchObject({ reconnecting: true });
+        expect(machine.getSnapshot().reconnectRetryAvailable).toBeUndefined();
 
         machine.setReconnecting({
             controlSessionId: 'stale-session',
@@ -259,6 +272,7 @@ describe('VoiceConversationRuntimeMachine', () => {
 
         machine.transitionToDisconnected({ controlSessionId: 's1', adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs' });
         expect(machine.getSnapshot().reconnecting).toBe(false);
+        expect(machine.getSnapshot().reconnectRetryAvailable).toBeUndefined();
     });
 
     it('clears a stale realtime owner when a local entry transition starts after a declined realtime attempt', () => {

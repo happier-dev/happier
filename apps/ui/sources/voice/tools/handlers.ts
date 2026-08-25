@@ -587,7 +587,11 @@ export function createVoiceToolHandlers(
     if (!actionInput) return jsonError('invalid_parameters', 'invalid_parameters');
     if (context?.signal?.aborted) return jsonError('tool_cancelled', 'tool_cancelled');
     const currentUiContext = deps.currentUiContext;
-    if (!currentUiContext || typeof currentUiContext.invokeAction !== 'function') {
+    if (
+      !currentUiContext
+      || typeof currentUiContext.invokeAction !== 'function'
+      || !isVoiceActionAvailableInState(storage.getState(), ACTION_INVOKE_ACTION_ID)
+    ) {
       return jsonError('action_unavailable', 'action_unavailable');
     }
     const outcome = await currentUiContext.invokeAction({
@@ -633,6 +637,7 @@ export function createVoiceToolHandlers(
     ACTION_INVOKE_TOOL_NAME
     && deps.currentUiContext
     && typeof deps.currentUiContext.invokeAction === 'function'
+    && isVoiceActionAvailableInState(storage.getState(), ACTION_INVOKE_ACTION_ID)
   ) {
     handlers[ACTION_INVOKE_TOOL_NAME] = invokeAction;
   }

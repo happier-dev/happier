@@ -95,7 +95,6 @@ installVoiceQaCommonModuleMocks({
             Text: 'Text',
             TextInput: 'TextInput',
             ScrollView: 'ScrollView',
-            Pressable: 'Pressable',
             Platform: {
                 OS: 'web',
                 select: (spec: any) => spec?.web ?? spec?.default,
