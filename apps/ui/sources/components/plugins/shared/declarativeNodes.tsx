@@ -413,7 +413,12 @@ const DECLARATIVE_NODE_RENDERERS = Object.freeze({
                         // node preserves focus and its accessible role.
                         onPress: affordance.onPress ?? RETAIN_DISABLED_ACTION_STRUCTURE,
                     }
-                    : {})}
+                    : node.action === undefined
+                        ? {}
+                        : {
+                            disabled: true,
+                            onPress: RETAIN_DISABLED_ACTION_STRUCTURE,
+                        })}
             />
         );
     },

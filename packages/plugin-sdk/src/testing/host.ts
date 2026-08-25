@@ -5,6 +5,7 @@ import {
     MessageActionAvailableSnapshotV1Schema,
     PluginMachineExecutionOriginV1Schema,
     PluginMachineMaterializationRefV1Schema,
+    PluginContributionPointProtocolV1Schema,
     rehydratePluginContributionPointSemanticsV1,
 } from '@happier-dev/protocol';
 import type {
@@ -728,7 +729,9 @@ export async function createPluginTestkit(
     function readFixtureOperationSemantics(
         protocol: TestkitFixtureProtocol,
     ): ReadonlyMap<string, RehydratedPluginContributionPointOperationV1> {
-        const semantics = rehydratePluginContributionPointSemanticsV1(protocol);
+        const admittedProtocol = PluginContributionPointProtocolV1Schema.safeParse(protocol);
+        if (!admittedProtocol.success) throw fixtureUnavailable();
+        const semantics = rehydratePluginContributionPointSemanticsV1(admittedProtocol.data);
         if (!semantics) throw fixtureUnavailable();
         return new Map(semantics.operations.map((operation) => [operation.role, operation]));
     }

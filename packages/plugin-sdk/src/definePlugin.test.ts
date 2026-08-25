@@ -3103,7 +3103,6 @@ void 0; /* @sdk-negative-type-case-end */
             targetPluginId: 'happier.channels',
             id: 'providers',
             protocol: { id: 'channels-providers', version: 1 },
-            semanticCarrier: expect.any(Object),
         });
         type AdmittedProvider = typeof target.contributionPoints.providers extends TargetedContributionPointRef<
             infer TContribution
@@ -3294,7 +3293,6 @@ void 0; /* @sdk-negative-type-case-end */
             targetPluginId: 'happier.channels',
             id: 'providers',
             protocol: { id: 'channels-providers', version: 1 },
-            semanticCarrier: expect.any(Object),
         });
     });
 
@@ -3753,21 +3751,27 @@ void 0; /* @sdk-negative-type-case-end */
                     targetPluginId: 'example.target',
                     id: 'providers',
                     protocol: { id: 'example-providers', version: 1 },
-                    semanticCarrier: expect.any(Object),
                 },
                 {
                     targetPluginId: 'example.target',
                     id: 'providers',
                     protocol: { id: 'example-providers', version: 2 },
-                    semanticCarrier: expect.any(Object),
                 },
             ],
         });
-        const semanticPointRefs = contributionAuthoring
-            .readTargetedContributionPointSemanticRefs(target.manifest);
+        expect(Object.keys(target.contributionPoints.providers.protocols[0]!))
+            .toEqual(['targetPluginId', 'id', 'protocol']);
+        expect(Object.keys(target.contributionPoints.providers.protocols[1]!))
+            .toEqual(['targetPluginId', 'id', 'protocol']);
+        const semanticPointRefs = contributionAuthoring.readTargetedContributionPointSemanticRefs(target.manifest);
         expect(semanticPointRefs).toEqual(target.contributionPoints.providers.protocols);
         expect(semanticPointRefs[0]).toBe(target.contributionPoints.providers.protocols[0]);
         expect(semanticPointRefs[1]).toBe(target.contributionPoints.providers.protocols[1]);
+        expect(Object.getOwnPropertyDescriptor(semanticPointRefs[0]!, 'semanticCarrier')).toMatchObject({
+            enumerable: false,
+            configurable: false,
+            writable: false,
+        });
         type V1Contribution = typeof target.contributionPoints.providers.protocols[0] extends TargetedContributionPointRef<
             infer TContribution
         > ? TContribution : never;

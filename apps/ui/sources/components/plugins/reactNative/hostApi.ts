@@ -226,6 +226,15 @@ function createPluginReactNativeHostRequestTransport(params: Readonly<{
         });
     }
 
+    const promptCallerCancellationMethods = new Set<PluginUiHostApiRequestMethodV1>([
+        'readResource',
+        'openSurface',
+        'notify',
+        'readClipboard',
+        'writeClipboard',
+        'openExternalLink',
+    ]);
+
     async function request(
         rawMethod: PluginUiHostApiRequestMethodV1,
         payload?: PluginUiJsonValueV1,
@@ -249,13 +258,13 @@ function createPluginReactNativeHostRequestTransport(params: Readonly<{
             ...(payload !== undefined ? { payload } : {}),
         });
 
-        const response = await settleWithCallerCancellation(
-            settlePluginSurfaceHostApiRequest(
-                envelope,
-                () => params.handleRequest(envelope, options),
-            ),
-            options?.signal,
+        const settlement = settlePluginSurfaceHostApiRequest(
+            envelope,
+            () => params.handleRequest(envelope, options),
         );
+        const response = await (promptCallerCancellationMethods.has(method)
+            ? settleWithCallerCancellation(settlement, options?.signal)
+            : settlement);
         if (response.kind === 'error') {
             throwHostApiError(response.payload.code, response.payload.diagnostics);
         }

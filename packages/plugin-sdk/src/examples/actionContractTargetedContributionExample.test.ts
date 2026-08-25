@@ -3,7 +3,10 @@ import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { describe, expect, it, vi } from 'vitest';
-import { rehydratePluginContributionPointSemanticsV1 } from '@happier-dev/protocol';
+import {
+    PluginContributionPointProtocolV1Schema,
+    rehydratePluginContributionPointSemanticsV1,
+} from '@happier-dev/protocol';
 import type { DefinedPlugin } from '@happier-dev/plugin-sdk';
 
 import { parsePluginManifest, type PluginManifest } from '../manifest.js';
@@ -74,7 +77,11 @@ function expectTriageSourcePointSemantics(
     const protocol = declaration?.protocols.find((candidate) =>
         candidate.id === protocolId && candidate.version === 1);
     if (!protocol) throw new Error(`targeted_contribution_${pointId}_manifest_protocol_missing`);
-    const semantics = rehydratePluginContributionPointSemanticsV1(protocol);
+    const admittedProtocol = PluginContributionPointProtocolV1Schema.safeParse(protocol);
+    if (!admittedProtocol.success) {
+        throw new Error(`targeted_contribution_${pointId}_manifest_protocol_invalid`);
+    }
+    const semantics = rehydratePluginContributionPointSemanticsV1(admittedProtocol.data);
     if (!semantics || !semantics.descriptor) {
         throw new Error(`targeted_contribution_${pointId}_semantic_rehydration_unavailable`);
     }

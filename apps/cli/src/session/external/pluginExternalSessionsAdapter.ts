@@ -1174,13 +1174,16 @@ export function createPluginExternalSessionsAdapter(params: Readonly<{
       // still missing a head remains incomplete in this existing snapshot for
       // the next opaque cursor rather than being drained in this call.
       await fillMissingHeads();
+      const hasUnknownHead = snapshot.sources.some(
+        (sourceState) => !sourceState.exhausted
+          && sourceState.offset >= sourceState.items.length,
+      );
       const items: HostExternalSessionCandidate[] = [];
-      while (items.length < limit) {
-        const hasMissingHead = snapshot.sources.some(
-          (sourceState) => !sourceState.exhausted
-            && sourceState.offset >= sourceState.items.length,
-        );
-        if (hasMissingHead) break;
+      // Once every selected source supplied a head, merge the rows already
+      // buffered by those attempts. A source that runs out during this merge
+      // waits for the next public cursor; it neither triggers another attempt
+      // nor suppresses the other known rows.
+      while (!hasUnknownHead && items.length < limit) {
         let selected: ListSourceSnapshot | null = null;
         for (const sourceState of snapshot.sources) {
           const candidate = sourceState.items[sourceState.offset];
