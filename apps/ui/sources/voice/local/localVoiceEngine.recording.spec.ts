@@ -8,6 +8,7 @@ import {
     machineRpcWithServerScope,
     emitSpeechRecEvent,
     speechRecStop,
+    submitMessage,
     registerLocalVoiceEngineHarnessHooks,
     setRecorderUri,
     setNextRecorderPrepareError,
@@ -83,6 +84,43 @@ describe('local voice engine recording lifecycle', () => {
         await toggleLocalVoiceTurn('s1');
         await expect(toggleLocalVoiceTurn('s1')).resolves.toBeUndefined();
 
+        expect(fileDelete).toHaveBeenCalledOnce();
+        expect(getLocalVoiceState()).toMatchObject({
+            status: 'idle',
+            error: 'recording_cleanup_failed',
+        });
+    });
+
+    it('keeps a late recorded-audio cleanup failure visible after End Voice releases its capture admission', async () => {
+        const cleanupFailure = new Error('recording_delete_failed');
+        let resolveTranscription!: (response: { ok: true; json: () => Promise<{ text: string }> }) => void;
+        fileDelete.mockRejectedValueOnce(cleanupFailure);
+        (globalThis.fetch as any).mockImplementationOnce(() => new Promise((resolve) => {
+            resolveTranscription = resolve;
+        }));
+
+        const {
+            getLocalVoiceState,
+            stopLocalVoiceSession,
+            toggleLocalVoiceTurn,
+        } = await loadLocalVoiceEngineWithCompatState();
+        await toggleLocalVoiceTurn('s1');
+        const stopAndTranscribe = toggleLocalVoiceTurn('s1');
+        await vi.waitFor(() => expect(globalThis.fetch).toHaveBeenCalledOnce());
+
+        await expect(stopLocalVoiceSession()).resolves.toBeUndefined();
+        expect(getLocalVoiceState()).toMatchObject({
+            status: 'idle',
+            error: null,
+        });
+
+        resolveTranscription({
+            ok: true,
+            json: async () => ({ text: 'late transcript' }),
+        });
+        await expect(stopAndTranscribe).resolves.toBeUndefined();
+
+        expect(submitMessage).not.toHaveBeenCalled();
         expect(fileDelete).toHaveBeenCalledOnce();
         expect(getLocalVoiceState()).toMatchObject({
             status: 'idle',

@@ -727,15 +727,21 @@ function surfaceRecordedAudioCleanupFailure(
   admission: LocalVoiceCaptureAdmission,
   captureAttempt: LocalVoiceCaptureAttempt,
 ): void {
-  if (!isCaptureAdmissionCurrent(admission) || admission.captureAttempt !== captureAttempt) return;
   const current = voiceConversationRuntimeMachine.getSnapshot();
-  if (
-    current.controlSessionId !== captureAttempt.controlSessionId
-    || current.state === 'disconnected'
-    || current.state === 'ending'
-  ) {
+  if (current.controlSessionId !== captureAttempt.controlSessionId) {
     return;
   }
+  // End Voice aborts and later releases this attempt while its recorded STT
+  // cleanup can still settle. The failure remains an observable terminal fact
+  // for that same session, but cannot regain live-turn authority.
+  const endedAttempt = admission.captureAbortController.signal.aborted
+    && (current.state === 'ending' || current.state === 'disconnected');
+  if (!endedAttempt && (
+    !isCaptureAdmissionCurrent(admission)
+    || admission.captureAttempt !== captureAttempt
+    || current.state === 'ending'
+    || current.state === 'disconnected'
+  )) return;
   transitionVoiceRuntimeToIdle({
     controlSessionId: captureAttempt.controlSessionId,
     reason: 'recording_cleanup_failed',
