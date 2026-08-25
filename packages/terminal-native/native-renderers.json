@@ -114,17 +114,20 @@
       "ime-commit-text",
       "hardware-key-escape-mapping",
       "mouse-tracking-and-scrollback",
-      "safe-http-link-tap-routing"
+      "safe-http-link-tap-routing",
+      "long-press-drag-range-selection",
+      "selected-range-rendering-and-copy",
+      "output-driven-accessibility-summary-refresh",
+      "remote-osc52-clipboard-default-deny"
     ],
       "remainingGaps": [
-        "selection-handles",
         "custom-accessibility",
         "crash-fallback-device-proof",
         "interaction-device-qa"
       ],
       "requiresDeviceQa": [
         "ime-keyboard-and-mouse-smoke",
-        "selection-copy-smoke",
+        "selection-render-and-copy-smoke",
         "fallback-crash-smoke"
       ]
     },

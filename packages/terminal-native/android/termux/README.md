@@ -6,7 +6,7 @@ The intended native renderer source is Termux `terminal-view` plus `terminal-emu
 
 Happier does not embed Termux's process-backed `TerminalView` widget directly. `TerminalView` requires a final `TerminalSession` that starts a local Android subprocess, while Happier terminals receive bytes from the remote daemon PTY. The native path therefore uses Termux `TerminalEmulator` and `TerminalRenderer` behind `TermuxBackedRemoteSession`, and Happier owns the remote interaction adapter.
 
-The adapter currently implements IME committed text, hardware-key escape mapping via Termux `KeyHandler`, mouse tracking, scroll wheel handling, alternate-screen scroll-as-arrow behavior, local scrollback rendering, and safe HTTP(S) link-tap routing through Happier's shared host link policy. It still requires device QA before release, and it does not yet implement Termux-style selection handles or a native accessibility tree; xterm WebView remains the accessible fallback.
+The adapter currently implements IME committed text, hardware-key escape mapping via Termux `KeyHandler`, mouse tracking, scroll wheel handling, alternate-screen scroll-as-arrow behavior, local scrollback rendering, safe HTTP(S) link-tap routing through Happier's shared host link policy, long-press drag range selection, selected-range rendering/copy, output-driven accessibility-summary refresh, and default-deny handling for remote OSC 52 clipboard writes. It still requires device QA before release and does not expose a per-cell native accessibility tree; xterm WebView remains the accessible fallback.
 
 Approved source is extracted into ignored `android/termux/vendor/` with:
 
