@@ -796,6 +796,12 @@ export async function createSessionScanner(opts: {
                 if (name && !name.endsWith('.jsonl')) return;
                 sync.invalidate();
             });
+            watcher.on('error', (error) => {
+                if (projectDirWatcher !== watcher) return;
+                logger.debug('[SESSION_SCANNER] Project directory watcher failed; using polling fallback:', error);
+                closeProjectDirWatcher();
+                sync.invalidate();
+            });
             watcher.unref?.();
             projectDirWatcher = watcher;
             watchedProjectDir = projectDir;

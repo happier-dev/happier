@@ -7,6 +7,22 @@ export interface PathValidationResult {
     resolvedPath?: string;
 }
 
+function resolveRealPathThroughExistingAncestor(targetPath: string): string {
+    let candidate = targetPath;
+    const missingSegments: string[] = [];
+
+    for (;;) {
+        try {
+            return resolve(realpathSync(candidate), ...missingSegments);
+        } catch {
+            const parent = dirname(candidate);
+            if (parent === candidate) return targetPath;
+            missingSegments.unshift(basename(candidate));
+            candidate = parent;
+        }
+    }
+}
+
 export function validateWorkspaceInspectionPath(targetPath: string): PathValidationResult {
     const trimmedPath = typeof targetPath === 'string' ? targetPath.trim() : '';
     if (!trimmedPath) {
@@ -53,13 +69,7 @@ export function validatePath(
     // Resolve and realpath the working directory to ensure comparisons stay consistent on platforms
     // where e.g. /var is a symlink to /private/var (macOS).
     const resolvedWorkingDir = resolve(workingDirectory);
-    const realWorkingDir = (() => {
-        try {
-            return realpathSync(resolvedWorkingDir);
-        } catch {
-            return resolvedWorkingDir;
-        }
-    })();
+    const realWorkingDir = resolveRealPathThroughExistingAncestor(resolvedWorkingDir);
 
     // Resolve the target against the real working dir to keep it on the same canonical root.
     const resolvedTarget = resolve(realWorkingDir, targetPath);
@@ -70,20 +80,7 @@ export function validatePath(
 
     // Resolve symlinks for the target when possible to prevent traversal via symlinks.
     // If the file doesn't exist yet, validate based on the realpath of its parent directory.
-    const resolveRealTarget = (): string => {
-        try {
-            return realpathSync(resolvedTarget);
-        } catch {
-            try {
-                const parent = realpathSync(dirname(resolvedTarget));
-                return resolve(parent, basename(resolvedTarget));
-            } catch {
-                return resolvedTarget;
-            }
-        }
-    };
-
-    const realTarget = resolveRealTarget();
+    const realTarget = resolveRealPathThroughExistingAncestor(resolvedTarget);
 
     const allowedDirs = [realWorkingDir, ...resolvedExtraDirs].map((dir) => {
         try {

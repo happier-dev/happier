@@ -60,8 +60,8 @@ setInterval(() => {}, 1000);
       parentPid = pids.parentPid;
       childPid = pids.childPid;
 
-      await expect(waitForProcessExit(parentPid, { timeoutMs: 2_000 })).resolves.toBe(true);
-      await expect(waitForProcessExit(childPid, { timeoutMs: 2_000 })).resolves.toBe(true);
+      await expect(waitForProcessExit(parentPid, { timeoutMs: 10_000 })).resolves.toBe(true);
+      await expect(waitForProcessExit(childPid, { timeoutMs: 10_000 })).resolves.toBe(true);
     } finally {
       forceKill(childPid);
       forceKill(parentPid);

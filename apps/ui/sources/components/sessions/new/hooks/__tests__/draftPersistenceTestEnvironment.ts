@@ -6,6 +6,7 @@ import type { FlushHookEffectsOptions } from '@/dev/testkit';
 import { flushHookEffects, renderHook } from '@/dev/testkit';
 import { createMachineFixture } from '@/dev/testkit';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
+import type { NewSessionDraft } from '@/sync/domains/state/persistence';
 
 import { installNewSessionScreenModelCommonModuleMocks } from '../newSessionScreenModelTestHelpers';
 
@@ -65,6 +66,14 @@ export type TestWorkspaceCheckout = {
     };
 };
 
+type PersistedDraftFixture = NewSessionDraft & {
+    selectedWorkspaceId: string;
+    selectedWorkspaceLocationId: string;
+    selectedWorkspaceCheckoutId: string;
+    checkoutCreationDraft: { kind: 'git_worktree'; displayName: string; baseRef: string } | null;
+    automationDraft: NonNullable<NewSessionDraft['automationDraft']>;
+};
+
 const persistedDraft = vi.hoisted(() => ({
     input: 'hello',
     selectedMachineId: 'machine-2',
@@ -114,49 +123,7 @@ const persistedDraft = vi.hoisted(() => ({
         timezone: string | null;
     },
     updatedAt: 123,
-}) as {
-    input: string;
-    selectedMachineId: string;
-    selectedPath: string;
-    selectedProfileId: null;
-    selectedSecretId: null;
-    mcpSelection: {
-        v: number;
-        managedServersEnabled: boolean;
-        forceIncludeServerIds: string[];
-        forceExcludeServerIds: string[];
-    };
-    selectedWorkspaceId: string;
-    selectedWorkspaceLocationId: string;
-    selectedWorkspaceCheckoutId: string;
-    checkoutCreationDraft: { kind: 'git_worktree'; displayName: string; baseRef: string } | null;
-    agentType: string;
-    permissionMode: string;
-    modelMode: string;
-    acpSessionModeId: string;
-    sessionConfigOptionOverrides: {
-        v: number;
-        updatedAt: number;
-        overrides: Record<string, { updatedAt: number; value: string }>;
-    };
-    automationDraft: {
-        enabled: boolean;
-        name: string;
-        description: string;
-        scheduleKind: 'interval' | 'cron';
-        everyMinutes: number;
-        cronExpr: string;
-        timezone: string | null;
-    };
-    updatedAt: number;
-    backendTarget?: { kind: 'builtInAgent'; agentId: string };
-    resumeSessionId?: string | null;
-    entryIntent?: unknown;
-    codexBackendMode?: unknown;
-    targetServerId?: string | null;
-    windowsRemoteSessionLaunchModeOverride?: { machineId: string; mode: 'hidden' | 'windows_terminal' | 'console' } | null;
-    launchUserAttemptId?: string;
-});
+}) as PersistedDraftFixture);
 
 const cliDetectionState = vi.hoisted(() => ({
     value: {
@@ -176,6 +143,12 @@ const cliDetectionState = vi.hoisted(() => ({
 const saveNewSessionDraftMock = vi.hoisted(() => vi.fn());
 const clearNewSessionDraftMock = vi.hoisted(() => vi.fn());
 const loadNewSessionDraftMock = vi.hoisted(() => vi.fn(() => JSON.parse(JSON.stringify(persistedDraft))));
+export const TEST_DRAFT_ID = '8e0a5dd1-b1df-43dd-b51e-b7787b30362e';
+const repositoryHarnessState = vi.hoisted(() => ({
+    seeding: false,
+    seeded: false,
+    lastSavedDraft: {} as Record<string, unknown>,
+}));
 const computeNewSessionInputMaxHeightMock = vi.hoisted(() => vi.fn((_params: unknown) => 100));
 const platformOsState = vi.hoisted(() => ({
     value: 'web' as 'web' | 'ios' | 'android',
@@ -597,6 +570,62 @@ vi.mock('@/sync/domains/state/persistence', async (importOriginal) => {
     };
 });
 
+vi.mock('@/sync/ops/sessionDrafts/sessionDraftRepository', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/sync/ops/sessionDrafts/sessionDraftRepository')>();
+    return {
+        ...actual,
+        // This legacy screen-model harness drives repository replacement and hook rerenders
+        // explicitly. Repository subscription behavior is covered by the projection owner tests;
+        // suppressing notifications here prevents unrelated autosave updates from recursively
+        // re-entering the oversized mocked screen graph.
+        subscribeSessionDraft: () => () => undefined,
+        getSessionDraftSnapshot: (...args: Parameters<typeof actual.getSessionDraftSnapshot>) => {
+            if (!repositoryHarnessState.seeding) loadNewSessionDraftMock();
+            return actual.getSessionDraftSnapshot(...args);
+        },
+        writeNewSessionDraft: (params: Parameters<typeof actual.writeNewSessionDraft>[0]) => {
+            actual.writeNewSessionDraft(params);
+            if (!repositoryHarnessState.seeding) {
+                const authoring = params.patch.authoring ?? {};
+                repositoryHarnessState.lastSavedDraft = {
+                    ...repositoryHarnessState.lastSavedDraft,
+                    input: params.patch.text,
+                    selectedMachineId: authoring.machineId,
+                    selectedPath: authoring.directory,
+                    targetServerId: authoring.serverId,
+                    agentType: authoring.agentId,
+                    backendTarget: authoring.backendTarget,
+                    permissionMode: authoring.permissionMode,
+                    modelMode: authoring.modelId,
+                    mcpSelection: authoring.mcpSelection,
+                    resumeSessionId: authoring.resumeSessionId,
+                    acpSessionModeId: authoring.acpSessionModeId,
+                    automationDraft: authoring.automation,
+                    checkoutCreationDraft: authoring.checkoutCreationDraft,
+                };
+                saveNewSessionDraftMock(repositoryHarnessState.lastSavedDraft);
+            }
+        },
+        writeSessionDraftLocalSupplement: (params: Parameters<typeof actual.writeSessionDraftLocalSupplement>[0]) => {
+            actual.writeSessionDraftLocalSupplement(params);
+            if (!repositoryHarnessState.seeding && params.address.kind === 'newSession') {
+                repositoryHarnessState.lastSavedDraft = {
+                    ...repositoryHarnessState.lastSavedDraft,
+                    ...(params.patch.newSessionLocalState ?? {}),
+                    ...(params.patch.launchUserAttemptId !== undefined
+                        ? { launchUserAttemptId: params.patch.launchUserAttemptId }
+                        : {}),
+                };
+                saveNewSessionDraftMock(repositoryHarnessState.lastSavedDraft);
+            }
+        },
+        deleteSessionDraft: async (params: Parameters<typeof actual.deleteSessionDraft>[0]) => {
+            await actual.deleteSessionDraft(params);
+            if (!repositoryHarnessState.seeding && params.address.kind === 'newSession') clearNewSessionDraftMock();
+        },
+    };
+});
+
 vi.mock('@/scm/scmRepositoryService', () => ({
     scmRepositoryService: {
         readCachedSnapshotForMachinePath: readCachedSnapshotForMachinePathMock,
@@ -940,7 +969,16 @@ export async function runFocusEffects(): Promise<Array<void | (() => void)>> {
 }
 
 /** Restores deterministic state for `beforeEach`. */
-export function resetDraftPersistenceState(): void {
+export async function resetDraftPersistenceState(): Promise<void> {
+    const { deleteSessionDraft } = await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
+    repositoryHarnessState.seeding = true;
+    await deleteSessionDraft({
+        scope: { serverId: 'server-a', accountId: 'account-a' },
+        address: { kind: 'newSession', draftId: TEST_DRAFT_ID },
+    });
+    repositoryHarnessState.seeding = false;
+    repositoryHarnessState.seeded = false;
+    repositoryHarnessState.lastSavedDraft = {};
     platformOsState.value = 'web';
     modalShowMock.mockReset();
     modalAlertMock.mockReset();
@@ -1166,9 +1204,12 @@ export async function runFocusEffectsAndSettle(): Promise<Array<void | (() => vo
 
 export async function renderNewSessionScreenModel(assignModel: (nextModel: unknown) => void): ReturnType<typeof renderHook> {
     const { useNewSessionScreenModel } = await useNewSessionScreenModelModulePromise;
+    if (!repositoryHarnessState.seeded) {
+        await replaceRepositoryDraftFromPersistedFixture();
+    }
 
     return renderHook(() => {
-        const nextModel = useNewSessionScreenModel();
+        const nextModel = useNewSessionScreenModel({ draftId: TEST_DRAFT_ID });
         assignModel(nextModel);
         return nextModel;
     }, {
@@ -1177,6 +1218,38 @@ export async function renderNewSessionScreenModel(assignModel: (nextModel: unkno
             turns: 2,
         },
     });
+}
+
+export async function replaceRepositoryDraftFromPersistedFixture(): Promise<void> {
+    const scope = activeServerAccountScopeState.value;
+    if (!scope) return;
+    const { buildNewSessionAuthoringDraftFromPersistedDraft } = await import('@/components/sessions/authoring/draft/sessionAuthoringDraftAdapters');
+    const { buildNewSessionDraftPatch } = await import('../screenModel/newSessionDraftRepositoryAdapter');
+    const { buildNewSessionDraftLocalState } = await import('@/sync/ops/sessionDrafts/newSessionDraftLocalState');
+    const { deleteSessionDraft, writeNewSessionDraft, writeSessionDraftLocalSupplement } = await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
+    repositoryHarnessState.seeding = true;
+    await deleteSessionDraft({ scope, address: { kind: 'newSession', draftId: TEST_DRAFT_ID } });
+    writeNewSessionDraft({
+        scope,
+        draftId: TEST_DRAFT_ID,
+        patch: buildNewSessionDraftPatch({
+            authoringDraft: buildNewSessionAuthoringDraftFromPersistedDraft(persistedDraft),
+            machineId: persistedDraft.selectedMachineId,
+            serverId: persistedDraft.targetServerId ?? null,
+            text: persistedDraft.input,
+        }),
+        materializationIntent: 'userEdit',
+    });
+    writeSessionDraftLocalSupplement({
+        scope,
+        address: { kind: 'newSession', draftId: TEST_DRAFT_ID },
+        patch: {
+            newSessionLocalState: buildNewSessionDraftLocalState(persistedDraft),
+            ...(persistedDraft.launchUserAttemptId ? { launchUserAttemptId: persistedDraft.launchUserAttemptId } : {}),
+        },
+    });
+    repositoryHarnessState.seeding = false;
+    repositoryHarnessState.seeded = true;
 }
 
 /**

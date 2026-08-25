@@ -277,7 +277,7 @@ describe('TranscriptEventRow', () => {
         const serialized = JSON.stringify(screen.tree.toJSON());
         expect(serialized).toContain(t('message.runtimeConfigOutcomeFailed'));
         expect(serialized).toContain(`${t('message.runtimeConfigOutcomeKeyReasoningEffort')} → Medium`);
-        expect(serialized).toContain('warning-outline');
+        expect(serialized).toContain('warning');
     });
 
     it('mutes de-emphasized prior-era event rows without changing current-era failure rows', async () => {
@@ -369,8 +369,8 @@ describe('TranscriptEventRow', () => {
         const serialized = JSON.stringify(screen.tree.toJSON());
         expect(serialized).toContain(t('message.runtimeConfigOutcomeAppliesBeforeNextMessage'));
         // Pending timing must read as a calm time/info state, never an alarming warning.
-        expect(serialized).toContain('time-outline');
-        expect(serialized).not.toContain('warning-outline');
+        expect(serialized).toContain('clock');
+        expect(serialized).not.toContain('warning');
         expect(screen.findByProps({ testID: 'transcript-event-runtime-config-outcome-applied-detail' })).toBeTruthy();
     });
 
@@ -387,7 +387,7 @@ describe('TranscriptEventRow', () => {
         const screen = await renderScreen(<TranscriptEventRow event={event} />);
 
         const serialized = JSON.stringify(screen.tree.toJSON());
-        expect(serialized).toContain('checkmark-circle-outline');
+        expect(serialized).toContain('check-circle');
         expect(serialized).not.toContain(t('message.runtimeConfigOutcomeAppliesBeforeNextMessage'));
         expect(serialized).not.toContain(t('message.runtimeConfigOutcomeQueuedUntilReady'));
     });
@@ -406,8 +406,8 @@ describe('TranscriptEventRow', () => {
 
         const serialized = JSON.stringify(screen.tree.toJSON());
         expect(serialized).toContain(t('message.runtimeConfigOutcomeQueuedUntilReady'));
-        expect(serialized).toContain('time-outline');
-        expect(serialized).not.toContain('warning-outline');
+        expect(serialized).toContain('clock');
+        expect(serialized).not.toContain('warning');
     });
 
     it('renders applied + skipped-already-effective as an effective success', async () => {
@@ -425,7 +425,7 @@ describe('TranscriptEventRow', () => {
         const serialized = JSON.stringify(screen.tree.toJSON());
         expect(serialized).toContain(t('message.runtimeConfigOutcomeAlreadySet'));
         // Already-effective means it is set now, so keep the success checkmark, not a pending clock.
-        expect(serialized).toContain('checkmark-circle-outline');
+        expect(serialized).toContain('check-circle');
     });
 
     it('renders the sessionMode change key with a labelled sub-state', async () => {
@@ -733,8 +733,8 @@ describe('TranscriptEventRow', () => {
 
         const serialized = JSON.stringify(screen.tree.toJSON());
         expect(screen.findByProps({ testID: 'transcript-event-connected-service-account-switch-attempt' })).toBeTruthy();
-        expect(serialized).toContain('information-circle-outline');
-        expect(serialized).not.toContain('checkmark-circle-outline');
+        expect(serialized).toContain('info');
+        expect(serialized).not.toContain('check-circle');
     });
 
     it('renders runtime-auth recovery retry events through the shared diagnostic presentation', async () => {

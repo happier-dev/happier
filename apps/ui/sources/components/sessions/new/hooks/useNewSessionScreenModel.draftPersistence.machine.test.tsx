@@ -19,8 +19,8 @@ describe('useNewSessionScreenModel (draft hydration — machine)', () => {
         standardCleanup();
     });
 
-    beforeEach(() => {
-        resetDraftPersistenceState();
+    beforeEach(async () => {
+        await resetDraftPersistenceState();
     });
 
     it('clears stale workspace linkage after the selected machine changes to a different machine route', async () => {

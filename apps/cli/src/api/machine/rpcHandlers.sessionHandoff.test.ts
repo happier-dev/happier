@@ -3593,6 +3593,9 @@ function createLoopbackMachineTransferChannels() {
     const handoffId = 'handoff_status_recovery_race';
     const prepareJobId = 'prepare_status_recovery_race';
     const realRunnerOwnerId = 'real-runner:status-poll-race';
+    const releaseMutationLock = createDeferred<void>();
+    let mutationLock: Promise<unknown> | null = null;
+    let backgroundStatusPromise: Promise<unknown> | null = null;
 
     try {
       vi.resetModules();
@@ -3632,9 +3635,8 @@ function createLoopbackMachineTransferChannels() {
       const statusGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET);
       expect(statusGet).toBeDefined();
 
-      const releaseMutationLock = createDeferred<void>();
       const mutationLockEntered = createDeferred<void>();
-      const mutationLock = withJsonOwnerFileLock({
+      mutationLock = withJsonOwnerFileLock({
         lockPath: join(activeServerDir, 'session-handoff', 'prepare-target-jobs', `${prepareJobId}.json.lock`),
         timeoutMs: 10_000,
         staleAfterMs: 30_000,
@@ -3665,6 +3667,7 @@ function createLoopbackMachineTransferChannels() {
         throw new Error('Prepare-target job record lock watcher ended before recovery contention');
       })();
       const statusPromise = statusGet!({ handoffId });
+      backgroundStatusPromise = statusPromise;
       const leaseOperationLockPath = join(
         activeServerDir,
         'session-handoff',
@@ -3676,8 +3679,10 @@ function createLoopbackMachineTransferChannels() {
       // Waiting for its job-record lock attempt identifies the later recovery critical
       // section, where proof validation has completed and the operation lock stays held.
       await recordLockPreparationObserved;
-      const recoveryOwner = JSON.parse(await readFile(leaseOperationLockPath, 'utf8')) as Record<string, unknown>;
-      expect(recoveryOwner).toMatchObject({ pid: process.pid, ownerToken: expect.any(String) });
+      await vi.waitFor(async () => {
+        const recoveryOwner = JSON.parse(await readFile(leaseOperationLockPath, 'utf8')) as Record<string, unknown>;
+        expect(recoveryOwner).toMatchObject({ pid: process.pid, ownerToken: expect.any(String) });
+      }, { timeout: 5_000 });
       await rm(
         join(activeServerDir, 'session-handoff', 'prepare-target-jobs-staging', prepareJobId, 'lease'),
         { recursive: true, force: true },
@@ -3709,6 +3714,9 @@ function createLoopbackMachineTransferChannels() {
       expect(realRunnerLease.acquired).toBe(true);
       expect(result.status?.status).toBe('awaiting_recovery');
     } finally {
+      releaseMutationLock.resolve();
+      if (mutationLock) await Promise.allSettled([mutationLock]);
+      if (backgroundStatusPromise) await Promise.allSettled([backgroundStatusPromise]);
       vi.doUnmock('@/configuration');
       vi.resetModules();
       await rm(activeServerDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });

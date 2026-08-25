@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   resolveVitestConfigPath,
+  resolveVitestMaxWorkers,
+  resolveVitestWorkerArgs,
   resolveVitestIsolationPlan,
   resolveVitestShardRange,
   resolveVitestShardCount,
@@ -9,6 +11,19 @@ import {
 } from '../runVitestShards.mjs';
 
 describe('runVitestShards', () => {
+  it('bounds inner Vitest concurrency for the process-heavy CLI unit lane', () => {
+    expect(resolveVitestMaxWorkers({}, 'vitest.config.ts')).toBe(2);
+    expect(resolveVitestWorkerArgs({}, 'vitest.config.ts')).toEqual(['--maxWorkers', '2']);
+    expect(resolveVitestMaxWorkers({}, 'vitest.integration.config.ts')).toBe(null);
+    expect(resolveVitestWorkerArgs({}, 'vitest.integration.config.ts')).toEqual([]);
+  });
+
+  it('accepts a positive inner-worker override and rejects invalid values', () => {
+    expect(resolveVitestMaxWorkers({ HAPPIER_CLI_VITEST_MAX_WORKERS: '2' }, 'vitest.config.ts')).toBe(2);
+    expect(resolveVitestMaxWorkers({ HAPPIER_CLI_VITEST_MAX_WORKERS: '0' }, 'vitest.config.ts')).toBe(2);
+    expect(resolveVitestMaxWorkers({ HAPPIER_CLI_VITEST_MAX_WORKERS: 'many' }, 'vitest.config.ts')).toBe(2);
+  });
+
   it('uses a smaller per-process unit slice while retaining the integration default', () => {
     expect(resolveVitestShardCount({}, 'vitest.config.ts')).toBe(64);
     expect(resolveVitestShardCount({}, 'vitest.integration.config.ts')).toBe(8);
@@ -48,9 +63,24 @@ describe('runVitestShards', () => {
     });
   });
 
-  it('runs the reset-heavy daemon service suite in two fresh processes', () => {
+  it('runs reset-heavy suites in bounded fresh processes', () => {
     expect(resolveVitestIsolationPlan('vitest.config.ts')).toEqual({
-      shardExcludes: ['src/daemon/service/cli.test.ts'],
+      shardExcludes: [
+        'src/daemon/service/cli.test.ts',
+        'src/api/machine/rpcHandlers.sessionHandoff.test.ts',
+        'src/backends/claude/unifiedTerminal/createClaudeUnifiedTranscriptBridge.test.ts',
+        'src/backends/claude/utils/sessionScanner.test.ts',
+        'src/backends/codex/appServer/runtime.test.ts',
+        'src/api/session/sessionClient.ephemeralSendOutcome.test.ts',
+        'src/agent/runtime/process/killProcessTree.test.ts',
+        'src/agent/acp/__tests__/AcpBackend.dispose.killsProcessTree.test.ts',
+        'src/capabilities/probes/acpProbe.processTreeCleanup.test.ts',
+        'src/backends/pi/rpc/PiRpcBackend.brokerPreflight.test.ts',
+        'src/backends/pi/rpc/PiRpcBackend.pendingTurnLifecycle.test.ts',
+        'src/backends/claude/sdk/query.signalCleanup.test.ts',
+        'src/backends/codex/appServer/client/createCodexAppServerClient.test.ts',
+        'src/daemon/processRunState.test.ts',
+      ],
       runs: [
         {
           file: 'src/daemon/service/cli.test.ts',
@@ -64,6 +94,40 @@ describe('runVitestShards', () => {
           file: 'src/daemon/service/cli.test.ts',
           testNamePattern: 'runDaemonServiceCliCommand (?:builds|includes|keeps|passes|rejects|respects|scopes|uninstalls)\\b',
         },
+        {
+          file: 'src/api/machine/rpcHandlers.sessionHandoff.test.ts',
+          testNamePattern: '^rpcHandlers \\(session handoff\\) (?:aborts|acknowledges|applies|claims|classifies|delegates|does|durably)\\b',
+        },
+        {
+          file: 'src/api/machine/rpcHandlers.sessionHandoff.test.ts',
+          testNamePattern: '^rpcHandlers \\(session handoff\\) (?:fails|keeps)\\b',
+        },
+        {
+          file: 'src/api/machine/rpcHandlers.sessionHandoff.test.ts',
+          testNamePattern: '^rpcHandlers \\(session handoff\\) (?:maps|normalizes|omits|passes|persists|prefers|propagates|publishes|recovers|registers|rejects|retries)\\b',
+        },
+        {
+          file: 'src/api/machine/rpcHandlers.sessionHandoff.test.ts',
+          testNamePattern: '^rpcHandlers \\(session handoff\\) (?:returns|reuses|serves|starts|stops|surfaces|tracks|uses|waits)\\b',
+        },
+        {
+          file: 'src/backends/claude/unifiedTerminal/createClaudeUnifiedTranscriptBridge.test.ts',
+          testNamePattern: '.*',
+        },
+        {
+          file: 'src/backends/claude/utils/sessionScanner.test.ts',
+          testNamePattern: '.*',
+        },
+        { file: 'src/backends/codex/appServer/runtime.test.ts', testNamePattern: '.*' },
+        { file: 'src/api/session/sessionClient.ephemeralSendOutcome.test.ts', testNamePattern: '.*' },
+        { file: 'src/agent/runtime/process/killProcessTree.test.ts', testNamePattern: '.*' },
+        { file: 'src/agent/acp/__tests__/AcpBackend.dispose.killsProcessTree.test.ts', testNamePattern: '.*' },
+        { file: 'src/capabilities/probes/acpProbe.processTreeCleanup.test.ts', testNamePattern: '.*' },
+        { file: 'src/backends/pi/rpc/PiRpcBackend.brokerPreflight.test.ts', testNamePattern: '.*' },
+        { file: 'src/backends/pi/rpc/PiRpcBackend.pendingTurnLifecycle.test.ts', testNamePattern: '.*' },
+        { file: 'src/backends/claude/sdk/query.signalCleanup.test.ts', testNamePattern: '.*' },
+        { file: 'src/backends/codex/appServer/client/createCodexAppServerClient.test.ts', testNamePattern: '.*' },
+        { file: 'src/daemon/processRunState.test.ts', testNamePattern: '.*' },
       ],
     });
     expect(resolveVitestIsolationPlan('vitest.integration.config.ts')).toEqual({

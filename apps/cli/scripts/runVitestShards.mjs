@@ -20,6 +20,16 @@ export function resolveVitestShardCount(env, configPath = null) {
   return typeof configPath === 'string' && basename(configPath) === 'vitest.config.ts' ? 64 : 8;
 }
 
+export function resolveVitestMaxWorkers(env, configPath = null) {
+  if (typeof configPath !== 'string' || basename(configPath) !== 'vitest.config.ts') return null;
+  return parsePositiveInt(env?.HAPPIER_CLI_VITEST_MAX_WORKERS) ?? 2;
+}
+
+export function resolveVitestWorkerArgs(env, configPath = null) {
+  const maxWorkers = resolveVitestMaxWorkers(env, configPath);
+  return maxWorkers === null ? [] : ['--maxWorkers', String(maxWorkers)];
+}
+
 export function resolveVitestShardRange(env, shardCount) {
   const part = parsePositiveInt(env?.HAPPIER_CLI_VITEST_PART);
   const parts = parsePositiveInt(env?.HAPPIER_CLI_VITEST_PARTS);
@@ -35,13 +45,57 @@ export function resolveVitestIsolationPlan(configPath) {
   if (typeof configPath !== 'string' || basename(configPath) !== 'vitest.config.ts') {
     return { shardExcludes: [], runs: [] };
   }
-  const file = 'src/daemon/service/cli.test.ts';
+  const daemonServiceFile = 'src/daemon/service/cli.test.ts';
+  const sessionHandoffFile = 'src/api/machine/rpcHandlers.sessionHandoff.test.ts';
+  const unifiedTranscriptBridgeFile = 'src/backends/claude/unifiedTerminal/createClaudeUnifiedTranscriptBridge.test.ts';
+  const sessionScannerFile = 'src/backends/claude/utils/sessionScanner.test.ts';
+  const codexAppServerRuntimeFile = 'src/backends/codex/appServer/runtime.test.ts';
+  const sessionClientEphemeralSendOutcomeFile = 'src/api/session/sessionClient.ephemeralSendOutcome.test.ts';
+  const processTreeFile = 'src/agent/runtime/process/killProcessTree.test.ts';
+  const acpDisposeProcessTreeFile = 'src/agent/acp/__tests__/AcpBackend.dispose.killsProcessTree.test.ts';
+  const acpProbeProcessTreeFile = 'src/capabilities/probes/acpProbe.processTreeCleanup.test.ts';
+  const piBrokerPreflightFile = 'src/backends/pi/rpc/PiRpcBackend.brokerPreflight.test.ts';
+  const piPendingTurnLifecycleFile = 'src/backends/pi/rpc/PiRpcBackend.pendingTurnLifecycle.test.ts';
+  const claudeSignalCleanupFile = 'src/backends/claude/sdk/query.signalCleanup.test.ts';
+  const codexAppServerClientFile = 'src/backends/codex/appServer/client/createCodexAppServerClient.test.ts';
+  const processRunStateFile = 'src/daemon/processRunState.test.ts';
   return {
-    shardExcludes: [file],
+    shardExcludes: [
+      daemonServiceFile,
+      sessionHandoffFile,
+      unifiedTranscriptBridgeFile,
+      sessionScannerFile,
+      codexAppServerRuntimeFile,
+      sessionClientEphemeralSendOutcomeFile,
+      processTreeFile,
+      acpDisposeProcessTreeFile,
+      acpProbeProcessTreeFile,
+      piBrokerPreflightFile,
+      piPendingTurnLifecycleFile,
+      claudeSignalCleanupFile,
+      codexAppServerClientFile,
+      processRunStateFile,
+    ],
     runs: [
-      { file, testNamePattern: 'runDaemonServiceCliCommand (?:allows|expands|prefers|resolves|restarts|restores|sets|treats)\\b' },
-      { file, testNamePattern: 'runDaemonServiceCliCommand (?:defaults|fails|plans|refreshes|reports|stops|supports|uses)\\b' },
-      { file, testNamePattern: 'runDaemonServiceCliCommand (?:builds|includes|keeps|passes|rejects|respects|scopes|uninstalls)\\b' },
+      { file: daemonServiceFile, testNamePattern: 'runDaemonServiceCliCommand (?:allows|expands|prefers|resolves|restarts|restores|sets|treats)\\b' },
+      { file: daemonServiceFile, testNamePattern: 'runDaemonServiceCliCommand (?:defaults|fails|plans|refreshes|reports|stops|supports|uses)\\b' },
+      { file: daemonServiceFile, testNamePattern: 'runDaemonServiceCliCommand (?:builds|includes|keeps|passes|rejects|respects|scopes|uninstalls)\\b' },
+      { file: sessionHandoffFile, testNamePattern: '^rpcHandlers \\(session handoff\\) (?:aborts|acknowledges|applies|claims|classifies|delegates|does|durably)\\b' },
+      { file: sessionHandoffFile, testNamePattern: '^rpcHandlers \\(session handoff\\) (?:fails|keeps)\\b' },
+      { file: sessionHandoffFile, testNamePattern: '^rpcHandlers \\(session handoff\\) (?:maps|normalizes|omits|passes|persists|prefers|propagates|publishes|recovers|registers|rejects|retries)\\b' },
+      { file: sessionHandoffFile, testNamePattern: '^rpcHandlers \\(session handoff\\) (?:returns|reuses|serves|starts|stops|surfaces|tracks|uses|waits)\\b' },
+      { file: unifiedTranscriptBridgeFile, testNamePattern: '.*' },
+      { file: sessionScannerFile, testNamePattern: '.*' },
+      { file: codexAppServerRuntimeFile, testNamePattern: '.*' },
+      { file: sessionClientEphemeralSendOutcomeFile, testNamePattern: '.*' },
+      { file: processTreeFile, testNamePattern: '.*' },
+      { file: acpDisposeProcessTreeFile, testNamePattern: '.*' },
+      { file: acpProbeProcessTreeFile, testNamePattern: '.*' },
+      { file: piBrokerPreflightFile, testNamePattern: '.*' },
+      { file: piPendingTurnLifecycleFile, testNamePattern: '.*' },
+      { file: claudeSignalCleanupFile, testNamePattern: '.*' },
+      { file: codexAppServerClientFile, testNamePattern: '.*' },
+      { file: processRunStateFile, testNamePattern: '.*' },
     ],
   };
 }
@@ -101,6 +155,7 @@ async function main(argv) {
   }
 
   const shardCount = resolveVitestShardCount(process.env, configPath);
+  const workerArgs = resolveVitestWorkerArgs(process.env, configPath);
   const shardRange = resolveVitestShardRange(process.env, shardCount);
   const isolationPlan = shardRange.part === 1
     ? resolveVitestIsolationPlan(configPath)
@@ -122,6 +177,7 @@ async function main(argv) {
           configPath,
           '--shard',
           `${shard}/${shardCount}`,
+          ...workerArgs,
           ...isolationPlan.shardExcludes.flatMap((exclude) => ['--exclude', exclude]),
         ],
         nodeOptions,
@@ -152,6 +208,7 @@ async function main(argv) {
           isolatedRun.file,
           '--testNamePattern',
           isolatedRun.testNamePattern,
+          ...workerArgs,
         ],
         nodeOptions,
       });

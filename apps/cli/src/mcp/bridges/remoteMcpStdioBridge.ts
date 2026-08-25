@@ -90,9 +90,10 @@ async function main(): Promise<void> {
 
   server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     const progressToken = request.params._meta?.progressToken;
+    const pendingProgressNotifications: Promise<void>[] = [];
     const onprogress = typeof progressToken === 'string' || typeof progressToken === 'number'
       ? (progress: Readonly<{ progress: number; total?: number; message?: string }>) => {
-        void extra.sendNotification({
+        const notification = extra.sendNotification({
           method: 'notifications/progress',
           params: {
             ...progress,
@@ -101,16 +102,19 @@ async function main(): Promise<void> {
         }).catch((err) => {
           writeStderr(`[happier-mcp-remote-bridge] Failed to forward progress: ${err instanceof Error ? err.message : String(err)}`);
         });
+        pendingProgressNotifications.push(notification);
       }
       : undefined;
 
-    return await callMcpToolWithResolvedTimeout({
+    const result = await callMcpToolWithResolvedTimeout({
       client: remoteClient,
       toolName: request.params.name,
       args: request.params.arguments,
       requestMetadata: request.params._meta,
       onprogress,
     });
+    await Promise.all(pendingProgressNotifications);
+    return result;
   });
 
   let didCloseRemoteClient = false;

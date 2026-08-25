@@ -32,8 +32,8 @@ describe('useNewSessionScreenModel (draft hydration — path)', () => {
         standardCleanup();
     });
 
-    beforeEach(() => {
-        resetDraftPersistenceState();
+    beforeEach(async () => {
+        await resetDraftPersistenceState();
     });
 
     it('keeps the current route stable and exposes a shared path popover when the new-session route starts without a dataId', async () => {

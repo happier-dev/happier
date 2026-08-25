@@ -123,6 +123,7 @@ describe('resolveDirectBrowseSourceOptions', () => {
             connectedServiceProfileId: null,
             connectedServiceGroupId: null,
             homePath: '/tmp/custom-home',
+            sqliteHomePath: null,
         });
 
         expect(resolveDirectBrowseLinkEnsureRequestExtras({

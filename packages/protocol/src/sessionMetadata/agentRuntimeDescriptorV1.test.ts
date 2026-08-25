@@ -110,6 +110,29 @@ describe('agentRuntimeDescriptorV1', () => {
     });
   });
 
+  it('round-trips codex sqlite affinity and keeps older descriptors compatible', () => {
+    const built = buildCodexAgentRuntimeDescriptorV1({
+      backendMode: 'appServer',
+      vendorSessionId: 'thread_sqlite',
+      homePath: '/tmp/codex-home',
+      sqliteHomePath: '/tmp/codex-state',
+    });
+
+    expect(readCanonicalAgentRuntimeDescriptorV1ForProvider(built, 'codex')).toMatchObject({
+      providerId: 'codex',
+      vendorSessionId: 'thread_sqlite',
+      homePath: '/tmp/codex-home',
+      sqliteHomePath: '/tmp/codex-state',
+    });
+    expect(readCanonicalAgentRuntimeDescriptorV1ForProvider({
+      v: 1,
+      providerId: 'codex',
+      provider: { backendMode: 'appServer' },
+    }, 'codex')).toMatchObject({
+      sqliteHomePath: null,
+    });
+  });
+
   it('reads provider-specific descriptors safely', () => {
     const built = buildOpenCodeAgentRuntimeDescriptorV1({
       backendMode: 'server',
@@ -191,6 +214,7 @@ describe('agentRuntimeDescriptorV1', () => {
       connectedServiceProfileId: null,
       connectedServiceGroupId: null,
       homePath: null,
+      sqliteHomePath: null,
     });
 
     expect(readCanonicalAgentRuntimeDescriptorV1ForProvider({
@@ -247,6 +271,7 @@ describe('agentRuntimeDescriptorV1', () => {
       connectedServiceProfileId: null,
       connectedServiceGroupId: null,
       homePath: null,
+      sqliteHomePath: null,
     });
   });
 });

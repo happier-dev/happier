@@ -24,6 +24,7 @@ describe('codexRuntimeDescriptorExtra', () => {
       connectedServiceProfileId: 'work',
       connectedServiceGroupId: null,
       homePath: '/tmp/codex-home',
+      sqliteHomePath: null,
     });
   });
 
@@ -45,6 +46,7 @@ describe('codexRuntimeDescriptorExtra', () => {
       connectedServiceProfileId: null,
       connectedServiceGroupId: null,
       homePath: '/tmp/codex-home',
+      sqliteHomePath: null,
     });
   });
 
@@ -62,6 +64,7 @@ describe('codexRuntimeDescriptorExtra', () => {
       connectedServiceProfileId: null,
       connectedServiceGroupId: null,
       homePath: null,
+      sqliteHomePath: null,
     });
   });
 });

@@ -934,6 +934,7 @@ export function useNewSessionScreenModel(params?: Readonly<{ draftId?: string }>
         draftId,
         promptStore,
         hasLocalEdit: hasUserEditedSessionPrompt,
+        preferInitialPrompt: hydratedTempAuthoringDraft?.displayText !== undefined || typeof prompt === 'string',
     });
     const [isCreatingLocally, setIsCreating] = React.useState(false);
     const accountActionOperations = useAllActionOperations(draftScope?.accountId ?? '');

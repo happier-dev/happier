@@ -22,9 +22,9 @@ export async function importClaudeSessionBundle(params: Readonly<{
   const resolvedClaudeConfigDir = resolveConfiguredClaudeConfigDir({ env: params.env });
   const projectId = resolveClaudeProjectId(params.targetPath);
   const projectDir = getProjectPath(params.targetPath, resolvedClaudeConfigDir);
+  const transcriptPath = resolveClaudeTranscriptPath(projectDir, params.bundle.remoteSessionId);
   await mkdir(projectDir, { recursive: true });
 
-  const transcriptPath = resolveClaudeTranscriptPath(projectDir, params.bundle.remoteSessionId);
   const transcript = Buffer.from(params.bundle.transcriptBase64, 'base64').toString('utf8');
   await writeFile(transcriptPath, transcript, 'utf8');
 

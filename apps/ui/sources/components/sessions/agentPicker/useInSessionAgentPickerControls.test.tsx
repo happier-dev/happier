@@ -564,8 +564,9 @@ describe('useInSessionAgentPickerControls', () => {
         });
         const localId = hook.getCurrent().armedContinuationLocalId;
         expect(localId).toEqual(expect.any(String));
+        expect(existingSessionDraftSemanticValues.read(accountScope, 'session-1', 'routing.agentContinuation')).toBeDefined();
 
-        await hook.rerender({ featureDecision: null });
+        await hook.rerender({ accountScope, featureDecision: null });
 
         // A missing server decision is fail-closed for presentation and dispatch,
         // but it is not proof that an already-persisted choice became stale.
@@ -573,7 +574,7 @@ describe('useInSessionAgentPickerControls', () => {
         expect(hook.getCurrent().armedContinuation).toBeNull();
         expect(existingSessionDraftSemanticValues.read(accountScope, 'session-1', 'routing.agentContinuation')).toBeDefined();
 
-        await hook.rerender({ featureDecision: { state: 'enabled' } });
+        await hook.rerender({ accountScope, featureDecision: { state: 'enabled' } });
 
         expect(hook.getCurrent().armedContinuation).toMatchObject({ selection: { agentId: 'codex' } });
         expect(hook.getCurrent().armedContinuationLocalId).toBe(localId);

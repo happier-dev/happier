@@ -1,7 +1,7 @@
 import { chmodSync, mkdirSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
-import { homedir, tmpdir } from 'node:os';
-import { basename, join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -55,13 +55,14 @@ describe('resolveCodexCliInvocation', () => {
             return;
         }
 
-        const home = homedir();
-        const homeTmp = await mkdtemp(join(home, '.happier-codex-cli-invocation-home-'));
+        const root = await mkdtemp(join(tmpdir(), 'happier-codex-cli-invocation-home-'));
         try {
+            const homeTmp = join(root, 'fixture');
             const binDir = join(homeTmp, 'bin');
             const codexPath = await createExecutable({ dir: binDir, name: 'codex-app-server' });
 
-            const override = `~/${basename(homeTmp)}/bin/codex-app-server`;
+            vi.stubEnv('HOME', root);
+            const override = '~/fixture/bin/codex-app-server';
             vi.stubEnv('HAPPIER_CODEX_APP_SERVER_BIN', override);
 
             const invocation = await resolveCodexCliInvocation({
@@ -73,8 +74,7 @@ describe('resolveCodexCliInvocation', () => {
 
             expect(invocation.command).toBe(codexPath);
         } finally {
-            // Best-effort cleanup under the real home dir.
-            await rm(homeTmp, { recursive: true, force: true });
+            await rm(root, { recursive: true, force: true });
         }
     });
 
@@ -112,13 +112,13 @@ describe('resolveCodexCliInvocation', () => {
             return;
         }
 
-        const home = homedir();
-        const homeTmp = await mkdtemp(join(home, '.happier-codex-cli-invocation-home-'));
         const root = await mkdtemp(join(tmpdir(), 'happier-codex-cli-invocation-'));
         try {
+            const homeTmp = join(root, 'home-fixture');
             const homeBinDir = join(homeTmp, 'bin');
             mkdirSync(homeBinDir, { recursive: true });
-            vi.stubEnv('HAPPIER_CODEX_APP_SERVER_BIN', `~/${basename(homeTmp)}/bin`);
+            vi.stubEnv('HOME', root);
+            vi.stubEnv('HAPPIER_CODEX_APP_SERVER_BIN', '~/home-fixture/bin');
 
             const binDir = join(root, 'bin');
             const codexPath = await createExecutable({ dir: binDir, name: 'codex' });
@@ -134,7 +134,6 @@ describe('resolveCodexCliInvocation', () => {
 
             expect(invocation.command).toBe(codexPath);
         } finally {
-            await rm(homeTmp, { recursive: true, force: true });
             await rm(root, { recursive: true, force: true });
         }
     });

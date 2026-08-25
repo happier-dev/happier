@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { withTempDir } from '@/testkit/fs/tempDir';
@@ -52,6 +52,15 @@ vi.mock('@/daemon/ownership/daemonServiceInventory', async (importOriginal) => {
 });
 
 describe('startDaemon ownership preflight', () => {
+    const daemonLifecycleProcessEvents = [
+        'SIGINT',
+        'SIGTERM',
+        'uncaughtException',
+        'unhandledRejection',
+        'exit',
+        'beforeExit',
+    ] as const;
+    let processListenersBeforeTest = daemonLifecycleProcessEvents.map((event) => [event, process.rawListeners(event)] as const);
     const envScope = createEnvKeyScope([
         'HAPPIER_HOME_DIR',
         'HAPPIER_ACTIVE_SERVER_ID',
@@ -73,7 +82,19 @@ describe('startDaemon ownership preflight', () => {
         text: async () => JSON.stringify({ success: true }),
     } as Response));
 
+    beforeEach(() => {
+        processListenersBeforeTest = daemonLifecycleProcessEvents.map((event) => [event, process.rawListeners(event)] as const);
+    });
+
     afterEach(() => {
+        for (const [event, originalListeners] of processListenersBeforeTest) {
+            const retainedListeners = new Set(originalListeners);
+            for (const listener of process.rawListeners(event)) {
+                if (!retainedListeners.has(listener)) {
+                    process.removeListener(event, listener);
+                }
+            }
+        }
         envScope.restore();
         waitForInitialCredentialsMock.mockReset();
         evaluateDaemonStartupServiceConflictMock.mockReset();

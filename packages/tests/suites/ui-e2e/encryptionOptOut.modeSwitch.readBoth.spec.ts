@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
+import { randomUUID } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
@@ -76,13 +77,19 @@ async function createNewSessionDraft(params: Readonly<{
   uiBaseUrl: string;
   text: string;
 }>): Promise<string> {
-  await gotoDomContentLoadedWithRetries(params.page, `${params.uiBaseUrl}/new?happier_hmr=0`, 120_000);
+  const requestedDraftId = randomUUID();
+  await gotoDomContentLoadedWithRetries(
+    params.page,
+    `${params.uiBaseUrl}/new?draftId=${encodeURIComponent(requestedDraftId)}&happier_hmr=0`,
+    120_000,
+  );
   const composer = params.page.getByTestId('new-session-composer-input');
   await expect(composer).toBeVisible({ timeout: 120_000 });
   await expect.poll(() => new URL(params.page.url()).searchParams.get('draftId'), { timeout: 60_000 })
     .toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
   const draftId = new URL(params.page.url()).searchParams.get('draftId');
   if (!draftId) throw new Error('new-session draft route did not establish a draftId');
+  expect(draftId).toBe(requestedDraftId);
   const mutation = params.page.waitForResponse(
     (response) => response.url().endsWith('/v1/account/session-drafts/mutate')
       && response.request().method() === 'POST'
