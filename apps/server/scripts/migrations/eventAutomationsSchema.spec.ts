@@ -433,6 +433,7 @@ describe("Event Automations persistence contract", () => {
             ["sources/app/automations/automationConversationAdmissionService.ts", 1],
             ["sources/app/automations/automationCrudService.ts", 3],
             ["sources/app/automations/automationReplyHandoffService.ts", 4],
+            ["sources/app/retention/rules/automationRunRetentionRule.ts", 1],
             // Cross-machine acknowledgement-loss and failed-input cancellation
             // retain the canonical produced Session identity through the incumbent Run owner.
             ["sources/app/automations/automationRunService.ts", 12],

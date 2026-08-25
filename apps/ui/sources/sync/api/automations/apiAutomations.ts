@@ -12,7 +12,6 @@ import {
     AutomationV3RunMutationResponseSchema,
     AutomationV3SettingsSchema,
     AutomationV3SettingsUpdateRequestSchema,
-    type AutomationAssignmentInput,
     type AutomationV3ClearRunHistoryResponse,
     type AutomationDefinitionDetail,
     type AutomationDefinitionListItem,

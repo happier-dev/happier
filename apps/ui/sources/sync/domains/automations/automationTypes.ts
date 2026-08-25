@@ -1,6 +1,6 @@
 import type {
     AcpConfigOptionOverridesV1,
-    AutomationDefinitionDetail,
+    AutomationDefinitionDetail as AutomationDefinitionDetailResponse,
     AutomationDefinitionListItem,
     AutomationV3RunListItem,
     BackendTargetRefV2,
@@ -64,7 +64,7 @@ export type AutomationDefinitionDetail =
     | Readonly<{
         kind: 'available';
         templateVersion: number;
-        value: AutomationDefinitionDetail;
+        value: AutomationDefinitionDetailResponse;
     }>
     | Readonly<{
         kind: 'unavailable';
@@ -82,7 +82,7 @@ export type AutomationDefinitionListItemForTrigger<
 
 export type AutomationDefinitionDetailForTrigger<
     TTriggerKind extends AutomationDefinitionTriggerKind,
-> = Extract<AutomationDefinitionDetail, Readonly<{
+> = Extract<AutomationDefinitionDetailResponse, Readonly<{
     trigger: Readonly<{ kind: TTriggerKind }>;
 }>>;
 
