@@ -92,8 +92,10 @@ struct CachedFileMetadata {
 struct CacheManifest {
     version: u8,
     identity_key_hash: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    entry_relative_path: Option<String>,
+    /// One persisted record is always the Artifact-owned exact file graph plus
+    /// its declared entry. There is deliberately no entry-less variant beside
+    /// that contract: no producer has ever written one.
+    entry_relative_path: String,
     files: Vec<CachedFileMetadata>,
 }
 
@@ -109,7 +111,7 @@ pub struct CacheReadRequest {
 pub struct CacheWriteRequest {
     locator: StorageLocator,
     identity_key_hash: String,
-    entry_relative_path: Option<String>,
+    entry_relative_path: String,
     files: Vec<CacheFileInput>,
 }
 
@@ -147,8 +149,7 @@ struct CacheReadFile {
 #[serde(rename_all = "camelCase")]
 pub struct CacheReadResult {
     identity_key_hash: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    entry_relative_path: Option<String>,
+    entry_relative_path: String,
     files: Vec<CacheReadFile>,
 }
 
@@ -451,30 +452,35 @@ fn hosted_artifact_desktop_transport_implementation_for(
     }
 }
 
-/// Per-platform hosted-Artifact frame proof, seeded from the approved contract
-/// rather than from this shell's link-time facts.
+/// Per-platform hosted-Artifact frame proof: whether THIS surface has a
+/// recorded loaded run on that platform.
 ///
-/// `PEP-UI-HOSTED-ARTIFACTS` `UI-RT-REQ-27` makes macOS the first factual
-/// packaged-desktop row and keeps other desktop platforms typed-unavailable
-/// until proved, and `UI-RT-INV-13` restricts Preview to advertising only
-/// platform cells with approved loaded proof. Flipping a platform to `true` is
-/// the one auditable edit that turns its `available` bit on, and it must be
-/// backed by a hosted-Artifact loaded run on that platform — multi-file
-/// custom-protocol load, strict IPC, mount/bridge retirement, late-request
-/// denial. Desktop-browser QA is a different surface and cannot stand in for
-/// it, and neither can a compiling implementation or a CI build matrix.
+/// `UI-RT-INV-13` restricts Preview to advertising only platform cells with
+/// approved loaded proof. Flipping a platform to `true` is the one auditable
+/// edit that turns its `available` bit on, and it must be backed by a
+/// hosted-Artifact loaded run on that platform — multi-file custom-protocol
+/// load, strict IPC, mount/bridge retirement, late-request denial.
+/// Desktop-browser QA is a different surface and cannot stand in for it, and
+/// neither can a compiling implementation or a CI build matrix.
+///
+/// `UI-RT-REQ-27` names macOS as the intended first factual packaged-desktop
+/// row. That is the plan's requirement, not evidence: a requirement sentence is
+/// not a loaded run, so it cannot seed this bit. No hosted-Artifact loaded run
+/// is recorded for any desktop platform yet, so every cell fails closed and the
+/// capability reports the missing proof instead of advertising it.
 ///
 /// This is deliberately a separate fact from
-/// `hosted_artifact_desktop_transport_implementation_for`: the Windows and X11
-/// direct-Wry paths stay implemented, selectable and unit-tested in source, and
-/// only their product advertisement waits on their own loaded proof.
+/// `hosted_artifact_desktop_transport_implementation_for`: the macOS, Windows
+/// and X11 direct-Wry paths stay implemented, selectable and unit-tested in
+/// source, and only their product advertisement waits on their own loaded
+/// proof.
 fn hosted_artifact_child_embedding_proved_for(platform: DesktopBrowserPlatform) -> bool {
     match platform {
-        // The first factual packaged-desktop row (`UI-RT-REQ-27`).
-        DesktopBrowserPlatform::MacOs => true,
         // Implemented and unit-tested, but with no recorded hosted-Artifact
-        // loaded run on either platform yet.
-        DesktopBrowserPlatform::Windows | DesktopBrowserPlatform::LinuxX11 => false,
+        // loaded run on any of these platforms yet.
+        DesktopBrowserPlatform::MacOs
+        | DesktopBrowserPlatform::Windows
+        | DesktopBrowserPlatform::LinuxX11 => false,
         // No implemented child-embedding primitive at all; the structural owner
         // already refuses these, and they carry their own typed reasons.
         DesktopBrowserPlatform::LinuxWayland
@@ -518,12 +524,9 @@ fn hosted_artifact_platform_unavailable_code(platform: DesktopBrowserPlatform) -
         // recorded loaded run on the platform yet, so it is not advertised.
         // The reason names the missing proof rather than claiming the adapter
         // does not exist.
-        DesktopBrowserPlatform::Windows | DesktopBrowserPlatform::LinuxX11 => {
-            "desktop_hosted_artifact_platform_frame_unproved"
-        }
-        // This owns an admitted transport; a caller only reaches this for a
-        // runtime failure that is not a platform fact.
-        DesktopBrowserPlatform::MacOs => "desktop_hosted_artifact_platform_unavailable",
+        DesktopBrowserPlatform::MacOs
+        | DesktopBrowserPlatform::Windows
+        | DesktopBrowserPlatform::LinuxX11 => "desktop_hosted_artifact_platform_frame_unproved",
     }
 }
 
@@ -998,10 +1001,8 @@ fn validate_manifest(manifest: &CacheManifest, locator: &StorageLocator) -> Resu
             return Err("invalid hosted Artifact cache file manifest".to_string());
         }
     }
-    if let Some(entry) = &manifest.entry_relative_path {
-        if !paths.contains(entry.as_str()) {
-            return Err("hosted Artifact cache entry is not declared".to_string());
-        }
+    if !paths.contains(manifest.entry_relative_path.as_str()) {
+        return Err("hosted Artifact cache entry is not declared".to_string());
     }
     Ok(())
 }
@@ -1041,6 +1042,81 @@ fn remove_cache_directory_if_present_within(root: &Path, path: &Path) -> Result<
             fs::remove_dir_all(canonical).map_err(|error| error.to_string())
         }
     }
+}
+
+fn retire_cache_manifest_if_present_within(root: &Path, directory: &Path) -> Result<(), String> {
+    match fs::symlink_metadata(root) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.to_string()),
+        Ok(_) => {}
+    }
+    match fs::symlink_metadata(directory) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.to_string()),
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
+            return Err("hosted Artifact cache retirement refused a non-directory path".to_string())
+        }
+        Ok(_) => {}
+    }
+    let canonical = resolve_existing_cache_directory_within(root, directory)?;
+    let manifest = canonical.join("manifest.json");
+    match fs::symlink_metadata(&manifest) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.to_string()),
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
+            Err("hosted Artifact cache retirement refused a non-file manifest".to_string())
+        }
+        Ok(_) => fs::remove_file(manifest).map_err(|error| error.to_string()),
+    }
+}
+
+fn retire_artifact_cache_directory_with<F>(
+    root: &Path,
+    directory: &Path,
+    physical_delete: F,
+) -> Result<(), String>
+where
+    F: FnOnce(&Path, &Path) -> Result<(), String>,
+{
+    retire_cache_manifest_if_present_within(root, directory)?;
+    physical_delete(root, directory)
+}
+
+fn retire_account_cache_directory_with<F>(
+    root: &Path,
+    account_directory: &Path,
+    physical_delete: F,
+) -> Result<(), String>
+where
+    F: FnOnce(&Path, &Path) -> Result<(), String>,
+{
+    match fs::symlink_metadata(account_directory) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return physical_delete(root, account_directory)
+        }
+        Err(error) => return Err(error.to_string()),
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
+            return Err(
+                "hosted Artifact Account cache retirement refused a non-directory path".to_string(),
+            )
+        }
+        Ok(_) => {}
+    }
+    let canonical = resolve_existing_cache_directory_within(root, account_directory)?;
+    for entry in fs::read_dir(canonical).map_err(|error| error.to_string())? {
+        let entry = entry.map_err(|error| error.to_string())?;
+        if entry
+            .file_type()
+            .map_err(|error| error.to_string())?
+            .is_dir()
+        {
+            retire_cache_manifest_if_present_within(
+                root,
+                &account_directory.join(entry.file_name()),
+            )?;
+        }
+    }
+    physical_delete(root, account_directory)
 }
 
 #[tauri::command]
@@ -1143,10 +1219,8 @@ pub fn desktop_hosted_artifact_cache_write(
                 stored_file_name,
             });
         }
-        if let Some(entry) = &input.entry_relative_path {
-            if !paths.contains(entry.as_str()) {
-                return Err("hosted Artifact cache entry is not declared".to_string());
-            }
+        if !paths.contains(input.entry_relative_path.as_str()) {
+            return Err("hosted Artifact cache entry is not declared".to_string());
         }
         let manifest = CacheManifest {
             version: 1,
@@ -1246,7 +1320,11 @@ pub fn desktop_hosted_artifact_cache_remove(
         .map_err(|_| "hosted Artifact cache write lock poisoned".to_string())?;
     let root = cache_root(&app)?;
     let directory = artifact_directory(&root, &input.locator)?;
-    remove_cache_directory_if_present_within(&root, &directory)
+    retire_artifact_cache_directory_with(
+        &root,
+        &directory,
+        remove_cache_directory_if_present_within,
+    )
 }
 
 #[tauri::command]
@@ -1261,7 +1339,7 @@ pub fn desktop_hosted_artifact_cache_remove_account(
         .map_err(|_| "hosted Artifact cache write lock poisoned".to_string())?;
     let root = cache_root(&app)?;
     let directory = account_directory(&root, &input.namespace, &input.account_key_hash)?;
-    remove_cache_directory_if_present_within(&root, &directory)
+    retire_account_cache_directory_with(&root, &directory, remove_cache_directory_if_present_within)
 }
 
 fn registered_artifact_from_input(
@@ -2358,10 +2436,11 @@ mod tests {
 
     #[test]
     fn hosted_artifact_transport_is_admitted_only_where_this_surface_recorded_loaded_proof() {
-        // `UI-RT-REQ-27`/`UI-RT-INV-13`: macOS is the first factual packaged-desktop
-        // row and every other desktop cell stays typed-unavailable until its own
+        // `UI-RT-INV-13`: a desktop cell stays typed-unavailable until its own
         // hosted-Artifact loaded run is recorded. An implemented, compiling,
-        // CI-built adapter is not that proof.
+        // CI-built adapter is not that proof, and neither is the plan sentence
+        // that names macOS as the intended first row. No such loaded run is
+        // recorded for ANY desktop platform today, so none may be advertised.
         for platform in [
             DesktopBrowserPlatform::MacOs,
             DesktopBrowserPlatform::Windows,
@@ -2370,17 +2449,18 @@ mod tests {
             DesktopBrowserPlatform::LinuxUnknown,
             DesktopBrowserPlatform::Unsupported,
         ] {
+            assert!(
+                !hosted_artifact_child_embedding_proved_for(platform),
+                "{platform:?} claims a recorded hosted-Artifact loaded run that does not exist",
+            );
             assert_eq!(
                 hosted_artifact_desktop_transport_for(platform).is_some(),
                 hosted_artifact_child_embedding_proved_for(platform),
                 "{platform:?} admitted a hosted-Artifact transport without its own proof",
             );
         }
-        assert_eq!(
-            hosted_artifact_desktop_transport_for(DesktopBrowserPlatform::MacOs),
-            Some(HostedArtifactDesktopTransport::MacOsDirectWry),
-        );
         for platform in [
+            DesktopBrowserPlatform::MacOs,
             DesktopBrowserPlatform::Windows,
             DesktopBrowserPlatform::LinuxX11,
         ] {
@@ -2416,22 +2496,16 @@ mod tests {
 
     #[test]
     fn hosted_artifact_frame_capability_reports_one_derived_status_per_platform() {
-        assert_eq!(
-            serde_json::to_value(hosted_artifact_frame_capability_for(
-                DesktopBrowserPlatform::MacOs
-            ))
-            .expect("admitted hosted Artifact capability should serialize"),
-            json!({
-                "kind": "available",
-                "capability": { "platform": "desktop", "adapter": "wry" },
-            }),
-            "macOS should advertise the one direct-Wry adapter",
-        );
-
         // An unavailable platform states why, so no consumer has to restate a generic
-        // "desktop is unsupported" claim that is false for the proved cell — and an
-        // implemented-but-unproved cell says so instead of claiming no adapter exists.
+        // "desktop is unsupported" claim — and an implemented-but-unproved cell says
+        // so instead of claiming no adapter exists. macOS is implemented but has no
+        // recorded loaded run, so it reports the same unproved fact as Windows/X11
+        // rather than advertising a capability whose proof does not exist.
         for (platform, code) in [
+            (
+                DesktopBrowserPlatform::MacOs,
+                "desktop_hosted_artifact_platform_frame_unproved",
+            ),
             (
                 DesktopBrowserPlatform::Windows,
                 "desktop_hosted_artifact_platform_frame_unproved",
@@ -2480,12 +2554,22 @@ mod tests {
             "the retired global availability sentence must not outlive the per-platform status",
         );
 
-        for platform in [
-            DesktopBrowserPlatform::MacOs,
-            DesktopBrowserPlatform::Windows,
-            DesktopBrowserPlatform::LinuxX11,
-            DesktopBrowserPlatform::LinuxWayland,
-            DesktopBrowserPlatform::LinuxUnknown,
+        // Each status is checked against THAT platform's own table row. A
+        // whole-document `contains` cannot fail while any other row happens to
+        // publish the same status string, so it would silently accept a row
+        // that still advertises a withdrawn capability.
+        for (platform, row_label) in [
+            (DesktopBrowserPlatform::MacOs, "Packaged desktop — macOS"),
+            (DesktopBrowserPlatform::Windows, "Packaged desktop — Windows"),
+            (DesktopBrowserPlatform::LinuxX11, "Packaged desktop — Linux/X11"),
+            (
+                DesktopBrowserPlatform::LinuxWayland,
+                "Packaged desktop — Linux/Wayland",
+            ),
+            (
+                DesktopBrowserPlatform::LinuxUnknown,
+                "Packaged desktop — Linux, no display server",
+            ),
         ] {
             let documented = match hosted_artifact_frame_capability_for(platform) {
                 HostedArtifactFrameCapabilityResult::Available { capability } => {
@@ -2496,9 +2580,14 @@ mod tests {
                 }
                 HostedArtifactFrameCapabilityResult::Unavailable { code } => code.to_string(),
             };
+            let row_prefix = format!("| {row_label} |");
+            let row = doc
+                .lines()
+                .find(|line| line.starts_with(&row_prefix))
+                .unwrap_or_else(|| panic!("hosted-web doc has no {row_label:?} status row"));
             assert!(
-                doc.contains(&documented),
-                "hosted-web doc omits the derived status {documented:?} for {platform:?}",
+                row.contains(&documented),
+                "hosted-web doc row {row_label:?} omits the derived status {documented:?} for {platform:?}: {row}",
             );
         }
     }
@@ -2683,6 +2772,66 @@ mod tests {
     }
 
     #[test]
+    fn cache_retirement_removes_the_commit_marker_before_physical_deletion_failure() {
+        let temporary = tempfile::tempdir().expect("temporary cache root should exist");
+        let root = temporary.path().join("cache");
+        let locator = StorageLocator {
+            namespace: CACHE_NAMESPACE.to_string(),
+            account_key_hash: "a".repeat(64),
+            artifact_key_hash: "b".repeat(64),
+        };
+        let directory =
+            artifact_directory(&root, &locator).expect("cache directory should resolve");
+        fs::create_dir_all(&directory).expect("artifact cache directory should exist");
+        fs::write(directory.join("manifest.json"), b"committed")
+            .expect("commit marker should exist");
+        fs::write(directory.join("resource.bin"), b"surviving bytes")
+            .expect("resource fixture should exist");
+
+        let result =
+            retire_artifact_cache_directory_with(&root, &directory, |_root, _directory| {
+                Err("simulated physical deletion failure".to_string())
+            });
+
+        assert_eq!(
+            result,
+            Err("simulated physical deletion failure".to_string())
+        );
+        assert!(!directory.join("manifest.json").exists());
+        assert!(directory.join("resource.bin").exists());
+    }
+
+    #[test]
+    fn account_cache_retirement_removes_every_commit_marker_before_physical_deletion_failure() {
+        let temporary = tempfile::tempdir().expect("temporary cache root should exist");
+        let root = temporary.path().join("cache");
+        let account_directory = root.join(CACHE_NAMESPACE).join("a".repeat(64));
+        for artifact_key_hash in ["b".repeat(64), "c".repeat(64)] {
+            let directory = account_directory.join(artifact_key_hash);
+            fs::create_dir_all(&directory).expect("artifact cache directory should exist");
+            fs::write(directory.join("manifest.json"), b"committed")
+                .expect("commit marker should exist");
+            fs::write(directory.join("resource.bin"), b"surviving bytes")
+                .expect("resource fixture should exist");
+        }
+
+        let result =
+            retire_account_cache_directory_with(&root, &account_directory, |_root, _directory| {
+                Err("simulated Account deletion failure".to_string())
+            });
+
+        assert_eq!(
+            result,
+            Err("simulated Account deletion failure".to_string())
+        );
+        for artifact_key_hash in ["b".repeat(64), "c".repeat(64)] {
+            let directory = account_directory.join(artifact_key_hash);
+            assert!(!directory.join("manifest.json").exists());
+            assert!(directory.join("resource.bin").exists());
+        }
+    }
+
+    #[test]
     fn protocol_serves_a_registered_relative_artifact_graph_from_native_cache() {
         let temporary = tempfile::tempdir().expect("temporary cache root should exist");
         let root = temporary.path().join("cache");
@@ -2809,6 +2958,53 @@ mod tests {
             serve_artifact_protocol_request(&inner, &root, &token, &partition_id, retired_request);
         assert_eq!(retired_response.status().as_u16(), 404);
         assert!(retired_response.body().is_empty());
+    }
+
+    #[test]
+    fn cache_manifest_has_exactly_one_record_shape_carrying_a_declared_entry() {
+        let locator = StorageLocator {
+            namespace: CACHE_NAMESPACE.to_string(),
+            account_key_hash: "a".repeat(64),
+            artifact_key_hash: "b".repeat(64),
+        };
+        let bytes = b"entry".to_vec();
+        let digest = format!("sha256:{}", sha256_hex(&bytes));
+        let complete = serde_json::json!({
+            "version": 1,
+            "identityKeyHash": locator.artifact_key_hash,
+            "entryRelativePath": "index.html",
+            "files": [{
+                "relativePath": "index.html",
+                "digest": digest,
+                "byteSize": bytes.len(),
+                "storedFileName": file_name_for("index.html", &digest),
+            }],
+        });
+        let manifest = serde_json::from_value::<CacheManifest>(complete.clone())
+            .expect("the canonical record shape should deserialize");
+        assert!(validate_manifest(&manifest, &locator).is_ok());
+
+        // The Artifact-owned exact file graph plus its declared entry is the
+        // only persisted record shape. An entry-less draft has no producer and
+        // must not survive as a second readable arm.
+        let mut entryless = complete
+            .as_object()
+            .expect("fixture should be an object")
+            .clone();
+        entryless.remove("entryRelativePath");
+        assert!(serde_json::from_value::<CacheManifest>(serde_json::Value::Object(entryless)).is_err());
+
+        let mut undeclared = complete
+            .as_object()
+            .expect("fixture should be an object")
+            .clone();
+        undeclared.insert(
+            "entryRelativePath".to_string(),
+            serde_json::Value::String("missing.html".to_string()),
+        );
+        let manifest = serde_json::from_value::<CacheManifest>(serde_json::Value::Object(undeclared))
+            .expect("an undeclared entry is a validation failure, not a decode failure");
+        assert!(validate_manifest(&manifest, &locator).is_err());
     }
 
     #[cfg(unix)]
