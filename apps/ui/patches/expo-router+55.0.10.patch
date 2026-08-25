@@ -478,10 +478,24 @@ index 523d01b..6427be9 100644
  //# sourceMappingURL=_web-modal.js.map
 \ No newline at end of file
 diff --git a/node_modules/expo-router/build/modal/web/ModalStack.js b/node_modules/expo-router/build/modal/web/ModalStack.js
-index 1c7dc5f..2905b25 100644
+index 1c7dc5f..04740db 100644
 --- a/node_modules/expo-router/build/modal/web/ModalStack.js
 +++ b/node_modules/expo-router/build/modal/web/ModalStack.js
-@@ -76,6 +76,7 @@ const ModalStackView = ({ state, navigation, descriptors, describe }) => {
+@@ -42,11 +42,12 @@ const ModalStackRouteDrawer_1 = require("./ModalStackRouteDrawer");
+ const TransparentModalStackRouteDrawer_1 = require("./TransparentModalStackRouteDrawer");
+ const utils_1 = require("./utils");
+ const withLayoutContext_1 = require("../../layouts/withLayoutContext");
+-function ModalStackNavigator({ initialRouteName, children, screenOptions, }) {
++function ModalStackNavigator({ initialRouteName, children, screenOptions, UNSTABLE_router, }) {
+     const { state, navigation, descriptors, NavigationContent, describe } = (0, native_1.useNavigationBuilder)(native_1.StackRouter, {
+         children,
+         screenOptions,
+         initialRouteName,
++        UNSTABLE_router,
+     });
+     (0, react_1.useEffect)(() => 
+     // @ts-expect-error: there may not be a tab navigator in parent
+@@ -76,6 +77,7 @@ const ModalStackView = ({ state, navigation, descriptors, describe }) => {
      const { routes: filteredRoutes, index: nonModalIndex } = (0, utils_1.convertStackStateToNonModalState)(state, descriptors, isWeb);
      const newStackState = {
          ...state,
@@ -490,7 +504,7 @@ index 1c7dc5f..2905b25 100644
          index: nonModalIndex,
      };
 diff --git a/node_modules/expo-router/build/modal/web/ModalStackRouteDrawer.js b/node_modules/expo-router/build/modal/web/ModalStackRouteDrawer.js
-index 04cdab6..b8565e8 100644
+index 04cdab6..51665eb 100644
 --- a/node_modules/expo-router/build/modal/web/ModalStackRouteDrawer.js
 +++ b/node_modules/expo-router/build/modal/web/ModalStackRouteDrawer.js
 @@ -9,6 +9,62 @@ const react_1 = __importDefault(require("react"));
@@ -556,7 +570,9 @@ index 04cdab6..b8565e8 100644
  function ModalStackRouteDrawer({ routeKey, options, dismissible, renderScreen, onDismiss, themeColors, }) {
      const [open, setOpen] = react_1.default.useState(true);
      // Determine sheet vs. modal with an SSR-safe hook. The first render (during
-@@ -138,22 +194,34 @@ function ModalStackRouteDrawer({ routeKey, options, dismissible, renderScreen, o
+@@ -136,24 +192,36 @@ function ModalStackRouteDrawer({ routeKey, options, dismissible, renderScreen, o
+             fadeFromIndex,
+         }
          : {};
 +    const modalAccessibilityTitle = typeof options.title === 'string'
 +        ? options.title
