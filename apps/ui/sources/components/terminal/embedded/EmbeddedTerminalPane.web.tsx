@@ -28,6 +28,7 @@ export const EmbeddedTerminalPane = React.memo(function EmbeddedTerminalPaneWeb(
             title={props.title}
             controller={props.controller}
             onRequestClose={props.onRequestClose}
+            onCopySelection={props.controller.copySelection ? () => props.controller.copySelection?.() : null}
             toolbarActionsStart={props.toolbarActionsStart}
             testIdPrefix={props.testIdPrefix}
             platformOS="web"
@@ -38,6 +39,7 @@ export const EmbeddedTerminalPane = React.memo(function EmbeddedTerminalPaneWeb(
                     fontSize={fontMetrics.fontSize}
                     onInput={props.controller.onInput}
                     onPaste={props.controller.onPaste}
+                    onCopySelection={(text) => props.controller.copySelection?.({ source: 'user-selection', text })}
                     onLink={props.controller.onLink}
                     onResize={props.controller.onResize}
                     onReady={props.controller.onReady}

@@ -9,6 +9,7 @@ import kotlinx.coroutines.ExecutorCoroutineDispatcher
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.withContext
 
 /**
  * Dedicated single-thread worker for the blocking sherpa calls.
@@ -27,6 +28,10 @@ internal class SherpaWorker(name: String) {
     }.asCoroutineDispatcher()
 
   val scope = CoroutineScope(dispatcher + SupervisorJob())
+
+  suspend fun <T> run(operation: () -> T): T = withContext(dispatcher) {
+    operation()
+  }
 
   fun shutdown() {
     scope.cancel()
@@ -83,8 +88,28 @@ class HappierSherpaNativeModule internal constructor(
     return assetsDir
   }
 
-  private fun requireEngine(assetsDir: String) {
-    if (HappierSherpaNativeJni.nativeEnsureEngine(assetsDir) != 1) {
+  private fun requireInitializationId(params: Map<String, Any?>): String {
+    val initializationId = params["initializationId"] as? String ?: ""
+    if (initializationId.isBlank()) throw Exception("initializationId is required")
+    return initializationId
+  }
+
+  private fun admitEngineInitialization(assetsDir: String, initializationId: String) {
+    if (HappierSherpaNativeJni.nativeAdmitEngineInitialization(assetsDir, initializationId) != 1) {
+      throw Exception("Failed to admit sherpa offline TTS initialization")
+    }
+  }
+
+  private fun requireEngine(assetsDir: String, initializationId: String? = null) {
+    val initialized = if (initializationId == null) {
+      HappierSherpaNativeJni.nativeEnsureEngine(assetsDir)
+    } else {
+      HappierSherpaNativeJni.nativeEnsureEngineAtInitialization(
+        assetsDir,
+        initializationId,
+      )
+    }
+    if (initialized != 1) {
       throw Exception("Failed to initialize sherpa offline TTS engine (assets may be missing)")
     }
   }
@@ -95,9 +120,26 @@ class HappierSherpaNativeModule internal constructor(
       handleModuleDestroy()
     }
 
-    AsyncFunction("initialize") { params: Map<String, Any?> ->
-      requireEngine(requireAssetsDir(params))
-    }.runOnQueue(ttsWorker.scope)
+    AsyncFunction("initialize").SuspendBody { params: Map<String, Any?> ->
+      // Admit before yielding to the TTS worker. `cancelInitialization` stays
+      // on Expo's control queue and can refuse this one queued request while the
+      // worker is occupied, without retiring another caller's active engine.
+      val assetsDir = requireAssetsDir(params)
+      val initializationId = params["initializationId"] as? String
+      if (initializationId == null) {
+        // `remote-dev` sends only `{ assetsDir }`. Preserve that ordinary warm-up
+        // through the same cache owner; it has no immutable request id to cancel.
+        ttsWorker.run {
+          requireEngine(assetsDir)
+        }
+      } else {
+        if (initializationId.isBlank()) throw Exception("initializationId is required")
+        admitEngineInitialization(assetsDir, initializationId)
+        ttsWorker.run {
+          requireEngine(assetsDir, initializationId)
+        }
+      }
+    }
 
     AsyncFunction("listVoices") { params: Map<String, Any?> ->
       val assetsDir = requireAssetsDir(params)
@@ -143,6 +185,15 @@ class HappierSherpaNativeModule internal constructor(
       val jobId = params["jobId"] as? String ?: ""
       if (jobId.isBlank()) return@AsyncFunction
       HappierSherpaNativeJni.nativeCancel(jobId)
+    }
+
+    // This remains on Expo's control queue so it reaches the cache while a TTS
+    // worker is busy. It marks only one initialization admission; pack mutation
+    // and module teardown continue to use `releaseAssetsDir`/`nativeReleaseAll`.
+    AsyncFunction("cancelInitialization") { params: Map<String, Any?> ->
+      val assetsDir = requireAssetsDir(params)
+      val initializationId = requireInitializationId(params)
+      HappierSherpaNativeJni.nativeCancelEngineInitialization(assetsDir, initializationId)
     }
 
     AsyncFunction("createStreamingRecognizer") { params: Map<String, Any?> ->
@@ -242,6 +293,10 @@ object HappierSherpaNativeJni {
   }
 
   external fun nativeEnsureEngine(assetsDir: String): Int
+  /** Admit/cancel exactly one initializer before it yields to the TTS worker. */
+  external fun nativeAdmitEngineInitialization(assetsDir: String, initializationId: String): Int
+  external fun nativeCancelEngineInitialization(assetsDir: String, initializationId: String)
+  external fun nativeEnsureEngineAtInitialization(assetsDir: String, initializationId: String): Int
   external fun nativeGetNumSpeakers(assetsDir: String): Int
   external fun nativeSynthesizeToWavFile(assetsDir: String, text: String, sid: Int, speed: Float, outWavPath: String, jobId: String): Int
   external fun nativeCancel(jobId: String)

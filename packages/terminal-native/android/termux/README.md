@@ -12,11 +12,11 @@ Approved source is extracted into ignored `android/termux/vendor/` with:
 
 ```bash
 HAPPIER_TERMINAL_NATIVE_TERMUX_SOURCE_ROOT=/path/to/termux-app \
-HAPPIER_TERMINAL_NATIVE_TERMUX_COMMIT=<40-char-reviewed-commit> \
+HAPPIER_TERMINAL_NATIVE_TERMUX_COMMIT=401bbe54b8f4e68302b1ff70678015a24628fb1d \
 yarn workspace @happier-dev/terminal-native fetch:termux:android
 ```
 
-The script copies only `terminal-view` and `terminal-emulator`, rejects `app` and `termux-shared`, and writes `android/termux/vendor/TERMUX-SOURCE.json` provenance. Gradle consumes that ignored source tree only when it exists.
+The source checkout must be clean and exactly at that pinned revision. The extractor copies only `terminal-view` and `terminal-emulator`, rejects `app` and `termux-shared`, copies the root upstream `LICENSE.md` plus an upstream `NOTICE` when present, and writes the matching provenance and license-closure fields to `android/termux/vendor/TERMUX-SOURCE.json`. Gradle consumes the ignored source tree only when its module set, pin, policy metadata, package notice, and copied license closure all match.
 
 Before approving source or artifacts here, record:
 

@@ -10,6 +10,7 @@
       ],
       "source": "libghostty-spm",
       "upstreamRelease": "storage.1.2.4",
+      "upstreamDownloadUrl": "https://github.com/Lakr233/libghostty-spm/releases/download/storage.1.2.4/GhosttyKit.xcframework.zip",
       "upstreamZipSha256": "f1484a5411559bf4a5b665b82a5bb91cb8a3ca2065467dc15202fb191d7a5c9d",
       "expandedSha256": "f59c864108a9ef3002f6dcaaa00f87e5b56ce4966fb6c90d5ad744cc7aef37c7",
       "vendoredBinaryAllowedAfterApproval": true,

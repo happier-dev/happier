@@ -4,6 +4,7 @@ export {
 } from './HappierSherpaNative';
 
 export type {
+  SherpaNativeCancelInitializationParams,
   SherpaNativeCancelParams,
   SherpaNativeInitializeParams,
   SherpaNativeListVoicesParams,

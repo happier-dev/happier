@@ -30,14 +30,10 @@ class HappierTerminalNativeModule : Module() {
     }
 
     AsyncFunction("createSurface") { surfaceId: String ->
-      val diagnostic = TermuxBridge.createSurface(surfaceId) { eventName, payload ->
+      TermuxBridge.createSurface(surfaceId) { eventName, payload ->
         sendEvent(eventName, payload)
       }
-      return@AsyncFunction mapOf(
-        "available" to diagnostic.available,
-        "reason" to diagnostic.reason,
-        "detail" to diagnostic.detail,
-      )
+      return@AsyncFunction TermuxBridge.availability()
     }
 
     AsyncFunction("writeBytes") { surfaceId: String, base64Bytes: String, byteOffset: Double ->

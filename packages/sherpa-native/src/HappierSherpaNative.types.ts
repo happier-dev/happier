@@ -6,6 +6,17 @@ export type SherpaNativeVoice = {
 
 export type SherpaNativeInitializeParams = {
   assetsDir: string;
+  /**
+   * Immutable identifier for one cancellable native initialization request.
+   * Optional while an older JS bundle can invoke a newer native module with the
+   * predecessor `{ assetsDir }` shape.
+   */
+  initializationId?: string;
+};
+
+export type SherpaNativeCancelInitializationParams = {
+  assetsDir: string;
+  initializationId: string;
 };
 
 export type SherpaNativeListVoicesParams = {
@@ -52,6 +63,12 @@ export type SherpaNativeVadFrameResult = {
 
 export type SherpaNativeModule = {
   initialize(params: SherpaNativeInitializeParams): Promise<void>;
+  /**
+   * Optional while JS bundles can meet a native binary that predates precise
+   * initialization cancellation. Callers must degrade the operation without
+   * using pack retirement as a cancellation fallback.
+   */
+  cancelInitialization?(params: SherpaNativeCancelInitializationParams): Promise<void>;
   listVoices(params: SherpaNativeListVoicesParams): Promise<SherpaNativeVoice[]>;
   synthesizeToWavFile(params: SherpaNativeSynthesizeParams): Promise<SherpaNativeSynthesizeResult>;
   createStreamingRecognizer(params: {

@@ -38,16 +38,22 @@ const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "
  *
  * `worker`: enters sherpa and blocks for as long as the model takes.
  * `control`: must stay reachable while a worker is blocked -- cancellation, pack
- * invalidation, and the short VAD frame calls that own their own lock.
+ * invalidation, and the short VAD frame calls that own their own lock. The iOS
+ * initialization pair stays on Expo's serial control queue so ordered admission
+ * reaches the cache before a same-call cancellation.
  */
 const FUNCTION_KIND = {
-  initialize: "worker",
+  // Initialization is admitted on its control queue before it yields to the TTS
+  // worker. Its immutable admission lets a caller cancel only that queued
+  // request without retiring an active same-pack engine.
+  initialize: "admittedWorker",
   listVoices: "worker",
   synthesizeToWavFile: "worker",
   createStreamingRecognizer: "worker",
   pushAudioFrame: "worker",
   finishStreaming: "worker",
   cancel: "control",
+  cancelInitialization: "control",
   releaseAssetsDir: "control",
   createVadDetector: "control",
   pushVadAudioFrame: "control",
@@ -82,6 +88,14 @@ function assertQueueAssignment(platform, queues) {
   );
 
   for (const [name, queue] of queues) {
+    if (FUNCTION_KIND[name] === "admittedWorker") {
+      assert.equal(
+        queue,
+        null,
+        `${platform}: \"${name}\" must admit its cache request on the control queue before yielding to its worker`,
+      );
+      continue;
+    }
     if (FUNCTION_KIND[name] === "worker") {
       assert.ok(
         queue,
@@ -110,6 +124,8 @@ test("iOS declares blocking sherpa work off the shared Expo async queue", () => 
   // speaking while the microphone stays open for barge-in.
   assert.equal(queues.get("synthesizeToWavFile"), "ttsQueue");
   assert.equal(queues.get("pushAudioFrame"), "asrQueue");
+  assert.equal(queues.get("initialize"), null);
+  assert.equal(queues.get("cancelInitialization"), null);
   assert.match(source, /private let ttsQueue = DispatchQueue\(label: "dev\.happier\.sherpa\.tts"/);
   assert.match(source, /private let asrQueue = DispatchQueue\(label: "dev\.happier\.sherpa\.asr"/);
 
@@ -132,6 +148,7 @@ test("Android declares blocking sherpa work off the shared Expo async queue", ()
 
   assert.equal(queues.get("synthesizeToWavFile"), "ttsWorker");
   assert.equal(queues.get("pushAudioFrame"), "asrWorker");
+  assert.equal(queues.get("initialize"), null);
 
   // Each worker is one dedicated thread, so a worker serializes its own engine's
   // calls the way the shared queue used to, without owning the cancel path.
@@ -147,6 +164,73 @@ test("Android declares blocking sherpa work off the shared Expo async queue", ()
     destroy[0].indexOf("releaseAllNative()") < destroy[0].indexOf("ttsWorker.shutdown()"),
     "native caches must be released before the workers are shut down",
   );
+});
+
+test("initialization carries its cancellable cache admission from the control queue into the TTS worker", () => {
+  const ios = readFileSync(path.join(packageRoot, "ios", "HappierSherpaNativeModule.swift"), "utf8");
+  const android = readFileSync(
+    path.join(packageRoot, "android", "src", "main", "java", "dev", "happier", "sherpa", "HappierSherpaNativeModule.kt"),
+    "utf8",
+  );
+  const iosOwner = readFileSync(path.join(packageRoot, "ios", "HappierSherpaOfflineTtsEngine.mm"), "utf8");
+  const androidOwner = readFileSync(
+    path.join(packageRoot, "android", "src", "main", "cpp", "HappierSherpaNativeJni.cpp"),
+    "utf8",
+  );
+
+  assert.match(
+    ios,
+    /AsyncFunction\("initialize"\) \{ \(params: \[String: Any\], promise: Promise\) in[\s\S]*?admitInitialization\(assetsDir: assetsDir, admissionId: initializationId\)[\s\S]*?self\.ttsQueue\.async[\s\S]*?prepare\(assetsDir: assetsDir, admissionId: initializationId\)[\s\S]*?promise\.resolve\(\)[\s\S]*?catch \{[\s\S]*?promise\.reject\(error\)/,
+    "iOS must admit on Expo's serial control queue before dispatching initialization onto the TTS worker",
+  );
+  assert.match(
+    ios,
+    /AsyncFunction\("cancelInitialization"\)[\s\S]*?cancelInitialization\(assetsDir: assetsDir, admissionId: initializationId\)/,
+    "iOS cancellation must share initialization's serial Expo control queue",
+  );
+  assert.doesNotMatch(
+    ios,
+    /AsyncFunction\("initialize"\) \{ \(params: \[String: Any\]\) async/,
+    "a concurrent Swift AsyncFunction can let cancellation reach the cache before initialization admits",
+  );
+  assert.match(
+    android,
+    /AsyncFunction\("initialize"\)\.SuspendBody \{ params: Map<String, Any\?> ->[\s\S]*?admitEngineInitialization\(assetsDir, initializationId\)[\s\S]*?ttsWorker\.run[\s\S]*?requireEngine\(assetsDir, initializationId\)/,
+    "Android must admit before dispatching initialization onto the TTS worker",
+  );
+  assert.match(iosOwner, /admitInitializationForAssetsDir/);
+  assert.match(iosOwner, /cancelInitializationForAssetsDir/);
+  assert.match(iosOwner, /prepareAssetsDir:[\s\S]*?admissionId:/);
+  assert.match(androidOwner, /nativeAdmitEngineInitialization/);
+  assert.match(androidOwner, /nativeCancelEngineInitialization/);
+  assert.match(androidOwner, /nativeEnsureEngineAtInitialization/);
+
+  // This control function must reach the cache while a TTS worker is occupied;
+  // it cancels an admission only and must never queue behind its initializer.
+  assert.match(ios, /AsyncFunction\("cancelInitialization"\)/);
+  assert.match(android, /AsyncFunction\("cancelInitialization"\)/);
+});
+
+test("initialization accepts the predecessor no-admission shape through the same cache owner", () => {
+  const ios = readFileSync(path.join(packageRoot, "ios", "HappierSherpaNativeModule.swift"), "utf8");
+  const android = readFileSync(
+    path.join(packageRoot, "android", "src", "main", "java", "dev", "happier", "sherpa", "HappierSherpaNativeModule.kt"),
+    "utf8",
+  );
+  const types = readFileSync(path.join(packageRoot, "src", "HappierSherpaNative.types.ts"), "utf8");
+
+  // `remote-dev` currently sends only `{ assetsDir }`. It may still warm the
+  // engine through the ordinary cache owner; only a current id-bearing caller
+  // receives precise queued-initialization cancellation.
+  assert.match(
+    ios,
+    /let initializationId = params\["initializationId"\] as\? String[\s\S]*?if let initializationId \{[\s\S]*?admitInitialization\(assetsDir: assetsDir, admissionId: initializationId\)[\s\S]*?\} else \{[\s\S]*?self\.ttsQueue\.async[\s\S]*?prepare\(assetsDir: assetsDir\)/,
+  );
+  assert.match(
+    android,
+    /val initializationId = params\["initializationId"\] as\? String[\s\S]*?if \(initializationId == null\) \{[\s\S]*?ttsWorker\.run[\s\S]*?requireEngine\(assetsDir\)/,
+  );
+  assert.match(types, /initializationId\?: string/);
 });
 
 test("pack invalidation retires both native engine kinds through one owner", () => {

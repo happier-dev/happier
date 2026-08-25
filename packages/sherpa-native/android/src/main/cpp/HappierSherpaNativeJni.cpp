@@ -129,6 +129,15 @@ std::shared_ptr<Engine> LeaseEngine(const std::string &assetsDir) {
   return Engines().leaseOrCreate(assetsDir, [&] { return CreateEngine(assetsDir); });
 }
 
+std::shared_ptr<Engine> LeaseEngine(
+    const std::string &assetsDir,
+    const std::string &initializationId) {
+  return Engines().leaseOrCreateInitialization(
+      assetsDir,
+      initializationId,
+      [&] { return CreateEngine(assetsDir); });
+}
+
 std::shared_ptr<const SherpaOnnxOnlineRecognizer> CreateAsrRecognizer(const std::string &assetsDir) {
   const std::string tokensPath = assetsDir + "/tokens.txt";
   const std::string encoderPath = assetsDir + "/encoder.onnx";
@@ -326,6 +335,49 @@ jobject MakeFinishResult(JNIEnv *env, const char *status, const char *text) {
 extern "C" JNIEXPORT jint JNICALL
 Java_dev_happier_sherpa_HappierSherpaNativeJni_nativeEnsureEngine(JNIEnv *env, jclass /*clazz*/, jstring assetsDir) {
   return LeaseEngine(JStringToUtf8(env, assetsDir)) ? 1 : 0;
+}
+
+/**
+ * Admit one native initialization while the Expo control queue still owns it.
+ * The cache retains this immutable request id until the TTS worker reaches its
+ * terminal decision, which lets JS cancel only this queued initializer without
+ * retiring an active engine or its synthesis jobs.
+ */
+extern "C" JNIEXPORT jint JNICALL
+Java_dev_happier_sherpa_HappierSherpaNativeJni_nativeAdmitEngineInitialization(
+    JNIEnv *env,
+    jclass /*clazz*/,
+    jstring assetsDir,
+    jstring initializationId) {
+  return Engines().admitInitialization(
+             JStringToUtf8(env, assetsDir),
+             JStringToUtf8(env, initializationId))
+      ? 1
+      : 0;
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_dev_happier_sherpa_HappierSherpaNativeJni_nativeCancelEngineInitialization(
+    JNIEnv *env,
+    jclass /*clazz*/,
+    jstring assetsDir,
+    jstring initializationId) {
+  Engines().cancelInitialization(
+      JStringToUtf8(env, assetsDir),
+      JStringToUtf8(env, initializationId));
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_dev_happier_sherpa_HappierSherpaNativeJni_nativeEnsureEngineAtInitialization(
+    JNIEnv *env,
+    jclass /*clazz*/,
+    jstring assetsDir,
+    jstring initializationId) {
+  return LeaseEngine(
+             JStringToUtf8(env, assetsDir),
+             JStringToUtf8(env, initializationId))
+      ? 1
+      : 0;
 }
 
 extern "C" JNIEXPORT jint JNICALL

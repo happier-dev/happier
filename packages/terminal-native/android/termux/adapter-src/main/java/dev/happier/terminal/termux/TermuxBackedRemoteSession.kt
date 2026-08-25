@@ -50,7 +50,7 @@ class TermuxBackedRemoteSession(
     }
 
     override fun onCopyTextToClipboard(text: String?) {
-      callbacks.emitCopy(text.orEmpty())
+      // TerminalEmulator calls this for remote OSC 52. It is not a user copy action.
     }
 
     override fun onPasteTextFromClipboard() {
@@ -79,7 +79,7 @@ class TermuxBackedRemoteSession(
     }
 
     override fun onCopyTextToClipboard(session: TerminalSession, text: String?) {
-      callbacks.emitCopy(text.orEmpty())
+      // Keep process-backed Termux callbacks fail-closed for remote clipboard writes too.
     }
 
     override fun onPasteTextFromClipboard(session: TerminalSession?) {
@@ -297,6 +297,7 @@ class TermuxBackedRemoteSession(
 
   override fun attachEventSink(eventSink: dev.happier.terminal.TermuxEventSink) {
     callbacks.attachEventSink(eventSink)
+    emitSurfaceReady()
   }
 
   override fun focus() {

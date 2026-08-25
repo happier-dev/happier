@@ -1,4 +1,5 @@
 #import <Foundation/Foundation.h>
+#include <stdint.h>
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -16,10 +17,33 @@ NS_ASSUME_NONNULL_BEGIN
  */
 @interface HappierSherpaOfflineTtsEngine : NSObject
 
+/**
+ * Admit one initialize request before it yields to the TTS worker. Its immutable
+ * id may be cancelled without retiring the cached engine for this pack.
+ */
++ (BOOL)admitInitializationForAssetsDir:(NSString *)assetsDir
+                            admissionId:(NSString *)admissionId
+    NS_SWIFT_NAME(admitInitialization(assetsDir:admissionId:));
+
+/** Refuse one queued initialize request without mutating this pack's runtime. */
++ (void)cancelInitializationForAssetsDir:(NSString *)assetsDir
+                              admissionId:(NSString *)admissionId
+    NS_SWIFT_NAME(cancelInitialization(assetsDir:admissionId:));
+
 /** Build (or reuse) the engine for `assetsDir` so later calls are warm. */
 + (BOOL)prepareAssetsDir:(NSString *)assetsDir
                    error:(NSError * _Nullable * _Nullable)error
     NS_SWIFT_NAME(prepare(assetsDir:));
+
+/**
+ * Continue a worker request admitted by `admitInitializationForAssetsDir:`. A
+ * cancellation that overtook that admission is refused before it can load or
+ * publish an engine, without retiring an active same-pack engine.
+ */
++ (BOOL)prepareAssetsDir:(NSString *)assetsDir
+             admissionId:(NSString *)admissionId
+                   error:(NSError * _Nullable * _Nullable)error
+    NS_SWIFT_NAME(prepare(assetsDir:admissionId:));
 
 /** Speakers the pack at `assetsDir` exposes; 0 when its engine cannot be built. */
 + (int32_t)numSpeakersForAssetsDir:(NSString *)assetsDir

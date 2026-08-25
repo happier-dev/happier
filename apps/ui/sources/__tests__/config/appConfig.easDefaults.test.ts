@@ -1,4 +1,5 @@
 import { getConfig } from '@expo/config';
+import { compileModsAsync, withPlugins } from '@expo/config-plugins';
 import { describe, expect, it } from 'vitest';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -64,6 +65,85 @@ function getPluginOptions(exp: ReturnType<typeof getPublicConfig>, pluginName: s
         : undefined;
 
     return Array.isArray(pluginEntry) ? pluginEntry[1] : undefined;
+}
+
+function getPluginName(plugin: unknown): string | undefined {
+    if (typeof plugin === 'string') return plugin;
+    if (Array.isArray(plugin) && typeof plugin[0] === 'string') return plugin[0];
+    return undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null;
+}
+
+function hasRecognitionServiceQuery(value: unknown): boolean {
+    if (!isRecord(value) || !Array.isArray(value.queries)) return false;
+
+    return value.queries.some((query) => {
+        if (!isRecord(query) || !Array.isArray(query.intent)) return false;
+
+        return query.intent.some((intent) => {
+            if (!isRecord(intent) || !Array.isArray(intent.action)) return false;
+
+            return intent.action.some((action) => {
+                if (!isRecord(action) || !isRecord(action.$)) return false;
+                return action.$['android:name'] === 'android.speech.RecognitionService';
+            });
+        });
+    });
+}
+
+function hasAndroidPermission(value: unknown, permission: string): boolean {
+    if (!isRecord(value) || !Array.isArray(value['uses-permission'])) return false;
+
+    return value['uses-permission'].some((entry) => (
+        isRecord(entry)
+        && isRecord(entry.$)
+        && entry.$['android:name'] === permission
+    ));
+}
+
+function findAndroidService(value: unknown, serviceName: string): Record<string, unknown> | undefined {
+    if (!isRecord(value) || !Array.isArray(value.application)) return undefined;
+
+    for (const application of value.application) {
+        if (!isRecord(application) || !Array.isArray(application.service)) continue;
+        const service = application.service.find((entry) => (
+            isRecord(entry)
+            && isRecord(entry.$)
+            && entry.$['android:name'] === serviceName
+        ));
+        if (isRecord(service)) return service;
+    }
+
+    return undefined;
+}
+
+async function compileAndroidManifest(
+    exp: ReturnType<typeof getPublicConfig>,
+    plugins: Parameters<typeof withPlugins>[1],
+) {
+    const compiled = await compileModsAsync(
+        withPlugins(
+            {
+                ...exp,
+                _internal: {
+                    ...exp._internal,
+                    projectRoot: getUiDir(),
+                },
+            },
+            plugins,
+        ),
+        {
+            projectRoot: getUiDir(),
+            platforms: ['android'],
+            introspect: true,
+            ignoreExistingNativeFiles: true,
+        }
+    );
+
+    return compiled._internal?.modResults?.android?.manifest?.manifest;
 }
 
 function withCleanEnv<T>(fn: () => T): T {
@@ -212,6 +292,76 @@ describe('app.config.js', () => {
         expect(getPluginOptions(exp, 'expo-image-picker')).not.toEqual(
             expect.objectContaining({ microphonePermission: false })
         );
+    });
+
+    it('declares Android 11+ speech-recognition package visibility through the installed Expo plugin', async () => {
+        const exp = withCleanEnv(() => getPublicConfig());
+        const speechRecognitionPlugin = (exp.plugins ?? []).find(
+            (plugin) => getPluginName(plugin) === 'expo-speech-recognition'
+        );
+        const speechRecognitionPluginName = getPluginName(speechRecognitionPlugin);
+
+        expect(speechRecognitionPluginName).toBe('expo-speech-recognition');
+        if (!speechRecognitionPluginName) return;
+
+        const compiled = await compileModsAsync(
+            withPlugins(
+                {
+                    ...exp,
+                    _internal: {
+                        ...exp._internal,
+                        projectRoot: getUiDir(),
+                    },
+                },
+                [speechRecognitionPluginName]
+            ),
+            {
+                projectRoot: getUiDir(),
+                platforms: ['android'],
+                introspect: true,
+                ignoreExistingNativeFiles: true,
+            }
+        );
+        const androidManifest = compiled._internal?.modResults?.android?.manifest?.manifest;
+
+        expect(hasRecognitionServiceQuery(androidManifest)).toBe(true);
+    });
+
+    it('registers the Android Voice foreground-service config plugin', () => {
+        const exp = withCleanEnv(() => getPublicConfig());
+
+        expect((exp.plugins ?? []).filter(
+            (plugin) => getPluginName(plugin) === './plugins/withAndroidVoiceForegroundService.js',
+        )).toEqual(['./plugins/withAndroidVoiceForegroundService.js']);
+    });
+
+    it('declares the microphone foreground service through the Android config boundary', async () => {
+        const exp = withCleanEnv(() => getPublicConfig());
+        // Load the actual app-owned plugin directly: all platform manifest
+        // changes are still exercised through Expo's Android mod compiler.
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const voiceForegroundServicePlugin = require(
+            join(getUiDir(), 'plugins', 'withAndroidVoiceForegroundService.js'),
+        );
+        const androidManifest = await compileAndroidManifest(exp, [voiceForegroundServicePlugin]);
+        const service = findAndroidService(
+            androidManifest,
+            'dev.happier.audio.HappierVoiceAudioForegroundService',
+        );
+
+        expect(hasAndroidPermission(androidManifest, 'android.permission.FOREGROUND_SERVICE')).toBe(true);
+        expect(hasAndroidPermission(
+            androidManifest,
+            'android.permission.FOREGROUND_SERVICE_MICROPHONE',
+        )).toBe(true);
+        expect(hasAndroidPermission(
+            androidManifest,
+            'android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK',
+        )).toBe(true);
+        expect(service?.$).toEqual(expect.objectContaining({
+            'android:exported': 'false',
+            'android:foregroundServiceType': 'microphone|mediaPlayback',
+        }));
     });
 
     it('allows disabling Android cleartext traffic explicitly via env override', () => {
@@ -444,7 +594,7 @@ describe('app.config.js', () => {
         expect(plugin).toEqual(['react-native-audio-api', expect.objectContaining({ iosBackgroundMode: true })]);
     });
 
-    it('allows overriding iOS background audio via env', () => {
+    it('keeps iOS background audio enabled when a legacy env override is false', () => {
         const exp = withCleanEnv(() => {
             process.env.APP_ENV = 'preview';
             process.env.EXPO_PUBLIC_IOS_BACKGROUND_AUDIO = 'false';
@@ -452,7 +602,7 @@ describe('app.config.js', () => {
         });
 
         const plugin = (exp.plugins ?? []).find((entry: any) => Array.isArray(entry) && entry[0] === 'react-native-audio-api');
-        expect(plugin).toEqual(['react-native-audio-api', expect.objectContaining({ iosBackgroundMode: false })]);
+        expect(plugin).toEqual(['react-native-audio-api', expect.objectContaining({ iosBackgroundMode: true })]);
     });
 
     it('bundles Happier notification sounds through expo-notifications', () => {
@@ -648,5 +798,11 @@ describe('app.config.js', () => {
         expect(exp.ios?.infoPlist?.NSPhotoLibraryUsageDescription).toBe(
             'Local override: access photos for sharing.',
         );
+        expect(getPluginOptions(exp, 'react-native-audio-api')).toEqual(
+            expect.objectContaining({ iosBackgroundMode: true }),
+        );
+        expect((exp.plugins ?? []).filter(
+            (plugin) => getPluginName(plugin) === './plugins/withAndroidVoiceForegroundService.js',
+        )).toEqual(['./plugins/withAndroidVoiceForegroundService.js']);
     });
 });

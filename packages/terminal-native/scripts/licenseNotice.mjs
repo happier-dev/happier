@@ -5,9 +5,12 @@ import { fileURLToPath } from 'node:url';
 const packageRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const packageJson = JSON.parse(await readFile(join(packageRoot, 'package.json'), 'utf-8'));
 const rendererPolicy = JSON.parse(await readFile(join(packageRoot, 'native-renderers.json'), 'utf-8'));
+const androidTermuxNoticePath = 'android/termux/NOTICE.md';
+const androidTermuxNotice = await readAndroidTermuxNotice();
+const status = androidTermuxNotice.status === 'present' ? 'ok' : 'blocked';
 
 process.stdout.write(`${JSON.stringify({
-  status: 'ok',
+  status,
   packageName: packageJson.name,
   vendoredRendererArtifacts: false,
   legalReviewRequiredBeforeBundlingGhosttyOrTermux: true,
@@ -32,6 +35,26 @@ process.stdout.write(`${JSON.stringify({
     remoteSessionAdapter: rendererPolicy.androidTermux.remoteSessionAdapter,
     sourceStrategy: rendererPolicy.androidTermux.sourceStrategy,
     license: rendererPolicy.androidTermux.license,
+    notice: androidTermuxNotice,
     gates: rendererPolicy.androidTermux.gates,
   },
 })}\n`);
+
+if (status !== 'ok') {
+  process.exitCode = 1;
+}
+
+async function readAndroidTermuxNotice() {
+  try {
+    const text = await readFile(join(packageRoot, androidTermuxNoticePath), 'utf-8');
+    return {
+      path: androidTermuxNoticePath,
+      status: text.trim() ? 'present' : 'missing',
+    };
+  } catch {
+    return {
+      path: androidTermuxNoticePath,
+      status: 'missing',
+    };
+  }
+}

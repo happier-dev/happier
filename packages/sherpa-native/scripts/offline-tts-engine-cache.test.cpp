@@ -227,6 +227,65 @@ void ReleaseDuringCreationRefusesThePublication() {
   assert(freshDestroyed.load() == 1);
 }
 
+// A caller may cancel its initialize request while it is waiting behind an
+// active synthesis on the dedicated TTS worker. That request must be refused
+// without retiring the pack: a pack release is for bytes being replaced or
+// removed, and would incorrectly stop the unrelated synthesis that already owns
+// the active engine.
+void CancelledQueuedAdmissionLeavesActiveEngineAndJobAlive() {
+  std::atomic<int> activeDestroyed{0};
+  std::atomic<int> queuedCreateCalls{0};
+  std::atomic<int> queuedDestroyed{0};
+  Cache cache;
+
+  auto active = cache.leaseOrCreate("/packs/kokoro", [&] { return MakeEngine(&activeDestroyed); });
+  assert(active != nullptr);
+  bool alreadyCancelled = false;
+  auto *activeJob = active->jobs.beginJob("active", &alreadyCancelled);
+  assert(activeJob != nullptr && !alreadyCancelled);
+
+  constexpr const char *kCancelledAdmissionId = "cancelled-queued-initialize";
+  assert(cache.admitInitialization("/packs/kokoro", kCancelledAdmissionId));
+  assert(cache.cancelInitialization("/packs/kokoro", kCancelledAdmissionId));
+
+  auto prevented = cache.leaseOrCreateInitialization(
+      "/packs/kokoro",
+      kCancelledAdmissionId,
+      [&] {
+        queuedCreateCalls.fetch_add(1);
+        return MakeEngine(&queuedDestroyed);
+      });
+
+  // The cancelled request never gets to reuse or publish an engine, while the
+  // active job and cache entry remain untouched.
+  assert(prevented == nullptr);
+  assert(queuedCreateCalls.load() == 0);
+  assert(cache.find("/packs/kokoro") == active);
+  assert(cache.cachedEngineCount() == 1);
+  assert(!activeJob->cancelled.load());
+
+  // Cancellation is specific to its immutable admission. A later request for
+  // the same pack can still use the active engine normally.
+  constexpr const char *kFreshAdmissionId = "fresh-initialize";
+  assert(cache.admitInitialization("/packs/kokoro", kFreshAdmissionId));
+  auto fresh = cache.leaseOrCreateInitialization(
+      "/packs/kokoro",
+      kFreshAdmissionId,
+      [&] {
+        queuedCreateCalls.fetch_add(1);
+        return MakeEngine(&queuedDestroyed);
+      });
+  assert(fresh == active);
+  assert(queuedCreateCalls.load() == 0);
+
+  active->jobs.finishJob("active");
+  cache.releaseAll();
+  fresh.reset();
+  active.reset();
+  assert(activeDestroyed.load() == 1);
+  assert(queuedDestroyed.load() == 0);
+}
+
 // Teardown has the same window, and must reject a creation for a directory that
 // no single-directory invalidation ever named -- otherwise the process-static
 // cache is repopulated after the module that owned it is gone.
@@ -281,6 +340,7 @@ int main() {
   ReleaseAllDropsEveryEngineExactlyOnce();
   LeaseOrCreateKeepsTheEngineThatWonTheRace();
   ReleaseDuringCreationRefusesThePublication();
+  CancelledQueuedAdmissionLeavesActiveEngineAndJobAlive();
   ReleaseAllDuringCreationRefusesThePublication();
   ReleaseDuringCreationLeavesAnotherPackPublishable();
   ConcurrentLeaseAndReleaseStress();

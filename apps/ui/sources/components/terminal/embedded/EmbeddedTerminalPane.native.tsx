@@ -12,8 +12,8 @@ import { resolveCodeEditorFontMetrics } from '@/components/ui/code/editor/codeEd
 import { Text } from '@/components/ui/text/Text';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useKeyboardHeight } from '@/hooks/ui/useKeyboardHeight';
-import { useLocalSetting } from '@/sync/domains/state/storage';
-import { getClipboardStringTrimmedSafe, setClipboardStringSafe } from '@/utils/ui/clipboard';
+import { useLocalSetting, useLocalSettingMutable } from '@/sync/domains/state/storage';
+import { getClipboardStringTrimmedSafe } from '@/utils/ui/clipboard';
 import { XtermWebViewSurface, type XtermWebViewSurfaceHandle } from '@/components/terminal/xterm/webview/XtermWebViewSurface.native';
 import { resolveGhosttyRendererSelection, type GhosttyRendererSelectionOptions } from '@/components/terminal/ghostty/availability';
 import { GhosttyTerminalSurface } from '@/components/terminal/ghostty/surface.native';
@@ -48,6 +48,7 @@ export const EmbeddedTerminalPane = React.memo(function EmbeddedTerminalPaneNati
     const styles = embeddedTerminalPaneStyles;
     const uiFontScale = useLocalSetting('uiFontScale');
     const terminalRendererPreference = useLocalSetting('terminalRendererPreference');
+    const [nativeRendererQuarantine, setNativeRendererQuarantine] = useLocalSettingMutable('terminalNativeRendererQuarantine');
     const osFontScale = typeof PixelRatio.getFontScale === 'function' ? PixelRatio.getFontScale() : 1;
     const fontMetrics = React.useMemo(() => resolveCodeEditorFontMetrics({ uiFontScale, osFontScale }), [osFontScale, uiFontScale]);
     const keyboardBottomInset = useKeyboardHeight();
@@ -90,10 +91,25 @@ export const EmbeddedTerminalPane = React.memo(function EmbeddedTerminalPaneNati
     React.useEffect(() => {
         setNativeRendererFailed(false);
     }, [selectedRenderer]);
-    const effectiveRenderer = nativeRendererFailed ? 'xterm-webview' : selectedRenderer;
+    const quarantineActive = nativeRendererQuarantine?.renderer === selectedRenderer
+        && nativeRendererQuarantine.expiresAtMs > Date.now();
+    React.useEffect(() => {
+        if (nativeRendererQuarantine && nativeRendererQuarantine.expiresAtMs <= Date.now()) {
+            setNativeRendererQuarantine(null);
+        }
+    }, [nativeRendererQuarantine, setNativeRendererQuarantine]);
+    const effectiveRenderer = nativeRendererFailed || quarantineActive ? 'xterm-webview' : selectedRenderer;
     const onNativeUnavailable = React.useCallback(() => {
         setNativeRendererFailed(true);
     }, []);
+    const onRendererCrash = React.useCallback((event: Readonly<{ fatal?: boolean }>) => {
+        setNativeRendererFailed(true);
+        if (!event.fatal || (selectedRenderer !== 'ios-ghosttykit' && selectedRenderer !== 'android-termux')) return;
+        setNativeRendererQuarantine({
+            renderer: selectedRenderer,
+            expiresAtMs: Date.now() + 24 * 60 * 60 * 1000,
+        });
+    }, [selectedRenderer, setNativeRendererQuarantine]);
     const nativeAccessibilityAccepted = terminalRendererPreference === 'native-experimental'
         || hasAcceptedNativeAccessibility(resolvedNativeRendererOptions);
     const nativeSurfaceKey = props.nativeSurfaceKey?.trim() || props.testIdPrefix || 'embedded-terminal';
@@ -104,8 +120,8 @@ export const EmbeddedTerminalPane = React.memo(function EmbeddedTerminalPaneNati
         void props.controller.onPaste(text);
     }, [props.controller]);
     const onNativeCopy = React.useCallback((event: TerminalNativeCopyEvent) => {
-        void setClipboardStringSafe(event.text);
-    }, []);
+        props.controller.copySelection?.({ source: 'user-selection', text: event.text });
+    }, [props.controller]);
     const onCopySelection = React.useCallback(() => {
         props.terminalRef.current?.copySelection?.();
     }, [props.terminalRef]);
@@ -164,6 +180,7 @@ export const EmbeddedTerminalPane = React.memo(function EmbeddedTerminalPaneNati
                             onReady={props.controller.onReady}
                             onWriteComplete={props.controller.onWriteComplete}
                             onUnavailable={onNativeUnavailable}
+                            onRendererCrash={onRendererCrash}
                         />
                     ) : effectiveRenderer === 'android-termux' ? (
                         <TermuxTerminalSurface
@@ -181,6 +198,7 @@ export const EmbeddedTerminalPane = React.memo(function EmbeddedTerminalPaneNati
                             onReady={props.controller.onReady}
                             onWriteComplete={props.controller.onWriteComplete}
                             onUnavailable={onNativeUnavailable}
+                            onRendererCrash={onRendererCrash}
                         />
                     ) : (
                         <XtermWebViewSurface

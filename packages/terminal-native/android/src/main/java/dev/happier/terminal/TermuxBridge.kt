@@ -43,6 +43,7 @@ object TermuxBridge {
   private const val MODULE_VERSION = "0.0.0"
   private val surfaces = ConcurrentHashMap<String, TermuxRemoteSession>()
   private val invalidators = ConcurrentHashMap<String, () -> Unit>()
+  private val focusRequesters = ConcurrentHashMap<String, () -> Unit>()
 
   private val requiredModules = listOf(
     mapOf("name" to "terminal-view", "path" to "terminal-view", "license" to "Apache-2.0"),
@@ -219,6 +220,7 @@ object TermuxBridge {
     unavailableDiagnostic()?.let { return }
     if (surfaceId.isNotBlank()) {
       surfaces.getOrPut(surfaceId) { TermuxRemoteSessionFactory.create(surfaceId, null) }.focus()
+      focusRequesters[surfaceId]?.invoke()
     }
   }
 
@@ -246,12 +248,23 @@ object TermuxBridge {
     }
   }
 
-  fun unregisterSurfaceInvalidator(surfaceId: String) {
-    invalidators.remove(surfaceId)
+  fun unregisterSurfaceInvalidator(surfaceId: String, invalidator: () -> Unit) {
+    invalidators.remove(surfaceId, invalidator)
+  }
+
+  fun registerSurfaceFocusRequester(surfaceId: String, focusRequester: () -> Unit) {
+    if (surfaceId.isNotBlank()) {
+      focusRequesters[surfaceId] = focusRequester
+    }
+  }
+
+  fun unregisterSurfaceFocusRequester(surfaceId: String, focusRequester: () -> Unit) {
+    focusRequesters.remove(surfaceId, focusRequester)
   }
 
   fun disposeSurface(surfaceId: String) {
     invalidators.remove(surfaceId)
+    focusRequesters.remove(surfaceId)
     surfaces.remove(surfaceId)?.dispose()
   }
 
@@ -259,6 +272,7 @@ object TermuxBridge {
     surfaces.values.forEach { it.dispose() }
     surfaces.clear()
     invalidators.clear()
+    focusRequesters.clear()
   }
 
   fun moduleVersion(): String = MODULE_VERSION

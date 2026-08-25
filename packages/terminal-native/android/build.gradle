@@ -6,9 +6,30 @@ plugins {
 group = 'dev.happier.terminal'
 version = '0.0.0'
 
+def termuxPolicy = new groovy.json.JsonSlurper().parse(file("../native-renderers.json")).androidTermux
 def termuxVendorDir = file("termux/vendor")
+def termuxSourceMetadataFile = file("termux/vendor/TERMUX-SOURCE.json")
+def termuxSourceMetadata = termuxSourceMetadataFile.exists()
+  ? new groovy.json.JsonSlurper().parse(termuxSourceMetadataFile)
+  : null
+def termuxUpstreamNoticePath = termuxSourceMetadata?.licenseClosure?.upstreamNoticePath
+def hasTermuxLicenseClosure = termuxSourceMetadata?.licenseClosure?.upstreamLicensePath == "TERMUX-UPSTREAM-LICENSE.md" &&
+  file("termux/vendor/TERMUX-UPSTREAM-LICENSE.md").exists() &&
+  (termuxUpstreamNoticePath == null || (
+    termuxUpstreamNoticePath == "TERMUX-UPSTREAM-NOTICE.md" &&
+    file("termux/vendor/TERMUX-UPSTREAM-NOTICE.md").exists()
+  )) &&
+  termuxSourceMetadata?.licenseClosure?.noticePath == "android/termux/NOTICE.md" &&
+  file("termux/NOTICE.md").exists()
 def hasTermuxSource = termuxVendorDir.exists() &&
-  file("termux/vendor/TERMUX-SOURCE.json").exists() &&
+  termuxSourceMetadata != null &&
+  termuxSourceMetadata.observedCommit == termuxPolicy.upstream.observedCommit &&
+  termuxSourceMetadata.upstream?.observedCommit == termuxPolicy.upstream.observedCommit &&
+  termuxSourceMetadata.modules == termuxPolicy.upstream.modules &&
+  termuxSourceMetadata.forbiddenModules == termuxPolicy.forbiddenModules &&
+  termuxSourceMetadata.sourceStrategy == termuxPolicy.sourceStrategy &&
+  termuxSourceMetadata.license == termuxPolicy.license &&
+  hasTermuxLicenseClosure &&
   file("termux/vendor/terminal-view/src/main/java/com/termux/view/TerminalView.java").exists() &&
   file("termux/vendor/terminal-emulator/src/main/java/com/termux/terminal/TerminalEmulator.java").exists()
 
@@ -32,7 +53,7 @@ if (termuxVendorDir.exists()) {
     }
   }
   if (!hasTermuxSource) {
-    throw new GradleException("[HappierTerminalNative] Incomplete Termux source vendor tree. Run scripts/fetchTermuxAndroid.mjs.")
+    throw new GradleException("[HappierTerminalNative] Invalid Termux source provenance or license closure. Run scripts/fetchTermuxAndroid.mjs from the pinned clean checkout.")
   }
 }
 
@@ -73,4 +94,6 @@ android {
 
 dependencies {
   implementation "androidx.annotation:annotation:1.9.0"
+  testImplementation "junit:junit:4.13.2"
+  testImplementation "org.robolectric:robolectric:4.14.1"
 }

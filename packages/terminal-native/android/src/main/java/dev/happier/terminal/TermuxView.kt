@@ -19,6 +19,12 @@ class TermuxView(context: Context, appContext: AppContext) : ExpoView(context, a
   private var lineHeightPx = 18.0
   private var accessibilitySummary = ""
   private var accessibilityAccepted = false
+  private val surfaceInvalidator: () -> Unit = {
+    postInvalidateOnAnimation()
+  }
+  private val surfaceFocusRequester: () -> Unit = {
+    requestNativeViewFocus()
+  }
 
   init {
     setBackgroundColor(Color.BLACK)
@@ -31,15 +37,14 @@ class TermuxView(context: Context, appContext: AppContext) : ExpoView(context, a
   fun setSurfaceId(surfaceId: String) {
     if (this.surfaceId == surfaceId) return
     if (this.surfaceId.isNotBlank()) {
-      TermuxBridge.unregisterSurfaceInvalidator(this.surfaceId)
-      TermuxBridge.disposeSurface(this.surfaceId)
+      TermuxBridge.unregisterSurfaceInvalidator(this.surfaceId, surfaceInvalidator)
+      TermuxBridge.unregisterSurfaceFocusRequester(this.surfaceId, surfaceFocusRequester)
     }
     this.surfaceId = surfaceId
     if (surfaceId.isNotBlank()) {
       TermuxBridge.createSurface(surfaceId)
-      TermuxBridge.registerSurfaceInvalidator(surfaceId) {
-        postInvalidateOnAnimation()
-      }
+      TermuxBridge.registerSurfaceInvalidator(surfaceId, surfaceInvalidator)
+      TermuxBridge.registerSurfaceFocusRequester(surfaceId, surfaceFocusRequester)
     }
     refreshAccessibility()
   }
@@ -66,11 +71,20 @@ class TermuxView(context: Context, appContext: AppContext) : ExpoView(context, a
     refreshAccessibility()
   }
 
+  override fun onAttachedToWindow() {
+    super.onAttachedToWindow()
+    val currentSurfaceId = surfaceId
+    if (currentSurfaceId.isNotBlank()) {
+      TermuxBridge.registerSurfaceInvalidator(currentSurfaceId, surfaceInvalidator)
+      TermuxBridge.registerSurfaceFocusRequester(currentSurfaceId, surfaceFocusRequester)
+    }
+  }
+
   override fun onDetachedFromWindow() {
     val currentSurfaceId = surfaceId
     if (currentSurfaceId.isNotBlank()) {
-      TermuxBridge.unregisterSurfaceInvalidator(currentSurfaceId)
-      TermuxBridge.disposeSurface(currentSurfaceId)
+      TermuxBridge.unregisterSurfaceInvalidator(currentSurfaceId, surfaceInvalidator)
+      TermuxBridge.unregisterSurfaceFocusRequester(currentSurfaceId, surfaceFocusRequester)
     }
     super.onDetachedFromWindow()
   }
@@ -198,8 +212,22 @@ class TermuxView(context: Context, appContext: AppContext) : ExpoView(context, a
     }
     TermuxBridge.focusSurface(surfaceId)
     if (showKeyboard) {
-      val inputMethodManager = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
-      inputMethodManager?.showSoftInput(this, InputMethodManager.SHOW_IMPLICIT)
+      showSoftKeyboard()
     }
+  }
+
+  private fun requestNativeViewFocus() {
+    if (!isAttachedToWindow) return
+    post {
+      if (!hasFocus()) {
+        requestFocus()
+      }
+      showSoftKeyboard()
+    }
+  }
+
+  private fun showSoftKeyboard() {
+    val inputMethodManager = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+    inputMethodManager?.showSoftInput(this, InputMethodManager.SHOW_IMPLICIT)
   }
 }

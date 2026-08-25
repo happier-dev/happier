@@ -1,11 +1,18 @@
+import { execFile } from 'node:child_process';
 import { cp, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
 
 const packageRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const policyPath = join(packageRoot, 'native-renderers.json');
 const TERMUX_SOURCE_ROOT_ENV = 'HAPPIER_TERMINAL_NATIVE_TERMUX_SOURCE_ROOT';
+const TERMUX_SOURCE_COMMIT_ENV = 'HAPPIER_TERMINAL_NATIVE_TERMUX_COMMIT';
+const TERMUX_PACKAGE_NOTICE_PATH = 'android/termux/NOTICE.md';
+const TERMUX_UPSTREAM_LICENSE_FILE = 'TERMUX-UPSTREAM-LICENSE.md';
+const TERMUX_UPSTREAM_NOTICE_FILE = 'TERMUX-UPSTREAM-NOTICE.md';
+const execFileAsync = promisify(execFile);
 
 export const TERMUX_ANDROID_VENDOR_METADATA_FILE = 'TERMUX-SOURCE.json';
 
@@ -18,6 +25,7 @@ export async function validateTermuxAndroidSource({ sourceRoot }) {
   const policy = await readTermuxAndroidPolicy();
   const requiredModules = policy.upstream.modules;
   const forbiddenModules = policy.forbiddenModules;
+  const metadata = await readOptionalJson(join(sourceRoot, TERMUX_ANDROID_VENDOR_METADATA_FILE));
   const missingRequired = [];
   const forbiddenPresent = [];
 
@@ -75,17 +83,53 @@ export async function validateTermuxAndroidSource({ sourceRoot }) {
     };
   }
 
+  const provenance = await validateTermuxVendorProvenance({
+    sourceRoot,
+    policy,
+    metadata,
+  });
+  if (provenance != null) {
+    return {
+      status: 'blocked',
+      reason: provenance.reason,
+      detail: provenance.detail,
+      missingRequired,
+      forbiddenPresent,
+      forbiddenReferences,
+      metadata,
+    };
+  }
+
   return {
     status: 'ok',
     modules: requiredModules,
     forbiddenPresent,
     forbiddenReferences,
-    metadata: await readOptionalJson(join(sourceRoot, TERMUX_ANDROID_VENDOR_METADATA_FILE)),
+    metadata,
   };
 }
 
 export async function installTermuxAndroidSource({ sourceRoot, vendorRoot, observedCommit }) {
   const policy = await readTermuxAndroidPolicy();
+  const expectedCommit = policy.upstream.observedCommit;
+  if (observedCommit !== expectedCommit) {
+    return {
+      status: 'blocked',
+      reason: 'termux-source-revision-mismatch',
+      detail: `Termux source revision must be ${expectedCommit}.`,
+      expectedCommit,
+      observedCommit,
+    };
+  }
+
+  const licenseClosure = await copyTermuxLicenseClosure({
+    sourceRoot,
+    targetRoot: null,
+  });
+  if (licenseClosure.status !== 'ok') {
+    return licenseClosure;
+  }
+
   const tempRoot = await mkdtemp(join(tmpdir(), 'happier-termux-android-vendor-'));
 
   try {
@@ -98,6 +142,11 @@ export async function installTermuxAndroidSource({ sourceRoot, vendorRoot, obser
     }
 
     await patchTermuxViewResourceImports(tempRoot);
+    await copyTermuxLicenseClosure({
+      sourceRoot,
+      targetRoot: tempRoot,
+      closure: licenseClosure.closure,
+    });
 
     const metadata = {
       observedCommit,
@@ -110,6 +159,7 @@ export async function installTermuxAndroidSource({ sourceRoot, vendorRoot, obser
       modules: policy.upstream.modules,
       forbiddenModules: policy.forbiddenModules,
       license: policy.license,
+      licenseClosure: licenseClosure.closure,
       installedBy: policy.sourceStrategy.fetchScript,
     };
 
@@ -145,18 +195,39 @@ export async function installTermuxAndroidSource({ sourceRoot, vendorRoot, obser
 export async function ensureTermuxAndroidSourceFromEnvironment({
   vendorRoot = join(packageRoot, 'android', 'termux', 'vendor'),
   sourceRoot = process.env[TERMUX_SOURCE_ROOT_ENV],
-  observedCommit,
+  observedCommit = process.env[TERMUX_SOURCE_COMMIT_ENV],
 } = {}) {
   const policy = await readTermuxAndroidPolicy();
-  const commit = observedCommit ?? policy.upstream.observedCommit;
+  const expectedCommit = policy.upstream.observedCommit;
+  const requestedCommit = observedCommit?.trim();
   const root = sourceRoot?.trim();
+
+  if (requestedCommit && requestedCommit !== expectedCommit) {
+    return {
+      status: 'blocked',
+      reason: 'termux-source-revision-mismatch',
+      detail: `HAPPIER_TERMINAL_NATIVE_TERMUX_COMMIT must equal ${expectedCommit}.`,
+      expectedCommit,
+      observedCommit: requestedCommit,
+      upstream: policy.upstream,
+    };
+  }
 
   if (!root) {
     return {
       status: 'blocked',
       reason: 'missing-termux-source-root-env',
       sourceEnv: TERMUX_SOURCE_ROOT_ENV,
-      detail: `Set ${TERMUX_SOURCE_ROOT_ENV} to a locally audited Termux checkout pinned to ${commit}.`,
+      detail: `Set ${TERMUX_SOURCE_ROOT_ENV} to a clean locally audited Termux checkout pinned to ${expectedCommit}.`,
+      upstream: policy.upstream,
+      forbiddenModules: policy.forbiddenModules,
+    };
+  }
+
+  const checkout = await inspectTermuxCheckout({ sourceRoot: root, expectedCommit });
+  if (checkout.status !== 'ok') {
+    return {
+      ...checkout,
       upstream: policy.upstream,
       forbiddenModules: policy.forbiddenModules,
     };
@@ -165,8 +236,62 @@ export async function ensureTermuxAndroidSourceFromEnvironment({
   return installTermuxAndroidSource({
     sourceRoot: root,
     vendorRoot,
-    observedCommit: commit,
+    observedCommit: checkout.observedCommit,
   });
+}
+
+async function inspectTermuxCheckout({ sourceRoot, expectedCommit }) {
+  let observedCommit;
+  try {
+    ({ stdout: observedCommit } = await execFileAsync('git', ['-C', sourceRoot, 'rev-parse', 'HEAD']));
+  } catch {
+    return {
+      status: 'blocked',
+      reason: 'termux-source-provenance-unverified',
+      detail: 'Termux source must be a readable Git checkout so its exact revision can be verified.',
+    };
+  }
+
+  observedCommit = observedCommit.trim();
+  if (observedCommit !== expectedCommit) {
+    return {
+      status: 'blocked',
+      reason: 'termux-source-revision-mismatch',
+      detail: `Termux checkout is at ${observedCommit || 'an unknown revision'}, not ${expectedCommit}.`,
+      expectedCommit,
+      observedCommit,
+    };
+  }
+
+  try {
+    const { stdout: dirtyStatus } = await execFileAsync('git', [
+      '-C',
+      sourceRoot,
+      'status',
+      '--porcelain',
+      '--untracked-files=all',
+    ]);
+    if (dirtyStatus.trim()) {
+      return {
+        status: 'blocked',
+        reason: 'termux-source-dirty',
+        detail: 'Termux source checkout has tracked or untracked changes; extract from a clean checkout.',
+        observedCommit,
+      };
+    }
+  } catch {
+    return {
+      status: 'blocked',
+      reason: 'termux-source-provenance-unverified',
+      detail: 'Termux source checkout cleanliness could not be verified.',
+      observedCommit,
+    };
+  }
+
+  return {
+    status: 'ok',
+    observedCommit,
+  };
 }
 
 async function copyAllowedTermuxModule({ sourceModuleRoot, targetModuleRoot, moduleName }) {
@@ -202,6 +327,70 @@ async function patchTermuxViewResourceImports(root) {
       await writeFile(filePath, patched);
     }
   }));
+}
+
+async function copyTermuxLicenseClosure({ sourceRoot, targetRoot, closure }) {
+  const upstreamLicensePath = join(sourceRoot, 'LICENSE.md');
+  if (!await exists(upstreamLicensePath)) {
+    return {
+      status: 'blocked',
+      reason: 'termux-source-license-missing',
+      detail: 'Termux source must include its root LICENSE.md before terminal libraries are extracted.',
+    };
+  }
+
+  const upstreamNoticeSource = await firstExistingPath(sourceRoot, ['NOTICE', 'NOTICE.md']);
+  const resolvedClosure = closure ?? {
+    upstreamLicensePath: TERMUX_UPSTREAM_LICENSE_FILE,
+    upstreamNoticePath: upstreamNoticeSource == null ? null : TERMUX_UPSTREAM_NOTICE_FILE,
+    noticePath: TERMUX_PACKAGE_NOTICE_PATH,
+  };
+
+  if (targetRoot != null) {
+    await cp(upstreamLicensePath, join(targetRoot, resolvedClosure.upstreamLicensePath));
+    if (upstreamNoticeSource != null && resolvedClosure.upstreamNoticePath != null) {
+      await cp(upstreamNoticeSource, join(targetRoot, resolvedClosure.upstreamNoticePath));
+    }
+  }
+
+  return {
+    status: 'ok',
+    closure: resolvedClosure,
+  };
+}
+
+async function validateTermuxVendorProvenance({ sourceRoot, policy, metadata }) {
+  if (!isRecord(metadata)
+    || metadata.observedCommit !== policy.upstream.observedCommit
+    || !isRecord(metadata.upstream)
+    || metadata.upstream.name !== policy.upstream.name
+    || metadata.upstream.url !== policy.upstream.url
+    || metadata.upstream.observedCommit !== policy.upstream.observedCommit
+    || !sameJson(metadata.modules, policy.upstream.modules)
+    || !sameJson(metadata.forbiddenModules, policy.forbiddenModules)
+    || !sameJson(metadata.sourceStrategy, policy.sourceStrategy)
+    || !sameJson(metadata.license, policy.license)) {
+    return {
+      reason: 'termux-source-provenance-unverified',
+      detail: 'Termux vendor source must record the policy-pinned revision, terminal-only module closure, and license policy.',
+    };
+  }
+
+  const closure = metadata.licenseClosure;
+  if (!isRecord(closure)
+    || closure.upstreamLicensePath !== TERMUX_UPSTREAM_LICENSE_FILE
+    || (closure.upstreamNoticePath !== null && closure.upstreamNoticePath !== TERMUX_UPSTREAM_NOTICE_FILE)
+    || closure.noticePath !== TERMUX_PACKAGE_NOTICE_PATH
+    || !await exists(join(sourceRoot, TERMUX_UPSTREAM_LICENSE_FILE))
+    || (closure.upstreamNoticePath != null && !await exists(join(sourceRoot, closure.upstreamNoticePath)))
+    || !await exists(join(packageRoot, TERMUX_PACKAGE_NOTICE_PATH))) {
+    return {
+      reason: 'termux-source-license-closure-missing',
+      detail: 'Termux vendor source must retain its upstream license and the package Android notice closure.',
+    };
+  }
+
+  return null;
 }
 
 async function findForbiddenReferences({ sourceRoot, forbiddenTokens }) {
@@ -242,6 +431,14 @@ async function copyIfExists(source, target) {
   await cp(source, target, { recursive: true });
 }
 
+async function firstExistingPath(root, names) {
+  for (const name of names) {
+    const candidate = join(root, name);
+    if (await exists(candidate)) return candidate;
+  }
+  return null;
+}
+
 async function readOptionalJson(path) {
   try {
     return JSON.parse(await readFile(path, 'utf-8'));
@@ -257,6 +454,14 @@ async function exists(path) {
   } catch {
     return false;
   }
+}
+
+function isRecord(value) {
+  return value != null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function sameJson(left, right) {
+  return JSON.stringify(left) === JSON.stringify(right);
 }
 
 async function listFiles(root, predicate) {

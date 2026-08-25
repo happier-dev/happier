@@ -25,6 +25,12 @@ async function readText(path) {
     return readFile(path, 'utf-8');
 }
 
+function extractPodspecFileList(podspec, property) {
+    const assignment = podspec.match(new RegExp(`^\\s*s\\.${property}\\s*=\\s*([\\s\\S]*?)(?=^\\s*s\\.|^end\\b)`, 'm'));
+    assert.ok(assignment, `Expected podspec to assign ${property}`);
+    return new Set([...assignment[1].matchAll(/'([^']+)'/g)].map((match) => match[1]));
+}
+
 async function pathExists(path) {
     try {
         await access(path);
@@ -220,7 +226,7 @@ test('sherpa-native declares Expo module metadata consistent with sibling native
     });
 });
 
-test('sherpa-native online ASR bridge matches the vendored Sherpa C API shape', async () => {
+test('sherpa-native iOS ASR bridge delegates stream lifetime to the shared registry', async () => {
     const source = await readText(join(
         repoRoot,
         'packages',
@@ -232,7 +238,11 @@ test('sherpa-native online ASR bridge matches the vendored Sherpa C API shape', 
     assert.doesNotMatch(source, /config\.decoder_config\./);
     assert.doesNotMatch(source, /config\.endpoint_config\./);
     assert.doesNotMatch(source, /wrapper->_/);
-    assert.match(source, /const SherpaOnnxOnlineStream \*_stream/);
+    assert.match(source, /^#import "HappierSherpaAsrStreamRegistry\.h"$/m);
+    assert.match(
+        source,
+        /happier_sherpa::AsrStreamRegistry<const SherpaOnnxOnlineRecognizer, const SherpaOnnxOnlineStream>/,
+    );
 });
 
 test('ssh-native declares Expo module metadata and package surface', async () => {
@@ -735,7 +745,7 @@ test('terminal-native iOS Ghostty view owns text, delete, and pointer routing in
         'GhosttySurfaceBridge.swift',
     ));
 
-    assert.match(viewSource, /final class GhosttySurfaceView: UIView, UIKeyInput/);
+    assert.match(viewSource, /final class GhosttySurfaceView: UIView, UITextInput, UITextInputTraits/);
     assert.match(viewSource, /func insertText\(_ text: String\)/);
     assert.match(viewSource, /func deleteBackward\(\)/);
     assert.match(viewSource, /override func touchesBegan\(_ touches: Set<UITouch>, with event: UIEvent\?\)/);
@@ -821,6 +831,69 @@ test('terminal-native Android surface creation attaches the Expo module event si
     assert.match(bridge, /attachEventSink\(eventSink\)/);
     assert.match(bridge, /putIfAbsent\(surfaceId, created\)/);
     assert.match(surface, /nativeModule\.createSurface\?\.\(props\.surfaceId\)/);
+});
+
+test('terminal-native Android replays readiness after attaching an event sink to a view-created surface', async () => {
+    const view = await readText(join(
+        repoRoot,
+        'packages',
+        'terminal-native',
+        'android',
+        'src',
+        'main',
+        'java',
+        'dev',
+        'happier',
+        'terminal',
+        'TermuxView.kt',
+    ));
+    const backedSession = await readText(join(
+        repoRoot,
+        'packages',
+        'terminal-native',
+        'android',
+        'termux',
+        'adapter-src',
+        'main',
+        'java',
+        'dev',
+        'happier',
+        'terminal',
+        'termux',
+        'TermuxBackedRemoteSession.kt',
+    ));
+    const attachEventSinkDefinition = backedSession.match(
+        /override fun attachEventSink\(eventSink: dev\.happier\.terminal\.TermuxEventSink\) \{[\s\S]*?\n  }\n\n  override fun focus/,
+    )?.[0] ?? '';
+
+    assert.match(view, /TermuxBridge\.createSurface\(surfaceId\)/);
+    assert.match(attachEventSinkDefinition, /callbacks\.attachEventSink\(eventSink\)/);
+    assert.match(attachEventSinkDefinition, /emitSurfaceReady\(\)/);
+    assert.ok(
+        attachEventSinkDefinition.indexOf('callbacks.attachEventSink(eventSink)')
+        < attachEventSinkDefinition.indexOf('emitSurfaceReady()'),
+    );
+});
+
+test('terminal-native Android surface creation returns canonical native availability on success', async () => {
+    const moduleSource = await readText(join(
+        repoRoot,
+        'packages',
+        'terminal-native',
+        'android',
+        'src',
+        'main',
+        'java',
+        'dev',
+        'happier',
+        'terminal',
+        'HappierTerminalNativeModule.kt',
+    ));
+    const createSurfaceDefinition = moduleSource.match(
+        /AsyncFunction\("createSurface"\)[\s\S]*?\n    }\n\n    AsyncFunction\("writeBytes"\)/,
+    )?.[0] ?? '';
+
+    assert.match(createSurfaceDefinition, /return@AsyncFunction TermuxBridge\.availability\(\)/);
 });
 
 test('terminal-native Android layout-driven renderer resize propagates back to the remote PTY', async () => {
@@ -1058,6 +1131,26 @@ test('HAPPIER_ENABLE_TERMINAL_NATIVE controls Expo autolinking exclusion for ter
 
     const enabledConfig = await loadAppConfigWithNativeFlags({ nativeSsh: '1', terminalNative: '1' });
     assert.deepEqual(enabledConfig?.autolinking, expectedAutolinkingConfig([]));
+
+    const nonExactConfig = await loadAppConfigWithNativeFlags({ nativeSsh: '1', terminalNative: 'true' });
+    assert.deepEqual(
+        nonExactConfig?.autolinking,
+        expectedAutolinkingConfig(['@happier-dev/terminal-native']),
+        'Terminal native inputs must activate only for the exact approved value HAPPIER_ENABLE_TERMINAL_NATIVE=1.',
+    );
+});
+
+test('only exact terminal-native opt-in registers the universal native build-input prebuild materializer', async () => {
+    const disabledConfig = await loadAppConfigWithNativeFlags({ nativeSsh: '1', terminalNative: '0' });
+    const nonExactConfig = await loadAppConfigWithNativeFlags({ nativeSsh: '1', terminalNative: 'true' });
+    const enabledConfig = await loadAppConfigWithNativeFlags({ nativeSsh: '1', terminalNative: '1' });
+    const pluginPath = './plugins/withTerminalNativeBuildInputs.js';
+    const pluginNames = (config) => (config?.plugins ?? []).map((plugin) => Array.isArray(plugin) ? plugin[0] : plugin);
+
+    assert.equal(pluginNames(disabledConfig).includes(pluginPath), false);
+    assert.equal(pluginNames(nonExactConfig).includes(pluginPath), false);
+    assert.equal(pluginNames(enabledConfig).filter((name) => name === pluginPath).length, 1);
+    assert.equal(pluginNames(enabledConfig).some((name) => name === './plugins/withTerminalNativeGhosttyKit.js'), false);
 });
 
 test('EAS build install scopes include active first-party native Expo modules', async () => {
@@ -1127,19 +1220,27 @@ test('Expo autolinking discovers sherpa-native alongside audio-stream-native for
     });
 });
 
-test('sherpa-native iOS podspec ships the bundled VAD model resource and excludes tests', async () => {
+test('sherpa-native iOS podspec ships the bundled VAD model and private shared registry headers', async () => {
     const podspec = await readText(join(repoRoot, 'packages', 'sherpa-native', 'ios', 'HappierSherpaNative.podspec'));
+    const sourceFiles = extractPodspecFileList(podspec, 'source_files');
+    const privateHeaders = extractPodspecFileList(podspec, 'private_header_files');
+    const sharedRegistryHeaders = [
+        'HappierSherpaAsrStreamRegistry.h',
+        'HappierSherpaCacheEpoch.h',
+        'HappierSherpaOfflineTtsEngineCache.h',
+        'HappierSherpaTtsJobRegistry.h',
+    ].map((header) => `../common/cpp/${header}`);
 
     assert.match(
         podspec,
         /resource_bundles\s*=\s*\{\s*'HappierSherpaNativeResources'\s*=>\s*\['\.\.\/android\/src\/main\/assets\/silero_vad_v5\.onnx'\]\s*\}/m,
     );
     assert.match(podspec, /exclude_files\s*=\s*'Tests\/\*\*\/\*'/);
-    assert.match(
-        podspec,
-        /source_files\s*=\s*\[\s*'\*\.{h,m,mm,swift}',\s*'\.\.\/common\/cpp\/HappierSherpaTtsJobRegistry\.h'\s*\]/m,
-    );
-    assert.match(podspec, /private_header_files\s*=\s*'\.\.\/common\/cpp\/HappierSherpaTtsJobRegistry\.h'/);
+    assert.ok(sourceFiles.has('*.{h,m,mm,swift}'));
+    for (const header of sharedRegistryHeaders) {
+        assert.ok(sourceFiles.has(header), `${header} must be a pod source`);
+        assert.ok(privateHeaders.has(header), `${header} must remain a private pod header`);
+    }
     assert.doesNotMatch(podspec, /source_files\s*=\s*'\*\*\/\*\.{h,m,mm,swift}'/);
 });
 
@@ -1150,20 +1251,25 @@ test('sherpa-native iOS Silero VAD wrapper matches the generated Objective-C ini
     assert.doesNotMatch(detectorSource, /HappierSherpaSileroVadDetector\([^)]*error:\s*&err/s);
 });
 
-test('sherpa-native iOS TTS and ASR wrappers use the imported throwing Swift ABIs', async () => {
+test('sherpa-native iOS module delegates TTS and ASR lifecycle to static native owners', async () => {
     const moduleSource = await readText(join(repoRoot, 'packages', 'sherpa-native', 'ios', 'HappierSherpaNativeModule.swift'));
     const offlineHeader = await readText(join(repoRoot, 'packages', 'sherpa-native', 'ios', 'HappierSherpaOfflineTtsEngine.h'));
     const onlineHeader = await readText(join(repoRoot, 'packages', 'sherpa-native', 'ios', 'HappierSherpaOnlineAsrEngine.h'));
 
-    assert.match(offlineHeader, /-\s*\(nullable instancetype\)initWithAssetsDir:/);
-    assert.match(onlineHeader, /-\s*\(nullable instancetype\)initWithAssetsDir:/);
-    assert.match(moduleSource, /let engine = try HappierSherpaOfflineTtsEngine\(assetsDir:\s*assetsDir\)/);
-    assert.match(moduleSource, /let engine = try HappierSherpaOnlineAsrEngine\(assetsDir:\s*assetsDir,\s*sampleRate:\s*16000,\s*language:\s*langKey\.isEmpty \? nil : langKey\)/s);
-    assert.match(moduleSource, /try engine\.synthesizeToWavFile\(atPath:\s*outWavPath,\s*text:\s*text,\s*sid:\s*Int32\(sid\),\s*speed:\s*Float\(speed\),\s*jobId:\s*jobId\s*\)/s);
-    assert.match(moduleSource, /let stream = try engine\.createStream\(\)/);
-    assert.match(moduleSource, /let result = stream\.pushPcm16Data\(data,\s*sampleRate:\s*Int32\(sampleRate\),\s*channels:\s*Int32\(channels\),\s*error:\s*&err\)/s);
-    assert.match(moduleSource, /let text = stream\.finishWithError\(&err\)/);
-    assert.doesNotMatch(moduleSource, /synthesizeToWavFile\([^)]*error:\s*&err/s);
+    assert.doesNotMatch(offlineHeader, /instancetype\)initWithAssetsDir:/);
+    assert.doesNotMatch(onlineHeader, /instancetype\)initWithAssetsDir:/);
+    assert.match(offlineHeader, /\+\s*\(BOOL\)prepareAssetsDir:\(NSString \*\)assetsDir/);
+    assert.match(offlineHeader, /NS_SWIFT_NAME\(prepare\(assetsDir:\)\)/);
+    assert.match(offlineHeader, /NS_SWIFT_NAME\(synthesizeToWavFile\(atPath:assetsDir:text:sid:speed:jobId:sampleRate:\)\)/);
+    assert.match(onlineHeader, /\+\s*\(BOOL\)createStreamForJob:\(NSString \*\)jobId/);
+    assert.match(onlineHeader, /\+\s*\(NSDictionary \*\)pushPcm16Data:\(NSData \*\)pcm16le/);
+    assert.match(moduleSource, /try HappierSherpaOfflineTtsEngine\.prepare\(assetsDir: assetsDir\)/);
+    assert.match(moduleSource, /try HappierSherpaOfflineTtsEngine\.synthesizeToWavFile\(/);
+    assert.match(moduleSource, /try HappierSherpaOnlineAsrEngine\.createStream\(forJob: jobId, assetsDir: assetsDir\)/);
+    assert.match(moduleSource, /HappierSherpaOnlineAsrEngine\.pushPcm16Data\(/);
+    assert.match(moduleSource, /HappierSherpaOnlineAsrEngine\.finishJob\(jobId\)/);
+    assert.match(moduleSource, /if let err \{ throw err \}/);
+    assert.doesNotMatch(moduleSource, /HappierSherpa(?:OfflineTtsEngine|OnlineAsrEngine)\s*\(/);
     assert.doesNotMatch(moduleSource, /createStreamWithError/);
 });
 

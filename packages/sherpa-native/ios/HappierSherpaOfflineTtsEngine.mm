@@ -112,19 +112,26 @@ std::shared_ptr<TtsEngine> CreateEngine(const std::string &assetsDir, NSError * 
  * loads a model and would block invalidation for seconds, and the cache refuses
  * the publication when a pack invalidation overtook that load.
  */
-std::shared_ptr<TtsEngine> LeaseEngine(const std::string &assetsDir, NSError * _Nullable * _Nullable error) {
+std::shared_ptr<TtsEngine> LeaseEngine(
+    const std::string &assetsDir,
+    NSError * _Nullable * _Nullable error,
+    const std::string *initializationId = nullptr) {
   if (assetsDir.empty()) {
     SetError(error, 2, @"assetsDir is empty");
     return nullptr;
   }
 
-  const auto engine = Engines().leaseOrCreate(assetsDir, [&] { return CreateEngine(assetsDir, error); });
+  const auto engine = initializationId
+      ? Engines().leaseOrCreateInitialization(
+            assetsDir,
+            *initializationId,
+            [&] { return CreateEngine(assetsDir, error); })
+      : Engines().leaseOrCreate(assetsDir, [&] { return CreateEngine(assetsDir, error); });
   if (!engine && error && !*error) {
-    // Creation succeeded but the pack it was built from was retired while it
-    // loaded, so there is no creation error to report. Distinguished from a
-    // missing-assets failure because retrying against the new bytes is the
-    // right response.
-    SetError(error, 11, @"Model pack was invalidated while the TTS engine was loading");
+    // The create can lose either a pack lifecycle race or its one caller-owned
+    // admission. In both cases there is no sherpa creation error to report, and
+    // a fresh initialization is the only valid retry.
+    SetError(error, 11, @"TTS initialization was cancelled or invalidated while loading");
   }
   return engine;
 }
@@ -133,8 +140,23 @@ std::shared_ptr<TtsEngine> LeaseEngine(const std::string &assetsDir, NSError * _
 
 @implementation HappierSherpaOfflineTtsEngine
 
++ (BOOL)admitInitializationForAssetsDir:(NSString *)assetsDir admissionId:(NSString *)admissionId {
+  return Engines().admitInitialization(NsToStd(assetsDir), NsToStd(admissionId));
+}
+
++ (void)cancelInitializationForAssetsDir:(NSString *)assetsDir admissionId:(NSString *)admissionId {
+  Engines().cancelInitialization(NsToStd(assetsDir), NsToStd(admissionId));
+}
+
 + (BOOL)prepareAssetsDir:(NSString *)assetsDir error:(NSError * _Nullable * _Nullable)error {
   return LeaseEngine(NsToStd(assetsDir), error) != nullptr;
+}
+
++ (BOOL)prepareAssetsDir:(NSString *)assetsDir
+             admissionId:(NSString *)admissionId
+                   error:(NSError * _Nullable * _Nullable)error {
+  const std::string id = NsToStd(admissionId);
+  return LeaseEngine(NsToStd(assetsDir), error, &id) != nullptr;
 }
 
 + (int32_t)numSpeakersForAssetsDir:(NSString *)assetsDir {

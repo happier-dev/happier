@@ -20,7 +20,10 @@ import { resolveTerminalHyperlinkAction } from '@/components/terminal/interactio
 import {
     applyEmbeddedTerminalBellPolicy,
     applyEmbeddedTerminalTitlePolicy,
+    sanitizeTerminalBell,
+    sanitizeTerminalTitle,
 } from '@/components/terminal/interaction/title';
+import { setClipboardStringSafe } from '@/utils/ui/clipboard';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import {
     createMachineRpcTerminalStreamCarrier,
@@ -65,6 +68,8 @@ export function useMachineTerminalSession(params: Readonly<{
 
     const [status, setStatus] = React.useState<TerminalStatus>('idle');
     const [error, setError] = React.useState<string | null>(null);
+    const [terminalTitle, setTerminalTitle] = React.useState<string | null>(null);
+    const [terminalBell, setTerminalBell] = React.useState<string | null>(null);
 
     const [connectionNonce, bumpConnectionNonce] = React.useReducer((x: number) => x + 1, 0);
     const restartRequestedRef = React.useRef(false);
@@ -185,12 +190,27 @@ export function useMachineTerminalSession(params: Readonly<{
     }, [syncDetectedUrl]);
 
     const onTitle = React.useCallback((title: string) => {
-        void applyEmbeddedTerminalTitlePolicy(title);
+        const sanitized = sanitizeTerminalTitle(title);
+        void applyEmbeddedTerminalTitlePolicy(sanitized);
+        setTerminalTitle(sanitized || null);
     }, []);
 
     const onBell = React.useCallback((label: string) => {
-        void applyEmbeddedTerminalBellPolicy(label);
+        const sanitized = sanitizeTerminalBell(label);
+        void applyEmbeddedTerminalBellPolicy(sanitized);
+        setTerminalBell(sanitized || null);
     }, []);
+
+    const copySelection = React.useCallback((request?: Readonly<{
+        source: 'user-selection' | 'remote-osc52';
+        text: string;
+    }>) => {
+        if (request?.source === 'remote-osc52') return;
+        const text = request?.text ?? (params.terminalRef.current?.hasSelection?.()
+            ? params.terminalRef.current.getSelectionText?.() ?? ''
+            : '');
+        if (text) void setClipboardStringSafe(text);
+    }, [params.terminalRef]);
 
     React.useEffect(() => {
         return () => {
@@ -601,6 +621,9 @@ export function useMachineTerminalSession(params: Readonly<{
         onLink,
         onTitle,
         onBell,
+        terminalTitle,
+        terminalBell,
+        copySelection,
         onResize,
         onReady,
         clearTerminal,

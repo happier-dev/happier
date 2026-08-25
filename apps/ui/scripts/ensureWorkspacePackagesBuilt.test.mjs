@@ -73,6 +73,37 @@ test('ensureUiWorkspacePackagesBuilt publishes rebuilt plugin artifacts before E
   });
 });
 
+test('ensureUiWorkspacePackagesBuilt publishes an aggregate app asset projection on a remote replica', async () => {
+  const calls = [];
+  const { ensureUiWorkspacePackagesBuilt } = await import('./ensureWorkspacePackagesBuilt.mjs');
+  const env = { HAPPIER_DEV_TARGET_EXECUTION: '1' };
+
+  await ensureUiWorkspacePackagesBuilt({
+    env,
+    verifyPatchedDependencies: () => {},
+    ensureWorkspacePackagesBuiltForComponent: async () => ({
+      ok: true,
+      built: ['@happier-dev/plugins-inspector'],
+      skipped: [],
+    }),
+    syncSharedDepsForSourceDev: async (_repoRoot, options) => {
+      calls.push(options);
+      return { synced: true, stamped: true };
+    },
+  });
+
+  assert.deepEqual(calls, [{
+    env,
+    includeRuntimeDependencies: true,
+    quiet: false,
+    workspaceNames: ['plugins-inspector'],
+    bundledPluginArtifactPublication: {
+      mode: 'write',
+      aggregateOnly: true,
+    },
+  }]);
+});
+
 test('ensureUiWorkspacePackagesBuilt does not republish a plugin projection when the UI build rebuilt no plugin package', async () => {
   const calls = [];
   const { ensureUiWorkspacePackagesBuilt } = await import('./ensureWorkspacePackagesBuilt.mjs');

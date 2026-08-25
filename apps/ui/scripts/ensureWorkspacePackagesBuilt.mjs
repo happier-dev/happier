@@ -86,6 +86,18 @@ export async function ensureUiWorkspacePackagesBuilt({
       includeRuntimeDependencies: true,
       quiet: false,
       workspaceNames: rebuiltPluginWorkspaceNames,
+      ...(String(env?.HAPPIER_DEV_TARGET_EXECUTION ?? '').trim() === '1'
+        ? {
+            // A dev target owns its ignored `dist` trees. Rebuilds are deterministic,
+            // but the app's static asset projection must describe the bytes present on
+            // this replica rather than a prior local build. The canonical generator's
+            // aggregate path reads those final artifacts without restaging plugins.
+            bundledPluginArtifactPublication: {
+              mode: 'write',
+              aggregateOnly: true,
+            },
+          }
+        : {}),
     });
   }
   return result;

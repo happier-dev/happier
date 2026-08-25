@@ -287,12 +287,43 @@ const mergeDeep = (base, override) => {
     return next;
 };
 
-// iOS background audio is required for "call-like" realtime ElevenLabs sessions to keep working when the app is
-// backgrounded/locked. We enable this by default for all variants so dev-client testing matches production behavior.
-const iosBackgroundAudioOverride = parseOptionalBoolean(
-    process.env.EXPO_PUBLIC_IOS_BACKGROUND_AUDIO ?? process.env.EXPO_IOS_BACKGROUND_AUDIO
-);
-const iosBackgroundAudioEnabled = iosBackgroundAudioOverride ?? true;
+const withRequiredIosBackgroundAudio = (expoConfig) => {
+    const plugins = Array.isArray(expoConfig.plugins) ? expoConfig.plugins : [];
+    let found = false;
+    const requiredPlugins = plugins.flatMap((plugin) => {
+        const pluginName = Array.isArray(plugin) ? plugin[0] : plugin;
+        if (pluginName !== 'react-native-audio-api') return [plugin];
+        if (found) return [];
+        found = true;
+        const options = Array.isArray(plugin) && plugin[1] && typeof plugin[1] === 'object'
+            ? plugin[1]
+            : {};
+        return [['react-native-audio-api', { ...options, iosBackgroundMode: true }]];
+    });
+    if (!found) {
+        requiredPlugins.push(['react-native-audio-api', { iosBackgroundMode: true }]);
+    }
+    return { ...expoConfig, plugins: requiredPlugins };
+};
+
+const ANDROID_VOICE_FOREGROUND_SERVICE_PLUGIN = './plugins/withAndroidVoiceForegroundService.js';
+
+const withRequiredAndroidVoiceForegroundService = (expoConfig) => {
+    const plugins = Array.isArray(expoConfig.plugins) ? expoConfig.plugins : [];
+    let found = false;
+    const requiredPlugins = plugins.flatMap((plugin) => {
+        const pluginName = Array.isArray(plugin) ? plugin[0] : plugin;
+        if (pluginName !== ANDROID_VOICE_FOREGROUND_SERVICE_PLUGIN) return [plugin];
+        if (found) return [];
+        found = true;
+        // Keep a local override's placement and any future plugin options.
+        return [plugin];
+    });
+    if (!found) {
+        requiredPlugins.push(ANDROID_VOICE_FOREGROUND_SERVICE_PLUGIN);
+    }
+    return { ...expoConfig, plugins: requiredPlugins };
+};
 const iosLiveActivitiesFrequentUpdates =
     parseOptionalBoolean(
         process.env.EXPO_PUBLIC_IOS_LIVE_ACTIVITIES_FREQUENT_UPDATES
@@ -418,6 +449,7 @@ const baseExpoConfig = {
             require("./plugins/withEinkCompatibility.js"),
             require("./plugins/withAndroidReactNativeArchitectures.js"),
             require("./plugins/withReactNativeRepackRuntime.js"),
+            ...(terminalNativeRendererEnabled ? ["./plugins/withTerminalNativeGhosttyKit.js"] : []),
             require("./modules/happier-hardware-keyboard-shortcuts/app.plugin.js"),
             ...(androidReleaseShrinkerPlugin ? [androidReleaseShrinkerPlugin] : []),
             [
@@ -477,13 +509,6 @@ const baseExpoConfig = {
             "expo-web-browser",
             "react-native-vision-camera",
             "@more-tech/react-native-libsodium",
-            [
-                "react-native-audio-api",
-                {
-                    // Enables UIBackgroundModes=audio when true (required for realtime voice calls in background).
-                    iosBackgroundMode: iosBackgroundAudioEnabled
-                }
-            ],
             "@livekit/react-native-expo-plugin",
             "@config-plugins/react-native-webrtc",
             [
@@ -498,6 +523,7 @@ const baseExpoConfig = {
                     microphonePermission: "Allow $(PRODUCT_NAME) to access your microphone for voice conversations."
                 }
             ],
+            "expo-speech-recognition",
             [
                 "expo-camera",
                 {
@@ -581,8 +607,14 @@ if (localExpoOverrides && typeof localExpoOverrides === 'object' && 'expo' in lo
     localExpoOverrides = localExpoOverrides.expo;
 }
 
+const mergedExpoConfig = localExpoOverrides && typeof localExpoOverrides === 'object'
+    ? mergeDeep(baseExpoConfig, localExpoOverrides)
+    : baseExpoConfig;
+
 export default {
-    expo: localExpoOverrides && typeof localExpoOverrides === 'object'
-        ? mergeDeep(baseExpoConfig, localExpoOverrides)
-        : baseExpoConfig,
+    // Voice's platform-required iOS audio and Android foreground-service
+    // declarations must survive every supported local plugin override.
+    expo: withRequiredAndroidVoiceForegroundService(
+        withRequiredIosBackgroundAudio(mergedExpoConfig),
+    ),
 };

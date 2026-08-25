@@ -17,6 +17,12 @@ export type EmbeddedTerminalPaneController = Readonly<{
     onLink?: (url: string) => void;
     onTitle?: (title: string) => void;
     onBell?: (label: string) => void;
+    terminalTitle?: string | null;
+    terminalBell?: string | null;
+    copySelection?: (request?: Readonly<{
+        source: 'user-selection' | 'remote-osc52';
+        text: string;
+    }>) => void;
     onResize: (cols: number, rows: number) => void;
     onReady: (cols: number, rows: number) => void;
     onWriteComplete: (event: EmbeddedTerminalWriteCompleteEvent) => void;
