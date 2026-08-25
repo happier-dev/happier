@@ -162,6 +162,17 @@ export async function dispatchBuiltInHappierTool(params: Readonly<{
     if (!availability.available) {
       return actionDisabled(availability);
     }
+    if (!isDirectManualToolAvailable({
+      toolName: params.toolName,
+      actionId: gatedManualActionId,
+      surface,
+      isActionEnabled,
+      actionsSettings,
+      registry: params.registry,
+      pluginToolCatalog: params.pluginToolCatalog,
+    })) {
+      return err('unknown_tool', `Unknown built-in Happier tool: ${params.toolName}`);
+    }
   }
 
   if (params.toolName === 'change_title') {

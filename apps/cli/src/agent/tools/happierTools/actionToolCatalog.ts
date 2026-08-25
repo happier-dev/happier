@@ -454,13 +454,23 @@ export function isDirectManualToolAvailable(params: Readonly<{
   registry?: ResolvedContributionRegistry;
   pluginToolCatalog?: readonly ProjectedPluginToolCatalogEntry[];
 }>): boolean {
-  if (!DIRECT_MANUAL_TOOL_NAMES.has(params.toolName)) {
-    return false;
+  const surface = params.surface ?? 'agent';
+  if (DIRECT_MANUAL_TOOL_NAMES.has(params.toolName)) {
+    const explicitMode = params.actionsSettings?.actions?.[params.actionId as ActionId]?.toolExposureModes?.[surface];
+    if (explicitMode === 'discoverable_only') return false;
+    return isActionAvailableOnToolSurface({
+      actionId: params.actionId,
+      surface,
+      isActionEnabled: params.isActionEnabled,
+      actionsSettings: params.actionsSettings ?? null,
+      registry: params.registry,
+      pluginToolCatalog: params.pluginToolCatalog,
+    });
   }
 
-  return isActionAvailableOnToolSurface({
+  return isActionDirectToolAvailableOnToolSurface({
     actionId: params.actionId,
-    surface: params.surface,
+    surface,
     isActionEnabled: params.isActionEnabled,
     actionsSettings: params.actionsSettings ?? null,
     registry: params.registry,

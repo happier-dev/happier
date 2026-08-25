@@ -198,6 +198,25 @@ describe('listBuiltInHappierTools', () => {
     expect(names).not.toContain('change_title');
   });
 
+  it('does not expose change_title when session title updates are discoverable-only', async () => {
+    const { listBuiltInHappierTools } = await import('./listBuiltInHappierTools');
+    const actionsSettings = ActionsSettingsV1Schema.parse({
+      v: 1,
+      actions: {
+        'session.title.set': {
+          toolExposureModes: { agent: 'discoverable_only' },
+        },
+      },
+    });
+
+    const names = listBuiltInHappierTools({
+      surface: 'agent',
+      actionsSettings,
+    }).map((tool) => tool.name);
+
+    expect(names).not.toContain('change_title');
+  });
+
   it('promotes required guidance actions unless the user explicitly keeps them discoverable-only', async () => {
     const { listBuiltInHappierTools } = await import('./listBuiltInHappierTools');
 

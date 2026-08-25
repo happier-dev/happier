@@ -138,6 +138,36 @@ describe('built-in Happier tools', () => {
     expect(changeTitle).not.toHaveBeenCalled();
   });
 
+  it('rejects change_title when session title updates are discoverable-only', async () => {
+    const changeTitle = vi.fn(async () => ({ success: true, title: 'New title' }));
+
+    const result = await dispatchBuiltInHappierTool({
+      toolName: 'change_title',
+      args: { title: 'New title' },
+      sessionId: 'sess-1',
+      surface: 'agent',
+      actionsSettings: ActionsSettingsV1Schema.parse({
+        v: 1,
+        actions: {
+          'session.title.set': {
+            toolExposureModes: { agent: 'discoverable_only' },
+          },
+        },
+      }),
+      deps: {
+        changeTitle,
+        executeActionByToolName: async () => unsupported(),
+      },
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      errorCode: 'unknown_tool',
+      error: 'Unknown built-in Happier tool: change_title',
+    });
+    expect(changeTitle).not.toHaveBeenCalled();
+  });
+
   it('returns serialized action spec payloads without needing transport deps', async () => {
     const listResult = await dispatchBuiltInHappierTool({
       toolName: 'action_spec_search',
