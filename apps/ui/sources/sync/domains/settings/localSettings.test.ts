@@ -151,8 +151,11 @@ describe('localSettingsParse', () => {
             terminalRendererPreference: 'xterm-webview',
         }).terminalRendererPreference).toBe('xterm-webview');
         expect(localSettingsParse({
+            terminalRendererPreference: 'native',
+        }).terminalRendererPreference).toBe('native');
+        expect(localSettingsParse({
             terminalRendererPreference: 'native-experimental',
-        }).terminalRendererPreference).toBe('native-experimental');
+        }).terminalRendererPreference).toBe('native');
         expect(localSettingsParse({
             terminalRendererPreference: 'ghostty-always',
         }).terminalRendererPreference).toBe('auto');

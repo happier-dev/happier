@@ -330,7 +330,7 @@ describe('EmbeddedTerminalPane native renderer selection', () => {
     it('selects native iOS when the user explicitly prefers the experimental native renderer', async () => {
         platformState.os = 'ios';
         resetSurfaceState();
-        localSettingState.terminalRendererPreference = 'native-experimental';
+        localSettingState.terminalRendererPreference = 'native';
         featureState.enabled = {
             'terminal.transport.byteStream': true,
             'terminal.renderer.native': true,
@@ -360,7 +360,7 @@ describe('EmbeddedTerminalPane native renderer selection', () => {
     it('routes Ghostty copy events through the host clipboard owner', async () => {
         platformState.os = 'ios';
         resetSurfaceState();
-        localSettingState.terminalRendererPreference = 'native-experimental';
+        localSettingState.terminalRendererPreference = 'native';
         featureState.enabled = {
             'terminal.transport.byteStream': true,
             'terminal.renderer.native': true,
@@ -402,7 +402,7 @@ describe('EmbeddedTerminalPane native renderer selection', () => {
     it('asks the selected iOS Ghostty surface to copy its real selection through the host clipboard path', async () => {
         platformState.os = 'ios';
         resetSurfaceState();
-        localSettingState.terminalRendererPreference = 'native-experimental';
+        localSettingState.terminalRendererPreference = 'native';
         featureState.enabled = {
             'terminal.transport.byteStream': true,
             'terminal.renderer.native': true,
@@ -451,7 +451,7 @@ describe('EmbeddedTerminalPane native renderer selection', () => {
     it('routes Android Termux copy events through the host clipboard owner', async () => {
         platformState.os = 'android';
         resetSurfaceState();
-        localSettingState.terminalRendererPreference = 'native-experimental';
+        localSettingState.terminalRendererPreference = 'native';
         featureState.enabled = {
             'terminal.transport.byteStream': true,
             'terminal.renderer.native': true,
@@ -497,7 +497,7 @@ describe('EmbeddedTerminalPane native renderer selection', () => {
     it('persists a next-launch quarantine only for an attributed fatal native renderer termination', async () => {
         platformState.os = 'ios';
         resetSurfaceState();
-        localSettingState.terminalRendererPreference = 'native-experimental';
+        localSettingState.terminalRendererPreference = 'native';
         featureState.enabled = {
             'terminal.transport.byteStream': true,
             'terminal.renderer.native': true,
@@ -544,7 +544,7 @@ describe('EmbeddedTerminalPane native renderer selection', () => {
     it('keeps recoverable native unavailability in-memory and out of the persisted fatal quarantine', async () => {
         platformState.os = 'ios';
         resetSurfaceState();
-        localSettingState.terminalRendererPreference = 'native-experimental';
+        localSettingState.terminalRendererPreference = 'native';
         featureState.enabled = {
             'terminal.transport.byteStream': true,
             'terminal.renderer.native': true,
@@ -577,7 +577,7 @@ describe('EmbeddedTerminalPane native renderer selection', () => {
     it('uses an unexpired fatal quarantine for xterm fallback and clears it once it expires', async () => {
         platformState.os = 'ios';
         resetSurfaceState();
-        localSettingState.terminalRendererPreference = 'native-experimental';
+        localSettingState.terminalRendererPreference = 'native';
         featureState.enabled = {
             'terminal.transport.byteStream': true,
             'terminal.renderer.native': true,
@@ -630,7 +630,7 @@ describe('EmbeddedTerminalPane native renderer selection', () => {
     it('uses terminal instance identity instead of UI test ids for native surface ids', async () => {
         platformState.os = 'ios';
         resetSurfaceState();
-        localSettingState.terminalRendererPreference = 'native-experimental';
+        localSettingState.terminalRendererPreference = 'native';
         featureState.enabled = {
             'terminal.transport.byteStream': true,
             'terminal.renderer.native': true,
@@ -702,7 +702,7 @@ describe('EmbeddedTerminalPane native renderer selection', () => {
     it('falls back to xterm WebView after a selected native renderer reports unavailable', async () => {
         platformState.os = 'ios';
         resetSurfaceState();
-        localSettingState.terminalRendererPreference = 'native-experimental';
+        localSettingState.terminalRendererPreference = 'native';
         featureState.enabled = {
             'terminal.transport.byteStream': true,
             'terminal.renderer.native': true,
@@ -754,7 +754,7 @@ describe('EmbeddedTerminalPane native renderer selection', () => {
     it('keeps xterm WebView selected when byte-stream transport is disabled', async () => {
         platformState.os = 'android';
         resetSurfaceState();
-        localSettingState.terminalRendererPreference = 'native-experimental';
+        localSettingState.terminalRendererPreference = 'native';
         featureState.enabled = {
             'terminal.renderer.native': true,
             'terminal.renderer.androidTermux': true,
@@ -783,7 +783,7 @@ describe('EmbeddedTerminalPane native renderer selection', () => {
     it('keeps xterm WebView selected on iOS when byte-stream transport is disabled', async () => {
         platformState.os = 'ios';
         resetSurfaceState();
-        localSettingState.terminalRendererPreference = 'native-experimental';
+        localSettingState.terminalRendererPreference = 'native';
         featureState.enabled = {
             'terminal.renderer.native': true,
             'terminal.renderer.iosGhostty': true,
