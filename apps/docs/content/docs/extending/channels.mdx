@@ -69,17 +69,19 @@ out.
 
 ## Channels and automations
 
-A binding can target an automation rather than a session, and an automation can
-be triggered by a conversation. Together that is: someone posts in a Discord
-channel, an automation runs on your machine, and the result is delivered back
-into the conversation.
+A binding can target an automation rather than a session. When a message is
+admitted through that binding, Happier invokes a Conversation-origin Run for
+the selected automation; the automation's own definition remains independent
+of the conversation binding. Together that is: someone posts in a Discord
+channel, a Run starts on your machine, and the result is delivered back into
+the conversation.
 
 Delivery of an automation's result is handled as an explicit custody handoff, so
 a result is not delivered twice and does not vanish when a run ends.
 
 ## Related
 
-- [Automations](/extras/automations) — including the conversation trigger.
+- [Automations](/extras/automations) — including automation bindings.
 - [Connected Services](/accounts/connected-services) — where the bot credentials live.
 - [What ships in the box](/plugins/bundled) — the Discord and Telegram provider plugins.
 - [Participant routing](/accounts/participant-routing) — who a message reaches inside Happier.

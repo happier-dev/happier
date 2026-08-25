@@ -125,7 +125,7 @@ export type PluginEventAutomationComposerModel = Readonly<{
     setMode: (mode: EventComposerMode) => void;
     /** Event edits cannot be reinterpreted as a retained V2 schedule update. */
     isEditingEvent: boolean;
-    /** Narrow direct-detail CAS fact for the incumbent V3 patch writer. */
+    /** Narrow direct-detail CAS fact for the incumbent patch writer. */
     editTarget: PluginEventAutomationEditTarget | null;
     /** Event creation chooses exactly one durable protocol target arm. */
     targetKind: PluginEventAutomationTargetKind;
@@ -195,7 +195,7 @@ export type PluginEventAutomationComposerModel = Readonly<{
     maximumObservationAgeMsText: string;
     setMaximumObservationAgeMsText: (value: string) => void;
     maximumObservationAgeMsValid: boolean;
-    /** Non-persisted strict V3 writer input; null until every owner-local fact is valid/current. */
+    /** Non-persisted strict writer input; null until every owner-local fact is valid/current. */
     createDraft: PluginEventAutomationCreateDraft | null;
     revision: number;
 }>;
@@ -501,7 +501,7 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         settings,
     ]);
     // Editing an Event may move it between the three approved target arms.
-    // The V3 replacement writer rewrites the whole strict recipe for future
+    // The replacement writer rewrites the whole strict recipe for future
     // Runs, and submit re-derives the assignment and capability facts for the
     // arm that is actually saved, so no editor-local arm lock is needed.
     const setTargetKind = React.useCallback((nextKind: PluginEventAutomationTargetKind) => {

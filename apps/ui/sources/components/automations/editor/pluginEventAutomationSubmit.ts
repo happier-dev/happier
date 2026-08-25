@@ -211,7 +211,7 @@ export async function submitPluginEventAutomation(params: Readonly<{
     ) {
         return unavailable('edit');
     }
-    // AUTO-19/r0.28: a V3 patch replaces the whole strict recipe for future
+    // AUTO-19/r0.28: a strict patch replaces the whole recipe for future
     // Runs, so an edit may move an Automation between the three approved
     // target arms. Already-admitted Runs keep the recipe they were frozen
     // with; only later admission uses the arm saved here.

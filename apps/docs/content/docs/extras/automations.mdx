@@ -1,6 +1,6 @@
 ---
 title: Automations
-description: Run a session on a schedule, on a plugin event, on a conversation, or on demand — and queue recurring messages into a session you already have.
+description: Run a session on a schedule, on a plugin event, or on demand — and queue recurring messages into a session you already have.
 ---
 
 Some work is worth doing on a timer rather than when you remember it: a nightly
@@ -30,14 +30,13 @@ conversation you are keeping around.
 
 ## What can trigger one
 
-A timer is only one of four things that can start an automation.
+A timer is only one of three things that can start an automation.
 
 | Trigger | What starts the run |
 | --- | --- |
 | **Schedule** | A cron expression or an interval. |
 | **Manual** | You, from the app or the CLI. Nothing runs on its own. |
 | **Plugin event** | Something a plugin observed — a new issue, a push, a review request. |
-| **Conversation** | A message arriving in a conversation the automation watches. |
 
 ### Schedule
 
@@ -88,6 +87,13 @@ webhook again.
 An event trigger can also carry a **filter**, and a maximum observation age —
 past which an event is considered too old to act on rather than triggering a
 run late.
+
+### Conversation bindings
+
+A channel can bind a conversation to an existing automation. A message admitted
+through that binding starts a Conversation-origin Run, while the automation's
+definition remains a schedule, manual, or plugin-event definition. The binding
+is therefore an invocation path, not a fourth definition trigger.
 
 ### Active and paused
 

@@ -1356,8 +1356,8 @@ export const AutomationEventSourceCatalogStatusV1Schema = z.object({
 export type AutomationEventSourceCatalogStatusV1 = z.infer<typeof AutomationEventSourceCatalogStatusV1Schema>;
 
 /**
- * Server-owned admission endpoint for the distinct Conversation trigger. The
- * signed caller frame is separate from immutable Action input so a plugin
+ * Server-owned admission endpoint for a Conversation-origin Run. The signed
+ * caller frame is separate from immutable Action input so a plugin
  * cannot select a machine or materialization through its payload.
  */
 export const AutomationConversationActionHttpPathsV1 = Object.freeze({

@@ -108,7 +108,7 @@ describe('submitPluginEventAutomation Account fence', () => {
     });
 
     /**
-     * r0.28/r0.39: a V3 patch replaces the whole strict recipe, so an edit may
+     * r0.28/r0.39: a strict patch replaces the whole recipe, so an edit may
      * move an Automation between the three approved target arms. Submitting a
      * different arm must reach ordinary target resolution instead of being
      * rejected as an invalid edit.

@@ -53,7 +53,7 @@ export async function projectAutomationSessionLink(params: Readonly<{
 
 /**
  * Applies the same one direct-detail-only existing-session association to the
- * V3 store record. Current recipes disclose their target structurally; a
+ * current store record. Current recipes disclose their target structurally; a
  * retained V2 template still goes through the established envelope reader.
  */
 export async function projectAutomationDefinitionSessionLink(params: Readonly<{
@@ -124,7 +124,7 @@ export function countEnabledAutomationsLinkedToSession(automations: ReadonlyArra
 }
 
 /**
- * V3 list summaries never guess at the private target. A link exists only
+ * Current list summaries never guess at the private target. A link exists only
  * after the incumbent direct-detail projection supplied it to this same record.
  */
 export function tryGetAutomationDefinitionLinkedExistingSessionId(

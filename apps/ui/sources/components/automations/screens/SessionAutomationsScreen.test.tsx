@@ -353,7 +353,7 @@ describe('SessionAutomationsScreen', () => {
         expect(syncSpies.refreshAutomations).toHaveBeenCalledTimes(2);
     });
 
-    it('resolves an unloaded V3 existing-session definition before showing an empty list', async () => {
+    it('resolves an unloaded existing-session definition before showing an empty list', async () => {
         let resolveDetail: (() => void) | undefined;
         const pendingDetail = new Promise<void>((resolve) => {
             resolveDetail = resolve;

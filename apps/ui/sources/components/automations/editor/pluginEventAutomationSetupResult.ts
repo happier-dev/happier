@@ -12,7 +12,7 @@ export type PluginEventAutomationSetupResultValidation =
 
 /**
  * Revalidates a setup Action's JSON result against the exact selected Event
- * declaration immediately before the incumbent Automation V3 writer consumes
+ * declaration immediately before the incumbent Automation writer consumes
  * source facts. The cold catalog owns the declaration; this adapter owns no
  * Event discovery, Action selection, or persisted setup state.
  */

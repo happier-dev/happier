@@ -42,7 +42,7 @@ function releaseFacts() {
     });
 }
 
-function strictConversationDefinitionRecipe(): string {
+function strictConversationRunRecipe(): string {
     const serialized = serializeAutomationRunExecutionRecipeV1({
         v: 1,
         templateVersion: 1,
@@ -179,11 +179,10 @@ describe.skipIf(provider !== "postgres" && provider !== "postgresql")(
                     scheduleKind: "interval",
                     everyMs: 60_000,
                     targetType: "execution_run",
-                    templateCiphertext: strictConversationDefinitionRecipe(),
+                    templateCiphertext: strictConversationRunRecipe(),
                     templateVersion: 1,
-                    // Channels binds to this existing Automation and creates
-                    // a Conversation Run; it does not replace the definition
-                    // trigger.
+                    // Channels binds to this scheduled Automation and creates
+                    // a Conversation Run without changing its definition trigger.
                     triggerKind: "schedule",
                     triggerDefinitionEnvelope: null,
                 },

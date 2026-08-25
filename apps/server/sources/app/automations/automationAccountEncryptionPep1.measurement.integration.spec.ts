@@ -131,47 +131,31 @@ function deterministicRandomBytes(length: number): Uint8Array {
     return new Uint8Array(length).fill(7);
 }
 
-const CONVERSATION_OWNER_REF = {
-    pluginId: "happier.channels",
-    localId: "provider/observation-ingest-v1",
-} as const;
-
 function buildTriggerDefinitionEnvelope(params: Readonly<{
     automationId: string;
     templateVersion: number;
-    triggerKind: "pluginEvent" | "conversation";
+    triggerKind: "pluginEvent";
     mode: "plain" | "e2ee";
 }>): string {
-    const binding = params.triggerKind === "pluginEvent"
-        ? {
-            v: 1 as const,
-            automationId: params.automationId,
-            templateVersion: params.templateVersion,
-            triggerKind: "pluginEvent" as const,
-            eventRef: {
-                pluginId: "com.example.github",
-                localId: "repository-event",
-            },
-            sourceSelectorId: SOURCE_SELECTOR_ID,
-        }
-        : {
-            v: 1 as const,
-            automationId: params.automationId,
-            templateVersion: params.templateVersion,
-            triggerKind: "conversation" as const,
-            eventRef: null,
-            sourceSelectorId: null,
-        };
-    const definition: PluginJsonValueV2 = params.triggerKind === "pluginEvent"
-        ? {
-            v: 1,
-            sourceInstanceId: "pep1-measurement-source",
-            sourceConfig: { repositoryId: 42 },
-            displayLabel: "PEP1 measurement source",
-            filter: null,
-            maximumObservationAgeMs: null,
-        }
-        : { v: 1, bindingId: "pep1-measurement-conversation", owner: CONVERSATION_OWNER_REF };
+    const binding = {
+        v: 1 as const,
+        automationId: params.automationId,
+        templateVersion: params.templateVersion,
+        triggerKind: "pluginEvent" as const,
+        eventRef: {
+            pluginId: "com.example.github",
+            localId: "repository-event",
+        },
+        sourceSelectorId: SOURCE_SELECTOR_ID,
+    };
+    const definition: PluginJsonValueV2 = {
+        v: 1,
+        sourceInstanceId: "pep1-measurement-source",
+        sourceConfig: { repositoryId: 42 },
+        displayLabel: "PEP1 measurement source",
+        filter: null,
+        maximumObservationAgeMs: null,
+    };
     return JSON.stringify(params.mode === "plain"
         ? sealAutomationTriggerDefinitionStoredEnvelopeV1({
             mode: "plain",
@@ -531,13 +515,11 @@ async function seedOneAccount(params: Readonly<{
                 accountId,
                 name: "PEP1 conversation measurement",
                 enabled: false,
-                triggerKind: "conversation",
-                triggerDefinitionEnvelope: buildTriggerDefinitionEnvelope({
-                    automationId: CONVERSATION_AUTOMATION_ID,
-                    templateVersion: 1,
-                    triggerKind: "conversation",
-                    mode: "plain",
-                }),
+                // Conversation is measured as a Run origin, backed by this schedule.
+                triggerKind: "schedule",
+                scheduleKind: "interval",
+                everyMs: 60_000,
+                triggerDefinitionEnvelope: null,
                 targetType: "new_session",
                 templateCiphertext: SOURCE_TEMPLATE,
                 templateVersion: 1,
@@ -589,18 +571,16 @@ async function seedOneAccount(params: Readonly<{
             automationId,
             expectedTemplateVersion: 1,
             templateCiphertext: TARGET_TEMPLATE,
-            ...(automationId === SCHEDULE_AUTOMATION_ID
-                ? {}
-                : {
+            ...(automationId === EVENT_AUTOMATION_ID
+                ? {
                     triggerDefinitionEnvelope: buildTriggerDefinitionEnvelope({
                         automationId,
                         templateVersion: 2,
-                        triggerKind: automationId === EVENT_AUTOMATION_ID
-                            ? "pluginEvent"
-                            : "conversation",
+                        triggerKind: "pluginEvent",
                         mode: "e2ee",
                     }),
-                }),
+                }
+                : {}),
         })),
         // The released direct migration request intentionally caps one
         // participant segment at 500 rows. This is the exact segment a

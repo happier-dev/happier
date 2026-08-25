@@ -56,7 +56,7 @@ const executionRecipe = {
     },
 };
 
-describe('Automation V3 definition projection', () => {
+describe('Automation definition projection', () => {
     it('keeps a manual definition correlated without inventing schedule or event state', () => {
         const detail = AutomationDefinitionDetailSchema.parse({
             ...eventSummary,

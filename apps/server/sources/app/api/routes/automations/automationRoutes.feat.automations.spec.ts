@@ -412,7 +412,7 @@ describe("automationRoutes", () => {
         expect(response).toEqual([]);
     });
 
-    it("returns the existing 404 before mutating known-incompatible Event or Conversation definitions through V2", async () => {
+    it("returns the existing 404 before mutating an Event definition through V2", async () => {
         const { automationRoutes } = await import("./automationRoutes");
         const route = createRouteTestBuilder({
             method: "PATCH",
@@ -429,7 +429,7 @@ describe("automationRoutes", () => {
             upgradeRequired: null,
         };
 
-        for (const automationId of ["event-automation", "conversation-automation"]) {
+        for (const automationId of ["event-automation"]) {
             const { response, reply } = await route.invoke({
                 userId: "u1",
                 params: { id: automationId },
@@ -445,12 +445,6 @@ describe("automationRoutes", () => {
         expect(getAutomation).toHaveBeenNthCalledWith(1, {
             accountId: "u1",
             automationId: "event-automation",
-            expectedTriggerKind: "schedule",
-            requireV2DefinitionRepresentability: true,
-        });
-        expect(getAutomation).toHaveBeenNthCalledWith(2, {
-            accountId: "u1",
-            automationId: "conversation-automation",
             expectedTriggerKind: "schedule",
             requireV2DefinitionRepresentability: true,
         });

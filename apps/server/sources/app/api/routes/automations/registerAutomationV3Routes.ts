@@ -65,7 +65,7 @@ import {
     toAutomationDefinitionDetailApiDto,
     toAutomationDefinitionListItemApiDto,
 } from "@/app/automations/automationApiProjection";
-import { loadAutomationEventStatusProjections } from "@/app/automations/automationV3EventStatusProjection";
+import { loadAutomationEventStatusProjections } from "@/app/automations/automationEventStatusProjection";
 import { AutomationStoredContentReadError } from "@/app/automations/automationStoredContentRead";
 import {
     AutomationValidationError,

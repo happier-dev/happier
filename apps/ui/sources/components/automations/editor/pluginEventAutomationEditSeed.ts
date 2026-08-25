@@ -27,7 +27,7 @@ import { arePluginContributionIdentitiesEqual } from '@/components/automations/p
 
 /**
  * The persisted observation transport, in the same discriminated shape the
- * composer draft and the V3 writer input use. Both arms are editable: the
+ * composer draft and the current writer input use. Both arms are editable: the
  * pull arm re-selects its watcher materialization, and the push arm keeps the
  * already-ensured endpoint identity so an ordinary prompt, filter, or target
  * correction never re-runs one-time credential setup.
@@ -46,7 +46,7 @@ export type PluginEventAutomationEditSeedObservation =
         webhookEndpointId: PluginWebhookEndpointIdV1;
         /**
          * The generic endpoint-routing source instance retained privately
-         * beside the provider's own source identity. The V3 writer requires
+         * beside the provider's own source identity. The current writer requires
          * it, so a push definition missing it cannot be re-written.
          */
         webhookRoutingSourceInstanceId: string;
@@ -77,7 +77,7 @@ export type PluginEventAutomationEditSeed = Readonly<{
     mentions: readonly MentionRefV1[];
     /**
      * The exact persisted target arm, seeded as the editor's starting
-     * selection. A V3 patch replaces the whole strict recipe for future Runs,
+     * selection. A strict patch replaces the whole recipe for future Runs,
      * so the arm and its own fields are both ordinary Event-editor inputs;
      * already-admitted Runs keep the recipe they were frozen with.
      */
@@ -178,7 +178,7 @@ export function readPluginEventAutomationPrivateDetail(
  * arm must be internally consistent with the private definition it was sealed
  * with: a pull definition never carries endpoint routing state, and a push
  * definition is unusable without the canonical endpoint identity plus the
- * routing source instance the V3 writer replays.
+ * routing source instance the current writer replays.
  */
 function readEditSeedObservation(
     detail: AutomationDefinitionDetailForTrigger<'pluginEvent'>,

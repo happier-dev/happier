@@ -24,7 +24,7 @@ import type {
     AutomationRunItem,
     AutomationTargetType,
 } from "./automationTypes";
-import type { AutomationEventStatusProjection } from "./automationV3EventStatusProjection";
+import type { AutomationEventStatusProjection } from "./automationEventStatusProjection";
 import {
     assertAutomationExecutionInputEnvelopeOuterForMode,
     assertAutomationStoredContentEnvelopeOuterForMode,

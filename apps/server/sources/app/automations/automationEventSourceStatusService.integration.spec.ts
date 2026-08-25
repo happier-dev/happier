@@ -20,7 +20,7 @@ import {
     reportAutomationEventSourceStatusV1,
 } from "./automationEventSourceStatusService";
 import { getAutomation } from "./automationCrudService";
-import { loadAutomationEventStatusProjections } from "./automationV3EventStatusProjection";
+import { loadAutomationEventStatusProjections } from "./automationEventStatusProjection";
 
 const ACCOUNT_ID = "account-automation-source-status";
 const MACHINE_ID = "machine-automation-source-status";

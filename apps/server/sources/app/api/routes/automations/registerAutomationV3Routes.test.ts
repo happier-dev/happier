@@ -205,7 +205,7 @@ vi.mock("@/app/automations/automationSettingsService", () => ({
     getAutomationSettings,
     updateAutomationSettings,
 }));
-vi.mock("@/app/automations/automationV3EventStatusProjection", () => ({
+vi.mock("@/app/automations/automationEventStatusProjection", () => ({
     loadAutomationEventStatusProjections,
 }));
 vi.mock("@/app/automations/automationClaimService", () => ({

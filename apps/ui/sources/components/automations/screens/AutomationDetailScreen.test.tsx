@@ -1068,8 +1068,8 @@ describe('AutomationDetailScreen', () => {
         expect(runRow?.props.subtitle).toContain('Event');
     });
 
-    it('does not offer the retained schedule editor for a current V3 schedule recipe', async () => {
-        const strictV3ScheduleDetail = {
+    it('does not offer the retained schedule editor for a current schedule recipe', async () => {
+        const strictScheduleDetail = {
             id: 'a1',
             name: 'Nightly',
             description: null,
@@ -1113,7 +1113,7 @@ describe('AutomationDetailScreen', () => {
             updatedAt: 1,
             assignments: [],
         };
-        expect(AutomationDefinitionDetailSchema.safeParse(strictV3ScheduleDetail).success).toBe(true);
+        expect(AutomationDefinitionDetailSchema.safeParse(strictScheduleDetail).success).toBe(true);
         automationState.automation = {
             ...automationState.automation,
             targetType: 'executionRun',
@@ -1122,7 +1122,7 @@ describe('AutomationDetailScreen', () => {
             detail: {
                 kind: 'available',
                 templateVersion: 3,
-                value: strictV3ScheduleDetail,
+                value: strictScheduleDetail,
             },
         };
         const { AutomationDetailScreen } = await import('./AutomationDetailScreen');

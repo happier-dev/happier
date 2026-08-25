@@ -208,7 +208,7 @@ describe('automationSessionLink', () => {
         expect(countEnabledAutomationsLinkedToSession([enabledLinked, disabledLinked, other], 's1')).toBe(1);
     });
 
-    it('filters the V3 store projection only when direct detail established its existing-session link', () => {
+    it('filters the current store projection only when direct detail established its existing-session link', () => {
         const linked = {
             id: 'event-linked',
             enabled: true,
@@ -233,7 +233,7 @@ describe('automationSessionLink', () => {
         expect(countEnabledAutomationDefinitionsLinkedToSession([linked, summaryOnly, newSession], 's1')).toBe(1);
     });
 
-    it('derives a legacy direct V3 definition link through the existing template reader without treating a summary as content', async () => {
+    it('derives a legacy direct definition link through the existing template reader without treating a summary as content', async () => {
         const templateCiphertext = await sealAutomationTemplateForTransport({
             template: {
                 directory: '/tmp/project',
@@ -278,7 +278,7 @@ describe('automationSessionLink', () => {
         expect(resolved.linkedExistingSessionId).toBe('legacy-session');
     });
 
-    it('fails closed when a legacy direct V3 detail is missing its optional template', async () => {
+    it('fails closed when a legacy direct detail is missing its optional template', async () => {
         const detail = {
             id: 'missing-legacy-template',
             name: 'Missing legacy template',

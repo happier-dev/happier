@@ -1680,12 +1680,12 @@ function validateAutomationTriggerDefinitionMigrationCandidate(params: Readonly<
     }
     if (params.row.triggerDefinitionEnvelope === null) {
         throw new AutomationValidationError(
-            "Event and Conversation Automation definitions require retained trigger-definition content",
+            "Event Automation definitions require retained trigger-definition content",
         );
     }
     if (typeof params.item.triggerDefinitionEnvelope !== "string") {
         throw new AutomationValidationError(
-            "Event and Conversation Automation migrations require one trigger-definition target",
+            "Event Automation migrations require one trigger-definition target",
         );
     }
     const nextTemplateVersion = params.item.expectedTemplateVersion + 1;

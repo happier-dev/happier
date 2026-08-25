@@ -79,7 +79,7 @@ const releaseFacts = normalizePluginReleaseFactsV1({
     },
 });
 
-function strictConversationDefinitionRecipe(): string {
+function strictConversationRunRecipe(): string {
     const serialized = serializeAutomationRunExecutionRecipeV1({
         v: 1,
         templateVersion: 3,
@@ -101,7 +101,7 @@ function strictConversationDefinitionRecipe(): string {
         },
     });
     if (serialized.kind !== "available") {
-        throw new Error("Failed to construct a strict Conversation Automation definition");
+        throw new Error("Failed to construct a strict Conversation Run execution recipe");
     }
     return serialized.serialized;
 }
@@ -442,7 +442,7 @@ describe("Automation Conversation admission database boundary", () => {
                 name: "Conversation admission",
                 enabled: true,
                 targetType: "execution_run",
-                templateCiphertext: strictConversationDefinitionRecipe(),
+                templateCiphertext: strictConversationRunRecipe(),
                 templateVersion: 3,
                 triggerKind: "manual",
             },
@@ -771,7 +771,7 @@ describe("Automation Conversation admission database boundary", () => {
                 name: "Second Conversation admission",
                 enabled: true,
                 targetType: "execution_run",
-                templateCiphertext: strictConversationDefinitionRecipe(),
+                templateCiphertext: strictConversationRunRecipe(),
                 templateVersion: 3,
                 triggerKind: "schedule",
                 scheduleKind: "interval",
@@ -918,7 +918,7 @@ describe("Automation Conversation admission database boundary", () => {
                 name: "Slack bridge conversation",
                 enabled: true,
                 targetType: "execution_run",
-                templateCiphertext: strictConversationDefinitionRecipe(),
+                templateCiphertext: strictConversationRunRecipe(),
                 templateVersion: 3,
                 triggerKind: "schedule",
                 scheduleKind: "interval",

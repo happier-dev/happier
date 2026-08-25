@@ -73,7 +73,7 @@ export type PluginEventAutomationCreateDraft = Readonly<{
     /**
      * Re-resolves the Availability/Administration-owned execution target at
      * writer time. The writer uses its target to reload the canonical Event
-     * catalog, so setup-captured catalog facts cannot authorize a later V3
+     * catalog, so setup-captured catalog facts cannot authorize a later
      * request.
      */
     resolveFreshWatcherOrigin: () => FreshPluginMachineExecutionOriginV1 | null;
@@ -82,7 +82,7 @@ export type PluginEventAutomationCreateDraft = Readonly<{
 /**
  * The direct-detail CAS fact supplied by the Event editor. It carries no
  * private trigger content: the incumbent Automation writer re-reads and
- * validates that detail immediately before it issues a V3 patch.
+ * validates that detail immediately before it issues a strict patch.
  */
 export type PluginEventAutomationEditTarget = Readonly<{
     automationId: string;
@@ -164,7 +164,7 @@ function parseMaximumObservationAgeMs(value: unknown): number | null {
 
 /**
  * Captures only transient composer facts. The source result never joins the
- * persisted new-session authoring draft: the incumbent V3 Automation writer
+ * persisted new-session authoring draft: the incumbent Automation writer
  * is its sole durable consumer.
  */
 export function createPluginEventAutomationAuthoringDraft(params: Readonly<{
@@ -314,7 +314,7 @@ export function buildPluginEventAutomationDetachedExecutionRunRequest(params: Re
 }
 
 /**
- * Builds exactly the incumbent strict V3 create body. Caller-provided watcher
+ * Builds exactly the incumbent strict create body. Caller-provided watcher
  * freshness must have been resolved by the existing Availability/
  * Administration owner immediately before this point.
  */

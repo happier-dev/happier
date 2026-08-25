@@ -175,7 +175,7 @@ function formatPayloadSample(value: unknown): string {
 /**
  * The Event branch of the incumbent Automation popover. It owns only
  * transient control presentation; Event discovery, setup input, Action
- * dispatch, watcher freshness, and durable V3 writes remain with their
+ * dispatch, watcher freshness, and durable writes remain with their
  * canonical owners.
  */
 export function PluginEventAutomationComposerContent(props: Props) {

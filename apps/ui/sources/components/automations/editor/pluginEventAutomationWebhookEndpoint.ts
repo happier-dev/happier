@@ -85,7 +85,7 @@ export function applyRefreshedPluginEventAutomationWebhookEndpoint(
 
 /**
  * The persisted endpoint facts an Event editor needs to rebuild a durable-push
- * trigger: the exact target materialization the V3 writer must name again, and
+ * trigger: the exact target materialization the current writer must name again, and
  * the public URL the user configured. They stay owned by the canonical webhook
  * endpoint store, so no Automation projection duplicates them.
  */

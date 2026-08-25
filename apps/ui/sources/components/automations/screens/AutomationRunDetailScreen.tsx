@@ -428,7 +428,7 @@ type AccountScopedRouteState<T> = RouteScopedState<T> & Readonly<{
 }>;
 
 /**
- * The detail route reads direct V3 detail only to retain the freshest safe Run
+ * The detail route reads direct detail only to retain the freshest safe Run
  * status alongside the incumbent bounded cache. It opens private envelopes
  * through the canonical Account crypto owner and keeps that projection route-
  * local, never in the bounded Run cache.

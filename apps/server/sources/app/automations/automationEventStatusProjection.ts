@@ -29,7 +29,7 @@ type CatalogStatusLookup = Readonly<{
 }>;
 
 /**
- * The one reporter identity an Automation's current observation can carry:
+ * The one reporter identity an Event Automation's current observation can carry:
  * its current watcher for `checkpointedPull`, or its current durable-push
  * endpoint target. Resolved once and reused by both summaries.
  */
