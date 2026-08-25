@@ -196,6 +196,21 @@ main().catch((error) => {
     );
   });
 
+  it('preserves the managed Happier session id in the Gemini child environment', async () => {
+    await withTempHome(() =>
+      withFakeGeminiCli(() => {
+        const result = createGeminiBackend({
+          cwd: '/tmp',
+          env: { HAPPIER_SESSION_ID: 'session-1' },
+          model: null,
+        });
+
+        const backend = result.backend as unknown as AcpBackendLike;
+        expect(backend.options.env?.HAPPIER_SESSION_ID).toBe('session-1');
+      }),
+    );
+  });
+
   it('uses gemini-api-key when GEMINI_API_KEY is present', async () => {
     await withTempHome(() =>
       withFakeGeminiCli(() => {

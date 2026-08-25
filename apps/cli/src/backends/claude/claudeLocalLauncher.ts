@@ -40,7 +40,7 @@ import { createClaudeWorkflowActivitySourceForSession } from './workflows/create
 import { createWorkflowAgentTranscriptRegistrar } from './remote/sidechains/createWorkflowAgentTranscriptRegistrar';
 import type { ClaudeRemoteSubagentFileCollector } from './remote/sidechains/claudeRemoteSubagentFileCollector';
 import { loadClaudeJsonlReplayBaseline } from './utils/loadClaudeJsonlReplayBaseline';
-import { normalizeCurrentHappierSessionId } from '@/agent/runtime/session/currentSessionIdEnv';
+import { withCurrentHappierSessionId } from '@/agent/runtime/session/currentSessionIdEnv';
 
 function upsertClaudePermissionModeArgs(
     args: string[] | undefined,
@@ -454,7 +454,7 @@ export async function claudeLocalLauncher(
                 });
 
                 const { mcpConfigJson: baseMcpConfigJson } = await session.getOrCreateHappierMcpBridge();
-                const happierSessionId = normalizeCurrentHappierSessionId(session.client.sessionId);
+                const claudeProcessEnv = withCurrentHappierSessionId(process.env, session.client.sessionId);
 
                 try {
                     await claudeLocal({
@@ -465,12 +465,12 @@ export async function claudeLocalLauncher(
                         onLifecycleGapDetected: (event) => emitClaudeUnifiedLifecycleGapDetected(unifiedTelemetry, event),
                         abort: processAbortController.signal,
                         claudeArgs: session.claudeArgs,
+                        processEnv: claudeProcessEnv,
                         systemPromptText: session.defaultSystemPromptText,
                         envOverlay: {
                             ...resolveClaudeCodeExperimentalEnvOverlay({
                                 claudeCodeExperimentalAgentTeamsEnabled: session.claudeCodeExperimentalAgentTeamsEnabled,
                             }),
-                            ...(happierSessionId ? { HAPPIER_SESSION_ID: happierSessionId } : {}),
                         },
                         happierMcpConfigJson: baseMcpConfigJson,
                         hookSettingsPath: session.hookSettingsPath,

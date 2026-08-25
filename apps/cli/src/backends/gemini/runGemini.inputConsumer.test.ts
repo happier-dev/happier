@@ -608,18 +608,6 @@ describe('runGemini input consumer migration', () => {
     expect(resolveConnectedServiceCredentials).not.toHaveBeenCalled();
   });
 
-  it('binds the managed Happier session id into the Gemini child environment', async () => {
-    const { runGemini } = await import('./runGemini');
-
-    await expect(runGemini({ credentials })).resolves.toBeUndefined();
-
-    expect(createGeminiBackendInstanceMock).toHaveBeenCalledWith(expect.objectContaining({
-      processEnv: expect.objectContaining({
-        HAPPIER_SESSION_ID: 'session-1',
-      }),
-    }));
-  });
-
   it('routes Gemini waits and post-turn drains through the session provider input consumer', async () => {
     getFakeSession().getMetadataSnapshot.mockReturnValue({
       path: '/tmp/gemini-test',

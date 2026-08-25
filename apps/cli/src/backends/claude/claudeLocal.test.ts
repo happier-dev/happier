@@ -1284,6 +1284,34 @@ describe('claudeLocal launcher selection', () => {
         expect(spawnOpts?.env?.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS).toBe('1');
     });
 
+    it('uses the supplied process environment without inheriting an outer Happier session id', async () => {
+        const previousSessionId = process.env.HAPPIER_SESSION_ID;
+        process.env.HAPPIER_SESSION_ID = 'outer-session';
+
+        try {
+            const processEnv = { ...process.env };
+            delete processEnv.HAPPIER_SESSION_ID;
+            await claudeLocal({
+                abort: new AbortController().signal,
+                sessionId: null,
+                path: '/tmp',
+                onSessionFound,
+                claudeArgs: [],
+                processEnv,
+            } as any);
+
+            expect(mockSpawn).toHaveBeenCalled();
+            const spawnOpts = mockSpawn.mock.calls[0][2];
+            expect(spawnOpts?.env).not.toHaveProperty('HAPPIER_SESSION_ID');
+        } finally {
+            if (previousSessionId === undefined) {
+                delete process.env.HAPPIER_SESSION_ID;
+            } else {
+                process.env.HAPPIER_SESSION_ID = previousSessionId;
+            }
+        }
+    });
+
     it('publishes the resolved Claude config dir override to spawned Claude processes', async () => {
         const previousClaudeConfigDir = process.env.CLAUDE_CONFIG_DIR;
         const previousHappierClaudeConfigDir = process.env.HAPPIER_CLAUDE_CONFIG_DIR;

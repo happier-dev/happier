@@ -42,9 +42,9 @@ vi.mock('@/ui/logger', () => ({
   },
 }));
 
-function createSessionStub(): Session {
+function createSessionStub(sessionId = 'api-session-1'): Session {
   const client = Object.assign(new EventEmitter(), {
-    sessionId: 'api-session-1',
+    sessionId,
     rpcHandlerManager: { registerHandler: vi.fn(), invokeLocal: vi.fn(async () => undefined) },
     sendSessionEvent: vi.fn(),
     sendClaudeSessionMessage: vi.fn(),
@@ -95,6 +95,31 @@ describe('claudeLocalLauncher (Agent Teams env)', () => {
     expect(result).toEqual({ type: 'exit', code: 0 });
     expect(mockClaudeLocal).toHaveBeenCalled();
     expect(firstOpts?.envOverlay?.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS).toBe('1');
-    expect(firstOpts?.envOverlay?.HAPPIER_SESSION_ID).toBe('api-session-1');
+    expect(firstOpts?.processEnv?.HAPPIER_SESSION_ID).toBe('api-session-1');
+  });
+
+  it.each(['', 'offline-local-session'])('clears an inherited session id for unusable managed id %j', async (sessionId) => {
+    const previousSessionId = process.env.HAPPIER_SESSION_ID;
+    process.env.HAPPIER_SESSION_ID = 'outer-session';
+
+    try {
+      const session = createSessionStub(sessionId);
+      let firstOpts: any = null;
+      mockClaudeLocal.mockImplementation(async (opts: any) => {
+        if (!firstOpts) firstOpts = opts;
+      });
+
+      const { claudeLocalLauncher } = await import('./claudeLocalLauncher');
+      const result = await claudeLocalLauncher(session);
+
+      expect(result).toEqual({ type: 'exit', code: 0 });
+      expect(firstOpts?.processEnv).not.toHaveProperty('HAPPIER_SESSION_ID');
+    } finally {
+      if (previousSessionId === undefined) {
+        delete process.env.HAPPIER_SESSION_ID;
+      } else {
+        process.env.HAPPIER_SESSION_ID = previousSessionId;
+      }
+    }
   });
 });

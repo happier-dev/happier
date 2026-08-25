@@ -92,6 +92,8 @@ export async function claudeLocal(opts: {
         activeFetchCount: number,
     }>) => void) | undefined,
     claudeArgs?: string[],
+    /** Base environment for the managed Claude subprocess. Defaults to the current process environment. */
+    processEnv?: NodeJS.ProcessEnv,
     /** Optional env overrides to apply to the spawned Claude Code subprocess. */
     envOverlay?: Record<string, string>,
     /** Optional MCP config JSON to inject into the Claude Code CLI invocation (e.g. Happier MCP). */
@@ -110,7 +112,8 @@ export async function claudeLocal(opts: {
     systemPromptText?: string | null,
 }) {
 
-    const claudeConfigDir = resolveClaudeConfigDirOverride(process.env);
+    const processEnv = opts.processEnv ?? process.env;
+    const claudeConfigDir = resolveClaudeConfigDirOverride(processEnv);
 
     // Ensure project directory exists
     const projectDir = getProjectPath(opts.path, claudeConfigDir);
@@ -421,10 +424,10 @@ export async function claudeLocal(opts: {
             // Note: Local mode uses global Claude installation with --session-id flag
             // Launcher only intercepts fetch for thinking state tracking
             const env: NodeJS.ProcessEnv = stripNestedSessionDetectionEnv({
-                ...process.env,
+                ...processEnv,
                 // Keep behavior consistent with our wrapper script.
                 DISABLE_AUTOUPDATER: '1',
-                ...resolveClaudeConfigDirEnvOverlay(process.env),
+                ...resolveClaudeConfigDirEnvOverlay(processEnv),
                 ...(opts.envOverlay ?? {}),
             })
             isolateClaudeRuntimeAuthEnv(env);
@@ -435,7 +438,7 @@ export async function claudeLocal(opts: {
                 logPrefix: 'ClaudeLocal',
                 sessionId: opts.sessionId,
                 startFrom,
-                runnerEnv: process.env,
+                runnerEnv: processEnv,
                 childEnv: env,
             });
 
