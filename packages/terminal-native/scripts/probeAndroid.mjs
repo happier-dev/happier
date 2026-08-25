@@ -63,7 +63,7 @@ process.stdout.write(`${JSON.stringify({
     ? [
       accessibility === 'native'
         ? 'Android Termux native renderer gates passed for default native accessibility selection.'
-        : 'Use terminalRendererPreference=native-experimental to opt into Android native while the custom accessibility model is still fallback-required.',
+        : 'Use terminalRendererPreference=native to opt into Android native while the custom accessibility model is still fallback-required.',
       'Keep xterm WebView available as the crash fallback.',
     ]
     : source.status === 'ok'

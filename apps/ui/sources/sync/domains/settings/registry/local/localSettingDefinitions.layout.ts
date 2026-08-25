@@ -94,7 +94,10 @@ export const LAYOUT_LOCAL_SETTING_DEFINITIONS = {
         analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'device_user' },
     },
     terminalRendererPreference: {
-        schema: z.enum(['auto', 'xterm-webview', 'native-experimental']).catch('auto'),
+        schema: z.preprocess(
+            (value) => value === 'native-experimental' ? 'native' : value,
+            z.enum(['auto', 'xterm-webview', 'native']),
+        ).catch('auto'),
         default: 'auto',
         description: 'Preferred terminal renderer on this device',
         storageScope: 'local',

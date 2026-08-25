@@ -11192,8 +11192,8 @@ settingsSession: {
       rendererAutoDescription: "除非原生渲染器完全符合条件，否则使用可访问性更好的 xterm.js 渲染器。",
       rendererXtermWebView: "xterm.js 网页视图",
       rendererXtermWebViewDescription: "可访问性支持最好的兼容渲染器。",
-      rendererNativeExperimental: "原生（实验性）",
-      rendererNativeExperimentalDescription: "当所有原生门禁通过时，在 iOS 上优先使用 Ghostty，在 Android 上优先使用 Termux。",
+      rendererNative: "原生",
+      rendererNativeDescription: "当所有原生安全检查通过时，在 iOS 上优先使用 Ghostty，在 Android 上优先使用 Termux。",
     },
     quickKeys: {
       esc: "ESC",

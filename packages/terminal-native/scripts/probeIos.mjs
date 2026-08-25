@@ -239,7 +239,7 @@ async function main() {
         verifier: result,
         remediation: [
           'Keep xterm WebView selected until package proof and crash fallback proof gates pass.',
-          'Use terminalRendererPreference=native-experimental only after hard package/crash gates pass if native accessibility is still fallback-required.',
+          'Use terminalRendererPreference=native only after hard package/crash gates pass if native accessibility is still fallback-required.',
         ],
       });
       return;

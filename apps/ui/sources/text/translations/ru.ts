@@ -11528,8 +11528,8 @@ settingsSession: {
       rendererAutoDescription: "Использовать доступный рендерер xterm.js, если нативный рендерер не прошёл все проверки.",
       rendererXtermWebView: "xterm.js Веб-представление",
       rendererXtermWebViewDescription: "Совместимый рендерер с лучшей поддержкой доступности.",
-      rendererNativeExperimental: "Нативный (экспериментальный)",
-      rendererNativeExperimentalDescription: "Предпочитать Ghostty на iOS или Termux на Android, когда пройдены все нативные проверки.",
+      rendererNative: "Нативный",
+      rendererNativeDescription: "Предпочитать Ghostty на iOS или Termux на Android после прохождения всех нативных проверок безопасности.",
     },
     quickKeys: {
       esc: "ESC",

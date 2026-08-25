@@ -11979,8 +11979,8 @@ settingsSession: {
             rendererAutoDescription: 'Use the accessible xterm.js renderer unless the native renderer is fully eligible.',
             rendererXtermWebView: 'xterm.js WebView',
             rendererXtermWebViewDescription: 'Compatibility renderer with the best accessibility support.',
-            rendererNativeExperimental: 'Native (experimental)',
-            rendererNativeExperimentalDescription: 'Prefer Ghostty on iOS or Termux on Android when all native gates pass.',
+            rendererNative: 'Native',
+            rendererNativeDescription: 'Prefer Ghostty on iOS or Termux on Android when all native safety checks pass.',
         },
         quickKeys: {
             esc: 'Esc',

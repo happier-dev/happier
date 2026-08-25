@@ -11563,8 +11563,8 @@ settingsSession: {
       rendererAutoDescription: "Utilise le moteur de rendu accessible xterm.js sauf si le moteur natif est pleinement éligible.",
       rendererXtermWebView: "xterm.js Vue Web",
       rendererXtermWebViewDescription: "Moteur de rendu de compatibilité avec le meilleur support d’accessibilité.",
-      rendererNativeExperimental: "Natif (expérimental)",
-      rendererNativeExperimentalDescription: "Préfère Ghostty sur iOS ou Termux sur Android quand tous les prérequis natifs sont remplis.",
+      rendererNative: "Natif",
+      rendererNativeDescription: "Préfère Ghostty sur iOS ou Termux sur Android lorsque tous les contrôles de sécurité natifs sont validés.",
     },
     quickKeys: {
       esc: "Échap",

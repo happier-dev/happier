@@ -11808,8 +11808,8 @@ settingsSession: {
       rendererAutoDescription: "ネイティブレンダラーが完全に利用可能な場合を除き、アクセシビリティ対応の xterm.js レンダラーを使います。",
       rendererXtermWebView: "xterm.js Webビュー",
       rendererXtermWebViewDescription: "アクセシビリティ対応が最も安定した互換レンダラーです。",
-      rendererNativeExperimental: "ネイティブ（実験的）",
-      rendererNativeExperimentalDescription: "すべてのネイティブゲートを満たした場合に、iOS では Ghostty、Android では Termux を優先します。",
+      rendererNative: "ネイティブ",
+      rendererNativeDescription: "すべてのネイティブ安全性チェックを満たした場合に、iOS では Ghostty、Android では Termux を優先します。",
     },
     quickKeys: {
       esc: "ESC",

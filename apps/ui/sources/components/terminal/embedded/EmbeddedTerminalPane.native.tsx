@@ -111,7 +111,7 @@ export const EmbeddedTerminalPane = React.memo(function EmbeddedTerminalPaneNati
             expiresAtMs: Date.now() + 24 * 60 * 60 * 1000,
         });
     }, [selectedRenderer, setNativeRendererQuarantine]);
-    const nativeAccessibilityAccepted = terminalRendererPreference === 'native-experimental'
+    const nativeAccessibilityAccepted = terminalRendererPreference === 'native'
         || hasAcceptedNativeAccessibility(resolvedNativeRendererOptions);
     const nativeSurfaceKey = props.nativeSurfaceKey?.trim() || props.testIdPrefix || 'embedded-terminal';
 
@@ -273,7 +273,7 @@ function createDefaultNativeRendererOptions(input: Readonly<{
         return undefined;
     }
 
-    const accessibilityAccepted = input.terminalRendererPreference === 'native-experimental';
+    const accessibilityAccepted = input.terminalRendererPreference === 'native';
 
     if (input.platform === 'ios') {
         const featureEnabled = input.byteStreamFeatureEnabled && input.nativeFeatureEnabled && input.iosGhosttyFeatureEnabled;
@@ -313,7 +313,7 @@ function createDefaultNativeRendererOptions(input: Readonly<{
     return undefined;
 }
 
-type TerminalRendererPreference = 'auto' | 'xterm-webview' | 'native-experimental';
+type TerminalRendererPreference = 'auto' | 'xterm-webview' | 'native';
 
 function hasAcceptedNativeAccessibility(
     nativeRenderer?: GhosttyRendererSelectionOptions | TermuxRendererSelectionOptions,

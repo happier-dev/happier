@@ -11902,8 +11902,8 @@ settingsSession: {
             rendererAutoDescription: 'Den barrierefreien xterm.js-Renderer nutzen, außer der native Renderer erfüllt alle Voraussetzungen.',
             rendererXtermWebView: 'xterm.js-WebView',
             rendererXtermWebViewDescription: 'Kompatibilitäts-Renderer mit der besten Unterstützung für Barrierefreiheit.',
-            rendererNativeExperimental: 'Nativ (experimentell)',
-            rendererNativeExperimentalDescription: 'Ghostty auf iOS oder Termux auf Android bevorzugen, wenn alle nativen Voraussetzungen erfüllt sind.',
+            rendererNative: 'Nativ',
+            rendererNativeDescription: 'Ghostty auf iOS oder Termux auf Android bevorzugen, wenn alle nativen Sicherheitsprüfungen bestanden sind.',
         },
         quickKeys: {
             esc: 'Esc',

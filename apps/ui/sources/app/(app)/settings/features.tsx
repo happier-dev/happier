@@ -278,8 +278,8 @@ export default React.memo(function FeaturesSettingsScreen() {
         switch (terminalRendererPreference) {
             case 'xterm-webview':
                 return t('terminalEmbedded.settings.rendererXtermWebView');
-            case 'native-experimental':
-                return t('terminalEmbedded.settings.rendererNativeExperimental');
+            case 'native':
+                return t('terminalEmbedded.settings.rendererNative');
             case 'auto':
             default:
                 return t('terminalEmbedded.settings.rendererAuto');
@@ -484,14 +484,14 @@ export default React.memo(function FeaturesSettingsScreen() {
                                     icon: <Icon name="wheelchair" size={16} color={theme.colors.text.secondary} />,
                                 },
                                 {
-                                    id: 'native-experimental',
-                                    title: t('terminalEmbedded.settings.rendererNativeExperimental'),
-                                    subtitle: t('terminalEmbedded.settings.rendererNativeExperimentalDescription'),
+                                    id: 'native',
+                                    title: t('terminalEmbedded.settings.rendererNative'),
+                                    subtitle: t('terminalEmbedded.settings.rendererNativeDescription'),
                                     icon: <Icon name="cpu" size={16} color={theme.colors.text.secondary} />,
                                 },
                             ]}
                             onSelect={(id) => {
-                                if (id === 'auto' || id === 'xterm-webview' || id === 'native-experimental') {
+                                if (id === 'auto' || id === 'xterm-webview' || id === 'native') {
                                     setTerminalRendererPreference(id);
                                 }
                                 setTerminalRendererMenuOpen(false);

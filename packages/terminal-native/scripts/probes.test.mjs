@@ -724,7 +724,7 @@ test('Android probe reports fallback-required availability after hard gates pass
     });
     assert.equal(payload.fallbackRequired, true);
     assert.equal(payload.gates.nativeAccessibilityProven, false);
-    assert.ok(payload.remediation.includes('Use terminalRendererPreference=native-experimental to opt into Android native while the custom accessibility model is still fallback-required.'));
+    assert.ok(payload.remediation.includes('Use terminalRendererPreference=native to opt into Android native while the custom accessibility model is still fallback-required.'));
   } finally {
     await rm(sourceRoot, { force: true, recursive: true });
     await rm(vendorRoot, { force: true, recursive: true });

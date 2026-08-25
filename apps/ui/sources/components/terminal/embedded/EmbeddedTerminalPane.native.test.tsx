@@ -298,7 +298,7 @@ describe('EmbeddedTerminalPane native renderer selection', () => {
         expect(surfaceState.termuxProps).toBeNull();
     });
 
-    it('keeps xterm WebView selected in auto mode when native accessibility needs an explicit experimental opt-in', async () => {
+    it('keeps xterm WebView selected in auto mode when native accessibility needs an explicit native preference', async () => {
         platformState.os = 'ios';
         resetSurfaceState();
         featureState.enabled = {
@@ -327,7 +327,7 @@ describe('EmbeddedTerminalPane native renderer selection', () => {
         expect(surfaceState.termuxProps).toBeNull();
     });
 
-    it('selects native iOS when the user explicitly prefers the experimental native renderer', async () => {
+    it('selects native iOS when the user explicitly prefers the native renderer', async () => {
         platformState.os = 'ios';
         resetSurfaceState();
         localSettingState.terminalRendererPreference = 'native';

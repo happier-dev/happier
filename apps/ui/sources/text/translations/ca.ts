@@ -10486,8 +10486,8 @@ settingsSession: {
             rendererAutoDescription: 'Fes servir el renderitzador xterm.js accessible tret que el renderitzador natiu sigui completament apte.',
             rendererXtermWebView: 'xterm.js WebView',
             rendererXtermWebViewDescription: 'Renderitzador de compatibilitat amb el millor suport d’accessibilitat.',
-            rendererNativeExperimental: 'Natiu (experimental)',
-            rendererNativeExperimentalDescription: 'Prefereix Ghostty a iOS o Termux a Android quan totes les portes natives passin.',
+            rendererNative: 'Natiu',
+            rendererNativeDescription: 'Prefereix Ghostty a iOS o Termux a Android quan se superin totes les comprovacions de seguretat natives.',
         },
         quickKeys: {
             esc: 'ESC',
