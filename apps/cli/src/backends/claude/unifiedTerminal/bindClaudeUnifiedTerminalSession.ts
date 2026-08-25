@@ -33,7 +33,7 @@ type ClaudeUnifiedTerminalSessionBindingOptions<Mode extends EnhancedMode = Enha
   logPrefix: string;
   acceptedPromptEchoWindowMs: number;
   nowMs?: (() => number) | undefined;
-  onMessage: (message: RawJSONLines) => void;
+  onMessage: (message: RawJSONLines) => void | Promise<void>;
   onReady: (context?: ReadyNotificationTurnContext) => void | Promise<void>;
   onTurnInterruptChanged?: ((handler: (() => Promise<void>) | null) => void) | undefined;
   onPromptTurnStarted?: (() => void | Promise<void>) | undefined;
@@ -341,9 +341,9 @@ export function bindClaudeUnifiedTerminalSession<Mode extends EnhancedMode = Enh
   return {
     sessionOptions: {
       allowFirstInputBeforeSessionStart: true,
-      onMessage: (message) => {
+      onMessage: async (message) => {
         if (shouldSuppressTranscriptMessage(message)) return;
-        opts.onMessage(message);
+        await opts.onMessage(message);
         // Choosing Claude's native "resume from summary" option makes Claude submit `/compact`
         // itself. Slash commands do not consistently emit UserPromptSubmit, but this exact
         // provider-authored JSONL row proves the provisional resume is active. Confirm the

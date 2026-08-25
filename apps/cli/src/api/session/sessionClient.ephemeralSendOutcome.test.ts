@@ -5,6 +5,7 @@ import {
   type ApiSessionSocketStub,
   createApiSessionSocketStub,
 } from '@/testkit/backends/apiSessionSocketHarness';
+import { ApiSessionClient } from './sessionClient';
 
 let sessionSocketStub: ApiSessionSocketStub | null = null;
 let userSocketStub: ApiSessionSocketStub | null = null;
@@ -49,10 +50,8 @@ vi.mock('@happier-dev/connection-supervisor', () => ({
 
 describe('ApiSessionClient ephemeral send outcomes', () => {
   it('reports a disconnected send as locally non-accepted', async () => {
-    vi.resetModules();
     sessionSocketStub = createApiSessionSocketStub({ connected: false });
     userSocketStub = createApiSessionSocketStub({ connected: false });
-    const { ApiSessionClient } = await import('./sessionClient');
     const client = new ApiSessionClient('tok', createPlainSessionFixture({ id: 's1' }));
 
     const outcome = client.sendAgentMessageEphemeral(
@@ -70,7 +69,6 @@ describe('ApiSessionClient ephemeral send outcomes', () => {
   });
 
   it('returns a structured bounded failure when socket emission throws', async () => {
-    vi.resetModules();
     sessionSocketStub = createApiSessionSocketStub({
       connected: true,
       emit: (event) => {
@@ -83,7 +81,6 @@ describe('ApiSessionClient ephemeral send outcomes', () => {
       },
     });
     userSocketStub = createApiSessionSocketStub({ connected: true });
-    const { ApiSessionClient } = await import('./sessionClient');
     const client = new ApiSessionClient('tok', createPlainSessionFixture({ id: 's1' }));
     await Promise.resolve();
 
@@ -114,10 +111,8 @@ describe('ApiSessionClient ephemeral send outcomes', () => {
   });
 
   it('reports normalization or assistant-observation throws without emitting', async () => {
-    vi.resetModules();
     sessionSocketStub = createApiSessionSocketStub({ connected: true });
     userSocketStub = createApiSessionSocketStub({ connected: true });
-    const { ApiSessionClient } = await import('./sessionClient');
     const client = new ApiSessionClient('tok', createPlainSessionFixture({ id: 's1' }));
     await Promise.resolve();
 
@@ -145,10 +140,8 @@ describe('ApiSessionClient ephemeral send outcomes', () => {
   });
 
   it('reports the current connection epoch only after the complete local send path succeeds', async () => {
-    vi.resetModules();
     sessionSocketStub = createApiSessionSocketStub({ connected: true });
     userSocketStub = createApiSessionSocketStub({ connected: true });
-    const { ApiSessionClient } = await import('./sessionClient');
     const client = new ApiSessionClient('tok', createPlainSessionFixture({ id: 's1' }));
     await Promise.resolve();
 

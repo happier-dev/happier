@@ -1122,30 +1122,23 @@ async function materializeAndVerifyConnectedServiceAuthForSpawn(params: Readonly
     vendorResumeId: params.vendorResumeId,
     candidatePersistedSessionFile: params.candidatePersistedSessionFile,
     validateGroupMutationCurrentness: params.validateGroupMutationCurrentness,
+    validatePromotedMaterialization: async ({ env, diagnostics }) => {
+      assertNoBlockingMaterializationDiagnostics({
+        agentId: params.agentId,
+        diagnostics,
+      });
+      await assertSpawnResumeReachable({
+        agentId: params.agentId,
+        materializedEnv: env,
+        vendorResumeId: params.vendorResumeId,
+        cwd: params.sessionDirectory,
+        resumeReachabilityRequired: params.resumeReachabilityRequired,
+        candidatePersistedSessionFile: params.candidatePersistedSessionFile,
+      });
+    },
   });
 
-  if (!materialized) return null;
-
-  try {
-    assertNoBlockingMaterializationDiagnostics({
-      agentId: params.agentId,
-      diagnostics: materialized.diagnostics,
-    });
-    await assertSpawnResumeReachable({
-      agentId: params.agentId,
-      materializedEnv: materialized.env,
-      vendorResumeId: params.vendorResumeId,
-      cwd: params.sessionDirectory,
-      resumeReachabilityRequired: params.resumeReachabilityRequired,
-      candidatePersistedSessionFile: params.candidatePersistedSessionFile,
-    });
-    return materialized;
-  } catch (error) {
-    const cleanupOnFailure = materialized.cleanupOnFailure
-      ?? materialized.cleanupMaterializationRoot;
-    cleanupOnFailure?.();
-    throw error;
-  }
+  return materialized;
 }
 
 export async function resolveConnectedServiceAuthForSpawn(params: Readonly<{

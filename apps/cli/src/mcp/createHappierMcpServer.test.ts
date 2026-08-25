@@ -1,12 +1,65 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+const { callMachineRpc } = vi.hoisted(() => ({ callMachineRpc: vi.fn() }));
+
+vi.mock('@/session/transport/rpc/machineRpc', () => ({ callMachineRpc }));
 
 const env = process.env;
 
 describe('createHappierMcpServer', () => {
   beforeEach(() => {
     vi.resetModules();
+    callMachineRpc.mockReset();
     process.env = { ...env };
     delete process.env.HAPPIER_ACTIONS_SETTINGS_V1;
+  });
+
+  afterEach(() => {
+    vi.doUnmock('@happier-dev/protocol');
+    vi.resetModules();
+  });
+
+  it('routes an explicit non-session memory machine through account-scoped machine RPC', async () => {
+    const captured: { deps?: any } = {};
+    vi.doMock('@happier-dev/protocol', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('@happier-dev/protocol')>();
+      return {
+        ...actual,
+        createActionExecutor: (deps: any) => {
+          captured.deps = deps;
+          return {} as any;
+        },
+      };
+    });
+    callMachineRpc.mockResolvedValue({ v: 1, ok: true, hits: [] });
+    const invokeLocal = vi.fn(async () => ({ v: 1, ok: true, hits: [] }));
+    const { createHappierMcpServer } = await import('@/mcp/createHappierMcpServer');
+    const credentials = {
+      token: 'token-1',
+      encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) },
+    };
+
+    createHappierMcpServer({
+      sessionId: 'sess_mcp_memory_machine_1',
+      rpcHandlerManager: { invokeLocal },
+      getCurrentSessionLocation: () => ({ machineId: 'machine-session' }),
+      sendClaudeSessionMessage: () => {},
+      updateMetadata: () => {},
+    } as any, {
+      credentials,
+    });
+
+    await expect(captured.deps.daemonMemorySearch({
+      machineId: 'machine-selected',
+      query: { v: 1, query: 'bridge', scope: { type: 'global' }, mode: 'hints' },
+    })).resolves.toEqual({ v: 1, ok: true, hits: [] });
+    expect(callMachineRpc).toHaveBeenCalledWith({
+      credentials,
+      machineId: 'machine-selected',
+      method: 'daemon.memory.search',
+      request: { v: 1, query: 'bridge', scope: { type: 'global' }, mode: 'hints' },
+    });
+    expect(invokeLocal).not.toHaveBeenCalled();
   });
 
   it('returns toolNames aligned with current MCP action settings', async () => {

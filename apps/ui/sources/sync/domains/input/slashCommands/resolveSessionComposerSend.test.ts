@@ -155,14 +155,14 @@ describe('resolveSessionComposerSend', () => {
     });
 
     it('intercepts /goal with no objective as a goal UI command', () => {
-        expect(resolveSessionComposerSend({ input: '/goal', executionRunsEnabled: true })).toEqual({
+        expect(resolveSessionComposerSend({ input: '/goal', executionRunsEnabled: true, goalControlsAvailable: true })).toEqual({
             kind: 'goal',
             command: 'open',
         });
     });
 
     it('intercepts /goal objective text as a native set-goal command', () => {
-        expect(resolveSessionComposerSend({ input: '/goal migrate plugin support', executionRunsEnabled: true })).toEqual({
+        expect(resolveSessionComposerSend({ input: '/goal migrate plugin support', executionRunsEnabled: true, goalControlsAvailable: true })).toEqual({
             kind: 'goal',
             command: 'set',
             objective: 'migrate plugin support',
@@ -180,10 +180,21 @@ describe('resolveSessionComposerSend', () => {
         });
     });
 
+    it('fails closed when a caller omits goal-control availability', () => {
+        expect(resolveSessionComposerSend({
+            input: '/goal ship the parser refactor',
+            executionRunsEnabled: true,
+        })).toEqual({
+            kind: 'send',
+            text: '/goal ship the parser refactor',
+        });
+    });
+
     it('preserves multiline /goal objective text as a native set-goal command', () => {
         expect(resolveSessionComposerSend({
             input: '/goal line one\nline two',
             executionRunsEnabled: true,
+            goalControlsAvailable: true,
         })).toEqual({
             kind: 'goal',
             command: 'set',
@@ -192,23 +203,23 @@ describe('resolveSessionComposerSend', () => {
     });
 
     it('intercepts /goal control verbs as native goal commands', () => {
-        expect(resolveSessionComposerSend({ input: '/goal pause', executionRunsEnabled: true })).toEqual({
+        expect(resolveSessionComposerSend({ input: '/goal pause', executionRunsEnabled: true, goalControlsAvailable: true })).toEqual({
             kind: 'goal',
             command: 'pause',
         });
-        expect(resolveSessionComposerSend({ input: '/goal resume', executionRunsEnabled: true })).toEqual({
+        expect(resolveSessionComposerSend({ input: '/goal resume', executionRunsEnabled: true, goalControlsAvailable: true })).toEqual({
             kind: 'goal',
             command: 'resume',
         });
-        expect(resolveSessionComposerSend({ input: '/goal complete', executionRunsEnabled: true })).toEqual({
+        expect(resolveSessionComposerSend({ input: '/goal complete', executionRunsEnabled: true, goalControlsAvailable: true })).toEqual({
             kind: 'goal',
             command: 'complete',
         });
-        expect(resolveSessionComposerSend({ input: '/goal clear', executionRunsEnabled: true })).toEqual({
+        expect(resolveSessionComposerSend({ input: '/goal clear', executionRunsEnabled: true, goalControlsAvailable: true })).toEqual({
             kind: 'goal',
             command: 'clear',
         });
-        expect(resolveSessionComposerSend({ input: '/goal status', executionRunsEnabled: true })).toEqual({
+        expect(resolveSessionComposerSend({ input: '/goal status', executionRunsEnabled: true, goalControlsAvailable: true })).toEqual({
             kind: 'goal',
             command: 'status',
         });

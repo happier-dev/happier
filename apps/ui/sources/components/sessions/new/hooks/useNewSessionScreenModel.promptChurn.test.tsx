@@ -5,6 +5,7 @@ import { standardCleanup } from '@/dev/testkit';
 
 import {
     persistDraftNowRef,
+    persistedDraft,
     renderNewSessionScreenModel,
     resetDraftPersistenceState,
 } from './__tests__/draftPersistenceTestEnvironment';
@@ -23,11 +24,12 @@ describe('useNewSessionScreenModel (composer text churn)', () => {
         standardCleanup();
     });
 
-    beforeEach(() => {
-        resetDraftPersistenceState();
+    beforeEach(async () => {
+        await resetDraftPersistenceState();
     });
 
     it('publishes live composer text without re-rendering the model, and still persists it', async () => {
+        persistedDraft.input = '';
         let model: any = null;
         let renderCount = 0;
 

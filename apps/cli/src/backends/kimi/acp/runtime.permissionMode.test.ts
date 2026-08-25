@@ -30,13 +30,13 @@ describe('Kimi ACP runtime permissionMode wiring', () => {
 
     await runtime.startOrLoad({});
     expect(createSpy).toHaveBeenCalledTimes(1);
-    expect(createCalls).toEqual([{ agentId: 'kimi', permissionMode: 'default' }]);
+    expect(createCalls).toEqual([{ agentId: 'kimi', happierSessionId: 'test-session-id', permissionMode: 'default' }]);
 
     permissionMode = 'yolo';
     await runtime.reset();
     await runtime.startOrLoad({});
     expect(createSpy).toHaveBeenCalledTimes(2);
-    expect(createCalls[1]).toEqual({ agentId: 'kimi', permissionMode: 'yolo' });
+    expect(createCalls[1]).toEqual({ agentId: 'kimi', happierSessionId: 'test-session-id', permissionMode: 'yolo' });
   }, 20_000);
 
   it('falls back to session metadata permissionMode when getPermissionMode is absent', async () => {
@@ -56,6 +56,6 @@ describe('Kimi ACP runtime permissionMode wiring', () => {
 
     await runtime.startOrLoad({});
     expect(createSpy).toHaveBeenCalledTimes(1);
-    expect(createCalls[0]).toEqual({ agentId: 'kimi', permissionMode: 'read-only' });
+    expect(createCalls[0]).toEqual({ agentId: 'kimi', happierSessionId: 'test-session-id', permissionMode: 'read-only' });
   }, 20_000);
 });

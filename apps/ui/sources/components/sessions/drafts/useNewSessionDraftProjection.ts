@@ -67,6 +67,7 @@ export function useNewSessionDraftPromptProjection(params: Readonly<{
     draftId: string;
     promptStore: NewSessionPromptStore;
     hasLocalEdit: () => boolean;
+    preferInitialPrompt?: boolean;
 }>): void {
     const address = React.useMemo(() => ({ kind: 'newSession', draftId: params.draftId } as const), [params.draftId]);
 
@@ -78,7 +79,7 @@ export function useNewSessionDraftPromptProjection(params: Readonly<{
             const snapshot = getSessionDraftSnapshot(scope, address);
             const durableText = snapshot?.document.composer.text.value;
             const localText = params.promptStore.getPrompt();
-            if (isInitialProjection && params.hasLocalEdit() && durableText !== localText) {
+            if (isInitialProjection && (params.hasLocalEdit() || params.preferInitialPrompt === true) && durableText !== localText) {
                 isInitialProjection = false;
                 writeNewSessionDraft({
                     scope,
@@ -94,5 +95,5 @@ export function useNewSessionDraftPromptProjection(params: Readonly<{
         const unsubscribe = subscribeSessionDraft(scope, address, project);
         project();
         return unsubscribe;
-    }, [address, params.draftId, params.hasLocalEdit, params.promptStore, params.scope]);
+    }, [address, params.draftId, params.hasLocalEdit, params.preferInitialPrompt, params.promptStore, params.scope]);
 }

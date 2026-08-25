@@ -11,6 +11,7 @@ import {
     type SessionDraftReadResponseV1,
     type SessionDraftRecordV1,
     type SessionDraftStoredContentEnvelopeV1,
+    StrictJsonValueSchema,
     type StrictJsonValue,
     type SyncedSessionAuthoringValueV1,
 } from '@happier-dev/protocol';
@@ -19,6 +20,7 @@ import { randomUUID as platformRandomUUID } from '@/platform/randomUUID';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
 import { getPersistenceStorage } from '@/sync/domains/state/persistence';
+import type { NewSessionDraftLocalState } from './newSessionDraftLocalState';
 
 export type SessionDraftRepositoryScope = ServerAccountScope;
 export type SessionDraftStatus = 'clean' | 'pending' | 'offline' | 'conflict' | 'error';
@@ -53,6 +55,8 @@ export type SessionDraftLocalSupplement = Readonly<{
     launchUserAttemptId?: string;
     /** Local-only launch CAS token. It is paired to one user attempt and never sealed or uploaded. */
     launchCurrentnessCapture?: SessionDraftLaunchCurrentnessCapture;
+    /** Device-local New Session state that must not become part of the synchronized document. */
+    newSessionLocalState?: NewSessionDraftLocalState;
     /** Crash-stable identity for the retired singleton new-session draft adapter. */
     legacyNewSessionDraftV1?: true;
     /** Captured legacy existing-session text/value owners exactly once. */
@@ -304,12 +308,24 @@ function normalizeLocalSupplement(value: unknown, expectedAddress: SessionDraftA
     const normalized: {
         launchUserAttemptId?: string;
         launchCurrentnessCapture?: SessionDraftLaunchCurrentnessCapture;
+        newSessionLocalState?: NewSessionDraftLocalState;
         legacyNewSessionDraftV1?: true;
         legacyExistingSessionDraftV1?: true;
     } = {};
     if (launchUserAttemptId) normalized.launchUserAttemptId = launchUserAttemptId;
     if (candidate.legacyNewSessionDraftV1 === true) normalized.legacyNewSessionDraftV1 = true;
     if (candidate.legacyExistingSessionDraftV1 === true) normalized.legacyExistingSessionDraftV1 = true;
+    const parsedNewSessionLocalState = StrictJsonValueSchema.safeParse(candidate.newSessionLocalState);
+    if (
+        expectedAddress.kind === 'newSession'
+        && parsedNewSessionLocalState.success
+        && parsedNewSessionLocalState.data
+        && typeof parsedNewSessionLocalState.data === 'object'
+        && !Array.isArray(parsedNewSessionLocalState.data)
+    ) {
+        // The repository writer owns the typed shape; this boundary strips non-JSON/corrupt values on reload.
+        normalized.newSessionLocalState = parsedNewSessionLocalState.data as unknown as NewSessionDraftLocalState;
+    }
 
     const capture = candidate.launchCurrentnessCapture;
     if (launchUserAttemptId && capture && typeof capture === 'object' && !Array.isArray(capture)) {
@@ -648,6 +664,7 @@ export class SessionDraftRepository {
         address: SessionDraftAddressV1;
         patch: Readonly<{
             launchUserAttemptId?: string | null;
+            newSessionLocalState?: NewSessionDraftLocalState | null;
             legacyNewSessionDraftV1?: true | null;
             legacyExistingSessionDraftV1?: true | null;
         }>;
@@ -664,6 +681,8 @@ export class SessionDraftRepository {
                 delete nextSupplement.launchCurrentnessCapture;
             }
         }
+        if (params.patch.newSessionLocalState === null) delete nextSupplement.newSessionLocalState;
+        else if (params.patch.newSessionLocalState !== undefined) nextSupplement.newSessionLocalState = params.patch.newSessionLocalState;
         if (params.patch.legacyNewSessionDraftV1 === null) delete nextSupplement.legacyNewSessionDraftV1;
         else if (params.patch.legacyNewSessionDraftV1 === true) nextSupplement.legacyNewSessionDraftV1 = true;
         if (params.patch.legacyExistingSessionDraftV1 === null) delete nextSupplement.legacyExistingSessionDraftV1;

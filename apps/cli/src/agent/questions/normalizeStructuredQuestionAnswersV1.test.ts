@@ -190,6 +190,20 @@ describe('normalizeStructuredQuestionAnswersV1', () => {
         )).toEqual({ q: ['  exact value  '] });
     });
 
+    it('accepts an exact empty answer only when the advertised freeform contract allows it', () => {
+        expect(normalizeStructuredQuestionAnswersV1(
+            { q: [''] },
+            [{ question: 'q', options: [], freeform: { allowEmpty: true } }],
+        )).toEqual({ q: [''] });
+
+        expect(() => normalizeStructuredQuestionAnswersV1(
+            { q: [''] },
+            [{ question: 'q', options: [], freeform: {} }],
+        )).toThrow(expect.objectContaining({
+            rpcErrorCode: PUBLIC_RPC_HANDLER_ERROR_CODES.STRUCTURED_QUESTION_INVALID,
+        }));
+    });
+
     it.each([
         [{ id: '   ', question: '', header: '', options: [{ label: 'A' }] }, { '   ': ['A'] }],
         [{ question: '   ', header: '   ', options: [{ label: 'A' }] }, { '   ': ['A'] }],

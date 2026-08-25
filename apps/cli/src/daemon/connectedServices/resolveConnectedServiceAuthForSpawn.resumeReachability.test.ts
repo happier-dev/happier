@@ -1,4 +1,4 @@
-import { access, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { access, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
@@ -167,6 +167,146 @@ async function expectPathRemoved(path: string): Promise<void> {
 }
 
 describe('resolveConnectedServiceAuthForSpawn post-materialization resume reachability gate', () => {
+  it('recovers a rollout from the previous Codex materialization when the native sessions store was missing', async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), 'happier-reverify-codex-recovery-base-'));
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-reverify-codex-recovery-server-'));
+    const sourceCodexHome = await mkdtemp(join(tmpdir(), 'happier-reverify-codex-recovery-source-home-'));
+    const fakeHome = await mkdtemp(join(tmpdir(), 'happier-reverify-codex-recovery-home-'));
+    const originalHome = process.env.HOME;
+    const now = 1_000_000;
+    const cwd = '/tmp/reverify-codex-recovery-project';
+    const vendorResumeId = '00000000-0000-4000-8000-000000000002';
+    const relativeRolloutPath = join(
+      'sessions',
+      '2026',
+      '08',
+      '24',
+      `rollout-2026-08-24T12-00-00-${vendorResumeId}.jsonl`,
+    );
+    const materializedRoot = resolveConnectedServiceMaterializedRootDir({
+      baseDir,
+      agentId: 'codex',
+      materializationKey: 'codex-session-recovery',
+      materializationIdentity: null,
+    });
+
+    const credentials = makeLegacyCredentials();
+    const api = makeCodexApi(now, credentials);
+    try {
+      process.env.HOME = fakeHome;
+      await mkdir(join(materializedRoot, 'codex-home', 'sessions', '2026', '08', '24'), { recursive: true });
+      await writeFile(
+        join(materializedRoot, 'codex-home', relativeRolloutPath),
+        '{"type":"session"}\n',
+      );
+      await writeFile(
+        join(materializedRoot, 'codex-home', 'history.jsonl'),
+        '{"text":"previous prompt"}\n',
+      );
+      await writeFile(
+        join(materializedRoot, 'codex-home', 'session_index.jsonl'),
+        '{"id":"previous session"}\n',
+      );
+      await mkdir(join(materializedRoot, 'codex-home', 'memories'), { recursive: true });
+      await writeFile(
+        join(materializedRoot, 'codex-home', 'memories', 'raw_memories.md'),
+        '# Previous memory\n',
+      );
+
+      const connectedServiceAuth = await resolveConnectedServiceAuthForSpawn({
+        agentId: 'codex',
+        sessionDirectory: cwd,
+        connectedServicesBindingsRaw: PI_CONNECTED_BINDINGS,
+        materializationKey: 'codex-session-recovery',
+        activeServerDir,
+        baseDir,
+        credentials,
+        api,
+        nowMs: () => now,
+        accountSettings: sharedStateAccountSettings(),
+        processEnv: {
+          CODEX_HOME: sourceCodexHome,
+          CODEX_SQLITE_HOME: sourceCodexHome,
+          HOME: fakeHome,
+        } as NodeJS.ProcessEnv,
+        vendorResumeId,
+        resumeReachabilityRequired: true,
+      });
+
+      expect(connectedServiceAuth).not.toBeNull();
+      await expect(readFile(join(sourceCodexHome, relativeRolloutPath), 'utf8')).resolves.toBe('{"type":"session"}\n');
+      await expect(readFile(join(connectedServiceAuth!.env.CODEX_HOME!, relativeRolloutPath), 'utf8')).resolves.toBe('{"type":"session"}\n');
+      await expect(readFile(join(sourceCodexHome, 'history.jsonl'), 'utf8')).resolves.toBe('{"text":"previous prompt"}\n');
+      await expect(readFile(join(sourceCodexHome, 'session_index.jsonl'), 'utf8')).resolves.toBe('{"id":"previous session"}\n');
+      await expect(readFile(join(sourceCodexHome, 'memories', 'raw_memories.md'), 'utf8')).resolves.toBe('# Previous memory\n');
+      await expect(readFile(join(connectedServiceAuth!.env.CODEX_HOME!, 'memories', 'raw_memories.md'), 'utf8')).resolves.toBe('# Previous memory\n');
+    } finally {
+      if (originalHome === undefined) delete process.env.HOME;
+      else process.env.HOME = originalHome;
+      await rm(baseDir, { recursive: true, force: true });
+      await rm(activeServerDir, { recursive: true, force: true });
+      await rm(sourceCodexHome, { recursive: true, force: true });
+      await rm(fakeHome, { recursive: true, force: true });
+    }
+  });
+
+  it('restores the previous Codex materialization when resume validation fails', async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), 'happier-reverify-codex-rollback-base-'));
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-reverify-codex-rollback-server-'));
+    const sourceCodexHome = await mkdtemp(join(tmpdir(), 'happier-reverify-codex-rollback-source-home-'));
+    const fakeHome = await mkdtemp(join(tmpdir(), 'happier-reverify-codex-rollback-home-'));
+    const originalHome = process.env.HOME;
+    const now = 1_000_000;
+    const cwd = '/tmp/reverify-codex-rollback-project';
+    const materializedRoot = resolveConnectedServiceMaterializedRootDir({
+      baseDir,
+      agentId: 'codex',
+      materializationKey: 'codex-session-rollback',
+      materializationIdentity: null,
+    });
+    const sentinelPath = join(materializedRoot, 'codex-home', 'previous-session.jsonl');
+
+    const credentials = makeLegacyCredentials();
+    const api = makeCodexApi(now, credentials);
+    try {
+      process.env.HOME = fakeHome;
+      await mkdir(join(materializedRoot, 'codex-home'), { recursive: true });
+      await writeFile(sentinelPath, '{"previous":true}\n');
+
+      await expect(resolveConnectedServiceAuthForSpawn({
+        agentId: 'codex',
+        sessionDirectory: cwd,
+        connectedServicesBindingsRaw: PI_CONNECTED_BINDINGS,
+        materializationKey: 'codex-session-rollback',
+        activeServerDir,
+        baseDir,
+        credentials,
+        api,
+        nowMs: () => now,
+        accountSettings: sharedStateAccountSettings(),
+        processEnv: {
+          CODEX_HOME: sourceCodexHome,
+          CODEX_SQLITE_HOME: sourceCodexHome,
+          HOME: fakeHome,
+        } as NodeJS.ProcessEnv,
+        vendorResumeId: '00000000-0000-4000-8000-000000000003',
+        resumeReachabilityRequired: true,
+      })).rejects.toMatchObject({
+        name: 'ConnectedServiceSpawnResumeUnreachableError',
+        reason: 'codex_session_file_not_found',
+      });
+
+      await expect(readFile(sentinelPath, 'utf8')).resolves.toBe('{"previous":true}\n');
+    } finally {
+      if (originalHome === undefined) delete process.env.HOME;
+      else process.env.HOME = originalHome;
+      await rm(baseDir, { recursive: true, force: true });
+      await rm(activeServerDir, { recursive: true, force: true });
+      await rm(sourceCodexHome, { recursive: true, force: true });
+      await rm(fakeHome, { recursive: true, force: true });
+    }
+  });
+
   it('cleans up a Codex materialized root when post-materialization resume reachability fails without a provider cleanup hook', async () => {
     const baseDir = await mkdtemp(join(tmpdir(), 'happier-reverify-codex-miss-base-'));
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-reverify-codex-miss-server-'));

@@ -27,6 +27,7 @@ import { CUSTOM_ACP_UI_BEHAVIOR_OVERRIDE } from '@/agents/providers/customAcp/ui
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput';
 import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import type { PendingInputServerWireMode } from '@/sync/engine/pending/pendingInputServerWireContract';
+import { resolveSessionGoalExecutionCapabilities } from '@/sync/domains/session/control/sessionGoalExecutionCapabilities';
 
 export type PendingDeliveryTransientAction = Readonly<{
     id: 'interrupt_and_run';
@@ -534,20 +535,48 @@ export function supportsDetectedMcpConfigScan(agentId: AgentId): boolean {
 export function supportsEditableSessionGoals(ctx: {
     agentId: AgentId;
     session: Session;
+    daemonGoalControlsSupported?: boolean;
 }): boolean {
-    const fn = AGENTS_UI_BEHAVIOR[ctx.agentId]?.workState?.supportsEditableGoals;
-    return fn ? fn(ctx) : false;
+    const profile = resolveSessionGoalActionCapabilityProfile(ctx);
+    return profile !== null && (
+        profile.canEdit
+        || profile.canStop
+        || profile.canClear
+        || profile.canConfigureBudget
+    );
 }
 
 /**
- * Provider goal-action capability profile for a session, used as the fallback when no goal item
- * carries its own `goalCapabilities` (the "Set goal" form before any native goal exists). Returns
- * null when the provider declares no profile, in which case the full legacy control surface applies.
+ * Effective goal-action profile for a session. Provider semantics are intersected with the active
+ * runner or target daemon's callable controls here so every goal surface consumes one decision.
+ * Returns null only when the provider does not semantically support editable goals.
  */
 export function resolveSessionGoalActionCapabilityProfile(ctx: {
     agentId: AgentId;
     session: Session;
+    daemonGoalControlsSupported?: boolean;
 }): GoalActionCapabilities | null {
-    const fn = AGENTS_UI_BEHAVIOR[ctx.agentId]?.workState?.resolveGoalActionCapabilityProfile;
-    return fn ? fn(ctx) : null;
+    const workState = AGENTS_UI_BEHAVIOR[ctx.agentId]?.workState;
+    if (!workState?.supportsEditableGoals?.(ctx)) return null;
+
+    const semanticProfile = workState.resolveGoalActionCapabilityProfile?.(ctx) ?? {
+        canEdit: true,
+        canStop: true,
+        canClear: true,
+        canConfigureBudget: true,
+    };
+    const execution = resolveSessionGoalExecutionCapabilities({
+        session: ctx.session,
+        machine: {
+            metadata: {
+                daemonSessionGoalControlsSupported: ctx.daemonGoalControlsSupported,
+            },
+        },
+    });
+    return {
+        canEdit: semanticProfile.canEdit && execution.canSet,
+        canStop: semanticProfile.canStop && execution.canSet,
+        canClear: semanticProfile.canClear && execution.canClear,
+        canConfigureBudget: semanticProfile.canConfigureBudget && execution.canSet,
+    };
 }

@@ -32,12 +32,37 @@ export async function getPreferredHostName(): Promise<string> {
     ?? fallback;
 }
 
-export const initialMachineMetadata: MachineMetadata = {
-  host: os.hostname(),
-  platform: os.platform(),
-  happyCliVersion: packageJson.version,
-  homeDir: os.homedir(),
-  happyHomeDir: configuration.happyHomeDir,
-  happyLibDir: projectPath(),
-  daemonTerminalSessionAttachSupported: true,
-};
+export function refreshMachineMetadataForCurrentDaemon(
+  current: Partial<MachineMetadata>,
+  host: string,
+): MachineMetadata {
+  const next: MachineMetadata = {
+    ...current,
+    host,
+    platform: os.platform(),
+    happyCliVersion: packageJson.version,
+    homeDir: os.homedir(),
+    happyHomeDir: configuration.happyHomeDir,
+    happyLibDir: projectPath(),
+    daemonTerminalSessionAttachSupported: true,
+    daemonSessionGoalControlsSupported: true,
+  };
+  if (
+    current.host === next.host
+    && current.platform === next.platform
+    && current.happyCliVersion === next.happyCliVersion
+    && current.homeDir === next.homeDir
+    && current.happyHomeDir === next.happyHomeDir
+    && current.happyLibDir === next.happyLibDir
+    && current.daemonTerminalSessionAttachSupported === next.daemonTerminalSessionAttachSupported
+    && current.daemonSessionGoalControlsSupported === next.daemonSessionGoalControlsSupported
+  ) {
+    return current as MachineMetadata;
+  }
+  return next;
+}
+
+export const initialMachineMetadata: MachineMetadata = refreshMachineMetadataForCurrentDaemon(
+  {},
+  os.hostname(),
+);

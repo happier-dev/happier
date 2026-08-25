@@ -274,4 +274,36 @@ describe('happier tools --json', () => {
       process.exitCode = prevExitCode;
     }
   });
+
+  it('forwards the native tool-call identity only for the trusted session-Agent bridge', async () => {
+    const output = captureStdoutJsonOutput();
+    const prevExitCode = process.exitCode;
+    process.exitCode = undefined;
+    const callBuiltInHappierTool = vi.fn(async () => ({ ok: true as const, result: { done: true } }));
+
+    try {
+      await handleToolsCommand([
+        'call',
+        '--session-id', 'sess-1',
+        '--directory', '/tmp/workspace',
+        '--source', 'happier',
+        '--tool', 'action_execute',
+        '--args-json', '{"actionId":"memory.search","input":{}}',
+        '--session-agent-bridge',
+        '--tool-call-id', 'pi-call-1',
+        '--json',
+      ], {
+        ...createBaseDeps(),
+        callBuiltInHappierTool,
+      } as any);
+
+      expect(callBuiltInHappierTool).toHaveBeenCalledWith(expect.objectContaining({
+        invocation: 'session_agent_bridge',
+        toolCallId: 'pi-call-1',
+      }));
+    } finally {
+      output.restore();
+      process.exitCode = prevExitCode;
+    }
+  });
 });

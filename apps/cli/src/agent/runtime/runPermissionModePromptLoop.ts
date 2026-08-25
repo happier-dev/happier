@@ -500,9 +500,9 @@ export async function runPermissionModePromptLoop(opts: {
       const providerNativeCommand = special.type === null
         && typeof opts.runtime.isProviderNativeCommand === 'function'
         && await opts.runtime.isProviderNativeCommand(message.message.text);
-      if (!providerNativeCommand) {
-        pendingFreshSessionSystemPrompt = false;
-      }
+      pendingFreshSessionSystemPrompt = providerNativeCommand
+        ? shouldApplyFreshSessionSystemPrompt
+        : false;
 
       const nowMs = Date.now();
       const seedResolution = providerNativeCommand

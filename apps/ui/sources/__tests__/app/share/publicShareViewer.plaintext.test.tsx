@@ -92,6 +92,12 @@ describe('PublicShareViewerScreen (plaintext)', () => {
         transcriptListSpy.mockClear();
     });
 
+    it('resolves the concrete web path token when Expo exposes its static route placeholder', async () => {
+        const { resolvePublicShareTokenParam } = await import('@/app/(app)/share/[token]');
+
+        expect(resolvePublicShareTokenParam(':token', '/share/web-token-1')).toBe('web-token-1');
+    });
+
     it('does not attempt DEK decryption for plaintext sessions', async () => {
         serverFetchSpy
             .mockResolvedValueOnce({

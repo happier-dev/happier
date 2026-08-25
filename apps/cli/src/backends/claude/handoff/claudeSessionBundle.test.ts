@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -188,6 +188,7 @@ describe('claude session handoff bundle', () => {
   it('supports persisted resume plans when the handoff keeps persisted transcript storage', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-claude-handoff-import-persisted-'));
     const targetPath = join(root, 'workspace');
+    const configDir = join(root, '.claude-target');
     await mkdir(targetPath, { recursive: true });
 
     const result = await importClaudeSessionBundle({
@@ -197,7 +198,7 @@ describe('claude session handoff bundle', () => {
         transcriptBase64: Buffer.from('{"type":"assistant"}\n', 'utf8').toString('base64'),
       },
       targetPath,
-      env: {},
+      env: { CLAUDE_CONFIG_DIR: configDir },
       sessionStorageMode: 'persisted',
     });
 
@@ -353,7 +354,9 @@ describe('claude session handoff bundle', () => {
   it('rejects remote session ids that contain path separators', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-claude-handoff-import-invalid-id-'));
     const targetPath = join(root, 'workspace');
+    const configDir = join(root, '.claude-target');
     await mkdir(targetPath, { recursive: true });
+    const projectDir = join(configDir, 'projects', resolveClaudeProjectId(targetPath));
 
     await expect(importClaudeSessionBundle({
       bundle: {
@@ -362,7 +365,8 @@ describe('claude session handoff bundle', () => {
         transcriptBase64: Buffer.from('{"type":"assistant"}\n', 'utf8').toString('base64'),
       },
       targetPath,
-      env: {},
+      env: { CLAUDE_CONFIG_DIR: configDir },
     })).rejects.toThrow(/remoteSessionId|session id|path/i);
+    await expect(stat(projectDir)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 });

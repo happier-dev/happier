@@ -23,6 +23,7 @@ type CodexAgentRuntimeDescriptorProvider = Readonly<{
   backendMode: CodexBackendMode;
   vendorSessionId?: string;
   homePath?: string;
+  sqliteHomePath?: string;
   home?: 'user' | 'connectedService';
   connectedServiceId?: string;
   connectedServiceProfileId?: string;
@@ -32,6 +33,7 @@ type CodexAgentRuntimeDescriptorProvider = Readonly<{
       backendMode?: CodexBackendMode;
       vendorSessionId?: string;
       homePath?: string;
+      sqliteHomePath?: string;
       home?: 'user' | 'connectedService';
       connectedServiceId?: string;
       connectedServiceProfileId?: string;
@@ -76,6 +78,7 @@ type CanonicalAgentRuntimeDescriptorByProviderId = {
     connectedServiceProfileId: string | null;
     connectedServiceGroupId: string | null;
     homePath: string | null;
+    sqliteHomePath: string | null;
   }>;
   opencode: Readonly<{
     providerId: 'opencode';
@@ -139,6 +142,7 @@ function readCanonicalCodexProviderExtra(value: unknown) {
       ? normalizeTrimmedString(runtimeAffinity.connectedServiceGroupId)
       : null,
     homePath: normalizeTrimmedString(runtimeAffinity.homePath),
+    sqliteHomePath: normalizeTrimmedString(runtimeAffinity.sqliteHomePath),
   };
 }
 
@@ -189,6 +193,7 @@ function buildCodexRuntimeAffinityProviderExtra(params: Readonly<{
   connectedServiceProfileId?: string | null;
   connectedServiceGroupId?: string | null;
   homePath?: string | null;
+  sqliteHomePath?: string | null;
 }>): NonNullable<CodexAgentRuntimeDescriptorProvider['providerExtra']> {
   return {
     owner: 'codex',
@@ -198,6 +203,7 @@ function buildCodexRuntimeAffinityProviderExtra(params: Readonly<{
       backendMode: params.backendMode,
       ...(params.vendorSessionId ? { vendorSessionId: params.vendorSessionId } : {}),
       ...(params.homePath ? { homePath: params.homePath } : {}),
+      ...(params.sqliteHomePath ? { sqliteHomePath: params.sqliteHomePath } : {}),
       ...(params.home ? { home: params.home } : {}),
       ...(params.home === 'connectedService' && params.connectedServiceId
         ? { connectedServiceId: params.connectedServiceId }
@@ -220,6 +226,7 @@ export function buildCodexAgentRuntimeDescriptorV1(params: Readonly<{
   connectedServiceProfileId?: string | null;
   connectedServiceGroupId?: string | null;
   homePath?: string | null;
+  sqliteHomePath?: string | null;
 }>): CodexAgentRuntimeDescriptorV1 {
   return {
     v: 1,
@@ -344,6 +351,7 @@ export function readCanonicalAgentRuntimeDescriptorV1ForProvider(
         connectedServiceGroupId: providerExtra?.connectedServiceGroupId
           ?? (home === 'connectedService' ? normalizeTrimmedString(descriptor.provider.connectedServiceGroupId) : null),
         homePath: providerExtra?.homePath ?? normalizeTrimmedString(descriptor.provider.homePath),
+        sqliteHomePath: providerExtra?.sqliteHomePath ?? normalizeTrimmedString(descriptor.provider.sqliteHomePath),
       };
     }
     case 'opencode': {

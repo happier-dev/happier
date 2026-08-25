@@ -149,11 +149,14 @@ interface LoopOptions {
 export async function loop(opts: LoopOptions): Promise<number> {
 
     installClaudeProviderOwnedUserMessageEchoClassifier(opts.session);
+    logger.infoFile('[CLAUDE_STARTUP] stage=provider_loop_entered');
 
     // Get log path for debug display
     const logPath = logger.logFilePath;
+    logger.infoFile('[CLAUDE_STARTUP] stage=provider_activity_binding_started');
     const runtimeActivityContributions =
         await opts.runtimeActivityContributions?.activateProviderTasks();
+    logger.infoFile('[CLAUDE_STARTUP] stage=provider_activity_binding_completed');
     let session = new Session({
         client: opts.session,
         pushSender: opts.pushSender ?? null,
@@ -190,7 +193,9 @@ export async function loop(opts: LoopOptions): Promise<number> {
         session.lastPermissionMode = opts.permissionMode ?? 'default';
         session.lastPermissionModeUpdatedAt = typeof opts.permissionModeUpdatedAt === 'number' ? opts.permissionModeUpdatedAt : 0;
     }
+    logger.infoFile('[CLAUDE_STARTUP] stage=session_ready_callback_started');
     await opts.onSessionReady?.(session)
+    logger.infoFile('[CLAUDE_STARTUP] stage=session_ready_callback_completed');
 
     if (opts.claudeUnifiedTerminalEnabled === true) {
         const unifiedTerminalDecision = resolveCliFeatureDecision({
@@ -200,6 +205,7 @@ export async function loop(opts: LoopOptions): Promise<number> {
         if (unifiedTerminalDecision.state !== 'enabled') {
             throw new Error('Claude unified terminal runtime is disabled by feature policy');
         }
+        logger.infoFile('[CLAUDE_STARTUP] stage=provider_launcher_entered', { runtime: 'unified-terminal' });
         const result = await claudeUnifiedTerminalLauncher(session, {
             initialMode: opts.initialClaudeUnifiedTerminalMode ?? {
                 permissionMode: opts.permissionMode ?? session.lastPermissionMode ?? 'default',
@@ -228,6 +234,7 @@ export async function loop(opts: LoopOptions): Promise<number> {
         logger.debug(`[loop] Iteration with mode: ${mode}`);
         switch (mode) {
             case 'local': {
+                logger.infoFile('[CLAUDE_STARTUP] stage=provider_launcher_entered', { runtime: 'local' });
                 const result = await claudeLocalLauncher(session, {
                     entry: localEntry,
                     remoteSwitchingEnabled: true,
@@ -247,6 +254,7 @@ export async function loop(opts: LoopOptions): Promise<number> {
             }
 
             case 'remote': {
+                logger.infoFile('[CLAUDE_STARTUP] stage=provider_launcher_entered', { runtime: 'agent-sdk' });
                 const reason = await claudeRemoteLauncher(session, {
                     initialMode: opts.initialClaudeUnifiedTerminalMode,
                 });

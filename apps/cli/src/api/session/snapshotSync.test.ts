@@ -3,9 +3,17 @@ import { describe, expect, it, vi } from 'vitest';
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 
-vi.mock('@/configuration', () => ({
-    configuration: { serverUrl: 'http://example.invalid', apiServerUrl: 'http://example.invalid' },
-}));
+vi.mock('@/configuration', async (importOriginal) => {
+  const original = await importOriginal<typeof import('@/configuration')>();
+  return {
+    ...original,
+    configuration: {
+      ...original.configuration,
+      serverUrl: 'http://example.invalid',
+      apiServerUrl: 'http://example.invalid',
+    },
+  };
+});
 
 import axios from 'axios';
 import { fetchSessionSnapshotUpdateFromServer } from './snapshotSync';

@@ -65,7 +65,10 @@ function validateAnswersAgainstQuestions(params: Readonly<{
         if (
             values.length === 0
             || (!descriptor.multiSelect && values.length !== 1)
-            || values.some((value) => value.trim().length === 0)
+            || values.some((value) => (
+                value.trim().length === 0
+                && !(value.length === 0 && descriptor.freeform?.allowEmpty === true)
+            ))
             || (!descriptor.allowsFreeform && values.some((value) => !descriptor.options.some((option) => option.answerValue === value)))
         ) {
             throw new PublicRpcHandlerError(params.errorCode);

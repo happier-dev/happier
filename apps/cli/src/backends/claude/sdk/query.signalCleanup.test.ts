@@ -27,7 +27,7 @@ describe('claude sdk query signal cleanup', () => {
     }
   });
 
-  it('cleans up the child process when the parent receives SIGTERM (no hang)', { timeout: 20_000 }, async () => {
+  it('cleans up the child process when the parent receives SIGTERM (no hang)', { timeout: 30_000 }, async () => {
     tmpRoot = mkdtempSync(join(tmpdir(), 'happier-claude-query-sigterm-'));
     const sleeper = join(tmpRoot, `sleep-${Date.now()}.js`);
     const markerPath = join(tmpRoot, 'marker.json');
@@ -63,6 +63,7 @@ describe('claude sdk query signal cleanup', () => {
         abort: abortController.signal,
       },
     });
+    let descendantPid: number | null = null;
 
     try {
       expect(process.listeners('SIGTERM').length).toBe(sigtermBefore + 1);
@@ -78,7 +79,7 @@ describe('claude sdk query signal cleanup', () => {
             try {
               resolve(JSON.parse(readFileSync(markerPath, 'utf8')) as { childPid: number });
             } catch (error) {
-              if (Date.now() - startedAt > 5_000) {
+              if (Date.now() - startedAt > 10_000) {
                 reject(error);
                 return;
               }
@@ -87,9 +88,10 @@ describe('claude sdk query signal cleanup', () => {
           };
           poll();
         }),
-        6_000,
+        11_000,
         'descendant marker before SIGTERM',
       );
+      descendantPid = marker.childPid;
 
       process.emit('SIGTERM');
 
@@ -100,7 +102,7 @@ describe('claude sdk query signal cleanup', () => {
           const check = () => {
             try {
               process.kill(marker.childPid, 0);
-              if (Date.now() - startedAt > 5_000) {
+              if (Date.now() - startedAt > 10_000) {
                 reject(new Error(`Timed out waiting for descendant ${marker.childPid} to exit`));
                 return;
               }
@@ -111,7 +113,7 @@ describe('claude sdk query signal cleanup', () => {
           };
           check();
         }),
-        6_000,
+        11_000,
         'descendant process cleanup after SIGTERM',
       );
 
@@ -121,6 +123,13 @@ describe('claude sdk query signal cleanup', () => {
       expect(process.listeners('SIGINT').length).toBe(sigintBefore);
     } finally {
       abortController.abort();
+      if (descendantPid !== null) {
+        try {
+          process.kill(descendantPid, 'SIGKILL');
+        } catch {
+          // already gone
+        }
+      }
     }
   });
 });

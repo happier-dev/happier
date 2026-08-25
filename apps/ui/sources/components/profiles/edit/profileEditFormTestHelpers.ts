@@ -133,7 +133,7 @@ export function installProfileEditFormModuleMocks(
     });
 
     vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
-        DropdownMenu: () => null,
+        DropdownMenu: (props: Record<string, unknown>) => React.createElement('DropdownMenu', props),
     }));
 
     vi.mock('@/components/ui/lists/ItemList', () => ({

@@ -29,7 +29,12 @@ import { DEFAULT_AGENT_ID, getAgentCore, type AgentId } from '@/agents/catalog/c
 import { AgentIcon } from '@/agents/registry/AgentIcon';
 import { getResolvedBackendCatalogEntries, type ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { buildBackendTargetKey } from '@happier-dev/protocol';
+import {
+    buildBackendTargetKey,
+    resolveCodingPromptBehaviorV1,
+    type CodingPromptBehaviorModeV1,
+    type CodingPromptSessionTitleUpdatesModeV1,
+} from '@happier-dev/protocol';
 import { supportsDirectTranscriptStorageForNewSession } from '@/components/sessions/new/modules/newSessionTranscriptStorage';
 import { readAccountTranscriptStorageDefaults, type SessionTranscriptStorageMode } from '@/sync/domains/session/transcriptStorageDefaults';
 import { MachinePreviewModal } from './MachinePreviewModal';
@@ -41,6 +46,10 @@ import {
 } from './profileBackendEntryStorage';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { Icon } from '@/components/ui/icons/Icon';
+import {
+    getCodingPromptResponseOptionsModeItems,
+    getCodingPromptTitleUpdatesModeItems,
+} from '@/components/settings/session/codingPromptBehaviorOptions';
 
 function stripUndefinedRecordValues<TValue>(
     record: Readonly<Record<string, TValue | undefined>>,
@@ -88,6 +97,10 @@ export function ProfileEditForm({
     const enabledAgentIds = useEnabledAgentIds();
     const machines = useAllMachines();
     const settings = useSettings();
+    const accountCodingPromptBehavior = React.useMemo(
+        () => resolveCodingPromptBehaviorV1(settings),
+        [settings],
+    );
     const directSessionsEnabled = useFeatureEnabled('sessions.direct');
     const [favoriteMachines, setFavoriteMachines] = useSettingMutable('favoriteMachines');
     const [secrets, setSecrets] = useSettingMutable('secrets');
@@ -179,6 +192,12 @@ export function ProfileEditForm({
     );
 
     const [name, setName] = React.useState(profile.name || '');
+    const [sessionTitleUpdatesOverride, setSessionTitleUpdatesOverride] = React.useState<CodingPromptSessionTitleUpdatesModeV1 | null>(
+        profile.codingPromptBehaviorV1?.sessionTitleUpdates ?? null,
+    );
+    const [responseOptionsOverride, setResponseOptionsOverride] = React.useState<CodingPromptBehaviorModeV1 | null>(
+        profile.codingPromptBehaviorV1?.responseOptions ?? null,
+    );
     const sessionDefaultPermissionModeByTargetKey = useSetting('sessionDefaultPermissionModeByTargetKey');
     const newSessionDefaultPersistenceModeV1 = useSetting('newSessionDefaultPersistenceModeV1');
     const newSessionDefaultPersistenceModeByTargetKeyV1 = useSetting('newSessionDefaultPersistenceModeByTargetKeyV1');
@@ -438,6 +457,9 @@ export function ProfileEditForm({
 
     const [openPermissionProvider, setOpenPermissionProvider] = React.useState<null | string>(null);
     const [openStorageProvider, setOpenStorageProvider] = React.useState<null | string>(null);
+    const [openPromptBehaviorMenu, setOpenPromptBehaviorMenu] = React.useState<null | 'title' | 'response'>(null);
+    const titleUpdatesModeItems = React.useMemo(getCodingPromptTitleUpdatesModeItems, []);
+    const responseOptionsModeItems = React.useMemo(getCodingPromptResponseOptionsModeItems, []);
 
     const canSelectMachineLogin = machineLoginRequirement.selectableTargetKey !== null;
     const effectiveAuthMode = authMode === 'machineLogin' && canSelectMachineLogin ? 'machineLogin' : undefined;
@@ -514,6 +536,8 @@ export function ProfileEditForm({
             authMode,
             requiresMachineLogin,
             derivedEnvVarRequirements,
+            sessionTitleUpdatesOverride,
+            responseOptionsOverride,
             // Bindings are settings-level but edited here; include for dirty tracking.
             secretBindings: secretBindingsDraft,
         });
@@ -529,6 +553,8 @@ export function ProfileEditForm({
             authMode,
             requiresMachineLogin,
             derivedEnvVarRequirements,
+            sessionTitleUpdatesOverride,
+            responseOptionsOverride,
             secretBindings: secretBindingsDraft,
         });
         return currentSnapshot !== initialSnapshotRef.current;
@@ -540,8 +566,10 @@ export function ProfileEditForm({
         environmentVariables,
         name,
         derivedEnvVarRequirements,
+        responseOptionsOverride,
         requiresMachineLogin,
         secretBindingsDraft,
+        sessionTitleUpdatesOverride,
     ]);
 
     React.useEffect(() => {
@@ -638,6 +666,13 @@ export function ProfileEditForm({
             defaultPersistenceModeByAgent: {},
             compatibilityByTargetKey,
             compatibility: {},
+            codingPromptBehaviorV1: sessionTitleUpdatesOverride || responseOptionsOverride
+                ? {
+                    v: 1,
+                    ...(sessionTitleUpdatesOverride ? { sessionTitleUpdates: sessionTitleUpdatesOverride } : {}),
+                    ...(responseOptionsOverride ? { responseOptions: responseOptionsOverride } : {}),
+                }
+                : undefined,
             updatedAt: Date.now(),
         }, secretBindingsDraft);
     }, [
@@ -650,10 +685,12 @@ export function ProfileEditForm({
         name,
         onSave,
         profile,
+        responseOptionsOverride,
         authMode,
         effectiveAuthMode,
         machineLoginRequirement.selectableTargetKey,
         secretBindingsDraft,
+        sessionTitleUpdatesOverride,
         supportedDirectBackendEntries,
     ]);
 
@@ -681,6 +718,86 @@ export function ProfileEditForm({
                         />
                     </View>
                 </React.Fragment>
+            </ItemGroup>
+
+            <ItemGroup
+                title={t('settingsSession.promptPersonalization.title')}
+                footer={t('settingsSession.promptPersonalization.footer')}
+            >
+                <DropdownMenu
+                    open={openPromptBehaviorMenu === 'title'}
+                    onOpenChange={(open) => setOpenPromptBehaviorMenu(open ? 'title' : null)}
+                    variant="selectable"
+                    search={false}
+                    showCategoryTitles={false}
+                    selectedId={sessionTitleUpdatesOverride ?? '__account__'}
+                    matchTriggerWidth={true}
+                    connectToTrigger={true}
+                    rowKind="item"
+                    popoverBoundaryRef={popoverBoundaryRef}
+                    itemTrigger={{
+                        title: t('settingsSession.promptPersonalization.askAgentToRenameSessionsTitle'),
+                        subtitle: sessionTitleUpdatesOverride
+                            ? titleUpdatesModeItems.find((item) => item.id === sessionTitleUpdatesOverride)?.title
+                            : t('profiles.defaultPermissions.accountDefaultSubtitle', {
+                                label: titleUpdatesModeItems.find((item) => item.id === accountCodingPromptBehavior.sessionTitleUpdates)?.title ?? '',
+                            }),
+                        showSelectedSubtitle: false,
+                        itemProps: { testID: 'profile-session-title-updates-mode-trigger' },
+                    }}
+                    items={[
+                        {
+                            id: '__account__',
+                            title: t('profiles.defaultPermissions.useAccountDefault'),
+                            subtitle: t('profiles.defaultPermissions.currently', {
+                                label: titleUpdatesModeItems.find((item) => item.id === accountCodingPromptBehavior.sessionTitleUpdates)?.title ?? '',
+                            }),
+                        },
+                        ...titleUpdatesModeItems,
+                    ]}
+                    onSelect={(id) => {
+                        setSessionTitleUpdatesOverride(
+                            id === 'disabled' || id === 'initial' || id === 'ongoing' ? id : null,
+                        );
+                        setOpenPromptBehaviorMenu(null);
+                    }}
+                />
+                <DropdownMenu
+                    open={openPromptBehaviorMenu === 'response'}
+                    onOpenChange={(open) => setOpenPromptBehaviorMenu(open ? 'response' : null)}
+                    variant="selectable"
+                    search={false}
+                    showCategoryTitles={false}
+                    selectedId={responseOptionsOverride ?? '__account__'}
+                    matchTriggerWidth={true}
+                    connectToTrigger={true}
+                    rowKind="item"
+                    popoverBoundaryRef={popoverBoundaryRef}
+                    itemTrigger={{
+                        title: t('settingsSession.promptPersonalization.askAgentToSuggestReplyOptionsTitle'),
+                        subtitle: responseOptionsOverride
+                            ? responseOptionsModeItems.find((item) => item.id === responseOptionsOverride)?.title
+                            : t('profiles.defaultPermissions.accountDefaultSubtitle', {
+                                label: responseOptionsModeItems.find((item) => item.id === accountCodingPromptBehavior.responseOptions)?.title ?? '',
+                            }),
+                        showSelectedSubtitle: false,
+                        itemProps: { testID: 'profile-response-options-mode-trigger' },
+                    }}
+                    items={[
+                        {
+                            id: '__account__',
+                            title: t('profiles.defaultPermissions.useAccountDefault'),
+                            subtitle: t('profiles.defaultPermissions.currently', {
+                                label: responseOptionsModeItems.find((item) => item.id === accountCodingPromptBehavior.responseOptions)?.title ?? '',
+                            }),
+                        },
+                        ...responseOptionsModeItems,
+                    ]}
+                    onSelect={(id) => {
+                        setResponseOptionsOverride(id === 'agent' || id === 'disabled' ? id : null);
+                        setOpenPromptBehaviorMenu(null);
+                    }}
+                />
             </ItemGroup>
 
             {profile.isBuiltIn && profileDocs?.setupGuideUrl && (

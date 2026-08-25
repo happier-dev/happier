@@ -64,6 +64,33 @@ describe('runPi', () => {
     });
   });
 
+  it('forwards the resolved tool delivery mode to the Pi runtime fallback', async () => {
+    await runPi({ credentials });
+
+    const config = runStandardAcpProviderMock.mock.calls[0]?.[1];
+    const { createPiAcpRuntime } = await import('@/backends/pi/acp/runtime');
+    const createPiAcpRuntimeMock = vi.mocked(createPiAcpRuntime);
+    createPiAcpRuntimeMock.mockClear();
+    config.createRuntime({
+      directory: '/tmp/repo',
+      machineId: 'machine-1',
+      session: {},
+      messageBuffer: {},
+      mcpServers: {},
+      permissionHandler: {},
+      setThinking() {},
+      getPermissionMode: () => 'default',
+      getAbortSignal: () => new AbortController().signal,
+      memoryRecallGuidanceEnabled: false,
+      toolDelivery: 'unsupported',
+      providerInputConsumer: {},
+    });
+
+    expect(createPiAcpRuntimeMock).toHaveBeenCalledWith(expect.objectContaining({
+      fallbackToolDelivery: 'unsupported',
+    }));
+  });
+
   it('uses the native Pi tool catalog as the unrestricted permission queue key', async () => {
     await runPi({ credentials });
 

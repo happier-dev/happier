@@ -5,6 +5,7 @@ import {
   type ResolvedActionOption,
 } from '@happier-dev/protocol';
 import { createActionToolNameToIdMap } from './actionToolCatalog';
+import { bindContextualActionToolInput } from './contextualActionToolInput';
 import { normalizeExecutionRunToolResult } from './normalizeExecutionRunToolResult';
 
 type ActionExecutorResult = Readonly<
@@ -18,6 +19,7 @@ type ActionExecutorLike = Readonly<{
     input: unknown,
     ctx: Readonly<{
       defaultSessionId: string;
+      defaultSessionMachineId?: string | null;
       surface: 'mcp' | 'cli' | 'session_agent';
       approvalOrigin?: ApprovalRequestOriginV1 | null;
       callerPermissionMode?: string | null;
@@ -100,6 +102,7 @@ export function createActionToolExecutorBridge(params: Readonly<{
   actionsSettings?: ActionsSettingsV1 | null;
   getActionsSettings?: (() => ActionsSettingsV1 | null) | null;
   resolveCallerPermissionMode?: (() => string | null | undefined) | null;
+  defaultSessionMachineId?: string | null;
 }>): Readonly<{
   executeActionByToolName: (toolName: string, toolArgs: unknown, defaultSessionId: string, options?: ActionToolExecutionOptions) => Promise<ActionToolBridgeResult>;
   resolveActionOptions: (args: Readonly<{
@@ -123,6 +126,7 @@ export function createActionToolExecutorBridge(params: Readonly<{
       const actionRequestId = readActionRequestId(options?.approvalOrigin);
       const context = {
         defaultSessionId,
+        ...(params.defaultSessionMachineId ? { defaultSessionMachineId: params.defaultSessionMachineId } : {}),
         surface,
         ...(options?.approvalOrigin ? { approvalOrigin: options.approvalOrigin } : {}),
         ...(callerPermissionMode ? { callerPermissionMode } : {}),
@@ -134,11 +138,16 @@ export function createActionToolExecutorBridge(params: Readonly<{
         if (!actionId) {
           return { ok: false, errorCode: 'invalid_action_input', error: 'Missing actionId' };
         }
-        return normalizeActionToolResult(actionId as ActionId, await params.executor.execute(
-          actionId as ActionId,
-          Object.prototype.hasOwnProperty.call(toolArgs ?? {}, 'input')
+        const input = bindContextualActionToolInput({
+          actionId,
+          input: Object.prototype.hasOwnProperty.call(toolArgs ?? {}, 'input')
             ? normalizeActionExecuteInput((toolArgs as any).input)
             : {},
+          context,
+        });
+        return normalizeActionToolResult(actionId as ActionId, await params.executor.execute(
+          actionId as ActionId,
+          input,
           context,
         ));
       }
@@ -155,7 +164,7 @@ export function createActionToolExecutorBridge(params: Readonly<{
 
       return normalizeActionToolResult(actionId, await params.executor.execute(
         actionId,
-        toolArgs,
+        bindContextualActionToolInput({ actionId, input: toolArgs, context }),
         context,
       ));
     },

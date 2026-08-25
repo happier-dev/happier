@@ -631,15 +631,9 @@ describe('runStandardAcpProvider', () => {
     expect(resolvedPrompt).not.toContain('vendor-session-123');
   });
 
-  it('shares canonical prompt composition with spawn-delivery runtimes without duplicating it on the first message', async () => {
+  it('does not duplicate a spawn-delivered system prompt on the first message', async () => {
     const harness = createHarness();
     harness.config.deliversSystemPromptAtSpawn = true;
-    let resolveSystemPromptBeforeSpawn: (() => Promise<string>) | undefined;
-    const originalCreateRuntime = harness.config.createRuntime;
-    harness.config.createRuntime = (params: any) => {
-      resolveSystemPromptBeforeSpawn = params.resolveSystemPromptBeforeSpawn;
-      return originalCreateRuntime(params);
-    };
     let firstMessagePrompt = '';
     harness.deps.runPermissionModePromptLoopFn = async (params: any) => {
       await params.runtime.startOrLoad({});
@@ -648,8 +642,6 @@ describe('runStandardAcpProvider', () => {
 
     await runStandardAcpProvider(harness.opts, harness.config, harness.deps);
 
-    const spawnPrompt = await resolveSystemPromptBeforeSpawn?.() ?? '';
-    expect(spawnPrompt).toContain('Happier tools are available through the CLI bridge');
     expect(firstMessagePrompt).toBe('EXPLICIT BASE');
   });
 

@@ -26,6 +26,7 @@ import { isTrustedAlwaysAutoApproveToolName } from './alwaysAutoApproveToolName'
 import { extractShellCommand } from './permissionToolIdentifier';
 import { resolveAgentRequestKind } from './requestKind';
 import { shouldDenyAgentSessionTitleToolCall } from './codingPromptTitlePermission';
+import { resolveSessionCodingPromptSettingsFromSession } from '../prompting/coding/resolveSessionCodingPromptSettings';
 import { parseTrustedHappierToolsShellBridgeCommand } from '@/agent/tools/happierTools/runtime/buildHappierToolsShellBridgeCommand';
 
 export type { PermissionResult, PendingRequest };
@@ -92,6 +93,21 @@ export class CodexLikePermissionHandler extends BasePermissionHandler {
     }
   }
 
+  /**
+   * Title-tool denial evaluated on the same merged settings the prompt and tools bridge
+   * consume: a profile override disabling sessionTitleUpdates must deny here too.
+   */
+  private shouldDenySessionTitleToolCall(toolName: string, input: unknown): boolean {
+    return shouldDenyAgentSessionTitleToolCall({
+      settings: resolveSessionCodingPromptSettingsFromSession({
+        settings: this.getAccountSettingsSnapshot() ?? {},
+        session: this.session,
+      }),
+      toolName,
+      input,
+    });
+  }
+
   private resolveDecisionForToolCall(toolCallId: string, toolName: string, input: unknown): PermissionResult | null {
     if (this.isPermissionRequestClaimed(toolCallId)) {
       return null;
@@ -100,11 +116,7 @@ export class CodexLikePermissionHandler extends BasePermissionHandler {
       return null;
     }
 
-    if (shouldDenyAgentSessionTitleToolCall({
-      settings: this.getAccountSettingsSnapshot(),
-      toolName,
-      input,
-    })) {
+    if (this.shouldDenySessionTitleToolCall(toolName, input)) {
       return { decision: 'denied' };
     }
 
@@ -222,11 +234,7 @@ export class CodexLikePermissionHandler extends BasePermissionHandler {
       return pending;
     }
 
-    if (shouldDenyAgentSessionTitleToolCall({
-      settings: this.getAccountSettingsSnapshot(),
-      toolName,
-      input,
-    })) {
+    if (this.shouldDenySessionTitleToolCall(toolName, input)) {
       logger.debug(`${this.getLogPrefix()} Denying session title tool ${toolName} (${toolCallId}) because title updates are disabled`);
       this.recordAutoDecision(toolCallId, toolName, input, 'denied');
       return { decision: 'denied' };

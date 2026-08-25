@@ -115,7 +115,10 @@ describe('MachinePickerScreen (back fallback)', () => {
         expect(typeof backButton?.props?.onPress).toBe('function');
         backButton?.props?.onPress?.();
 
-        expect(routerMock.replace).toHaveBeenCalledWith('/new');
+        expect(routerMock.replace).toHaveBeenCalledWith({
+            pathname: '/new',
+            params: { draftId: expect.any(String) },
+        });
         expect(routerMock.back).toHaveBeenCalledTimes(0);
     });
 });

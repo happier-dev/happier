@@ -2553,6 +2553,9 @@ function SessionViewLoaded({
     // Check if CLI version is outdated and not already acknowledged
     const cliVersion = session.metadata?.version;
     const machineId = reachableMachineTarget?.machineId ?? session.metadata?.machineId;
+    const goalControlMachineId = controlMachineTarget?.machineId ?? machineId;
+    const goalControlMachine = useMachine(typeof goalControlMachineId === 'string' ? goalControlMachineId : '');
+    const daemonGoalControlsSupported = goalControlMachine?.metadata?.daemonSessionGoalControlsSupported === true;
     const isCliOutdated = cliVersion && !isVersionSupported(cliVersion, MINIMUM_CLI_VERSION);
     const isAcknowledged = machineId && acknowledgedCliVersions[machineId] === cliVersion;
     const shouldShowCliWarning = isCliOutdated && !isAcknowledged;
@@ -2672,8 +2675,8 @@ function SessionViewLoaded({
     );
     const hasWriteAccess = hasSessionWriteAccess(session.accessLevel);
     const providerSupportsEditableSessionGoals = React.useMemo(
-        () => supportsEditableSessionGoals({ agentId, session }),
-        [agentId, session],
+        () => supportsEditableSessionGoals({ agentId, session, daemonGoalControlsSupported }),
+        [agentId, daemonGoalControlsSupported, session],
     );
     const canEditSessionGoals = React.useMemo(
         () => isSessionGoalEditingAvailable({
@@ -2687,10 +2690,10 @@ function SessionViewLoaded({
     );
     // Provider goal-action capability profile applied to the set-first-goal form (before any native
     // goal item exists), so a provider like Claude shows only edit/clear with no budget/lifecycle
-    // controls. Null = full legacy surface (Codex). Capability-driven; no provider-name branching.
+    // controls. The registry has already intersected provider semantics with runtime reachability.
     const sessionGoalActionCapabilityFallback = React.useMemo(
-        () => resolveSessionGoalActionCapabilityProfile({ agentId, session }),
-        [agentId, session],
+        () => resolveSessionGoalActionCapabilityProfile({ agentId, session, daemonGoalControlsSupported }),
+        [agentId, daemonGoalControlsSupported, session],
     );
     const setSessionGoalForView = React.useCallback(
         (request: Parameters<typeof sessionGoalSet>[1]) => sessionGoalSet(sessionId, request),

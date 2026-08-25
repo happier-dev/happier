@@ -1,4 +1,4 @@
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -25,16 +25,12 @@ type PiRpcBackendWithPromptAdmission = PiRpcBackend & {
 
 function makeFakePiRpcProcessScript(
   dir: string,
-  scenario:
-    | 'ack-before-turn'
-    | 'advertised-prompt-ack-before-turn'
-    | 'command-without-turn'
-    | 'negative-ack-then-turn'
-    | 'response-loss'
-    | 'turn-before-ack',
+  scenario: 'ack-before-turn' | 'command-without-turn' | 'command-ack-before-turn' | 'command-state-unknown-before-turn' | 'negative-ack-then-turn' | 'response-loss' | 'turn-before-ack',
 ): string {
   const scriptPath = join(dir, `fake-pi-rpc-${scenario}.js`);
+  const observedPromptsPath = join(dir, 'observed-prompts.jsonl');
   const script = `
+const fs = require('node:fs');
 const readline = require('node:readline');
 const rl = readline.createInterface({ input: process.stdin });
 const out = (value) => process.stdout.write(JSON.stringify(value) + '\\n');
@@ -61,6 +57,9 @@ rl.on('line', (line) => {
         data: {
           sessionId: 'pi-prompt-admission-test',
           model: { id: 'gpt-5.5', provider: 'openai-codex', name: 'GPT-5.5' },
+          ...(scenario === 'command-state-unknown-before-turn'
+            ? {}
+            : { isStreaming: false, isCompacting: false }),
         },
       });
       break;
@@ -82,24 +81,26 @@ rl.on('line', (line) => {
         data: {
           commands: scenario === 'command-without-turn'
             ? [{ name: 'goal', source: 'extension' }]
-            : scenario === 'advertised-prompt-ack-before-turn'
-              ? [{ name: 'goal', source: 'prompt' }]
+            : scenario === 'command-ack-before-turn' || scenario === 'command-state-unknown-before-turn'
+              ? [{ name: 'goal', source: 'extension' }]
               : [],
         },
       });
       break;
     case 'prompt':
+      fs.appendFileSync(${JSON.stringify(observedPromptsPath)}, JSON.stringify(command.message) + '\\n');
       if (scenario === 'command-without-turn') {
         out({ id: command.id, type: 'response', command: command.type, success: true });
         break;
       }
-      if (scenario === 'ack-before-turn') {
+      if (scenario === 'command-ack-before-turn' || scenario === 'command-state-unknown-before-turn') {
         out({ id: command.id, type: 'response', command: command.type, success: true });
-        setTimeout(() => out({ type: 'agent_start' }), 100);
-        setTimeout(() => out({ type: 'agent_end' }), 140);
+        const turnDelay = scenario === 'command-state-unknown-before-turn' ? 180 : 100;
+        setTimeout(() => out({ type: 'agent_start' }), turnDelay);
+        setTimeout(() => out({ type: 'agent_end' }), turnDelay + 40);
         break;
       }
-      if (scenario === 'advertised-prompt-ack-before-turn') {
+      if (scenario === 'ack-before-turn') {
         out({ id: command.id, type: 'response', command: command.type, success: true });
         setTimeout(() => out({ type: 'agent_start' }), 100);
         setTimeout(() => out({ type: 'agent_end' }), 140);
@@ -148,6 +149,9 @@ describe('PiRpcBackend prompt admission', () => {
       cwd: dir,
       command: process.execPath,
       args: [makeFakePiRpcProcessScript(dir, scenario)],
+      env: scenario === 'command-state-unknown-before-turn'
+        ? { HAPPIER_PI_RPC_AGENT_END_SETTLE_MS: '25' }
+        : {},
     });
     backends.push(backend);
     const session = await backend.startSession();
@@ -164,8 +168,20 @@ describe('PiRpcBackend prompt admission', () => {
     });
 
     await expect(submission.admission).resolves.toEqual({ status: 'accepted' });
+    await new Promise((resolve) => setTimeout(resolve, 50));
     expect(completionSettled).toBe(false);
     await expect(submission.completion).resolves.toBeUndefined();
+  });
+
+  it('preserves nonblank prompt bytes when sending them to Pi', async () => {
+    const { backend, sessionId } = await startBackend('ack-before-turn');
+
+    const prompt = '  /goal fix authentication  ';
+    const submission = backend.sendPromptWithAdmission(sessionId, prompt);
+
+    await expect(submission.admission).resolves.toEqual({ status: 'accepted' });
+    await expect(submission.completion).resolves.toBeUndefined();
+    expect(readFileSync(join(tempDirs[0]!, 'observed-prompts.jsonl'), 'utf8')).toBe(`${JSON.stringify(prompt)}\n`);
   });
 
   it('completes an advertised command that returns without starting an agent turn', async () => {
@@ -177,17 +193,33 @@ describe('PiRpcBackend prompt admission', () => {
     await expect(submission.completion).resolves.toBeUndefined();
   });
 
-  it('keeps an advertised prompt-template command pending until its delayed agent turn completes', async () => {
-    const { backend, sessionId } = await startBackend('advertised-prompt-ack-before-turn');
+  it('does not complete an extension command before its delayed agent turn starts', async () => {
+    const { backend, sessionId } = await startBackend('command-ack-before-turn');
 
     const submission = backend.sendPromptWithAdmission(sessionId, '/goal fix authentication');
+    let completionSettled = false;
+    void submission.completion.finally(() => {
+      completionSettled = true;
+    });
 
     await expect(submission.admission).resolves.toEqual({ status: 'accepted' });
-    const earlyCompletion = await Promise.race([
-      submission.completion.then(() => 'settled' as const),
-      new Promise<'pending'>((resolve) => setTimeout(() => resolve('pending'), 70)),
-    ]);
-    expect(earlyCompletion).toBe('pending');
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(completionSettled).toBe(false);
+    await expect(submission.completion).resolves.toBeUndefined();
+  });
+
+  it('does not treat incomplete state evidence as idle before a delayed extension-command turn', async () => {
+    const { backend, sessionId } = await startBackend('command-state-unknown-before-turn');
+
+    const submission = backend.sendPromptWithAdmission(sessionId, '/goal fix authentication');
+    let completionSettled = false;
+    void submission.completion.finally(() => {
+      completionSettled = true;
+    });
+
+    await expect(submission.admission).resolves.toEqual({ status: 'accepted' });
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    expect(completionSettled).toBe(false);
     await expect(submission.completion).resolves.toBeUndefined();
   });
 

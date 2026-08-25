@@ -121,7 +121,8 @@ vi.mock('@/utils/errors/errors', () => ({
     },
 }));
 
-vi.mock('@/sync/domains/settings/settings', () => ({
+vi.mock('@/sync/domains/settings/settings', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/sync/domains/settings/settings')>(),
     applySettings: mocks.applySettingsFn,
     settingsDefaults: createBaseMockSettings(),
     settingsParse: mocks.settingsParse,
@@ -147,7 +148,8 @@ vi.mock('@/sync/domains/state/storage', async () => {
 });
 });
 
-vi.mock('@/sync/domains/state/persistence', () => ({
+vi.mock('@/sync/domains/state/persistence', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/sync/domains/state/persistence')>(),
     loadPendingSettings: mocks.loadPendingSettings,
     loadSettings: () => ({ settings: createBaseMockSettings(), version: 9 }),
     loadLocalSettings: () => ({}),

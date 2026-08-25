@@ -1,6 +1,7 @@
-import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 
+import { writeGeneratedTextAtomicallyIfChanged } from '@/utils/fs/writeGeneratedTextAtomicallyIfChanged';
 import { buildPiBrokerExtensionSource } from './piBrokerExtensionSource';
 
 /**
@@ -40,12 +41,6 @@ async function retireVersionedPiBrokerExtensionAssets(extensionDir: string): Pro
     .map((entry) => rm(join(extensionDir, entry.name), { force: true })));
 }
 
-async function writeFileIfChanged(path: string, content: string): Promise<void> {
-  const existing = await readFile(path, 'utf8').catch(() => null);
-  if (existing === content) return;
-  await writeFile(path, content, { mode: 0o600 });
-}
-
 /**
  * Idempotently write the Pi broker extension into `<agentDir>/extensions/`. Safe to call repeatedly
  * (write-if-changed). Called by the materializer for brokered Pi sessions only — direct-API-key and
@@ -56,6 +51,10 @@ export async function ensurePiBrokerExtensionAsset(agentDir: string): Promise<st
   await mkdir(extensionDir, { recursive: true });
   await retireVersionedPiBrokerExtensionAssets(extensionDir);
   const path = resolvePiBrokerExtensionPath(agentDir);
-  await writeFileIfChanged(path, buildPiBrokerExtensionSource());
+  await writeGeneratedTextAtomicallyIfChanged({
+    path,
+    contents: buildPiBrokerExtensionSource(),
+    mode: 0o600,
+  });
   return path;
 }

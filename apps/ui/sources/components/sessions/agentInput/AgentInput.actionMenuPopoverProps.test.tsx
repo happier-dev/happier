@@ -1,5 +1,5 @@
 import React from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { createReducer } from '@/sync/reducer/reducer';
 import { settingsDefaults, type Settings } from '@/sync/domains/settings/settings';
@@ -100,7 +100,11 @@ vi.mock('@/agents/catalog/catalog', () => ({
     AGENT_IDS: ['codex', 'claude', 'opencode', 'gemini'],
     DEFAULT_AGENT_ID: 'codex',
     resolveAgentIdFromFlavor: () => null,
-    getAgentCore: () => ({ displayNameKey: 'agents.codex', toolRendering: { hideUnknownToolsByDefault: false } }),
+    getAgentCore: () => ({
+        displayNameKey: 'agents.codex',
+        toolRendering: { hideUnknownToolsByDefault: false },
+        ui: { agentPickerIconName: 'sparkles-outline' },
+    }),
     getAgentBehavior: (agentId: string) => ({
         sessionUsage: {
             supportsExactContextUsageBadge: agentId !== 'codex' && agentId !== 'gemini',
@@ -160,8 +164,9 @@ vi.mock('@/components/ui/status/StatusDot', () => ({
     StatusDot: () => null,
 }));
 
+const activeSuggestionsState = vi.hoisted(() => ({ value: [] as Array<Record<string, unknown>> }));
 vi.mock('@/components/autocomplete/useActiveSuggestions', () => ({
-    useActiveSuggestions: () => [[], 0, () => {}, () => {}],
+    useActiveSuggestions: () => [activeSuggestionsState.value, 0, () => {}, () => {}],
 }));
 
 vi.mock('@/components/autocomplete/applySuggestion', () => ({
@@ -308,20 +313,21 @@ vi.mock('./components/AgentInputSelectionListPopover', () => ({
 }));
 
 describe('AgentInput (action menu popover props)', () => {
+    beforeEach(() => {
+        activeSuggestionsState.value = [];
+    });
+
     it('anchors autocomplete suggestions to the composer input container', async () => {
-        vi.resetModules();
         captured.last = null;
-        vi.doMock('@/components/autocomplete/useActiveSuggestions', () => ({
-            useActiveSuggestions: () => [[{
-                // `kind` is the registry lookup the row mapper resolves its section
-                // header and icon from; every suggestion carries one.
-                kind: 'slashCommand',
-                key: 'slash-command',
-                text: '/mcp',
-                label: '/mcp',
-                description: 'MCP',
-            }], 0, () => {}, () => {}],
-        }));
+        activeSuggestionsState.value = [{
+            // `kind` is the registry lookup the row mapper resolves its section
+            // header and icon from; every suggestion carries one.
+            kind: 'slashCommand',
+            key: 'slash-command',
+            text: '/mcp',
+            label: '/mcp',
+            description: 'MCP',
+        }];
 
         const { AgentInput } = await import('./AgentInput');
 
@@ -346,10 +352,7 @@ describe('AgentInput (action menu popover props)', () => {
     });
 
     it('ignores autocomplete suggestions whose component is missing instead of crashing', async () => {
-        vi.resetModules();
-        vi.doMock('@/components/autocomplete/useActiveSuggestions', () => ({
-            useActiveSuggestions: () => [[{ kind: 'slashCommand', key: 'broken', text: '/broken', component: undefined }], 0, () => {}, () => {}],
-        }));
+        activeSuggestionsState.value = [{ kind: 'slashCommand', key: 'broken', text: '/broken', component: undefined }];
 
         const { AgentInput } = await import('./AgentInput');
 
@@ -366,7 +369,6 @@ describe('AgentInput (action menu popover props)', () => {
     });
 
     it('anchors the permission popover to the permission chip and uses the shared popover sizing', async () => {
-        vi.resetModules();
         capturedPermissionPicker.last = null;
         const { AgentInput } = await import('./AgentInput');
 
@@ -397,7 +399,6 @@ describe('AgentInput (action menu popover props)', () => {
     });
 
     it('closes the permission popover after selecting a mode', async () => {
-        vi.resetModules();
         captured.last = null;
         capturedPermissionPicker.last = null;
         const { AgentInput } = await import('./AgentInput');
@@ -433,7 +434,6 @@ describe('AgentInput (action menu popover props)', () => {
     });
 
     it("routes the migrated delivery factory through the SelectionList popover and per-option onSelect dispatches the mutation (RV-1 F1)", async () => {
-        vi.resetModules();
         captured.last = null;
         capturedActionMenuContent.last = null;
         capturedChipPickerPopover.last = null;
@@ -506,7 +506,6 @@ describe('AgentInput (action menu popover props)', () => {
     });
 
     it("routes the migrated recipient factory through the SelectionList popover and per-option onSelect dispatches the mutation (RV-1 F1)", async () => {
-        vi.resetModules();
         captured.last = null;
         capturedActionMenuContent.last = null;
         capturedChipPickerPopover.last = null;
@@ -585,7 +584,6 @@ describe('AgentInput (action menu popover props)', () => {
     });
 
     it('routes the migrated storage factory through the SelectionList popover and per-option onSelect dispatches the mutation (RV-1 F1)', async () => {
-        vi.resetModules();
         captured.last = null;
         capturedActionMenuContent.last = null;
         capturedChipPickerPopover.last = null;
@@ -660,7 +658,6 @@ describe('AgentInput (action menu popover props)', () => {
     });
 
     it('routes the migrated Windows-mode factory through the SelectionList popover and per-option onSelect dispatches the mutation (RV-1 F1)', async () => {
-        vi.resetModules();
         captured.last = null;
         capturedActionMenuContent.last = null;
         capturedChipPickerPopover.last = null;
@@ -725,7 +722,6 @@ describe('AgentInput (action menu popover props)', () => {
     });
 
     it('routes collapsed content actions through the shared content popover anchored to the action menu button', async () => {
-        vi.resetModules();
         captured.last = null;
         capturedActionMenuContent.last = null;
         const { AgentInput } = await import('./AgentInput');
@@ -787,7 +783,6 @@ describe('AgentInput (action menu popover props)', () => {
     });
 
     it('toggles a visible extra-chip content popover closed when the chip is pressed twice', async () => {
-        vi.resetModules();
         captured.last = null;
         capturedActionMenuContent.last = null;
         const { AgentInput } = await import('./AgentInput');
@@ -843,7 +838,6 @@ describe('AgentInput (action menu popover props)', () => {
     });
 
     it('routes collapsed machine actions through the shared content popover when a machine popover is configured', async () => {
-        vi.resetModules();
         captured.last = null;
         capturedActionMenuContent.last = null;
         const { AgentInput } = await import('./AgentInput');
@@ -897,7 +891,6 @@ describe('AgentInput (action menu popover props)', () => {
     });
 
     it('routes collapsed resume actions through the shared content popover anchored to the action menu button', async () => {
-        vi.resetModules();
         captured.last = null;
         capturedActionMenuContent.last = null;
         const { AgentInput } = await import('./AgentInput');
@@ -950,7 +943,6 @@ describe('AgentInput (action menu popover props)', () => {
     });
 
     it('routes the target-server chip through the shared content popover rather than a route-only action', async () => {
-        vi.resetModules();
         captured.last = null;
         capturedActionMenuContent.last = null;
         const { createServerActionChip } = await import('./definitions/createServerActionChip');
@@ -987,7 +979,6 @@ describe('AgentInput (action menu popover props)', () => {
     });
 
     it('routes the checkout/worktree chip through the SelectionList popover anchored to the chip', async () => {
-        vi.resetModules();
         captured.last = null;
         capturedActionMenuContent.last = null;
         capturedChipPickerPopover.last = null;

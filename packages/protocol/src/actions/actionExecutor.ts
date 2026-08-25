@@ -121,6 +121,9 @@ export type ActionExecutorContext = Readonly<{
    */
   defaultSessionId?: string | null;
 
+  /** Machine authoritatively bound to the current session, for explicitly declared contextual defaults. */
+  defaultSessionMachineId?: string | null;
+
   /**
    * Optional explicit server routing hint. When omitted, deps may resolve serverId
    * from local caches given a sessionId.

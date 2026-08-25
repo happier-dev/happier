@@ -328,7 +328,7 @@ describe('/setup route', () => {
         expect(customRelayIds).toContain('setup.customRelayUrl');
         expect(customRelayIds).toContain('setup.customRelayName');
         expect(customRelayIds).toContain('setup.addRelay');
-        expect((changeRelayRow?.props.rightElement as { props?: { name?: string } } | undefined)?.props?.name).toBe('chevron-down');
+        expect((changeRelayRow?.props.rightElement as { props?: { name?: string } } | undefined)?.props?.name).toBe('caret-down');
     });
 
     it('does not wrap the post-auth setup route in the unauthenticated split shell', async () => {

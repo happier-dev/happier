@@ -34,13 +34,13 @@ describe('Kilo ACP runtime permission mode wiring', () => {
     await runtime.startOrLoad({});
     expect(createSpy).toHaveBeenCalledTimes(1);
     expect(createCalls).toEqual([
-      { agentId: 'kilo', permissionMode: 'default' },
+      { agentId: 'kilo', happierSessionId: 'test-session-id', permissionMode: 'default' },
     ]);
 
     permissionMode = 'read-only';
     await runtime.reset();
     await runtime.startOrLoad({});
     expect(createSpy).toHaveBeenCalledTimes(2);
-    expect(createCalls[1]).toEqual({ agentId: 'kilo', permissionMode: 'read-only' });
+    expect(createCalls[1]).toEqual({ agentId: 'kilo', happierSessionId: 'test-session-id', permissionMode: 'read-only' });
   });
 });

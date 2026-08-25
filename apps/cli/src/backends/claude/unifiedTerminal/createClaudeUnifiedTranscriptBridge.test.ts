@@ -897,60 +897,6 @@ describe('createClaudeUnifiedTranscriptBridge', () => {
     }
   });
 
-  it('discovers a fresh transcript when Claude writes before emitting SessionStart', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'happier-claude-unified-transcript-no-hook-'));
-    tempDirs.push(dir);
-    const workspaceDir = join(dir, 'workspace');
-    const claudeConfigDir = join(dir, 'claude-config');
-    await mkdir(workspaceDir, { recursive: true });
-    const projectDir = getProjectPath(workspaceDir, claudeConfigDir);
-    await mkdir(projectDir, { recursive: true });
-
-    let subscribedHook: ((data: SessionHookData) => void) | undefined;
-    const onMessage = vi.fn();
-    const bridge = createClaudeUnifiedTranscriptBridge({
-      sessionId: null,
-      transcriptPath: null,
-      workingDirectory: workspaceDir,
-      claudeConfigDir,
-      onMessage,
-      subscribeClaudeSessionHooks: (callback) => {
-        subscribedHook = callback;
-        return () => {
-          subscribedHook = undefined;
-        };
-      },
-      transcriptMissingWarningMs: 0,
-    });
-
-    try {
-      await bridge.start({ abortSignal: new AbortController().signal });
-      expect(subscribedHook).toBeTypeOf('function');
-
-      const transcriptPath = join(projectDir, '11111111-1111-4111-8111-111111111111.jsonl');
-      await appendJsonl(transcriptPath, {
-        type: 'assistant',
-        uuid: 'assistant_auth_failure_before_session_start',
-        timestamp: new Date().toISOString(),
-        sessionId: '11111111-1111-4111-8111-111111111111',
-        message: {
-          role: 'assistant',
-          content: [{ type: 'text', text: 'Not logged in · Please run /login' }],
-        },
-        error: 'authentication_failed',
-        isApiErrorMessage: true,
-      } as RawJSONLines);
-
-      await waitUntil(() => onMessage.mock.calls.length === 1);
-      expect(onMessage).toHaveBeenCalledWith(expect.objectContaining({
-        uuid: 'assistant_auth_failure_before_session_start',
-        error: 'authentication_failed',
-      }));
-    } finally {
-      await bridge.dispose();
-    }
-  });
-
   it('replays an early SessionStart through the identity owner, then re-reports once on exact proof', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'happier-claude-unified-transcript-proof-'));
     tempDirs.push(dir);
@@ -1385,12 +1331,6 @@ describe('createClaudeUnifiedTranscriptBridge', () => {
         isApiErrorMessage: true,
       } as RawJSONLines);
 
-      await waitUntil(() => onMessage.mock.calls.length === 1);
-      expect(onMessage).toHaveBeenCalledWith(expect.objectContaining({
-        sessionId: unhookedSessionId,
-        uuid: 'assistant_auth_failure_before_session_start',
-      }));
-
       const liveSessionId = '77777777-7777-4777-8777-777777777777';
       const liveTranscriptPath = join(projectDir, `${liveSessionId}.jsonl`);
       hook({
@@ -1410,10 +1350,13 @@ describe('createClaudeUnifiedTranscriptBridge', () => {
         },
       } as RawJSONLines);
 
-      await waitUntil(() => onMessage.mock.calls.length === 2);
-      expect(onMessage).toHaveBeenLastCalledWith(expect.objectContaining({
+      await waitUntil(() => onMessage.mock.calls.length === 1);
+      expect(onMessage).toHaveBeenCalledWith(expect.objectContaining({
         sessionId: liveSessionId,
         uuid: 'assistant_from_trusted_session_start',
+      }));
+      expect(onMessage).not.toHaveBeenCalledWith(expect.objectContaining({
+        sessionId: unhookedSessionId,
       }));
     } finally {
       await bridge.dispose();

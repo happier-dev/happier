@@ -616,6 +616,18 @@ export abstract class BasePermissionHandler {
         return completed;
     }
 
+    cancelPendingRequest(requestId: string, reason: string): boolean {
+        if (this.isPermissionRequestClaimed(requestId)) return false;
+        const context = this.requestCoordinator.getResponseContext(requestId);
+        if (!context) return false;
+        return this.completePendingPermissionRequest(
+            requestId,
+            context,
+            { decision: 'abort' },
+            { status: 'canceled', decision: 'abort', reason },
+        );
+    }
+
     /**
      * Reset state for new sessions.
      * This method is idempotent - safe to call multiple times.

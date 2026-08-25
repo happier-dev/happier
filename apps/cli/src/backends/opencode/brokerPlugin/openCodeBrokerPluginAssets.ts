@@ -1,7 +1,8 @@
-import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { configuration } from '@/configuration';
+import { writeGeneratedTextAtomicallyIfChanged } from '@/utils/fs/writeGeneratedTextAtomicallyIfChanged';
 
 import {
   OPEN_CODE_BROKER_PROVIDERS,
@@ -63,12 +64,6 @@ async function retireVersionedOpenCodeBrokerPluginAssets(pluginDir: string): Pro
     .map((entry) => rm(join(pluginDir, entry.name), { force: true })));
 }
 
-async function writeFileIfChanged(path: string, content: string): Promise<void> {
-  const existing = await readFile(path, 'utf8').catch(() => null);
-  if (existing === content) return;
-  await writeFile(path, content, { mode: 0o600 });
-}
-
 /**
  * Idempotently materialize the broker assets for the given providers:
  *  - ensure the Happier-owned connected config home exists (isolated ⇒ no user 3rd-party plugins), and
@@ -90,6 +85,10 @@ export async function ensureOpenCodeBrokerPluginAssets(params: Readonly<{
   await retireVersionedOpenCodeBrokerPluginAssets(pluginDir);
   if (providers.length === 0) return;
   await Promise.all(providers.map(async (provider) => {
-    await writeFileIfChanged(resolveOpenCodeBrokerPluginPath(provider, happyHomeDir), buildOpenCodeBrokerPluginSource(provider));
+    await writeGeneratedTextAtomicallyIfChanged({
+      path: resolveOpenCodeBrokerPluginPath(provider, happyHomeDir),
+      contents: buildOpenCodeBrokerPluginSource(provider),
+      mode: 0o600,
+    });
   }));
 }

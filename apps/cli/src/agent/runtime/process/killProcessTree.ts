@@ -11,7 +11,7 @@ function isAlive(pid: number): boolean {
   }
 }
 
-async function resolveDescendantPids(rootPid: number): Promise<number[]> {
+async function resolveDescendantPidsOnce(rootPid: number): Promise<number[]> {
   const processes = await psList();
   const childrenByParent = new Map<number, number[]>();
   for (const p of processes) {
@@ -35,6 +35,19 @@ async function resolveDescendantPids(rootPid: number): Promise<number[]> {
 
   visit(rootPid);
   return out;
+}
+
+async function resolveDescendantPids(rootPid: number): Promise<number[]> {
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      return await resolveDescendantPidsOnce(rootPid);
+    } catch (error) {
+      lastError = error;
+      if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  }
+  throw lastError;
 }
 
 function bestEffortKillPid(pid: number, signal: NodeJS.Signals): void {
@@ -66,11 +79,28 @@ export async function killProcessTree(
 
   // Keep child runtimes attached to their owning CLI process tree and explicitly terminate
   // descendants on disposal so provider processes cannot outlive their supervisor.
-  const descendants = await resolveDescendantPids(pid).catch(() => []);
+  // On POSIX, stop the root before taking the process-tree snapshot. Without this fence, a
+  // freshly spawned descendant can be reported to its parent before it is visible in the
+  // process listing; killing the parent then reparents that descendant and loses the only
+  // relationship that lets this owner find it.
+  const rootStopped = process.platform !== 'win32' && isAlive(pid);
+  if (rootStopped) bestEffortKillPid(pid, 'SIGSTOP');
+
+  let descendants: number[];
+  try {
+    descendants = await resolveDescendantPids(pid);
+  } catch {
+    // Process enumeration is an external best-effort boundary. The known root must still be
+    // resumed and terminated when the OS denies or transiently exhausts that boundary; making
+    // every caller fail here leaves the owned process alive and amplifies cleanup failures.
+    descendants = [];
+  }
   const all = [...descendants, pid];
 
   // Try graceful first (children-first).
-  for (const targetPid of all) bestEffortKillPid(targetPid, 'SIGTERM');
+  for (const targetPid of descendants) bestEffortKillPid(targetPid, 'SIGTERM');
+  if (rootStopped) bestEffortKillPid(pid, 'SIGCONT');
+  bestEffortKillPid(pid, 'SIGTERM');
   await waitForAllGone(all, graceMs);
 
   const remaining = all.filter((p) => isAlive(p));

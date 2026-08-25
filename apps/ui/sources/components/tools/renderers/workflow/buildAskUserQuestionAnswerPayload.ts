@@ -20,7 +20,13 @@ export type AskUserQuestionPayloadQuestion = Readonly<{
     responseKey?: string;
     options?: ReadonlyArray<AskUserQuestionPayloadOption>;
     multiSelect: boolean;
-    freeform?: Readonly<{ placeholder?: string; description?: string }>;
+    freeform?: Readonly<{
+        placeholder?: string;
+        description?: string;
+        initialValue?: string;
+        multiline?: boolean;
+        allowEmpty?: boolean;
+    }>;
 }>;
 
 export type NormalizeAskUserQuestionRenderQuestionsResult =
@@ -68,18 +74,29 @@ export function buildAskUserQuestionAnswerPayload(params: Readonly<{
             ? question.header
             : null;
         const key = question.responseKey ?? exactQuestion ?? exactHeader ?? '';
-        const typed = params.freeformAnswers.get(questionIndex);
-        if (typeof typed === 'string' && typed.trim().length > 0) {
-            rawAnswers[key] = [typed];
-            continue;
-        }
         const selected = params.selections.get(questionIndex);
         const options = Array.isArray(question.options) ? question.options : [];
-        rawAnswers[key] = selected
+        const selectedAnswers = selected
             ? [...selected]
                 .map((optionIndex) => resolveStructuredQuestionOptionAnswerValue(options[optionIndex]))
                 .filter((value): value is string => value !== null)
             : [];
+        if (selectedAnswers.length > 0) {
+            rawAnswers[key] = selectedAnswers;
+            continue;
+        }
+        const typed = params.freeformAnswers.get(questionIndex);
+        if (
+            typeof typed === 'string'
+            && (
+                typed.trim().length > 0
+                || (typed.length === 0 && question.freeform?.allowEmpty === true)
+            )
+        ) {
+            rawAnswers[key] = [typed];
+            continue;
+        }
+        rawAnswers[key] = question.freeform?.allowEmpty === true ? [''] : [];
     }
 
     const structuredAnswersV1 = StructuredQuestionAnswersV1Schema.parse(rawAnswers);

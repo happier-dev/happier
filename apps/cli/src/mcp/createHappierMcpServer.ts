@@ -12,7 +12,9 @@ import { normalizeExecutionRunRpcPayload } from '@/session/services/executionRun
 import { registerHappierMcpBuiltInTools } from '@/mcp/server/registerHappierMcpBuiltInTools';
 import type { Credentials } from '@/persistence';
 import { createCliActionExecutorHarness } from '@/session/actions/createCliActionExecutorHarness';
+import { createDaemonMemoryActionDeps } from '@/session/actions/createDaemonMemoryActionDeps';
 import { resolveSessionEncryptionContextFromCredentials } from '@/session/transport/encryption/sessionEncryptionContext';
+import { callMachineRpc } from '@/session/transport/rpc/machineRpc';
 import {
   PromptRegistryInstallRequestV1Schema,
   PromptRegistryInstallResponseV1Schema,
@@ -23,7 +25,6 @@ import {
   isActionSpecSurfacedOn,
 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { MemorySearchResultV1Schema, MemoryWindowV1Schema, type MemorySearchResultV1, type MemoryWindowV1 } from '@happier-dev/protocol';
 import {
   createMcpActionApprovalRequirement,
   createMcpActionEnablement,
@@ -180,16 +181,31 @@ export function createHappierMcpServer(
       executionRunAction: async (_sessionId, request) => await executionRuns.action(request),
       executionRunWait: async (_sessionId, request) => await executionRuns.wait(request),
 
-      daemonMemorySearch: async ({ query }): Promise<MemorySearchResultV1> => {
-        const res = await sessionScopedRpc(RPC_METHODS.DAEMON_MEMORY_SEARCH, query);
-        return MemorySearchResultV1Schema.parse(res);
-      },
-      daemonMemoryGetWindow: async ({ sessionId, seqFrom, seqTo }): Promise<MemoryWindowV1> => {
-        const res = await sessionScopedRpc(RPC_METHODS.DAEMON_MEMORY_GET_WINDOW, { v: 1, sessionId, seqFrom, seqTo });
-        return MemoryWindowV1Schema.parse(res);
-      },
-      daemonMemoryEnsureUpToDate: async ({ sessionId }) =>
-        await sessionScopedRpc(RPC_METHODS.DAEMON_MEMORY_ENSURE_UP_TO_DATE, sessionId ? { sessionId } : {}),
+      ...createDaemonMemoryActionDeps({
+        invoke: async ({ machineId, method, request }) => {
+          const selectedMachineId = machineId.trim();
+          const sessionMachineId = typeof sessionLocation?.machineId === 'string'
+            ? sessionLocation.machineId.trim()
+            : '';
+          if (sessionMachineId && selectedMachineId === sessionMachineId) {
+            return await sessionScopedRpc(method, request);
+          }
+          if (credentials) {
+            return await callMachineRpc({
+              credentials,
+              machineId: selectedMachineId,
+              method,
+              request,
+            });
+          }
+          if (sessionMachineId) {
+            throw new Error('Cross-machine memory access requires authenticated machine RPC');
+          }
+          // Compatibility clients that do not expose a session machine and do not
+          // provide credentials can only address their already-bound local daemon.
+          return await sessionScopedRpc(method, request);
+        },
+      }),
 
       promptRegistryInstall: async (args) => {
         if (!args.installTarget) {
@@ -229,10 +245,12 @@ export function createHappierMcpServer(
     actionsSettings: readActionsSettings(),
     getActionsSettings: readActionsSettings,
     resolveCallerPermissionMode: () => resolveLiveClientPermissionMode(client, sessionMetadataSnapshot),
+    defaultSessionMachineId: sessionLocation?.machineId ?? null,
   });
 
   const { toolNames } = registerHappierMcpBuiltInTools(mcp as any, {
     sessionId: client.sessionId,
+    defaultSessionMachineId: sessionLocation?.machineId ?? null,
     surface: toolSurface,
     actionsSettings: readActionsSettings(),
     getActionsSettings: readActionsSettings,

@@ -63,12 +63,13 @@ export const HAPPIER_BASE_SYSTEM_PROMPT_LINKED_WORKSPACE_FILES_V1 = trimIdent(`
 
 export function buildHappierBaseSystemPromptV1(args?: Readonly<{
   settings?: Record<string, unknown> | null | undefined;
+  sessionTitleToolAvailable?: boolean;
 }>): string {
   const blocks: string[] = [];
   const sessionTitleUpdatesMode = resolveCodingPromptSessionTitleUpdatesModeV1(args?.settings);
-  if (sessionTitleUpdatesMode === 'initial') {
+  if (args?.sessionTitleToolAvailable !== false && sessionTitleUpdatesMode === 'initial') {
     blocks.push(HAPPIER_BASE_SYSTEM_PROMPT_SESSION_TITLE_INITIAL_V1);
-  } else if (sessionTitleUpdatesMode === 'ongoing') {
+  } else if (args?.sessionTitleToolAvailable !== false && sessionTitleUpdatesMode === 'ongoing') {
     blocks.push(HAPPIER_BASE_SYSTEM_PROMPT_SESSION_TITLE_ONGOING_V1);
   }
   if (isCodingPromptResponseOptionsEnabled(args?.settings)) {

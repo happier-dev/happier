@@ -301,6 +301,13 @@ export async function createSessionScanner(opts: {
             });
             if (disposition === 'ignore') continue;
             if (disposition === 'diagnostic') {
+                for (const message of messages) {
+                    if (!isClaudeApiErrorDiagnosticMessage(message)) continue;
+                    await processSessionMessage(
+                        normalizeClaudeToolUseNamesInRawJsonLines(message),
+                        { suppressSideEffects: true },
+                    );
+                }
                 discoveredSessions.add(sessionId);
                 continue;
             }
@@ -331,7 +338,9 @@ export async function createSessionScanner(opts: {
             }
             try {
                 shapeLogger.log('emit:sidechain-import', body);
-                opts.onMessage(body);
+                void Promise.resolve(opts.onMessage(body)).catch((err) => {
+                    logger.debug('[SESSION_SCANNER] onMessage callback rejected (sidechain import):', err);
+                });
             } catch (err) {
                 logger.debug('[SESSION_SCANNER] onMessage callback threw (sidechain import):', err);
             }
@@ -363,7 +372,9 @@ export async function createSessionScanner(opts: {
             }
             try {
                 shapeLogger.log('emit:team-inbox', body);
-                opts.onMessage(body);
+                void Promise.resolve(opts.onMessage(body)).catch((err) => {
+                    logger.debug('[SESSION_SCANNER] onMessage callback rejected (team inbox):', err);
+                });
             } catch (err) {
                 logger.debug('[SESSION_SCANNER] onMessage callback threw (team inbox):', err);
             }
@@ -559,17 +570,19 @@ export async function createSessionScanner(opts: {
         if (processedMessageKeys.has(key)) {
             return false;
         }
-        processedMessageKeys.add(key);
         if (isFilteredSystemMessage(file)) {
+            processedMessageKeys.add(key);
             return false;
         }
         if (isReplaySuppressedRow(file, replayOpts?.suppressBeforeMs)) {
+            processedMessageKeys.add(key);
             return false;
         }
         logger.debug(`[SESSION_SCANNER] Sending new message: type=${file.type}, uuid=${file.type === 'summary' ? file.leafUuid : file.uuid}`);
         try {
             const action = rewriteTaskNotificationToToolResult(file);
             if (action?.type === 'drop') {
+                processedMessageKeys.add(key);
                 return false;
             }
             if (action?.type === 'rewrite') {
@@ -579,10 +592,10 @@ export async function createSessionScanner(opts: {
                 shapeLogger.log(`emit:${String((file as any)?.type ?? 'unknown')}`, file);
                 await opts.onMessage(file, { historicalReplay: replayOpts?.suppressSideEffects === true });
             }
+            processedMessageKeys.add(key);
             return true;
         } catch (err) {
             if (replayOpts?.suppressSideEffects === true) {
-                processedMessageKeys.delete(key);
                 throw err;
             }
             logger.debug('[SESSION_SCANNER] onMessage callback threw:', err);
@@ -783,6 +796,12 @@ export async function createSessionScanner(opts: {
                 if (name && !name.endsWith('.jsonl')) return;
                 sync.invalidate();
             });
+            watcher.on('error', (error) => {
+                if (projectDirWatcher !== watcher) return;
+                logger.debug('[SESSION_SCANNER] Project directory watcher failed; using polling fallback:', error);
+                closeProjectDirWatcher();
+                sync.invalidate();
+            });
             watcher.unref?.();
             projectDirWatcher = watcher;
             watchedProjectDir = projectDir;
@@ -956,16 +975,18 @@ function resolveUnhookedSessionDisposition(params: Readonly<{
 }
 
 function shouldDiscoverUnhookedSession(messages: readonly RawJSONLines[]): boolean {
-    return messages.some((message) => {
-        if (message.type !== 'assistant') return false;
-        const record = message as Record<string, unknown>;
-        return record.isApiErrorMessage === true
-            || record.error != null
-            || record.apiErrorStatus != null
-            || record.api_error_status != null
-            || record.errorStatus != null
-            || record.error_status != null;
-    });
+    return messages.some(isClaudeApiErrorDiagnosticMessage);
+}
+
+function isClaudeApiErrorDiagnosticMessage(message: RawJSONLines): boolean {
+    if (message.type !== 'assistant') return false;
+    const record = message as Record<string, unknown>;
+    return record.isApiErrorMessage === true
+        || record.error != null
+        || record.apiErrorStatus != null
+        || record.api_error_status != null
+        || record.errorStatus != null
+        || record.error_status != null;
 }
 
 function readClaudeSessionJsonlEntrySessionId(entry: string): string | null {
